@@ -152,6 +152,15 @@ const sharingPlugin: NonNullable<ExpoConfig["plugins"]>[number] = [
   },
 ];
 
+const notificationsPlugin: NonNullable<ExpoConfig["plugins"]>[number] = [
+  "expo-notifications",
+  {
+    icon: variant.assets.androidNotificationIcon,
+    color: variant.assets.androidNotificationColor,
+    mode: APP_VARIANT === "development" ? "development" : "production",
+  },
+];
+
 // These aliases match the fonts' PostScript names on iOS. Register the same
 // names on Android so React Native and the native composer use one set of
 // family names without waiting for runtime font loading.
@@ -186,10 +195,9 @@ const config: ExpoConfig = {
     // does not fall back to a personal team (which cannot sign app groups,
     // Sign in with Apple, or push notification entitlements).
     appleTeamId: "ARK85ZXQ4Z",
-    associatedDomains: [
-      `applinks:${variant.relyingParty}`,
-      `webcredentials:${variant.relyingParty}`,
-    ],
+    associatedDomains: isIosPersonalTeamBuild
+      ? []
+      : [`applinks:${variant.relyingParty}`, `webcredentials:${variant.relyingParty}`],
     infoPlist: {
       NSAppTransportSecurity: {
         NSAllowsArbitraryLoads: true,
@@ -246,16 +254,10 @@ const config: ExpoConfig = {
     ...(isIosPersonalTeamBuild
       ? [sharingPlugin]
       : ["./plugins/withShareExtensionDisplayName.cjs", sharingPlugin]),
-    [
-      "expo-notifications",
-      {
-        icon: variant.assets.androidNotificationIcon,
-        color: variant.assets.androidNotificationColor,
-        mode: APP_VARIANT === "development" ? "development" : "production",
-      },
-    ],
-    // appleSignIn must be gated here: withoutIosPersonalTeamCapabilities.cjs runs before
-    // plugins earlier in this array, so it cannot strip the entitlement Clerk would add.
+    ...(!isIosPersonalTeamBuild ? [notificationsPlugin] : []),
+    // appleSignIn must be gated at the owning plugin because a later
+    // entitlement-cleanup mod cannot reliably undo capabilities added by
+    // another plugin's mod.
     ["@clerk/expo", { theme: "./clerk-theme.json", appleSignIn: !isIosPersonalTeamBuild }],
     "expo-web-browser",
     [
