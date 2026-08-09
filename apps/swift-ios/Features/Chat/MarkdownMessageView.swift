@@ -12,6 +12,7 @@ struct MarkdownMessageView: View {
     private let revision: MarkdownContentRevision
     private let isStreaming: Bool
     private let onOpenURL: ((URL) -> Bool)?
+    private let imageContext: MarkdownImageContext?
     @State private var renderedDocument: MarkdownRenderedDocument?
     @State private var streamingRenderer = StreamingMarkdownRenderer()
     @State private var isSelectingText = false
@@ -19,11 +20,13 @@ struct MarkdownMessageView: View {
     init(
         _ source: String,
         isStreaming: Bool = false,
-        onOpenURL: ((URL) -> Bool)? = nil
+        onOpenURL: ((URL) -> Bool)? = nil,
+        imageContext: MarkdownImageContext? = nil
     ) {
         self.source = source
         self.isStreaming = isStreaming
         self.onOpenURL = onOpenURL
+        self.imageContext = imageContext
         let revision = MarkdownContentRevision(source)
         self.revision = revision
         let initialDocument = if isStreaming {
@@ -39,7 +42,7 @@ struct MarkdownMessageView: View {
     var body: some View {
         Group {
             if let displayDocument {
-                MarkdownBlocksView(blocks: displayDocument.blocks)
+                MarkdownBlocksView(blocks: displayDocument.blocks, imageContext: imageContext)
             } else {
                 // Parsing waits briefly so token-by-token streaming cancels stale revisions
                 // instead of scheduling work for content the user will never see.
@@ -219,6 +222,7 @@ private struct MarkdownTextSelectionModifier: ViewModifier {
 
 private struct MarkdownBlocksView: View {
     let blocks: [MarkdownRenderedBlock]
+    var imageContext: MarkdownImageContext?
     var spacing: CGFloat = 12
 
     var body: some View {
@@ -227,7 +231,7 @@ private struct MarkdownBlocksView: View {
                 // Unchanged blocks share inline runs by reference across
                 // streaming revisions, so equatable comparison skips their
                 // body and layout entirely; only the changed tail re-renders.
-                MarkdownBlockView(block: blocks[index])
+                MarkdownBlockView(block: blocks[index], imageContext: imageContext)
                     .equatable()
             }
         }
@@ -236,6 +240,18 @@ private struct MarkdownBlocksView: View {
 
 private struct MarkdownBlockView: View, Equatable {
     let block: MarkdownRenderedBlock
+    let imageContext: MarkdownImageContext?
+    nonisolated let imageContextID: MarkdownImageContext.ID?
+
+    init(block: MarkdownRenderedBlock, imageContext: MarkdownImageContext?) {
+        self.block = block
+        self.imageContext = imageContext
+        imageContextID = imageContext?.id
+    }
+
+    nonisolated static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.block == rhs.block && lhs.imageContextID == rhs.imageContextID
+    }
 
     @ViewBuilder
     var body: some View {
@@ -243,18 +259,27 @@ private struct MarkdownBlockView: View, Equatable {
         case let .paragraph(inline):
             MarkdownInlineText(inline)
 
+        case let .image(reference):
+            if let imageContext {
+                MarkdownWorkspaceImageView(reference: reference, context: imageContext)
+            } else {
+                Text(reference.alt ?? reference.source)
+                    .font(T3Typography.supporting)
+                    .foregroundStyle(T3Colors.textSecondary)
+            }
+
         case let .heading(level, inline):
             MarkdownInlineText(inline)
                 .padding(.top, level <= 2 ? 3 : 1)
 
         case let .unorderedList(items):
-            MarkdownListView(items: items, start: nil)
+            MarkdownListView(items: items, start: nil, imageContext: imageContext)
 
         case let .orderedList(start, items):
-            MarkdownListView(items: items, start: start)
+            MarkdownListView(items: items, start: start, imageContext: imageContext)
 
         case let .blockquote(blocks):
-            MarkdownBlocksView(blocks: blocks, spacing: 9)
+            MarkdownBlocksView(blocks: blocks, imageContext: imageContext, spacing: 9)
                 .foregroundStyle(T3Colors.textSecondary)
                 .padding(.leading, 14)
                 .overlay(alignment: .leading) {
@@ -358,6 +383,7 @@ private struct MarkdownTableView: View {
 private struct MarkdownListView: View {
     let items: [MarkdownRenderedListItem]
     let start: Int?
+    let imageContext: MarkdownImageContext?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -366,7 +392,11 @@ private struct MarkdownListView: View {
                 HStack(alignment: .top, spacing: 8) {
                     marker(for: item, offset: offset)
                         .frame(width: 24, height: 24, alignment: .trailing)
-                    MarkdownBlocksView(blocks: item.blocks, spacing: 7)
+                    MarkdownBlocksView(
+                        blocks: item.blocks,
+                        imageContext: imageContext,
+                        spacing: 7
+                    )
                 }
                 .accessibilityElement(children: .contain)
             }

@@ -366,6 +366,11 @@ public struct ThreadDetailView: View {
             } else {
                 FeatureTranscriptCollectionView(
                     threadID: thread.id,
+                    imageContext: MarkdownImageContext(
+                        client: model.client,
+                        threadID: thread.id,
+                        workspaceRoot: workspaceRoot
+                    ),
                     messages: detail.messages,
                     renderUpdate: model.detailRenderUpdates[thread.id],
                     dynamicTypeSize: dynamicTypeSize,
@@ -730,6 +735,7 @@ private struct FeatureTranscriptCollectionView: UIViewRepresentable {
     }
 
     let threadID: String
+    let imageContext: MarkdownImageContext
     let messages: [FeatureMessage]
     let renderUpdate: FeatureDetailRenderUpdate?
     let dynamicTypeSize: DynamicTypeSize
@@ -766,6 +772,7 @@ private struct FeatureTranscriptCollectionView: UIViewRepresentable {
     func updateUIView(_ collectionView: UICollectionView, context: Context) {
         context.coordinator.update(
             threadID: threadID,
+            imageContext: imageContext,
             messages: messages,
             renderUpdate: renderUpdate,
             dynamicTypeSize: dynamicTypeSize,
@@ -821,6 +828,7 @@ private struct FeatureTranscriptCollectionView: UIViewRepresentable {
         private var messagesByID: [String: FeatureMessage] = [:]
         private var orderedIDs: [String] = []
         private var currentThreadID: String?
+        private var currentImageContext: MarkdownImageContext?
         private var currentDetailRevision: UInt64?
         private var currentDynamicTypeSize: DynamicTypeSize?
         private var currentIsWorking = false
@@ -889,7 +897,8 @@ private struct FeatureTranscriptCollectionView: UIViewRepresentable {
                         reveal: self?.timestampReveal ?? FeatureTimestampRevealState(),
                         onOpenURL: { [weak self] url in
                             self?.onOpenURL?(url) == true
-                        }
+                        },
+                        imageContext: self?.currentImageContext
                     )
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
@@ -970,6 +979,7 @@ private struct FeatureTranscriptCollectionView: UIViewRepresentable {
 
         func update(
             threadID: String,
+            imageContext: MarkdownImageContext,
             messages: [FeatureMessage],
             renderUpdate: FeatureDetailRenderUpdate?,
             dynamicTypeSize: DynamicTypeSize,
@@ -991,6 +1001,7 @@ private struct FeatureTranscriptCollectionView: UIViewRepresentable {
             self.onDismissKeyboard = onDismissKeyboard
 
             let threadChanged = currentThreadID != threadID
+            let imageContextChanged = currentImageContext?.id != imageContext.id
             let typeSizeChanged = currentDynamicTypeSize != dynamicTypeSize
             let revisionChanged = currentDetailRevision != renderUpdate?.revision
             let workingChanged = currentIsWorking != isWorking
@@ -1000,7 +1011,7 @@ private struct FeatureTranscriptCollectionView: UIViewRepresentable {
             let workingStartChanged = isWorking && currentWorkingStartedAt != workingStartedAt
             let loadEarlierChanged = currentCanLoadEarlier != canLoadEarlier
                 || currentIsLoadingEarlier != isLoadingEarlier
-            guard threadChanged || typeSizeChanged || revisionChanged || workingChanged
+            guard threadChanged || imageContextChanged || typeSizeChanged || revisionChanged || workingChanged
                 || workingDetailChanged || workingStartChanged || loadEarlierChanged else { return }
 
             let incremental = !threadChanged
@@ -1009,10 +1020,11 @@ private struct FeatureTranscriptCollectionView: UIViewRepresentable {
             let state = incremental ?? fullState(messages: messages)
             let newIDs = state.ids
             let idsChanged = state.idsChanged
-            let changedIDs = typeSizeChanged
+            let changedIDs = typeSizeChanged || imageContextChanged
                 ? newIDs
                 : state.changedIDs
 
+            currentImageContext = imageContext
             currentDetailRevision = renderUpdate?.revision
             currentDynamicTypeSize = dynamicTypeSize
             currentIsWorking = isWorking
@@ -1022,7 +1034,7 @@ private struct FeatureTranscriptCollectionView: UIViewRepresentable {
             currentWorkingStartedAt = workingStartedAt
             currentCanLoadEarlier = canLoadEarlier
             currentIsLoadingEarlier = isLoadingEarlier
-            guard threadChanged || idsChanged || !changedIDs.isEmpty || workingChanged
+            guard threadChanged || imageContextChanged || idsChanged || !changedIDs.isEmpty || workingChanged
                 || workingDetailChanged || workingStartChanged || loadEarlierChanged else { return }
 
             if threadChanged {
@@ -1595,7 +1607,7 @@ private final class BottomAnchoredTranscriptCollectionView: UICollectionView {
     }
 }
 
-private struct FeatureRemoteAttachmentThumbnail: View {
+struct FeatureRemoteAttachmentThumbnail: View {
     private struct Request: Hashable {
         let url: URL
         let maximumPixelSize: Int
@@ -1780,6 +1792,7 @@ private enum FeatureAttachmentThumbnailError: Error {
 struct FeatureMessageView: View {
     let message: FeatureMessage
     let onOpenURL: (URL) -> Bool
+    var imageContext: MarkdownImageContext?
 
     var body: some View {
         switch message.role {
@@ -1792,7 +1805,8 @@ struct FeatureMessageView: View {
                         MarkdownMessageView(
                             message.text,
                             isStreaming: message.state == .streaming,
-                            onOpenURL: onOpenURL
+                            onOpenURL: onOpenURL,
+                            imageContext: imageContext
                         )
                     }
                 }
@@ -1828,7 +1842,8 @@ struct FeatureMessageView: View {
                     MarkdownMessageView(
                         message.text,
                         isStreaming: message.state == .streaming,
-                        onOpenURL: onOpenURL
+                        onOpenURL: onOpenURL,
+                        imageContext: imageContext
                     )
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }

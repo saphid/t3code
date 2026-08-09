@@ -5,6 +5,69 @@ import Testing
 @Suite("Chat Markdown")
 struct MarkdownDocumentTests {
     @Test
+    func parsesStandaloneImagesWithoutChangingMixedProse() {
+        let document = MarkdownDocument(
+            parsing: """
+            Before
+
+            ![Simulator preview](./artifacts/demo.png "Latest run")
+
+            See ![small preview](inline.png) above.
+            """
+        )
+
+        #expect(document.blocks == [
+            .paragraph("Before"),
+            .image(MarkdownImageReference(
+                source: "./artifacts/demo.png",
+                alt: "Simulator preview"
+            )),
+            .paragraph("See ![small preview](inline.png) above."),
+        ])
+    }
+
+    @Test
+    func keepsMultilineAndMalformedImageParagraphsAsText() {
+        #expect(
+            MarkdownDocument(parsing: "![Preview](demo.png)\ncontinues here").blocks == [
+                .paragraph("![Preview](demo.png)\ncontinues here"),
+            ]
+        )
+        #expect(
+            MarkdownDocument(parsing: "![Preview](demo.png invalid-title)").blocks == [
+                .paragraph("![Preview](demo.png invalid-title)"),
+            ]
+        )
+    }
+
+    @Test
+    func preservesStandaloneImagesInsideListsAndQuotes() {
+        let document = MarkdownDocument(
+            parsing: """
+            - ![List preview](images/list.png)
+
+            > ![Quoted preview](images/quote.png)
+            """
+        )
+
+        guard case let .unorderedList(items) = document.blocks.first else {
+            Issue.record("Expected image in a list")
+            return
+        }
+        #expect(items.first?.blocks == [
+            .image(MarkdownImageReference(source: "images/list.png", alt: "List preview")),
+        ])
+
+        guard case let .blockquote(quote) = document.blocks.last else {
+            Issue.record("Expected image in a quote")
+            return
+        }
+        #expect(quote.blocks == [
+            .image(MarkdownImageReference(source: "images/quote.png", alt: "Quoted preview")),
+        ])
+    }
+
+    @Test
     func separatesHeadingsParagraphsAndListKinds() {
         let document = MarkdownDocument(
             parsing: """
