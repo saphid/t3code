@@ -179,6 +179,19 @@ public actor EnvironmentStore {
         return environments
     }
 
+    public func updateDescriptor(
+        environmentID: String,
+        descriptor: EnvironmentDescriptor
+    ) throws -> Environment? {
+        var document = try loadDocument()
+        guard let index = document.environments.firstIndex(where: { $0.id == environmentID }) else {
+            return nil
+        }
+        document.environments[index].descriptor = descriptor
+        try save(document)
+        return document.environments[index]
+    }
+
     @discardableResult
     public func remove(id: String) throws -> [Environment] {
         var document = try loadDocument()

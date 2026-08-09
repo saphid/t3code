@@ -77,6 +77,7 @@ public enum HTTPError: LocalizedError, Sendable {
     case status(Int, message: String, traceID: String?)
     case missingCredential
     case incompatibleCredential
+    case environmentMismatch
     case managedAuthorizationUnavailable
 
     public var errorDescription: String? {
@@ -89,6 +90,8 @@ public enum HTTPError: LocalizedError, Sendable {
             "This environment has no saved credential."
         case .incompatibleCredential:
             "This environment's saved authentication method is invalid. Connect it again."
+        case .environmentMismatch:
+            "The server at this address has a different environment identity."
         case .managedAuthorizationUnavailable:
             "This build cannot authorize a managed T3 Connect environment."
         }
@@ -118,11 +121,15 @@ public actor EnvironmentAPI {
         self.managedAuthorization = managedAuthorization
     }
 
-    public func descriptor(at httpBaseURL: URL) async throws -> EnvironmentDescriptor {
-        try await send(
-            URLRequest(url: endpoint(httpBaseURL, path: "/.well-known/t3/environment")),
-            as: EnvironmentDescriptor.self
-        )
+    public func descriptor(
+        at httpBaseURL: URL,
+        timeoutInterval: TimeInterval? = nil
+    ) async throws -> EnvironmentDescriptor {
+        var request = URLRequest(url: endpoint(httpBaseURL, path: "/.well-known/t3/environment"))
+        if let timeoutInterval {
+            request.timeoutInterval = timeoutInterval
+        }
+        return try await send(request, as: EnvironmentDescriptor.self)
     }
 
     public func shellSnapshot(

@@ -322,7 +322,34 @@ public struct SettingsView: View {
             VStack(spacing: 0) {
                 SettingsValueRow(title: "App", value: appDisplayName)
                 settingsDivider
-                SettingsValueRow(title: "Platform", value: "Native SwiftUI")
+                SettingsValueRow(title: "Version", value: appVersionLabel)
+                settingsDivider
+                SettingsValueRow(
+                    title: "Environment version",
+                    value: activeEnvironmentVersion
+                )
+                settingsDivider
+                if let buildChangelogURL {
+                    Link(destination: buildChangelogURL) {
+                        SettingsNavigationRow(
+                            title: "Build changelog",
+                            systemImage: "clock.arrow.circlepath",
+                            trailingSystemImage: "arrow.up.right"
+                        )
+                    }
+                    .buttonStyle(.plain)
+
+                    settingsDivider
+                }
+                Link(destination: URL(string: "https://github.com/pingdotgg/t3code/releases")!) {
+                    SettingsNavigationRow(
+                        title: "Release changelog",
+                        systemImage: "list.bullet.rectangle",
+                        trailingSystemImage: "arrow.up.right"
+                    )
+                }
+                .buttonStyle(.plain)
+
                 settingsDivider
                 Link(destination: URL(string: "https://github.com/pingdotgg/t3code")!) {
                     SettingsNavigationRow(
@@ -442,6 +469,21 @@ public struct SettingsView: View {
             ?? "T3 Code SwiftUI"
     }
 
+    private var appVersionLabel: String {
+        SettingsAboutMetadata.appVersionLabel(info: Bundle.main.infoDictionary)
+    }
+
+    private var activeEnvironmentVersion: String {
+        SettingsAboutMetadata.environmentVersionLabel(
+            connectionState: model.snapshot.connection.state,
+            serverVersion: model.snapshot.environments.first(where: \.isActive)?.serverVersion
+        )
+    }
+
+    private var buildChangelogURL: URL? {
+        SettingsAboutMetadata.buildChangelogURL(info: Bundle.main.infoDictionary)
+    }
+
     private var canSave: Bool {
         !isSaving && settings != model.snapshot.settings
     }
@@ -533,6 +575,42 @@ public struct SettingsView: View {
                 saveErrorMessage = model.errorMessage ?? "Settings could not be saved."
             }
         }
+    }
+}
+
+enum SettingsAboutMetadata {
+    static func environmentVersionLabel(
+        connectionState: FeatureConnection.State,
+        serverVersion: String?
+    ) -> String {
+        guard connectionState == .connected else { return "Not connected" }
+        return serverVersion ?? "Unknown"
+    }
+
+    static func appVersionLabel(info: [String: Any]?) -> String {
+        let version = nonemptyValue("CFBundleShortVersionString", info: info) ?? "?"
+        let build = nonemptyValue("CFBundleVersion", info: info) ?? "?"
+        return "\(version) (\(build))"
+    }
+
+    static func buildChangelogURL(info: [String: Any]?) -> URL? {
+        guard let repositoryURL = nonemptyValue("T3GitRepoURL", info: info),
+              repositoryURL.hasPrefix("https://github.com/"),
+              var commit = nonemptyValue("T3GitCommit", info: info),
+              commit != "unknown"
+        else { return nil }
+        if commit.hasSuffix("-dirty") {
+            commit = String(commit.dropLast("-dirty".count))
+        }
+        return URL(string: "\(repositoryURL)/commits/\(commit)")
+    }
+
+    private static func nonemptyValue(_ key: String, info: [String: Any]?) -> String? {
+        guard let value = info?[key] as? String,
+              !value.isEmpty,
+              !value.hasPrefix("$(")
+        else { return nil }
+        return value
     }
 }
 

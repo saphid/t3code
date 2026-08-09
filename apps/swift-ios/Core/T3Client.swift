@@ -1051,9 +1051,32 @@ public actor EnvironmentRuntime {
         return await client(for: environment)
     }
 
-    public func descriptor(at httpBaseURL: URL) async throws -> EnvironmentDescriptor {
+    public func descriptor(
+        at httpBaseURL: URL,
+        timeoutInterval: TimeInterval? = nil
+    ) async throws -> EnvironmentDescriptor {
         let api = EnvironmentAPI(transport: httpTransport, credentials: credentialStore)
-        return try await api.descriptor(at: httpBaseURL)
+        return try await api.descriptor(at: httpBaseURL, timeoutInterval: timeoutInterval)
+    }
+
+    public func refreshDescriptor(
+        for environment: Environment,
+        timeoutInterval: TimeInterval
+    ) async throws -> Environment {
+        let descriptor = try await descriptor(
+            at: environment.httpBaseURL,
+            timeoutInterval: timeoutInterval
+        )
+        guard descriptor.environmentId == environment.id else {
+            throw HTTPError.environmentMismatch
+        }
+        guard let refreshed = try await environmentStore.updateDescriptor(
+            environmentID: environment.id,
+            descriptor: descriptor
+        ) else {
+            throw CancellationError()
+        }
+        return refreshed
     }
 
     /// Persists a fully validated managed environment. Both the environment

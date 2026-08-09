@@ -95,7 +95,6 @@ if [[ "${CONFIGURATION}" == "Debug" ]]; then
     ssh://git@*) GIT_REPO_URL="https://${GIT_REPO_URL#ssh://git@}" ;;
     git@*) GIT_REPO_URL="https://$(printf '%s' "${GIT_REPO_URL#git@}" | tr ':' '/')" ;;
   esac
-
   # Prefer the branch's configured base, then the public repository's default
   # branch. Release and PR builds can supply an exact comparison line.
   GIT_BASE_REF="${T3_SWIFT_BASE_REF:-}"

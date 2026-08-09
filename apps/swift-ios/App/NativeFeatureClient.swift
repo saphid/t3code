@@ -175,9 +175,9 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
     }
 
     func initialSnapshot() async throws -> FeatureSnapshot {
-        let environments = try await runtime.environments()
         guard let activeClient = try await runtime.activeClient() else {
             await clearActiveEnvironment()
+            let environments = try await runtime.environments()
             let snapshot = disconnectedSnapshot(environments: environments)
             latestSnapshot = snapshot
             return snapshot
@@ -185,7 +185,12 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         // The runtime actor can change its active selection at any suspension
         // point. Derive both values from one client so the snapshot cannot pair
         // one environment with another environment's connection.
-        let environment = activeClient.environment
+        let environment = (try? await runtime.refreshDescriptor(
+            for: activeClient.environment,
+            timeoutInterval: environmentShellTimeoutInterval
+        ))
+            ?? activeClient.environment
+        let environments = try await runtime.environments()
 
         await adoptEnvironment(environment, client: activeClient)
         let generation = environmentGeneration
@@ -380,7 +385,12 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
 
     func activateEnvironment(id: String) async throws {
         let activated = try await runtime.activate(id: id)
-        await adoptEnvironment(activated.environment, client: activated)
+        let environment = (try? await runtime.refreshDescriptor(
+            for: activated.environment,
+            timeoutInterval: environmentShellTimeoutInterval
+        ))
+            ?? activated.environment
+        await adoptEnvironment(environment, client: activated)
         try await refresh(client: activated)
         startPolling(activated)
     }
@@ -1231,7 +1241,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
             switch error {
             case .invalidResponse:
                 return true
-            case .status, .missingCredential, .incompatibleCredential,
+            case .status, .missingCredential, .incompatibleCredential, .environmentMismatch,
                  .managedAuthorizationUnavailable:
                 return false
             }
@@ -3764,6 +3774,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
             id: environment.id,
             name: environment.label,
             endpoint: environment.httpBaseURL.absoluteString,
+            serverVersion: environment.descriptor?.serverVersion,
             isActive: environment.id == activeID,
             connectionState: environmentConnectionStates[environment.id],
             connectionDetail: environmentConnectionDetails[environment.id]
