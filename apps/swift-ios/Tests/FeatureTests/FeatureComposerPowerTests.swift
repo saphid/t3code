@@ -12,20 +12,92 @@ struct FeatureComposerPowerTests {
         #expect(
             FeatureComposerTextLayout.visibleLineRange(
                 dynamicTypeSize: .large,
-                verticalSizeClass: .regular
+                verticalSizeClass: .regular,
+                softwareKeyboardIsVisible: false
             ) == (1...10)
         )
         #expect(
             FeatureComposerTextLayout.visibleLineRange(
                 dynamicTypeSize: .large,
-                verticalSizeClass: .compact
+                verticalSizeClass: .compact,
+                softwareKeyboardIsVisible: false
             ) == (1...5)
         )
         #expect(
             FeatureComposerTextLayout.visibleLineRange(
-                dynamicTypeSize: .accessibility5,
-                verticalSizeClass: .regular
+                dynamicTypeSize: .large,
+                verticalSizeClass: .regular,
+                softwareKeyboardIsVisible: true
             ) == (1...3)
+        )
+        #expect(
+            FeatureComposerTextLayout.visibleLineRange(
+                dynamicTypeSize: .large,
+                verticalSizeClass: .compact,
+                softwareKeyboardIsVisible: true
+            ) == (1...3)
+        )
+        #expect(
+            FeatureComposerTextLayout.visibleLineRange(
+                dynamicTypeSize: .accessibility5,
+                verticalSizeClass: .regular,
+                softwareKeyboardIsVisible: false
+            ) == (1...3)
+        )
+        #expect(
+            FeatureComposerTextLayout.visibleLineRange(
+                dynamicTypeSize: .accessibility5,
+                verticalSizeClass: .regular,
+                softwareKeyboardIsVisible: true
+            ) == (1...2)
+        )
+        #expect(
+            FeatureComposerTextLayout.visibleLineRange(
+                dynamicTypeSize: .large,
+                verticalSizeClass: nil,
+                softwareKeyboardIsVisible: false
+            ) == (1...10)
+        )
+    }
+
+    @Test
+    func softwareKeyboardDetectionRequiresALocalDockedKeyboardSizedFrame() {
+        let screen = CGRect(x: 0, y: 0, width: 368, height: 800)
+
+        #expect(
+            FeatureComposerTextLayout.softwareKeyboardOccupiesScreen(
+                keyboardFrame: CGRect(x: 0, y: 494, width: 368, height: 306),
+                screenBounds: screen,
+                isLocal: true
+            )
+        )
+        #expect(
+            !FeatureComposerTextLayout.softwareKeyboardOccupiesScreen(
+                keyboardFrame: CGRect(x: 0, y: 800, width: 368, height: 306),
+                screenBounds: screen,
+                isLocal: true
+            )
+        )
+        #expect(
+            !FeatureComposerTextLayout.softwareKeyboardOccupiesScreen(
+                keyboardFrame: CGRect(x: 84, y: 400, width: 200, height: 200),
+                screenBounds: screen,
+                isLocal: true
+            )
+        )
+        #expect(
+            !FeatureComposerTextLayout.softwareKeyboardOccupiesScreen(
+                keyboardFrame: CGRect(x: 0, y: 745, width: 368, height: 55),
+                screenBounds: screen,
+                isLocal: true
+            )
+        )
+        #expect(
+            !FeatureComposerTextLayout.softwareKeyboardOccupiesScreen(
+                keyboardFrame: CGRect(x: 0, y: 494, width: 368, height: 306),
+                screenBounds: screen,
+                isLocal: false
+            )
         )
     }
 

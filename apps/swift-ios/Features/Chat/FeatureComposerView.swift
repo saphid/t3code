@@ -7,6 +7,7 @@ struct FeatureComposerView: View {
     @SwiftUI.Environment(\.verticalSizeClass) private var verticalSizeClass
     @State private var isManuallyExpanded = false
     @State private var isAttachmentFlowActive = false
+    @State private var dockedSoftwareKeyboardOccupiesScreen = false
     @State private var attachmentPreparation = FeatureAttachmentPreparationState()
     @State private var attachmentLifecycle: FeatureAttachmentLifecycle
     @State private var attachmentTasks: FeatureAttachmentTaskStore
@@ -150,6 +151,13 @@ struct FeatureComposerView: View {
             } message: {
                 Text(attachmentErrorMessage ?? "")
             }
+            .onReceive(
+                NotificationCenter.default.publisher(
+                    for: UIResponder.keyboardWillChangeFrameNotification
+                )
+            ) { notification in
+                updateSoftwareKeyboardState(from: notification)
+            }
     }
 
     private var composerSurface: some View {
@@ -229,7 +237,9 @@ struct FeatureComposerView: View {
             let placeholder = isWorking ? "Message to queue…" : "Ask anything…"
             let visibleLineRange = FeatureComposerTextLayout.visibleLineRange(
                 dynamicTypeSize: dynamicTypeSize,
-                verticalSizeClass: verticalSizeClass
+                verticalSizeClass: verticalSizeClass,
+                softwareKeyboardIsVisible: focused.wrappedValue
+                    && dockedSoftwareKeyboardOccupiesScreen
             )
             ZStack(alignment: .topLeading) {
                 FeatureComposerTextInput(
@@ -277,6 +287,8 @@ struct FeatureComposerView: View {
             }
 
             composerFooter
+                .fixedSize(horizontal: false, vertical: true)
+                .layoutPriority(1)
         }
     }
 
@@ -581,20 +593,58 @@ struct FeatureComposerView: View {
         attachmentTasks.cancelAll()
         attachmentPreparation.cancelAll()
     }
+
+    private func updateSoftwareKeyboardState(from notification: Notification) {
+        guard let frame = notification.userInfo?[UIResponder.keyboardFrameEndUserInfoKey]
+                as? CGRect,
+              let screenBounds = UIApplication.shared.connectedScenes
+                .compactMap({ $0 as? UIWindowScene })
+                .flatMap(\.windows)
+                .first(where: \.isKeyWindow)?
+                .screen.bounds
+        else { return }
+
+        dockedSoftwareKeyboardOccupiesScreen =
+            FeatureComposerTextLayout.softwareKeyboardOccupiesScreen(
+                keyboardFrame: frame,
+                screenBounds: screenBounds,
+                isLocal: notification.userInfo?[UIResponder.keyboardIsLocalUserInfoKey]
+                    as? Bool ?? true
+            )
+    }
 }
 
 enum FeatureComposerTextLayout {
+    // Excludes the hardware-keyboard assistant bar while admitting a docked software keyboard.
+    private static let minimumSoftwareKeyboardHeight: CGFloat = 100
+
     static func visibleLineRange(
         dynamicTypeSize: DynamicTypeSize,
-        verticalSizeClass: UserInterfaceSizeClass?
+        verticalSizeClass: UserInterfaceSizeClass?,
+        softwareKeyboardIsVisible: Bool
     ) -> ClosedRange<Int> {
         if dynamicTypeSize.isAccessibilitySize {
+            return softwareKeyboardIsVisible ? (1...2) : (1...3)
+        }
+        if softwareKeyboardIsVisible {
             return 1...3
         }
         if verticalSizeClass == .compact {
             return 1...5
         }
         return 1...10
+    }
+
+    static func softwareKeyboardOccupiesScreen(
+        keyboardFrame: CGRect,
+        screenBounds: CGRect,
+        isLocal: Bool
+    ) -> Bool {
+        guard isLocal else { return false }
+        let dockedAtBottom = abs(keyboardFrame.maxY - screenBounds.maxY) < 1
+        guard dockedAtBottom else { return false }
+        return screenBounds.intersection(keyboardFrame).height
+            >= minimumSoftwareKeyboardHeight
     }
 }
 
