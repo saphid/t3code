@@ -1781,8 +1781,32 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
     func sourceControlStatus(threadID: String) async throws -> FeatureSourceControlStatus {
         let route = try threadRoute(for: threadID)
         let context = try workspaceContext(route: route)
-        return NativeWorkspaceMapper.sourceControl(
-            try await route.client.refreshVCSStatus(cwd: context.cwd)
+        let events = await route.client.vcsStatusEvents(cwd: context.cwd)
+        var latestLocal: VCSLocalStatus?
+
+        for try await event in events {
+            switch event {
+            case let .snapshot(local, remote):
+                if let remote {
+                    return NativeWorkspaceMapper.sourceControl(local: local, remote: remote)
+                }
+                if !local.isRepo || !local.hasPrimaryRemote {
+                    return NativeWorkspaceMapper.sourceControl(local: local, remote: nil)
+                }
+                latestLocal = local
+            case let .localUpdated(local):
+                if !local.isRepo || !local.hasPrimaryRemote {
+                    return NativeWorkspaceMapper.sourceControl(local: local, remote: nil)
+                }
+                latestLocal = local
+            case let .remoteUpdated(remote):
+                guard let latestLocal else { continue }
+                return NativeWorkspaceMapper.sourceControl(local: latestLocal, remote: remote)
+            }
+        }
+
+        throw RPCError.protocolViolation(
+            "The source-control status stream ended before returning a snapshot."
         )
     }
 
