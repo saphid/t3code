@@ -78,9 +78,9 @@ public struct FeatureSourceControlView: View {
                 .font(T3Typography.supporting)
                 .foregroundStyle(T3Colors.textSecondary)
                 if let pullRequest = status.pullRequest {
-                    if let url = pullRequest.url {
+                    if let url = pullRequest.safeExternalURL {
                         Link(destination: url) {
-                            Label("PR #\(pullRequest.number) · \(pullRequest.title)", systemImage: "arrow.up.right.square")
+                            Label("PR \(pullRequest.shortLabel) · \(pullRequest.title)", systemImage: "arrow.up.right.square")
                         }
                     } else {
                         LabeledContent("Pull Request", value: "#\(pullRequest.number) · \(pullRequest.state)")

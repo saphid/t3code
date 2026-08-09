@@ -59,6 +59,8 @@ struct HomeThreadCollectionView: UIViewRepresentable {
 
     static func dismantleUIView(_ collectionView: UICollectionView, coordinator: Coordinator) {
         coordinator.invalidateTimer()
+        coordinator.invalidatePullRequestLookups()
+        coordinator.invalidatePullRequestObserver()
         collectionView.delegate = nil
     }
 
@@ -77,6 +79,12 @@ struct HomeThreadCollectionView: UIViewRepresentable {
         private var timer: Timer?
         private var timerTick = 0
         private var timerInterval: TimeInterval = 0
+        private var pullRequestCache: [PullRequestLookupKey: PullRequestCacheEntry] = [:]
+        private var stalePullRequestKeys = Set<PullRequestLookupKey>()
+        private var pullRequestQueue: [PullRequestLookupRequest] = []
+        private var pullRequestWorker: Task<Void, Never>?
+        private var activePullRequestLookupKey: PullRequestLookupKey?
+        private var foregroundObserver: NSObjectProtocol?
 
         init(parent: HomeThreadCollectionView) {
             self.parent = parent
@@ -85,6 +93,15 @@ struct HomeThreadCollectionView: UIViewRepresentable {
 
         func configure(_ collectionView: UICollectionView) {
             self.collectionView = collectionView
+            foregroundObserver = NotificationCenter.default.addObserver(
+                forName: UIApplication.willEnterForegroundNotification,
+                object: nil,
+                queue: .main
+            ) { [weak self] _ in
+                MainActor.assumeIsolated {
+                    self?.refreshPullRequestsAfterForeground()
+                }
+            }
 
             let registration = UICollectionView.CellRegistration<HomeCollectionCell, HomeCollectionItem.ID> {
                 [weak self] cell, _, identifier in
@@ -117,6 +134,7 @@ struct HomeThreadCollectionView: UIViewRepresentable {
                 seenIdentifiers.insert(item.id).inserted
             }
             itemsByID = Dictionary(uniqueKeysWithValues: items.map { ($0.id, $0) })
+            prunePullRequestLookups()
             // After items land: picks 1 Hz when a working thread is present,
             // 60s otherwise, and is a no-op when the interval is unchanged.
             startTimer()
@@ -149,6 +167,36 @@ struct HomeThreadCollectionView: UIViewRepresentable {
         func invalidateTimer() {
             timer?.invalidate()
             timer = nil
+        }
+
+        func invalidatePullRequestLookups() {
+            pullRequestWorker?.cancel()
+            pullRequestWorker = nil
+            activePullRequestLookupKey = nil
+            pullRequestQueue.removeAll()
+        }
+
+        func invalidatePullRequestObserver() {
+            guard let foregroundObserver else { return }
+            NotificationCenter.default.removeObserver(foregroundObserver)
+            self.foregroundObserver = nil
+        }
+
+        private func refreshPullRequestsAfterForeground() {
+            invalidatePullRequestLookups()
+            stalePullRequestKeys.formUnion(pullRequestCache.keys)
+            refreshVisibleRowsForPullRequests()
+        }
+
+        private func refreshVisibleRowsForPullRequests() {
+            guard let collectionView, let dataSource else { return }
+            for indexPath in collectionView.indexPathsForVisibleItems {
+                guard let identifier = dataSource.itemIdentifier(for: indexPath),
+                      let cell = collectionView.cellForItem(at: indexPath) as? HomeCollectionCell else {
+                    continue
+                }
+                configure(cell, identifier: identifier, now: .now)
+            }
         }
 
         func collectionView(_ collectionView: UICollectionView, didSelectItemAt indexPath: IndexPath) {
@@ -250,12 +298,20 @@ struct HomeThreadCollectionView: UIViewRepresentable {
             now: Date
         ) {
             guard let item = itemsByID[identifier] else { return }
+            let resolvedPullRequest: FeaturePullRequest?
+            if case let .thread(thread, _, _, _, _) = item {
+                loadPullRequestIfNeeded(for: thread)
+                resolvedPullRequest = pullRequest(for: thread)
+            } else {
+                resolvedPullRequest = nil
+            }
             cell.contentConfiguration = UIHostingConfiguration {
                 HomeCollectionCellContent(
                     item: item,
                     projectFaviconClient: parent.projectFaviconClient,
                     isSelected: identifier.threadID == selectedThreadID,
-                    now: now
+                    now: now,
+                    pullRequest: resolvedPullRequest
                 )
             }
             .margins(.all, 0)
@@ -267,6 +323,87 @@ struct HomeThreadCollectionView: UIViewRepresentable {
             configureAccessibility(cell, item: item)
         }
 
+        private func pullRequest(for thread: FeatureThread) -> FeaturePullRequest? {
+            let key = PullRequestLookupKey(thread: thread)
+            return pullRequestCache[key]?.pullRequest
+        }
+
+        private func loadPullRequestIfNeeded(for thread: FeatureThread) {
+            let key = PullRequestLookupKey(thread: thread)
+            guard key.branch != nil else { return }
+            // sourceControlStatus is an explicit, cache-busting server refresh.
+            // Resolve each checkout identity only once while this Home
+            // coordinator lives; row timer ticks must never become VCS polling.
+            guard pullRequestCache[key] == nil || stalePullRequestKeys.remove(key) != nil else { return }
+            guard pullRequestQueue.allSatisfy({ $0.key != key }),
+                  activePullRequestLookupKey != key else { return }
+
+            pullRequestQueue.append(PullRequestLookupRequest(key: key, thread: thread))
+            startNextPullRequestLookup()
+        }
+
+        private func startNextPullRequestLookup() {
+            guard pullRequestWorker == nil else { return }
+            guard !pullRequestQueue.isEmpty else { return }
+            // Requests enter this queue only while UIKit is configuring an
+            // on-screen cell. Do not consult indexPathsForVisibleItems here:
+            // during initial configuration UIKit has not published that index
+            // path yet, which would incorrectly discard the lookup.
+            let request = pullRequestQueue.removeFirst()
+
+            let client = parent.projectFaviconClient
+            activePullRequestLookupKey = request.key
+            pullRequestWorker = Task { [weak self] in
+                let result: Result<FeaturePullRequest?, Error>
+                do {
+                    let status = try await client.sourceControlStatus(threadID: request.thread.id)
+                    result = .success(HomeThreadPullRequest.related(to: request.thread, in: status))
+                } catch {
+                    result = .failure(error)
+                }
+                guard !Task.isCancelled, let self else { return }
+                pullRequestWorker = nil
+                activePullRequestLookupKey = nil
+                switch result {
+                case let .success(pullRequest):
+                    pullRequestCache[request.key] = PullRequestCacheEntry(pullRequest: pullRequest)
+                case .failure:
+                    // A failed explicit refresh is terminal until Home is
+                    // foregrounded again, avoiding a background failure loop.
+                    pullRequestCache[request.key] = PullRequestCacheEntry(pullRequest: nil)
+                }
+                reconfigureThreadRows(matching: request.key)
+                startNextPullRequestLookup()
+            }
+        }
+
+        private func reconfigureThreadRows(matching key: PullRequestLookupKey) {
+            guard let dataSource else { return }
+            let identifiers = itemsByID.compactMap { id, item -> HomeCollectionItem.ID? in
+                guard case let .thread(thread, _, _, _, _) = item,
+                      PullRequestLookupKey(thread: thread) == key else { return nil }
+                return id
+            }
+            guard !identifiers.isEmpty else { return }
+            var snapshot = dataSource.snapshot()
+            snapshot.reconfigureItems(identifiers)
+            dataSource.apply(snapshot, animatingDifferences: false)
+        }
+
+        private func prunePullRequestLookups() {
+            let validKeys = Set(parent.presentation.allThreads.map(PullRequestLookupKey.init))
+            pullRequestCache = pullRequestCache.filter { validKeys.contains($0.key) }
+            stalePullRequestKeys.formIntersection(validKeys)
+            pullRequestQueue.removeAll { !validKeys.contains($0.key) }
+            if let activePullRequestLookupKey,
+               !validKeys.contains(activePullRequestLookupKey) {
+                pullRequestWorker?.cancel()
+                pullRequestWorker = nil
+                self.activePullRequestLookupKey = nil
+                startNextPullRequestLookup()
+            }
+        }
+
         private func configureAccessibility(_ cell: HomeCollectionCell, item: HomeCollectionItem) {
             switch item {
             case let .thread(thread, context, _, _, _):
@@ -275,8 +412,23 @@ struct HomeThreadCollectionView: UIViewRepresentable {
                     ? [.button, .selected]
                     : .button
                 cell.accessibilityLabel = thread.title
-                cell.accessibilityValue = threadAccessibilityValue(thread, context: context)
+                let baseValue = threadAccessibilityValue(thread, context: context)
                 cell.accessibilityHint = "Opens task"
+                if let pullRequest = pullRequest(for: thread),
+                   let url = pullRequest.safeExternalURL {
+                    cell.accessibilityValue = "\(baseValue). Pull request \(pullRequest.number), \(pullRequest.state)."
+                    cell.accessibilityCustomActions = [
+                        UIAccessibilityCustomAction(
+                            name: "Open pull request \(pullRequest.number), \(pullRequest.state)"
+                        ) { _ in
+                            UIApplication.shared.open(url)
+                            return true
+                        },
+                    ]
+                } else {
+                    cell.accessibilityValue = baseValue
+                    cell.accessibilityCustomActions = nil
+                }
                 cell.onAccessibilityActivate = { [weak self] in
                     guard let self else { return }
                     let previousSelection = self.selectedThreadID
@@ -290,6 +442,7 @@ struct HomeThreadCollectionView: UIViewRepresentable {
                     }
                 }
             case let .shelfHeader(shelf, count, isExpanded):
+                cell.accessibilityCustomActions = nil
                 cell.isAccessibilityElement = true
                 cell.accessibilityTraits = .button
                 cell.accessibilityLabel = "\(shelf.title), \(count) tasks"
@@ -297,6 +450,7 @@ struct HomeThreadCollectionView: UIViewRepresentable {
                 cell.accessibilityHint = nil
                 cell.onAccessibilityActivate = { [weak self] in self?.toggle(shelf) }
             case let .showMoreSettled(remaining):
+                cell.accessibilityCustomActions = nil
                 cell.isAccessibilityElement = true
                 cell.accessibilityTraits = .button
                 cell.accessibilityLabel = "Show \(remaining) more settled tasks"
@@ -306,6 +460,7 @@ struct HomeThreadCollectionView: UIViewRepresentable {
                     self?.parent.onShowMoreSettled()
                 }
             case let .empty(shelf):
+                cell.accessibilityCustomActions = nil
                 cell.isAccessibilityElement = true
                 cell.accessibilityTraits = .staticText
                 cell.accessibilityLabel = shelf == .active ? "No active tasks" : "No \(shelf.title.lowercased()) tasks"
@@ -313,6 +468,7 @@ struct HomeThreadCollectionView: UIViewRepresentable {
                 cell.accessibilityHint = nil
                 cell.onAccessibilityActivate = nil
             case .searchEmpty:
+                cell.accessibilityCustomActions = nil
                 cell.isAccessibilityElement = true
                 cell.accessibilityTraits = .staticText
                 cell.accessibilityLabel = "No matching tasks"
@@ -320,6 +476,7 @@ struct HomeThreadCollectionView: UIViewRepresentable {
                 cell.accessibilityHint = nil
                 cell.onAccessibilityActivate = nil
             case .pinnedDivider:
+                cell.accessibilityCustomActions = nil
                 cell.isAccessibilityElement = false
                 cell.onAccessibilityActivate = nil
             }
@@ -592,6 +749,7 @@ private final class HomeCollectionCell: UICollectionViewListCell {
     override func prepareForReuse() {
         super.prepareForReuse()
         onAccessibilityActivate = nil
+        accessibilityCustomActions = nil
     }
 }
 
@@ -645,6 +803,7 @@ private struct HomeCollectionCellContent: View {
     let projectFaviconClient: any FeatureClient
     let isSelected: Bool
     let now: Date
+    let pullRequest: FeaturePullRequest?
 
     @ViewBuilder
     var body: some View {
@@ -657,7 +816,8 @@ private struct HomeCollectionCellContent: View {
                 isSelected: isSelected,
                 style: style,
                 now: now,
-                allowsMultilineTitle: allowsMultilineTitle
+                allowsMultilineTitle: allowsMultilineTitle,
+                pullRequest: pullRequest
             )
         case let .shelfHeader(shelf, count, isExpanded):
             HomeShelfHeader(
@@ -695,6 +855,31 @@ private struct HomeCollectionCellContent: View {
                 .padding(.vertical, 3)
         }
     }
+}
+
+private struct PullRequestLookupKey: Hashable {
+    let projectID: String
+    let branch: String?
+    let worktreePath: String?
+
+    init(thread: FeatureThread) {
+        projectID = thread.projectID
+        branch = thread.branch?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
+        worktreePath = thread.worktreePath?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
+    }
+}
+
+private struct PullRequestLookupRequest {
+    let key: PullRequestLookupKey
+    let thread: FeatureThread
+}
+
+private struct PullRequestCacheEntry {
+    let pullRequest: FeaturePullRequest?
+}
+
+private extension String {
+    var nilIfEmpty: String? { isEmpty ? nil : self }
 }
 
 private extension Optional where Wrapped == [IndexPath] {

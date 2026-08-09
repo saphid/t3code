@@ -904,6 +904,23 @@ public struct FeaturePullRequest: Sendable, Equatable, Hashable, Codable {
         self.state = state
         self.url = url
     }
+
+    public var shortLabel: String { "#\(number)" }
+
+    /// Pull-request URLs come from the connected server. Keep external opening
+    /// on the same web-only path as the rest of the native client and do not
+    /// hand custom schemes or credential-bearing URLs to the system.
+    public var safeExternalURL: URL? {
+        guard let url,
+              let scheme = url.scheme?.lowercased(),
+              scheme == "http" || scheme == "https",
+              url.host?.isEmpty == false,
+              url.user == nil,
+              url.password == nil else {
+            return nil
+        }
+        return url
+    }
 }
 
 public enum FeatureSourceControlAction: String, CaseIterable, Sendable, Codable {

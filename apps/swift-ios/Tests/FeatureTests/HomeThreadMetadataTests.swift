@@ -195,4 +195,91 @@ struct HomeThreadMetadataTests {
             ) == nil
         )
     }
+
+    @Test
+    func pullRequestRequiresTheStatusToMatchTheThreadBranch() {
+        let pullRequest = FeaturePullRequest(
+            number: 5178,
+            title: "Native SwiftUI client",
+            state: "open",
+            url: URL(string: "https://github.com/pingdotgg/t3code/pull/5178")
+        )
+        let thread = FeatureThread(
+            id: "thread",
+            projectID: "project",
+            title: "Build",
+            branch: "feature/native-pr-link"
+        )
+
+        #expect(HomeThreadPullRequest.related(
+            to: thread,
+            in: FeatureSourceControlStatus(
+                branch: "feature/native-pr-link",
+                pullRequest: pullRequest
+            )
+        ) == pullRequest)
+        #expect(HomeThreadPullRequest.related(
+            to: thread,
+            in: FeatureSourceControlStatus(
+                branch: "feature/another-thread",
+                pullRequest: pullRequest
+            )
+        ) == nil)
+
+        for missingBranch in [nil, "", "   "] {
+            var missingThreadBranch = thread
+            missingThreadBranch.branch = missingBranch
+            #expect(HomeThreadPullRequest.related(
+                to: missingThreadBranch,
+                in: FeatureSourceControlStatus(
+                    branch: "feature/native-pr-link",
+                    pullRequest: pullRequest
+                )
+            ) == nil)
+        }
+        #expect(HomeThreadPullRequest.related(
+            to: thread,
+            in: FeatureSourceControlStatus(branch: nil, pullRequest: pullRequest)
+        ) == nil)
+    }
+
+    @Test
+    func pullRequestLinksOnlyOpenSafeWebURLs() {
+        let safe = FeaturePullRequest(
+            number: 42,
+            title: "Safe",
+            state: "open",
+            url: URL(string: "https://github.com/pingdotgg/t3code/pull/42")
+        )
+        let customScheme = FeaturePullRequest(
+            number: 43,
+            title: "Unsafe",
+            state: "open",
+            url: URL(string: "t3code-swiftui://pull/43")
+        )
+        let credentialed = FeaturePullRequest(
+            number: 44,
+            title: "Credentialed",
+            state: "open",
+            url: URL(string: "https://token@example.com/pull/44")
+        )
+        let plainHTTP = FeaturePullRequest(
+            number: 45,
+            title: "Local",
+            state: "open",
+            url: URL(string: "HTTP://127.0.0.1/pull/45")
+        )
+        let missingURL = FeaturePullRequest(
+            number: 46,
+            title: "Missing",
+            state: "open"
+        )
+
+        #expect(safe.shortLabel == "#42")
+        #expect(safe.safeExternalURL == safe.url)
+        #expect(customScheme.safeExternalURL == nil)
+        #expect(credentialed.safeExternalURL == nil)
+        #expect(plainHTTP.safeExternalURL == plainHTTP.url)
+        #expect(missingURL.safeExternalURL == nil)
+    }
 }

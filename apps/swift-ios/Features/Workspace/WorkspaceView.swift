@@ -668,6 +668,7 @@ private extension FeatureDraftAttachment {
 }
 
 struct HomePresentation {
+    let allThreads: [FeatureThread]
     let pinned: [FeatureThread]
     let active: [FeatureThread]
     let snoozed: [FeatureThread]
@@ -677,6 +678,7 @@ struct HomePresentation {
     let rowContexts: [String: HomeThreadRowContext]
 
     init(snapshot: FeatureSnapshot, query: String, projectID: String?, now: Date) {
+        allThreads = snapshot.threads
         let index = DailyUXSidebarIndex(
             snapshot: snapshot,
             query: "",
@@ -857,6 +859,28 @@ struct HomeThreadRowContext: Equatable {
     }
 }
 
+enum HomeThreadPullRequest {
+    static func related(
+        to thread: FeatureThread,
+        in status: FeatureSourceControlStatus
+    ) -> FeaturePullRequest? {
+        guard let threadBranch = normalizedBranch(thread.branch),
+              let statusBranch = normalizedBranch(status.branch),
+              threadBranch == statusBranch else {
+            return nil
+        }
+        return status.pullRequest
+    }
+
+    private static func normalizedBranch(_ branch: String?) -> String? {
+        guard let branch = branch?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !branch.isEmpty else {
+            return nil
+        }
+        return branch
+    }
+}
+
 struct FeatureThreadRow: View {
     enum Style: Equatable {
         case rich
@@ -870,6 +894,7 @@ struct FeatureThreadRow: View {
     let style: Style
     let now: Date
     let allowsMultilineTitle: Bool
+    let pullRequest: FeaturePullRequest?
 
     init(
         thread: FeatureThread,
@@ -878,7 +903,8 @@ struct FeatureThreadRow: View {
         isSelected: Bool = false,
         style: Style = .rich,
         now: Date = .now,
-        allowsMultilineTitle: Bool = false
+        allowsMultilineTitle: Bool = false,
+        pullRequest: FeaturePullRequest? = nil
     ) {
         self.thread = thread
         self.context = context
@@ -887,6 +913,7 @@ struct FeatureThreadRow: View {
         self.style = style
         self.now = now
         self.allowsMultilineTitle = allowsMultilineTitle
+        self.pullRequest = pullRequest
     }
 
     var body: some View {
@@ -941,6 +968,7 @@ struct FeatureThreadRow: View {
                         .foregroundStyle(T3Colors.syntaxProperty)
                 }
                 Spacer(minLength: 8)
+                pullRequestLink
                 if let environmentLabel {
                     HStack(spacing: 4) {
                         Image(systemName: environmentIcon)
@@ -982,6 +1010,7 @@ struct FeatureThreadRow: View {
                 .foregroundStyle(T3Colors.textSecondary)
                 .lineLimit(allowsMultilineTitle ? 2 : 1)
             Spacer(minLength: 8)
+            pullRequestLink
             if thread.pinnedAt != nil {
                 Image(systemName: "pin.fill")
                     .font(.system(size: 9, weight: .semibold))
@@ -999,6 +1028,49 @@ struct FeatureThreadRow: View {
             isSelected ? T3Colors.subtleStrong : Color.clear,
             in: RoundedRectangle(cornerRadius: 7)
         )
+    }
+
+    @ViewBuilder
+    private var pullRequestLink: some View {
+        if let pullRequest,
+           let url = pullRequest.safeExternalURL {
+            Link(destination: url) {
+                HStack(spacing: 3) {
+                    Text(pullRequest.shortLabel)
+                        .monospacedDigit()
+                        .lineLimit(1)
+                        .fixedSize(horizontal: true, vertical: false)
+                    Image(systemName: "arrow.up.right")
+                        .font(.system(size: 8, weight: .bold))
+                }
+                .font(T3Typography.homeMetadata.weight(.semibold))
+                .foregroundStyle(pullRequestColor(pullRequest))
+                .padding(.horizontal, 7)
+                .padding(.vertical, 5)
+                .background(T3Colors.subtle, in: Capsule())
+                .frame(
+                    minWidth: T3Metrics.minimumTapTarget,
+                    minHeight: T3Metrics.minimumTapTarget
+                )
+                .contentShape(Rectangle())
+                .padding(.vertical, -10)
+            }
+            .buttonStyle(.plain)
+            .layoutPriority(1)
+            .accessibilityLabel("Pull request \(pullRequest.number), \(pullRequest.state)")
+            .accessibilityHint("Opens pull request in the browser")
+            .accessibilityIdentifier("thread-\(thread.id)-pull-request")
+        }
+    }
+
+    private func pullRequestColor(_ pullRequest: FeaturePullRequest) -> Color {
+        switch pullRequest.state.lowercased() {
+        case "merged": T3Colors.syntaxKeyword
+        case "closed": T3Colors.textTertiary
+        case "open": T3Colors.success
+        case "draft": T3Colors.textSecondary
+        default: T3Colors.textTertiary
+        }
     }
 
     @ViewBuilder
