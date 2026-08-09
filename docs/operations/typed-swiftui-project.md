@@ -1,0 +1,68 @@
+# T3 Code Typed SwiftUI project boundary
+
+This private repository is a standalone, full-history downstream of
+[`pingdotgg/t3code`](https://github.com/pingdotgg/t3code). It owns the isolated
+typed SwiftUI vertical-slice proof approved in
+[`saphid/t3code-personal#28`](https://github.com/saphid/t3code-personal/issues/28).
+Repository creation is tracked by
+[`saphid/t3code-personal#36`](https://github.com/saphid/t3code-personal/issues/36).
+
+The prototype is not implemented by the repository-creation change. This
+repository has no product runtime, installed app, release, Apple registration,
+credential, deployment, or integration with the existing fleet and release
+gates.
+
+## Identity
+
+- GitHub: `saphid/t3code-typed-swiftui`, private and standalone.
+- Canonical clone: `/Users/saphid/Projects/T3 Code/t3code-typed-swiftui`.
+- Initial upstream revision: `1a003e383ac6b10258b8100c2617d938c4f06c69`.
+- Product branches: `typed-swiftui/<ticket-or-topic>`.
+- Upstream import branches: `sync/upstream-YYYYMMDD-<short-sha>`.
+
+The machine-readable namespace is
+[`config/t3code-typed-swiftui/project-isolation.json`](../../config/t3code-typed-swiftui/project-isolation.json).
+The identifiers there are reserved collision boundaries, not registrations or
+shipping configuration.
+
+Run the static guardrail and its focused tests with:
+
+```sh
+node scripts/verify-project-isolation.mjs --receipts
+node --test scripts/verify-project-isolation.test.mjs
+```
+
+In the canonical clone, also verify the Git common directory and remote roles:
+
+```sh
+node scripts/verify-project-isolation.mjs --live --receipts
+```
+
+## Remote roles
+
+`origin` is the only pushable product remote. `upstream` fetches
+`pingdotgg/t3code`; `contrib` fetches the public `saphid/t3code` contribution
+fork. The latter two remotes use the literal push URL `DISABLED`. Do not test
+that policy by attempting a push.
+
+No worktree for this project may share a Git common directory with
+`t3code-personal`. New project worktrees belong below
+`/Users/saphid/.t3/worktrees/t3code-typed-swiftui/`.
+
+## Upstream sync
+
+1. Fetch `upstream` without changing product refs.
+2. Record the full target `upstream/main` SHA.
+3. Create `sync/upstream-YYYYMMDD-<short-sha>` from current product `main`.
+4. Merge the exact upstream SHA with an explicit merge commit. Never rebase or
+   force-push published product history.
+5. Add one JSON receipt under `docs/upstream-sync/receipts/`. A baseline receipt
+   may use `mode: "baseline"` and `mergeCommit: null`; later imports use
+   `mode: "merge"` and name the exact merge commit.
+6. Open a draft pull request, run focused checks for the affected paths, obtain
+   review, and merge manually only after the protected-main requirements pass.
+
+Automation may fetch, test, and open a draft sync pull request. It may not
+auto-merge, deploy, install, mutate Portfolio identity, or touch the existing
+T3 Code Personal project, public contribution branches, SwiftUI work, fleet
+configuration, release gates, apps, or runtimes.

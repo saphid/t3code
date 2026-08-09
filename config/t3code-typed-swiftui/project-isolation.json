@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "repository": "saphid/t3code-typed-swiftui",
+  "canonicalRoot": "/Users/saphid/Projects/T3 Code/t3code-typed-swiftui",
+  "worktreeRoot": "/Users/saphid/.t3/worktrees/t3code-typed-swiftui",
+  "namespace": "t3code-typed-swiftui",
+  "branchPrefixes": ["typed-swiftui/", "sync/upstream-"],
+  "environmentPrefix": "T3_TYPED_SWIFTUI_",
+  "launchdPrefix": "com.alxs.t3code-typed-swiftui",
+  "stateRoot": "/Users/saphid/Library/Application Support/T3CodeTypedSwiftUI",
+  "identities": {
+    "releaseBundleId": "com.alxs.t3code.typed-swiftui",
+    "debugBundleId": "com.alxs.t3code.typed-swiftui.dev",
+    "releaseAppGroup": "group.com.alxs.t3code.typed-swiftui",
+    "debugAppGroup": "group.com.alxs.t3code.typed-swiftui.dev",
+    "releaseUrlScheme": "t3code-typed-swiftui",
+    "debugUrlScheme": "t3code-typed-swiftui-dev",
+    "desktopBundleId": "com.alxs.t3code.typed-swiftui.desktop"
+  }
+}

@@ -1,0 +1,28 @@
+name: Typed SwiftUI project guardrails
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: t3code-typed-swiftui-guardrails-${{ github.repository }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  isolation:
+    name: Project isolation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Verify namespace and upstream receipts
+        run: node scripts/verify-project-isolation.mjs --receipts
+      - name: Test collision rejection
+        run: node --test scripts/verify-project-isolation.test.mjs
