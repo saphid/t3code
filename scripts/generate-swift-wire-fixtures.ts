@@ -130,7 +130,8 @@ class StaleWireFixturesError extends Schema.TaggedErrorClass<StaleWireFixturesEr
   },
 ) {
   override get message(): string {
-    return "Run `node scripts/generate-swift-wire-fixtures.ts` and commit the result.";
+    const staleFixtureList = this.staleFixtures.map((name) => `- ${name}`).join("\n");
+    return `Generated Swift wire fixtures are stale:\n${staleFixtureList}\nRun \`node scripts/generate-swift-wire-fixtures.ts\` and commit the result.`;
   }
 }
 
@@ -149,7 +150,6 @@ const generateSwiftWireFixtures = Effect.gen(function* () {
         .readFileString(filePath)
         .pipe(Effect.orElseSucceed(() => undefined));
       if (current !== contents) {
-        yield* Effect.logError(`[swift-wire-fixtures] stale: ${name}`);
         staleFixtures.push(name);
       }
     } else {
