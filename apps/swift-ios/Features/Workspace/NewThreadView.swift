@@ -8,6 +8,7 @@ public struct NewThreadView: View {
     let onCreateProject: @MainActor () -> Void
     private let draftStore: FeatureComposerDraftStore
     private let initialProjectID: String?
+    private let initialWorkspace: FeatureComposerWorkspaceDraft?
 
     @State private var projectID = ""
     @State private var prompt = ""
@@ -17,6 +18,7 @@ public struct NewThreadView: View {
     @State private var attachments: [FeatureDraftAttachment] = []
     @State private var workspaceMode: FeatureWorkspaceMode = .local
     @State private var workspaceSelectionIsExplicit = false
+    @State private var workspaceSelectionIsSeeded = false
     @State private var branches: [FeatureWorkspaceBranch] = []
     @State private var selectedBranch: FeatureWorkspaceBranch?
     @State private var startFromOrigin = true
@@ -38,6 +40,7 @@ public struct NewThreadView: View {
         onCreated: @escaping (FeatureThread) -> Void,
         onCreateProject: @escaping @MainActor () -> Void = {},
         initialProjectID: String? = nil,
+        initialWorkspace: FeatureComposerWorkspaceDraft? = nil,
         draftStore: FeatureComposerDraftStore = .shared
     ) {
         self.model = model
@@ -45,6 +48,7 @@ public struct NewThreadView: View {
         self.onCreated = onCreated
         self.onCreateProject = onCreateProject
         self.initialProjectID = initialProjectID
+        self.initialWorkspace = initialWorkspace
         self.draftStore = draftStore
     }
 
@@ -141,6 +145,7 @@ public struct NewThreadView: View {
                     loadFailed: branchLoadFailed,
                     onSelect: { branch in
                         workspaceSelectionIsExplicit = true
+                        workspaceSelectionIsSeeded = false
                         selectedBranch = branch
                         activePicker = nil
                     },
@@ -329,6 +334,7 @@ public struct NewThreadView: View {
 
                 Button {
                     workspaceSelectionIsExplicit = true
+                    workspaceSelectionIsSeeded = false
                     startFromOrigin.toggle()
                 } label: {
                     Label(
@@ -599,6 +605,7 @@ public struct NewThreadView: View {
         attachments = []
         selectionIsExplicit = false
         workspaceSelectionIsExplicit = false
+        workspaceSelectionIsSeeded = false
         branches = []
         selectedBranch = nil
         branchLoadFailed = false
@@ -635,10 +642,23 @@ public struct NewThreadView: View {
             projectID: id,
             baseline: FeatureComposerDraft()
         )
+        if id == initialProjectID, let initialWorkspace {
+            workspaceMode = initialWorkspace.mode
+            selectedBranch = initialWorkspace.branch.map {
+                FeatureWorkspaceBranch(
+                    name: $0,
+                    worktreePath: initialWorkspace.worktreePath
+                )
+            }
+            startFromOrigin = initialWorkspace.startFromOrigin
+            workspaceSelectionIsExplicit = true
+            workspaceSelectionIsSeeded = true
+        }
     }
 
     private func setWorkspaceMode(_ mode: FeatureWorkspaceMode) {
         workspaceSelectionIsExplicit = true
+        workspaceSelectionIsSeeded = false
         workspaceMode = mode
         selectedBranch = switch mode {
         case .local: NewTaskWorkspaceDefaults.localBranch(in: branches)
@@ -660,16 +680,11 @@ public struct NewThreadView: View {
             )
             guard !Task.isCancelled, projectID == requestedProjectID else { return }
             branches = loaded.sorted(by: Self.branchSort)
-
-            if let selectedBranch,
-               let updated = branches.first(where: { $0.name == selectedBranch.name }) {
-                self.selectedBranch = updated
-            } else {
-                self.selectedBranch = switch workspaceMode {
-                case .local: NewTaskWorkspaceDefaults.localBranch(in: branches)
-                case .worktree: NewTaskWorkspaceDefaults.worktreeBase(in: branches)
-                }
-            }
+            selectedBranch = NewTaskWorkspaceDefaults.refreshedSelection(
+                selectedBranch,
+                in: branches,
+                mode: workspaceMode
+            )
         } catch is CancellationError {
             return
         } catch {
@@ -782,6 +797,13 @@ public struct NewThreadView: View {
         )
     }
 
+    private var draftForPersistence: FeatureComposerDraft {
+        SeededWorkspaceDraftPersistence.prepare(
+            composerDraft,
+            workspaceSelectionIsSeeded: workspaceSelectionIsSeeded
+        )
+    }
+
     private func scheduleDraftSave() {
         guard restoredDraftProjectID == projectID,
               !isSubmitting,
@@ -792,7 +814,7 @@ public struct NewThreadView: View {
         let pendingDraftSaveTask = draftSaveTask
         pendingDraftSaveTask?.cancel()
         draftSaveTask = nil
-        let snapshot = composerDraft
+        let snapshot = draftForPersistence
         draftSaveTask = Task {
             await NewTaskDraftWriteFence.wait(pendingDraftSaveTask)
             do {
@@ -815,7 +837,7 @@ public struct NewThreadView: View {
         let pendingDraftSaveTask = draftSaveTask
         pendingDraftSaveTask?.cancel()
         draftSaveTask = nil
-        let snapshot = composerDraft
+        let snapshot = draftForPersistence
         let restoreContext = draftRestoreContext
         let draftProjectID = projectID
         let needsRestoreMerge = restoredDraftProjectID != draftProjectID
@@ -847,6 +869,23 @@ public struct NewThreadView: View {
         let rhsRank = rhs.isCurrent ? 0 : rhs.isDefault ? 1 : rhs.isRemote ? 3 : 2
         if lhsRank != rhsRank { return lhsRank < rhsRank }
         return lhs.name.localizedCaseInsensitiveCompare(rhs.name) == .orderedAscending
+    }
+}
+
+enum SeededWorkspaceDraftPersistence {
+    static func prepare(
+        _ draft: FeatureComposerDraft,
+        workspaceSelectionIsSeeded: Bool
+    ) -> FeatureComposerDraft {
+        guard workspaceSelectionIsSeeded,
+              draft.text.isEmpty,
+              draft.attachments.isEmpty,
+              draft.selection == nil else {
+            return draft
+        }
+        var prepared = draft
+        prepared.workspace = nil
+        return prepared
     }
 }
 
