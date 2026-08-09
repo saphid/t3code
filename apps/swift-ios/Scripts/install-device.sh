@@ -78,20 +78,6 @@ build_settings=(
   "DEVELOPMENT_TEAM=${DEVELOPMENT_TEAM}"
 )
 
-GIT_COMMIT="$(git -C "${APP_DIR}" rev-parse --short HEAD 2>/dev/null || echo unknown)"
-if [[ "${GIT_COMMIT}" != "unknown" ]] && \
-   [[ -n "$(git -C "${APP_DIR}" status --porcelain 2>/dev/null)" ]]; then
-  GIT_COMMIT="${GIT_COMMIT}-dirty"
-fi
-build_settings+=("T3_GIT_COMMIT=${GIT_COMMIT}")
-
-GIT_REPO_URL="$(git -C "${APP_DIR}" remote get-url origin 2>/dev/null || true)"
-GIT_REPO_URL="${GIT_REPO_URL%.git}"
-case "${GIT_REPO_URL}" in
-  git@*) GIT_REPO_URL="https://$(printf '%s' "${GIT_REPO_URL#git@}" | tr ':' '/')" ;;
-esac
-build_settings+=("T3_GIT_REPO_URL=${GIT_REPO_URL}")
-
 DEVICE_JSON="$(mktemp -t t3-swift-devices.XXXXXX)"
 trap 'unlink "${DEVICE_JSON}" 2>/dev/null || true' EXIT
 xcrun devicectl list devices --json-output "${DEVICE_JSON}" --quiet >/dev/null

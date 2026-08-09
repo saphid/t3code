@@ -1,0 +1,83 @@
+{
+  "schemaVersion": 1,
+  "branch": "personal/swiftui-approved",
+  "upstream": {
+    "remote": "upstream",
+    "repository": "https://github.com/pingdotgg/t3code.git",
+    "ref": "t3code/rebuild-mobile-app-swift",
+    "commit": "0d0c77431c851ff31181fb5f1708f351e0c5e80c"
+  },
+  "approvedBy": "Alex Southwell",
+  "approvedAt": "2026-08-09T18:08:30+10:00",
+  "features": [
+    {
+      "name": "Grow the SwiftUI composer for long prompts",
+      "pullRequest": "https://github.com/pingdotgg/t3code/pull/5801",
+      "reviewCommit": "1e100db6c41d8a891e8f1807f493d3d4dad2514f",
+      "reviewPatchId": "a0ec26e448921d1463f5d175ba8af1d18be3d5ae",
+      "integratedCommit": "ee7bc9c20a50ce55f9f98102bdf9f9c6a01fafe7"
+    },
+    {
+      "name": "Default new SwiftUI tasks to the recent project",
+      "pullRequest": "https://github.com/pingdotgg/t3code/pull/5802",
+      "reviewCommit": "ddb12b40801663ed18ca8ab9746f72cbd824e3d1",
+      "reviewPatchId": "bb64368c8e98a7877dd809f7b6e2b9506912b896",
+      "integratedCommit": "ec8fab07f9a4d147db44fc896af2ffc7e26d0304"
+    },
+    {
+      "name": "Open workspace file links in SwiftUI",
+      "pullRequest": "https://github.com/pingdotgg/t3code/pull/5803",
+      "reviewCommit": "ce45355ceaca144a62194d74ad645f009263e630",
+      "reviewPatchId": "de4d4445975eebcc1d7eb79afaaf9412b8eac4d6",
+      "integratedCommit": "401be983ceb0828734246918f724c3c7fc8e252c"
+    },
+    {
+      "name": "Link SwiftUI thread rows to pull requests",
+      "pullRequest": "https://github.com/pingdotgg/t3code/pull/5804",
+      "reviewCommit": "230a113d1338a9e7ceba6eb55cee74cd2e36e131",
+      "reviewPatchId": "a4687b348ff78ee4f8db3d7bf172165f522eb201",
+      "integratedCommit": "c728a81ca4bd1606891693f67666b92aaee47034"
+    }
+  ],
+  "featurePaths": [
+    "apps/swift-ios/Features/Chat/FeatureComposerView.swift",
+    "apps/swift-ios/Features/Chat/MarkdownMessageView.swift",
+    "apps/swift-ios/Features/Chat/MarkdownRenderCache.swift",
+    "apps/swift-ios/Features/Chat/ThreadDetailView.swift",
+    "apps/swift-ios/Features/Files/FeatureFilesView.swift",
+    "apps/swift-ios/Features/Shared/FeatureToolModels.swift",
+    "apps/swift-ios/Features/SourceControl/FeatureSourceControlView.swift",
+    "apps/swift-ios/Features/Workspace/DailyUXModels.swift",
+    "apps/swift-ios/Features/Workspace/HomeThreadCollectionView.swift",
+    "apps/swift-ios/Features/Workspace/NewThreadView.swift",
+    "apps/swift-ios/Features/Workspace/WorkspaceView.swift",
+    "apps/swift-ios/DesignSystem/T3Theme.swift",
+    "apps/swift-ios/Tests/FeatureTests/DailyUXNewTaskTests.swift",
+    "apps/swift-ios/Tests/FeatureTests/FeatureComposerPowerTests.swift",
+    "apps/swift-ios/Tests/FeatureTests/FeatureToolStateTests.swift",
+    "apps/swift-ios/Tests/FeatureTests/HomeThreadMetadataTests.swift",
+    "apps/swift-ios/Tests/FeatureTests/MarkdownDocumentTests.swift"
+  ],
+  "featureTreeDigest": "f7682d600eca0689f3f9804bf9671283eea3b33bcec5450060a269e4170fb5fd",
+  "overlayPaths": [
+    "apps/swift-ios/Extensions/Shared/T3CodeDev.entitlements",
+    "apps/swift-ios/Resources/Info.plist",
+    "apps/swift-ios/Scripts/install-device.sh",
+    "apps/swift-ios/T3Code.xcodeproj/project.pbxproj"
+  ],
+  "overlayTreeDigest": "bf24935ac08084c2baf51f04c63aa32fdd060ebdf776daee7b966a94551338d3",
+  "policyPaths": [
+    "docs/operations/swiftui-approved-phone-lane.md",
+    "scripts/t3-swift-approved/manifest.json",
+    "scripts/t3-swift-approved/sync.sh",
+    "scripts/t3-swift-approved/verify.sh",
+    "scripts/t3-swift-approved/verify.test.sh"
+  ],
+  "policyDigestPaths": [
+    "docs/operations/swiftui-approved-phone-lane.md",
+    "scripts/t3-swift-approved/sync.sh",
+    "scripts/t3-swift-approved/verify.sh",
+    "scripts/t3-swift-approved/verify.test.sh"
+  ],
+  "policyTreeDigest": "d4c53be6887f2eb931431e8209c5491e2688a18ce25e3d63d7d6ab4026283750"
+}
