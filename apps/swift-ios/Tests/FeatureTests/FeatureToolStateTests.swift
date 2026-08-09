@@ -1,3 +1,4 @@
+import Foundation
 import Testing
 @testable import T3Code
 
@@ -25,6 +26,60 @@ struct FeatureToolStateTests {
         #expect(FeatureFilePreviewKind.infer(path: "Package.swift") == .source)
         #expect(FeatureFilePreviewKind.infer(path: "LICENSE") == .plainText)
         #expect(FeatureFilePreviewKind.infer(path: "template", language: "html") == .source)
+    }
+
+    @Test
+    func workspaceFileLinksResolveRelativeAndContainedAbsolutePaths() throws {
+        let relative = try #require(URL(string: "docs/My%20Notes.txt#L12"))
+        #expect(
+            FeatureWorkspaceFileLink(url: relative, workspaceRoot: "/repo")?.path
+                == "docs/My Notes.txt"
+        )
+
+        let nested = try #require(URL(string: "../LICENSE"))
+        #expect(
+            FeatureWorkspaceFileLink(
+                url: nested,
+                workspaceRoot: "/repo",
+                relativeTo: "docs/guides/README.md"
+            )?.path == "docs/LICENSE"
+        )
+
+        let absolute = URL(fileURLWithPath: "/repo/Sources/App.swift")
+        #expect(
+            FeatureWorkspaceFileLink(url: absolute, workspaceRoot: "/repo")?.path
+                == "Sources/App.swift"
+        )
+    }
+
+    @Test
+    func workspaceFileLinksRejectExternalAndEscapingDestinations() throws {
+        let web = try #require(URL(string: "https://example.com/readme.txt"))
+        #expect(FeatureWorkspaceFileLink(url: web, workspaceRoot: "/repo") == nil)
+
+        let escape = try #require(URL(string: "../../secret.txt"))
+        #expect(
+            FeatureWorkspaceFileLink(
+                url: escape,
+                workspaceRoot: "/repo",
+                relativeTo: "docs/README.md"
+            ) == nil
+        )
+
+        let outside = URL(fileURLWithPath: "/other/secret.txt")
+        #expect(FeatureWorkspaceFileLink(url: outside, workspaceRoot: "/repo") == nil)
+
+        let authority = try #require(URL(string: "//example.com/repo/README.md"))
+        #expect(FeatureWorkspaceFileLink(url: authority, workspaceRoot: "/repo") == nil)
+    }
+
+    @Test
+    func workspaceFileLinksDecodeEscapesExactlyOnce() throws {
+        let literalPercent = try #require(URL(string: "docs/a%2520b.txt"))
+        #expect(
+            FeatureWorkspaceFileLink(url: literalPercent, workspaceRoot: "/repo")?.path
+                == "docs/a%20b.txt"
+        )
     }
 
     @Test

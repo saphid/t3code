@@ -11,13 +11,19 @@ struct MarkdownMessageView: View {
     private let source: String
     private let revision: MarkdownContentRevision
     private let isStreaming: Bool
+    private let onOpenURL: ((URL) -> Bool)?
     @State private var renderedDocument: MarkdownRenderedDocument?
     @State private var streamingRenderer = StreamingMarkdownRenderer()
     @State private var isSelectingText = false
 
-    init(_ source: String, isStreaming: Bool = false) {
+    init(
+        _ source: String,
+        isStreaming: Bool = false,
+        onOpenURL: ((URL) -> Bool)? = nil
+    ) {
         self.source = source
         self.isStreaming = isStreaming
+        self.onOpenURL = onOpenURL
         let revision = MarkdownContentRevision(source)
         self.revision = revision
         let initialDocument = if isStreaming {
@@ -62,6 +68,11 @@ struct MarkdownMessageView: View {
         .accessibilityAction(named: "Copy message") {
             UIPasteboard.general.string = source
         }
+        .environment(\.openURL, OpenURLAction { url in
+            if onOpenURL?(url) == true { return .handled }
+            guard MarkdownExternalLink.safeURL(url) != nil else { return .discarded }
+            return .systemAction
+        })
         .task(id: RenderRequest(revision: revision, isStreaming: isStreaming)) {
             if !isStreaming {
                 streamingRenderer.cancel()
@@ -110,6 +121,21 @@ struct MarkdownMessageView: View {
             return nil
         }
         return MarkdownRenderCache.shared.documentImmediately(for: revision)
+    }
+}
+
+enum MarkdownExternalLink {
+    /// Transcript and repository markdown are untrusted input. Only ordinary,
+    /// credential-free web URLs may leave the app through the system handler.
+    static func safeURL(_ url: URL) -> URL? {
+        guard let scheme = url.scheme?.lowercased(),
+              scheme == "http" || scheme == "https",
+              url.host?.isEmpty == false,
+              url.user == nil,
+              url.password == nil else {
+            return nil
+        }
+        return url
     }
 }
 
@@ -216,7 +242,6 @@ private struct MarkdownBlockView: View, Equatable {
         switch block {
         case let .paragraph(inline):
             MarkdownInlineText(inline)
-                .lineSpacing(4)
 
         case let .heading(level, inline):
             MarkdownInlineText(inline)
@@ -290,7 +315,6 @@ private struct MarkdownTableView: View {
         GridRow(alignment: .top) {
             ForEach(cells.indices, id: \.self) { columnIndex in
                 MarkdownInlineText(cells[columnIndex])
-                    .lineSpacing(3)
                     .frame(
                         width: columnWidths[columnIndex],
                         alignment: alignment(for: columnIndex)
@@ -470,18 +494,189 @@ enum MarkdownCodeBlockWrapping {
 }
 
 private struct MarkdownInlineText: View {
+    @SwiftUI.Environment(\.dynamicTypeSize) private var dynamicTypeSize
+
     private let attributedText: AttributedString
     private let font: Font
+    private let style: MarkdownInlineStyle
+    private let lineSpacing: CGFloat
+    private let hasLinks: Bool
 
     init(_ rendered: MarkdownRenderedInline) {
         attributedText = rendered.attributedText
         font = rendered.style.font
+        style = rendered.style
+        lineSpacing = rendered.style.lineSpacing
+        hasLinks = rendered.attributedText.runs.contains { $0.link != nil }
     }
 
     var body: some View {
         Text(attributedText)
             .font(font)
+            .lineSpacing(lineSpacing)
             .fixedSize(horizontal: false, vertical: true)
+            .overlay {
+                if hasLinks {
+                    // UIHostingConfiguration transcript cells swallow SwiftUI Text link taps.
+                    // Mirror the same style here so only linked glyphs intercept touches.
+                    MarkdownLinkInteractionOverlay(
+                        attributedText: attributedText,
+                        baseFont: style.uiFont(dynamicTypeSize: dynamicTypeSize),
+                        lineSpacing: lineSpacing
+                    )
+                }
+            }
+    }
+}
+
+private struct MarkdownLinkInteractionOverlay: UIViewRepresentable {
+    @SwiftUI.Environment(\.openURL) private var openURL
+
+    let attributedText: AttributedString
+    let baseFont: UIFont
+    let lineSpacing: CGFloat
+
+    func makeUIView(context: Context) -> MarkdownLinkInteractionView {
+        let view = MarkdownLinkInteractionView()
+        view.onOpenURL = { url in openURL(url) }
+        return view
+    }
+
+    func updateUIView(_ view: MarkdownLinkInteractionView, context: Context) {
+        view.onOpenURL = { url in openURL(url) }
+        view.render(attributedText, baseFont: baseFont, lineSpacing: lineSpacing)
+    }
+}
+
+private final class MarkdownLinkInteractionView: UIView {
+    var onOpenURL: ((URL) -> Void)?
+
+    private let textStorage = NSTextStorage()
+    private let layoutManager = NSLayoutManager()
+    private let textContainer = NSTextContainer(size: .zero)
+    private var initialTouch: (point: CGPoint, url: URL, timestamp: TimeInterval)?
+    private var renderedText: AttributedString?
+    private var renderedFont: UIFont?
+    private var renderedLineSpacing: CGFloat?
+
+    init() {
+        super.init(frame: .zero)
+        backgroundColor = .clear
+        isOpaque = false
+        isUserInteractionEnabled = true
+        isAccessibilityElement = false
+        accessibilityElementsHidden = true
+        textContainer.lineFragmentPadding = 0
+        layoutManager.addTextContainer(textContainer)
+        textStorage.addLayoutManager(layoutManager)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    func render(
+        _ attributedText: AttributedString,
+        baseFont: UIFont,
+        lineSpacing: CGFloat
+    ) {
+        guard renderedText != attributedText
+                || renderedFont?.isEqual(baseFont) != true
+                || renderedLineSpacing != lineSpacing else { return }
+        renderedText = attributedText
+        renderedFont = baseFont
+        renderedLineSpacing = lineSpacing
+
+        let rendered = NSMutableAttributedString()
+        for run in attributedText.runs {
+            let text = String(attributedText[run.range].characters)
+            var attributes: [NSAttributedString.Key: Any] = [
+                .font: font(for: run.inlinePresentationIntent, baseFont: baseFont),
+                .foregroundColor: UIColor.clear,
+            ]
+            if let link = run.link {
+                attributes[.link] = link
+            }
+            rendered.append(NSAttributedString(string: text, attributes: attributes))
+        }
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.lineSpacing = lineSpacing
+        rendered.addAttribute(
+            .paragraphStyle,
+            value: paragraph,
+            range: NSRange(location: 0, length: rendered.length)
+        )
+        textStorage.setAttributedString(rendered)
+        setNeedsLayout()
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        textContainer.size = bounds.size
+    }
+
+    override func point(inside point: CGPoint, with event: UIEvent?) -> Bool {
+        link(at: point) != nil
+    }
+
+    override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
+        guard let point = touches.first?.location(in: self), let url = link(at: point) else {
+            initialTouch = nil
+            super.touchesBegan(touches, with: event)
+            return
+        }
+        initialTouch = (point, url, touches.first?.timestamp ?? 0)
+    }
+
+    override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {
+        guard let point = touches.first?.location(in: self),
+              let initialTouch,
+              initialTouch.url == link(at: point),
+              hypot(point.x - initialTouch.point.x, point.y - initialTouch.point.y) <= 10,
+              (touches.first?.timestamp ?? initialTouch.timestamp) - initialTouch.timestamp <= 0.5 else {
+            self.initialTouch = nil
+            super.touchesEnded(touches, with: event)
+            return
+        }
+        self.initialTouch = nil
+        onOpenURL?(initialTouch.url)
+    }
+
+    override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent?) {
+        initialTouch = nil
+        super.touchesCancelled(touches, with: event)
+    }
+
+    private func link(at point: CGPoint) -> URL? {
+        guard textStorage.length > 0, bounds.contains(point) else { return nil }
+        let glyph = layoutManager.glyphIndex(for: point, in: textContainer)
+        guard glyph < layoutManager.numberOfGlyphs else { return nil }
+        let glyphRect = layoutManager.boundingRect(
+            forGlyphRange: NSRange(location: glyph, length: 1),
+            in: textContainer
+        )
+        guard glyphRect.insetBy(dx: -6, dy: -4).contains(point) else { return nil }
+        let character = layoutManager.characterIndexForGlyph(at: glyph)
+        guard character < textStorage.length else { return nil }
+        return textStorage.attribute(.link, at: character, effectiveRange: nil) as? URL
+    }
+
+    private func font(
+        for intent: InlinePresentationIntent?,
+        baseFont: UIFont
+    ) -> UIFont {
+        var descriptor = baseFont.fontDescriptor
+        if intent?.contains(.code) == true {
+            descriptor = descriptor.withDesign(.monospaced) ?? descriptor
+        }
+        var traits = descriptor.symbolicTraits
+        if intent?.contains(.stronglyEmphasized) == true { traits.insert(.traitBold) }
+        if intent?.contains(.emphasized) == true { traits.insert(.traitItalic) }
+        guard let descriptor = descriptor.withSymbolicTraits(traits) else {
+            return baseFont
+        }
+        return UIFont(descriptor: descriptor, size: baseFont.pointSize)
     }
 }
 

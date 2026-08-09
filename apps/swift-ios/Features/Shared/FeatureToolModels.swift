@@ -48,6 +48,85 @@ public struct FeatureFileEntry: Identifiable, Sendable, Equatable, Hashable, Cod
     }
 }
 
+public struct FeatureWorkspaceFileLink: Identifiable, Sendable, Equatable, Hashable {
+    public let path: String
+
+    public var id: String { path }
+
+    public var entry: FeatureFileEntry {
+        FeatureFileEntry(
+            path: path,
+            name: URL(fileURLWithPath: path).lastPathComponent,
+            kind: .file
+        )
+    }
+
+    public init?(url: URL, workspaceRoot: String?, relativeTo sourcePath: String? = nil) {
+        let scheme = url.scheme?.lowercased()
+        guard (scheme == nil || scheme == "file"),
+              url.host == nil,
+              url.user == nil else { return nil }
+
+        let decodedPath = url.path
+        guard !decodedPath.isEmpty else { return nil }
+
+        let normalizedRoot = workspaceRoot.map(Self.standardize)
+        let relativePath: String
+        if decodedPath.hasPrefix("/") {
+            guard let normalizedRoot,
+                  let containedPath = Self.relativePath(
+                      for: Self.standardize(decodedPath),
+                      in: normalizedRoot
+                  ) else { return nil }
+            relativePath = containedPath
+        } else {
+            let sourceDirectory = sourcePath.map {
+                ($0 as NSString).deletingLastPathComponent
+            }
+            guard let normalizedPath = Self.normalizeRelative(
+                [sourceDirectory, decodedPath]
+                    .compactMap { $0 }
+                    .filter { !$0.isEmpty && $0 != "." }
+                    .joined(separator: "/")
+            ) else { return nil }
+            relativePath = normalizedPath
+        }
+
+        guard !relativePath.isEmpty,
+              relativePath != ".",
+              relativePath != "..",
+              !relativePath.hasPrefix("../"),
+              !relativePath.hasPrefix("/") else { return nil }
+        path = relativePath
+    }
+
+    private static func standardize(_ path: String) -> String {
+        (path as NSString).standardizingPath
+    }
+
+    private static func normalizeRelative(_ path: String) -> String? {
+        var components: [Substring] = []
+        for component in path.split(separator: "/", omittingEmptySubsequences: true) {
+            switch component {
+            case ".":
+                continue
+            case "..":
+                guard components.popLast() != nil else { return nil }
+            default:
+                components.append(component)
+            }
+        }
+        return components.joined(separator: "/")
+    }
+
+    private static func relativePath(for absolutePath: String, in root: String) -> String? {
+        if absolutePath == root { return nil }
+        let prefix = root == "/" ? root : root + "/"
+        guard absolutePath.hasPrefix(prefix) else { return nil }
+        return String(absolutePath.dropFirst(prefix.count))
+    }
+}
+
 public extension Array where Element == FeatureFileEntry {
     func featureFiltered(by query: String, includesHidden: Bool) -> [FeatureFileEntry] {
         let visible = includesHidden ? self : filter { !$0.isHidden }

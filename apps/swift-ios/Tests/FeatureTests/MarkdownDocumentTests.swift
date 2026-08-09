@@ -263,4 +263,17 @@ struct MarkdownDocumentTests {
         #expect(runs.contains { $0.inlinePresentationIntent?.contains(.code) == true })
         #expect(runs.contains { $0.link == URL(string: "https://example.com") })
     }
+
+    @Test
+    func externalMarkdownLinksAllowOnlyCredentialFreeWebURLs() throws {
+        let web = try #require(URL(string: "https://example.com/docs"))
+        let localHTTP = try #require(URL(string: "HTTP://127.0.0.1:45678/docs"))
+        let shortcut = try #require(URL(string: "shortcuts://run-shortcut?name=Unsafe"))
+        let credentialed = try #require(URL(string: "https://token@example.com/docs"))
+
+        #expect(MarkdownExternalLink.safeURL(web) == web)
+        #expect(MarkdownExternalLink.safeURL(localHTTP) == localHTTP)
+        #expect(MarkdownExternalLink.safeURL(shortcut) == nil)
+        #expect(MarkdownExternalLink.safeURL(credentialed) == nil)
+    }
 }

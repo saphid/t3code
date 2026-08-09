@@ -21,6 +21,7 @@ public struct ThreadDetailView: View {
     @State private var didRestoreDraft = false
     @State private var draftSaveTask: Task<Void, Never>?
     @State private var toolSurface: FeatureThreadToolSurface?
+    @State private var linkedFile: FeatureWorkspaceFileLink?
     @FocusState private var composerFocused: Bool
 
     public init(
@@ -82,7 +83,11 @@ public struct ThreadDetailView: View {
             NavigationStack {
                 switch surface {
                 case .files:
-                    FeatureFilesView(client: model.client, threadID: thread.id)
+                    FeatureFilesView(
+                        client: model.client,
+                        threadID: thread.id,
+                        workspaceRoot: workspaceRoot
+                    )
                 case .review:
                     FeatureReviewView(client: model.client, threadID: thread.id)
                 case .sourceControl:
@@ -95,6 +100,23 @@ public struct ThreadDetailView: View {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Done") {
                         toolSurface = nil
+                    }
+                }
+            }
+            .presentationDetents([.large])
+            .presentationDragIndicator(.visible)
+        }
+        .sheet(item: $linkedFile) { link in
+            NavigationStack {
+                FeatureFilePreviewView(
+                    client: model.client,
+                    threadID: thread.id,
+                    workspaceRoot: workspaceRoot,
+                    entry: link.entry
+                )
+                .toolbar {
+                    ToolbarItem(placement: .cancellationAction) {
+                        Button("Done") { linkedFile = nil }
                     }
                 }
             }
@@ -128,6 +150,11 @@ public struct ThreadDetailView: View {
 
     private var currentThread: FeatureThread {
         detail?.thread ?? thread
+    }
+
+    private var workspaceRoot: String? {
+        currentThread.worktreePath
+            ?? model.snapshot.projects.first { $0.id == currentThread.projectID }?.path
     }
 
     private var currentSelection: FeatureSelection? {
@@ -334,6 +361,7 @@ public struct ThreadDetailView: View {
                     onLoadEarlier: {
                         Task { await model.loadEarlierTurns(for: thread.id) }
                     },
+                    onOpenURL: openURL,
                     onDismissKeyboard: dismissKeyboard
                 )
             }
@@ -366,6 +394,15 @@ public struct ThreadDetailView: View {
             )
             .simultaneousGesture(composerKeyboardDismissGesture)
         }
+    }
+
+    private func openURL(_ url: URL) -> Bool {
+        guard let link = FeatureWorkspaceFileLink(
+            url: url,
+            workspaceRoot: workspaceRoot
+        ) else { return false }
+        linkedFile = link
+        return true
     }
 
     private var composerKeyboardDismissGesture: some Gesture {
@@ -644,6 +681,7 @@ private struct FeatureTranscriptCollectionView: UIViewRepresentable {
     let canLoadEarlier: Bool
     let isLoadingEarlier: Bool
     let onLoadEarlier: () -> Void
+    let onOpenURL: (URL) -> Bool
     let onDismissKeyboard: () -> Void
 
     func makeCoordinator() -> Coordinator {
@@ -679,6 +717,7 @@ private struct FeatureTranscriptCollectionView: UIViewRepresentable {
             canLoadEarlier: canLoadEarlier,
             isLoadingEarlier: isLoadingEarlier,
             onLoadEarlier: onLoadEarlier,
+            onOpenURL: onOpenURL,
             onDismissKeyboard: onDismissKeyboard,
             in: collectionView
         )
@@ -730,6 +769,7 @@ private struct FeatureTranscriptCollectionView: UIViewRepresentable {
         private var currentIsLoadingEarlier = false
         private var markdownPrefetches: [String: MarkdownPrefetch] = [:]
         private var onLoadEarlier: (() -> Void)?
+        private var onOpenURL: ((URL) -> Bool)?
         private var onDismissKeyboard: (() -> Void)?
 
         deinit {
@@ -770,7 +810,12 @@ private struct FeatureTranscriptCollectionView: UIViewRepresentable {
                 }
 
                 cell.contentConfiguration = UIHostingConfiguration {
-                    FeatureMessageView(message: message)
+                    FeatureMessageView(
+                        message: message,
+                        onOpenURL: { [weak self] url in
+                            self?.onOpenURL?(url) == true
+                        }
+                    )
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
                 .margins(.all, 0)
@@ -803,11 +848,13 @@ private struct FeatureTranscriptCollectionView: UIViewRepresentable {
             canLoadEarlier: Bool,
             isLoadingEarlier: Bool,
             onLoadEarlier: @escaping () -> Void,
+            onOpenURL: @escaping (URL) -> Bool,
             onDismissKeyboard: @escaping () -> Void,
             in collectionView: UICollectionView
         ) {
             guard let dataSource else { return }
             self.onLoadEarlier = onLoadEarlier
+            self.onOpenURL = onOpenURL
             self.onDismissKeyboard = onDismissKeyboard
 
             let threadChanged = currentThreadID != threadID
@@ -1501,6 +1548,7 @@ private enum FeatureAttachmentThumbnailError: Error {
 
 struct FeatureMessageView: View {
     let message: FeatureMessage
+    let onOpenURL: (URL) -> Bool
 
     var body: some View {
         switch message.role {
@@ -1512,7 +1560,8 @@ struct FeatureMessageView: View {
                     if !message.text.isEmpty {
                         MarkdownMessageView(
                             message.text,
-                            isStreaming: message.state == .streaming
+                            isStreaming: message.state == .streaming,
+                            onOpenURL: onOpenURL
                         )
                     }
                 }
@@ -1546,7 +1595,8 @@ struct FeatureMessageView: View {
                 if !message.text.isEmpty {
                     MarkdownMessageView(
                         message.text,
-                        isStreaming: message.state == .streaming
+                        isStreaming: message.state == .streaming,
+                        onOpenURL: onOpenURL
                     )
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }

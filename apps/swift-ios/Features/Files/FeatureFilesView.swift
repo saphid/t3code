@@ -5,14 +5,22 @@ import UIKit
 public struct FeatureFilesView: View {
     let client: any FeatureClient
     let threadID: String
+    let workspaceRoot: String?
 
-    public init(client: any FeatureClient, threadID: String) {
+    public init(client: any FeatureClient, threadID: String, workspaceRoot: String? = nil) {
         self.client = client
         self.threadID = threadID
+        self.workspaceRoot = workspaceRoot
     }
 
     public var body: some View {
-        FeatureFileDirectoryView(client: client, threadID: threadID, path: nil, title: "Files")
+        FeatureFileDirectoryView(
+            client: client,
+            threadID: threadID,
+            workspaceRoot: workspaceRoot,
+            path: nil,
+            title: "Files"
+        )
             .background(T3Colors.background)
     }
 }
@@ -20,6 +28,7 @@ public struct FeatureFilesView: View {
 private struct FeatureFileDirectoryView: View {
     let client: any FeatureClient
     let threadID: String
+    let workspaceRoot: String?
     let path: String?
     let title: String
 
@@ -87,11 +96,17 @@ private struct FeatureFileDirectoryView: View {
             FeatureFileDirectoryView(
                 client: client,
                 threadID: threadID,
+                workspaceRoot: workspaceRoot,
                 path: entry.path,
                 title: entry.name
             )
         } else {
-            FeatureFilePreviewView(client: client, threadID: threadID, entry: entry)
+            FeatureFilePreviewView(
+                client: client,
+                threadID: threadID,
+                workspaceRoot: workspaceRoot,
+                entry: entry
+            )
         }
     }
 
@@ -149,9 +164,10 @@ private struct FeatureFileRow: View {
     }
 }
 
-private struct FeatureFilePreviewView: View {
+struct FeatureFilePreviewView: View {
     let client: any FeatureClient
     let threadID: String
+    let workspaceRoot: String?
     let entry: FeatureFileEntry
 
     @State private var content: FeatureFileContent?
@@ -160,6 +176,7 @@ private struct FeatureFilePreviewView: View {
     @State private var assetURL: URL?
     @State private var errorMessage: String?
     @State private var isLoading = true
+    @State private var linkedFile: FeatureWorkspaceFileLink?
 
     private var previewKind: FeatureFilePreviewKind {
         FeatureFilePreviewKind.infer(path: entry.path, language: content?.language)
@@ -187,7 +204,7 @@ private struct FeatureFilePreviewView: View {
                     switch previewKind {
                     case .markdown:
                         ScrollView {
-                            MarkdownMessageView(content.text)
+                            MarkdownMessageView(content.text, onOpenURL: openURL)
                                 .frame(maxWidth: T3Metrics.readingWidth, alignment: .leading)
                                 .frame(maxWidth: .infinity, alignment: .leading)
                                 .padding(.horizontal, 18)
@@ -211,6 +228,15 @@ private struct FeatureFilePreviewView: View {
         .background(T3Colors.background)
         .navigationTitle(entry.name)
         .navigationBarTitleDisplayMode(.inline)
+        .navigationDestination(item: $linkedFile) { link in
+            FeatureFilePreviewView(
+                client: client,
+                threadID: threadID,
+                workspaceRoot: workspaceRoot,
+                entry: link.entry
+            )
+        }
+        .accessibilityIdentifier("workspace-file-preview")
         .toolbar {
             if let assetURL {
                 ToolbarItem(placement: .topBarTrailing) {
@@ -229,6 +255,16 @@ private struct FeatureFilePreviewView: View {
             }
         }
         .task { await load() }
+    }
+
+    private func openURL(_ url: URL) -> Bool {
+        guard let link = FeatureWorkspaceFileLink(
+            url: url,
+            workspaceRoot: workspaceRoot,
+            relativeTo: entry.path
+        ) else { return false }
+        linkedFile = link
+        return true
     }
 
     private func load() async {

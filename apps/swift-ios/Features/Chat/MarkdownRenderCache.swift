@@ -54,6 +54,44 @@ enum MarkdownInlineStyle: String, Hashable, Sendable {
         }
     }
 
+    func uiFont(dynamicTypeSize: DynamicTypeSize) -> UIFont {
+        let textStyle: UIFont.TextStyle
+        let weight: UIFont.Weight
+        switch self {
+        case .body, .tableCell:
+            textStyle = .body
+            weight = .regular
+        case .heading1:
+            textStyle = .title2
+            weight = .bold
+        case .heading2:
+            textStyle = .title3
+            weight = .bold
+        case .heading3:
+            textStyle = .headline
+            weight = .bold
+        case .heading4, .tableHeader:
+            textStyle = .body
+            weight = .semibold
+        }
+        let traits = UITraitCollection(
+            preferredContentSizeCategory: UIContentSizeCategory(dynamicTypeSize)
+        )
+        let preferred = UIFont.preferredFont(forTextStyle: textStyle, compatibleWith: traits)
+        return UIFont.systemFont(ofSize: preferred.pointSize, weight: weight)
+    }
+
+    var lineSpacing: CGFloat {
+        switch self {
+        case .body:
+            4
+        case .tableHeader, .tableCell:
+            3
+        case .heading1, .heading2, .heading3, .heading4:
+            0
+        }
+    }
+
     static func heading(level: Int) -> Self {
         switch level {
         case 1: .heading1
