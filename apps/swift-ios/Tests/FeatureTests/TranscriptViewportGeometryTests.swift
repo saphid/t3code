@@ -1,8 +1,75 @@
 import Testing
 @testable import T3Code
 
-@Suite("Transcript viewport anchoring")
+@Suite("Transcript viewport and timestamp gestures")
 struct TranscriptViewportGeometryTests {
+    @Test
+    func timestampRevealTracksLeftwardDragWithinBounds() {
+        #expect(TranscriptTimestampRevealGeometry.width(translationX: -32) == 32)
+    }
+
+    @Test
+    func timestampRevealClampsAtRestAndMaximumWidth() {
+        #expect(TranscriptTimestampRevealGeometry.width(translationX: 24) == 0)
+        #expect(
+            TranscriptTimestampRevealGeometry.width(translationX: -200)
+                == TranscriptTimestampRevealGeometry.maximumWidth
+        )
+    }
+
+    @Test
+    func timestampRevealClaimsOnlyDeliberateLeftwardHorizontalPans() {
+        #expect(
+            TranscriptTimestampRevealGeometry.shouldBegin(velocityX: -24, velocityY: 4)
+        )
+        #expect(
+            !TranscriptTimestampRevealGeometry.shouldBegin(velocityX: -4, velocityY: 24)
+        )
+        #expect(
+            !TranscriptTimestampRevealGeometry.shouldBegin(velocityX: 24, velocityY: 4)
+        )
+        #expect(
+            !TranscriptTimestampRevealGeometry.shouldBegin(velocityX: -10, velocityY: 9)
+        )
+    }
+
+    @Test
+    func timestampRevealRequiresBeginAndResetsAfterCancellation() {
+        var reveal = TranscriptTimestampRevealModel()
+
+        reveal.update(translationX: -32)
+        #expect(reveal == TranscriptTimestampRevealModel())
+
+        reveal.begin()
+        reveal.update(translationX: -32)
+        #expect(reveal.phase == .tracking)
+        #expect(reveal.width == 32)
+
+        reveal.finish()
+        #expect(reveal == TranscriptTimestampRevealModel())
+    }
+
+    @Test
+    func timestampRevealReuseCannotLeakPriorThreadState() {
+        var reveal = TranscriptTimestampRevealModel()
+        reveal.begin()
+        reveal.update(translationX: -200)
+        #expect(reveal.width == TranscriptTimestampRevealGeometry.maximumWidth)
+
+        reveal.finish()
+        reveal.begin()
+        #expect(reveal.phase == .tracking)
+        #expect(reveal.width == 0)
+    }
+
+    @Test
+    func timestampAccessibilityLabelsEveryMessageRole() {
+        #expect(FeatureMessageTimestampAccessibility.label(for: .user) == "Sent")
+        #expect(FeatureMessageTimestampAccessibility.label(for: .assistant) == "Received")
+        #expect(FeatureMessageTimestampAccessibility.label(for: .tool) == "Timestamp")
+        #expect(FeatureMessageTimestampAccessibility.label(for: .system) == "Timestamp")
+    }
+
     @Test
     func firstLoadedTranscriptAnchorsToLatestMessage() {
         let empty = TranscriptViewportGeometry(
