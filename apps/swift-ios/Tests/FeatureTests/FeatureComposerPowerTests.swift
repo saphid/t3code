@@ -1,5 +1,8 @@
+import Foundation
 import SwiftUI
 import Testing
+import UIKit
+import UniformTypeIdentifiers
 @testable import T3Code
 
 @Suite("Composer power features")
@@ -61,6 +64,79 @@ struct FeatureComposerPowerTests {
             with: "[App](Sources/App) "
         )
         #expect(result == "Review [App](Sources/App)  please")
+    }
+
+    @Test
+    func replacementCursorLandsAfterInsertedTextInUTF16() {
+        let original = "🧪 Use $dep please"
+        let range = 6..<10
+        let replacement = "$dependency "
+
+        #expect(
+            FeatureComposerTextSelectionPolicy.cursorLocation(
+                afterReplacing: range,
+                in: original,
+                with: replacement
+            ) == "🧪 Use $dependency ".utf16.count
+        )
+    }
+
+    @Test
+    func mixedPasteKeepsOnlyTextFromNonImageItems() {
+        let items = [
+            FeatureComposerPasteItem(
+                typeIdentifiers: [UTType.png.identifier, UTType.plainText.identifier],
+                stringsByType: [UTType.plainText.identifier: "image metadata"]
+            ),
+            FeatureComposerPasteItem(
+                typeIdentifiers: [UTType.plainText.identifier],
+                stringsByType: [UTType.plainText.identifier: "first"]
+            ),
+            FeatureComposerPasteItem(
+                typeIdentifiers: [
+                    UTType.html.identifier,
+                    UTType.utf8PlainText.identifier,
+                ],
+                stringsByType: [
+                    UTType.html.identifier: "<b>second</b>",
+                    UTType.utf8PlainText.identifier: "second",
+                ]
+            ),
+        ]
+
+        #expect(FeatureComposerPasteTextPolicy.text(from: items) == "first\nsecond")
+        #expect(
+            FeatureComposerPasteTextPolicy.text(
+                from: [
+                    FeatureComposerPasteItem(
+                        typeIdentifiers: [UTType.jpeg.identifier],
+                        stringsByType: [:]
+                    ),
+                ]
+            ) == nil
+        )
+    }
+
+    @Test
+    func mixedPasteReadsPlainTextLazilyFromUIPasteboard() {
+        let pasteboard = UIPasteboard.withUniqueName()
+        defer { UIPasteboard.remove(withName: pasteboard.name) }
+        pasteboard.items = [
+            [
+                UTType.png.identifier: Data([0x89]),
+                UTType.plainText.identifier: "image metadata",
+            ],
+            [UTType.utf8PlainText.identifier: Data("first".utf8)],
+            [
+                UTType.html.identifier: Data("<b>second</b>".utf8),
+                UTType.utf8PlainText.identifier: "second",
+            ],
+        ]
+
+        #expect(
+            FeatureComposerPasteTextPolicy.text(from: pasteboard)
+                == "first\nsecond"
+        )
     }
 
     @Test
