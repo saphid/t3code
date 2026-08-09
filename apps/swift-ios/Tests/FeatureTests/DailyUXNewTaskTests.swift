@@ -526,6 +526,67 @@ struct DailyUXNewTaskTests {
     }
 
     @Test
+    func projectPickerShowsThreeRecentGroupsThenAlphabeticalProjects() {
+        let alpha = projectGroup(id: "alpha", name: "Alpha", memberIDs: ["alpha-studio"])
+        let bravo = projectGroup(id: "bravo", name: "Bravo", memberIDs: ["bravo-studio"])
+        let delta = projectGroup(
+            id: "delta",
+            name: "Delta",
+            memberIDs: ["delta-laptop", "delta-studio"]
+        )
+        let echo = projectGroup(id: "echo", name: "Echo", memberIDs: ["echo-studio"])
+        let zulu = projectGroup(id: "zulu", name: "Zulu", memberIDs: ["zulu-studio"])
+
+        let sections = NewTaskProjectListSections.split(
+            groups: [zulu, echo, delta, bravo, alpha],
+            recentProjectIDs: [
+                "delta-laptop",
+                "missing-project",
+                "zulu-studio",
+                "delta-studio",
+                "echo-studio",
+                "alpha-studio",
+            ]
+        )
+
+        #expect(sections.recent.map(\.id) == ["delta", "zulu", "echo"])
+        #expect(sections.remaining.map(\.id) == ["alpha", "bravo"])
+    }
+
+    @Test
+    func projectPickerWithoutRecentsSortsAllGroupsAlphabetically() {
+        let sections = NewTaskProjectListSections.split(
+            groups: [
+                projectGroup(id: "zulu", name: "zulu", memberIDs: ["zulu"]),
+                projectGroup(id: "alpha", name: "Alpha", memberIDs: ["alpha"]),
+            ],
+            recentProjectIDs: []
+        )
+
+        #expect(sections.recent.isEmpty)
+        #expect(sections.remaining.map(\.id) == ["alpha", "zulu"])
+    }
+
+    @Test
+    func recentProjectStoreKeepsEightNewestUniqueProjectIDs() throws {
+        let suiteName = "new-task-recent-project-store-tests"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defaults.removePersistentDomain(forName: suiteName)
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let store = NewTaskRecentProjectStore(
+            defaults: defaults,
+            key: "test.recent-projects",
+            capacity: 8
+        )
+
+        for id in ["a", "b", "c", "d", "e", "f", "g", "h", "a", "i"] {
+            store.record(id)
+        }
+
+        #expect(store.recentIDs() == ["i", "a", "h", "g", "f", "e", "d", "c"])
+    }
+
+    @Test
     func projectsWithoutRepositoryIdentityNeverGroupAcrossComputers() {
         let studio = FeatureProject(
             id: "studio",
@@ -544,6 +605,19 @@ struct DailyUXNewTaskTests {
 
         #expect(groups.count == 2)
         #expect(groups.allSatisfy { $0.projects.count == 1 })
+    }
+
+    private func projectGroup(
+        id: String,
+        name: String,
+        memberIDs: Set<String>
+    ) -> DailyUXProjectGroup {
+        DailyUXProjectGroup(
+            id: id,
+            name: name,
+            projects: [],
+            memberProjectIDs: memberIDs
+        )
     }
 
     @Test

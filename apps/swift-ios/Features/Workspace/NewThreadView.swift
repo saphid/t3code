@@ -141,8 +141,14 @@ public struct NewThreadView: View {
             case .project:
                 NewTaskProjectPicker(
                     groups: creationProjectGroups,
+                    recentProjectIDs: NewTaskRecentProjectStore.shared.recentIDs(),
                     selectionID: selectedProjectGroup?.id,
                     onSelect: { group in
+                        if let project = group.preferredProject(
+                            environmentID: selectedProject?.environmentID
+                        ) {
+                            NewTaskRecentProjectStore.shared.record(project.id)
+                        }
                         if selectProjectGroup(group) {
                             activePicker = nil
                         }
@@ -518,6 +524,7 @@ public struct NewThreadView: View {
         }
         promptFocused = false
         isSubmitting = true
+        NewTaskRecentProjectStore.shared.record(project.id)
         let pendingDraftSaveTask = draftSaveTask
         pendingDraftSaveTask?.cancel()
         draftSaveTask = nil
@@ -977,11 +984,80 @@ private enum NewTaskPicker: String, Identifiable {
     var id: String { rawValue }
 }
 
+final class NewTaskRecentProjectStore: @unchecked Sendable {
+    static let shared = NewTaskRecentProjectStore()
+
+    private let defaults: UserDefaults
+    private let key: String
+    private let capacity: Int
+    private let lock = NSLock()
+
+    init(
+        defaults: UserDefaults = .standard,
+        key: String = "swift-ios.recent-projects.v1",
+        capacity: Int = 8
+    ) {
+        self.defaults = defaults
+        self.key = key
+        self.capacity = capacity
+    }
+
+    func record(_ projectID: String) {
+        lock.withLock {
+            var ids = defaults.stringArray(forKey: key) ?? []
+            ids.removeAll { $0 == projectID }
+            ids.insert(projectID, at: 0)
+            defaults.set(Array(ids.prefix(capacity)), forKey: key)
+        }
+    }
+
+    func recentIDs() -> [String] {
+        lock.withLock {
+            defaults.stringArray(forKey: key) ?? []
+        }
+    }
+}
+
+enum NewTaskProjectListSections {
+    static let recentLimit = 3
+
+    static func split(
+        groups: [DailyUXProjectGroup],
+        recentProjectIDs: [String],
+        limit: Int = recentLimit
+    ) -> (recent: [DailyUXProjectGroup], remaining: [DailyUXProjectGroup]) {
+        var seenGroupIDs = Set<String>()
+        let recent = recentProjectIDs
+            .compactMap { projectID in
+                groups.first { $0.memberProjectIDs.contains(projectID) }
+            }
+            .filter { seenGroupIDs.insert($0.id).inserted }
+            .prefix(limit)
+        let recentGroupIDs = Set(recent.map(\.id))
+        let remaining = groups
+            .filter { !recentGroupIDs.contains($0.id) }
+            .sorted {
+                let order = $0.name.localizedCaseInsensitiveCompare($1.name)
+                if order != .orderedSame { return order == .orderedAscending }
+                return $0.id < $1.id
+            }
+        return (Array(recent), remaining)
+    }
+}
+
 private struct NewTaskProjectPicker: View {
     @SwiftUI.Environment(\.dismiss) private var dismiss
     let groups: [DailyUXProjectGroup]
+    let recentProjectIDs: [String]
     let selectionID: String?
     let onSelect: (DailyUXProjectGroup) -> Void
+
+    private var sections: (recent: [DailyUXProjectGroup], remaining: [DailyUXProjectGroup]) {
+        NewTaskProjectListSections.split(
+            groups: groups,
+            recentProjectIDs: recentProjectIDs
+        )
+    }
 
     var body: some View {
         NavigationStack {
@@ -993,30 +1069,24 @@ private struct NewTaskProjectPicker: View {
                         description: Text("Reconnect an environment or add a project to continue.")
                     )
                 } else {
-                    List(groups) { group in
-                        Button {
-                            onSelect(group)
-                        } label: {
-                            HStack(spacing: 12) {
-                                Text(group.name)
-                                    .foregroundStyle(T3Colors.textPrimary)
-
-                                Spacer(minLength: 10)
-
-                                if group.id == selectionID {
-                                    Image(systemName: "checkmark")
-                                        .font(.system(size: 13, weight: .semibold))
-                                        .foregroundStyle(T3Colors.accent)
+                    List {
+                        let sections = sections
+                        if sections.recent.isEmpty {
+                            ForEach(sections.remaining, content: row)
+                        } else {
+                            Section {
+                                ForEach(sections.recent, content: row)
+                            } header: {
+                                sectionHeader("Recent")
+                            }
+                            if !sections.remaining.isEmpty {
+                                Section {
+                                    ForEach(sections.remaining, content: row)
+                                } header: {
+                                    sectionHeader("Other projects")
                                 }
                             }
-                            .frame(minHeight: 34)
-                            .contentShape(Rectangle())
                         }
-                        .buttonStyle(.plain)
-                        .accessibilityAddTraits(
-                            group.id == selectionID ? .isSelected : []
-                        )
-                        .listRowBackground(T3Colors.background)
                     }
                     .listStyle(.plain)
                     .scrollContentBackground(.hidden)
@@ -1033,6 +1103,39 @@ private struct NewTaskProjectPicker: View {
         }
         .presentationDetents([.medium, .large])
         .presentationBackground(T3Colors.background)
+    }
+
+    private func sectionHeader(_ title: String) -> some View {
+        Text(title)
+            .font(T3Typography.supporting)
+            .foregroundStyle(T3Colors.textTertiary)
+            .textCase(nil)
+    }
+
+    private func row(_ group: DailyUXProjectGroup) -> some View {
+        Button {
+            onSelect(group)
+        } label: {
+            HStack(spacing: 12) {
+                Text(group.name)
+                    .foregroundStyle(T3Colors.textPrimary)
+
+                Spacer(minLength: 10)
+
+                if group.id == selectionID {
+                    Image(systemName: "checkmark")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(T3Colors.accent)
+                }
+            }
+            .frame(minHeight: 34)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityAddTraits(
+            group.id == selectionID ? .isSelected : []
+        )
+        .listRowBackground(T3Colors.background)
     }
 }
 
