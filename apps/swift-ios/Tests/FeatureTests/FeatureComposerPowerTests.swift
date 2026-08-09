@@ -1,8 +1,31 @@
+import SwiftUI
 import Testing
 @testable import T3Code
 
 @Suite("Composer power features")
 struct FeatureComposerPowerTests {
+    @Test
+    func textInputUsesReadableCapsAcrossAvailableHeights() {
+        #expect(
+            FeatureComposerTextLayout.visibleLineRange(
+                dynamicTypeSize: .large,
+                verticalSizeClass: .regular
+            ) == (1...10)
+        )
+        #expect(
+            FeatureComposerTextLayout.visibleLineRange(
+                dynamicTypeSize: .large,
+                verticalSizeClass: .compact
+            ) == (1...5)
+        )
+        #expect(
+            FeatureComposerTextLayout.visibleLineRange(
+                dynamicTypeSize: .accessibility5,
+                verticalSizeClass: .regular
+            ) == (1...3)
+        )
+    }
+
     @Test
     func detectsCommandsModelsSkillsAndPathsAtTheCursor() {
         #expect(

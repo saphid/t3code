@@ -1,6 +1,8 @@
 import SwiftUI
 
 struct FeatureComposerView: View {
+    @SwiftUI.Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @SwiftUI.Environment(\.verticalSizeClass) private var verticalSizeClass
     @State private var isManuallyExpanded = false
     @State private var isAttachmentFlowActive = false
     @State private var attachmentPreparation = FeatureAttachmentPreparationState()
@@ -198,8 +200,16 @@ struct FeatureComposerView: View {
                 axis: .vertical
             )
                 .font(T3Typography.composer)
-                .lineLimit(1...7)
+                .lineLimit(
+                    FeatureComposerTextLayout.visibleLineRange(
+                        dynamicTypeSize: dynamicTypeSize,
+                        verticalSizeClass: verticalSizeClass
+                    )
+                )
+                // Claim the vertical field's line-limited ideal height so it grows with the draft.
+                .fixedSize(horizontal: false, vertical: true)
                 .focused(focused)
+                .accessibilityIdentifier("composer-text-input")
                 // Return is always editing input. Sending is deliberately button-only.
                 .submitLabel(.return)
                 .padding(.horizontal, 16)
@@ -445,6 +455,21 @@ struct FeatureComposerView: View {
                   canSend {
             onSend()
         }
+    }
+}
+
+enum FeatureComposerTextLayout {
+    static func visibleLineRange(
+        dynamicTypeSize: DynamicTypeSize,
+        verticalSizeClass: UserInterfaceSizeClass?
+    ) -> ClosedRange<Int> {
+        if dynamicTypeSize.isAccessibilitySize {
+            return 1...3
+        }
+        if verticalSizeClass == .compact {
+            return 1...5
+        }
+        return 1...10
     }
 }
 
