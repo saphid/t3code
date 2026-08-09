@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 
@@ -38,4 +39,23 @@ test("compares macOS paths case-insensitively", () => {
     normalizePathCase("/Users/saphid/Projects/T3 Code", "darwin"),
     "/users/saphid/projects/t3 code",
   );
+});
+
+test("canonical-clone hook blocks direct pushes to main", () => {
+  const result = spawnSync(".githooks/pre-push", ["origin", "unused"], {
+    encoding: "utf8",
+    input: `refs/heads/main ${"1".repeat(40)} refs/heads/main ${"0".repeat(40)}\n`,
+  });
+
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /Direct pushes to protected product main are blocked/);
+});
+
+test("canonical-clone hook allows isolated product branches", () => {
+  const result = spawnSync(".githooks/pre-push", ["origin", "unused"], {
+    encoding: "utf8",
+    input: `refs/heads/typed-swiftui/example ${"1".repeat(40)} refs/heads/typed-swiftui/example ${"0".repeat(40)}\n`,
+  });
+
+  assert.equal(result.status, 0);
 });

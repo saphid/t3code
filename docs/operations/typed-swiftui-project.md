@@ -38,6 +38,17 @@ In the canonical clone, also verify the Git common directory and remote roles:
 node scripts/verify-project-isolation.mjs --live --receipts
 ```
 
+The canonical clone uses `.githooks/pre-push` to fail closed on direct pushes
+to `main`. The desired GitHub-hosted ruleset is checked in at
+`config/t3code-typed-swiftui/protected-main-ruleset.json`: it requires one
+approval and resolved review threads, and rejects deletion and non-fast-forward
+updates. GitHub returned HTTP 403 when repository creation attempted to apply
+both native branch protection and this ruleset because the current account plan
+does not include either feature for private repositories. Until that plan
+boundary changes and the checked-in ruleset is applied, hosted enforcement is
+an explicit open verification anomaly; the local hook is not represented as an
+equivalent server-side control.
+
 ## Remote roles
 
 `origin` is the only pushable product remote. `upstream` fetches

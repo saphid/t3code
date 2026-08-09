@@ -1,0 +1,11 @@
+#!/bin/sh
+
+while read -r local_ref local_sha remote_ref remote_sha; do
+  if [ "$remote_ref" = "refs/heads/main" ]; then
+    echo "Direct pushes to protected product main are blocked." >&2
+    echo "Push a typed-swiftui/* or sync/upstream-* branch and use a reviewed pull request." >&2
+    exit 1
+  fi
+done
+
+exit 0

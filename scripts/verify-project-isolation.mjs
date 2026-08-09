@@ -125,6 +125,12 @@ function validateLiveRepository() {
   if (existsSync(path.join(commonDirectoryDisplay, "objects/info/alternates"))) {
     errors.push("Git object alternates are forbidden");
   }
+  if (git("config", "--get", "core.hooksPath") !== ".githooks") {
+    errors.push("core.hooksPath must be .githooks in the canonical clone");
+  }
+  if (!existsSync(path.join(repositoryRoot, ".githooks/pre-push"))) {
+    errors.push("canonical-clone protected-main pre-push hook is missing");
+  }
 
   const remotes = new Map(
     git("remote")
