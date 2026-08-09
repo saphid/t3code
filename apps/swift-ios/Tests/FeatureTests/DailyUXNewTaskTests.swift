@@ -6,6 +6,188 @@ import UIKit
 @Suite("Message-first task creation")
 struct DailyUXNewTaskTests {
     @Test
+    func newTaskDefaultsToMostRecentlyUsedAvailableProject() throws {
+        let olderProject = project(id: "older", name: "Alpha")
+        let recentProject = project(id: "recent", name: "Zulu")
+        let snapshot = snapshot(
+            projects: [olderProject, recentProject],
+            threads: [
+                thread(id: "older-thread", projectID: olderProject.id, updatedAt: 10),
+                thread(id: "recent-thread", projectID: recentProject.id, updatedAt: 20),
+            ]
+        )
+
+        let selected = try #require(
+            DailyUXCreationContext.initialProject(in: snapshot, requestedProjectID: nil)
+        )
+
+        #expect(selected.id == recentProject.id)
+    }
+
+    @Test
+    func explicitNewTaskProjectOverridesRecentUse() throws {
+        let alphabeticalProject = project(id: "alphabetical", name: "Alpha")
+        let requestedProject = project(id: "requested", name: "Middle")
+        let recentProject = project(id: "recent", name: "Zulu")
+        let snapshot = snapshot(
+            projects: [recentProject, alphabeticalProject, requestedProject],
+            threads: [thread(id: "recent-thread", projectID: recentProject.id, updatedAt: 20)]
+        )
+
+        let selected = try #require(
+            DailyUXCreationContext.initialProject(
+                in: snapshot,
+                requestedProjectID: requestedProject.id
+            )
+        )
+
+        #expect(selected.id == requestedProject.id)
+    }
+
+    @Test
+    func staleRequestedProjectFallsThroughToRecentUse() throws {
+        let alphabeticalProject = project(id: "alphabetical", name: "Alpha")
+        let recentProject = project(id: "recent", name: "Zulu")
+        let value = snapshot(
+            projects: [alphabeticalProject, recentProject],
+            threads: [thread(id: "recent-thread", projectID: recentProject.id, updatedAt: 20)]
+        )
+
+        let selected = try #require(
+            DailyUXCreationContext.initialProject(
+                in: value,
+                requestedProjectID: "missing-project"
+            )
+        )
+
+        #expect(selected.id == recentProject.id)
+    }
+
+    @Test
+    func unavailableRecentProjectUsesNextAvailableRecentProject() throws {
+        let nextRecent = project(id: "zulu", name: "Zulu", environmentID: "connected")
+        let alpha = project(id: "alpha", name: "Alpha", environmentID: "connected")
+        let unavailable = project(
+            id: "unavailable",
+            name: "Unavailable",
+            environmentID: "disconnected"
+        )
+        let value = snapshot(
+            projects: [nextRecent, unavailable, alpha],
+            threads: [
+                thread(id: "recent", projectID: unavailable.id, updatedAt: 30),
+                thread(id: "next-recent", projectID: nextRecent.id, updatedAt: 20),
+            ],
+            environments: [
+                environment(id: "connected", isActive: true, state: .connected),
+                environment(id: "disconnected", state: .disconnected),
+            ]
+        )
+
+        let selected = try #require(
+            DailyUXCreationContext.initialProject(in: value, requestedProjectID: nil)
+        )
+
+        #expect(selected.id == nextRecent.id)
+    }
+
+    @Test
+    func noRecentUseFallsBackToAlphabeticalProject() throws {
+        let zulu = project(id: "zulu", name: "Zulu")
+        let alpha = project(id: "alpha", name: "Alpha")
+        let value = snapshot(projects: [zulu, alpha], threads: [])
+
+        let selected = try #require(
+            DailyUXCreationContext.initialProject(in: value, requestedProjectID: nil)
+        )
+
+        #expect(selected.id == alpha.id)
+    }
+
+    @Test
+    func equalRecencyUsesStableThreadIdentity() throws {
+        let alpha = project(id: "alpha", name: "Alpha")
+        let zulu = project(id: "zulu", name: "Zulu")
+        let value = snapshot(
+            projects: [alpha, zulu],
+            threads: [
+                thread(id: "z-thread", projectID: alpha.id, updatedAt: 20),
+                thread(id: "a-thread", projectID: zulu.id, updatedAt: 20),
+            ]
+        )
+
+        let selected = try #require(
+            DailyUXCreationContext.initialProject(in: value, requestedProjectID: nil)
+        )
+
+        #expect(selected.id == zulu.id)
+    }
+
+    @Test
+    func recentUseSelectsTheMatchingEnvironmentForAGroupedProject() throws {
+        let identity = FeatureRepositoryIdentity(canonicalKey: "github.com:saphid/t3code")
+        let activeProject = FeatureProject(
+            id: "active-project",
+            environmentID: "active",
+            name: "T3 Code",
+            path: "/active/t3code",
+            repositoryIdentity: identity
+        )
+        let recentProject = FeatureProject(
+            id: "recent-project",
+            environmentID: "recent-environment",
+            name: "T3 Code",
+            path: "/recent/t3code",
+            repositoryIdentity: identity
+        )
+        let value = snapshot(
+            projects: [activeProject, recentProject],
+            threads: [
+                thread(
+                    id: "recent-thread",
+                    projectID: recentProject.id,
+                    environmentID: recentProject.environmentID,
+                    updatedAt: 20
+                ),
+            ],
+            environments: [
+                environment(id: "active", isActive: true, state: .connected),
+                environment(id: "recent-environment", state: .connected),
+            ]
+        )
+
+        let selected = try #require(
+            DailyUXCreationContext.initialProject(in: value, requestedProjectID: nil)
+        )
+
+        #expect(selected.id == recentProject.id)
+    }
+
+    @Test
+    func lastActivityTakesPrecedenceOverMetadataUpdateTime() throws {
+        let alpha = project(id: "alpha", name: "Alpha")
+        let zulu = project(id: "zulu", name: "Zulu")
+        let value = snapshot(
+            projects: [alpha, zulu],
+            threads: [
+                thread(
+                    id: "metadata-recent",
+                    projectID: alpha.id,
+                    updatedAt: 100,
+                    lastActivityAt: 10
+                ),
+                thread(id: "activity-recent", projectID: zulu.id, updatedAt: 20),
+            ]
+        )
+
+        let selected = try #require(
+            DailyUXCreationContext.initialProject(in: value, requestedProjectID: nil)
+        )
+
+        #expect(selected.id == zulu.id)
+    }
+
+    @Test
     func requestNormalizesLegacyModesAndKeepsImageBytes() {
         let image = FeatureDraftAttachment(
             data: Data([1, 2, 3]),
@@ -504,5 +686,65 @@ struct DailyUXNewTaskTests {
         #expect(max(prepared.size.width, prepared.size.height) <= 2_048)
         #expect(max(thumbnail.size.width, thumbnail.size.height) <= 160)
         #expect(attachment.mimeType == "image/jpeg")
+    }
+
+    private func project(
+        id: String,
+        name: String,
+        environmentID: String = "environment"
+    ) -> FeatureProject {
+        FeatureProject(
+            id: id,
+            environmentID: environmentID,
+            name: name,
+            path: "/projects/\(id)"
+        )
+    }
+
+    private func thread(
+        id: String,
+        projectID: String,
+        environmentID: String? = nil,
+        updatedAt: TimeInterval,
+        lastActivityAt: TimeInterval? = nil
+    ) -> FeatureThread {
+        FeatureThread(
+            id: id,
+            projectID: projectID,
+            environmentID: environmentID,
+            title: id,
+            createdAt: Date(timeIntervalSince1970: updatedAt),
+            updatedAt: Date(timeIntervalSince1970: updatedAt),
+            lastActivityAt: lastActivityAt.map(Date.init(timeIntervalSince1970:))
+        )
+    }
+
+    private func environment(
+        id: String,
+        isActive: Bool = false,
+        state: FeatureConnection.State
+    ) -> FeatureEnvironment {
+        FeatureEnvironment(
+            id: id,
+            name: id,
+            endpoint: "https://\(id).example",
+            isActive: isActive,
+            connectionState: state
+        )
+    }
+
+    private func snapshot(
+        projects: [FeatureProject],
+        threads: [FeatureThread],
+        environments: [FeatureEnvironment]? = nil
+    ) -> FeatureSnapshot {
+        FeatureSnapshot(
+            connection: .init(state: .connected),
+            environments: environments ?? [
+                environment(id: "environment", isActive: true, state: .connected),
+            ],
+            projects: projects,
+            threads: threads
+        )
     }
 }

@@ -89,16 +89,10 @@ public struct NewThreadView: View {
         }
         .onAppear {
             if projectID.isEmpty {
-                let initialProject = creationProjects.first { $0.id == initialProjectID }
-                let initialGroup = initialProject.flatMap {
-                    DailyUXProjectGrouping.group(
-                        containing: $0.id,
-                        in: creationProjectGroups
-                    )
-                }
-                let initialID = initialGroup?.preferredProject(
-                    environmentID: initialProject?.environmentID
-                )?.id ?? creationProjectGroups.first?.projects.first?.id ?? ""
+                let initialID = DailyUXCreationContext.initialProject(
+                    in: model.snapshot,
+                    requestedProjectID: initialProjectID
+                )?.id ?? ""
                 selectInitialProject(initialID)
             }
         }
