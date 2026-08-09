@@ -19,24 +19,26 @@ require_cmd() {
 }
 
 require_cmd awk
+require_cmd git
 require_cmd mktemp
+
+REPO_ROOT="$(git -C "${APP_DIR}" rev-parse --show-toplevel 2>/dev/null)" || die \
+  "SwiftUI source is not inside a Git worktree"
+"${REPO_ROOT}/scripts/t3-swift-approved/verify.sh"
+
 require_cmd plutil
 require_cmd xcodebuild
 require_cmd xcrun
 
-[[ "${CONFIGURATION}" == "Debug" || "${CONFIGURATION}" == "Release" ]] || die \
-  "T3_SWIFT_CONFIGURATION must be Debug or Release"
+[[ "${CONFIGURATION}" == "Debug" ]] || die \
+  "the approved personal phone lane supports only T3_SWIFT_CONFIGURATION=Debug"
 
-if [[ "${CONFIGURATION}" == "Debug" ]]; then
-  BUNDLE_IDENTIFIER="com.t3tools.t3code.swiftui.dev"
-else
-  BUNDLE_IDENTIFIER="com.t3tools.t3code.swiftui"
-fi
+BUNDLE_IDENTIFIER="com.saphid.t3code.swiftui.dev"
 WIDGET_BUNDLE_IDENTIFIER="${BUNDLE_IDENTIFIER}.widgets"
 SHARE_BUNDLE_IDENTIFIER="${BUNDLE_IDENTIFIER}.sharing"
 
 [[ -z "${T3_SWIFT_BUNDLE_IDENTIFIER:-}" || "${T3_SWIFT_BUNDLE_IDENTIFIER}" == "${BUNDLE_IDENTIFIER}" ]] || die \
-  "custom bundle identifiers are unsupported; select the Debug or Release identity with T3_SWIFT_CONFIGURATION"
+  "custom bundle identifiers are unsupported; this approved installer is Debug-only"
 
 bundle_identifier_for_target() {
   local target="$1"
@@ -75,6 +77,20 @@ fi
 build_settings=(
   "DEVELOPMENT_TEAM=${DEVELOPMENT_TEAM}"
 )
+
+GIT_COMMIT="$(git -C "${APP_DIR}" rev-parse --short HEAD 2>/dev/null || echo unknown)"
+if [[ "${GIT_COMMIT}" != "unknown" ]] && \
+   [[ -n "$(git -C "${APP_DIR}" status --porcelain 2>/dev/null)" ]]; then
+  GIT_COMMIT="${GIT_COMMIT}-dirty"
+fi
+build_settings+=("T3_GIT_COMMIT=${GIT_COMMIT}")
+
+GIT_REPO_URL="$(git -C "${APP_DIR}" remote get-url origin 2>/dev/null || true)"
+GIT_REPO_URL="${GIT_REPO_URL%.git}"
+case "${GIT_REPO_URL}" in
+  git@*) GIT_REPO_URL="https://$(printf '%s' "${GIT_REPO_URL#git@}" | tr ':' '/')" ;;
+esac
+build_settings+=("T3_GIT_REPO_URL=${GIT_REPO_URL}")
 
 DEVICE_JSON="$(mktemp -t t3-swift-devices.XXXXXX)"
 trap 'unlink "${DEVICE_JSON}" 2>/dev/null || true' EXIT
