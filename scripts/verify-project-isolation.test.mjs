@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 
-import { validateManifest } from "./verify-project-isolation.mjs";
+import { normalizePathCase, validateManifest } from "./verify-project-isolation.mjs";
 
 const approved = JSON.parse(
   readFileSync("config/t3code-typed-swiftui/project-isolation.json", "utf8"),
@@ -31,4 +31,11 @@ test("rejects drift from the approved branch namespace", () => {
   collision.branchPrefixes = ["personal/", "sync/upstream-"];
 
   assert.match(validateManifest(collision).join("\n"), /approved identity contract/);
+});
+
+test("compares macOS paths case-insensitively", () => {
+  assert.equal(
+    normalizePathCase("/Users/saphid/Projects/T3 Code", "darwin"),
+    "/users/saphid/projects/t3 code",
+  );
 });

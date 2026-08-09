@@ -87,6 +87,14 @@ export function validateManifest(manifest) {
   return errors;
 }
 
+export function normalizePathCase(value, platform = process.platform) {
+  return platform === "darwin" ? value.toLowerCase() : value;
+}
+
+function comparableRealpath(value) {
+  return normalizePathCase(realpathSync(value));
+}
+
 function git(...args) {
   return execFileSync("git", args, {
     cwd: repositoryRoot,
@@ -98,19 +106,23 @@ function git(...args) {
 function validateLiveRepository() {
   const errors = [];
   const manifest = JSON.parse(readFileSync(defaultManifestPath, "utf8"));
-  const topLevel = realpathSync(git("rev-parse", "--show-toplevel"));
-  const canonicalRoot = realpathSync(manifest.canonicalRoot);
-  const commonDirectory = realpathSync(
-    path.resolve(topLevel, git("rev-parse", "--git-common-dir")),
+  const topLevelDisplay = realpathSync(git("rev-parse", "--show-toplevel"));
+  const canonicalRootDisplay = realpathSync(manifest.canonicalRoot);
+  const commonDirectoryDisplay = realpathSync(
+    path.resolve(topLevelDisplay, git("rev-parse", "--git-common-dir")),
   );
+  const topLevel = normalizePathCase(topLevelDisplay);
+  const canonicalRoot = normalizePathCase(canonicalRootDisplay);
+  const commonDirectory = normalizePathCase(commonDirectoryDisplay);
+  const expectedCommonDirectory = comparableRealpath(path.join(manifest.canonicalRoot, ".git"));
 
   if (topLevel !== canonicalRoot) {
-    errors.push(`checkout root ${topLevel} is not canonical root ${canonicalRoot}`);
+    errors.push(`checkout root ${topLevelDisplay} is not canonical root ${canonicalRootDisplay}`);
   }
-  if (commonDirectory !== path.join(canonicalRoot, ".git")) {
-    errors.push(`Git common directory is not isolated: ${commonDirectory}`);
+  if (commonDirectory !== expectedCommonDirectory) {
+    errors.push(`Git common directory is not isolated: ${commonDirectoryDisplay}`);
   }
-  if (existsSync(path.join(commonDirectory, "objects/info/alternates"))) {
+  if (existsSync(path.join(commonDirectoryDisplay, "objects/info/alternates"))) {
     errors.push("Git object alternates are forbidden");
   }
 
