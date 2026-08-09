@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "branch": "personal/swiftui-approved",
   "upstream": {
     "remote": "upstream",
@@ -45,38 +45,124 @@
       "sourceBranch": "t3code/swiftui-cached-home-pr-status",
       "sourceCommit": "3f4a6ec009a11ac56b216f5677c06842739387d2",
       "sourcePatchId": "b505f167e0128e9fcbdd2490ddabe448f40312ac",
+      "integrationPatchId": "b505f167e0128e9fcbdd2490ddabe448f40312ac",
       "integratedCommit": "5b07e1ea66c1f00d9fb67af5cb1f2126be9f8019"
+    },
+    {
+      "name": "Paste clipboard images into the SwiftUI composer",
+      "sourceBranch": "agent/swiftui-image-paste",
+      "sourceCommit": "08cc37c15818359275329c092fb8fef45d367d86",
+      "pullRequest": "https://github.com/pingdotgg/t3code/pull/5610",
+      "integrationPatchId": "73c4eb4f102f0d845f63b21574b9de281fda9934",
+      "integratedCommit": "20710714802776a7272c96acb3eec5e6d4f7e013"
+    },
+    {
+      "name": "Show live working duration in SwiftUI threads",
+      "sourceBranch": "agent/swiftui-composer-polish",
+      "sourceCommit": "4232e066f68250f6d170c9ca752221ab4456bb34",
+      "pullRequest": "https://github.com/pingdotgg/t3code/pull/5611",
+      "integrationPatchId": "0283823aba717280956290899daacc090e567861",
+      "integratedCommit": "aef1e4217b377b22723c2531c6a4729c6e40aa2f"
+    },
+    {
+      "name": "Expose complete SwiftUI thread row menus",
+      "sourceBranch": "t3code/add-mobile-thread-menus",
+      "sourceCommit": "cc44c814feba600d60911242383a05179d8e1a0f",
+      "pullRequest": "https://github.com/pingdotgg/t3code/pull/5753",
+      "sourcePatchId": "13d5fcee172d74394183c1ce3a429a53d2c434c8",
+      "integrationPatchId": "13d5fcee172d74394183c1ce3a429a53d2c434c8",
+      "integratedCommit": "88b3ead822997e1666fa6a6850690d69964684e9"
+    },
+    {
+      "name": "Show SwiftUI debug build identity and base distance",
+      "sourceBranch": "saphid/swiftui-debug-build-distance",
+      "sourceCommit": "fb558e106bb2da478bbea4e432517cbc70f6d3f1",
+      "pullRequest": "https://github.com/pingdotgg/t3code/pull/5789",
+      "integrationPatchId": "1b05ea4e95c917d3ca99f79390643c5d1fc8a4c9",
+      "integratedCommit": "1da1f94a0761208293bd6045785b65fd8b2e353b"
+    },
+    {
+      "name": "Show app, environment, build, and release changelog metadata",
+      "sourceBranch": "saphid/swiftui-version-settings",
+      "sourceCommit": "1a884f19a8de9161a9c9c4356d776805019e075f",
+      "pullRequest": "https://github.com/pingdotgg/t3code/pull/5790",
+      "integrationPatchId": "a41d6df8075ca05e9553cc775d89e4535cb4a656",
+      "integratedCommit": "b0dcfe71f06cf323477786e345631c1d7a3c8859"
+    },
+    {
+      "name": "Reveal SwiftUI message timestamps with a swipe",
+      "sourceBranch": "t3code/swiftui-swipe-message-timestamps",
+      "sourceCommit": "ad0b3ddfb8c935834e6e5aed92f9c8828ffac094",
+      "pullRequest": "https://github.com/pingdotgg/t3code/pull/5820",
+      "integrationPatchId": "a71a977bc3afb77ce5fa82b438d6f64eaa2644cf",
+      "integratedCommit": "ef48d9306230321c9bf8b8987516428bcf55b107"
+    },
+    {
+      "name": "Keep SwiftUI composer controls above a docked keyboard",
+      "sourceBranch": "personal/swiftui-four-feature-release-20260809",
+      "sourceCommit": "40b935540b2d9e4cc43192f975a95b60238f6d41",
+      "integrationPatchId": "2fa3f0baec776417c05b624c429601a29e229d5e",
+      "integratedCommit": "362bf5dd38bd320dd82448a49329ebea826cbdde"
+    },
+    {
+      "name": "Mark SwiftUI debug thread title bars in orange",
+      "sourceBranch": "t3code/add-dev-banner-mobile-app",
+      "sourceCommit": "ce23ed2fe821c585671883bd964ade5c41f38278",
+      "sourcePatchId": "1a6d9da59a072eabb0e5beaf3f0e2df479a21872",
+      "integrationPatchId": "1a6d9da59a072eabb0e5beaf3f0e2df479a21872",
+      "integratedCommit": "258909ec40dba2b10df39d921dfc4e4573299d61"
     }
   ],
   "featurePaths": [
     "apps/swift-ios/App/NativeFeatureClient.swift",
     "apps/swift-ios/App/NativeWorkspaceMapper.swift",
+    "apps/swift-ios/Core/HTTP.swift",
+    "apps/swift-ios/Core/Models.swift",
+    "apps/swift-ios/Core/Persistence.swift",
+    "apps/swift-ios/Core/T3Client.swift",
     "apps/swift-ios/Features/Chat/FeatureComposerView.swift",
+    "apps/swift-ios/Features/Chat/ImageAttachmentViews.swift",
     "apps/swift-ios/Features/Chat/MarkdownMessageView.swift",
     "apps/swift-ios/Features/Chat/MarkdownRenderCache.swift",
     "apps/swift-ios/Features/Chat/ThreadDetailView.swift",
     "apps/swift-ios/Features/Files/FeatureFilesView.swift",
+    "apps/swift-ios/Features/Root/FeatureRootModel.swift",
+    "apps/swift-ios/Features/Settings/SettingsView.swift",
+    "apps/swift-ios/Features/Shared/FeatureClient.swift",
+    "apps/swift-ios/Features/Shared/FeatureModels.swift",
     "apps/swift-ios/Features/Shared/FeatureToolModels.swift",
     "apps/swift-ios/Features/SourceControl/FeatureSourceControlView.swift",
     "apps/swift-ios/Features/Workspace/DailyUXModels.swift",
+    "apps/swift-ios/Features/Workspace/DebugBuildMetadata.swift",
     "apps/swift-ios/Features/Workspace/HomeThreadCollectionView.swift",
     "apps/swift-ios/Features/Workspace/NewThreadView.swift",
+    "apps/swift-ios/Features/Workspace/NewTaskWorkspaceModels.swift",
+    "apps/swift-ios/Features/Workspace/ThreadContextMenu.swift",
     "apps/swift-ios/Features/Workspace/WorkspaceView.swift",
     "apps/swift-ios/DesignSystem/T3Theme.swift",
+    "apps/swift-ios/README.md",
+    "apps/swift-ios/Tests/CoreTests/CoreContractTests.swift",
+    "apps/swift-ios/Tests/FeatureTests/AttachmentPreparationTests.swift",
     "apps/swift-ios/Tests/FeatureTests/DailyUXNewTaskTests.swift",
     "apps/swift-ios/Tests/FeatureTests/FeatureComposerPowerTests.swift",
     "apps/swift-ios/Tests/FeatureTests/FeatureToolStateTests.swift",
     "apps/swift-ios/Tests/FeatureTests/HomeThreadMetadataTests.swift",
-    "apps/swift-ios/Tests/FeatureTests/MarkdownDocumentTests.swift"
+    "apps/swift-ios/Tests/FeatureTests/MarkdownDocumentTests.swift",
+    "apps/swift-ios/Tests/FeatureTests/DebugBuildMetadataTests.swift",
+    "apps/swift-ios/Tests/FeatureTests/SettingsAboutMetadataTests.swift",
+    "apps/swift-ios/Tests/FeatureTests/ThreadContextMenuTests.swift",
+    "apps/swift-ios/Tests/FeatureTests/TranscriptViewportGeometryTests.swift",
+    "docs/user/swiftui-image-attachments.md",
+    "docs/user/swiftui-working-duration.md"
   ],
-  "featureTreeDigest": "837064b9a21d1c3437325f05bfb75b276d15b42027c180cef8dc323cbe979d0c",
+  "featureTreeDigest": "c0b2f3e3ffececc967f872d5dd2ed6f4243ade45153d7e1132b4c886f102b10c",
   "overlayPaths": [
     "apps/swift-ios/Extensions/Shared/T3CodeDev.entitlements",
     "apps/swift-ios/Resources/Info.plist",
     "apps/swift-ios/Scripts/install-device.sh",
     "apps/swift-ios/T3Code.xcodeproj/project.pbxproj"
   ],
-  "overlayTreeDigest": "bf24935ac08084c2baf51f04c63aa32fdd060ebdf776daee7b966a94551338d3",
+  "overlayTreeDigest": "f86572bb67f16203c721326af55e77e954cece87fb5b9dfe5b94f41bf8fd5d21",
   "policyPaths": [
     "docs/operations/swiftui-approved-phone-lane.md",
     "scripts/t3-swift-approved/manifest.json",
@@ -90,5 +176,5 @@
     "scripts/t3-swift-approved/verify.sh",
     "scripts/t3-swift-approved/verify.test.sh"
   ],
-  "policyTreeDigest": "a138ed84dd3c5e2395789e20214339f89cad5e2099f606738f947b3294f9531c"
+  "policyTreeDigest": "992412b1d65f2a0b88e5f0bd32568dc6097fb2a4bcf24ccc59d9d2656fda26a9"
 }

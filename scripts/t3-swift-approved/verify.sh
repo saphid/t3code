@@ -23,7 +23,7 @@ for command in git jq shasum; do
 done
 
 jq -e '
-  .schemaVersion == 1 and
+  .schemaVersion == 2 and
   (.branch | type == "string" and length > 0) and
   (.upstream.commit | test("^[0-9a-f]{40}$")) and
   (.features | length > 0) and
@@ -35,7 +35,10 @@ jq -e '
   ([.candidates[] |
     (.sourceBranch | type == "string" and length > 0) and
     (.sourceCommit | test("^[0-9a-f]{40}$")) and
-    (.sourcePatchId | test("^[0-9a-f]{40}$")) and
+    (.integrationPatchId | test("^[0-9a-f]{40}$")) and
+    ((has("sourcePatchId") | not) or (.sourcePatchId | test("^[0-9a-f]{40}$"))) and
+    ((has("pullRequest") | not) or
+      (.pullRequest | test("^https://github.com/pingdotgg/t3code/pull/[0-9]+$"))) and
     (.integratedCommit | test("^[0-9a-f]{40}$"))] | all) and
   (.featureTreeDigest | test("^[0-9a-f]{64}$")) and
   (.overlayTreeDigest | test("^[0-9a-f]{64}$")) and
@@ -73,13 +76,13 @@ while IFS="$(printf '\t')" read -r review_commit review_patch_id integrated_comm
   fi
 done
 
-jq -r '.candidates[] | [.sourceCommit, .sourcePatchId, .integratedCommit, .sourceBranch] | @tsv' "$MANIFEST" |
-while IFS="$(printf '\t')" read -r source_commit source_patch_id integrated_commit source_branch; do
+jq -r '.candidates[] | [.sourceCommit, (.sourcePatchId // ""), .integrationPatchId, .integratedCommit, .sourceBranch] | join("|")' "$MANIFEST" |
+while IFS='|' read -r source_commit source_patch_id integration_patch_id integrated_commit source_branch; do
   git -C "$REPO" merge-base --is-ancestor "$integrated_commit" HEAD || \
     fail "approved candidate from $source_branch is not an ancestor"
-  [ "$source_patch_id" = "$(patch_id "$integrated_commit")" ] || \
+  [ "$integration_patch_id" = "$(patch_id "$integrated_commit")" ] || \
     fail "integrated candidate no longer matches $source_branch"
-  if git -C "$REPO" cat-file -e "$source_commit^{commit}" 2>/dev/null; then
+  if [ -n "$source_patch_id" ] && git -C "$REPO" cat-file -e "$source_commit^{commit}" 2>/dev/null; then
     [ "$source_patch_id" = "$(patch_id "$source_commit")" ] || \
       fail "stored source commit no longer matches $source_branch"
   fi
@@ -110,6 +113,6 @@ unexpected=$(comm -13 "$allowed" "$actual")
 [ -z "$unexpected" ] || fail "unapproved paths differ from Theo's branch:
 $unexpected"
 
-printf '[swiftui-approved] accepted %s at %s with %s upstream PRs and %s pre-PR candidates\n' \
+printf '[swiftui-approved] accepted %s at %s with %s upstream PRs and %s promoted candidates\n' \
   "$expected_branch" "${head%????????????????????????????????}" \
   "$(jq '.features | length' "$MANIFEST")" "$(jq '.candidates | length' "$MANIFEST")"

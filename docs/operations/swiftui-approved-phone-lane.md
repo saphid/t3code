@@ -7,13 +7,21 @@ SwiftUI app for Alex's physical iPhone. It is based on Theo's active
 Each local feature remains in its T3 thread worktree based on Theo's SwiftUI
 branch. Alex can promote a focused, tested change to this lane as a pre-PR
 candidate for physical-phone proof, or promote an already reviewed upstream PR.
-The manifest records either source and its stable patch ID. Candidate branches
-remain separate and are not pushed upstream as part of this composite lane;
-after phone proof they can become focused PRs in the normal way. The verifier
-compares each recorded patch to its integration commit and, when the source
-object is available locally, to the source commit. Its offline sync clone relies
-on the recorded IDs and digest-pinned final tree. Personal signing is a separate,
-digest-pinned overlay.
+The manifest records each source commit and the stable patch ID of its approved
+integration commit. When conflict resolution did not change the source patch, it
+also records and verifies that exact source patch ID. Candidate branches remain
+separate and are not pushed upstream as part of this composite lane; after phone
+proof they can become focused PRs in the normal way. Squashed or conflict-resolved
+promotions are pinned by their integration patch and the final approved-tree
+digest instead of claiming false patch equivalence with a multi-commit source.
+Personal signing is a separate, digest-pinned overlay.
+
+The current promoted candidates add clipboard image paste, live working
+duration, full thread menus, debug build/base-distance identity, app and
+environment versions with build and release changelog links, swipe-revealed
+message timestamps, keyboard-aware composer height, and an orange Debug thread
+title bar. The richer base-distance badge supersedes the older standalone dev
+badge patch, so that older patch is not duplicated in this lane.
 
 The device installer runs `scripts/t3-swift-approved/verify.sh` before resolving
 or touching a phone. The verifier rejects a dirty worktree, another branch, an
