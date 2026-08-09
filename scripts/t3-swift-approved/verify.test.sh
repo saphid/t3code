@@ -58,6 +58,9 @@ expect_rejection "changed policy digest" "$VERIFY" --repo "$TEST_REPO" --manifes
 jq '.features[0].reviewPatchId = ("0" * 40)' "$MANIFEST" >"$TEST_MANIFEST"
 expect_rejection "changed review patch ID" "$VERIFY" --repo "$TEST_REPO" --manifest "$TEST_MANIFEST"
 
+jq '.candidates[0].sourcePatchId = ("0" * 40)' "$MANIFEST" >"$TEST_MANIFEST"
+expect_rejection "changed candidate patch ID" "$VERIFY" --repo "$TEST_REPO" --manifest "$TEST_MANIFEST"
+
 printf '\n' >>"$TEST_REPO/apps/swift-ios/Features/Chat/FeatureComposerView.swift"
 expect_rejection "dirty worktree" "$VERIFY" --repo "$TEST_REPO"
 git -C "$TEST_REPO" restore apps/swift-ios/Features/Chat/FeatureComposerView.swift

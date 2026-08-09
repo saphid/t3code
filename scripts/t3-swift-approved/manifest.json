@@ -39,7 +39,18 @@
       "integratedCommit": "c728a81ca4bd1606891693f67666b92aaee47034"
     }
   ],
+  "candidates": [
+    {
+      "name": "Read cached VCS status for Home pull-request links",
+      "sourceBranch": "t3code/swiftui-cached-home-pr-status",
+      "sourceCommit": "3f4a6ec009a11ac56b216f5677c06842739387d2",
+      "sourcePatchId": "b505f167e0128e9fcbdd2490ddabe448f40312ac",
+      "integratedCommit": "5b07e1ea66c1f00d9fb67af5cb1f2126be9f8019"
+    }
+  ],
   "featurePaths": [
+    "apps/swift-ios/App/NativeFeatureClient.swift",
+    "apps/swift-ios/App/NativeWorkspaceMapper.swift",
     "apps/swift-ios/Features/Chat/FeatureComposerView.swift",
     "apps/swift-ios/Features/Chat/MarkdownMessageView.swift",
     "apps/swift-ios/Features/Chat/MarkdownRenderCache.swift",
@@ -58,7 +69,7 @@
     "apps/swift-ios/Tests/FeatureTests/HomeThreadMetadataTests.swift",
     "apps/swift-ios/Tests/FeatureTests/MarkdownDocumentTests.swift"
   ],
-  "featureTreeDigest": "f7682d600eca0689f3f9804bf9671283eea3b33bcec5450060a269e4170fb5fd",
+  "featureTreeDigest": "837064b9a21d1c3437325f05bfb75b276d15b42027c180cef8dc323cbe979d0c",
   "overlayPaths": [
     "apps/swift-ios/Extensions/Shared/T3CodeDev.entitlements",
     "apps/swift-ios/Resources/Info.plist",
@@ -79,5 +90,5 @@
     "scripts/t3-swift-approved/verify.sh",
     "scripts/t3-swift-approved/verify.test.sh"
   ],
-  "policyTreeDigest": "d4c53be6887f2eb931431e8209c5491e2688a18ce25e3d63d7d6ab4026283750"
+  "policyTreeDigest": "a138ed84dd3c5e2395789e20214339f89cad5e2099f606738f947b3294f9531c"
 }

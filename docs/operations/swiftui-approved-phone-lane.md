@@ -4,13 +4,15 @@
 SwiftUI app for Alex's physical iPhone. It is based on Theo's active
 `t3code/rebuild-mobile-app-swift` branch until SwiftUI reaches upstream `main`.
 
-Each local feature remains in its T3 thread worktree. Promotion requires Alex's
-explicit approval, one focused upstream pull request, focused tests, and the
-exact review patch recorded in `scripts/t3-swift-approved/manifest.json`.
-The integration commit must have the recorded stable patch ID from the upstream
-review branch. The verifier also compares that ID to the review commit whenever
-the review object is available locally; its offline sync clone relies on the
-recorded ID and digest-pinned final tree. Personal signing is a separate,
+Each local feature remains in its T3 thread worktree based on Theo's SwiftUI
+branch. Alex can promote a focused, tested change to this lane as a pre-PR
+candidate for physical-phone proof, or promote an already reviewed upstream PR.
+The manifest records either source and its stable patch ID. Candidate branches
+remain separate and are not pushed upstream as part of this composite lane;
+after phone proof they can become focused PRs in the normal way. The verifier
+compares each recorded patch to its integration commit and, when the source
+object is available locally, to the source commit. Its offline sync clone relies
+on the recorded IDs and digest-pinned final tree. Personal signing is a separate,
 digest-pinned overlay.
 
 The device installer runs `scripts/t3-swift-approved/verify.sh` before resolving
@@ -36,10 +38,11 @@ remain in the shared Info.plist, but push registration and background delivery
 are unavailable without the missing Debug entitlements.
 
 Home resolves pull-request metadata at most once per checkout identity between
-foreground activations. The lookup is an explicit cache-busting server refresh,
-so timer ticks, search text, shelf expansion, and project filtering must never
-retry it. Returning from the background deliberately clears the cache so PR
-state and transient failures receive one bounded refresh.
+foreground activations. The lookup observes the server's cached VCS status
+stream instead of invalidating its shared source-control cache, so timer ticks,
+search text, shelf expansion, and project filtering must never retry it.
+Returning from the background deliberately clears the local cache so PR state
+and transient failures receive one bounded observation.
 
 The two-hour sync job may merge Theo's branch automatically only when the merge
 leaves every approved feature and personal overlay digest unchanged and the

@@ -32,6 +32,11 @@ jq -e '
     (.reviewCommit | test("^[0-9a-f]{40}$")) and
     (.reviewPatchId | test("^[0-9a-f]{40}$")) and
     (.integratedCommit | test("^[0-9a-f]{40}$"))] | all) and
+  ([.candidates[] |
+    (.sourceBranch | type == "string" and length > 0) and
+    (.sourceCommit | test("^[0-9a-f]{40}$")) and
+    (.sourcePatchId | test("^[0-9a-f]{40}$")) and
+    (.integratedCommit | test("^[0-9a-f]{40}$"))] | all) and
   (.featureTreeDigest | test("^[0-9a-f]{64}$")) and
   (.overlayTreeDigest | test("^[0-9a-f]{64}$")) and
   (.policyTreeDigest | test("^[0-9a-f]{64}$"))
@@ -68,6 +73,18 @@ while IFS="$(printf '\t')" read -r review_commit review_patch_id integrated_comm
   fi
 done
 
+jq -r '.candidates[] | [.sourceCommit, .sourcePatchId, .integratedCommit, .sourceBranch] | @tsv' "$MANIFEST" |
+while IFS="$(printf '\t')" read -r source_commit source_patch_id integrated_commit source_branch; do
+  git -C "$REPO" merge-base --is-ancestor "$integrated_commit" HEAD || \
+    fail "approved candidate from $source_branch is not an ancestor"
+  [ "$source_patch_id" = "$(patch_id "$integrated_commit")" ] || \
+    fail "integrated candidate no longer matches $source_branch"
+  if git -C "$REPO" cat-file -e "$source_commit^{commit}" 2>/dev/null; then
+    [ "$source_patch_id" = "$(patch_id "$source_commit")" ] || \
+      fail "stored source commit no longer matches $source_branch"
+  fi
+done
+
 paths_digest() {
   key=$1
   jq -r ".$key[]" "$MANIFEST" |
@@ -93,5 +110,6 @@ unexpected=$(comm -13 "$allowed" "$actual")
 [ -z "$unexpected" ] || fail "unapproved paths differ from Theo's branch:
 $unexpected"
 
-printf '[swiftui-approved] accepted %s at %s with %s approved upstream PRs\n' \
-  "$expected_branch" "${head%????????????????????????????????}" "$(jq '.features | length' "$MANIFEST")"
+printf '[swiftui-approved] accepted %s at %s with %s upstream PRs and %s pre-PR candidates\n' \
+  "$expected_branch" "${head%????????????????????????????????}" \
+  "$(jq '.features | length' "$MANIFEST")" "$(jq '.candidates | length' "$MANIFEST")"
