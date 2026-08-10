@@ -11,10 +11,12 @@ public struct SettingsView: View {
     @State private var showingT3Connect = false
     @State private var removalTarget: FeatureEnvironment?
     @State private var saveErrorMessage: String?
+    private let appVersionLabel: String
 
     public init(model: FeatureRootModel) {
         self.model = model
         _settings = State(initialValue: model.snapshot.settings)
+        appVersionLabel = SettingsAboutMetadata.appVersionLabel(info: Bundle.main.infoDictionary)
     }
 
     public var body: some View {
@@ -337,6 +339,10 @@ public struct SettingsView: View {
             VStack(spacing: 0) {
                 SettingsValueRow(title: "App", value: appDisplayName)
                 settingsDivider
+                SettingsValueRow(title: "App version", value: appVersionLabel)
+                settingsDivider
+                SettingsValueRow(title: "Environment version", value: environmentVersionLabel)
+                settingsDivider
                 SettingsValueRow(title: "Platform", value: "Native SwiftUI")
                 settingsDivider
                 Link(destination: URL(string: "https://github.com/pingdotgg/t3code")!) {
@@ -455,6 +461,14 @@ public struct SettingsView: View {
     private var appDisplayName: String {
         Bundle.main.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String
             ?? "T3 Code SwiftUI"
+    }
+
+    private var environmentVersionLabel: String {
+        let activeEnvironment = model.snapshot.environments.first(where: \.isActive)
+        return SettingsAboutMetadata.environmentVersionLabel(
+            connectionState: model.snapshot.connection.state,
+            serverVersion: activeEnvironment?.serverVersion
+        )
     }
 
     private var canSave: Bool {

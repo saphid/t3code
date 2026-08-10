@@ -2543,6 +2543,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
                         ]
                         let config = ServerConfigSnapshot(
                             providers: providers,
+                            environment: previous?.environment,
                             settings: previous?.settings,
                             threadSnapshotPagination: previous?.threadSnapshotPagination
                         )
@@ -2554,6 +2555,9 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
                         ]?.providers ?? self.latestServerConfig?.providers ?? []
                         let config = ServerConfigSnapshot(
                             providers: providers,
+                            environment: self.serverConfigsByEnvironmentID[
+                                activeClient.environment.id
+                            ]?.environment,
                             settings: settings,
                             threadSnapshotPagination: self.serverConfigsByEnvironmentID[
                                 activeClient.environment.id
@@ -3779,10 +3783,15 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
     }
 
     private func mapEnvironment(_ environment: Environment, activeID: String?) -> FeatureEnvironment {
-        FeatureEnvironment(
+        let pairedVersion = environment.descriptor?.serverVersion
+        let serverVersion = serverConfigsByEnvironmentID[environment.id]
+            .map { $0.serverVersion(fallingBackTo: pairedVersion) }
+            ?? pairedVersion
+        return FeatureEnvironment(
             id: environment.id,
             name: environment.label,
             endpoint: environment.httpBaseURL.absoluteString,
+            serverVersion: serverVersion,
             isActive: environment.id == activeID,
             connectionState: environmentConnectionStates[environment.id],
             connectionDetail: environmentConnectionDetails[environment.id]
