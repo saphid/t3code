@@ -130,6 +130,7 @@ public struct WorkspaceView: View {
     @State private var settledLimit = 12
     @State private var showingNewTask = false
     @State private var isDismissingNewTask = false
+    @State private var newTaskSheetHasAppeared = false
     @State private var newTaskPresentation = FeatureNewTaskPresentationCoordinator()
     @State private var deferredNewTaskPresentation: FeatureNewTaskPresentationRequest?
     @State private var newTaskPresentationEpoch = 0
@@ -141,6 +142,7 @@ public struct WorkspaceView: View {
     @State private var sidebarBoundaryNow = Date.now
     @State private var preferredCompactColumn = NavigationSplitViewColumn.sidebar
     @State private var homePresentationCache = HomePresentationCache()
+    @State private var consumedNavigationRequestID: UUID?
     @FocusState private var isSearchFocused: Bool
 
     public init(
@@ -229,22 +231,7 @@ public struct WorkspaceView: View {
         }
         .navigationSplitViewStyle(.balanced)
         .sheet(isPresented: $showingNewTask, onDismiss: {
-            isDismissingNewTask = false
-            let dismissed = newTaskPresentation.didDismiss()
-            if let shareID = dismissed?.incomingShareID {
-                releaseIncomingSharePresentation(shareID)
-            }
-            if newTaskPresentation.current != nil {
-                newTaskPresentationEpoch += 1
-                let presentationEpoch = newTaskPresentationEpoch
-                Task { @MainActor in
-                    await Task.yield()
-                    guard presentationEpoch == newTaskPresentationEpoch else { return }
-                    showingNewTask = true
-                }
-            } else {
-                resumeDeferredNewTaskPresentation()
-            }
+            completeNewTaskDismissal()
         }) {
             let presentation = newTaskPresentation.current
             NewThreadView(
@@ -261,6 +248,9 @@ public struct WorkspaceView: View {
                 acknowledgeIncomingShare: acknowledgeIncomingShare
             )
             .id(newTaskPresentation.presentationID)
+            .onAppear {
+                newTaskSheetHasAppeared = true
+            }
         }
         .sheet(isPresented: $showingAddProject, onDismiss: {
             resumeDeferredNewTaskPresentation()
@@ -850,7 +840,8 @@ public struct WorkspaceView: View {
     }
 
     private func consumeNavigationRequest() {
-        guard let navigationRequest else { return }
+        guard let navigationRequest,
+              consumedNavigationRequestID != navigationRequest.id else { return }
         switch navigationRequest.destination {
         case let .thread(id):
             guard model.snapshot.threads.contains(where: { $0.id == id }) else { return }
@@ -881,6 +872,7 @@ public struct WorkspaceView: View {
         case let .sharedNewTask(shareID):
             requestNewTaskPresentation(.sharedNewTask(shareID: shareID))
         }
+        consumedNavigationRequestID = navigationRequest.id
         onNavigationRequestConsumed(navigationRequest.id)
     }
 
@@ -982,6 +974,39 @@ public struct WorkspaceView: View {
         guard showingNewTask else { return }
         isDismissingNewTask = true
         showingNewTask = false
+        guard !newTaskSheetHasAppeared else { return }
+        Task { @MainActor in
+            await Task.yield()
+            guard isDismissingNewTask, !newTaskSheetHasAppeared else { return }
+            completeNewTaskDismissal()
+        }
+    }
+
+    private func completeNewTaskDismissal() {
+        guard isDismissingNewTask || newTaskSheetHasAppeared else { return }
+        isDismissingNewTask = false
+        newTaskSheetHasAppeared = false
+        let dismissed = newTaskPresentation.didDismiss()
+        releaseIncomingSharePresentation(from: dismissed)
+
+        guard newTaskPresentation.current != nil else {
+            resumeDeferredNewTaskPresentation()
+            return
+        }
+        if showingAddProject || showingSettings || renamingThread != nil {
+            let promoted = newTaskPresentation.cancelCurrent()
+            releaseIncomingSharePresentation(from: deferredNewTaskPresentation)
+            deferredNewTaskPresentation = promoted
+            return
+        }
+
+        newTaskPresentationEpoch += 1
+        let presentationEpoch = newTaskPresentationEpoch
+        Task { @MainActor in
+            await Task.yield()
+            guard presentationEpoch == newTaskPresentationEpoch else { return }
+            showingNewTask = true
+        }
     }
 
     private func projectMenuTitle(_ project: FeatureProject) -> String {
