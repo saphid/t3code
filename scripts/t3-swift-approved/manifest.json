@@ -119,6 +119,14 @@
       "sourcePatchId": "b4f770316f00d82f9b821686e0619245121d4d49",
       "integrationPatchId": "b4f770316f00d82f9b821686e0619245121d4d49",
       "integratedCommit": "fbc6ec7716ff35b95e424a4c15bc3dd8e8f2b18f"
+    },
+    {
+      "name": "Keep SwiftUI skill suggestions clear of composer text",
+      "sourceBranch": "t3code/move-skills-popup-upward",
+      "sourceCommit": "e0799cd13b18085adfbdcc82b5a4adacff99f9da",
+      "sourcePatchId": "7b60b54124b5326212101e110a21d7d603fcdc8d",
+      "integrationPatchId": "7b60b54124b5326212101e110a21d7d603fcdc8d",
+      "integratedCommit": "72a89353f198f48f12967384c0da445bacf2c5d3"
     }
   ],
   "featurePaths": [
@@ -163,7 +171,7 @@
     "docs/user/swiftui-image-attachments.md",
     "docs/user/swiftui-working-duration.md"
   ],
-  "featureTreeDigest": "6c386e703cf7556ddb7099022750c84c5d5a8bab2ea50df8de4f8b516c10e279",
+  "featureTreeDigest": "74326e9010ee28c9f7b6c07d64c01d9e10c29d27c03dc390749b2c5413f1f754",
   "overlayPaths": [
     "apps/swift-ios/Extensions/Shared/T3CodeDev.entitlements",
     "apps/swift-ios/Resources/Info.plist",
