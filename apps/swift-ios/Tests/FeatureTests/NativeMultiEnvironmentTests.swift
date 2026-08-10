@@ -218,6 +218,79 @@ final class NativeMultiEnvironmentTests: XCTestCase {
         await fixture.client.disconnect()
     }
 
+    func testUsageSummariesPreserveEnvironmentOrderIsolateFailuresAndCloseProbes() async throws {
+        let first = UsageProbeConnection(
+            result: .success(usageProbeSummary(provider: .codex)),
+            delay: .milliseconds(20)
+        )
+        let second = UsageProbeConnection(result: .failure("usage unavailable"))
+        let connector = UsageProbeConnector(connections: [
+            "one.example": first,
+            "two.example": second,
+        ])
+        let fixture = try await makeFixture(webSocketConnector: connector)
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+
+        let summaries = try await fixture.client.usageSummaries(
+            UsageSummaryInput(
+                sinceDay: "2026-08-03",
+                untilDay: "2026-08-09",
+                timeZone: "Australia/Sydney"
+            )
+        )
+
+        XCTAssertEqual(summaries.map(\.environmentID), ["one", "two"])
+        XCTAssertNotNil(summaries[0].summary)
+        XCTAssertNil(summaries[0].errorMessage)
+        XCTAssertNil(summaries[1].summary)
+        XCTAssertNotNil(summaries[1].errorMessage)
+        let firstWasClosed = await first.wasClosed
+        let secondWasClosed = await second.wasClosed
+        XCTAssertTrue(firstWasClosed)
+        XCTAssertTrue(secondWasClosed)
+    }
+
+    func testUsageSummaryCancellationClosesEveryProbeAndRethrowsCancellation() async throws {
+        let first = UsageProbeConnection(
+            result: .success(usageProbeSummary(provider: .codex)),
+            delay: .seconds(30)
+        )
+        let second = UsageProbeConnection(
+            result: .success(usageProbeSummary(provider: .claude)),
+            delay: .seconds(30)
+        )
+        let connector = UsageProbeConnector(connections: [
+            "one.example": first,
+            "two.example": second,
+        ])
+        let fixture = try await makeFixture(webSocketConnector: connector)
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+
+        let task = Task {
+            try await fixture.client.usageSummaries(
+                UsageSummaryInput(
+                    sinceDay: "2026-08-03",
+                    untilDay: "2026-08-09",
+                    timeZone: "Australia/Sydney"
+                )
+            )
+        }
+        await first.waitUntilSent()
+        await second.waitUntilSent()
+        task.cancel()
+
+        do {
+            _ = try await task.value
+            XCTFail("Cancellation must be rethrown.")
+        } catch is CancellationError {
+            // Expected.
+        }
+        let firstWasClosed = await first.wasClosed
+        let secondWasClosed = await second.wasClosed
+        XCTAssertTrue(firstWasClosed)
+        XCTAssertTrue(secondWasClosed)
+    }
+
     func testAggregateRefreshRetriesTransientEnvironmentLoadFailures() async throws {
         let loader = FailOnceAggregateEnvironmentLoader()
         let fixture = try await makeFixture(
@@ -428,6 +501,8 @@ final class NativeMultiEnvironmentTests: XCTestCase {
         fallbackPollingInitialDelay: Duration = .seconds(3),
         fallbackPollingInterval: Duration = .seconds(2),
         aggregateRefreshInterval: Duration = .seconds(20),
+        webSocketConnector: any WebSocketConnecting =
+            UnavailableMultiEnvironmentWebSocketConnector(),
         aggregateEnvironmentLoader: @escaping @Sendable (EnvironmentRuntime) async throws -> [Environment] = {
             try await $0.environments()
         }
@@ -480,7 +555,7 @@ final class NativeMultiEnvironmentTests: XCTestCase {
                 ]
             ),
             httpTransport: transport,
-            webSocketConnector: UnavailableMultiEnvironmentWebSocketConnector(),
+            webSocketConnector: webSocketConnector,
             rpcConnectionWaitTimeout: .milliseconds(5)
         )
         let settings = UserDefaults(
@@ -803,6 +878,132 @@ private struct UnavailableMultiEnvironmentWebSocketConnector: WebSocketConnectin
     func connect(to _: URL) async throws -> any WebSocketConnection {
         throw URLError(.cannotConnectToHost)
     }
+}
+
+private actor UsageProbeConnector: WebSocketConnecting {
+    private let connections: [String: UsageProbeConnection]
+
+    init(connections: [String: UsageProbeConnection]) {
+        self.connections = connections
+    }
+
+    func connect(to url: URL) throws -> any WebSocketConnection {
+        guard let host = url.host, let connection = connections[host] else {
+            throw URLError(.cannotConnectToHost)
+        }
+        return connection
+    }
+}
+
+private actor UsageProbeConnection: WebSocketConnection {
+    enum Result: Sendable {
+        case success(UsageSummary)
+        case failure(String)
+    }
+
+    private let result: Result
+    private let delay: Duration
+    private var queuedResponses: [Data] = []
+    private var receiver: CheckedContinuation<Data, Error>?
+    private var sent = false
+    private var sentWaiters: [CheckedContinuation<Void, Never>] = []
+    private(set) var closeCount = 0
+    var wasClosed: Bool { closeCount > 0 }
+
+    init(result: Result, delay: Duration = .zero) {
+        self.result = result
+        self.delay = delay
+    }
+
+    func send(_ data: Data) async throws {
+        sent = true
+        let waiters = sentWaiters
+        sentWaiters.removeAll()
+        waiters.forEach { $0.resume() }
+        try await Task.sleep(for: delay)
+        let request = try JSONDecoder.t3.decode(JSONValue.self, from: data)
+        guard request["tag"]?.stringValue == RPCMethod.serverGetUsageSummary.rawValue,
+              case let .number(requestID) = request["id"] else {
+            return
+        }
+        let exit: JSONValue
+        switch result {
+        case let .success(summary):
+            exit = .object([
+                "_tag": .string("Success"),
+                "value": try JSONValue.encode(summary),
+            ])
+        case let .failure(message):
+            exit = .object([
+                "_tag": .string("Failure"),
+                "cause": .array([
+                    .object([
+                        "_tag": .string("Fail"),
+                        "error": .object(["message": .string(message)]),
+                    ]),
+                ]),
+            ])
+        }
+        enqueue(
+            try JSONEncoder.t3.encode(
+                JSONValue.object([
+                    "_tag": .string("Exit"),
+                    "requestId": .number(requestID),
+                    "exit": exit,
+                ])
+            )
+        )
+    }
+
+    func receive() async throws -> Data {
+        if !queuedResponses.isEmpty {
+            return queuedResponses.removeFirst()
+        }
+        return try await withCheckedThrowingContinuation { continuation in
+            receiver = continuation
+        }
+    }
+
+    func close() {
+        closeCount += 1
+        receiver?.resume(throwing: CancellationError())
+        receiver = nil
+    }
+
+    func waitUntilSent() async {
+        guard !sent else { return }
+        await withCheckedContinuation { continuation in
+            sentWaiters.append(continuation)
+        }
+    }
+
+    private func enqueue(_ data: Data) {
+        if let receiver {
+            self.receiver = nil
+            receiver.resume(returning: data)
+        } else {
+            queuedResponses.append(data)
+        }
+    }
+}
+
+private func usageProbeSummary(provider: UsageProviderKind) -> UsageSummary {
+    UsageSummary(
+        contractVersion: usageContractVersion,
+        readAt: "2026-08-09T12:00:00.000Z",
+        timeZone: "Australia/Sydney",
+        sinceDay: "2026-08-03",
+        untilDay: "2026-08-09",
+        buckets: [],
+        sources: [],
+        pricing: UsagePricing(
+            status: .fresh,
+            source: provider.rawValue,
+            fetchedAt: "2026-08-09T12:00:00.000Z",
+            knownModels: 1
+        ),
+        scanDurationMs: 1
+    )
 }
 
 private func multiEnvironmentShell(

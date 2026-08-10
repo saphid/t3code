@@ -78,7 +78,7 @@ public struct UsageView: View {
             .padding(.bottom, 32)
         }
         .scrollIndicators(.hidden)
-        .refreshable { await load(input: windowInput) }
+        .refreshable { await load(input: UsageWindow.make(days: windowDays)) }
         .background(T3Colors.background)
         .navigationTitle("Usage")
         .navigationBarTitleDisplayMode(.inline)
