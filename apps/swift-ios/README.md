@@ -145,6 +145,12 @@ Run with
 `T3_SWIFT_VERIFY_BUNDLE_IDENTIFIERS_ONLY=1` to verify the configuration's host
 and extension bundle identifiers without a device build.
 
+Debug installations embed an offline changelog for the commits after
+`upstream/t3code/rebuild-mobile-app-swift`. Set `T3_SWIFT_CHANGELOG_BASE_REF` to
+compare with another build base. Settings only shows notes whose embedded build
+number (and overridden marketing version, when supplied) matches the installed
+app. Release builds do not embed local Git history.
+
 ## Release checklist
 
 1. Set a unique `MARKETING_VERSION` and a higher `CURRENT_PROJECT_VERSION`.

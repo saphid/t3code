@@ -13,14 +13,17 @@ public struct SettingsView: View {
     @State private var saveErrorMessage: String?
     private let appVersionLabel: String
     private let debugBuildMetadata: DebugBuildMetadata?
+    private let buildChangelog: BuildChangelog?
 
     public init(model: FeatureRootModel) {
         self.model = model
         _settings = State(initialValue: model.snapshot.settings)
-        appVersionLabel = SettingsAboutMetadata.appVersionLabel(info: Bundle.main.infoDictionary)
+        let info = Bundle.main.infoDictionary
+        appVersionLabel = SettingsAboutMetadata.appVersionLabel(info: info)
         debugBuildMetadata = T3BuildChrome.isDebugBuild
-            ? DebugBuildMetadata(info: Bundle.main.infoDictionary)
+            ? DebugBuildMetadata(info: info)
             : nil
+        buildChangelog = BuildChangelog.load(info: info)
     }
 
     public var body: some View {
@@ -373,6 +376,29 @@ public struct SettingsView: View {
                     .accessibilityHidden(true)
                 }
                 settingsDivider
+                if let buildChangelog {
+                    NavigationLink {
+                        BuildChangelogView(
+                            changelog: buildChangelog,
+                            versionLabel: appVersionLabel
+                        )
+                    } label: {
+                        SettingsNavigationRow(
+                            title: "What’s new",
+                            systemImage: "clock.arrow.circlepath"
+                        )
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("What’s new in version \(appVersionLabel)")
+                } else {
+                    SettingsValueRow(
+                        title: "What’s new",
+                        value: "Unavailable",
+                        systemImage: "clock.arrow.circlepath"
+                    )
+                    .accessibilityHint("This build does not include matching release notes.")
+                }
+                settingsDivider
                 SettingsValueRow(title: "Platform", value: "Native SwiftUI")
                 settingsDivider
                 Link(destination: URL(string: "https://github.com/pingdotgg/t3code")!) {
@@ -500,7 +526,6 @@ public struct SettingsView: View {
             serverVersion: activeEnvironment?.serverVersion
         )
     }
-
     private var canSave: Bool {
         !isSaving && settings != model.snapshot.settings
     }

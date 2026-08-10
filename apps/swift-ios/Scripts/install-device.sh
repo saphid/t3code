@@ -19,8 +19,10 @@ require_cmd() {
 }
 
 require_cmd awk
+require_cmd base64
 require_cmd mktemp
 require_cmd plutil
+require_cmd tr
 require_cmd xcodebuild
 require_cmd xcrun
 
@@ -77,6 +79,15 @@ fi
 build_settings=(
   "DEVELOPMENT_TEAM=${DEVELOPMENT_TEAM}"
 )
+CHANGELOG_FILE=""
+DEVICE_JSON=""
+INSTALLED_APPS_JSON=""
+cleanup() {
+  [[ -z "${CHANGELOG_FILE}" ]] || rm -f -- "${CHANGELOG_FILE}"
+  [[ -z "${DEVICE_JSON}" ]] || rm -f -- "${DEVICE_JSON}"
+  [[ -z "${INSTALLED_APPS_JSON}" ]] || rm -f -- "${INSTALLED_APPS_JSON}"
+}
+trap cleanup EXIT
 
 if [[ "${CONFIGURATION}" == "Debug" ]]; then
   require_cmd git
@@ -92,15 +103,18 @@ if [[ "${CONFIGURATION}" == "Debug" ]]; then
     "T3_GIT_AHEAD_COUNT=${GIT_AHEAD_COUNT}"
     "T3_GIT_BEHIND_COUNT=${GIT_BEHIND_COUNT}"
   )
+  CHANGELOG_FILE="$(mktemp -t t3-swift-changelog.XXXXXX)"
+  CHANGELOG_BASE_REF="${T3_SWIFT_CHANGELOG_BASE_REF:-upstream/t3code/rebuild-mobile-app-swift}"
+  xcrun swift "${SCRIPT_DIR}/generate-build-changelog.swift" \
+    "${APP_DIR}/../.." \
+    "${CHANGELOG_BASE_REF}" \
+    "${CHANGELOG_FILE}" \
+    "${T3_SWIFT_VERSION:-}" \
+    "${T3_SWIFT_BUILD_NUMBER}"
+  BUILD_CHANGELOG="$(base64 < "${CHANGELOG_FILE}" | tr -d '\n')"
+  build_settings+=("T3_BUILD_CHANGELOG=${BUILD_CHANGELOG}")
 fi
 
-DEVICE_JSON=""
-INSTALLED_APPS_JSON=""
-cleanup() {
-  [[ -z "${DEVICE_JSON}" ]] || rm -f -- "${DEVICE_JSON}"
-  [[ -z "${INSTALLED_APPS_JSON}" ]] || rm -f -- "${INSTALLED_APPS_JSON}"
-}
-trap cleanup EXIT
 DEVICE_JSON="$(mktemp -t t3-swift-devices.XXXXXX)"
 INSTALLED_APPS_JSON="$(mktemp -t t3-swift-installed-apps.XXXXXX)"
 xcrun devicectl list devices --json-output "${DEVICE_JSON}" --quiet >/dev/null
