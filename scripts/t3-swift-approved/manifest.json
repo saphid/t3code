@@ -144,6 +144,14 @@
       "sourcePatchId": "250b35b2f5196d2a8adef2e7fc821fd1b52ddc70",
       "integrationPatchId": "250b35b2f5196d2a8adef2e7fc821fd1b52ddc70",
       "integratedCommit": "b5602cdbc43a3b5cbde0f3e6134e6ed42d307f19"
+    },
+    {
+      "name": "Let the SwiftUI composer grow without a numeric line cap",
+      "sourceBranch": "fix/swiftui-composer-unlimited-growth-20260810",
+      "sourceCommit": "3faa42759f57c1f6d5fd47728540a8ef329be581",
+      "pullRequest": "https://github.com/pingdotgg/t3code/pull/5801",
+      "integrationPatchId": "c01876656ecb223f180530488f96b1fe447c389c",
+      "integratedCommit": "28f64927fec7a3319f8e82669adf9b033aaad573"
     }
   ],
   "featurePaths": [
@@ -190,7 +198,7 @@
     "docs/user/swiftui-image-attachments.md",
     "docs/user/swiftui-working-duration.md"
   ],
-  "featureTreeDigest": "19726a5b2f4cbeff867811480734b88ef3abad4a3607c24e6711010da57373e3",
+  "featureTreeDigest": "ac6c79e167fa348e3a5d24a68cac21b7d093ea8aec3a881929267f2d8502adcc",
   "overlayPaths": [
     "apps/swift-ios/Extensions/Shared/T3CodeDev.entitlements",
     "apps/swift-ios/Resources/Info.plist",
