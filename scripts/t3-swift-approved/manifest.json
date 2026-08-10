@@ -5,7 +5,7 @@
     "remote": "upstream",
     "repository": "https://github.com/pingdotgg/t3code.git",
     "ref": "t3code/rebuild-mobile-app-swift",
-    "commit": "4cb33079025f80bbd8f8d206f4642ba84451a9ef"
+    "commit": "497f54f3e67acf1d2562d22d60eddd70aefc9627"
   },
   "approvedBy": "Alex Southwell",
   "approvedAt": "2026-08-10T12:35:00+10:00",
@@ -160,24 +160,164 @@
       "pullRequest": "https://github.com/pingdotgg/t3code/pull/5801",
       "integrationPatchId": "20746a8516474e7cfae915b808526cf6ea7397c7",
       "integratedCommit": "2fef68bbd66a0cda08275e40879eba478532c9a2"
+    },
+    {
+      "name": "Keep the restored SwiftUI composer caret at the end",
+      "sourceBranch": "agent/swiftui-image-paste",
+      "sourceCommit": "7dd05819938d624cfed4928881abe59c81b55d70",
+      "pullRequest": "https://github.com/pingdotgg/t3code/pull/5610",
+      "sourcePatchId": "ca716e5a0d2d0d9592fe05ad696b7da92514bc35",
+      "integrationPatchId": "a7b8e626294b7362d42992f134ba8f0b160b956d",
+      "integratedCommit": "5cd14fc02babe14740e69530511c2e7f29728ad9"
+    },
+    {
+      "name": "Harden live SwiftUI working-duration updates",
+      "sourceBranch": "agent/swiftui-composer-polish",
+      "sourceCommit": "4a562721c25e671e6122e71241b5eecb376708e1",
+      "pullRequest": "https://github.com/pingdotgg/t3code/pull/5611",
+      "sourcePatchId": "ebe123314ec646eeb995057e0a70ceb9e0e2480d",
+      "integrationPatchId": "ebe123314ec646eeb995057e0a70ceb9e0e2480d",
+      "integratedCommit": "049d4143533bc24bd6b808fa9a776714298aea7f"
+    },
+    {
+      "name": "Preserve missing seeded SwiftUI branches",
+      "sourceBranch": "t3code/add-mobile-thread-menus",
+      "sourceCommit": "ca4bcd15b5b06a5423e924a64bdf30a389d1d095",
+      "pullRequest": "https://github.com/pingdotgg/t3code/pull/5753",
+      "sourcePatchId": "cf7276ed3fffb0f4d691c0b83208ef4b5379524e",
+      "integrationPatchId": "cf7276ed3fffb0f4d691c0b83208ef4b5379524e",
+      "integratedCommit": "d4117fea220ffcd74c59e6e2db56315863ed8412"
+    },
+    {
+      "name": "Gate SwiftUI branch seeding by project availability",
+      "sourceBranch": "t3code/add-mobile-thread-menus",
+      "sourceCommit": "341a59c60a60a5a6353c41d3be5964e182dd3e9d",
+      "pullRequest": "https://github.com/pingdotgg/t3code/pull/5753",
+      "sourcePatchId": "e03ce0bd2c92559f8b6aff5aca495fe4225a5658",
+      "integrationPatchId": "e03ce0bd2c92559f8b6aff5aca495fe4225a5658",
+      "integratedCommit": "587a24f1cd3c36a8a15eda3c13ab993868e8d706"
+    },
+    {
+      "name": "Open SwiftUI thread links inside the app",
+      "sourceBranch": "saphid/swiftui-deep-links-v2",
+      "sourceCommit": "c301dfe21cd04e26a4faf74ea5a91c428833b4c1",
+      "sourcePatchId": "0fd5534dec7f31f09573865b452a2a620e6239ca",
+      "integrationPatchId": "0fd5534dec7f31f09573865b452a2a620e6239ca",
+      "integratedCommit": "fae1bd6bf4cdfe37e65e84559c75c172416b8c7a"
+    },
+    {
+      "name": "Share content into durable SwiftUI composer drafts",
+      "sourceBranch": "saphid/swiftui-share-drafts-v2",
+      "sourceCommit": "4cdabe5294d65675b0c1da7e8ca6f5d22b36b4a0",
+      "sourcePatchId": "3d32a7f4d71e9d20fed293f25175bcedf53139ef",
+      "integrationPatchId": "daaf7484bf54e16b813ae9f12ab14f6e0b665b52",
+      "integratedCommit": "6aa3079df3c6b3edbc43fbb2d6e60364050fb1af"
+    },
+    {
+      "name": "Fix SwiftUI share appearance and continuation",
+      "sourceBranch": "saphid/swiftui-share-drafts-v2",
+      "sourceCommit": "8d1e77fe5855330e824f02e448c160e4f87313f0",
+      "sourcePatchId": "0cb33afb51484ca46d319613f3071fcf94d100b6",
+      "integrationPatchId": "0cb33afb51484ca46d319613f3071fcf94d100b6",
+      "integratedCommit": "713a8d56e1cad6a57b8ba094384dbbb81f7e8888"
+    },
+    {
+      "name": "Configure the shared SwiftUI app group per build",
+      "sourceBranch": "saphid/swiftui-share-drafts-v2",
+      "sourceCommit": "fc40cf325ebd7f061e39ff75ce7d35f94fbf2a33",
+      "sourcePatchId": "b828fd808d468d1b19c3c6f9a3b354cbaf15e0ea",
+      "integrationPatchId": "b828fd808d468d1b19c3c6f9a3b354cbaf15e0ea",
+      "integratedCommit": "daa2603e8fcebeab406f05a66f0f9e39a0c4a002"
+    },
+    {
+      "name": "Show the exact SwiftUI build changelog in app",
+      "sourceBranch": "saphid/swiftui-changelog-v2",
+      "sourceCommit": "84a4d8f9164ea12a8bdb17aa7e1ea845e363acfb",
+      "sourcePatchId": "2dc7c2101cb12f7febb7a40f607074204b1c3214",
+      "integrationPatchId": "56575c29fcc563ff633e796cc566303b1ed49c7c",
+      "integratedCommit": "70a4dba1df1b6c83c009115a1e845bbd341e2f8f"
+    },
+    {
+      "name": "Link SwiftUI changelog commits and pull requests",
+      "sourceBranch": "saphid/swiftui-changelog-v2",
+      "sourceCommit": "64a8033e4e0d33e36b9b10dc401a01fddcbd1a0a",
+      "sourcePatchId": "06990473ec7e94aadf04d9741a701ae849c7f403",
+      "integrationPatchId": "06990473ec7e94aadf04d9741a701ae849c7f403",
+      "integratedCommit": "24bd3d1b3df92e43c0fed76b661acb33a59102d9"
+    },
+    {
+      "name": "Make Settle the SwiftUI full-swipe action",
+      "sourceBranch": "saphid/swiftui-settle-swipe-v2",
+      "sourceCommit": "62e9c962464050474fd8c2d8de7124503988b66f",
+      "sourcePatchId": "fc2b16836721c5c91dd080985e066cbdae53d60c",
+      "integrationPatchId": "fc2b16836721c5c91dd080985e066cbdae53d60c",
+      "integratedCommit": "bdecfb6d67c3ea75454e2865502aa615d2b2a75c"
+    },
+    {
+      "name": "Add SwiftUI file preview navigation and info",
+      "sourceBranch": "saphid/swiftui-file-viewer-navigation",
+      "sourceCommit": "e21c0f2ab7a0f8149bd7fb6ae1a065d4afc406e7",
+      "sourcePatchId": "4d599f95b64857426b4896ce0f22eb03aee21460",
+      "integrationPatchId": "30b85408b0d1e69ca9418fe73907a556abc2c34b",
+      "integratedCommit": "2a07bb223c2d8143ed6589bf93fb7b9c1c55c048"
+    },
+    {
+      "name": "Show workspace images inline in SwiftUI chat",
+      "sourceBranch": "saphid/swiftui-inline-workspace-images",
+      "sourceCommit": "0d339511999244fec450db48059e0e595e10bcb8",
+      "sourcePatchId": "18b04d0f91dea74d568f84cf942b7d31b32539b2",
+      "integrationPatchId": "2325d5540a9bca8d09485f331dad9d908c383354",
+      "integratedCommit": "afeffa6f2863483c853d384a839520692434c0e7"
+    },
+    {
+      "name": "Show recent projects in the SwiftUI picker",
+      "sourceBranch": "saphid/swiftui-recent-projects-section",
+      "sourceCommit": "c304262ef1a1549f69108dd07456964c9f9c912b",
+      "sourcePatchId": "3e95a6110f26508884a4f6b6ff9183ebaa5bb19c",
+      "integrationPatchId": "3e95a6110f26508884a4f6b6ff9183ebaa5bb19c",
+      "integratedCommit": "015f584d8e3957063cf94e211955e0d3e4079797"
+    },
+    {
+      "name": "Compose timestamp swipes with workspace image rendering",
+      "sourceBranch": "personal/swiftui-approved",
+      "sourceCommit": "553ade4e68bbd6fad812c031db686658d18a883a",
+      "sourcePatchId": "535cfdee5b29ffe40e8511edcfd61db6bef81b07",
+      "integrationPatchId": "535cfdee5b29ffe40e8511edcfd61db6bef81b07",
+      "integratedCommit": "553ade4e68bbd6fad812c031db686658d18a883a"
     }
   ],
   "featurePaths": [
     "apps/swift-ios/App/NativeFeatureClient.swift",
     "apps/swift-ios/App/NativeWorkspaceMapper.swift",
+    "apps/swift-ios/App/Platform/PlatformDeepLinks.swift",
+    "apps/swift-ios/App/Platform/PlatformIncomingShare.swift",
+    "apps/swift-ios/App/Platform/PlatformRootView.swift",
+    "apps/swift-ios/App/Platform/PlatformShortcuts.swift",
     "apps/swift-ios/Core/HTTP.swift",
     "apps/swift-ios/Core/Models.swift",
     "apps/swift-ios/Core/Persistence.swift",
     "apps/swift-ios/Core/T3Client.swift",
+    "apps/swift-ios/Extensions/Share/Info.plist",
+    "apps/swift-ios/Extensions/Share/SharePayloadLoader.swift",
+    "apps/swift-ios/Extensions/Share/ShareViewController.swift",
+    "apps/swift-ios/Extensions/Shared/ShareInbox.swift",
+    "apps/swift-ios/Extensions/Shared/SharedContainer.swift",
+    "apps/swift-ios/Extensions/Tests/ExtensionContractTests.swift",
+    "apps/swift-ios/Extensions/Widgets/Info.plist",
     "apps/swift-ios/Features/Chat/FeatureComposerView.swift",
     "apps/swift-ios/Features/Chat/ImageAttachmentViews.swift",
+    "apps/swift-ios/Features/Chat/MarkdownDocument.swift",
     "apps/swift-ios/Features/Chat/MarkdownMessageView.swift",
     "apps/swift-ios/Features/Chat/MarkdownRenderCache.swift",
+    "apps/swift-ios/Features/Chat/MarkdownWorkspaceImageView.swift",
     "apps/swift-ios/Features/Chat/ThreadDetailView.swift",
     "apps/swift-ios/Features/Files/FeatureFilesView.swift",
     "apps/swift-ios/Features/Root/FeatureRootModel.swift",
+    "apps/swift-ios/Features/Root/FeatureRootView.swift",
+    "apps/swift-ios/Features/Settings/BuildChangelog.swift",
     "apps/swift-ios/Features/Settings/SettingsView.swift",
     "apps/swift-ios/Features/Shared/FeatureClient.swift",
+    "apps/swift-ios/Features/Shared/FeatureComposerDraftStore.swift",
     "apps/swift-ios/Features/Shared/FeatureModels.swift",
     "apps/swift-ios/Features/Shared/FeatureToolModels.swift",
     "apps/swift-ios/Features/SourceControl/FeatureSourceControlView.swift",
@@ -190,6 +330,9 @@
     "apps/swift-ios/Features/Workspace/WorkspaceView.swift",
     "apps/swift-ios/DesignSystem/T3Theme.swift",
     "apps/swift-ios/README.md",
+    "apps/swift-ios/Scripts/changelog-summaries.schema.json",
+    "apps/swift-ios/Scripts/generate-build-changelog.swift",
+    "apps/swift-ios/Scripts/generate-luna-changelog-summaries.sh",
     "apps/swift-ios/Tests/CoreTests/CoreContractTests.swift",
     "apps/swift-ios/Tests/FeatureTests/AttachmentPreparationTests.swift",
     "apps/swift-ios/Tests/FeatureTests/DailyUXModelPickerTests.swift",
@@ -199,14 +342,19 @@
     "apps/swift-ios/Tests/FeatureTests/FeatureToolStateTests.swift",
     "apps/swift-ios/Tests/FeatureTests/HomeThreadMetadataTests.swift",
     "apps/swift-ios/Tests/FeatureTests/MarkdownDocumentTests.swift",
+    "apps/swift-ios/Tests/FeatureTests/MarkdownWorkspaceImageTests.swift",
     "apps/swift-ios/Tests/FeatureTests/DebugBuildMetadataTests.swift",
     "apps/swift-ios/Tests/FeatureTests/SettingsAboutMetadataTests.swift",
     "apps/swift-ios/Tests/FeatureTests/ThreadContextMenuTests.swift",
     "apps/swift-ios/Tests/FeatureTests/TranscriptViewportGeometryTests.swift",
+    "apps/swift-ios/Tests/PlatformTests/PlatformDeepLinkTests.swift",
+    "apps/swift-ios/Tests/PlatformTests/PlatformFeedbackTests.swift",
+    "apps/swift-ios/Tests/PlatformTests/PlatformIncomingShareTests.swift",
+    "docs/README.md",
     "docs/user/swiftui-image-attachments.md",
     "docs/user/swiftui-working-duration.md"
   ],
-  "featureTreeDigest": "03560b942a940c4c7b4fc656d5c53a73badf95265500d75db14382662dc08100",
+  "featureTreeDigest": "69aefca562c43fe10bb84db46e7df90ef1caae63d75ce9db3b43acf492a7a790",
   "overlayPaths": [
     "apps/swift-ios/Extensions/Shared/T3CodeDev.entitlements",
     "apps/swift-ios/Resources/Info.plist",
@@ -215,7 +363,7 @@
     "apps/swift-ios/Scripts/validate-device-build-number.test.sh",
     "apps/swift-ios/T3Code.xcodeproj/project.pbxproj"
   ],
-  "overlayTreeDigest": "0fdab23615935917580c8a974d591671486edb05ebd5c5071e94db22d039ccc1",
+  "overlayTreeDigest": "3ccbe2b73c9d9a10641b80a12e65e37ed5d98738c43201d10fb3bfca4be9db29",
   "policyPaths": [
     "docs/operations/swiftui-approved-phone-lane.md",
     "scripts/t3-swift-approved/manifest.json",
