@@ -1088,7 +1088,7 @@ struct FeatureComposerTextInput: UIViewRepresentable {
         textView.textContainerInset = .zero
         textView.textContainer.lineFragmentPadding = 0
         // Return always edits the draft; sending is deliberately button-only.
-        textView.isScrollEnabled = false
+        textView.isScrollEnabled = true
         textView.accessibilityIdentifier = "message-composer"
         updateAccessibility(textView)
         return textView
@@ -1117,7 +1117,7 @@ struct FeatureComposerTextInput: UIViewRepresentable {
             context.coordinator.lastAppliedSelectionRequestID = selectionRequest.id
         }
         updateAccessibility(textView)
-        textView.isScrollEnabled = false
+        textView.isScrollEnabled = true
 
         if context.coordinator.lastAppliedFocus != focused.wrappedValue {
             context.coordinator.lastAppliedFocus = focused.wrappedValue
@@ -1138,7 +1138,10 @@ struct FeatureComposerTextInput: UIViewRepresentable {
         let fittingSize = uiView.sizeThatFits(
             CGSize(width: width, height: .greatestFiniteMagnitude)
         )
-        return CGSize(width: width, height: fittingSize.height)
+        let availableHeight = proposal.height.flatMap { height in
+            height.isFinite ? height : nil
+        } ?? fittingSize.height
+        return CGSize(width: width, height: min(fittingSize.height, availableHeight))
     }
 
     private func updateAccessibility(_ textView: FeatureComposerUITextView) {

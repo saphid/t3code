@@ -17,7 +17,18 @@ struct FeatureComposerPowerTests {
     }
 
     @MainActor
-    private func composerTextInputHeight(lineCount: Int) -> CGFloat {
+    @Test
+    func composerTextInputYieldsToTheAvailableViewportForVeryTallDrafts() {
+        let viewportHeight: CGFloat = 500
+
+        #expect(composerTextInputHeight(lineCount: 100, maximumHeight: viewportHeight) <= viewportHeight)
+    }
+
+    @MainActor
+    private func composerTextInputHeight(
+        lineCount: Int,
+        maximumHeight: CGFloat = .greatestFiniteMagnitude
+    ) -> CGFloat {
         let text = Array(repeating: "A full visible prompt line", count: lineCount)
             .joined(separator: "\n")
         let controller = UIHostingController(
@@ -26,7 +37,7 @@ struct FeatureComposerPowerTests {
         )
 
         return controller.sizeThatFits(
-            in: CGSize(width: 320, height: CGFloat.greatestFiniteMagnitude)
+            in: CGSize(width: 320, height: maximumHeight)
         ).height
     }
 
