@@ -8,7 +8,7 @@
     "commit": "0d0c77431c851ff31181fb5f1708f351e0c5e80c"
   },
   "approvedBy": "Alex Southwell",
-  "approvedAt": "2026-08-09T18:08:30+10:00",
+  "approvedAt": "2026-08-10T11:01:50+10:00",
   "features": [
     {
       "name": "Grow the SwiftUI composer for long prompts",
@@ -111,6 +111,14 @@
       "sourcePatchId": "1a6d9da59a072eabb0e5beaf3f0e2df479a21872",
       "integrationPatchId": "1a6d9da59a072eabb0e5beaf3f0e2df479a21872",
       "integratedCommit": "258909ec40dba2b10df39d921dfc4e4573299d61"
+    },
+    {
+      "name": "Show reasoning level in the SwiftUI composer",
+      "sourceBranch": "saphid/swiftui-composer-reasoning-level-upstream",
+      "sourceCommit": "824f6a148a6c0f547141b0996236d90d5cf57727",
+      "sourcePatchId": "b4f770316f00d82f9b821686e0619245121d4d49",
+      "integrationPatchId": "b4f770316f00d82f9b821686e0619245121d4d49",
+      "integratedCommit": "fbc6ec7716ff35b95e424a4c15bc3dd8e8f2b18f"
     }
   ],
   "featurePaths": [
@@ -155,7 +163,7 @@
     "docs/user/swiftui-image-attachments.md",
     "docs/user/swiftui-working-duration.md"
   ],
-  "featureTreeDigest": "c0b2f3e3ffececc967f872d5dd2ed6f4243ade45153d7e1132b4c886f102b10c",
+  "featureTreeDigest": "6c386e703cf7556ddb7099022750c84c5d5a8bab2ea50df8de4f8b516c10e279",
   "overlayPaths": [
     "apps/swift-ios/Extensions/Shared/T3CodeDev.entitlements",
     "apps/swift-ios/Resources/Info.plist",
