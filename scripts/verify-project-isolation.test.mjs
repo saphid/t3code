@@ -5,6 +5,7 @@ import test from "node:test";
 
 import {
   normalizePathCase,
+  validateEarlyDesktopUserData,
   validateManifest,
   validatePersonalTeamDebugSigning,
 } from "./verify-project-isolation.mjs";
@@ -62,6 +63,20 @@ test("keeps Debug signing compatible with a Personal Team", () => {
       devEntitlementsSource,
     ).join("\n"),
     /all three Debug app targets/,
+  );
+});
+
+test("configures typed Electron user data before child processes can start", () => {
+  const mainSource = readFileSync("apps/desktop/src/main.ts", "utf8");
+  const earlyIdentitySource = readFileSync("apps/desktop/src/app/DesktopEarlyIdentity.ts", "utf8");
+
+  assert.deepEqual(validateEarlyDesktopUserData(mainSource, earlyIdentitySource), []);
+  assert.match(
+    validateEarlyDesktopUserData(
+      mainSource.replace('import "./app/DesktopEarlyIdentity.ts";', ""),
+      earlyIdentitySource,
+    ).join("\n"),
+    /before other startup work/,
   );
 });
 

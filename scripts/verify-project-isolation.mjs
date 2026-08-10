@@ -292,6 +292,26 @@ export function validatePersonalTeamDebugSigning(projectSource, devEntitlementsS
   return errors;
 }
 
+export function validateEarlyDesktopUserData(mainSource, earlyIdentitySource) {
+  const errors = [];
+
+  if (!mainSource.startsWith('import "./app/DesktopEarlyIdentity.ts";')) {
+    errors.push("desktop entrypoint must load typed identity before other startup work");
+  }
+  for (const token of [
+    '"T3CodeTypedSwiftUIElectron"',
+    '"T3CodeTypedSwiftUIElectronDev"',
+    'app.setPath("userData", userDataPath)',
+    'app.commandLine.appendSwitch("user-data-dir", userDataPath)',
+  ]) {
+    if (!earlyIdentitySource.includes(token)) {
+      errors.push(`early desktop identity is missing: ${token}`);
+    }
+  }
+
+  return errors;
+}
+
 function validateAppSandboxSources() {
   const roots = [
     NodePath.join(repositoryRoot, "apps/swift-ios"),
@@ -356,6 +376,15 @@ function validateAppSandboxSources() {
       ),
       NodeFS.readFileSync(
         NodePath.join(repositoryRoot, "apps/swift-ios/Extensions/Shared/T3CodeDev.entitlements"),
+        "utf8",
+      ),
+    ),
+  );
+  errors.push(
+    ...validateEarlyDesktopUserData(
+      NodeFS.readFileSync(NodePath.join(repositoryRoot, "apps/desktop/src/main.ts"), "utf8"),
+      NodeFS.readFileSync(
+        NodePath.join(repositoryRoot, "apps/desktop/src/app/DesktopEarlyIdentity.ts"),
         "utf8",
       ),
     ),

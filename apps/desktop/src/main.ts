@@ -1,3 +1,5 @@
+import "./app/DesktopEarlyIdentity.ts";
+
 for (const stream of [process.stdout, process.stderr]) {
   stream.on("error", (err: NodeJS.ErrnoException) => {
     if (err.code !== "EPIPE") throw err;
