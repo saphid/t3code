@@ -28,14 +28,14 @@ struct FeatureComposerPowerTests {
                 dynamicTypeSize: .large,
                 verticalSizeClass: .regular,
                 softwareKeyboardIsVisible: true
-            ) == (1...3)
+            ) == (1...1)
         )
         #expect(
             FeatureComposerTextLayout.visibleLineRange(
                 dynamicTypeSize: .large,
                 verticalSizeClass: .compact,
                 softwareKeyboardIsVisible: true
-            ) == (1...3)
+            ) == (1...1)
         )
         #expect(
             FeatureComposerTextLayout.visibleLineRange(
@@ -49,7 +49,7 @@ struct FeatureComposerPowerTests {
                 dynamicTypeSize: .accessibility5,
                 verticalSizeClass: .regular,
                 softwareKeyboardIsVisible: true
-            ) == (1...2)
+            ) == (1...1)
         )
         #expect(
             FeatureComposerTextLayout.visibleLineRange(
@@ -98,6 +98,41 @@ struct FeatureComposerPowerTests {
                 screenBounds: screen,
                 isLocal: false
             )
+        )
+    }
+
+    @Test
+    func newThreadKeyboardStateClearsAcrossScenePresentationTransitions() {
+        let screen = CGRect(x: 0, y: 0, width: 368, height: 800)
+        let keyboard = CGRect(x: 0, y: 494, width: 368, height: 306)
+
+        #expect(
+            !FeatureComposerTextLayout.softwareKeyboardOccupiesScreen(
+                keyboardFrame: nil,
+                screenBounds: screen,
+                isLocal: true
+            )
+        )
+        #expect(
+            !FeatureComposerTextLayout.softwareKeyboardOccupiesScreen(
+                keyboardFrame: keyboard,
+                screenBounds: nil,
+                isLocal: true
+            )
+        )
+        #expect(
+            !FeatureComposerTextLayout.softwareKeyboardOccupiesScreen(
+                keyboardFrame: keyboard,
+                screenBounds: screen,
+                isLocal: true,
+                sceneIsActive: false
+            )
+        )
+        #expect(
+            FeatureComposerTextLayout.bottomClearance(
+                dynamicTypeSize: .accessibility5,
+                softwareKeyboardIsVisible: true
+            ) == 52
         )
     }
 
