@@ -382,13 +382,23 @@ struct FeatureComposerView: View {
             .frame(maxWidth: 220, alignment: .leading)
             .layoutPriority(2)
 
-            if let reasoningSummary {
-                Text(reasoningSummary)
-                    .font(T3Typography.supporting)
+            if let reasoningContext {
+                Menu {
+                    reasoningChoices(for: reasoningContext)
+                } label: {
+                    HStack(spacing: 3) {
+                        Text(reasoningContext.summary)
+                            .lineLimit(1)
+                        Image(systemName: "chevron.up.chevron.down")
+                            .font(.system(size: 8, weight: .bold))
+                    }
+                    .font(T3Typography.supportingStrong)
                     .foregroundStyle(T3Colors.textSecondary)
-                    .lineLimit(1)
                     .fixedSize(horizontal: true, vertical: false)
-                    .accessibilityLabel("Reasoning level: \(reasoningSummary)")
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Choose reasoning level")
+                .accessibilityValue(reasoningContext.summary)
             }
 
             Spacer(minLength: 0)
@@ -473,15 +483,61 @@ struct FeatureComposerView: View {
         )
     }
 
-    private var reasoningSummary: String? {
-        guard let effectiveSelection = selection ?? threadSelection,
-              let provider = providers.first(where: { $0.id == effectiveSelection.providerID }),
-              let model = provider.models.first(where: { $0.id == effectiveSelection.modelID }) else {
-            return nil
+    @ViewBuilder
+    private func reasoningChoices(
+        for context: FeatureComposerReasoningSelection.Context
+    ) -> some View {
+        switch context.descriptor.kind {
+        case .select:
+            ForEach(context.descriptor.choices) { choice in
+                Button {
+                    updateReasoning(.string(choice.id))
+                } label: {
+                    if context.value == .string(choice.id) {
+                        Label(choice.label, systemImage: "checkmark")
+                    } else {
+                        Text(choice.label)
+                    }
+                }
+            }
+        case .boolean:
+            Button {
+                updateReasoning(.boolean(true))
+            } label: {
+                if context.value == .boolean(true) {
+                    Label("On", systemImage: "checkmark")
+                } else {
+                    Text("On")
+                }
+            }
+            Button {
+                updateReasoning(.boolean(false))
+            } label: {
+                if context.value == .boolean(false) {
+                    Label("Off", systemImage: "checkmark")
+                } else {
+                    Text("Off")
+                }
+            }
         }
-        return DailyUXModelOptions.reasoningSummary(
-            for: model,
-            selections: effectiveSelection.options
+    }
+
+    private var reasoningContext: FeatureComposerReasoningSelection.Context? {
+        FeatureComposerReasoningSelection.context(
+            explicit: selection,
+            inherited: threadSelection,
+            providers: providers,
+            materializesDefaultSelection: materializesDefaultSelection
+        )
+    }
+
+    private func updateReasoning(_ value: FeatureModelOptionValue) {
+        selection = FeatureComposerReasoningSelection.updating(
+            explicit: selection,
+            inherited: threadSelection,
+            providers: providers,
+            materializesDefaultSelection: materializesDefaultSelection,
+            value: value
         )
     }
 
@@ -668,6 +724,72 @@ enum FeatureComposerTextLayout {
         guard dockedAtBottom else { return false }
         return screenBounds.intersection(keyboardFrame).height
             >= minimumSoftwareKeyboardHeight
+    }
+}
+
+enum FeatureComposerReasoningSelection {
+    struct Context: Equatable {
+        let selection: FeatureSelection
+        let descriptor: FeatureModelOptionDescriptor
+        let value: FeatureModelOptionValue
+        let summary: String
+    }
+
+    static func context(
+        explicit: FeatureSelection?,
+        inherited: FeatureSelection?,
+        providers: [FeatureProvider],
+        materializesDefaultSelection: Bool
+    ) -> Context? {
+        let normalizedProviders = ProviderModelCatalogNormalizer.normalized(providers)
+        let resolved = materializesDefaultSelection
+            ? ProviderModelSelectionResolver.materialized(explicit, in: normalizedProviders)
+            : ThreadComposerModelSelectionPolicy.resolvedSelection(
+                explicit: explicit,
+                inherited: inherited,
+                providers: normalizedProviders
+            )
+        guard let resolved,
+              let provider = normalizedProviders.first(where: { $0.id == resolved.providerID }),
+              let model = provider.models.first(where: { $0.id == resolved.modelID }),
+              let descriptor = DailyUXModelOptions.reasoningDescriptor(for: model),
+              let value = DailyUXModelOptions.value(for: descriptor, in: resolved.options),
+              let summary = DailyUXModelOptions.reasoningSummary(
+                for: model,
+                selections: resolved.options
+              ) else {
+            return nil
+        }
+        return Context(
+            selection: resolved,
+            descriptor: descriptor,
+            value: value,
+            summary: summary
+        )
+    }
+
+    static func updating(
+        explicit: FeatureSelection?,
+        inherited: FeatureSelection?,
+        providers: [FeatureProvider],
+        materializesDefaultSelection: Bool,
+        value: FeatureModelOptionValue
+    ) -> FeatureSelection? {
+        guard let context = context(
+            explicit: explicit,
+            inherited: inherited,
+            providers: providers,
+            materializesDefaultSelection: materializesDefaultSelection
+        ) else {
+            return explicit
+        }
+        var updated = context.selection
+        updated.options = DailyUXModelOptions.updating(
+            updated.options,
+            id: context.descriptor.id,
+            value: value
+        )
+        return updated
     }
 }
 
