@@ -5,10 +5,10 @@
     "remote": "upstream",
     "repository": "https://github.com/pingdotgg/t3code.git",
     "ref": "t3code/rebuild-mobile-app-swift",
-    "commit": "e55c7ffd166358170ca124b79e45ba162dd0f2a8"
+    "commit": "e995f72f665bf6ae248fbce1b471d498346f79ab"
   },
   "approvedBy": "Alex Southwell",
-  "approvedAt": "2026-08-10T11:01:50+10:00",
+  "approvedAt": "2026-08-10T11:30:30+10:00",
   "features": [
     {
       "name": "Grow the SwiftUI composer for long prompts",
@@ -121,6 +121,14 @@
       "integratedCommit": "fbc6ec7716ff35b95e424a4c15bc3dd8e8f2b18f"
     },
     {
+      "name": "Change reasoning level from the SwiftUI composer",
+      "sourceBranch": "saphid/swiftui-composer-reasoning-level-upstream",
+      "sourceCommit": "41f3dbcded025cb9af81c1e88f5daa3486872c74",
+      "sourcePatchId": "e5c5fac0550da6b6464f92427c962c3f3a5288d8",
+      "integrationPatchId": "e5c5fac0550da6b6464f92427c962c3f3a5288d8",
+      "integratedCommit": "41f3dbcded025cb9af81c1e88f5daa3486872c74"
+    },
+    {
       "name": "Keep SwiftUI skill suggestions clear of composer text",
       "sourceBranch": "t3code/move-skills-popup-upward",
       "sourceCommit": "e0799cd13b18085adfbdcc82b5a4adacff99f9da",
@@ -167,6 +175,7 @@
     "apps/swift-ios/README.md",
     "apps/swift-ios/Tests/CoreTests/CoreContractTests.swift",
     "apps/swift-ios/Tests/FeatureTests/AttachmentPreparationTests.swift",
+    "apps/swift-ios/Tests/FeatureTests/DailyUXModelPickerTests.swift",
     "apps/swift-ios/Tests/FeatureTests/DailyUXSidebarTests.swift",
     "apps/swift-ios/Tests/FeatureTests/DailyUXNewTaskTests.swift",
     "apps/swift-ios/Tests/FeatureTests/FeatureComposerPowerTests.swift",
@@ -180,7 +189,7 @@
     "docs/user/swiftui-image-attachments.md",
     "docs/user/swiftui-working-duration.md"
   ],
-  "featureTreeDigest": "52c2b07a1ca1629d3918c7e86668db2ea9eff99b86637a309cf4a08692947088",
+  "featureTreeDigest": "d5199b4366457322a10932210f361bbf22d032d6598684f0ba4c6a45d62f72d5",
   "overlayPaths": [
     "apps/swift-ios/Extensions/Shared/T3CodeDev.entitlements",
     "apps/swift-ios/Resources/Info.plist",
