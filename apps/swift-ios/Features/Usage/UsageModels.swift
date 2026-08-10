@@ -155,6 +155,7 @@ enum UsageMerger {
                 result.records += bucket.records
                 cacheSavingsUsd += bucket.cacheSavingsUsd
                 unpricedRecords += bucket.unpricedRecords
+
                 var provider = providers[bucket.provider] ?? ProviderAccumulator()
                 provider.costUsd += bucket.costUsd
                 provider.totalTokens += tokens

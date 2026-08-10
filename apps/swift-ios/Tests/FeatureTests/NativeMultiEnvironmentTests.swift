@@ -228,7 +228,10 @@ final class NativeMultiEnvironmentTests: XCTestCase {
             "one.example": first,
             "two.example": second,
         ])
-        let fixture = try await makeFixture(webSocketConnector: connector)
+        let fixture = try await makeFixture(
+            webSocketConnector: connector,
+            rpcConnectionWaitTimeout: .seconds(1)
+        )
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
 
         let summaries = try await fixture.client.usageSummaries(
@@ -263,7 +266,10 @@ final class NativeMultiEnvironmentTests: XCTestCase {
             "one.example": first,
             "two.example": second,
         ])
-        let fixture = try await makeFixture(webSocketConnector: connector)
+        let fixture = try await makeFixture(
+            webSocketConnector: connector,
+            rpcConnectionWaitTimeout: .seconds(1)
+        )
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
 
         let task = Task {
@@ -275,8 +281,10 @@ final class NativeMultiEnvironmentTests: XCTestCase {
                 )
             )
         }
-        await first.waitUntilSent()
-        await second.waitUntilSent()
+        let firstWasSent = await first.waitUntilSent()
+        let secondWasSent = await second.waitUntilSent()
+        XCTAssertTrue(firstWasSent)
+        XCTAssertTrue(secondWasSent)
         task.cancel()
 
         do {
@@ -503,6 +511,7 @@ final class NativeMultiEnvironmentTests: XCTestCase {
         aggregateRefreshInterval: Duration = .seconds(20),
         webSocketConnector: any WebSocketConnecting =
             UnavailableMultiEnvironmentWebSocketConnector(),
+        rpcConnectionWaitTimeout: Duration = .milliseconds(5),
         aggregateEnvironmentLoader: @escaping @Sendable (EnvironmentRuntime) async throws -> [Environment] = {
             try await $0.environments()
         }
@@ -556,7 +565,7 @@ final class NativeMultiEnvironmentTests: XCTestCase {
             ),
             httpTransport: transport,
             webSocketConnector: webSocketConnector,
-            rpcConnectionWaitTimeout: .milliseconds(5)
+            rpcConnectionWaitTimeout: rpcConnectionWaitTimeout
         )
         let settings = UserDefaults(
             suiteName: "t3-native-multi-\(UUID().uuidString)"
@@ -906,7 +915,6 @@ private actor UsageProbeConnection: WebSocketConnection {
     private var queuedResponses: [Data] = []
     private var receiver: CheckedContinuation<Data, Error>?
     private var sent = false
-    private var sentWaiters: [CheckedContinuation<Void, Never>] = []
     private(set) var closeCount = 0
     var wasClosed: Bool { closeCount > 0 }
 
@@ -917,9 +925,6 @@ private actor UsageProbeConnection: WebSocketConnection {
 
     func send(_ data: Data) async throws {
         sent = true
-        let waiters = sentWaiters
-        sentWaiters.removeAll()
-        waiters.forEach { $0.resume() }
         try await Task.sleep(for: delay)
         let request = try JSONDecoder.t3.decode(JSONValue.self, from: data)
         guard request["tag"]?.stringValue == RPCMethod.serverGetUsageSummary.rawValue,
@@ -970,11 +975,13 @@ private actor UsageProbeConnection: WebSocketConnection {
         receiver = nil
     }
 
-    func waitUntilSent() async {
-        guard !sent else { return }
-        await withCheckedContinuation { continuation in
-            sentWaiters.append(continuation)
+    func waitUntilSent(timeout: Duration = .seconds(1)) async -> Bool {
+        let clock = ContinuousClock()
+        let deadline = clock.now.advanced(by: timeout)
+        while !sent, clock.now < deadline {
+            await Task.yield()
         }
+        return sent
     }
 
     private func enqueue(_ data: Data) {

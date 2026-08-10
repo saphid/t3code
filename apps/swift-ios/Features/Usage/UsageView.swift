@@ -50,7 +50,9 @@ public struct UsageView: View {
                     } description: {
                         Text(errorMessage)
                     } actions: {
-                        Button("Try again") { Task { await load(input: windowInput) } }
+                        Button("Try again") {
+                            Task { await load(input: UsageWindow.make(days: windowDays)) }
+                        }
                     }
                 } else if environments.isEmpty {
                     ContentUnavailableView {
@@ -64,7 +66,9 @@ public struct UsageView: View {
                     } description: {
                         Text("No compatible usage data is available.")
                     } actions: {
-                        Button("Try again") { Task { await load(input: windowInput) } }
+                        Button("Try again") {
+                            Task { await load(input: UsageWindow.make(days: windowDays)) }
+                        }
                     }
                 } else {
                     chartCard
@@ -352,9 +356,13 @@ public struct UsageView: View {
         let loadID = UUID()
         activeLoadID = loadID
         if input != windowInput {
+            let selectedWindowChanged =
+                UsageWindow.days(in: input).count != UsageWindow.days(in: windowInput).count
             windowInput = input
-            environments = []
-            merged = MergedUsage()
+            if selectedWindowChanged {
+                environments = []
+                merged = MergedUsage()
+            }
         }
         isLoading = true
         defer {
