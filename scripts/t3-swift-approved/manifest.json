@@ -316,6 +316,14 @@
       "sourcePatchId": "5945d51e0be4e5d785236a5864e88b29adc6aa88",
       "integrationPatchId": "5945d51e0be4e5d785236a5864e88b29adc6aa88",
       "integratedCommit": "42a4e2b145ad09d1484a0f18e5bccbc972f31c4a"
+    },
+    {
+      "name": "Complete dropped SwiftUI new-task dismissals",
+      "sourceBranch": "personal/swiftui-approved",
+      "sourceCommit": "a455185df480c7062b9c0d062acb054f267df330",
+      "sourcePatchId": "8ee6c49241ac7f7eb5d8e5a8318d78ccdbbada38",
+      "integrationPatchId": "8ee6c49241ac7f7eb5d8e5a8318d78ccdbbada38",
+      "integratedCommit": "a455185df480c7062b9c0d062acb054f267df330"
     }
   ],
   "featurePaths": [
@@ -387,7 +395,7 @@
     "docs/user/swiftui-image-attachments.md",
     "docs/user/swiftui-working-duration.md"
   ],
-  "featureTreeDigest": "31f0e5ca24bb8e6dcc000c3fb24738c04fa4da754dead5e5dc6ec074d6ec2836",
+  "featureTreeDigest": "5afc54cc99cc8d0bf8827ed15af088c9b211826e51fa16272ba7b04b7d31e877",
   "overlayPaths": [
     "apps/swift-ios/Extensions/Shared/T3CodeDev.entitlements",
     "apps/swift-ios/Resources/Info.plist",
