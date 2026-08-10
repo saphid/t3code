@@ -4,8 +4,10 @@ import UIKit
 struct FeatureWorkspaceNavigationRequest: Equatable, Sendable {
     enum Destination: Equatable, Sendable {
         case thread(id: String)
+        case sharedThread(id: String, importDraft: FeatureComposerIncomingShareDraft)
         case project(id: String)
         case newTask(projectID: String?)
+        case sharedNewTask(shareID: String)
     }
 
     let id: UUID
@@ -25,6 +27,8 @@ public struct WorkspaceView: View {
     private let onNavigationRequestConsumed: @MainActor (UUID) -> Void
     private let submitNewTask: (NewTaskRequest) async -> FeatureThread?
     private let submitMessage: (FeatureMessageSubmission) async -> Bool
+    private let acknowledgeIncomingShare: (String) async -> Void
+    private let releaseIncomingSharePresentation: @MainActor (String) -> Void
 
     @State private var selectedThreadID: String?
     @State private var selectedProjectID: String?
@@ -34,8 +38,12 @@ public struct WorkspaceView: View {
     @State private var isSettledExpanded = true
     @State private var isArchiveExpanded = false
     @State private var settledLimit = 12
-    @State private var showingNewTask = false
+    @State private var presentedNewTask: NewTaskPresentation?
     @State private var newTaskInitialProjectID: String?
+    @State private var newTaskIncomingShareID: String?
+    @State private var dismissingNewTaskContext: NewTaskDismissalContext?
+    @State private var threadDetailPresentationRevision = 0
+    @State private var sharedThreadImports: [String: [FeatureComposerIncomingShareDraft]] = [:]
     @State private var showingAddProject = false
     @State private var showingSettings = false
     @State private var renamingThread: FeatureThread?
@@ -55,7 +63,9 @@ public struct WorkspaceView: View {
             navigationRequest: nil,
             onNavigationRequestConsumed: { _ in },
             submitNewTask: submitNewTask,
-            submitMessage: submitMessage
+            submitMessage: submitMessage,
+            acknowledgeIncomingShare: { _ in },
+            releaseIncomingSharePresentation: { _ in }
         )
     }
 
@@ -64,11 +74,15 @@ public struct WorkspaceView: View {
         navigationRequest: FeatureWorkspaceNavigationRequest?,
         onNavigationRequestConsumed: @escaping @MainActor (UUID) -> Void,
         submitNewTask: ((NewTaskRequest) async -> FeatureThread?)? = nil,
-        submitMessage: ((FeatureMessageSubmission) async -> Bool)? = nil
+        submitMessage: ((FeatureMessageSubmission) async -> Bool)? = nil,
+        acknowledgeIncomingShare: @escaping (String) async -> Void = { _ in },
+        releaseIncomingSharePresentation: @escaping @MainActor (String) -> Void = { _ in }
     ) {
         self.model = model
         self.navigationRequest = navigationRequest
         self.onNavigationRequestConsumed = onNavigationRequestConsumed
+        self.acknowledgeIncomingShare = acknowledgeIncomingShare
+        self.releaseIncomingSharePresentation = releaseIncomingSharePresentation
         self.submitNewTask = submitNewTask ?? { request in
             do {
                 let thread = try await model.client.createThreadAndSend(
@@ -124,17 +138,23 @@ public struct WorkspaceView: View {
             detail
         }
         .navigationSplitViewStyle(.balanced)
-        .sheet(isPresented: $showingNewTask) {
+        .sheet(item: $presentedNewTask, onDismiss: newTaskDidDismiss) { presentation in
             NewThreadView(
                 model: model,
                 submit: submitNewTask,
                 onCreated: { thread in
                     openThread(thread.id)
-                    showingNewTask = false
+                    presentedNewTask = nil
                 },
                 onCreateProject: openProjectCreation,
-                initialProjectID: newTaskInitialProjectID
+                initialProjectID: presentation.initialProjectID,
+                incomingShareID: presentation.incomingShareID,
+                acknowledgeIncomingShare: acknowledgeIncomingShare
             )
+            .id(NewTaskPresentationIdentity(
+                initialProjectID: presentation.initialProjectID,
+                incomingShareID: presentation.incomingShareID
+            ))
         }
         .sheet(isPresented: $showingAddProject) {
             AddProjectView(model: model)
@@ -267,6 +287,8 @@ public struct WorkspaceView: View {
             ThreadDetailView(
                 model: model,
                 thread: thread,
+                composerDraftReloadRevision: threadDetailPresentationRevision,
+                composerDraftReloadImports: sharedThreadImports[id] ?? [],
                 submitMessage: submitMessage,
                 onNavigateBack: closeSelectedThread
             )
@@ -600,7 +622,7 @@ public struct WorkspaceView: View {
 
     @MainActor
     private func openProjectCreation() {
-        showingNewTask = false
+        presentedNewTask = nil
         showingAddProject = true
     }
 
@@ -613,7 +635,10 @@ public struct WorkspaceView: View {
             showingAddProject = true
         } else {
             newTaskInitialProjectID = initialProjectID
-            showingNewTask = true
+            presentedNewTask = NewTaskPresentation(
+                initialProjectID: initialProjectID,
+                incomingShareID: nil
+            )
         }
     }
 
@@ -623,6 +648,17 @@ public struct WorkspaceView: View {
         case let .thread(id):
             guard model.snapshot.threads.contains(where: { $0.id == id }) else { return }
             dismissTransientPresentations()
+            openThread(id)
+        case let .sharedThread(id, importDraft):
+            guard model.snapshot.threads.contains(where: { $0.id == id }) else { return }
+            dismissTransientPresentations()
+            if selectedThreadID == id {
+                sharedThreadImports[id] = FeatureComposerIncomingShareReloadPolicy.appending(
+                    importDraft,
+                    to: sharedThreadImports[id] ?? []
+                )
+                threadDetailPresentationRevision &+= 1
+            }
             openThread(id)
         case let .project(id):
             guard model.snapshot.projects.contains(where: { $0.id == id }) else { return }
@@ -639,15 +675,65 @@ public struct WorkspaceView: View {
                 await Task.yield()
                 openNewTaskOrProjectCreation(initialProjectID: projectID)
             }
+        case let .sharedNewTask(shareID):
+            dismissTransientPresentations()
+            Task { @MainActor in
+                await Task.yield()
+                newTaskInitialProjectID = nil
+                newTaskIncomingShareID = shareID
+                await Task.yield()
+                guard newTaskIncomingShareID == shareID else { return }
+                presentedNewTask = NewTaskPresentation(
+                    initialProjectID: nil,
+                    incomingShareID: shareID
+                )
+            }
         }
         onNavigationRequestConsumed(navigationRequest.id)
     }
 
     private func dismissTransientPresentations() {
-        showingNewTask = false
+        if let presentedNewTask {
+            dismissingNewTaskContext = NewTaskDismissalContext(
+                initialProjectID: presentedNewTask.initialProjectID,
+                incomingShareID: presentedNewTask.incomingShareID
+            )
+        }
+        presentedNewTask = nil
         showingAddProject = false
         showingSettings = false
         renamingThread = nil
+    }
+
+    private func newTaskDidDismiss() {
+        if presentedNewTask != nil {
+            let resolution = NewTaskDismissalPolicy.resolveStaleDismissal(
+                dismissing: dismissingNewTaskContext,
+                currentInitialProjectID: newTaskInitialProjectID,
+                currentIncomingShareID: newTaskIncomingShareID
+            )
+            if let shareID = resolution.releasedIncomingShareID {
+                releaseIncomingSharePresentation(shareID)
+            }
+            newTaskInitialProjectID = resolution.remainingInitialProjectID
+            newTaskIncomingShareID = resolution.remainingIncomingShareID
+            dismissingNewTaskContext = nil
+            return
+        }
+        let dismissed = dismissingNewTaskContext ?? NewTaskDismissalContext(
+            initialProjectID: newTaskInitialProjectID,
+            incomingShareID: newTaskIncomingShareID
+        )
+        let resolution = dismissed.resolve(
+            currentInitialProjectID: newTaskInitialProjectID,
+            currentIncomingShareID: newTaskIncomingShareID
+        )
+        if let shareID = resolution.releasedIncomingShareID {
+            releaseIncomingSharePresentation(shareID)
+        }
+        newTaskInitialProjectID = resolution.remainingInitialProjectID
+        newTaskIncomingShareID = resolution.remainingIncomingShareID
+        dismissingNewTaskContext = nil
     }
 
     private func projectMenuTitle(_ project: FeatureProject) -> String {
@@ -659,6 +745,57 @@ public struct WorkspaceView: View {
         }
         return "\(project.name) · \(environment.name)"
     }
+}
+
+struct NewTaskDismissalContext: Equatable {
+    let initialProjectID: String?
+    let incomingShareID: String?
+
+    func resolve(
+        currentInitialProjectID: String?,
+        currentIncomingShareID: String?
+    ) -> NewTaskDismissalResolution {
+        NewTaskDismissalResolution(
+            remainingInitialProjectID: currentInitialProjectID == initialProjectID
+                ? nil
+                : currentInitialProjectID,
+            remainingIncomingShareID: currentIncomingShareID == incomingShareID
+                ? nil
+                : currentIncomingShareID,
+            releasedIncomingShareID: incomingShareID
+        )
+    }
+}
+
+struct NewTaskPresentationIdentity: Hashable {
+    let initialProjectID: String?
+    let incomingShareID: String?
+}
+
+struct NewTaskPresentation: Identifiable, Equatable {
+    let id = UUID()
+    let initialProjectID: String?
+    let incomingShareID: String?
+}
+
+enum NewTaskDismissalPolicy {
+    static func resolveStaleDismissal(
+        dismissing: NewTaskDismissalContext?,
+        currentInitialProjectID: String?,
+        currentIncomingShareID: String?
+    ) -> NewTaskDismissalResolution {
+        NewTaskDismissalResolution(
+            remainingInitialProjectID: currentInitialProjectID,
+            remainingIncomingShareID: currentIncomingShareID,
+            releasedIncomingShareID: dismissing?.incomingShareID
+        )
+    }
+}
+
+struct NewTaskDismissalResolution: Equatable {
+    let remainingInitialProjectID: String?
+    let remainingIncomingShareID: String?
+    let releasedIncomingShareID: String?
 }
 
 private extension FeatureDraftAttachment {

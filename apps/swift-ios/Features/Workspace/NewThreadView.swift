@@ -8,6 +8,7 @@ public struct NewThreadView: View {
     let onCreateProject: @MainActor () -> Void
     private let draftStore: FeatureComposerDraftStore
     private let initialProjectID: String?
+    private let acknowledgeIncomingShare: (String) async -> Void
 
     @State private var projectID = ""
     @State private var prompt = ""
@@ -31,6 +32,9 @@ public struct NewThreadView: View {
     @State private var immediateDraftSaveTasks: [String: Task<Void, Never>] = [:]
     @State private var submittedSuccessfully = false
     @State private var attachmentLifecycle: FeatureAttachmentLifecycle
+    @State private var pendingIncomingShareID: String?
+    @State private var restoredIncomingShareID: String?
+    @State private var showingDiscardIncomingShare = false
     @FocusState private var promptFocused: Bool
 
     public init(
@@ -39,6 +43,8 @@ public struct NewThreadView: View {
         onCreated: @escaping (FeatureThread) -> Void,
         onCreateProject: @escaping @MainActor () -> Void = {},
         initialProjectID: String? = nil,
+        incomingShareID: String? = nil,
+        acknowledgeIncomingShare: @escaping (String) async -> Void = { _ in },
         draftStore: FeatureComposerDraftStore = .shared
     ) {
         self.model = model
@@ -46,10 +52,12 @@ public struct NewThreadView: View {
         self.onCreated = onCreated
         self.onCreateProject = onCreateProject
         self.initialProjectID = initialProjectID
+        self.acknowledgeIncomingShare = acknowledgeIncomingShare
         self.draftStore = draftStore
         _attachmentLifecycle = State(
             initialValue: FeatureAttachmentLifecycle(contextID: initialProjectID ?? "")
         )
+        _pendingIncomingShareID = State(initialValue: incomingShareID)
     }
 
     public var body: some View {
@@ -94,7 +102,11 @@ public struct NewThreadView: View {
             }
         }
         .onAppear {
-            if projectID.isEmpty {
+            if pendingIncomingShareID != nil {
+                if !creationProjects.isEmpty {
+                    activePicker = .project
+                }
+            } else if projectID.isEmpty {
                 let initialProject = creationProjects.first { $0.id == initialProjectID }
                 let initialGroup = initialProject.flatMap {
                     DailyUXProjectGrouping.group(
@@ -111,6 +123,7 @@ public struct NewThreadView: View {
         .onChange(of: projectID) { prepareProjectIfNeeded(projectID) }
         .onChange(of: creationProjectIDs) { _, ids in
             guard !ids.contains(projectID) else { return }
+            guard pendingIncomingShareID == nil else { return }
             persistCurrentDraftImmediately()
             let previousProject = model.snapshot.projects.first { $0.id == projectID }
             let previousGroupID = previousProject.map {
@@ -128,6 +141,7 @@ public struct NewThreadView: View {
         .onChange(of: selectedBranch) { scheduleDraftSave() }
         .onChange(of: startFromOrigin) { scheduleDraftSave() }
         .task(id: projectID) { await restoreDraftAndLoadBranches() }
+        .task(id: pendingIncomingShareID) { await restoreIncomingShareDraft() }
         .onDisappear {
             guard !submittedSuccessfully else { return }
             persistCurrentDraftImmediately()
@@ -164,14 +178,30 @@ public struct NewThreadView: View {
         } message: {
             Text("Check your connection and try again.")
         }
-        .interactiveDismissDisabled(isSubmitting)
+        .confirmationDialog(
+            "Discard this shared draft?",
+            isPresented: $showingDiscardIncomingShare,
+            titleVisibility: .visible
+        ) {
+            Button("Keep editing", role: .cancel) {}
+            Button("Discard shared draft", role: .destructive) {
+                discardIncomingShare()
+            }
+        }
+        .interactiveDismissDisabled(isSubmitting || pendingIncomingShareID != nil)
         .presentationDetents([.large])
         .presentationDragIndicator(.visible)
     }
 
     private var topBar: some View {
         HStack {
-            Button("Cancel") { dismiss() }
+            Button("Cancel") {
+                if pendingIncomingShareID == nil {
+                    dismiss()
+                } else {
+                    showingDiscardIncomingShare = true
+                }
+            }
                 .font(.body)
                 .foregroundStyle(T3Colors.textSecondary)
                 .disabled(isSubmitting)
@@ -601,6 +631,8 @@ public struct NewThreadView: View {
     private func prepareProjectIfNeeded(_ id: String) {
         guard draftRestoreContext?.projectID != id else { return }
 
+        persistIncomingShareDraftImmediately()
+
         if selectionIsExplicit, let selection {
             preferredSelection = selection
         }
@@ -710,12 +742,59 @@ public struct NewThreadView: View {
               draftRestoreContext?.projectID == requestedProjectID else {
             return
         }
-        let saved = try? await draftStore.draft(for: key)
+        let routedShareID = pendingIncomingShareID
+        if let routedShareID {
+            let sourceKey = FeatureComposerDraftStore.incomingShareKey(shareID: routedShareID)
+            await NewTaskDraftWriteFence.wait(immediateDraftSaveTasks[sourceKey])
+        }
         guard !Task.isCancelled,
               projectID == requestedProjectID,
+              pendingIncomingShareID == routedShareID,
               draftRestoreContext?.projectID == requestedProjectID else {
             return
         }
+        let saved: FeatureComposerDraft?
+        var shouldAcknowledgeShare = false
+        var routingError: String?
+        if let routedShareID {
+            do {
+                let result = try await draftStore.routeIncomingShare(
+                    shareID: routedShareID,
+                    to: key
+                )
+                switch result {
+                case let .routed(draft), let .alreadyRouted(draft?):
+                    saved = draft
+                    shouldAcknowledgeShare = true
+                case .alreadyRouted(nil):
+                    saved = nil
+                    shouldAcknowledgeShare = true
+                case .sourceMissing:
+                    saved = nil
+                    routingError = "The shared draft is no longer available. Share it again to retry."
+                }
+            } catch {
+                saved = nil
+                routingError = error.localizedDescription
+            }
+        } else {
+            saved = try? await draftStore.draft(for: key)
+        }
+        let routeIsCurrent = !Task.isCancelled
+            && projectID == requestedProjectID
+            && pendingIncomingShareID == routedShareID
+            && draftRestoreContext?.projectID == requestedProjectID
+        guard routeIsCurrent else {
+            if let routedShareID,
+               shouldAcknowledgeShare,
+               pendingIncomingShareID == routedShareID {
+                restoredIncomingShareID = nil
+                pendingIncomingShareID = nil
+                await acknowledgeIncomingShare(routedShareID)
+            }
+            return
+        }
+        if let routingError { model.errorMessage = routingError }
 
         let liveDraft = composerDraft
         let liveSelectionIsExplicit = selectionIsExplicit
@@ -752,10 +831,45 @@ public struct NewThreadView: View {
         workspaceSelectionIsExplicit = liveWorkspaceSelectionIsExplicit
             || saved?.workspace != nil
         restoredDraftProjectID = requestedProjectID
+        if let routedShareID, shouldAcknowledgeShare {
+            restoredIncomingShareID = nil
+            pendingIncomingShareID = nil
+            await acknowledgeIncomingShare(routedShareID)
+        }
         if liveDraft != context.baseline {
             scheduleDraftSave()
         }
         await loadBranches()
+    }
+
+    @MainActor
+    private func restoreIncomingShareDraft() async {
+        guard let shareID = pendingIncomingShareID,
+              projectID.isEmpty else { return }
+        let key = FeatureComposerDraftStore.incomingShareKey(shareID: shareID)
+        let saved: FeatureComposerDraft?
+        let readError: String?
+        do {
+            saved = try await draftStore.draft(for: key)
+            readError = nil
+        } catch {
+            saved = nil
+            readError = error.localizedDescription
+        }
+        guard !Task.isCancelled,
+              pendingIncomingShareID == shareID,
+              projectID.isEmpty else { return }
+        if let readError {
+            model.errorMessage = readError
+            return
+        }
+        guard let saved else { return }
+        restoredIncomingShareID = shareID
+        prompt = saved.text
+        attachments = saved.attachments
+        if !creationProjects.isEmpty {
+            activePicker = .project
+        }
     }
 
     private var currentDraftKey: String? {
@@ -796,6 +910,10 @@ public struct NewThreadView: View {
     }
 
     private func scheduleDraftSave() {
+        if projectID.isEmpty, pendingIncomingShareID != nil {
+            scheduleIncomingShareDraftSave()
+            return
+        }
         guard restoredDraftProjectID == projectID,
               !isSubmitting,
               !submittedSuccessfully,
@@ -817,6 +935,63 @@ public struct NewThreadView: View {
             } catch {
                 return
             }
+        }
+    }
+
+    private func scheduleIncomingShareDraftSave() {
+        guard let shareID = pendingIncomingShareID,
+              NewTaskIncomingSharePersistencePolicy.canPersist(
+                  pendingShareID: shareID,
+                  restoredShareID: restoredIncomingShareID
+              ),
+              !isSubmitting,
+              !submittedSuccessfully else { return }
+        let key = FeatureComposerDraftStore.incomingShareKey(shareID: shareID)
+        let previousSave = immediateDraftSaveTasks[key]
+        previousSave?.cancel()
+        let snapshot = composerDraft
+        let task = Task { @MainActor in
+            await NewTaskDraftWriteFence.wait(previousSave)
+            do {
+                try await Task.sleep(for: .milliseconds(220))
+                try Task.checkCancellation()
+                try await draftStore.setDraft(snapshot, for: key)
+            } catch {
+                return
+            }
+        }
+        immediateDraftSaveTasks[key] = task
+    }
+
+    private func persistIncomingShareDraftImmediately() {
+        guard let shareID = pendingIncomingShareID,
+              NewTaskIncomingSharePersistencePolicy.canPersist(
+                  pendingShareID: shareID,
+                  restoredShareID: restoredIncomingShareID
+              ) else { return }
+        let key = FeatureComposerDraftStore.incomingShareKey(shareID: shareID)
+        let previousSave = immediateDraftSaveTasks[key]
+        previousSave?.cancel()
+        let snapshot = composerDraft
+        let task = Task { @MainActor in
+            await NewTaskDraftWriteFence.wait(previousSave)
+            guard !Task.isCancelled else { return }
+            try? await draftStore.setDraft(snapshot, for: key)
+        }
+        immediateDraftSaveTasks[key] = task
+    }
+
+    private func discardIncomingShare() {
+        guard let shareID = pendingIncomingShareID else { return }
+        let key = FeatureComposerDraftStore.incomingShareKey(shareID: shareID)
+        let pendingSave = immediateDraftSaveTasks.removeValue(forKey: key)
+        restoredIncomingShareID = nil
+        pendingIncomingShareID = nil
+        Task { @MainActor in
+            await NewTaskDraftWriteFence.cancelAndWait(pendingSave)
+            try? await draftStore.removeDraft(for: key)
+            await acknowledgeIncomingShare(shareID)
+            dismiss()
         }
     }
 
@@ -871,6 +1046,13 @@ enum NewTaskDraftWriteFence {
     static func cancelAndWait(_ task: Task<Void, Never>?) async {
         task?.cancel()
         await task?.value
+    }
+}
+
+enum NewTaskIncomingSharePersistencePolicy {
+    static func canPersist(pendingShareID: String?, restoredShareID: String?) -> Bool {
+        guard let pendingShareID else { return false }
+        return restoredShareID == pendingShareID
     }
 }
 

@@ -8,6 +8,8 @@ public struct ThreadDetailView: View {
 
     @Bindable var model: FeatureRootModel
     let thread: FeatureThread
+    let composerDraftReloadRevision: Int
+    let composerDraftReloadImports: [FeatureComposerIncomingShareDraft]
     let submitMessage: (FeatureMessageSubmission) async -> Bool
     let onNavigateBack: () -> Void
     private let draftStore: FeatureComposerDraftStore
@@ -18,7 +20,10 @@ public struct ThreadDetailView: View {
     @State private var isSending = false
     @State private var isLoading = true
     @State private var sendFailed = false
+    @State private var sharedAttachmentOverflowCount = 0
     @State private var didRestoreDraft = false
+    @State private var restoredImportedShareIDs: Set<String> = []
+    @State private var handledComposerDraftReloadRevision: Int
     @State private var draftSaveTask: Task<Void, Never>?
     @State private var toolSurface: FeatureThreadToolSurface?
     @FocusState private var composerFocused: Bool
@@ -26,12 +31,19 @@ public struct ThreadDetailView: View {
     public init(
         model: FeatureRootModel,
         thread: FeatureThread,
+        composerDraftReloadRevision: Int = 0,
+        composerDraftReloadImports: [FeatureComposerIncomingShareDraft] = [],
         submitMessage: @escaping (FeatureMessageSubmission) async -> Bool,
         onNavigateBack: @escaping () -> Void = {},
         draftStore: FeatureComposerDraftStore = .shared
     ) {
         self.model = model
         self.thread = thread
+        self.composerDraftReloadRevision = composerDraftReloadRevision
+        self.composerDraftReloadImports = composerDraftReloadImports
+        _handledComposerDraftReloadRevision = State(
+            initialValue: composerDraftReloadRevision
+        )
         self.submitMessage = submitMessage
         self.onNavigateBack = onNavigateBack
         self.draftStore = draftStore
@@ -71,6 +83,21 @@ public struct ThreadDetailView: View {
             await restoreDraft(from: restoreBaseline, key: restoreKey)
             isLoading = false
         }
+        .task(id: FeatureComposerDraftReloadTrigger(
+            revision: composerDraftReloadRevision,
+            didRestoreDraft: didRestoreDraft
+        )) {
+            guard handledComposerDraftReloadRevision != composerDraftReloadRevision,
+                  didRestoreDraft else { return }
+            for imported in FeatureComposerIncomingShareReloadPolicy.pendingImports(
+                composerDraftReloadImports,
+                restoredShareIDs: restoredImportedShareIDs
+            ) {
+                guard await reloadImportedDraft(imported.draft) else { return }
+                restoredImportedShareIDs.insert(imported.shareID)
+            }
+            handledComposerDraftReloadRevision = composerDraftReloadRevision
+        }
         .onChange(of: draft) { scheduleDraftSave() }
         .onChange(of: attachments) { scheduleDraftSave() }
         .onChange(of: selection) { scheduleDraftSave() }
@@ -105,6 +132,20 @@ public struct ThreadDetailView: View {
             Button("OK") {}
         } message: {
             Text("Your draft is still here. Check your connection and try again.")
+        }
+        .alert(
+            "Remove attachments before sending",
+            isPresented: Binding(
+                get: { sharedAttachmentOverflowCount > 0 },
+                set: { if !$0 { sharedAttachmentOverflowCount = 0 } }
+            )
+        ) {
+            Button("OK") {}
+        } message: {
+            Text(
+                "The shared attachments were kept. Remove "
+                    + "\(sharedAttachmentOverflowCount) before sending this draft."
+            )
         }
         .simultaneousGesture(edgeBackGesture)
     }
@@ -474,13 +515,45 @@ public struct ThreadDetailView: View {
     }
 
     @MainActor
+    private func reloadImportedDraft(_ importedDraft: FeatureComposerDraft) async -> Bool {
+        guard didRestoreDraft else { return false }
+        let key = draftKey
+        let pendingSave = draftSaveTask
+        draftSaveTask = nil
+        pendingSave?.cancel()
+        await pendingSave?.value
+        guard !Task.isCancelled else { return false }
+
+        let mergeResult = FeatureComposerIncomingShareMerge.merge(
+            current: composerDraft,
+            incoming: importedDraft
+        )
+        let merged = mergeResult.draft
+        draft = merged.text
+        attachments = merged.attachments
+        sharedAttachmentOverflowCount = mergeResult.attachmentOverflowCount
+        draftSaveTask?.cancel()
+        draftSaveTask = nil
+        try? await draftStore.setDraft(composerDraft, for: key)
+        return true
+    }
+
+    @MainActor
     private func restoreDraft(from baseline: FeatureComposerDraft, key: String) async {
-        let saved = try? await draftStore.draft(for: key)
+        let snapshot = try? await draftStore.snapshot(for: key)
         guard !Task.isCancelled else { return }
 
+        restoreDraft(snapshot, from: baseline)
+    }
+
+    @MainActor
+    private func restoreDraft(
+        _ snapshot: FeatureComposerDraftSnapshot?,
+        from baseline: FeatureComposerDraft
+    ) {
         let liveDraft = composerDraft
         var restored = FeatureComposerDraftRestoration.merge(
-            saved: saved,
+            saved: snapshot?.draft,
             baseline: baseline,
             current: liveDraft
         )
@@ -492,6 +565,7 @@ public struct ThreadDetailView: View {
         draft = restored.text
         attachments = restored.attachments
         selection = restored.selection
+        restoredImportedShareIDs = snapshot?.importedShareIDs ?? []
         didRestoreDraft = true
 
         // Changes made while the file read or thread refresh was in flight did
@@ -622,6 +696,70 @@ enum FeatureComposerDraftRestoration {
                 : current.startFromOrigin
         )
     }
+}
+
+enum FeatureComposerIncomingShareMerge {
+    static func merge(
+        current: FeatureComposerDraft,
+        incoming: FeatureComposerDraft,
+        maximumAttachmentCount: Int = 8
+    ) -> FeatureComposerIncomingShareMergeResult {
+        let incomingText = incoming.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let mergedText: String
+        if incomingText.isEmpty {
+            mergedText = current.text
+        } else if current.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            mergedText = incomingText
+        } else {
+            mergedText = "\(current.text)\n\n\(incomingText)"
+        }
+
+        let currentAttachmentIDs = Set(current.attachments.map(\.id))
+        let uniqueIncomingAttachments = incoming.attachments.filter {
+            !currentAttachmentIDs.contains($0.id)
+        }
+        let mergedAttachments = current.attachments + uniqueIncomingAttachments
+        return FeatureComposerIncomingShareMergeResult(
+            draft: FeatureComposerDraft(
+                text: mergedText,
+                attachments: mergedAttachments,
+                selection: current.selection,
+                workspace: current.workspace
+            ),
+            attachmentOverflowCount: max(
+                0,
+                mergedAttachments.count - maximumAttachmentCount
+            )
+        )
+    }
+}
+
+struct FeatureComposerIncomingShareMergeResult {
+    let draft: FeatureComposerDraft
+    let attachmentOverflowCount: Int
+}
+
+enum FeatureComposerIncomingShareReloadPolicy {
+    static func appending(
+        _ imported: FeatureComposerIncomingShareDraft,
+        to imports: [FeatureComposerIncomingShareDraft],
+        maximumCount: Int = 32
+    ) -> [FeatureComposerIncomingShareDraft] {
+        let deduplicated = imports.filter { $0.shareID != imported.shareID }
+        return Array((deduplicated + [imported]).suffix(maximumCount))
+    }
+
+    static func pendingImports(
+        _ imports: [FeatureComposerIncomingShareDraft],
+        restoredShareIDs: Set<String>
+    ) -> [FeatureComposerIncomingShareDraft] {
+        imports.filter { !restoredShareIDs.contains($0.shareID) }
+    }
+}
+
+private struct FeatureComposerDraftReloadTrigger: Hashable {
+    let revision: Int
+    let didRestoreDraft: Bool
 }
 
 /// A recycled transcript surface. SwiftUI still owns each message's rendering,

@@ -5,6 +5,75 @@ import Testing
 @Suite("Incoming share import")
 struct PlatformIncomingShareTests {
     @Test
+    func workspaceNavigationQueuesDeepLinksAndSharesWithoutOverwritingEither() {
+        let deepLinkID = UUID()
+        let shareID = UUID()
+        let threadID = UUID()
+        let deepLink = FeatureWorkspaceNavigationRequest(
+            id: deepLinkID,
+            destination: .newTask(projectID: "project-1")
+        )
+        let share = FeatureWorkspaceNavigationRequest(
+            id: shareID,
+            destination: .sharedNewTask(shareID: "share-1")
+        )
+        let thread = FeatureWorkspaceNavigationRequest(
+            id: threadID,
+            destination: .thread(id: "thread-1")
+        )
+        var coordinator = PlatformWorkspaceNavigationCoordinator()
+
+        coordinator.request(deepLink)
+        coordinator.request(share)
+        coordinator.request(thread)
+
+        #expect(coordinator.current == deepLink)
+        #expect(coordinator.pending == [share, thread])
+        let consumedStaleRequest = coordinator.consume(id: UUID())
+        #expect(!consumedStaleRequest)
+        #expect(coordinator.current == deepLink)
+
+        let consumedDeepLink = coordinator.consume(id: deepLinkID)
+        #expect(consumedDeepLink)
+        #expect(coordinator.current == share)
+        #expect(coordinator.pending == [thread])
+        let consumedShare = coordinator.consume(id: shareID)
+        #expect(consumedShare)
+        #expect(coordinator.current == thread)
+        let consumedThread = coordinator.consume(id: threadID)
+        #expect(consumedThread)
+        #expect(coordinator.current == nil)
+        #expect(coordinator.pending.isEmpty)
+    }
+
+    @Test @MainActor
+    func routingGateCoalescesARequestThatArrivesWhileRouting() async {
+        let gate = PlatformIncomingShareRoutingGate()
+        let started = AsyncStream<Void>.makeStream()
+        let release = AsyncStream<Void>.makeStream()
+        var runCount = 0
+
+        let first = Task { @MainActor in
+            await gate.request {
+                runCount += 1
+                if runCount == 1 {
+                    started.continuation.yield()
+                    for await _ in release.stream { break }
+                }
+            }
+        }
+        var startedIterator = started.stream.makeAsyncIterator()
+        _ = await startedIterator.next()
+
+        await gate.request { runCount += 1 }
+        await gate.request { runCount += 10 }
+        release.continuation.yield()
+        await first.value
+
+        #expect(runCount == 11)
+    }
+
+    @Test
     func persistsMergedDraftBeforeRemovingInboxEnvelope() async throws {
         let recorder = IncomingShareTestRecorder()
         let directory = FileManager.default.temporaryDirectory
@@ -55,7 +124,7 @@ struct PlatformIncomingShareTests {
                     )
                     await recorder.capture(draft: draft, key: key)
                     await recorder.record("import:\(key)")
-                    return draft
+                    return PlatformIncomingShareDraftImport(draft: draft, didImport: true)
                 }
             ),
             prepareImage: { data, ordinal in
@@ -127,7 +196,10 @@ struct PlatformIncomingShareTests {
             drafts: PlatformIncomingShareDraftRepository(
                 importContent: { _, _, _, _, _ in
                     await recorder.record("import")
-                    return FeatureComposerDraft()
+                    return PlatformIncomingShareDraftImport(
+                        draft: FeatureComposerDraft(),
+                        didImport: true
+                    )
                 }
             ),
             prepareImage: { _, _ in Self.attachment(id: UUID(), value: 1) }
@@ -173,13 +245,14 @@ struct PlatformIncomingShareTests {
             drafts: PlatformIncomingShareDraftRepository(
                 importContent: { shareID, text, attachments, key, maximumCount in
                     await recorder.record("import")
-                    return try await store.importSharedContent(
+                    let draft = try await store.importSharedContent(
                         shareID: shareID,
                         text: text,
                         attachments: attachments,
                         for: key,
                         maximumAttachmentCount: maximumCount
                     )
+                    return PlatformIncomingShareDraftImport(draft: draft, didImport: true)
                 }
             ),
             prepareImage: { _, _ in Self.attachment(id: UUID(), value: 1) }
@@ -221,7 +294,7 @@ struct PlatformIncomingShareTests {
         var edited = once
         edited.text += "\nUser edit"
         try await store.setDraft(edited, for: key)
-        let twice = try await store.importSharedContent(
+        let replay = try await store.importSharedContentResult(
             shareID: "share-id",
             text: "Shared",
             attachments: [attachment],
@@ -230,7 +303,203 @@ struct PlatformIncomingShareTests {
 
         #expect(once.text == "Existing\n\nShared")
         #expect(once.attachments == [attachment])
-        #expect(twice == edited)
+        #expect(replay.draft == edited)
+        #expect(!replay.didImport)
+    }
+
+    @Test
+    func replayAfterInboxRemovalFailureStillReturnsTheShareIdentityAndDelta() async throws {
+        let recorder = IncomingShareTestRecorder()
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = FeatureComposerDraftStore(
+            fileURL: directory.appendingPathComponent("drafts.json")
+        )
+        let envelope = Self.envelope(text: "Shared once")
+        let thread = FeatureThread(
+            id: "thread:environment:thread",
+            wireID: "thread",
+            projectID: "project",
+            environmentID: "environment",
+            title: "Thread"
+        )
+        let pipeline = PlatformIncomingSharePipeline(
+            source: PlatformIncomingShareSource(
+                loadAll: { [envelope] },
+                data: { _ in Data() },
+                remove: { id in
+                    await recorder.record("remove:\(id)")
+                    if await recorder.events.count == 1 {
+                        throw IncomingShareTestError.removeFailed
+                    }
+                }
+            ),
+            drafts: PlatformIncomingShareDraftRepository(
+                importContent: { shareID, text, attachments, key, maximumCount in
+                    let result = try await store.importSharedContentResult(
+                        shareID: shareID,
+                        text: text,
+                        attachments: attachments,
+                        for: key,
+                        maximumAttachmentCount: maximumCount
+                    )
+                    return PlatformIncomingShareDraftImport(
+                        draft: result.draft,
+                        didImport: result.didImport
+                    )
+                }
+            )
+        )
+
+        do {
+            _ = try await pipeline.importEnvelope(envelope, into: thread)
+            Issue.record("Expected inbox removal to fail")
+        } catch {
+            #expect(error as? IncomingShareTestError == .removeFailed)
+        }
+
+        let replay = try await pipeline.importEnvelope(envelope, into: thread)
+        let snapshot = try await store.snapshot(for: FeatureComposerDraftStore.threadKey(thread))
+
+        #expect(replay.sharedContent.shareID == envelope.id)
+        #expect(replay.sharedContent.draft.text == "Shared once")
+        #expect(snapshot.draft?.text == "Shared once")
+        #expect(snapshot.importedShareIDs == [envelope.id])
+        #expect(await recorder.events.count == 2)
+    }
+
+    @Test
+    func existingThreadImportUsesItsDraftAndRepresentsVideoAsAContactSheet() async throws {
+        let recorder = IncomingShareTestRecorder()
+        let videoID = "12345678-1234-1234-1234-123456789abc"
+        let envelope = Self.envelope(
+            text: "Review this",
+            videos: [Self.video(id: videoID)]
+        )
+        let thread = FeatureThread(
+            id: "thread:environment:thread",
+            wireID: "thread",
+            projectID: "project",
+            environmentID: "environment",
+            title: "Existing"
+        )
+        let pipeline = PlatformIncomingSharePipeline(
+            source: PlatformIncomingShareSource(
+                loadAll: { [envelope] },
+                data: { _ in Data() },
+                videoURL: { video in
+                    await recorder.record("video:\(video.id)")
+                    return URL(fileURLWithPath: "/tmp/video.mov")
+                },
+                remove: { id in await recorder.record("remove:\(id)") }
+            ),
+            drafts: PlatformIncomingShareDraftRepository(
+                importContent: { shareID, text, attachments, key, _ in
+                    await recorder.capture(
+                        draft: FeatureComposerDraft(text: text, attachments: attachments),
+                        key: key
+                    )
+                    await recorder.record("import:\(shareID)")
+                    return PlatformIncomingShareDraftImport(
+                        draft: FeatureComposerDraft(text: text, attachments: attachments),
+                        didImport: true
+                    )
+                }
+            ),
+            prepareImage: { _, _ in Self.attachment(id: UUID(), value: 1) },
+            prepareVideo: { _, _, _ in
+                Self.attachment(id: UUID(), value: 9)
+            }
+        )
+
+        let imported = try await pipeline.importEnvelope(envelope, into: thread)
+        let captured = await recorder.capturedDraft
+
+        #expect(captured?.key == FeatureComposerDraftStore.threadKey(thread))
+        #expect(imported.draft.text.contains("Review this"))
+        #expect(imported.sharedContent.shareID == envelope.id)
+        #expect(imported.sharedContent.draft.text.contains("Shared video: reference.mov"))
+        #expect(
+            imported.sharedContent.draft.attachments.first?.id.uuidString.lowercased() == videoID
+        )
+        #expect(await recorder.events == [
+            "video:\(videoID)",
+            "import:\(envelope.id)",
+            "remove:\(envelope.id)",
+        ])
+    }
+
+    @Test
+    func newThreadShareStaysDurableUntilProjectSelectionRoutesIt() async throws {
+        let recorder = IncomingShareTestRecorder()
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = FeatureComposerDraftStore(
+            fileURL: directory.appendingPathComponent("drafts.json")
+        )
+        let envelope = Self.envelope(text: "Choose my project")
+        let pipeline = PlatformIncomingSharePipeline(
+            source: PlatformIncomingShareSource(
+                loadAll: { [envelope] },
+                data: { _ in Data() },
+                remove: { id in await recorder.record("remove:\(id)") }
+            ),
+            drafts: PlatformIncomingShareDraftRepository(
+                importContent: { shareID, text, attachments, key, maximumCount in
+                    let draft = try await store.importSharedContent(
+                        shareID: shareID,
+                        text: text,
+                        attachments: attachments,
+                        for: key,
+                        maximumAttachmentCount: maximumCount
+                    )
+                    return PlatformIncomingShareDraftImport(draft: draft, didImport: true)
+                }
+            ),
+            prepareImage: { _, _ in Self.attachment(id: UUID(), value: 1) }
+        )
+
+        _ = try await pipeline.stageEnvelopeForNewThread(envelope)
+        let transferKey = FeatureComposerDraftStore.incomingShareKey(shareID: envelope.id)
+        #expect(try await store.draft(for: transferKey)?.text == "Choose my project")
+        #expect(await recorder.events.isEmpty)
+
+        let project = Self.project()
+        let destinationKey = FeatureComposerDraftStore.newTaskKey(project: project)
+        let routed = try await store.routeIncomingShare(
+            shareID: envelope.id,
+            to: destinationKey
+        )
+        guard case let .routed(routedDraft) = routed else {
+            Issue.record("Expected the staged share to be routed")
+            return
+        }
+        #expect(routedDraft.text == "Choose my project")
+        #expect(try await store.draft(for: transferKey) == nil)
+        #expect(try await store.draft(for: destinationKey) == routedDraft)
+
+        try await pipeline.acknowledgeEnvelope(id: envelope.id)
+        #expect(await recorder.events == ["remove:\(envelope.id)"])
+    }
+
+    @Test
+    func missingStagedShareNeverMasqueradesAsAnExistingDestinationDraft() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appending(path: UUID().uuidString, directoryHint: .isDirectory)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = FeatureComposerDraftStore(fileURL: directory.appending(path: "drafts.json"))
+        let key = "new-task:project"
+        try await store.setDraft(FeatureComposerDraft(text: "Existing text"), for: key)
+
+        let result = try await store.routeIncomingShare(
+            shareID: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+            to: key
+        )
+
+        #expect(result == .sourceMissing)
+        #expect(try await store.draft(for: key)?.text == "Existing text")
     }
 
     @Test
@@ -245,7 +514,12 @@ struct PlatformIncomingShareTests {
                     remove: { _ in }
                 ),
                 drafts: PlatformIncomingShareDraftRepository(
-                    importContent: { _, _, _, _, _ in FeatureComposerDraft() }
+                    importContent: { _, _, _, _, _ in
+                        PlatformIncomingShareDraftImport(
+                            draft: FeatureComposerDraft(),
+                            didImport: true
+                        )
+                    }
                 ),
                 prepareImage: { _, _ in Self.attachment(id: UUID(), value: 1) }
             )
@@ -257,9 +531,73 @@ struct PlatformIncomingShareTests {
         #expect(coordinator.pendingEnvelope == envelope)
     }
 
+    @Test
+    @MainActor
+    func staleThreadDestinationCanFallBackToThePicker() async throws {
+        var envelope = Self.envelope(text: "Pending")
+        envelope.destination = .existingThread(environmentID: "env", threadID: "deleted")
+        let coordinator = PlatformIncomingShareCoordinator(
+            pipeline: PlatformIncomingSharePipeline(
+                source: PlatformIncomingShareSource(
+                    loadAll: { [envelope] },
+                    data: { _ in Data() },
+                    remove: { _ in },
+                    updateDestination: { _, _ in }
+                ),
+                drafts: PlatformIncomingShareDraftRepository(
+                    importContent: { _, _, _, _, _ in
+                        PlatformIncomingShareDraftImport(
+                            draft: FeatureComposerDraft(),
+                            didImport: true
+                        )
+                    }
+                ),
+                prepareImage: { _, _ in Self.attachment(id: UUID(), value: 1) }
+            )
+        )
+
+        _ = await coordinator.refresh(hasProjects: true)
+        try await coordinator.requestAnotherDestination()
+
+        #expect(coordinator.pendingEnvelope?.destination == nil)
+    }
+
+    @Test
+    @MainActor
+    func preferredEnvelopeDoesNotFallBackToAnotherPendingShare() async {
+        let envelope = Self.envelope(text: "Do not route me")
+        let coordinator = PlatformIncomingShareCoordinator(
+            pipeline: PlatformIncomingSharePipeline(
+                source: PlatformIncomingShareSource(
+                    loadAll: { [envelope] },
+                    data: { _ in Data() },
+                    remove: { _ in }
+                ),
+                drafts: PlatformIncomingShareDraftRepository(
+                    importContent: { _, _, _, _, _ in
+                        PlatformIncomingShareDraftImport(
+                            draft: FeatureComposerDraft(),
+                            didImport: true
+                        )
+                    }
+                ),
+                prepareImage: { _, _ in Self.attachment(id: UUID(), value: 1) }
+            )
+        )
+
+        #expect(
+            !(await coordinator.refresh(
+                preferredID: "ffffffff-ffff-ffff-ffff-ffffffffffff",
+                hasProjects: true
+            ))
+        )
+        #expect(coordinator.pendingEnvelope == nil)
+    }
+
     private static func envelope(
         text: String = "",
-        images: [T3IncomingShareImage] = []
+        images: [T3IncomingShareImage] = [],
+        videos: [T3IncomingShareVideo] = []
     ) -> T3IncomingShareEnvelope {
         T3IncomingShareEnvelope(
             schemaVersion: T3IncomingShareEnvelope.schemaVersion,
@@ -267,6 +605,7 @@ struct PlatformIncomingShareTests {
             createdAt: Date(timeIntervalSince1970: 100),
             text: text,
             images: images,
+            videos: videos,
             warnings: []
         )
     }
@@ -277,6 +616,16 @@ struct PlatformIncomingShareTests {
             fileName: "reference.png",
             typeIdentifier: "public.png",
             relativePath: "image.png",
+            byteCount: 2
+        )
+    }
+
+    private static func video(id: String) -> T3IncomingShareVideo {
+        T3IncomingShareVideo(
+            id: id,
+            fileName: "reference.mov",
+            typeIdentifier: "com.apple.quicktime-movie",
+            relativePath: "video.mov",
             byteCount: 2
         )
     }
@@ -303,6 +652,7 @@ struct PlatformIncomingShareTests {
 
 private enum IncomingShareTestError: Error, Equatable {
     case imageFailed
+    case removeFailed
     case saveFailed
 }
 

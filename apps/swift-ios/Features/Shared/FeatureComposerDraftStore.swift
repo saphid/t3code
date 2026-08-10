@@ -23,6 +23,26 @@ public struct FeatureComposerDraft: Sendable, Equatable {
     }
 }
 
+public struct FeatureComposerDraftSnapshot: Sendable, Equatable {
+    public let draft: FeatureComposerDraft?
+    public let importedShareIDs: Set<String>
+
+    public init(draft: FeatureComposerDraft?, importedShareIDs: Set<String>) {
+        self.draft = draft
+        self.importedShareIDs = importedShareIDs
+    }
+}
+
+public struct FeatureComposerIncomingShareDraft: Sendable, Equatable {
+    public let shareID: String
+    public let draft: FeatureComposerDraft
+
+    public init(shareID: String, draft: FeatureComposerDraft) {
+        self.shareID = shareID
+        self.draft = draft
+    }
+}
+
 public struct FeatureComposerWorkspaceDraft: Sendable, Equatable {
     public var mode: FeatureWorkspaceMode
     public var branch: String?
@@ -53,6 +73,22 @@ public enum FeatureComposerDraftImportError: LocalizedError, Equatable, Sendable
                 : "This share needs more attachment slots. The current draft has room for \(available)."
         }
     }
+}
+
+public struct FeatureComposerDraftImportResult: Equatable, Sendable {
+    public let draft: FeatureComposerDraft
+    public let didImport: Bool
+
+    public init(draft: FeatureComposerDraft, didImport: Bool) {
+        self.draft = draft
+        self.didImport = didImport
+    }
+}
+
+public enum FeatureComposerIncomingShareRoutingResult: Equatable, Sendable {
+    case routed(FeatureComposerDraft)
+    case alreadyRouted(FeatureComposerDraft?)
+    case sourceMissing
 }
 
 /// Persists composer state independently of view navigation. Draft writes are
@@ -159,9 +195,18 @@ public actor FeatureComposerDraftStore {
     }
 
     public func draft(for key: String) throws -> FeatureComposerDraft? {
-        guard let draft = try loadIfNeeded()[key]?.featureValue,
-              !draft.isEmpty else { return nil }
-        return draft
+        try snapshot(for: key).draft
+    }
+
+    public func snapshot(for key: String) throws -> FeatureComposerDraftSnapshot {
+        guard let persisted = try loadIfNeeded()[key] else {
+            return FeatureComposerDraftSnapshot(draft: nil, importedShareIDs: [])
+        }
+        let draft = persisted.featureValue
+        return FeatureComposerDraftSnapshot(
+            draft: draft.isEmpty ? nil : draft,
+            importedShareIDs: Set(persisted.importedShareIDs ?? [])
+        )
     }
 
     public func setDraft(_ draft: FeatureComposerDraft, for key: String) throws {
@@ -197,10 +242,31 @@ public actor FeatureComposerDraftStore {
         for key: String,
         maximumAttachmentCount: Int = 8
     ) throws -> FeatureComposerDraft {
+        try importSharedContentResult(
+            shareID: shareID,
+            text: text,
+            attachments: attachments,
+            for: key,
+            maximumAttachmentCount: maximumAttachmentCount
+        ).draft
+    }
+
+    public func importSharedContentResult(
+        shareID: String,
+        text: String,
+        attachments: [FeatureDraftAttachment],
+        for key: String,
+        maximumAttachmentCount: Int = 8
+    ) throws -> FeatureComposerDraftImportResult {
         var drafts = try loadIfNeeded()
         var persisted = drafts[key] ?? PersistedDraft(FeatureComposerDraft())
         var importedIDs = persisted.importedShareIDs ?? []
-        guard !importedIDs.contains(shareID) else { return persisted.featureValue }
+        guard !importedIDs.contains(shareID) else {
+            return FeatureComposerDraftImportResult(
+                draft: persisted.featureValue,
+                didImport: false
+            )
+        }
 
         let existingIDs = Set(persisted.attachments.map(\.id))
         let uniqueAttachments = attachments.filter { !existingIDs.contains($0.id) }
@@ -225,7 +291,63 @@ public actor FeatureComposerDraftStore {
         drafts[key] = persisted
         try persist(drafts)
         loadedDrafts = drafts
-        return persisted.featureValue
+        return FeatureComposerDraftImportResult(
+            draft: persisted.featureValue,
+            didImport: true
+        )
+    }
+
+    /// Atomically moves a share that was staged before project selection into
+    /// the chosen new-task draft. The destination ledger prevents replay from
+    /// duplicating content if the host app is interrupted during inbox cleanup.
+    @discardableResult
+    public func routeIncomingShare(
+        shareID: String,
+        to key: String,
+        maximumAttachmentCount: Int = 8
+    ) throws -> FeatureComposerIncomingShareRoutingResult {
+        var drafts = try loadIfNeeded()
+        let sourceKey = Self.incomingShareKey(shareID: shareID)
+        guard let source = drafts[sourceKey] else {
+            guard let destination = drafts[key],
+                  destination.importedShareIDs?.contains(shareID) == true else {
+                return .sourceMissing
+            }
+            return .alreadyRouted(destination.featureValue)
+        }
+
+        var destination = drafts[key] ?? PersistedDraft(FeatureComposerDraft())
+        var importedIDs = destination.importedShareIDs ?? []
+        let wasAlreadyRouted = importedIDs.contains(shareID)
+        if !wasAlreadyRouted {
+            let existingIDs = Set(destination.attachments.map(\.id))
+            let uniqueAttachments = source.attachments.filter { !existingIDs.contains($0.id) }
+            let availableCount = max(0, maximumAttachmentCount - destination.attachments.count)
+            guard uniqueAttachments.count <= availableCount else {
+                throw FeatureComposerDraftImportError.attachmentLimitExceeded(
+                    available: availableCount
+                )
+            }
+
+            let incomingText = source.text.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !incomingText.isEmpty {
+                destination.text = destination.text.trimmingCharacters(in: .whitespacesAndNewlines)
+                destination.text = destination.text.isEmpty
+                    ? incomingText
+                    : "\(destination.text)\n\n\(incomingText)"
+            }
+            destination.attachments.append(contentsOf: uniqueAttachments)
+            importedIDs.append(shareID)
+            destination.importedShareIDs = Array(importedIDs.suffix(32))
+        }
+
+        drafts[key] = destination
+        drafts.removeValue(forKey: sourceKey)
+        try persist(drafts)
+        loadedDrafts = drafts
+        return wasAlreadyRouted
+            ? .alreadyRouted(destination.featureValue)
+            : .routed(destination.featureValue)
     }
 
     public func removeDraft(for key: String) throws {
@@ -256,6 +378,10 @@ public actor FeatureComposerDraftStore {
 
     public static func newTaskKey(logicalProjectID: String) -> String {
         "logical-project:\(logicalProjectID):new-task"
+    }
+
+    public static func incomingShareKey(shareID: String) -> String {
+        "incoming-share:\(shareID.lowercased())"
     }
 
     private func loadIfNeeded() throws -> [String: PersistedDraft] {

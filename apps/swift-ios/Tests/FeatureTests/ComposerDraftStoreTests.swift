@@ -261,6 +261,133 @@ struct ComposerDraftStoreTests {
         #expect(merged.workspace == fallbackWorkspace)
     }
 
+    @Test func incomingShareAppendsToTheCurrentComposer() {
+        let liveDraft = FeatureComposerDraft(
+            text: "Typed before import",
+            attachments: [FeatureDraftAttachment(
+                data: Data([0x01]),
+                filename: "live.png",
+                mimeType: "image/png"
+            )]
+        )
+        let importedAttachment = FeatureDraftAttachment(
+            data: Data([0x02]),
+            filename: "shared.png",
+            mimeType: "image/png"
+        )
+        let incomingDraft = FeatureComposerDraft(
+            text: "Shared content",
+            attachments: [importedAttachment]
+        )
+
+        let result = FeatureComposerIncomingShareMerge.merge(
+            current: liveDraft,
+            incoming: incomingDraft
+        )
+
+        #expect(result.draft.text == "Typed before import\n\nShared content")
+        #expect(result.draft.attachments == liveDraft.attachments + [importedAttachment])
+        #expect(result.attachmentOverflowCount == 0)
+    }
+
+    @Test func incomingShareMergeKeepsAttachmentsAndReportsTheRequiredRemovalCount() {
+        let currentAttachments = (0..<8).map { value in
+            FeatureDraftAttachment(
+                data: Data([UInt8(value)]),
+                filename: "live-\(value).png",
+                mimeType: "image/png"
+            )
+        }
+        let incoming = FeatureComposerDraft(
+            text: "Shared",
+            attachments: [FeatureDraftAttachment(
+                data: Data([0xFF]),
+                filename: "shared.png",
+                mimeType: "image/png"
+            )]
+        )
+
+        let result = FeatureComposerIncomingShareMerge.merge(
+            current: FeatureComposerDraft(text: "   ", attachments: currentAttachments),
+            incoming: incoming
+        )
+
+        #expect(result.draft.text == "Shared")
+        #expect(result.draft.attachments == currentAttachments + incoming.attachments)
+        #expect(result.attachmentOverflowCount == 1)
+    }
+
+    @Test func draftSnapshotReportsWhichShareImportsRestorationConsumed() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = FeatureComposerDraftStore(
+            fileURL: directory.appendingPathComponent("drafts.json")
+        )
+        let key = "environment:one:thread:one"
+        _ = try await store.importSharedContent(
+            shareID: "share-one",
+            text: "Shared",
+            attachments: [],
+            for: key
+        )
+
+        let snapshot = try await store.snapshot(for: key)
+
+        #expect(snapshot.draft?.text == "Shared")
+        #expect(snapshot.importedShareIDs == ["share-one"])
+    }
+
+    @Test func reloadPolicyRetainsEveryShareNotConsumedByInitialRestoration() {
+        let imports = [
+            FeatureComposerIncomingShareDraft(
+                shareID: "already-restored",
+                draft: FeatureComposerDraft(text: "First")
+            ),
+            FeatureComposerIncomingShareDraft(
+                shareID: "pending-one",
+                draft: FeatureComposerDraft(text: "Second")
+            ),
+            FeatureComposerIncomingShareDraft(
+                shareID: "pending-two",
+                draft: FeatureComposerDraft(text: "Third")
+            ),
+        ]
+
+        let pending = FeatureComposerIncomingShareReloadPolicy.pendingImports(
+            imports,
+            restoredShareIDs: ["already-restored"]
+        )
+
+        #expect(pending.map(\.shareID) == ["pending-one", "pending-two"])
+    }
+
+    @Test func reloadQueueMatchesThePersistedLedgerWindowAndDeduplicatesReplays() {
+        var imports: [FeatureComposerIncomingShareDraft] = []
+        for index in 0..<34 {
+            imports = FeatureComposerIncomingShareReloadPolicy.appending(
+                FeatureComposerIncomingShareDraft(
+                    shareID: "share-\(index)",
+                    draft: FeatureComposerDraft(text: "Shared \(index)")
+                ),
+                to: imports
+            )
+        }
+        imports = FeatureComposerIncomingShareReloadPolicy.appending(
+            FeatureComposerIncomingShareDraft(
+                shareID: "share-33",
+                draft: FeatureComposerDraft(text: "Replayed 33")
+            ),
+            to: imports
+        )
+
+        #expect(imports.count == 32)
+        #expect(imports.first?.shareID == "share-2")
+        #expect(imports.last?.shareID == "share-33")
+        #expect(imports.last?.draft.text == "Replayed 33")
+        #expect(imports.filter { $0.shareID == "share-33" }.count == 1)
+    }
+
     @Test func successfulSubmissionFenceWaitsForCancelledDraftWrites() async {
         let started = AsyncStream<Void>.makeStream()
         let release = AsyncStream<Void>.makeStream()
@@ -283,5 +410,111 @@ struct ComposerDraftStoreTests {
         var eventIterator = events.stream.makeAsyncIterator()
         #expect(await eventIterator.next() == "write finished")
         #expect(await eventIterator.next() == "draft removed")
+    }
+
+    @Test func incomingSharePersistenceWaitsForTheMatchingRestore() {
+        #expect(!NewTaskIncomingSharePersistencePolicy.canPersist(
+            pendingShareID: "share-a",
+            restoredShareID: nil
+        ))
+        #expect(!NewTaskIncomingSharePersistencePolicy.canPersist(
+            pendingShareID: "share-a",
+            restoredShareID: "share-b"
+        ))
+        #expect(NewTaskIncomingSharePersistencePolicy.canPersist(
+            pendingShareID: "share-a",
+            restoredShareID: "share-a"
+        ))
+        #expect(!NewTaskIncomingSharePersistencePolicy.canPersist(
+            pendingShareID: nil,
+            restoredShareID: "share-a"
+        ))
+    }
+
+    @Test func sharedThreadNavigationRequestsAComposerReload() {
+        let importDraft = FeatureComposerIncomingShareDraft(
+            shareID: "share-1",
+            draft: FeatureComposerDraft(text: "Shared")
+        )
+        let request = FeatureWorkspaceNavigationRequest(
+            destination: .sharedThread(
+                id: "thread-1",
+                importDraft: importDraft
+            )
+        )
+
+        #expect(request.destination == .sharedThread(
+            id: "thread-1",
+            importDraft: importDraft
+        ))
+        #expect(request.destination != .thread(id: "thread-1"))
+    }
+
+    @Test func dismissingOldShareSheetPreservesReplacementContext() {
+        let resolution = NewTaskDismissalContext(
+            initialProjectID: "project-a",
+            incomingShareID: "share-a"
+        ).resolve(
+            currentInitialProjectID: nil,
+            currentIncomingShareID: "share-b"
+        )
+
+        #expect(resolution == NewTaskDismissalResolution(
+            remainingInitialProjectID: nil,
+            remainingIncomingShareID: "share-b",
+            releasedIncomingShareID: "share-a"
+        ))
+    }
+
+    @Test func dismissingCurrentShareSheetClearsItsContext() {
+        let resolution = NewTaskDismissalContext(
+            initialProjectID: "project-a",
+            incomingShareID: "share-a"
+        ).resolve(
+            currentInitialProjectID: "project-a",
+            currentIncomingShareID: "share-a"
+        )
+
+        #expect(resolution == NewTaskDismissalResolution(
+            remainingInitialProjectID: nil,
+            remainingIncomingShareID: nil,
+            releasedIncomingShareID: "share-a"
+        ))
+    }
+
+    @Test func sharedNewTaskGetsDistinctPresentationIdentity() {
+        let ordinary = NewTaskPresentationIdentity(
+            initialProjectID: nil,
+            incomingShareID: nil
+        )
+        let firstShare = NewTaskPresentationIdentity(
+            initialProjectID: nil,
+            incomingShareID: "share-a"
+        )
+        let replacementShare = NewTaskPresentationIdentity(
+            initialProjectID: nil,
+            incomingShareID: "share-b"
+        )
+
+        #expect(ordinary != firstShare)
+        #expect(firstShare != replacementShare)
+        #expect(firstShare == NewTaskPresentationIdentity(
+            initialProjectID: nil,
+            incomingShareID: "share-a"
+        ))
+    }
+
+    @Test func staleSheetDismissalCannotClearActiveReplacementShare() {
+        let resolution = NewTaskDismissalPolicy.resolveStaleDismissal(
+            dismissing: nil,
+            currentInitialProjectID: nil,
+            currentIncomingShareID: "share-b"
+        )
+
+        #expect(resolution == NewTaskDismissalResolution(
+            remainingInitialProjectID: nil,
+            remainingIncomingShareID: "share-b",
+            releasedIncomingShareID: nil
+        ))
     }
 }

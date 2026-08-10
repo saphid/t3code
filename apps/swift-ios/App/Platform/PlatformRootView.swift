@@ -1,16 +1,56 @@
 import SwiftUI
 
+@MainActor
+final class PlatformIncomingShareRoutingGate {
+    private var isRouting = false
+    private var pendingOperation: (@MainActor () async -> Void)?
+
+    func request(_ operation: @escaping @MainActor () async -> Void) async {
+        pendingOperation = operation
+        guard !isRouting else { return }
+        isRouting = true
+        while let operation = pendingOperation {
+            pendingOperation = nil
+            await operation()
+        }
+        isRouting = false
+    }
+}
+
+@Observable
+final class PlatformWorkspaceNavigationCoordinator {
+    private(set) var current: FeatureWorkspaceNavigationRequest?
+    private(set) var pending: [FeatureWorkspaceNavigationRequest] = []
+
+    func request(_ request: FeatureWorkspaceNavigationRequest) {
+        guard current != nil else {
+            current = request
+            return
+        }
+        pending.append(request)
+    }
+
+    @discardableResult
+    func consume(id: UUID) -> Bool {
+        guard current?.id == id else { return false }
+        current = pending.isEmpty ? nil : pending.removeFirst()
+        return true
+    }
+}
+
 struct PlatformRootView: View {
     @SwiftUI.Environment(\.scenePhase) private var scenePhase
     @Bindable private var model: FeatureRootModel
 
-    @State private var navigationRequest: FeatureWorkspaceNavigationRequest?
+    @State private var workspaceNavigation = PlatformWorkspaceNavigationCoordinator()
     @State private var pendingRoute: PlatformRoute?
     @State private var previousThreadStates: [String: FeatureThreadState]?
     @State private var lastNotificationPreference: Bool?
     @State private var incomingShareCoordinator = PlatformIncomingShareCoordinator()
     @State private var incomingShareNeedsProject = false
     @State private var importedShareProjectID: String?
+    @State private var stagedIncomingShareID: String?
+    @State private var incomingShareRoutingGate = PlatformIncomingShareRoutingGate()
     @State private var recentThreadsPersistenceTask: Task<Void, Never>?
 
     init(model: FeatureRootModel) {
@@ -20,10 +60,17 @@ struct PlatformRootView: View {
     var body: some View {
         FeatureRootView(
             model: model,
-            navigationRequest: navigationRequest,
+            navigationRequest: workspaceNavigation.current,
             onNavigationRequestConsumed: { requestID in
-                guard navigationRequest?.id == requestID else { return }
-                navigationRequest = nil
+                workspaceNavigation.consume(id: requestID)
+            },
+            acknowledgeIncomingShare: { shareID in
+                await acknowledgeStagedIncomingShare(id: shareID)
+            },
+            releaseIncomingSharePresentation: { shareID in
+                if stagedIncomingShareID?.caseInsensitiveCompare(shareID) == .orderedSame {
+                    stagedIncomingShareID = nil
+                }
             }
         )
         .onOpenURL { url in
@@ -82,8 +129,18 @@ struct PlatformRootView: View {
             synchronizeAgentAwareness()
             synchronizeCloudDelivery()
         }
+        .onChange(of: model.snapshot.settings.appearance, initial: true) { _, appearance in
+            T3SharedAppearanceStore.shared.update(appearance.sharedAppearance)
+        }
         .onChange(of: model.snapshot.projects.map(\.id)) { _, _ in
             refreshIncomingShares()
+        }
+        .onChange(of: incomingShareConnectionStates) { _, _ in
+            guard incomingShareCoordinator.pendingEnvelope?.destination?.kind == .existingThread,
+                  !incomingShareCoordinator.isImporting else { return }
+            Task { @MainActor in
+                await routePendingIncomingShareIfNeeded()
+            }
         }
         .sheet(item: presentedIncomingShare, onDismiss: openImportedShareDraft) { envelope in
             PlatformIncomingShareDestinationSheet(
@@ -98,9 +155,9 @@ struct PlatformRootView: View {
         .alert("Create a project to continue", isPresented: $incomingShareNeedsProject) {
             Button("Not now", role: .cancel) {}
             Button("Create project") {
-                navigationRequest = FeatureWorkspaceNavigationRequest(
+                requestWorkspaceNavigation(FeatureWorkspaceNavigationRequest(
                     destination: .newTask(projectID: nil)
-                )
+                ))
             }
         } message: {
             Text("Your share is saved. Connect an environment and create a project to finish importing it.")
@@ -120,6 +177,9 @@ struct PlatformRootView: View {
         Binding(
             get: {
                 guard !incomingShareProjects.isEmpty else { return nil }
+                guard incomingShareCoordinator.pendingEnvelope?.destination == nil else {
+                    return nil
+                }
                 return incomingShareCoordinator.pendingEnvelope
             },
             set: { value in
@@ -204,13 +264,94 @@ struct PlatformRootView: View {
         )
     }
 
-    private func refreshIncomingShares() {
+    private func refreshIncomingShares(preferredID: String? = nil) {
         guard !model.isLoading else { return }
         let hasProjects = !incomingShareProjects.isEmpty
         Task { @MainActor in
-            if await incomingShareCoordinator.refresh(hasProjects: hasProjects) {
+            if await incomingShareCoordinator.refresh(
+                preferredID: preferredID,
+                hasProjects: hasProjects
+            ) {
                 incomingShareNeedsProject = true
             }
+            await routePendingIncomingShareIfNeeded()
+        }
+    }
+
+    @MainActor
+    private func routePendingIncomingShareIfNeeded() async {
+        await incomingShareRoutingGate.request {
+            await performPendingIncomingShareRoute()
+        }
+    }
+
+    private func performPendingIncomingShareRoute() async {
+        guard let envelope = incomingShareCoordinator.pendingEnvelope,
+              let destination = envelope.destination,
+              stagedIncomingShareID != envelope.id else { return }
+        do {
+            switch destination.kind {
+            case .newThread:
+                guard let shareID = try await incomingShareCoordinator.stagePendingForNewThread()
+                else { return }
+                stagedIncomingShareID = shareID
+                requestWorkspaceNavigation(FeatureWorkspaceNavigationRequest(
+                    destination: .sharedNewTask(shareID: shareID)
+                ))
+            case .existingThread:
+                guard let threadID = destination.threadID else {
+                    try await incomingShareCoordinator.requestAnotherDestination()
+                    model.errorMessage = "That thread is no longer available. Choose another destination."
+                    return
+                }
+                if let environmentID = destination.environmentID,
+                   !model.snapshot.environments.contains(where: { $0.id == environmentID }) {
+                    try await incomingShareCoordinator.requestAnotherDestination()
+                    model.errorMessage = "That thread's environment is no longer saved. Choose another destination."
+                    return
+                }
+                guard await activateEnvironmentIfNeeded(destination.environmentID) else {
+                    // Keep the saved destination so a temporarily unavailable
+                    // environment can retry when its connection recovers.
+                    return
+                }
+                guard let thread = PlatformRouteResolver.thread(
+                    in: model.snapshot,
+                    environmentID: destination.environmentID,
+                    id: threadID
+                ) else {
+                    try await incomingShareCoordinator.requestAnotherDestination()
+                    model.errorMessage = "That thread is no longer available. Choose another destination."
+                    return
+                }
+                guard let imported = try await incomingShareCoordinator.importPending(
+                    into: thread
+                ) else { return }
+                requestWorkspaceNavigation(FeatureWorkspaceNavigationRequest(
+                    destination: .sharedThread(
+                        id: thread.id,
+                        importDraft: imported.sharedContent
+                    )
+                ))
+            }
+            PlatformHapticEngine.shared.emit(
+                .success,
+                enabled: model.snapshot.settings.hapticsEnabled
+            )
+        } catch {
+            model.errorMessage = error.localizedDescription
+        }
+    }
+
+    @MainActor
+    private func acknowledgeStagedIncomingShare(id: String) async {
+        do {
+            try await incomingShareCoordinator.acknowledgeStagedNewThread(id: id)
+            if stagedIncomingShareID?.caseInsensitiveCompare(id) == .orderedSame {
+                stagedIncomingShareID = nil
+            }
+        } catch {
+            model.errorMessage = error.localizedDescription
         }
     }
 
@@ -230,9 +371,9 @@ struct PlatformRootView: View {
     private func openImportedShareDraft() {
         guard let projectID = importedShareProjectID else { return }
         importedShareProjectID = nil
-        navigationRequest = FeatureWorkspaceNavigationRequest(
+        requestWorkspaceNavigation(FeatureWorkspaceNavigationRequest(
             destination: .newTask(projectID: projectID)
-        )
+        ))
         PlatformHapticEngine.shared.emit(
             .success,
             enabled: model.snapshot.settings.hapticsEnabled
@@ -265,9 +406,9 @@ struct PlatformRootView: View {
                 if model.errorMessage == nil { model.errorMessage = "That thread is not available on this device." }
                 return
             }
-            navigationRequest = FeatureWorkspaceNavigationRequest(
+            requestWorkspaceNavigation(FeatureWorkspaceNavigationRequest(
                 destination: .thread(id: thread.id)
-            )
+            ))
             PlatformHapticEngine.shared.selection(
                 enabled: model.snapshot.settings.hapticsEnabled
             )
@@ -282,9 +423,9 @@ struct PlatformRootView: View {
                 if model.errorMessage == nil { model.errorMessage = "That project is not available on this device." }
                 return
             }
-            navigationRequest = FeatureWorkspaceNavigationRequest(
+            requestWorkspaceNavigation(FeatureWorkspaceNavigationRequest(
                 destination: .project(id: project.id)
-            )
+            ))
             PlatformHapticEngine.shared.selection(
                 enabled: model.snapshot.settings.hapticsEnabled
             )
@@ -301,13 +442,17 @@ struct PlatformRootView: View {
                 model.errorMessage = "That project is not available on this device."
                 return
             }
-            navigationRequest = FeatureWorkspaceNavigationRequest(
+            requestWorkspaceNavigation(FeatureWorkspaceNavigationRequest(
                 destination: .newTask(projectID: resolvedProject?.id)
-            )
+            ))
             PlatformHapticEngine.shared.selection(
                 enabled: model.snapshot.settings.hapticsEnabled
             )
         }
+    }
+
+    private func requestWorkspaceNavigation(_ request: FeatureWorkspaceNavigationRequest) {
+        workspaceNavigation.request(request)
     }
 
     @MainActor
@@ -319,6 +464,11 @@ struct PlatformRootView: View {
         }
         guard !environment.isActive else { return true }
         return await model.activateEnvironment(id)
+    }
+
+    private var incomingShareConnectionStates: [FeatureConnection.State?] {
+        [model.snapshot.connection.state]
+            + model.snapshot.environments.map(\.connectionState)
     }
 
     /// Home revisions are coalesced by FeatureRootModel, so this performs one
@@ -357,5 +507,15 @@ struct PlatformRootView: View {
             snapshot: model.snapshot,
             liveActivitiesEnabled: model.snapshot.settings.liveActivitiesEnabled
         )
+    }
+}
+
+private extension FeatureAppearance {
+    var sharedAppearance: T3SharedAppearance {
+        switch self {
+        case .system: .system
+        case .light: .light
+        case .dark: .dark
+        }
     }
 }

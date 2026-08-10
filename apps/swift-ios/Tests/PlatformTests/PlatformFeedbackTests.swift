@@ -49,26 +49,38 @@ struct PlatformFeedbackTests {
     }
 
     @Test
-    func recentThreadStoreSortsLimitsAndSkipsArchived() throws {
+    func recentThreadStoreSortsAndSkipsArchived() throws {
         let suiteName = "PlatformFeedbackTests.\(UUID().uuidString)"
         let defaults = try #require(UserDefaults(suiteName: suiteName))
         defer { defaults.removePersistentDomain(forName: suiteName) }
         let store = PlatformRecentThreadStore(defaults: defaults, key: "recent")
-        var threads = (0 ..< 14).map { index in
+        var threads = (0 ..< 102).map { index in
             thread(
                 id: "thread-\(index)",
                 state: .idle,
                 updatedAt: Date(timeIntervalSince1970: TimeInterval(index))
             )
         }
-        threads[13].isArchived = true
+        threads[101].isArchived = true
 
         store.update(from: threads)
         let records = store.records()
 
-        #expect(records.count == 12)
-        #expect(records.first?.id == "thread-12")
-        #expect(!records.contains { $0.id == "thread-13" })
+        #expect(records.count == T3SharedRecentThreadStore.maximumCount)
+        #expect(records.first?.id == "thread-100")
+        #expect(!records.contains { $0.id == "thread-101" })
+    }
+
+    @Test
+    func sharedAppearanceStoreDefaultsToSystemAndRoundTripsDarkMode() throws {
+        let suiteName = "PlatformFeedbackTests.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let store = T3SharedAppearanceStore(defaults: defaults)
+
+        #expect(store.appearance() == .system)
+        store.update(.dark)
+        #expect(store.appearance() == .dark)
     }
 
     private func thread(
