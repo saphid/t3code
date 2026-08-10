@@ -332,6 +332,14 @@
       "sourcePatchId": "624af90cb9867ae13a75fd0f6311ece6b4175d30",
       "integrationPatchId": "624af90cb9867ae13a75fd0f6311ece6b4175d30",
       "integratedCommit": "c51724a0ed159a716a97a21bb195d3f51bce957a"
+    },
+    {
+      "name": "Ignore stale SwiftUI new-task dismissals",
+      "sourceBranch": "personal/swiftui-approved",
+      "sourceCommit": "1832dc71c99815a41ca3c9863acf7f21a966c7e0",
+      "sourcePatchId": "b286240885d1c90919a98397cda199a68e684409",
+      "integrationPatchId": "b286240885d1c90919a98397cda199a68e684409",
+      "integratedCommit": "1832dc71c99815a41ca3c9863acf7f21a966c7e0"
     }
   ],
   "featurePaths": [
@@ -403,7 +411,7 @@
     "docs/user/swiftui-image-attachments.md",
     "docs/user/swiftui-working-duration.md"
   ],
-  "featureTreeDigest": "aa028caac78fa3c8032e4611879b5adba47b7572f1062508379d9cbf493a1474",
+  "featureTreeDigest": "49c782b3cbdf806411ea4fb964983f188d4f24381960b0370085a778b0430971",
   "overlayPaths": [
     "apps/swift-ios/Extensions/Shared/T3CodeDev.entitlements",
     "apps/swift-ios/Resources/Info.plist",
