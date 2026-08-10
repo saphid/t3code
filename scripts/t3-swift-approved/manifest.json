@@ -8,7 +8,7 @@
     "commit": "5b7ee58f6e62158559c6656d0ba581f10efced64"
   },
   "approvedBy": "Alex Southwell",
-  "approvedAt": "2026-08-10T12:35:00+10:00",
+  "approvedAt": "2026-08-10T18:24:00+10:00",
   "features": [
     {
       "name": "Grow the SwiftUI composer for long prompts",
@@ -348,6 +348,14 @@
       "sourcePatchId": "958362658542ebe52edcb5509dd287f4516ea136",
       "integrationPatchId": "958362658542ebe52edcb5509dd287f4516ea136",
       "integratedCommit": "85997be7acabb958e4a754c6ec231b208a516705"
+    },
+    {
+      "name": "Harden SwiftUI usage refresh and multi-environment probes",
+      "sourceBranch": "sandbox/swiftui-approved-full-audit-20260810",
+      "sourceCommit": "f1903e4c73a3ea2a6936c600e3e1fe1ee090d304",
+      "sourcePatchId": "11f5aab9de27c074233244fd4880154fd4e9c568",
+      "integrationPatchId": "11f5aab9de27c074233244fd4880154fd4e9c568",
+      "integratedCommit": "f1903e4c73a3ea2a6936c600e3e1fe1ee090d304"
     }
   ],
   "featurePaths": [
@@ -385,6 +393,8 @@
     "apps/swift-ios/Features/Shared/FeatureModels.swift",
     "apps/swift-ios/Features/Shared/FeatureToolModels.swift",
     "apps/swift-ios/Features/SourceControl/FeatureSourceControlView.swift",
+    "apps/swift-ios/Features/Usage/UsageModels.swift",
+    "apps/swift-ios/Features/Usage/UsageView.swift",
     "apps/swift-ios/Features/Workspace/DailyUXModels.swift",
     "apps/swift-ios/Features/Workspace/DebugBuildMetadata.swift",
     "apps/swift-ios/Features/Workspace/HomeThreadCollectionView.swift",
@@ -408,6 +418,7 @@
     "apps/swift-ios/Tests/FeatureTests/HomeThreadMetadataTests.swift",
     "apps/swift-ios/Tests/FeatureTests/MarkdownDocumentTests.swift",
     "apps/swift-ios/Tests/FeatureTests/MarkdownWorkspaceImageTests.swift",
+    "apps/swift-ios/Tests/FeatureTests/NativeMultiEnvironmentTests.swift",
     "apps/swift-ios/Tests/FeatureTests/DebugBuildMetadataTests.swift",
     "apps/swift-ios/Tests/FeatureTests/SettingsAboutMetadataTests.swift",
     "apps/swift-ios/Tests/FeatureTests/ThreadContextMenuTests.swift",
@@ -419,7 +430,7 @@
     "docs/user/swiftui-image-attachments.md",
     "docs/user/swiftui-working-duration.md"
   ],
-  "featureTreeDigest": "8e7cf70489075880e68b38daf0cf061cb25881941874a42fc20b9711b13d5040",
+  "featureTreeDigest": "278bfcbdd9d0420364ce51ea19ccba4ce55d1a697e880137c0aea09a9a38b241",
   "overlayPaths": [
     "apps/swift-ios/Extensions/Shared/T3CodeDev.entitlements",
     "apps/swift-ios/Resources/Info.plist",
