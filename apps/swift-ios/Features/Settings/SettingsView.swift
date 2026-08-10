@@ -329,18 +329,22 @@ public struct SettingsView: View {
                     value: activeEnvironmentVersion
                 )
                 settingsDivider
-                if let buildChangelogURL {
-                    Link(destination: buildChangelogURL) {
-                        SettingsNavigationRow(
-                            title: "Build changelog",
-                            systemImage: "clock.arrow.circlepath",
-                            trailingSystemImage: "arrow.up.right"
-                        )
-                    }
-                    .buttonStyle(.plain)
-
-                    settingsDivider
+                NavigationLink {
+                    BuildChangelogView(
+                        changelog: buildChangelog,
+                        versionLabel: appVersionLabel
+                    )
+                } label: {
+                    SettingsNavigationRow(
+                        title: "Build changelog",
+                        systemImage: "clock.arrow.circlepath",
+                        trailingSystemImage: "chevron.right"
+                    )
                 }
+                .buttonStyle(.plain)
+                settingsDivider
+                SettingsValueRow(title: "Platform", value: "Native SwiftUI")
+                settingsDivider
                 Link(destination: URL(string: "https://github.com/pingdotgg/t3code/releases")!) {
                     SettingsNavigationRow(
                         title: "Release changelog",
@@ -349,7 +353,6 @@ public struct SettingsView: View {
                     )
                 }
                 .buttonStyle(.plain)
-
                 settingsDivider
                 Link(destination: URL(string: "https://github.com/pingdotgg/t3code")!) {
                     SettingsNavigationRow(
@@ -480,10 +483,9 @@ public struct SettingsView: View {
         )
     }
 
-    private var buildChangelogURL: URL? {
-        SettingsAboutMetadata.buildChangelogURL(info: Bundle.main.infoDictionary)
+    private var buildChangelog: BuildChangelog? {
+        BuildChangelog.load(info: Bundle.main.infoDictionary)
     }
-
     private var canSave: Bool {
         !isSaving && settings != model.snapshot.settings
     }
@@ -604,7 +606,6 @@ enum SettingsAboutMetadata {
         }
         return URL(string: "\(repositoryURL)/commits/\(commit)")
     }
-
     private static func nonemptyValue(_ key: String, info: [String: Any]?) -> String? {
         guard let value = info?[key] as? String,
               !value.isEmpty,
@@ -613,7 +614,6 @@ enum SettingsAboutMetadata {
         return value
     }
 }
-
 private struct EnvironmentStatusPresentation {
     let title: String
     let symbol: String

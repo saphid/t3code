@@ -19,6 +19,7 @@ require_cmd() {
 }
 
 require_cmd awk
+require_cmd base64
 require_cmd git
 require_cmd jq
 require_cmd mktemp
@@ -125,8 +126,27 @@ if [[ "${CONFIGURATION}" == "Debug" ]]; then
     "T3_GIT_AHEAD_COUNT=${GIT_AHEAD_COUNT}"
     "T3_GIT_BEHIND_COUNT=${GIT_BEHIND_COUNT}"
   )
-fi
 
+  CHANGELOG_FILE="$(mktemp -t t3-swift-changelog.XXXXXX)"
+  CHANGELOG_BASE_REF="${T3_SWIFT_CHANGELOG_BASE_REF:-upstream/t3code/rebuild-mobile-app-swift}"
+  changelog_arguments=("${APP_DIR}/../.." "${CHANGELOG_BASE_REF}" "${CHANGELOG_FILE}")
+  CHANGELOG_SUMMARIES="${T3_SWIFT_CHANGELOG_SUMMARIES:-}"
+  if [[ "${T3_SWIFT_CHANGELOG_USE_LUNA:-0}" == "1" ]]; then
+    CHANGELOG_SUMMARIES="$(mktemp -t t3-swift-changelog-summaries.XXXXXX)"
+    "${SCRIPT_DIR}/generate-luna-changelog-summaries.sh" \
+      "${APP_DIR}/../.." "${CHANGELOG_BASE_REF}" "${CHANGELOG_SUMMARIES}"
+  fi
+  if [[ -n "${CHANGELOG_SUMMARIES}" ]]; then
+    changelog_arguments+=("${CHANGELOG_SUMMARIES}")
+  fi
+  xcrun swift "${SCRIPT_DIR}/generate-build-changelog.swift" "${changelog_arguments[@]}"
+  BUILD_CHANGELOG="$(base64 < "${CHANGELOG_FILE}" | tr -d '\n')"
+  unlink "${CHANGELOG_FILE}"
+  if [[ "${T3_SWIFT_CHANGELOG_USE_LUNA:-0}" == "1" ]]; then
+    unlink "${CHANGELOG_SUMMARIES}"
+  fi
+  build_settings+=("T3_BUILD_CHANGELOG=${BUILD_CHANGELOG}")
+fi
 DEVICE_JSON="$(mktemp -t t3-swift-devices.XXXXXX)"
 INSTALLED_APPS_JSON="$(mktemp -t t3-swift-installed-apps.XXXXXX)"
 trap 'unlink "${DEVICE_JSON}" "${INSTALLED_APPS_JSON}" 2>/dev/null || true' EXIT
