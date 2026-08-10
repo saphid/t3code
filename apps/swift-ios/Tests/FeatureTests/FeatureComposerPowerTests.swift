@@ -7,57 +7,27 @@ import UniformTypeIdentifiers
 
 @Suite("Composer power features")
 struct FeatureComposerPowerTests {
+    @MainActor
     @Test
-    func textInputUsesReadableCapsAcrossAvailableHeights() {
-        #expect(
-            FeatureComposerTextLayout.visibleLineRange(
-                dynamicTypeSize: .large,
-                verticalSizeClass: .regular,
-                softwareKeyboardIsVisible: false
-            ) == (1...10)
+    func composerTextInputGrowsBeyondThreeLinesWithoutANumericCap() {
+        let threeLineHeight = composerTextInputHeight(lineCount: 3)
+        let thirtyLineHeight = composerTextInputHeight(lineCount: 30)
+
+        #expect(thirtyLineHeight > threeLineHeight + 400)
+    }
+
+    @MainActor
+    private func composerTextInputHeight(lineCount: Int) -> CGFloat {
+        let text = Array(repeating: "A full visible prompt line", count: lineCount)
+            .joined(separator: "\n")
+        let controller = UIHostingController(
+            rootView: ComposerTextInputHarness(text: text)
+                .frame(width: 320)
         )
-        #expect(
-            FeatureComposerTextLayout.visibleLineRange(
-                dynamicTypeSize: .large,
-                verticalSizeClass: .compact,
-                softwareKeyboardIsVisible: false
-            ) == (1...5)
-        )
-        #expect(
-            FeatureComposerTextLayout.visibleLineRange(
-                dynamicTypeSize: .large,
-                verticalSizeClass: .regular,
-                softwareKeyboardIsVisible: true
-            ) == (1...1)
-        )
-        #expect(
-            FeatureComposerTextLayout.visibleLineRange(
-                dynamicTypeSize: .large,
-                verticalSizeClass: .compact,
-                softwareKeyboardIsVisible: true
-            ) == (1...1)
-        )
-        #expect(
-            FeatureComposerTextLayout.visibleLineRange(
-                dynamicTypeSize: .accessibility5,
-                verticalSizeClass: .regular,
-                softwareKeyboardIsVisible: false
-            ) == (1...3)
-        )
-        #expect(
-            FeatureComposerTextLayout.visibleLineRange(
-                dynamicTypeSize: .accessibility5,
-                verticalSizeClass: .regular,
-                softwareKeyboardIsVisible: true
-            ) == (1...1)
-        )
-        #expect(
-            FeatureComposerTextLayout.visibleLineRange(
-                dynamicTypeSize: .large,
-                verticalSizeClass: nil,
-                softwareKeyboardIsVisible: false
-            ) == (1...10)
-        )
+
+        return controller.sizeThatFits(
+            in: CGSize(width: 320, height: CGFloat.greatestFiniteMagnitude)
+        ).height
     }
 
     @Test
@@ -400,6 +370,22 @@ struct FeatureComposerPowerTests {
         )
         #expect(
             !FeatureComposerSubmissionPolicy.allowsSend(for: .returnKey)
+        )
+    }
+}
+
+private struct ComposerTextInputHarness: View {
+    @State var text: String
+    @FocusState private var focused: Bool
+
+    var body: some View {
+        FeatureComposerTextInput(
+            text: $text,
+            focused: $focused,
+            placeholder: "Ask anything…",
+            acceptsImages: false,
+            selectionRequest: nil,
+            onPasteImages: { _ in }
         )
     }
 }
