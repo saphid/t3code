@@ -5,7 +5,7 @@
     "remote": "upstream",
     "repository": "https://github.com/pingdotgg/t3code.git",
     "ref": "t3code/rebuild-mobile-app-swift",
-    "commit": "0d0c77431c851ff31181fb5f1708f351e0c5e80c"
+    "commit": "e55c7ffd166358170ca124b79e45ba162dd0f2a8"
   },
   "approvedBy": "Alex Southwell",
   "approvedAt": "2026-08-10T11:01:50+10:00",
