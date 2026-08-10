@@ -59,6 +59,32 @@ struct FeatureComposerPowerTests {
     }
 
     @Test
+    func composerTextInputRecomputesItsViewportBoundAfterKeyboardAndRotationChanges() {
+        let fittingHeight: CGFloat = 1_200
+
+        let portraitWithKeyboard = FeatureComposerTextInputSizing.height(
+            fittingHeight: fittingHeight,
+            proposedHeight: 300,
+            lineHeight: 22
+        )
+        let landscapeWithKeyboard = FeatureComposerTextInputSizing.height(
+            fittingHeight: fittingHeight,
+            proposedHeight: 220,
+            lineHeight: 22
+        )
+        let portraitAfterKeyboardHide = FeatureComposerTextInputSizing.height(
+            fittingHeight: fittingHeight,
+            proposedHeight: 700,
+            lineHeight: 22
+        )
+
+        #expect(portraitWithKeyboard == 150)
+        #expect(landscapeWithKeyboard == 110)
+        #expect(portraitAfterKeyboardHide == 350)
+        #expect(portraitAfterKeyboardHide > portraitWithKeyboard)
+    }
+
+    @Test
     func detectsCommandsModelsSkillsAndPathsAtTheCursor() {
         #expect(
             FeatureComposerTriggerParser.detect(in: "/re")
