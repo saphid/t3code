@@ -111,8 +111,9 @@ node scripts/generate-swift-wire-fixtures.ts
 node scripts/generate-swift-wire-fixtures.ts --check
 ```
 
-Pull requests that change `apps/swift-ios`, `packages/contracts`, or the fixture
-generator run both checks in the path-gated SwiftUI workflow.
+This experimental repository does not enable an inherited SwiftUI workflow.
+Run both checks locally for affected changes; adding sandbox-specific CI is a
+separate approval because inherited release automation must remain disabled.
 
 ## Install on a physical device
 
