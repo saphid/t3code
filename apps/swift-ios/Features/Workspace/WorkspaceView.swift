@@ -1009,6 +1009,7 @@ public struct WorkspaceView: View {
                 dismissingNewTaskPresentationID = nil
                 isDismissingNewTask = false
             }
+            continueAfterNewTaskDismissal()
             return
         }
         completedNewTaskDismissalID = presentationID
@@ -1021,7 +1022,10 @@ public struct WorkspaceView: View {
         }
         let dismissed = newTaskPresentation.didDismiss()
         releaseIncomingSharePresentation(from: dismissed)
+        continueAfterNewTaskDismissal()
+    }
 
+    private func continueAfterNewTaskDismissal() {
         guard newTaskPresentation.current != nil else {
             resumeDeferredNewTaskPresentation()
             return
