@@ -67,7 +67,7 @@ struct FeatureComposerView: View {
         _pasteQueue = State(
             initialValue: FeatureComposerPasteQueue(lifecycle: attachmentLifecycle)
         )
-        self.providers = providers
+        self.providers = ProviderModelCatalogNormalizer.normalized(providers)
         self.threadSelection = threadSelection
         self.attachmentContextID = attachmentContextID
         self.materializesDefaultSelection = materializesDefaultSelection
@@ -345,7 +345,31 @@ struct FeatureComposerView: View {
                 materializesDefaultSelection: materializesDefaultSelection
             )
             .frame(maxWidth: 220, alignment: .leading)
-            .layoutPriority(2)
+            .layoutPriority(1)
+
+            if let reasoningContext {
+                Menu {
+                    reasoningChoices(for: reasoningContext)
+                } label: {
+                    HStack(spacing: 3) {
+                        Text(reasoningContext.summary)
+                            .lineLimit(1)
+                        Image(systemName: "chevron.up.chevron.down")
+                            .font(.system(size: 8, weight: .bold))
+                            .fixedSize()
+                    }
+                    .font(T3Typography.supportingStrong)
+                    .foregroundStyle(T3Colors.textSecondary)
+                    .frame(maxWidth: 100, alignment: .leading)
+                    .padding(.horizontal, 6)
+                    .frame(minHeight: T3Metrics.minimumTapTarget)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .layoutPriority(2)
+                .accessibilityLabel(reasoningContext.descriptor.label)
+                .accessibilityValue(reasoningContext.summary)
+            }
 
             Spacer(minLength: 0)
 
@@ -426,6 +450,58 @@ struct FeatureComposerView: View {
         DailyUXModelOptions.supportsImages(
             selection: selection ?? threadSelection,
             providers: providers
+        )
+    }
+
+    @ViewBuilder
+    private func reasoningChoices(
+        for context: FeatureComposerReasoningSelection.Context
+    ) -> some View {
+        switch context.descriptor.kind {
+        case .select:
+            Picker(
+                "Reasoning",
+                selection: Binding(
+                    get: { context.value },
+                    set: { value in updateReasoning(value) }
+                )
+            ) {
+                ForEach(context.choices) { choice in
+                    Text(choice.label).tag(FeatureModelOptionValue.string(choice.id))
+                }
+            }
+            .pickerStyle(.inline)
+        case .boolean:
+            Picker(
+                "Reasoning",
+                selection: Binding(
+                    get: { context.value },
+                    set: { value in updateReasoning(value) }
+                )
+            ) {
+                Text("On").tag(FeatureModelOptionValue.boolean(true))
+                Text("Off").tag(FeatureModelOptionValue.boolean(false))
+            }
+            .pickerStyle(.inline)
+        }
+    }
+
+    private var reasoningContext: FeatureComposerReasoningSelection.Context? {
+        FeatureComposerReasoningSelection.context(
+            explicit: selection,
+            inherited: threadSelection,
+            providers: providers,
+            materializesDefaultSelection: materializesDefaultSelection
+        )
+    }
+
+    private func updateReasoning(_ value: FeatureModelOptionValue) {
+        selection = FeatureComposerReasoningSelection.updating(
+            explicit: selection,
+            inherited: threadSelection,
+            providers: providers,
+            materializesDefaultSelection: materializesDefaultSelection,
+            value: value
         )
     }
 
@@ -566,6 +642,82 @@ struct FeatureComposerView: View {
         }
         pasteQueue.cancelAll()
         attachmentPreparation.cancelAll()
+    }
+}
+
+enum FeatureComposerReasoningSelection {
+    struct Context: Equatable {
+        let selection: FeatureSelection
+        let descriptor: FeatureModelOptionDescriptor
+        let choices: [FeatureModelOptionChoice]
+        let value: FeatureModelOptionValue
+        let summary: String
+    }
+
+    static func context(
+        explicit: FeatureSelection?,
+        inherited: FeatureSelection?,
+        providers: [FeatureProvider],
+        materializesDefaultSelection: Bool
+    ) -> Context? {
+        let resolved = ProviderModelSelectionResolver.resolved(
+            explicit: explicit,
+            inherited: inherited,
+            providers: providers,
+            materializesDefaultSelection: materializesDefaultSelection
+        )
+        guard let resolved,
+              let provider = providers.first(where: { $0.id == resolved.providerID }),
+              let model = provider.models.first(where: { $0.id == resolved.modelID }),
+              let descriptor = DailyUXModelOptions.reasoningDescriptor(for: model),
+              let value = DailyUXModelOptions.value(for: descriptor, in: resolved.options) else {
+            return nil
+        }
+        let choices = descriptor.choices
+        let summary: String
+        switch (descriptor.kind, value) {
+        case let (.select, .string(choiceID)):
+            guard !choices.isEmpty,
+                  let choice = choices.first(where: { $0.id == choiceID }) else {
+                return nil
+            }
+            summary = choice.label
+        case let (.boolean, .boolean(isEnabled)):
+            summary = "\(descriptor.label): \(isEnabled ? "On" : "Off")"
+        default:
+            return nil
+        }
+        return Context(
+            selection: resolved,
+            descriptor: descriptor,
+            choices: choices,
+            value: value,
+            summary: summary
+        )
+    }
+
+    static func updating(
+        explicit: FeatureSelection?,
+        inherited: FeatureSelection?,
+        providers: [FeatureProvider],
+        materializesDefaultSelection: Bool,
+        value: FeatureModelOptionValue
+    ) -> FeatureSelection? {
+        guard let context = context(
+            explicit: explicit,
+            inherited: inherited,
+            providers: providers,
+            materializesDefaultSelection: materializesDefaultSelection
+        ) else {
+            return explicit
+        }
+        var updated = context.selection
+        updated.options = DailyUXModelOptions.updating(
+            updated.options,
+            id: context.descriptor.id,
+            value: value
+        )
+        return updated
     }
 }
 
