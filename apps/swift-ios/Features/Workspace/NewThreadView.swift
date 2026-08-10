@@ -190,6 +190,11 @@ public struct NewThreadView: View {
         }
         .padding(.horizontal, 16)
         .frame(height: 48)
+#if DEBUG
+        .background(Color.orange)
+        .environment(\.colorScheme, .light)
+        .accessibilityIdentifier("debug-new-thread-title-bar")
+#endif
     }
 
     private var hero: some View {

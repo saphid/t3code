@@ -395,7 +395,13 @@ public struct WorkspaceView: View {
         .padding(.leading, 15)
         .padding(.trailing, 8)
         .frame(height: 49)
+#if DEBUG
+        .background(Color.orange.ignoresSafeArea(edges: .top))
+        .environment(\.colorScheme, .light)
+        .accessibilityIdentifier("debug-home-title-bar")
+#else
         .background(T3Colors.background)
+#endif
     }
 
 #if DEBUG
