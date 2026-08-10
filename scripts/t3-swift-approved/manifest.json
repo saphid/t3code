@@ -8,7 +8,7 @@
     "commit": "e995f72f665bf6ae248fbce1b471d498346f79ab"
   },
   "approvedBy": "Alex Southwell",
-  "approvedAt": "2026-08-10T11:30:30+10:00",
+  "approvedAt": "2026-08-10T11:47:45+10:00",
   "features": [
     {
       "name": "Grow the SwiftUI composer for long prompts",
@@ -99,10 +99,11 @@
     },
     {
       "name": "Keep SwiftUI composer controls above a docked keyboard",
-      "sourceBranch": "personal/swiftui-four-feature-release-20260809",
-      "sourceCommit": "40b935540b2d9e4cc43192f975a95b60238f6d41",
-      "integrationPatchId": "2fa3f0baec776417c05b624c429601a29e229d5e",
-      "integratedCommit": "362bf5dd38bd320dd82448a49329ebea826cbdde"
+      "sourceBranch": "fix/swiftui-keyboard-clearance",
+      "sourceCommit": "f2ed77976e8895a778f21e150833284e20f0eff2",
+      "pullRequest": "https://github.com/pingdotgg/t3code/pull/5829",
+      "integrationPatchId": "91276e8db832642badcaecf237d9fb11d0a78add",
+      "integratedCommit": "db5a07ef7002a2b1c05b333c06a0b20a7d6e44cd"
     },
     {
       "name": "Mark SwiftUI debug thread title bars in orange",
@@ -189,7 +190,7 @@
     "docs/user/swiftui-image-attachments.md",
     "docs/user/swiftui-working-duration.md"
   ],
-  "featureTreeDigest": "d5199b4366457322a10932210f361bbf22d032d6598684f0ba4c6a45d62f72d5",
+  "featureTreeDigest": "19726a5b2f4cbeff867811480734b88ef3abad4a3607c24e6711010da57373e3",
   "overlayPaths": [
     "apps/swift-ios/Extensions/Shared/T3CodeDev.entitlements",
     "apps/swift-ios/Resources/Info.plist",
