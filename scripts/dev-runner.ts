@@ -693,7 +693,9 @@ export function runDevRunnerWithInput(input: DevRunnerCliInput) {
     const resolvedT3Home =
       (input.t3Home?.trim() || undefined) ??
       worktreeHome ??
-      (hostEnvironment.T3CODE_HOME?.trim() || undefined);
+      (input.mode === "dev:desktop"
+        ? hostEnvironment.T3_TYPED_SWIFTUI_HOME?.trim() || undefined
+        : hostEnvironment.T3CODE_HOME?.trim() || undefined);
     const env = yield* createDevRunnerEnv({
       mode: input.mode,
       baseEnv: hostEnvironment,

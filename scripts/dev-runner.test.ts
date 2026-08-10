@@ -1225,6 +1225,8 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
         readonly t3Home: string | undefined;
         readonly cwd: string;
         readonly ambientHome: string | undefined;
+        readonly ambientTypedHome?: string | undefined;
+        readonly mode?: "dev:server" | "dev:desktop";
       }) =>
         Effect.gen(function* () {
           let captured: Record<string, string | undefined> | undefined;
@@ -1240,17 +1242,20 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
             }),
           );
 
-          yield* runDevRunnerWithInput({ ...devServerInput, t3Home: input.t3Home }).pipe(
+          const mode = input.mode ?? "dev:server";
+          yield* runDevRunnerWithInput({ ...devServerInput, mode, t3Home: input.t3Home }).pipe(
             Effect.provide(Layer.mergeAll(emptyConfigLayer, netServiceLayer, spawnerLayer)),
             Effect.provideService(HostProcessPlatform, "linux"),
             Effect.provideService(HostProcessWorkingDirectory, input.cwd),
-            Effect.provideService(
-              HostProcessEnvironment,
-              input.ambientHome === undefined ? {} : { T3CODE_HOME: input.ambientHome },
-            ),
+            Effect.provideService(HostProcessEnvironment, {
+              ...(input.ambientHome === undefined ? {} : { T3CODE_HOME: input.ambientHome }),
+              ...(input.ambientTypedHome === undefined
+                ? {}
+                : { T3_TYPED_SWIFTUI_HOME: input.ambientTypedHome }),
+            }),
           );
 
-          return captured?.T3CODE_HOME;
+          return mode === "dev:desktop" ? captured?.T3_TYPED_SWIFTUI_HOME : captured?.T3CODE_HOME;
         });
 
       it.effect("prefers an explicit --home-dir over the worktree default", () =>
@@ -1301,6 +1306,32 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
             ambientHome: "/home/user/.t3",
           });
           assert.equal(home, path.resolve("/home/user/.t3"));
+        }),
+      );
+
+      it.effect("desktop mode ignores the existing product's ambient home", () =>
+        Effect.gen(function* () {
+          const home = yield* spawnedHome({
+            mode: "dev:desktop",
+            t3Home: undefined,
+            cwd: NodeOS.tmpdir(),
+            ambientHome: "/home/user/.t3",
+          });
+          assert.equal(home, undefined);
+        }),
+      );
+
+      it.effect("desktop mode uses only its reserved ambient home", () =>
+        Effect.gen(function* () {
+          const path = yield* Path.Path;
+          const home = yield* spawnedHome({
+            mode: "dev:desktop",
+            t3Home: undefined,
+            cwd: NodeOS.tmpdir(),
+            ambientHome: "/home/user/.t3",
+            ambientTypedHome: "/home/user/t3-typed-swiftui",
+          });
+          assert.equal(home, path.resolve("/home/user/t3-typed-swiftui"));
         }),
       );
 
