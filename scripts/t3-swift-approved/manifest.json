@@ -127,6 +127,14 @@
       "sourcePatchId": "7b60b54124b5326212101e110a21d7d603fcdc8d",
       "integrationPatchId": "7b60b54124b5326212101e110a21d7d603fcdc8d",
       "integratedCommit": "72a89353f198f48f12967384c0da445bacf2c5d3"
+    },
+    {
+      "name": "Show Settle when swiping pinned SwiftUI threads",
+      "sourceBranch": "saphid/swiftui-pinned-settle",
+      "sourceCommit": "3203b8e295ef18df975a0e96cf0d7b4c9e6881b5",
+      "sourcePatchId": "250b35b2f5196d2a8adef2e7fc821fd1b52ddc70",
+      "integrationPatchId": "250b35b2f5196d2a8adef2e7fc821fd1b52ddc70",
+      "integratedCommit": "b5602cdbc43a3b5cbde0f3e6134e6ed42d307f19"
     }
   ],
   "featurePaths": [
@@ -159,6 +167,7 @@
     "apps/swift-ios/README.md",
     "apps/swift-ios/Tests/CoreTests/CoreContractTests.swift",
     "apps/swift-ios/Tests/FeatureTests/AttachmentPreparationTests.swift",
+    "apps/swift-ios/Tests/FeatureTests/DailyUXSidebarTests.swift",
     "apps/swift-ios/Tests/FeatureTests/DailyUXNewTaskTests.swift",
     "apps/swift-ios/Tests/FeatureTests/FeatureComposerPowerTests.swift",
     "apps/swift-ios/Tests/FeatureTests/FeatureToolStateTests.swift",
@@ -171,7 +180,7 @@
     "docs/user/swiftui-image-attachments.md",
     "docs/user/swiftui-working-duration.md"
   ],
-  "featureTreeDigest": "74326e9010ee28c9f7b6c07d64c01d9e10c29d27c03dc390749b2c5413f1f754",
+  "featureTreeDigest": "52c2b07a1ca1629d3918c7e86668db2ea9eff99b86637a309cf4a08692947088",
   "overlayPaths": [
     "apps/swift-ios/Extensions/Shared/T3CodeDev.entitlements",
     "apps/swift-ios/Resources/Info.plist",
