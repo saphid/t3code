@@ -300,6 +300,14 @@
       "sourcePatchId": "380d8a225907915450358621e3df5305fbb878c1",
       "integrationPatchId": "380d8a225907915450358621e3df5305fbb878c1",
       "integratedCommit": "b262fd6ee9c255a85622af284b6db699db07ceec"
+    },
+    {
+      "name": "Harden SwiftUI new-task presentation cleanup",
+      "sourceBranch": "personal/swiftui-approved",
+      "sourceCommit": "23a3363fd90a89f6d7deeab62aaaa29ec051f75b",
+      "sourcePatchId": "58bc7cb8a109c59e8aaed4fd8ee60455bf3c6192",
+      "integrationPatchId": "58bc7cb8a109c59e8aaed4fd8ee60455bf3c6192",
+      "integratedCommit": "23a3363fd90a89f6d7deeab62aaaa29ec051f75b"
     }
   ],
   "featurePaths": [
@@ -371,7 +379,7 @@
     "docs/user/swiftui-image-attachments.md",
     "docs/user/swiftui-working-duration.md"
   ],
-  "featureTreeDigest": "2e2f45216195966c25016079e8f566169f793720b540ff8f05984d086fafa9b6",
+  "featureTreeDigest": "5093e8435a84f627cfcc6678dfe64c058c58f332ae39084a90556650691ddd9d",
   "overlayPaths": [
     "apps/swift-ios/Extensions/Shared/T3CodeDev.entitlements",
     "apps/swift-ios/Resources/Info.plist",
