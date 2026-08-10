@@ -34,6 +34,45 @@ struct ComposerDraftStoreTests {
         #expect(try await reloaded.draft(for: "environment:test:thread:one") == draft)
     }
 
+    @Test func roundTripsComposerReasoningChoiceForNewTaskAndThreadDrafts() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = FeatureComposerDraftStore(
+            fileURL: directory.appendingPathComponent("drafts.json")
+        )
+        let reasoningSelection = FeatureSelection(
+            providerID: "codex",
+            modelID: "gpt-5.6-sol",
+            options: [
+                .init(id: "reasoningEffort", value: .string("high")),
+                .init(id: "fast", value: .boolean(true)),
+            ]
+        )
+
+        for key in [
+            "environment:test:new-task:project",
+            "environment:test:thread:one",
+        ] {
+            try await store.setDraft(
+                FeatureComposerDraft(text: "Keep reasoning", selection: reasoningSelection),
+                for: key
+            )
+        }
+
+        let reloaded = FeatureComposerDraftStore(
+            fileURL: directory.appendingPathComponent("drafts.json")
+        )
+        #expect(
+            try await reloaded.draft(for: "environment:test:new-task:project")?.selection
+                == reasoningSelection
+        )
+        #expect(
+            try await reloaded.draft(for: "environment:test:thread:one")?.selection
+                == reasoningSelection
+        )
+    }
+
     @Test func emptyDraftRemovesPersistedEntry() async throws {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
