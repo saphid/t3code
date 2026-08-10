@@ -3,7 +3,11 @@ import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 
-import { normalizePathCase, validateManifest } from "./verify-project-isolation.mjs";
+import {
+  normalizePathCase,
+  validateManifest,
+  validatePersonalTeamDebugSigning,
+} from "./verify-project-isolation.mjs";
 
 const approved = JSON.parse(
   readFileSync("config/t3code-typed-swiftui/project-isolation.json", "utf8"),
@@ -38,6 +42,26 @@ test("compares macOS paths case-insensitively", () => {
   assert.equal(
     normalizePathCase("/Users/saphid/Projects/T3 Code", "darwin"),
     "/users/saphid/projects/t3 code",
+  );
+});
+
+test("keeps Debug signing compatible with a Personal Team", () => {
+  const projectSource = readFileSync("apps/swift-ios/T3Code.xcodeproj/project.pbxproj", "utf8");
+  const devEntitlementsSource = readFileSync(
+    "apps/swift-ios/Extensions/Shared/T3CodeDev.entitlements",
+    "utf8",
+  );
+
+  assert.deepEqual(validatePersonalTeamDebugSigning(projectSource, devEntitlementsSource), []);
+  assert.match(
+    validatePersonalTeamDebugSigning(
+      projectSource.replace(
+        "Extensions/Shared/T3CodeDev.entitlements",
+        "Extensions/Shared/T3Code.entitlements",
+      ),
+      devEntitlementsSource,
+    ).join("\n"),
+    /all three Debug app targets/,
   );
 });
 

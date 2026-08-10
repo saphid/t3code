@@ -265,6 +265,33 @@ function collectFiles(root) {
   return NodeFS.readdirSync(root).flatMap((name) => collectFiles(NodePath.join(root, name)));
 }
 
+export function validatePersonalTeamDebugSigning(projectSource, devEntitlementsSource) {
+  const errors = [];
+  const devEntitlementsReference =
+    "CODE_SIGN_ENTITLEMENTS = Extensions/Shared/T3CodeDev.entitlements;";
+  const referenceCount = projectSource.split(devEntitlementsReference).length - 1;
+  const unsupportedPersonalTeamEntitlements = [
+    "aps-environment",
+    "com.apple.developer.applesignin",
+    "com.apple.developer.associated-domains",
+    "com.apple.security.application-groups",
+  ];
+
+  if (referenceCount !== 3) {
+    errors.push("all three Debug app targets must use the personal-team entitlement overlay");
+  }
+  if (projectSource.includes("APS_ENVIRONMENT = development;")) {
+    errors.push("Debug signing must not request the push notification environment");
+  }
+  for (const entitlement of unsupportedPersonalTeamEntitlements) {
+    if (devEntitlementsSource.includes(entitlement)) {
+      errors.push(`personal-team entitlement overlay contains unsupported key: ${entitlement}`);
+    }
+  }
+
+  return errors;
+}
+
 function validateAppSandboxSources() {
   const roots = [
     NodePath.join(repositoryRoot, "apps/swift-ios"),
@@ -320,6 +347,19 @@ function validateAppSandboxSources() {
   if (!desktopConfigSource.includes("T3_TYPED_SWIFTUI_")) {
     errors.push("sandbox desktop config must consume its reserved environment namespace");
   }
+
+  errors.push(
+    ...validatePersonalTeamDebugSigning(
+      NodeFS.readFileSync(
+        NodePath.join(repositoryRoot, "apps/swift-ios/T3Code.xcodeproj/project.pbxproj"),
+        "utf8",
+      ),
+      NodeFS.readFileSync(
+        NodePath.join(repositoryRoot, "apps/swift-ios/Extensions/Shared/T3CodeDev.entitlements"),
+        "utf8",
+      ),
+    ),
+  );
 
   const devRunnerSource = NodeFS.readFileSync(
     NodePath.join(repositoryRoot, "scripts/dev-runner.ts"),

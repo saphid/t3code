@@ -16,7 +16,7 @@
             <BuildableReference
                BuildableIdentifier = "primary"
                BlueprintIdentifier = "A50000000000000000000001"
-               BuildableName = "T3 Code.app"
+               BuildableName = "T3Code.app"
                BlueprintName = "T3Code"
                ReferencedContainer = "container:T3Code.xcodeproj">
             </BuildableReference>
@@ -68,7 +68,7 @@
          <BuildableReference
             BuildableIdentifier = "primary"
             BlueprintIdentifier = "A50000000000000000000001"
-            BuildableName = "T3 Code.app"
+            BuildableName = "T3Code.app"
             BlueprintName = "T3Code"
             ReferencedContainer = "container:T3Code.xcodeproj">
          </BuildableReference>
@@ -84,7 +84,7 @@
          <BuildableReference
             BuildableIdentifier = "primary"
             BlueprintIdentifier = "A50000000000000000000001"
-            BuildableName = "T3 Code.app"
+            BuildableName = "T3Code.app"
             BlueprintName = "T3Code"
             ReferencedContainer = "container:T3Code.xcodeproj">
          </BuildableReference>
