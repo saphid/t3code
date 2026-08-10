@@ -5,10 +5,10 @@
     "remote": "upstream",
     "repository": "https://github.com/pingdotgg/t3code.git",
     "ref": "t3code/rebuild-mobile-app-swift",
-    "commit": "e995f72f665bf6ae248fbce1b471d498346f79ab"
+    "commit": "4cb33079025f80bbd8f8d206f4642ba84451a9ef"
   },
   "approvedBy": "Alex Southwell",
-  "approvedAt": "2026-08-10T11:47:45+10:00",
+  "approvedAt": "2026-08-10T11:53:40+10:00",
   "features": [
     {
       "name": "Grow the SwiftUI composer for long prompts",
