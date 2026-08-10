@@ -130,7 +130,9 @@ public struct WorkspaceView: View {
     @State private var settledLimit = 12
     @State private var showingNewTask = false
     @State private var isDismissingNewTask = false
-    @State private var newTaskSheetHasAppeared = false
+    @State private var appearedNewTaskPresentationID: UUID?
+    @State private var dismissingNewTaskPresentationID: UUID?
+    @State private var completedNewTaskDismissalID: UUID?
     @State private var newTaskPresentation = FeatureNewTaskPresentationCoordinator()
     @State private var deferredNewTaskPresentation: FeatureNewTaskPresentationRequest?
     @State private var newTaskPresentationEpoch = 0
@@ -231,9 +233,14 @@ public struct WorkspaceView: View {
         }
         .navigationSplitViewStyle(.balanced)
         .sheet(isPresented: $showingNewTask, onDismiss: {
-            completeNewTaskDismissal()
+            let presentationID = appearedNewTaskPresentationID
+                ?? dismissingNewTaskPresentationID
+                ?? completedNewTaskDismissalID
+                ?? newTaskPresentation.presentationID
+            completeNewTaskDismissal(presentationID: presentationID)
         }) {
             let presentation = newTaskPresentation.current
+            let presentationID = newTaskPresentation.presentationID
             NewThreadView(
                 model: model,
                 submit: submitNewTask,
@@ -249,7 +256,7 @@ public struct WorkspaceView: View {
             )
             .id(newTaskPresentation.presentationID)
             .onAppear {
-                newTaskSheetHasAppeared = true
+                appearedNewTaskPresentationID = presentationID
             }
         }
         .sheet(isPresented: $showingAddProject, onDismiss: {
@@ -296,6 +303,11 @@ public struct WorkspaceView: View {
         // links are not silently stranded.
         .onChange(of: model.homePresentationRevision) { _, _ in
             if navigationRequest != nil { consumeNavigationRequest() }
+        }
+        .onChange(of: renamingThread?.id) { _, threadID in
+            if threadID == nil {
+                resumeDeferredNewTaskPresentation()
+            }
         }
         .task(id: nextSidebarBoundary) {
             guard let boundary = nextSidebarBoundary else { return }
@@ -972,20 +984,30 @@ public struct WorkspaceView: View {
 
     private func dismissNewTaskPresentation() {
         guard showingNewTask else { return }
+        let presentationID = newTaskPresentation.presentationID
         isDismissingNewTask = true
+        dismissingNewTaskPresentationID = presentationID
         showingNewTask = false
-        guard !newTaskSheetHasAppeared else { return }
+        guard appearedNewTaskPresentationID != presentationID else { return }
         Task { @MainActor in
             await Task.yield()
-            guard isDismissingNewTask, !newTaskSheetHasAppeared else { return }
-            completeNewTaskDismissal()
+            guard isDismissingNewTask,
+                  dismissingNewTaskPresentationID == presentationID,
+                  appearedNewTaskPresentationID != presentationID else { return }
+            completeNewTaskDismissal(presentationID: presentationID)
         }
     }
 
-    private func completeNewTaskDismissal() {
-        guard isDismissingNewTask || newTaskSheetHasAppeared else { return }
+    private func completeNewTaskDismissal(presentationID: UUID) {
+        guard completedNewTaskDismissalID != presentationID else { return }
+        completedNewTaskDismissalID = presentationID
         isDismissingNewTask = false
-        newTaskSheetHasAppeared = false
+        if appearedNewTaskPresentationID == presentationID {
+            appearedNewTaskPresentationID = nil
+        }
+        if dismissingNewTaskPresentationID == presentationID {
+            dismissingNewTaskPresentationID = nil
+        }
         let dismissed = newTaskPresentation.didDismiss()
         releaseIncomingSharePresentation(from: dismissed)
 
