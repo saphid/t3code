@@ -308,6 +308,14 @@
       "sourcePatchId": "58bc7cb8a109c59e8aaed4fd8ee60455bf3c6192",
       "integrationPatchId": "58bc7cb8a109c59e8aaed4fd8ee60455bf3c6192",
       "integratedCommit": "23a3363fd90a89f6d7deeab62aaaa29ec051f75b"
+    },
+    {
+      "name": "Track SwiftUI new-task dismissal state",
+      "sourceBranch": "personal/swiftui-approved",
+      "sourceCommit": "42a4e2b145ad09d1484a0f18e5bccbc972f31c4a",
+      "sourcePatchId": "5945d51e0be4e5d785236a5864e88b29adc6aa88",
+      "integrationPatchId": "5945d51e0be4e5d785236a5864e88b29adc6aa88",
+      "integratedCommit": "42a4e2b145ad09d1484a0f18e5bccbc972f31c4a"
     }
   ],
   "featurePaths": [
@@ -379,7 +387,7 @@
     "docs/user/swiftui-image-attachments.md",
     "docs/user/swiftui-working-duration.md"
   ],
-  "featureTreeDigest": "5093e8435a84f627cfcc6678dfe64c058c58f332ae39084a90556650691ddd9d",
+  "featureTreeDigest": "31f0e5ca24bb8e6dcc000c3fb24738c04fa4da754dead5e5dc6ec074d6ec2836",
   "overlayPaths": [
     "apps/swift-ios/Extensions/Shared/T3CodeDev.entitlements",
     "apps/swift-ios/Resources/Info.plist",
