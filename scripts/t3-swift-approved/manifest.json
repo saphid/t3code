@@ -152,6 +152,14 @@
       "pullRequest": "https://github.com/pingdotgg/t3code/pull/5801",
       "integrationPatchId": "c01876656ecb223f180530488f96b1fe447c389c",
       "integratedCommit": "28f64927fec7a3319f8e82669adf9b033aaad573"
+    },
+    {
+      "name": "Keep very tall SwiftUI composer drafts reachable",
+      "sourceBranch": "fix/swiftui-composer-unlimited-growth-20260810",
+      "sourceCommit": "1b333c67a375643a4286ec3dbd1b06e8fa4844ad",
+      "pullRequest": "https://github.com/pingdotgg/t3code/pull/5801",
+      "integrationPatchId": "20746a8516474e7cfae915b808526cf6ea7397c7",
+      "integratedCommit": "2fef68bbd66a0cda08275e40879eba478532c9a2"
     }
   ],
   "featurePaths": [
@@ -198,7 +206,7 @@
     "docs/user/swiftui-image-attachments.md",
     "docs/user/swiftui-working-duration.md"
   ],
-  "featureTreeDigest": "ac6c79e167fa348e3a5d24a68cac21b7d093ea8aec3a881929267f2d8502adcc",
+  "featureTreeDigest": "03560b942a940c4c7b4fc656d5c53a73badf95265500d75db14382662dc08100",
   "overlayPaths": [
     "apps/swift-ios/Extensions/Shared/T3CodeDev.entitlements",
     "apps/swift-ios/Resources/Info.plist",
