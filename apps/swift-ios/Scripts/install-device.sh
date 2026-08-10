@@ -78,6 +78,22 @@ build_settings=(
   "DEVELOPMENT_TEAM=${DEVELOPMENT_TEAM}"
 )
 
+if [[ "${CONFIGURATION}" == "Debug" ]]; then
+  require_cmd git
+  IFS='|' read -r GIT_COMMIT GIT_REPO_URL GIT_BASE_REF GIT_AHEAD_COUNT GIT_BEHIND_COUNT < <(
+    "${SCRIPT_DIR}/resolve-debug-build-metadata.sh" \
+      "${APP_DIR}" \
+      "${T3_SWIFT_BASE_REF:-}"
+  )
+  build_settings+=(
+    "T3_GIT_COMMIT=${GIT_COMMIT}"
+    "T3_GIT_REPO_URL=${GIT_REPO_URL}"
+    "T3_GIT_BASE_REF=${GIT_BASE_REF}"
+    "T3_GIT_AHEAD_COUNT=${GIT_AHEAD_COUNT}"
+    "T3_GIT_BEHIND_COUNT=${GIT_BEHIND_COUNT}"
+  )
+fi
+
 DEVICE_JSON=""
 INSTALLED_APPS_JSON=""
 cleanup() {

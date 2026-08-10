@@ -12,11 +12,15 @@ public struct SettingsView: View {
     @State private var removalTarget: FeatureEnvironment?
     @State private var saveErrorMessage: String?
     private let appVersionLabel: String
+    private let debugBuildMetadata: DebugBuildMetadata?
 
     public init(model: FeatureRootModel) {
         self.model = model
         _settings = State(initialValue: model.snapshot.settings)
         appVersionLabel = SettingsAboutMetadata.appVersionLabel(info: Bundle.main.infoDictionary)
+        debugBuildMetadata = T3BuildChrome.isDebugBuild
+            ? DebugBuildMetadata(info: Bundle.main.infoDictionary)
+            : nil
     }
 
     public var body: some View {
@@ -342,6 +346,32 @@ public struct SettingsView: View {
                 SettingsValueRow(title: "App version", value: appVersionLabel)
                 settingsDivider
                 SettingsValueRow(title: "Environment version", value: environmentVersionLabel)
+                if let debugBuildMetadata {
+                    settingsDivider
+                    if let commitURL = debugBuildMetadata.commitURL {
+                        Link(destination: commitURL) {
+                            SettingsValueRow(
+                                title: "Debug source",
+                                value: debugBuildMetadata.sourceLabel,
+                                systemImage: "arrow.up.right"
+                            )
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel(debugBuildMetadata.accessibilityLabel)
+                    } else {
+                        SettingsValueRow(
+                            title: "Debug source",
+                            value: debugBuildMetadata.sourceLabel
+                        )
+                        .accessibilityLabel(debugBuildMetadata.accessibilityLabel)
+                    }
+                    settingsDivider
+                    SettingsValueRow(
+                        title: "Upstream distance",
+                        value: debugBuildMetadata.distanceLabel
+                    )
+                    .accessibilityHidden(true)
+                }
                 settingsDivider
                 SettingsValueRow(title: "Platform", value: "Native SwiftUI")
                 settingsDivider
