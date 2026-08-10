@@ -324,6 +324,14 @@
       "sourcePatchId": "8ee6c49241ac7f7eb5d8e5a8318d78ccdbbada38",
       "integrationPatchId": "8ee6c49241ac7f7eb5d8e5a8318d78ccdbbada38",
       "integratedCommit": "a455185df480c7062b9c0d062acb054f267df330"
+    },
+    {
+      "name": "Make SwiftUI new-task dismissal idempotent",
+      "sourceBranch": "personal/swiftui-approved",
+      "sourceCommit": "c51724a0ed159a716a97a21bb195d3f51bce957a",
+      "sourcePatchId": "624af90cb9867ae13a75fd0f6311ece6b4175d30",
+      "integrationPatchId": "624af90cb9867ae13a75fd0f6311ece6b4175d30",
+      "integratedCommit": "c51724a0ed159a716a97a21bb195d3f51bce957a"
     }
   ],
   "featurePaths": [
@@ -395,7 +403,7 @@
     "docs/user/swiftui-image-attachments.md",
     "docs/user/swiftui-working-duration.md"
   ],
-  "featureTreeDigest": "5afc54cc99cc8d0bf8827ed15af088c9b211826e51fa16272ba7b04b7d31e877",
+  "featureTreeDigest": "aa028caac78fa3c8032e4611879b5adba47b7572f1062508379d9cbf493a1474",
   "overlayPaths": [
     "apps/swift-ios/Extensions/Shared/T3CodeDev.entitlements",
     "apps/swift-ios/Resources/Info.plist",
