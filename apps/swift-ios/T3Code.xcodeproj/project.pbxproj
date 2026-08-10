@@ -621,7 +621,7 @@
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = Resources/Info.plist;
-				INFOPLIST_KEY_CFBundleDisplayName = "T3 Swift Dev";
+				INFOPLIST_KEY_CFBundleDisplayName = "T3 Typed SwiftUI Dev";
 				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.developer-tools";
 				INFOPLIST_KEY_NSCameraUsageDescription = "Scan pairing QR codes and attach photos to T3 Code tasks.";
@@ -677,7 +677,7 @@
 				CURRENT_PROJECT_VERSION = 19;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = Resources/Info.plist;
-				INFOPLIST_KEY_CFBundleDisplayName = "T3 Code SwiftUI";
+				INFOPLIST_KEY_CFBundleDisplayName = "T3 Typed SwiftUI";
 				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.developer-tools";
 				INFOPLIST_KEY_NSCameraUsageDescription = "Scan pairing QR codes and attach photos to T3 Code tasks.";
@@ -784,7 +784,7 @@
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 5.0;
 				T3CODE_APP_GROUP_IDENTIFIER = group.com.alxs.t3code.typed-swiftui.dev;
-				T3CODE_WIDGET_DISPLAY_NAME = "T3 Swift Dev Widgets";
+				T3CODE_WIDGET_DISPLAY_NAME = "T3 Typed SwiftUI Dev Widgets";
 				TARGETED_DEVICE_FAMILY = "1,2";
 			};
 			name = Debug;
@@ -816,7 +816,7 @@
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 5.0;
 				T3CODE_APP_GROUP_IDENTIFIER = group.com.alxs.t3code.typed-swiftui;
-				T3CODE_WIDGET_DISPLAY_NAME = "T3 Code Widgets";
+				T3CODE_WIDGET_DISPLAY_NAME = "T3 Typed SwiftUI Widgets";
 				TARGETED_DEVICE_FAMILY = "1,2";
 				VALIDATE_PRODUCT = YES;
 			};
@@ -848,7 +848,7 @@
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 5.0;
 				T3CODE_APP_GROUP_IDENTIFIER = group.com.alxs.t3code.typed-swiftui.dev;
-				T3CODE_SHARE_DISPLAY_NAME = "T3 Swift Dev";
+				T3CODE_SHARE_DISPLAY_NAME = "T3 Typed SwiftUI Dev";
 				TARGETED_DEVICE_FAMILY = "1,2";
 			};
 			name = Debug;
@@ -880,7 +880,7 @@
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 5.0;
 				T3CODE_APP_GROUP_IDENTIFIER = group.com.alxs.t3code.typed-swiftui;
-				T3CODE_SHARE_DISPLAY_NAME = "T3 Code (SwiftUI)";
+				T3CODE_SHARE_DISPLAY_NAME = "T3 Typed SwiftUI";
 				TARGETED_DEVICE_FAMILY = "1,2";
 				VALIDATE_PRODUCT = YES;
 			};

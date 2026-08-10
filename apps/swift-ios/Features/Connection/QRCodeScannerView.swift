@@ -205,7 +205,9 @@ private struct QRScannerCameraView: UIViewControllerRepresentable {
 @MainActor
 private final class QRScannerViewController: UIViewController {
     private let captureSession = AVCaptureSession()
-    private let sessionQueue = DispatchQueue(label: "codes.t3.swift-ios.qr-scanner")
+    private let sessionQueue = DispatchQueue(
+        label: "com.alxs.t3code.typed-swiftui.qr-scanner"
+    )
     private var previewLayer: AVCaptureVideoPreviewLayer?
     private var metadataDelegate: AVCaptureMetadataOutputObjectsDelegate?
     private var availabilityChanged: (@MainActor (QRScannerAvailability) -> Void)?

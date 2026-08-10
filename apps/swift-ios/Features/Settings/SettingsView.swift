@@ -439,7 +439,7 @@ public struct SettingsView: View {
 
     private var appDisplayName: String {
         Bundle.main.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String
-            ?? "T3 Code SwiftUI"
+            ?? "T3 Typed SwiftUI"
     }
 
     private var canSave: Bool {

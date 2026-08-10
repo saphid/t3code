@@ -335,9 +335,16 @@ export function createDevRunnerEnv({
     };
 
     if (configuredBaseDir !== undefined) {
-      output.T3CODE_HOME = resolvedBaseDir;
+      if (isDesktopMode) {
+        output.T3_TYPED_SWIFTUI_HOME = resolvedBaseDir;
+        delete output.T3CODE_HOME;
+      } else {
+        output.T3CODE_HOME = resolvedBaseDir;
+        delete output.T3_TYPED_SWIFTUI_HOME;
+      }
     } else {
       delete output.T3CODE_HOME;
+      delete output.T3_TYPED_SWIFTUI_HOME;
     }
 
     // A dev-runner server is never launcher-managed. When the shell that runs
@@ -350,6 +357,7 @@ export function createDevRunnerEnv({
 
     if (!isDesktopMode) {
       output.T3CODE_PORT = String(serverPort);
+      delete output.T3_TYPED_SWIFTUI_PORT;
       // HOST is Vite's own bind address, and the desktop branch below is the
       // only place we set it. An inherited one (an exported HOST, a container,
       // a `HOST=0.0.0.0 npm start` habit) would otherwise reach Vite and pin
@@ -379,7 +387,8 @@ export function createDevRunnerEnv({
         delete output.T3CODE_SINGLE_ORIGIN_DEV;
       }
     } else {
-      output.T3CODE_PORT = String(serverPort);
+      output.T3_TYPED_SWIFTUI_PORT = String(serverPort);
+      delete output.T3CODE_PORT;
       output.VITE_HTTP_URL = `http://${DESKTOP_DEV_LOOPBACK_HOST}:${serverPort}`;
       output.VITE_WS_URL = `ws://${DESKTOP_DEV_LOOPBACK_HOST}:${serverPort}`;
       // Desktop pins the renderer to loopback on purpose; an ambient marker
@@ -703,10 +712,13 @@ export function runDevRunnerWithInput(input: DevRunnerCliInput) {
       serverOffset !== offset || webOffset !== offset
         ? ` selectedOffset(server=${serverOffset},web=${webOffset})`
         : "";
-    const baseDir = env.T3CODE_HOME ?? (yield* DEFAULT_T3_HOME);
+    const baseDir =
+      (input.mode === "dev:desktop" ? env.T3_TYPED_SWIFTUI_HOME : env.T3CODE_HOME) ??
+      (yield* DEFAULT_T3_HOME);
+    const serverPort = input.mode === "dev:desktop" ? env.T3_TYPED_SWIFTUI_PORT : env.T3CODE_PORT;
 
     yield* Effect.logInfo(
-      `[dev-runner] mode=${input.mode} source=${source}${selectionSuffix} serverPort=${String(env.T3CODE_PORT)} webPort=${String(env.PORT)} baseDir=${baseDir}`,
+      `[dev-runner] mode=${input.mode} source=${source}${selectionSuffix} serverPort=${String(serverPort)} webPort=${String(env.PORT)} baseDir=${baseDir}`,
     );
 
     // Before the share block: --dry-run only resolves and prints. Sharing would

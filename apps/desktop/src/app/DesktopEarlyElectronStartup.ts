@@ -49,7 +49,7 @@ function resolveEarlyDesktopSettingsPath(input: {
   readonly homeDirectory: string;
   readonly joinPath: JoinPath;
 }): string {
-  const t3Home = Option.fromUndefinedOr(input.env.T3CODE_HOME);
+  const t3Home = Option.fromUndefinedOr(input.env.T3_TYPED_SWIFTUI_HOME);
   const baseDir = resolveDesktopBaseDir({
     defaultBaseDir: input.joinPath(input.homeDirectory, ".config", "T3CodeTypedSwiftUI"),
     joinPath: input.joinPath,

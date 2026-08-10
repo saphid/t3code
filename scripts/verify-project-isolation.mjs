@@ -272,6 +272,7 @@ function validateAppSandboxSources() {
     NodePath.join(repositoryRoot, "apps/desktop/scripts"),
     NodePath.join(repositoryRoot, "apps/server/src/http.ts"),
     NodePath.join(repositoryRoot, "scripts/build-desktop-artifact.ts"),
+    NodePath.join(repositoryRoot, "scripts/dev-runner.ts"),
   ];
   const files = roots
     .flatMap(collectFiles)
@@ -283,6 +284,7 @@ function validateAppSandboxSources() {
     "group.com.t3tools.t3code.swiftui",
     "t3code-swiftui",
     "T3CodeSwift",
+    "codes.t3.swift-ios",
     "com.t3tools.t3code.dev",
     '"com.t3tools.t3code"',
     "t3code://app",
@@ -295,6 +297,8 @@ function validateAppSandboxSources() {
     "T3CodeTypedSwiftUI",
     "com.alxs.t3code.typed-swiftui.desktop",
     "t3code-typed-swiftui-desktop",
+    "T3 Typed Desktop",
+    "T3 Typed SwiftUI",
   ];
 
   for (const token of forbiddenAppTokens) {
@@ -305,6 +309,27 @@ function validateAppSandboxSources() {
   }
   if (source.includes("buildConfig.publish = [publishConfig]")) {
     errors.push("sandbox desktop builds must not inherit a GitHub auto-update feed");
+  }
+  const desktopConfigSource = NodeFS.readFileSync(
+    NodePath.join(repositoryRoot, "apps/desktop/src/app/DesktopConfig.ts"),
+    "utf8",
+  );
+  if (desktopConfigSource.includes('trimmedString("T3CODE_')) {
+    errors.push("sandbox desktop config must not consume existing-product T3CODE_* overrides");
+  }
+  if (!desktopConfigSource.includes("T3_TYPED_SWIFTUI_")) {
+    errors.push("sandbox desktop config must consume its reserved environment namespace");
+  }
+
+  const devRunnerSource = NodeFS.readFileSync(
+    NodePath.join(repositoryRoot, "scripts/dev-runner.ts"),
+    "utf8",
+  );
+  if (
+    !devRunnerSource.includes("output.T3_TYPED_SWIFTUI_HOME = resolvedBaseDir") ||
+    !devRunnerSource.includes("output.T3_TYPED_SWIFTUI_PORT = String(serverPort)")
+  ) {
+    errors.push("sandbox desktop dev runner must emit the reserved environment namespace");
   }
 
   return errors;

@@ -40,13 +40,13 @@ describe("DesktopEnvironment", () => {
       const environment = yield* makeEnvironment(
         {},
         {
-          T3CODE_HOME: " /tmp/t3 ",
-          T3CODE_COMMIT_HASH: " 0123456789abcdef ",
-          T3CODE_PORT: "4949",
+          T3_TYPED_SWIFTUI_HOME: " /tmp/t3 ",
+          T3_TYPED_SWIFTUI_COMMIT_HASH: " 0123456789abcdef ",
+          T3_TYPED_SWIFTUI_PORT: "4949",
           VITE_DEV_SERVER_URL: "http://localhost:5173",
-          T3CODE_DEV_REMOTE_T3_SERVER_ENTRY_PATH: " /remote/server.mjs ",
-          T3CODE_OTLP_TRACES_URL: " http://127.0.0.1:4318/v1/traces ",
-          T3CODE_OTLP_EXPORT_INTERVAL_MS: "2500",
+          T3_TYPED_SWIFTUI_DEV_REMOTE_T3_SERVER_ENTRY_PATH: " /remote/server.mjs ",
+          T3_TYPED_SWIFTUI_OTLP_TRACES_URL: " http://127.0.0.1:4318/v1/traces ",
+          T3_TYPED_SWIFTUI_OTLP_EXPORT_INTERVAL_MS: "2500",
         },
       );
 
@@ -86,7 +86,7 @@ describe("DesktopEnvironment", () => {
       const environment = yield* makeEnvironment(
         {},
         {
-          T3CODE_HOME: "/tmp/t3",
+          T3_TYPED_SWIFTUI_HOME: "/tmp/t3",
         },
       );
 
@@ -122,7 +122,8 @@ describe("DesktopEnvironment", () => {
       const environment = yield* makeEnvironment(
         {},
         {
-          T3CODE_DESKTOP_APP_USER_MODEL_ID: " com.alxs.t3code.typed-swiftui.desktop.dev.local ",
+          T3_TYPED_SWIFTUI_DESKTOP_APP_USER_MODEL_ID:
+            " com.alxs.t3code.typed-swiftui.desktop.dev.local ",
           VITE_DEV_SERVER_URL: "http://localhost:5173",
         },
       );

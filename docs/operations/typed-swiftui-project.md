@@ -43,10 +43,19 @@ The Electron and SwiftUI sources use identities owned only by this repository:
 - Desktop artifacts use the `T3-Code-Typed-SwiftUI-*` name and carry no GitHub
   update feed. Mock-update configuration remains available only for tests.
 
-These source-level boundaries do not install or launch either app. The existing
-T3 Code Electron and approved SwiftUI apps keep their current identities,
-storage, runtime, checkout, and automation. Visible product copy and layouts are
-unchanged, so this isolation change has no user-interface surface to capture.
+These source-level boundaries do not prescribe a persistent installation or
+runtime for either app. Evidence-only launches must use disposable isolated
+state and be cleaned up afterward. The existing T3 Code Electron and approved
+SwiftUI apps keep their current identities, storage, runtime, checkout, and
+automation. The sandbox clients use visibly distinct `T3 Typed Desktop` and
+`T3 Typed SwiftUI` app names; product copy, layouts, and interactions are
+otherwise the imported upstream baseline.
+
+Inherited T3 operational and release documents are reference material only in
+this experimental repository. Commands that register, sign, publish, install,
+or launch upstream identities are not approved here. This project boundary and
+the isolation manifest take precedence until a later ticket explicitly creates
+the corresponding runtime and release lane.
 
 Run the static guardrail and its focused tests with:
 

@@ -45,7 +45,7 @@ public struct T3ConnectCloudEnvironment: Identifiable, Equatable, Sendable {
 @Observable
 public final class T3ConnectController {
     private static let logger = Logger(
-        subsystem: "codes.t3.swift-ios",
+        subsystem: "com.alxs.t3code.typed-swiftui",
         category: "T3Connect"
     )
     public let resolution: T3ConnectConfigurationResolution

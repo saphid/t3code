@@ -1,4 +1,4 @@
-// This file mostly exists because we want dev mode to say "T3 Code (Dev)" instead of "electron"
+// This file mostly exists because we want dev mode to say "T3 Typed Desktop (Dev)" instead of "electron"
 
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
@@ -12,7 +12,9 @@ const isDevelopment = Boolean(process.env.VITE_DEV_SERVER_URL);
 const __dirname = NodePath.dirname(NodeURL.fileURLToPath(import.meta.url));
 export const desktopDir = NodePath.resolve(__dirname, "..");
 const repoRoot = NodePath.resolve(desktopDir, "..", "..");
-export const APP_DISPLAY_NAME = isDevelopment ? "T3 Code (Dev)" : "T3 Code (Alpha)";
+export const APP_DISPLAY_NAME = isDevelopment
+  ? "T3 Typed Desktop (Dev)"
+  : "T3 Typed Desktop (Alpha)";
 export const APP_BUNDLE_ID = isDevelopment
   ? "com.alxs.t3code.typed-swiftui.desktop.dev"
   : "com.alxs.t3code.typed-swiftui.desktop";
@@ -107,12 +109,15 @@ export function makeDevelopmentLauncherScript({
 }) {
   const envEntries = [
     ["VITE_DEV_SERVER_URL", environment.VITE_DEV_SERVER_URL],
-    ["T3CODE_PORT", environment.T3CODE_PORT],
-    ["T3CODE_HOME", environment.T3CODE_HOME],
-    ["T3CODE_COMMIT_HASH", environment.T3CODE_COMMIT_HASH],
-    ["T3CODE_OTLP_TRACES_URL", environment.T3CODE_OTLP_TRACES_URL],
-    ["T3CODE_OTLP_EXPORT_INTERVAL_MS", environment.T3CODE_OTLP_EXPORT_INTERVAL_MS],
-    ["T3CODE_DESKTOP_APP_USER_MODEL_ID", APP_BUNDLE_ID],
+    ["T3_TYPED_SWIFTUI_PORT", environment.T3_TYPED_SWIFTUI_PORT],
+    ["T3_TYPED_SWIFTUI_HOME", environment.T3_TYPED_SWIFTUI_HOME],
+    ["T3_TYPED_SWIFTUI_COMMIT_HASH", environment.T3_TYPED_SWIFTUI_COMMIT_HASH],
+    ["T3_TYPED_SWIFTUI_OTLP_TRACES_URL", environment.T3_TYPED_SWIFTUI_OTLP_TRACES_URL],
+    [
+      "T3_TYPED_SWIFTUI_OTLP_EXPORT_INTERVAL_MS",
+      environment.T3_TYPED_SWIFTUI_OTLP_EXPORT_INTERVAL_MS,
+    ],
+    ["T3_TYPED_SWIFTUI_DESKTOP_APP_USER_MODEL_ID", APP_BUNDLE_ID],
   ].filter((entry) => typeof entry[1] === "string" && entry[1].trim().length > 0);
   return [
     "#!/bin/sh",

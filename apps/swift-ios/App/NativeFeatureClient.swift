@@ -28,7 +28,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
 {
     private static let maximumRetainedThreadDetails = 6
     private static let t3ConnectLogger = Logger(
-        subsystem: "codes.t3.swift-ios",
+        subsystem: "com.alxs.t3code.typed-swiftui",
         category: "T3Connect"
     )
     private static let initialThreadUserTurnLimit = 10
@@ -288,7 +288,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         }
         let authorization = try await t3ConnectController.managedAuthorizer.exchange(
             credential,
-            clientLabel: "T3 Code SwiftUI"
+            clientLabel: "T3 Typed SwiftUI"
         )
         guard authorization.environmentID == descriptor.environmentId,
               authorization.endpoint == credential.endpoint,

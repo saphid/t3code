@@ -48,7 +48,7 @@ const childEnv = { ...process.env };
 delete childEnv.ELECTRON_RUN_AS_NODE;
 const devProtocolClient = resolveDevProtocolClient();
 if (devProtocolClient) {
-  childEnv.T3CODE_DESKTOP_APP_USER_MODEL_ID = devProtocolClient.appBundleId;
+  childEnv.T3_TYPED_SWIFTUI_DESKTOP_APP_USER_MODEL_ID = devProtocolClient.appBundleId;
   childEnv.T3CODE_DESKTOP_PROTOCOL_REGISTRATION_MANAGED = "1";
 }
 

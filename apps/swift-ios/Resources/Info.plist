@@ -12,7 +12,7 @@
             <key>CFBundleTypeRole</key>
             <string>Editor</string>
             <key>CFBundleURLName</key>
-            <string>T3 Code SwiftUI Routes</string>
+            <string>T3 Typed SwiftUI Routes</string>
             <key>CFBundleURLSchemes</key>
             <array>
                 <string>$(T3CODE_URL_SCHEME)</string>

@@ -341,11 +341,13 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
           devUrl: undefined,
         });
 
-        assert.equal(env.T3CODE_HOME, path.resolve("/tmp/my-t3"));
+        assert.equal(env.T3_TYPED_SWIFTUI_HOME, path.resolve("/tmp/my-t3"));
+        assert.equal(env.T3CODE_HOME, undefined);
         assert.equal(env.PORT, "5733");
         assert.equal(env.VITE_DEV_SERVER_URL, "http://127.0.0.1:5733");
         assert.equal(env.HOST, "127.0.0.1");
-        assert.equal(env.T3CODE_PORT, "4222");
+        assert.equal(env.T3_TYPED_SWIFTUI_PORT, "4222");
+        assert.equal(env.T3CODE_PORT, undefined);
         assert.equal(env.VITE_HTTP_URL, "http://127.0.0.1:4222");
         assert.equal(env.T3CODE_MODE, undefined);
         assert.equal(env.T3CODE_NO_BROWSER, undefined);

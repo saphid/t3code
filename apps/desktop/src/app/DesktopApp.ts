@@ -56,7 +56,7 @@ export class DesktopDevelopmentBackendPortRequiredError extends Schema.TaggedErr
   {},
 ) {
   override get message(): string {
-    return "T3CODE_PORT is required in desktop development.";
+    return "T3_TYPED_SWIFTUI_PORT is required in desktop development.";
   }
 }
 

@@ -28,7 +28,7 @@ public actor KeychainCredentialStore: CredentialStore {
     private let accessibility: CFString
 
     public init(
-        service: String = "codes.t3.swift-ios.environment-credentials",
+        service: String = "com.alxs.t3code.typed-swiftui.environment-credentials",
         accessibility: CFString = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
     ) {
         self.service = service
