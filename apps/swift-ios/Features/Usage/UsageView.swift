@@ -358,8 +358,8 @@ public struct UsageView: View {
         if input != windowInput {
             let selectedWindowChanged =
                 UsageWindow.days(in: input).count != UsageWindow.days(in: windowInput).count
-            windowInput = input
             if selectedWindowChanged {
+                windowInput = input
                 environments = []
                 merged = MergedUsage()
             }
@@ -374,6 +374,7 @@ public struct UsageView: View {
             let result = try await client.usageSummaries(input)
             try Task.checkCancellation()
             guard activeLoadID == loadID else { return }
+            windowInput = input
             environments = result
             merged = UsageMerger.merge(result)
             errorMessage = nil

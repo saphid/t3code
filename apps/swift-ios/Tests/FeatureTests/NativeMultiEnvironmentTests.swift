@@ -254,13 +254,21 @@ final class NativeMultiEnvironmentTests: XCTestCase {
     }
 
     func testUsageSummaryCancellationClosesEveryProbeAndRethrowsCancellation() async throws {
+        let firstSent = SendableExpectation(
+            expectation(description: "first usage probe sent its request")
+        )
+        let secondSent = SendableExpectation(
+            expectation(description: "second usage probe sent its request")
+        )
         let first = UsageProbeConnection(
             result: .success(usageProbeSummary(provider: .codex)),
-            delay: .seconds(30)
+            delay: .seconds(30),
+            onSend: { firstSent.fulfill() }
         )
         let second = UsageProbeConnection(
             result: .success(usageProbeSummary(provider: .claude)),
-            delay: .seconds(30)
+            delay: .seconds(30),
+            onSend: { secondSent.fulfill() }
         )
         let connector = UsageProbeConnector(connections: [
             "one.example": first,
@@ -281,10 +289,10 @@ final class NativeMultiEnvironmentTests: XCTestCase {
                 )
             )
         }
-        let firstWasSent = await first.waitUntilSent()
-        let secondWasSent = await second.waitUntilSent()
-        XCTAssertTrue(firstWasSent)
-        XCTAssertTrue(secondWasSent)
+        await fulfillment(
+            of: [firstSent.expectation, secondSent.expectation],
+            timeout: 2
+        )
         task.cancel()
 
         do {
@@ -912,19 +920,24 @@ private actor UsageProbeConnection: WebSocketConnection {
 
     private let result: Result
     private let delay: Duration
+    private let onSend: (@Sendable () -> Void)?
     private var queuedResponses: [Data] = []
     private var receiver: CheckedContinuation<Data, Error>?
-    private var sent = false
     private(set) var closeCount = 0
     var wasClosed: Bool { closeCount > 0 }
 
-    init(result: Result, delay: Duration = .zero) {
+    init(
+        result: Result,
+        delay: Duration = .zero,
+        onSend: (@Sendable () -> Void)? = nil
+    ) {
         self.result = result
         self.delay = delay
+        self.onSend = onSend
     }
 
     func send(_ data: Data) async throws {
-        sent = true
+        onSend?()
         try await Task.sleep(for: delay)
         let request = try JSONDecoder.t3.decode(JSONValue.self, from: data)
         guard request["tag"]?.stringValue == RPCMethod.serverGetUsageSummary.rawValue,
@@ -975,15 +988,6 @@ private actor UsageProbeConnection: WebSocketConnection {
         receiver = nil
     }
 
-    func waitUntilSent(timeout: Duration = .seconds(1)) async -> Bool {
-        let clock = ContinuousClock()
-        let deadline = clock.now.advanced(by: timeout)
-        while !sent, clock.now < deadline {
-            await Task.yield()
-        }
-        return sent
-    }
-
     private func enqueue(_ data: Data) {
         if let receiver {
             self.receiver = nil
@@ -991,6 +995,27 @@ private actor UsageProbeConnection: WebSocketConnection {
         } else {
             queuedResponses.append(data)
         }
+    }
+}
+
+private final class SendableExpectation: @unchecked Sendable {
+    let expectation: XCTestExpectation
+    private let lock = NSLock()
+    private var didFulfill = false
+
+    init(_ expectation: XCTestExpectation) {
+        self.expectation = expectation
+    }
+
+    func fulfill() {
+        lock.lock()
+        guard !didFulfill else {
+            lock.unlock()
+            return
+        }
+        didFulfill = true
+        lock.unlock()
+        expectation.fulfill()
     }
 }
 
