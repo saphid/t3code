@@ -9,6 +9,7 @@ public struct NewThreadView: View {
     private let draftStore: FeatureComposerDraftStore
     private let initialProjectID: String?
     private let initialWorkspace: FeatureComposerWorkspaceDraft?
+    private let acknowledgeIncomingShare: (String) async -> Void
 
     @State private var projectID = ""
     @State private var prompt = ""
@@ -32,6 +33,7 @@ public struct NewThreadView: View {
     @State private var draftSaveTask: Task<Void, Never>?
     @State private var immediateDraftSaveTasks: [String: Task<Void, Never>] = [:]
     @State private var submittedSuccessfully = false
+    @State private var pendingIncomingShareID: String?
     @FocusState private var promptFocused: Bool
 
     public init(
@@ -41,6 +43,8 @@ public struct NewThreadView: View {
         onCreateProject: @escaping @MainActor () -> Void = {},
         initialProjectID: String? = nil,
         initialWorkspace: FeatureComposerWorkspaceDraft? = nil,
+        incomingShareID: String? = nil,
+        acknowledgeIncomingShare: @escaping (String) async -> Void = { _ in },
         draftStore: FeatureComposerDraftStore = .shared
     ) {
         self.model = model
@@ -49,7 +53,9 @@ public struct NewThreadView: View {
         self.onCreateProject = onCreateProject
         self.initialProjectID = initialProjectID
         self.initialWorkspace = initialWorkspace
+        self.acknowledgeIncomingShare = acknowledgeIncomingShare
         self.draftStore = draftStore
+        _pendingIncomingShareID = State(initialValue: incomingShareID)
     }
 
     public var body: some View {
@@ -93,7 +99,11 @@ public struct NewThreadView: View {
             }
         }
         .onAppear {
-            if projectID.isEmpty {
+            if pendingIncomingShareID != nil {
+                if !creationProjects.isEmpty {
+                    activePicker = .project
+                }
+            } else if projectID.isEmpty {
                 let initialID = DailyUXCreationContext.initialProject(
                     in: model.snapshot,
                     requestedProjectID: initialProjectID
@@ -121,6 +131,7 @@ public struct NewThreadView: View {
         .onChange(of: selectedBranch) { scheduleDraftSave() }
         .onChange(of: startFromOrigin) { scheduleDraftSave() }
         .task(id: projectID) { await restoreDraftAndLoadBranches() }
+        .task(id: pendingIncomingShareID) { await restoreIncomingShareDraft() }
         .onDisappear {
             guard !submittedSuccessfully else { return }
             persistCurrentDraftImmediately()
@@ -713,7 +724,16 @@ public struct NewThreadView: View {
               draftRestoreContext?.projectID == requestedProjectID else {
             return
         }
-        let saved = try? await draftStore.draft(for: key)
+        let routedShareID = pendingIncomingShareID
+        let saved: FeatureComposerDraft?
+        if let routedShareID {
+            saved = try? await draftStore.routeIncomingShare(
+                shareID: routedShareID,
+                to: key
+            )
+        } else {
+            saved = try? await draftStore.draft(for: key)
+        }
         guard !Task.isCancelled,
               projectID == requestedProjectID,
               draftRestoreContext?.projectID == requestedProjectID else {
@@ -755,10 +775,27 @@ public struct NewThreadView: View {
         workspaceSelectionIsExplicit = liveWorkspaceSelectionIsExplicit
             || saved?.workspace != nil
         restoredDraftProjectID = requestedProjectID
+        if let routedShareID, saved != nil {
+            pendingIncomingShareID = nil
+            await acknowledgeIncomingShare(routedShareID)
+        }
         if liveDraft != context.baseline {
             scheduleDraftSave()
         }
         await loadBranches()
+    }
+
+    @MainActor
+    private func restoreIncomingShareDraft() async {
+        guard let shareID = pendingIncomingShareID,
+              projectID.isEmpty else { return }
+        let key = FeatureComposerDraftStore.incomingShareKey(shareID: shareID)
+        guard let saved = try? await draftStore.draft(for: key) else { return }
+        prompt = saved.text
+        attachments = saved.attachments
+        if !creationProjects.isEmpty {
+            activePicker = .project
+        }
     }
 
     private var currentDraftKey: String? {
