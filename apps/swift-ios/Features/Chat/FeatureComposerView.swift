@@ -4,7 +4,6 @@ import UniformTypeIdentifiers
 
 struct FeatureComposerView: View {
     @SwiftUI.Environment(\.dynamicTypeSize) private var dynamicTypeSize
-    @SwiftUI.Environment(\.verticalSizeClass) private var verticalSizeClass
     @State private var isManuallyExpanded = false
     @State private var isAttachmentFlowActive = false
     @State private var dockedSoftwareKeyboardOccupiesScreen = false
@@ -268,18 +267,12 @@ struct FeatureComposerView: View {
             }
 
             let placeholder = isWorking ? "Message to queue…" : "Ask anything…"
-            let visibleLineRange = FeatureComposerTextLayout.visibleLineRange(
-                dynamicTypeSize: dynamicTypeSize,
-                verticalSizeClass: verticalSizeClass,
-                softwareKeyboardIsVisible: dockedSoftwareKeyboardOccupiesScreen
-            )
             ZStack(alignment: .topLeading) {
                 FeatureComposerTextInput(
                     text: $text,
                     focused: focused,
                     placeholder: placeholder,
                     acceptsImages: canPasteImages,
-                    maximumVisibleLines: visibleLineRange.upperBound,
                     selectionRequest: textSelectionRequest,
                     onPasteImages: loadPastedImages
                 )
@@ -794,24 +787,6 @@ enum FeatureComposerTextLayout {
     private static let minimumSoftwareKeyboardHeight: CGFloat = 100
     private static let accessibilityKeyboardBottomClearance: CGFloat = 52
 
-    static func visibleLineRange(
-        dynamicTypeSize: DynamicTypeSize,
-        verticalSizeClass: UserInterfaceSizeClass?,
-        softwareKeyboardIsVisible: Bool
-    ) -> ClosedRange<Int> {
-        if dynamicTypeSize.isAccessibilitySize {
-            return softwareKeyboardIsVisible ? (1...1) : (1...3)
-        }
-        // New Thread's sheet can leave only enough vertical room for one input
-        // line plus the footer. A larger cap lets SwiftUI compress those views
-        // into each other even though the keyboard itself was detected.
-        if softwareKeyboardIsVisible { return 1...1 }
-        if verticalSizeClass == .compact {
-            return 1...5
-        }
-        return 1...10
-    }
-
     static func bottomClearance(
         dynamicTypeSize: DynamicTypeSize,
         softwareKeyboardIsVisible: Bool
@@ -1087,12 +1062,11 @@ enum FeatureComposerPasteTextPolicy {
     }
 }
 
-private struct FeatureComposerTextInput: UIViewRepresentable {
+struct FeatureComposerTextInput: UIViewRepresentable {
     @Binding var text: String
     let focused: FocusState<Bool>.Binding
     let placeholder: String
     let acceptsImages: Bool
-    let maximumVisibleLines: Int
     let selectionRequest: FeatureComposerTextSelectionRequest?
     let onPasteImages: ([NSItemProvider]) -> Void
 
@@ -1143,7 +1117,7 @@ private struct FeatureComposerTextInput: UIViewRepresentable {
             context.coordinator.lastAppliedSelectionRequestID = selectionRequest.id
         }
         updateAccessibility(textView)
-        Self.updateScrolling(textView, maximumVisibleLines: maximumVisibleLines)
+        textView.isScrollEnabled = false
 
         if context.coordinator.lastAppliedFocus != focused.wrappedValue {
             context.coordinator.lastAppliedFocus = focused.wrappedValue
@@ -1164,8 +1138,7 @@ private struct FeatureComposerTextInput: UIViewRepresentable {
         let fittingSize = uiView.sizeThatFits(
             CGSize(width: width, height: .greatestFiniteMagnitude)
         )
-        let maximumHeight = (uiView.font?.lineHeight ?? 22) * CGFloat(maximumVisibleLines)
-        return CGSize(width: width, height: min(fittingSize.height, maximumHeight))
+        return CGSize(width: width, height: fittingSize.height)
     }
 
     private func updateAccessibility(_ textView: FeatureComposerUITextView) {
@@ -1174,14 +1147,6 @@ private struct FeatureComposerTextInput: UIViewRepresentable {
             ? "Enter a message or paste images to attach them."
             : "Enter a message."
         textView.accessibilityValue = text.isEmpty ? placeholder : nil
-    }
-
-    private static func updateScrolling(
-        _ textView: UITextView,
-        maximumVisibleLines: Int
-    ) {
-        let maximumHeight = (textView.font?.lineHeight ?? 22) * CGFloat(maximumVisibleLines)
-        textView.isScrollEnabled = textView.contentSize.height > maximumHeight
     }
 
     final class Coordinator: NSObject, UITextViewDelegate {
@@ -1194,10 +1159,7 @@ private struct FeatureComposerTextInput: UIViewRepresentable {
         }
 
         func textViewDidChange(_ textView: UITextView) {
-            FeatureComposerTextInput.updateScrolling(
-                textView,
-                maximumVisibleLines: parent.maximumVisibleLines
-            )
+            textView.isScrollEnabled = false
             guard parent.text != textView.text else { return }
             parent.text = textView.text
         }
