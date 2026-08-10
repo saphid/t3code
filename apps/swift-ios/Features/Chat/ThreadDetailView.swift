@@ -1406,6 +1406,7 @@ private struct FeatureTimestampRevealMessageView: View {
     let message: FeatureMessage
     @ObservedObject var reveal: FeatureTimestampRevealState
     let onOpenURL: (URL) -> Bool
+    let imageContext: MarkdownImageContext?
 
     var body: some View {
         ZStack(alignment: .trailing) {
@@ -1425,7 +1426,11 @@ private struct FeatureTimestampRevealMessageView: View {
                     .accessibilityHidden(true)
             }
 
-            FeatureMessageView(message: message, onOpenURL: onOpenURL)
+            FeatureMessageView(
+                message: message,
+                onOpenURL: onOpenURL,
+                imageContext: imageContext
+            )
                 .offset(x: -reveal.width)
         }
     }
