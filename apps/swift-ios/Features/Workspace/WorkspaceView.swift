@@ -44,6 +44,11 @@ struct FeatureNewTaskPresentationRequestResult: Equatable, Sendable {
     let displaced: FeatureNewTaskPresentationRequest?
 }
 
+struct FeatureNewTaskPresentationReplacement: Equatable, Sendable {
+    let current: FeatureNewTaskPresentationRequest?
+    let pending: FeatureNewTaskPresentationRequest?
+}
+
 struct FeatureNewTaskPresentationCoordinator: Equatable, Sendable {
     private(set) var current: FeatureNewTaskPresentationRequest?
     private(set) var pending: FeatureNewTaskPresentationRequest?
@@ -76,8 +81,12 @@ struct FeatureNewTaskPresentationCoordinator: Equatable, Sendable {
 
     mutating func replaceInactiveCurrent(
         with request: FeatureNewTaskPresentationRequest
-    ) -> FeatureNewTaskPresentationRequest? {
-        let displaced = current
+    ) -> FeatureNewTaskPresentationReplacement {
+        let displaced = FeatureNewTaskPresentationReplacement(
+            current: current,
+            pending: pending
+        )
+        pending = nil
         activate(request)
         return displaced
     }
@@ -120,6 +129,7 @@ public struct WorkspaceView: View {
     @State private var isArchiveExpanded = false
     @State private var settledLimit = 12
     @State private var showingNewTask = false
+    @State private var isDismissingNewTask = false
     @State private var newTaskPresentation = FeatureNewTaskPresentationCoordinator()
     @State private var deferredNewTaskPresentation: FeatureNewTaskPresentationRequest?
     @State private var newTaskPresentationEpoch = 0
@@ -219,6 +229,7 @@ public struct WorkspaceView: View {
         }
         .navigationSplitViewStyle(.balanced)
         .sheet(isPresented: $showingNewTask, onDismiss: {
+            isDismissingNewTask = false
             let dismissed = newTaskPresentation.didDismiss()
             if let shareID = dismissed?.incomingShareID {
                 releaseIncomingSharePresentation(shareID)
@@ -231,6 +242,8 @@ public struct WorkspaceView: View {
                     guard presentationEpoch == newTaskPresentationEpoch else { return }
                     showingNewTask = true
                 }
+            } else {
+                resumeDeferredNewTaskPresentation()
             }
         }) {
             let presentation = newTaskPresentation.current
@@ -239,7 +252,7 @@ public struct WorkspaceView: View {
                 submit: submitNewTask,
                 onCreated: { thread in
                     openThread(thread.id)
-                    showingNewTask = false
+                    dismissNewTaskPresentation()
                 },
                 onCreateProject: openProjectCreation,
                 initialProjectID: presentation?.initialProjectID,
@@ -795,7 +808,7 @@ public struct WorkspaceView: View {
 
     @MainActor
     private func openProjectCreation() {
-        showingNewTask = false
+        dismissNewTaskPresentation()
         showingAddProject = true
     }
 
@@ -854,6 +867,7 @@ public struct WorkspaceView: View {
                 selectedProjectID = projectID
             }
             if creationProjects.isEmpty {
+                guard !showingAddProject else { break }
                 dismissTransientPresentations()
                 let presentationEpoch = newTaskPresentationEpoch
                 Task { @MainActor in
@@ -876,7 +890,7 @@ public struct WorkspaceView: View {
         releaseIncomingSharePresentation(from: deferredNewTaskPresentation)
         deferredNewTaskPresentation = nil
         if showingNewTask {
-            showingNewTask = false
+            dismissNewTaskPresentation()
         } else {
             releaseIncomingSharePresentation(from: newTaskPresentation.cancelCurrent())
         }
@@ -889,16 +903,15 @@ public struct WorkspaceView: View {
         let waitingOnSheet = showingAddProject || showingSettings
         let waitingOnAlert = renamingThread != nil
         let shouldWaitForOtherPresentation = waitingOnSheet || waitingOnAlert
+        if !shouldWaitForOtherPresentation {
+            releaseIncomingSharePresentation(from: deferredNewTaskPresentation)
+            deferredNewTaskPresentation = nil
+        }
 
         if showingNewTask {
             let result = newTaskPresentation.request(request)
             releaseIncomingSharePresentation(from: result.displaced)
-            showingNewTask = false
-        } else if newTaskPresentation.current != nil {
-            let displaced = newTaskPresentation.replaceInactiveCurrent(with: request)
-            releaseIncomingSharePresentation(from: displaced)
-            newTaskPresentationEpoch += 1
-            showingNewTask = true
+            dismissNewTaskPresentation()
         } else if shouldWaitForOtherPresentation {
             releaseIncomingSharePresentation(from: deferredNewTaskPresentation)
             deferredNewTaskPresentation = request
@@ -911,6 +924,14 @@ public struct WorkspaceView: View {
                     resumeDeferredNewTaskPresentation()
                 }
             }
+        } else if isDismissingNewTask {
+            let result = newTaskPresentation.request(request)
+            releaseIncomingSharePresentation(from: result.displaced)
+        } else if newTaskPresentation.current != nil {
+            let displaced = newTaskPresentation.replaceInactiveCurrent(with: request)
+            releaseIncomingSharePresentations(from: displaced)
+            newTaskPresentationEpoch += 1
+            showingNewTask = true
         } else {
             presentNewTask(request)
         }
@@ -919,7 +940,7 @@ public struct WorkspaceView: View {
     private func presentNewTask(_ request: FeatureNewTaskPresentationRequest) {
         if !showingNewTask, newTaskPresentation.current != nil {
             let displaced = newTaskPresentation.replaceInactiveCurrent(with: request)
-            releaseIncomingSharePresentation(from: displaced)
+            releaseIncomingSharePresentations(from: displaced)
             newTaskPresentationEpoch += 1
             showingNewTask = true
             return
@@ -930,12 +951,13 @@ public struct WorkspaceView: View {
             newTaskPresentationEpoch += 1
             showingNewTask = true
         } else {
-            showingNewTask = false
+            dismissNewTaskPresentation()
         }
     }
 
     private func resumeDeferredNewTaskPresentation() {
-        guard !showingAddProject, !showingSettings, renamingThread == nil,
+        guard !showingNewTask, !isDismissingNewTask,
+              !showingAddProject, !showingSettings, renamingThread == nil,
               let request = deferredNewTaskPresentation else { return }
         deferredNewTaskPresentation = nil
         presentNewTask(request)
@@ -947,6 +969,19 @@ public struct WorkspaceView: View {
         if let shareID = request?.incomingShareID {
             releaseIncomingSharePresentation(shareID)
         }
+    }
+
+    private func releaseIncomingSharePresentations(
+        from replacement: FeatureNewTaskPresentationReplacement
+    ) {
+        releaseIncomingSharePresentation(from: replacement.current)
+        releaseIncomingSharePresentation(from: replacement.pending)
+    }
+
+    private func dismissNewTaskPresentation() {
+        guard showingNewTask else { return }
+        isDismissingNewTask = true
+        showingNewTask = false
     }
 
     private func projectMenuTitle(_ project: FeatureProject) -> String {

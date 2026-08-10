@@ -57,11 +57,28 @@ final class WorkspaceContractTests: XCTestCase {
 
         XCTAssertTrue(coordinator.request(first).shouldPresent)
         let firstPresentationID = coordinator.presentationID
-        XCTAssertEqual(coordinator.replaceInactiveCurrent(with: replacement), first)
+        let displaced = coordinator.replaceInactiveCurrent(with: replacement)
+        XCTAssertEqual(displaced.current, first)
+        XCTAssertNil(displaced.pending)
         XCTAssertEqual(coordinator.current, replacement)
         XCTAssertNotEqual(coordinator.presentationID, firstPresentationID)
         XCTAssertEqual(coordinator.cancelCurrent(), replacement)
         XCTAssertNil(coordinator.current)
+    }
+
+    func testReplacingInactiveNewTaskAlsoDisplacesPendingShare() {
+        let active = FeatureNewTaskPresentationRequest.newTask(initialProjectID: "project-1")
+        let pending = FeatureNewTaskPresentationRequest.sharedNewTask(shareID: "share-1")
+        let replacement = FeatureNewTaskPresentationRequest.newTask(initialProjectID: "project-2")
+        var coordinator = FeatureNewTaskPresentationCoordinator()
+
+        XCTAssertTrue(coordinator.request(active).shouldPresent)
+        XCTAssertFalse(coordinator.request(pending).shouldPresent)
+        let displaced = coordinator.replaceInactiveCurrent(with: replacement)
+        XCTAssertEqual(displaced.current, active)
+        XCTAssertEqual(displaced.pending, pending)
+        XCTAssertEqual(coordinator.current, replacement)
+        XCTAssertNil(coordinator.pending)
     }
 
     func testVCSStatusSnapshotDecodesTaggedEffectRPCShape() throws {
