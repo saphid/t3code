@@ -8,7 +8,7 @@
     "commit": "5b7ee58f6e62158559c6656d0ba581f10efced64"
   },
   "approvedBy": "Alex Southwell",
-  "approvedAt": "2026-08-10T18:39:00+10:00",
+  "approvedAt": "2026-08-10T18:48:00+10:00",
   "features": [
     {
       "name": "Grow the SwiftUI composer for long prompts",
@@ -364,6 +364,14 @@
       "sourcePatchId": "165149cc9b4a9ea5e90424f6f5f015c53c2df463",
       "integrationPatchId": "165149cc9b4a9ea5e90424f6f5f015c53c2df463",
       "integratedCommit": "5735d178357becc6ef58a589a2fdb38ea072bc29"
+    },
+    {
+      "name": "Preserve SwiftUI usage window truth across failed refreshes",
+      "sourceBranch": "sandbox/swiftui-approved-full-audit-20260810",
+      "sourceCommit": "7b2206f01bfc27cfa920bf082f68e2f4058b21b5",
+      "sourcePatchId": "4af80956697ec559381aafb4a914d8ab8108062c",
+      "integrationPatchId": "4af80956697ec559381aafb4a914d8ab8108062c",
+      "integratedCommit": "7b2206f01bfc27cfa920bf082f68e2f4058b21b5"
     }
   ],
   "featurePaths": [
@@ -438,7 +446,7 @@
     "docs/user/swiftui-image-attachments.md",
     "docs/user/swiftui-working-duration.md"
   ],
-  "featureTreeDigest": "a364ebb17c625f88e4f201f6c9c53fd8afbe20e73a2d2f0028b33903c31503ed",
+  "featureTreeDigest": "8aa1ae5bcb1a9ce7e7552e05b9ae8719cc2725fb8be1fa52b08f4b94cf34286d",
   "overlayPaths": [
     "apps/swift-ios/Extensions/Shared/T3CodeDev.entitlements",
     "apps/swift-ios/Resources/Info.plist",
