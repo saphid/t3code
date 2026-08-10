@@ -8,7 +8,7 @@
     "commit": "4cb33079025f80bbd8f8d206f4642ba84451a9ef"
   },
   "approvedBy": "Alex Southwell",
-  "approvedAt": "2026-08-10T11:53:40+10:00",
+  "approvedAt": "2026-08-10T12:35:00+10:00",
   "features": [
     {
       "name": "Grow the SwiftUI composer for long prompts",
@@ -195,9 +195,11 @@
     "apps/swift-ios/Extensions/Shared/T3CodeDev.entitlements",
     "apps/swift-ios/Resources/Info.plist",
     "apps/swift-ios/Scripts/install-device.sh",
+    "apps/swift-ios/Scripts/validate-device-build-number.sh",
+    "apps/swift-ios/Scripts/validate-device-build-number.test.sh",
     "apps/swift-ios/T3Code.xcodeproj/project.pbxproj"
   ],
-  "overlayTreeDigest": "f86572bb67f16203c721326af55e77e954cece87fb5b9dfe5b94f41bf8fd5d21",
+  "overlayTreeDigest": "0fdab23615935917580c8a974d591671486edb05ebd5c5071e94db22d039ccc1",
   "policyPaths": [
     "docs/operations/swiftui-approved-phone-lane.md",
     "scripts/t3-swift-approved/manifest.json",
@@ -211,5 +213,5 @@
     "scripts/t3-swift-approved/verify.sh",
     "scripts/t3-swift-approved/verify.test.sh"
   ],
-  "policyTreeDigest": "992412b1d65f2a0b88e5f0bd32568dc6097fb2a4bcf24ccc59d9d2656fda26a9"
+  "policyTreeDigest": "794b16867d7c039e3beab371b6a35cc249b88692dfffb1c116e8503fa9c49de6"
 }
