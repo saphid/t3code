@@ -9,7 +9,7 @@ struct PlatformBackgroundRefreshTests {
     func usesThePermittedIdentifierAndAConservativeRetryWindow() {
         #expect(
             PlatformBackgroundRefreshCoordinator.identifier
-                == "\(Bundle.main.bundleIdentifier ?? "com.t3tools.t3code.swiftui").refresh"
+                == "\(Bundle.main.bundleIdentifier ?? "com.alxs.t3code.typed-swiftui").refresh"
         )
         #expect(PlatformBackgroundRefreshPolicy.minimumDelay == 15 * 60)
     }

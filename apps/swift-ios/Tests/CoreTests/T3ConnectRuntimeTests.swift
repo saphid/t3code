@@ -621,7 +621,7 @@ final class T3ConnectRuntimeTests: XCTestCase {
             deviceID: "phone-1",
             label: "Big O",
             iosMajorVersion: 26,
-            bundleID: "com.t3tools.t3code.swiftui",
+            bundleID: "com.alxs.t3code.typed-swiftui",
             apsEnvironment: .sandbox,
             pushToken: "apns-token",
             pushToStartToken: "start-token"
@@ -806,7 +806,7 @@ final class T3ConnectRuntimeTests: XCTestCase {
             deviceID: "phone-1",
             label: "Big O",
             iosMajorVersion: 26,
-            bundleID: "com.t3tools.t3code.swiftui",
+            bundleID: "com.alxs.t3code.typed-swiftui",
             apsEnvironment: .sandbox,
             pushToken: "apns-token",
             pushToStartToken: "start-token"

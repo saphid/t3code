@@ -28,7 +28,7 @@ struct PlatformCloudDeliveryTests {
             deviceName: "Big O",
             systemVersion: OperatingSystemVersion(majorVersion: 26, minorVersion: 0, patchVersion: 0),
             appVersion: "1.2.3",
-            bundleID: "com.t3tools.t3code.swiftui",
+            bundleID: "com.alxs.t3code.typed-swiftui",
             pushToken: "apns-token",
             pushToStartToken: "activity-token",
             settings: settings,
@@ -37,7 +37,7 @@ struct PlatformCloudDeliveryTests {
 
         #expect(registration.platform == "ios")
         #expect(registration.iosMajorVersion == 26)
-        #expect(registration.bundleId == "com.t3tools.t3code.swiftui")
+        #expect(registration.bundleId == "com.alxs.t3code.typed-swiftui")
         #expect(registration.apsEnvironment == .sandbox)
         #expect(registration.pushToken == "apns-token")
         #expect(registration.pushToStartToken == "activity-token")

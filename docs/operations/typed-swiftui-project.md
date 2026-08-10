@@ -7,8 +7,9 @@ typed SwiftUI vertical-slice proof approved in
 Repository creation is tracked by
 [`saphid/t3code-personal#36`](https://github.com/saphid/t3code-personal/issues/36).
 
-The prototype is not implemented by the repository-creation change. This
-repository has no product runtime, installed app, release, Apple registration,
+The prototype is not implemented by the repository-creation change. The
+official SwiftUI branch is imported as a source baseline, but this repository
+has no started product runtime, installed app, release, Apple registration,
 credential, deployment, or integration with the existing fleet and release
 gates.
 
@@ -22,8 +23,30 @@ gates.
 
 The machine-readable namespace is
 [`config/t3code-typed-swiftui/project-isolation.json`](../../config/t3code-typed-swiftui/project-isolation.json).
-The identifiers there are reserved collision boundaries, not registrations or
-shipping configuration.
+The identifiers there are reserved collision boundaries. They are wired into
+the source build configuration but are not external registrations or shipping
+configuration.
+
+## App sandbox
+
+The Electron and SwiftUI sources use identities owned only by this repository:
+
+- Electron bundle IDs: `com.alxs.t3code.typed-swiftui.desktop` and its `.dev`
+  variant.
+- Electron URL schemes: `t3code-typed-swiftui-desktop` and its `-dev` variant.
+- Electron backend state: `T3CodeTypedSwiftUI` below the platform application
+  data directory; Electron user data uses `T3CodeTypedSwiftUIElectron` or
+  `T3CodeTypedSwiftUIElectronDev`.
+- SwiftUI bundle IDs: `com.alxs.t3code.typed-swiftui` and its `.dev` variant,
+  with matching app-group, extension, URL-scheme, keychain, and on-disk cache
+  namespaces.
+- Desktop artifacts use the `T3-Code-Typed-SwiftUI-*` name and carry no GitHub
+  update feed. Mock-update configuration remains available only for tests.
+
+These source-level boundaries do not install or launch either app. The existing
+T3 Code Electron and approved SwiftUI apps keep their current identities,
+storage, runtime, checkout, and automation. Visible product copy and layouts are
+unchanged, so this isolation change has no user-interface surface to capture.
 
 Run the static guardrail and its focused tests with:
 

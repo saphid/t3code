@@ -65,7 +65,7 @@ actor FeatureProjectFaviconStore {
                 in: .userDomainMask
             ).first!
             self.directoryURL = root
-                .appendingPathComponent("T3CodeSwift", isDirectory: true)
+                .appendingPathComponent("T3CodeTypedSwiftUI", isDirectory: true)
                 .appendingPathComponent("project-favicons", isDirectory: true)
         }
     }

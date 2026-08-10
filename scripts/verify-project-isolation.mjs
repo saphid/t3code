@@ -1,12 +1,16 @@
 #!/usr/bin/env node
 
-import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync, realpathSync, readdirSync } from "node:fs";
-import path from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import * as NodeChildProcess from "node:child_process";
+import * as NodeFS from "node:fs";
+import * as NodePath from "node:path";
+import * as NodeProcess from "node:process";
+import * as NodeURL from "node:url";
 
-const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const defaultManifestPath = path.join(
+const repositoryRoot = NodePath.resolve(
+  NodePath.dirname(NodeURL.fileURLToPath(import.meta.url)),
+  "..",
+);
+const defaultManifestPath = NodePath.join(
   repositoryRoot,
   "config/t3code-typed-swiftui/project-isolation.json",
 );
@@ -29,10 +33,13 @@ const expected = {
     releaseUrlScheme: "t3code-typed-swiftui",
     debugUrlScheme: "t3code-typed-swiftui-dev",
     desktopBundleId: "com.alxs.t3code.typed-swiftui.desktop",
+    desktopDebugBundleId: "com.alxs.t3code.typed-swiftui.desktop.dev",
+    desktopReleaseUrlScheme: "t3code-typed-swiftui-desktop",
+    desktopDebugUrlScheme: "t3code-typed-swiftui-desktop-dev",
   },
 };
 
-const forbiddenValues = [
+const forbiddenValues = new Set([
   "/Users/saphid/Projects/T3 Code/t3code-personal",
   "/Users/saphid/.t3/worktrees/t3code-personal",
   "/Applications/T3 Code (Nightly).app",
@@ -48,7 +55,7 @@ const forbiddenValues = [
   "agent/swiftui-",
   "theo/",
   "t3code/",
-];
+]);
 
 function stable(value) {
   if (Array.isArray(value)) return value.map(stable);
@@ -79,7 +86,7 @@ export function validateManifest(manifest) {
   }
 
   for (const value of collectStrings(manifest)) {
-    if (forbiddenValues.includes(value)) {
+    if (forbiddenValues.has(value)) {
       errors.push(`forbidden existing-project identity: ${value}`);
     }
   }
@@ -87,16 +94,16 @@ export function validateManifest(manifest) {
   return errors;
 }
 
-export function normalizePathCase(value, platform = process.platform) {
+export function normalizePathCase(value, platform) {
   return platform === "darwin" ? value.toLowerCase() : value;
 }
 
 function comparableRealpath(value) {
-  return normalizePathCase(realpathSync(value));
+  return normalizePathCase(NodeFS.realpathSync(value), NodeProcess.platform);
 }
 
 function git(...args) {
-  return execFileSync("git", args, {
+  return NodeChildProcess.execFileSync("git", args, {
     cwd: repositoryRoot,
     encoding: "utf8",
     stdio: ["ignore", "pipe", "pipe"],
@@ -105,16 +112,16 @@ function git(...args) {
 
 function validateLiveRepository() {
   const errors = [];
-  const manifest = JSON.parse(readFileSync(defaultManifestPath, "utf8"));
-  const topLevelDisplay = realpathSync(git("rev-parse", "--show-toplevel"));
-  const canonicalRootDisplay = realpathSync(manifest.canonicalRoot);
-  const commonDirectoryDisplay = realpathSync(
-    path.resolve(topLevelDisplay, git("rev-parse", "--git-common-dir")),
+  const manifest = JSON.parse(NodeFS.readFileSync(defaultManifestPath, "utf8"));
+  const topLevelDisplay = NodeFS.realpathSync(git("rev-parse", "--show-toplevel"));
+  const canonicalRootDisplay = NodeFS.realpathSync(manifest.canonicalRoot);
+  const commonDirectoryDisplay = NodeFS.realpathSync(
+    NodePath.resolve(topLevelDisplay, git("rev-parse", "--git-common-dir")),
   );
-  const topLevel = normalizePathCase(topLevelDisplay);
-  const canonicalRoot = normalizePathCase(canonicalRootDisplay);
-  const commonDirectory = normalizePathCase(commonDirectoryDisplay);
-  const expectedCommonDirectory = comparableRealpath(path.join(manifest.canonicalRoot, ".git"));
+  const topLevel = normalizePathCase(topLevelDisplay, NodeProcess.platform);
+  const canonicalRoot = normalizePathCase(canonicalRootDisplay, NodeProcess.platform);
+  const commonDirectory = normalizePathCase(commonDirectoryDisplay, NodeProcess.platform);
+  const expectedCommonDirectory = comparableRealpath(NodePath.join(manifest.canonicalRoot, ".git"));
 
   if (topLevel !== canonicalRoot) {
     errors.push(`checkout root ${topLevelDisplay} is not canonical root ${canonicalRootDisplay}`);
@@ -122,13 +129,13 @@ function validateLiveRepository() {
   if (commonDirectory !== expectedCommonDirectory) {
     errors.push(`Git common directory is not isolated: ${commonDirectoryDisplay}`);
   }
-  if (existsSync(path.join(commonDirectoryDisplay, "objects/info/alternates"))) {
+  if (NodeFS.existsSync(NodePath.join(commonDirectoryDisplay, "objects/info/alternates"))) {
     errors.push("Git object alternates are forbidden");
   }
   if (git("config", "--get", "core.hooksPath") !== ".githooks") {
     errors.push("core.hooksPath must be .githooks in the canonical clone");
   }
-  if (!existsSync(path.join(repositoryRoot, ".githooks/pre-push"))) {
+  if (!NodeFS.existsSync(NodePath.join(repositoryRoot, ".githooks/pre-push"))) {
     errors.push("canonical-clone protected-main pre-push hook is missing");
   }
 
@@ -175,7 +182,7 @@ function validateLiveRepository() {
 }
 
 function validateReceipt(receiptPath) {
-  const receipt = JSON.parse(readFileSync(receiptPath, "utf8"));
+  const receipt = JSON.parse(NodeFS.readFileSync(receiptPath, "utf8"));
   const errors = [];
   const shaPattern = /^[0-9a-f]{40}$/;
 
@@ -214,8 +221,13 @@ function validateReceipt(receiptPath) {
     } else {
       try {
         const parents = git("show", "-s", "--format=%P", receipt.mergeCommit).split(" ");
-        if (!parents.includes(receipt.upstreamCommit) || !parents.includes(receipt.productBaseCommit)) {
-          errors.push("mergeCommit parents must include the exact product base and upstream commits");
+        if (
+          !parents.includes(receipt.upstreamCommit) ||
+          !parents.includes(receipt.productBaseCommit)
+        ) {
+          errors.push(
+            "mergeCommit parents must include the exact product base and upstream commits",
+          );
         }
       } catch {
         errors.push("mergeCommit must identify a local commit");
@@ -226,7 +238,7 @@ function validateReceipt(receiptPath) {
       errors.push("baseline receipts require mergeCommit: null");
     }
     try {
-      execFileSync(
+      NodeChildProcess.execFileSync(
         "git",
         ["merge-base", "--is-ancestor", receipt.upstreamCommit, receipt.productBaseCommit],
         { cwd: repositoryRoot, stdio: "ignore" },
@@ -236,30 +248,81 @@ function validateReceipt(receiptPath) {
     }
   }
 
-  return errors.map((error) => `${path.relative(repositoryRoot, receiptPath)}: ${error}`);
+  return errors.map((error) => `${NodePath.relative(repositoryRoot, receiptPath)}: ${error}`);
 }
 
 function validateReceipts() {
-  const receiptDirectory = path.join(repositoryRoot, "docs/upstream-sync/receipts");
-  if (!existsSync(receiptDirectory)) return [];
-  return readdirSync(receiptDirectory)
+  const receiptDirectory = NodePath.join(repositoryRoot, "docs/upstream-sync/receipts");
+  if (!NodeFS.existsSync(receiptDirectory)) return [];
+  return NodeFS.readdirSync(receiptDirectory)
     .filter((name) => name.endsWith(".json"))
-    .flatMap((name) => validateReceipt(path.join(receiptDirectory, name)));
+    .flatMap((name) => validateReceipt(NodePath.join(receiptDirectory, name)));
+}
+
+function collectFiles(root) {
+  if (!NodeFS.existsSync(root)) return [];
+  if (NodeFS.statSync(root).isFile()) return [root];
+  return NodeFS.readdirSync(root).flatMap((name) => collectFiles(NodePath.join(root, name)));
+}
+
+function validateAppSandboxSources() {
+  const roots = [
+    NodePath.join(repositoryRoot, "apps/swift-ios"),
+    NodePath.join(repositoryRoot, "apps/desktop/src"),
+    NodePath.join(repositoryRoot, "apps/desktop/scripts"),
+    NodePath.join(repositoryRoot, "apps/server/src/http.ts"),
+    NodePath.join(repositoryRoot, "scripts/build-desktop-artifact.ts"),
+  ];
+  const files = roots
+    .flatMap(collectFiles)
+    .filter((file) => !file.includes(`${NodePath.sep}.build${NodePath.sep}`));
+  const source = files.map((file) => NodeFS.readFileSync(file, "utf8")).join("\n");
+  const errors = [];
+  const forbiddenAppTokens = [
+    "com.t3tools.t3code.swiftui",
+    "group.com.t3tools.t3code.swiftui",
+    "t3code-swiftui",
+    "T3CodeSwift",
+    "com.t3tools.t3code.dev",
+    '"com.t3tools.t3code"',
+    "t3code://app",
+    "t3code-dev://app",
+  ];
+  const requiredAppTokens = [
+    "com.alxs.t3code.typed-swiftui",
+    "group.com.alxs.t3code.typed-swiftui",
+    "t3code-typed-swiftui",
+    "T3CodeTypedSwiftUI",
+    "com.alxs.t3code.typed-swiftui.desktop",
+    "t3code-typed-swiftui-desktop",
+  ];
+
+  for (const token of forbiddenAppTokens) {
+    if (source.includes(token)) errors.push(`sandbox source contains existing-app token: ${token}`);
+  }
+  for (const token of requiredAppTokens) {
+    if (!source.includes(token)) errors.push(`sandbox source is missing reserved token: ${token}`);
+  }
+  if (source.includes("buildConfig.publish = [publishConfig]")) {
+    errors.push("sandbox desktop builds must not inherit a GitHub auto-update feed");
+  }
+
+  return errors;
 }
 
 function run() {
-  const argumentsSet = new Set(process.argv.slice(2));
-  const manifest = JSON.parse(readFileSync(defaultManifestPath, "utf8"));
+  const argumentsSet = new Set(NodeProcess.argv.slice(2));
+  const manifest = JSON.parse(NodeFS.readFileSync(defaultManifestPath, "utf8"));
   const errors = [
     ...validateManifest(manifest),
+    ...validateAppSandboxSources(),
     ...(argumentsSet.has("--live") ? validateLiveRepository() : []),
     ...(argumentsSet.has("--receipts") ? validateReceipts() : []),
   ];
 
   if (errors.length > 0) {
     for (const error of errors) console.error(`project isolation error: ${error}`);
-    process.exitCode = 1;
-    return;
+    NodeProcess.exit(1);
   }
 
   const checks = ["static identity contract"];
@@ -268,4 +331,4 @@ function run() {
   console.log(`Project isolation verified: ${checks.join(", ")}.`);
 }
 
-if (import.meta.url === pathToFileURL(process.argv[1]).href) run();
+if (import.meta.url === NodeURL.pathToFileURL(NodeProcess.argv[1]).href) run();

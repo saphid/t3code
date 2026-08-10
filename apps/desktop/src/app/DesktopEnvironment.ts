@@ -151,7 +151,7 @@ const make = Effect.fn("desktop.environment.make")(function* (
         ? path.join(homeDirectory, "Library", "Application Support")
         : Option.getOrElse(config.xdgConfigHome, () => path.join(homeDirectory, ".config"));
   const baseDir = resolveDesktopBaseDir({
-    homeDirectory,
+    defaultBaseDir: path.join(appDataDirectory, "T3CodeTypedSwiftUI"),
     joinPath: path.join,
     t3Home: config.t3Home,
   });
@@ -168,8 +168,10 @@ const make = Effect.fn("desktop.environment.make")(function* (
     joinPath: path.join,
     t3Home: config.t3Home,
   });
-  const userDataDirName = isDevelopment ? "t3code-dev" : "t3code";
-  const legacyUserDataDirName = isDevelopment ? "T3 Code (Dev)" : "T3 Code (Alpha)";
+  const userDataDirName = isDevelopment
+    ? "T3CodeTypedSwiftUIElectronDev"
+    : "T3CodeTypedSwiftUIElectron";
+  const legacyUserDataDirName = userDataDirName;
   const linuxApplicationsDir = path.join(
     Option.getOrElse(config.xdgDataHome, () => path.join(homeDirectory, ".local", "share")),
     "applications",
@@ -213,10 +215,14 @@ const make = Effect.fn("desktop.environment.make")(function* (
     branding,
     displayName,
     appUserModelId: Option.getOrElse(config.appUserModelIdOverride, () =>
-      isDevelopment ? "com.t3tools.t3code.dev" : "com.t3tools.t3code",
+      isDevelopment
+        ? "com.alxs.t3code.typed-swiftui.desktop.dev"
+        : "com.alxs.t3code.typed-swiftui.desktop",
     ),
-    linuxDesktopEntryName: isDevelopment ? "t3code-dev.desktop" : "t3code.desktop",
-    linuxWmClass: isDevelopment ? "t3code-dev" : "t3code",
+    linuxDesktopEntryName: isDevelopment
+      ? "t3code-typed-swiftui-dev.desktop"
+      : "t3code-typed-swiftui.desktop",
+    linuxWmClass: isDevelopment ? "t3code-typed-swiftui-dev" : "t3code-typed-swiftui",
     linuxApplicationsDir,
     appImagePath: config.appImagePath,
     userDataDirName,

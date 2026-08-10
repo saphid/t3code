@@ -175,7 +175,7 @@ public actor FeatureOutboxStore {
                 in: .userDomainMask
             ).first!
             self.fileURL = root
-                .appendingPathComponent("T3CodeSwift", isDirectory: true)
+                .appendingPathComponent("T3CodeTypedSwiftUI", isDirectory: true)
                 .appendingPathComponent("outbox.json", isDirectory: false)
         }
     }

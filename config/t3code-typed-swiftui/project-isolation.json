@@ -15,6 +15,9 @@
     "debugAppGroup": "group.com.alxs.t3code.typed-swiftui.dev",
     "releaseUrlScheme": "t3code-typed-swiftui",
     "debugUrlScheme": "t3code-typed-swiftui-dev",
-    "desktopBundleId": "com.alxs.t3code.typed-swiftui.desktop"
+    "desktopBundleId": "com.alxs.t3code.typed-swiftui.desktop",
+    "desktopDebugBundleId": "com.alxs.t3code.typed-swiftui.desktop.dev",
+    "desktopReleaseUrlScheme": "t3code-typed-swiftui-desktop",
+    "desktopDebugUrlScheme": "t3code-typed-swiftui-desktop-dev"
   }
 }

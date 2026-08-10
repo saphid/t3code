@@ -138,7 +138,7 @@ public actor EnvironmentStore {
                 in: .userDomainMask
             ).first!
             self.fileURL = root
-                .appendingPathComponent("T3CodeSwift", isDirectory: true)
+                .appendingPathComponent("T3CodeTypedSwiftUI", isDirectory: true)
                 .appendingPathComponent("environments.json", isDirectory: false)
         }
     }

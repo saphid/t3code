@@ -154,7 +154,7 @@ public actor WebSocketRPCClient {
     public typealias EndpointProvider = @Sendable () async throws -> URL
 
     private static let logger = Logger(
-        subsystem: "com.t3tools.t3code",
+        subsystem: "com.alxs.t3code.typed-swiftui",
         category: "WebSocketRPC"
     )
 

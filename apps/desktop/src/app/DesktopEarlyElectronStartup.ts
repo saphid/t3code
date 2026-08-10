@@ -51,7 +51,7 @@ function resolveEarlyDesktopSettingsPath(input: {
 }): string {
   const t3Home = Option.fromUndefinedOr(input.env.T3CODE_HOME);
   const baseDir = resolveDesktopBaseDir({
-    homeDirectory: input.homeDirectory,
+    defaultBaseDir: input.joinPath(input.homeDirectory, ".config", "T3CodeTypedSwiftUI"),
     joinPath: input.joinPath,
     t3Home,
   });
@@ -81,7 +81,9 @@ export function resolveEarlyLinuxElectronOptions(
 ): EarlyLinuxElectronOptions {
   const preference = resolveEarlyLinuxPasswordStorePreference(input);
   return {
-    linuxWmClass: isDevelopmentEnvironment(input.env) ? "t3code-dev" : "t3code",
+    linuxWmClass: isDevelopmentEnvironment(input.env)
+      ? "t3code-typed-swiftui-dev"
+      : "t3code-typed-swiftui",
     passwordStore: resolveLinuxPasswordStoreSwitch({
       preference,
       env: input.env,
