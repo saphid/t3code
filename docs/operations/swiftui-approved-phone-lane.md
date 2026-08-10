@@ -29,6 +29,11 @@ unrecorded patch, a changed approved file, or any path outside the approved
 feature, signing, and policy sets. A detached build is accepted only when its
 commit is exactly `origin/personal/swiftui-approved`.
 
+Every physical install must supply a positive `T3_SWIFT_BUILD_NUMBER`. Before
+building, the installer reads the currently installed private bundle and
+rejects an equal or lower build number. This prevents an older worktree or the
+project default from silently replacing a newer approved phone build.
+
 The manifest is the reviewed root of trust. It pins the feature tree, personal
 overlay, verifier, sync job, verifier tests, and this policy. Changing the
 manifest is therefore a promotion decision, even when all other digests still
