@@ -48,6 +48,20 @@ public struct FeatureFileEntry: Identifiable, Sendable, Equatable, Hashable, Cod
     }
 }
 
+extension String {
+    var featureLastPathComponent: String {
+        split(separator: "/", omittingEmptySubsequences: true).last.map(String.init) ?? self
+    }
+}
+
+public extension FeatureFileEntry {
+    var containingDirectoryPath: String? {
+        guard let separator = path.lastIndex(of: "/") else { return nil }
+        let directory = path[..<separator]
+        return directory.isEmpty ? nil : String(directory)
+    }
+}
+
 public struct FeatureWorkspaceFileLink: Identifiable, Sendable, Equatable, Hashable {
     public let path: String
 
