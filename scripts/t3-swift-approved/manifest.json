@@ -340,6 +340,14 @@
       "sourcePatchId": "b286240885d1c90919a98397cda199a68e684409",
       "integrationPatchId": "b286240885d1c90919a98397cda199a68e684409",
       "integratedCommit": "1832dc71c99815a41ca3c9863acf7f21a966c7e0"
+    },
+    {
+      "name": "Continue SwiftUI new-task flow after stale dismissals",
+      "sourceBranch": "personal/swiftui-approved",
+      "sourceCommit": "85997be7acabb958e4a754c6ec231b208a516705",
+      "sourcePatchId": "958362658542ebe52edcb5509dd287f4516ea136",
+      "integrationPatchId": "958362658542ebe52edcb5509dd287f4516ea136",
+      "integratedCommit": "85997be7acabb958e4a754c6ec231b208a516705"
     }
   ],
   "featurePaths": [
@@ -411,7 +419,7 @@
     "docs/user/swiftui-image-attachments.md",
     "docs/user/swiftui-working-duration.md"
   ],
-  "featureTreeDigest": "49c782b3cbdf806411ea4fb964983f188d4f24381960b0370085a778b0430971",
+  "featureTreeDigest": "db43fb35d03adf8859977b99807c43a295f85316e5ec9f15524d3200bd0103e5",
   "overlayPaths": [
     "apps/swift-ios/Extensions/Shared/T3CodeDev.entitlements",
     "apps/swift-ios/Resources/Info.plist",
