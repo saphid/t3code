@@ -233,8 +233,8 @@ public struct WorkspaceView: View {
         }
         .navigationSplitViewStyle(.balanced)
         .sheet(isPresented: $showingNewTask, onDismiss: {
-            let presentationID = appearedNewTaskPresentationID
-                ?? dismissingNewTaskPresentationID
+            let presentationID = dismissingNewTaskPresentationID
+                ?? appearedNewTaskPresentationID
                 ?? completedNewTaskDismissalID
                 ?? newTaskPresentation.presentationID
             completeNewTaskDismissal(presentationID: presentationID)
@@ -1000,6 +1000,17 @@ public struct WorkspaceView: View {
 
     private func completeNewTaskDismissal(presentationID: UUID) {
         guard completedNewTaskDismissalID != presentationID else { return }
+        guard presentationID == newTaskPresentation.presentationID else {
+            completedNewTaskDismissalID = presentationID
+            if appearedNewTaskPresentationID == presentationID {
+                appearedNewTaskPresentationID = nil
+            }
+            if dismissingNewTaskPresentationID == presentationID {
+                dismissingNewTaskPresentationID = nil
+                isDismissingNewTask = false
+            }
+            return
+        }
         completedNewTaskDismissalID = presentationID
         isDismissingNewTask = false
         if appearedNewTaskPresentationID == presentationID {
