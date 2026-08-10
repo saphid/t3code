@@ -10,5 +10,7 @@ Captured on 2026-08-10 from the integrated `personal/swiftui-approved` Debug bui
 - `settle-actions.jpg`: Settle is the first thread swipe action.
 - `settled-result.jpg`: the same thread moved into the Settled shelf after invoking Settle.
 - `deep-link-proof.mp4`: home-to-thread direct navigation triggered by the registered thread URL.
+- `cached-pr-badge.jpg`: home-row source-control cache resolved the real upstream PR and rendered `#5975`.
+- `share-extension-target.jpg`: the system share sheet exposes the installed T3 share extension.
 
 Focused native tests were run separately on each exact PR head; this directory records the integrated visual pass.
