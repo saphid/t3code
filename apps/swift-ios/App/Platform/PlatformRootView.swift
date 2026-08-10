@@ -86,6 +86,9 @@ struct PlatformRootView: View {
             synchronizeAgentAwareness()
             synchronizeCloudDelivery()
         }
+        .onChange(of: model.snapshot.settings.appearance, initial: true) { _, appearance in
+            T3SharedAppearanceStore.shared.update(appearance.sharedAppearance)
+        }
         .onChange(of: model.snapshot.projects.map(\.id)) { _, _ in
             refreshIncomingShares()
         }
@@ -423,5 +426,15 @@ struct PlatformRootView: View {
             snapshot: model.snapshot,
             liveActivitiesEnabled: model.snapshot.settings.liveActivitiesEnabled
         )
+    }
+}
+
+private extension FeatureAppearance {
+    var sharedAppearance: T3SharedAppearance {
+        switch self {
+        case .system: .system
+        case .light: .light
+        case .dark: .dark
+        }
     }
 }
