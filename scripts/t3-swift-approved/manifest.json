@@ -292,6 +292,14 @@
       "sourcePatchId": "5865c1fbad63da8f9446ccf0d5e41cb1921ba330",
       "integrationPatchId": "5865c1fbad63da8f9446ccf0d5e41cb1921ba330",
       "integratedCommit": "124a7b88cf053eb9a72810915e945c51f8152371"
+    },
+    {
+      "name": "Serialize SwiftUI new-task replacement presentations",
+      "sourceBranch": "personal/swiftui-approved",
+      "sourceCommit": "b262fd6ee9c255a85622af284b6db699db07ceec",
+      "sourcePatchId": "380d8a225907915450358621e3df5305fbb878c1",
+      "integrationPatchId": "380d8a225907915450358621e3df5305fbb878c1",
+      "integratedCommit": "b262fd6ee9c255a85622af284b6db699db07ceec"
     }
   ],
   "featurePaths": [
@@ -342,6 +350,7 @@
     "apps/swift-ios/Scripts/generate-build-changelog.swift",
     "apps/swift-ios/Scripts/generate-luna-changelog-summaries.sh",
     "apps/swift-ios/Tests/CoreTests/CoreContractTests.swift",
+    "apps/swift-ios/Tests/CoreTests/WorkspaceContractTests.swift",
     "apps/swift-ios/Tests/FeatureTests/AttachmentPreparationTests.swift",
     "apps/swift-ios/Tests/FeatureTests/DailyUXModelPickerTests.swift",
     "apps/swift-ios/Tests/FeatureTests/DailyUXSidebarTests.swift",
@@ -362,7 +371,7 @@
     "docs/user/swiftui-image-attachments.md",
     "docs/user/swiftui-working-duration.md"
   ],
-  "featureTreeDigest": "30286d5cc61dbbe7b8582d74684d8be66f05c6cb39b92dffe6b996e526c5c507",
+  "featureTreeDigest": "2e2f45216195966c25016079e8f566169f793720b540ff8f05984d086fafa9b6",
   "overlayPaths": [
     "apps/swift-ios/Extensions/Shared/T3CodeDev.entitlements",
     "apps/swift-ios/Resources/Info.plist",
