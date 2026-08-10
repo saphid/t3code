@@ -5,7 +5,7 @@
     "remote": "upstream",
     "repository": "https://github.com/pingdotgg/t3code.git",
     "ref": "t3code/rebuild-mobile-app-swift",
-    "commit": "497f54f3e67acf1d2562d22d60eddd70aefc9627"
+    "commit": "5b7ee58f6e62158559c6656d0ba581f10efced64"
   },
   "approvedBy": "Alex Southwell",
   "approvedAt": "2026-08-10T12:35:00+10:00",
@@ -419,7 +419,7 @@
     "docs/user/swiftui-image-attachments.md",
     "docs/user/swiftui-working-duration.md"
   ],
-  "featureTreeDigest": "db43fb35d03adf8859977b99807c43a295f85316e5ec9f15524d3200bd0103e5",
+  "featureTreeDigest": "8e7cf70489075880e68b38daf0cf061cb25881941874a42fc20b9711b13d5040",
   "overlayPaths": [
     "apps/swift-ios/Extensions/Shared/T3CodeDev.entitlements",
     "apps/swift-ios/Resources/Info.plist",
