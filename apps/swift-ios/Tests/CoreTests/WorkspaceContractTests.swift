@@ -8,11 +8,11 @@ final class WorkspaceContractTests: XCTestCase {
         let replacement = FeatureNewTaskPresentationRequest.sharedNewTask(shareID: "share-2")
         var coordinator = FeatureNewTaskPresentationCoordinator()
 
-        XCTAssertTrue(coordinator.request(first))
+        XCTAssertTrue(coordinator.request(first).shouldPresent)
         let firstPresentationID = coordinator.presentationID
         XCTAssertEqual(coordinator.current, first)
 
-        XCTAssertFalse(coordinator.request(replacement))
+        XCTAssertFalse(coordinator.request(replacement).shouldPresent)
         XCTAssertEqual(coordinator.current, first)
         XCTAssertEqual(coordinator.pending, replacement)
         XCTAssertEqual(coordinator.presentationID, firstPresentationID)
@@ -29,11 +29,38 @@ final class WorkspaceContractTests: XCTestCase {
         let replacement = FeatureNewTaskPresentationRequest.sharedNewTask(shareID: "share-2")
         var coordinator = FeatureNewTaskPresentationCoordinator()
 
-        XCTAssertTrue(coordinator.request(first))
-        XCTAssertFalse(coordinator.request(replacement))
+        XCTAssertTrue(coordinator.request(first).shouldPresent)
+        XCTAssertFalse(coordinator.request(replacement).shouldPresent)
         XCTAssertEqual(coordinator.didDismiss()?.incomingShareID, "share-1")
         XCTAssertEqual(coordinator.current?.incomingShareID, "share-2")
         XCTAssertEqual(coordinator.didDismiss()?.incomingShareID, "share-2")
+        XCTAssertNil(coordinator.current)
+    }
+
+    func testNewTaskReplacementReturnsOverwrittenAndCancelledShares() {
+        let active = FeatureNewTaskPresentationRequest.newTask(initialProjectID: "project-1")
+        let firstShare = FeatureNewTaskPresentationRequest.sharedNewTask(shareID: "share-1")
+        let secondShare = FeatureNewTaskPresentationRequest.sharedNewTask(shareID: "share-2")
+        var coordinator = FeatureNewTaskPresentationCoordinator()
+
+        XCTAssertTrue(coordinator.request(active).shouldPresent)
+        XCTAssertNil(coordinator.request(firstShare).displaced)
+        XCTAssertEqual(coordinator.request(secondShare).displaced, firstShare)
+        XCTAssertEqual(coordinator.cancelPending(), secondShare)
+        XCTAssertNil(coordinator.pending)
+    }
+
+    func testNewTaskInactivePresentationCanBeReplacedAndCancelled() {
+        let first = FeatureNewTaskPresentationRequest.sharedNewTask(shareID: "share-1")
+        let replacement = FeatureNewTaskPresentationRequest.newTask(initialProjectID: "project-2")
+        var coordinator = FeatureNewTaskPresentationCoordinator()
+
+        XCTAssertTrue(coordinator.request(first).shouldPresent)
+        let firstPresentationID = coordinator.presentationID
+        XCTAssertEqual(coordinator.replaceInactiveCurrent(with: replacement), first)
+        XCTAssertEqual(coordinator.current, replacement)
+        XCTAssertNotEqual(coordinator.presentationID, firstPresentationID)
+        XCTAssertEqual(coordinator.cancelCurrent(), replacement)
         XCTAssertNil(coordinator.current)
     }
 

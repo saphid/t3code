@@ -39,18 +39,29 @@ struct FeatureNewTaskPresentationRequest: Equatable, Sendable {
     }
 }
 
+struct FeatureNewTaskPresentationRequestResult: Equatable, Sendable {
+    let shouldPresent: Bool
+    let displaced: FeatureNewTaskPresentationRequest?
+}
+
 struct FeatureNewTaskPresentationCoordinator: Equatable, Sendable {
     private(set) var current: FeatureNewTaskPresentationRequest?
     private(set) var pending: FeatureNewTaskPresentationRequest?
     private(set) var presentationID = UUID()
 
-    mutating func request(_ request: FeatureNewTaskPresentationRequest) -> Bool {
+    mutating func request(
+        _ request: FeatureNewTaskPresentationRequest
+    ) -> FeatureNewTaskPresentationRequestResult {
         guard current == nil else {
+            let displaced = pending
             pending = request
-            return false
+            return FeatureNewTaskPresentationRequestResult(
+                shouldPresent: false,
+                displaced: displaced
+            )
         }
         activate(request)
-        return true
+        return FeatureNewTaskPresentationRequestResult(shouldPresent: true, displaced: nil)
     }
 
     mutating func didDismiss() -> FeatureNewTaskPresentationRequest? {
@@ -63,8 +74,24 @@ struct FeatureNewTaskPresentationCoordinator: Equatable, Sendable {
         return dismissed
     }
 
-    mutating func cancelPending() {
+    mutating func replaceInactiveCurrent(
+        with request: FeatureNewTaskPresentationRequest
+    ) -> FeatureNewTaskPresentationRequest? {
+        let displaced = current
+        activate(request)
+        return displaced
+    }
+
+    mutating func cancelPending() -> FeatureNewTaskPresentationRequest? {
+        let cancelled = pending
         pending = nil
+        return cancelled
+    }
+
+    mutating func cancelCurrent() -> FeatureNewTaskPresentationRequest? {
+        let cancelled = current
+        current = nil
+        return cancelled
     }
 
     private mutating func activate(_ request: FeatureNewTaskPresentationRequest) {
@@ -94,6 +121,8 @@ public struct WorkspaceView: View {
     @State private var settledLimit = 12
     @State private var showingNewTask = false
     @State private var newTaskPresentation = FeatureNewTaskPresentationCoordinator()
+    @State private var deferredNewTaskPresentation: FeatureNewTaskPresentationRequest?
+    @State private var newTaskPresentationEpoch = 0
     @State private var showingAddProject = false
     @State private var showingSettings = false
     @State private var renamingThread: FeatureThread?
@@ -195,8 +224,11 @@ public struct WorkspaceView: View {
                 releaseIncomingSharePresentation(shareID)
             }
             if newTaskPresentation.current != nil {
+                newTaskPresentationEpoch += 1
+                let presentationEpoch = newTaskPresentationEpoch
                 Task { @MainActor in
                     await Task.yield()
+                    guard presentationEpoch == newTaskPresentationEpoch else { return }
                     showingNewTask = true
                 }
             }
@@ -217,10 +249,14 @@ public struct WorkspaceView: View {
             )
             .id(newTaskPresentation.presentationID)
         }
-        .sheet(isPresented: $showingAddProject) {
+        .sheet(isPresented: $showingAddProject, onDismiss: {
+            resumeDeferredNewTaskPresentation()
+        }) {
             AddProjectView(model: model)
         }
-        .sheet(isPresented: $showingSettings) {
+        .sheet(isPresented: $showingSettings, onDismiss: {
+            resumeDeferredNewTaskPresentation()
+        }) {
             SettingsView(model: model)
         }
         .alert(
@@ -817,7 +853,17 @@ public struct WorkspaceView: View {
                model.snapshot.projects.contains(where: { $0.id == projectID }) {
                 selectedProjectID = projectID
             }
-            requestNewTaskPresentation(.newTask(initialProjectID: projectID))
+            if creationProjects.isEmpty {
+                dismissTransientPresentations()
+                let presentationEpoch = newTaskPresentationEpoch
+                Task { @MainActor in
+                    await Task.yield()
+                    guard presentationEpoch == newTaskPresentationEpoch else { return }
+                    showingAddProject = true
+                }
+            } else {
+                requestNewTaskPresentation(.newTask(initialProjectID: projectID))
+            }
         case let .sharedNewTask(shareID):
             requestNewTaskPresentation(.sharedNewTask(shareID: shareID))
         }
@@ -825,26 +871,45 @@ public struct WorkspaceView: View {
     }
 
     private func dismissTransientPresentations() {
-        newTaskPresentation.cancelPending()
-        showingNewTask = false
+        newTaskPresentationEpoch += 1
+        releaseIncomingSharePresentation(from: newTaskPresentation.cancelPending())
+        releaseIncomingSharePresentation(from: deferredNewTaskPresentation)
+        deferredNewTaskPresentation = nil
+        if showingNewTask {
+            showingNewTask = false
+        } else {
+            releaseIncomingSharePresentation(from: newTaskPresentation.cancelCurrent())
+        }
         showingAddProject = false
         showingSettings = false
         renamingThread = nil
     }
 
     private func requestNewTaskPresentation(_ request: FeatureNewTaskPresentationRequest) {
-        let shouldWaitForOtherPresentation = showingAddProject || showingSettings || renamingThread != nil
-        showingAddProject = false
-        showingSettings = false
-        renamingThread = nil
+        let waitingOnSheet = showingAddProject || showingSettings
+        let waitingOnAlert = renamingThread != nil
+        let shouldWaitForOtherPresentation = waitingOnSheet || waitingOnAlert
 
         if showingNewTask {
-            _ = newTaskPresentation.request(request)
+            let result = newTaskPresentation.request(request)
+            releaseIncomingSharePresentation(from: result.displaced)
             showingNewTask = false
+        } else if newTaskPresentation.current != nil {
+            let displaced = newTaskPresentation.replaceInactiveCurrent(with: request)
+            releaseIncomingSharePresentation(from: displaced)
+            newTaskPresentationEpoch += 1
+            showingNewTask = true
         } else if shouldWaitForOtherPresentation {
-            Task { @MainActor in
-                await Task.yield()
-                presentNewTask(request)
+            releaseIncomingSharePresentation(from: deferredNewTaskPresentation)
+            deferredNewTaskPresentation = request
+            showingAddProject = false
+            showingSettings = false
+            renamingThread = nil
+            if waitingOnAlert && !waitingOnSheet {
+                Task { @MainActor in
+                    await Task.yield()
+                    resumeDeferredNewTaskPresentation()
+                }
             }
         } else {
             presentNewTask(request)
@@ -852,10 +917,35 @@ public struct WorkspaceView: View {
     }
 
     private func presentNewTask(_ request: FeatureNewTaskPresentationRequest) {
-        if newTaskPresentation.request(request) {
+        if !showingNewTask, newTaskPresentation.current != nil {
+            let displaced = newTaskPresentation.replaceInactiveCurrent(with: request)
+            releaseIncomingSharePresentation(from: displaced)
+            newTaskPresentationEpoch += 1
+            showingNewTask = true
+            return
+        }
+        let result = newTaskPresentation.request(request)
+        releaseIncomingSharePresentation(from: result.displaced)
+        if result.shouldPresent {
+            newTaskPresentationEpoch += 1
             showingNewTask = true
         } else {
             showingNewTask = false
+        }
+    }
+
+    private func resumeDeferredNewTaskPresentation() {
+        guard !showingAddProject, !showingSettings, renamingThread == nil,
+              let request = deferredNewTaskPresentation else { return }
+        deferredNewTaskPresentation = nil
+        presentNewTask(request)
+    }
+
+    private func releaseIncomingSharePresentation(
+        from request: FeatureNewTaskPresentationRequest?
+    ) {
+        if let shareID = request?.incomingShareID {
+            releaseIncomingSharePresentation(shareID)
         }
     }
 
