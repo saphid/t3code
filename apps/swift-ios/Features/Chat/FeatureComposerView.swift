@@ -249,6 +249,15 @@ struct FeatureComposerView: View {
             .frame(maxWidth: 220, alignment: .leading)
             .layoutPriority(2)
 
+            if let reasoningSummary {
+                Text(reasoningSummary)
+                    .font(T3Typography.supporting)
+                    .foregroundStyle(T3Colors.textSecondary)
+                    .lineLimit(1)
+                    .fixedSize(horizontal: true, vertical: false)
+                    .accessibilityLabel("Reasoning level: \(reasoningSummary)")
+            }
+
             Spacer(minLength: 0)
 
             if let contextUsage {
@@ -328,6 +337,18 @@ struct FeatureComposerView: View {
         DailyUXModelOptions.supportsImages(
             selection: selection ?? threadSelection,
             providers: providers
+        )
+    }
+
+    private var reasoningSummary: String? {
+        guard let effectiveSelection = selection ?? threadSelection,
+              let provider = providers.first(where: { $0.id == effectiveSelection.providerID }),
+              let model = provider.models.first(where: { $0.id == effectiveSelection.modelID }) else {
+            return nil
+        }
+        return DailyUXModelOptions.reasoningSummary(
+            for: model,
+            selections: effectiveSelection.options
         )
     }
 
