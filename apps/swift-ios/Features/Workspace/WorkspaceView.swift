@@ -18,6 +18,61 @@ struct FeatureWorkspaceNavigationRequest: Equatable, Sendable {
     }
 }
 
+struct FeatureNewTaskPresentationRequest: Equatable, Sendable {
+    let initialProjectID: String?
+    let initialWorkspace: FeatureComposerWorkspaceDraft?
+    let incomingShareID: String?
+
+    static func newTask(
+        initialProjectID: String?,
+        initialWorkspace: FeatureComposerWorkspaceDraft? = nil
+    ) -> Self {
+        Self(
+            initialProjectID: initialProjectID,
+            initialWorkspace: initialWorkspace,
+            incomingShareID: nil
+        )
+    }
+
+    static func sharedNewTask(shareID: String) -> Self {
+        Self(initialProjectID: nil, initialWorkspace: nil, incomingShareID: shareID)
+    }
+}
+
+struct FeatureNewTaskPresentationCoordinator: Equatable, Sendable {
+    private(set) var current: FeatureNewTaskPresentationRequest?
+    private(set) var pending: FeatureNewTaskPresentationRequest?
+    private(set) var presentationID = UUID()
+
+    mutating func request(_ request: FeatureNewTaskPresentationRequest) -> Bool {
+        guard current == nil else {
+            pending = request
+            return false
+        }
+        activate(request)
+        return true
+    }
+
+    mutating func didDismiss() -> FeatureNewTaskPresentationRequest? {
+        let dismissed = current
+        current = nil
+        if let pending {
+            self.pending = nil
+            activate(pending)
+        }
+        return dismissed
+    }
+
+    mutating func cancelPending() {
+        pending = nil
+    }
+
+    private mutating func activate(_ request: FeatureNewTaskPresentationRequest) {
+        current = request
+        presentationID = UUID()
+    }
+}
+
 public struct WorkspaceView: View {
     @SwiftUI.Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
@@ -38,10 +93,7 @@ public struct WorkspaceView: View {
     @State private var isArchiveExpanded = false
     @State private var settledLimit = 12
     @State private var showingNewTask = false
-    @State private var newTaskPresentationID = UUID()
-    @State private var newTaskInitialProjectID: String?
-    @State private var newTaskInitialWorkspace: FeatureComposerWorkspaceDraft?
-    @State private var newTaskIncomingShareID: String?
+    @State private var newTaskPresentation = FeatureNewTaskPresentationCoordinator()
     @State private var showingAddProject = false
     @State private var showingSettings = false
     @State private var renamingThread: FeatureThread?
@@ -138,12 +190,18 @@ public struct WorkspaceView: View {
         }
         .navigationSplitViewStyle(.balanced)
         .sheet(isPresented: $showingNewTask, onDismiss: {
-            if let shareID = newTaskIncomingShareID {
+            let dismissed = newTaskPresentation.didDismiss()
+            if let shareID = dismissed?.incomingShareID {
                 releaseIncomingSharePresentation(shareID)
             }
-            newTaskInitialProjectID = nil
-            newTaskIncomingShareID = nil
+            if newTaskPresentation.current != nil {
+                Task { @MainActor in
+                    await Task.yield()
+                    showingNewTask = true
+                }
+            }
         }) {
+            let presentation = newTaskPresentation.current
             NewThreadView(
                 model: model,
                 submit: submitNewTask,
@@ -152,12 +210,12 @@ public struct WorkspaceView: View {
                     showingNewTask = false
                 },
                 onCreateProject: openProjectCreation,
-                initialProjectID: newTaskInitialProjectID,
-                initialWorkspace: newTaskInitialWorkspace,
-                incomingShareID: newTaskIncomingShareID,
+                initialProjectID: presentation?.initialProjectID,
+                initialWorkspace: presentation?.initialWorkspace,
+                incomingShareID: presentation?.incomingShareID,
                 acknowledgeIncomingShare: acknowledgeIncomingShare
             )
-            .id(newTaskPresentationID)
+            .id(newTaskPresentation.presentationID)
         }
         .sheet(isPresented: $showingAddProject) {
             AddProjectView(model: model)
@@ -716,10 +774,12 @@ public struct WorkspaceView: View {
         if creationProjects.isEmpty {
             showingAddProject = true
         } else {
-            newTaskInitialProjectID = initialProjectID
-            newTaskInitialWorkspace = initialWorkspace
-            newTaskPresentationID = UUID()
-            showingNewTask = true
+            presentNewTask(
+                .newTask(
+                    initialProjectID: initialProjectID,
+                    initialWorkspace: initialWorkspace
+                )
+            )
         }
     }
 
@@ -757,29 +817,46 @@ public struct WorkspaceView: View {
                model.snapshot.projects.contains(where: { $0.id == projectID }) {
                 selectedProjectID = projectID
             }
-            dismissTransientPresentations()
-            Task { @MainActor in
-                await Task.yield()
-                openNewTaskOrProjectCreation(initialProjectID: projectID)
-            }
+            requestNewTaskPresentation(.newTask(initialProjectID: projectID))
         case let .sharedNewTask(shareID):
-            dismissTransientPresentations()
-            newTaskIncomingShareID = shareID
-            Task { @MainActor in
-                await Task.yield()
-                newTaskInitialProjectID = nil
-                showingNewTask = true
-            }
+            requestNewTaskPresentation(.sharedNewTask(shareID: shareID))
         }
         onNavigationRequestConsumed(navigationRequest.id)
     }
 
     private func dismissTransientPresentations() {
+        newTaskPresentation.cancelPending()
         showingNewTask = false
         showingAddProject = false
         showingSettings = false
         renamingThread = nil
-        newTaskInitialWorkspace = nil
+    }
+
+    private func requestNewTaskPresentation(_ request: FeatureNewTaskPresentationRequest) {
+        let shouldWaitForOtherPresentation = showingAddProject || showingSettings || renamingThread != nil
+        showingAddProject = false
+        showingSettings = false
+        renamingThread = nil
+
+        if showingNewTask {
+            _ = newTaskPresentation.request(request)
+            showingNewTask = false
+        } else if shouldWaitForOtherPresentation {
+            Task { @MainActor in
+                await Task.yield()
+                presentNewTask(request)
+            }
+        } else {
+            presentNewTask(request)
+        }
+    }
+
+    private func presentNewTask(_ request: FeatureNewTaskPresentationRequest) {
+        if newTaskPresentation.request(request) {
+            showingNewTask = true
+        } else {
+            showingNewTask = false
+        }
     }
 
     private func projectMenuTitle(_ project: FeatureProject) -> String {

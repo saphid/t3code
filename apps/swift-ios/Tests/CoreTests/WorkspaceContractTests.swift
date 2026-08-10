@@ -3,6 +3,40 @@ import XCTest
 
 @MainActor
 final class WorkspaceContractTests: XCTestCase {
+    func testNewTaskReplacementWaitsForDismissalAndGetsFreshIdentity() {
+        let first = FeatureNewTaskPresentationRequest.newTask(initialProjectID: "project-1")
+        let replacement = FeatureNewTaskPresentationRequest.sharedNewTask(shareID: "share-2")
+        var coordinator = FeatureNewTaskPresentationCoordinator()
+
+        XCTAssertTrue(coordinator.request(first))
+        let firstPresentationID = coordinator.presentationID
+        XCTAssertEqual(coordinator.current, first)
+
+        XCTAssertFalse(coordinator.request(replacement))
+        XCTAssertEqual(coordinator.current, first)
+        XCTAssertEqual(coordinator.pending, replacement)
+        XCTAssertEqual(coordinator.presentationID, firstPresentationID)
+
+        XCTAssertEqual(coordinator.didDismiss(), first)
+        XCTAssertEqual(coordinator.current, replacement)
+        XCTAssertNil(coordinator.pending)
+        XCTAssertNotEqual(coordinator.presentationID, firstPresentationID)
+        XCTAssertEqual(coordinator.current?.incomingShareID, "share-2")
+    }
+
+    func testNewTaskReplacementReleasesOnlyTheDismissedPresentation() {
+        let first = FeatureNewTaskPresentationRequest.sharedNewTask(shareID: "share-1")
+        let replacement = FeatureNewTaskPresentationRequest.sharedNewTask(shareID: "share-2")
+        var coordinator = FeatureNewTaskPresentationCoordinator()
+
+        XCTAssertTrue(coordinator.request(first))
+        XCTAssertFalse(coordinator.request(replacement))
+        XCTAssertEqual(coordinator.didDismiss()?.incomingShareID, "share-1")
+        XCTAssertEqual(coordinator.current?.incomingShareID, "share-2")
+        XCTAssertEqual(coordinator.didDismiss()?.incomingShareID, "share-2")
+        XCTAssertNil(coordinator.current)
+    }
+
     func testVCSStatusSnapshotDecodesTaggedEffectRPCShape() throws {
         let data = Data(
             """
