@@ -107,6 +107,178 @@ struct HomeThreadMetadataTests {
         #expect(monitoring.homeWorkingDuration(at: now) == nil)
     }
 
+    @Test
+    func completedThreadExposesTimeSinceLatestTurnCompleted() {
+        let thread = FeatureThread(
+            id: "done",
+            projectID: "project",
+            title: "Ship it",
+            state: .completed,
+            latestTurnCompletedAt: now.addingTimeInterval(-5_465)
+        )
+
+        #expect(thread.homeDoneDuration(at: now) == "1h 31m")
+        #expect(thread.homeDoneAccessibilityDuration(at: now) == "1 hour, 31 minutes")
+    }
+
+    @Test
+    func completedThreadShowsSecondsAndClampsFutureCompletion() {
+        let recent = FeatureThread(
+            id: "recent",
+            projectID: "project",
+            title: "Ship it",
+            state: .completed,
+            latestTurnCompletedAt: now.addingTimeInterval(-42)
+        )
+        let future = FeatureThread(
+            id: "future",
+            projectID: "project",
+            title: "Clock skew",
+            state: .completed,
+            latestTurnCompletedAt: now.addingTimeInterval(30)
+        )
+
+        #expect(recent.homeDoneDuration(at: now) == "42s")
+        #expect(future.homeDoneDuration(at: now) == "0s")
+        #expect(future.homeDoneAccessibilityDuration(at: now) == "0 seconds")
+    }
+
+    @Test
+    func completedThreadUsesDaysForLongDurations() {
+        let thread = FeatureThread(
+            id: "done",
+            projectID: "project",
+            title: "Ship it",
+            state: .completed,
+            latestTurnCompletedAt: now.addingTimeInterval(-(49 * 3_600))
+        )
+
+        #expect(thread.homeDoneDuration(at: now) == "2d 1h")
+        #expect(thread.homeDoneAccessibilityDuration(at: now) == "2 days, 1 hour")
+    }
+
+    @Test
+    func incompleteThreadDoesNotExposeDoneDuration() {
+        let thread = FeatureThread(
+            id: "working",
+            projectID: "project",
+            title: "Keep going",
+            state: .working,
+            latestTurnCompletedAt: now.addingTimeInterval(-60)
+        )
+
+        #expect(thread.homeDoneDuration(at: now) == nil)
+        #expect(thread.homeDoneAccessibilityDuration(at: now) == nil)
+    }
+
+    @Test
+    func freshCompletionUsesFastRefreshWhenPreferenceIsEnabled() {
+        let thread = FeatureThread(
+            id: "done",
+            projectID: "project",
+            title: "Ship it",
+            state: .completed,
+            latestTurnCompletedAt: now.addingTimeInterval(-30)
+        )
+
+        #expect(HomeThreadRefreshCadence.interval(
+            threads: [thread],
+            showDoneDuration: true,
+            now: now
+        ) == 1)
+        #expect(HomeThreadRefreshCadence.interval(
+            threads: [thread],
+            showDoneDuration: false,
+            now: now
+        ) == 60)
+    }
+
+    @Test
+    func workingThreadUsesFastRefreshRegardlessOfDoneDurationPreference() {
+        let thread = FeatureThread(
+            id: "working",
+            projectID: "project",
+            title: "Building",
+            state: .working
+        )
+
+        for showDoneDuration in [false, true] {
+            #expect(HomeThreadRefreshCadence.interval(
+                threads: [thread],
+                showDoneDuration: showDoneDuration,
+                now: now
+            ) == 1)
+        }
+    }
+
+    @Test
+    func oldAndFutureCompletionsUseMinuteRefresh() {
+        for offset in [-60.0, 30.0] {
+            let thread = FeatureThread(
+                id: "done-\(offset)",
+                projectID: "project",
+                title: "Ship it",
+                state: .completed,
+                latestTurnCompletedAt: now.addingTimeInterval(offset)
+            )
+            #expect(HomeThreadRefreshCadence.interval(
+                threads: [thread],
+                showDoneDuration: true,
+                now: now
+            ) == 60)
+        }
+    }
+
+    @Test
+    func completionAtNowAndJustBeforeMinuteBoundaryUseFastRefresh() {
+        for offset in [0.0, -59.999] {
+            let thread = FeatureThread(
+                id: "done-\(offset)",
+                projectID: "project",
+                title: "Ship it",
+                state: .completed,
+                latestTurnCompletedAt: now.addingTimeInterval(offset)
+            )
+            #expect(HomeThreadRefreshCadence.interval(
+                threads: [thread],
+                showDoneDuration: true,
+                now: now
+            ) == 1)
+        }
+    }
+
+    @Test
+    func completionRefreshSurvivesDelayedMinuteBoundaryTick() {
+        let thread = FeatureThread(
+            id: "done",
+            projectID: "project",
+            title: "Ship it",
+            state: .completed,
+            latestTurnCompletedAt: now.addingTimeInterval(-60)
+        )
+
+        #expect(!HomeThreadRefreshCadence.isFreshCompletion(thread, now: now))
+        #expect(HomeThreadRefreshCadence.needsSecondPrecisionRefresh(thread, now: now))
+
+        let outsideRecoveryWindow = FeatureThread(
+            id: "older-done",
+            projectID: "project",
+            title: "Already refreshed",
+            state: .completed,
+            latestTurnCompletedAt: now.addingTimeInterval(-120)
+        )
+        #expect(!HomeThreadRefreshCadence.needsSecondPrecisionRefresh(outsideRecoveryWindow, now: now))
+
+        let incomplete = FeatureThread(
+            id: "incomplete",
+            projectID: "project",
+            title: "Still working",
+            state: .working,
+            latestTurnCompletedAt: now.addingTimeInterval(-60)
+        )
+        #expect(!HomeThreadRefreshCadence.needsSecondPrecisionRefresh(incomplete, now: now))
+    }
+
     private func workingDuration(
         state: FeatureThreadState = .working,
         startedAtOffset: TimeInterval

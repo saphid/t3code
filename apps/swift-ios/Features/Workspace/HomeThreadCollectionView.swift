@@ -42,6 +42,7 @@ struct HomeThreadCollectionView: UIViewRepresentable {
     let query: String
     let selectedThreadID: String?
     let forceRichRows: Bool
+    let showThreadDoneDuration: Bool
     let isSnoozedExpanded: Bool
     let isSettledExpanded: Bool
     let isArchiveExpanded: Bool
@@ -167,6 +168,8 @@ struct HomeThreadCollectionView: UIViewRepresentable {
         func update(parent: HomeThreadCollectionView, collectionView: UICollectionView) {
             let previousItems = itemsByID
             let previousSelection = selectedThreadID
+            let doneDurationPreferenceChanged =
+                self.parent.showThreadDoneDuration != parent.showThreadDoneDuration
             self.parent = parent
             selectedThreadID = parent.selectedThreadID
 
@@ -189,7 +192,10 @@ struct HomeThreadCollectionView: UIViewRepresentable {
                 let selectionChanged = [previousSelection, selectedThreadID]
                     .compactMap { $0.map(HomeCollectionItem.ID.thread) }
                     .filter { newIdentifiers.contains($0) }
-                let identifiers = Array(Set(changed + selectionChanged))
+                let preferenceChanged = doneDurationPreferenceChanged
+                    ? doneIdentifiers(in: newIdentifiers)
+                    : []
+                let identifiers = Array(Set(changed + selectionChanged + preferenceChanged))
                 if !identifiers.isEmpty {
                     var snapshot = dataSource.snapshot()
                     snapshot.reconfigureItems(identifiers)
@@ -199,6 +205,9 @@ struct HomeThreadCollectionView: UIViewRepresentable {
                 var snapshot = NSDiffableDataSourceSnapshot<Section, HomeCollectionItem.ID>()
                 snapshot.appendSections([.main])
                 snapshot.appendItems(newIdentifiers, toSection: .main)
+                if doneDurationPreferenceChanged {
+                    snapshot.reconfigureItems(doneIdentifiers(in: newIdentifiers))
+                }
                 dataSource.apply(snapshot, animatingDifferences: false)
             }
 
@@ -368,7 +377,8 @@ struct HomeThreadCollectionView: UIViewRepresentable {
                     projectFaviconClient: parent.projectFaviconClient,
                     isSelected: identifier.threadID == selectedThreadID,
                     now: now,
-                    pullRequest: resolvedPullRequest
+                    pullRequest: resolvedPullRequest,
+                    showThreadDoneDuration: parent.showThreadDoneDuration
                 )
             }
             .margins(.all, 0)
@@ -377,7 +387,7 @@ struct HomeThreadCollectionView: UIViewRepresentable {
             cell.accessories = []
             cell.tintColor = T3Colors.uiTextPrimary
             cell.contentView.accessibilityElementsHidden = true
-            configureAccessibility(cell, item: item)
+            configureAccessibility(cell, item: item, now: now)
         }
 
         private func pullRequest(for thread: FeatureThread) -> FeaturePullRequest? {
@@ -461,7 +471,11 @@ struct HomeThreadCollectionView: UIViewRepresentable {
             }
         }
 
-        private func configureAccessibility(_ cell: HomeCollectionCell, item: HomeCollectionItem) {
+        private func configureAccessibility(
+            _ cell: HomeCollectionCell,
+            item: HomeCollectionItem,
+            now: Date
+        ) {
             switch item {
             case let .thread(thread, context, _, _, _):
                 cell.isAccessibilityElement = true
@@ -469,7 +483,7 @@ struct HomeThreadCollectionView: UIViewRepresentable {
                     ? [.button, .selected]
                     : .button
                 cell.accessibilityLabel = thread.title
-                let baseValue = threadAccessibilityValue(thread, context: context)
+                let baseValue = threadAccessibilityValue(thread, context: context, now: now)
                 cell.accessibilityHint = "Opens task"
                 if let pullRequest = pullRequest(for: thread),
                    let url = pullRequest.safeExternalURL {
@@ -541,12 +555,17 @@ struct HomeThreadCollectionView: UIViewRepresentable {
 
         private func threadAccessibilityValue(
             _ thread: FeatureThread,
-            context: HomeThreadRowContext
+            context: HomeThreadRowContext,
+            now: Date
         ) -> String {
             var values = [thread.homeStatusLabel ?? "Ready", "Project \(context.projectName)"]
             values.append("Harness \(context.providerName)")
-            if let duration = thread.homeWorkingDuration(at: .now) {
+            if let duration = thread.homeWorkingDuration(at: now) {
                 values.append("for \(duration)")
+            }
+            if parent.showThreadDoneDuration,
+               let duration = thread.homeDoneAccessibilityDuration(at: now) {
+                values.append("done for \(duration)")
             }
             if let environment = context.environmentLabel {
                 values.append("on \(environment)")
@@ -711,12 +730,11 @@ struct HomeThreadCollectionView: UIViewRepresentable {
         /// timer idles down to match instead of waking the main thread every
         /// second for the lifetime of the sidebar.
         private func startTimer() {
-            let interval: TimeInterval = itemsByID.values.contains {
-                if case let .thread(thread, _, _, _, _) = $0 {
-                    return thread.homeStatus == .working
-                }
-                return false
-            } ? 1 : 60
+            let interval = HomeThreadRefreshCadence.interval(
+                threads: threads(),
+                showDoneDuration: parent.showThreadDoneDuration,
+                now: .now
+            )
 
             if timer != nil, timerInterval == interval { return }
             invalidateTimer()
@@ -735,15 +753,50 @@ struct HomeThreadCollectionView: UIViewRepresentable {
             timerTick = (timerTick + 1) % 60
             let refreshRelativeAges = timerInterval >= 60 || timerTick == 0
             let now = Date.now
+            let cadenceChanged = timerInterval == 1
+                && HomeThreadRefreshCadence.interval(
+                    threads: threads(),
+                    showDoneDuration: parent.showThreadDoneDuration,
+                    now: now
+                ) != timerInterval
 
             for indexPath in collectionView.indexPathsForVisibleItems {
                 guard let identifier = dataSource.itemIdentifier(for: indexPath),
                       case let .thread(thread, _, _, _, _) = itemsByID[identifier],
-                      refreshRelativeAges || thread.homeStatus == .working,
+                      refreshRelativeAges
+                        || thread.homeStatus == .working
+                        || (cadenceChanged && thread.homeStatus == .done)
+                        || (parent.showThreadDoneDuration
+                            && thread.homeStatus == .done
+                            && HomeThreadRefreshCadence.needsSecondPrecisionRefresh(
+                                thread,
+                                now: now
+                            )),
                       let cell = collectionView.cellForItem(at: indexPath) as? HomeCollectionCell else {
                     continue
                 }
                 configure(cell, identifier: identifier, now: now)
+            }
+            if cadenceChanged {
+                startTimer()
+            }
+        }
+
+        private func threads() -> some Sequence<FeatureThread> {
+            itemsByID.values.lazy.compactMap { item in
+                guard case let .thread(thread, _, _, _, _) = item else { return nil }
+                return thread
+            }
+        }
+
+        private func doneIdentifiers(
+            in identifiers: [HomeCollectionItem.ID]
+        ) -> [HomeCollectionItem.ID] {
+            identifiers.filter { identifier in
+                guard case let .thread(thread, _, _, _, _) = itemsByID[identifier] else {
+                    return false
+                }
+                return thread.homeStatus == .done
             }
         }
     }
@@ -907,6 +960,7 @@ private struct HomeCollectionCellContent: View {
     let isSelected: Bool
     let now: Date
     let pullRequest: FeaturePullRequest?
+    let showThreadDoneDuration: Bool
 
     @ViewBuilder
     var body: some View {
@@ -920,7 +974,8 @@ private struct HomeCollectionCellContent: View {
                 style: style,
                 now: now,
                 allowsMultilineTitle: allowsMultilineTitle,
-                pullRequest: pullRequest
+                pullRequest: pullRequest,
+                showDoneDuration: showThreadDoneDuration
             )
         case let .shelfHeader(shelf, count, isExpanded):
             HomeShelfHeader(

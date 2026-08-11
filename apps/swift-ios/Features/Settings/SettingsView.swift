@@ -328,6 +328,12 @@ public struct SettingsView: View {
                     systemImage: "waveform.path.ecg.rectangle",
                     isOn: $settings.liveActivitiesEnabled
                 )
+                settingsDivider
+                SettingsToggleRow(
+                    title: "Show time since completion",
+                    systemImage: "clock.badge.checkmark",
+                    isOn: $settings.showThreadDoneDuration
+                )
             }
         }
     }

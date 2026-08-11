@@ -364,6 +364,7 @@ public struct WorkspaceView: View {
                 query: searchText,
                 selectedThreadID: selectedThreadID,
                 forceRichRows: dynamicTypeSize.isAccessibilitySize,
+                showThreadDoneDuration: model.snapshot.settings.showThreadDoneDuration,
                 isSnoozedExpanded: isSnoozedExpanded,
                 isSettledExpanded: isSettledExpanded,
                 isArchiveExpanded: isArchiveExpanded,
@@ -1291,6 +1292,7 @@ struct FeatureThreadRow: View {
     let now: Date
     let allowsMultilineTitle: Bool
     let pullRequest: FeaturePullRequest?
+    let showDoneDuration: Bool
 
     init(
         thread: FeatureThread,
@@ -1300,7 +1302,8 @@ struct FeatureThreadRow: View {
         style: Style = .rich,
         now: Date = .now,
         allowsMultilineTitle: Bool = false,
-        pullRequest: FeaturePullRequest? = nil
+        pullRequest: FeaturePullRequest? = nil,
+        showDoneDuration: Bool = false
     ) {
         self.thread = thread
         self.context = context
@@ -1310,6 +1313,7 @@ struct FeatureThreadRow: View {
         self.now = now
         self.allowsMultilineTitle = allowsMultilineTitle
         self.pullRequest = pullRequest
+        self.showDoneDuration = showDoneDuration
     }
 
     var body: some View {
@@ -1413,7 +1417,7 @@ struct FeatureThreadRow: View {
                     .foregroundStyle(T3Colors.textSecondary)
             }
             providerIcon(size: 15)
-            Text(SidebarRelativeAge.compact(since: thread.updatedAt, now: now))
+            Text(slimTrailingLabel(at: now))
                 .font(T3Typography.homeMetadata.monospacedDigit())
                 .foregroundStyle(T3Colors.textTertiary)
         }
@@ -1480,6 +1484,11 @@ struct FeatureThreadRow: View {
             }
             Text(label)
             if let duration = thread.homeWorkingDuration(at: now) {
+                Text(duration)
+                    .font(.system(.footnote, design: .monospaced, weight: .semibold))
+                    .monospacedDigit()
+            }
+            if showDoneDuration, let duration = thread.homeDoneDuration(at: now) {
                 Text(duration)
                     .font(.system(.footnote, design: .monospaced, weight: .semibold))
                     .monospacedDigit()
@@ -1578,6 +1587,9 @@ struct FeatureThreadRow: View {
         if let duration = thread.homeWorkingDuration(at: now) {
             values.append("for \(duration)")
         }
+        if showDoneDuration, let duration = thread.homeDoneAccessibilityDuration(at: now) {
+            values.append("done for \(duration)")
+        }
         values.append("Branch \(branchLabel)")
         if let environmentLabel {
             values.append("on \(environmentLabel)")
@@ -1586,6 +1598,13 @@ struct FeatureThreadRow: View {
             values.append("last known state")
         }
         return values.joined(separator: ". ")
+    }
+
+    private func slimTrailingLabel(at now: Date) -> String {
+        if showDoneDuration, let duration = thread.homeDoneDuration(at: now) {
+            return "Done \(duration)"
+        }
+        return SidebarRelativeAge.compact(since: thread.updatedAt, now: now)
     }
 
 }

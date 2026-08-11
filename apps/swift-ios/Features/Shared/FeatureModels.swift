@@ -768,6 +768,7 @@ public struct FeatureSettings: Sendable, Equatable, Codable {
     public var hapticsEnabled: Bool
     public var notificationsEnabled: Bool
     public var liveActivitiesEnabled: Bool
+    public var showThreadDoneDuration: Bool
     public var defaultSelection: FeatureSelection?
 
     public init(
@@ -775,12 +776,14 @@ public struct FeatureSettings: Sendable, Equatable, Codable {
         hapticsEnabled: Bool = true,
         notificationsEnabled: Bool = true,
         liveActivitiesEnabled: Bool = true,
+        showThreadDoneDuration: Bool = false,
         defaultSelection: FeatureSelection? = nil
     ) {
         self.appearance = appearance
         self.hapticsEnabled = hapticsEnabled
         self.notificationsEnabled = notificationsEnabled
         self.liveActivitiesEnabled = liveActivitiesEnabled
+        self.showThreadDoneDuration = showThreadDoneDuration
         self.defaultSelection = defaultSelection
     }
 
@@ -789,6 +792,7 @@ public struct FeatureSettings: Sendable, Equatable, Codable {
         case hapticsEnabled
         case notificationsEnabled
         case liveActivitiesEnabled
+        case showThreadDoneDuration
         case defaultSelection
     }
 
@@ -810,6 +814,10 @@ public struct FeatureSettings: Sendable, Equatable, Codable {
             Bool.self,
             forKey: .liveActivitiesEnabled
         ) ?? true
+        showThreadDoneDuration = try container.decodeIfPresent(
+            Bool.self,
+            forKey: .showThreadDoneDuration
+        ) ?? false
         defaultSelection = try container.decodeIfPresent(
             FeatureSelection.self,
             forKey: .defaultSelection
@@ -822,6 +830,7 @@ public struct FeatureSettings: Sendable, Equatable, Codable {
         try container.encode(hapticsEnabled, forKey: .hapticsEnabled)
         try container.encode(notificationsEnabled, forKey: .notificationsEnabled)
         try container.encode(liveActivitiesEnabled, forKey: .liveActivitiesEnabled)
+        try container.encode(showThreadDoneDuration, forKey: .showThreadDoneDuration)
         try container.encodeIfPresent(defaultSelection, forKey: .defaultSelection)
     }
 }
