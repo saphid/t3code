@@ -3,6 +3,7 @@ import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Result from "effect/Result";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import { SqlitePersistenceMemory } from "./Sqlite.ts";
@@ -132,6 +133,53 @@ projectionRepositoriesLayer("Projection repositories", (it) => {
         instanceId: ProviderInstanceId.make("claudeAgent"),
         model: "claude-opus-4-6",
       });
+    }),
+  );
+
+  it.effect("identifies a full database when creating a thread", () =>
+    Effect.gen(function* () {
+      const threads = yield* ProjectionThreadRepository;
+      const sql = yield* SqlClient.SqlClient;
+
+      yield* sql`PRAGMA max_page_count = 1`;
+
+      const result = yield* Effect.result(
+        threads.upsert({
+          threadId: ThreadId.make("thread-database-full"),
+          projectId: ProjectId.make("project-database-full"),
+          title: "x".repeat(32_000),
+          modelSelection: {
+            instanceId: ProviderInstanceId.make("codex"),
+            model: "gpt-5.4",
+          },
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          latestTurnId: null,
+          createdAt: "2026-08-12T00:00:00.000Z",
+          updatedAt: "2026-08-12T00:00:00.000Z",
+          archivedAt: null,
+          settledOverride: null,
+          settledAt: null,
+          snoozedUntil: null,
+          snoozedAt: null,
+          pinnedAt: null,
+          latestUserMessageAt: null,
+          pendingApprovalCount: 0,
+          pendingUserInputCount: 0,
+          hasActionableProposedPlan: 0,
+          deletedAt: null,
+        }),
+      );
+
+      assert.isTrue(Result.isFailure(result));
+      if (Result.isFailure(result)) {
+        assert.strictEqual(
+          result.failure.detail,
+          "The T3 Code database is full. Free some disk space and try again.",
+        );
+      }
     }),
   );
 

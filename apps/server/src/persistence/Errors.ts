@@ -72,12 +72,42 @@ export class PersistenceDecodeError extends Schema.TaggedErrorClass<PersistenceD
 const isPersistenceSqlError = Schema.is(PersistenceSqlError);
 const isPersistenceDecodeError = Schema.is(PersistenceDecodeError);
 
+const DATABASE_FULL_MESSAGE = "database or disk is full";
+
+function isDatabaseFullCause(cause: unknown): boolean {
+  let current = cause;
+  for (let depth = 0; depth < 4; depth += 1) {
+    if (typeof current !== "object" || current === null) return false;
+
+    if (
+      "message" in current &&
+      typeof current.message === "string" &&
+      current.message.toLowerCase().includes(DATABASE_FULL_MESSAGE)
+    ) {
+      return true;
+    }
+
+    if ("cause" in current) {
+      current = current.cause;
+      continue;
+    }
+    if ("reason" in current) {
+      current = current.reason;
+      continue;
+    }
+    return false;
+  }
+  return false;
+}
+
 // Kept for orchestration/projection call sites, which are being revamped separately.
 export function toPersistenceSqlError(operation: string) {
   return (cause: unknown): PersistenceSqlError =>
     new PersistenceSqlError({
       operation,
-      detail: `Failed to execute ${operation}`,
+      detail: isDatabaseFullCause(cause)
+        ? "The T3 Code database is full. Free some disk space and try again."
+        : `Failed to execute ${operation}`,
       cause,
     });
 }
