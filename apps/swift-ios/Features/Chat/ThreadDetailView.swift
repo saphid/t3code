@@ -40,8 +40,11 @@ public struct ThreadDetailView: View {
 
     public var body: some View {
         Group {
-            if isLoading {
-                FeatureThreadOpeningView(isRefreshing: detail != nil)
+            if FeatureThreadPresentation.showsOpeningState(
+                isLoading: isLoading,
+                hasDetail: detail != nil
+            ) {
+                FeatureThreadOpeningView()
             } else if let detail {
                 timeline(detail)
             } else {
@@ -646,14 +649,18 @@ private struct FeatureLinkedFileSheet: View {
     }
 }
 
-private struct FeatureThreadOpeningView: View {
-    let isRefreshing: Bool
+enum FeatureThreadPresentation {
+    static func showsOpeningState(isLoading: Bool, hasDetail: Bool) -> Bool {
+        isLoading && !hasDetail
+    }
+}
 
+private struct FeatureThreadOpeningView: View {
     var body: some View {
         VStack(spacing: 12) {
             ProgressView()
                 .controlSize(.regular)
-            Text(isRefreshing ? "Refreshing thread…" : "Loading thread…")
+            Text("Loading thread…")
                 .font(T3Typography.supporting)
                 .foregroundStyle(T3Colors.textSecondary)
         }
