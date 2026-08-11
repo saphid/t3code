@@ -41,17 +41,41 @@ enum MarkdownInlineStyle: String, Hashable, Sendable {
     case heading4
     case tableHeader
     case tableCell
+    case code
 
-    var font: Font {
+    @MainActor
+    var uiFont: UIFont {
+        let textStyle: UIFont.TextStyle
+        let weight: UIFont.Weight
         switch self {
-        case .body: T3Typography.threadBody
-        case .heading1: T3Typography.threadHeading1
-        case .heading2: T3Typography.threadHeading2
-        case .heading3: T3Typography.threadHeading3
-        case .heading4: T3Typography.threadHeading4
-        case .tableHeader: T3Typography.threadBody.weight(.semibold)
-        case .tableCell: T3Typography.threadBody
+        case .body, .tableCell:
+            textStyle = .body
+            weight = .regular
+        case .heading1:
+            textStyle = .title2
+            weight = .bold
+        case .heading2:
+            textStyle = .title3
+            weight = .bold
+        case .heading3:
+            textStyle = .headline
+            weight = .bold
+        case .heading4, .tableHeader:
+            textStyle = .body
+            weight = .semibold
+        case .code:
+            textStyle = .callout
+            weight = .regular
         }
+
+        let preferred = UIFont.preferredFont(forTextStyle: textStyle)
+        if self == .code {
+            return UIFont.monospacedSystemFont(
+                ofSize: preferred.pointSize,
+                weight: weight
+            )
+        }
+        return UIFont.systemFont(ofSize: preferred.pointSize, weight: weight)
     }
 
     func uiFont(dynamicTypeSize: DynamicTypeSize) -> UIFont {
@@ -73,11 +97,17 @@ enum MarkdownInlineStyle: String, Hashable, Sendable {
         case .heading4, .tableHeader:
             textStyle = .body
             weight = .semibold
+        case .code:
+            textStyle = .callout
+            weight = .regular
         }
         let traits = UITraitCollection(
             preferredContentSizeCategory: UIContentSizeCategory(dynamicTypeSize)
         )
         let preferred = UIFont.preferredFont(forTextStyle: textStyle, compatibleWith: traits)
+        if self == .code {
+            return UIFont.monospacedSystemFont(ofSize: preferred.pointSize, weight: weight)
+        }
         return UIFont.systemFont(ofSize: preferred.pointSize, weight: weight)
     }
 
@@ -89,6 +119,8 @@ enum MarkdownInlineStyle: String, Hashable, Sendable {
             3
         case .heading1, .heading2, .heading3, .heading4:
             0
+        case .code:
+            3
         }
     }
 
@@ -166,7 +198,7 @@ indirect enum MarkdownRenderedBlock: Equatable, @unchecked Sendable {
     case orderedList(start: Int, items: [MarkdownRenderedListItem])
     case blockquote([MarkdownRenderedBlock])
     case table(MarkdownRenderedTable)
-    case codeBlock(language: String?, code: String)
+    case codeBlock(language: String?, code: String, inline: MarkdownRenderedInline)
     case thematicBreak
 }
 
@@ -403,7 +435,8 @@ final class MarkdownRenderCache: @unchecked Sendable {
                 rendered = .table(table)
 
             case let .codeBlock(language, code):
-                rendered = .codeBlock(language: language, code: code)
+                guard let inline = renderInline(code, style: .code) else { return nil }
+                rendered = .codeBlock(language: language, code: code, inline: inline)
 
             case .thematicBreak:
                 rendered = .thematicBreak
@@ -465,10 +498,12 @@ final class MarkdownRenderCache: @unchecked Sendable {
             return cached.value
         }
 
-        let inline = MarkdownRenderedInline(
-            attributedText: MarkdownInlineFormatter.format(source, baseFont: style.font),
-            style: style
-        )
+        let attributedText = if style == .code {
+            AttributedString(source)
+        } else {
+            MarkdownInlineFormatter.format(source)
+        }
+        let inline = MarkdownRenderedInline(attributedText: attributedText, style: style)
         guard !Task.isCancelled else { return nil }
         inlineRuns.setObject(
             MarkdownRenderedInlineBox(inline),

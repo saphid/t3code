@@ -1371,7 +1371,6 @@ private struct FeatureTranscriptCollectionView: UIViewRepresentable {
             }
             verticalDragStartOffset = nil
             (scrollView as? BottomAnchoredTranscriptCollectionView)?.maintainsBottomAnchor = false
-            scrollView.window?.endEditing(false)
             onDismissKeyboard?()
         }
 

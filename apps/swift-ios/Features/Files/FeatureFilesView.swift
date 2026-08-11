@@ -213,7 +213,11 @@ struct FeatureFilePreviewView: View {
                     switch previewKind {
                     case .markdown:
                         ScrollView {
-                            MarkdownMessageView(content.text, onOpenURL: openURL)
+                            MarkdownMessageView(
+                                content.text,
+                                onOpenURL: openURL,
+                                copyActionTitle: "Copy file contents"
+                            )
                                 .frame(maxWidth: T3Metrics.readingWidth, alignment: .leading)
                                 .frame(maxWidth: .infinity, alignment: .leading)
                                 .padding(.horizontal, 18)
