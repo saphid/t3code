@@ -105,6 +105,7 @@ import { requiredScopeForRpcMethod } from "./auth/RpcAuthorization.ts";
 import * as ProcessDiagnostics from "./diagnostics/ProcessDiagnostics.ts";
 import * as ProcessResourceMonitor from "./diagnostics/ProcessResourceMonitor.ts";
 import * as ResourceTelemetry from "./resourceTelemetry/ResourceTelemetry.ts";
+import { hostStorageStream, sampleHostStorage } from "./resourceTelemetry/HostStorage.ts";
 import * as UsageService from "./usage/UsageService.ts";
 import * as TraceDiagnostics from "./diagnostics/TraceDiagnostics.ts";
 import * as SourceControlDiscovery from "./sourceControl/SourceControlDiscovery.ts";
@@ -2189,6 +2190,12 @@ const makeWsRpcLayer = (
                 Stream.concat(Stream.make(latest), changes),
               ),
             ),
+            { "rpc.aggregate": "server" },
+          ),
+        [WS_METHODS.subscribeHostStorage]: (_input) =>
+          observeRpcStream(
+            WS_METHODS.subscribeHostStorage,
+            hostStorageStream(sampleHostStorage(config.baseDir)),
             { "rpc.aggregate": "server" },
           ),
       });

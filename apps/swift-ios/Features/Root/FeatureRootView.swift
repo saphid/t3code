@@ -54,6 +54,11 @@ public struct FeatureRootView: View {
         .preferredColorScheme(preferredColorScheme)
         .tint(T3Colors.accent)
         .background(T3Colors.background.ignoresSafeArea())
+        .safeAreaInset(edge: .top, spacing: 0) {
+            if let storage = model.hostStorage, storage.status != .ok {
+                HostStorageWarning(storage: storage)
+            }
+        }
         .task { await model.start() }
         .alert(
             "Something went wrong",
@@ -86,6 +91,43 @@ public struct FeatureRootView: View {
         case .light: .light
         case .dark: .dark
         }
+    }
+}
+
+private struct HostStorageWarning: View {
+    let storage: HostStorageSnapshot
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: "externaldrive.fill.badge.exclamationmark")
+                .font(.system(size: 17, weight: .semibold))
+            VStack(alignment: .leading, spacing: 3) {
+                Text(storage.status == .critical
+                    ? "Host storage is critically low"
+                    : "Host storage is low")
+                    .font(T3Typography.homeTitle)
+                Text("\(formattedAvailable) remains on the computer running T3 Code. Free up space to keep new threads and messages from failing.")
+                    .font(T3Typography.supporting)
+            }
+            Spacer(minLength: 0)
+        }
+        .foregroundStyle(storage.status == .critical ? T3Colors.danger : T3Colors.warning)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 11)
+        .frame(maxWidth: .infinity)
+        .background(T3Colors.surface)
+        .overlay(alignment: .bottom) {
+            Divider()
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(.isStaticText)
+    }
+
+    private var formattedAvailable: String {
+        let gibibytes = storage.availableBytes / pow(1024, 3)
+        return gibibytes < 10
+            ? String(format: "%.1f GiB", gibibytes)
+            : String(format: "%.0f GiB", gibibytes)
     }
 }
 

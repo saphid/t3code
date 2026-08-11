@@ -94,6 +94,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
     private var pollingTask: Task<Void, Never>?
     private var fallbackPollingTask: Task<Void, Never>?
     private var configurationTask: Task<Void, Never>?
+    private var hostStorageTask: Task<Void, Never>?
     private var aggregateRefreshTask: Task<Void, Never>?
     private var aggregateRefreshID: UUID?
     private var shellPublishTask: Task<Void, Never>?
@@ -162,6 +163,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         pollingTask?.cancel()
         fallbackPollingTask?.cancel()
         configurationTask?.cancel()
+        hostStorageTask?.cancel()
         aggregateRefreshTask?.cancel()
         shellPublishTask?.cancel()
         archivedRefreshTask?.cancel()
@@ -472,12 +474,14 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         pollingTask?.cancel()
         fallbackPollingTask?.cancel()
         configurationTask?.cancel()
+        hostStorageTask?.cancel()
         aggregateRefreshTask?.cancel()
         archivedRefreshTask?.cancel()
         passiveDetailPollingTask?.cancel()
         pollingTask = nil
         fallbackPollingTask = nil
         configurationTask = nil
+        hostStorageTask = nil
         aggregateRefreshTask = nil
         aggregateRefreshID = nil
         archivedRefreshTask = nil
@@ -498,12 +502,14 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         pollingTask?.cancel()
         fallbackPollingTask?.cancel()
         configurationTask?.cancel()
+        hostStorageTask?.cancel()
         aggregateRefreshTask?.cancel()
         archivedRefreshTask?.cancel()
         passiveDetailPollingTask?.cancel()
         pollingTask = nil
         fallbackPollingTask = nil
         configurationTask = nil
+        hostStorageTask = nil
         aggregateRefreshTask = nil
         aggregateRefreshID = nil
         archivedRefreshTask = nil
@@ -517,6 +523,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
     }
 
     private func clearEnvironmentState(preserveEnvironmentSnapshots: Bool = false) {
+        continuation.yield(.hostStorage(nil))
         environmentGeneration &+= 1
         resetDetailRefresh()
         resetDetailStream()
@@ -2439,6 +2446,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         pollingTask?.cancel()
         fallbackPollingTask?.cancel()
         configurationTask?.cancel()
+        hostStorageTask?.cancel()
         let generation = environmentGeneration
         pollingTask = Task { [weak self] in
             do {
@@ -2614,6 +2622,33 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
             } catch {
                 // The shell and thread streams remain useful on older servers
                 // that do not expose the provider catalogue subscription.
+            }
+        }
+        hostStorageTask = Task { [weak self] in
+            do {
+                for try await storage in await activeClient.hostStorageEvents() {
+                    guard !Task.isCancelled,
+                          let self,
+                          self.isCurrentSession(
+                              client: activeClient,
+                              generation: generation
+                          ) else {
+                        break
+                    }
+                    self.continuation.yield(.hostStorage(storage))
+                }
+            } catch is CancellationError {
+                return
+            } catch {
+                // Older servers may not expose host resource telemetry.
+                guard let self,
+                      self.isCurrentSession(
+                          client: activeClient,
+                          generation: generation
+                      ) else {
+                    return
+                }
+                self.continuation.yield(.hostStorage(nil))
             }
         }
     }

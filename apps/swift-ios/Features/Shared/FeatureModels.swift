@@ -933,5 +933,6 @@ public enum FeatureEvent: Sendable {
     case threadRemoved(id: String)
     case detail(FeatureThreadDetail)
     case detailDelta(FeatureThreadDetail, FeatureDetailDelta)
+    case hostStorage(HostStorageSnapshot?)
     case failure(String)
 }

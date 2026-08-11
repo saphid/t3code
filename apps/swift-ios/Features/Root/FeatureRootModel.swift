@@ -37,6 +37,7 @@ public final class FeatureRootModel {
     public private(set) var isLoading = true
     public private(set) var isPerformingAction = false
     public private(set) var isManagingConnections = false
+    public private(set) var hostStorage: HostStorageSnapshot?
     public var errorMessage: String?
 
     let client: any FeatureClient
@@ -705,6 +706,8 @@ public final class FeatureRootModel {
         case let .detailDelta(value, delta):
             store(value, delta: delta)
             upsert(value.thread)
+        case let .hostStorage(storage):
+            hostStorage = storage
         case let .failure(message):
             errorMessage = message
         }

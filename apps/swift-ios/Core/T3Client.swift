@@ -110,6 +110,15 @@ public actor T3Client {
         )
     }
 
+    public func hostStorageEvents() async
+        -> AsyncThrowingStream<HostStorageSnapshot, Error>
+    {
+        await rpc.subscribe(
+            RPCMethod.subscribeHostStorage.rawValue,
+            as: HostStorageSnapshot.self
+        )
+    }
+
     public func clientSessions() async throws -> [AuthClientSession] {
         try await api.clientSessions(for: environment)
     }
@@ -1268,6 +1277,7 @@ public enum RPCMethod: String, Sendable {
     case filesystemBrowse = "filesystem.browse"
     case assetsCreateURL = "assets.createUrl"
     case subscribeServerConfig
+    case subscribeHostStorage
     case serverDiscoverSourceControl = "server.discoverSourceControl"
     case subscribeVCSStatus = "subscribeVcsStatus"
     case vcsPull = "vcs.pull"

@@ -17,6 +17,11 @@ The native monitor owns bounded in-memory history. The server only merges and
 summarizes that history when diagnostics requests it. Telemetry history is not
 persisted to disk or continuously copied into Node.
 
+Host storage warnings use the separate, lightweight `subscribeHostStorage` stream. It samples the
+filesystem containing T3's durable state immediately on subscription and every 30 seconds after
+that. Keeping storage off the diagnostics stream avoids enabling the one-second process monitor or
+shipping process details to clients that only need a capacity warning.
+
 ## Why a standalone executable
 
 The monitor is intentionally not a Node native addon.

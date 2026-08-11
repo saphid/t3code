@@ -1,4 +1,8 @@
-import type { ResourceTelemetryHistoryInput, ResourceTelemetrySnapshot } from "@t3tools/contracts";
+import type {
+  EnvironmentId,
+  ResourceTelemetryHistoryInput,
+  ResourceTelemetrySnapshot,
+} from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import { useCallback } from "react";
 
@@ -38,6 +42,12 @@ export function useResourceTelemetry(): ResourceTelemetryState {
   }, [environmentId, retryCommand]);
 
   return { ...query, retry };
+}
+
+export function useHostStorage(environmentId: EnvironmentId | null) {
+  return useEnvironmentQuery(
+    environmentId === null ? null : serverEnvironment.hostStorage({ environmentId, input: {} }),
+  );
 }
 
 export function useResourceTelemetryHistory(input: ResourceTelemetryHistoryInput) {

@@ -6,6 +6,26 @@ import Testing
 @Suite("Feature root model")
 struct FeatureRootModelTests {
     @Test
+    func hostStorageTelemetryUpdatesThePersistentWarningState() async {
+        let client = FeatureClientStub()
+        let model = testRootModel(client: client)
+        let storage = HostStorageSnapshot(
+            totalBytes: 200 * pow(1024, 3),
+            availableBytes: 4 * pow(1024, 3),
+            warningThresholdBytes: 20 * pow(1024, 3),
+            criticalThresholdBytes: 5 * pow(1024, 3),
+            status: .critical
+        )
+
+        let run = Task { await model.start() }
+        client.emit(.hostStorage(storage))
+        client.finishEvents()
+        await run.value
+
+        #expect(model.hostStorage == storage)
+    }
+
+    @Test
     func appearanceAppliesImmediatelyAndPersistsWithoutSavingTheDraft() async {
         let client = FeatureClientStub()
         let model = testRootModel(client: client)
