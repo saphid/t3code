@@ -43,41 +43,6 @@ enum MarkdownInlineStyle: String, Hashable, Sendable {
     case tableCell
     case code
 
-    @MainActor
-    var uiFont: UIFont {
-        let textStyle: UIFont.TextStyle
-        let weight: UIFont.Weight
-        switch self {
-        case .body, .tableCell:
-            textStyle = .body
-            weight = .regular
-        case .heading1:
-            textStyle = .title2
-            weight = .bold
-        case .heading2:
-            textStyle = .title3
-            weight = .bold
-        case .heading3:
-            textStyle = .headline
-            weight = .bold
-        case .heading4, .tableHeader:
-            textStyle = .body
-            weight = .semibold
-        case .code:
-            textStyle = .callout
-            weight = .regular
-        }
-
-        let preferred = UIFont.preferredFont(forTextStyle: textStyle)
-        if self == .code {
-            return UIFont.monospacedSystemFont(
-                ofSize: preferred.pointSize,
-                weight: weight
-            )
-        }
-        return UIFont.systemFont(ofSize: preferred.pointSize, weight: weight)
-    }
-
     func uiFont(dynamicTypeSize: DynamicTypeSize) -> UIFont {
         let textStyle: UIFont.TextStyle
         let weight: UIFont.Weight
@@ -109,19 +74,6 @@ enum MarkdownInlineStyle: String, Hashable, Sendable {
             return UIFont.monospacedSystemFont(ofSize: preferred.pointSize, weight: weight)
         }
         return UIFont.systemFont(ofSize: preferred.pointSize, weight: weight)
-    }
-
-    var lineSpacing: CGFloat {
-        switch self {
-        case .body:
-            4
-        case .tableHeader, .tableCell:
-            3
-        case .heading1, .heading2, .heading3, .heading4:
-            0
-        case .code:
-            3
-        }
     }
 
     static func heading(level: Int) -> Self {

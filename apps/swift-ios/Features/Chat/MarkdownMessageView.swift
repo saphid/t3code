@@ -50,7 +50,8 @@ struct MarkdownMessageView: View {
                 MarkdownBlocksView(
                     blocks: displayDocument.blocks,
                     selectionContext: selectionContext,
-                    imageContext: imageContext
+                    imageContext: imageContext,
+                    allowsUnifiedSelection: !isStreaming
                 )
             } else {
                 // Parsing waits briefly so token-by-token streaming cancels stale revisions
@@ -238,25 +239,57 @@ private enum MarkdownTextColor: Equatable, Sendable {
 }
 
 private struct MarkdownBlocksView: View {
+    @SwiftUI.Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @State private var selectableCache = MarkdownSelectableDocumentCache()
+
     let blocks: [MarkdownRenderedBlock]
     let selectionContext: MarkdownSelectionContext
     var imageContext: MarkdownImageContext?
     var spacing: CGFloat = 12
     var textColor: MarkdownTextColor = .primary
+    var allowsUnifiedSelection = true
 
     var body: some View {
+        let segments = MarkdownSelectableDocumentAttributes.segments(
+            in: blocks,
+            allowsSelectableSegments: allowsUnifiedSelection
+        )
+        let _ = selectableCache.retain(
+            blockSets: segments.compactMap { segment in
+                guard case let .selectable(blocks) = segment else { return nil }
+                return blocks
+            },
+            textColor: textColor.uiColor,
+            dynamicTypeSize: dynamicTypeSize,
+            blockSpacing: spacing
+        )
         VStack(alignment: .leading, spacing: spacing) {
-            ForEach(blocks.indices, id: \.self) { index in
-                // Unchanged blocks share inline runs by reference across
-                // streaming revisions, so equatable comparison skips their
-                // body and layout entirely; only the changed tail re-renders.
-                MarkdownBlockView(
-                    block: blocks[index],
-                    selectionContext: selectionContext,
-                    textColor: textColor,
-                    imageContext: imageContext
-                )
-                    .equatable()
+            ForEach(segments.indices, id: \.self) { index in
+                switch segments[index] {
+                case let .selectable(segmentBlocks):
+                    MarkdownDocumentText(
+                        attributedText: MarkdownSelectableDocumentAttributes.make(
+                            from: segmentBlocks,
+                            textColor: textColor.uiColor,
+                            dynamicTypeSize: dynamicTypeSize,
+                            blockSpacing: spacing,
+                            cache: selectableCache
+                        ),
+                        selectionContext: selectionContext
+                    )
+                case let .rich(block):
+                    // Unchanged blocks share inline runs by reference across
+                    // streaming revisions, so equatable comparison skips their
+                    // body and layout entirely; only the changed tail re-renders.
+                    MarkdownBlockView(
+                        block: block,
+                        selectionContext: selectionContext,
+                        textColor: textColor,
+                        imageContext: imageContext,
+                        allowsUnifiedSelection: allowsUnifiedSelection
+                    )
+                        .equatable()
+                }
             }
         }
     }
@@ -267,18 +300,21 @@ private struct MarkdownBlockView: View, Equatable {
     let selectionContext: MarkdownSelectionContext
     let textColor: MarkdownTextColor
     let imageContext: MarkdownImageContext?
+    let allowsUnifiedSelection: Bool
     nonisolated let imageContextID: MarkdownImageContext.ID?
 
     init(
         block: MarkdownRenderedBlock,
         selectionContext: MarkdownSelectionContext,
         textColor: MarkdownTextColor,
-        imageContext: MarkdownImageContext?
+        imageContext: MarkdownImageContext?,
+        allowsUnifiedSelection: Bool
     ) {
         self.block = block
         self.selectionContext = selectionContext
         self.textColor = textColor
         self.imageContext = imageContext
+        self.allowsUnifiedSelection = allowsUnifiedSelection
         imageContextID = imageContext?.id
     }
 
@@ -286,6 +322,7 @@ private struct MarkdownBlockView: View, Equatable {
         lhs.block == rhs.block
             && lhs.selectionContext == rhs.selectionContext
             && lhs.textColor == rhs.textColor
+            && lhs.allowsUnifiedSelection == rhs.allowsUnifiedSelection
             && lhs.imageContextID == rhs.imageContextID
     }
 
@@ -323,7 +360,8 @@ private struct MarkdownBlockView: View, Equatable {
                 start: nil,
                 selectionContext: selectionContext,
                 textColor: textColor,
-                imageContext: imageContext
+                imageContext: imageContext,
+                allowsUnifiedSelection: allowsUnifiedSelection
             )
 
         case let .orderedList(start, items):
@@ -332,7 +370,8 @@ private struct MarkdownBlockView: View, Equatable {
                 start: start,
                 selectionContext: selectionContext,
                 textColor: textColor,
-                imageContext: imageContext
+                imageContext: imageContext,
+                allowsUnifiedSelection: allowsUnifiedSelection
             )
 
         case let .blockquote(blocks):
@@ -341,7 +380,8 @@ private struct MarkdownBlockView: View, Equatable {
                 selectionContext: selectionContext,
                 imageContext: imageContext,
                 spacing: 9,
-                textColor: .secondary
+                textColor: .secondary,
+                allowsUnifiedSelection: allowsUnifiedSelection
             )
                 .foregroundStyle(T3Colors.textSecondary)
                 .padding(.leading, 14)
@@ -464,6 +504,7 @@ private struct MarkdownListView: View {
     let selectionContext: MarkdownSelectionContext
     let textColor: MarkdownTextColor
     let imageContext: MarkdownImageContext?
+    let allowsUnifiedSelection: Bool
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -477,7 +518,8 @@ private struct MarkdownListView: View {
                         selectionContext: selectionContext,
                         imageContext: imageContext,
                         spacing: 7,
-                        textColor: textColor
+                        textColor: textColor,
+                        allowsUnifiedSelection: allowsUnifiedSelection
                     )
                 }
                 .accessibilityElement(children: .contain)
@@ -610,194 +652,151 @@ enum MarkdownCodeBlockWrapping {
     }
 }
 
-#if false
-private struct MarkdownInlineText: View {
-    @SwiftUI.Environment(\.dynamicTypeSize) private var dynamicTypeSize
-
-    private let attributedText: AttributedString
-    private let font: Font
-    private let style: MarkdownInlineStyle
-    private let lineSpacing: CGFloat
-    private let hasLinks: Bool
-
-    init(_ rendered: MarkdownRenderedInline) {
-        attributedText = rendered.attributedText
-        font = rendered.style.font
-        style = rendered.style
-        lineSpacing = rendered.style.lineSpacing
-        hasLinks = rendered.attributedText.runs.contains { $0.link != nil }
-    }
-
-    var body: some View {
-        Text(attributedText)
-            .font(font)
-            .lineSpacing(lineSpacing)
-            .fixedSize(horizontal: false, vertical: true)
-            .overlay {
-                if hasLinks {
-                    // UIHostingConfiguration transcript cells swallow SwiftUI Text link taps.
-                    // Mirror the same style here so only linked glyphs intercept touches.
-                    MarkdownLinkInteractionOverlay(
-                        attributedText: attributedText,
-                        baseFont: style.uiFont(dynamicTypeSize: dynamicTypeSize),
-                        lineSpacing: lineSpacing
-                    )
-                }
-            }
-    }
-}
-
-private struct MarkdownLinkInteractionOverlay: UIViewRepresentable {
+private struct MarkdownDocumentText: UIViewRepresentable {
     @SwiftUI.Environment(\.openURL) private var openURL
 
-    let attributedText: AttributedString
-    let baseFont: UIFont
-    let lineSpacing: CGFloat
+    let attributedText: NSAttributedString
+    let selectionContext: MarkdownSelectionContext
 
-    func makeUIView(context: Context) -> MarkdownLinkInteractionView {
-        let view = MarkdownLinkInteractionView()
-        view.onOpenURL = { url in openURL(url) }
-        return view
+    func makeCoordinator() -> Coordinator { Coordinator() }
+
+    func makeUIView(context: Context) -> UITextView {
+        let textView = UITextView()
+        textView.backgroundColor = .clear
+        textView.isEditable = false
+        textView.isSelectable = true
+        textView.isScrollEnabled = false
+        textView.textContainerInset = .zero
+        textView.textContainer.lineFragmentPadding = 0
+        textView.textContainer.widthTracksTextView = true
+        textView.adjustsFontForContentSizeCategory = true
+        textView.accessibilityTraits = .staticText
+        textView.delegate = context.coordinator
+        textView.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        return textView
     }
 
-    func updateUIView(_ view: MarkdownLinkInteractionView, context: Context) {
-        view.onOpenURL = { url in openURL(url) }
-        view.render(attributedText, baseFont: baseFont, lineSpacing: lineSpacing)
-    }
-}
-
-private final class MarkdownLinkInteractionView: UIView {
-    var onOpenURL: ((URL) -> Void)?
-
-    private let textStorage = NSTextStorage()
-    private let layoutManager = NSLayoutManager()
-    private let textContainer = NSTextContainer(size: .zero)
-    private var initialTouch: (point: CGPoint, url: URL, timestamp: TimeInterval)?
-    private var renderedText: AttributedString?
-    private var renderedFont: UIFont?
-    private var renderedLineSpacing: CGFloat?
-
-    init() {
-        super.init(frame: .zero)
-        backgroundColor = .clear
-        isOpaque = false
-        isUserInteractionEnabled = true
-        isAccessibilityElement = false
-        accessibilityElementsHidden = true
-        textContainer.lineFragmentPadding = 0
-        layoutManager.addTextContainer(textContainer)
-        textStorage.addLayoutManager(layoutManager)
+    func updateUIView(_ textView: UITextView, context: Context) {
+        if context.coordinator.shouldApply(attributedText) {
+            let previousText = textView.attributedText.string
+            let previousSelection = textView.selectedRange
+            textView.attributedText = attributedText
+            textView.selectedRange = MarkdownSelectionRestoration.range(
+                previousText: previousText,
+                previousRange: previousSelection,
+                newText: attributedText.string
+            )
+            context.coordinator.didApplyText()
+            context.coordinator.didApply(attributedText)
+        }
+        context.coordinator.selectionContext = selectionContext
+        context.coordinator.onOpenURL = { openURL($0) }
+        textView.accessibilityCustomActions = context.coordinator.accessibilityActions(
+            title: selectionContext.copyActionTitle
+        )
     }
 
-    @available(*, unavailable)
-    required init?(coder: NSCoder) {
-        fatalError("init(coder:) has not been implemented")
+    func sizeThatFits(
+        _ proposal: ProposedViewSize,
+        uiView: UITextView,
+        context: Context
+    ) -> CGSize? {
+        guard let width = proposal.width, width.isFinite, width > 0 else { return nil }
+        return context.coordinator.size(
+            for: uiView,
+            proposedWidth: width
+        )
     }
 
-    func render(
-        _ attributedText: AttributedString,
-        baseFont: UIFont,
-        lineSpacing: CGFloat
-    ) {
-        guard renderedText != attributedText
-                || renderedFont?.isEqual(baseFont) != true
-                || renderedLineSpacing != lineSpacing else { return }
-        renderedText = attributedText
-        renderedFont = baseFont
-        renderedLineSpacing = lineSpacing
+    final class Coordinator: NSObject, UITextViewDelegate {
+        private struct SizeKey: Hashable {
+            let width: CGFloat
+            let textHash: Int
+        }
 
-        let rendered = NSMutableAttributedString()
-        for run in attributedText.runs {
-            let text = String(attributedText[run.range].characters)
-            var attributes: [NSAttributedString.Key: Any] = [
-                .font: font(for: run.inlinePresentationIntent, baseFont: baseFont),
-                .foregroundColor: UIColor.clear,
+        var selectionContext = MarkdownSelectionContext(
+            source: MarkdownSelectionSource(""),
+            copyActionTitle: "Copy message"
+        )
+        var onOpenURL: ((URL) -> Void)?
+        private var cachedSize: (key: SizeKey, value: CGSize)?
+        private var cachedAccessibilityTitle: String?
+        private var cachedAccessibilityActions: [UIAccessibilityCustomAction] = []
+        private var lastAppliedAttributedText: NSAttributedString?
+
+        func didApplyText() {
+            cachedSize = nil
+        }
+
+        func shouldApply(_ attributedText: NSAttributedString) -> Bool {
+            lastAppliedAttributedText !== attributedText
+        }
+
+        func didApply(_ attributedText: NSAttributedString) {
+            lastAppliedAttributedText = attributedText
+        }
+
+        func size(for textView: UITextView, proposedWidth: CGFloat) -> CGSize {
+            let key = SizeKey(
+                width: proposedWidth,
+                textHash: textView.attributedText.hash
+            )
+            if cachedSize?.key == key, let value = cachedSize?.value { return value }
+            let bounds = textView.attributedText.boundingRect(
+                with: CGSize(width: proposedWidth, height: .greatestFiniteMagnitude),
+                options: [.usesLineFragmentOrigin, .usesFontLeading],
+                context: nil
+            )
+            let width = min(proposedWidth, max(1, ceil(bounds.width)))
+            let fittingSize = textView.sizeThatFits(
+                CGSize(width: width, height: .greatestFiniteMagnitude)
+            )
+            let value = CGSize(width: width, height: max(1, ceil(fittingSize.height)))
+            cachedSize = (key, value)
+            return value
+        }
+
+        func accessibilityActions(title: String) -> [UIAccessibilityCustomAction] {
+            if cachedAccessibilityTitle == title { return cachedAccessibilityActions }
+            cachedAccessibilityTitle = title
+            cachedAccessibilityActions = [
+                UIAccessibilityCustomAction(name: title) { [weak self] _ in
+                    guard let self else { return false }
+                    UIPasteboard.general.string = selectionContext.source.text
+                    return true
+                },
             ]
-            if let link = run.link {
-                attributes[.link] = link
+            return cachedAccessibilityActions
+        }
+
+        func textView(
+            _ textView: UITextView,
+            editMenuForTextIn range: NSRange,
+            suggestedActions: [UIMenuElement]
+        ) -> UIMenu? {
+            let copyMessage = UIAction(
+                title: selectionContext.copyActionTitle,
+                image: UIImage(systemName: "doc.on.doc")
+            ) { [weak self] _ in
+                guard let self else { return }
+                UIPasteboard.general.string = selectionContext.source.text
             }
-            rendered.append(NSAttributedString(string: text, attributes: attributes))
+            return UIMenu(children: suggestedActions + [copyMessage])
         }
-        let paragraph = NSMutableParagraphStyle()
-        paragraph.lineSpacing = lineSpacing
-        rendered.addAttribute(
-            .paragraphStyle,
-            value: paragraph,
-            range: NSRange(location: 0, length: rendered.length)
-        )
-        textStorage.setAttributedString(rendered)
-        setNeedsLayout()
-    }
 
-    override func layoutSubviews() {
-        super.layoutSubviews()
-        textContainer.size = bounds.size
-    }
-
-    override func point(inside point: CGPoint, with event: UIEvent?) -> Bool {
-        link(at: point) != nil
-    }
-
-    override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
-        guard let point = touches.first?.location(in: self), let url = link(at: point) else {
-            initialTouch = nil
-            super.touchesBegan(touches, with: event)
-            return
+        func textView(
+            _ textView: UITextView,
+            shouldInteractWith URL: URL,
+            in characterRange: NSRange,
+            interaction: UITextItemInteraction
+        ) -> Bool {
+            guard interaction == .invokeDefaultAction else { return false }
+            onOpenURL?(URL)
+            return false
         }
-        initialTouch = (point, url, touches.first?.timestamp ?? 0)
-    }
-
-    override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {
-        guard let point = touches.first?.location(in: self),
-              let initialTouch,
-              initialTouch.url == link(at: point),
-              hypot(point.x - initialTouch.point.x, point.y - initialTouch.point.y) <= 10,
-              (touches.first?.timestamp ?? initialTouch.timestamp) - initialTouch.timestamp <= 0.5 else {
-            self.initialTouch = nil
-            super.touchesEnded(touches, with: event)
-            return
-        }
-        self.initialTouch = nil
-        onOpenURL?(initialTouch.url)
-    }
-
-    override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent?) {
-        initialTouch = nil
-        super.touchesCancelled(touches, with: event)
-    }
-
-    private func link(at point: CGPoint) -> URL? {
-        guard textStorage.length > 0, bounds.contains(point) else { return nil }
-        let glyph = layoutManager.glyphIndex(for: point, in: textContainer)
-        guard glyph < layoutManager.numberOfGlyphs else { return nil }
-        let glyphRect = layoutManager.boundingRect(
-            forGlyphRange: NSRange(location: glyph, length: 1),
-            in: textContainer
-        )
-        guard glyphRect.insetBy(dx: -6, dy: -4).contains(point) else { return nil }
-        let character = layoutManager.characterIndexForGlyph(at: glyph)
-        guard character < textStorage.length else { return nil }
-        return textStorage.attribute(.link, at: character, effectiveRange: nil) as? URL
-    }
-
-    private func font(
-        for intent: InlinePresentationIntent?,
-        baseFont: UIFont
-    ) -> UIFont {
-        var descriptor = baseFont.fontDescriptor
-        if intent?.contains(.code) == true {
-            descriptor = descriptor.withDesign(.monospaced) ?? descriptor
-        }
-        var traits = descriptor.symbolicTraits
-        if intent?.contains(.stronglyEmphasized) == true { traits.insert(.traitBold) }
-        if intent?.contains(.emphasized) == true { traits.insert(.traitItalic) }
-        guard let descriptor = descriptor.withSymbolicTraits(traits) else {
-            return baseFont
-        }
-        return UIFont(descriptor: descriptor, size: baseFont.pointSize)
     }
 }
-#endif
+
 private struct MarkdownInlineText: UIViewRepresentable {
     @SwiftUI.Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @SwiftUI.Environment(\.openURL) private var openURL
@@ -938,6 +937,7 @@ private struct MarkdownInlineText: UIViewRepresentable {
                 from: rendered,
                 lineSpacing: lineSpacing,
                 foregroundColor: textColor.uiColor,
+                dynamicTypeSize: dynamicTypeSize,
                 wrapsLines: wrapsLines
             )
             cacheKey = key
@@ -1044,6 +1044,7 @@ private struct MarkdownInlineText: UIViewRepresentable {
             in characterRange: NSRange,
             interaction: UITextItemInteraction
         ) -> Bool {
+            guard interaction == .invokeDefaultAction else { return false }
             onOpenURL?(URL)
             return false
         }
@@ -1060,6 +1061,7 @@ enum MarkdownSelectableTextAttributes {
         from rendered: MarkdownRenderedInline,
         lineSpacing: CGFloat,
         foregroundColor: UIColor = T3Colors.uiTextPrimary,
+        dynamicTypeSize: DynamicTypeSize = .large,
         wrapsLines: Bool = true
     ) -> NSAttributedString {
         let result = NSMutableAttributedString()
@@ -1070,7 +1072,11 @@ enum MarkdownSelectableTextAttributes {
         for run in rendered.attributedText.runs {
             let intent = run.inlinePresentationIntent
             var attributes: [NSAttributedString.Key: Any] = [
-                .font: font(for: rendered.style, intent: intent),
+                .font: font(
+                    for: rendered.style,
+                    intent: intent,
+                    dynamicTypeSize: dynamicTypeSize
+                ),
                 .foregroundColor: foregroundColor,
                 .paragraphStyle: paragraphStyle,
             ]
@@ -1098,9 +1104,10 @@ enum MarkdownSelectableTextAttributes {
     @MainActor
     private static func font(
         for style: MarkdownInlineStyle,
-        intent: InlinePresentationIntent?
+        intent: InlinePresentationIntent?,
+        dynamicTypeSize: DynamicTypeSize
     ) -> UIFont {
-        var font = style.uiFont
+        var font = style.uiFont(dynamicTypeSize: dynamicTypeSize)
         if intent?.contains(.code) == true, style != .code {
             font = UIFont.monospacedSystemFont(
                 ofSize: font.pointSize,
@@ -1124,6 +1131,303 @@ enum MarkdownSelectableTextAttributes {
         }
         return font
     }
+}
+
+@MainActor
+final class MarkdownSelectableDocumentCache {
+    private struct Entry {
+        let blocks: [MarkdownRenderedBlock]
+        let textColor: UIColor
+        let dynamicTypeSize: DynamicTypeSize
+        let blockSpacing: CGFloat
+        let attributedText: NSAttributedString
+    }
+
+    private var entries: [Entry] = []
+
+    func retain(
+        blockSets: [[MarkdownRenderedBlock]],
+        textColor: UIColor,
+        dynamicTypeSize: DynamicTypeSize,
+        blockSpacing: CGFloat
+    ) {
+        entries.removeAll { entry in
+            !blockSets.contains(where: { $0 == entry.blocks })
+                || !entry.textColor.isEqual(textColor)
+                || entry.dynamicTypeSize != dynamicTypeSize
+                || entry.blockSpacing != blockSpacing
+        }
+    }
+
+    func value(
+        for blocks: [MarkdownRenderedBlock],
+        textColor: UIColor,
+        dynamicTypeSize: DynamicTypeSize,
+        blockSpacing: CGFloat,
+        build: () -> NSAttributedString
+    ) -> NSAttributedString {
+        if let entry = entries.first(where: {
+            $0.blocks == blocks
+                && $0.textColor.isEqual(textColor)
+                && $0.dynamicTypeSize == dynamicTypeSize
+                && $0.blockSpacing == blockSpacing
+        }) {
+            return entry.attributedText
+        }
+        let attributedText = build()
+        entries.append(Entry(
+            blocks: blocks,
+            textColor: textColor,
+            dynamicTypeSize: dynamicTypeSize,
+            blockSpacing: blockSpacing,
+            attributedText: attributedText
+        ))
+        return attributedText
+    }
+}
+
+enum MarkdownSelectableDocumentAttributes {
+    enum Segment {
+        case selectable([MarkdownRenderedBlock])
+        case rich(MarkdownRenderedBlock)
+    }
+
+    static func segments(
+        in blocks: [MarkdownRenderedBlock],
+        allowsSelectableSegments: Bool = true
+    ) -> [Segment] {
+        guard allowsSelectableSegments else { return blocks.map(Segment.rich) }
+        var result: [Segment] = []
+        var selectable: [MarkdownRenderedBlock] = []
+        func flushSelectable() {
+            guard !selectable.isEmpty else { return }
+            result.append(.selectable(selectable))
+            selectable.removeAll(keepingCapacity: true)
+        }
+        for block in blocks {
+            if isSelectable(block) {
+                selectable.append(block)
+            } else {
+                flushSelectable()
+                result.append(.rich(block))
+            }
+        }
+        flushSelectable()
+        return result
+    }
+
+    private static func isSelectable(_ block: MarkdownRenderedBlock) -> Bool {
+        switch block {
+        case .paragraph, .heading:
+            true
+        case let .unorderedList(items), let .orderedList(_, items):
+            items.allSatisfy { $0.task == nil && $0.blocks.allSatisfy(isSelectable) }
+        case .blockquote, .image, .table, .codeBlock, .thematicBreak:
+            false
+        }
+    }
+
+    @MainActor
+    static func make(
+        from blocks: [MarkdownRenderedBlock],
+        textColor: UIColor = T3Colors.uiTextPrimary,
+        dynamicTypeSize: DynamicTypeSize = .large,
+        blockSpacing: CGFloat = 12,
+        cache: MarkdownSelectableDocumentCache? = nil
+    ) -> NSAttributedString {
+        let build = {
+            let result = NSMutableAttributedString()
+            append(
+                blocks,
+                to: result,
+                depth: 0,
+                textColor: textColor,
+                dynamicTypeSize: dynamicTypeSize,
+                blockSpacing: blockSpacing
+            )
+            return result
+        }
+        return cache?.value(
+            for: blocks,
+            textColor: textColor,
+            dynamicTypeSize: dynamicTypeSize,
+            blockSpacing: blockSpacing,
+            build: build
+        ) ?? build()
+    }
+
+    @MainActor
+    private static func append(
+        _ blocks: [MarkdownRenderedBlock],
+        to result: NSMutableAttributedString,
+        depth: Int,
+        textColor: UIColor,
+        dynamicTypeSize: DynamicTypeSize,
+        blockSpacing: CGFloat
+    ) {
+        for (index, block) in blocks.enumerated() {
+            if index > 0 {
+                appendSeparator(
+                    to: result,
+                    spacing: blockSpacing,
+                    textColor: textColor,
+                    dynamicTypeSize: dynamicTypeSize
+                )
+            }
+            switch block {
+            case let .paragraph(inline), let .heading(_, inline):
+                result.append(MarkdownSelectableTextAttributes.make(
+                    from: inline,
+                    lineSpacing: 4,
+                    foregroundColor: textColor,
+                    dynamicTypeSize: dynamicTypeSize
+                ))
+            case let .unorderedList(items):
+                appendList(
+                    items,
+                    start: nil,
+                    to: result,
+                    depth: depth,
+                    textColor: textColor,
+                    dynamicTypeSize: dynamicTypeSize,
+                    blockSpacing: blockSpacing
+                )
+            case let .orderedList(start, items):
+                appendList(
+                    items,
+                    start: start,
+                    to: result,
+                    depth: depth,
+                    textColor: textColor,
+                    dynamicTypeSize: dynamicTypeSize,
+                    blockSpacing: blockSpacing
+                )
+            case .blockquote, .image, .table, .codeBlock, .thematicBreak:
+                preconditionFailure("Rich blocks must be split before selectable rendering")
+            }
+        }
+    }
+
+    @MainActor
+    private static func appendList(
+        _ items: [MarkdownRenderedListItem],
+        start: Int?,
+        to result: NSMutableAttributedString,
+        depth: Int,
+        textColor: UIColor,
+        dynamicTypeSize: DynamicTypeSize,
+        blockSpacing: CGFloat
+    ) {
+        for (offset, item) in items.enumerated() {
+            if offset > 0 { result.append(NSAttributedString(string: "\n")) }
+            let itemStart = result.length
+            let marker = if let task = item.task {
+                task == .complete ? "☑" : "☐"
+            } else if let start {
+                "\(start + offset)."
+            } else {
+                "•"
+            }
+            let paragraph = NSMutableParagraphStyle()
+            let bodyFont = MarkdownInlineStyle.body.uiFont(dynamicTypeSize: dynamicTypeSize)
+            let indentUnit = max(32, ceil(bodyFont.pointSize * 1.5))
+            paragraph.firstLineHeadIndent = CGFloat(depth) * indentUnit
+            paragraph.headIndent = CGFloat(depth + 1) * indentUnit
+            paragraph.paragraphSpacing = 6
+            paragraph.lineSpacing = 4
+            paragraph.defaultTabInterval = indentUnit
+            paragraph.tabStops = [
+                NSTextTab(textAlignment: .left, location: paragraph.headIndent),
+            ]
+            result.append(NSAttributedString(
+                string: "\(marker)\t",
+                attributes: [
+                    .font: bodyFont,
+                    .foregroundColor: T3Colors.uiTextSecondary,
+                    .paragraphStyle: paragraph,
+                ]
+            ))
+            append(
+                item.blocks,
+                to: result,
+                depth: depth + 1,
+                textColor: textColor,
+                dynamicTypeSize: dynamicTypeSize,
+                blockSpacing: 7
+            )
+            applyMinimumIndent(
+                paragraph,
+                to: result,
+                range: NSRange(location: itemStart, length: result.length - itemStart)
+            )
+        }
+    }
+
+    private static func applyMinimumIndent(
+        _ minimum: NSParagraphStyle,
+        to result: NSMutableAttributedString,
+        range: NSRange
+    ) {
+        let text = result.string as NSString
+        var location = range.location
+        while location < NSMaxRange(range) {
+            let paragraphRange = NSIntersectionRange(text.paragraphRange(
+                for: NSRange(location: location, length: 0)
+            ), range)
+            let existing = result.attribute(
+                .paragraphStyle,
+                at: paragraphRange.location,
+                effectiveRange: nil
+            ) as? NSParagraphStyle
+            let merged = (existing?.mutableCopy() as? NSMutableParagraphStyle)
+                ?? NSMutableParagraphStyle()
+            if merged.headIndent < minimum.headIndent {
+                merged.firstLineHeadIndent = minimum.firstLineHeadIndent
+                merged.headIndent = minimum.headIndent
+                merged.tabStops = minimum.tabStops
+                merged.defaultTabInterval = minimum.defaultTabInterval
+                merged.paragraphSpacing = max(merged.paragraphSpacing, minimum.paragraphSpacing)
+                merged.lineSpacing = max(merged.lineSpacing, minimum.lineSpacing)
+                if paragraphRange.location > range.location {
+                    merged.firstLineHeadIndent = merged.headIndent
+                }
+            }
+            result.addAttribute(.paragraphStyle, value: merged, range: paragraphRange)
+            let next = NSMaxRange(paragraphRange)
+            guard next > location else { break }
+            location = next
+        }
+    }
+
+    @MainActor
+    private static func appendSeparator(
+        to result: NSMutableAttributedString,
+        spacing: CGFloat,
+        textColor: UIColor,
+        dynamicTypeSize: DynamicTypeSize
+    ) {
+        if result.length > 0,
+           let style = result.attribute(
+               .paragraphStyle,
+               at: result.length - 1,
+               effectiveRange: nil
+           ) as? NSParagraphStyle,
+           let spaced = style.mutableCopy() as? NSMutableParagraphStyle {
+            spaced.paragraphSpacing = max(spaced.paragraphSpacing, spacing)
+            let paragraph = (result.string as NSString).paragraphRange(
+                for: NSRange(location: result.length - 1, length: 0)
+            )
+            result.addAttribute(.paragraphStyle, value: spaced, range: paragraph)
+        }
+        result.append(NSAttributedString(
+            string: "\n",
+            attributes: [
+                .font: MarkdownInlineStyle.body.uiFont(dynamicTypeSize: dynamicTypeSize),
+                .foregroundColor: textColor,
+            ]
+        ))
+    }
+
 }
 
 enum MarkdownSelectionRestoration {
