@@ -30,6 +30,7 @@ struct FeatureComposerView: View {
     private let focused: FocusState<Bool>.Binding
     private let contextUsage: Double?
     private let forceExpanded: Bool
+    private let reservesCommandMenuKeyboardClearance: Bool
     private let pendingApprovals: [FeatureApproval]
     private let pendingUserInputs: [FeatureUserInput]
     private let isResolvingRequest: Bool
@@ -54,6 +55,7 @@ struct FeatureComposerView: View {
         onStop: @escaping () -> Void,
         contextUsage: Double? = nil,
         forceExpanded: Bool = false,
+        reservesCommandMenuKeyboardClearance: Bool = false,
         pendingApprovals: [FeatureApproval] = [],
         pendingUserInputs: [FeatureUserInput] = [],
         isResolvingRequest: Bool = false,
@@ -83,6 +85,7 @@ struct FeatureComposerView: View {
         self.onStop = onStop
         self.contextUsage = contextUsage
         self.forceExpanded = forceExpanded
+        self.reservesCommandMenuKeyboardClearance = reservesCommandMenuKeyboardClearance
         self.pendingApprovals = pendingApprovals
         self.pendingUserInputs = pendingUserInputs
         self.isResolvingRequest = isResolvingRequest
@@ -117,7 +120,9 @@ struct FeatureComposerView: View {
                 .bottom,
                 FeatureComposerTextLayout.bottomClearance(
                     dynamicTypeSize: dynamicTypeSize,
-                    softwareKeyboardIsVisible: dockedSoftwareKeyboardOccupiesScreen
+                    softwareKeyboardIsVisible: dockedSoftwareKeyboardOccupiesScreen,
+                    commandMenuIsVisible: showsCommandMenu,
+                    reservesCommandMenuClearance: reservesCommandMenuKeyboardClearance
                 )
             )
             .background {
@@ -785,16 +790,19 @@ private struct FeatureComposerWindowReader: UIViewRepresentable {
 enum FeatureComposerTextLayout {
     // Excludes the hardware-keyboard assistant bar while admitting a docked software keyboard.
     private static let minimumSoftwareKeyboardHeight: CGFloat = 100
-    private static let accessibilityKeyboardBottomClearance: CGFloat = 52
+    private static let keyboardBottomClearance: CGFloat = 52
 
     static func bottomClearance(
         dynamicTypeSize: DynamicTypeSize,
-        softwareKeyboardIsVisible: Bool
+        softwareKeyboardIsVisible: Bool,
+        commandMenuIsVisible: Bool = false,
+        reservesCommandMenuClearance: Bool = false
     ) -> CGFloat {
-        guard dynamicTypeSize.isAccessibilitySize,
-              softwareKeyboardIsVisible else { return 0 }
-        // Reserve one 44pt footer row plus 8pt breathing room above keyboard clipping.
-        return accessibilityKeyboardBottomClearance
+        guard softwareKeyboardIsVisible,
+              dynamicTypeSize.isAccessibilitySize
+                || (commandMenuIsVisible && reservesCommandMenuClearance) else { return 0 }
+        // Reserve one 44pt footer row plus 8pt so the menu and input remain separated.
+        return keyboardBottomClearance
     }
 
     static func softwareKeyboardOccupiesScreen(
