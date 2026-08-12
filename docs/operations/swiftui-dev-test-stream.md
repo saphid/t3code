@@ -111,6 +111,13 @@ and the share extension cannot exchange group data, remote push cannot arrive,
 Sign in with Apple is unavailable, and Clerk password autofill is unavailable
 until those capabilities are provisioned.
 
+The Test target alone defines `T3_PERSONAL_CONNECT`. That condition embeds the
+allowlisted private fleet and exposes one-tap pairing through each host's
+authenticated `/__t3/mobile-pair` Tailnet broker. The broker requires Alex's
+Tailnet identity and allowlisted iPhone; Dev and upstream app binaries contain
+no private fleet addresses. QR, paste, and manual pairing remain available in
+every channel.
+
 Widgets and Share extensions use the matching channel bundle ID and App Group.
 The channels therefore have separate host credentials, persistence, and
 deep-link ownership. App Group-dependent share inboxes and widgets remain

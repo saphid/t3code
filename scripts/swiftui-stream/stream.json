@@ -126,6 +126,17 @@
       "sourceCommit": "9006b8de",
       "testBuild": 41,
       "order": 8
+    },
+    {
+      "id": "swiftui-test-personal-connect",
+      "name": "Pair SwiftUI Test through the private Tailnet without entering a code",
+      "aliases": ["personal connect", "one-tap pairing", "test app pairing"],
+      "state": "developing",
+      "branch": "feat/swiftui-personal-connect-test",
+      "sourceIssue": "https://github.com/saphid/t3code-personal/issues/54",
+      "sourceThread": "019ff7b4-531e-7d43-9233-ced5bc44bb3b",
+      "startingBaseline": "d79e45e3ae1e305b248c751d6a51bac7210fff6a",
+      "delivery": "local-only"
     }
   ]
 }

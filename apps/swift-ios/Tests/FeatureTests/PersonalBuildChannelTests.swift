@@ -18,4 +18,34 @@ struct PersonalBuildChannelTests {
         #expect(PersonalBuildChannel.debug.titleSuffix == "Debug")
         #expect(PersonalBuildChannel.upstream.titleSuffix == nil)
     }
+
+    @Test(arguments: [
+        PersonalBuildChannel.upstream,
+        PersonalBuildChannel.debug,
+        PersonalBuildChannel.dev,
+    ])
+    func hidesPersonalConnectOutsideTest(_ channel: PersonalBuildChannel) {
+        #expect(
+            PersonalConnectAvailability.isVisible(
+                for: channel,
+                hasConfiguredHosts: true
+            ) == false
+        )
+    }
+
+    @Test
+    func showsPersonalConnectOnlyForConfiguredTestBuilds() {
+        #expect(
+            PersonalConnectAvailability.isVisible(
+                for: .test,
+                hasConfiguredHosts: true
+            )
+        )
+        #expect(
+            PersonalConnectAvailability.isVisible(
+                for: .test,
+                hasConfiguredHosts: false
+            ) == false
+        )
+    }
 }

@@ -6,6 +6,8 @@ public struct ConnectionOnboardingView: View {
     @Bindable private var model: FeatureRootModel
 
     private let readinessChecker: any ConnectionReadinessChecking
+    private let personalFleetPairingRequester: any PersonalFleetPairingRequesting
+    private let buildChannel: PersonalBuildChannel
     private let onConnected: @MainActor () -> Void
     private let onCancel: (@MainActor () -> Void)?
 
@@ -17,6 +19,8 @@ public struct ConnectionOnboardingView: View {
     @State private var showingScanner = false
     @State private var entryHeading = "Connect manually"
     @State private var connectionTask: Task<Void, Never>?
+    @State private var personalFleetPairingTask: Task<Void, Never>?
+    @State private var personalFleetConnectingID: String?
     @State private var connectionAttemptID: UUID?
     @FocusState private var focusedField: ConnectionField?
 
@@ -27,6 +31,8 @@ public struct ConnectionOnboardingView: View {
     ) {
         self.model = model
         readinessChecker = LocalNetworkAccessChecker()
+        personalFleetPairingRequester = PersonalFleetPairingService.shared
+        buildChannel = .current
         self.onConnected = onConnected
         self.onCancel = onCancel
     }
@@ -34,11 +40,15 @@ public struct ConnectionOnboardingView: View {
     init(
         model: FeatureRootModel,
         readinessChecker: any ConnectionReadinessChecking,
+        personalFleetPairingRequester: any PersonalFleetPairingRequesting = PersonalFleetPairingService.shared,
+        buildChannel: PersonalBuildChannel = .current,
         onConnected: @escaping @MainActor () -> Void = {},
         onCancel: (@MainActor () -> Void)? = nil
     ) {
         self.model = model
         self.readinessChecker = readinessChecker
+        self.personalFleetPairingRequester = personalFleetPairingRequester
+        self.buildChannel = buildChannel
         self.onConnected = onConnected
         self.onCancel = onCancel
     }
@@ -107,6 +117,7 @@ public struct ConnectionOnboardingView: View {
         .interactiveDismissDisabled(stage == .connecting)
         .onDisappear {
             cancelConnectionAttempt()
+            cancelPersonalFleetPairing()
         }
     }
 
@@ -146,12 +157,21 @@ public struct ConnectionOnboardingView: View {
                     .accessibilityHint("Sign in to connect an environment linked to your T3 account")
                 }
 
+                if PersonalConnectAvailability.isVisible(for: buildChannel) {
+                    PersonalConnectView(
+                        connectingHostID: personalFleetConnectingID,
+                        errorMessage: errorMessage,
+                        onSelect: requestPersonalFleetPairing
+                    )
+                }
+
                 VStack(spacing: 0) {
                     connectionAction(
                         title: "Scan QR code",
                         subtitle: "Pair directly with a computer nearby",
                         systemImage: "qrcode.viewfinder"
                     ) {
+                        cancelPersonalFleetPairing()
                         showingScanner = true
                     }
 
@@ -173,6 +193,7 @@ public struct ConnectionOnboardingView: View {
                         systemImage: "keyboard"
                     ) {
                         entryHeading = "Connect manually"
+                        cancelPersonalFleetPairing()
                         errorMessage = nil
                         stage = .details
                     }
@@ -475,7 +496,40 @@ public struct ConnectionOnboardingView: View {
     }
 
     @MainActor
+    private func requestPersonalFleetPairing(_ host: PersonalFleetPairingHost) {
+        cancelPersonalFleetPairing()
+        errorMessage = nil
+        personalFleetConnectingID = host.id
+
+        personalFleetPairingTask = Task {
+            do {
+                let pairingURL = try await personalFleetPairingRequester.pairingURL(for: host)
+                guard !Task.isCancelled, personalFleetConnectingID == host.id else { return }
+                personalFleetConnectingID = nil
+                personalFleetPairingTask = nil
+                applyConnectionString(
+                    pairingURL,
+                    heading: "Connect to \(host.label)",
+                    connectAutomatically: true
+                )
+            } catch is CancellationError {
+                return
+            } catch {
+                guard !Task.isCancelled, personalFleetConnectingID == host.id else { return }
+                personalFleetConnectingID = nil
+                personalFleetPairingTask = nil
+                if let pairingError = error as? PersonalFleetPairingError {
+                    errorMessage = pairingError.localizedDescription
+                } else {
+                    errorMessage = "\(host.label) pairing is unavailable. Check Tailscale and try again."
+                }
+            }
+        }
+    }
+
+    @MainActor
     private func pasteConnectionLink() {
+        cancelPersonalFleetPairing()
         guard let value = UIPasteboard.general.string, !value.isEmpty else {
             entryHeading = "Connect manually"
             stage = .details
@@ -492,6 +546,7 @@ public struct ConnectionOnboardingView: View {
         heading: String,
         connectAutomatically: Bool = false
     ) {
+        cancelPersonalFleetPairing()
         cancelConnectionAttempt()
         do {
             let details = try ConnectionDetailsParser.parse(value)
@@ -532,6 +587,7 @@ public struct ConnectionOnboardingView: View {
 
     @MainActor
     private func connect(_ action: ConnectionAction) {
+        cancelPersonalFleetPairing()
         cancelConnectionAttempt()
         let attemptID = UUID()
         connectionAttemptID = attemptID
@@ -588,6 +644,13 @@ public struct ConnectionOnboardingView: View {
         connectionTask?.cancel()
         connectionTask = nil
         connectionAttemptID = nil
+    }
+
+    @MainActor
+    private func cancelPersonalFleetPairing() {
+        personalFleetPairingTask?.cancel()
+        personalFleetPairingTask = nil
+        personalFleetConnectingID = nil
     }
 }
 
