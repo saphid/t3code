@@ -81,6 +81,7 @@ public struct EnvironmentDescriptor: Codable, Equatable, Sendable {
         public let threadTitleRegeneration: Bool?
         public let serverSelfUpdate: String?
         public let serverSelfUpdateProgress: Bool?
+        public let themeConversion: Bool?
 
         private enum CodingKeys: String, CodingKey {
             case repositoryIdentity
@@ -91,6 +92,7 @@ public struct EnvironmentDescriptor: Codable, Equatable, Sendable {
             case threadTitleRegeneration
             case serverSelfUpdate
             case serverSelfUpdateProgress
+            case themeConversion
         }
 
         public init(from decoder: any Decoder) throws {
@@ -110,6 +112,7 @@ public struct EnvironmentDescriptor: Codable, Equatable, Sendable {
                 Bool.self,
                 forKey: .serverSelfUpdateProgress
             )
+            themeConversion = try container.decodeIfPresent(Bool.self, forKey: .themeConversion)
         }
     }
 

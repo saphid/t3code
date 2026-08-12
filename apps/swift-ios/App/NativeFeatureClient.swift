@@ -24,7 +24,8 @@ private struct T3ConnectManagedCleanupError: LocalizedError {
 /// Composes the transport-focused Core layer with the UI-focused Features layer.
 @MainActor
 final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
-    FeatureProjectCreationClient, FeatureWorkspaceAssetResolving, T3ConnectCapable
+    FeatureProjectCreationClient, FeatureWorkspaceAssetResolving, T3ConnectCapable,
+    ThemeConversionCapable
 {
     private static let maximumRetainedThreadDetails = 6
     private static let t3ConnectLogger = Logger(
@@ -51,6 +52,29 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
 
     private var activeEnvironment: Environment?
     private var client: T3Client?
+
+    var themeConversionEnvironmentName: String? { activeEnvironment?.label }
+
+    var canConvertThemes: Bool {
+        activeEnvironment?.descriptor?.capabilities.themeConversion == true && client != nil
+    }
+
+    func compileTheme(fileName: String, contents: String) async throws -> T3ResolvedThemeArtifact {
+        guard canConvertThemes, let client else {
+            throw NativeFeatureClientError.notConnected
+        }
+        return try await client.compileTheme(fileName: fileName, contents: contents)
+    }
+
+    func searchOpenVsxThemes(query: String) async throws -> [T3OpenVsxThemeExtension] {
+        guard canConvertThemes, let client else { throw NativeFeatureClientError.notConnected }
+        return try await client.searchOpenVsxThemes(query: query)
+    }
+
+    func installOpenVsxTheme(extensionID: String) async throws -> T3ResolvedThemeArtifact {
+        guard canConvertThemes, let client else { throw NativeFeatureClientError.notConnected }
+        return try await client.installOpenVsxTheme(extensionID: extensionID)
+    }
     private var latestShell: OrchestrationShellSnapshot?
     private var environmentClients: [String: T3Client] = [:]
     private var shellsByEnvironmentID: [String: OrchestrationShellSnapshot] = [:]

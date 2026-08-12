@@ -1,5 +1,14 @@
 import Foundation
 
+@MainActor
+protocol ThemeConversionCapable: AnyObject {
+    var themeConversionEnvironmentName: String? { get }
+    var canConvertThemes: Bool { get }
+    func compileTheme(fileName: String, contents: String) async throws -> T3ResolvedThemeArtifact
+    func searchOpenVsxThemes(query: String) async throws -> [T3OpenVsxThemeExtension]
+    func installOpenVsxTheme(extensionID: String) async throws -> T3ResolvedThemeArtifact
+}
+
 /// The app-owned adapter between the native feature layer and T3's WebSocket/Core runtime.
 /// Implementations are main-actor isolated so UI state never depends on locking.
 @MainActor

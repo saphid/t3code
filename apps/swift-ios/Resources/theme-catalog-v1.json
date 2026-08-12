@@ -1,0 +1,5652 @@
+{
+  "artifactVersion": 1,
+  "engineVersion": "theme-palette-v1",
+  "roleManifest": [
+    "canvas",
+    "chrome",
+    "toolbar",
+    "toolbarForeground",
+    "toolbarBorder",
+    "toolbarControl",
+    "toolbarControlForeground",
+    "toolbarControlHover",
+    "surface",
+    "surfaceRaised",
+    "surfaceOverlay",
+    "text",
+    "textMuted",
+    "border",
+    "input",
+    "focus",
+    "accent",
+    "accentForeground",
+    "secondary",
+    "secondaryForeground",
+    "muted",
+    "mutedForeground",
+    "placeholder",
+    "secondaryLabel",
+    "iconMuted",
+    "error",
+    "errorForeground",
+    "errorSurface",
+    "warning",
+    "warningForeground",
+    "warningSurface",
+    "update",
+    "updateForeground",
+    "updateSurface",
+    "accentSurface",
+    "accentSurfaceForeground",
+    "messageSurface",
+    "messageForeground",
+    "messageAction",
+    "messageActionForeground",
+    "messageActionHover",
+    "codeBackground",
+    "codeForeground",
+    "sidebar",
+    "sidebarForeground",
+    "sidebarMutedForeground",
+    "sidebarControlSurface",
+    "sidebarRowHover",
+    "sidebarRowActive",
+    "sidebarRowSelected",
+    "sidebarBorder",
+    "terminalBackground",
+    "terminalForeground",
+    "terminalCursor",
+    "terminalSelection",
+    "terminalScrollbar",
+    "terminalScrollbarHover"
+  ],
+  "roleSchema": "4908eafc2f695560dae6f20c8375d11eb9751a7d427bd8d96bea2f6e529025ea",
+  "themes": [
+    {
+      "id": "t3-code",
+      "label": "T3 Code",
+      "modes": [
+        {
+          "appearance": "light",
+          "colors": {
+            "canvas": {
+              "css": "#fcfcfc",
+              "colorSpace": "srgb",
+              "red": 0.9882352941176471,
+              "green": 0.9882352941176471,
+              "blue": 0.9882352941176471,
+              "alpha": 1
+            },
+            "chrome": {
+              "css": "#fcfcfc",
+              "colorSpace": "srgb",
+              "red": 0.9882352941176471,
+              "green": 0.9882352941176471,
+              "blue": 0.9882352941176471,
+              "alpha": 1
+            },
+            "toolbar": {
+              "css": "#fcfcfc",
+              "colorSpace": "srgb",
+              "red": 0.9882352941176471,
+              "green": 0.9882352941176471,
+              "blue": 0.9882352941176471,
+              "alpha": 1
+            },
+            "toolbarForeground": {
+              "css": "#27272a",
+              "colorSpace": "srgb",
+              "red": 0.15294117647058825,
+              "green": 0.15294117647058825,
+              "blue": 0.16470588235294117,
+              "alpha": 1
+            },
+            "toolbarBorder": {
+              "css": "#e4e4e7",
+              "colorSpace": "srgb",
+              "red": 0.8941176470588236,
+              "green": 0.8941176470588236,
+              "blue": 0.9058823529411765,
+              "alpha": 1
+            },
+            "toolbarControl": {
+              "css": "#ffffff",
+              "colorSpace": "srgb",
+              "red": 1,
+              "green": 1,
+              "blue": 1,
+              "alpha": 1
+            },
+            "toolbarControlForeground": {
+              "css": "#27272a",
+              "colorSpace": "srgb",
+              "red": 0.15294117647058825,
+              "green": 0.15294117647058825,
+              "blue": 0.16470588235294117,
+              "alpha": 1
+            },
+            "toolbarControlHover": {
+              "css": "#f4f4f5",
+              "colorSpace": "srgb",
+              "red": 0.9568627450980393,
+              "green": 0.9568627450980393,
+              "blue": 0.9607843137254902,
+              "alpha": 1
+            },
+            "surface": {
+              "css": "#ffffff",
+              "colorSpace": "srgb",
+              "red": 1,
+              "green": 1,
+              "blue": 1,
+              "alpha": 1
+            },
+            "surfaceRaised": {
+              "css": "#fcfcfc",
+              "colorSpace": "srgb",
+              "red": 0.9882352941176471,
+              "green": 0.9882352941176471,
+              "blue": 0.9882352941176471,
+              "alpha": 1
+            },
+            "surfaceOverlay": {
+              "css": "#ffffff",
+              "colorSpace": "srgb",
+              "red": 1,
+              "green": 1,
+              "blue": 1,
+              "alpha": 1
+            },
+            "text": {
+              "css": "#27272a",
+              "colorSpace": "srgb",
+              "red": 0.15294117647058825,
+              "green": 0.15294117647058825,
+              "blue": 0.16470588235294117,
+              "alpha": 1
+            },
+            "textMuted": {
+              "css": "#71717b",
+              "colorSpace": "srgb",
+              "red": 0.44313725490196076,
+              "green": 0.44313725490196076,
+              "blue": 0.4823529411764706,
+              "alpha": 1
+            },
+            "border": {
+              "css": "#e4e4e7",
+              "colorSpace": "srgb",
+              "red": 0.8941176470588236,
+              "green": 0.8941176470588236,
+              "blue": 0.9058823529411765,
+              "alpha": 1
+            },
+            "input": {
+              "css": "#d4d4d8",
+              "colorSpace": "srgb",
+              "red": 0.8313725490196079,
+              "green": 0.8313725490196079,
+              "blue": 0.8470588235294118,
+              "alpha": 1
+            },
+            "focus": {
+              "css": "#1b4ed8",
+              "colorSpace": "srgb",
+              "red": 0.10588235294117647,
+              "green": 0.3058823529411765,
+              "blue": 0.8470588235294118,
+              "alpha": 1
+            },
+            "accent": {
+              "css": "#1b4ed8",
+              "colorSpace": "srgb",
+              "red": 0.10588235294117647,
+              "green": 0.3058823529411765,
+              "blue": 0.8470588235294118,
+              "alpha": 1
+            },
+            "accentForeground": {
+              "css": "#ffffff",
+              "colorSpace": "srgb",
+              "red": 1,
+              "green": 1,
+              "blue": 1,
+              "alpha": 1
+            },
+            "secondary": {
+              "css": "#fafafa",
+              "colorSpace": "srgb",
+              "red": 0.9803921568627451,
+              "green": 0.9803921568627451,
+              "blue": 0.9803921568627451,
+              "alpha": 1
+            },
+            "secondaryForeground": {
+              "css": "#27272a",
+              "colorSpace": "srgb",
+              "red": 0.15294117647058825,
+              "green": 0.15294117647058825,
+              "blue": 0.16470588235294117,
+              "alpha": 1
+            },
+            "muted": {
+              "css": "#fafafa",
+              "colorSpace": "srgb",
+              "red": 0.9803921568627451,
+              "green": 0.9803921568627451,
+              "blue": 0.9803921568627451,
+              "alpha": 1
+            },
+            "mutedForeground": {
+              "css": "#71717b",
+              "colorSpace": "srgb",
+              "red": 0.44313725490196076,
+              "green": 0.44313725490196076,
+              "blue": 0.4823529411764706,
+              "alpha": 1
+            },
+            "placeholder": {
+              "css": "#71717b",
+              "colorSpace": "srgb",
+              "red": 0.44313725490196076,
+              "green": 0.44313725490196076,
+              "blue": 0.4823529411764706,
+              "alpha": 1
+            },
+            "secondaryLabel": {
+              "css": "#71717b",
+              "colorSpace": "srgb",
+              "red": 0.44313725490196076,
+              "green": 0.44313725490196076,
+              "blue": 0.4823529411764706,
+              "alpha": 1
+            },
+            "iconMuted": {
+              "css": "#71717b",
+              "colorSpace": "srgb",
+              "red": 0.44313725490196076,
+              "green": 0.44313725490196076,
+              "blue": 0.4823529411764706,
+              "alpha": 1
+            },
+            "error": {
+              "css": "#fb2c36",
+              "colorSpace": "srgb",
+              "red": 0.984313725490196,
+              "green": 0.17254901960784313,
+              "blue": 0.21176470588235294,
+              "alpha": 1
+            },
+            "errorForeground": {
+              "css": "#c10007",
+              "colorSpace": "srgb",
+              "red": 0.7568627450980392,
+              "green": 0,
+              "blue": 0.027450980392156862,
+              "alpha": 1
+            },
+            "errorSurface": {
+              "css": "#fcebec",
+              "colorSpace": "srgb",
+              "red": 0.9882352941176471,
+              "green": 0.9215686274509803,
+              "blue": 0.9254901960784314,
+              "alpha": 1
+            },
+            "warning": {
+              "css": "#fe9a00",
+              "colorSpace": "srgb",
+              "red": 0.996078431372549,
+              "green": 0.6039215686274509,
+              "blue": 0,
+              "alpha": 1
+            },
+            "warningForeground": {
+              "css": "#bb4d00",
+              "colorSpace": "srgb",
+              "red": 0.7333333333333333,
+              "green": 0.30196078431372547,
+              "blue": 0,
+              "alpha": 1
+            },
+            "warningSurface": {
+              "css": "#fcf4e8",
+              "colorSpace": "srgb",
+              "red": 0.9882352941176471,
+              "green": 0.9568627450980393,
+              "blue": 0.9098039215686274,
+              "alpha": 1
+            },
+            "update": {
+              "css": "#1b4ed8",
+              "colorSpace": "srgb",
+              "red": 0.10588235294117647,
+              "green": 0.3058823529411765,
+              "blue": 0.8470588235294118,
+              "alpha": 1
+            },
+            "updateForeground": {
+              "css": "#1b4ed8",
+              "colorSpace": "srgb",
+              "red": 0.10588235294117647,
+              "green": 0.3058823529411765,
+              "blue": 0.8470588235294118,
+              "alpha": 1
+            },
+            "updateSurface": {
+              "css": "#e0e6f7",
+              "colorSpace": "srgb",
+              "red": 0.8784313725490196,
+              "green": 0.9019607843137255,
+              "blue": 0.9686274509803922,
+              "alpha": 1
+            },
+            "accentSurface": {
+              "css": "#f4f4f5",
+              "colorSpace": "srgb",
+              "red": 0.9568627450980393,
+              "green": 0.9568627450980393,
+              "blue": 0.9607843137254902,
+              "alpha": 1
+            },
+            "accentSurfaceForeground": {
+              "css": "#18181b",
+              "colorSpace": "srgb",
+              "red": 0.09411764705882353,
+              "green": 0.09411764705882353,
+              "blue": 0.10588235294117647,
+              "alpha": 1
+            },
+            "messageSurface": {
+              "css": "#f4f4f5",
+              "colorSpace": "srgb",
+              "red": 0.9568627450980393,
+              "green": 0.9568627450980393,
+              "blue": 0.9607843137254902,
+              "alpha": 1
+            },
+            "messageForeground": {
+              "css": "#27272a",
+              "colorSpace": "srgb",
+              "red": 0.15294117647058825,
+              "green": 0.15294117647058825,
+              "blue": 0.16470588235294117,
+              "alpha": 1
+            },
+            "messageAction": {
+              "css": "#1b4ed8",
+              "colorSpace": "srgb",
+              "red": 0.10588235294117647,
+              "green": 0.3058823529411765,
+              "blue": 0.8470588235294118,
+              "alpha": 1
+            },
+            "messageActionForeground": {
+              "css": "#ffffff",
+              "colorSpace": "srgb",
+              "red": 1,
+              "green": 1,
+              "blue": 1,
+              "alpha": 1
+            },
+            "messageActionHover": {
+              "css": "#3160db",
+              "colorSpace": "srgb",
+              "red": 0.19215686274509805,
+              "green": 0.3764705882352941,
+              "blue": 0.8588235294117647,
+              "alpha": 1
+            },
+            "codeBackground": {
+              "css": "#ffffff",
+              "colorSpace": "srgb",
+              "red": 1,
+              "green": 1,
+              "blue": 1,
+              "alpha": 1
+            },
+            "codeForeground": {
+              "css": "#27272a",
+              "colorSpace": "srgb",
+              "red": 0.15294117647058825,
+              "green": 0.15294117647058825,
+              "blue": 0.16470588235294117,
+              "alpha": 1
+            },
+            "sidebar": {
+              "css": "#fafafa",
+              "colorSpace": "srgb",
+              "red": 0.9803921568627451,
+              "green": 0.9803921568627451,
+              "blue": 0.9803921568627451,
+              "alpha": 1
+            },
+            "sidebarForeground": {
+              "css": "#27272a",
+              "colorSpace": "srgb",
+              "red": 0.15294117647058825,
+              "green": 0.15294117647058825,
+              "blue": 0.16470588235294117,
+              "alpha": 1
+            },
+            "sidebarMutedForeground": {
+              "css": "#71717b",
+              "colorSpace": "srgb",
+              "red": 0.44313725490196076,
+              "green": 0.44313725490196076,
+              "blue": 0.4823529411764706,
+              "alpha": 1
+            },
+            "sidebarControlSurface": {
+              "css": "#f4f4f5",
+              "colorSpace": "srgb",
+              "red": 0.9568627450980393,
+              "green": 0.9568627450980393,
+              "blue": 0.9607843137254902,
+              "alpha": 1
+            },
+            "sidebarRowHover": {
+              "css": "#fcfcfc",
+              "colorSpace": "srgb",
+              "red": 0.9882352941176471,
+              "green": 0.9882352941176471,
+              "blue": 0.9882352941176471,
+              "alpha": 1
+            },
+            "sidebarRowActive": {
+              "css": "#ffffff",
+              "colorSpace": "srgb",
+              "red": 1,
+              "green": 1,
+              "blue": 1,
+              "alpha": 1
+            },
+            "sidebarRowSelected": {
+              "css": "#ffffff",
+              "colorSpace": "srgb",
+              "red": 1,
+              "green": 1,
+              "blue": 1,
+              "alpha": 1
+            },
+            "sidebarBorder": {
+              "css": "#e4e4e7",
+              "colorSpace": "srgb",
+              "red": 0.8941176470588236,
+              "green": 0.8941176470588236,
+              "blue": 0.9058823529411765,
+              "alpha": 1
+            },
+            "terminalBackground": {
+              "css": "#fcfcfc",
+              "colorSpace": "srgb",
+              "red": 0.9882352941176471,
+              "green": 0.9882352941176471,
+              "blue": 0.9882352941176471,
+              "alpha": 1
+            },
+            "terminalForeground": {
+              "css": "#27272a",
+              "colorSpace": "srgb",
+              "red": 0.15294117647058825,
+              "green": 0.15294117647058825,
+              "blue": 0.16470588235294117,
+              "alpha": 1
+            },
+            "terminalCursor": {
+              "css": "#26384e",
+              "colorSpace": "srgb",
+              "red": 0.14901960784313725,
+              "green": 0.2196078431372549,
+              "blue": 0.3058823529411765,
+              "alpha": 1
+            },
+            "terminalSelection": {
+              "css": "#d0d6dd",
+              "colorSpace": "srgb",
+              "red": 0.8156862745098039,
+              "green": 0.8392156862745098,
+              "blue": 0.8666666666666667,
+              "alpha": 1
+            },
+            "terminalScrollbar": {
+              "css": "#d6d6d6",
+              "colorSpace": "srgb",
+              "red": 0.8392156862745098,
+              "green": 0.8392156862745098,
+              "blue": 0.8392156862745098,
+              "alpha": 1
+            },
+            "terminalScrollbarHover": {
+              "css": "#bdbdbd",
+              "colorSpace": "srgb",
+              "red": 0.7411764705882353,
+              "green": 0.7411764705882353,
+              "blue": 0.7411764705882353,
+              "alpha": 1
+            }
+          }
+        },
+        {
+          "appearance": "dark",
+          "colors": {
+            "canvas": {
+              "css": "#0a0a0a",
+              "colorSpace": "srgb",
+              "red": 0.0392156862745098,
+              "green": 0.0392156862745098,
+              "blue": 0.0392156862745098,
+              "alpha": 1
+            },
+            "chrome": {
+              "css": "#0a0a0a",
+              "colorSpace": "srgb",
+              "red": 0.0392156862745098,
+              "green": 0.0392156862745098,
+              "blue": 0.0392156862745098,
+              "alpha": 1
+            },
+            "toolbar": {
+              "css": "#0a0a0a",
+              "colorSpace": "srgb",
+              "red": 0.0392156862745098,
+              "green": 0.0392156862745098,
+              "blue": 0.0392156862745098,
+              "alpha": 1
+            },
+            "toolbarForeground": {
+              "css": "#f5f5f5",
+              "colorSpace": "srgb",
+              "red": 0.9607843137254902,
+              "green": 0.9607843137254902,
+              "blue": 0.9607843137254902,
+              "alpha": 1
+            },
+            "toolbarBorder": {
+              "css": "#191919",
+              "colorSpace": "srgb",
+              "red": 0.09803921568627451,
+              "green": 0.09803921568627451,
+              "blue": 0.09803921568627451,
+              "alpha": 1
+            },
+            "toolbarControl": {
+              "css": "#191919",
+              "colorSpace": "srgb",
+              "red": 0.09803921568627451,
+              "green": 0.09803921568627451,
+              "blue": 0.09803921568627451,
+              "alpha": 1
+            },
+            "toolbarControlForeground": {
+              "css": "#f5f5f5",
+              "colorSpace": "srgb",
+              "red": 0.9607843137254902,
+              "green": 0.9607843137254902,
+              "blue": 0.9607843137254902,
+              "alpha": 1
+            },
+            "toolbarControlHover": {
+              "css": "#141414",
+              "colorSpace": "srgb",
+              "red": 0.0784313725490196,
+              "green": 0.0784313725490196,
+              "blue": 0.0784313725490196,
+              "alpha": 1
+            },
+            "surface": {
+              "css": "#111111",
+              "colorSpace": "srgb",
+              "red": 0.06666666666666667,
+              "green": 0.06666666666666667,
+              "blue": 0.06666666666666667,
+              "alpha": 1
+            },
+            "surfaceRaised": {
+              "css": "#141414",
+              "colorSpace": "srgb",
+              "red": 0.0784313725490196,
+              "green": 0.0784313725490196,
+              "blue": 0.0784313725490196,
+              "alpha": 1
+            },
+            "surfaceOverlay": {
+              "css": "#191919",
+              "colorSpace": "srgb",
+              "red": 0.09803921568627451,
+              "green": 0.09803921568627451,
+              "blue": 0.09803921568627451,
+              "alpha": 1
+            },
+            "text": {
+              "css": "#f5f5f5",
+              "colorSpace": "srgb",
+              "red": 0.9607843137254902,
+              "green": 0.9607843137254902,
+              "blue": 0.9607843137254902,
+              "alpha": 1
+            },
+            "textMuted": {
+              "css": "#818181",
+              "colorSpace": "srgb",
+              "red": 0.5058823529411764,
+              "green": 0.5058823529411764,
+              "blue": 0.5058823529411764,
+              "alpha": 1
+            },
+            "border": {
+              "css": "#191919",
+              "colorSpace": "srgb",
+              "red": 0.09803921568627451,
+              "green": 0.09803921568627451,
+              "blue": 0.09803921568627451,
+              "alpha": 1
+            },
+            "input": {
+              "css": "#1e1e1e",
+              "colorSpace": "srgb",
+              "red": 0.11764705882352941,
+              "green": 0.11764705882352941,
+              "blue": 0.11764705882352941,
+              "alpha": 1
+            },
+            "focus": {
+              "css": "#366ffb",
+              "colorSpace": "srgb",
+              "red": 0.21176470588235294,
+              "green": 0.43529411764705883,
+              "blue": 0.984313725490196,
+              "alpha": 1
+            },
+            "accent": {
+              "css": "#366ffb",
+              "colorSpace": "srgb",
+              "red": 0.21176470588235294,
+              "green": 0.43529411764705883,
+              "blue": 0.984313725490196,
+              "alpha": 1
+            },
+            "accentForeground": {
+              "css": "#ffffff",
+              "colorSpace": "srgb",
+              "red": 1,
+              "green": 1,
+              "blue": 1,
+              "alpha": 1
+            },
+            "secondary": {
+              "css": "#141414",
+              "colorSpace": "srgb",
+              "red": 0.0784313725490196,
+              "green": 0.0784313725490196,
+              "blue": 0.0784313725490196,
+              "alpha": 1
+            },
+            "secondaryForeground": {
+              "css": "#f5f5f5",
+              "colorSpace": "srgb",
+              "red": 0.9607843137254902,
+              "green": 0.9607843137254902,
+              "blue": 0.9607843137254902,
+              "alpha": 1
+            },
+            "muted": {
+              "css": "#141414",
+              "colorSpace": "srgb",
+              "red": 0.0784313725490196,
+              "green": 0.0784313725490196,
+              "blue": 0.0784313725490196,
+              "alpha": 1
+            },
+            "mutedForeground": {
+              "css": "#818181",
+              "colorSpace": "srgb",
+              "red": 0.5058823529411764,
+              "green": 0.5058823529411764,
+              "blue": 0.5058823529411764,
+              "alpha": 1
+            },
+            "placeholder": {
+              "css": "#818181",
+              "colorSpace": "srgb",
+              "red": 0.5058823529411764,
+              "green": 0.5058823529411764,
+              "blue": 0.5058823529411764,
+              "alpha": 1
+            },
+            "secondaryLabel": {
+              "css": "#818181",
+              "colorSpace": "srgb",
+              "red": 0.5058823529411764,
+              "green": 0.5058823529411764,
+              "blue": 0.5058823529411764,
+              "alpha": 1
+            },
+            "iconMuted": {
+              "css": "#818181",
+              "colorSpace": "srgb",
+              "red": 0.5058823529411764,
+              "green": 0.5058823529411764,
+              "blue": 0.5058823529411764,
+              "alpha": 1
+            },
+            "error": {
+              "css": "#fb414a",
+              "colorSpace": "srgb",
+              "red": 0.984313725490196,
+              "green": 0.2549019607843137,
+              "blue": 0.2901960784313726,
+              "alpha": 1
+            },
+            "errorForeground": {
+              "css": "#ff6467",
+              "colorSpace": "srgb",
+              "red": 1,
+              "green": 0.39215686274509803,
+              "blue": 0.403921568627451,
+              "alpha": 1
+            },
+            "errorSurface": {
+              "css": "#301214",
+              "colorSpace": "srgb",
+              "red": 0.18823529411764706,
+              "green": 0.07058823529411765,
+              "blue": 0.0784313725490196,
+              "alpha": 1
+            },
+            "warning": {
+              "css": "#fe9a00",
+              "colorSpace": "srgb",
+              "red": 0.996078431372549,
+              "green": 0.6039215686274509,
+              "blue": 0,
+              "alpha": 1
+            },
+            "warningForeground": {
+              "css": "#ffb900",
+              "colorSpace": "srgb",
+              "red": 1,
+              "green": 0.7254901960784313,
+              "blue": 0,
+              "alpha": 1
+            },
+            "warningSurface": {
+              "css": "#312108",
+              "colorSpace": "srgb",
+              "red": 0.19215686274509805,
+              "green": 0.12941176470588237,
+              "blue": 0.03137254901960784,
+              "alpha": 1
+            },
+            "update": {
+              "css": "#366ffb",
+              "colorSpace": "srgb",
+              "red": 0.21176470588235294,
+              "green": 0.43529411764705883,
+              "blue": 0.984313725490196,
+              "alpha": 1
+            },
+            "updateForeground": {
+              "css": "#51a2ff",
+              "colorSpace": "srgb",
+              "red": 0.3176470588235294,
+              "green": 0.6352941176470588,
+              "blue": 1,
+              "alpha": 1
+            },
+            "updateSurface": {
+              "css": "#121c35",
+              "colorSpace": "srgb",
+              "red": 0.07058823529411765,
+              "green": 0.10980392156862745,
+              "blue": 0.20784313725490197,
+              "alpha": 1
+            },
+            "accentSurface": {
+              "css": "#141414",
+              "colorSpace": "srgb",
+              "red": 0.0784313725490196,
+              "green": 0.0784313725490196,
+              "blue": 0.0784313725490196,
+              "alpha": 1
+            },
+            "accentSurfaceForeground": {
+              "css": "#f5f5f5",
+              "colorSpace": "srgb",
+              "red": 0.9607843137254902,
+              "green": 0.9607843137254902,
+              "blue": 0.9607843137254902,
+              "alpha": 1
+            },
+            "messageSurface": {
+              "css": "#141414",
+              "colorSpace": "srgb",
+              "red": 0.0784313725490196,
+              "green": 0.0784313725490196,
+              "blue": 0.0784313725490196,
+              "alpha": 1
+            },
+            "messageForeground": {
+              "css": "#f5f5f5",
+              "colorSpace": "srgb",
+              "red": 0.9607843137254902,
+              "green": 0.9607843137254902,
+              "blue": 0.9607843137254902,
+              "alpha": 1
+            },
+            "messageAction": {
+              "css": "#366ffb",
+              "colorSpace": "srgb",
+              "red": 0.21176470588235294,
+              "green": 0.43529411764705883,
+              "blue": 0.984313725490196,
+              "alpha": 1
+            },
+            "messageActionForeground": {
+              "css": "#ffffff",
+              "colorSpace": "srgb",
+              "red": 1,
+              "green": 1,
+              "blue": 1,
+              "alpha": 1
+            },
+            "messageActionHover": {
+              "css": "#3265e3",
+              "colorSpace": "srgb",
+              "red": 0.19607843137254902,
+              "green": 0.396078431372549,
+              "blue": 0.8901960784313725,
+              "alpha": 1
+            },
+            "codeBackground": {
+              "css": "#111111",
+              "colorSpace": "srgb",
+              "red": 0.06666666666666667,
+              "green": 0.06666666666666667,
+              "blue": 0.06666666666666667,
+              "alpha": 1
+            },
+            "codeForeground": {
+              "css": "#f5f5f5",
+              "colorSpace": "srgb",
+              "red": 0.9607843137254902,
+              "green": 0.9607843137254902,
+              "blue": 0.9607843137254902,
+              "alpha": 1
+            },
+            "sidebar": {
+              "css": "#000000",
+              "colorSpace": "srgb",
+              "red": 0,
+              "green": 0,
+              "blue": 0,
+              "alpha": 1
+            },
+            "sidebarForeground": {
+              "css": "#f1f3f7",
+              "colorSpace": "srgb",
+              "red": 0.9450980392156862,
+              "green": 0.9529411764705882,
+              "blue": 0.9686274509803922,
+              "alpha": 1
+            },
+            "sidebarMutedForeground": {
+              "css": "#a3a3a3",
+              "colorSpace": "srgb",
+              "red": 0.6392156862745098,
+              "green": 0.6392156862745098,
+              "blue": 0.6392156862745098,
+              "alpha": 1
+            },
+            "sidebarControlSurface": {
+              "css": "#0a0a0a",
+              "colorSpace": "srgb",
+              "red": 0.0392156862745098,
+              "green": 0.0392156862745098,
+              "blue": 0.0392156862745098,
+              "alpha": 1
+            },
+            "sidebarRowHover": {
+              "css": "#131313",
+              "colorSpace": "srgb",
+              "red": 0.07450980392156863,
+              "green": 0.07450980392156863,
+              "blue": 0.07450980392156863,
+              "alpha": 1
+            },
+            "sidebarRowActive": {
+              "css": "#1a1b1b",
+              "colorSpace": "srgb",
+              "red": 0.10196078431372549,
+              "green": 0.10588235294117647,
+              "blue": 0.10588235294117647,
+              "alpha": 1
+            },
+            "sidebarRowSelected": {
+              "css": "#111111",
+              "colorSpace": "srgb",
+              "red": 0.06666666666666667,
+              "green": 0.06666666666666667,
+              "blue": 0.06666666666666667,
+              "alpha": 1
+            },
+            "sidebarBorder": {
+              "css": "#141414",
+              "colorSpace": "srgb",
+              "red": 0.0784313725490196,
+              "green": 0.0784313725490196,
+              "blue": 0.0784313725490196,
+              "alpha": 1
+            },
+            "terminalBackground": {
+              "css": "#0a0a0a",
+              "colorSpace": "srgb",
+              "red": 0.0392156862745098,
+              "green": 0.0392156862745098,
+              "blue": 0.0392156862745098,
+              "alpha": 1
+            },
+            "terminalForeground": {
+              "css": "#f5f5f5",
+              "colorSpace": "srgb",
+              "red": 0.9607843137254902,
+              "green": 0.9607843137254902,
+              "blue": 0.9607843137254902,
+              "alpha": 1
+            },
+            "terminalCursor": {
+              "css": "#b4cbff",
+              "colorSpace": "srgb",
+              "red": 0.7058823529411765,
+              "green": 0.796078431372549,
+              "blue": 1,
+              "alpha": 1
+            },
+            "terminalSelection": {
+              "css": "#343a47",
+              "colorSpace": "srgb",
+              "red": 0.20392156862745098,
+              "green": 0.22745098039215686,
+              "blue": 0.2784313725490196,
+              "alpha": 1
+            },
+            "terminalScrollbar": {
+              "css": "#222222",
+              "colorSpace": "srgb",
+              "red": 0.13333333333333333,
+              "green": 0.13333333333333333,
+              "blue": 0.13333333333333333,
+              "alpha": 1
+            },
+            "terminalScrollbarHover": {
+              "css": "#363636",
+              "colorSpace": "srgb",
+              "red": 0.21176470588235294,
+              "green": 0.21176470588235294,
+              "blue": 0.21176470588235294,
+              "alpha": 1
+            }
+          }
+        }
+      ],
+      "provenance": {
+        "source": "builtin"
+      }
+    },
+    {
+      "id": "t3-chat",
+      "label": "T3 Chat",
+      "modes": [
+        {
+          "appearance": "light",
+          "colors": {
+            "canvas": {
+              "css": "#fdf7fd",
+              "colorSpace": "srgb",
+              "red": 0.9921568627450981,
+              "green": 0.9686274509803922,
+              "blue": 0.9921568627450981,
+              "alpha": 1
+            },
+            "chrome": {
+              "css": "#fdf7fd",
+              "colorSpace": "srgb",
+              "red": 0.9921568627450981,
+              "green": 0.9686274509803922,
+              "blue": 0.9921568627450981,
+              "alpha": 1
+            },
+            "toolbar": {
+              "css": "#fdf7fd",
+              "colorSpace": "srgb",
+              "red": 0.9921568627450981,
+              "green": 0.9686274509803922,
+              "blue": 0.9921568627450981,
+              "alpha": 1
+            },
+            "toolbarForeground": {
+              "css": "#501854",
+              "colorSpace": "srgb",
+              "red": 0.3137254901960784,
+              "green": 0.09411764705882353,
+              "blue": 0.32941176470588235,
+              "alpha": 1
+            },
+            "toolbarBorder": {
+              "css": "#efbdeb",
+              "colorSpace": "srgb",
+              "red": 0.9372549019607843,
+              "green": 0.7411764705882353,
+              "blue": 0.9215686274509803,
+              "alpha": 1
+            },
+            "toolbarControl": {
+              "css": "#f3e6f5",
+              "colorSpace": "srgb",
+              "red": 0.9529411764705882,
+              "green": 0.9019607843137255,
+              "blue": 0.9607843137254902,
+              "alpha": 1
+            },
+            "toolbarControlForeground": {
+              "css": "#501854",
+              "colorSpace": "srgb",
+              "red": 0.3137254901960784,
+              "green": 0.09411764705882353,
+              "blue": 0.32941176470588235,
+              "alpha": 1
+            },
+            "toolbarControlHover": {
+              "css": "#eccfe3",
+              "colorSpace": "srgb",
+              "red": 0.9254901960784314,
+              "green": 0.8117647058823529,
+              "blue": 0.8901960784313725,
+              "alpha": 1
+            },
+            "surface": {
+              "css": "#faf3fb",
+              "colorSpace": "srgb",
+              "red": 0.9803921568627451,
+              "green": 0.9529411764705882,
+              "blue": 0.984313725490196,
+              "alpha": 1
+            },
+            "surfaceRaised": {
+              "css": "#fdfafd",
+              "colorSpace": "srgb",
+              "red": 0.9921568627450981,
+              "green": 0.9803921568627451,
+              "blue": 0.9921568627450981,
+              "alpha": 1
+            },
+            "surfaceOverlay": {
+              "css": "#ffffff",
+              "colorSpace": "srgb",
+              "red": 1,
+              "green": 1,
+              "blue": 1,
+              "alpha": 1
+            },
+            "text": {
+              "css": "#501854",
+              "colorSpace": "srgb",
+              "red": 0.3137254901960784,
+              "green": 0.09411764705882353,
+              "blue": 0.32941176470588235,
+              "alpha": 1
+            },
+            "textMuted": {
+              "css": "#ac1668",
+              "colorSpace": "srgb",
+              "red": 0.6745098039215687,
+              "green": 0.08627450980392157,
+              "blue": 0.40784313725490196,
+              "alpha": 1
+            },
+            "border": {
+              "css": "#eee1ed",
+              "colorSpace": "srgb",
+              "red": 0.9333333333333333,
+              "green": 0.8823529411764706,
+              "blue": 0.9294117647058824,
+              "alpha": 1
+            },
+            "input": {
+              "css": "#e7c1dc",
+              "colorSpace": "srgb",
+              "red": 0.9058823529411765,
+              "green": 0.7568627450980392,
+              "blue": 0.8627450980392157,
+              "alpha": 1
+            },
+            "focus": {
+              "css": "#db2777",
+              "colorSpace": "srgb",
+              "red": 0.8588235294117647,
+              "green": 0.15294117647058825,
+              "blue": 0.4666666666666667,
+              "alpha": 1
+            },
+            "accent": {
+              "css": "#e33f86",
+              "colorSpace": "srgb",
+              "red": 0.8901960784313725,
+              "green": 0.24705882352941178,
+              "blue": 0.5254901960784314,
+              "alpha": 1
+            },
+            "accentForeground": {
+              "css": "#ffffff",
+              "colorSpace": "srgb",
+              "red": 1,
+              "green": 1,
+              "blue": 1,
+              "alpha": 1
+            },
+            "secondary": {
+              "css": "#f1c4e6",
+              "colorSpace": "srgb",
+              "red": 0.9450980392156862,
+              "green": 0.7686274509803922,
+              "blue": 0.9019607843137255,
+              "alpha": 1
+            },
+            "secondaryForeground": {
+              "css": "#77347c",
+              "colorSpace": "srgb",
+              "red": 0.4666666666666667,
+              "green": 0.20392156862745098,
+              "blue": 0.48627450980392156,
+              "alpha": 1
+            },
+            "muted": {
+              "css": "#eaa7cb",
+              "colorSpace": "srgb",
+              "red": 0.9176470588235294,
+              "green": 0.6549019607843137,
+              "blue": 0.796078431372549,
+              "alpha": 1
+            },
+            "mutedForeground": {
+              "css": "#ac1668",
+              "colorSpace": "srgb",
+              "red": 0.6745098039215687,
+              "green": 0.08627450980392157,
+              "blue": 0.40784313725490196,
+              "alpha": 1
+            },
+            "placeholder": {
+              "css": "#ad83b0",
+              "colorSpace": "srgb",
+              "red": 0.6784313725490196,
+              "green": 0.5137254901960784,
+              "blue": 0.6901960784313725,
+              "alpha": 1
+            },
+            "secondaryLabel": {
+              "css": "#ac1668",
+              "colorSpace": "srgb",
+              "red": 0.6745098039215687,
+              "green": 0.08627450980392157,
+              "blue": 0.40784313725490196,
+              "alpha": 1
+            },
+            "iconMuted": {
+              "css": "#ac1668",
+              "colorSpace": "srgb",
+              "red": 0.6745098039215687,
+              "green": 0.08627450980392157,
+              "blue": 0.40784313725490196,
+              "alpha": 1
+            },
+            "error": {
+              "css": "#f7086c",
+              "colorSpace": "srgb",
+              "red": 0.9686274509803922,
+              "green": 0.03137254901960784,
+              "blue": 0.4235294117647059,
+              "alpha": 1
+            },
+            "errorForeground": {
+              "css": "#9d174d",
+              "colorSpace": "srgb",
+              "red": 0.615686274509804,
+              "green": 0.09019607843137255,
+              "blue": 0.30196078431372547,
+              "alpha": 1
+            },
+            "errorSurface": {
+              "css": "#fde4f1",
+              "colorSpace": "srgb",
+              "red": 0.9921568627450981,
+              "green": 0.8941176470588236,
+              "blue": 0.9450980392156862,
+              "alpha": 1
+            },
+            "warning": {
+              "css": "#f59e0b",
+              "colorSpace": "srgb",
+              "red": 0.9607843137254902,
+              "green": 0.6196078431372549,
+              "blue": 0.043137254901960784,
+              "alpha": 1
+            },
+            "warningForeground": {
+              "css": "#b45309",
+              "colorSpace": "srgb",
+              "red": 0.7058823529411765,
+              "green": 0.3254901960784314,
+              "blue": 0.03529411764705882,
+              "alpha": 1
+            },
+            "warningSurface": {
+              "css": "#fcf0ea",
+              "colorSpace": "srgb",
+              "red": 0.9882352941176471,
+              "green": 0.9411764705882353,
+              "blue": 0.9176470588235294,
+              "alpha": 1
+            },
+            "update": {
+              "css": "#e33f86",
+              "colorSpace": "srgb",
+              "red": 0.8901960784313725,
+              "green": 0.24705882352941178,
+              "blue": 0.5254901960784314,
+              "alpha": 1
+            },
+            "updateForeground": {
+              "css": "#ac1668",
+              "colorSpace": "srgb",
+              "red": 0.6745098039215687,
+              "green": 0.08627450980392157,
+              "blue": 0.40784313725490196,
+              "alpha": 1
+            },
+            "updateSurface": {
+              "css": "#fadfef",
+              "colorSpace": "srgb",
+              "red": 0.9803921568627451,
+              "green": 0.8745098039215686,
+              "blue": 0.9372549019607843,
+              "alpha": 1
+            },
+            "accentSurface": {
+              "css": "#f3e6f5",
+              "colorSpace": "srgb",
+              "red": 0.9529411764705882,
+              "green": 0.9019607843137255,
+              "blue": 0.9607843137254902,
+              "alpha": 1
+            },
+            "accentSurfaceForeground": {
+              "css": "#454554",
+              "colorSpace": "srgb",
+              "red": 0.27058823529411763,
+              "green": 0.27058823529411763,
+              "blue": 0.32941176470588235,
+              "alpha": 1
+            },
+            "messageSurface": {
+              "css": "#f7def2",
+              "colorSpace": "srgb",
+              "red": 0.9686274509803922,
+              "green": 0.8705882352941177,
+              "blue": 0.9490196078431372,
+              "alpha": 1
+            },
+            "messageForeground": {
+              "css": "#492c61",
+              "colorSpace": "srgb",
+              "red": 0.28627450980392155,
+              "green": 0.17254901960784313,
+              "blue": 0.3803921568627451,
+              "alpha": 1
+            },
+            "messageAction": {
+              "css": "#e33f86",
+              "colorSpace": "srgb",
+              "red": 0.8901960784313725,
+              "green": 0.24705882352941178,
+              "blue": 0.5254901960784314,
+              "alpha": 1
+            },
+            "messageActionForeground": {
+              "css": "#ffffff",
+              "colorSpace": "srgb",
+              "red": 1,
+              "green": 1,
+              "blue": 1,
+              "alpha": 1
+            },
+            "messageActionHover": {
+              "css": "#d56698",
+              "colorSpace": "srgb",
+              "red": 0.8352941176470589,
+              "green": 0.4,
+              "blue": 0.596078431372549,
+              "alpha": 1
+            },
+            "codeBackground": {
+              "css": "#f5ecf9",
+              "colorSpace": "srgb",
+              "red": 0.9607843137254902,
+              "green": 0.9254901960784314,
+              "blue": 0.9764705882352941,
+              "alpha": 1
+            },
+            "codeForeground": {
+              "css": "#673c8b",
+              "colorSpace": "srgb",
+              "red": 0.403921568627451,
+              "green": 0.23529411764705882,
+              "blue": 0.5450980392156862,
+              "alpha": 1
+            },
+            "sidebar": {
+              "css": "#f2e1f4",
+              "colorSpace": "srgb",
+              "red": 0.9490196078431372,
+              "green": 0.8823529411764706,
+              "blue": 0.9568627450980393,
+              "alpha": 1
+            },
+            "sidebarForeground": {
+              "css": "#454554",
+              "colorSpace": "srgb",
+              "red": 0.27058823529411763,
+              "green": 0.27058823529411763,
+              "blue": 0.32941176470588235,
+              "alpha": 1
+            },
+            "sidebarMutedForeground": {
+              "css": "#ac1668",
+              "colorSpace": "srgb",
+              "red": 0.6745098039215687,
+              "green": 0.08627450980392157,
+              "blue": 0.40784313725490196,
+              "alpha": 1
+            },
+            "sidebarControlSurface": {
+              "css": "#f8f8f7",
+              "colorSpace": "srgb",
+              "red": 0.9725490196078431,
+              "green": 0.9725490196078431,
+              "blue": 0.9686274509803922,
+              "alpha": 1
+            },
+            "sidebarRowHover": {
+              "css": "#f8f8f7",
+              "colorSpace": "srgb",
+              "red": 0.9725490196078431,
+              "green": 0.9725490196078431,
+              "blue": 0.9686274509803922,
+              "alpha": 1
+            },
+            "sidebarRowActive": {
+              "css": "#f8f8f7",
+              "colorSpace": "srgb",
+              "red": 0.9725490196078431,
+              "green": 0.9725490196078431,
+              "blue": 0.9686274509803922,
+              "alpha": 1
+            },
+            "sidebarRowSelected": {
+              "css": "#f8f8f7",
+              "colorSpace": "srgb",
+              "red": 0.9725490196078431,
+              "green": 0.9725490196078431,
+              "blue": 0.9686274509803922,
+              "alpha": 1
+            },
+            "sidebarBorder": {
+              "css": "#eceae9",
+              "colorSpace": "srgb",
+              "red": 0.9254901960784314,
+              "green": 0.9176470588235294,
+              "blue": 0.9137254901960784,
+              "alpha": 1
+            },
+            "terminalBackground": {
+              "css": "#fdf7fd",
+              "colorSpace": "srgb",
+              "red": 0.9921568627450981,
+              "green": 0.9686274509803922,
+              "blue": 0.9921568627450981,
+              "alpha": 1
+            },
+            "terminalForeground": {
+              "css": "#501854",
+              "colorSpace": "srgb",
+              "red": 0.3137254901960784,
+              "green": 0.09411764705882353,
+              "blue": 0.32941176470588235,
+              "alpha": 1
+            },
+            "terminalCursor": {
+              "css": "#db2777",
+              "colorSpace": "srgb",
+              "red": 0.8588235294117647,
+              "green": 0.15294117647058825,
+              "blue": 0.4666666666666667,
+              "alpha": 1
+            },
+            "terminalSelection": {
+              "css": "#f1c4e6",
+              "colorSpace": "srgb",
+              "red": 0.9450980392156862,
+              "green": 0.7686274509803922,
+              "blue": 0.9019607843137255,
+              "alpha": 1
+            },
+            "terminalScrollbar": {
+              "css": "#e7c1dc",
+              "colorSpace": "srgb",
+              "red": 0.9058823529411765,
+              "green": 0.7568627450980392,
+              "blue": 0.8627450980392157,
+              "alpha": 1
+            },
+            "terminalScrollbarHover": {
+              "css": "#eaa7cb",
+              "colorSpace": "srgb",
+              "red": 0.9176470588235294,
+              "green": 0.6549019607843137,
+              "blue": 0.796078431372549,
+              "alpha": 1
+            }
+          }
+        },
+        {
+          "appearance": "dark",
+          "colors": {
+            "canvas": {
+              "css": "#1f1a24",
+              "colorSpace": "srgb",
+              "red": 0.12156862745098039,
+              "green": 0.10196078431372549,
+              "blue": 0.1411764705882353,
+              "alpha": 1
+            },
+            "chrome": {
+              "css": "#1f1a24",
+              "colorSpace": "srgb",
+              "red": 0.12156862745098039,
+              "green": 0.10196078431372549,
+              "blue": 0.1411764705882353,
+              "alpha": 1
+            },
+            "toolbar": {
+              "css": "#1f1a24",
+              "colorSpace": "srgb",
+              "red": 0.12156862745098039,
+              "green": 0.10196078431372549,
+              "blue": 0.1411764705882353,
+              "alpha": 1
+            },
+            "toolbarForeground": {
+              "css": "#f9f8fb",
+              "colorSpace": "srgb",
+              "red": 0.9764705882352941,
+              "green": 0.9725490196078431,
+              "blue": 0.984313725490196,
+              "alpha": 1
+            },
+            "toolbarBorder": {
+              "css": "#27242c",
+              "colorSpace": "srgb",
+              "red": 0.15294117647058825,
+              "green": 0.1411764705882353,
+              "blue": 0.17254901960784313,
+              "alpha": 1
+            },
+            "toolbarControl": {
+              "css": "#362d3d",
+              "colorSpace": "srgb",
+              "red": 0.21176470588235294,
+              "green": 0.17647058823529413,
+              "blue": 0.23921568627450981,
+              "alpha": 1
+            },
+            "toolbarControlForeground": {
+              "css": "#d4c7e1",
+              "colorSpace": "srgb",
+              "red": 0.8313725490196079,
+              "green": 0.7803921568627451,
+              "blue": 0.8823529411764706,
+              "alpha": 1
+            },
+            "toolbarControlHover": {
+              "css": "#463753",
+              "colorSpace": "srgb",
+              "red": 0.27450980392156865,
+              "green": 0.21568627450980393,
+              "blue": 0.3254901960784314,
+              "alpha": 1
+            },
+            "surface": {
+              "css": "#29232d",
+              "colorSpace": "srgb",
+              "red": 0.1607843137254902,
+              "green": 0.13725490196078433,
+              "blue": 0.17647058823529413,
+              "alpha": 1
+            },
+            "surfaceRaised": {
+              "css": "#2c2631",
+              "colorSpace": "srgb",
+              "red": 0.17254901960784313,
+              "green": 0.14901960784313725,
+              "blue": 0.19215686274509805,
+              "alpha": 1
+            },
+            "surfaceOverlay": {
+              "css": "#100a0e",
+              "colorSpace": "srgb",
+              "red": 0.06274509803921569,
+              "green": 0.0392156862745098,
+              "blue": 0.054901960784313725,
+              "alpha": 1
+            },
+            "text": {
+              "css": "#f9f8fb",
+              "colorSpace": "srgb",
+              "red": 0.9764705882352941,
+              "green": 0.9725490196078431,
+              "blue": 0.984313725490196,
+              "alpha": 1
+            },
+            "textMuted": {
+              "css": "#e7d0dd",
+              "colorSpace": "srgb",
+              "red": 0.9058823529411765,
+              "green": 0.8156862745098039,
+              "blue": 0.8666666666666667,
+              "alpha": 1
+            },
+            "border": {
+              "css": "#27242c",
+              "colorSpace": "srgb",
+              "red": 0.15294117647058825,
+              "green": 0.1411764705882353,
+              "blue": 0.17254901960784313,
+              "alpha": 1
+            },
+            "input": {
+              "css": "#302029",
+              "colorSpace": "srgb",
+              "red": 0.18823529411764706,
+              "green": 0.12549019607843137,
+              "blue": 0.1607843137254902,
+              "alpha": 1
+            },
+            "focus": {
+              "css": "#db2777",
+              "colorSpace": "srgb",
+              "red": 0.8588235294117647,
+              "green": 0.15294117647058825,
+              "blue": 0.4666666666666667,
+              "alpha": 1
+            },
+            "accent": {
+              "css": "#a3004c",
+              "colorSpace": "srgb",
+              "red": 0.6392156862745098,
+              "green": 0,
+              "blue": 0.2980392156862745,
+              "alpha": 1
+            },
+            "accentForeground": {
+              "css": "#fbd0e8",
+              "colorSpace": "srgb",
+              "red": 0.984313725490196,
+              "green": 0.8156862745098039,
+              "blue": 0.9098039215686274,
+              "alpha": 1
+            },
+            "secondary": {
+              "css": "#362d3d",
+              "colorSpace": "srgb",
+              "red": 0.21176470588235294,
+              "green": 0.17647058823529413,
+              "blue": 0.23921568627450981,
+              "alpha": 1
+            },
+            "secondaryForeground": {
+              "css": "#d4c7e1",
+              "colorSpace": "srgb",
+              "red": 0.8313725490196079,
+              "green": 0.7803921568627451,
+              "blue": 0.8823529411764706,
+              "alpha": 1
+            },
+            "muted": {
+              "css": "#423a45",
+              "colorSpace": "srgb",
+              "red": 0.25882352941176473,
+              "green": 0.22745098039215686,
+              "blue": 0.27058823529411763,
+              "alpha": 1
+            },
+            "mutedForeground": {
+              "css": "#e7d0dd",
+              "colorSpace": "srgb",
+              "red": 0.9058823529411765,
+              "green": 0.8156862745098039,
+              "blue": 0.8666666666666667,
+              "alpha": 1
+            },
+            "placeholder": {
+              "css": "#8f8699",
+              "colorSpace": "srgb",
+              "red": 0.5607843137254902,
+              "green": 0.5254901960784314,
+              "blue": 0.6,
+              "alpha": 1
+            },
+            "secondaryLabel": {
+              "css": "#e7d0dd",
+              "colorSpace": "srgb",
+              "red": 0.9058823529411765,
+              "green": 0.8156862745098039,
+              "blue": 0.8666666666666667,
+              "alpha": 1
+            },
+            "iconMuted": {
+              "css": "#d4c7e1",
+              "colorSpace": "srgb",
+              "red": 0.8313725490196079,
+              "green": 0.7803921568627451,
+              "blue": 0.8823529411764706,
+              "alpha": 1
+            },
+            "error": {
+              "css": "#9d174d",
+              "colorSpace": "srgb",
+              "red": 0.615686274509804,
+              "green": 0.09019607843137255,
+              "blue": 0.30196078431372547,
+              "alpha": 1
+            },
+            "errorForeground": {
+              "css": "#fbd0e8",
+              "colorSpace": "srgb",
+              "red": 0.984313725490196,
+              "green": 0.8156862745098039,
+              "blue": 0.9098039215686274,
+              "alpha": 1
+            },
+            "errorSurface": {
+              "css": "#331a2b",
+              "colorSpace": "srgb",
+              "red": 0.2,
+              "green": 0.10196078431372549,
+              "blue": 0.16862745098039217,
+              "alpha": 1
+            },
+            "warning": {
+              "css": "#f59e0b",
+              "colorSpace": "srgb",
+              "red": 0.9607843137254902,
+              "green": 0.6196078431372549,
+              "blue": 0.043137254901960784,
+              "alpha": 1
+            },
+            "warningForeground": {
+              "css": "#fbbf24",
+              "colorSpace": "srgb",
+              "red": 0.984313725490196,
+              "green": 0.7490196078431373,
+              "blue": 0.1411764705882353,
+              "alpha": 1
+            },
+            "warningSurface": {
+              "css": "#412f20",
+              "colorSpace": "srgb",
+              "red": 0.2549019607843137,
+              "green": 0.1843137254901961,
+              "blue": 0.12549019607843137,
+              "alpha": 1
+            },
+            "update": {
+              "css": "#a3004c",
+              "colorSpace": "srgb",
+              "red": 0.6392156862745098,
+              "green": 0,
+              "blue": 0.2980392156862745,
+              "alpha": 1
+            },
+            "updateForeground": {
+              "css": "#fbd0e8",
+              "colorSpace": "srgb",
+              "red": 0.984313725490196,
+              "green": 0.8156862745098039,
+              "blue": 0.9098039215686274,
+              "alpha": 1
+            },
+            "updateSurface": {
+              "css": "#37152b",
+              "colorSpace": "srgb",
+              "red": 0.21568627450980393,
+              "green": 0.08235294117647059,
+              "blue": 0.16862745098039217,
+              "alpha": 1
+            },
+            "accentSurface": {
+              "css": "#463753",
+              "colorSpace": "srgb",
+              "red": 0.27450980392156865,
+              "green": 0.21568627450980393,
+              "blue": 0.3254901960784314,
+              "alpha": 1
+            },
+            "accentSurfaceForeground": {
+              "css": "#f8f1f5",
+              "colorSpace": "srgb",
+              "red": 0.9725490196078431,
+              "green": 0.9450980392156862,
+              "blue": 0.9607843137254902,
+              "alpha": 1
+            },
+            "messageSurface": {
+              "css": "#2b2431",
+              "colorSpace": "srgb",
+              "red": 0.16862745098039217,
+              "green": 0.1411764705882353,
+              "blue": 0.19215686274509805,
+              "alpha": 1
+            },
+            "messageForeground": {
+              "css": "#f2ebfa",
+              "colorSpace": "srgb",
+              "red": 0.9490196078431372,
+              "green": 0.9215686274509803,
+              "blue": 0.9803921568627451,
+              "alpha": 1
+            },
+            "messageAction": {
+              "css": "#a3004c",
+              "colorSpace": "srgb",
+              "red": 0.6392156862745098,
+              "green": 0,
+              "blue": 0.2980392156862745,
+              "alpha": 1
+            },
+            "messageActionForeground": {
+              "css": "#fbd0e8",
+              "colorSpace": "srgb",
+              "red": 0.984313725490196,
+              "green": 0.8156862745098039,
+              "blue": 0.9098039215686274,
+              "alpha": 1
+            },
+            "messageActionHover": {
+              "css": "#a2004c",
+              "colorSpace": "srgb",
+              "red": 0.6352941176470588,
+              "green": 0,
+              "blue": 0.2980392156862745,
+              "alpha": 1
+            },
+            "codeBackground": {
+              "css": "#1f1a24",
+              "colorSpace": "srgb",
+              "red": 0.12156862745098039,
+              "green": 0.10196078431372549,
+              "blue": 0.1411764705882353,
+              "alpha": 1
+            },
+            "codeForeground": {
+              "css": "#d8c3ef",
+              "colorSpace": "srgb",
+              "red": 0.8470588235294118,
+              "green": 0.7647058823529411,
+              "blue": 0.9372549019607843,
+              "alpha": 1
+            },
+            "sidebar": {
+              "css": "#171018",
+              "colorSpace": "srgb",
+              "red": 0.09019607843137255,
+              "green": 0.06274509803921569,
+              "blue": 0.09411764705882353,
+              "alpha": 1
+            },
+            "sidebarForeground": {
+              "css": "#f4f4f5",
+              "colorSpace": "srgb",
+              "red": 0.9568627450980393,
+              "green": 0.9568627450980393,
+              "blue": 0.9607843137254902,
+              "alpha": 1
+            },
+            "sidebarMutedForeground": {
+              "css": "#e7d0dd",
+              "colorSpace": "srgb",
+              "red": 0.9058823529411765,
+              "green": 0.8156862745098039,
+              "blue": 0.8666666666666667,
+              "alpha": 1
+            },
+            "sidebarControlSurface": {
+              "css": "#261922",
+              "colorSpace": "srgb",
+              "red": 0.14901960784313725,
+              "green": 0.09803921568627451,
+              "blue": 0.13333333333333333,
+              "alpha": 1
+            },
+            "sidebarRowHover": {
+              "css": "#261922",
+              "colorSpace": "srgb",
+              "red": 0.14901960784313725,
+              "green": 0.09803921568627451,
+              "blue": 0.13333333333333333,
+              "alpha": 1
+            },
+            "sidebarRowActive": {
+              "css": "#261922",
+              "colorSpace": "srgb",
+              "red": 0.14901960784313725,
+              "green": 0.09803921568627451,
+              "blue": 0.13333333333333333,
+              "alpha": 1
+            },
+            "sidebarRowSelected": {
+              "css": "#261922",
+              "colorSpace": "srgb",
+              "red": 0.14901960784313725,
+              "green": 0.09803921568627451,
+              "blue": 0.13333333333333333,
+              "alpha": 1
+            },
+            "sidebarBorder": {
+              "css": "#322028",
+              "colorSpace": "srgb",
+              "red": 0.19607843137254902,
+              "green": 0.12549019607843137,
+              "blue": 0.1568627450980392,
+              "alpha": 1
+            },
+            "terminalBackground": {
+              "css": "#1f1a24",
+              "colorSpace": "srgb",
+              "red": 0.12156862745098039,
+              "green": 0.10196078431372549,
+              "blue": 0.1411764705882353,
+              "alpha": 1
+            },
+            "terminalForeground": {
+              "css": "#f9f8fb",
+              "colorSpace": "srgb",
+              "red": 0.9764705882352941,
+              "green": 0.9725490196078431,
+              "blue": 0.984313725490196,
+              "alpha": 1
+            },
+            "terminalCursor": {
+              "css": "#db2777",
+              "colorSpace": "srgb",
+              "red": 0.8588235294117647,
+              "green": 0.15294117647058825,
+              "blue": 0.4666666666666667,
+              "alpha": 1
+            },
+            "terminalSelection": {
+              "css": "#362d3d",
+              "colorSpace": "srgb",
+              "red": 0.21176470588235294,
+              "green": 0.17647058823529413,
+              "blue": 0.23921568627450981,
+              "alpha": 1
+            },
+            "terminalScrollbar": {
+              "css": "#302029",
+              "colorSpace": "srgb",
+              "red": 0.18823529411764706,
+              "green": 0.12549019607843137,
+              "blue": 0.1607843137254902,
+              "alpha": 1
+            },
+            "terminalScrollbarHover": {
+              "css": "#423a45",
+              "colorSpace": "srgb",
+              "red": 0.25882352941176473,
+              "green": 0.22745098039215686,
+              "blue": 0.27058823529411763,
+              "alpha": 1
+            }
+          }
+        }
+      ],
+      "provenance": {
+        "source": "builtin"
+      }
+    },
+    {
+      "id": "grove",
+      "label": "Grove",
+      "modes": [
+        {
+          "appearance": "light",
+          "colors": {
+            "canvas": {
+              "css": "#f3f7f4",
+              "colorSpace": "srgb",
+              "red": 0.9529411764705882,
+              "green": 0.9686274509803922,
+              "blue": 0.9568627450980393,
+              "alpha": 1
+            },
+            "chrome": {
+              "css": "#f3f7f4",
+              "colorSpace": "srgb",
+              "red": 0.9529411764705882,
+              "green": 0.9686274509803922,
+              "blue": 0.9568627450980393,
+              "alpha": 1
+            },
+            "toolbar": {
+              "css": "#f3f7f4",
+              "colorSpace": "srgb",
+              "red": 0.9529411764705882,
+              "green": 0.9686274509803922,
+              "blue": 0.9568627450980393,
+              "alpha": 1
+            },
+            "toolbarForeground": {
+              "css": "#241523",
+              "colorSpace": "srgb",
+              "red": 0.1411764705882353,
+              "green": 0.08235294117647059,
+              "blue": 0.13725490196078433,
+              "alpha": 1
+            },
+            "toolbarBorder": {
+              "css": "#d5e6dd",
+              "colorSpace": "srgb",
+              "red": 0.8352941176470589,
+              "green": 0.9019607843137255,
+              "blue": 0.8666666666666667,
+              "alpha": 1
+            },
+            "toolbarControl": {
+              "css": "#e2ede7",
+              "colorSpace": "srgb",
+              "red": 0.8862745098039215,
+              "green": 0.9294117647058824,
+              "blue": 0.9058823529411765,
+              "alpha": 1
+            },
+            "toolbarControlForeground": {
+              "css": "#241523",
+              "colorSpace": "srgb",
+              "red": 0.1411764705882353,
+              "green": 0.08235294117647059,
+              "blue": 0.13725490196078433,
+              "alpha": 1
+            },
+            "toolbarControlHover": {
+              "css": "#d5e6dd",
+              "colorSpace": "srgb",
+              "red": 0.8352941176470589,
+              "green": 0.9019607843137255,
+              "blue": 0.8666666666666667,
+              "alpha": 1
+            },
+            "surface": {
+              "css": "#f3f7f4",
+              "colorSpace": "srgb",
+              "red": 0.9529411764705882,
+              "green": 0.9686274509803922,
+              "blue": 0.9568627450980393,
+              "alpha": 1
+            },
+            "surfaceRaised": {
+              "css": "#ecefed",
+              "colorSpace": "srgb",
+              "red": 0.9254901960784314,
+              "green": 0.9372549019607843,
+              "blue": 0.9294117647058824,
+              "alpha": 1
+            },
+            "surfaceOverlay": {
+              "css": "#e7e9e8",
+              "colorSpace": "srgb",
+              "red": 0.9058823529411765,
+              "green": 0.9137254901960784,
+              "blue": 0.9098039215686274,
+              "alpha": 1
+            },
+            "text": {
+              "css": "#241523",
+              "colorSpace": "srgb",
+              "red": 0.1411764705882353,
+              "green": 0.08235294117647059,
+              "blue": 0.13725490196078433,
+              "alpha": 1
+            },
+            "textMuted": {
+              "css": "#746c73",
+              "colorSpace": "srgb",
+              "red": 0.4549019607843137,
+              "green": 0.4235294117647059,
+              "blue": 0.45098039215686275,
+              "alpha": 1
+            },
+            "border": {
+              "css": "#cbd5d1",
+              "colorSpace": "srgb",
+              "red": 0.796078431372549,
+              "green": 0.8352941176470589,
+              "blue": 0.8196078431372549,
+              "alpha": 1
+            },
+            "input": {
+              "css": "#becbc5",
+              "colorSpace": "srgb",
+              "red": 0.7450980392156863,
+              "green": 0.796078431372549,
+              "blue": 0.7725490196078432,
+              "alpha": 1
+            },
+            "focus": {
+              "css": "#1b7d50",
+              "colorSpace": "srgb",
+              "red": 0.10588235294117647,
+              "green": 0.49019607843137253,
+              "blue": 0.3137254901960784,
+              "alpha": 1
+            },
+            "accent": {
+              "css": "#1b7d50",
+              "colorSpace": "srgb",
+              "red": 0.10588235294117647,
+              "green": 0.49019607843137253,
+              "blue": 0.3137254901960784,
+              "alpha": 1
+            },
+            "accentForeground": {
+              "css": "#fffaff",
+              "colorSpace": "srgb",
+              "red": 1,
+              "green": 0.9803921568627451,
+              "blue": 1,
+              "alpha": 1
+            },
+            "secondary": {
+              "css": "#e2ede7",
+              "colorSpace": "srgb",
+              "red": 0.8862745098039215,
+              "green": 0.9294117647058824,
+              "blue": 0.9058823529411765,
+              "alpha": 1
+            },
+            "secondaryForeground": {
+              "css": "#241523",
+              "colorSpace": "srgb",
+              "red": 0.1411764705882353,
+              "green": 0.08235294117647059,
+              "blue": 0.13725490196078433,
+              "alpha": 1
+            },
+            "muted": {
+              "css": "#e6f0ea",
+              "colorSpace": "srgb",
+              "red": 0.9019607843137255,
+              "green": 0.9411764705882353,
+              "blue": 0.9176470588235294,
+              "alpha": 1
+            },
+            "mutedForeground": {
+              "css": "#746c73",
+              "colorSpace": "srgb",
+              "red": 0.4549019607843137,
+              "green": 0.4235294117647059,
+              "blue": 0.45098039215686275,
+              "alpha": 1
+            },
+            "placeholder": {
+              "css": "#746c73",
+              "colorSpace": "srgb",
+              "red": 0.4549019607843137,
+              "green": 0.4235294117647059,
+              "blue": 0.45098039215686275,
+              "alpha": 1
+            },
+            "secondaryLabel": {
+              "css": "#746c73",
+              "colorSpace": "srgb",
+              "red": 0.4549019607843137,
+              "green": 0.4235294117647059,
+              "blue": 0.45098039215686275,
+              "alpha": 1
+            },
+            "iconMuted": {
+              "css": "#746c73",
+              "colorSpace": "srgb",
+              "red": 0.4549019607843137,
+              "green": 0.4235294117647059,
+              "blue": 0.45098039215686275,
+              "alpha": 1
+            },
+            "error": {
+              "css": "#fb2c36",
+              "colorSpace": "srgb",
+              "red": 0.984313725490196,
+              "green": 0.17254901960784313,
+              "blue": 0.21176470588235294,
+              "alpha": 1
+            },
+            "errorForeground": {
+              "css": "#c10007",
+              "colorSpace": "srgb",
+              "red": 0.7568627450980392,
+              "green": 0,
+              "blue": 0.027450980392156862,
+              "alpha": 1
+            },
+            "errorSurface": {
+              "css": "#f4e7e5",
+              "colorSpace": "srgb",
+              "red": 0.9568627450980393,
+              "green": 0.9058823529411765,
+              "blue": 0.8980392156862745,
+              "alpha": 1
+            },
+            "warning": {
+              "css": "#fe9a00",
+              "colorSpace": "srgb",
+              "red": 0.996078431372549,
+              "green": 0.6039215686274509,
+              "blue": 0,
+              "alpha": 1
+            },
+            "warningForeground": {
+              "css": "#ab5225",
+              "colorSpace": "srgb",
+              "red": 0.6705882352941176,
+              "green": 0.3215686274509804,
+              "blue": 0.1450980392156863,
+              "alpha": 1
+            },
+            "warningSurface": {
+              "css": "#f4f0e1",
+              "colorSpace": "srgb",
+              "red": 0.9568627450980393,
+              "green": 0.9411764705882353,
+              "blue": 0.8823529411764706,
+              "alpha": 1
+            },
+            "update": {
+              "css": "#1b7d50",
+              "colorSpace": "srgb",
+              "red": 0.10588235294117647,
+              "green": 0.49019607843137253,
+              "blue": 0.3137254901960784,
+              "alpha": 1
+            },
+            "updateForeground": {
+              "css": "#125134",
+              "colorSpace": "srgb",
+              "red": 0.07058823529411765,
+              "green": 0.3176470588235294,
+              "blue": 0.20392156862745098,
+              "alpha": 1
+            },
+            "updateSurface": {
+              "css": "#d0e3da",
+              "colorSpace": "srgb",
+              "red": 0.8156862745098039,
+              "green": 0.8901960784313725,
+              "blue": 0.8549019607843137,
+              "alpha": 1
+            },
+            "accentSurface": {
+              "css": "#d5e6dd",
+              "colorSpace": "srgb",
+              "red": 0.8352941176470589,
+              "green": 0.9019607843137255,
+              "blue": 0.8666666666666667,
+              "alpha": 1
+            },
+            "accentSurfaceForeground": {
+              "css": "#241523",
+              "colorSpace": "srgb",
+              "red": 0.1411764705882353,
+              "green": 0.08235294117647059,
+              "blue": 0.13725490196078433,
+              "alpha": 1
+            },
+            "messageSurface": {
+              "css": "#cce1d7",
+              "colorSpace": "srgb",
+              "red": 0.8,
+              "green": 0.8823529411764706,
+              "blue": 0.8431372549019608,
+              "alpha": 1
+            },
+            "messageForeground": {
+              "css": "#241523",
+              "colorSpace": "srgb",
+              "red": 0.1411764705882353,
+              "green": 0.08235294117647059,
+              "blue": 0.13725490196078433,
+              "alpha": 1
+            },
+            "messageAction": {
+              "css": "#8f6410",
+              "colorSpace": "srgb",
+              "red": 0.5607843137254902,
+              "green": 0.39215686274509803,
+              "blue": 0.06274509803921569,
+              "alpha": 1
+            },
+            "messageActionForeground": {
+              "css": "#fffaff",
+              "colorSpace": "srgb",
+              "red": 1,
+              "green": 0.9803921568627451,
+              "blue": 1,
+              "alpha": 1
+            },
+            "messageActionHover": {
+              "css": "#7e580e",
+              "colorSpace": "srgb",
+              "red": 0.49411764705882355,
+              "green": 0.34509803921568627,
+              "blue": 0.054901960784313725,
+              "alpha": 1
+            },
+            "codeBackground": {
+              "css": "#eef1ef",
+              "colorSpace": "srgb",
+              "red": 0.9333333333333333,
+              "green": 0.9450980392156862,
+              "blue": 0.9372549019607843,
+              "alpha": 1
+            },
+            "codeForeground": {
+              "css": "#241523",
+              "colorSpace": "srgb",
+              "red": 0.1411764705882353,
+              "green": 0.08235294117647059,
+              "blue": 0.13725490196078433,
+              "alpha": 1
+            },
+            "sidebar": {
+              "css": "#e2ede7",
+              "colorSpace": "srgb",
+              "red": 0.8862745098039215,
+              "green": 0.9294117647058824,
+              "blue": 0.9058823529411765,
+              "alpha": 1
+            },
+            "sidebarForeground": {
+              "css": "#241523",
+              "colorSpace": "srgb",
+              "red": 0.1411764705882353,
+              "green": 0.08235294117647059,
+              "blue": 0.13725490196078433,
+              "alpha": 1
+            },
+            "sidebarMutedForeground": {
+              "css": "#6b666c",
+              "colorSpace": "srgb",
+              "red": 0.4196078431372549,
+              "green": 0.4,
+              "blue": 0.4235294117647059,
+              "alpha": 1
+            },
+            "sidebarControlSurface": {
+              "css": "#d3dcd8",
+              "colorSpace": "srgb",
+              "red": 0.8274509803921568,
+              "green": 0.8627450980392157,
+              "blue": 0.8470588235294118,
+              "alpha": 1
+            },
+            "sidebarRowHover": {
+              "css": "#cae0d5",
+              "colorSpace": "srgb",
+              "red": 0.792156862745098,
+              "green": 0.8784313725490196,
+              "blue": 0.8352941176470589,
+              "alpha": 1
+            },
+            "sidebarRowActive": {
+              "css": "#bad7c9",
+              "colorSpace": "srgb",
+              "red": 0.7294117647058823,
+              "green": 0.8431372549019608,
+              "blue": 0.788235294117647,
+              "alpha": 1
+            },
+            "sidebarRowSelected": {
+              "css": "#b2d2c3",
+              "colorSpace": "srgb",
+              "red": 0.6980392156862745,
+              "green": 0.8235294117647058,
+              "blue": 0.7647058823529411,
+              "alpha": 1
+            },
+            "sidebarBorder": {
+              "css": "#cbd3d0",
+              "colorSpace": "srgb",
+              "red": 0.796078431372549,
+              "green": 0.8274509803921568,
+              "blue": 0.8156862745098039,
+              "alpha": 1
+            },
+            "terminalBackground": {
+              "css": "#f3f7f4",
+              "colorSpace": "srgb",
+              "red": 0.9529411764705882,
+              "green": 0.9686274509803922,
+              "blue": 0.9568627450980393,
+              "alpha": 1
+            },
+            "terminalForeground": {
+              "css": "#241523",
+              "colorSpace": "srgb",
+              "red": 0.1411764705882353,
+              "green": 0.08235294117647059,
+              "blue": 0.13725490196078433,
+              "alpha": 1
+            },
+            "terminalCursor": {
+              "css": "#1b7d50",
+              "colorSpace": "srgb",
+              "red": 0.10588235294117647,
+              "green": 0.49019607843137253,
+              "blue": 0.3137254901960784,
+              "alpha": 1
+            },
+            "terminalSelection": {
+              "css": "#cce1d7",
+              "colorSpace": "srgb",
+              "red": 0.8,
+              "green": 0.8823529411764706,
+              "blue": 0.8431372549019608,
+              "alpha": 1
+            },
+            "terminalScrollbar": {
+              "css": "#c5c5c6",
+              "colorSpace": "srgb",
+              "red": 0.7725490196078432,
+              "green": 0.7725490196078432,
+              "blue": 0.7764705882352941,
+              "alpha": 1
+            },
+            "terminalScrollbarHover": {
+              "css": "#b1afb1",
+              "colorSpace": "srgb",
+              "red": 0.6941176470588235,
+              "green": 0.6862745098039216,
+              "blue": 0.6941176470588235,
+              "alpha": 1
+            }
+          }
+        },
+        {
+          "appearance": "dark",
+          "colors": {
+            "canvas": {
+              "css": "#1b2821",
+              "colorSpace": "srgb",
+              "red": 0.10588235294117647,
+              "green": 0.1568627450980392,
+              "blue": 0.12941176470588237,
+              "alpha": 1
+            },
+            "chrome": {
+              "css": "#1b2821",
+              "colorSpace": "srgb",
+              "red": 0.10588235294117647,
+              "green": 0.1568627450980392,
+              "blue": 0.12941176470588237,
+              "alpha": 1
+            },
+            "toolbar": {
+              "css": "#1b2821",
+              "colorSpace": "srgb",
+              "red": 0.10588235294117647,
+              "green": 0.1568627450980392,
+              "blue": 0.12941176470588237,
+              "alpha": 1
+            },
+            "toolbarForeground": {
+              "css": "#fffaff",
+              "colorSpace": "srgb",
+              "red": 1,
+              "green": 0.9803921568627451,
+              "blue": 1,
+              "alpha": 1
+            },
+            "toolbarBorder": {
+              "css": "#36654c",
+              "colorSpace": "srgb",
+              "red": 0.21176470588235294,
+              "green": 0.396078431372549,
+              "blue": 0.2980392156862745,
+              "alpha": 1
+            },
+            "toolbarControl": {
+              "css": "#2a4b39",
+              "colorSpace": "srgb",
+              "red": 0.16470588235294117,
+              "green": 0.29411764705882354,
+              "blue": 0.2235294117647059,
+              "alpha": 1
+            },
+            "toolbarControlForeground": {
+              "css": "#fffaff",
+              "colorSpace": "srgb",
+              "red": 1,
+              "green": 0.9803921568627451,
+              "blue": 1,
+              "alpha": 1
+            },
+            "toolbarControlHover": {
+              "css": "#325c46",
+              "colorSpace": "srgb",
+              "red": 0.19607843137254902,
+              "green": 0.3607843137254902,
+              "blue": 0.27450980392156865,
+              "alpha": 1
+            },
+            "surface": {
+              "css": "#1b2821",
+              "colorSpace": "srgb",
+              "red": 0.10588235294117647,
+              "green": 0.1568627450980392,
+              "blue": 0.12941176470588237,
+              "alpha": 1
+            },
+            "surfaceRaised": {
+              "css": "#36413c",
+              "colorSpace": "srgb",
+              "red": 0.21176470588235294,
+              "green": 0.2549019607843137,
+              "blue": 0.23529411764705882,
+              "alpha": 1
+            },
+            "surfaceOverlay": {
+              "css": "#444d49",
+              "colorSpace": "srgb",
+              "red": 0.26666666666666666,
+              "green": 0.30196078431372547,
+              "blue": 0.28627450980392155,
+              "alpha": 1
+            },
+            "text": {
+              "css": "#fffaff",
+              "colorSpace": "srgb",
+              "red": 1,
+              "green": 0.9803921568627451,
+              "blue": 1,
+              "alpha": 1
+            },
+            "textMuted": {
+              "css": "#919595",
+              "colorSpace": "srgb",
+              "red": 0.5686274509803921,
+              "green": 0.5843137254901961,
+              "blue": 0.5843137254901961,
+              "alpha": 1
+            },
+            "border": {
+              "css": "#415f4f",
+              "colorSpace": "srgb",
+              "red": 0.2549019607843137,
+              "green": 0.37254901960784315,
+              "blue": 0.30980392156862746,
+              "alpha": 1
+            },
+            "input": {
+              "css": "#4f725f",
+              "colorSpace": "srgb",
+              "red": 0.30980392156862746,
+              "green": 0.4470588235294118,
+              "blue": 0.37254901960784315,
+              "alpha": 1
+            },
+            "focus": {
+              "css": "#69d69a",
+              "colorSpace": "srgb",
+              "red": 0.4117647058823529,
+              "green": 0.8392156862745098,
+              "blue": 0.6039215686274509,
+              "alpha": 1
+            },
+            "accent": {
+              "css": "#69d69a",
+              "colorSpace": "srgb",
+              "red": 0.4117647058823529,
+              "green": 0.8392156862745098,
+              "blue": 0.6039215686274509,
+              "alpha": 1
+            },
+            "accentForeground": {
+              "css": "#241523",
+              "colorSpace": "srgb",
+              "red": 0.1411764705882353,
+              "green": 0.08235294117647059,
+              "blue": 0.13725490196078433,
+              "alpha": 1
+            },
+            "secondary": {
+              "css": "#2a4b39",
+              "colorSpace": "srgb",
+              "red": 0.16470588235294117,
+              "green": 0.29411764705882354,
+              "blue": 0.2235294117647059,
+              "alpha": 1
+            },
+            "secondaryForeground": {
+              "css": "#fffaff",
+              "colorSpace": "srgb",
+              "red": 1,
+              "green": 0.9803921568627451,
+              "blue": 1,
+              "alpha": 1
+            },
+            "muted": {
+              "css": "#253e31",
+              "colorSpace": "srgb",
+              "red": 0.1450980392156863,
+              "green": 0.24313725490196078,
+              "blue": 0.19215686274509805,
+              "alpha": 1
+            },
+            "mutedForeground": {
+              "css": "#919595",
+              "colorSpace": "srgb",
+              "red": 0.5686274509803921,
+              "green": 0.5843137254901961,
+              "blue": 0.5843137254901961,
+              "alpha": 1
+            },
+            "placeholder": {
+              "css": "#919595",
+              "colorSpace": "srgb",
+              "red": 0.5686274509803921,
+              "green": 0.5843137254901961,
+              "blue": 0.5843137254901961,
+              "alpha": 1
+            },
+            "secondaryLabel": {
+              "css": "#919595",
+              "colorSpace": "srgb",
+              "red": 0.5686274509803921,
+              "green": 0.5843137254901961,
+              "blue": 0.5843137254901961,
+              "alpha": 1
+            },
+            "iconMuted": {
+              "css": "#919595",
+              "colorSpace": "srgb",
+              "red": 0.5686274509803921,
+              "green": 0.5843137254901961,
+              "blue": 0.5843137254901961,
+              "alpha": 1
+            },
+            "error": {
+              "css": "#fb414a",
+              "colorSpace": "srgb",
+              "red": 0.984313725490196,
+              "green": 0.2549019607843137,
+              "blue": 0.2901960784313726,
+              "alpha": 1
+            },
+            "errorForeground": {
+              "css": "#f07372",
+              "colorSpace": "srgb",
+              "red": 0.9411764705882353,
+              "green": 0.45098039215686275,
+              "blue": 0.4470588235294118,
+              "alpha": 1
+            },
+            "errorSurface": {
+              "css": "#3f2c28",
+              "colorSpace": "srgb",
+              "red": 0.24705882352941178,
+              "green": 0.17254901960784313,
+              "blue": 0.1568627450980392,
+              "alpha": 1
+            },
+            "warning": {
+              "css": "#fe9a00",
+              "colorSpace": "srgb",
+              "red": 0.996078431372549,
+              "green": 0.6039215686274509,
+              "blue": 0,
+              "alpha": 1
+            },
+            "warningForeground": {
+              "css": "#ffb900",
+              "colorSpace": "srgb",
+              "red": 1,
+              "green": 0.7254901960784313,
+              "blue": 0,
+              "alpha": 1
+            },
+            "warningSurface": {
+              "css": "#3f3a1c",
+              "colorSpace": "srgb",
+              "red": 0.24705882352941178,
+              "green": 0.22745098039215686,
+              "blue": 0.10980392156862745,
+              "alpha": 1
+            },
+            "update": {
+              "css": "#69d69a",
+              "colorSpace": "srgb",
+              "red": 0.4117647058823529,
+              "green": 0.8392156862745098,
+              "blue": 0.6039215686274509,
+              "alpha": 1
+            },
+            "updateForeground": {
+              "css": "#9ee4be",
+              "colorSpace": "srgb",
+              "red": 0.6196078431372549,
+              "green": 0.8941176470588236,
+              "blue": 0.7450980392156863,
+              "alpha": 1
+            },
+            "updateSurface": {
+              "css": "#345f48",
+              "colorSpace": "srgb",
+              "red": 0.20392156862745098,
+              "green": 0.37254901960784315,
+              "blue": 0.2823529411764706,
+              "alpha": 1
+            },
+            "accentSurface": {
+              "css": "#325c46",
+              "colorSpace": "srgb",
+              "red": 0.19607843137254902,
+              "green": 0.3607843137254902,
+              "blue": 0.27450980392156865,
+              "alpha": 1
+            },
+            "accentSurfaceForeground": {
+              "css": "#fffaff",
+              "colorSpace": "srgb",
+              "red": 1,
+              "green": 0.9803921568627451,
+              "blue": 1,
+              "alpha": 1
+            },
+            "messageSurface": {
+              "css": "#37664d",
+              "colorSpace": "srgb",
+              "red": 0.21568627450980393,
+              "green": 0.4,
+              "blue": 0.30196078431372547,
+              "alpha": 1
+            },
+            "messageForeground": {
+              "css": "#fffaff",
+              "colorSpace": "srgb",
+              "red": 1,
+              "green": 0.9803921568627451,
+              "blue": 1,
+              "alpha": 1
+            },
+            "messageAction": {
+              "css": "#e3b34e",
+              "colorSpace": "srgb",
+              "red": 0.8901960784313725,
+              "green": 0.7019607843137254,
+              "blue": 0.3058823529411765,
+              "alpha": 1
+            },
+            "messageActionForeground": {
+              "css": "#241523",
+              "colorSpace": "srgb",
+              "red": 0.1411764705882353,
+              "green": 0.08235294117647059,
+              "blue": 0.13725490196078433,
+              "alpha": 1
+            },
+            "messageActionHover": {
+              "css": "#e6bc63",
+              "colorSpace": "srgb",
+              "red": 0.9019607843137255,
+              "green": 0.7372549019607844,
+              "blue": 0.38823529411764707,
+              "alpha": 1
+            },
+            "codeBackground": {
+              "css": "#28342e",
+              "colorSpace": "srgb",
+              "red": 0.1568627450980392,
+              "green": 0.20392156862745098,
+              "blue": 0.1803921568627451,
+              "alpha": 1
+            },
+            "codeForeground": {
+              "css": "#fffaff",
+              "colorSpace": "srgb",
+              "red": 1,
+              "green": 0.9803921568627451,
+              "blue": 1,
+              "alpha": 1
+            },
+            "sidebar": {
+              "css": "#21362b",
+              "colorSpace": "srgb",
+              "red": 0.12941176470588237,
+              "green": 0.21176470588235294,
+              "blue": 0.16862745098039217,
+              "alpha": 1
+            },
+            "sidebarForeground": {
+              "css": "#fffaff",
+              "colorSpace": "srgb",
+              "red": 1,
+              "green": 0.9803921568627451,
+              "blue": 1,
+              "alpha": 1
+            },
+            "sidebarMutedForeground": {
+              "css": "#9da3a2",
+              "colorSpace": "srgb",
+              "red": 0.615686274509804,
+              "green": 0.6392156862745098,
+              "blue": 0.6352941176470588,
+              "alpha": 1
+            },
+            "sidebarControlSurface": {
+              "css": "#45554d",
+              "colorSpace": "srgb",
+              "red": 0.27058823529411763,
+              "green": 0.3333333333333333,
+              "blue": 0.30196078431372547,
+              "alpha": 1
+            },
+            "sidebarRowHover": {
+              "css": "#2a4938",
+              "colorSpace": "srgb",
+              "red": 0.16470588235294117,
+              "green": 0.28627450980392155,
+              "blue": 0.2196078431372549,
+              "alpha": 1
+            },
+            "sidebarRowActive": {
+              "css": "#2f5641",
+              "colorSpace": "srgb",
+              "red": 0.1843137254901961,
+              "green": 0.33725490196078434,
+              "blue": 0.2549019607843137,
+              "alpha": 1
+            },
+            "sidebarRowSelected": {
+              "css": "#325c46",
+              "colorSpace": "srgb",
+              "red": 0.19607843137254902,
+              "green": 0.3607843137254902,
+              "blue": 0.27450980392156865,
+              "alpha": 1
+            },
+            "sidebarBorder": {
+              "css": "#6f7a75",
+              "colorSpace": "srgb",
+              "red": 0.43529411764705883,
+              "green": 0.47843137254901963,
+              "blue": 0.4588235294117647,
+              "alpha": 1
+            },
+            "terminalBackground": {
+              "css": "#1b2821",
+              "colorSpace": "srgb",
+              "red": 0.10588235294117647,
+              "green": 0.1568627450980392,
+              "blue": 0.12941176470588237,
+              "alpha": 1
+            },
+            "terminalForeground": {
+              "css": "#fffaff",
+              "colorSpace": "srgb",
+              "red": 1,
+              "green": 0.9803921568627451,
+              "blue": 1,
+              "alpha": 1
+            },
+            "terminalCursor": {
+              "css": "#69d69a",
+              "colorSpace": "srgb",
+              "red": 0.4117647058823529,
+              "green": 0.8392156862745098,
+              "blue": 0.6039215686274509,
+              "alpha": 1
+            },
+            "terminalSelection": {
+              "css": "#36654c",
+              "colorSpace": "srgb",
+              "red": 0.21176470588235294,
+              "green": 0.396078431372549,
+              "blue": 0.2980392156862745,
+              "alpha": 1
+            },
+            "terminalScrollbar": {
+              "css": "#7b807e",
+              "colorSpace": "srgb",
+              "red": 0.4823529411764706,
+              "green": 0.5019607843137255,
+              "blue": 0.49411764705882355,
+              "alpha": 1
+            },
+            "terminalScrollbarHover": {
+              "css": "#989b9b",
+              "colorSpace": "srgb",
+              "red": 0.596078431372549,
+              "green": 0.6078431372549019,
+              "blue": 0.6078431372549019,
+              "alpha": 1
+            }
+          }
+        }
+      ],
+      "provenance": {
+        "source": "builtin"
+      }
+    },
+    {
+      "id": "ocean",
+      "label": "Ocean",
+      "modes": [
+        {
+          "appearance": "light",
+          "colors": {
+            "canvas": {
+              "css": "#f5f7f8",
+              "colorSpace": "srgb",
+              "red": 0.9607843137254902,
+              "green": 0.9686274509803922,
+              "blue": 0.9725490196078431,
+              "alpha": 1
+            },
+            "chrome": {
+              "css": "#f5f7f8",
+              "colorSpace": "srgb",
+              "red": 0.9607843137254902,
+              "green": 0.9686274509803922,
+              "blue": 0.9725490196078431,
+              "alpha": 1
+            },
+            "toolbar": {
+              "css": "#f5f7f8",
+              "colorSpace": "srgb",
+              "red": 0.9607843137254902,
+              "green": 0.9686274509803922,
+              "blue": 0.9725490196078431,
+              "alpha": 1
+            },
+            "toolbarForeground": {
+              "css": "#241523",
+              "colorSpace": "srgb",
+              "red": 0.1411764705882353,
+              "green": 0.08235294117647059,
+              "blue": 0.13725490196078433,
+              "alpha": 1
+            },
+            "toolbarBorder": {
+              "css": "#d8e4ee",
+              "colorSpace": "srgb",
+              "red": 0.8470588235294118,
+              "green": 0.8941176470588236,
+              "blue": 0.9333333333333333,
+              "alpha": 1
+            },
+            "toolbarControl": {
+              "css": "#e4ecf2",
+              "colorSpace": "srgb",
+              "red": 0.8941176470588236,
+              "green": 0.9254901960784314,
+              "blue": 0.9490196078431372,
+              "alpha": 1
+            },
+            "toolbarControlForeground": {
+              "css": "#241523",
+              "colorSpace": "srgb",
+              "red": 0.1411764705882353,
+              "green": 0.08235294117647059,
+              "blue": 0.13725490196078433,
+              "alpha": 1
+            },
+            "toolbarControlHover": {
+              "css": "#d8e4ee",
+              "colorSpace": "srgb",
+              "red": 0.8470588235294118,
+              "green": 0.8941176470588236,
+              "blue": 0.9333333333333333,
+              "alpha": 1
+            },
+            "surface": {
+              "css": "#f5f7f8",
+              "colorSpace": "srgb",
+              "red": 0.9607843137254902,
+              "green": 0.9686274509803922,
+              "blue": 0.9725490196078431,
+              "alpha": 1
+            },
+            "surfaceRaised": {
+              "css": "#edeff1",
+              "colorSpace": "srgb",
+              "red": 0.9294117647058824,
+              "green": 0.9372549019607843,
+              "blue": 0.9450980392156862,
+              "alpha": 1
+            },
+            "surfaceOverlay": {
+              "css": "#e8e9eb",
+              "colorSpace": "srgb",
+              "red": 0.9098039215686274,
+              "green": 0.9137254901960784,
+              "blue": 0.9215686274509803,
+              "alpha": 1
+            },
+            "text": {
+              "css": "#241523",
+              "colorSpace": "srgb",
+              "red": 0.1411764705882353,
+              "green": 0.08235294117647059,
+              "blue": 0.13725490196078433,
+              "alpha": 1
+            },
+            "textMuted": {
+              "css": "#746c75",
+              "colorSpace": "srgb",
+              "red": 0.4549019607843137,
+              "green": 0.4235294117647059,
+              "blue": 0.4588235294117647,
+              "alpha": 1
+            },
+            "border": {
+              "css": "#cdd4dc",
+              "colorSpace": "srgb",
+              "red": 0.803921568627451,
+              "green": 0.8313725490196079,
+              "blue": 0.8627450980392157,
+              "alpha": 1
+            },
+            "input": {
+              "css": "#c0c9d4",
+              "colorSpace": "srgb",
+              "red": 0.7529411764705882,
+              "green": 0.788235294117647,
+              "blue": 0.8313725490196079,
+              "alpha": 1
+            },
+            "focus": {
+              "css": "#2672af",
+              "colorSpace": "srgb",
+              "red": 0.14901960784313725,
+              "green": 0.4470588235294118,
+              "blue": 0.6862745098039216,
+              "alpha": 1
+            },
+            "accent": {
+              "css": "#2672af",
+              "colorSpace": "srgb",
+              "red": 0.14901960784313725,
+              "green": 0.4470588235294118,
+              "blue": 0.6862745098039216,
+              "alpha": 1
+            },
+            "accentForeground": {
+              "css": "#fffaff",
+              "colorSpace": "srgb",
+              "red": 1,
+              "green": 0.9803921568627451,
+              "blue": 1,
+              "alpha": 1
+            },
+            "secondary": {
+              "css": "#e4ecf2",
+              "colorSpace": "srgb",
+              "red": 0.8941176470588236,
+              "green": 0.9254901960784314,
+              "blue": 0.9490196078431372,
+              "alpha": 1
+            },
+            "secondaryForeground": {
+              "css": "#241523",
+              "colorSpace": "srgb",
+              "red": 0.1411764705882353,
+              "green": 0.08235294117647059,
+              "blue": 0.13725490196078433,
+              "alpha": 1
+            },
+            "muted": {
+              "css": "#e8eff4",
+              "colorSpace": "srgb",
+              "red": 0.9098039215686274,
+              "green": 0.9372549019607843,
+              "blue": 0.9568627450980393,
+              "alpha": 1
+            },
+            "mutedForeground": {
+              "css": "#746c75",
+              "colorSpace": "srgb",
+              "red": 0.4549019607843137,
+              "green": 0.4235294117647059,
+              "blue": 0.4588235294117647,
+              "alpha": 1
+            },
+            "placeholder": {
+              "css": "#746c75",
+              "colorSpace": "srgb",
+              "red": 0.4549019607843137,
+              "green": 0.4235294117647059,
+              "blue": 0.4588235294117647,
+              "alpha": 1
+            },
+            "secondaryLabel": {
+              "css": "#746c75",
+              "colorSpace": "srgb",
+              "red": 0.4549019607843137,
+              "green": 0.4235294117647059,
+              "blue": 0.4588235294117647,
+              "alpha": 1
+            },
+            "iconMuted": {
+              "css": "#746c75",
+              "colorSpace": "srgb",
+              "red": 0.4549019607843137,
+              "green": 0.4235294117647059,
+              "blue": 0.4588235294117647,
+              "alpha": 1
+            },
+            "error": {
+              "css": "#fb2c36",
+              "colorSpace": "srgb",
+              "red": 0.984313725490196,
+              "green": 0.17254901960784313,
+              "blue": 0.21176470588235294,
+              "alpha": 1
+            },
+            "errorForeground": {
+              "css": "#c10007",
+              "colorSpace": "srgb",
+              "red": 0.7568627450980392,
+              "green": 0,
+              "blue": 0.027450980392156862,
+              "alpha": 1
+            },
+            "errorSurface": {
+              "css": "#f5e6e9",
+              "colorSpace": "srgb",
+              "red": 0.9607843137254902,
+              "green": 0.9019607843137255,
+              "blue": 0.9137254901960784,
+              "alpha": 1
+            },
+            "warning": {
+              "css": "#fe9a00",
+              "colorSpace": "srgb",
+              "red": 0.996078431372549,
+              "green": 0.6039215686274509,
+              "blue": 0,
+              "alpha": 1
+            },
+            "warningForeground": {
+              "css": "#ab5325",
+              "colorSpace": "srgb",
+              "red": 0.6705882352941176,
+              "green": 0.3254901960784314,
+              "blue": 0.1450980392156863,
+              "alpha": 1
+            },
+            "warningSurface": {
+              "css": "#f6efe4",
+              "colorSpace": "srgb",
+              "red": 0.9647058823529412,
+              "green": 0.9372549019607843,
+              "blue": 0.8941176470588236,
+              "alpha": 1
+            },
+            "update": {
+              "css": "#2672af",
+              "colorSpace": "srgb",
+              "red": 0.14901960784313725,
+              "green": 0.4470588235294118,
+              "blue": 0.6862745098039216,
+              "alpha": 1
+            },
+            "updateForeground": {
+              "css": "#194a72",
+              "colorSpace": "srgb",
+              "red": 0.09803921568627451,
+              "green": 0.2901960784313726,
+              "blue": 0.4470588235294118,
+              "alpha": 1
+            },
+            "updateSurface": {
+              "css": "#d4e1ed",
+              "colorSpace": "srgb",
+              "red": 0.8313725490196079,
+              "green": 0.8823529411764706,
+              "blue": 0.9294117647058824,
+              "alpha": 1
+            },
+            "accentSurface": {
+              "css": "#d8e4ee",
+              "colorSpace": "srgb",
+              "red": 0.8470588235294118,
+              "green": 0.8941176470588236,
+              "blue": 0.9333333333333333,
+              "alpha": 1
+            },
+            "accentSurfaceForeground": {
+              "css": "#241523",
+              "colorSpace": "srgb",
+              "red": 0.1411764705882353,
+              "green": 0.08235294117647059,
+              "blue": 0.13725490196078433,
+              "alpha": 1
+            },
+            "messageSurface": {
+              "css": "#d0dfeb",
+              "colorSpace": "srgb",
+              "red": 0.8156862745098039,
+              "green": 0.8745098039215686,
+              "blue": 0.9215686274509803,
+              "alpha": 1
+            },
+            "messageForeground": {
+              "css": "#241523",
+              "colorSpace": "srgb",
+              "red": 0.1411764705882353,
+              "green": 0.08235294117647059,
+              "blue": 0.13725490196078433,
+              "alpha": 1
+            },
+            "messageAction": {
+              "css": "#0a6f75",
+              "colorSpace": "srgb",
+              "red": 0.0392156862745098,
+              "green": 0.43529411764705883,
+              "blue": 0.4588235294117647,
+              "alpha": 1
+            },
+            "messageActionForeground": {
+              "css": "#fffaff",
+              "colorSpace": "srgb",
+              "red": 1,
+              "green": 0.9803921568627451,
+              "blue": 1,
+              "alpha": 1
+            },
+            "messageActionHover": {
+              "css": "#096267",
+              "colorSpace": "srgb",
+              "red": 0.03529411764705882,
+              "green": 0.3843137254901961,
+              "blue": 0.403921568627451,
+              "alpha": 1
+            },
+            "codeBackground": {
+              "css": "#f0f1f3",
+              "colorSpace": "srgb",
+              "red": 0.9411764705882353,
+              "green": 0.9450980392156862,
+              "blue": 0.9529411764705882,
+              "alpha": 1
+            },
+            "codeForeground": {
+              "css": "#241523",
+              "colorSpace": "srgb",
+              "red": 0.1411764705882353,
+              "green": 0.08235294117647059,
+              "blue": 0.13725490196078433,
+              "alpha": 1
+            },
+            "sidebar": {
+              "css": "#e4ecf2",
+              "colorSpace": "srgb",
+              "red": 0.8941176470588236,
+              "green": 0.9254901960784314,
+              "blue": 0.9490196078431372,
+              "alpha": 1
+            },
+            "sidebarForeground": {
+              "css": "#241523",
+              "colorSpace": "srgb",
+              "red": 0.1411764705882353,
+              "green": 0.08235294117647059,
+              "blue": 0.13725490196078433,
+              "alpha": 1
+            },
+            "sidebarMutedForeground": {
+              "css": "#6c6570",
+              "colorSpace": "srgb",
+              "red": 0.4235294117647059,
+              "green": 0.396078431372549,
+              "blue": 0.4392156862745098,
+              "alpha": 1
+            },
+            "sidebarControlSurface": {
+              "css": "#d5dbe2",
+              "colorSpace": "srgb",
+              "red": 0.8352941176470589,
+              "green": 0.8588235294117647,
+              "blue": 0.8862745098039215,
+              "alpha": 1
+            },
+            "sidebarRowHover": {
+              "css": "#cdddea",
+              "colorSpace": "srgb",
+              "red": 0.803921568627451,
+              "green": 0.8666666666666667,
+              "blue": 0.9176470588235294,
+              "alpha": 1
+            },
+            "sidebarRowActive": {
+              "css": "#bed4e5",
+              "colorSpace": "srgb",
+              "red": 0.7450980392156863,
+              "green": 0.8313725490196079,
+              "blue": 0.8980392156862745,
+              "alpha": 1
+            },
+            "sidebarRowSelected": {
+              "css": "#b7cfe2",
+              "colorSpace": "srgb",
+              "red": 0.7176470588235294,
+              "green": 0.8117647058823529,
+              "blue": 0.8862745098039215,
+              "alpha": 1
+            },
+            "sidebarBorder": {
+              "css": "#cdd2d9",
+              "colorSpace": "srgb",
+              "red": 0.803921568627451,
+              "green": 0.8235294117647058,
+              "blue": 0.8509803921568627,
+              "alpha": 1
+            },
+            "terminalBackground": {
+              "css": "#f5f7f8",
+              "colorSpace": "srgb",
+              "red": 0.9607843137254902,
+              "green": 0.9686274509803922,
+              "blue": 0.9725490196078431,
+              "alpha": 1
+            },
+            "terminalForeground": {
+              "css": "#241523",
+              "colorSpace": "srgb",
+              "red": 0.1411764705882353,
+              "green": 0.08235294117647059,
+              "blue": 0.13725490196078433,
+              "alpha": 1
+            },
+            "terminalCursor": {
+              "css": "#2672af",
+              "colorSpace": "srgb",
+              "red": 0.14901960784313725,
+              "green": 0.4470588235294118,
+              "blue": 0.6862745098039216,
+              "alpha": 1
+            },
+            "terminalSelection": {
+              "css": "#d0dfeb",
+              "colorSpace": "srgb",
+              "red": 0.8156862745098039,
+              "green": 0.8745098039215686,
+              "blue": 0.9215686274509803,
+              "alpha": 1
+            },
+            "terminalScrollbar": {
+              "css": "#c7c5c9",
+              "colorSpace": "srgb",
+              "red": 0.7803921568627451,
+              "green": 0.7725490196078432,
+              "blue": 0.788235294117647,
+              "alpha": 1
+            },
+            "terminalScrollbarHover": {
+              "css": "#b2aeb4",
+              "colorSpace": "srgb",
+              "red": 0.6980392156862745,
+              "green": 0.6823529411764706,
+              "blue": 0.7058823529411765,
+              "alpha": 1
+            }
+          }
+        },
+        {
+          "appearance": "dark",
+          "colors": {
+            "canvas": {
+              "css": "#17212b",
+              "colorSpace": "srgb",
+              "red": 0.09019607843137255,
+              "green": 0.12941176470588237,
+              "blue": 0.16862745098039217,
+              "alpha": 1
+            },
+            "chrome": {
+              "css": "#17212b",
+              "colorSpace": "srgb",
+              "red": 0.09019607843137255,
+              "green": 0.12941176470588237,
+              "blue": 0.16862745098039217,
+              "alpha": 1
+            },
+            "toolbar": {
+              "css": "#17212b",
+              "colorSpace": "srgb",
+              "red": 0.09019607843137255,
+              "green": 0.12941176470588237,
+              "blue": 0.16862745098039217,
+              "alpha": 1
+            },
+            "toolbarForeground": {
+              "css": "#fffaff",
+              "colorSpace": "srgb",
+              "red": 1,
+              "green": 0.9803921568627451,
+              "blue": 1,
+              "alpha": 1
+            },
+            "toolbarBorder": {
+              "css": "#36566f",
+              "colorSpace": "srgb",
+              "red": 0.21176470588235294,
+              "green": 0.33725490196078434,
+              "blue": 0.43529411764705883,
+              "alpha": 1
+            },
+            "toolbarControl": {
+              "css": "#293f52",
+              "colorSpace": "srgb",
+              "red": 0.1607843137254902,
+              "green": 0.24705882352941178,
+              "blue": 0.3215686274509804,
+              "alpha": 1
+            },
+            "toolbarControlForeground": {
+              "css": "#fffaff",
+              "colorSpace": "srgb",
+              "red": 1,
+              "green": 0.9803921568627451,
+              "blue": 1,
+              "alpha": 1
+            },
+            "toolbarControlHover": {
+              "css": "#324e66",
+              "colorSpace": "srgb",
+              "red": 0.19607843137254902,
+              "green": 0.3058823529411765,
+              "blue": 0.4,
+              "alpha": 1
+            },
+            "surface": {
+              "css": "#17212b",
+              "colorSpace": "srgb",
+              "red": 0.09019607843137255,
+              "green": 0.12941176470588237,
+              "blue": 0.16862745098039217,
+              "alpha": 1
+            },
+            "surfaceRaised": {
+              "css": "#333b45",
+              "colorSpace": "srgb",
+              "red": 0.2,
+              "green": 0.23137254901960785,
+              "blue": 0.27058823529411763,
+              "alpha": 1
+            },
+            "surfaceOverlay": {
+              "css": "#414851",
+              "colorSpace": "srgb",
+              "red": 0.2549019607843137,
+              "green": 0.2823529411764706,
+              "blue": 0.3176470588235294,
+              "alpha": 1
+            },
+            "text": {
+              "css": "#fffaff",
+              "colorSpace": "srgb",
+              "red": 1,
+              "green": 0.9803921568627451,
+              "blue": 1,
+              "alpha": 1
+            },
+            "textMuted": {
+              "css": "#8d8f97",
+              "colorSpace": "srgb",
+              "red": 0.5529411764705883,
+              "green": 0.5607843137254902,
+              "blue": 0.592156862745098,
+              "alpha": 1
+            },
+            "border": {
+              "css": "#405567",
+              "colorSpace": "srgb",
+              "red": 0.25098039215686274,
+              "green": 0.3333333333333333,
+              "blue": 0.403921568627451,
+              "alpha": 1
+            },
+            "input": {
+              "css": "#4f677b",
+              "colorSpace": "srgb",
+              "red": 0.30980392156862746,
+              "green": 0.403921568627451,
+              "blue": 0.4823529411764706,
+              "alpha": 1
+            },
+            "focus": {
+              "css": "#70b9ee",
+              "colorSpace": "srgb",
+              "red": 0.4392156862745098,
+              "green": 0.7254901960784313,
+              "blue": 0.9333333333333333,
+              "alpha": 1
+            },
+            "accent": {
+              "css": "#70b9ee",
+              "colorSpace": "srgb",
+              "red": 0.4392156862745098,
+              "green": 0.7254901960784313,
+              "blue": 0.9333333333333333,
+              "alpha": 1
+            },
+            "accentForeground": {
+              "css": "#241523",
+              "colorSpace": "srgb",
+              "red": 0.1411764705882353,
+              "green": 0.08235294117647059,
+              "blue": 0.13725490196078433,
+              "alpha": 1
+            },
+            "secondary": {
+              "css": "#293f52",
+              "colorSpace": "srgb",
+              "red": 0.1607843137254902,
+              "green": 0.24705882352941178,
+              "blue": 0.3215686274509804,
+              "alpha": 1
+            },
+            "secondaryForeground": {
+              "css": "#fffaff",
+              "colorSpace": "srgb",
+              "red": 1,
+              "green": 0.9803921568627451,
+              "blue": 1,
+              "alpha": 1
+            },
+            "muted": {
+              "css": "#233544",
+              "colorSpace": "srgb",
+              "red": 0.13725490196078433,
+              "green": 0.20784313725490197,
+              "blue": 0.26666666666666666,
+              "alpha": 1
+            },
+            "mutedForeground": {
+              "css": "#8d8f97",
+              "colorSpace": "srgb",
+              "red": 0.5529411764705883,
+              "green": 0.5607843137254902,
+              "blue": 0.592156862745098,
+              "alpha": 1
+            },
+            "placeholder": {
+              "css": "#8d8f97",
+              "colorSpace": "srgb",
+              "red": 0.5529411764705883,
+              "green": 0.5607843137254902,
+              "blue": 0.592156862745098,
+              "alpha": 1
+            },
+            "secondaryLabel": {
+              "css": "#8d8f97",
+              "colorSpace": "srgb",
+              "red": 0.5529411764705883,
+              "green": 0.5607843137254902,
+              "blue": 0.592156862745098,
+              "alpha": 1
+            },
+            "iconMuted": {
+              "css": "#8d8f97",
+              "colorSpace": "srgb",
+              "red": 0.5529411764705883,
+              "green": 0.5607843137254902,
+              "blue": 0.592156862745098,
+              "alpha": 1
+            },
+            "error": {
+              "css": "#fb414a",
+              "colorSpace": "srgb",
+              "red": 0.984313725490196,
+              "green": 0.2549019607843137,
+              "blue": 0.2901960784313726,
+              "alpha": 1
+            },
+            "errorForeground": {
+              "css": "#ff6467",
+              "colorSpace": "srgb",
+              "red": 1,
+              "green": 0.39215686274509803,
+              "blue": 0.403921568627451,
+              "alpha": 1
+            },
+            "errorSurface": {
+              "css": "#3c2630",
+              "colorSpace": "srgb",
+              "red": 0.23529411764705882,
+              "green": 0.14901960784313725,
+              "blue": 0.18823529411764706,
+              "alpha": 1
+            },
+            "warning": {
+              "css": "#fe9a00",
+              "colorSpace": "srgb",
+              "red": 0.996078431372549,
+              "green": 0.6039215686274509,
+              "blue": 0,
+              "alpha": 1
+            },
+            "warningForeground": {
+              "css": "#ffb900",
+              "colorSpace": "srgb",
+              "red": 1,
+              "green": 0.7254901960784313,
+              "blue": 0,
+              "alpha": 1
+            },
+            "warningSurface": {
+              "css": "#3c3424",
+              "colorSpace": "srgb",
+              "red": 0.23529411764705882,
+              "green": 0.20392156862745098,
+              "blue": 0.1411764705882353,
+              "alpha": 1
+            },
+            "update": {
+              "css": "#70b9ee",
+              "colorSpace": "srgb",
+              "red": 0.4392156862745098,
+              "green": 0.7254901960784313,
+              "blue": 0.9333333333333333,
+              "alpha": 1
+            },
+            "updateForeground": {
+              "css": "#a2d2f4",
+              "colorSpace": "srgb",
+              "red": 0.6352941176470588,
+              "green": 0.8235294117647058,
+              "blue": 0.9568627450980393,
+              "alpha": 1
+            },
+            "updateSurface": {
+              "css": "#345269",
+              "colorSpace": "srgb",
+              "red": 0.20392156862745098,
+              "green": 0.3215686274509804,
+              "blue": 0.4117647058823529,
+              "alpha": 1
+            },
+            "accentSurface": {
+              "css": "#324e66",
+              "colorSpace": "srgb",
+              "red": 0.19607843137254902,
+              "green": 0.3058823529411765,
+              "blue": 0.4,
+              "alpha": 1
+            },
+            "accentSurfaceForeground": {
+              "css": "#fffaff",
+              "colorSpace": "srgb",
+              "red": 1,
+              "green": 0.9803921568627451,
+              "blue": 1,
+              "alpha": 1
+            },
+            "messageSurface": {
+              "css": "#375871",
+              "colorSpace": "srgb",
+              "red": 0.21568627450980393,
+              "green": 0.34509803921568627,
+              "blue": 0.44313725490196076,
+              "alpha": 1
+            },
+            "messageForeground": {
+              "css": "#fffaff",
+              "colorSpace": "srgb",
+              "red": 1,
+              "green": 0.9803921568627451,
+              "blue": 1,
+              "alpha": 1
+            },
+            "messageAction": {
+              "css": "#5bd0d6",
+              "colorSpace": "srgb",
+              "red": 0.3568627450980392,
+              "green": 0.8156862745098039,
+              "blue": 0.8392156862745098,
+              "alpha": 1
+            },
+            "messageActionForeground": {
+              "css": "#241523",
+              "colorSpace": "srgb",
+              "red": 0.1411764705882353,
+              "green": 0.08235294117647059,
+              "blue": 0.13725490196078433,
+              "alpha": 1
+            },
+            "messageActionHover": {
+              "css": "#6fd6db",
+              "colorSpace": "srgb",
+              "red": 0.43529411764705883,
+              "green": 0.8392156862745098,
+              "blue": 0.8588235294117647,
+              "alpha": 1
+            },
+            "codeBackground": {
+              "css": "#252e38",
+              "colorSpace": "srgb",
+              "red": 0.1450980392156863,
+              "green": 0.1803921568627451,
+              "blue": 0.2196078431372549,
+              "alpha": 1
+            },
+            "codeForeground": {
+              "css": "#fffaff",
+              "colorSpace": "srgb",
+              "red": 1,
+              "green": 0.9803921568627451,
+              "blue": 1,
+              "alpha": 1
+            },
+            "sidebar": {
+              "css": "#1e2d3b",
+              "colorSpace": "srgb",
+              "red": 0.11764705882352941,
+              "green": 0.17647058823529413,
+              "blue": 0.23137254901960785,
+              "alpha": 1
+            },
+            "sidebarForeground": {
+              "css": "#fffaff",
+              "colorSpace": "srgb",
+              "red": 1,
+              "green": 0.9803921568627451,
+              "blue": 1,
+              "alpha": 1
+            },
+            "sidebarMutedForeground": {
+              "css": "#989ca5",
+              "colorSpace": "srgb",
+              "red": 0.596078431372549,
+              "green": 0.611764705882353,
+              "blue": 0.6470588235294118,
+              "alpha": 1
+            },
+            "sidebarControlSurface": {
+              "css": "#424e5a",
+              "colorSpace": "srgb",
+              "red": 0.25882352941176473,
+              "green": 0.3058823529411765,
+              "blue": 0.35294117647058826,
+              "alpha": 1
+            },
+            "sidebarRowHover": {
+              "css": "#283e50",
+              "colorSpace": "srgb",
+              "red": 0.1568627450980392,
+              "green": 0.24313725490196078,
+              "blue": 0.3137254901960784,
+              "alpha": 1
+            },
+            "sidebarRowActive": {
+              "css": "#2f495f",
+              "colorSpace": "srgb",
+              "red": 0.1843137254901961,
+              "green": 0.28627450980392155,
+              "blue": 0.37254901960784315,
+              "alpha": 1
+            },
+            "sidebarRowSelected": {
+              "css": "#324f66",
+              "colorSpace": "srgb",
+              "red": 0.19607843137254902,
+              "green": 0.30980392156862746,
+              "blue": 0.4,
+              "alpha": 1
+            },
+            "sidebarBorder": {
+              "css": "#6d757f",
+              "colorSpace": "srgb",
+              "red": 0.42745098039215684,
+              "green": 0.4588235294117647,
+              "blue": 0.4980392156862745,
+              "alpha": 1
+            },
+            "terminalBackground": {
+              "css": "#17212b",
+              "colorSpace": "srgb",
+              "red": 0.09019607843137255,
+              "green": 0.12941176470588237,
+              "blue": 0.16862745098039217,
+              "alpha": 1
+            },
+            "terminalForeground": {
+              "css": "#fffaff",
+              "colorSpace": "srgb",
+              "red": 1,
+              "green": 0.9803921568627451,
+              "blue": 1,
+              "alpha": 1
+            },
+            "terminalCursor": {
+              "css": "#70b9ee",
+              "colorSpace": "srgb",
+              "red": 0.4392156862745098,
+              "green": 0.7254901960784313,
+              "blue": 0.9333333333333333,
+              "alpha": 1
+            },
+            "terminalSelection": {
+              "css": "#36566f",
+              "colorSpace": "srgb",
+              "red": 0.21176470588235294,
+              "green": 0.33725490196078434,
+              "blue": 0.43529411764705883,
+              "alpha": 1
+            },
+            "terminalScrollbar": {
+              "css": "#797c84",
+              "colorSpace": "srgb",
+              "red": 0.4745098039215686,
+              "green": 0.48627450980392156,
+              "blue": 0.5176470588235295,
+              "alpha": 1
+            },
+            "terminalScrollbarHover": {
+              "css": "#9798a0",
+              "colorSpace": "srgb",
+              "red": 0.592156862745098,
+              "green": 0.596078431372549,
+              "blue": 0.6274509803921569,
+              "alpha": 1
+            }
+          }
+        }
+      ],
+      "provenance": {
+        "source": "builtin"
+      }
+    },
+    {
+      "id": "ember",
+      "label": "Ember",
+      "modes": [
+        {
+          "appearance": "light",
+          "colors": {
+            "canvas": {
+              "css": "#f9f7f5",
+              "colorSpace": "srgb",
+              "red": 0.9764705882352941,
+              "green": 0.9686274509803922,
+              "blue": 0.9607843137254902,
+              "alpha": 1
+            },
+            "chrome": {
+              "css": "#f9f7f5",
+              "colorSpace": "srgb",
+              "red": 0.9764705882352941,
+              "green": 0.9686274509803922,
+              "blue": 0.9607843137254902,
+              "alpha": 1
+            },
+            "toolbar": {
+              "css": "#f9f7f5",
+              "colorSpace": "srgb",
+              "red": 0.9764705882352941,
+              "green": 0.9686274509803922,
+              "blue": 0.9607843137254902,
+              "alpha": 1
+            },
+            "toolbarForeground": {
+              "css": "#241523",
+              "colorSpace": "srgb",
+              "red": 0.1411764705882353,
+              "green": 0.08235294117647059,
+              "blue": 0.13725490196078433,
+              "alpha": 1
+            },
+            "toolbarBorder": {
+              "css": "#eee0d9",
+              "colorSpace": "srgb",
+              "red": 0.9333333333333333,
+              "green": 0.8784313725490196,
+              "blue": 0.8509803921568627,
+              "alpha": 1
+            },
+            "toolbarControl": {
+              "css": "#f3eae5",
+              "colorSpace": "srgb",
+              "red": 0.9529411764705882,
+              "green": 0.9176470588235294,
+              "blue": 0.8980392156862745,
+              "alpha": 1
+            },
+            "toolbarControlForeground": {
+              "css": "#241523",
+              "colorSpace": "srgb",
+              "red": 0.1411764705882353,
+              "green": 0.08235294117647059,
+              "blue": 0.13725490196078433,
+              "alpha": 1
+            },
+            "toolbarControlHover": {
+              "css": "#eee0d9",
+              "colorSpace": "srgb",
+              "red": 0.9333333333333333,
+              "green": 0.8784313725490196,
+              "blue": 0.8509803921568627,
+              "alpha": 1
+            },
+            "surface": {
+              "css": "#f9f7f5",
+              "colorSpace": "srgb",
+              "red": 0.9764705882352941,
+              "green": 0.9686274509803922,
+              "blue": 0.9607843137254902,
+              "alpha": 1
+            },
+            "surfaceRaised": {
+              "css": "#f1efee",
+              "colorSpace": "srgb",
+              "red": 0.9450980392156862,
+              "green": 0.9372549019607843,
+              "blue": 0.9333333333333333,
+              "alpha": 1
+            },
+            "surfaceOverlay": {
+              "css": "#ece9e9",
+              "colorSpace": "srgb",
+              "red": 0.9254901960784314,
+              "green": 0.9137254901960784,
+              "blue": 0.9137254901960784,
+              "alpha": 1
+            },
+            "text": {
+              "css": "#241523",
+              "colorSpace": "srgb",
+              "red": 0.1411764705882353,
+              "green": 0.08235294117647059,
+              "blue": 0.13725490196078433,
+              "alpha": 1
+            },
+            "textMuted": {
+              "css": "#766c74",
+              "colorSpace": "srgb",
+              "red": 0.4627450980392157,
+              "green": 0.4235294117647059,
+              "blue": 0.4549019607843137,
+              "alpha": 1
+            },
+            "border": {
+              "css": "#ddd2ce",
+              "colorSpace": "srgb",
+              "red": 0.8666666666666667,
+              "green": 0.8235294117647058,
+              "blue": 0.807843137254902,
+              "alpha": 1
+            },
+            "input": {
+              "css": "#d4c6c1",
+              "colorSpace": "srgb",
+              "red": 0.8313725490196079,
+              "green": 0.7764705882352941,
+              "blue": 0.7568627450980392,
+              "alpha": 1
+            },
+            "focus": {
+              "css": "#ae552a",
+              "colorSpace": "srgb",
+              "red": 0.6823529411764706,
+              "green": 0.3333333333333333,
+              "blue": 0.16470588235294117,
+              "alpha": 1
+            },
+            "accent": {
+              "css": "#ae552a",
+              "colorSpace": "srgb",
+              "red": 0.6823529411764706,
+              "green": 0.3333333333333333,
+              "blue": 0.16470588235294117,
+              "alpha": 1
+            },
+            "accentForeground": {
+              "css": "#fffaff",
+              "colorSpace": "srgb",
+              "red": 1,
+              "green": 0.9803921568627451,
+              "blue": 1,
+              "alpha": 1
+            },
+            "secondary": {
+              "css": "#f3eae5",
+              "colorSpace": "srgb",
+              "red": 0.9529411764705882,
+              "green": 0.9176470588235294,
+              "blue": 0.8980392156862745,
+              "alpha": 1
+            },
+            "secondaryForeground": {
+              "css": "#241523",
+              "colorSpace": "srgb",
+              "red": 0.1411764705882353,
+              "green": 0.08235294117647059,
+              "blue": 0.13725490196078433,
+              "alpha": 1
+            },
+            "muted": {
+              "css": "#f4ede9",
+              "colorSpace": "srgb",
+              "red": 0.9568627450980393,
+              "green": 0.9294117647058824,
+              "blue": 0.9137254901960784,
+              "alpha": 1
+            },
+            "mutedForeground": {
+              "css": "#766c74",
+              "colorSpace": "srgb",
+              "red": 0.4627450980392157,
+              "green": 0.4235294117647059,
+              "blue": 0.4549019607843137,
+              "alpha": 1
+            },
+            "placeholder": {
+              "css": "#766c74",
+              "colorSpace": "srgb",
+              "red": 0.4627450980392157,
+              "green": 0.4235294117647059,
+              "blue": 0.4549019607843137,
+              "alpha": 1
+            },
+            "secondaryLabel": {
+              "css": "#766c74",
+              "colorSpace": "srgb",
+              "red": 0.4627450980392157,
+              "green": 0.4235294117647059,
+              "blue": 0.4549019607843137,
+              "alpha": 1
+            },
+            "iconMuted": {
+              "css": "#766c74",
+              "colorSpace": "srgb",
+              "red": 0.4627450980392157,
+              "green": 0.4235294117647059,
+              "blue": 0.4549019607843137,
+              "alpha": 1
+            },
+            "error": {
+              "css": "#fb2c36",
+              "colorSpace": "srgb",
+              "red": 0.984313725490196,
+              "green": 0.17254901960784313,
+              "blue": 0.21176470588235294,
+              "alpha": 1
+            },
+            "errorForeground": {
+              "css": "#c10007",
+              "colorSpace": "srgb",
+              "red": 0.7568627450980392,
+              "green": 0,
+              "blue": 0.027450980392156862,
+              "alpha": 1
+            },
+            "errorSurface": {
+              "css": "#f9e7e6",
+              "colorSpace": "srgb",
+              "red": 0.9764705882352941,
+              "green": 0.9058823529411765,
+              "blue": 0.9019607843137255,
+              "alpha": 1
+            },
+            "warning": {
+              "css": "#fe9a00",
+              "colorSpace": "srgb",
+              "red": 0.996078431372549,
+              "green": 0.6039215686274509,
+              "blue": 0,
+              "alpha": 1
+            },
+            "warningForeground": {
+              "css": "#ac5326",
+              "colorSpace": "srgb",
+              "red": 0.6745098039215687,
+              "green": 0.3254901960784314,
+              "blue": 0.14901960784313725,
+              "alpha": 1
+            },
+            "warningSurface": {
+              "css": "#f9efe2",
+              "colorSpace": "srgb",
+              "red": 0.9764705882352941,
+              "green": 0.9372549019607843,
+              "blue": 0.8862745098039215,
+              "alpha": 1
+            },
+            "update": {
+              "css": "#ae552a",
+              "colorSpace": "srgb",
+              "red": 0.6823529411764706,
+              "green": 0.3333333333333333,
+              "blue": 0.16470588235294117,
+              "alpha": 1
+            },
+            "updateForeground": {
+              "css": "#71381b",
+              "colorSpace": "srgb",
+              "red": 0.44313725490196076,
+              "green": 0.2196078431372549,
+              "blue": 0.10588235294117647,
+              "alpha": 1
+            },
+            "updateSurface": {
+              "css": "#edddd5",
+              "colorSpace": "srgb",
+              "red": 0.9294117647058824,
+              "green": 0.8666666666666667,
+              "blue": 0.8352941176470589,
+              "alpha": 1
+            },
+            "accentSurface": {
+              "css": "#eee0d9",
+              "colorSpace": "srgb",
+              "red": 0.9333333333333333,
+              "green": 0.8784313725490196,
+              "blue": 0.8509803921568627,
+              "alpha": 1
+            },
+            "accentSurfaceForeground": {
+              "css": "#241523",
+              "colorSpace": "srgb",
+              "red": 0.1411764705882353,
+              "green": 0.08235294117647059,
+              "blue": 0.13725490196078433,
+              "alpha": 1
+            },
+            "messageSurface": {
+              "css": "#ebdad1",
+              "colorSpace": "srgb",
+              "red": 0.9215686274509803,
+              "green": 0.8549019607843137,
+              "blue": 0.8196078431372549,
+              "alpha": 1
+            },
+            "messageForeground": {
+              "css": "#241523",
+              "colorSpace": "srgb",
+              "red": 0.1411764705882353,
+              "green": 0.08235294117647059,
+              "blue": 0.13725490196078433,
+              "alpha": 1
+            },
+            "messageAction": {
+              "css": "#b23535",
+              "colorSpace": "srgb",
+              "red": 0.6980392156862745,
+              "green": 0.20784313725490197,
+              "blue": 0.20784313725490197,
+              "alpha": 1
+            },
+            "messageActionForeground": {
+              "css": "#fffaff",
+              "colorSpace": "srgb",
+              "red": 1,
+              "green": 0.9803921568627451,
+              "blue": 1,
+              "alpha": 1
+            },
+            "messageActionHover": {
+              "css": "#9d2f2f",
+              "colorSpace": "srgb",
+              "red": 0.615686274509804,
+              "green": 0.1843137254901961,
+              "blue": 0.1843137254901961,
+              "alpha": 1
+            },
+            "codeBackground": {
+              "css": "#f3f1f0",
+              "colorSpace": "srgb",
+              "red": 0.9529411764705882,
+              "green": 0.9450980392156862,
+              "blue": 0.9411764705882353,
+              "alpha": 1
+            },
+            "codeForeground": {
+              "css": "#241523",
+              "colorSpace": "srgb",
+              "red": 0.1411764705882353,
+              "green": 0.08235294117647059,
+              "blue": 0.13725490196078433,
+              "alpha": 1
+            },
+            "sidebar": {
+              "css": "#f3eae5",
+              "colorSpace": "srgb",
+              "red": 0.9529411764705882,
+              "green": 0.9176470588235294,
+              "blue": 0.8980392156862745,
+              "alpha": 1
+            },
+            "sidebarForeground": {
+              "css": "#241523",
+              "colorSpace": "srgb",
+              "red": 0.1411764705882353,
+              "green": 0.08235294117647059,
+              "blue": 0.13725490196078433,
+              "alpha": 1
+            },
+            "sidebarMutedForeground": {
+              "css": "#71646b",
+              "colorSpace": "srgb",
+              "red": 0.44313725490196076,
+              "green": 0.39215686274509803,
+              "blue": 0.4196078431372549,
+              "alpha": 1
+            },
+            "sidebarControlSurface": {
+              "css": "#e2d9d6",
+              "colorSpace": "srgb",
+              "red": 0.8862745098039215,
+              "green": 0.8509803921568627,
+              "blue": 0.8392156862745098,
+              "alpha": 1
+            },
+            "sidebarRowHover": {
+              "css": "#ead8cf",
+              "colorSpace": "srgb",
+              "red": 0.9176470588235294,
+              "green": 0.8470588235294118,
+              "blue": 0.8117647058823529,
+              "alpha": 1
+            },
+            "sidebarRowActive": {
+              "css": "#e5ccc0",
+              "colorSpace": "srgb",
+              "red": 0.8980392156862745,
+              "green": 0.8,
+              "blue": 0.7529411764705882,
+              "alpha": 1
+            },
+            "sidebarRowSelected": {
+              "css": "#e2c6b8",
+              "colorSpace": "srgb",
+              "red": 0.8862745098039215,
+              "green": 0.7764705882352941,
+              "blue": 0.7215686274509804,
+              "alpha": 1
+            },
+            "sidebarBorder": {
+              "css": "#dad0ce",
+              "colorSpace": "srgb",
+              "red": 0.8549019607843137,
+              "green": 0.8156862745098039,
+              "blue": 0.807843137254902,
+              "alpha": 1
+            },
+            "terminalBackground": {
+              "css": "#f9f7f5",
+              "colorSpace": "srgb",
+              "red": 0.9764705882352941,
+              "green": 0.9686274509803922,
+              "blue": 0.9607843137254902,
+              "alpha": 1
+            },
+            "terminalForeground": {
+              "css": "#241523",
+              "colorSpace": "srgb",
+              "red": 0.1411764705882353,
+              "green": 0.08235294117647059,
+              "blue": 0.13725490196078433,
+              "alpha": 1
+            },
+            "terminalCursor": {
+              "css": "#ae552a",
+              "colorSpace": "srgb",
+              "red": 0.6823529411764706,
+              "green": 0.3333333333333333,
+              "blue": 0.16470588235294117,
+              "alpha": 1
+            },
+            "terminalSelection": {
+              "css": "#ebdad1",
+              "colorSpace": "srgb",
+              "red": 0.9215686274509803,
+              "green": 0.8549019607843137,
+              "blue": 0.8196078431372549,
+              "alpha": 1
+            },
+            "terminalScrollbar": {
+              "css": "#cac5c7",
+              "colorSpace": "srgb",
+              "red": 0.792156862745098,
+              "green": 0.7725490196078432,
+              "blue": 0.7803921568627451,
+              "alpha": 1
+            },
+            "terminalScrollbarHover": {
+              "css": "#b5afb2",
+              "colorSpace": "srgb",
+              "red": 0.7098039215686275,
+              "green": 0.6862745098039216,
+              "blue": 0.6980392156862745,
+              "alpha": 1
+            }
+          }
+        },
+        {
+          "appearance": "dark",
+          "colors": {
+            "canvas": {
+              "css": "#291e1a",
+              "colorSpace": "srgb",
+              "red": 0.1607843137254902,
+              "green": 0.11764705882352941,
+              "blue": 0.10196078431372549,
+              "alpha": 1
+            },
+            "chrome": {
+              "css": "#291e1a",
+              "colorSpace": "srgb",
+              "red": 0.1607843137254902,
+              "green": 0.11764705882352941,
+              "blue": 0.10196078431372549,
+              "alpha": 1
+            },
+            "toolbar": {
+              "css": "#291e1a",
+              "colorSpace": "srgb",
+              "red": 0.1607843137254902,
+              "green": 0.11764705882352941,
+              "blue": 0.10196078431372549,
+              "alpha": 1
+            },
+            "toolbarForeground": {
+              "css": "#fffaff",
+              "colorSpace": "srgb",
+              "red": 1,
+              "green": 0.9803921568627451,
+              "blue": 1,
+              "alpha": 1
+            },
+            "toolbarBorder": {
+              "css": "#6e4934",
+              "colorSpace": "srgb",
+              "red": 0.43137254901960786,
+              "green": 0.28627450980392155,
+              "blue": 0.20392156862745098,
+              "alpha": 1
+            },
+            "toolbarControl": {
+              "css": "#513728",
+              "colorSpace": "srgb",
+              "red": 0.3176470588235294,
+              "green": 0.21568627450980393,
+              "blue": 0.1568627450980392,
+              "alpha": 1
+            },
+            "toolbarControlForeground": {
+              "css": "#fffaff",
+              "colorSpace": "srgb",
+              "red": 1,
+              "green": 0.9803921568627451,
+              "blue": 1,
+              "alpha": 1
+            },
+            "toolbarControlHover": {
+              "css": "#644330",
+              "colorSpace": "srgb",
+              "red": 0.39215686274509803,
+              "green": 0.2627450980392157,
+              "blue": 0.18823529411764706,
+              "alpha": 1
+            },
+            "surface": {
+              "css": "#291e1a",
+              "colorSpace": "srgb",
+              "red": 0.1607843137254902,
+              "green": 0.11764705882352941,
+              "blue": 0.10196078431372549,
+              "alpha": 1
+            },
+            "surfaceRaised": {
+              "css": "#433835",
+              "colorSpace": "srgb",
+              "red": 0.2627450980392157,
+              "green": 0.2196078431372549,
+              "blue": 0.20784313725490197,
+              "alpha": 1
+            },
+            "surfaceOverlay": {
+              "css": "#4f4543",
+              "colorSpace": "srgb",
+              "red": 0.30980392156862746,
+              "green": 0.27058823529411763,
+              "blue": 0.2627450980392157,
+              "alpha": 1
+            },
+            "text": {
+              "css": "#fffaff",
+              "colorSpace": "srgb",
+              "red": 1,
+              "green": 0.9803921568627451,
+              "blue": 1,
+              "alpha": 1
+            },
+            "textMuted": {
+              "css": "#968e8f",
+              "colorSpace": "srgb",
+              "red": 0.5882352941176471,
+              "green": 0.5568627450980392,
+              "blue": 0.5607843137254902,
+              "alpha": 1
+            },
+            "border": {
+              "css": "#664c3f",
+              "colorSpace": "srgb",
+              "red": 0.4,
+              "green": 0.2980392156862745,
+              "blue": 0.24705882352941178,
+              "alpha": 1
+            },
+            "input": {
+              "css": "#7a5d4d",
+              "colorSpace": "srgb",
+              "red": 0.47843137254901963,
+              "green": 0.36470588235294116,
+              "blue": 0.30196078431372547,
+              "alpha": 1
+            },
+            "focus": {
+              "css": "#f09a64",
+              "colorSpace": "srgb",
+              "red": 0.9411764705882353,
+              "green": 0.6039215686274509,
+              "blue": 0.39215686274509803,
+              "alpha": 1
+            },
+            "accent": {
+              "css": "#f09a64",
+              "colorSpace": "srgb",
+              "red": 0.9411764705882353,
+              "green": 0.6039215686274509,
+              "blue": 0.39215686274509803,
+              "alpha": 1
+            },
+            "accentForeground": {
+              "css": "#241523",
+              "colorSpace": "srgb",
+              "red": 0.1411764705882353,
+              "green": 0.08235294117647059,
+              "blue": 0.13725490196078433,
+              "alpha": 1
+            },
+            "secondary": {
+              "css": "#513728",
+              "colorSpace": "srgb",
+              "red": 0.3176470588235294,
+              "green": 0.21568627450980393,
+              "blue": 0.1568627450980392,
+              "alpha": 1
+            },
+            "secondaryForeground": {
+              "css": "#fffaff",
+              "colorSpace": "srgb",
+              "red": 1,
+              "green": 0.9803921568627451,
+              "blue": 1,
+              "alpha": 1
+            },
+            "muted": {
+              "css": "#432e23",
+              "colorSpace": "srgb",
+              "red": 0.2627450980392157,
+              "green": 0.1803921568627451,
+              "blue": 0.13725490196078433,
+              "alpha": 1
+            },
+            "mutedForeground": {
+              "css": "#968e8f",
+              "colorSpace": "srgb",
+              "red": 0.5882352941176471,
+              "green": 0.5568627450980392,
+              "blue": 0.5607843137254902,
+              "alpha": 1
+            },
+            "placeholder": {
+              "css": "#968e8f",
+              "colorSpace": "srgb",
+              "red": 0.5882352941176471,
+              "green": 0.5568627450980392,
+              "blue": 0.5607843137254902,
+              "alpha": 1
+            },
+            "secondaryLabel": {
+              "css": "#968e8f",
+              "colorSpace": "srgb",
+              "red": 0.5882352941176471,
+              "green": 0.5568627450980392,
+              "blue": 0.5607843137254902,
+              "alpha": 1
+            },
+            "iconMuted": {
+              "css": "#968e8f",
+              "colorSpace": "srgb",
+              "red": 0.5882352941176471,
+              "green": 0.5568627450980392,
+              "blue": 0.5607843137254902,
+              "alpha": 1
+            },
+            "error": {
+              "css": "#fb414a",
+              "colorSpace": "srgb",
+              "red": 0.984313725490196,
+              "green": 0.2549019607843137,
+              "blue": 0.2901960784313726,
+              "alpha": 1
+            },
+            "errorForeground": {
+              "css": "#ff6467",
+              "colorSpace": "srgb",
+              "red": 1,
+              "green": 0.39215686274509803,
+              "blue": 0.403921568627451,
+              "alpha": 1
+            },
+            "errorSurface": {
+              "css": "#4a2321",
+              "colorSpace": "srgb",
+              "red": 0.2901960784313726,
+              "green": 0.13725490196078433,
+              "blue": 0.12941176470588237,
+              "alpha": 1
+            },
+            "warning": {
+              "css": "#fe9a00",
+              "colorSpace": "srgb",
+              "red": 0.996078431372549,
+              "green": 0.6039215686274509,
+              "blue": 0,
+              "alpha": 1
+            },
+            "warningForeground": {
+              "css": "#ffb900",
+              "colorSpace": "srgb",
+              "red": 1,
+              "green": 0.7254901960784313,
+              "blue": 0,
+              "alpha": 1
+            },
+            "warningSurface": {
+              "css": "#4b3215",
+              "colorSpace": "srgb",
+              "red": 0.29411764705882354,
+              "green": 0.19607843137254902,
+              "blue": 0.08235294117647059,
+              "alpha": 1
+            },
+            "update": {
+              "css": "#f09a64",
+              "colorSpace": "srgb",
+              "red": 0.9411764705882353,
+              "green": 0.6039215686274509,
+              "blue": 0.39215686274509803,
+              "alpha": 1
+            },
+            "updateForeground": {
+              "css": "#f5bd9a",
+              "colorSpace": "srgb",
+              "red": 0.9607843137254902,
+              "green": 0.7411764705882353,
+              "blue": 0.6039215686274509,
+              "alpha": 1
+            },
+            "updateSurface": {
+              "css": "#684631",
+              "colorSpace": "srgb",
+              "red": 0.40784313725490196,
+              "green": 0.27450980392156865,
+              "blue": 0.19215686274509805,
+              "alpha": 1
+            },
+            "accentSurface": {
+              "css": "#644330",
+              "colorSpace": "srgb",
+              "red": 0.39215686274509803,
+              "green": 0.2627450980392157,
+              "blue": 0.18823529411764706,
+              "alpha": 1
+            },
+            "accentSurfaceForeground": {
+              "css": "#fffaff",
+              "colorSpace": "srgb",
+              "red": 1,
+              "green": 0.9803921568627451,
+              "blue": 1,
+              "alpha": 1
+            },
+            "messageSurface": {
+              "css": "#704b34",
+              "colorSpace": "srgb",
+              "red": 0.4392156862745098,
+              "green": 0.29411764705882354,
+              "blue": 0.20392156862745098,
+              "alpha": 1
+            },
+            "messageForeground": {
+              "css": "#fffaff",
+              "colorSpace": "srgb",
+              "red": 1,
+              "green": 0.9803921568627451,
+              "blue": 1,
+              "alpha": 1
+            },
+            "messageAction": {
+              "css": "#f78a7a",
+              "colorSpace": "srgb",
+              "red": 0.9686274509803922,
+              "green": 0.5411764705882353,
+              "blue": 0.47843137254901963,
+              "alpha": 1
+            },
+            "messageActionForeground": {
+              "css": "#241523",
+              "colorSpace": "srgb",
+              "red": 0.1411764705882353,
+              "green": 0.08235294117647059,
+              "blue": 0.13725490196078433,
+              "alpha": 1
+            },
+            "messageActionHover": {
+              "css": "#f8988a",
+              "colorSpace": "srgb",
+              "red": 0.9725490196078431,
+              "green": 0.596078431372549,
+              "blue": 0.5411764705882353,
+              "alpha": 1
+            },
+            "codeBackground": {
+              "css": "#362b27",
+              "colorSpace": "srgb",
+              "red": 0.21176470588235294,
+              "green": 0.16862745098039217,
+              "blue": 0.15294117647058825,
+              "alpha": 1
+            },
+            "codeForeground": {
+              "css": "#fffaff",
+              "colorSpace": "srgb",
+              "red": 1,
+              "green": 0.9803921568627451,
+              "blue": 1,
+              "alpha": 1
+            },
+            "sidebar": {
+              "css": "#39281f",
+              "colorSpace": "srgb",
+              "red": 0.2235294117647059,
+              "green": 0.1568627450980392,
+              "blue": 0.12156862745098039,
+              "alpha": 1
+            },
+            "sidebarForeground": {
+              "css": "#fffaff",
+              "colorSpace": "srgb",
+              "red": 1,
+              "green": 0.9803921568627451,
+              "blue": 1,
+              "alpha": 1
+            },
+            "sidebarMutedForeground": {
+              "css": "#a49998",
+              "colorSpace": "srgb",
+              "red": 0.6431372549019608,
+              "green": 0.6,
+              "blue": 0.596078431372549,
+              "alpha": 1
+            },
+            "sidebarControlSurface": {
+              "css": "#584943",
+              "colorSpace": "srgb",
+              "red": 0.34509803921568627,
+              "green": 0.28627450980392155,
+              "blue": 0.2627450980392157,
+              "alpha": 1
+            },
+            "sidebarRowHover": {
+              "css": "#4f3528",
+              "colorSpace": "srgb",
+              "red": 0.30980392156862746,
+              "green": 0.20784313725490197,
+              "blue": 0.1568627450980392,
+              "alpha": 1
+            },
+            "sidebarRowActive": {
+              "css": "#5d3f2d",
+              "colorSpace": "srgb",
+              "red": 0.36470588235294116,
+              "green": 0.24705882352941178,
+              "blue": 0.17647058823529413,
+              "alpha": 1
+            },
+            "sidebarRowSelected": {
+              "css": "#654330",
+              "colorSpace": "srgb",
+              "red": 0.396078431372549,
+              "green": 0.2627450980392157,
+              "blue": 0.18823529411764706,
+              "alpha": 1
+            },
+            "sidebarBorder": {
+              "css": "#7e716e",
+              "colorSpace": "srgb",
+              "red": 0.49411764705882355,
+              "green": 0.44313725490196076,
+              "blue": 0.43137254901960786,
+              "alpha": 1
+            },
+            "terminalBackground": {
+              "css": "#291e1a",
+              "colorSpace": "srgb",
+              "red": 0.1607843137254902,
+              "green": 0.11764705882352941,
+              "blue": 0.10196078431372549,
+              "alpha": 1
+            },
+            "terminalForeground": {
+              "css": "#fffaff",
+              "colorSpace": "srgb",
+              "red": 1,
+              "green": 0.9803921568627451,
+              "blue": 1,
+              "alpha": 1
+            },
+            "terminalCursor": {
+              "css": "#f09a64",
+              "colorSpace": "srgb",
+              "red": 0.9411764705882353,
+              "green": 0.6039215686274509,
+              "blue": 0.39215686274509803,
+              "alpha": 1
+            },
+            "terminalSelection": {
+              "css": "#6e4934",
+              "colorSpace": "srgb",
+              "red": 0.43137254901960786,
+              "green": 0.28627450980392155,
+              "blue": 0.20392156862745098,
+              "alpha": 1
+            },
+            "terminalScrollbar": {
+              "css": "#837a7a",
+              "colorSpace": "srgb",
+              "red": 0.5137254901960784,
+              "green": 0.47843137254901963,
+              "blue": 0.47843137254901963,
+              "alpha": 1
+            },
+            "terminalScrollbarHover": {
+              "css": "#9f9798",
+              "colorSpace": "srgb",
+              "red": 0.6235294117647059,
+              "green": 0.592156862745098,
+              "blue": 0.596078431372549,
+              "alpha": 1
+            }
+          }
+        }
+      ],
+      "provenance": {
+        "source": "builtin"
+      }
+    },
+    {
+      "id": "iris",
+      "label": "Iris",
+      "modes": [
+        {
+          "appearance": "light",
+          "colors": {
+            "canvas": {
+              "css": "#f8f7f9",
+              "colorSpace": "srgb",
+              "red": 0.9725490196078431,
+              "green": 0.9686274509803922,
+              "blue": 0.9764705882352941,
+              "alpha": 1
+            },
+            "chrome": {
+              "css": "#f8f7f9",
+              "colorSpace": "srgb",
+              "red": 0.9725490196078431,
+              "green": 0.9686274509803922,
+              "blue": 0.9764705882352941,
+              "alpha": 1
+            },
+            "toolbar": {
+              "css": "#f8f7f9",
+              "colorSpace": "srgb",
+              "red": 0.9725490196078431,
+              "green": 0.9686274509803922,
+              "blue": 0.9764705882352941,
+              "alpha": 1
+            },
+            "toolbarForeground": {
+              "css": "#241523",
+              "colorSpace": "srgb",
+              "red": 0.1411764705882353,
+              "green": 0.08235294117647059,
+              "blue": 0.13725490196078433,
+              "alpha": 1
+            },
+            "toolbarBorder": {
+              "css": "#e5e0f0",
+              "colorSpace": "srgb",
+              "red": 0.8980392156862745,
+              "green": 0.8784313725490196,
+              "blue": 0.9411764705882353,
+              "alpha": 1
+            },
+            "toolbarControl": {
+              "css": "#edeaf4",
+              "colorSpace": "srgb",
+              "red": 0.9294117647058824,
+              "green": 0.9176470588235294,
+              "blue": 0.9568627450980393,
+              "alpha": 1
+            },
+            "toolbarControlForeground": {
+              "css": "#241523",
+              "colorSpace": "srgb",
+              "red": 0.1411764705882353,
+              "green": 0.08235294117647059,
+              "blue": 0.13725490196078433,
+              "alpha": 1
+            },
+            "toolbarControlHover": {
+              "css": "#e5e0f0",
+              "colorSpace": "srgb",
+              "red": 0.8980392156862745,
+              "green": 0.8784313725490196,
+              "blue": 0.9411764705882353,
+              "alpha": 1
+            },
+            "surface": {
+              "css": "#f8f7f9",
+              "colorSpace": "srgb",
+              "red": 0.9725490196078431,
+              "green": 0.9686274509803922,
+              "blue": 0.9764705882352941,
+              "alpha": 1
+            },
+            "surfaceRaised": {
+              "css": "#f0eff2",
+              "colorSpace": "srgb",
+              "red": 0.9411764705882353,
+              "green": 0.9372549019607843,
+              "blue": 0.9490196078431372,
+              "alpha": 1
+            },
+            "surfaceOverlay": {
+              "css": "#ebe9ed",
+              "colorSpace": "srgb",
+              "red": 0.9215686274509803,
+              "green": 0.9137254901960784,
+              "blue": 0.9294117647058824,
+              "alpha": 1
+            },
+            "text": {
+              "css": "#241523",
+              "colorSpace": "srgb",
+              "red": 0.1411764705882353,
+              "green": 0.08235294117647059,
+              "blue": 0.13725490196078433,
+              "alpha": 1
+            },
+            "textMuted": {
+              "css": "#766c76",
+              "colorSpace": "srgb",
+              "red": 0.4627450980392157,
+              "green": 0.4235294117647059,
+              "blue": 0.4627450980392157,
+              "alpha": 1
+            },
+            "border": {
+              "css": "#d6d1de",
+              "colorSpace": "srgb",
+              "red": 0.8392156862745098,
+              "green": 0.8196078431372549,
+              "blue": 0.8705882352941177,
+              "alpha": 1
+            },
+            "input": {
+              "css": "#ccc5d6",
+              "colorSpace": "srgb",
+              "red": 0.8,
+              "green": 0.7725490196078432,
+              "blue": 0.8392156862745098,
+              "alpha": 1
+            },
+            "focus": {
+              "css": "#7253b9",
+              "colorSpace": "srgb",
+              "red": 0.4470588235294118,
+              "green": 0.3254901960784314,
+              "blue": 0.7254901960784313,
+              "alpha": 1
+            },
+            "accent": {
+              "css": "#7253b9",
+              "colorSpace": "srgb",
+              "red": 0.4470588235294118,
+              "green": 0.3254901960784314,
+              "blue": 0.7254901960784313,
+              "alpha": 1
+            },
+            "accentForeground": {
+              "css": "#fffaff",
+              "colorSpace": "srgb",
+              "red": 1,
+              "green": 0.9803921568627451,
+              "blue": 1,
+              "alpha": 1
+            },
+            "secondary": {
+              "css": "#edeaf4",
+              "colorSpace": "srgb",
+              "red": 0.9294117647058824,
+              "green": 0.9176470588235294,
+              "blue": 0.9568627450980393,
+              "alpha": 1
+            },
+            "secondaryForeground": {
+              "css": "#241523",
+              "colorSpace": "srgb",
+              "red": 0.1411764705882353,
+              "green": 0.08235294117647059,
+              "blue": 0.13725490196078433,
+              "alpha": 1
+            },
+            "muted": {
+              "css": "#f0edf6",
+              "colorSpace": "srgb",
+              "red": 0.9411764705882353,
+              "green": 0.9294117647058824,
+              "blue": 0.9647058823529412,
+              "alpha": 1
+            },
+            "mutedForeground": {
+              "css": "#766c76",
+              "colorSpace": "srgb",
+              "red": 0.4627450980392157,
+              "green": 0.4235294117647059,
+              "blue": 0.4627450980392157,
+              "alpha": 1
+            },
+            "placeholder": {
+              "css": "#766c76",
+              "colorSpace": "srgb",
+              "red": 0.4627450980392157,
+              "green": 0.4235294117647059,
+              "blue": 0.4627450980392157,
+              "alpha": 1
+            },
+            "secondaryLabel": {
+              "css": "#766c76",
+              "colorSpace": "srgb",
+              "red": 0.4627450980392157,
+              "green": 0.4235294117647059,
+              "blue": 0.4627450980392157,
+              "alpha": 1
+            },
+            "iconMuted": {
+              "css": "#766c76",
+              "colorSpace": "srgb",
+              "red": 0.4627450980392157,
+              "green": 0.4235294117647059,
+              "blue": 0.4627450980392157,
+              "alpha": 1
+            },
+            "error": {
+              "css": "#fb2c36",
+              "colorSpace": "srgb",
+              "red": 0.984313725490196,
+              "green": 0.17254901960784313,
+              "blue": 0.21176470588235294,
+              "alpha": 1
+            },
+            "errorForeground": {
+              "css": "#c10007",
+              "colorSpace": "srgb",
+              "red": 0.7568627450980392,
+              "green": 0,
+              "blue": 0.027450980392156862,
+              "alpha": 1
+            },
+            "errorSurface": {
+              "css": "#f8e6ea",
+              "colorSpace": "srgb",
+              "red": 0.9725490196078431,
+              "green": 0.9019607843137255,
+              "blue": 0.9176470588235294,
+              "alpha": 1
+            },
+            "warning": {
+              "css": "#fe9a00",
+              "colorSpace": "srgb",
+              "red": 0.996078431372549,
+              "green": 0.6039215686274509,
+              "blue": 0,
+              "alpha": 1
+            },
+            "warningForeground": {
+              "css": "#ac5326",
+              "colorSpace": "srgb",
+              "red": 0.6745098039215687,
+              "green": 0.3254901960784314,
+              "blue": 0.14901960784313725,
+              "alpha": 1
+            },
+            "warningSurface": {
+              "css": "#f8efe5",
+              "colorSpace": "srgb",
+              "red": 0.9725490196078431,
+              "green": 0.9372549019607843,
+              "blue": 0.8980392156862745,
+              "alpha": 1
+            },
+            "update": {
+              "css": "#7253b9",
+              "colorSpace": "srgb",
+              "red": 0.4470588235294118,
+              "green": 0.3254901960784314,
+              "blue": 0.7254901960784313,
+              "alpha": 1
+            },
+            "updateForeground": {
+              "css": "#4a3678",
+              "colorSpace": "srgb",
+              "red": 0.2901960784313726,
+              "green": 0.21176470588235294,
+              "blue": 0.47058823529411764,
+              "alpha": 1
+            },
+            "updateSurface": {
+              "css": "#e2dcef",
+              "colorSpace": "srgb",
+              "red": 0.8862745098039215,
+              "green": 0.8627450980392157,
+              "blue": 0.9372549019607843,
+              "alpha": 1
+            },
+            "accentSurface": {
+              "css": "#e5e0f0",
+              "colorSpace": "srgb",
+              "red": 0.8980392156862745,
+              "green": 0.8784313725490196,
+              "blue": 0.9411764705882353,
+              "alpha": 1
+            },
+            "accentSurfaceForeground": {
+              "css": "#241523",
+              "colorSpace": "srgb",
+              "red": 0.1411764705882353,
+              "green": 0.08235294117647059,
+              "blue": 0.13725490196078433,
+              "alpha": 1
+            },
+            "messageSurface": {
+              "css": "#e0d9ee",
+              "colorSpace": "srgb",
+              "red": 0.8784313725490196,
+              "green": 0.8509803921568627,
+              "blue": 0.9333333333333333,
+              "alpha": 1
+            },
+            "messageForeground": {
+              "css": "#241523",
+              "colorSpace": "srgb",
+              "red": 0.1411764705882353,
+              "green": 0.08235294117647059,
+              "blue": 0.13725490196078433,
+              "alpha": 1
+            },
+            "messageAction": {
+              "css": "#a82c87",
+              "colorSpace": "srgb",
+              "red": 0.6588235294117647,
+              "green": 0.17254901960784313,
+              "blue": 0.5294117647058824,
+              "alpha": 1
+            },
+            "messageActionForeground": {
+              "css": "#fffaff",
+              "colorSpace": "srgb",
+              "red": 1,
+              "green": 0.9803921568627451,
+              "blue": 1,
+              "alpha": 1
+            },
+            "messageActionHover": {
+              "css": "#942777",
+              "colorSpace": "srgb",
+              "red": 0.5803921568627451,
+              "green": 0.15294117647058825,
+              "blue": 0.4666666666666667,
+              "alpha": 1
+            },
+            "codeBackground": {
+              "css": "#f2f1f4",
+              "colorSpace": "srgb",
+              "red": 0.9490196078431372,
+              "green": 0.9450980392156862,
+              "blue": 0.9568627450980393,
+              "alpha": 1
+            },
+            "codeForeground": {
+              "css": "#241523",
+              "colorSpace": "srgb",
+              "red": 0.1411764705882353,
+              "green": 0.08235294117647059,
+              "blue": 0.13725490196078433,
+              "alpha": 1
+            },
+            "sidebar": {
+              "css": "#edeaf4",
+              "colorSpace": "srgb",
+              "red": 0.9294117647058824,
+              "green": 0.9176470588235294,
+              "blue": 0.9568627450980393,
+              "alpha": 1
+            },
+            "sidebarForeground": {
+              "css": "#241523",
+              "colorSpace": "srgb",
+              "red": 0.1411764705882353,
+              "green": 0.08235294117647059,
+              "blue": 0.13725490196078433,
+              "alpha": 1
+            },
+            "sidebarMutedForeground": {
+              "css": "#6f6471",
+              "colorSpace": "srgb",
+              "red": 0.43529411764705883,
+              "green": 0.39215686274509803,
+              "blue": 0.44313725490196076,
+              "alpha": 1
+            },
+            "sidebarControlSurface": {
+              "css": "#ddd9e3",
+              "colorSpace": "srgb",
+              "red": 0.8666666666666667,
+              "green": 0.8509803921568627,
+              "blue": 0.8901960784313725,
+              "alpha": 1
+            },
+            "sidebarRowHover": {
+              "css": "#ded8ed",
+              "colorSpace": "srgb",
+              "red": 0.8705882352941177,
+              "green": 0.8470588235294118,
+              "blue": 0.9294117647058824,
+              "alpha": 1
+            },
+            "sidebarRowActive": {
+              "css": "#d4cce8",
+              "colorSpace": "srgb",
+              "red": 0.8313725490196079,
+              "green": 0.8,
+              "blue": 0.9098039215686274,
+              "alpha": 1
+            },
+            "sidebarRowSelected": {
+              "css": "#cfc6e6",
+              "colorSpace": "srgb",
+              "red": 0.8117647058823529,
+              "green": 0.7764705882352941,
+              "blue": 0.9019607843137255,
+              "alpha": 1
+            },
+            "sidebarBorder": {
+              "css": "#d5d0db",
+              "colorSpace": "srgb",
+              "red": 0.8352941176470589,
+              "green": 0.8156862745098039,
+              "blue": 0.8588235294117647,
+              "alpha": 1
+            },
+            "terminalBackground": {
+              "css": "#f8f7f9",
+              "colorSpace": "srgb",
+              "red": 0.9725490196078431,
+              "green": 0.9686274509803922,
+              "blue": 0.9764705882352941,
+              "alpha": 1
+            },
+            "terminalForeground": {
+              "css": "#241523",
+              "colorSpace": "srgb",
+              "red": 0.1411764705882353,
+              "green": 0.08235294117647059,
+              "blue": 0.13725490196078433,
+              "alpha": 1
+            },
+            "terminalCursor": {
+              "css": "#7253b9",
+              "colorSpace": "srgb",
+              "red": 0.4470588235294118,
+              "green": 0.3254901960784314,
+              "blue": 0.7254901960784313,
+              "alpha": 1
+            },
+            "terminalSelection": {
+              "css": "#e0d9ee",
+              "colorSpace": "srgb",
+              "red": 0.8784313725490196,
+              "green": 0.8509803921568627,
+              "blue": 0.9333333333333333,
+              "alpha": 1
+            },
+            "terminalScrollbar": {
+              "css": "#c9c5ca",
+              "colorSpace": "srgb",
+              "red": 0.788235294117647,
+              "green": 0.7725490196078432,
+              "blue": 0.792156862745098,
+              "alpha": 1
+            },
+            "terminalScrollbarHover": {
+              "css": "#b4aeb5",
+              "colorSpace": "srgb",
+              "red": 0.7058823529411765,
+              "green": 0.6823529411764706,
+              "blue": 0.7098039215686275,
+              "alpha": 1
+            }
+          }
+        },
+        {
+          "appearance": "dark",
+          "colors": {
+            "canvas": {
+              "css": "#1d1929",
+              "colorSpace": "srgb",
+              "red": 0.11372549019607843,
+              "green": 0.09803921568627451,
+              "blue": 0.1607843137254902,
+              "alpha": 1
+            },
+            "chrome": {
+              "css": "#1d1929",
+              "colorSpace": "srgb",
+              "red": 0.11372549019607843,
+              "green": 0.09803921568627451,
+              "blue": 0.1607843137254902,
+              "alpha": 1
+            },
+            "toolbar": {
+              "css": "#1d1929",
+              "colorSpace": "srgb",
+              "red": 0.11372549019607843,
+              "green": 0.09803921568627451,
+              "blue": 0.1607843137254902,
+              "alpha": 1
+            },
+            "toolbarForeground": {
+              "css": "#fffaff",
+              "colorSpace": "srgb",
+              "red": 1,
+              "green": 0.9803921568627451,
+              "blue": 1,
+              "alpha": 1
+            },
+            "toolbarBorder": {
+              "css": "#4a3c70",
+              "colorSpace": "srgb",
+              "red": 0.2901960784313726,
+              "green": 0.23529411764705882,
+              "blue": 0.4392156862745098,
+              "alpha": 1
+            },
+            "toolbarControl": {
+              "css": "#362d51",
+              "colorSpace": "srgb",
+              "red": 0.21176470588235294,
+              "green": 0.17647058823529413,
+              "blue": 0.3176470588235294,
+              "alpha": 1
+            },
+            "toolbarControlForeground": {
+              "css": "#fffaff",
+              "colorSpace": "srgb",
+              "red": 1,
+              "green": 0.9803921568627451,
+              "blue": 1,
+              "alpha": 1
+            },
+            "toolbarControlHover": {
+              "css": "#433765",
+              "colorSpace": "srgb",
+              "red": 0.2627450980392157,
+              "green": 0.21568627450980393,
+              "blue": 0.396078431372549,
+              "alpha": 1
+            },
+            "surface": {
+              "css": "#1d1929",
+              "colorSpace": "srgb",
+              "red": 0.11372549019607843,
+              "green": 0.09803921568627451,
+              "blue": 0.1607843137254902,
+              "alpha": 1
+            },
+            "surfaceRaised": {
+              "css": "#383443",
+              "colorSpace": "srgb",
+              "red": 0.2196078431372549,
+              "green": 0.20392156862745098,
+              "blue": 0.2627450980392157,
+              "alpha": 1
+            },
+            "surfaceOverlay": {
+              "css": "#454250",
+              "colorSpace": "srgb",
+              "red": 0.27058823529411763,
+              "green": 0.25882352941176473,
+              "blue": 0.3137254901960784,
+              "alpha": 1
+            },
+            "text": {
+              "css": "#fffaff",
+              "colorSpace": "srgb",
+              "red": 1,
+              "green": 0.9803921568627451,
+              "blue": 1,
+              "alpha": 1
+            },
+            "textMuted": {
+              "css": "#8e8a95",
+              "colorSpace": "srgb",
+              "red": 0.5568627450980392,
+              "green": 0.5411764705882353,
+              "blue": 0.5843137254901961,
+              "alpha": 1
+            },
+            "border": {
+              "css": "#4d4366",
+              "colorSpace": "srgb",
+              "red": 0.30196078431372547,
+              "green": 0.2627450980392157,
+              "blue": 0.4,
+              "alpha": 1
+            },
+            "input": {
+              "css": "#5d527b",
+              "colorSpace": "srgb",
+              "red": 0.36470588235294116,
+              "green": 0.3215686274509804,
+              "blue": 0.4823529411764706,
+              "alpha": 1
+            },
+            "focus": {
+              "css": "#9d7df2",
+              "colorSpace": "srgb",
+              "red": 0.615686274509804,
+              "green": 0.49019607843137253,
+              "blue": 0.9490196078431372,
+              "alpha": 1
+            },
+            "accent": {
+              "css": "#9d7df2",
+              "colorSpace": "srgb",
+              "red": 0.615686274509804,
+              "green": 0.49019607843137253,
+              "blue": 0.9490196078431372,
+              "alpha": 1
+            },
+            "accentForeground": {
+              "css": "#241523",
+              "colorSpace": "srgb",
+              "red": 0.1411764705882353,
+              "green": 0.08235294117647059,
+              "blue": 0.13725490196078433,
+              "alpha": 1
+            },
+            "secondary": {
+              "css": "#362d51",
+              "colorSpace": "srgb",
+              "red": 0.21176470588235294,
+              "green": 0.17647058823529413,
+              "blue": 0.3176470588235294,
+              "alpha": 1
+            },
+            "secondaryForeground": {
+              "css": "#fffaff",
+              "colorSpace": "srgb",
+              "red": 1,
+              "green": 0.9803921568627451,
+              "blue": 1,
+              "alpha": 1
+            },
+            "muted": {
+              "css": "#2d2643",
+              "colorSpace": "srgb",
+              "red": 0.17647058823529413,
+              "green": 0.14901960784313725,
+              "blue": 0.2627450980392157,
+              "alpha": 1
+            },
+            "mutedForeground": {
+              "css": "#8e8a95",
+              "colorSpace": "srgb",
+              "red": 0.5568627450980392,
+              "green": 0.5411764705882353,
+              "blue": 0.5843137254901961,
+              "alpha": 1
+            },
+            "placeholder": {
+              "css": "#8e8a95",
+              "colorSpace": "srgb",
+              "red": 0.5568627450980392,
+              "green": 0.5411764705882353,
+              "blue": 0.5843137254901961,
+              "alpha": 1
+            },
+            "secondaryLabel": {
+              "css": "#8e8a95",
+              "colorSpace": "srgb",
+              "red": 0.5568627450980392,
+              "green": 0.5411764705882353,
+              "blue": 0.5843137254901961,
+              "alpha": 1
+            },
+            "iconMuted": {
+              "css": "#8e8a95",
+              "colorSpace": "srgb",
+              "red": 0.5568627450980392,
+              "green": 0.5411764705882353,
+              "blue": 0.5843137254901961,
+              "alpha": 1
+            },
+            "error": {
+              "css": "#fb414a",
+              "colorSpace": "srgb",
+              "red": 0.984313725490196,
+              "green": 0.2549019607843137,
+              "blue": 0.2901960784313726,
+              "alpha": 1
+            },
+            "errorForeground": {
+              "css": "#ff6467",
+              "colorSpace": "srgb",
+              "red": 1,
+              "green": 0.39215686274509803,
+              "blue": 0.403921568627451,
+              "alpha": 1
+            },
+            "errorSurface": {
+              "css": "#40202e",
+              "colorSpace": "srgb",
+              "red": 0.25098039215686274,
+              "green": 0.12549019607843137,
+              "blue": 0.1803921568627451,
+              "alpha": 1
+            },
+            "warning": {
+              "css": "#fe9a00",
+              "colorSpace": "srgb",
+              "red": 0.996078431372549,
+              "green": 0.6039215686274509,
+              "blue": 0,
+              "alpha": 1
+            },
+            "warningForeground": {
+              "css": "#ffb900",
+              "colorSpace": "srgb",
+              "red": 1,
+              "green": 0.7254901960784313,
+              "blue": 0,
+              "alpha": 1
+            },
+            "warningSurface": {
+              "css": "#412e23",
+              "colorSpace": "srgb",
+              "red": 0.2549019607843137,
+              "green": 0.1803921568627451,
+              "blue": 0.13725490196078433,
+              "alpha": 1
+            },
+            "update": {
+              "css": "#9d7df2",
+              "colorSpace": "srgb",
+              "red": 0.615686274509804,
+              "green": 0.49019607843137253,
+              "blue": 0.9490196078431372,
+              "alpha": 1
+            },
+            "updateForeground": {
+              "css": "#bfabf7",
+              "colorSpace": "srgb",
+              "red": 0.7490196078431373,
+              "green": 0.6705882352941176,
+              "blue": 0.9686274509803922,
+              "alpha": 1
+            },
+            "updateSurface": {
+              "css": "#463969",
+              "colorSpace": "srgb",
+              "red": 0.27450980392156865,
+              "green": 0.2235294117647059,
+              "blue": 0.4117647058823529,
+              "alpha": 1
+            },
+            "accentSurface": {
+              "css": "#433765",
+              "colorSpace": "srgb",
+              "red": 0.2627450980392157,
+              "green": 0.21568627450980393,
+              "blue": 0.396078431372549,
+              "alpha": 1
+            },
+            "accentSurfaceForeground": {
+              "css": "#fffaff",
+              "colorSpace": "srgb",
+              "red": 1,
+              "green": 0.9803921568627451,
+              "blue": 1,
+              "alpha": 1
+            },
+            "messageSurface": {
+              "css": "#4b3d72",
+              "colorSpace": "srgb",
+              "red": 0.29411764705882354,
+              "green": 0.23921568627450981,
+              "blue": 0.4470588235294118,
+              "alpha": 1
+            },
+            "messageForeground": {
+              "css": "#fffaff",
+              "colorSpace": "srgb",
+              "red": 1,
+              "green": 0.9803921568627451,
+              "blue": 1,
+              "alpha": 1
+            },
+            "messageAction": {
+              "css": "#f099d8",
+              "colorSpace": "srgb",
+              "red": 0.9411764705882353,
+              "green": 0.6,
+              "blue": 0.8470588235294118,
+              "alpha": 1
+            },
+            "messageActionForeground": {
+              "css": "#241523",
+              "colorSpace": "srgb",
+              "red": 0.1411764705882353,
+              "green": 0.08235294117647059,
+              "blue": 0.13725490196078433,
+              "alpha": 1
+            },
+            "messageActionHover": {
+              "css": "#f2a5dd",
+              "colorSpace": "srgb",
+              "red": 0.9490196078431372,
+              "green": 0.6470588235294118,
+              "blue": 0.8666666666666667,
+              "alpha": 1
+            },
+            "codeBackground": {
+              "css": "#2a2736",
+              "colorSpace": "srgb",
+              "red": 0.16470588235294117,
+              "green": 0.15294117647058825,
+              "blue": 0.21176470588235294,
+              "alpha": 1
+            },
+            "codeForeground": {
+              "css": "#fffaff",
+              "colorSpace": "srgb",
+              "red": 1,
+              "green": 0.9803921568627451,
+              "blue": 1,
+              "alpha": 1
+            },
+            "sidebar": {
+              "css": "#272139",
+              "colorSpace": "srgb",
+              "red": 0.15294117647058825,
+              "green": 0.12941176470588237,
+              "blue": 0.2235294117647059,
+              "alpha": 1
+            },
+            "sidebarForeground": {
+              "css": "#fffaff",
+              "colorSpace": "srgb",
+              "red": 1,
+              "green": 0.9803921568627451,
+              "blue": 1,
+              "alpha": 1
+            },
+            "sidebarMutedForeground": {
+              "css": "#9792a0",
+              "colorSpace": "srgb",
+              "red": 0.592156862745098,
+              "green": 0.5725490196078431,
+              "blue": 0.6274509803921569,
+              "alpha": 1
+            },
+            "sidebarControlSurface": {
+              "css": "#494459",
+              "colorSpace": "srgb",
+              "red": 0.28627450980392155,
+              "green": 0.26666666666666666,
+              "blue": 0.34901960784313724,
+              "alpha": 1
+            },
+            "sidebarRowHover": {
+              "css": "#352c4f",
+              "colorSpace": "srgb",
+              "red": 0.20784313725490197,
+              "green": 0.17254901960784313,
+              "blue": 0.30980392156862746,
+              "alpha": 1
+            },
+            "sidebarRowActive": {
+              "css": "#3f345e",
+              "colorSpace": "srgb",
+              "red": 0.24705882352941178,
+              "green": 0.20392156862745098,
+              "blue": 0.3686274509803922,
+              "alpha": 1
+            },
+            "sidebarRowSelected": {
+              "css": "#433766",
+              "colorSpace": "srgb",
+              "red": 0.2627450980392157,
+              "green": 0.21568627450980393,
+              "blue": 0.4,
+              "alpha": 1
+            },
+            "sidebarBorder": {
+              "css": "#736d7e",
+              "colorSpace": "srgb",
+              "red": 0.45098039215686275,
+              "green": 0.42745098039215684,
+              "blue": 0.49411764705882355,
+              "alpha": 1
+            },
+            "terminalBackground": {
+              "css": "#1d1929",
+              "colorSpace": "srgb",
+              "red": 0.11372549019607843,
+              "green": 0.09803921568627451,
+              "blue": 0.1607843137254902,
+              "alpha": 1
+            },
+            "terminalForeground": {
+              "css": "#fffaff",
+              "colorSpace": "srgb",
+              "red": 1,
+              "green": 0.9803921568627451,
+              "blue": 1,
+              "alpha": 1
+            },
+            "terminalCursor": {
+              "css": "#9d7df2",
+              "colorSpace": "srgb",
+              "red": 0.615686274509804,
+              "green": 0.49019607843137253,
+              "blue": 0.9490196078431372,
+              "alpha": 1
+            },
+            "terminalSelection": {
+              "css": "#4a3c70",
+              "colorSpace": "srgb",
+              "red": 0.2901960784313726,
+              "green": 0.23529411764705882,
+              "blue": 0.4392156862745098,
+              "alpha": 1
+            },
+            "terminalScrollbar": {
+              "css": "#7c7883",
+              "colorSpace": "srgb",
+              "red": 0.48627450980392156,
+              "green": 0.47058823529411764,
+              "blue": 0.5137254901960784,
+              "alpha": 1
+            },
+            "terminalScrollbarHover": {
+              "css": "#99959f",
+              "colorSpace": "srgb",
+              "red": 0.6,
+              "green": 0.5843137254901961,
+              "blue": 0.6235294117647059,
+              "alpha": 1
+            }
+          }
+        }
+      ],
+      "provenance": {
+        "source": "builtin"
+      }
+    }
+  ]
+}

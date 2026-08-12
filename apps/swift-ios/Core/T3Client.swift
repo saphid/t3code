@@ -93,6 +93,37 @@ public actor T3Client {
         )
     }
 
+    public func compileTheme(fileName: String, contents: String) async throws
+        -> T3ResolvedThemeArtifact
+    {
+        try await rpc.request(
+            RPCMethod.themesCompile.rawValue,
+            payload: .object([
+                "fileName": .string(fileName),
+                "contents": .string(contents),
+            ]),
+            as: T3ResolvedThemeArtifact.self
+        )
+    }
+
+    public func searchOpenVsxThemes(query: String) async throws -> [T3OpenVsxThemeExtension] {
+        try await rpc.request(
+            RPCMethod.themesSearchOpenVsx.rawValue,
+            payload: .object(["query": .string(query)]),
+            as: [T3OpenVsxThemeExtension].self
+        )
+    }
+
+    public func installOpenVsxTheme(extensionID: String) async throws
+        -> T3ResolvedThemeArtifact
+    {
+        try await rpc.request(
+            RPCMethod.themesInstallOpenVsx.rawValue,
+            payload: .object(["extensionId": .string(extensionID)]),
+            as: T3ResolvedThemeArtifact.self
+        )
+    }
+
     public func usageSummary(_ input: UsageSummaryInput) async throws -> UsageSummary {
         try await rpc.request(
             RPCMethod.serverGetUsageSummary.rawValue,
@@ -1266,6 +1297,9 @@ public enum RPCMethod: String, Sendable {
     case serverProbe = "server.probe"
     case serverGetConfig = "server.getConfig"
     case serverGetUsageSummary = "server.getUsageSummary"
+    case themesCompile = "themes.compile"
+    case themesSearchOpenVsx = "themes.searchOpenVsx"
+    case themesInstallOpenVsx = "themes.installOpenVsx"
     case dispatchCommand = "orchestration.dispatchCommand"
     case getArchivedShellSnapshot = "orchestration.getArchivedShellSnapshot"
     case subscribeShell = "orchestration.subscribeShell"

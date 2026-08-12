@@ -11,6 +11,7 @@ final class T3ShareViewController: UIViewController {
         let content = T3ShareExtensionView(
             recentThreads: T3SharedRecentThreadStore.shared.records(),
             appearance: T3SharedAppearanceStore.shared.appearance(),
+            theme: T3SharedThemeStore.shared.projection(),
             save: { [weak self] destination in
                 let inputItems = self?.extensionContext?.inputItems ?? []
                 let payload = await T3SharePayloadLoader.load(from: inputItems)
@@ -57,6 +58,7 @@ struct T3ShareExtensionView: View {
 
     let recentThreads: [T3SharedRecentThreadRecord]
     let appearance: T3SharedAppearance
+    let theme: T3SharedThemeProjection
     let save: (T3IncomingShareDestination) async throws -> T3IncomingShareEnvelope
     let cancel: () -> Void
     let complete: () -> Void
@@ -112,7 +114,7 @@ struct T3ShareExtensionView: View {
             }
         }
         .preferredColorScheme(preferredColorScheme)
-        .background(T3ShareTheme.background.ignoresSafeArea())
+        .background(T3ShareTheme.background(theme).ignoresSafeArea())
     }
 
     private var isSaving: Bool {
@@ -168,7 +170,7 @@ struct T3ShareExtensionView: View {
             }
         }
         .scrollContentBackground(.hidden)
-        .background(T3ShareTheme.background)
+        .background(T3ShareTheme.background(theme))
         .searchable(
             text: $searchText,
             placement: .navigationBarDrawer(displayMode: .always),
@@ -290,11 +292,27 @@ struct T3ShareExtensionView: View {
 }
 
 private enum T3ShareTheme {
-    static let background = Color(
-        uiColor: UIColor { traits in
-            traits.userInterfaceStyle == .dark
-                ? UIColor(red: 10 / 255, green: 10 / 255, blue: 10 / 255, alpha: 1)
-                : UIColor(red: 242 / 255, green: 242 / 255, blue: 247 / 255, alpha: 1)
-        }
-    )
+    static func background(_ theme: T3SharedThemeProjection) -> Color {
+        Color(
+            uiColor: UIColor { traits in
+                UIColor(
+                    t3Hex: traits.userInterfaceStyle == .dark ? theme.darkCanvas : theme.lightCanvas
+                )
+                    ?? (traits.userInterfaceStyle == .dark ? .black : .systemGroupedBackground)
+            }
+        )
+    }
+}
+
+extension UIColor {
+    fileprivate convenience init?(t3Hex value: String) {
+        let raw = value.hasPrefix("#") ? String(value.dropFirst()) : value
+        guard raw.count == 6, let number = UInt32(raw, radix: 16) else { return nil }
+        self.init(
+            red: CGFloat((number >> 16) & 0xFF) / 255,
+            green: CGFloat((number >> 8) & 0xFF) / 255,
+            blue: CGFloat(number & 0xFF) / 255,
+            alpha: 1
+        )
+    }
 }

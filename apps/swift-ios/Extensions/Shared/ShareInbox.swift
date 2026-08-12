@@ -162,6 +162,55 @@ final class T3SharedAppearanceStore: @unchecked Sendable {
     }
 }
 
+struct T3SharedThemeProjection: Codable, Equatable, Sendable {
+    let lightCanvas: String
+    let darkCanvas: String
+    let lightAccent: String
+    let darkAccent: String
+
+    static let fallback = T3SharedThemeProjection(
+        lightCanvas: "#f2f2f7",
+        darkCanvas: "#0a0a0a",
+        lightAccent: "#007aff",
+        darkAccent: "#0a84ff"
+    )
+}
+
+final class T3SharedThemeStore: @unchecked Sendable {
+    static let shared = T3SharedThemeStore()
+
+    private let defaults: UserDefaults?
+    private let key: String
+    private let lock = NSLock()
+
+    init(
+        defaults: UserDefaults? = UserDefaults(suiteName: T3SharedContainer.appGroupID),
+        key: String = "swift-ios.shared-theme.v1"
+    ) {
+        self.defaults = defaults
+        self.key = key
+    }
+
+    func update(_ projection: T3SharedThemeProjection) {
+        lock.withLock {
+            guard let data = try? JSONEncoder().encode(projection) else { return }
+            defaults?.set(data, forKey: key)
+        }
+    }
+
+    func projection() -> T3SharedThemeProjection {
+        lock.withLock {
+            guard
+                let data = defaults?.data(forKey: key),
+                let projection = try? JSONDecoder().decode(T3SharedThemeProjection.self, from: data)
+            else {
+                return .fallback
+            }
+            return projection
+        }
+    }
+}
+
 final class T3SharedRecentThreadStore: @unchecked Sendable {
     static let shared = T3SharedRecentThreadStore()
     static let maximumCount = 100
