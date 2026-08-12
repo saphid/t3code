@@ -98,6 +98,10 @@ def validate_manifest(value: dict[str, Any]) -> None:
         ids.add(feature_id)
         if feature.get("state") not in states:
             fail(f"{feature_id} has invalid state {feature.get('state')}")
+        if feature.get("state") in APPROVAL_STATES:
+            test_build = feature.get("testBuild")
+            if not isinstance(test_build, int) or isinstance(test_build, bool) or test_build < 1:
+                fail(f"{feature_id} requires a positive integer testBuild")
         delivery = feature.get("delivery")
         if delivery is not None and delivery not in VALID_DELIVERY:
             fail(f"{feature_id} has invalid delivery {delivery}")
@@ -283,14 +287,18 @@ def approval_list() -> list[dict[str, Any]]:
         feature for feature in catalog(False)
         if feature.get("state") in APPROVAL_STATES
     ]
-    stale = [feature for feature in pending if feature.get("testBuild") != build]
-    if stale:
+    for feature in pending:
+        test_build = feature.get("testBuild")
+        if not isinstance(test_build, int) or isinstance(test_build, bool) or test_build < 1:
+            fail(f"{feature['id']} requires a positive integer testBuild")
+    future = [feature for feature in pending if feature["testBuild"] > build]
+    if future:
         print(
-            f"[swiftui-stream] anomaly: {len(stale)} pending approval record(s) "
-            f"do not match current Test build {build}; excluded",
+            f"[swiftui-stream] {len(future)} pending approval record(s) "
+            f"are staged after current Test build {build}; excluded",
             file=sys.stderr,
         )
-    eligible = [feature for feature in pending if feature.get("testBuild") == build]
+    eligible = [feature for feature in pending if feature["testBuild"] <= build]
     return sorted(
         eligible,
         key=lambda feature: (

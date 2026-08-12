@@ -31,7 +31,27 @@ class StreamTests(unittest.TestCase):
         self.assertEqual(len(records), len({item["id"] for item in records}))
         self.assertGreaterEqual(value["currentTestBuild"]["build"], 40)
 
-    def test_approval_list_is_exact_build_order(self):
+    def test_pending_feature_requires_positive_integer_test_build(self):
+        value = json.loads(json.dumps(stream.manifest()))
+        pending = next(
+            item for item in value["features"]
+            if item["state"] in stream.APPROVAL_STATES
+        )
+        pending["testBuild"] = "42"
+        with self.assertRaises(SystemExit):
+            stream.validate_manifest(value)
+
+    def test_imported_pending_record_requires_test_build(self):
+        record = {
+            "id": "upstream-pr-1",
+            "name": "Imported pending record",
+            "state": "needs-you",
+        }
+        with patch.object(stream, "catalog", return_value=[record]):
+            with self.assertRaises(SystemExit):
+                stream.approval_list()
+
+    def test_approval_list_carries_forward_installed_features_in_order(self):
         items = stream.approval_list()
         current = stream.manifest()["currentTestBuild"]["build"]
         self.assertTrue(items)
@@ -39,8 +59,15 @@ class StreamTests(unittest.TestCase):
             [item.get("order", 1_000_000) for item in items],
             sorted(item.get("order", 1_000_000) for item in items),
         )
-        self.assertTrue(all(item["testBuild"] == current for item in items))
+        self.assertTrue(all(item["testBuild"] <= current for item in items))
         self.assertNotIn("dev-title-label", {item["id"] for item in items})
+        future_ids = {
+            item["id"]
+            for item in stream.catalog(False)
+            if item.get("state") in stream.APPROVAL_STATES
+            and item["testBuild"] > current
+        }
+        self.assertTrue(future_ids.isdisjoint(item["id"] for item in items))
 
     def test_fuzzy_match_prefers_command_palette(self):
         ranked = sorted(
