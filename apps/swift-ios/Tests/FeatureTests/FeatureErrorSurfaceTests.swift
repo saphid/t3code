@@ -1,3 +1,4 @@
+import Foundation
 import Testing
 @testable import T3Code
 
@@ -34,14 +35,39 @@ struct FeatureErrorSurfaceTests {
     }
 
     @Test
-    func sourceControlRetryPreservesTheFailedActionAndCommitMessage() {
-        let retry = FeatureSourceControlRetry(
-            action: .commitAndPush,
-            message: "Explain the change"
+    func suppressesCancellationErrors() {
+        #expect(
+            FeatureToolErrorPresentation.message(
+                for: CancellationError(),
+                taskIsCancelled: false
+            ) == nil
         )
+    }
 
-        #expect(retry.action == .commitAndPush)
-        #expect(retry.message == "Explain the change")
+    @Test
+    func presentsNonCancellationErrors() {
+        let error = NSError(domain: "FeatureErrorSurfaceTests", code: 1)
+
+        #expect(
+            FeatureToolErrorPresentation.message(
+                for: error,
+                taskIsCancelled: false
+            ) == error.localizedDescription
+        )
+    }
+
+    @Test
+    func loadedPathDetectsOnlyResourceChanges() {
+        var loadedPath = FeatureLoadedPath()
+        let initialRoot = loadedPath.begin(nil)
+        let repeatedRoot = loadedPath.begin(nil)
+        let changedPath = loadedPath.begin("Sources")
+        let repeatedPath = loadedPath.begin("Sources")
+
+        #expect(initialRoot)
+        #expect(repeatedRoot == false)
+        #expect(changedPath)
+        #expect(repeatedPath == false)
     }
 
     @Test

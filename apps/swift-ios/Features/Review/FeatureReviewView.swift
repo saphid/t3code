@@ -59,7 +59,11 @@ public struct FeatureReviewView: View {
         }
         .safeAreaInset(edge: .top, spacing: 0) {
             if let errorMessage = errorPresentation.inlineMessage {
-                FeatureToolErrorNotice(message: errorMessage, isRetrying: isLoading) {
+                FeatureToolErrorNotice(
+                    message: errorMessage,
+                    isRetrying: isLoading,
+                    retryTitle: "Reload changes"
+                ) {
                     await load()
                 }
             }
@@ -129,7 +133,11 @@ public struct FeatureReviewView: View {
             errorMessage = nil
         } catch {
             guard loadRequests.isCurrent(request) else { return }
-            errorMessage = error.localizedDescription
+            guard let message = FeatureToolErrorPresentation.message(
+                for: error,
+                taskIsCancelled: Task.isCancelled
+            ) else { return }
+            errorMessage = message
         }
     }
 }

@@ -46,6 +46,7 @@ private struct FeatureFileDirectoryView: View {
     @State private var errorMessage: String?
     @State private var hasLoaded = false
     @State private var loadRequests = FeatureLatestRequest()
+    @State private var loadedPath = FeatureLoadedPath()
 
     private var errorPresentation: FeatureToolErrorPresentation {
         .resolve(errorMessage: errorMessage, retainsContent: hasLoaded)
@@ -101,10 +102,21 @@ private struct FeatureFileDirectoryView: View {
                 .accessibilityLabel("File browser options")
             }
         }
-        .task(id: path) { await load() }
+        .task(id: path) {
+            if loadedPath.begin(path) {
+                entries = []
+                hasLoaded = false
+                errorMessage = nil
+            }
+            await load()
+        }
         .safeAreaInset(edge: .top, spacing: 0) {
             if let errorMessage = errorPresentation.inlineMessage {
-                FeatureToolErrorNotice(message: errorMessage, isRetrying: isLoading) {
+                FeatureToolErrorNotice(
+                    message: errorMessage,
+                    isRetrying: isLoading,
+                    retryTitle: "Reload files"
+                ) {
                     await load()
                 }
             }
@@ -151,7 +163,11 @@ private struct FeatureFileDirectoryView: View {
             errorMessage = nil
         } catch {
             guard loadRequests.isCurrent(request) else { return }
-            errorMessage = error.localizedDescription
+            guard let message = FeatureToolErrorPresentation.message(
+                for: error,
+                taskIsCancelled: Task.isCancelled
+            ) else { return }
+            errorMessage = message
         }
     }
 }

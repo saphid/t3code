@@ -10,6 +10,11 @@ enum FeatureToolErrorPresentation: Equatable {
             : .unavailable(message: errorMessage)
     }
 
+    static func message(for error: Error, taskIsCancelled: Bool) -> String? {
+        guard !taskIsCancelled, !(error is CancellationError) else { return nil }
+        return error.localizedDescription
+    }
+
     var inlineMessage: String? {
         guard case let .inline(message) = self else { return nil }
         return message

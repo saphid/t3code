@@ -10,7 +10,7 @@ public struct FeatureSourceControlView: View {
     @State private var errorMessage: String?
     @State private var commitMessage = ""
     @State private var pendingCommitAction: FeatureSourceControlAction?
-    @State private var failedAction: FeatureSourceControlRetry?
+    @State private var needsLoadAfterAction = false
     @State private var loadRequests = FeatureLatestRequest()
 
     private var errorPresentation: FeatureToolErrorPresentation {
@@ -77,13 +77,10 @@ public struct FeatureSourceControlView: View {
             if let errorMessage = errorPresentation.inlineMessage {
                 FeatureToolErrorNotice(
                     message: errorMessage,
-                    isRetrying: isLoading || isRunningAction
+                    isRetrying: isLoading || isRunningAction,
+                    retryTitle: "Refresh status"
                 ) {
-                    if let failedAction {
-                        await perform(failedAction.action, message: failedAction.message)
-                    } else {
-                        await load()
-                    }
+                    await load()
                 }
             }
         }
@@ -177,7 +174,10 @@ public struct FeatureSourceControlView: View {
     }
 
     private func load() async {
-        guard !isRunningAction else { return }
+        guard !isRunningAction else {
+            needsLoadAfterAction = true
+            return
+        }
         let request = loadRequests.begin()
         isLoading = true
         defer {
@@ -190,18 +190,19 @@ public struct FeatureSourceControlView: View {
             guard loadRequests.isCurrent(request) else { return }
             status = loadedStatus
             errorMessage = nil
-            failedAction = nil
         } catch {
             guard loadRequests.isCurrent(request) else { return }
-            errorMessage = error.localizedDescription
-            failedAction = nil
+            guard let message = FeatureToolErrorPresentation.message(
+                for: error,
+                taskIsCancelled: Task.isCancelled
+            ) else { return }
+            errorMessage = message
         }
     }
 
     private func perform(_ action: FeatureSourceControlAction, message: String?) async {
         guard !isLoading, !isRunningAction else { return }
         isRunningAction = true
-        defer { isRunningAction = false }
         do {
             status = try await client.performSourceControlAction(
                 threadID: threadID,
@@ -209,10 +210,13 @@ public struct FeatureSourceControlView: View {
                 message: message?.trimmingCharacters(in: .whitespacesAndNewlines)
             )
             errorMessage = nil
-            failedAction = nil
         } catch {
             errorMessage = error.localizedDescription
-            failedAction = FeatureSourceControlRetry(action: action, message: message)
+        }
+        isRunningAction = false
+        if needsLoadAfterAction {
+            needsLoadAfterAction = false
+            await load()
         }
     }
 }
