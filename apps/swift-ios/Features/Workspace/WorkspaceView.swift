@@ -138,6 +138,9 @@ public struct WorkspaceView: View {
     @State private var newTaskPresentationEpoch = 0
     @State private var showingAddProject = false
     @State private var showingSettings = false
+    @State private var showingBuildChangelog = false
+    @AppStorage(BuildChangelogPrompt.lastOpenedBuildStorageKey)
+    private var lastOpenedBuildIdentifier = ""
     @State private var renamingThread: FeatureThread?
     @State private var renameTitle = ""
     @State private var regeneratingThreadIDs: Set<String> = []
@@ -268,6 +271,19 @@ public struct WorkspaceView: View {
             resumeDeferredNewTaskPresentation()
         }) {
             SettingsView(model: model)
+        }
+        .sheet(isPresented: $showingBuildChangelog) {
+            NavigationStack {
+                BuildChangelogView(
+                    changelog: Self.buildChangelog,
+                    versionLabel: Self.appVersionLabel
+                )
+                .toolbar {
+                    ToolbarItem(placement: .confirmationAction) {
+                        Button("Done") { showingBuildChangelog = false }
+                    }
+                }
+            }
         }
         .alert(
             "Rename thread",
@@ -469,6 +485,24 @@ public struct WorkspaceView: View {
                 .padding(.trailing, 4)
 #endif
 
+            if shouldShowBuildChangelogPrompt {
+                Button(action: openBuildChangelog) {
+                    ZStack {
+                        Image(systemName: "gift.fill")
+                            .font(.system(size: 17, weight: .medium))
+                        Image(systemName: "sparkles")
+                            .font(.system(size: 8, weight: .bold))
+                            .offset(x: 9, y: -9)
+                    }
+                    .frame(width: 40, height: T3Metrics.minimumTapTarget)
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(T3Colors.primaryAction)
+                .accessibilityLabel("What’s New")
+                .accessibilityHint("Shows what changed in this build")
+                .accessibilityIdentifier("sidebar-whats-new-button")
+            }
+
             Button {
                 withAnimation(.easeOut(duration: 0.16)) {
                     isSearching.toggle()
@@ -512,6 +546,26 @@ public struct WorkspaceView: View {
 #else
         .background(T3Colors.background)
 #endif
+    }
+
+    private static let buildChangelog = BuildChangelog.load(info: Bundle.main.infoDictionary)
+    private static let appVersionLabel = SettingsAboutMetadata.appVersionLabel(
+        info: Bundle.main.infoDictionary
+    )
+
+    private var shouldShowBuildChangelogPrompt: Bool {
+        BuildChangelogPrompt.shouldShow(
+            lastOpenedBuild: lastOpenedBuildIdentifier,
+            info: Bundle.main.infoDictionary
+        )
+    }
+
+    private func openBuildChangelog() {
+        guard let buildIdentifier = BuildChangelogPrompt.buildIdentifier(
+            info: Bundle.main.infoDictionary
+        ) else { return }
+        lastOpenedBuildIdentifier = buildIdentifier
+        showingBuildChangelog = true
     }
 
 #if DEBUG

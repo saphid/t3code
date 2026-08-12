@@ -17,19 +17,20 @@ enum HomeThreadSwipeActions {
         now: Date
     ) -> [HomeThreadSwipeActionKind] {
         if isArchived {
-            return [.delete, .restore]
+            return [.restore, .delete]
         }
 
-        var kinds: [HomeThreadSwipeActionKind] = [.delete]
-        if thread.pinnedAt != nil, thread.canTogglePin {
-            kinds.append(.unpin)
-        }
+        var kinds: [HomeThreadSwipeActionKind] = []
         if thread.canToggleSettlement {
             kinds.append(thread.isEffectivelySettled(at: now) ? .reopen : .settle)
         }
-        if kinds.count == 1 {
+        if thread.pinnedAt != nil, thread.canTogglePin {
+            kinds.append(.unpin)
+        }
+        if kinds.isEmpty {
             kinds.append(.archive)
         }
+        kinds.append(.delete)
         return kinds
     }
 }

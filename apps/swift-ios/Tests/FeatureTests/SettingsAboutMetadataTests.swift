@@ -70,4 +70,18 @@ struct SettingsAboutMetadataTests {
             "CFBundleVersion": "$(CURRENT_PROJECT_VERSION)",
         ]) == "? (?)")
     }
+
+    @Test
+    func whatsNewPromptRemainsUntilTheCurrentBuildIsOpened() {
+        let info: [String: Any] = [
+            "CFBundleShortVersionString": "1.2.3",
+            "CFBundleVersion": "456",
+        ]
+
+        #expect(BuildChangelogPrompt.buildIdentifier(info: info) == "1.2.3-456")
+        #expect(BuildChangelogPrompt.shouldShow(lastOpenedBuild: "", info: info))
+        #expect(BuildChangelogPrompt.shouldShow(lastOpenedBuild: "1.2.3-455", info: info))
+        #expect(!BuildChangelogPrompt.shouldShow(lastOpenedBuild: "1.2.3-456", info: info))
+        #expect(!BuildChangelogPrompt.shouldShow(lastOpenedBuild: "", info: nil))
+    }
 }

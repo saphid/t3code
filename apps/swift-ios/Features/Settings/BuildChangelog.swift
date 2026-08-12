@@ -33,6 +33,30 @@ struct BuildChangelog: Codable, Equatable, Sendable {
     }
 }
 
+enum BuildChangelogPrompt {
+    static let lastOpenedBuildStorageKey = "swift-ios.whats-new.last-opened-build"
+
+    static func buildIdentifier(info: [String: Any]?) -> String? {
+        guard let version = metadataValue("CFBundleShortVersionString", info: info),
+              let build = metadataValue("CFBundleVersion", info: info)
+        else { return nil }
+        return "\(version)-\(build)"
+    }
+
+    static func shouldShow(lastOpenedBuild: String, info: [String: Any]?) -> Bool {
+        guard let currentBuild = buildIdentifier(info: info) else { return false }
+        return lastOpenedBuild != currentBuild
+    }
+
+    private static func metadataValue(_ key: String, info: [String: Any]?) -> String? {
+        guard let value = info?[key] as? String,
+              !value.isEmpty,
+              !value.hasPrefix("$(")
+        else { return nil }
+        return value
+    }
+}
+
 struct BuildChangelogView: View {
     let changelog: BuildChangelog?
     let versionLabel: String
