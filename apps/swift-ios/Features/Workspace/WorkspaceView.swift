@@ -489,7 +489,7 @@ public struct WorkspaceView: View {
 
     private var homeBar: some View {
         HStack(spacing: 2) {
-            connectionBrand
+            homeBrand
                 .frame(maxWidth: .infinity, alignment: .leading)
 
 #if DEBUG
@@ -553,13 +553,7 @@ public struct WorkspaceView: View {
         .padding(.leading, 15)
         .padding(.trailing, 8)
         .frame(height: 49)
-#if DEBUG
-        .background(Color.orange.ignoresSafeArea(edges: .top))
-        .environment(\.colorScheme, .light)
-        .accessibilityIdentifier("debug-home-title-bar")
-#else
         .background(T3Colors.background)
-#endif
         .background {
             FeatureCommandPaletteGestureInstaller {
                 isSearchFocused = false
@@ -621,6 +615,19 @@ public struct WorkspaceView: View {
         .minimumScaleFactor(0.75)
     }
 #endif
+
+    private var homeBrand: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 4) {
+            connectionBrand
+#if DEBUG
+            Text("Dev")
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundStyle(T3Colors.warning)
+                .fixedSize()
+                .accessibilityIdentifier("home-title-dev-marker")
+#endif
+        }
+    }
 
     @ViewBuilder
     private var connectionBrand: some View {
