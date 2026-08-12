@@ -26,10 +26,10 @@
   ],
   "currentTestBuild": {
     "channel": "test",
-    "build": 40,
-    "sequence": 40,
-    "commit": "2b1cf46a76afb0825dff0cec505307807149992e",
-    "receipt": "~/.t3/artifacts/swiftui-trains/2b1cf46a76afb0825dff0cec505307807149992e/install-receipt.json",
+    "build": 41,
+    "sequence": 41,
+    "commit": "f9e752d95ba1826681011b9136bf8ec6e84f7e32",
+    "receipt": "~/.t3/swiftui-stream/device-receipts/test.json",
     "status": "installed-awaiting-unlock-and-approval"
   },
   "features": [
@@ -50,7 +50,7 @@
       "aliases": ["skills popup", "keyboard clearance"],
       "state": "needs-you",
       "sourceCommit": "9cb21674",
-      "testBuild": 40,
+      "testBuild": 41,
       "order": 1
     },
     {
@@ -60,7 +60,7 @@
       "state": "superseded",
       "sourceCommit": "181bb7a1",
       "supersededBy": "swiftui-stream-infrastructure",
-      "testBuild": 40,
+      "testBuild": 41,
       "order": 2
     },
     {
@@ -69,7 +69,7 @@
       "aliases": ["home scrolling", "thread list scroll"],
       "state": "needs-you",
       "sourceCommit": "7cc3a611",
-      "testBuild": 40,
+      "testBuild": 41,
       "order": 3
     },
     {
@@ -78,7 +78,7 @@
       "aliases": ["command palette", "swipe-down command palette"],
       "state": "needs-you",
       "sourceCommit": "ed91d0cb",
-      "testBuild": 40,
+      "testBuild": 41,
       "order": 4
     },
     {
@@ -87,7 +87,7 @@
       "aliases": ["source thread link", "whats new thread"],
       "state": "needs-you",
       "sourceCommit": "ed15ca2a",
-      "testBuild": 40,
+      "testBuild": 41,
       "order": 5
     },
     {
@@ -96,7 +96,7 @@
       "aliases": ["initial thread updates", "thread refresh"],
       "state": "needs-you",
       "sourceCommit": "dd2ecbb",
-      "testBuild": 40,
+      "testBuild": 41,
       "order": 6
     },
     {
@@ -105,7 +105,7 @@
       "aliases": ["pull request protocol", "pr workspace"],
       "state": "needs-you",
       "sourceCommit": "4f967ba4",
-      "testBuild": 40,
+      "testBuild": 41,
       "order": 7
     },
     {
@@ -114,7 +114,7 @@
       "aliases": ["tool content", "accessible recovery"],
       "state": "needs-you",
       "sourceCommit": "9006b8de",
-      "testBuild": 40,
+      "testBuild": 41,
       "order": 8
     }
   ]
