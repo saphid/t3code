@@ -1013,7 +1013,7 @@
 				APS_ENVIRONMENT = development;
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIconPersonalDev;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
-				CODE_SIGN_ENTITLEMENTS = Extensions/Shared/T3Code.entitlements;
+				CODE_SIGN_ENTITLEMENTS = Extensions/Shared/T3CodeDev.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				ENABLE_PREVIEWS = YES;
@@ -1036,14 +1036,14 @@
 				LD_RUNPATH_SEARCH_PATHS = ("$(inherited)", "@executable_path/Frameworks", );
 				MARKETING_VERSION = 0.1.0;
 				OTHER_LDFLAGS = ("$(inherited)", "-lc++", "-lz", "-framework", IOSurface, "-framework", Metal, "-framework", MetalKit, "-framework", QuartzCore, );
-				PRODUCT_BUNDLE_IDENTIFIER = com.saphid.t3code.swiftui.stream.dev;
+				PRODUCT_BUNDLE_IDENTIFIER = com.saphid.t3code.swiftui.dev;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				SUPPORTS_MACCATALYST = NO;
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 5.0;
-				T3CODE_APP_GROUP_IDENTIFIER = group.com.saphid.t3code.swiftui.stream.dev;
+				T3CODE_APP_GROUP_IDENTIFIER = group.com.saphid.t3code.swiftui.dev;
 				T3CODE_URL_SCHEME = t3code-swiftui-personal-dev;
 				T3_BUILD_CHANNEL = dev;
 				TARGETED_DEVICE_FAMILY = "1,2";
@@ -1056,7 +1056,7 @@
 				APS_ENVIRONMENT = development;
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIconTest;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
-				CODE_SIGN_ENTITLEMENTS = Extensions/Shared/T3Code.entitlements;
+				CODE_SIGN_ENTITLEMENTS = Extensions/Shared/T3CodeDev.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				ENABLE_PREVIEWS = YES;
@@ -1079,14 +1079,14 @@
 				LD_RUNPATH_SEARCH_PATHS = ("$(inherited)", "@executable_path/Frameworks", );
 				MARKETING_VERSION = 0.1.0;
 				OTHER_LDFLAGS = ("$(inherited)", "-lc++", "-lz", "-framework", IOSurface, "-framework", Metal, "-framework", MetalKit, "-framework", QuartzCore, );
-				PRODUCT_BUNDLE_IDENTIFIER = com.saphid.t3code.swiftui.stream.test;
+				PRODUCT_BUNDLE_IDENTIFIER = com.alxs.t3code.typed-swiftui.dev;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				SUPPORTS_MACCATALYST = NO;
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 5.0;
-				T3CODE_APP_GROUP_IDENTIFIER = group.com.saphid.t3code.swiftui.stream.test;
+				T3CODE_APP_GROUP_IDENTIFIER = group.com.alxs.t3code.typed-swiftui.dev;
 				T3CODE_URL_SCHEME = t3code-swiftui-personal;
 				T3_BUILD_CHANNEL = test;
 				TARGETED_DEVICE_FAMILY = "1,2";
@@ -1095,32 +1095,32 @@
 		};
 		DB0000000000000000000005 /* Dev */ = {
 			isa = XCBuildConfiguration;
-			buildSettings = { BUNDLE_LOADER = "$(TEST_HOST)"; CODE_SIGN_STYLE = Automatic; GENERATE_INFOPLIST_FILE = YES; IPHONEOS_DEPLOYMENT_TARGET = 17.0; PRODUCT_BUNDLE_IDENTIFIER = com.saphid.t3code.swiftui.stream.dev.tests; PRODUCT_NAME = "$(TARGET_NAME)"; SDKROOT = iphoneos; SUPPORTED_PLATFORMS = "iphoneos iphonesimulator"; SWIFT_VERSION = 5.0; TARGETED_DEVICE_FAMILY = "1,2"; TEST_HOST = "$(BUILT_PRODUCTS_DIR)/T3Code.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/T3Code"; };
+			buildSettings = { BUNDLE_LOADER = "$(TEST_HOST)"; CODE_SIGN_STYLE = Automatic; GENERATE_INFOPLIST_FILE = YES; IPHONEOS_DEPLOYMENT_TARGET = 17.0; PRODUCT_BUNDLE_IDENTIFIER = com.saphid.t3code.swiftui.dev.tests; PRODUCT_NAME = "$(TARGET_NAME)"; SDKROOT = iphoneos; SUPPORTED_PLATFORMS = "iphoneos iphonesimulator"; SWIFT_VERSION = 5.0; TARGETED_DEVICE_FAMILY = "1,2"; TEST_HOST = "$(BUILT_PRODUCTS_DIR)/T3Code.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/T3Code"; };
 			name = Dev;
 		};
 		DB0000000000000000000006 /* Test */ = {
 			isa = XCBuildConfiguration;
-			buildSettings = { BUNDLE_LOADER = "$(TEST_HOST)"; CODE_SIGN_STYLE = Automatic; GENERATE_INFOPLIST_FILE = YES; IPHONEOS_DEPLOYMENT_TARGET = 17.0; PRODUCT_BUNDLE_IDENTIFIER = com.saphid.t3code.swiftui.stream.test.tests; PRODUCT_NAME = "$(TARGET_NAME)"; SDKROOT = iphoneos; SUPPORTED_PLATFORMS = "iphoneos iphonesimulator"; SWIFT_VERSION = 5.0; TARGETED_DEVICE_FAMILY = "1,2"; TEST_HOST = "$(BUILT_PRODUCTS_DIR)/T3Code.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/T3Code"; };
+			buildSettings = { BUNDLE_LOADER = "$(TEST_HOST)"; CODE_SIGN_STYLE = Automatic; GENERATE_INFOPLIST_FILE = YES; IPHONEOS_DEPLOYMENT_TARGET = 17.0; PRODUCT_BUNDLE_IDENTIFIER = com.alxs.t3code.typed-swiftui.dev.tests; PRODUCT_NAME = "$(TARGET_NAME)"; SDKROOT = iphoneos; SUPPORTED_PLATFORMS = "iphoneos iphonesimulator"; SWIFT_VERSION = 5.0; TARGETED_DEVICE_FAMILY = "1,2"; TEST_HOST = "$(BUILT_PRODUCTS_DIR)/T3Code.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/T3Code"; };
 			name = Test;
 		};
 		DB0000000000000000000007 /* Dev */ = {
 			isa = XCBuildConfiguration;
-			buildSettings = { APPLICATION_EXTENSION_API_ONLY = YES; CODE_SIGN_ENTITLEMENTS = Extensions/Widgets/T3CodeWidgets.entitlements; CODE_SIGN_STYLE = Automatic; CURRENT_PROJECT_VERSION = 1; GENERATE_INFOPLIST_FILE = YES; INFOPLIST_FILE = Extensions/Widgets/Info.plist; INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO; IPHONEOS_DEPLOYMENT_TARGET = 17.0; LD_RUNPATH_SEARCH_PATHS = ("$(inherited)", "@executable_path/Frameworks", "@executable_path/../../Frameworks", ); MARKETING_VERSION = 0.1.0; PRODUCT_BUNDLE_IDENTIFIER = com.saphid.t3code.swiftui.stream.dev.widgets; PRODUCT_NAME = "$(TARGET_NAME)"; SDKROOT = iphoneos; SKIP_INSTALL = YES; SUPPORTED_PLATFORMS = "iphoneos iphonesimulator"; SUPPORTS_MACCATALYST = NO; SWIFT_EMIT_LOC_STRINGS = YES; SWIFT_VERSION = 5.0; T3CODE_APP_GROUP_IDENTIFIER = group.com.saphid.t3code.swiftui.stream.dev; T3CODE_URL_SCHEME = t3code-swiftui-personal-dev; T3CODE_WIDGET_DISPLAY_NAME = "SwiftUI Dev Widgets"; TARGETED_DEVICE_FAMILY = "1,2"; };
+			buildSettings = { APPLICATION_EXTENSION_API_ONLY = YES; CODE_SIGN_ENTITLEMENTS = Extensions/Shared/T3CodeDev.entitlements; CODE_SIGN_STYLE = Automatic; CURRENT_PROJECT_VERSION = 1; GENERATE_INFOPLIST_FILE = YES; INFOPLIST_FILE = Extensions/Widgets/Info.plist; INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO; IPHONEOS_DEPLOYMENT_TARGET = 17.0; LD_RUNPATH_SEARCH_PATHS = ("$(inherited)", "@executable_path/Frameworks", "@executable_path/../../Frameworks", ); MARKETING_VERSION = 0.1.0; PRODUCT_BUNDLE_IDENTIFIER = com.saphid.t3code.swiftui.dev.widgets; PRODUCT_NAME = "$(TARGET_NAME)"; SDKROOT = iphoneos; SKIP_INSTALL = YES; SUPPORTED_PLATFORMS = "iphoneos iphonesimulator"; SUPPORTS_MACCATALYST = NO; SWIFT_EMIT_LOC_STRINGS = YES; SWIFT_VERSION = 5.0; T3CODE_APP_GROUP_IDENTIFIER = group.com.saphid.t3code.swiftui.dev; T3CODE_URL_SCHEME = t3code-swiftui-personal-dev; T3CODE_WIDGET_DISPLAY_NAME = "SwiftUI Dev Widgets"; TARGETED_DEVICE_FAMILY = "1,2"; };
 			name = Dev;
 		};
 		DB0000000000000000000008 /* Test */ = {
 			isa = XCBuildConfiguration;
-			buildSettings = { APPLICATION_EXTENSION_API_ONLY = YES; CODE_SIGN_ENTITLEMENTS = Extensions/Widgets/T3CodeWidgets.entitlements; CODE_SIGN_STYLE = Automatic; CURRENT_PROJECT_VERSION = 1; GENERATE_INFOPLIST_FILE = YES; INFOPLIST_FILE = Extensions/Widgets/Info.plist; INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO; IPHONEOS_DEPLOYMENT_TARGET = 17.0; LD_RUNPATH_SEARCH_PATHS = ("$(inherited)", "@executable_path/Frameworks", "@executable_path/../../Frameworks", ); MARKETING_VERSION = 0.1.0; PRODUCT_BUNDLE_IDENTIFIER = com.saphid.t3code.swiftui.stream.test.widgets; PRODUCT_NAME = "$(TARGET_NAME)"; SDKROOT = iphoneos; SKIP_INSTALL = YES; SUPPORTED_PLATFORMS = "iphoneos iphonesimulator"; SUPPORTS_MACCATALYST = NO; SWIFT_EMIT_LOC_STRINGS = YES; SWIFT_VERSION = 5.0; T3CODE_APP_GROUP_IDENTIFIER = group.com.saphid.t3code.swiftui.stream.test; T3CODE_URL_SCHEME = t3code-swiftui-personal; T3CODE_WIDGET_DISPLAY_NAME = "SwiftUI Test Widgets"; TARGETED_DEVICE_FAMILY = "1,2"; };
+			buildSettings = { APPLICATION_EXTENSION_API_ONLY = YES; CODE_SIGN_ENTITLEMENTS = Extensions/Shared/T3CodeDev.entitlements; CODE_SIGN_STYLE = Automatic; CURRENT_PROJECT_VERSION = 1; GENERATE_INFOPLIST_FILE = YES; INFOPLIST_FILE = Extensions/Widgets/Info.plist; INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO; IPHONEOS_DEPLOYMENT_TARGET = 17.0; LD_RUNPATH_SEARCH_PATHS = ("$(inherited)", "@executable_path/Frameworks", "@executable_path/../../Frameworks", ); MARKETING_VERSION = 0.1.0; PRODUCT_BUNDLE_IDENTIFIER = com.alxs.t3code.typed-swiftui.dev.widgets; PRODUCT_NAME = "$(TARGET_NAME)"; SDKROOT = iphoneos; SKIP_INSTALL = YES; SUPPORTED_PLATFORMS = "iphoneos iphonesimulator"; SUPPORTS_MACCATALYST = NO; SWIFT_EMIT_LOC_STRINGS = YES; SWIFT_VERSION = 5.0; T3CODE_APP_GROUP_IDENTIFIER = group.com.alxs.t3code.typed-swiftui.dev; T3CODE_URL_SCHEME = t3code-swiftui-personal; T3CODE_WIDGET_DISPLAY_NAME = "SwiftUI Test Widgets"; TARGETED_DEVICE_FAMILY = "1,2"; };
 			name = Test;
 		};
 		DB0000000000000000000009 /* Dev */ = {
 			isa = XCBuildConfiguration;
-			buildSettings = { APPLICATION_EXTENSION_API_ONLY = YES; CODE_SIGN_ENTITLEMENTS = Extensions/Share/T3CodeShare.entitlements; CODE_SIGN_STYLE = Automatic; CURRENT_PROJECT_VERSION = 1; GENERATE_INFOPLIST_FILE = YES; INFOPLIST_FILE = Extensions/Share/Info.plist; INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO; IPHONEOS_DEPLOYMENT_TARGET = 17.0; LD_RUNPATH_SEARCH_PATHS = ("$(inherited)", "@executable_path/Frameworks", "@executable_path/../../Frameworks", ); MARKETING_VERSION = 0.1.0; PRODUCT_BUNDLE_IDENTIFIER = com.saphid.t3code.swiftui.stream.dev.sharing; PRODUCT_NAME = "$(TARGET_NAME)"; SDKROOT = iphoneos; SKIP_INSTALL = YES; SUPPORTED_PLATFORMS = "iphoneos iphonesimulator"; SUPPORTS_MACCATALYST = NO; SWIFT_EMIT_LOC_STRINGS = YES; SWIFT_VERSION = 5.0; T3CODE_APP_GROUP_IDENTIFIER = group.com.saphid.t3code.swiftui.stream.dev; T3CODE_SHARE_DISPLAY_NAME = "SwiftUI Dev"; T3CODE_URL_SCHEME = t3code-swiftui-personal-dev; TARGETED_DEVICE_FAMILY = "1,2"; };
+			buildSettings = { APPLICATION_EXTENSION_API_ONLY = YES; CODE_SIGN_ENTITLEMENTS = Extensions/Shared/T3CodeDev.entitlements; CODE_SIGN_STYLE = Automatic; CURRENT_PROJECT_VERSION = 1; GENERATE_INFOPLIST_FILE = YES; INFOPLIST_FILE = Extensions/Share/Info.plist; INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO; IPHONEOS_DEPLOYMENT_TARGET = 17.0; LD_RUNPATH_SEARCH_PATHS = ("$(inherited)", "@executable_path/Frameworks", "@executable_path/../../Frameworks", ); MARKETING_VERSION = 0.1.0; PRODUCT_BUNDLE_IDENTIFIER = com.saphid.t3code.swiftui.dev.sharing; PRODUCT_NAME = "$(TARGET_NAME)"; SDKROOT = iphoneos; SKIP_INSTALL = YES; SUPPORTED_PLATFORMS = "iphoneos iphonesimulator"; SUPPORTS_MACCATALYST = NO; SWIFT_EMIT_LOC_STRINGS = YES; SWIFT_VERSION = 5.0; T3CODE_APP_GROUP_IDENTIFIER = group.com.saphid.t3code.swiftui.dev; T3CODE_SHARE_DISPLAY_NAME = "SwiftUI Dev"; T3CODE_URL_SCHEME = t3code-swiftui-personal-dev; TARGETED_DEVICE_FAMILY = "1,2"; };
 			name = Dev;
 		};
 		DB000000000000000000000A /* Test */ = {
 			isa = XCBuildConfiguration;
-			buildSettings = { APPLICATION_EXTENSION_API_ONLY = YES; CODE_SIGN_ENTITLEMENTS = Extensions/Share/T3CodeShare.entitlements; CODE_SIGN_STYLE = Automatic; CURRENT_PROJECT_VERSION = 1; GENERATE_INFOPLIST_FILE = YES; INFOPLIST_FILE = Extensions/Share/Info.plist; INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO; IPHONEOS_DEPLOYMENT_TARGET = 17.0; LD_RUNPATH_SEARCH_PATHS = ("$(inherited)", "@executable_path/Frameworks", "@executable_path/../../Frameworks", ); MARKETING_VERSION = 0.1.0; PRODUCT_BUNDLE_IDENTIFIER = com.saphid.t3code.swiftui.stream.test.sharing; PRODUCT_NAME = "$(TARGET_NAME)"; SDKROOT = iphoneos; SKIP_INSTALL = YES; SUPPORTED_PLATFORMS = "iphoneos iphonesimulator"; SUPPORTS_MACCATALYST = NO; SWIFT_EMIT_LOC_STRINGS = YES; SWIFT_VERSION = 5.0; T3CODE_APP_GROUP_IDENTIFIER = group.com.saphid.t3code.swiftui.stream.test; T3CODE_SHARE_DISPLAY_NAME = "SwiftUI Test"; T3CODE_URL_SCHEME = t3code-swiftui-personal; TARGETED_DEVICE_FAMILY = "1,2"; };
+			buildSettings = { APPLICATION_EXTENSION_API_ONLY = YES; CODE_SIGN_ENTITLEMENTS = Extensions/Shared/T3CodeDev.entitlements; CODE_SIGN_STYLE = Automatic; CURRENT_PROJECT_VERSION = 1; GENERATE_INFOPLIST_FILE = YES; INFOPLIST_FILE = Extensions/Share/Info.plist; INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO; IPHONEOS_DEPLOYMENT_TARGET = 17.0; LD_RUNPATH_SEARCH_PATHS = ("$(inherited)", "@executable_path/Frameworks", "@executable_path/../../Frameworks", ); MARKETING_VERSION = 0.1.0; PRODUCT_BUNDLE_IDENTIFIER = com.alxs.t3code.typed-swiftui.dev.sharing; PRODUCT_NAME = "$(TARGET_NAME)"; SDKROOT = iphoneos; SKIP_INSTALL = YES; SUPPORTED_PLATFORMS = "iphoneos iphonesimulator"; SUPPORTS_MACCATALYST = NO; SWIFT_EMIT_LOC_STRINGS = YES; SWIFT_VERSION = 5.0; T3CODE_APP_GROUP_IDENTIFIER = group.com.alxs.t3code.typed-swiftui.dev; T3CODE_SHARE_DISPLAY_NAME = "SwiftUI Test"; T3CODE_URL_SCHEME = t3code-swiftui-personal; TARGETED_DEVICE_FAMILY = "1,2"; };
 			name = Test;
 		};
 /* End XCBuildConfiguration section */

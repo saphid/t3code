@@ -96,8 +96,17 @@ dependency disappears.
 
 | Scheme / configuration | Icon and in-app suffix | Home Screen name | Bundle ID | App Group | Route |
 | --- | --- | --- | --- | --- | --- |
-| `T3CodeDev` / `Dev` | Orange `Dev` | SwiftUI Dev | `com.saphid.t3code.swiftui.stream.dev` | `group.com.saphid.t3code.swiftui.stream.dev` | `t3code-swiftui-personal-dev` |
-| `T3CodeTest` / `Test` | Purple `Test` | SwiftUI Test | `com.saphid.t3code.swiftui.stream.test` | `group.com.saphid.t3code.swiftui.stream.test` | `t3code-swiftui-personal` |
+| `T3CodeDev` / `Dev` | Orange `Dev` | SwiftUI Dev | `com.saphid.t3code.swiftui.dev` | `group.com.saphid.t3code.swiftui.dev` | `t3code-swiftui-personal-dev` |
+| `T3CodeTest` / `Test` | Purple `Test` | SwiftUI Test | `com.alxs.t3code.typed-swiftui.dev` | `group.com.alxs.t3code.typed-swiftui.dev` | `t3code-swiftui-personal` |
+
+These host and extension bundle identifiers deliberately reuse the two locally
+provisioned personal-team identities. That allows both apps to coexist and be
+renewed without creating a new Apple identifier. Free personal-team profiles do
+not carry App Group capability: device builds therefore use the empty personal
+entitlement file and the channel-aware runtime fallback keeps host storage
+isolated. The configured group names remain distinct for a future paid-team
+profile; widgets and the share extension cannot exchange group data until that
+capability is provisioned.
 | `T3Code` / `Release` | Upstream | T3 Code SwiftUI | `com.t3tools.t3code.swiftui` | upstream | `t3code-swiftui` |
 
 Widgets and Share extensions use the matching channel bundle ID and App Group.
