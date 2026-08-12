@@ -34,9 +34,13 @@ fi
 DIGEST="$(printf '%s|%s' "$STATUS" "$DETAIL" | shasum -a 256 | awk '{print $1}')"
 LAST="$(cat "$STATE_DIR/drift-monitor.digest" 2>/dev/null || true)"
 PREVIOUS_STATUS="$(jq -r '.status // empty' "$STATE_DIR/drift-monitor.json" 2>/dev/null || true)"
-[[ "$DIGEST" == "$LAST" ]] && exit 0
 jq -n --arg status "$STATUS" --arg detail "$DETAIL" --arg theo "$THEO" --arg dev "$DEV" --arg test "$TEST" \
   '{status:$status,detail:$detail,theo:$theo,dev:$dev,test:$test}' > "$STATE_DIR/drift-monitor.next.json"
+mv "$STATE_DIR/drift-monitor.next.json" "$STATE_DIR/drift-monitor.json"
+
+# Evidence refreshes on every run even when the notification-worthy state did
+# not change. The digest deduplicates only external comments.
+[[ "$DIGEST" == "$LAST" ]] && exit 0
 
 if [[ "$STATUS" != healthy ]]; then
   "$GH_BIN" issue comment 53 --repo saphid/t3code-personal \
@@ -47,5 +51,4 @@ elif [[ -n "$LAST" && "$PREVIOUS_STATUS" != healthy ]]; then
     --body "SwiftUI stream drift monitor recovered: Theo is under Dev and Dev is under Test." \
     >/dev/null
 fi
-mv "$STATE_DIR/drift-monitor.next.json" "$STATE_DIR/drift-monitor.json"
 printf '%s\n' "$DIGEST" > "$STATE_DIR/drift-monitor.digest"
