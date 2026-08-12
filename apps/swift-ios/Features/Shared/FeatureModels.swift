@@ -75,6 +75,8 @@ public struct FeatureEnvironment: Identifiable, Sendable, Equatable, Hashable, C
         case id
         case name
         case endpoint
+        case serverVersion
+        case supportsPullRequests
         case isActive
         case isEnabled
         case source
@@ -87,6 +89,11 @@ public struct FeatureEnvironment: Identifiable, Sendable, Equatable, Hashable, C
         id = try container.decode(String.self, forKey: .id)
         name = try container.decode(String.self, forKey: .name)
         endpoint = try container.decode(String.self, forKey: .endpoint)
+        serverVersion = try container.decodeIfPresent(String.self, forKey: .serverVersion)
+        supportsPullRequests = try container.decodeIfPresent(
+            Bool.self,
+            forKey: .supportsPullRequests
+        ) ?? false
         isActive = try container.decodeIfPresent(Bool.self, forKey: .isActive) ?? false
         isEnabled = try container.decodeIfPresent(Bool.self, forKey: .isEnabled) ?? true
         source = try container.decodeIfPresent(Source.self, forKey: .source) ?? .direct

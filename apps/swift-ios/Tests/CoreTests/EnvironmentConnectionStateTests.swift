@@ -25,6 +25,8 @@ struct EnvironmentConnectionStateTests {
 
         #expect(environment.isEnabled)
         #expect(environment.source == .direct)
+        #expect(environment.serverVersion == nil)
+        #expect(environment.supportsPullRequests == false)
     }
 
     @Test
