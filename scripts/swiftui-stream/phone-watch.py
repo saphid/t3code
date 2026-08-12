@@ -43,8 +43,9 @@ def notify(config: dict[str, Any], channel: str, message: str, key: str) -> None
     state_path = ROOT / "notification-state.json"
     state = load(state_path) if state_path.exists() else {}
     digest = hashlib.sha256(key.encode()).hexdigest()
-    delivered = state.get("lastDeliveredByChannel", {})
-    if delivered.get(channel) == digest:
+    delivered = state.get("deliveredByChannel", {})
+    channel_deliveries = set(delivered.get(channel, []))
+    if digest in channel_deliveries:
         return
     command = config.get("discordCommand", "/Users/saphid/bin/hermes-discord")
     host = config.get("discordHost", "lxso1")
@@ -58,8 +59,9 @@ def notify(config: dict[str, Any], channel: str, message: str, key: str) -> None
         env=environment,
     )
     if result.returncode == 0:
-        delivered[channel] = digest
-    state["lastDeliveredByChannel"] = delivered
+        channel_deliveries.add(digest)
+        delivered[channel] = sorted(channel_deliveries)[-100:]
+    state["deliveredByChannel"] = delivered
     state["lastAttemptByChannel"] = {
         **state.get("lastAttemptByChannel", {}),
         channel: {
@@ -203,7 +205,7 @@ def process_channel(path: Path, config: dict[str, Any]) -> None:
                     config,
                     channel,
                     f"SwiftUI {channel.title()} build {pointer['build']} is ready. Please connect and unlock the iPhone; the deterministic watcher will install the newest build automatically. Stream: {config.get('trackingIssue', 'T3 SwiftUI stream')}",
-                    f"{channel}:{pointer['build']}:{reason}",
+                    f"{channel}:{pointer['build']}",
                 )
                 return
 

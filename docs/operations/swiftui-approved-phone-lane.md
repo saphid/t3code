@@ -1,6 +1,10 @@
 # Approved SwiftUI phone lane
 
-`personal/swiftui-approved` is the only branch allowed to build the private
+> Historical rollback record (frozen 2026-08-12). This lane and its sync
+> LaunchAgent are disabled. Do not run its sync or installer during normal
+> work; use `swiftui-dev-test-stream.md` and the Dev/Test watcher instead.
+
+`personal/swiftui-approved` was the only branch allowed to build the private
 SwiftUI app for Alex's physical iPhone. It is based on Theo's active
 `t3code/rebuild-mobile-app-swift` branch until SwiftUI reaches upstream `main`.
 

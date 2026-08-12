@@ -56,11 +56,22 @@ class StreamTests(unittest.TestCase):
         self.assertTrue(any(item["delivery"] == "direct" for item in records))
         self.assertTrue(any(item["delivery"] == "chain" for item in records))
         for item in records:
-            self.assertEqual(bool(item["dependsOn"]), item["delivery"] == "chain")
+            if item["delivery"] == "direct":
+                self.assertFalse(item["dependsOn"])
+            if item["delivery"] == "chain":
+                self.assertTrue(item["dependsOn"])
             delivery, dependencies = stream.delivery_for(
                 f"https://github.com/pingdotgg/t3code/pull/{item['number']}"
             )
             self.assertEqual((delivery, dependencies), (item["delivery"], item["dependsOn"]))
+        legacy = stream.load_json(stream.REPO_ROOT / stream.manifest()["legacyManifest"])
+        referenced = {
+            stream.pr_number(item.get("pullRequest"))
+            for group in ("features", "candidates")
+            for item in legacy.get(group, [])
+            if item.get("pullRequest")
+        }
+        self.assertFalse(referenced - {item["number"] for item in records})
 
 
 class WatcherTests(unittest.TestCase):
@@ -176,6 +187,18 @@ class WatcherTests(unittest.TestCase):
                 watcher.notify({}, "dev", "unlock", "build-41")
                 watcher.notify({}, "test", "unlock", "build-41")
                 self.assertEqual(send.call_count, 2)
+
+    def test_notification_dedup_survives_alternating_failure_reasons(self):
+        completed = subprocess.CompletedProcess([], 0, "", "")
+        with tempfile.TemporaryDirectory() as directory:
+            with (
+                patch.object(watcher, "ROOT", Path(directory)),
+                patch.object(watcher.subprocess, "run", return_value=completed) as send,
+            ):
+                watcher.notify({}, "test", "locked", "test:41")
+                watcher.notify({}, "test", "unavailable", "test:41")
+                watcher.notify({}, "test", "locked again", "test:41")
+                self.assertEqual(send.call_count, 1)
 
 
 if __name__ == "__main__":

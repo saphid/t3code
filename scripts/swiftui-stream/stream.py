@@ -96,6 +96,42 @@ def validate_manifest(value: dict[str, Any]) -> None:
             for key in ("approvedBy", "approvedAt", "approvedInThread", "approvalEvidence", "legacy")
         ):
             fail(f"{feature_id} reached {feature.get('state')} without human approval evidence")
+        if feature.get("state") in APPROVED_OR_LATER and not feature.get("legacy"):
+            receipt_path = feature.get("approvalReceipt")
+            if not isinstance(receipt_path, str) or not receipt_path:
+                fail(f"{feature_id} reached {feature.get('state')} without an approval receipt")
+            receipt = load_json(Path(receipt_path))
+            if receipt.get("featureId") != feature_id or not receipt.get("humanConfirmation"):
+                fail(f"{feature_id} approval receipt does not match confirmed human approval")
+
+
+def validate_delivery_inventory(value: dict[str, Any], states: list[str]) -> None:
+    records = value.get("pullRequests", [])
+    numbers = [item.get("number") for item in records]
+    if any(not isinstance(number, int) for number in numbers) or len(numbers) != len(set(numbers)):
+        fail("PR delivery inventory numbers must be present and unique")
+    for item in records:
+        delivery = item.get("delivery")
+        dependencies = item.get("dependsOn", [])
+        if delivery not in VALID_DELIVERY - {"local-only"}:
+            fail(f"PR {item['number']} has invalid delivery {delivery}")
+        if delivery == "chain" and not dependencies:
+            fail(f"PR {item['number']} is a chain without dependencies")
+        if delivery == "direct" and dependencies:
+            fail(f"direct PR {item['number']} cannot have dependencies")
+        if item.get("state") not in states:
+            fail(f"PR {item['number']} has invalid state {item.get('state')}")
+
+    legacy = load_json(REPO_ROOT / manifest_path_value("legacyManifest"))
+    referenced = {
+        number
+        for group in ("features", "candidates")
+        for item in legacy.get(group, [])
+        if (number := pr_number(item.get("pullRequest"))) is not None
+    }
+    missing = sorted(referenced - set(numbers))
+    if missing:
+        fail(f"PR delivery inventory is missing legacy PRs: {', '.join(map(str, missing))}")
 
 
 def normalize(text: str) -> str:
@@ -158,6 +194,7 @@ def upstream_pr_features(value: dict[str, Any], existing: list[dict[str, Any]]) 
             "delivery": item["delivery"],
             "dependsOnPullRequests": item.get("dependsOn", []),
             "validatedAgainst": delivery.get("validatedAgainst"),
+            "legacy": True,
         })
     return records
 
@@ -220,15 +257,19 @@ def catalog(include_threads: bool = True) -> list[dict[str, Any]]:
 def approval_list() -> list[dict[str, Any]]:
     current = manifest().get("currentTestBuild", {})
     build = current.get("build")
-    eligible = [
+    pending = [
         feature for feature in catalog(False)
         if feature.get("state") in APPROVAL_STATES
-        and feature.get("testBuild") == build
     ]
+    stale = [feature for feature in pending if feature.get("testBuild") != build]
+    if stale:
+        fail(
+            f"{len(stale)} pending approval record(s) do not match current Test build {build}"
+        )
+    eligible = pending
     return sorted(
         eligible,
         key=lambda feature: (
-            0 if feature.get("testBuild") == build else 1,
             feature.get("order", 1_000_000),
             normalize(feature["name"]),
             feature["id"],
@@ -346,6 +387,18 @@ def command_validate_pr(args: argparse.Namespace) -> None:
         fail("a chain PR merge order must begin with its dependencies in declared order")
     if delivery == "blocked" and depends_on.lower() == "none":
         fail("a blocked PR must name its blocker in Depends on")
+    if args.number is not None:
+        inventory = load_json(REPO_ROOT / manifest_path_value("prDelivery"))
+        expected = next(
+            (item for item in inventory.get("pullRequests", []) if item["number"] == args.number),
+            None,
+        )
+        if expected is None:
+            fail(f"PR {args.number} is absent from the delivery inventory")
+        if delivery != expected["delivery"] or dependencies != expected.get("dependsOn", []):
+            fail(
+                f"PR {args.number} body does not match inventory delivery/dependencies"
+            )
     theo = git("rev-parse", manifest()["branches"]["theo"])
     resolved = git("rev-parse", validated_commit)
     if resolved != theo:
@@ -396,9 +449,15 @@ def command_queue(args: argparse.Namespace) -> None:
 
 def command_validate(_: argparse.Namespace) -> None:
     value = manifest()
+    validate_delivery_inventory(load_json(REPO_ROOT / value["prDelivery"]), value["lifecycle"])
     records = catalog(False)
     if len({item["id"] for item in records}) != len(records):
         fail("catalog contains duplicate ids")
+    for item in records:
+        if item.get("state") not in value["lifecycle"]:
+            fail(f"catalog record {item['id']} has invalid state {item.get('state')}")
+        if item.get("delivery") is not None and item.get("delivery") not in VALID_DELIVERY:
+            fail(f"catalog record {item['id']} has invalid delivery {item.get('delivery')}")
     print(f"stream manifest valid: {len(records)} durable feature records")
 
 
@@ -423,6 +482,7 @@ def parser() -> argparse.ArgumentParser:
     verify.set_defaults(func=command_verify_branches)
     pr = commands.add_parser("validate-pr-body")
     pr.add_argument("--body")
+    pr.add_argument("--number", type=int)
     pr.set_defaults(func=command_validate_pr)
     queue = commands.add_parser("queue-order")
     queue.add_argument("--path", default="~/.t3/swiftui-stream/promotion-queue.json")
