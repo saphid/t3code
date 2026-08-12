@@ -199,6 +199,13 @@ struct FeatureCommandPaletteTests {
             )
         )
         #expect(
+            FeatureCommandPaletteGesture.shouldReceive(
+                point: CGPoint(x: 180, y: 20),
+                surfaceFrame: header,
+                hasPresentedViewController: false
+            )
+        )
+        #expect(
             !FeatureCommandPaletteGesture.shouldReceive(
                 point: CGPoint(x: 180, y: 300),
                 surfaceFrame: header,

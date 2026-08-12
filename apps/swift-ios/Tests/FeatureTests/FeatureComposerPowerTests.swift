@@ -115,6 +115,18 @@ struct FeatureComposerPowerTests {
                 softwareKeyboardIsVisible: true
             ) == 52
         )
+        #expect(
+            FeatureComposerTextLayout.bottomClearance(
+                dynamicTypeSize: .accessibility5,
+                softwareKeyboardIsVisible: false
+            ) == 0
+        )
+        #expect(
+            FeatureComposerTextLayout.bottomClearance(
+                dynamicTypeSize: .large,
+                softwareKeyboardIsVisible: true
+            ) == 0
+        )
     }
 
     @Test

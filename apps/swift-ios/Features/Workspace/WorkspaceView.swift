@@ -1192,6 +1192,10 @@ private struct FeatureCommandPaletteGestureInstaller: UIViewRepresentable {
             fatalError("init(coder:) has not been implemented")
         }
 
+        deinit {
+            uninstallGesture()
+        }
+
         override func didMoveToWindow() {
             super.didMoveToWindow()
             installGestureIfPossible()
@@ -1249,7 +1253,7 @@ private struct FeatureCommandPaletteGestureInstaller: UIViewRepresentable {
         }
 
         private func shouldReceive(_ touch: UITouch) -> Bool {
-            guard let gestureHost, window != nil else { return false }
+            guard let gestureHost, let window, window === gestureHost.window else { return false }
             let point = touch.location(in: gestureHost)
             return FeatureCommandPaletteGesture.shouldReceive(
                 point: point,

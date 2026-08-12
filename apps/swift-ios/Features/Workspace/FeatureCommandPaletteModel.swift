@@ -51,10 +51,11 @@ enum FeatureCommandPaletteMode: Equatable {
 
 enum FeatureCommandPaletteGesture {
     static let minimumDownwardTranslation: CGFloat = 72
+    private static let verticalDominanceRatio: CGFloat = 1.15
 
     static func shouldBegin(velocity: CGPoint, translation: CGPoint = .zero) -> Bool {
         let intent = velocity == .zero ? translation : velocity
-        return intent.y > 0 && intent.y > abs(intent.x) * 1.15
+        return intent.y > 0 && intent.y > abs(intent.x) * verticalDominanceRatio
     }
 
     static func shouldReceive(
@@ -62,7 +63,9 @@ enum FeatureCommandPaletteGesture {
         surfaceFrame: CGRect,
         hasPresentedViewController: Bool
     ) -> Bool {
-        !hasPresentedViewController && surfaceFrame.contains(point)
+        !hasPresentedViewController
+            && surfaceFrame.minX...surfaceFrame.maxX ~= point.x
+            && 0...surfaceFrame.maxY ~= point.y
     }
 
     static func shouldPresent(translation: CGSize) -> Bool {
@@ -70,7 +73,7 @@ enum FeatureCommandPaletteGesture {
             return false
         }
 
-        return translation.height > abs(translation.width) * 1.15
+        return translation.height > abs(translation.width) * verticalDominanceRatio
     }
 }
 
