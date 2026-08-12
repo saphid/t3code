@@ -5,15 +5,13 @@ enum T3Colors {
     // Keep these values aligned with apps/mobile/global.css. UIKit variants
     // let recycled collection and terminal surfaces participate in the same
     // system appearance changes as SwiftUI views.
-    static var uiBackground: UIColor {
-        themed("canvas", light: rgb(0xF2F2F7), dark: rgb(0x0A0A0A))
-    }
-    static var uiTextPrimary: UIColor {
-        themed("text", light: rgb(0x262626), dark: rgb(0xF5F5F5))
-    }
-    static var uiTextSecondary: UIColor {
-        themed("textMuted", light: rgb(0x525252), dark: rgb(0xA3A3A3))
-    }
+    // Keep shared UIKit colors identity-stable. Selectable Markdown uses their
+    // identity as part of its attributed-text cache, while each dynamic color
+    // still resolves through the currently published theme palette.
+    static let uiBackground = themed("canvas", light: rgb(0xF2F2F7), dark: rgb(0x0A0A0A))
+    static let uiTextPrimary = themed("text", light: rgb(0x262626), dark: rgb(0xF5F5F5))
+    static let uiTextSecondary = themed(
+        "textMuted", light: rgb(0x525252), dark: rgb(0xA3A3A3))
 
     static var background: Color { Color(uiColor: uiBackground) }
     static var sheet: Color {
