@@ -342,7 +342,6 @@ public struct WorkspaceView: View {
                 return
             }
         }
-        .highPriorityGesture(commandPaletteGesture)
     }
 
     private var sidebar: some View {
@@ -555,6 +554,12 @@ public struct WorkspaceView: View {
 #else
         .background(T3Colors.background)
 #endif
+        .background {
+            FeatureCommandPaletteGestureInstaller {
+                isSearchFocused = false
+                showingCommandPalette = true
+            }
+        }
     }
 
     private static let buildChangelog = BuildChangelog.load(info: Bundle.main.infoDictionary)
@@ -949,20 +954,6 @@ public struct WorkspaceView: View {
         }
     }
 
-    private var commandPaletteGesture: some Gesture {
-        DragGesture(minimumDistance: 24, coordinateSpace: .global)
-            .onEnded { value in
-                guard FeatureCommandPaletteGesture.shouldPresent(
-                    startY: value.startLocation.y,
-                    translation: value.translation
-                ) else {
-                    return
-                }
-                isSearchFocused = false
-                showingCommandPalette = true
-            }
-    }
-
     private func consumeNavigationRequest() {
         guard let navigationRequest,
               consumedNavigationRequestID != navigationRequest.id else { return }
@@ -1166,6 +1157,146 @@ public struct WorkspaceView: View {
             return project.name
         }
         return "\(project.name) · \(environment.name)"
+    }
+}
+
+private struct FeatureCommandPaletteGestureInstaller: UIViewRepresentable {
+    let onPresent: () -> Void
+
+    func makeUIView(context _: Context) -> InstallerView {
+        InstallerView(onPresent: onPresent)
+    }
+
+    func updateUIView(_ view: InstallerView, context _: Context) {
+        view.configure(onPresent: onPresent)
+    }
+
+    static func dismantleUIView(_ view: InstallerView, coordinator _: Void) {
+        view.uninstallGesture()
+    }
+
+    final class InstallerView: UIView {
+        private var onPresent: () -> Void
+        private weak var gestureHost: UIView?
+        private var panGesture: UIPanGestureRecognizer?
+        private var gestureDelegate: GestureDelegate?
+
+        init(onPresent: @escaping () -> Void) {
+            self.onPresent = onPresent
+            super.init(frame: .zero)
+            isUserInteractionEnabled = false
+        }
+
+        @available(*, unavailable)
+        required init?(coder _: NSCoder) {
+            fatalError("init(coder:) has not been implemented")
+        }
+
+        override func didMoveToWindow() {
+            super.didMoveToWindow()
+            installGestureIfPossible()
+        }
+
+        override func layoutSubviews() {
+            super.layoutSubviews()
+            installGestureIfPossible()
+        }
+
+        func configure(onPresent: @escaping () -> Void) {
+            self.onPresent = onPresent
+            installGestureIfPossible()
+        }
+
+        func uninstallGesture() {
+            if let panGesture, let gestureHost {
+                gestureHost.removeGestureRecognizer(panGesture)
+            }
+            panGesture = nil
+            gestureDelegate = nil
+            gestureHost = nil
+        }
+
+        private func installGestureIfPossible() {
+            guard let host = window?.rootViewController?.view else {
+                uninstallGesture()
+                return
+            }
+            guard gestureHost !== host else { return }
+
+            uninstallGesture()
+            let panGesture = UIPanGestureRecognizer(
+                target: self,
+                action: #selector(handlePan(_:))
+            )
+            let gestureDelegate = GestureDelegate(owner: self)
+            panGesture.delegate = gestureDelegate
+            panGesture.cancelsTouchesInView = false
+            panGesture.delaysTouchesBegan = false
+            panGesture.maximumNumberOfTouches = 1
+            host.addGestureRecognizer(panGesture)
+            gestureHost = host
+            self.panGesture = panGesture
+            self.gestureDelegate = gestureDelegate
+        }
+
+        @objc private func handlePan(_ gesture: UIPanGestureRecognizer) {
+            guard gesture.state == .ended, let gestureHost else { return }
+            let translation = gesture.translation(in: gestureHost)
+            guard FeatureCommandPaletteGesture.shouldPresent(
+                translation: CGSize(width: translation.x, height: translation.y)
+            ) else { return }
+            onPresent()
+        }
+
+        private func shouldReceive(_ touch: UITouch) -> Bool {
+            guard let gestureHost, window != nil else { return false }
+            let point = touch.location(in: gestureHost)
+            return FeatureCommandPaletteGesture.shouldReceive(
+                point: point,
+                surfaceFrame: convert(bounds, to: gestureHost),
+                hasPresentedViewController: Self.hasPresentedViewController(
+                    in: gestureHost.window?.rootViewController
+                )
+            )
+        }
+
+        private static func hasPresentedViewController(in controller: UIViewController?) -> Bool {
+            guard let controller else { return false }
+            if controller.presentedViewController != nil { return true }
+            return controller.children.contains { hasPresentedViewController(in: $0) }
+        }
+
+        private final class GestureDelegate: NSObject, UIGestureRecognizerDelegate {
+            private weak var owner: InstallerView?
+
+            init(owner: InstallerView) {
+                self.owner = owner
+            }
+
+            func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+                guard let panGesture = gestureRecognizer as? UIPanGestureRecognizer else {
+                    return false
+                }
+                return FeatureCommandPaletteGesture.shouldBegin(
+                    velocity: panGesture.velocity(in: panGesture.view),
+                    translation: panGesture.translation(in: panGesture.view)
+                )
+            }
+
+            func gestureRecognizer(
+                _ gestureRecognizer: UIGestureRecognizer,
+                shouldReceive touch: UITouch
+            ) -> Bool {
+                owner?.shouldReceive(touch) == true
+            }
+
+            func gestureRecognizer(
+                _ gestureRecognizer: UIGestureRecognizer,
+                shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer
+            ) -> Bool {
+                otherGestureRecognizer.view is UIScrollView
+            }
+        }
     }
 }
 

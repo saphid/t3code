@@ -50,12 +50,23 @@ enum FeatureCommandPaletteMode: Equatable {
 }
 
 enum FeatureCommandPaletteGesture {
-    static let maximumStartY: CGFloat = 88
     static let minimumDownwardTranslation: CGFloat = 72
 
-    static func shouldPresent(startY: CGFloat, translation: CGSize) -> Bool {
-        guard startY <= maximumStartY,
-              translation.height >= minimumDownwardTranslation else {
+    static func shouldBegin(velocity: CGPoint, translation: CGPoint = .zero) -> Bool {
+        let intent = velocity == .zero ? translation : velocity
+        return intent.y > 0 && intent.y > abs(intent.x) * 1.15
+    }
+
+    static func shouldReceive(
+        point: CGPoint,
+        surfaceFrame: CGRect,
+        hasPresentedViewController: Bool
+    ) -> Bool {
+        !hasPresentedViewController && surfaceFrame.contains(point)
+    }
+
+    static func shouldPresent(translation: CGSize) -> Bool {
+        guard translation.height >= minimumDownwardTranslation else {
             return false
         }
 

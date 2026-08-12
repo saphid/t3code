@@ -159,29 +159,82 @@ struct FeatureCommandPaletteTests {
     }
 
     @Test
-    func swipeDownOnlyPresentsFromTheTopEdge() {
+    func swipeDownPresentsOnlyAfterEnoughVerticalTravel() {
         #expect(
             FeatureCommandPaletteGesture.shouldPresent(
-                startY: 20,
                 translation: CGSize(width: 2, height: 90)
             )
         )
         #expect(
             !FeatureCommandPaletteGesture.shouldPresent(
-                startY: 120,
-                translation: CGSize(width: 0, height: 90)
+                translation: CGSize(width: 0, height: 71)
+            )
+        )
+        #expect(
+            FeatureCommandPaletteGesture.shouldPresent(
+                translation: CGSize(width: 0, height: 72)
             )
         )
         #expect(
             !FeatureCommandPaletteGesture.shouldPresent(
-                startY: 20,
                 translation: CGSize(width: 80, height: 90)
             )
         )
         #expect(
             !FeatureCommandPaletteGesture.shouldPresent(
-                startY: 20,
                 translation: CGSize(width: 0, height: -90)
+            )
+        )
+    }
+
+    @Test
+    func commandPalettePanReceivesOnlyTouchesInsideTheHomeHeader() {
+        let header = CGRect(x: 0, y: 59, width: 393, height: 49)
+
+        #expect(
+            FeatureCommandPaletteGesture.shouldReceive(
+                point: CGPoint(x: 180, y: 80),
+                surfaceFrame: header,
+                hasPresentedViewController: false
+            )
+        )
+        #expect(
+            !FeatureCommandPaletteGesture.shouldReceive(
+                point: CGPoint(x: 180, y: 300),
+                surfaceFrame: header,
+                hasPresentedViewController: false
+            )
+        )
+        #expect(
+            !FeatureCommandPaletteGesture.shouldReceive(
+                point: CGPoint(x: 180, y: 80),
+                surfaceFrame: header,
+                hasPresentedViewController: true
+            )
+        )
+    }
+
+    @Test
+    func commandPalettePanBeginsOnlyOnDownwardIntent() {
+        #expect(
+            FeatureCommandPaletteGesture.shouldBegin(
+                velocity: CGPoint(x: 8, y: 120)
+            )
+        )
+        #expect(
+            !FeatureCommandPaletteGesture.shouldBegin(
+                velocity: CGPoint(x: 8, y: -120)
+            )
+        )
+        #expect(
+            !FeatureCommandPaletteGesture.shouldBegin(
+                velocity: CGPoint(x: 120, y: 8)
+            )
+        )
+        #expect(
+            FeatureCommandPaletteGesture.shouldBegin(
+                velocity: .zero,
+                translation: CGPoint(x: 2, y: 20)
             )
         )
     }
