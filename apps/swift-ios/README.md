@@ -141,7 +141,10 @@ Debug installations embed an offline changelog for the commits after
 `upstream/t3code/rebuild-mobile-app-swift`. Set `T3_SWIFT_CHANGELOG_BASE_REF` to
 compare with another build base. Set `T3_SWIFT_CHANGELOG_USE_LUNA=1` to generate
 one GPT-5.6 Luna summary per commit with the local Codex CLI, or pass a previously
-generated response with `T3_SWIFT_CHANGELOG_SUMMARIES`.
+generated response with `T3_SWIFT_CHANGELOG_SUMMARIES`. When the installer runs
+inside a T3 Code thread, the changelog also links back to that thread. Set
+`T3_SWIFT_SOURCE_THREAD_ID` to preserve or override that source during a resumed
+or coordinated build.
 
 ## Release checklist
 

@@ -18,7 +18,22 @@ struct BuildChangelog: Codable, Equatable, Sendable {
     let baseRevision: String?
     let repositoryURL: URL?
     let generatedBy: String
+    let sourceThreadID: String?
     let entries: [Entry]
+
+    var sourceThreadURL: URL? {
+        guard let sourceThreadID,
+              !sourceThreadID.isEmpty,
+              sourceThreadID.utf8.count <= 1_024,
+              sourceThreadID == sourceThreadID.trimmingCharacters(in: .whitespacesAndNewlines),
+              sourceThreadID != ".",
+              sourceThreadID != "..",
+              sourceThreadID.unicodeScalars.allSatisfy({
+                  !CharacterSet.controlCharacters.contains($0)
+              })
+        else { return nil }
+        return PlatformRoute.thread(environmentID: nil, threadID: sourceThreadID).url
+    }
 
     static func load(info: [String: Any]?) -> BuildChangelog? {
         guard let encoded = info?["T3BuildChangelog"] as? String,
@@ -58,8 +73,21 @@ enum BuildChangelogPrompt {
 }
 
 struct BuildChangelogView: View {
+    @SwiftUI.Environment(\.openURL) private var openURL
+
     let changelog: BuildChangelog?
     let versionLabel: String
+    let onOpenSourceThread: () -> Void
+
+    init(
+        changelog: BuildChangelog?,
+        versionLabel: String,
+        onOpenSourceThread: @escaping () -> Void = {}
+    ) {
+        self.changelog = changelog
+        self.versionLabel = versionLabel
+        self.onOpenSourceThread = onOpenSourceThread
+    }
 
     var body: some View {
         ScrollView {
@@ -68,7 +96,11 @@ struct BuildChangelogView: View {
 
                 if let changelog, !changelog.entries.isEmpty {
                     if let latest = changelog.entries.last {
-                        latestChange(latest, repositoryURL: changelog.repositoryURL)
+                        latestChange(
+                            latest,
+                            repositoryURL: changelog.repositoryURL,
+                            sourceThreadURL: changelog.sourceThreadURL
+                        )
                             .padding(.bottom, 28)
                     }
 
@@ -117,7 +149,11 @@ struct BuildChangelogView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    private func latestChange(_ entry: BuildChangelog.Entry, repositoryURL: URL?) -> some View {
+    private func latestChange(
+        _ entry: BuildChangelog.Entry,
+        repositoryURL: URL?,
+        sourceThreadURL: URL?
+    ) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             Label("New in this version", systemImage: "sparkles")
                 .font(T3Typography.homeTitle)
@@ -131,6 +167,19 @@ struct BuildChangelogView: View {
                 .foregroundStyle(T3Colors.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
             changeLinks(entry, repositoryURL: repositoryURL)
+            if let sourceThreadURL {
+                Button {
+                    onOpenSourceThread()
+                    openURL(sourceThreadURL)
+                } label: {
+                    Label("Open development thread", systemImage: "bubble.left.and.bubble.right")
+                }
+                .font(T3Typography.control)
+                .foregroundStyle(T3Colors.accent)
+                .buttonStyle(.plain)
+                .accessibilityHint("Opens the T3 Code thread used to create this build")
+                .padding(.top, 2)
+            }
         }
         .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)

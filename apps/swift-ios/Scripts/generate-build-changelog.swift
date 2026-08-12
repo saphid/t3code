@@ -16,6 +16,7 @@ struct Changelog: Codable {
     let baseRevision: String?
     let repositoryURL: String?
     let generatedBy: String
+    let sourceThreadID: String?
     let entries: [Entry]
 }
 
@@ -56,6 +57,25 @@ func git(_ arguments: [String], repository: String) -> String {
     guard process.terminationStatus == 0 else { fail("git command failed") }
     return String(decoding: data, as: UTF8.self)
         .trimmingCharacters(in: .whitespacesAndNewlines)
+}
+
+func sourceThreadID(environment: [String: String]) -> String? {
+    guard let value = environment["T3_SWIFT_SOURCE_THREAD_ID"]
+        ?? environment["CODEX_THREAD_ID"]
+    else { return nil }
+    let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.isEmpty,
+          trimmed == value,
+          value.utf8.count <= 1_024,
+          value != ".",
+          value != "..",
+          value.unicodeScalars.allSatisfy({
+              !CharacterSet.controlCharacters.contains($0)
+          })
+    else {
+        fail("source thread ID is invalid")
+    }
+    return value
 }
 
 let arguments = CommandLine.arguments
@@ -164,6 +184,7 @@ let changelog = Changelog(
     baseRevision: baseRevision,
     repositoryURL: repositoryURL,
     generatedBy: summaries.isEmpty ? "Git history" : "GPT-5.6 Luna",
+    sourceThreadID: sourceThreadID(environment: ProcessInfo.processInfo.environment),
     entries: entries
 )
 let encoder = JSONEncoder()

@@ -350,7 +350,8 @@ public struct SettingsView: View {
                 NavigationLink {
                     BuildChangelogView(
                         changelog: buildChangelog,
-                        versionLabel: appVersionLabel
+                        versionLabel: appVersionLabel,
+                        onOpenSourceThread: { dismiss() }
                     )
                 } label: {
                     SettingsNavigationRow(
