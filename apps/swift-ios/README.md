@@ -85,8 +85,8 @@ beside each other and beside TestFlight:
 
 | Scheme / configuration | Display name    | Bundle identifier                    | URL scheme             |
 | ---------------------- | --------------- | ------------------------------------ | ---------------------- |
-| T3CodeDev / Dev        | SwiftUI Dev     | `com.saphid.t3code.swiftui.stream.dev`  | `t3code-swiftui-personal-dev` |
-| T3CodeTest / Test      | SwiftUI Test    | `com.saphid.t3code.swiftui.stream.test` | `t3code-swiftui-personal`     |
+| T3CodeDev / Dev        | SwiftUI Dev     | `com.saphid.t3code.swiftui.dev`       | `t3code-swiftui-personal-dev` |
+| T3CodeTest / Test      | SwiftUI Test    | `com.alxs.t3code.typed-swiftui.dev`   | `t3code-swiftui-personal`     |
 | T3Code / Debug         | T3 Swift Dev    | `com.t3tools.t3code.swiftui.dev`     | `t3code-swiftui-dev`   |
 | T3Code / Release       | T3 Code SwiftUI | `com.t3tools.t3code.swiftui`         | `t3code-swiftui`       |
 

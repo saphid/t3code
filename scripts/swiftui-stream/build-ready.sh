@@ -13,13 +13,13 @@ case "$CHANNEL" in
   dev)
     CONFIGURATION=Dev
     SCHEME=T3CodeDev
-    BUNDLE_ID=com.saphid.t3code.swiftui.stream.dev
+    BUNDLE_ID=com.saphid.t3code.swiftui.dev
     EXPECTED_BRANCH=personal/swiftui-dev
     ;;
   test)
     CONFIGURATION=Test
     SCHEME=T3CodeTest
-    BUNDLE_ID=com.saphid.t3code.swiftui.stream.test
+    BUNDLE_ID=com.alxs.t3code.typed-swiftui.dev
     EXPECTED_BRANCH=personal/swiftui-test
     ;;
   *) printf 'usage: %s dev|test\n' "$0" >&2; exit 2 ;;

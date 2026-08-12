@@ -5,8 +5,8 @@ enum T3SharedContainer {
         let channel = (Bundle.main.object(forInfoDictionaryKey: "T3BuildChannel") as? String)?
             .lowercased()
         return switch channel {
-        case "dev": "group.com.saphid.t3code.swiftui.stream.dev"
-        case "test": "group.com.saphid.t3code.swiftui.stream.test"
+        case "dev": "group.com.saphid.t3code.swiftui.dev"
+        case "test": "group.com.alxs.t3code.typed-swiftui.dev"
         case "debug": "group.com.t3tools.t3code.swiftui.dev"
         default: "group.com.t3tools.t3code.swiftui"
         }

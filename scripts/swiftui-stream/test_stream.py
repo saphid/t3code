@@ -71,7 +71,7 @@ class WatcherTests(unittest.TestCase):
             with (app / "Info.plist").open("wb") as file:
                 plistlib.dump(
                     {
-                        "CFBundleIdentifier": "com.saphid.t3code.swiftui.stream.test",
+                        "CFBundleIdentifier": "com.alxs.t3code.typed-swiftui.dev",
                         "CFBundleVersion": "41",
                         "T3BuildChannel": "test",
                         "T3GitCommit": "a" * 40,
@@ -89,7 +89,7 @@ class WatcherTests(unittest.TestCase):
                 "build": 41,
                 "sequence": 41,
                 "commit": "a" * 40,
-                "bundleId": "com.saphid.t3code.swiftui.stream.test",
+                "bundleId": "com.alxs.t3code.typed-swiftui.dev",
                 "appPath": str(app),
                 "zipPath": str(archive),
                 "sha256": digest,
