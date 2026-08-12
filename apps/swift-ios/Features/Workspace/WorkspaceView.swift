@@ -225,17 +225,30 @@ public struct WorkspaceView: View {
     }
 
     public var body: some View {
-        NavigationSplitView(preferredCompactColumn: $preferredCompactColumn) {
-            sidebar
-                .navigationSplitViewColumnWidth(
-                    min: T3Metrics.minimumSidebarWidth,
-                    ideal: T3Metrics.sidebarWidth,
-                    max: T3Metrics.maximumSidebarWidth
-                )
-        } detail: {
-            detail
+        ZStack(alignment: .top) {
+            NavigationSplitView(preferredCompactColumn: $preferredCompactColumn) {
+                sidebar
+                    .navigationSplitViewColumnWidth(
+                        min: T3Metrics.minimumSidebarWidth,
+                        ideal: T3Metrics.sidebarWidth,
+                        max: T3Metrics.maximumSidebarWidth
+                    )
+            } detail: {
+                detail
+            }
+            .navigationSplitViewStyle(.balanced)
+            .accessibilityHidden(showingCommandPalette)
+
+            if showingCommandPalette {
+                commandPaletteScrim
+                    .transition(.opacity)
+                    .zIndex(1)
+
+                commandPalettePanel
+                    .transition(.move(edge: .top))
+                    .zIndex(1)
+            }
         }
-        .navigationSplitViewStyle(.balanced)
         .sheet(isPresented: $showingNewTask, onDismiss: {
             let presentationID = dismissingNewTaskPresentationID
                 ?? appearedNewTaskPresentationID
@@ -285,13 +298,6 @@ public struct WorkspaceView: View {
                     }
                 }
             }
-        }
-        .sheet(isPresented: $showingCommandPalette) {
-            FeatureCommandPaletteView(
-                model: model,
-                activeProjectID: commandPaletteActiveProjectID,
-                onSelect: handleCommandPaletteAction
-            )
         }
         .alert(
             "Rename thread",
@@ -557,7 +563,9 @@ public struct WorkspaceView: View {
         .background {
             FeatureCommandPaletteGestureInstaller {
                 isSearchFocused = false
-                showingCommandPalette = true
+                withAnimation(.snappy(duration: 0.32)) {
+                    showingCommandPalette = true
+                }
             }
         }
     }
@@ -839,6 +847,43 @@ public struct WorkspaceView: View {
         return creationProjects.first?.id
     }
 
+    private var commandPaletteScrim: some View {
+        Color.black.opacity(0.32)
+            .ignoresSafeArea()
+            .contentShape(Rectangle())
+            .onTapGesture(perform: dismissCommandPalette)
+            .accessibilityHidden(true)
+    }
+
+    private var commandPalettePanel: some View {
+        GeometryReader { proxy in
+            ZStack(alignment: .top) {
+                T3Colors.background
+                FeatureCommandPaletteView(
+                    model: model,
+                    activeProjectID: commandPaletteActiveProjectID,
+                    onDismiss: dismissCommandPalette,
+                    onSelect: handleCommandPaletteAction
+                )
+                .padding(.top, proxy.safeAreaInsets.top)
+            }
+            .frame(maxWidth: .infinity)
+            .frame(height: max(360, proxy.size.height * 0.72))
+            .clipShape(
+                UnevenRoundedRectangle(
+                    bottomLeadingRadius: 20,
+                    bottomTrailingRadius: 20
+                )
+            )
+            .shadow(color: .black.opacity(0.22), radius: 18, y: 8)
+        }
+        .ignoresSafeArea(.container, edges: .top)
+        .ignoresSafeArea(.keyboard, edges: .bottom)
+        .accessibilityIdentifier("command-palette-drawer")
+        .accessibilityAddTraits(.isModal)
+        .accessibilityAction(.escape) { dismissCommandPalette() }
+    }
+
     private var connectionEnvironmentName: String {
         model.snapshot.connection.environmentName
             ?? model.snapshot.environments.first(where: \.isActive)?.name
@@ -951,6 +996,12 @@ public struct WorkspaceView: View {
             case .chooseNewTaskProject:
                 break
             }
+        }
+    }
+
+    private func dismissCommandPalette() {
+        withAnimation(.snappy(duration: 0.24)) {
+            showingCommandPalette = false
         }
     }
 

@@ -1,10 +1,10 @@
 import SwiftUI
 
 struct FeatureCommandPaletteView: View {
-    @SwiftUI.Environment(\.dismiss) private var dismiss
     @Bindable var model: FeatureRootModel
 
     let activeProjectID: String?
+    let onDismiss: () -> Void
     let onSelect: (FeatureCommandPaletteAction) -> Void
 
     @State private var mode: FeatureCommandPaletteMode = .root
@@ -14,10 +14,12 @@ struct FeatureCommandPaletteView: View {
     init(
         model: FeatureRootModel,
         activeProjectID: String?,
+        onDismiss: @escaping () -> Void,
         onSelect: @escaping (FeatureCommandPaletteAction) -> Void
     ) {
         self.model = model
         self.activeProjectID = activeProjectID
+        self.onDismiss = onDismiss
         self.onSelect = onSelect
     }
 
@@ -43,19 +45,19 @@ struct FeatureCommandPaletteView: View {
                             Label("Back", systemImage: "chevron.left")
                         }
                     } else {
-                        Button("Done") { dismiss() }
+                        Button("Done", action: onDismiss)
+                            .keyboardShortcut(.cancelAction)
                     }
                 }
 
                 if mode == .newTaskProjectPicker {
                     ToolbarItem(placement: .confirmationAction) {
-                        Button("Cancel") { dismiss() }
+                        Button("Cancel", action: onDismiss)
+                            .keyboardShortcut(.cancelAction)
                     }
                 }
             }
         }
-        .presentationDetents([.medium, .large])
-        .presentationDragIndicator(.visible)
         .onAppear { focusSearch() }
     }
 
@@ -197,7 +199,7 @@ struct FeatureCommandPaletteView: View {
             query = ""
             focusSearch()
         default:
-            dismiss()
+            onDismiss()
             onSelect(item.action)
         }
     }
