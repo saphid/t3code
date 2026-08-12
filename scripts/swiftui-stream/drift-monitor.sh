@@ -9,10 +9,13 @@ git -C "$REPO" rev-parse --git-dir >/dev/null 2>&1 || exit 0
 mkdir -p "$STATE_DIR"
 
 FETCH_OK=true
-git -C "$REPO" fetch --quiet origin \
+fetch_with_retry() {
+  git -C "$REPO" fetch --quiet "$@" || git -C "$REPO" fetch --quiet "$@"
+}
+fetch_with_retry origin \
   refs/heads/personal/swiftui-dev:refs/remotes/origin/personal/swiftui-dev \
   refs/heads/personal/swiftui-test:refs/remotes/origin/personal/swiftui-test || FETCH_OK=false
-git -C "$REPO" fetch --quiet upstream \
+fetch_with_retry upstream \
   refs/heads/t3code/rebuild-mobile-app-swift:refs/remotes/upstream/t3code/rebuild-mobile-app-swift || FETCH_OK=false
 
 THEO="$(git -C "$REPO" rev-parse --verify upstream/t3code/rebuild-mobile-app-swift 2>/dev/null || true)"

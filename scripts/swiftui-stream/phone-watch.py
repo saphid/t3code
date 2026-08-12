@@ -44,7 +44,7 @@ def notify(config: dict[str, Any], channel: str, message: str, key: str) -> None
     state = load(state_path) if state_path.exists() else {}
     digest = hashlib.sha256(key.encode()).hexdigest()
     delivered = state.get("deliveredByChannel", {})
-    channel_deliveries = set(delivered.get(channel, []))
+    channel_deliveries = list(delivered.get(channel, []))
     if digest in channel_deliveries:
         return
     command = config.get("discordCommand", "/Users/saphid/bin/hermes-discord")
@@ -59,8 +59,8 @@ def notify(config: dict[str, Any], channel: str, message: str, key: str) -> None
         env=environment,
     )
     if result.returncode == 0:
-        channel_deliveries.add(digest)
-        delivered[channel] = sorted(channel_deliveries)[-100:]
+        channel_deliveries.append(digest)
+        delivered[channel] = channel_deliveries[-100:]
     state["deliveredByChannel"] = delivered
     state["lastAttemptByChannel"] = {
         **state.get("lastAttemptByChannel", {}),
