@@ -115,38 +115,6 @@ struct FeatureComposerPowerTests {
                 softwareKeyboardIsVisible: true
             ) == 52
         )
-        #expect(
-            FeatureComposerTextLayout.bottomClearance(
-                dynamicTypeSize: .large,
-                softwareKeyboardIsVisible: true,
-                commandMenuIsVisible: true,
-                reservesCommandMenuClearance: true
-            ) == 52
-        )
-        #expect(
-            FeatureComposerTextLayout.bottomClearance(
-                dynamicTypeSize: .large,
-                softwareKeyboardIsVisible: true,
-                commandMenuIsVisible: false,
-                reservesCommandMenuClearance: true
-            ) == 0
-        )
-        #expect(
-            FeatureComposerTextLayout.bottomClearance(
-                dynamicTypeSize: .large,
-                softwareKeyboardIsVisible: true,
-                commandMenuIsVisible: true,
-                reservesCommandMenuClearance: false
-            ) == 0
-        )
-        #expect(
-            FeatureComposerTextLayout.bottomClearance(
-                dynamicTypeSize: .large,
-                softwareKeyboardIsVisible: false,
-                commandMenuIsVisible: true,
-                reservesCommandMenuClearance: true
-            ) == 0
-        )
     }
 
     @Test

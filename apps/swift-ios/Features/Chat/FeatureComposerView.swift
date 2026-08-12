@@ -30,7 +30,6 @@ struct FeatureComposerView: View {
     private let focused: FocusState<Bool>.Binding
     private let contextUsage: Double?
     private let forceExpanded: Bool
-    private let reservesCommandMenuKeyboardClearance: Bool
     private let pendingApprovals: [FeatureApproval]
     private let pendingUserInputs: [FeatureUserInput]
     private let isResolvingRequest: Bool
@@ -55,7 +54,6 @@ struct FeatureComposerView: View {
         onStop: @escaping () -> Void,
         contextUsage: Double? = nil,
         forceExpanded: Bool = false,
-        reservesCommandMenuKeyboardClearance: Bool = false,
         pendingApprovals: [FeatureApproval] = [],
         pendingUserInputs: [FeatureUserInput] = [],
         isResolvingRequest: Bool = false,
@@ -85,7 +83,6 @@ struct FeatureComposerView: View {
         self.onStop = onStop
         self.contextUsage = contextUsage
         self.forceExpanded = forceExpanded
-        self.reservesCommandMenuKeyboardClearance = reservesCommandMenuKeyboardClearance
         self.pendingApprovals = pendingApprovals
         self.pendingUserInputs = pendingUserInputs
         self.isResolvingRequest = isResolvingRequest
@@ -95,106 +92,101 @@ struct FeatureComposerView: View {
     }
 
     var body: some View {
-        composerSurface
-            .overlay(alignment: .top) {
-                if showsCommandMenu, let trigger = composerTrigger {
-                    FeatureComposerCommandPopover(
-                        triggerKind: trigger.kind,
-                        items: commandMenuItems,
-                        isLoading: isPathSearchLoading,
-                        errorMessage: pathSearchError,
-                        pathSearchAvailable: powerFeatures.searchPaths != nil,
-                        onSelect: selectCommandItem
-                    )
-                    .alignmentGuide(.top) { dimensions in
-                        // Keep the menu clear of the text entry surface so the
-                        // active `$`/`@`/`/` token remains readable while typing.
-                        dimensions[.bottom] + 24
-                    }
-                }
-            }
-            .padding(.horizontal, 12)
-            .padding(.top, 12)
-            .padding(.bottom, 10)
-            .padding(
-                .bottom,
-                FeatureComposerTextLayout.bottomClearance(
-                    dynamicTypeSize: dynamicTypeSize,
-                    softwareKeyboardIsVisible: dockedSoftwareKeyboardOccupiesScreen,
-                    commandMenuIsVisible: showsCommandMenu,
-                    reservesCommandMenuClearance: reservesCommandMenuKeyboardClearance
+        VStack(spacing: 24) {
+            if showsCommandMenu, let trigger = composerTrigger {
+                FeatureComposerCommandPopover(
+                    triggerKind: trigger.kind,
+                    items: commandMenuItems,
+                    isLoading: isPathSearchLoading,
+                    errorMessage: pathSearchError,
+                    pathSearchAvailable: powerFeatures.searchPaths != nil,
+                    onSelect: selectCommandItem
                 )
+                .transition(.identity)
+            }
+
+            composerSurface
+        }
+        .padding(.horizontal, 12)
+        .padding(.top, 12)
+        .padding(.bottom, 10)
+        .padding(
+            .bottom,
+            FeatureComposerTextLayout.bottomClearance(
+                dynamicTypeSize: dynamicTypeSize,
+                softwareKeyboardIsVisible: dockedSoftwareKeyboardOccupiesScreen
             )
-            .background {
-                LinearGradient(
-                    colors: [
-                        .clear,
-                        T3Colors.background.opacity(0.94),
-                        T3Colors.background,
-                    ],
-                    startPoint: .top,
-                    endPoint: .bottom
-                )
-                .ignoresSafeArea()
+        )
+        .background {
+            LinearGradient(
+                colors: [
+                    .clear,
+                    T3Colors.background.opacity(0.94),
+                    T3Colors.background,
+                ],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+            .ignoresSafeArea()
+        }
+        .background {
+            FeatureComposerWindowReader { window in
+                composerWindow = window
+                updateSoftwareKeyboardState(in: window)
             }
-            .background {
-                FeatureComposerWindowReader { window in
-                    composerWindow = window
-                    updateSoftwareKeyboardState(in: window)
-                }
-                .frame(width: 0, height: 0)
-            }
-            .onChange(of: focused.wrappedValue) {
-                if FeatureComposerCollapsePolicy.shouldCollapse(
-                    isFocused: focused.wrappedValue,
-                    textIsEmpty: textIsEmpty,
-                    attachmentsAreEmpty: attachments.isEmpty,
-                    isAttachmentFlowActive: isAttachmentFlowActive,
-                    isPreparingAttachments: attachmentPreparation.isPreparing
-                ) {
-                    isManuallyExpanded = false
-                }
-            }
-            .task(id: pathSearchRequest) {
-                await updatePathSearch()
-            }
-            .onChange(of: attachmentContextID) {
-                rotateAttachmentLifecycle(to: attachmentContextID)
-            }
-            .alert(
-                "Couldn’t paste image",
-                isPresented: Binding(
-                    get: { attachmentErrorMessage != nil },
-                    set: { if !$0 { attachmentErrorMessage = nil } }
-                )
+            .frame(width: 0, height: 0)
+        }
+        .onChange(of: focused.wrappedValue) {
+            if FeatureComposerCollapsePolicy.shouldCollapse(
+                isFocused: focused.wrappedValue,
+                textIsEmpty: textIsEmpty,
+                attachmentsAreEmpty: attachments.isEmpty,
+                isAttachmentFlowActive: isAttachmentFlowActive,
+                isPreparingAttachments: attachmentPreparation.isPreparing
             ) {
-                Button("OK") { attachmentErrorMessage = nil }
-            } message: {
-                Text(attachmentErrorMessage ?? "")
+                isManuallyExpanded = false
             }
-            .onReceive(
-                NotificationCenter.default.publisher(
-                    for: UIResponder.keyboardWillChangeFrameNotification
-                )
-            ) { notification in
-                updateSoftwareKeyboardState(from: notification, in: composerWindow)
-            }
-            // New Thread autofocus can begin the keyboard transition before this
-            // sheet's composer has subscribed to the "will change" event.
-            .onReceive(
-                NotificationCenter.default.publisher(
-                    for: UIResponder.keyboardDidShowNotification
-                )
-            ) { notification in
-                updateSoftwareKeyboardState(from: notification, in: composerWindow)
-            }
-            .onReceive(
-                NotificationCenter.default.publisher(
-                    for: UIResponder.keyboardDidHideNotification
-                )
-            ) { _ in
-                dockedSoftwareKeyboardOccupiesScreen = false
-            }
+        }
+        .task(id: pathSearchRequest) {
+            await updatePathSearch()
+        }
+        .onChange(of: attachmentContextID) {
+            rotateAttachmentLifecycle(to: attachmentContextID)
+        }
+        .alert(
+            "Couldn’t paste image",
+            isPresented: Binding(
+                get: { attachmentErrorMessage != nil },
+                set: { if !$0 { attachmentErrorMessage = nil } }
+            )
+        ) {
+            Button("OK") { attachmentErrorMessage = nil }
+        } message: {
+            Text(attachmentErrorMessage ?? "")
+        }
+        .onReceive(
+            NotificationCenter.default.publisher(
+                for: UIResponder.keyboardWillChangeFrameNotification
+            )
+        ) { notification in
+            updateSoftwareKeyboardState(from: notification, in: composerWindow)
+        }
+        // New Thread autofocus can begin the keyboard transition before this
+        // sheet's composer has subscribed to the "will change" event.
+        .onReceive(
+            NotificationCenter.default.publisher(
+                for: UIResponder.keyboardDidShowNotification
+            )
+        ) { notification in
+            updateSoftwareKeyboardState(from: notification, in: composerWindow)
+        }
+        .onReceive(
+            NotificationCenter.default.publisher(
+                for: UIResponder.keyboardDidHideNotification
+            )
+        ) { _ in
+            dockedSoftwareKeyboardOccupiesScreen = false
+        }
     }
 
     private var composerSurface: some View {
@@ -790,19 +782,16 @@ private struct FeatureComposerWindowReader: UIViewRepresentable {
 enum FeatureComposerTextLayout {
     // Excludes the hardware-keyboard assistant bar while admitting a docked software keyboard.
     private static let minimumSoftwareKeyboardHeight: CGFloat = 100
-    private static let keyboardBottomClearance: CGFloat = 52
+    private static let accessibilityKeyboardBottomClearance: CGFloat = 52
 
     static func bottomClearance(
         dynamicTypeSize: DynamicTypeSize,
-        softwareKeyboardIsVisible: Bool,
-        commandMenuIsVisible: Bool = false,
-        reservesCommandMenuClearance: Bool = false
+        softwareKeyboardIsVisible: Bool
     ) -> CGFloat {
-        guard softwareKeyboardIsVisible,
-              dynamicTypeSize.isAccessibilitySize
-                || (commandMenuIsVisible && reservesCommandMenuClearance) else { return 0 }
-        // Reserve one 44pt footer row plus 8pt so the menu and input remain separated.
-        return keyboardBottomClearance
+        guard dynamicTypeSize.isAccessibilitySize,
+              softwareKeyboardIsVisible else { return 0 }
+        // Reserve one 44pt footer row plus 8pt breathing room above keyboard clipping.
+        return accessibilityKeyboardBottomClearance
     }
 
     static func softwareKeyboardOccupiesScreen(

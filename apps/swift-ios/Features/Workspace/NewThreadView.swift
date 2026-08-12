@@ -92,7 +92,6 @@ public struct NewThreadView: View {
                         onSend: startTask,
                         onStop: {},
                         forceExpanded: true,
-                        reservesCommandMenuKeyboardClearance: true,
                         powerFeatures: composerPowerFeatures
                     )
                 }
