@@ -130,6 +130,30 @@ struct FeatureComposerPowerTests {
     }
 
     @Test
+    func commandMenuCompactsWhileTheSoftwareKeyboardIsVisible() {
+        #expect(
+            FeatureComposerTextLayout.commandMenuMaximumHeight(
+                softwareKeyboardIsVisible: false
+            ) == 188
+        )
+        #expect(
+            FeatureComposerTextLayout.commandMenuMaximumHeight(
+                softwareKeyboardIsVisible: true
+            ) == 94
+        )
+        #expect(
+            FeatureComposerTextLayout.commandMenuSpacing(
+                softwareKeyboardIsVisible: true
+            ) == 12
+        )
+        #expect(
+            FeatureComposerTextLayout.containerBottomPadding(
+                softwareKeyboardIsVisible: true
+            ) == 4
+        )
+    }
+
+    @Test
     func detectsCommandsModelsSkillsAndPathsAtTheCursor() {
         #expect(
             FeatureComposerTriggerParser.detect(in: "/re")

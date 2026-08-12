@@ -92,7 +92,11 @@ struct FeatureComposerView: View {
     }
 
     var body: some View {
-        VStack(spacing: 24) {
+        VStack(
+            spacing: FeatureComposerTextLayout.commandMenuSpacing(
+                softwareKeyboardIsVisible: dockedSoftwareKeyboardOccupiesScreen
+            )
+        ) {
             if showsCommandMenu, let trigger = composerTrigger {
                 FeatureComposerCommandPopover(
                     triggerKind: trigger.kind,
@@ -100,6 +104,9 @@ struct FeatureComposerView: View {
                     isLoading: isPathSearchLoading,
                     errorMessage: pathSearchError,
                     pathSearchAvailable: powerFeatures.searchPaths != nil,
+                    maximumHeight: FeatureComposerTextLayout.commandMenuMaximumHeight(
+                        softwareKeyboardIsVisible: dockedSoftwareKeyboardOccupiesScreen
+                    ),
                     onSelect: selectCommandItem
                 )
                 .transition(.identity)
@@ -109,7 +116,12 @@ struct FeatureComposerView: View {
         }
         .padding(.horizontal, 12)
         .padding(.top, 12)
-        .padding(.bottom, 10)
+        .padding(
+            .bottom,
+            FeatureComposerTextLayout.containerBottomPadding(
+                softwareKeyboardIsVisible: dockedSoftwareKeyboardOccupiesScreen
+            )
+        )
         .padding(
             .bottom,
             FeatureComposerTextLayout.bottomClearance(
@@ -783,6 +795,24 @@ enum FeatureComposerTextLayout {
     // Excludes the hardware-keyboard assistant bar while admitting a docked software keyboard.
     private static let minimumSoftwareKeyboardHeight: CGFloat = 100
     private static let accessibilityKeyboardBottomClearance: CGFloat = 52
+
+    static func commandMenuMaximumHeight(
+        softwareKeyboardIsVisible: Bool
+    ) -> CGFloat {
+        softwareKeyboardIsVisible ? 94 : 188
+    }
+
+    static func commandMenuSpacing(
+        softwareKeyboardIsVisible: Bool
+    ) -> CGFloat {
+        softwareKeyboardIsVisible ? 12 : 24
+    }
+
+    static func containerBottomPadding(
+        softwareKeyboardIsVisible: Bool
+    ) -> CGFloat {
+        softwareKeyboardIsVisible ? 4 : 10
+    }
 
     static func bottomClearance(
         dynamicTypeSize: DynamicTypeSize,
