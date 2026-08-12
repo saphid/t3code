@@ -19,9 +19,9 @@ Personal signing is a separate, digest-pinned overlay.
 The current promoted candidates add clipboard image paste, live working
 duration, full thread menus, debug build/base-distance identity, app and
 environment versions with build and release changelog links, swipe-revealed
-message timestamps, keyboard-aware composer height, and an orange Debug thread
-title bar. The richer base-distance badge supersedes the older standalone dev
-badge patch, so that older patch is not duplicated in this lane.
+message timestamps, keyboard-aware composer height, and an orange Dev label in
+the Debug home title. The richer base-distance badge supersedes the older
+standalone dev badge patch, so that older patch is not duplicated in this lane.
 
 The device installer runs `scripts/t3-swift-approved/verify.sh` before resolving
 or touching a phone. The verifier rejects a dirty worktree, another branch, an

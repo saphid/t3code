@@ -6,6 +6,7 @@ struct FeatureComposerCommandPopover: View {
     let isLoading: Bool
     let errorMessage: String?
     let pathSearchAvailable: Bool
+    let maximumHeight: CGFloat
     let onSelect: (FeatureComposerMenuItem) -> Void
 
     var body: some View {
@@ -75,7 +76,7 @@ struct FeatureComposerCommandPopover: View {
     private var menuHeight: CGFloat {
         guard !items.isEmpty else { return 48 }
         let rowHeight: CGFloat = 47
-        return min(CGFloat(items.count) * rowHeight, 188)
+        return min(CGFloat(items.count) * rowHeight, maximumHeight)
     }
 }
 

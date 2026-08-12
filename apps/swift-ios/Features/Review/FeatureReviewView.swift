@@ -9,6 +9,11 @@ public struct FeatureReviewView: View {
     @State private var review: FeatureReview?
     @State private var isLoading = true
     @State private var errorMessage: String?
+    @State private var loadRequests = FeatureLatestRequest()
+
+    private var errorPresentation: FeatureToolErrorPresentation {
+        .resolve(errorMessage: errorMessage, retainsContent: review != nil)
+    }
 
     public init(client: any FeatureClient, threadID: String) {
         self.client = client
@@ -26,7 +31,10 @@ public struct FeatureReviewView: View {
                 ContentUnavailableView(
                     "Review unavailable",
                     systemImage: "doc.text.magnifyingglass",
-                    description: Text(errorMessage ?? "Changes could not be loaded.")
+                    description: Text(
+                        errorPresentation.unavailableMessage
+                            ?? "Changes could not be loaded."
+                    )
                 )
             }
         }
@@ -41,12 +49,24 @@ public struct FeatureReviewView: View {
                     Image(systemName: "arrow.clockwise")
                 }
                 .accessibilityLabel("Reload changes")
+                .disabled(isLoading)
             }
         }
         .task { await load() }
         .onChange(of: scenePhase) { _, phase in
             guard phase == .active, review != nil, !isLoading else { return }
             Task { await load() }
+        }
+        .safeAreaInset(edge: .top, spacing: 0) {
+            if let errorMessage = errorPresentation.inlineMessage {
+                FeatureToolErrorNotice(
+                    message: errorMessage,
+                    isRetrying: isLoading,
+                    retryTitle: "Reload changes"
+                ) {
+                    await load()
+                }
+            }
         }
     }
 
@@ -99,13 +119,25 @@ public struct FeatureReviewView: View {
     }
 
     private func load() async {
+        let request = loadRequests.begin()
         isLoading = true
-        defer { isLoading = false }
+        defer {
+            if loadRequests.isCurrent(request) {
+                isLoading = false
+            }
+        }
         do {
-            review = try await client.loadReview(threadID: threadID)
+            let loadedReview = try await client.loadReview(threadID: threadID)
+            guard loadRequests.isCurrent(request) else { return }
+            review = loadedReview
             errorMessage = nil
         } catch {
-            errorMessage = error.localizedDescription
+            guard loadRequests.isCurrent(request) else { return }
+            guard let message = FeatureToolErrorPresentation.message(
+                for: error,
+                taskIsCancelled: Task.isCancelled
+            ) else { return }
+            errorMessage = message
         }
     }
 }

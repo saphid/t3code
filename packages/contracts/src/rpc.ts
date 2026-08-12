@@ -147,12 +147,22 @@ import {
   ServerUpsertKeybindingResult,
 } from "./server.ts";
 import {
+  HostStorageSnapshot,
   ResourceTelemetryHistory,
   ResourceTelemetryHistoryInput,
   ResourceTelemetryRetryResult,
   ResourceTelemetrySnapshot,
 } from "./resourceTelemetry.ts";
 import { UsageReadError, UsageSummary, UsageSummaryInput } from "./usage.ts";
+import {
+  OpenVsxThemeError,
+  OpenVsxThemeExtension,
+  OpenVsxThemeInstallInput,
+  OpenVsxThemeSearchInput,
+  ResolvedThemeArtifact,
+  ThemeCompileError,
+  ThemeCompileInput,
+} from "./theme.ts";
 import { ServerSettings, ServerSettingsError, ServerSettingsPatch } from "./settings.ts";
 import {
   SourceControlCloneRepositoryInput,
@@ -183,6 +193,11 @@ export const WS_METHODS = {
   // Filesystem methods
   filesystemBrowse: "filesystem.browse",
   assetsCreateUrl: "assets.createUrl",
+
+  // Theme conversion methods
+  themesCompile: "themes.compile",
+  themesSearchOpenVsx: "themes.searchOpenVsx",
+  themesInstallOpenVsx: "themes.installOpenVsx",
 
   // VCS methods
   vcsPull: "vcs.pull",
@@ -266,6 +281,7 @@ export const WS_METHODS = {
   subscribeServerLifecycle: "subscribeServerLifecycle",
   subscribeAuthAccess: "subscribeAuthAccess",
   subscribeBackgroundPolicy: "subscribeBackgroundPolicy",
+  subscribeHostStorage: "subscribeHostStorage",
   subscribeResourceTelemetry: "subscribeResourceTelemetry",
 } as const;
 
@@ -493,6 +509,24 @@ export const WsAssetsCreateUrlRpc = Rpc.make(WS_METHODS.assetsCreateUrl, {
   payload: AssetCreateUrlInput,
   success: AssetCreateUrlResult,
   error: Schema.Union([AssetAccessError, EnvironmentAuthorizationError]),
+});
+
+export const WsThemesCompileRpc = Rpc.make(WS_METHODS.themesCompile, {
+  payload: ThemeCompileInput,
+  success: ResolvedThemeArtifact,
+  error: Schema.Union([ThemeCompileError, EnvironmentAuthorizationError]),
+});
+
+export const WsThemesSearchOpenVsxRpc = Rpc.make(WS_METHODS.themesSearchOpenVsx, {
+  payload: OpenVsxThemeSearchInput,
+  success: Schema.Array(OpenVsxThemeExtension),
+  error: Schema.Union([OpenVsxThemeError, EnvironmentAuthorizationError]),
+});
+
+export const WsThemesInstallOpenVsxRpc = Rpc.make(WS_METHODS.themesInstallOpenVsx, {
+  payload: OpenVsxThemeInstallInput,
+  success: ResolvedThemeArtifact,
+  error: Schema.Union([OpenVsxThemeError, EnvironmentAuthorizationError]),
 });
 
 export const WsSubscribeVcsStatusRpc = Rpc.make(WS_METHODS.subscribeVcsStatus, {
@@ -810,6 +844,13 @@ export const WsSubscribeResourceTelemetryRpc = Rpc.make(WS_METHODS.subscribeReso
   stream: true,
 });
 
+export const WsSubscribeHostStorageRpc = Rpc.make(WS_METHODS.subscribeHostStorage, {
+  payload: Schema.Struct({}),
+  success: HostStorageSnapshot,
+  error: EnvironmentAuthorizationError,
+  stream: true,
+});
+
 export const WsRpcGroup = RpcGroup.make(
   WsServerProbeRpc,
   WsServerGetConfigRpc,
@@ -845,6 +886,9 @@ export const WsRpcGroup = RpcGroup.make(
   WsShellOpenInEditorRpc,
   WsFilesystemBrowseRpc,
   WsAssetsCreateUrlRpc,
+  WsThemesCompileRpc,
+  WsThemesSearchOpenVsxRpc,
+  WsThemesInstallOpenVsxRpc,
   WsSubscribeVcsStatusRpc,
   WsVcsPullRpc,
   WsVcsRefreshStatusRpc,
@@ -884,6 +928,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsSubscribeServerLifecycleRpc,
   WsSubscribeAuthAccessRpc,
   WsSubscribeBackgroundPolicyRpc,
+  WsSubscribeHostStorageRpc,
   WsSubscribeResourceTelemetryRpc,
   WsOrchestrationDispatchCommandRpc,
   WsOrchestrationGetWorkflowScriptRpc,

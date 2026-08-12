@@ -6,6 +6,26 @@ import Testing
 @Suite("Feature root model")
 struct FeatureRootModelTests {
     @Test
+    func hostStorageTelemetryUpdatesThePersistentWarningState() async {
+        let client = FeatureClientStub()
+        let model = testRootModel(client: client)
+        let storage = HostStorageSnapshot(
+            totalBytes: 200 * pow(1024, 3),
+            availableBytes: 4 * pow(1024, 3),
+            warningThresholdBytes: 20 * pow(1024, 3),
+            criticalThresholdBytes: 5 * pow(1024, 3),
+            status: .critical
+        )
+
+        let run = Task { await model.start() }
+        client.emit(.hostStorage(storage))
+        client.finishEvents()
+        await run.value
+
+        #expect(model.hostStorage == storage)
+    }
+
+    @Test
     func appearanceAppliesImmediatelyAndPersistsWithoutSavingTheDraft() async {
         let client = FeatureClientStub()
         let model = testRootModel(client: client)
@@ -678,6 +698,36 @@ struct FeatureRootModelTests {
     }
 
     @Test
+    func testInitialDetailLoadDoesNotOverwriteNewerLiveUpdate() async {
+        let client = FeatureClientStub()
+        let thread = FeatureThread(id: "thread-1", projectID: "project-1", title: "Thread")
+        let initial = FeatureThreadDetail(
+            thread: thread,
+            messages: [FeatureMessage(id: "message-1", role: .assistant, text: "Initial")]
+        )
+        let live = FeatureThreadDetail(
+            thread: thread,
+            messages: [FeatureMessage(id: "message-2", role: .assistant, text: "Live")]
+        )
+        client.threadDetail = initial
+        let model = testRootModel(client: client)
+        let run = Task { await model.start() }
+        client.beforeLoadThreadReturn = {
+            client.emit(.detail(live))
+            while model.details[thread.id] != live {
+                await Task.yield()
+            }
+        }
+
+        let loaded = await model.detail(for: thread.id, force: true)
+        client.finishEvents()
+        await run.value
+
+        #expect(loaded == live)
+        #expect(model.details[thread.id] == live)
+    }
+
+    @Test
     func testResnoozeRefreshesTheOptimisticSnoozeTimestamp() async {
         let client = FeatureClientStub()
         var thread = FeatureThread(
@@ -1231,6 +1281,7 @@ private final class FeatureClientStub: FeatureClient {
     var removedEnvironmentID: String?
     var beforeSendMessage: (() throws -> Void)?
     var loadThreadError: (any Error)?
+    var beforeLoadThreadReturn: (() async -> Void)?
     var loadEarlierCallCount = 0
     var resolvedInputID: String?
     var resolvedInputAnswers: [String: FeatureInputAnswer]?
@@ -1340,6 +1391,7 @@ private final class FeatureClientStub: FeatureClient {
         if let loadThreadError {
             throw loadThreadError
         }
+        await beforeLoadThreadReturn?()
         if let threadDetail {
             return threadDetail
         }

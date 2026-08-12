@@ -51,6 +51,8 @@ import {
   RpcClientId,
   EnvironmentAuthorizationError,
   ThreadId,
+  ThemeCompileError,
+  OpenVsxThemeError,
   type TerminalAttachStreamEvent,
   type TerminalError,
   type TerminalEvent,
@@ -105,6 +107,7 @@ import { requiredScopeForRpcMethod } from "./auth/RpcAuthorization.ts";
 import * as ProcessDiagnostics from "./diagnostics/ProcessDiagnostics.ts";
 import * as ProcessResourceMonitor from "./diagnostics/ProcessResourceMonitor.ts";
 import * as ResourceTelemetry from "./resourceTelemetry/ResourceTelemetry.ts";
+import { hostStorageStream, sampleHostStorage } from "./resourceTelemetry/HostStorage.ts";
 import * as UsageService from "./usage/UsageService.ts";
 import * as TraceDiagnostics from "./diagnostics/TraceDiagnostics.ts";
 import * as SourceControlDiscovery from "./sourceControl/SourceControlDiscovery.ts";
@@ -122,6 +125,8 @@ import * as PairingGrantStore from "./auth/PairingGrantStore.ts";
 import * as SessionStore from "./auth/SessionStore.ts";
 import { failEnvironmentAuthInvalid, failEnvironmentInternal } from "./auth/http.ts";
 import * as RelayClient from "@t3tools/shared/relayClient";
+import { compileOpenVsxTheme, compileThemeSource } from "@t3tools/shared/themeArtifact";
+import { searchOpenVsxThemes } from "@t3tools/shared/openVsxThemes";
 const isOrchestrationDispatchCommandError = Schema.is(OrchestrationDispatchCommandError);
 
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
@@ -1031,6 +1036,66 @@ const makeWsRpcLayer = (
           .pipe(Effect.ignoreCause({ log: true }), Effect.forkDetach, Effect.asVoid);
 
       return WsRpcGroup.of({
+        [WS_METHODS.themesCompile]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.themesCompile,
+            Effect.try({
+              try: () => compileThemeSource(input.contents),
+              catch: (cause) =>
+                new ThemeCompileError({
+                  message: cause instanceof Error ? cause.message : "Theme conversion failed.",
+                }),
+            }),
+            { "rpc.aggregate": "themes" },
+          ),
+        [WS_METHODS.themesSearchOpenVsx]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.themesSearchOpenVsx,
+            Effect.tryPromise({
+              try: () => searchOpenVsxThemes(input.query),
+              catch: (cause) =>
+                new OpenVsxThemeError({
+                  message: cause instanceof Error ? cause.message : "Open VSX search failed.",
+                }),
+            }).pipe(
+              Effect.map((extensions) =>
+                extensions.map(
+                  ({
+                    id,
+                    name,
+                    publisher,
+                    description,
+                    downloadCount,
+                    iconUrl,
+                    version,
+                    license,
+                  }) => ({
+                    id,
+                    name,
+                    publisher,
+                    description,
+                    downloadCount,
+                    iconUrl,
+                    version,
+                    license,
+                  }),
+                ),
+              ),
+            ),
+            { "rpc.aggregate": "themes" },
+          ),
+        [WS_METHODS.themesInstallOpenVsx]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.themesInstallOpenVsx,
+            Effect.tryPromise({
+              try: async () => (await compileOpenVsxTheme(input.extensionId)).artifact,
+              catch: (cause) =>
+                new OpenVsxThemeError({
+                  message: cause instanceof Error ? cause.message : "Open VSX import failed.",
+                }),
+            }),
+            { "rpc.aggregate": "themes" },
+          ),
         [ORCHESTRATION_WS_METHODS.dispatchCommand]: (command) =>
           observeRpcEffect(
             ORCHESTRATION_WS_METHODS.dispatchCommand,
@@ -2189,6 +2254,12 @@ const makeWsRpcLayer = (
                 Stream.concat(Stream.make(latest), changes),
               ),
             ),
+            { "rpc.aggregate": "server" },
+          ),
+        [WS_METHODS.subscribeHostStorage]: (_input) =>
+          observeRpcStream(
+            WS_METHODS.subscribeHostStorage,
+            hostStorageStream(sampleHostStorage(config.baseDir)),
             { "rpc.aggregate": "server" },
           ),
       });

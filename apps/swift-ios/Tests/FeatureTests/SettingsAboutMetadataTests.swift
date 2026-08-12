@@ -53,7 +53,7 @@ struct SettingsAboutMetadataTests {
 
     @Test
     func decodesEmbeddedBuildChangelog() throws {
-        let json = #"{"revision":"abc123","baseRevision":"def456","repositoryURL":"https://github.com/pingdotgg/t3code","generatedBy":"GPT-5.6 Luna","entries":[{"commit":"abc123","title":"Fix sync","summary":"Keeps messages in sync.","pullRequest":42,"pullRequestURL":"https://github.com/pingdotgg/t3code/pull/42","committedAt":"2026-08-10T01:02:03Z"}]}"#
+        let json = #"{"revision":"abc123","baseRevision":"def456","repositoryURL":"https://github.com/pingdotgg/t3code","generatedBy":"GPT-5.6 Luna","sourceThreadID":"thread-7","entries":[{"commit":"abc123","title":"Fix sync","summary":"Keeps messages in sync.","pullRequest":42,"pullRequestURL":"https://github.com/pingdotgg/t3code/pull/42","committedAt":"2026-08-10T01:02:03Z"}]}"#
         let info = ["T3BuildChangelog": Data(json.utf8).base64EncodedString()]
         let changelog = try #require(BuildChangelog.load(info: info))
 
@@ -63,11 +63,44 @@ struct SettingsAboutMetadataTests {
         #expect(changelog.entries.first?.pullRequestURL?.absoluteString == "https://github.com/pingdotgg/t3code/pull/42")
         #expect(changelog.repositoryURL?.absoluteString == "https://github.com/pingdotgg/t3code")
         #expect(changelog.entries.first?.shortCommit == "abc123")
+        #expect(
+            changelog.sourceThreadURL?.absoluteString
+                == "t3code-swiftui-dev://threads?thread=thread-7"
+        )
         #expect(BuildChangelog.load(info: nil) == nil)
         #expect(BuildChangelog.load(info: ["T3BuildChangelog": "not base64"]) == nil)
         #expect(SettingsAboutMetadata.appVersionLabel(info: [
             "CFBundleShortVersionString": "$(MARKETING_VERSION)",
             "CFBundleVersion": "$(CURRENT_PROJECT_VERSION)",
         ]) == "? (?)")
+    }
+
+    @Test
+    func whatsNewPromptRemainsUntilTheCurrentBuildIsOpened() {
+        let info: [String: Any] = [
+            "CFBundleShortVersionString": "1.2.3",
+            "CFBundleVersion": "456",
+        ]
+
+        #expect(BuildChangelogPrompt.buildIdentifier(info: info) == "1.2.3-456")
+        #expect(BuildChangelogPrompt.shouldShow(lastOpenedBuild: "", info: info))
+        #expect(BuildChangelogPrompt.shouldShow(lastOpenedBuild: "1.2.3-455", info: info))
+        #expect(!BuildChangelogPrompt.shouldShow(lastOpenedBuild: "1.2.3-456", info: info))
+        #expect(!BuildChangelogPrompt.shouldShow(lastOpenedBuild: "", info: nil))
+    }
+
+    @Test
+    func hidesInvalidOrMissingSourceThreadLinks() throws {
+        for json in [
+            #"{"revision":"abc123","baseRevision":null,"repositoryURL":null,"generatedBy":"Git history","entries":[]}"#,
+            #"{"revision":"abc123","baseRevision":null,"repositoryURL":null,"generatedBy":"Git history","sourceThreadID":" thread-7 ","entries":[]}"#,
+            #"{"revision":"abc123","baseRevision":null,"repositoryURL":null,"generatedBy":"Git history","sourceThreadID":"..","entries":[]}"#,
+            #"{"revision":"abc123","baseRevision":null,"repositoryURL":null,"generatedBy":"Git history","sourceThreadID":"line\nbreak","entries":[]}"#,
+        ] {
+            let info = ["T3BuildChangelog": Data(json.utf8).base64EncodedString()]
+            let changelog = try #require(BuildChangelog.load(info: info))
+
+            #expect(changelog.sourceThreadURL == nil)
+        }
     }
 }

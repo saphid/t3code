@@ -145,6 +145,29 @@ enum ThreadContextMenuItem: Equatable {
 }
 
 enum ThreadContextMenuModel {
+    static func sections(
+        for thread: FeatureThread,
+        isArchived: Bool,
+        canCreateThread: Bool = true,
+        canCopyPath: Bool = true,
+        now: Date = .now,
+        calendar: Calendar = .current,
+        locale: Locale = .current
+    ) -> [[ThreadContextMenuItem]] {
+        let items = items(
+            for: thread,
+            isArchived: isArchived,
+            canCreateThread: canCreateThread,
+            canCopyPath: canCopyPath,
+            now: now,
+            calendar: calendar,
+            locale: locale
+        )
+        let primaryItems = items.filter { !isClosingAction($0) }
+        let closingItems = items.filter(isClosingAction)
+        return [primaryItems, closingItems].filter { !$0.isEmpty }
+    }
+
     static func items(
         for thread: FeatureThread,
         isArchived: Bool,
@@ -189,7 +212,6 @@ enum ThreadContextMenuModel {
         if !isArchived, thread.supportsTitleRegeneration == true {
             items.append(.regenerateTitle)
         }
-        items.append(.archive(archived: isArchived))
         if canCopyPath {
             items.append(.copyPath)
         }
@@ -197,8 +219,15 @@ enum ThreadContextMenuModel {
             items.append(.copyBranch)
         }
         items.append(.copyThreadID)
+        items.append(.archive(archived: isArchived))
         items.append(.delete)
         return items
+    }
+
+    private static func isClosingAction(_ item: ThreadContextMenuItem) -> Bool {
+        if case .archive = item { return true }
+        if case .delete = item { return true }
+        return false
     }
 
     private static func nonEmpty(_ value: String?) -> String? {

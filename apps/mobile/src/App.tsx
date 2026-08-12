@@ -10,6 +10,7 @@ import { createStaticNavigation, DarkTheme, DefaultTheme } from "@react-navigati
 
 import { RegistryContext } from "@effect/atom-react";
 import { ConfirmDialogHost } from "./components/ConfirmDialogHost";
+import { ActiveHostStorageWarning } from "./components/HostStorageWarning";
 import { CloudAuthProvider } from "./features/cloud/CloudAuthProvider";
 import { prepareNativeShowcaseCapture } from "./features/showcase/nativeShowcaseScene";
 import { IncomingShareProvider } from "./features/sharing/IncomingShareProvider";
@@ -87,6 +88,7 @@ export default function App() {
                       theme={colorScheme === "dark" ? DarkTheme : DefaultTheme}
                     />
                   </IncomingShareProvider>
+                  <ActiveHostStorageWarning />
                   <ConfirmDialogHost />
                 </BlurTargetView>
                 {/* Anchored-menu overlays render here — in-window, so the

@@ -93,6 +93,37 @@ public actor T3Client {
         )
     }
 
+    public func compileTheme(fileName: String, contents: String) async throws
+        -> T3ResolvedThemeArtifact
+    {
+        try await rpc.request(
+            RPCMethod.themesCompile.rawValue,
+            payload: .object([
+                "fileName": .string(fileName),
+                "contents": .string(contents),
+            ]),
+            as: T3ResolvedThemeArtifact.self
+        )
+    }
+
+    public func searchOpenVsxThemes(query: String) async throws -> [T3OpenVsxThemeExtension] {
+        try await rpc.request(
+            RPCMethod.themesSearchOpenVsx.rawValue,
+            payload: .object(["query": .string(query)]),
+            as: [T3OpenVsxThemeExtension].self
+        )
+    }
+
+    public func installOpenVsxTheme(extensionID: String) async throws
+        -> T3ResolvedThemeArtifact
+    {
+        try await rpc.request(
+            RPCMethod.themesInstallOpenVsx.rawValue,
+            payload: .object(["extensionId": .string(extensionID)]),
+            as: T3ResolvedThemeArtifact.self
+        )
+    }
+
     public func usageSummary(_ input: UsageSummaryInput) async throws -> UsageSummary {
         try await rpc.request(
             RPCMethod.serverGetUsageSummary.rawValue,
@@ -101,12 +132,176 @@ public actor T3Client {
         )
     }
 
+    // MARK: Pull requests
+
+    public func pullRequestsList(_ input: PullRequestListInput) async throws
+        -> PullRequestListResult
+    {
+        try await pullRequestRead(RPCMethod.pullRequestsList, input, as: PullRequestListResult.self)
+    }
+
+    public func pullRequestsListStats(_ input: PullRequestListStatsInput) async throws
+        -> PullRequestListStatsResult
+    {
+        try await pullRequestRead(
+            RPCMethod.pullRequestsListStats,
+            input,
+            as: PullRequestListStatsResult.self
+        )
+    }
+
+    public func pullRequestDetail(_ reference: PullRequestRef) async throws -> PullRequestDetail {
+        try await pullRequestRead(
+            RPCMethod.pullRequestsDetail,
+            reference,
+            as: PullRequestDetail.self
+        )
+    }
+
+    public func pullRequestActivity(_ reference: PullRequestRef) async throws
+        -> PullRequestActivity
+    {
+        try await pullRequestRead(
+            RPCMethod.pullRequestsActivity,
+            reference,
+            as: PullRequestActivity.self
+        )
+    }
+
+    public func pullRequestDiff(_ input: PullRequestDiffInput) async throws
+        -> PullRequestDiffResult
+    {
+        try requirePullRequestCapability()
+        do {
+            return try await api.pullRequestDiff(input, for: environment)
+        } catch {
+            throw mappedPullRequestError(error)
+        }
+    }
+
+    public func pullRequestDiffFileContents(_ input: PullRequestDiffFileContentsInput) async throws
+        -> PullRequestDiffFileContentsResult
+    {
+        try await pullRequestRead(
+            RPCMethod.pullRequestsDiffFileContents,
+            input,
+            as: PullRequestDiffFileContentsResult.self
+        )
+    }
+
+    public func runPullRequestAction(_ input: PullRequestActionInput) async throws {
+        try await pullRequestWrite(RPCMethod.pullRequestsRunAction, input)
+    }
+
+    public func commentOnPullRequest(_ input: PullRequestCommentInput) async throws {
+        try await pullRequestWrite(RPCMethod.pullRequestsComment, input)
+    }
+
+    public func submitPullRequestReview(_ input: PullRequestSubmitReviewInput) async throws {
+        try await pullRequestWrite(RPCMethod.pullRequestsSubmitReview, input)
+    }
+
+    public func replyToPullRequestThread(_ input: PullRequestThreadReplyInput) async throws {
+        try await pullRequestWrite(RPCMethod.pullRequestsReplyToThread, input)
+    }
+
+    public func setPullRequestThreadResolution(
+        _ input: PullRequestThreadResolutionInput
+    ) async throws {
+        try await pullRequestWrite(RPCMethod.pullRequestsSetThreadResolution, input)
+    }
+
+    public func invalidatePullRequests(_ input: PullRequestInvalidateInput) async throws {
+        try await pullRequestWrite(RPCMethod.pullRequestsInvalidate, input)
+    }
+
+    public func pullRequestReviewerCandidates(_ reference: PullRequestRef) async throws
+        -> PullRequestReviewerCandidateList
+    {
+        try await pullRequestRead(
+            RPCMethod.pullRequestsReviewerCandidates,
+            reference,
+            as: PullRequestReviewerCandidateList.self
+        )
+    }
+
+    public func requestPullRequestReviewers(
+        _ input: PullRequestReviewerRequestInput
+    ) async throws {
+        try await pullRequestWrite(RPCMethod.pullRequestsRequestReviewers, input)
+    }
+
+    private func pullRequestRead<Input, Result>(
+        _ method: RPCMethod,
+        _ input: Input,
+        as type: Result.Type
+    ) async throws -> Result
+    where Input: Encodable & Sendable, Result: Decodable & Sendable {
+        try requirePullRequestCapability()
+        do {
+            return try await rpc.request(
+                method.rawValue,
+                payload: try JSONValue.encode(input),
+                as: type
+            )
+        } catch {
+            throw mappedPullRequestError(error)
+        }
+    }
+
+    private func pullRequestWrite<Input>(
+        _ method: RPCMethod,
+        _ input: Input
+    ) async throws where Input: Encodable & Sendable {
+        try requirePullRequestCapability()
+        do {
+            try await rpc.request(method.rawValue, payload: try JSONValue.encode(input))
+        } catch {
+            throw mappedPullRequestError(error)
+        }
+    }
+
+    private func requirePullRequestCapability() throws {
+        guard environment.descriptor?.capabilities.pullRequests == true else {
+            throw PullRequestCapabilityUnavailableError()
+        }
+    }
+
+    private func mappedPullRequestError(_ error: any Error) -> any Error {
+        if let rpc = error as? RPCError {
+            switch rpc {
+            case .remote, .remotePayload:
+                return PullRequestServiceError(error: rpc)
+            case .connectionUnavailable, .disconnected, .responseTimedOut, .protocolViolation:
+                return rpc
+            }
+        }
+        if let http = error as? HTTPError {
+            switch http {
+            case .status, .structuredStatus:
+                return PullRequestServiceError(error: http)
+            default:
+                return http
+            }
+        }
+        return error
+    }
+
     public func serverConfigEvents() async
         -> AsyncThrowingStream<ServerConfigStreamEvent, Error>
     {
         await rpc.subscribe(
             RPCMethod.subscribeServerConfig.rawValue,
             as: ServerConfigStreamEvent.self
+        )
+    }
+
+    public func hostStorageEvents() async
+        -> AsyncThrowingStream<HostStorageSnapshot, Error>
+    {
+        await rpc.subscribe(
+            RPCMethod.subscribeHostStorage.rawValue,
+            as: HostStorageSnapshot.self
         )
     }
 
@@ -1271,6 +1466,22 @@ public enum RPCMethod: String, Sendable {
     case serverProbe = "server.probe"
     case serverGetConfig = "server.getConfig"
     case serverGetUsageSummary = "server.getUsageSummary"
+    case themesCompile = "themes.compile"
+    case themesSearchOpenVsx = "themes.searchOpenVsx"
+    case themesInstallOpenVsx = "themes.installOpenVsx"
+    case pullRequestsList = "pullRequests.list"
+    case pullRequestsListStats = "pullRequests.listStats"
+    case pullRequestsDetail = "pullRequests.detail"
+    case pullRequestsActivity = "pullRequests.activity"
+    case pullRequestsDiffFileContents = "pullRequests.diffFileContents"
+    case pullRequestsRunAction = "pullRequests.runAction"
+    case pullRequestsComment = "pullRequests.comment"
+    case pullRequestsSubmitReview = "pullRequests.submitReview"
+    case pullRequestsReplyToThread = "pullRequests.replyToThread"
+    case pullRequestsSetThreadResolution = "pullRequests.setThreadResolution"
+    case pullRequestsInvalidate = "pullRequests.invalidate"
+    case pullRequestsReviewerCandidates = "pullRequests.reviewerCandidates"
+    case pullRequestsRequestReviewers = "pullRequests.requestReviewers"
     case dispatchCommand = "orchestration.dispatchCommand"
     case getArchivedShellSnapshot = "orchestration.getArchivedShellSnapshot"
     case subscribeShell = "orchestration.subscribeShell"
@@ -1282,6 +1493,7 @@ public enum RPCMethod: String, Sendable {
     case filesystemBrowse = "filesystem.browse"
     case assetsCreateURL = "assets.createUrl"
     case subscribeServerConfig
+    case subscribeHostStorage
     case serverDiscoverSourceControl = "server.discoverSourceControl"
     case subscribeVCSStatus = "subscribeVcsStatus"
     case vcsPull = "vcs.pull"

@@ -38,6 +38,7 @@ public struct FeatureEnvironment: Identifiable, Sendable, Equatable, Hashable, C
     public var serverVersion: String?
     /// Internal stream-leader compatibility. Product routing must use the
     /// project or thread environment instead.
+    public var supportsPullRequests: Bool
     public var isActive: Bool
     public var isEnabled: Bool
     public var source: Source
@@ -51,6 +52,7 @@ public struct FeatureEnvironment: Identifiable, Sendable, Equatable, Hashable, C
         name: String,
         endpoint: String,
         serverVersion: String? = nil,
+        supportsPullRequests: Bool = false,
         isActive: Bool = false,
         isEnabled: Bool = true,
         source: Source = .direct,
@@ -61,6 +63,7 @@ public struct FeatureEnvironment: Identifiable, Sendable, Equatable, Hashable, C
         self.name = name
         self.endpoint = endpoint
         self.serverVersion = serverVersion
+        self.supportsPullRequests = supportsPullRequests
         self.isActive = isActive
         self.isEnabled = isEnabled
         self.source = source
@@ -807,6 +810,7 @@ public struct FeatureSettings: Sendable, Equatable, Codable {
     public var hapticsEnabled: Bool
     public var notificationsEnabled: Bool
     public var liveActivitiesEnabled: Bool
+    public var showThreadDoneDuration: Bool
     public var defaultSelection: FeatureSelection?
 
     public init(
@@ -814,12 +818,14 @@ public struct FeatureSettings: Sendable, Equatable, Codable {
         hapticsEnabled: Bool = true,
         notificationsEnabled: Bool = true,
         liveActivitiesEnabled: Bool = true,
+        showThreadDoneDuration: Bool = false,
         defaultSelection: FeatureSelection? = nil
     ) {
         self.appearance = appearance
         self.hapticsEnabled = hapticsEnabled
         self.notificationsEnabled = notificationsEnabled
         self.liveActivitiesEnabled = liveActivitiesEnabled
+        self.showThreadDoneDuration = showThreadDoneDuration
         self.defaultSelection = defaultSelection
     }
 
@@ -828,6 +834,7 @@ public struct FeatureSettings: Sendable, Equatable, Codable {
         case hapticsEnabled
         case notificationsEnabled
         case liveActivitiesEnabled
+        case showThreadDoneDuration
         case defaultSelection
     }
 
@@ -849,6 +856,10 @@ public struct FeatureSettings: Sendable, Equatable, Codable {
             Bool.self,
             forKey: .liveActivitiesEnabled
         ) ?? true
+        showThreadDoneDuration = try container.decodeIfPresent(
+            Bool.self,
+            forKey: .showThreadDoneDuration
+        ) ?? false
         defaultSelection = try container.decodeIfPresent(
             FeatureSelection.self,
             forKey: .defaultSelection
@@ -861,6 +872,7 @@ public struct FeatureSettings: Sendable, Equatable, Codable {
         try container.encode(hapticsEnabled, forKey: .hapticsEnabled)
         try container.encode(notificationsEnabled, forKey: .notificationsEnabled)
         try container.encode(liveActivitiesEnabled, forKey: .liveActivitiesEnabled)
+        try container.encode(showThreadDoneDuration, forKey: .showThreadDoneDuration)
         try container.encodeIfPresent(defaultSelection, forKey: .defaultSelection)
     }
 }
@@ -972,5 +984,6 @@ public enum FeatureEvent: Sendable {
     case threadRemoved(id: String)
     case detail(FeatureThreadDetail)
     case detailDelta(FeatureThreadDetail, FeatureDetailDelta)
+    case hostStorage(HostStorageSnapshot?)
     case failure(String)
 }

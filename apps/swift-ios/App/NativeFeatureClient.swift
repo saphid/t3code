@@ -24,7 +24,8 @@ private struct T3ConnectManagedCleanupError: LocalizedError {
 /// Composes the transport-focused Core layer with the UI-focused Features layer.
 @MainActor
 final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
-    FeatureProjectCreationClient, FeatureWorkspaceAssetResolving, T3ConnectCapable
+    FeatureProjectCreationClient, FeatureWorkspaceAssetResolving, T3ConnectCapable,
+    ThemeConversionCapable
 {
     private static let maximumRetainedThreadDetails = 6
     private static let t3ConnectLogger = Logger(
@@ -52,6 +53,29 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
 
     private var activeEnvironment: Environment?
     private var client: T3Client?
+
+    var themeConversionEnvironmentName: String? { activeEnvironment?.label }
+
+    var canConvertThemes: Bool {
+        activeEnvironment?.descriptor?.capabilities.themeConversion == true && client != nil
+    }
+
+    func compileTheme(fileName: String, contents: String) async throws -> T3ResolvedThemeArtifact {
+        guard canConvertThemes, let client else {
+            throw NativeFeatureClientError.notConnected
+        }
+        return try await client.compileTheme(fileName: fileName, contents: contents)
+    }
+
+    func searchOpenVsxThemes(query: String) async throws -> [T3OpenVsxThemeExtension] {
+        guard canConvertThemes, let client else { throw NativeFeatureClientError.notConnected }
+        return try await client.searchOpenVsxThemes(query: query)
+    }
+
+    func installOpenVsxTheme(extensionID: String) async throws -> T3ResolvedThemeArtifact {
+        guard canConvertThemes, let client else { throw NativeFeatureClientError.notConnected }
+        return try await client.installOpenVsxTheme(extensionID: extensionID)
+    }
     private var latestShell: OrchestrationShellSnapshot?
     private var environmentClients: [String: T3Client] = [:]
     private var shellsByEnvironmentID: [String: OrchestrationShellSnapshot] = [:]
@@ -96,6 +120,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
     private var pollingTask: Task<Void, Never>?
     private var fallbackPollingTask: Task<Void, Never>?
     private var configurationTask: Task<Void, Never>?
+    private var hostStorageTask: Task<Void, Never>?
     private var aggregateRefreshTask: Task<Void, Never>?
     private var aggregateRefreshID: UUID?
     private var shellPublishTask: Task<Void, Never>?
@@ -166,6 +191,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         pollingTask?.cancel()
         fallbackPollingTask?.cancel()
         configurationTask?.cancel()
+        hostStorageTask?.cancel()
         aggregateRefreshTask?.cancel()
         shellPublishTask?.cancel()
         archivedRefreshTask?.cancel()
@@ -463,6 +489,102 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         }
     }
 
+    func pullRequestsList(
+        environmentID: String,
+        input: PullRequestListInput
+    ) async throws -> PullRequestListResult {
+        try await pullRequestClient(environmentID: environmentID).pullRequestsList(input)
+    }
+
+    func pullRequestsListStats(
+        environmentID: String,
+        input: PullRequestListStatsInput
+    ) async throws -> PullRequestListStatsResult {
+        try await pullRequestClient(environmentID: environmentID).pullRequestsListStats(input)
+    }
+
+    func pullRequestDetail(
+        environmentID: String,
+        reference: PullRequestRef
+    ) async throws -> PullRequestDetail {
+        try await pullRequestClient(environmentID: environmentID).pullRequestDetail(reference)
+    }
+
+    func pullRequestActivity(
+        environmentID: String,
+        reference: PullRequestRef
+    ) async throws -> PullRequestActivity {
+        try await pullRequestClient(environmentID: environmentID).pullRequestActivity(reference)
+    }
+
+    func pullRequestDiff(
+        environmentID: String,
+        input: PullRequestDiffInput
+    ) async throws -> PullRequestDiffResult {
+        try await pullRequestClient(environmentID: environmentID).pullRequestDiff(input)
+    }
+
+    func pullRequestDiffFileContents(
+        environmentID: String,
+        input: PullRequestDiffFileContentsInput
+    ) async throws -> PullRequestDiffFileContentsResult {
+        try await pullRequestClient(environmentID: environmentID)
+            .pullRequestDiffFileContents(input)
+    }
+
+    func runPullRequestAction(environmentID: String, input: PullRequestActionInput) async throws {
+        try await pullRequestClient(environmentID: environmentID).runPullRequestAction(input)
+    }
+
+    func commentOnPullRequest(environmentID: String, input: PullRequestCommentInput) async throws {
+        try await pullRequestClient(environmentID: environmentID).commentOnPullRequest(input)
+    }
+
+    func submitPullRequestReview(
+        environmentID: String,
+        input: PullRequestSubmitReviewInput
+    ) async throws {
+        try await pullRequestClient(environmentID: environmentID).submitPullRequestReview(input)
+    }
+
+    func replyToPullRequestThread(
+        environmentID: String,
+        input: PullRequestThreadReplyInput
+    ) async throws {
+        try await pullRequestClient(environmentID: environmentID).replyToPullRequestThread(input)
+    }
+
+    func setPullRequestThreadResolution(
+        environmentID: String,
+        input: PullRequestThreadResolutionInput
+    ) async throws {
+        try await pullRequestClient(environmentID: environmentID)
+            .setPullRequestThreadResolution(input)
+    }
+
+    func invalidatePullRequests(
+        environmentID: String,
+        input: PullRequestInvalidateInput
+    ) async throws {
+        try await pullRequestClient(environmentID: environmentID).invalidatePullRequests(input)
+    }
+
+    func pullRequestReviewerCandidates(
+        environmentID: String,
+        reference: PullRequestRef
+    ) async throws -> PullRequestReviewerCandidateList {
+        try await pullRequestClient(environmentID: environmentID)
+            .pullRequestReviewerCandidates(reference)
+    }
+
+    func requestPullRequestReviewers(
+        environmentID: String,
+        input: PullRequestReviewerRequestInput
+    ) async throws {
+        try await pullRequestClient(environmentID: environmentID)
+            .requestPullRequestReviewers(input)
+    }
+
     private func adoptEnvironment(
         _ environment: Environment,
         client newClient: T3Client
@@ -478,12 +600,14 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         pollingTask?.cancel()
         fallbackPollingTask?.cancel()
         configurationTask?.cancel()
+        hostStorageTask?.cancel()
         aggregateRefreshTask?.cancel()
         archivedRefreshTask?.cancel()
         passiveDetailPollingTask?.cancel()
         pollingTask = nil
         fallbackPollingTask = nil
         configurationTask = nil
+        hostStorageTask = nil
         aggregateRefreshTask = nil
         aggregateRefreshID = nil
         archivedRefreshTask = nil
@@ -504,12 +628,14 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         pollingTask?.cancel()
         fallbackPollingTask?.cancel()
         configurationTask?.cancel()
+        hostStorageTask?.cancel()
         aggregateRefreshTask?.cancel()
         archivedRefreshTask?.cancel()
         passiveDetailPollingTask?.cancel()
         pollingTask = nil
         fallbackPollingTask = nil
         configurationTask = nil
+        hostStorageTask = nil
         aggregateRefreshTask = nil
         aggregateRefreshID = nil
         archivedRefreshTask = nil
@@ -523,6 +649,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
     }
 
     private func clearEnvironmentState(preserveEnvironmentSnapshots: Bool = false) {
+        continuation.yield(.hostStorage(nil))
         environmentGeneration &+= 1
         resetDetailRefresh()
         resetDetailStream()
@@ -741,7 +868,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
                     )
                 }
                 throw error
-            case .remote, .protocolViolation:
+            case .remote, .remotePayload, .protocolViolation:
                 throw error
             }
         }
@@ -1289,7 +1416,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
             switch error {
             case .connectionUnavailable, .disconnected, .responseTimedOut:
                 return true
-            case .remote, .protocolViolation:
+            case .remote, .remotePayload, .protocolViolation:
                 return false
             }
         }
@@ -1297,7 +1424,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
             switch error {
             case .invalidResponse:
                 return true
-            case .status, .missingCredential, .incompatibleCredential, .environmentMismatch,
+            case .status, .structuredStatus, .missingCredential, .incompatibleCredential, .environmentMismatch,
                  .managedAuthorizationUnavailable:
                 return false
             }
@@ -2198,6 +2325,14 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         return client
     }
 
+    private func pullRequestClient(environmentID: String) async throws -> T3Client {
+        let client = try await projectCreationClient(environmentID: environmentID)
+        guard client.environment.descriptor?.capabilities.pullRequests == true else {
+            throw PullRequestCapabilityUnavailableError()
+        }
+        return client
+    }
+
     private func projectRoute(for projectID: String) throws -> NativeProjectRoute {
         guard let environmentID = projectEnvironmentIDs[projectID],
               let wireID = projectWireIDs[projectID],
@@ -2475,6 +2610,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         pollingTask?.cancel()
         fallbackPollingTask?.cancel()
         configurationTask?.cancel()
+        hostStorageTask?.cancel()
         let generation = environmentGeneration
         pollingTask = Task { [weak self] in
             do {
@@ -2650,6 +2786,33 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
             } catch {
                 // The shell and thread streams remain useful on older servers
                 // that do not expose the provider catalogue subscription.
+            }
+        }
+        hostStorageTask = Task { [weak self] in
+            do {
+                for try await storage in await activeClient.hostStorageEvents() {
+                    guard !Task.isCancelled,
+                          let self,
+                          self.isCurrentSession(
+                              client: activeClient,
+                              generation: generation
+                          ) else {
+                        break
+                    }
+                    self.continuation.yield(.hostStorage(storage))
+                }
+            } catch is CancellationError {
+                return
+            } catch {
+                // Older servers may not expose host resource telemetry.
+                guard let self,
+                      self.isCurrentSession(
+                          client: activeClient,
+                          generation: generation
+                      ) else {
+                    return
+                }
+                self.continuation.yield(.hostStorage(nil))
             }
         }
     }
@@ -3862,6 +4025,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
             name: environment.label,
             endpoint: environment.httpBaseURL.absoluteString,
             serverVersion: environment.descriptor?.serverVersion,
+            supportsPullRequests: environment.descriptor?.capabilities.pullRequests == true,
             isActive: environment.id == activeID,
             isEnabled: environment.isEnabled,
             source: environment.kind == .managedDPoP ? .t3Connect : .direct,

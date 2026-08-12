@@ -95,6 +95,10 @@ public enum RPCError: LocalizedError, Sendable {
     case disconnected
     case responseTimedOut
     case remote(String)
+    /// A typed server failure. Retaining the original payload lets feature
+    /// clients distinguish setup failures from refused operations without
+    /// coupling the transport to every server error type.
+    case remotePayload(message: String, payload: JSONValue)
     case protocolViolation(String)
 
     public var errorDescription: String? {
@@ -104,6 +108,7 @@ public enum RPCError: LocalizedError, Sendable {
         case .disconnected: "The environment disconnected."
         case .responseTimedOut: "The environment did not answer the command in time."
         case let .remote(message): message
+        case let .remotePayload(message, _): message
         case let .protocolViolation(message): message
         }
     }
@@ -793,7 +798,8 @@ public actor WebSocketRPCClient {
         let message = value?["message"]?.stringValue
             ?? value?["detail"]?.stringValue
             ?? "The environment rejected the RPC request."
-        return .remote(message)
+        guard let value else { return .remote(message) }
+        return .remotePayload(message: message, payload: value)
     }
 
     private func allocateRequestID() -> Int {

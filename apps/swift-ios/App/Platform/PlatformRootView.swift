@@ -2,6 +2,7 @@ import SwiftUI
 
 struct PlatformRootView: View {
     @SwiftUI.Environment(\.scenePhase) private var scenePhase
+    @SwiftUI.Environment(T3ThemeRuntime.self) private var themeRuntime
     @Bindable private var model: FeatureRootModel
 
     @State private var navigationRequest: FeatureWorkspaceNavigationRequest?
@@ -87,7 +88,11 @@ struct PlatformRootView: View {
             synchronizeCloudDelivery()
         }
         .onChange(of: model.snapshot.settings.appearance, initial: true) { _, appearance in
+            T3ThemeRuntime.shared.setAppearance(appearance)
             T3SharedAppearanceStore.shared.update(appearance.sharedAppearance)
+        }
+        .onChange(of: themeRuntime.revision, initial: true) { _, _ in
+            T3SharedThemeStore.shared.update(themeRuntime.sharedProjection)
         }
         .onChange(of: model.snapshot.projects.map(\.id)) { _, _ in
             refreshIncomingShares()

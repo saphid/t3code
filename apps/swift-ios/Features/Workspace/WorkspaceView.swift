@@ -138,6 +138,10 @@ public struct WorkspaceView: View {
     @State private var newTaskPresentationEpoch = 0
     @State private var showingAddProject = false
     @State private var showingSettings = false
+    @State private var showingBuildChangelog = false
+    @AppStorage(BuildChangelogPrompt.lastOpenedBuildStorageKey)
+    private var lastOpenedBuildIdentifier = ""
+    @State private var showingCommandPalette = false
     @State private var renamingThread: FeatureThread?
     @State private var renameTitle = ""
     @State private var regeneratingThreadIDs: Set<String> = []
@@ -221,17 +225,30 @@ public struct WorkspaceView: View {
     }
 
     public var body: some View {
-        NavigationSplitView(preferredCompactColumn: $preferredCompactColumn) {
-            sidebar
-                .navigationSplitViewColumnWidth(
-                    min: T3Metrics.minimumSidebarWidth,
-                    ideal: T3Metrics.sidebarWidth,
-                    max: T3Metrics.maximumSidebarWidth
-                )
-        } detail: {
-            detail
+        ZStack(alignment: .top) {
+            NavigationSplitView(preferredCompactColumn: $preferredCompactColumn) {
+                sidebar
+                    .navigationSplitViewColumnWidth(
+                        min: T3Metrics.minimumSidebarWidth,
+                        ideal: T3Metrics.sidebarWidth,
+                        max: T3Metrics.maximumSidebarWidth
+                    )
+            } detail: {
+                detail
+            }
+            .navigationSplitViewStyle(.balanced)
+            .accessibilityHidden(showingCommandPalette)
+
+            if showingCommandPalette {
+                commandPaletteScrim
+                    .transition(.opacity)
+                    .zIndex(1)
+
+                commandPalettePanel
+                    .transition(.move(edge: .top))
+                    .zIndex(1)
+            }
         }
-        .navigationSplitViewStyle(.balanced)
         .sheet(isPresented: $showingNewTask, onDismiss: {
             let presentationID = dismissingNewTaskPresentationID
                 ?? appearedNewTaskPresentationID
@@ -268,6 +285,19 @@ public struct WorkspaceView: View {
             resumeDeferredNewTaskPresentation()
         }) {
             SettingsView(model: model)
+        }
+        .sheet(isPresented: $showingBuildChangelog) {
+            NavigationStack {
+                BuildChangelogView(
+                    changelog: Self.buildChangelog,
+                    versionLabel: Self.appVersionLabel
+                )
+                .toolbar {
+                    ToolbarItem(placement: .confirmationAction) {
+                        Button("Done") { showingBuildChangelog = false }
+                    }
+                }
+            }
         }
         .alert(
             "Rename thread",
@@ -364,6 +394,7 @@ public struct WorkspaceView: View {
                 query: searchText,
                 selectedThreadID: selectedThreadID,
                 forceRichRows: dynamicTypeSize.isAccessibilitySize,
+                showThreadDoneDuration: model.snapshot.settings.showThreadDoneDuration,
                 isSnoozedExpanded: isSnoozedExpanded,
                 isSettledExpanded: isSettledExpanded,
                 isArchiveExpanded: isArchiveExpanded,
@@ -458,7 +489,7 @@ public struct WorkspaceView: View {
 
     private var homeBar: some View {
         HStack(spacing: 2) {
-            connectionBrand
+            homeBrand
                 .frame(maxWidth: .infinity, alignment: .leading)
 
             if PersonalBuildChannel.current.showsBuildIdentity {
@@ -466,6 +497,24 @@ public struct WorkspaceView: View {
                     .frame(maxWidth: 120, alignment: .trailing)
                     .layoutPriority(-1)
                     .padding(.trailing, 4)
+            }
+
+            if shouldShowBuildChangelogPrompt {
+                Button(action: openBuildChangelog) {
+                    ZStack {
+                        Image(systemName: "gift.fill")
+                            .font(.system(size: 17, weight: .medium))
+                        Image(systemName: "sparkles")
+                            .font(.system(size: 8, weight: .bold))
+                            .offset(x: 9, y: -9)
+                    }
+                    .frame(width: 40, height: T3Metrics.minimumTapTarget)
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(T3Colors.primaryAction)
+                .accessibilityLabel("What’s New")
+                .accessibilityHint("Shows what changed in this build")
+                .accessibilityIdentifier("sidebar-whats-new-button")
             }
 
             Button {
@@ -505,6 +554,34 @@ public struct WorkspaceView: View {
         .padding(.trailing, 8)
         .frame(height: 49)
         .background(T3Colors.background)
+        .background {
+            FeatureCommandPaletteGestureInstaller {
+                isSearchFocused = false
+                withAnimation(.snappy(duration: 0.32)) {
+                    showingCommandPalette = true
+                }
+            }
+        }
+    }
+
+    private static let buildChangelog = BuildChangelog.load(info: Bundle.main.infoDictionary)
+    private static let appVersionLabel = SettingsAboutMetadata.appVersionLabel(
+        info: Bundle.main.infoDictionary
+    )
+
+    private var shouldShowBuildChangelogPrompt: Bool {
+        BuildChangelogPrompt.shouldShow(
+            lastOpenedBuild: lastOpenedBuildIdentifier,
+            info: Bundle.main.infoDictionary
+        )
+    }
+
+    private func openBuildChangelog() {
+        guard let buildIdentifier = BuildChangelogPrompt.buildIdentifier(
+            info: Bundle.main.infoDictionary
+        ) else { return }
+        lastOpenedBuildIdentifier = buildIdentifier
+        showingBuildChangelog = true
     }
 
     private static let devBuildMetadata = DebugBuildMetadata(info: Bundle.main.infoDictionary)
@@ -535,6 +612,9 @@ public struct WorkspaceView: View {
         .font(.caption2.weight(.semibold).monospaced())
         .lineLimit(1)
         .minimumScaleFactor(0.75)
+    }
+    private var homeBrand: some View {
+        connectionBrand
     }
     @ViewBuilder
     private var connectionBrand: some View {
@@ -719,6 +799,62 @@ public struct WorkspaceView: View {
         DailyUXCreationContext.projects(in: model.snapshot)
     }
 
+    private var commandPaletteActiveProjectID: String? {
+        if let selectedProjectID {
+            return selectedProjectID
+        }
+        if let selectedThreadID,
+           let selectedThread = model.snapshot.threads.first(where: {
+               $0.id == selectedThreadID
+           }) {
+            return selectedThread.projectID
+        }
+        return creationProjects.first?.id
+    }
+
+    private var commandPaletteScrim: some View {
+        Color.black.opacity(0.32)
+            .ignoresSafeArea()
+            .contentShape(Rectangle())
+            .onTapGesture(perform: dismissCommandPalette)
+            .accessibilityHidden(true)
+    }
+
+    private var commandPalettePanel: some View {
+        GeometryReader { proxy in
+            ZStack(alignment: .top) {
+                T3Colors.background
+                FeatureCommandPaletteView(
+                    model: model,
+                    activeProjectID: commandPaletteActiveProjectID,
+                    onDismiss: dismissCommandPalette,
+                    onSelect: handleCommandPaletteAction
+                )
+                .padding(.top, proxy.safeAreaInsets.top)
+            }
+            .frame(maxWidth: .infinity)
+            .frame(height: max(360, proxy.size.height * 0.72))
+            .clipShape(
+                UnevenRoundedRectangle(
+                    bottomLeadingRadius: 20,
+                    bottomTrailingRadius: 20
+                )
+            )
+            .shadow(color: .black.opacity(0.22), radius: 18, y: 8)
+        }
+        .ignoresSafeArea(.container, edges: .top)
+        .ignoresSafeArea(.keyboard, edges: .bottom)
+        .accessibilityIdentifier("command-palette-drawer")
+        .accessibilityAddTraits(.isModal)
+        .accessibilityAction(.escape) { dismissCommandPalette() }
+    }
+
+    private var connectionEnvironmentName: String {
+        model.snapshot.connection.environmentName
+            ?? model.snapshot.environments.first(where: \.isActive)?.name
+            ?? model.snapshot.environments.first?.name
+            ?? "Server"
+    }
     private var unreachableEnvironments: [FeatureEnvironment] {
         model.snapshot.environments.filter {
             $0.isEnabled && $0.connectionState == .disconnected
@@ -807,6 +943,33 @@ public struct WorkspaceView: View {
             return worktreePath
         }
         return model.snapshot.projects.first { $0.id == thread.projectID }?.path
+    }
+
+    private func handleCommandPaletteAction(_ action: FeatureCommandPaletteAction) {
+        Task { @MainActor in
+            await Task.yield()
+            switch action {
+            case let .newTask(projectID):
+                openNewTaskOrProjectCreation(initialProjectID: projectID)
+            case .addProject:
+                showingAddProject = true
+            case .settings:
+                showingSettings = true
+            case let .openThread(id):
+                openThread(id)
+            case let .openProject(id):
+                selectedProjectID = id
+                closeSelectedThread()
+            case .chooseNewTaskProject:
+                break
+            }
+        }
+    }
+
+    private func dismissCommandPalette() {
+        withAnimation(.snappy(duration: 0.24)) {
+            showingCommandPalette = false
+        }
     }
 
     private func consumeNavigationRequest() {
@@ -1012,6 +1175,150 @@ public struct WorkspaceView: View {
             return project.name
         }
         return "\(project.name) · \(environment.name)"
+    }
+}
+
+private struct FeatureCommandPaletteGestureInstaller: UIViewRepresentable {
+    let onPresent: () -> Void
+
+    func makeUIView(context _: Context) -> InstallerView {
+        InstallerView(onPresent: onPresent)
+    }
+
+    func updateUIView(_ view: InstallerView, context _: Context) {
+        view.configure(onPresent: onPresent)
+    }
+
+    static func dismantleUIView(_ view: InstallerView, coordinator _: Void) {
+        view.uninstallGesture()
+    }
+
+    final class InstallerView: UIView {
+        private var onPresent: () -> Void
+        private weak var gestureHost: UIView?
+        private var panGesture: UIPanGestureRecognizer?
+        private var gestureDelegate: GestureDelegate?
+
+        init(onPresent: @escaping () -> Void) {
+            self.onPresent = onPresent
+            super.init(frame: .zero)
+            isUserInteractionEnabled = false
+        }
+
+        @available(*, unavailable)
+        required init?(coder _: NSCoder) {
+            fatalError("init(coder:) has not been implemented")
+        }
+
+        deinit {
+            uninstallGesture()
+        }
+
+        override func didMoveToWindow() {
+            super.didMoveToWindow()
+            installGestureIfPossible()
+        }
+
+        override func layoutSubviews() {
+            super.layoutSubviews()
+            installGestureIfPossible()
+        }
+
+        func configure(onPresent: @escaping () -> Void) {
+            self.onPresent = onPresent
+            installGestureIfPossible()
+        }
+
+        func uninstallGesture() {
+            if let panGesture, let gestureHost {
+                gestureHost.removeGestureRecognizer(panGesture)
+            }
+            panGesture = nil
+            gestureDelegate = nil
+            gestureHost = nil
+        }
+
+        private func installGestureIfPossible() {
+            guard let host = window?.rootViewController?.view else {
+                uninstallGesture()
+                return
+            }
+            guard gestureHost !== host else { return }
+
+            uninstallGesture()
+            let panGesture = UIPanGestureRecognizer(
+                target: self,
+                action: #selector(handlePan(_:))
+            )
+            let gestureDelegate = GestureDelegate(owner: self)
+            panGesture.delegate = gestureDelegate
+            panGesture.cancelsTouchesInView = false
+            panGesture.delaysTouchesBegan = false
+            panGesture.maximumNumberOfTouches = 1
+            host.addGestureRecognizer(panGesture)
+            gestureHost = host
+            self.panGesture = panGesture
+            self.gestureDelegate = gestureDelegate
+        }
+
+        @objc private func handlePan(_ gesture: UIPanGestureRecognizer) {
+            guard gesture.state == .ended, let gestureHost else { return }
+            let translation = gesture.translation(in: gestureHost)
+            guard FeatureCommandPaletteGesture.shouldPresent(
+                translation: CGSize(width: translation.x, height: translation.y)
+            ) else { return }
+            onPresent()
+        }
+
+        private func shouldReceive(_ touch: UITouch) -> Bool {
+            guard let gestureHost, let window, window === gestureHost.window else { return false }
+            let point = touch.location(in: gestureHost)
+            return FeatureCommandPaletteGesture.shouldReceive(
+                point: point,
+                surfaceFrame: convert(bounds, to: gestureHost),
+                hasPresentedViewController: Self.hasPresentedViewController(
+                    in: gestureHost.window?.rootViewController
+                )
+            )
+        }
+
+        private static func hasPresentedViewController(in controller: UIViewController?) -> Bool {
+            guard let controller else { return false }
+            if controller.presentedViewController != nil { return true }
+            return controller.children.contains { hasPresentedViewController(in: $0) }
+        }
+
+        private final class GestureDelegate: NSObject, UIGestureRecognizerDelegate {
+            private weak var owner: InstallerView?
+
+            init(owner: InstallerView) {
+                self.owner = owner
+            }
+
+            func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+                guard let panGesture = gestureRecognizer as? UIPanGestureRecognizer else {
+                    return false
+                }
+                return FeatureCommandPaletteGesture.shouldBegin(
+                    velocity: panGesture.velocity(in: panGesture.view),
+                    translation: panGesture.translation(in: panGesture.view)
+                )
+            }
+
+            func gestureRecognizer(
+                _ gestureRecognizer: UIGestureRecognizer,
+                shouldReceive touch: UITouch
+            ) -> Bool {
+                owner?.shouldReceive(touch) == true
+            }
+
+            func gestureRecognizer(
+                _ gestureRecognizer: UIGestureRecognizer,
+                shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer
+            ) -> Bool {
+                otherGestureRecognizer.view is UIScrollView
+            }
+        }
     }
 }
 
@@ -1242,6 +1549,7 @@ struct FeatureThreadRow: View {
     let now: Date
     let allowsMultilineTitle: Bool
     let pullRequest: FeaturePullRequest?
+    let showDoneDuration: Bool
 
     init(
         thread: FeatureThread,
@@ -1251,7 +1559,8 @@ struct FeatureThreadRow: View {
         style: Style = .rich,
         now: Date = .now,
         allowsMultilineTitle: Bool = false,
-        pullRequest: FeaturePullRequest? = nil
+        pullRequest: FeaturePullRequest? = nil,
+        showDoneDuration: Bool = false
     ) {
         self.thread = thread
         self.context = context
@@ -1261,6 +1570,7 @@ struct FeatureThreadRow: View {
         self.now = now
         self.allowsMultilineTitle = allowsMultilineTitle
         self.pullRequest = pullRequest
+        self.showDoneDuration = showDoneDuration
     }
 
     var body: some View {
@@ -1364,7 +1674,7 @@ struct FeatureThreadRow: View {
                     .foregroundStyle(T3Colors.textSecondary)
             }
             providerIcon(size: 15)
-            Text(SidebarRelativeAge.compact(since: thread.updatedAt, now: now))
+            Text(slimTrailingLabel(at: now))
                 .font(T3Typography.homeMetadata.monospacedDigit())
                 .foregroundStyle(T3Colors.textTertiary)
         }
@@ -1431,6 +1741,11 @@ struct FeatureThreadRow: View {
             }
             Text(label)
             if let duration = thread.homeWorkingDuration(at: now) {
+                Text(duration)
+                    .font(.system(.footnote, design: .monospaced, weight: .semibold))
+                    .monospacedDigit()
+            }
+            if showDoneDuration, let duration = thread.homeDoneDuration(at: now) {
                 Text(duration)
                     .font(.system(.footnote, design: .monospaced, weight: .semibold))
                     .monospacedDigit()
@@ -1529,6 +1844,9 @@ struct FeatureThreadRow: View {
         if let duration = thread.homeWorkingDuration(at: now) {
             values.append("for \(duration)")
         }
+        if showDoneDuration, let duration = thread.homeDoneAccessibilityDuration(at: now) {
+            values.append("done for \(duration)")
+        }
         values.append("Branch \(branchLabel)")
         if let environmentLabel {
             values.append("on \(environmentLabel)")
@@ -1537,6 +1855,13 @@ struct FeatureThreadRow: View {
             values.append("last known state")
         }
         return values.joined(separator: ". ")
+    }
+
+    private func slimTrailingLabel(at now: Date) -> String {
+        if showDoneDuration, let duration = thread.homeDoneDuration(at: now) {
+            return "Done \(duration)"
+        }
+        return SidebarRelativeAge.compact(since: thread.updatedAt, now: now)
     }
 
 }

@@ -624,6 +624,64 @@ enum HomeWorkingDuration {
     }
 }
 
+enum HomeThreadRefreshCadence {
+    static func isFreshCompletion(_ thread: FeatureThread, now: Date) -> Bool {
+        guard thread.homeStatus == .done,
+              let completedAt = thread.latestTurnCompletedAt else {
+            return false
+        }
+        return (0..<60).contains(now.timeIntervalSince(completedAt))
+    }
+
+    static func needsSecondPrecisionRefresh(_ thread: FeatureThread, now: Date) -> Bool {
+        guard thread.homeStatus == .done,
+              let completedAt = thread.latestTurnCompletedAt else {
+            return false
+        }
+        // Keep repainting through the first minute boundary. The extra minute
+        // tolerates a delayed/coalesced timer tick without leaving "59s" stale.
+        return (0..<120).contains(now.timeIntervalSince(completedAt))
+    }
+
+    static func interval(
+        threads: some Sequence<FeatureThread>,
+        showDoneDuration: Bool,
+        now: Date
+    ) -> TimeInterval {
+        let needsFastRefresh = threads.contains { thread in
+            if thread.homeStatus == .working {
+                return true
+            }
+            return showDoneDuration && isFreshCompletion(thread, now: now)
+        }
+        return needsFastRefresh ? 1 : 60
+    }
+}
+
+enum HomeDoneDuration {
+    static func compact(since date: Date, now: Date) -> String {
+        let seconds = max(0, Int(now.timeIntervalSince(date)))
+        guard seconds >= 86_400 else {
+            return HomeWorkingDuration.compact(since: date, now: now)
+        }
+        let hours = seconds / 3_600
+        return "\(hours / 24)d \(hours % 24)h"
+    }
+
+    static func accessibility(since date: Date, now: Date) -> String {
+        let seconds = max(0, Int(now.timeIntervalSince(date)))
+        guard seconds >= 86_400 else {
+            return HomeWorkingDuration.accessibility(since: date, now: now)
+        }
+        let hours = seconds / 3_600
+        let days = hours / 24
+        let remainingHours = hours % 24
+        let dayLabel = "\(days) day\(days == 1 ? "" : "s")"
+        guard remainingHours > 0 else { return dayLabel }
+        return "\(dayLabel), \(remainingHours) hour\(remainingHours == 1 ? "" : "s")"
+    }
+}
+
 extension FeatureThread {
     var homeStatus: HomeThreadStatus {
         switch state {
@@ -659,6 +717,16 @@ extension FeatureThread {
     func homeWorkingDuration(at now: Date) -> String? {
         guard homeStatus == .working, let workingStartedAt else { return nil }
         return HomeWorkingDuration.compact(since: workingStartedAt, now: now)
+    }
+
+    func homeDoneDuration(at now: Date) -> String? {
+        guard homeStatus == .done, let latestTurnCompletedAt else { return nil }
+        return HomeDoneDuration.compact(since: latestTurnCompletedAt, now: now)
+    }
+
+    func homeDoneAccessibilityDuration(at now: Date) -> String? {
+        guard homeStatus == .done, let latestTurnCompletedAt else { return nil }
+        return HomeDoneDuration.accessibility(since: latestTurnCompletedAt, now: now)
     }
 
     func homeEnvironmentLabel(in snapshot: FeatureSnapshot) -> String? {

@@ -5,6 +5,7 @@ import UIKit
 
 struct GhosttyTerminalSurface: UIViewRepresentable {
     @SwiftUI.Environment(\.colorScheme) private var colorScheme
+    @SwiftUI.Environment(T3ThemeRuntime.self) private var themeRuntime
     let terminalKey: String
     let buffer: String
     let fontSize: CGFloat
@@ -27,6 +28,9 @@ struct GhosttyTerminalSurface: UIViewRepresentable {
 
     private func configure(_ view: GhosttyTerminalView) {
         view.isDarkMode = colorScheme == .dark
+        view.themeID = themeRuntime.selectedTheme(
+            for: colorScheme == .dark ? .dark : .light
+        ).id
         view.onInput = onInput
         view.onResize = onResize
         view.onClear = onClear
@@ -441,11 +445,7 @@ private final class TerminalAccessoryView: UIInputView {
 final class GhosttyTerminalView: UIView, UITextFieldDelegate, UIContextMenuInteractionDelegate {
     private static let minimumVerticalScrollStepPoints: CGFloat = 18
     private static let verticalScrollStepMultiplier: CGFloat = 1.15
-    private static let darkThemeConfig = """
-    background = #0a0a0a
-    foreground = #adadb1
-    cursor-color = #009fff
-    cursor-text = #0a0a0a
+    private static let darkAnsiConfig = """
     cursor-style-blink = false
     palette = 0=#141415
     palette = 1=#ff2e3f
@@ -464,11 +464,7 @@ final class GhosttyTerminalView: UIView, UITextFieldDelegate, UIContextMenuInter
     palette = 14=#08c0ef
     palette = 15=#c6c6c8
     """
-    private static let lightThemeConfig = """
-    background = #f2f2f7
-    foreground = #6c6c71
-    cursor-color = #009fff
-    cursor-text = #f2f2f7
+    private static let lightAnsiConfig = """
     cursor-style-blink = false
     palette = 0=#1f1f21
     palette = 1=#ff2e3f
@@ -496,6 +492,14 @@ final class GhosttyTerminalView: UIView, UITextFieldDelegate, UIContextMenuInter
     var isDarkMode = true {
         didSet {
             guard oldValue != isDarkMode else { return }
+            applyChromeAppearance()
+            refreshSurface()
+        }
+    }
+
+    var themeID = "t3-code" {
+        didSet {
+            guard oldValue != themeID else { return }
             applyChromeAppearance()
             refreshSurface()
         }
@@ -788,10 +792,16 @@ final class GhosttyTerminalView: UIView, UITextFieldDelegate, UIContextMenuInter
     }
 
     private func applyChromeAppearance() {
-        let background =
+        let appearance: T3ThemeAppearance = isDarkMode ? .dark : .light
+        let fallback =
             isDarkMode
             ? UIColor(red: 10 / 255, green: 10 / 255, blue: 10 / 255, alpha: 1)
             : UIColor(red: 242 / 255, green: 242 / 255, blue: 247 / 255, alpha: 1)
+        let background = T3ThemeRuntime.currentColor(
+            role: "terminalBackground",
+            appearance: appearance,
+            fallback: fallback
+        )
         backgroundColor = background
         terminalViewport.backgroundColor = background
         accessoryView.overrideUserInterfaceStyle = isDarkMode ? .dark : .light
@@ -995,10 +1005,40 @@ final class GhosttyTerminalView: UIView, UITextFieldDelegate, UIContextMenuInter
     }
 
     private func loadThemeConfig(into config: ghostty_config_t) {
+        let appearance: T3ThemeAppearance = isDarkMode ? .dark : .light
         let url = FileManager.default.temporaryDirectory
-            .appendingPathComponent("t3-swiftui-terminal.ghostty")
+            .appendingPathComponent("t3-swiftui-terminal-\(themeID)-\(appearance.rawValue).ghostty")
         do {
-            let themeConfig = isDarkMode ? Self.darkThemeConfig : Self.lightThemeConfig
+            let background = T3ThemeRuntime.currentCSS(
+                role: "terminalBackground",
+                appearance: appearance,
+                fallback: isDarkMode ? "#0a0a0a" : "#f2f2f7"
+            )
+            let foreground = T3ThemeRuntime.currentCSS(
+                role: "terminalForeground",
+                appearance: appearance,
+                fallback: isDarkMode ? "#adadb1" : "#6c6c71"
+            )
+            let cursor = T3ThemeRuntime.currentCSS(
+                role: "terminalCursor",
+                appearance: appearance,
+                fallback: "#009fff"
+            )
+            let selection = T3ThemeRuntime.currentCSS(
+                role: "terminalSelection",
+                appearance: appearance,
+                fallback: isDarkMode ? "#334155" : "#dbeafe"
+            )
+            let ansi = isDarkMode ? Self.darkAnsiConfig : Self.lightAnsiConfig
+            let themeConfig = """
+                background = \(background)
+                foreground = \(foreground)
+                cursor-color = \(cursor)
+                cursor-text = \(background)
+                selection-background = \(selection)
+                selection-foreground = \(foreground)
+                \(ansi)
+                """
             if (try? String(contentsOf: url, encoding: .utf8)) != themeConfig {
                 try themeConfig.write(to: url, atomically: true, encoding: .utf8)
             }

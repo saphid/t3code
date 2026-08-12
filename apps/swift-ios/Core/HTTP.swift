@@ -75,16 +75,32 @@ public enum HTTPRequestPolicy {
 public enum HTTPError: LocalizedError, Sendable {
     case invalidResponse
     case status(Int, message: String, traceID: String?)
+    /// A non-success response whose JSON error body is still meaningful to a
+    /// feature layer. Authentication retry continues to key off the status.
+    case structuredStatus(Int, message: String, traceID: String?, payload: JSONValue)
     case missingCredential
     case incompatibleCredential
     case environmentMismatch
     case managedAuthorizationUnavailable
+
+    /// Stable status inspection for callers that should not need to know
+    /// whether a JSON error payload was decoded.
+    public var statusCode: Int? {
+        switch self {
+        case let .status(status, _, _), let .structuredStatus(status, _, _, _):
+            status
+        default:
+            nil
+        }
+    }
 
     public var errorDescription: String? {
         switch self {
         case .invalidResponse:
             "The server returned an invalid response."
         case let .status(status, message, traceID):
+            traceID.map { "\(message) (trace \($0))" } ?? "\(message) (HTTP \(status))"
+        case let .structuredStatus(status, message, traceID, _):
             traceID.map { "\(message) (trace \($0))" } ?? "\(message) (HTTP \(status))"
         case .missingCredential:
             "This environment has no saved credential."
@@ -242,6 +258,19 @@ public actor EnvironmentAPI {
             path: "/api/auth/clients/revoke-others",
             method: "POST",
             as: AuthOtherClientSessionsRevokeResult.self
+        )
+    }
+
+    public func pullRequestDiff(
+        _ input: PullRequestDiffInput,
+        for environment: Environment
+    ) async throws -> PullRequestDiffResult {
+        try await authorized(
+            environment: environment,
+            path: "/api/pull-requests/diff",
+            method: "POST",
+            body: JSONEncoder.t3.encode(input),
+            as: PullRequestDiffResult.self
         )
     }
 
@@ -419,6 +448,14 @@ public actor EnvironmentAPI {
         let (data, response) = try await transport.data(for: HTTPRequestPolicy.prepare(request))
         guard (200..<300).contains(response.statusCode) else {
             let body = try? JSONDecoder.t3.decode(ErrorBody.self, from: data)
+            if let payload = try? JSONDecoder.t3.decode(JSONValue.self, from: data) {
+                throw HTTPError.structuredStatus(
+                    response.statusCode,
+                    message: body?.message ?? body?.reason ?? "Environment request failed.",
+                    traceID: body?.traceId,
+                    payload: payload
+                )
+            }
             throw HTTPError.status(
                 response.statusCode,
                 message: body?.message ?? body?.reason ?? "Environment request failed.",
@@ -431,8 +468,7 @@ public actor EnvironmentAPI {
 
 private extension HTTPError {
     var isRejectedAuthorization: Bool {
-        guard case let .status(status, _, _) = self else { return false }
-        return status == 401
+        statusCode == 401
     }
 }
 

@@ -5,39 +5,74 @@ enum T3Colors {
     // Keep these values aligned with apps/mobile/global.css. UIKit variants
     // let recycled collection and terminal surfaces participate in the same
     // system appearance changes as SwiftUI views.
-    static let uiBackground = adaptive(light: rgb(0xF2F2F7), dark: rgb(0x0A0A0A))
-    static let uiTextPrimary = adaptive(light: rgb(0x262626), dark: rgb(0xF5F5F5))
+    // Keep shared UIKit colors identity-stable. Selectable Markdown uses their
+    // identity as part of its attributed-text cache, while each dynamic color
+    // still resolves through the currently published theme palette.
+    static let uiBackground = themed("canvas", light: rgb(0xF2F2F7), dark: rgb(0x0A0A0A))
+    static let uiTextPrimary = themed("text", light: rgb(0x262626), dark: rgb(0xF5F5F5))
+    static let uiTextSecondary = themed(
+        "textMuted", light: rgb(0x525252), dark: rgb(0xA3A3A3))
 
-    static let background = Color(uiColor: uiBackground)
-    static let sheet = color(light: rgb(0xF2F2F7, alpha: 0.98), dark: rgb(0x0E0E0E, alpha: 0.98))
-    static let surface = color(light: rgb(0xFFFFFF), dark: rgb(0x171717))
-    static let surfaceRaised = color(light: rgb(0xF5F5F5), dark: rgb(0x1C1C1C))
-    static let input = color(light: rgb(0xFFFFFF), dark: rgb(0x141414))
-    static let border = color(light: rgb(0x000000, alpha: 0.08), dark: rgb(0xFFFFFF, alpha: 0.06))
-    static let inputBorder = color(
+    static var background: Color { Color(uiColor: uiBackground) }
+    static var sheet: Color {
+        themedColor(
+            "surfaceOverlay", light: rgb(0xF2F2F7, alpha: 0.98), dark: rgb(0x0E0E0E, alpha: 0.98))
+    }
+    static var surface: Color { themedColor("surface", light: rgb(0xFFFFFF), dark: rgb(0x171717)) }
+    static var surfaceRaised: Color {
+        themedColor("surfaceRaised", light: rgb(0xF5F5F5), dark: rgb(0x1C1C1C))
+    }
+    static var input: Color { themedColor("input", light: rgb(0xFFFFFF), dark: rgb(0x141414)) }
+    static var border: Color {
+        themedColor("border", light: rgb(0x000000, alpha: 0.08), dark: rgb(0xFFFFFF, alpha: 0.06))
+    }
+    static var inputBorder: Color {
+        themedColor(
+            "border",
         light: rgb(0x000000, alpha: 0.10), dark: rgb(0xFFFFFF, alpha: 0.08))
-    static let separator = color(
+    }
+    static var separator: Color {
+        themedColor(
+            "border",
         light: rgb(0x000000, alpha: 0.04), dark: rgb(0xFFFFFF, alpha: 0.03))
-    static let subtle = color(light: rgb(0x000000, alpha: 0.04), dark: rgb(0xFFFFFF, alpha: 0.04))
-    static let subtleStrong = color(
+    }
+    static var subtle: Color {
+        themedColor("muted", light: rgb(0x000000, alpha: 0.04), dark: rgb(0xFFFFFF, alpha: 0.04))
+    }
+    static var subtleStrong: Color {
+        themedColor(
+            "accentSurface",
         light: rgb(0x000000, alpha: 0.08), dark: rgb(0xFFFFFF, alpha: 0.08))
-    static let shadow = color(light: rgb(0x000000, alpha: 0.18), dark: rgb(0x000000, alpha: 0.32))
-    static let ledgerSurface = surface
-    static let ledgerSelected = surfaceRaised
+    }
+    static var shadow: Color {
+        color(light: rgb(0x000000, alpha: 0.18), dark: rgb(0x000000, alpha: 0.32))
+    }
+    static var ledgerSurface: Color { surface }
+    static var ledgerSelected: Color { surfaceRaised }
 
-    static let textPrimary = Color(uiColor: uiTextPrimary)
-    static let textSecondary = color(light: rgb(0x525252), dark: rgb(0xA3A3A3))
-    static let textTertiary = color(light: rgb(0x737373), dark: rgb(0x8E8E93))
-    static let placeholder = color(light: rgb(0xA3A3A3), dark: rgb(0x8E8E93))
+    static var textPrimary: Color { Color(uiColor: uiTextPrimary) }
+    static var textSecondary: Color {
+        themedColor("textMuted", light: rgb(0x525252), dark: rgb(0xA3A3A3))
+    }
+    static var textTertiary: Color {
+        themedColor("secondaryLabel", light: rgb(0x737373), dark: rgb(0x8E8E93))
+    }
+    static var placeholder: Color {
+        themedColor("placeholder", light: rgb(0xA3A3A3), dark: rgb(0x8E8E93))
+    }
 
-    static let primaryAction = color(light: rgb(0x262626), dark: rgb(0xF5F5F5))
-    static let primaryActionForeground = color(light: rgb(0xFFFFFF), dark: rgb(0x0A0A0A))
-    static let accent = color(light: rgb(0x007AFF), dark: rgb(0x0A84FF))
+    static var primaryAction: Color {
+        themedColor("messageAction", light: rgb(0x262626), dark: rgb(0xF5F5F5))
+    }
+    static var primaryActionForeground: Color {
+        themedColor("messageActionForeground", light: rgb(0xFFFFFF), dark: rgb(0x0A0A0A))
+    }
+    static var accent: Color { themedColor("accent", light: rgb(0x007AFF), dark: rgb(0x0A84FF)) }
     static let statusRunning = color(light: rgb(0x0284C7), dark: rgb(0x22D3EE))
     static let statusInput = color(light: rgb(0x4F46E5), dark: rgb(0xA5B4FC))
     static let success = color(light: rgb(0x16A34A), dark: rgb(0x30D158))
-    static let warning = color(light: rgb(0xD97706), dark: rgb(0xFF9F0A))
-    static let danger = color(light: rgb(0xDC2626), dark: rgb(0xFF453A))
+    static var warning: Color { themedColor("warning", light: rgb(0xD97706), dark: rgb(0xFF9F0A)) }
+    static var danger: Color { themedColor("error", light: rgb(0xDC2626), dark: rgb(0xFF453A)) }
 
     static let syntaxKeyword = color(light: rgb(0x7C3AED), dark: rgb(0xC78EFF))
     static let syntaxLiteral = color(light: rgb(0x2563EB), dark: rgb(0x8CC7FF))
@@ -46,6 +81,14 @@ enum T3Colors {
 
     private static func color(light: UIColor, dark: UIColor) -> Color {
         Color(uiColor: adaptive(light: light, dark: dark))
+    }
+
+    private static func themedColor(_ role: String, light: UIColor, dark: UIColor) -> Color {
+        Color(uiColor: themed(role, light: light, dark: dark))
+    }
+
+    private static func themed(_ role: String, light: UIColor, dark: UIColor) -> UIColor {
+        T3ThemeRuntime.adaptiveColor(role: role, fallbackLight: light, fallbackDark: dark)
     }
 
     private static func adaptive(light: UIColor, dark: UIColor) -> UIColor {
@@ -76,9 +119,6 @@ enum T3Typography {
 
     static let threadBody = Font.system(.body, design: .default)
     static let threadHeading1 = Font.system(.title2, design: .default, weight: .bold)
-    static let threadHeading2 = Font.system(.title3, design: .default, weight: .bold)
-    static let threadHeading3 = Font.system(.headline, design: .default, weight: .bold)
-    static let threadHeading4 = Font.system(.body, design: .default, weight: .semibold)
     static let code = Font.system(.callout, design: .monospaced)
     static let tool = Font.system(.footnote, design: .monospaced)
 

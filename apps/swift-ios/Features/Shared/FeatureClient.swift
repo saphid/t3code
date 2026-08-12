@@ -1,5 +1,14 @@
 import Foundation
 
+@MainActor
+protocol ThemeConversionCapable: AnyObject {
+    var themeConversionEnvironmentName: String? { get }
+    var canConvertThemes: Bool { get }
+    func compileTheme(fileName: String, contents: String) async throws -> T3ResolvedThemeArtifact
+    func searchOpenVsxThemes(query: String) async throws -> [T3OpenVsxThemeExtension]
+    func installOpenVsxTheme(extensionID: String) async throws -> T3ResolvedThemeArtifact
+}
+
 /// The app-owned adapter between the native feature layer and T3's WebSocket/Core runtime.
 /// Implementations are main-actor isolated so UI state never depends on locking.
 @MainActor
@@ -89,6 +98,57 @@ public protocol FeatureClient: AnyObject {
 
     func usageSummaries(_ input: UsageSummaryInput) async throws -> [FeatureEnvironmentUsage]
 
+    func pullRequestsList(
+        environmentID: String,
+        input: PullRequestListInput
+    ) async throws -> PullRequestListResult
+    func pullRequestsListStats(
+        environmentID: String,
+        input: PullRequestListStatsInput
+    ) async throws -> PullRequestListStatsResult
+    func pullRequestDetail(
+        environmentID: String,
+        reference: PullRequestRef
+    ) async throws -> PullRequestDetail
+    func pullRequestActivity(
+        environmentID: String,
+        reference: PullRequestRef
+    ) async throws -> PullRequestActivity
+    func pullRequestDiff(
+        environmentID: String,
+        input: PullRequestDiffInput
+    ) async throws -> PullRequestDiffResult
+    func pullRequestDiffFileContents(
+        environmentID: String,
+        input: PullRequestDiffFileContentsInput
+    ) async throws -> PullRequestDiffFileContentsResult
+    func runPullRequestAction(environmentID: String, input: PullRequestActionInput) async throws
+    func commentOnPullRequest(environmentID: String, input: PullRequestCommentInput) async throws
+    func submitPullRequestReview(
+        environmentID: String,
+        input: PullRequestSubmitReviewInput
+    ) async throws
+    func replyToPullRequestThread(
+        environmentID: String,
+        input: PullRequestThreadReplyInput
+    ) async throws
+    func setPullRequestThreadResolution(
+        environmentID: String,
+        input: PullRequestThreadResolutionInput
+    ) async throws
+    func invalidatePullRequests(
+        environmentID: String,
+        input: PullRequestInvalidateInput
+    ) async throws
+    func pullRequestReviewerCandidates(
+        environmentID: String,
+        reference: PullRequestRef
+    ) async throws -> PullRequestReviewerCandidateList
+    func requestPullRequestReviewers(
+        environmentID: String,
+        input: PullRequestReviewerRequestInput
+    ) async throws
+
     func cachedProjectFavicon(
         environmentID: String,
         workspaceRoot: String
@@ -159,6 +219,84 @@ public extension FeatureClient {
     func addProject(path: String) async throws {}
     func usageSummaries(_ input: UsageSummaryInput) async throws -> [FeatureEnvironmentUsage] {
         []
+    }
+    func pullRequestsList(
+        environmentID: String,
+        input: PullRequestListInput
+    ) async throws -> PullRequestListResult {
+        throw PullRequestCapabilityUnavailableError()
+    }
+    func pullRequestsListStats(
+        environmentID: String,
+        input: PullRequestListStatsInput
+    ) async throws -> PullRequestListStatsResult {
+        throw PullRequestCapabilityUnavailableError()
+    }
+    func pullRequestDetail(
+        environmentID: String,
+        reference: PullRequestRef
+    ) async throws -> PullRequestDetail {
+        throw PullRequestCapabilityUnavailableError()
+    }
+    func pullRequestActivity(
+        environmentID: String,
+        reference: PullRequestRef
+    ) async throws -> PullRequestActivity {
+        throw PullRequestCapabilityUnavailableError()
+    }
+    func pullRequestDiff(
+        environmentID: String,
+        input: PullRequestDiffInput
+    ) async throws -> PullRequestDiffResult {
+        throw PullRequestCapabilityUnavailableError()
+    }
+    func pullRequestDiffFileContents(
+        environmentID: String,
+        input: PullRequestDiffFileContentsInput
+    ) async throws -> PullRequestDiffFileContentsResult {
+        throw PullRequestCapabilityUnavailableError()
+    }
+    func runPullRequestAction(environmentID: String, input: PullRequestActionInput) async throws {
+        throw PullRequestCapabilityUnavailableError()
+    }
+    func commentOnPullRequest(environmentID: String, input: PullRequestCommentInput) async throws {
+        throw PullRequestCapabilityUnavailableError()
+    }
+    func submitPullRequestReview(
+        environmentID: String,
+        input: PullRequestSubmitReviewInput
+    ) async throws {
+        throw PullRequestCapabilityUnavailableError()
+    }
+    func replyToPullRequestThread(
+        environmentID: String,
+        input: PullRequestThreadReplyInput
+    ) async throws {
+        throw PullRequestCapabilityUnavailableError()
+    }
+    func setPullRequestThreadResolution(
+        environmentID: String,
+        input: PullRequestThreadResolutionInput
+    ) async throws {
+        throw PullRequestCapabilityUnavailableError()
+    }
+    func invalidatePullRequests(
+        environmentID: String,
+        input: PullRequestInvalidateInput
+    ) async throws {
+        throw PullRequestCapabilityUnavailableError()
+    }
+    func pullRequestReviewerCandidates(
+        environmentID: String,
+        reference: PullRequestRef
+    ) async throws -> PullRequestReviewerCandidateList {
+        throw PullRequestCapabilityUnavailableError()
+    }
+    func requestPullRequestReviewers(
+        environmentID: String,
+        input: PullRequestReviewerRequestInput
+    ) async throws {
+        throw PullRequestCapabilityUnavailableError()
     }
     func cachedProjectFavicon(environmentID: String, workspaceRoot: String) async -> Data? {
         nil

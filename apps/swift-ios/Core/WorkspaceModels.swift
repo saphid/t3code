@@ -59,12 +59,14 @@ public struct FilesystemBrowseResult: Codable, Equatable, Sendable {
 
 // MARK: - Source control and VCS
 
-public enum SourceControlProviderKind: String, Codable, CaseIterable, Sendable {
+public enum SourceControlProviderKind: String, ForwardCompatibleStringEnum, CaseIterable {
     case github
     case gitlab
     case azureDevOps = "azure-devops"
     case bitbucket
     case unknown
+
+    public static let unknownValue = Self.unknown
 }
 
 public struct SourceControlProviderInfo: Codable, Equatable, Sendable {

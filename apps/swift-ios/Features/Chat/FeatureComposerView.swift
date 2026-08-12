@@ -92,104 +92,113 @@ struct FeatureComposerView: View {
     }
 
     var body: some View {
-        composerSurface
-            .overlay(alignment: .top) {
-                if showsCommandMenu, let trigger = composerTrigger {
-                    FeatureComposerCommandPopover(
-                        triggerKind: trigger.kind,
-                        items: commandMenuItems,
-                        isLoading: isPathSearchLoading,
-                        errorMessage: pathSearchError,
-                        pathSearchAvailable: powerFeatures.searchPaths != nil,
-                        onSelect: selectCommandItem
-                    )
-                    .alignmentGuide(.top) { dimensions in
-                        // Keep the menu clear of the text entry surface so the
-                        // active `$`/`@`/`/` token remains readable while typing.
-                        dimensions[.bottom] + 24
-                    }
-                }
-            }
-            .padding(.horizontal, 12)
-            .padding(.top, 12)
-            .padding(.bottom, 10)
-            .padding(
-                .bottom,
-                FeatureComposerTextLayout.bottomClearance(
-                    dynamicTypeSize: dynamicTypeSize,
-                    softwareKeyboardIsVisible: dockedSoftwareKeyboardOccupiesScreen
-                )
+        VStack(
+            spacing: FeatureComposerTextLayout.commandMenuSpacing(
+                softwareKeyboardIsVisible: dockedSoftwareKeyboardOccupiesScreen
             )
-            .background {
-                LinearGradient(
-                    colors: [
-                        .clear,
-                        T3Colors.background.opacity(0.94),
-                        T3Colors.background,
-                    ],
-                    startPoint: .top,
-                    endPoint: .bottom
+        ) {
+            if showsCommandMenu, let trigger = composerTrigger {
+                FeatureComposerCommandPopover(
+                    triggerKind: trigger.kind,
+                    items: commandMenuItems,
+                    isLoading: isPathSearchLoading,
+                    errorMessage: pathSearchError,
+                    pathSearchAvailable: powerFeatures.searchPaths != nil,
+                    maximumHeight: FeatureComposerTextLayout.commandMenuMaximumHeight(
+                        softwareKeyboardIsVisible: dockedSoftwareKeyboardOccupiesScreen
+                    ),
+                    onSelect: selectCommandItem
                 )
-                .ignoresSafeArea()
+                .transition(.identity)
             }
-            .background {
-                FeatureComposerWindowReader { window in
-                    composerWindow = window
-                    updateSoftwareKeyboardState(in: window)
-                }
-                .frame(width: 0, height: 0)
+
+            composerSurface
+        }
+        .padding(.horizontal, 12)
+        .padding(.top, 12)
+        .padding(
+            .bottom,
+            FeatureComposerTextLayout.containerBottomPadding(
+                softwareKeyboardIsVisible: dockedSoftwareKeyboardOccupiesScreen
+            )
+        )
+        .padding(
+            .bottom,
+            FeatureComposerTextLayout.bottomClearance(
+                dynamicTypeSize: dynamicTypeSize,
+                softwareKeyboardIsVisible: dockedSoftwareKeyboardOccupiesScreen
+            )
+        )
+        .background {
+            LinearGradient(
+                colors: [
+                    .clear,
+                    T3Colors.background.opacity(0.94),
+                    T3Colors.background,
+                ],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+            .ignoresSafeArea()
+        }
+        .background {
+            FeatureComposerWindowReader { window in
+                composerWindow = window
+                updateSoftwareKeyboardState(in: window)
             }
-            .onChange(of: focused.wrappedValue) {
-                if FeatureComposerCollapsePolicy.shouldCollapse(
-                    isFocused: focused.wrappedValue,
-                    textIsEmpty: textIsEmpty,
-                    attachmentsAreEmpty: attachments.isEmpty,
-                    isAttachmentFlowActive: isAttachmentFlowActive,
-                    isPreparingAttachments: attachmentPreparation.isPreparing
-                ) {
-                    isManuallyExpanded = false
-                }
-            }
-            .task(id: pathSearchRequest) {
-                await updatePathSearch()
-            }
-            .onChange(of: attachmentContextID) {
-                rotateAttachmentLifecycle(to: attachmentContextID)
-            }
-            .alert(
-                "Couldn’t paste image",
-                isPresented: Binding(
-                    get: { attachmentErrorMessage != nil },
-                    set: { if !$0 { attachmentErrorMessage = nil } }
-                )
+            .frame(width: 0, height: 0)
+        }
+        .onChange(of: focused.wrappedValue) {
+            if FeatureComposerCollapsePolicy.shouldCollapse(
+                isFocused: focused.wrappedValue,
+                textIsEmpty: textIsEmpty,
+                attachmentsAreEmpty: attachments.isEmpty,
+                isAttachmentFlowActive: isAttachmentFlowActive,
+                isPreparingAttachments: attachmentPreparation.isPreparing
             ) {
-                Button("OK") { attachmentErrorMessage = nil }
-            } message: {
-                Text(attachmentErrorMessage ?? "")
+                isManuallyExpanded = false
             }
-            .onReceive(
-                NotificationCenter.default.publisher(
-                    for: UIResponder.keyboardWillChangeFrameNotification
-                )
-            ) { notification in
-                updateSoftwareKeyboardState(from: notification, in: composerWindow)
-            }
-            // New Thread autofocus can begin the keyboard transition before this
-            // sheet's composer has subscribed to the "will change" event.
-            .onReceive(
-                NotificationCenter.default.publisher(
-                    for: UIResponder.keyboardDidShowNotification
-                )
-            ) { notification in
-                updateSoftwareKeyboardState(from: notification, in: composerWindow)
-            }
-            .onReceive(
-                NotificationCenter.default.publisher(
-                    for: UIResponder.keyboardDidHideNotification
-                )
-            ) { _ in
-                dockedSoftwareKeyboardOccupiesScreen = false
-            }
+        }
+        .task(id: pathSearchRequest) {
+            await updatePathSearch()
+        }
+        .onChange(of: attachmentContextID) {
+            rotateAttachmentLifecycle(to: attachmentContextID)
+        }
+        .alert(
+            "Couldn’t paste image",
+            isPresented: Binding(
+                get: { attachmentErrorMessage != nil },
+                set: { if !$0 { attachmentErrorMessage = nil } }
+            )
+        ) {
+            Button("OK") { attachmentErrorMessage = nil }
+        } message: {
+            Text(attachmentErrorMessage ?? "")
+        }
+        .onReceive(
+            NotificationCenter.default.publisher(
+                for: UIResponder.keyboardWillChangeFrameNotification
+            )
+        ) { notification in
+            updateSoftwareKeyboardState(from: notification, in: composerWindow)
+        }
+        // New Thread autofocus can begin the keyboard transition before this
+        // sheet's composer has subscribed to the "will change" event.
+        .onReceive(
+            NotificationCenter.default.publisher(
+                for: UIResponder.keyboardDidShowNotification
+            )
+        ) { notification in
+            updateSoftwareKeyboardState(from: notification, in: composerWindow)
+        }
+        .onReceive(
+            NotificationCenter.default.publisher(
+                for: UIResponder.keyboardDidHideNotification
+            )
+        ) { _ in
+            dockedSoftwareKeyboardOccupiesScreen = false
+        }
     }
 
     private var composerSurface: some View {
@@ -786,6 +795,24 @@ enum FeatureComposerTextLayout {
     // Excludes the hardware-keyboard assistant bar while admitting a docked software keyboard.
     private static let minimumSoftwareKeyboardHeight: CGFloat = 100
     private static let accessibilityKeyboardBottomClearance: CGFloat = 52
+
+    static func commandMenuMaximumHeight(
+        softwareKeyboardIsVisible: Bool
+    ) -> CGFloat {
+        softwareKeyboardIsVisible ? 94 : 188
+    }
+
+    static func commandMenuSpacing(
+        softwareKeyboardIsVisible: Bool
+    ) -> CGFloat {
+        softwareKeyboardIsVisible ? 12 : 24
+    }
+
+    static func containerBottomPadding(
+        softwareKeyboardIsVisible: Bool
+    ) -> CGFloat {
+        softwareKeyboardIsVisible ? 4 : 10
+    }
 
     static func bottomClearance(
         dynamicTypeSize: DynamicTypeSize,

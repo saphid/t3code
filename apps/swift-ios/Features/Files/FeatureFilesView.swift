@@ -44,13 +44,20 @@ private struct FeatureFileDirectoryView: View {
     @State private var includesHidden = false
     @State private var isLoading = true
     @State private var errorMessage: String?
+    @State private var hasLoaded = false
+    @State private var loadRequests = FeatureLatestRequest()
+    @State private var loadedPath = FeatureLoadedPath()
+
+    private var errorPresentation: FeatureToolErrorPresentation {
+        .resolve(errorMessage: errorMessage, retainsContent: hasLoaded)
+    }
 
     var body: some View {
         Group {
             if isLoading, entries.isEmpty {
                 ProgressView("Loading files…")
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else if let errorMessage, entries.isEmpty {
+            } else if let errorMessage = errorPresentation.unavailableMessage {
                 ContentUnavailableView(
                     "Files unavailable",
                     systemImage: "folder.badge.questionmark",
@@ -88,13 +95,32 @@ private struct FeatureFileDirectoryView: View {
                     } label: {
                         Label("Reload", systemImage: "arrow.clockwise")
                     }
+                    .disabled(isLoading)
                 } label: {
                     Image(systemName: "ellipsis")
                 }
                 .accessibilityLabel("File browser options")
             }
         }
-        .task(id: path) { await load() }
+        .task(id: path) {
+            if loadedPath.begin(path) {
+                entries = []
+                hasLoaded = false
+                errorMessage = nil
+            }
+            await load()
+        }
+        .safeAreaInset(edge: .top, spacing: 0) {
+            if let errorMessage = errorPresentation.inlineMessage {
+                FeatureToolErrorNotice(
+                    message: errorMessage,
+                    isRetrying: isLoading,
+                    retryTitle: "Reload files"
+                ) {
+                    await load()
+                }
+            }
+        }
     }
 
     @ViewBuilder
@@ -122,13 +148,26 @@ private struct FeatureFileDirectoryView: View {
     }
 
     private func load() async {
+        let request = loadRequests.begin()
         isLoading = true
-        defer { isLoading = false }
+        defer {
+            if loadRequests.isCurrent(request) {
+                isLoading = false
+            }
+        }
         do {
-            entries = try await client.listFiles(threadID: threadID, path: path)
+            let loadedEntries = try await client.listFiles(threadID: threadID, path: path)
+            guard loadRequests.isCurrent(request) else { return }
+            entries = loadedEntries
+            hasLoaded = true
             errorMessage = nil
         } catch {
-            errorMessage = error.localizedDescription
+            guard loadRequests.isCurrent(request) else { return }
+            guard let message = FeatureToolErrorPresentation.message(
+                for: error,
+                taskIsCancelled: Task.isCancelled
+            ) else { return }
+            errorMessage = message
         }
     }
 }
@@ -213,7 +252,11 @@ struct FeatureFilePreviewView: View {
                     switch previewKind {
                     case .markdown:
                         ScrollView {
-                            MarkdownMessageView(content.text, onOpenURL: openURL)
+                            MarkdownMessageView(
+                                content.text,
+                                onOpenURL: openURL,
+                                copyActionTitle: "Copy file contents"
+                            )
                                 .frame(maxWidth: T3Metrics.readingWidth, alignment: .leading)
                                 .frame(maxWidth: .infinity, alignment: .leading)
                                 .padding(.horizontal, 18)

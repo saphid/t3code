@@ -109,12 +109,35 @@ struct ThreadContextMenuTests {
             "snooze",
             "rename",
             "regenerate-title",
-            "archive",
             "copy-path",
             "copy-branch",
             "copy-thread-id",
+            "archive",
             "delete",
         ])
+
+        #expect(
+            ThreadContextMenuModel.sections(
+                for: thread,
+                isArchived: false,
+                now: now,
+                calendar: calendar,
+                locale: locale
+            ).map(kinds) == [
+                [
+                    "new-thread",
+                    "pin",
+                    "settle",
+                    "snooze",
+                    "rename",
+                    "regenerate-title",
+                    "copy-path",
+                    "copy-branch",
+                    "copy-thread-id",
+                ],
+                ["archive", "delete"],
+            ]
+        )
 
         for gatedState in [
             FeatureThreadState.queued,
@@ -166,11 +189,15 @@ struct ThreadContextMenuTests {
         #expect(kinds(items) == [
             "new-thread",
             "rename",
-            "restore",
             "copy-path",
             "copy-branch",
             "copy-thread-id",
+            "restore",
             "delete",
+        ])
+        #expect(ThreadContextMenuModel.sections(for: thread, isArchived: true).map(kinds) == [
+            ["new-thread", "rename", "copy-path", "copy-branch", "copy-thread-id"],
+            ["restore", "delete"],
         ])
     }
 
@@ -206,9 +233,9 @@ struct ThreadContextMenuTests {
 
         #expect(kinds(ThreadContextMenuModel.items(for: thread, isArchived: false)) == [
             "rename",
-            "archive",
             "copy-path",
             "copy-thread-id",
+            "archive",
             "delete",
         ])
 

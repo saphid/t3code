@@ -5,6 +5,7 @@ import SwiftUI
 struct T3CodeApp: App {
     @UIApplicationDelegateAdaptor(T3PlatformAppDelegate.self) private var appDelegate
     @State private var model: FeatureRootModel
+    @State private var themeRuntime = T3ThemeRuntime.shared
 
     init() {
         let client = NativeFeatureClient()
@@ -24,6 +25,7 @@ struct T3CodeApp: App {
             RootView {
                 PlatformRootView(model: model)
             }
+            .environment(themeRuntime)
         }
     }
 }

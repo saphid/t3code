@@ -133,7 +133,41 @@ struct DailyUXSidebarTests {
             now: now
         )
 
-        #expect(actions == [.delete, .unpin, .settle])
+        #expect(actions == [.settle, .unpin, .delete])
+    }
+
+    @Test
+    func activeThreadFullSwipeSettlesAndKeepsDeleteExplicit() {
+        let active = thread(id: "active", created: -100, updated: -50, state: .idle)
+
+        #expect(
+            HomeThreadSwipeActions.kinds(
+                for: active,
+                isArchived: false,
+                now: now
+            ) == [.settle, .delete]
+        )
+    }
+
+    @Test
+    func settledAndArchivedThreadsKeepReversibleFullSwipeActions() {
+        var settled = thread(id: "settled", created: -100, updated: -50, state: .idle)
+        settled.isSettled = true
+
+        #expect(
+            HomeThreadSwipeActions.kinds(
+                for: settled,
+                isArchived: false,
+                now: now
+            ) == [.reopen, .delete]
+        )
+        #expect(
+            HomeThreadSwipeActions.kinds(
+                for: settled,
+                isArchived: true,
+                now: now
+            ) == [.restore, .delete]
+        )
     }
 
     @Test
