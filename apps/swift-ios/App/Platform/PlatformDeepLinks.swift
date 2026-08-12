@@ -1,11 +1,30 @@
 import Foundation
 
 enum PlatformRoute: Codable, Hashable, Identifiable, Sendable {
-    #if DEBUG
-    static let nativeScheme = "t3code-swiftui-dev"
-    #else
-    static let nativeScheme = "t3code-swiftui"
-    #endif
+    static var nativeScheme: String {
+        guard let value = Bundle.main.object(forInfoDictionaryKey: "T3CodeURLScheme") as? String,
+              !value.isEmpty,
+              !value.hasPrefix("$(")
+        else {
+            let channel = (Bundle.main.object(forInfoDictionaryKey: "T3BuildChannel") as? String)?
+                .lowercased()
+            return switch channel {
+            case "dev": "t3code-swiftui-personal-dev"
+            case "test": "t3code-swiftui-personal"
+            case "debug": "t3code-swiftui-dev"
+            default: "t3code-swiftui"
+            }
+        }
+        return value
+    }
+
+    static var supportedNativeSchemes: Set<String> {
+        [
+            "t3", "t3code", "t3code-swiftui", "t3code-swiftui-dev",
+            "t3code-swiftui-personal-dev", "t3code-swiftui-personal",
+            nativeScheme.lowercased(),
+        ]
+    }
 
     case connection(endpoint: String, token: String?)
     case environment(id: String)
@@ -103,7 +122,7 @@ enum PlatformDeepLinkParser {
         }
 
         let query = queryValues(components.queryItems ?? [])
-        if ["t3", "t3code", "t3code-swiftui", "t3code-swiftui-dev"].contains(scheme) {
+        if PlatformRoute.supportedNativeSchemes.contains(scheme) {
             let segments = customSchemeSegments(components)
             if isConnectionRoute(segments: segments, query: query) {
                 return try connectionRoute(url)

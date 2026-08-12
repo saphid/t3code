@@ -1,13 +1,33 @@
 import Foundation
 
 enum T3SharedContainer {
-    #if DEBUG
-    static let defaultAppGroupID = "group.com.t3tools.t3code.swiftui.dev"
-    static let urlScheme = "t3code-swiftui-dev"
-    #else
-    static let defaultAppGroupID = "group.com.t3tools.t3code.swiftui"
-    static let urlScheme = "t3code-swiftui"
-    #endif
+    static var defaultAppGroupID: String {
+        let channel = (Bundle.main.object(forInfoDictionaryKey: "T3BuildChannel") as? String)?
+            .lowercased()
+        return switch channel {
+        case "dev": "group.com.saphid.t3code.swiftui.stream.dev"
+        case "test": "group.com.saphid.t3code.swiftui.stream.test"
+        case "debug": "group.com.t3tools.t3code.swiftui.dev"
+        default: "group.com.t3tools.t3code.swiftui"
+        }
+    }
+
+    static var urlScheme: String {
+        guard let value = Bundle.main.object(forInfoDictionaryKey: "T3CodeURLScheme") as? String,
+              !value.isEmpty,
+              !value.hasPrefix("$(")
+        else {
+            let channel = (Bundle.main.object(forInfoDictionaryKey: "T3BuildChannel") as? String)?
+                .lowercased()
+            return switch channel {
+            case "dev": "t3code-swiftui-personal-dev"
+            case "test": "t3code-swiftui-personal"
+            case "debug": "t3code-swiftui-dev"
+            default: "t3code-swiftui"
+            }
+        }
+        return value
+    }
 
     static var appGroupID: String {
         configuredAppGroupID(

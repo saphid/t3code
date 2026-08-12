@@ -1,0 +1,268 @@
+{
+  "schemaVersion": 1,
+  "validatedAgainst": "f98cab553546558e28d6e22f3dbe9807ecc3325f",
+  "updatedAt": "2026-08-12T21:20:00+10:00",
+  "pullRequests": [
+    {
+      "number": 5610,
+      "name": "Image paste from composer edit menu",
+      "delivery": "direct",
+      "dependsOn": [],
+      "state": "upstream-pr"
+    },
+    {
+      "number": 5789,
+      "name": "Debug build distance from base",
+      "delivery": "direct",
+      "dependsOn": [],
+      "state": "upstream-pr"
+    },
+    {
+      "number": 5790,
+      "name": "App and environment versions",
+      "delivery": "direct",
+      "dependsOn": [],
+      "state": "upstream-pr"
+    },
+    {
+      "number": 5802,
+      "name": "Default new tasks to recent project",
+      "delivery": "direct",
+      "dependsOn": [],
+      "state": "upstream-pr"
+    },
+    {
+      "number": 5803,
+      "name": "Open workspace file links",
+      "delivery": "direct",
+      "dependsOn": [],
+      "state": "upstream-pr"
+    },
+    {
+      "number": 5804,
+      "name": "Link thread rows to pull requests",
+      "delivery": "direct",
+      "dependsOn": [],
+      "state": "upstream-pr"
+    },
+    {
+      "number": 5820,
+      "name": "Reveal message timestamps on swipe",
+      "delivery": "direct",
+      "dependsOn": [],
+      "state": "upstream-pr"
+    },
+    {
+      "number": 5969,
+      "name": "Exact build changelog with links",
+      "delivery": "direct",
+      "dependsOn": [],
+      "state": "upstream-pr"
+    },
+    {
+      "number": 5970,
+      "name": "Prevent device build downgrades",
+      "delivery": "direct",
+      "dependsOn": [],
+      "state": "upstream-pr"
+    },
+    {
+      "number": 5971,
+      "name": "Skills popup keyboard clearance",
+      "delivery": "direct",
+      "dependsOn": [],
+      "state": "upstream-pr"
+    },
+    {
+      "number": 5972,
+      "name": "Debug warning chrome",
+      "delivery": "direct",
+      "dependsOn": [],
+      "state": "upstream-pr"
+    },
+    {
+      "number": 5973,
+      "name": "Open thread links in app",
+      "delivery": "direct",
+      "dependsOn": [],
+      "state": "upstream-pr"
+    },
+    {
+      "number": 5974,
+      "name": "Settle primary swipe action",
+      "delivery": "direct",
+      "dependsOn": [],
+      "state": "upstream-pr"
+    },
+    {
+      "number": 5975,
+      "name": "Cached source-control status",
+      "delivery": "direct",
+      "dependsOn": [],
+      "state": "upstream-pr"
+    },
+    {
+      "number": 5976,
+      "name": "Durable composer share drafts",
+      "delivery": "direct",
+      "dependsOn": [],
+      "state": "upstream-pr"
+    },
+    {
+      "number": 5985,
+      "name": "Change reasoning from composer",
+      "delivery": "direct",
+      "dependsOn": [],
+      "state": "upstream-pr"
+    },
+    {
+      "number": 5992,
+      "name": "Truthful usage refresh",
+      "delivery": "direct",
+      "dependsOn": [],
+      "state": "upstream-pr"
+    },
+    {
+      "number": 5993,
+      "name": "Live duration accessibility",
+      "delivery": "direct",
+      "dependsOn": [],
+      "state": "upstream-pr"
+    },
+    {
+      "number": 6090,
+      "name": "Thread scrolling and back swipe",
+      "delivery": "direct",
+      "dependsOn": [],
+      "state": "upstream-pr"
+    },
+    {
+      "number": 6110,
+      "name": "Granular text selection",
+      "delivery": "direct",
+      "dependsOn": [],
+      "state": "upstream-pr"
+    },
+    {
+      "number": 6117,
+      "name": "Safe thread swipe actions",
+      "delivery": "direct",
+      "dependsOn": [],
+      "state": "upstream-pr"
+    },
+    {
+      "number": 6130,
+      "name": "Environment-scoped provider catalog tests",
+      "delivery": "direct",
+      "dependsOn": [],
+      "state": "upstream-pr"
+    },
+    {
+      "number": 6131,
+      "name": "Recent projects picker",
+      "delivery": "chain",
+      "dependsOn": [
+        5802
+      ],
+      "state": "upstream-pr"
+    },
+    {
+      "number": 6132,
+      "name": "File preview navigation and info",
+      "delivery": "chain",
+      "dependsOn": [
+        5803
+      ],
+      "state": "upstream-pr"
+    },
+    {
+      "number": 6133,
+      "name": "Inline workspace images",
+      "delivery": "chain",
+      "dependsOn": [
+        5803,
+        6132
+      ],
+      "state": "upstream-pr"
+    },
+    {
+      "number": 6134,
+      "name": "Copy thread metadata from rows",
+      "delivery": "chain",
+      "dependsOn": [
+        6117
+      ],
+      "state": "upstream-pr"
+    },
+    {
+      "number": 6135,
+      "name": "Thread snooze presets",
+      "delivery": "chain",
+      "dependsOn": [
+        6117,
+        6134
+      ],
+      "state": "upstream-pr"
+    },
+    {
+      "number": 6136,
+      "name": "New thread on same branch",
+      "delivery": "chain",
+      "dependsOn": [
+        6117,
+        6134,
+        6135
+      ],
+      "state": "upstream-pr"
+    },
+    {
+      "number": 6137,
+      "name": "Regenerate thread titles",
+      "delivery": "chain",
+      "dependsOn": [
+        6117,
+        6134,
+        6135,
+        6136
+      ],
+      "state": "upstream-pr"
+    },
+    {
+      "number": 6144,
+      "name": "Harden new task presentation lifecycle",
+      "delivery": "chain",
+      "dependsOn": [
+        5976
+      ],
+      "state": "upstream-pr"
+    },
+    {
+      "number": 6145,
+      "name": "Composer software-keyboard clearance",
+      "delivery": "chain",
+      "dependsOn": [
+        6130
+      ],
+      "state": "upstream-pr"
+    },
+    {
+      "number": 6146,
+      "name": "Swipe-down command palette",
+      "delivery": "chain",
+      "dependsOn": [
+        6130
+      ],
+      "state": "upstream-pr"
+    },
+    {
+      "number": 6147,
+      "name": "Remove composer line cap",
+      "delivery": "chain",
+      "dependsOn": [
+        6130
+      ],
+      "state": "upstream-pr"
+    }
+  ]
+}
+

@@ -55,15 +55,7 @@ public struct ThreadDetailView: View {
         .background(T3Colors.background)
         .navigationBarTitleDisplayMode(.inline)
         .navigationBarBackButtonHidden(false)
-#if DEBUG
-        // Dev-build marker inside a thread: the whole title bar goes orange.
-        .toolbarBackground(Color.orange, for: .navigationBar)
-        .toolbarBackground(.visible, for: .navigationBar)
-        .toolbarColorScheme(.light, for: .navigationBar)
-        .accessibilityIdentifier("debug-thread-title-bar")
-#else
         .t3NavigationChrome()
-#endif
         .toolbar {
             ToolbarItem(placement: .principal) {
                 threadHeaderTitle

@@ -79,17 +79,22 @@ Unset T3 Connect values disable that connection method without affecting direct
 pairing. Supply settings on the `xcodebuild` command line or through a local
 `.xcconfig`; do not commit private release configuration.
 
-Debug and Release use separate identities so a local build can remain installed
-beside TestFlight:
+The upstream configurations remain available. Alex's personal workflow adds
+separate Dev and Test schemes so both personal builds can remain installed
+beside each other and beside TestFlight:
 
-| Configuration | Display name    | Bundle identifier                | URL scheme           |
-| ------------- | --------------- | -------------------------------- | -------------------- |
-| Debug         | T3 Swift Dev    | `com.t3tools.t3code.swiftui.dev` | `t3code-swiftui-dev` |
-| Release       | T3 Code SwiftUI | `com.t3tools.t3code.swiftui`     | `t3code-swiftui`     |
+| Scheme / configuration | Display name    | Bundle identifier                    | URL scheme             |
+| ---------------------- | --------------- | ------------------------------------ | ---------------------- |
+| T3CodeDev / Dev        | SwiftUI Dev     | `com.saphid.t3code.swiftui.stream.dev`  | `t3code-swiftui-personal-dev` |
+| T3CodeTest / Test      | SwiftUI Test    | `com.saphid.t3code.swiftui.stream.test` | `t3code-swiftui-personal`     |
+| T3Code / Debug         | T3 Swift Dev    | `com.t3tools.t3code.swiftui.dev`     | `t3code-swiftui-dev`   |
+| T3Code / Release       | T3 Code SwiftUI | `com.t3tools.t3code.swiftui`         | `t3code-swiftui`       |
 
-Each identity also has matching widget and share-extension bundle identifiers
-and a separate App Group. Debug data and credentials therefore do not alter the
-TestFlight installation.
+Each personal identity has matching widget and share-extension bundle
+identifiers, a separate App Group, a distinct icon, and an in-app channel suffix.
+Dev and Test data, credentials, share inboxes, and widgets are isolated. The
+complete branch, promotion, build, phone-watcher, and upstream-PR rules live in
+`../../docs/operations/swiftui-dev-test-stream.md`.
 
 ## Verify
 

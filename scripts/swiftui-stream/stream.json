@@ -1,0 +1,121 @@
+{
+  "schemaVersion": 1,
+  "branches": {
+    "theo": "upstream/t3code/rebuild-mobile-app-swift",
+    "dev": "origin/personal/swiftui-dev",
+    "test": "origin/personal/swiftui-test",
+    "legacy": "origin/personal/swiftui-approved"
+  },
+  "legacyManifest": "scripts/t3-swift-approved/manifest.json",
+  "prDelivery": "scripts/swiftui-stream/pr-delivery.json",
+  "trackingIssue": "https://github.com/saphid/t3code-personal/issues/53",
+  "lifecycle": [
+    "developing",
+    "proved",
+    "in-test",
+    "needs-you",
+    "approved",
+    "in-dev",
+    "upstream-validation",
+    "needs-pr",
+    "upstream-pr",
+    "landed",
+    "blocked",
+    "rejected",
+    "superseded"
+  ],
+  "currentTestBuild": {
+    "channel": "test",
+    "build": 40,
+    "sequence": 40,
+    "commit": "2b1cf46a76afb0825dff0cec505307807149992e",
+    "receipt": "~/.t3/artifacts/swiftui-trains/2b1cf46a76afb0825dff0cec505307807149992e/install-receipt.json",
+    "status": "installed-awaiting-unlock-and-approval"
+  },
+  "features": [
+    {
+      "id": "swiftui-stream-infrastructure",
+      "name": "SwiftUI Dev/Test branch, build, approval, and delivery stream",
+      "aliases": ["branches and builds", "approval workflow", "dev test stream"],
+      "state": "in-dev",
+      "approvedBy": "Alex Southwell",
+      "approvedAt": "2026-08-12T21:45:00+10:00",
+      "approvedInThread": "dd129883-d2eb-4f81-9ccc-def28b9a2992",
+      "approvalEvidence": "User approved the complete grilled Dev/Test stream design and instructed implementation in the source T3 thread.",
+      "delivery": "local-only"
+    },
+    {
+      "id": "skills-popup-keyboard-clearance",
+      "name": "Skills popup composer clearance and keyboard refinement",
+      "aliases": ["skills popup", "keyboard clearance"],
+      "state": "needs-you",
+      "sourceCommit": "9cb21674",
+      "testBuild": 40,
+      "order": 1
+    },
+    {
+      "id": "dev-title-label",
+      "name": "Replace orange dev bars with a channel-colored title label",
+      "aliases": ["orange dev bars", "dev title"],
+      "state": "superseded",
+      "sourceCommit": "181bb7a1",
+      "supersededBy": "swiftui-stream-infrastructure",
+      "testBuild": 40,
+      "order": 2
+    },
+    {
+      "id": "home-thread-list-scrolling",
+      "name": "Home thread-list scrolling",
+      "aliases": ["home scrolling", "thread list scroll"],
+      "state": "needs-you",
+      "sourceCommit": "7cc3a611",
+      "testBuild": 40,
+      "order": 3
+    },
+    {
+      "id": "command-palette-top-drawer",
+      "name": "Command palette top drawer",
+      "aliases": ["command palette", "swipe-down command palette"],
+      "state": "needs-you",
+      "sourceCommit": "ed91d0cb",
+      "testBuild": 40,
+      "order": 4
+    },
+    {
+      "id": "development-build-source-thread",
+      "name": "Link development builds to their source T3 thread",
+      "aliases": ["source thread link", "whats new thread"],
+      "state": "needs-you",
+      "sourceCommit": "ed15ca2a",
+      "testBuild": 40,
+      "order": 5
+    },
+    {
+      "id": "initial-thread-live-updates",
+      "name": "Preserve live updates during initial thread open",
+      "aliases": ["initial thread updates", "thread refresh"],
+      "state": "needs-you",
+      "sourceCommit": "dd2ecbb",
+      "testBuild": 40,
+      "order": 6
+    },
+    {
+      "id": "pull-request-workspace-protocol",
+      "name": "Native pull-request workspace protocol foundation",
+      "aliases": ["pull request protocol", "pr workspace"],
+      "state": "needs-you",
+      "sourceCommit": "4f967ba4",
+      "testBuild": 40,
+      "order": 7
+    },
+    {
+      "id": "safe-tool-content-recovery",
+      "name": "Preserve SwiftUI tool content with safe accessible recovery",
+      "aliases": ["tool content", "accessible recovery"],
+      "state": "needs-you",
+      "sourceCommit": "9006b8de",
+      "testBuild": 40,
+      "order": 8
+    }
+  ]
+}

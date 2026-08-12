@@ -461,12 +461,12 @@ public struct WorkspaceView: View {
             connectionBrand
                 .frame(maxWidth: .infinity, alignment: .leading)
 
-#if DEBUG
-            devBuildBadge
-                .frame(maxWidth: 120, alignment: .trailing)
-                .layoutPriority(-1)
-                .padding(.trailing, 4)
-#endif
+            if PersonalBuildChannel.current.showsBuildIdentity {
+                devBuildBadge
+                    .frame(maxWidth: 120, alignment: .trailing)
+                    .layoutPriority(-1)
+                    .padding(.trailing, 4)
+            }
 
             Button {
                 withAnimation(.easeOut(duration: 0.16)) {
@@ -504,16 +504,9 @@ public struct WorkspaceView: View {
         .padding(.leading, 15)
         .padding(.trailing, 8)
         .frame(height: 49)
-#if DEBUG
-        .background(Color.orange.ignoresSafeArea(edges: .top))
-        .environment(\.colorScheme, .light)
-        .accessibilityIdentifier("debug-home-title-bar")
-#else
         .background(T3Colors.background)
-#endif
     }
 
-#if DEBUG
     private static let devBuildMetadata = DebugBuildMetadata(info: Bundle.main.infoDictionary)
 
     @ViewBuilder
@@ -543,8 +536,6 @@ public struct WorkspaceView: View {
         .lineLimit(1)
         .minimumScaleFactor(0.75)
     }
-#endif
-
     @ViewBuilder
     private var connectionBrand: some View {
         if !unreachableEnvironments.isEmpty {
@@ -591,10 +582,18 @@ public struct WorkspaceView: View {
                 Text("Code")
                     .fontWeight(.medium)
                     .foregroundStyle(T3Colors.textSecondary)
+                if let suffix = PersonalBuildChannel.current.titleSuffix {
+                    Text(suffix)
+                        .fontWeight(.bold)
+                        .foregroundStyle(PersonalBuildChannel.current.color)
+                }
             }
             .font(.system(size: 16))
             .accessibilityElement(children: .combine)
-            .accessibilityLabel("T3 Code")
+            .accessibilityLabel(
+                PersonalBuildChannel.current.titleSuffix.map { "T3 Code \($0)" }
+                    ?? "T3 Code"
+            )
         }
     }
 

@@ -6,6 +6,8 @@
 	<string>$(T3CODE_SHARE_DISPLAY_NAME)</string>
 	<key>T3CodeAppGroupIdentifier</key>
 	<string>$(T3CODE_APP_GROUP_IDENTIFIER)</string>
+	<key>T3CodeURLScheme</key>
+	<string>$(T3CODE_URL_SCHEME)</string>
 	<key>NSExtension</key>
 	<dict>
 		<key>NSExtensionAttributes</key>

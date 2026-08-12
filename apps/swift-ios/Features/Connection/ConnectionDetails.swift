@@ -39,7 +39,8 @@ enum ConnectionDetailsParser {
         let trimmed = input.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { throw ConnectionDetailsError.empty }
 
-        let extracted = trimmed.lowercased().hasPrefix("t3code:")
+        let inputScheme = URLComponents(string: trimmed)?.scheme?.lowercased()
+        let extracted = inputScheme.map(PlatformRoute.supportedNativeSchemes.contains) == true
             ? trimmed
             : (firstURL(in: trimmed) ?? trimmed)
         let candidate = trimmingTrailingProsePunctuation(extracted)
@@ -118,7 +119,7 @@ enum ConnectionDetailsParser {
         let allItems = queryItems + fragmentItems
         let token = firstValue(named: tokenNames, in: allItems)
 
-        if ["t3", "t3code", "t3code-swiftui", "t3code-swiftui-dev"].contains(scheme) {
+        if PlatformRoute.supportedNativeSchemes.contains(scheme) {
             if let wrappedPairingURL = firstValue(named: wrappedPairingURLNames, in: allItems) {
                 var wrapped = try parse(wrappedPairingURL)
                 if wrapped.pairingCode == nil {
@@ -159,7 +160,7 @@ enum ConnectionDetailsParser {
 
     private static func firstURL(in input: String) -> String? {
         guard let expression = try? NSRegularExpression(
-            pattern: #"(?i)(?:(?:https?|wss?|t3)://|t3code(?:-swiftui(?:-dev)?)?:(?://)?)[^\s<>"']+"#
+            pattern: #"(?i)(?:(?:https?|wss?|t3)://|t3code(?:-swiftui(?:-(?:dev|personal(?:-dev)?))?)?:(?://)?)[^\s<>"']+"#
         ) else {
             return nil
         }

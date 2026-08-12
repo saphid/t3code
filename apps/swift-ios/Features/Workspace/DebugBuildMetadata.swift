@@ -1,6 +1,5 @@
 import Foundation
 
-#if DEBUG
 struct DebugBuildMetadata: Equatable {
     let build: String
     let commit: String
@@ -61,4 +60,3 @@ struct DebugBuildMetadata: Equatable {
         return count
     }
 }
-#endif

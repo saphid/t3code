@@ -124,6 +124,14 @@ An empty database is a bad test. Seed your worktree's `.t3` with a copy of real 
 - One concern per PR. If the description says "also", split it.
 - When babysitting: poll checks and comments newer than the last push, verify each bot finding against the source, fix real ones, dismiss false positives with a written reason. Stay quiet when nothing is new. Stop when the bots are green on the latest commit.
 
+### Personal SwiftUI stream
+
+Work for Alex's personal native SwiftUI builds must follow
+`docs/operations/swiftui-dev-test-stream.md`. In particular, branch features
+from `personal/swiftui-dev`, test them together on `personal/swiftui-test`,
+promote exact human-approved feature receipts back to Dev, and classify every
+upstream PR as direct, chain, or blocked before delivery.
+
 ## How it works
 
 Clients send typed WebSocket requests. The server turns them into _commands_, a pure _decider_ turns commands into persisted _events_, and a _projector_ derives the read model the UI renders. Provider CLIs run as subprocesses; per-provider _adapters_ translate their native protocols into orchestration events. Side effects run in queue-backed _reactors_ that emit _receipts_ when milestones land. Each turn ends with a _checkpoint_, a hidden git ref, so the app can diff and restore.
