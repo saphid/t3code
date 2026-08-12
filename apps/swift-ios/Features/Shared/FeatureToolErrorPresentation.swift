@@ -1,3 +1,5 @@
+import Foundation
+
 enum FeatureToolErrorPresentation: Equatable {
     case none
     case unavailable(message: String)

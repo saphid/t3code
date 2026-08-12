@@ -22,6 +22,7 @@ struct FeatureToolErrorNotice: View {
         let label = HStack(alignment: .firstTextBaseline, spacing: 7) {
             Image(systemName: "exclamationmark.circle")
                 .foregroundStyle(.orange)
+                .accessibilityHidden(true)
             Text(message)
                 .foregroundStyle(T3Colors.textPrimary)
         }
@@ -32,11 +33,10 @@ struct FeatureToolErrorNotice: View {
             Task { await retry() }
         } label: {
             HStack(spacing: 6) {
-                if isRetrying {
-                    ProgressView()
-                        .controlSize(.small)
-                        .accessibilityHidden(true)
-                }
+                ProgressView()
+                    .controlSize(.small)
+                    .opacity(isRetrying ? 1 : 0)
+                    .accessibilityHidden(true)
                 Text(retryTitle)
             }
         }

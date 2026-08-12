@@ -32,16 +32,19 @@ public struct FeatureSourceControlView: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if let status, status.isRepository {
                 statusList(status)
+            } else if let errorMessage = errorPresentation.unavailableMessage {
+                ContentUnavailableView(
+                    "Source control unavailable",
+                    systemImage: "arrow.triangle.branch",
+                    description: Text(errorMessage)
+                )
             } else {
                 ContentUnavailableView(
                     "Source control unavailable",
                     systemImage: "arrow.triangle.branch",
-                    description: Text(
-                        errorMessage
-                            ?? (status?.isRepository == false
-                                ? "This workspace is not a Git repository."
-                                : "Repository status could not be loaded.")
-                    )
+                    description: Text(status?.isRepository == false
+                        ? "This workspace is not a Git repository."
+                        : "Repository status could not be loaded.")
                 )
             }
         }
@@ -69,6 +72,7 @@ public struct FeatureSourceControlView: View {
             }
             .disabled(
                 isLoading
+                    || isRunningAction
                     || commitMessage.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             )
         }
@@ -211,7 +215,12 @@ public struct FeatureSourceControlView: View {
             )
             errorMessage = nil
         } catch {
-            errorMessage = error.localizedDescription
+            if let message = FeatureToolErrorPresentation.message(
+                for: error,
+                taskIsCancelled: Task.isCancelled
+            ) {
+                errorMessage = message
+            }
         }
         isRunningAction = false
         if needsLoadAfterAction {
