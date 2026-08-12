@@ -45,7 +45,7 @@ else
 fi
 COMMIT="$(git -C "$REPO_ROOT" rev-parse HEAD)"
 DERIVED="${T3_SWIFT_DERIVED_DATA_PATH:-$APP_DIR/.derivedData/ready-$CHANNEL}"
-DESTINATION="platform=iOS,id=$DEVICE_ID"
+DESTINATION="generic/platform=iOS"
 
 xcodebuild build \
   -quiet \
