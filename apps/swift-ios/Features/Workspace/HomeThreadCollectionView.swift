@@ -613,12 +613,25 @@ struct HomeThreadCollectionView: UIViewRepresentable {
         }
 
         private func menuActions(for thread: FeatureThread, isArchived: Bool) -> [UIMenuElement] {
-            ThreadContextMenuModel.items(
+            let sections = ThreadContextMenuModel.sections(
                 for: thread,
                 isArchived: isArchived,
                 canCreateThread: parent.canCreateThread(thread),
                 canCopyPath: parent.canCopyPath(thread)
-            ).map { item in
+            )
+            return sections.map { section in
+                UIMenu(
+                    options: .displayInline,
+                    children: menuElements(for: section, thread: thread)
+                )
+            }
+        }
+
+        private func menuElements(
+            for items: [ThreadContextMenuItem],
+            thread: FeatureThread
+        ) -> [UIMenuElement] {
+            items.map { item in
                 switch item {
                 case let .newThread(branch):
                     return UIAction(
