@@ -11,6 +11,13 @@
       "state": "upstream-pr"
     },
     {
+      "number": 5611,
+      "name": "Live working duration in thread detail (closed; replacement validation required)",
+      "delivery": "direct",
+      "dependsOn": [],
+      "state": "upstream-validation"
+    },
+    {
       "number": 5789,
       "name": "Debug build distance from base",
       "delivery": "direct",
@@ -32,6 +39,13 @@
       "state": "upstream-pr"
     },
     {
+      "number": 5801,
+      "name": "Composer growth without line cap (closed; replaced by PR 6147)",
+      "delivery": "direct",
+      "dependsOn": [],
+      "state": "upstream-validation"
+    },
+    {
       "number": 5803,
       "name": "Open workspace file links",
       "delivery": "direct",
@@ -51,6 +65,20 @@
       "delivery": "direct",
       "dependsOn": [],
       "state": "upstream-pr"
+    },
+    {
+      "number": 5829,
+      "name": "Composer keyboard clearance (closed; replaced by PR 6145)",
+      "delivery": "direct",
+      "dependsOn": [],
+      "state": "upstream-validation"
+    },
+    {
+      "number": 5753,
+      "name": "Full thread row menu (closed; replacement chain validation required)",
+      "delivery": "direct",
+      "dependsOn": [],
+      "state": "upstream-validation"
     },
     {
       "number": 5969,
@@ -265,4 +293,3 @@
     }
   ]
 }
-

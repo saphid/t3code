@@ -42,7 +42,17 @@
       "approvedAt": "2026-08-12T21:45:00+10:00",
       "approvedInThread": "dd129883-d2eb-4f81-9ccc-def28b9a2992",
       "approvalEvidence": "User approved the complete grilled Dev/Test stream design and instructed implementation in the source T3 thread.",
+      "approvalReceipt": "~/.t3/swiftui-stream/approvals/swiftui-stream-infrastructure/cabbd92291069de7f70a2020eac7a23b687068a8.json",
       "delivery": "local-only"
+    },
+    {
+      "id": "legacy-dev-title-chrome",
+      "name": "Show orange debug chrome on SwiftUI home and new task",
+      "aliases": ["orange debug chrome", "legacy dev title bars"],
+      "state": "superseded",
+      "sourceCommit": "124a7b88cf053eb9a72810915e945c51f8152371",
+      "supersededBy": "swiftui-stream-infrastructure",
+      "supersessionEvidence": "The human-approved channel identity replaces generic debug chrome with explicit orange Dev and purple Test titles and icons."
     },
     {
       "id": "skills-popup-keyboard-clearance",

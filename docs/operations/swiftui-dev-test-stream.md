@@ -88,7 +88,7 @@ Validation status: <focused tests, review, Simulator, CI/conflict state>
 
 A chain PR must name every dependency and its order. A direct PR says
 `Depends on: none` and `Merge order: this PR only`. Validate a prepared body
-with `scripts/swiftui-stream/stream.py validate-pr-body --body <file>`. After a
+with `scripts/swiftui-stream/stream.py validate-pr-body --number <PR> --body <file>`. After a
 parent lands, rebase and validate the child again; convert it to direct when the
 dependency disappears.
 
@@ -98,21 +98,24 @@ dependency disappears.
 | --- | --- | --- | --- | --- | --- |
 | `T3CodeDev` / `Dev` | Orange `Dev` | SwiftUI Dev | `com.saphid.t3code.swiftui.dev` | `group.com.saphid.t3code.swiftui.dev` | `t3code-swiftui-personal-dev` |
 | `T3CodeTest` / `Test` | Purple `Test` | SwiftUI Test | `com.alxs.t3code.typed-swiftui.dev` | `group.com.alxs.t3code.typed-swiftui.dev` | `t3code-swiftui-personal` |
+| `T3Code` / `Release` | Upstream | T3 Code SwiftUI | `com.t3tools.t3code.swiftui` | upstream | `t3code-swiftui` |
 
 These host and extension bundle identifiers deliberately reuse the two locally
 provisioned personal-team identities. That allows both apps to coexist and be
 renewed without creating a new Apple identifier. Free personal-team profiles do
-not carry App Group capability: device builds therefore use the empty personal
-entitlement file and the channel-aware runtime fallback keeps host storage
-isolated. The configured group names remain distinct for a future paid-team
-profile; widgets and the share extension cannot exchange group data until that
-capability is provisioned.
-| `T3Code` / `Release` | Upstream | T3 Code SwiftUI | `com.t3tools.t3code.swiftui` | upstream | `t3code-swiftui` |
+not carry App Groups, push, Sign in with Apple, or associated-domain
+webcredentials. Device builds therefore use the empty personal entitlement
+file. Distinct bundle IDs keep host persistence and credentials isolated; the
+configured group names remain distinct for a future paid-team profile. Widgets
+and the share extension cannot exchange group data, remote push cannot arrive,
+Sign in with Apple is unavailable, and Clerk password autofill is unavailable
+until those capabilities are provisioned.
 
 Widgets and Share extensions use the matching channel bundle ID and App Group.
-The channels therefore have separate credentials, persistence, share inboxes,
-widgets, and deep-link ownership. Dev and Test build counters are independent
-and monotonically increasing.
+The channels therefore have separate host credentials, persistence, and
+deep-link ownership. App Group-dependent share inboxes and widgets remain
+disabled under free personal-team signing. Dev and Test build counters are
+independent and monotonically increasing.
 
 ## Build and automatic phone install
 
@@ -173,9 +176,10 @@ anomalies to investigate, not proof that no work exists.
 
 ### Read-only drift monitor
 
-`com.saphid.t3-swiftui-drift-monitor` fetches the three canonical refs every
+`com.saphid.t3-swiftui-drift-monitor` runs from the stable primary clone, fetches the three canonical refs every
 two hours and verifies Theo is an ancestor of Dev and Dev is an ancestor of
-Test. It never merges or pushes. A changed failure state is posted once to
+Test. Fetch failure is an unhealthy state, and every evidence record includes
+`checkedAt`. It never merges or pushes. A changed failure state is posted once to
 issue #53; recovery is posted once after the invariant is restored. Install or
 refresh it with:
 
@@ -199,4 +203,5 @@ stream is intentionally retired.
 - A locked or disconnected phone leaves the newest immutable build ready for the
   watcher; no agent needs to remain alive.
 - The old `personal/swiftui-approved` ref, its final tag, old sync script,
-  LaunchAgent plist, and logs are rollback evidence and must not be deleted.
+  disabled LaunchAgent plist, and logs are rollback evidence and must not be
+  deleted. The legacy agent must remain booted out.

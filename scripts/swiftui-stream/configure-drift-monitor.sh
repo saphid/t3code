@@ -1,13 +1,16 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-REPO="$(git rev-parse --show-toplevel)"
+COMMON_DIR="$(git rev-parse --path-format=absolute --git-common-dir)"
+REPO="${COMMON_DIR%/.git}"
+[[ -d "$REPO/.git" ]] || { echo "stable primary clone not found at $REPO" >&2; exit 1; }
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 STATE_DIR="$HOME/.t3/swiftui-stream"
 LIBEXEC="$HOME/.local/libexec/t3-swiftui-stream"
 LOG_DIR="$HOME/Library/Logs/t3-swiftui-stream"
 PLIST="$HOME/Library/LaunchAgents/com.saphid.t3-swiftui-drift-monitor.plist"
 mkdir -p "$STATE_DIR" "$LIBEXEC" "$LOG_DIR" "$(dirname "$PLIST")"
-install -m 755 "$REPO/scripts/swiftui-stream/drift-monitor.sh" "$LIBEXEC/drift-monitor.sh"
+install -m 755 "$SCRIPT_DIR/drift-monitor.sh" "$LIBEXEC/drift-monitor.sh"
 
 TMP="$(mktemp "$STATE_DIR/drift-monitor.XXXXXX")"
 cat > "$TMP" <<PLIST
