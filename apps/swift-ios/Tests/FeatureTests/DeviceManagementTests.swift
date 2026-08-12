@@ -34,6 +34,14 @@ struct DeviceManagementTests {
         #expect(desktop.displayName == "Desktop")
     }
 
+    @Test(arguments: [
+        (1, "Remove 1 device"),
+        (2, "Remove 2 devices"),
+    ])
+    func removeOtherDevicesTitleInflects(count: Int, expected: String) {
+        #expect(DeviceManagementCopy.removeOtherDevicesTitle(count: count) == expected)
+    }
+
     private func session(
         id: String,
         at date: Date,

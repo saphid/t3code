@@ -88,7 +88,10 @@ public struct DevicesView: View {
             isPresented: $showingRevokeOthers,
             titleVisibility: .visible
         ) {
-            Button("Remove \(otherSessions.count) devices", role: .destructive) {
+            Button(
+                DeviceManagementCopy.removeOtherDevicesTitle(count: otherSessions.count),
+                role: .destructive
+            ) {
                 Task { await revokeOthers() }
             }
             Button("Cancel", role: .cancel) {}

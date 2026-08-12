@@ -10,6 +10,15 @@ public struct FeatureSourceControlView: View {
     @State private var errorMessage: String?
     @State private var commitMessage = ""
     @State private var pendingCommitAction: FeatureSourceControlAction?
+    @State private var failedAction: FeatureSourceControlRetry?
+    @State private var loadRequests = FeatureLatestRequest()
+
+    private var errorPresentation: FeatureToolErrorPresentation {
+        .resolve(
+            errorMessage: errorMessage,
+            retainsContent: status?.isRepository == true
+        )
+    }
 
     public init(client: any FeatureClient, threadID: String) {
         self.client = client
@@ -58,9 +67,26 @@ public struct FeatureSourceControlView: View {
                 }
                 pendingCommitAction = nil
             }
-            .disabled(commitMessage.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            .disabled(
+                isLoading
+                    || commitMessage.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            )
         }
         .task { await load() }
+        .safeAreaInset(edge: .top, spacing: 0) {
+            if let errorMessage = errorPresentation.inlineMessage {
+                FeatureToolErrorNotice(
+                    message: errorMessage,
+                    isRetrying: isLoading || isRunningAction
+                ) {
+                    if let failedAction {
+                        await perform(failedAction.action, message: failedAction.message)
+                    } else {
+                        await load()
+                    }
+                }
+            }
+        }
     }
 
     private func statusList(_ status: FeatureSourceControlStatus) -> some View {
@@ -100,7 +126,7 @@ public struct FeatureSourceControlView: View {
                         Label(action.title, systemImage: action.icon)
                             .frame(maxWidth: .infinity, alignment: .leading)
                     }
-                    .disabled(isRunningAction)
+                    .disabled(isLoading || isRunningAction)
                 }
             }
 
@@ -151,17 +177,29 @@ public struct FeatureSourceControlView: View {
     }
 
     private func load() async {
+        guard !isRunningAction else { return }
+        let request = loadRequests.begin()
         isLoading = true
-        defer { isLoading = false }
+        defer {
+            if loadRequests.isCurrent(request) {
+                isLoading = false
+            }
+        }
         do {
-            status = try await client.sourceControlStatus(threadID: threadID)
+            let loadedStatus = try await client.sourceControlStatus(threadID: threadID)
+            guard loadRequests.isCurrent(request) else { return }
+            status = loadedStatus
             errorMessage = nil
+            failedAction = nil
         } catch {
+            guard loadRequests.isCurrent(request) else { return }
             errorMessage = error.localizedDescription
+            failedAction = nil
         }
     }
 
     private func perform(_ action: FeatureSourceControlAction, message: String?) async {
+        guard !isLoading, !isRunningAction else { return }
         isRunningAction = true
         defer { isRunningAction = false }
         do {
@@ -171,8 +209,10 @@ public struct FeatureSourceControlView: View {
                 message: message?.trimmingCharacters(in: .whitespacesAndNewlines)
             )
             errorMessage = nil
+            failedAction = nil
         } catch {
             errorMessage = error.localizedDescription
+            failedAction = FeatureSourceControlRetry(action: action, message: message)
         }
     }
 }
