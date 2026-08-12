@@ -31,6 +31,7 @@ public struct FeatureEnvironment: Identifiable, Sendable, Equatable, Hashable, C
     public var name: String
     public var endpoint: String
     public var serverVersion: String?
+    public var supportsPullRequests: Bool
     public var isActive: Bool
     /// Reachability from the latest aggregate refresh. `nil` means the client
     /// has not probed this saved environment yet.
@@ -42,6 +43,7 @@ public struct FeatureEnvironment: Identifiable, Sendable, Equatable, Hashable, C
         name: String,
         endpoint: String,
         serverVersion: String? = nil,
+        supportsPullRequests: Bool = false,
         isActive: Bool = false,
         connectionState: FeatureConnection.State? = nil,
         connectionDetail: String? = nil
@@ -50,6 +52,7 @@ public struct FeatureEnvironment: Identifiable, Sendable, Equatable, Hashable, C
         self.name = name
         self.endpoint = endpoint
         self.serverVersion = serverVersion
+        self.supportsPullRequests = supportsPullRequests
         self.isActive = isActive
         self.connectionState = connectionState
         self.connectionDetail = connectionDetail

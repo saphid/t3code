@@ -483,6 +483,102 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         }
     }
 
+    func pullRequestsList(
+        environmentID: String,
+        input: PullRequestListInput
+    ) async throws -> PullRequestListResult {
+        try await pullRequestClient(environmentID: environmentID).pullRequestsList(input)
+    }
+
+    func pullRequestsListStats(
+        environmentID: String,
+        input: PullRequestListStatsInput
+    ) async throws -> PullRequestListStatsResult {
+        try await pullRequestClient(environmentID: environmentID).pullRequestsListStats(input)
+    }
+
+    func pullRequestDetail(
+        environmentID: String,
+        reference: PullRequestRef
+    ) async throws -> PullRequestDetail {
+        try await pullRequestClient(environmentID: environmentID).pullRequestDetail(reference)
+    }
+
+    func pullRequestActivity(
+        environmentID: String,
+        reference: PullRequestRef
+    ) async throws -> PullRequestActivity {
+        try await pullRequestClient(environmentID: environmentID).pullRequestActivity(reference)
+    }
+
+    func pullRequestDiff(
+        environmentID: String,
+        input: PullRequestDiffInput
+    ) async throws -> PullRequestDiffResult {
+        try await pullRequestClient(environmentID: environmentID).pullRequestDiff(input)
+    }
+
+    func pullRequestDiffFileContents(
+        environmentID: String,
+        input: PullRequestDiffFileContentsInput
+    ) async throws -> PullRequestDiffFileContentsResult {
+        try await pullRequestClient(environmentID: environmentID)
+            .pullRequestDiffFileContents(input)
+    }
+
+    func runPullRequestAction(environmentID: String, input: PullRequestActionInput) async throws {
+        try await pullRequestClient(environmentID: environmentID).runPullRequestAction(input)
+    }
+
+    func commentOnPullRequest(environmentID: String, input: PullRequestCommentInput) async throws {
+        try await pullRequestClient(environmentID: environmentID).commentOnPullRequest(input)
+    }
+
+    func submitPullRequestReview(
+        environmentID: String,
+        input: PullRequestSubmitReviewInput
+    ) async throws {
+        try await pullRequestClient(environmentID: environmentID).submitPullRequestReview(input)
+    }
+
+    func replyToPullRequestThread(
+        environmentID: String,
+        input: PullRequestThreadReplyInput
+    ) async throws {
+        try await pullRequestClient(environmentID: environmentID).replyToPullRequestThread(input)
+    }
+
+    func setPullRequestThreadResolution(
+        environmentID: String,
+        input: PullRequestThreadResolutionInput
+    ) async throws {
+        try await pullRequestClient(environmentID: environmentID)
+            .setPullRequestThreadResolution(input)
+    }
+
+    func invalidatePullRequests(
+        environmentID: String,
+        input: PullRequestInvalidateInput
+    ) async throws {
+        try await pullRequestClient(environmentID: environmentID).invalidatePullRequests(input)
+    }
+
+    func pullRequestReviewerCandidates(
+        environmentID: String,
+        reference: PullRequestRef
+    ) async throws -> PullRequestReviewerCandidateList {
+        try await pullRequestClient(environmentID: environmentID)
+            .pullRequestReviewerCandidates(reference)
+    }
+
+    func requestPullRequestReviewers(
+        environmentID: String,
+        input: PullRequestReviewerRequestInput
+    ) async throws {
+        try await pullRequestClient(environmentID: environmentID)
+            .requestPullRequestReviewers(input)
+    }
+
     private func adoptEnvironment(
         _ environment: Environment,
         client newClient: T3Client
@@ -766,7 +862,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
                     )
                 }
                 throw error
-            case .remote, .protocolViolation:
+            case .remote, .remotePayload, .protocolViolation:
                 throw error
             }
         }
@@ -1314,7 +1410,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
             switch error {
             case .connectionUnavailable, .disconnected, .responseTimedOut:
                 return true
-            case .remote, .protocolViolation:
+            case .remote, .remotePayload, .protocolViolation:
                 return false
             }
         }
@@ -1322,7 +1418,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
             switch error {
             case .invalidResponse:
                 return true
-            case .status, .missingCredential, .incompatibleCredential, .environmentMismatch,
+            case .status, .structuredStatus, .missingCredential, .incompatibleCredential, .environmentMismatch,
                  .managedAuthorizationUnavailable:
                 return false
             }
@@ -2190,6 +2286,14 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         }
         let client = await runtime.client(for: environment)
         environmentClients[environmentID] = client
+        return client
+    }
+
+    private func pullRequestClient(environmentID: String) async throws -> T3Client {
+        let client = try await projectCreationClient(environmentID: environmentID)
+        guard client.environment.descriptor?.capabilities.pullRequests == true else {
+            throw PullRequestCapabilityUnavailableError()
+        }
         return client
     }
 
@@ -3884,6 +3988,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
             name: environment.label,
             endpoint: environment.httpBaseURL.absoluteString,
             serverVersion: environment.descriptor?.serverVersion,
+            supportsPullRequests: environment.descriptor?.capabilities.pullRequests == true,
             isActive: environment.id == activeID,
             connectionState: environmentConnectionStates[environment.id],
             connectionDetail: environmentConnectionDetails[environment.id]
