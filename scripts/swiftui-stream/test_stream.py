@@ -72,6 +72,13 @@ class StreamTests(unittest.TestCase):
             if item.get("pullRequest")
         }
         self.assertFalse(referenced - {item["number"] for item in records})
+        catalog_by_pr = {}
+        for item in stream.legacy_features(stream.manifest()):
+            number = stream.pr_number(item.get("pullRequest"))
+            if number is not None:
+                catalog_by_pr.setdefault(number, set()).add(item["state"])
+        for number in (5611, 5753, 5801, 5829):
+            self.assertEqual(catalog_by_pr[number], {"upstream-validation"})
 
 
 class WatcherTests(unittest.TestCase):
@@ -199,6 +206,21 @@ class WatcherTests(unittest.TestCase):
                 watcher.notify({}, "test", "unavailable", "test:41")
                 watcher.notify({}, "test", "locked again", "test:41")
                 self.assertEqual(send.call_count, 1)
+
+    def test_notification_history_retains_newest_digest(self):
+        completed = subprocess.CompletedProcess([], 0, "", "")
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            state = {"deliveredByChannel": {"test": [f"old-{i}" for i in range(100)]}}
+            (root / "notification-state.json").write_text(json.dumps(state))
+            with (
+                patch.object(watcher, "ROOT", root),
+                patch.object(watcher.subprocess, "run", return_value=completed),
+            ):
+                watcher.notify({}, "test", "new", "new-build")
+                value = json.loads((root / "notification-state.json").read_text())
+                self.assertEqual(len(value["deliveredByChannel"]["test"]), 100)
+                self.assertNotIn("old-0", value["deliveredByChannel"]["test"])
 
 
 if __name__ == "__main__":
