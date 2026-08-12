@@ -821,6 +821,36 @@ struct FeatureRootModelTests {
     }
 
     @Test
+    func testInitialDetailLoadDoesNotOverwriteNewerLiveUpdate() async {
+        let client = FeatureClientStub()
+        let thread = FeatureThread(id: "thread-1", projectID: "project-1", title: "Thread")
+        let initial = FeatureThreadDetail(
+            thread: thread,
+            messages: [FeatureMessage(id: "message-1", role: .assistant, text: "Initial")]
+        )
+        let live = FeatureThreadDetail(
+            thread: thread,
+            messages: [FeatureMessage(id: "message-2", role: .assistant, text: "Live")]
+        )
+        client.threadDetail = initial
+        let model = testRootModel(client: client)
+        let run = Task { await model.start() }
+        client.beforeLoadThreadReturn = {
+            client.emit(.detail(live))
+            while model.details[thread.id] != live {
+                await Task.yield()
+            }
+        }
+
+        let loaded = await model.detail(for: thread.id, force: true)
+        client.finishEvents()
+        await run.value
+
+        #expect(loaded == live)
+        #expect(model.details[thread.id] == live)
+    }
+
+    @Test
     func testResnoozeRefreshesTheOptimisticSnoozeTimestamp() async {
         let client = FeatureClientStub()
         var thread = FeatureThread(
@@ -1374,6 +1404,7 @@ private final class FeatureClientStub: FeatureClient {
     var removedEnvironmentID: String?
     var beforeSendMessage: (() throws -> Void)?
     var loadThreadError: (any Error)?
+    var beforeLoadThreadReturn: (() async -> Void)?
     var loadEarlierCallCount = 0
     var resolvedInputID: String?
     var resolvedInputAnswers: [String: FeatureInputAnswer]?
@@ -1483,6 +1514,7 @@ private final class FeatureClientStub: FeatureClient {
         if let loadThreadError {
             throw loadThreadError
         }
+        await beforeLoadThreadReturn?()
         if let threadDetail {
             return threadDetail
         }
