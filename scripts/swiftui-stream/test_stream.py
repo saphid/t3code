@@ -2,6 +2,7 @@
 
 import importlib.util
 import json
+import os
 import plistlib
 import sqlite3
 import subprocess
@@ -21,12 +22,72 @@ def load_module(name: str, path: Path):
     return module
 
 
+def git(repository: Path, *arguments: str) -> str:
+    result = subprocess.run(
+        ["git", "-C", str(repository), *arguments],
+        check=True,
+        text=True,
+        capture_output=True,
+    )
+    return result.stdout.strip()
+
+
+def write_stream(repository: Path, features: list[dict]) -> None:
+    path = repository / "scripts/swiftui-stream/stream.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({"features": features}))
+
+
+def commit_all(repository: Path, message: str) -> str:
+    git(repository, "add", ".")
+    git(repository, "commit", "-m", message)
+    return git(repository, "rev-parse", "HEAD")
+
+
 ROOT = Path(__file__).resolve().parent
 stream = load_module("swiftui_stream", ROOT / "stream.py")
 watcher = load_module("swiftui_phone_watch", ROOT / "phone-watch.py")
+testing_manifest = load_module(
+    "swiftui_testing_manifest", ROOT / "generate_testing_manifest.py"
+)
 
 
 class StreamTests(unittest.TestCase):
+    def test_build_number_peek_does_not_consume_the_counter(self):
+        with tempfile.TemporaryDirectory() as directory:
+            environment = dict(os.environ, HOME=directory)
+            command = [str(ROOT / "next-build.py"), "dev"]
+            peek = subprocess.run(
+                [*command, "--peek"],
+                check=True,
+                text=True,
+                capture_output=True,
+                env=environment,
+            )
+            self.assertEqual(peek.stdout.strip(), "41")
+            counter = Path(directory) / ".t3/swiftui-stream/build-counters.json"
+            self.assertFalse(counter.exists())
+
+            allocated = subprocess.run(
+                command,
+                check=True,
+                text=True,
+                capture_output=True,
+                env=environment,
+            )
+            self.assertEqual(allocated.stdout.strip(), "41")
+            self.assertEqual(json.loads(counter.read_text()), {"dev": 41})
+
+            next_peek = subprocess.run(
+                [*command, "--peek"],
+                check=True,
+                text=True,
+                capture_output=True,
+                env=environment,
+            )
+            self.assertEqual(next_peek.stdout.strip(), "42")
+            self.assertEqual(json.loads(counter.read_text()), {"dev": 41})
+
     def test_projection_threads_are_developing_only_during_active_turns(self):
         now = datetime(2026, 8, 13, tzinfo=timezone.utc)
         fresh = now.isoformat()
@@ -254,6 +315,315 @@ class StreamTests(unittest.TestCase):
                 catalog_by_pr.setdefault(number, set()).add(item["state"])
         for number in (5611, 5753, 5801, 5829):
             self.assertEqual(catalog_by_pr[number], {"upstream-validation"})
+
+    def test_testing_manifest_carries_pending_features_into_later_builds(self):
+        value = {
+            "features": [
+                {"id": "developing", "name": "Developing", "state": "developing"},
+                {"id": "proved", "name": "Proved", "state": "proved"},
+                {"id": "test-41", "name": "Test 41", "state": "needs-you", "testBuild": 41},
+                {"id": "test-42", "name": "Test 42", "state": "in-test", "testBuild": 42},
+                {"id": "shipped", "name": "Shipped", "state": "in-dev"},
+            ]
+        }
+
+        self.assertEqual(
+            [item["id"] for item in testing_manifest.selected_features(value, "dev", 9)],
+            ["proved"],
+        )
+        self.assertEqual(
+            [item["id"] for item in testing_manifest.selected_features(value, "test", 42)],
+            ["test-41", "test-42"],
+        )
+
+    def test_testing_manifest_deduplicates_threads_and_commits(self):
+        feature = {
+            "sourceCommit": "abc",
+            "candidateCommit": "abc",
+            "commits": ["def", "abc"],
+            "sourceThread": "THREAD-1",
+            "sourceThreadTitle": "Source",
+            "relatedThreads": ["thread-1", {"id": "THREAD-2", "title": "Related"}],
+        }
+
+        self.assertEqual(
+            testing_manifest.feature_commit_values(feature, "dev"),
+            [("def", "candidate"), ("abc", "candidate")],
+        )
+        self.assertEqual(
+            testing_manifest.feature_thread_values(feature),
+            [
+                {"id": "THREAD-1", "title": "Source"},
+                {"id": "THREAD-2", "title": "Related"},
+            ],
+        )
+
+    def test_public_repository_url_removes_credentials(self):
+        self.assertEqual(
+            testing_manifest.public_repository_url(
+                "https://token@github.com/saphid/t3code-personal.git"
+            ),
+            "https://github.com/saphid/t3code-personal",
+        )
+        self.assertEqual(
+            testing_manifest.public_repository_url("git@github.com:saphid/t3code.git"),
+            "https://github.com/saphid/t3code",
+        )
+
+    def test_dev_manifest_requires_one_frozen_candidate_and_metadata_only_tail(self):
+        with tempfile.TemporaryDirectory() as directory:
+            repository = Path(directory)
+            git(repository, "init", "-b", "personal/swiftui-dev")
+            git(repository, "config", "user.email", "test@example.com")
+            git(repository, "config", "user.name", "Test")
+            git(repository, "remote", "add", "origin", "https://github.com/test/repo.git")
+            write_stream(repository, [])
+            baseline = commit_all(repository, "baseline")
+            git(repository, "update-ref", "refs/remotes/origin/personal/swiftui-dev", baseline)
+            git(repository, "switch", "-c", "feat/one")
+            (repository / "Feature.swift").write_text("let feature = true\n")
+            candidate = commit_all(repository, "feature")
+            git(repository, "update-ref", "refs/remotes/origin/feat/one", candidate)
+
+            feature = {
+                "id": "one",
+                "name": "One",
+                "state": "proved",
+                "sourceBranch": "feat/one",
+                "startingBaseline": baseline,
+                "candidateCommit": candidate,
+                "sourceCommit": candidate[:8],
+                "sourceThread": "THREAD-1",
+            }
+            write_stream(repository, [feature])
+            frozen = commit_all(repository, "freeze metadata")
+            git(repository, "update-ref", "refs/remotes/origin/feat/one", frozen)
+            manifest = testing_manifest.build_manifest(repository, "dev", 2)
+            self.assertEqual([entry["id"] for entry in manifest["entries"]], ["one"])
+            self.assertEqual(manifest["entries"][0]["commits"][0]["role"], "candidate")
+            self.assertEqual(len(manifest["entries"][0]["commits"]), 1)
+
+            (repository / "Unexpected.swift").write_text("let unexpected = true\n")
+            unexpected = commit_all(repository, "unexpected executable tail")
+            git(repository, "update-ref", "refs/remotes/origin/feat/one", unexpected)
+            with self.assertRaisesRegex(RuntimeError, "changes after candidateCommit"):
+                testing_manifest.build_manifest(repository, "dev", 3)
+
+    def test_dev_manifest_requires_candidate_on_remote_source_branch(self):
+        with tempfile.TemporaryDirectory() as directory:
+            repository = Path(directory)
+            git(repository, "init", "-b", "personal/swiftui-dev")
+            git(repository, "config", "user.email", "test@example.com")
+            git(repository, "config", "user.name", "Test")
+            git(repository, "remote", "add", "origin", "https://github.com/test/repo.git")
+            write_stream(repository, [])
+            baseline = commit_all(repository, "baseline")
+            git(repository, "update-ref", "refs/remotes/origin/personal/swiftui-dev", baseline)
+            git(repository, "switch", "-c", "feat/one")
+            (repository / "Feature.swift").write_text("let feature = true\n")
+            candidate = commit_all(repository, "feature")
+            write_stream(repository, [{
+                "id": "one",
+                "name": "One",
+                "state": "proved",
+                "sourceBranch": "feat/one",
+                "startingBaseline": baseline,
+                "candidateCommit": candidate,
+                "commits": [candidate],
+                "sourceThread": "THREAD-1",
+            }])
+            commit_all(repository, "freeze metadata")
+
+            with self.assertRaisesRegex(RuntimeError, "not published at origin/feat/one"):
+                testing_manifest.build_manifest(repository, "dev", 2)
+            git(repository, "update-ref", "refs/remotes/origin/feat/one", "HEAD")
+            manifest = testing_manifest.build_manifest(repository, "dev", 2)
+            self.assertEqual(manifest["entries"][0]["commits"][0]["sha"], candidate)
+
+    def test_dev_manifest_rejects_zero_two_missing_and_nonancestor_candidates(self):
+        with tempfile.TemporaryDirectory() as directory:
+            repository = Path(directory)
+            git(repository, "init", "-b", "personal/swiftui-dev")
+            git(repository, "config", "user.email", "test@example.com")
+            git(repository, "config", "user.name", "Test")
+            git(repository, "remote", "add", "origin", "https://github.com/test/repo.git")
+            write_stream(repository, [])
+            baseline = commit_all(repository, "baseline")
+            git(repository, "update-ref", "refs/remotes/origin/personal/swiftui-dev", baseline)
+            git(repository, "switch", "-c", "feat/one")
+
+            with self.assertRaisesRegex(RuntimeError, "exactly one proved feature"):
+                testing_manifest.build_manifest(repository, "dev", 2)
+
+            missing = {
+                "id": "one",
+                "name": "One",
+                "state": "proved",
+                "sourceBranch": "feat/one",
+                "startingBaseline": baseline,
+                "sourceThread": "THREAD-1",
+            }
+            write_stream(repository, [missing])
+            commit_all(repository, "missing candidate")
+            with self.assertRaisesRegex(RuntimeError, "no frozen candidateCommit"):
+                testing_manifest.build_manifest(repository, "dev", 2)
+
+            second = dict(missing, id="two", name="Two")
+            write_stream(repository, [missing, second])
+            commit_all(repository, "two candidates")
+            with self.assertRaisesRegex(RuntimeError, "exactly one proved feature"):
+                testing_manifest.build_manifest(repository, "dev", 2)
+
+            git(repository, "switch", "-c", "unrelated", baseline)
+            (repository / "Other.swift").write_text("let other = true\n")
+            unrelated = commit_all(repository, "unrelated")
+            git(repository, "switch", "feat/one")
+            missing["candidateCommit"] = unrelated
+            write_stream(repository, [missing])
+            commit_all(repository, "nonancestor candidate")
+            with self.assertRaisesRegex(RuntimeError, "not an ancestor"):
+                testing_manifest.build_manifest(repository, "dev", 2)
+
+    def test_dev_manifest_rejects_undeclared_commit_before_candidate(self):
+        with tempfile.TemporaryDirectory() as directory:
+            repository = Path(directory)
+            git(repository, "init", "-b", "personal/swiftui-dev")
+            git(repository, "config", "user.email", "test@example.com")
+            git(repository, "config", "user.name", "Test")
+            git(repository, "remote", "add", "origin", "https://github.com/test/repo.git")
+            write_stream(repository, [])
+            baseline = commit_all(repository, "baseline")
+            git(repository, "update-ref", "refs/remotes/origin/personal/swiftui-dev", baseline)
+            git(repository, "switch", "-c", "feat/one")
+            (repository / "Unrelated.swift").write_text("let unrelated = true\n")
+            commit_all(repository, "undeclared predecessor")
+            (repository / "Feature.swift").write_text("let feature = true\n")
+            candidate = commit_all(repository, "feature")
+            git(repository, "update-ref", "refs/remotes/origin/feat/one", candidate)
+            write_stream(repository, [{
+                "id": "one",
+                "name": "One",
+                "state": "proved",
+                "sourceBranch": "feat/one",
+                "startingBaseline": baseline,
+                "candidateCommit": candidate,
+                "sourceThread": "THREAD-1",
+            }])
+            frozen = commit_all(repository, "freeze metadata")
+            git(repository, "update-ref", "refs/remotes/origin/feat/one", frozen)
+
+            with self.assertRaisesRegex(RuntimeError, "range does not match"):
+                testing_manifest.build_manifest(repository, "dev", 2)
+
+    def test_test_manifest_rejects_integrated_commit_absent_from_head(self):
+        with tempfile.TemporaryDirectory() as directory:
+            repository = Path(directory)
+            git(repository, "init", "-b", "personal/swiftui-test")
+            git(repository, "config", "user.email", "test@example.com")
+            git(repository, "config", "user.name", "Test")
+            git(repository, "remote", "add", "origin", "https://github.com/test/repo.git")
+            write_stream(repository, [])
+            baseline = commit_all(repository, "baseline")
+            git(repository, "switch", "-c", "unrelated")
+            (repository / "Other.swift").write_text("let other = true\n")
+            unrelated = commit_all(repository, "unrelated")
+            git(repository, "switch", "personal/swiftui-test")
+            write_stream(repository, [{
+                "id": "one",
+                "name": "One",
+                "state": "needs-you",
+                "testBuild": 1,
+                "integratedCommit": unrelated,
+                "sourceThread": "THREAD-1",
+            }])
+            commit_all(repository, "test metadata")
+
+            with self.assertRaisesRegex(RuntimeError, "integrated commit is not in this build"):
+                testing_manifest.build_manifest(repository, "test", 2)
+
+    def test_test_manifest_keeps_unresolvable_source_attribution(self):
+        with tempfile.TemporaryDirectory() as directory:
+            repository = Path(directory)
+            git(repository, "init", "-b", "personal/swiftui-test")
+            git(repository, "config", "user.email", "test@example.com")
+            git(repository, "config", "user.name", "Test")
+            git(repository, "remote", "add", "origin", "https://github.com/test/repo.git")
+            write_stream(repository, [])
+            integrated = commit_all(repository, "integrated feature")
+            write_stream(repository, [{
+                "id": "one",
+                "name": "One",
+                "state": "needs-you",
+                "testBuild": 1,
+                "integratedCommit": integrated,
+                "sourceCommit": "deadbee",
+                "sourceThread": "THREAD-1",
+            }])
+            commit_all(repository, "test metadata")
+
+            manifest = testing_manifest.build_manifest(repository, "test", 2)
+            source = next(
+                commit for commit in manifest["entries"][0]["commits"]
+                if commit["role"] == "source"
+            )
+            self.assertEqual(source["sha"], "deadbee")
+            self.assertEqual(source["title"], "Source attribution")
+
+    def test_test_manifest_rejects_missing_test_build(self):
+        with tempfile.TemporaryDirectory() as directory:
+            repository = Path(directory)
+            git(repository, "init", "-b", "personal/swiftui-test")
+            git(repository, "config", "user.email", "test@example.com")
+            git(repository, "config", "user.name", "Test")
+            git(repository, "remote", "add", "origin", "https://github.com/test/repo.git")
+            write_stream(repository, [{
+                "id": "one",
+                "name": "One",
+                "state": "needs-you",
+            }])
+            commit_all(repository, "invalid Test metadata")
+
+            with self.assertRaisesRegex(RuntimeError, "invalid testBuild"):
+                testing_manifest.build_manifest(repository, "test", 2)
+
+    def test_test_manifest_rejects_partial_future_build(self):
+        with tempfile.TemporaryDirectory() as directory:
+            repository = Path(directory)
+            git(repository, "init", "-b", "personal/swiftui-test")
+            git(repository, "config", "user.email", "test@example.com")
+            git(repository, "config", "user.name", "Test")
+            git(repository, "remote", "add", "origin", "https://github.com/test/repo.git")
+            write_stream(repository, [])
+            integrated = commit_all(repository, "baseline")
+            write_stream(repository, [
+                {
+                    "id": "current",
+                    "name": "Current",
+                    "state": "needs-you",
+                    "testBuild": 1,
+                    "integratedCommit": integrated,
+                    "sourceThread": "THREAD-1",
+                },
+                {
+                    "id": "future",
+                    "name": "Future",
+                    "state": "in-test",
+                    "testBuild": 3,
+                    "integratedCommit": integrated,
+                    "sourceThread": "THREAD-2",
+                },
+            ])
+            commit_all(repository, "mixed Test metadata")
+
+            with self.assertRaisesRegex(RuntimeError, "future build: future"):
+                testing_manifest.build_manifest(repository, "test", 2)
+
+    def test_ancestor_check_surfaces_git_errors(self):
+        with tempfile.TemporaryDirectory() as directory:
+            repository = Path(directory)
+            git(repository, "init", "-b", "main")
+            with self.assertRaisesRegex(RuntimeError, "Not a valid object name"):
+                testing_manifest.is_ancestor(repository, "missing", "HEAD")
 
 
 class WatcherTests(unittest.TestCase):

@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+
 @testable import T3Code
 
 @Suite("Platform deep links")
@@ -224,21 +225,47 @@ struct PlatformDeepLinkTests {
             PlatformRouteResolver.thread(
                 in: snapshot,
                 environmentID: nil,
-                id: "shared-thread"
+                id: "SHARED-THREAD"
             ) == nil
         )
         #expect(
             PlatformRouteResolver.thread(
                 in: snapshot,
                 environmentID: passive.id,
-                id: "shared-thread"
+                id: "SHARED-THREAD"
             )?.id == passiveThread.id
+        )
+        let singleEnvironmentSnapshot = FeatureSnapshot(
+            environments: [passive],
+            projects: [passiveProject],
+            threads: [passiveThread]
+        )
+        #expect(
+            PlatformRouteResolver.thread(
+                in: singleEnvironmentSnapshot,
+                environmentID: nil,
+                id: "SHARED-THREAD"
+            )?.id == passiveThread.id
+        )
+        #expect(
+            PlatformRouteResolver.project(
+                in: singleEnvironmentSnapshot,
+                environmentID: nil,
+                id: "SHARED-PROJECT"
+            )?.id == passiveProject.id
+        )
+        #expect(
+            PlatformRouteResolver.project(
+                in: snapshot,
+                environmentID: nil,
+                id: "SHARED-PROJECT"
+            ) == nil
         )
         #expect(
             PlatformRouteResolver.project(
                 in: snapshot,
                 environmentID: passive.id,
-                id: "shared-project"
+                id: "SHARED-PROJECT"
             )?.id == passiveProject.id
         )
     }

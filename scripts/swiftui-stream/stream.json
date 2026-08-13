@@ -34,6 +34,17 @@
   },
   "features": [
     {
+      "id": "in-app-stream-approval-control",
+      "name": "Approve Dev candidates into Test and Test candidates upstream",
+      "aliases": ["what's testing", "testing approvals", "dev approvals"],
+      "state": "developing",
+      "sourceBranch": "feat/swiftui-stream-approval-control",
+      "sourceThread": "7F1BCA94-9E0D-4CF6-A833-99995121ADFB",
+      "sourceIssue": "https://github.com/saphid/t3code-personal/issues/56",
+      "startingBaseline": "125ed781e20716091222651092ed2708448bb6b6",
+      "tentativeDelivery": "local-only"
+    },
+    {
       "id": "swiftui-stream-infrastructure",
       "name": "SwiftUI Dev/Test branch, build, approval, and delivery stream",
       "aliases": ["branches and builds", "approval workflow", "dev test stream"],
@@ -60,6 +71,15 @@
       "aliases": ["skills popup", "keyboard clearance"],
       "state": "needs-you",
       "sourceCommit": "9cb21674",
+      "integratedCommit": "dd72827894d37158335408770bca04fa26b5caab",
+      "sourceThread": "876DD4F4-77A5-4719-B652-B8446ACD4ED9",
+      "sourceThreadTitle": "Fix Hidden Text Entry Box",
+      "relatedThreads": [
+        {
+          "id": "060A4D25-0220-4BAD-A3CE-614A2E2BAEF2",
+          "title": "Fix Skills Popup Keyboard Overlap"
+        }
+      ],
       "testBuild": 41,
       "order": 1
     },
@@ -96,6 +116,9 @@
       "aliases": ["home scrolling", "thread list scroll"],
       "state": "needs-you",
       "sourceCommit": "7cc3a611",
+      "integratedCommit": "cd7f6a44fb36980a2ae1193d5edc215dfb74b4b8",
+      "sourceThread": "483B0392-396C-4D09-9658-FF378C410BC3",
+      "sourceThreadTitle": "Fix Threads List Scrolling",
       "testBuild": 41,
       "order": 3
     },
@@ -105,6 +128,9 @@
       "aliases": ["command palette", "swipe-down command palette"],
       "state": "needs-you",
       "sourceCommit": "ed91d0cb",
+      "integratedCommit": "8ef974258b9d2b38af5bcb02f680da4e23579704",
+      "sourceThread": "9DD22B40-3832-4FE7-B482-69D9C7BEDE0A",
+      "sourceThreadTitle": "Fix Command Palette Top Drawer",
       "testBuild": 41,
       "order": 4
     },
@@ -114,6 +140,9 @@
       "aliases": ["source thread link", "whats new thread"],
       "state": "needs-you",
       "sourceCommit": "ed15ca2a",
+      "integratedCommit": "e1ca3cb09f0eadc6f02c33a959cc0da4912564c0",
+      "sourceThread": "508739B1-477F-4CAB-BA79-8816FCCEA000",
+      "sourceThreadTitle": "Add Thread Links to What’s New",
       "testBuild": 41,
       "order": 5
     },
@@ -123,6 +152,9 @@
       "aliases": ["initial thread updates", "thread refresh"],
       "state": "needs-you",
       "sourceCommit": "dd2ecbb",
+      "integratedCommit": "2c2f4fe27c248dc93ab4f9b36b627f72ab5daf57",
+      "sourceThread": "1B30199A-3681-4A1B-B938-B735767508C4",
+      "sourceThreadTitle": "Fix SwiftUI Thread Initial Updates",
       "testBuild": 41,
       "order": 6
     },
@@ -132,6 +164,9 @@
       "aliases": ["pull request protocol", "pr workspace"],
       "state": "needs-you",
       "sourceCommit": "4f967ba4",
+      "integratedCommit": "455781e7e37fc0021671aa4660e1a5150d1777f7",
+      "sourceThread": "ECA79DCF-1DD0-4FDD-B736-870854E7FDAB",
+      "sourceThreadTitle": "Port PR and GitHub Features",
       "testBuild": 41,
       "order": 7
     },
@@ -157,6 +192,9 @@
       "aliases": ["tool content", "accessible recovery"],
       "state": "needs-you",
       "sourceCommit": "9006b8de",
+      "integratedCommit": "2b1cf46a76afb0825dff0cec505307807149992e",
+      "sourceThread": "84C318E3-49C0-4F00-8E6D-9874969057D0",
+      "sourceThreadTitle": "Audit and Uplift SwiftUI Code",
       "testBuild": 41,
       "order": 8
     },

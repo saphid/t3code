@@ -46,6 +46,8 @@
     <string>$(T3_GIT_BEHIND_COUNT)</string>
     <key>T3BuildChangelog</key>
     <string>$(T3_BUILD_CHANGELOG)</string>
+    <key>T3BuildTesting</key>
+    <string>$(T3_BUILD_TESTING)</string>
     <key>T3BuildChannel</key>
     <string>$(T3_BUILD_CHANNEL)</string>
     <key>T3ConnectClerkJWTTemplate</key>

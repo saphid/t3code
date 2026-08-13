@@ -13,6 +13,7 @@ parser = argparse.ArgumentParser()
 parser.add_argument("channel", choices=("dev", "test"))
 parser.add_argument("--minimum", type=int, default=40)
 parser.add_argument("--requested", type=int)
+parser.add_argument("--peek", action="store_true")
 args = parser.parse_args()
 
 root = Path.home() / ".t3/swiftui-stream"
@@ -43,8 +44,9 @@ with lock_path.open("a+") as lock:
         number = args.requested
     else:
         number = floor + 1
-    counters[args.channel] = number
-    temporary = path.with_suffix(".tmp")
-    temporary.write_text(json.dumps(counters, indent=2, sort_keys=True) + "\n")
-    os.replace(temporary, path)
+    if not args.peek:
+        counters[args.channel] = number
+        temporary = path.with_suffix(".tmp")
+        temporary.write_text(json.dumps(counters, indent=2, sort_keys=True) + "\n")
+        os.replace(temporary, path)
 print(number)

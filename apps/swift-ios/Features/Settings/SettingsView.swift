@@ -25,6 +25,29 @@ public struct SettingsView: View {
                         connectionSection
                         generalSection
                         preferencesSection
+                        if let testingPresentation {
+                            SettingsSection(title: testingPresentation.sectionTitle) {
+                                NavigationLink {
+                                    BuildTestingView(
+                                        model: model,
+                                        manifest: buildTestingManifest,
+                                        presentation: testingPresentation
+                                    )
+                                } label: {
+                                    SettingsNavigationRow(
+                                        title: testingPresentation.rowTitle,
+                                        value: buildTestingManifest.flatMap {
+                                            $0.channel == testingPresentation.channel
+                                                ? "\($0.entries.count)"
+                                                : nil
+                                        },
+                                        systemImage: "checklist",
+                                        trailingSystemImage: "chevron.right"
+                                    )
+                                }
+                                .buttonStyle(.plain)
+                            }
+                        }
                         aboutSection
                     }
                     .padding(.vertical, 18)
@@ -242,6 +265,13 @@ public struct SettingsView: View {
     private var buildChangelog: BuildChangelog? {
         BuildChangelog.load(info: Bundle.main.infoDictionary)
     }
+
+    private var buildTestingManifest: BuildTestingManifest? { BuildTestingManifest.current }
+
+    private var testingPresentation: BuildTestingPresentation? {
+        BuildTestingPresentation(channel: PersonalBuildChannel.current)
+    }
+
     private var canSave: Bool {
         !isSaving && settings != model.snapshot.settings
     }

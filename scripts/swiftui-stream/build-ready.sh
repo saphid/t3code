@@ -27,16 +27,38 @@ esac
 
 [[ -n "$TEAM" ]] || { echo "T3_SWIFT_DEVELOPMENT_TEAM is required" >&2; exit 1; }
 [[ -n "$DEVICE_ID" ]] || { echo "T3_SWIFT_DEVICE_ID is required" >&2; exit 1; }
+BRANCH="$(git -C "$REPO_ROOT" branch --show-current)"
+if [[ "$CHANNEL" == "dev" && "$BRANCH" != "$EXPECTED_BRANCH" ]]; then
+  [[ -n "$BRANCH" ]] || {
+    echo "Dev review builds require the named feature branch from the proved receipt" >&2
+    exit 1
+  }
+  git -C "$REPO_ROOT" fetch --no-tags origin personal/swiftui-dev "$BRANCH"
+fi
 "$SCRIPT_DIR/stream.py" validate
 [[ -z "$(git -C "$REPO_ROOT" status --porcelain)" ]] || {
   echo "refusing to publish a non-reproducible dirty build" >&2
   exit 1
 }
-BRANCH="$(git -C "$REPO_ROOT" branch --show-current)"
-[[ "$BRANCH" == "$EXPECTED_BRANCH" ]] || {
-  echo "$CHANNEL builds must be published from $EXPECTED_BRANCH, not $BRANCH" >&2
-  exit 1
-}
+if [[ "$CHANNEL" == "test" ]]; then
+  [[ "$BRANCH" == "$EXPECTED_BRANCH" ]] || {
+    echo "Test builds must be published from $EXPECTED_BRANCH, not $BRANCH" >&2
+    exit 1
+  }
+elif [[ "$BRANCH" != "$EXPECTED_BRANCH" ]]; then
+  printf '[swiftui-stream] preparing one proved Dev candidate from %s\n' "$BRANCH"
+fi
+
+PREFLIGHT_MANIFEST="$(mktemp -t t3-swift-testing-preflight.XXXXXX)"
+TESTING_MANIFEST="$(mktemp -t t3-swift-testing.XXXXXX)"
+trap 'unlink "$PREFLIGHT_MANIFEST" 2>/dev/null || true; unlink "$TESTING_MANIFEST" 2>/dev/null || true' EXIT
+if [[ -n "${T3_SWIFT_BUILD_NUMBER:-}" ]]; then
+  PREFLIGHT_BUILD="$("$SCRIPT_DIR/next-build.py" "$CHANNEL" --peek --requested "$T3_SWIFT_BUILD_NUMBER")"
+else
+  PREFLIGHT_BUILD="$("$SCRIPT_DIR/next-build.py" "$CHANNEL" --peek)"
+fi
+python3 "$SCRIPT_DIR/generate_testing_manifest.py" \
+  "$REPO_ROOT" "$CHANNEL" "$PREFLIGHT_BUILD" "$PREFLIGHT_MANIFEST"
 
 if [[ -n "${T3_SWIFT_BUILD_NUMBER:-}" ]]; then
   BUILD="$("$SCRIPT_DIR/next-build.py" "$CHANNEL" --requested "$T3_SWIFT_BUILD_NUMBER")"
@@ -46,6 +68,9 @@ fi
 COMMIT="$(git -C "$REPO_ROOT" rev-parse HEAD)"
 DERIVED="${T3_SWIFT_DERIVED_DATA_PATH:-$APP_DIR/.derivedData/ready-$CHANNEL}"
 DESTINATION="generic/platform=iOS"
+python3 "$SCRIPT_DIR/generate_testing_manifest.py" \
+  "$REPO_ROOT" "$CHANNEL" "$BUILD" "$TESTING_MANIFEST"
+BUILD_TESTING="$(base64 < "$TESTING_MANIFEST" | tr -d '\n')"
 
 xcodebuild build \
   -quiet \
@@ -60,7 +85,8 @@ xcodebuild build \
   "CURRENT_PROJECT_VERSION=$BUILD" \
   "T3_GIT_COMMIT=$COMMIT" \
   "T3_GIT_REPO_URL=https://github.com/saphid/t3code-personal" \
-  "T3_GIT_BASE_REF=upstream/t3code/rebuild-mobile-app-swift"
+  "T3_GIT_BASE_REF=upstream/t3code/rebuild-mobile-app-swift" \
+  "T3_BUILD_TESTING=$BUILD_TESTING"
 
 APP_PATH="$DERIVED/Build/Products/$CONFIGURATION-iphoneos/T3Code.app"
 [[ -d "$APP_PATH" ]] || { echo "missing built app: $APP_PATH" >&2; exit 1; }
@@ -68,10 +94,12 @@ ACTUAL_BUNDLE="$(plutil -extract CFBundleIdentifier raw -o - "$APP_PATH/Info.pli
 ACTUAL_BUILD="$(plutil -extract CFBundleVersion raw -o - "$APP_PATH/Info.plist")"
 ACTUAL_CHANNEL="$(plutil -extract T3BuildChannel raw -o - "$APP_PATH/Info.plist")"
 ACTUAL_COMMIT="$(plutil -extract T3GitCommit raw -o - "$APP_PATH/Info.plist")"
+ACTUAL_TESTING="$(plutil -extract T3BuildTesting raw -o - "$APP_PATH/Info.plist")"
 [[ "$ACTUAL_BUNDLE" == "$BUNDLE_ID" ]] || { echo "unexpected bundle $ACTUAL_BUNDLE" >&2; exit 1; }
 [[ "$ACTUAL_BUILD" == "$BUILD" ]] || { echo "unexpected build $ACTUAL_BUILD" >&2; exit 1; }
 [[ "$ACTUAL_CHANNEL" == "$CHANNEL" ]] || { echo "unexpected channel $ACTUAL_CHANNEL" >&2; exit 1; }
 [[ "$ACTUAL_COMMIT" == "$COMMIT" ]] || { echo "unexpected commit $ACTUAL_COMMIT" >&2; exit 1; }
+[[ "$ACTUAL_TESTING" == "$BUILD_TESTING" ]] || { echo "unexpected testing manifest" >&2; exit 1; }
 codesign --verify --deep --strict "$APP_PATH"
 WIDGET_PATH="$APP_PATH/PlugIns/T3CodeWidgets.appex"
 SHARE_PATH="$APP_PATH/PlugIns/T3CodeShare.appex"

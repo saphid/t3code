@@ -10,7 +10,7 @@ does not change Theo's public contribution policy or the upstream Release build.
 | `upstream/t3code/rebuild-mobile-app-swift` | Theo's current SwiftUI line | Theo's upstream commits |
 | `personal/swiftui-dev` | Theo plus human-approved features and this workflow | Per-feature promotions and reviewed Theo updates |
 | `personal/swiftui-test` | Dev plus every compatible candidate awaiting approval | Forward merges from Dev and attributed candidate integrations |
-| Feature/fix branch | One candidate based on the current Dev tip | Only that feature and its tests/evidence |
+| Feature/fix branch | One candidate based on the current Dev tip | Only that feature, its tests/evidence, and one immutable Dev review build |
 | `personal/swiftui-approved` | Frozen legacy evidence | Nothing; preserve it and its migration tag read-only |
 
 Dev and Test are append-only shared lines. Do not force-push or delete either
@@ -180,6 +180,46 @@ replace a feature's own source range. GitHub issue
 each feature keeps its own issue/thread evidence. Unexpected empty scans,
 unmapped T3 threads, missing artifacts, or device/receipt disagreement are
 anomalies to investigate, not proof that no work exists.
+
+### In-app Dev and Test verdicts
+
+A proved feature branch may publish exactly one receipt-matched `dev` artifact
+without merging the candidate into shared Dev. `build-ready.sh dev` requires
+the branch to match one `proved` catalog record, requires its frozen candidate
+commit to underlie the build revision, permits only the catalog's metadata-only
+freeze commit after that candidate, requires that exact build revision to be
+published on the receipt's remote feature branch, and embeds only that feature. When the
+proof receipt is frozen, record the full candidate SHA as `candidateCommit`,
+the exact branch as `sourceBranch`, the current remote Dev tip as
+`startingBaseline`, and every commit in that baseline-to-candidate range in
+`commits`; then advance the catalog record to `proved`.
+Shared `personal/swiftui-dev` builds never claim unmerged proved features. This lets
+Alex exercise the actual candidate in the orange Dev app while shared Dev
+remains the approved baseline.
+
+The Dev app's **What’s ready for testing** section shows the exact build,
+candidate commits, owning T3 threads, and issue. A confirmed **Ready for Test**
+or **Not ready** verdict is sent to the owning thread with that evidence. Only
+the guarded stream workflow may integrate a ready candidate into Test. Those
+Dev verdict messages invoke `$swiftui-feature-fix`, the personal candidate
+workflow that re-audits the embedded receipt before changing Test.
+
+The purple Test app's **What’s testing** section contains the exact aggregate
+Test-build candidates. Its confirmed dialog sends an evidence-carrying request
+into the existing per-feature approval or rejection path. The approval skill
+still shows the frozen evidence and asks for its required final human
+confirmation. A **Not ready** Test verdict invokes `$swiftui-feature-fix` to
+record the rejection and construct a replacement Test train that removes only
+that feature while preserving every unrelated candidate. A queued verdict is
+remembered for that exact channel, build, revision, and feature; submitting the
+opposite verdict remains available as the explicit reversal. The app never
+changes Git refs itself. Release and ordinary Debug builds expose neither
+section.
+
+Every Test record carries both `sourceCommit` for attribution and the full
+`integratedCommit` that is actually in Test. The app labels those roles and uses
+only integrated commits as build provenance. A pending feature remains listed
+in every later Test build until it is approved, rejected, or superseded.
 
 ### Read-only drift monitor
 

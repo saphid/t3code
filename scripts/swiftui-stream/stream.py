@@ -97,12 +97,29 @@ def validate_manifest(value: dict[str, Any]) -> None:
         if not feature_id or feature_id in ids:
             fail(f"feature id is missing or duplicated: {feature_id}")
         ids.add(feature_id)
+        if not isinstance(feature.get("name"), str) or not feature["name"].strip():
+            fail(f"{feature_id} has no name")
         if feature.get("state") not in states:
             fail(f"{feature_id} has invalid state {feature.get('state')}")
+        if feature.get("state") == "proved":
+            source_branch = feature.get("sourceBranch")
+            candidate = feature.get("candidateCommit")
+            baseline = feature.get("startingBaseline")
+            if not isinstance(source_branch, str) or not source_branch:
+                fail(f"{feature_id} is proved without sourceBranch")
+            if not isinstance(candidate, str) or not re.fullmatch(r"[0-9a-f]{40}", candidate):
+                fail(f"{feature_id} is proved without a full candidateCommit")
+            if not isinstance(baseline, str) or not re.fullmatch(r"[0-9a-f]{40}", baseline):
+                fail(f"{feature_id} is proved without a full startingBaseline")
         if feature.get("state") in APPROVAL_STATES:
             test_build = feature.get("testBuild")
+            integrated = feature.get("integratedCommit")
             if not isinstance(test_build, int) or isinstance(test_build, bool) or test_build < 1:
-                fail(f"{feature_id} requires a positive integer testBuild")
+                fail(f"{feature_id} is in Test without a positive testBuild")
+            if not isinstance(integrated, str) or not re.fullmatch(r"[0-9a-f]{40}", integrated):
+                fail(f"{feature_id} is in Test without a full integratedCommit")
+            if not feature.get("sourceThread"):
+                fail(f"{feature_id} is in Test without a sourceThread")
         delivery = feature.get("delivery")
         if delivery is not None and delivery not in VALID_DELIVERY:
             fail(f"{feature_id} has invalid delivery {delivery}")
