@@ -139,9 +139,9 @@
       "sourceThread": "019ff9b0-3de8-7f31-8f7d-b6d1b9545949",
       "sourceIssue": "https://github.com/saphid/t3code-personal/issues/58",
       "startingBaseline": "125ed781e20716091222651092ed2708448bb6b6",
-      "sourceCommit": "b71ead31206de34e176cceb0008686b3f37351e9",
-      "receipt": "~/.t3/swiftui-stream/feature-receipts/app-flow-regression-tests/b71ead31206de34e176cceb0008686b3f37351e9/receipt.json",
-      "blockedReason": "XcodeBuildMCP cleanup remains owned by a concurrent T3 session; live TestFlight evidence is also unavailable.",
+      "sourceCommit": "30ef241d9983a3060f6baa842e806563dfea1c4d",
+      "receipt": "~/.t3/swiftui-stream/feature-receipts/app-flow-regression-tests/30ef241d9983a3060f6baa842e806563dfea1c4d/receipt.json",
+      "blockedReason": "ios-build-hygiene cleanup deferred with exit 75 while another testmanagerd was active; physical Dev/Test/TestFlight evidence is also unavailable.",
       "delivery": "local-only"
     }
   ]
