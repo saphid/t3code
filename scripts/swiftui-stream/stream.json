@@ -26,11 +26,11 @@
   ],
   "currentTestBuild": {
     "channel": "test",
-    "build": 45,
-    "sequence": 45,
-    "commit": "771af21d518df51fc7e1de6fa88211737158178b",
+    "build": 47,
+    "sequence": 47,
+    "commit": "865435bec1cfa9ad64daeb4f328fd9ce9636a036",
     "receipt": "~/.t3/swiftui-stream/device-receipts/test.json",
-    "status": "installed-and-launched-awaiting-approval"
+    "status": "installed-awaiting-unlock"
   },
   "features": [
     {
@@ -163,13 +163,13 @@
       "id": "shared-electron-vscode-themes",
       "name": "Share Electron and VS Code themes with SwiftUI",
       "aliases": ["shared themes", "VS Code themes", "theme selector", "SwiftUI themes"],
-      "state": "in-test",
+      "state": "needs-you",
       "branch": "personal/swift-theme-sharing",
       "sourceCommit": "66da910135c997078c82dec5d30fcc01a6712e08",
       "candidateCommit": "66da910135c997078c82dec5d30fcc01a6712e08",
       "integratedCommit": "bd90247576eb8b0591b90058b8380a0c88e95823",
-      "featureReceipt": "~/.t3/swiftui-stream/feature-receipts/shared-electron-vscode-themes/66da910135c997078c82dec5d30fcc01a6712e08/receipt.json",
-      "testBuild": 44,
+      "featureReceipt": "~/.t3/swiftui-stream/feature-receipts/shared-electron-vscode-themes/66da910135c997078c82dec5d30fcc01a6712e08-v2/receipt.json",
+      "testBuild": 41,
       "order": 11,
       "sourceIssue": "https://github.com/saphid/t3code-personal/issues/51",
       "sourceThread": "9bed9116-ac61-4787-9b19-e6e8b90bb80f",
