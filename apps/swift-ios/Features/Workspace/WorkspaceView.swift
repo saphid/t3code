@@ -121,6 +121,7 @@ public struct WorkspaceView: View {
     private let releaseIncomingSharePresentation: @MainActor (String) -> Void
 
     @State private var selectedThreadID: String?
+    @State private var selectedPullRequestEnvironmentID: String?
     @State private var selectedProjectID: String?
     @State private var searchText = ""
     @State private var isSearching = false
@@ -225,6 +226,114 @@ public struct WorkspaceView: View {
     }
 
     public var body: some View {
+        workspaceShell
+            .sheet(isPresented: $showingNewTask, onDismiss: {
+                let presentationID = dismissingNewTaskPresentationID
+                    ?? appearedNewTaskPresentationID
+                    ?? completedNewTaskDismissalID
+                    ?? newTaskPresentation.presentationID
+                completeNewTaskDismissal(presentationID: presentationID)
+            }) {
+                let presentation = newTaskPresentation.current
+                let presentationID = newTaskPresentation.presentationID
+                NewThreadView(
+                    model: model,
+                    submit: submitNewTask,
+                    onCreated: { thread in
+                        openThread(thread.id)
+                        dismissNewTaskPresentation()
+                    },
+                    onCreateProject: openProjectCreation,
+                    initialProjectID: presentation?.initialProjectID,
+                    initialWorkspace: presentation?.initialWorkspace,
+                    incomingShareID: presentation?.incomingShareID,
+                    acknowledgeIncomingShare: acknowledgeIncomingShare
+                )
+                .id(newTaskPresentation.presentationID)
+                .onAppear {
+                    appearedNewTaskPresentationID = presentationID
+                }
+            }
+            .sheet(isPresented: $showingAddProject, onDismiss: {
+                resumeDeferredNewTaskPresentation()
+            }) {
+                AddProjectView(model: model)
+            }
+            .sheet(isPresented: $showingSettings, onDismiss: {
+                resumeDeferredNewTaskPresentation()
+            }) {
+                SettingsView(model: model)
+            }
+            .sheet(isPresented: $showingBuildChangelog) {
+                NavigationStack {
+                    BuildChangelogView(
+                        changelog: Self.buildChangelog,
+                        versionLabel: Self.appVersionLabel
+                    )
+                    .toolbar {
+                        ToolbarItem(placement: .confirmationAction) {
+                            Button("Done") { showingBuildChangelog = false }
+                        }
+                    }
+                }
+            }
+            .alert(
+                "Rename thread",
+                isPresented: Binding(
+                    get: { renamingThread != nil },
+                    set: { if !$0 { renamingThread = nil } }
+                )
+            ) {
+                TextField("Thread title", text: $renameTitle)
+                Button("Cancel", role: .cancel) { renamingThread = nil }
+                Button("Save") {
+                    guard let thread = renamingThread else { return }
+                    let title = renameTitle
+                    renamingThread = nil
+                    Task { await model.renameThread(thread.id, title: title) }
+                }
+                .disabled(renameTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+            .onChange(of: selectedThreadIsAvailable) { _, isAvailable in
+                if !isAvailable { closeSelectedThread() }
+            }
+            .onChange(of: selectedThreadID) { _, newValue in
+                if selectedPullRequestEnvironmentID == nil {
+                    preferredCompactColumn = newValue == nil ? .sidebar : .detail
+                }
+            }
+            .onChange(of: selectedProjectIsAvailable) { _, isAvailable in
+                if !isAvailable { selectedProjectID = nil }
+            }
+            .onChange(of: selectedPullRequestEnvironmentIsAvailable) { _, isAvailable in
+                if !isAvailable { closePullRequests() }
+            }
+            .onChange(of: navigationRequest?.id, initial: true) { _, _ in
+                consumeNavigationRequest()
+            }
+            // A request that arrives before its thread or project exists in the
+            // snapshot stays pending; retry it as data lands so cold-start deep
+            // links are not silently stranded.
+            .onChange(of: model.homePresentationRevision) { _, _ in
+                if navigationRequest != nil { consumeNavigationRequest() }
+            }
+            .onChange(of: renamingThread?.id) { _, threadID in
+                if threadID == nil {
+                    resumeDeferredNewTaskPresentation()
+                }
+            }
+            .task(id: nextSidebarBoundary) {
+                guard let boundary = nextSidebarBoundary else { return }
+                do {
+                    try await Task.sleep(for: .seconds(max(0, boundary.timeIntervalSinceNow)))
+                    sidebarBoundaryNow = max(.now, boundary)
+                } catch {
+                    return
+                }
+            }
+    }
+
+    private var workspaceShell: some View {
         ZStack(alignment: .top) {
             NavigationSplitView(preferredCompactColumn: $preferredCompactColumn) {
                 sidebar
@@ -247,105 +356,6 @@ public struct WorkspaceView: View {
                 commandPalettePanel
                     .transition(.move(edge: .top))
                     .zIndex(1)
-            }
-        }
-        .sheet(isPresented: $showingNewTask, onDismiss: {
-            let presentationID = dismissingNewTaskPresentationID
-                ?? appearedNewTaskPresentationID
-                ?? completedNewTaskDismissalID
-                ?? newTaskPresentation.presentationID
-            completeNewTaskDismissal(presentationID: presentationID)
-        }) {
-            let presentation = newTaskPresentation.current
-            let presentationID = newTaskPresentation.presentationID
-            NewThreadView(
-                model: model,
-                submit: submitNewTask,
-                onCreated: { thread in
-                    openThread(thread.id)
-                    dismissNewTaskPresentation()
-                },
-                onCreateProject: openProjectCreation,
-                initialProjectID: presentation?.initialProjectID,
-                initialWorkspace: presentation?.initialWorkspace,
-                incomingShareID: presentation?.incomingShareID,
-                acknowledgeIncomingShare: acknowledgeIncomingShare
-            )
-            .id(newTaskPresentation.presentationID)
-            .onAppear {
-                appearedNewTaskPresentationID = presentationID
-            }
-        }
-        .sheet(isPresented: $showingAddProject, onDismiss: {
-            resumeDeferredNewTaskPresentation()
-        }) {
-            AddProjectView(model: model)
-        }
-        .sheet(isPresented: $showingSettings, onDismiss: {
-            resumeDeferredNewTaskPresentation()
-        }) {
-            SettingsView(model: model)
-        }
-        .sheet(isPresented: $showingBuildChangelog) {
-            NavigationStack {
-                BuildChangelogView(
-                    changelog: Self.buildChangelog,
-                    versionLabel: Self.appVersionLabel
-                )
-                .toolbar {
-                    ToolbarItem(placement: .confirmationAction) {
-                        Button("Done") { showingBuildChangelog = false }
-                    }
-                }
-            }
-        }
-        .alert(
-            "Rename thread",
-            isPresented: Binding(
-                get: { renamingThread != nil },
-                set: { if !$0 { renamingThread = nil } }
-            )
-        ) {
-            TextField("Thread title", text: $renameTitle)
-            Button("Cancel", role: .cancel) { renamingThread = nil }
-            Button("Save") {
-                guard let thread = renamingThread else { return }
-                let title = renameTitle
-                renamingThread = nil
-                Task { await model.renameThread(thread.id, title: title) }
-            }
-            .disabled(renameTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-        }
-        .onChange(of: selectedThreadIsAvailable) { _, isAvailable in
-            if !isAvailable { closeSelectedThread() }
-        }
-        .onChange(of: selectedThreadID) { _, newValue in
-            preferredCompactColumn = newValue == nil ? .sidebar : .detail
-        }
-        .onChange(of: selectedProjectIsAvailable) { _, isAvailable in
-            if !isAvailable { selectedProjectID = nil }
-        }
-        .onChange(of: navigationRequest?.id, initial: true) { _, _ in
-            consumeNavigationRequest()
-        }
-        // A request that arrives before its thread or project exists in the
-        // snapshot stays pending; retry it as data lands so cold-start deep
-        // links are not silently stranded.
-        .onChange(of: model.homePresentationRevision) { _, _ in
-            if navigationRequest != nil { consumeNavigationRequest() }
-        }
-        .onChange(of: renamingThread?.id) { _, threadID in
-            if threadID == nil {
-                resumeDeferredNewTaskPresentation()
-            }
-        }
-        .task(id: nextSidebarBoundary) {
-            guard let boundary = nextSidebarBoundary else { return }
-            do {
-                try await Task.sleep(for: .seconds(max(0, boundary.timeIntervalSinceNow)))
-                sidebarBoundaryNow = max(.now, boundary)
-            } catch {
-                return
             }
         }
     }
@@ -458,7 +468,22 @@ public struct WorkspaceView: View {
 
     @ViewBuilder
     private var detail: some View {
-        if let id = selectedThreadID,
+        if let environmentID = selectedPullRequestEnvironmentID,
+           let environment = pullRequestEnvironments.first(where: {
+               $0.id == environmentID
+           }) {
+            PullRequestInboxView(
+                environment: environment,
+                environments: pullRequestEnvironments,
+                client: model.client,
+                onSelectEnvironment: openPullRequests,
+                onNavigateBack: closePullRequests
+            )
+            .id(
+                "\(environmentID):\(environment.pullRequestCapabilityKnown):"
+                    + "\(environment.pullRequestCapability.map(String.init) ?? "unknown")"
+            )
+        } else if let id = selectedThreadID,
            let thread = model.snapshot.threads.first(where: { $0.id == id }) {
             ThreadDetailView(
                 model: model,
@@ -516,6 +541,22 @@ public struct WorkspaceView: View {
                 .accessibilityHint("Shows what changed in this build")
                 .accessibilityIdentifier("sidebar-whats-new-button")
             }
+
+            Button {
+                if let environment = preferredPullRequestEnvironment {
+                    openPullRequests(environment.id)
+                }
+            } label: {
+                Image(systemName: "arrow.triangle.pull")
+                    .font(.system(size: 17, weight: .medium))
+                    .frame(width: 40, height: T3Metrics.minimumTapTarget)
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(T3Colors.textSecondary)
+            .disabled(preferredPullRequestEnvironment == nil)
+            .accessibilityLabel("Pull requests")
+            .accessibilityHint("Browse one environment's pull requests")
+            .accessibilityIdentifier("sidebar-pull-requests-button")
 
             Button {
                 withAnimation(.easeOut(duration: 0.16)) {
@@ -868,6 +909,14 @@ public struct WorkspaceView: View {
         }
     }
 
+    private var pullRequestEnvironments: [FeatureEnvironment] {
+        model.snapshot.environments.filter(\.isEnabled)
+    }
+
+    private var preferredPullRequestEnvironment: FeatureEnvironment? {
+        pullRequestEnvironments.first(where: { $0.isActive }) ?? pullRequestEnvironments.first
+    }
+
     private var unreachableBrandLabel: String {
         if unreachableEnvironments.count == 1 {
             return "\(unreachableEnvironments[0].name) unreachable"
@@ -892,9 +941,26 @@ public struct WorkspaceView: View {
         return model.snapshot.projects.contains { $0.id == selectedProjectID }
     }
 
+    private var selectedPullRequestEnvironmentIsAvailable: Bool {
+        guard let selectedPullRequestEnvironmentID else { return true }
+        return pullRequestEnvironments.contains { $0.id == selectedPullRequestEnvironmentID }
+    }
+
     private func openThread(_ id: String) {
+        selectedPullRequestEnvironmentID = nil
         selectedThreadID = id
         preferredCompactColumn = .detail
+    }
+
+    private func openPullRequests(_ environmentID: String) {
+        selectedThreadID = nil
+        selectedPullRequestEnvironmentID = environmentID
+        preferredCompactColumn = .detail
+    }
+
+    private func closePullRequests() {
+        selectedPullRequestEnvironmentID = nil
+        preferredCompactColumn = .sidebar
     }
 
     private func closeSelectedThread() {
@@ -984,6 +1050,7 @@ public struct WorkspaceView: View {
             guard model.snapshot.projects.contains(where: { $0.id == id }) else { return }
             dismissTransientPresentations()
             selectedProjectID = id
+            selectedPullRequestEnvironmentID = nil
             closeSelectedThread()
         case let .newTask(projectID):
             if let projectID,

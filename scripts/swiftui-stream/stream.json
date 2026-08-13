@@ -119,6 +119,16 @@
       "order": 7
     },
     {
+      "id": "pull-request-inbox-summary-timeline",
+      "name": "Single-environment pull-request inbox with Summary and Timeline detail",
+      "aliases": ["pull request inbox", "pr summary", "pr timeline"],
+      "state": "developing",
+      "sourceThread": "ECA79DCF-1DD0-4FDD-B736-870854E7FDAB",
+      "issue": "https://github.com/saphid/personal-ops/issues/94",
+      "sourceBranch": "personal/swiftui-pr-inbox-summary-timeline-20260813",
+      "dependsOn": ["pull-request-workspace-protocol"]
+    },
+    {
       "id": "safe-tool-content-recovery",
       "name": "Preserve SwiftUI tool content with safe accessible recovery",
       "aliases": ["tool content", "accessible recovery"],
