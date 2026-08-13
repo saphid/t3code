@@ -588,12 +588,8 @@ public struct WorkspaceView: View {
 
     @ViewBuilder
     private var devBuildBadge: some View {
-        if Self.devBuildMetadata.commit == "unknown" {
+        if Self.devBuildMetadata.build == "?" {
             EmptyView()
-        } else if let url = Self.devBuildMetadata.commitURL {
-            Link(destination: url) { devBuildBadgeLabel.underline() }
-                .foregroundStyle(T3Colors.textSecondary)
-                .accessibilityLabel("\(Self.devBuildMetadata.accessibilityLabel). Opens the commit on GitHub.")
         } else {
             devBuildBadgeLabel
                 .foregroundStyle(T3Colors.textSecondary)
@@ -604,7 +600,7 @@ public struct WorkspaceView: View {
 
     private var devBuildBadgeLabel: some View {
         VStack(alignment: .trailing, spacing: 0) {
-            Text(Self.devBuildMetadata.identityLabel)
+            Text(Self.devBuildMetadata.build)
             if let distance = Self.devBuildMetadata.distanceLabel {
                 Text(distance)
             }
