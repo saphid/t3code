@@ -1,0 +1,34 @@
+{
+  "schemaVersion": 1,
+  "sourceCommit": "0123456789abcdef0123456789abcdef01234567",
+  "candidateContentSha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+  "channel": "testflight",
+  "build": {
+    "version": "1.0",
+    "number": "123"
+  },
+  "device": {
+    "kind": "physical",
+    "id": "redacted-device-receipt-id",
+    "model": "iPhone",
+    "osVersion": "26.5"
+  },
+  "fixtureLaunchDisabled": true,
+  "authorizedMutations": ["create disposable task", "send one disposable follow-up"],
+  "checks": [
+    {
+      "id": "pair-project-task-follow-up",
+      "result": "passed",
+      "evidence": [
+        {
+          "name": "screen-recording.mov",
+          "sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+        }
+      ]
+    }
+  ],
+  "cleanup": {
+    "status": "passed",
+    "removed": ["disposable task"]
+  }
+}

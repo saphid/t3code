@@ -257,6 +257,41 @@ struct HomeThreadMetadataTests {
     }
 
     @Test
+    func environmentCatalogDoesNotFallBackToAnActiveEnvironmentProvider() throws {
+        let thread = FeatureThread(
+            id: "remote-thread",
+            projectID: "remote-project",
+            environmentID: "remote",
+            title: "Remote task",
+            providerID: "shared-provider"
+        )
+        let snapshot = FeatureSnapshot(
+            projects: [
+                FeatureProject(
+                    id: "remote-project",
+                    environmentID: "remote",
+                    name: "remote",
+                    path: "/remote/workspace"
+                ),
+            ],
+            threads: [thread],
+            providers: [
+                FeatureProvider(
+                    id: "shared-provider",
+                    name: "Active Environment Provider",
+                    driver: "active-driver"
+                ),
+            ],
+            providersByEnvironment: ["remote": []]
+        )
+
+        #expect(thread.homeProviderLabel(in: snapshot) == "shared-provider")
+        let context = try #require(HomeThreadRowContext.index(snapshot: snapshot)[thread.id])
+        #expect(context.providerName == "shared-provider")
+        #expect(context.providerDriver == "shared-provider")
+    }
+
+    @Test
     func pullRequestRequiresTheStatusToMatchTheThreadBranch() {
         let pullRequest = FeaturePullRequest(
             number: 5178,

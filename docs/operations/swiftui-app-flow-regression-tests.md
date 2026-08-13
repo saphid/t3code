@@ -22,11 +22,12 @@ app journeys as manual smoke tests.
 
 ## Test layers
 
-| Layer                    | Owns                                                                                                                                                                 | Routine oracle                                                               | Model use                                                                                  |
-| ------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
-| Deterministic app flow   | Launch, onboarding entry, home/search/filter, new-task workspace/model/reasoning/attachment menus, settings/connections, thread context actions, and workspace tools | Accessibility identifiers, labels, state, and a three-second response budget | Inspect retained screenshots only on failure or an intentional visual review               |
-| Live Dev/Test smoke      | Pairing, server-backed project/task/message operations, reconnect, approval/input requests, real file/review/source-control/terminal data                            | Explicit state assertions against a disposable environment                   | Diagnose failures after logs, accessibility state, and screenshots have narrowed the cause |
-| TestFlight release smoke | Read-only/navigation checks plus narrowly approved live mutations                                                                                                    | Human-observed release checklist with build number and timestamp             | Visual review of the release evidence; never put fixture launch arguments into Release     |
+| Layer                    | Owns                                                                                                                                                                 | Routine oracle                                                                   | Model use                                                                                  |
+| ------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
+| Deterministic app flow   | Launch, onboarding entry, home/search/filter, new-task workspace/model/reasoning/attachment menus, settings/connections, thread context actions, and workspace tools | Accessibility identifiers, labels, state, and a three-second response budget     | Inspect retained screenshots only on failure or an intentional visual review               |
+| Visual and accessibility | Phone standard/XXL/RTL and iPad onboarding snapshots, unique critical-screen identifiers, plus semantic trees at every XCUITest checkpoint                           | Tolerant PNG comparison on a pinned environment and explicit semantic assertions | Diagnose snapshot or semantic failures; Apple audit API remains a measured prototype       |
+| Live Dev/Test smoke      | Pairing, server-backed project/task/message operations, reconnect, approval/input requests, real file/review/source-control/terminal data                            | Explicit state assertions against a disposable environment                       | Diagnose failures after logs, accessibility state, and screenshots have narrowed the cause |
+| TestFlight release smoke | Read-only/navigation checks plus narrowly approved live mutations                                                                                                    | Human-observed release checklist with build number and timestamp                 | Visual review of the release evidence; never put fixture launch arguments into Release     |
 
 The fixture exists only in `DEBUG`. Release and TestFlight builds always compose
 `NativeFeatureClient` and cannot opt into fixture state.
@@ -35,7 +36,7 @@ The fixture exists only in `DEBUG`. Release and TestFlight builds always compose
 
 `T3CodeUITests/AppFlowUITests` currently covers:
 
-- direct-connection onboarding through enabled manual credentials;
+- direct-connection onboarding through a completed manual fixture connection;
 - home, search, project filtering, and new-task entry;
 - current-checkout/new-worktree, model, reasoning, and attachment menus;
 - task creation plus a follow-up message through the production composer;
@@ -43,7 +44,12 @@ The fixture exists only in `DEBUG`. Release and TestFlight builds always compose
 - Settings, theme choices, connection list, and connection detail;
 - the complete non-destructive thread context-menu inventory;
 - thread detail plus Files, Review, Source Control, and Terminal surfaces;
-- retained screenshots at the meaningful checkpoints.
+- retained screenshots and semantic accessibility hierarchies at the meaningful
+  checkpoints;
+- four pinned onboarding snapshot smokes: light/standard, dark/accessibility
+  XXL, right-to-left, and iPad Mini;
+- a separate critical-screen accessibility lane that rejects duplicate nonempty
+  identifiers across onboarding, Home, and Settings.
 
 The tests deliberately do not tap destructive confirmation actions, system
 photo/camera/file pickers, external URLs, or buttons that would send live data.
@@ -60,28 +66,135 @@ T3_SWIFT_SIMULATOR_ID="$SIMULATOR_UDID" \
 ./apps/swift-ios/Scripts/ci-app-flow-test.sh
 ```
 
-The script prints the `.xcresult` path. Screenshots use `keepAlways`, so they
-remain available even on a passing run. A routine pass should not spend model
-tokens: accessibility and timing assertions own the verdict.
+The script prints the `.xcresult` and receipt paths. Each plan resolves exact
+test methods from `Scripts/app-flow-catalog.json`; catalog validation rejects
+uncataloged Swift tests, missing fixture journeys, mixed lane semantics, and
+duplicate checkpoint names. Screenshots and semantic accessibility trees use
+`keepAlways`, are exported from the result bundle, and are required by the
+receipt for every declared checkpoint. A routine pass should not spend model
+tokens: semantic assertions, pinned snapshots, timing, exact test inventory,
+and result status own the verdict.
+Retained accessibility trees are diagnostic evidence, not an accessibility
+oracle by themselves.
 
-Known product failures are explicit tests that skip with their issue URL during
-the routine pass. Run the red audit deliberately with:
+An XCTest `performAccessibilityAudit` prototype was not promoted. On Xcode 26.6
+and iOS 26.5, combined, split-screen, and single-screen contrast-only probes all
+hit process deadlines without finalizing a valid result bundle. The catalog
+keeps that boundary explicit. Re-evaluate the API on a later Xcode/runtime; do
+not make a hanging audit required or add a blanket issue suppression.
+
+Known product failures are excluded from routine plans and selected only by an
+explicit issue-linked red audit. Run it deliberately with:
 
 ```sh
-T3_APP_FLOW_RUN_KNOWN_FAILURES=1 ./apps/swift-ios/Scripts/ci-app-flow-test.sh
+T3_APP_FLOW_PLAN=known-red ./apps/swift-ios/Scripts/ci-app-flow-test.sh
 ```
 
 Run the live transport smoke only against disposable state and a fresh,
-single-use pairing token:
+single-use pairing token. Put the endpoint and token in a mode-`600` JSON file
+outside the evidence directory:
 
 ```sh
-T3_APP_FLOW_LIVE_SERVER=http://127.0.0.1:49631 \
-T3_APP_FLOW_LIVE_TOKEN='<single-use token>' \
+T3_SWIFT_SIMULATOR_ID="$RUN_OWNED_SIMULATOR_UDID" \
+T3_APP_FLOW_LIVE_CREDENTIALS_FILE=/private/path/app-flow-live.json \
+T3_APP_FLOW_LIVE_DISPOSABLE_SIMULATOR=1 \
+T3_APP_FLOW_PLAN=live \
 ./apps/swift-ios/Scripts/ci-app-flow-test.sh
 ```
 
-Without both values, the live journey skips. The routine fixture journeys still
-run, so use `-only-testing` when the intent is a focused live check.
+The file must contain `{"server":"http://127.0.0.1:49631","token":"..."}`.
+The server must be an HTTP(S) origin without user info, path, query, or fragment.
+Raw credential environment variables are rejected. The runner builds a portable
+test product, boots the selected Simulator, installs its app, and copies the
+mode-`600` credentials into that app's data container. The DEBUG app consumes
+and deletes the file before XCTest acts, so the token never enters an XCTest
+action or launch environment. The product masks both staged fields, and
+credential-bearing xcodebuild output is quarantined from the console. The
+runner scans that log plus the completed result bundle, extracted
+summary/inventory, checkpoints, and receipt for the exact endpoint and token.
+If it finds either one—or cannot complete a scan—it removes the unsafe,
+run-owned evidence and fails. It then uninstalls the app so the
+credential-bearing data container is not retained. The scan is a plaintext
+oracle rather than OCR; masking the staged fields is what keeps automatic
+failure screenshots from rendering the values.
+Because successful pairing exchanges the one-time code for a bearer token in
+Simulator Keychain, the `live` plan also requires the explicit disposable-target
+flag and deletes that run-owned Simulator before issuing a passing receipt.
+Never point the live plan at a shared development Simulator.
+The live plan fails before Xcode if the file is absent; deterministic plans
+reject credential input instead of silently running a different lane.
+
+The same credential-file mode also enables an isolated fixture audit that uses
+the identical staged-file ingress without contacting the server. Run only
+the `security` plan with a valid-format sentinel token to prove the XCTest
+activity log, screenshot, accessibility attachment, extracted inventory, and
+receipt remain clean; the runner's fail-closed endpoint-and-token scan owns that
+verdict. Because cleanup uninstalls the tested app and its data container, both
+the security plan and the encompassing `ci-verify.sh` profile require an
+run-owned state. `ci-verify.sh` creates and deletes a uniquely named disposable
+Simulator by default; an explicit UDID is treated as caller-owned.
+
+## Plans and receipts
+
+| Plan                   | Purpose                                                                     | Retry policy                                 |
+| ---------------------- | --------------------------------------------------------------------------- | -------------------------------------------- |
+| `pr`                   | Four critical deterministic journeys for pull requests                      | None; first failure is red                   |
+| `regression`           | Every fixture journey across nine named personas, with zero expected skips  | None                                         |
+| `stability`            | Three fresh-runner repetitions of onboarding and task/follow-up             | No retry-to-green; all attempts are retained |
+| `live`                 | One disposable-backend pairing/project smoke                                | None; requires a fresh one-time code         |
+| `security`             | Staged credential ingress and evidence-leak audit                           | None; valid-format sentinel only             |
+| `visual-accessibility` | Critical-screen identifier uniqueness plus screenshot and semantic evidence | None                                         |
+| `known-red`            | Explicit issue-linked product-defect audits                                 | Expected to stay outside required PR gates   |
+
+One build manifest binds reusable `.xctestproducts` to the exact repository
+content hash, commit, dirty state, catalog, scheme, Xcode build, platform, the
+committed `Package.resolved` graph, and every file and symlink in the portable
+test-product tree. Reuse fails if any
+identity changes or any app, unit/UI test, framework, resource, or metadata file
+is tampered with. The final receipt rechecks that identity after execution and
+compares the exact executed test identifiers—not only aggregate counts—with the
+selected plan. A plan-derived process-group watchdog preserves exit `124` on a
+wall-clock timeout and prevents Xcode's post-failure diagnostics from consuming
+the enclosing CI job. Each plan receives twice its catalog estimate or five
+minutes of fixed startup/diagnostic headroom, whichever is larger, and every UI
+test receives a 180-second default / 360-second maximum XCTest allowance.
+
+For the fork-safe upstream profile, run `Scripts/ci-verify.sh pr`; trusted main
+uses `ci-verify.sh regression`; a weekly/manual run uses `ci-verify.sh
+stability`. All profiles reuse one product for app-flow, native unit, visual
+snapshot, and sentinel-security verdicts. CI pins Xcode 26.6, iOS 26.5,
+and iPhone 17 Pro, and the receipt independently checks the actual xcresult
+destination. Native units have a separate exact receipt: all four app-flow
+visual tests must execute and pass, and the only accepted skip is the named
+disposable-live per-message-deflate transport test. Snapshot comparisons use
+`0.99` pixel precision and `0.98` perceptual precision. Their point size, phone
+3x / tablet 2x display scale, locale, layout direction, appearance, and Dynamic Type input are explicit, so the
+references do not inherit the host Simulator model's scale. The workflow's
+exact Xcode/runtime pin is intentionally fail-closed: image refreshes require a
+reviewed baseline update rather than a degraded comparison. Failed result bundles
+and exported native-unit attachments are retained for diagnosis. CI retains
+small receipts/summaries/checkpoint
+exports for 30 days and full result bundles only on failure for 14 days. Live
+credentials and the Release/TestFlight archive belong to a separate protected
+exact-SHA workflow; no privileged workflow executes products uploaded by a pull
+request.
+
+`verification.receipt.json` is the content-addressed attempt ledger. It requires
+an exact, unique plan set bound to one source identity and one frozen build
+manifest; missing telemetry, mixed candidates, and duplicate receipts fail
+closed. It records component and artifact hashes, first-attempt status,
+pass-after-failure signals,
+durations, secret/credential cleanup attestations, and owned-Simulator cleanup.
+Both component receipt creation and ledger aggregation derive required
+secret-scan and cleanup attestations from the selected catalog plan; manual
+callers cannot downgrade a credential-bearing lane to `not-required`. Reused
+build manifests must retain a valid seal in addition to matching their source,
+catalog, package resolution, toolchain, and product hashes.
+A rerun never changes an earlier failure to green. Before treating timing or
+flake thresholds as release policy, collect a calibration baseline of at least
+20 consecutive pull-request runs and 200 scheduled journey attempts on the
+pinned runner; until then, the only automated threshold is zero failed first
+attempts.
 
 Do not teach a routine assertion to accept broken behavior. Isolate a confirmed
 red behind the audit flag, link its issue from the skip, and return it to the
@@ -135,6 +248,12 @@ several symptoms into “the app is broken.”
 | Deterministic harness         | UIKit thread cells discarded the stable thread identifier, so automation could not select a known fixture thread                | Initial red UI run                                                                                                                                                                             | Fixed on this feature branch by assigning `thread-<id>` and clearing it on cell reuse                                           | Test infrastructure |
 | Deterministic harness         | Persisted composer drafts and fixture message IDs made typed text repeat and a follow-up render twice across focused reruns     | Visual review of `created-task-detail` and `sent-follow-up` from the first focused pass                                                                                                        | Fixed in the harness by replacing existing draft text, preserving submission identity, and asserting exactly one rendered value | Test infrastructure |
 
+### Historical harness-development evidence
+
+The counts and paths below describe the earlier harness-development audit, not
+the current catalog or required-plan semantics. The current machine-readable
+catalog and receipts are authoritative.
+
 The first complete simulator run produced 1 pass, 5 failures, and 1 known-issue
 skip in 2m16s. Screenshot and accessibility inspection classified three failures
 as ambiguous test selectors rather than product defects. After tightening those
@@ -161,9 +280,10 @@ bundle also surfaced four widget-extension
 crash reports, tracked separately as #63 rather than hidden behind the passing
 host-app verdict.
 
-The frozen routine audit contains eight programmatic journeys and three
-issue-linked red audits, plus one opt-in live transport journey. On iPhone 17e / iOS 26.5, one serial run passed seven,
-skipped the three known defects, and failed only because the Terminal test had
+That earlier frozen routine audit contained eight programmatic journeys and
+three issue-linked red audits, plus one opt-in live transport journey. On iPhone
+17e / iOS 26.5, one serial run passed seven, skipped the three known defects,
+and failed only because the Terminal test had
 hard-coded a user-configurable `14 pt` label. The corrected Terminal/tools
 journey then passed in 1m32s; together these results cover every routine journey
 with the exact staged source. The onboarding journey also passed under both the

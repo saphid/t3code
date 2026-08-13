@@ -1,0 +1,4 @@
+interface:
+  display_name: "Verify Swift iOS App Flow"
+  short_description: "Build and prove native Simulator journeys"
+  default_prompt: "Use $verify-swift-ios-app-flow to add and prove a native iOS Simulator journey."

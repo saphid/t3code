@@ -9,6 +9,7 @@
 /* Begin PBXBuildFile section */
 		B10000000000000000000001 /* ClerkKit in Frameworks */ = {isa = PBXBuildFile; productRef = B30000000000000000000001 /* ClerkKit */; };
 		B10000000000000000000002 /* ClerkKitUI in Frameworks */ = {isa = PBXBuildFile; productRef = B30000000000000000000002 /* ClerkKitUI */; };
+		E10000000000000000000001 /* SnapshotTesting in Frameworks */ = {isa = PBXBuildFile; productRef = E30000000000000000000001 /* SnapshotTesting */; };
 		D10000000000000000000001 /* GhosttyKit.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = D40000000000000000000001 /* GhosttyKit.xcframework */; };
 		C10000000000000000000001 /* AgentActivityAttributes.swift in Sources */ = {isa = PBXBuildFile; fileRef = C40000000000000000000001 /* AgentActivityAttributes.swift */; };
 		C10000000000000000000002 /* SharedContainer.swift in Sources */ = {isa = PBXBuildFile; fileRef = C40000000000000000000002 /* SharedContainer.swift */; };
@@ -110,6 +111,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				E10000000000000000000001 /* SnapshotTesting in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -302,6 +304,7 @@
 			);
 			name = T3CodeTests;
 			packageProductDependencies = (
+				E30000000000000000000001 /* SnapshotTesting */,
 			);
 			productName = T3CodeTests;
 			productReference = A40000000000000000000002 /* T3CodeTests.xctest */;
@@ -435,6 +438,7 @@
 			productRefGroup = A30000000000000000000002 /* Products */;
 			packageReferences = (
 				B20000000000000000000001 /* XCRemoteSwiftPackageReference "clerk-ios" */,
+				E20000000000000000000001 /* XCRemoteSwiftPackageReference "swift-snapshot-testing" */,
 			);
 			projectDirPath = "";
 			projectRoot = "";
@@ -1291,6 +1295,14 @@
 				version = 1.2.0;
 			};
 		};
+		E20000000000000000000001 /* XCRemoteSwiftPackageReference "swift-snapshot-testing" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/pointfreeco/swift-snapshot-testing";
+			requirement = {
+				kind = exactVersion;
+				version = 1.19.2;
+			};
+		};
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
@@ -1303,6 +1315,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = B20000000000000000000001 /* XCRemoteSwiftPackageReference "clerk-ios" */;
 			productName = ClerkKitUI;
+		};
+		E30000000000000000000001 /* SnapshotTesting */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = E20000000000000000000001 /* XCRemoteSwiftPackageReference "swift-snapshot-testing" */;
+			productName = SnapshotTesting;
 		};
 /* End XCSwiftPackageProductDependency section */
 

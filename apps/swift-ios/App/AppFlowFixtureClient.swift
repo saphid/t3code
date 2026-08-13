@@ -4,6 +4,9 @@ import Foundation
 enum AppFlowFixtureScenario: String {
     case workspace
     case onboarding
+    case recovery
+    case permissionsDenied = "permissions-denied"
+    case longLived = "long-lived"
 }
 
 enum AppFlowFixtureLaunch {
@@ -55,6 +58,15 @@ final class AppFlowFixtureClient: FeatureClient, FeatureProjectCreationClient {
         case .onboarding:
             snapshot = FeatureSnapshot()
             details = [:]
+        case .recovery:
+            snapshot = Self.recoverySnapshot
+            details = Self.threadDetails
+        case .permissionsDenied:
+            snapshot = Self.permissionsDeniedSnapshot
+            details = Self.threadDetails
+        case .longLived:
+            snapshot = Self.longLivedSnapshot
+            details = Self.threadDetails.merging(Self.longLivedThreadDetails) { _, latest in latest }
         }
     }
 
@@ -492,6 +504,74 @@ final class AppFlowFixtureClient: FeatureClient, FeatureProjectCreationClient {
         ],
         settings: FeatureSettings(defaultSelection: selection)
     )
+
+    private static var recoverySnapshot: FeatureSnapshot {
+        var value = workspaceSnapshot
+        value.connection = FeatureConnection(
+            state: .reconnecting,
+            environmentName: "Fixture Mac",
+            endpoint: "http://fixture.invalid",
+            detail: "Recovering the deterministic fixture connection"
+        )
+        value.environments[0].connectionState = .reconnecting
+        value.environments[0].connectionDetail = "Retrying after a fixture transport interruption"
+        return value
+    }
+
+    private static var permissionsDeniedSnapshot: FeatureSnapshot {
+        var value = workspaceSnapshot
+        value.settings = FeatureSettings(
+            hapticsEnabled: false,
+            notificationsEnabled: false,
+            liveActivitiesEnabled: false,
+            defaultSelection: selection
+        )
+        return value
+    }
+
+    private static var longLivedSnapshot: FeatureSnapshot {
+        var value = workspaceSnapshot
+        value.threads.append(contentsOf: longLivedThreads)
+        value.projects[0].threadCount = value.threads.count
+        return value
+    }
+
+    private static let longLivedThreads: [FeatureThread] = (1 ... 24).map { index in
+        FeatureThread(
+            id: "fixture-history-\(index)",
+            projectID: "fixture-project",
+            environmentID: "fixture-environment",
+            environmentName: "Fixture Mac",
+            title: "Long-lived project history item \(index)",
+            preview: "Stable accumulated fixture history for search and scrolling coverage.",
+            branch: "history/fixture-\(index)",
+            worktreePath: "/workspace/t3code-history-\(index)",
+            providerID: "codex",
+            providerName: "Codex",
+            modelID: "gpt-5.6-sol",
+            supportsSettlement: true,
+            supportsSnooze: true,
+            supportsPinning: true,
+            supportsTitleRegeneration: true
+        )
+    }
+
+    private static let longLivedThreadDetails: [String: FeatureThreadDetail] =
+        Dictionary(uniqueKeysWithValues: longLivedThreads.map { thread in
+            (
+                thread.id,
+                FeatureThreadDetail(
+                    thread: thread,
+                    messages: [
+                        FeatureMessage(
+                            id: "message-\(thread.id)",
+                            role: .assistant,
+                            text: "Retained deterministic history for \(thread.title)."
+                        ),
+                    ]
+                )
+            )
+        })
 
     private static let threadDetails: [String: FeatureThreadDetail] = [
         mainThread.id: FeatureThreadDetail(

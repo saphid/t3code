@@ -4,51 +4,133 @@ import XCTest
 final class AppFlowUITests: XCTestCase {
     private static var testedApplicationIsRegistered = false
     private var app: XCUIApplication!
+    private var permissionPolicy = PermissionPolicy.denyAll
 
     override func setUp() {
         super.setUp()
         continueAfterFailure = false
+        addUIInterruptionMonitor(withDescription: "System permission") { alert in
+            MainActor.assumeIsolated {
+                let containsLocalNetworkText = alert.label
+                    .localizedCaseInsensitiveContains("local network")
+                    || alert.staticTexts.allElementsBoundByIndex
+                    .contains { $0.label.localizedCaseInsensitiveContains("local network") }
+                if self.permissionPolicy == .allowLocalNetwork,
+                   containsLocalNetworkText
+                {
+                    let allow = alert.buttons["Allow"]
+                    if allow.exists {
+                        allow.tap()
+                        return true
+                    }
+                }
+                let deny = alert.buttons["Don’t Allow"]
+                if deny.exists {
+                    deny.tap()
+                    return true
+                }
+                return false
+            }
+        }
     }
 
     func testDirectConnectionOnboardingHappyPath() {
         launch(scenario: "onboarding")
-
-        assertExists("Enter details manually").tap()
-        let serverAddress = assertExists("Server address")
-        let pairingCode = assertExists("Pairing code")
-        serverAddress.tap()
-        serverAddress.typeText("http://127.0.0.1:3773")
-        pairingCode.tap()
-        pairingCode.typeText("fixture-code")
-
-        XCTAssertTrue(assertExists("Connect").isEnabled)
-        capture("onboarding-manual-connection")
+        completeManualConnection(
+            server: "http://127.0.0.1:3773",
+            pairingCode: "fixture-code"
+        )
+        assertIdentifier("thread-fixture-main")
+        capture("onboarding-connected-home")
     }
 
     func testLiveBackendPairingAndProjectDiscovery() throws {
         let environment = ProcessInfo.processInfo.environment
-        guard let server = environment["T3_APP_FLOW_LIVE_SERVER"],
-              let token = environment["T3_APP_FLOW_LIVE_TOKEN"],
-              !server.isEmpty,
-              !token.isEmpty
-        else {
-            throw XCTSkip("Set T3_APP_FLOW_LIVE_SERVER and T3_APP_FLOW_LIVE_TOKEN for the opt-in live smoke journey")
+        guard environment["T3_APP_FLOW_LIVE_ENABLED"] == "1" else {
+            throw XCTSkip("Set T3_APP_FLOW_LIVE_CREDENTIALS_FILE for the opt-in live smoke journey")
         }
 
         launchLive()
+        assertExists("Server address")
+        assertExists("Pairing code")
+        let projectFilter = submitConnectionAndReachHome()
+        let project = openProjectFilter(
+            projectFilter,
+            expectedProject: "App Flow Regression Fixture",
+            timeout: 12
+        )
+        capture("live-project-discovery")
+        project.tap()
+
+        assertIdentifier("sidebar-new-task-button").tap()
+        let initialMessage = "App-flow disposable live task"
+        replaceText(in: assertIdentifier("message-composer"), with: initialMessage)
+        assertIdentifier("message-send").tap()
+        assertSingleMessageText(initialMessage)
+
+        let followUp = "App-flow disposable live follow-up"
+        if !app.descendants(matching: .any)["message-composer"].firstMatch.exists {
+            assertHittableButton("Message agent").tap()
+        }
+        replaceText(in: assertIdentifier("message-composer"), with: followUp)
+        assertIdentifier("message-send").tap()
+        assertSingleMessageText(followUp)
+        capture("live-task-follow-up")
+    }
+
+    func testCredentialIngressDoesNotEnterEvidence() throws {
+        guard ProcessInfo.processInfo.environment["T3_APP_FLOW_LIVE_ENABLED"] == "1" else {
+            throw XCTSkip("Set T3_APP_FLOW_LIVE_CREDENTIALS_FILE for the credential-ingress audit")
+        }
+
+        launch(scenario: "onboarding", usesStagedCredentials: true)
+        assertExists("Server address")
+        assertExists("Pairing code")
+        _ = submitConnectionAndReachHome()
+        assertIdentifier("thread-fixture-main")
+        capture("credential-ingress-connected-home")
+    }
+
+    @discardableResult
+    private func completeManualConnection(
+        server: String,
+        pairingCode: String
+    ) -> XCUIElement {
         assertExists("Enter details manually").tap()
         let serverAddress = assertExists("Server address")
-        let pairingCode = assertExists("Pairing code")
+        let pairingCodeField = assertExists("Pairing code")
         serverAddress.tap()
         serverAddress.typeText(server)
-        pairingCode.tap()
-        pairingCode.typeText(token)
+        pairingCodeField.tap()
+        pairingCodeField.typeText(pairingCode)
+        return submitConnectionAndReachHome()
+    }
+
+    private func submitConnectionAndReachHome() -> XCUIElement {
         assertHittableButton("Connect").tap()
 
-        let projectFilter = assertIdentifier("sidebar-project-filter", timeout: 20)
+        return assertIdentifier("sidebar-project-filter", timeout: 20)
+    }
+
+    @discardableResult
+    private func openProjectFilter(
+        _ projectFilter: XCUIElement,
+        expectedProject: String,
+        timeout: TimeInterval
+    ) -> XCUIElement {
+        let project = app.descendants(matching: .any)[expectedProject].firstMatch
         projectFilter.tap()
-        assertExists("App Flow Regression Fixture", timeout: 12)
-        capture("live-project-discovery")
+        if !project.waitForExistence(timeout: 1) {
+            // A first post-connection tap may be consumed while XCTest handles
+            // the notification permission alert. Retry the intended action,
+            // then apply the real semantic timeout.
+            projectFilter.tap()
+        }
+        XCTAssertTrue(
+            project.waitForExistence(timeout: timeout),
+            "Missing project after opening the project filter: \(expectedProject)"
+        )
+        return project
     }
 
     func testWorkspaceNavigationAndMenus() {
@@ -101,6 +183,57 @@ final class AppFlowUITests: XCTestCase {
         assertExists("30 days")
         assertExists("90 days")
         capture("settings-usage")
+    }
+
+    func testAccessibilitySemanticsCriticalScreens() {
+        launch(scenario: "onboarding")
+        assertAccessibleButton(
+            identifier: "connection-action-manual",
+            label: "Enter details manually"
+        )
+        assertUniqueAccessibilityIdentifiers(context: "onboarding")
+        capture("accessibility-onboarding")
+
+        completeManualConnection(
+            server: "http://127.0.0.1:3773",
+            pairingCode: "fixture-code"
+        )
+        assertIdentifier("thread-fixture-main")
+        assertAccessibleButton(
+            identifier: "sidebar-new-task-button",
+            label: "New task"
+        )
+        assertUniqueAccessibilityIdentifiers(context: "Home")
+        capture("accessibility-home")
+
+        assertIdentifier("sidebar-settings-button").tap()
+        assertExists("Settings")
+        assertUniqueAccessibilityIdentifiers(context: "Settings")
+        capture("accessibility-settings")
+    }
+
+    func testRecoveryPersonaKeepsLastKnownWorkspace() {
+        launch(scenario: "recovery")
+        assertExists("Fixture Mac reconnecting")
+        assertIdentifier("thread-fixture-main")
+        capture("recovery-last-known-workspace")
+    }
+
+    func testPermissionsDeniedPersonaReflectsSettings() {
+        launch(scenario: "permissions-denied")
+        assertIdentifier("sidebar-settings-button").tap()
+        assertSwitch("Haptics", isOn: false)
+        assertSwitch("Notifications", isOn: false)
+        assertSwitch("Live Activities", isOn: false)
+        capture("settings-permissions-denied")
+    }
+
+    func testLongLivedPersonaSearchesAccumulatedHistory() {
+        launch(scenario: "long-lived")
+        assertIdentifier("sidebar-search-button").tap()
+        assertIdentifier("sidebar-search-field").typeText("history item 24")
+        assertIdentifier("thread-fixture-history-24")
+        capture("long-lived-history-search")
     }
 
     func testCreateTaskAndSendFollowUpHappyPath() {
@@ -300,14 +433,19 @@ final class AppFlowUITests: XCTestCase {
         )
     }
 
-    private func launch(scenario: String = "workspace") {
+    private func launch(
+        scenario: String = "workspace",
+        usesStagedCredentials: Bool = false
+    ) {
+        permissionPolicy = .denyAll
         if !Self.testedApplicationIsRegistered {
             // XCUITest can report PID 0 for an app left running by an earlier
-            // interactive session. Register and terminate that process before
-            // the first journey so its fixture arguments are not ignored.
+            // invocation. Register the first journey with the same requested
+            // persona before terminating it, so a launch/termination race can
+            // never substitute the default workspace for another persona.
             let preflight = XCUIApplication()
-            preflight.launchArguments = fixtureLaunchArguments(scenario: "workspace")
-            preflight.launchEnvironment["T3_APP_FLOW_FIXTURE_SCENARIO"] = "workspace"
+            preflight.launchArguments = fixtureLaunchArguments(scenario: scenario)
+            preflight.launchEnvironment["T3_APP_FLOW_FIXTURE_SCENARIO"] = scenario
             preflight.launch()
             preflight.terminate()
             Self.testedApplicationIsRegistered = true
@@ -316,25 +454,45 @@ final class AppFlowUITests: XCTestCase {
         app = XCUIApplication()
         app.terminate()
         app.launchEnvironment["T3_APP_FLOW_FIXTURE_SCENARIO"] = scenario
-        app.launchArguments = fixtureLaunchArguments(scenario: scenario)
+        app.launchArguments = fixtureLaunchArguments(
+            scenario: scenario,
+            usesStagedCredentials: usesStagedCredentials
+        )
         app.launch()
     }
 
     private func launchLive() {
+        permissionPolicy = .allowLocalNetwork
         app = XCUIApplication()
         app.terminate()
-        app.launchArguments = ["-ApplePersistenceIgnoreState", "YES"]
+        app.launchArguments = [
+            "-app-flow-staged-credentials",
+            "-ApplePersistenceIgnoreState",
+            "YES",
+        ]
         app.launch()
     }
 
-    private func fixtureLaunchArguments(scenario: String) -> [String] {
-        [
+    private enum PermissionPolicy {
+        case denyAll
+        case allowLocalNetwork
+    }
+
+    private func fixtureLaunchArguments(
+        scenario: String,
+        usesStagedCredentials: Bool = false
+    ) -> [String] {
+        var arguments = [
             "-app-flow-fixture",
             "-app-flow-scenario",
             scenario,
             "-ApplePersistenceIgnoreState",
             "YES",
         ]
+        if usesStagedCredentials {
+            arguments.append("-app-flow-staged-credentials")
+        }
+        return arguments
     }
 
     @discardableResult
@@ -371,6 +529,53 @@ final class AppFlowUITests: XCTestCase {
         return element
     }
 
+    private func assertSwitch(
+        _ label: String,
+        isOn: Bool,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
+        let control = app.switches[label].firstMatch
+        XCTAssertTrue(
+            control.waitForExistence(timeout: 8),
+            "Missing switch: \(label)",
+            file: file,
+            line: line
+        )
+        XCTAssertEqual(
+            control.value as? String,
+            isOn ? "1" : "0",
+            "Unexpected switch value: \(label)",
+            file: file,
+            line: line
+        )
+    }
+
+    private func assertUniqueAccessibilityIdentifiers(
+        context: String,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
+        // XCTest keeps decorative SF Symbols in its descendant snapshot even
+        // when SwiftUI hides them from VoiceOver, and assigns the symbol name
+        // as an identifier. Validate the application-owned semantic elements,
+        // not duplicated framework metadata such as `chevron.right`.
+        let identifiers = app.descendants(matching: .any).allElementsBoundByIndex
+            .filter { $0.elementType != .image }
+            .map(\.identifier)
+            .filter { !$0.isEmpty }
+        let duplicates = Dictionary(grouping: identifiers, by: { $0 })
+            .filter { $0.value.count > 1 }
+            .keys
+            .sorted()
+        XCTAssertTrue(
+            duplicates.isEmpty,
+            "Duplicate accessibility identifiers on \(context): \(duplicates.joined(separator: ", "))",
+            file: file,
+            line: line
+        )
+    }
+
     @discardableResult
     private func assertHittableButton(
         _ label: String,
@@ -391,8 +596,47 @@ final class AppFlowUITests: XCTestCase {
             RunLoop.current.run(until: Date().addingTimeInterval(0.1))
         } while Date() < deadline
 
-        XCTFail("Missing hittable button: \(label)", file: file, line: line)
+        let visibleButtonLabels = app.buttons.allElementsBoundByIndex
+            .filter(\.exists)
+            .map(\.label)
+            .filter { !$0.isEmpty }
+        XCTFail(
+            "Missing hittable button: \(label). XCTest button labels: \(visibleButtonLabels)",
+            file: file,
+            line: line
+        )
         return buttons.firstMatch
+    }
+
+    @discardableResult
+    private func assertAccessibleButton(
+        identifier: String,
+        label: String,
+        timeout: TimeInterval = 8,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) -> XCUIElement {
+        let button = app.buttons[identifier].firstMatch
+        XCTAssertTrue(
+            button.waitForExistence(timeout: timeout),
+            "Missing button accessibility identifier: \(identifier)",
+            file: file,
+            line: line
+        )
+        XCTAssertEqual(
+            button.label,
+            label,
+            "Unexpected accessible label for \(identifier)",
+            file: file,
+            line: line
+        )
+        XCTAssertTrue(
+            button.isHittable,
+            "Button is not hittable: \(identifier)",
+            file: file,
+            line: line
+        )
+        return button
     }
 
     @discardableResult
@@ -551,9 +795,18 @@ final class AppFlowUITests: XCTestCase {
     }
 
     private func capture(_ name: String) {
-        let attachment = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
-        attachment.name = name
-        attachment.lifetime = .keepAlways
-        add(attachment)
+        let screenshot = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+        screenshot.name = name
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
+
+        let accessibility = XCTAttachment(
+            data: Data(app.debugDescription.utf8),
+            uniformTypeIdentifier: "public.plain-text"
+        )
+        accessibility.name = "\(name)-accessibility"
+        accessibility.lifetime = .keepAlways
+        add(accessibility)
     }
+
 }

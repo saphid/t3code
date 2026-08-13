@@ -100,8 +100,9 @@ complete branch, promotion, build, phone-watcher, and upstream-PR rules live in
 
 ## Verify
 
-Run the `T3Code` scheme's tests in Xcode, or use the same entry point as CI. It
-chooses an available iPhone from the newest installed Simulator runtime:
+Run the `T3Code` scheme's tests in Xcode, or use the repository entry point. A
+local run chooses an available iPhone from the newest installed Simulator
+runtime; CI creates an iPhone 17 Pro on iOS 26.5 and selects Xcode 26.6:
 
 ```sh
 ./Scripts/ci-test.sh
@@ -117,14 +118,58 @@ Run the focused native app-flow regression suite separately:
 ```
 
 It launches a debug-only, in-process fixture so routine navigation and menu
-checks do not need credentials or a live server. Set `T3_SWIFT_SCHEME` to
+checks do not need credentials or a live server. The default `regression` plan
+runs every deterministic journey with no expected skips. Use
+`T3_APP_FLOW_PLAN=pr`, `regression`, `stability`, or `known-red` for the named
+cadence in `Scripts/app-flow-catalog.json`. Set `T3_SWIFT_SCHEME` to
 `T3CodeDev` or `T3CodeTest` to exercise those configurations. Result bundles
-and their screenshot attachments are written under the ignored `.t3/evidence`
-directory by default. The coverage boundaries and live/TestFlight follow-up
-protocol are documented in
+and a portable JSON summary, exact executed-test inventory, exported screenshots
+and accessibility trees, source-bound build manifest, and verdict receipt are
+written under the ignored `.t3/evidence` directory by default. The runner builds
+one portable test product and supports source-verified reuse with
+`T3_SWIFT_REUSE_TEST_PRODUCTS=1`. The coverage boundaries and live/TestFlight
+follow-up protocol are documented in
 [`../../docs/operations/swiftui-app-flow-regression-tests.md`](../../docs/operations/swiftui-app-flow-regression-tests.md).
-Set `T3_APP_FLOW_LIVE_SERVER` and `T3_APP_FLOW_LIVE_TOKEN` only when running the
-opt-in real-pairing journey against disposable server state; otherwise it skips.
+For the opt-in real-pairing journey, create a mode-`600` JSON file outside the
+evidence directory with `server` and single-use `token` string fields, then set
+`T3_APP_FLOW_PLAN=live`, `T3_APP_FLOW_LIVE_CREDENTIALS_FILE` to its path, and
+`T3_SWIFT_SIMULATOR_ID` plus `T3_APP_FLOW_LIVE_DISPOSABLE_SIMULATOR=1` only
+after creating a run-owned Simulator that the runner may delete.
+Raw credential environment
+variables are rejected. The runner builds one portable test product, installs
+its app, stages a one-shot file in that app's data container, and the DEBUG app
+consumes and deletes it before XCTest acts. It then runs the selected journey
+with `test-without-building`; staged server and code fields are masked, the
+credential-bearing xcodebuild log is kept out of console output, and every
+retained text/binary artifact is scanned before retention. Endpoint or token
+evidence is removed and the run fails closed, then the app is uninstalled to
+remove its data container. A real live run deletes its disposable Simulator to
+destroy the bearer credential exchanged into Keychain. The server must be a
+credential-free HTTP(S) origin. The `live` and
+`security` plans require the file; other plans reject it. The security plan uses
+the same ingress with a non-secret sentinel and fixture backend.
+
+CI uses the installable one-command profile. By default it creates and deletes
+a unique disposable Simulator; set `T3_SWIFT_SIMULATOR_ID` only for an advanced
+caller-owned destination:
+
+```sh
+./Scripts/ci-verify.sh pr
+./Scripts/ci-verify.sh regression
+./Scripts/ci-verify.sh stability
+```
+
+It validates the shell and agent-promotion contracts, builds once, runs the
+impact-selected app-flow plan, the explicit visual/accessibility lane, native
+units, and the credential-security audit from one source-bound product. Sealed
+receipts hash retained evidence and roll into `verification.receipt.json`, whose
+policy requires first-attempt success. Pinned phone standard/XXL/RTL and iPad
+snapshots own the deterministic layout smoke. Real live pairing uses
+`Scripts/ci-live-app-flow-test.sh` with an exact-SHA disposable-backend adapter;
+physical-device/TestFlight lanes validate content-addressed evidence with
+`app-flow.py release-receipt`, an explicit artifact root, and protected
+candidate commit and content hashes. The validator hashes every named artifact
+itself; caller-supplied digests are not treated as proof.
 
 Contract fixtures are encoded from the TypeScript schemas and decoded by the
 Swift test target. Regenerate and verify them after a relevant wire change:
