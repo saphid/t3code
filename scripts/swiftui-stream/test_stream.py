@@ -578,6 +578,17 @@ class StreamTests(unittest.TestCase):
         with self.assertRaises(SystemExit):
             stream.validate_manifest(value)
 
+    def test_reviewable_feature_requires_the_exact_current_test_build(self):
+        value = json.loads(json.dumps(stream.manifest()))
+        feature = next(
+            item
+            for item in value["features"]
+            if item.get("state") in stream.APPROVAL_STATES
+        )
+        feature["testBuild"] = value["currentTestBuild"]["build"] - 1
+        with self.assertRaises(SystemExit):
+            stream.validate_manifest(value)
+
     def test_imported_pending_record_requires_test_build(self):
         record = {
             "id": "upstream-pr-1",
