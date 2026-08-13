@@ -321,7 +321,8 @@ class StreamTests(unittest.TestCase):
             stream.validate_manifest(value)
 
         base_feature["proofMediaReceipt"] = "~/.t3/evidence/visual/receipt.json"
-        stream.validate_manifest(value)
+        with patch.dict(os.environ, {"SWIFTUI_STREAM_EVIDENCE_DIR": "/missing/evidence-root"}):
+            stream.validate_manifest(value)
 
         base_feature["visualEvidence"][0]["cleanURL"] = "http://evidence.example/clean.png"
         with self.assertRaises(SystemExit):
@@ -331,6 +332,36 @@ class StreamTests(unittest.TestCase):
         base_feature["visualChange"] = False
         with self.assertRaises(SystemExit):
             stream.validate_manifest(value)
+
+    def test_visual_receipt_binds_every_declared_url_and_hash(self):
+        evidence = [{
+            "kind": "image",
+            "appearance": "dark",
+            "cleanURL": "https://evidence.example/clean.png",
+            "annotatedURL": "https://evidence.example/annotated.png",
+        }]
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            receipt = root / "receipt.json"
+            receipt.write_text(json.dumps({
+                "featureId": "visual",
+                "media": [{
+                    **evidence[0],
+                    "cleanSha256": "a" * 64,
+                    "cleanBytes": 1,
+                    "annotatedSha256": "b" * 64,
+                    "annotatedBytes": 2,
+                }],
+            }))
+            with patch.dict(os.environ, {"SWIFTUI_STREAM_EVIDENCE_DIR": directory}):
+                stream.validate_proof_media_receipt("visual", evidence, str(receipt))
+                evidence[0]["annotatedURL"] = "https://evidence.example/changed.png"
+                with self.assertRaises(SystemExit):
+                    stream.validate_proof_media_receipt("visual", evidence, str(receipt))
+                evidence[0]["annotatedURL"] = "https://evidence.example/annotated.png"
+                receipt.unlink()
+                with self.assertRaises(SystemExit):
+                    stream.validate_proof_media_receipt("visual", evidence, str(receipt))
 
     def test_visual_pr_body_requires_every_evidence_link(self):
         feature = {
@@ -538,7 +569,13 @@ Annotated screenshot: https://evidence.example/annotated.png
             (repository / "Unexpected.swift").write_text("let unexpected = true\n")
             unexpected = commit_all(repository, "unexpected executable tail")
             git(repository, "update-ref", "refs/remotes/origin/feat/one", unexpected)
-            with self.assertRaisesRegex(RuntimeError, "changes after candidateCommit"):
+            with self.assertRaisesRegex(RuntimeError, "non-metadata commits after candidateCommit"):
+                testing_manifest.build_manifest(repository, "dev", 3)
+
+            (repository / "Unexpected.swift").unlink()
+            commit_all(repository, "cancel executable tail")
+            git(repository, "update-ref", "refs/remotes/origin/feat/one", "HEAD")
+            with self.assertRaisesRegex(RuntimeError, "non-metadata commits after candidateCommit"):
                 testing_manifest.build_manifest(repository, "dev", 3)
 
     def test_dev_manifest_requires_candidate_on_remote_source_branch(self):

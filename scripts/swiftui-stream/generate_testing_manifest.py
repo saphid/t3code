@@ -247,15 +247,16 @@ def build_manifest(repository, channel, build):
                 "%s baseline-to-candidate range does not match its declared commits"
                 % features[0]["id"]
             )
-        changed_after_candidate = set(
-            git(repository, "diff", "--name-only", "%s..HEAD" % candidate_sha).splitlines()
-        )
-        unexpected = sorted(
-            changed_after_candidate - {"scripts/swiftui-stream/stream.json"}
-        )
+        post_candidate = git(
+            repository, "rev-list", "--reverse", "%s..HEAD" % candidate_sha
+        ).splitlines()
+        unexpected = [
+            commit for commit in post_candidate
+            if not is_stream_metadata_only(repository, commit)
+        ]
         if unexpected:
             raise RuntimeError(
-                "the Dev build contains changes after candidateCommit: %s"
+                "the Dev build contains non-metadata commits after candidateCommit: %s"
                 % ", ".join(unexpected)
             )
 

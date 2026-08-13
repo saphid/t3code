@@ -26,7 +26,7 @@ struct BuildTestingVisualEvidenceItemView: View {
             case .image:
                 BuildTestingEvidenceImage(url: evidence.annotatedURL, title: evidence.title)
             case .video:
-                BuildTestingEvidenceVideo(url: evidence.annotatedURL)
+                BuildTestingEvidenceVideo(url: evidence.annotatedURL, title: evidence.title)
             }
 
             VStack(alignment: .leading, spacing: 8) {

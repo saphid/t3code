@@ -93,9 +93,11 @@ dark-mode proof packet used by the review build:
 Dark mode evidence: yes
 Clean screenshot: <durable HTTPS URL>
 Annotated screenshot: <durable HTTPS URL>
-Clean video: <durable HTTPS URL> # required for interaction or motion
-Annotated video: <durable HTTPS URL> # required for interaction or motion
+Clean video: <durable HTTPS URL>
+Annotated video: <durable HTTPS URL>
 ```
+
+The two video lines are required for interaction or motion changes.
 
 Create paired clean and annotated outputs with `prepare-proof-media`. The
 annotated media carries visible tap and swipe animations plus concise `Next:`
@@ -209,8 +211,8 @@ anomalies to investigate, not proof that no work exists.
 A proved feature branch may publish exactly one receipt-matched `dev` artifact
 without merging the candidate into shared Dev. `build-ready.sh dev` requires
 the branch to match one `proved` catalog record, requires its frozen candidate
-commit to underlie the build revision, permits only the catalog's metadata-only
-freeze commit after that candidate, requires that exact build revision to be
+commit to underlie the build revision, permits only metadata-only catalog
+commits after that candidate, requires that exact build revision to be
 published on the receipt's remote feature branch, and embeds only that feature. When the
 proof receipt is frozen, record the full candidate SHA as `candidateCommit`,
 the exact branch as `sourceBranch`, the current remote Dev tip as

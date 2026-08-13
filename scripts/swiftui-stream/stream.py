@@ -139,6 +139,9 @@ def validate_manifest(value: dict[str, Any]) -> None:
             receipt = feature.get("proofMediaReceipt")
             if not isinstance(receipt, str) or not receipt.strip():
                 fail(f"{feature_id} visual evidence has no proofMediaReceipt")
+            validate_proof_media_receipt(
+                feature_id, evidence, receipt, feature.get("candidateCommit")
+            )
         if feature.get("state") == "proved":
             source_branch = feature.get("sourceBranch")
             candidate = feature.get("candidateCommit")
@@ -183,6 +186,57 @@ def validate_manifest(value: dict[str, Any]) -> None:
                 receipt = load_json(receipt_file)
                 if receipt.get("featureId") != feature_id or not receipt.get("humanConfirmation"):
                     fail(f"{feature_id} approval receipt does not match confirmed human approval")
+
+
+def validate_proof_media_receipt(
+    feature_id: str,
+    evidence: list[dict[str, Any]],
+    receipt_path: str,
+    candidate_commit: str | None = None,
+) -> None:
+    receipt_root = Path(
+        os.environ.get(
+            "SWIFTUI_STREAM_EVIDENCE_DIR",
+            str(Path.home() / ".t3/artifacts/swiftui-stream/evidence"),
+        )
+    ).expanduser()
+    if not receipt_root.exists():
+        return
+    receipt_file = Path(receipt_path).expanduser()
+    try:
+        receipt_file.resolve().relative_to(receipt_root.resolve())
+    except ValueError:
+        fail(f"{feature_id} proofMediaReceipt is outside durable evidence storage")
+    if not receipt_file.is_file():
+        fail(f"{feature_id} proofMediaReceipt does not exist")
+    receipt = load_json(receipt_file)
+    if receipt.get("featureId") != feature_id:
+        fail(f"{feature_id} proofMediaReceipt names another feature")
+    if candidate_commit is not None and receipt.get("candidateCommit") != candidate_commit:
+        fail(f"{feature_id} proofMediaReceipt names another candidate")
+    receipt_media = receipt.get("media")
+    if not isinstance(receipt_media, list):
+        fail(f"{feature_id} proofMediaReceipt has no media inventory")
+    declared = {
+        (item["kind"], item["appearance"], item["cleanURL"], item["annotatedURL"])
+        for item in evidence
+    }
+    attested = set()
+    for item in receipt_media:
+        if not isinstance(item, dict):
+            fail(f"{feature_id} proofMediaReceipt has invalid media")
+        for prefix in ("clean", "annotated"):
+            digest = item.get(f"{prefix}Sha256")
+            size = item.get(f"{prefix}Bytes")
+            if not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest):
+                fail(f"{feature_id} proofMediaReceipt has invalid {prefix}Sha256")
+            if not isinstance(size, int) or size < 1:
+                fail(f"{feature_id} proofMediaReceipt has invalid {prefix}Bytes")
+        attested.add(
+            (item.get("kind"), item.get("appearance"), item.get("cleanURL"), item.get("annotatedURL"))
+        )
+    if declared != attested:
+        fail(f"{feature_id} visualEvidence does not match its proofMediaReceipt")
 
 
 def validate_delivery_inventory(value: dict[str, Any], states: list[str]) -> None:

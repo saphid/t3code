@@ -3,6 +3,7 @@ import SwiftUI
 
 struct BuildTestingEvidenceVideo: View {
     let url: URL
+    let title: String
 
     @State private var player: AVPlayer?
     @State private var loadFailed = false
@@ -28,7 +29,6 @@ struct BuildTestingEvidenceVideo: View {
             RoundedRectangle(cornerRadius: 10)
                 .stroke(T3Colors.border, lineWidth: 1)
         }
-        .accessibilityLabel("Annotated interaction video")
         .task(id: url) {
             player?.pause()
             player = nil
@@ -53,5 +53,8 @@ struct BuildTestingEvidenceVideo: View {
         .onDisappear {
             player?.pause()
         }
+        .accessibilityElement(children: loadFailed ? .contain : .ignore)
+        .accessibilityLabel(loadFailed ? "Video unavailable" : title)
+        .accessibilityValue(loadFailed ? "Open the evidence link below to try again." : "")
     }
 }
