@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import importlib.util
+import io
 import json
 import os
 import plistlib
@@ -8,6 +9,8 @@ import sqlite3
 import subprocess
 import tempfile
 import unittest
+from argparse import Namespace
+from contextlib import redirect_stderr
 from datetime import datetime, timedelta, timezone
 import zipfile
 from pathlib import Path
@@ -58,6 +61,344 @@ testing_manifest = load_module(
 
 
 class StreamTests(unittest.TestCase):
+    def receipt_fixture(
+        self,
+        directory: str,
+        current=None,
+    ) -> tuple[dict, Path, Path, Path]:
+        root = Path(directory)
+        receipt_root = root / "device-receipts"
+        receipt_root.mkdir()
+        ready_root = root / "ready"
+        ready_root.mkdir()
+        current = dict(current or stream.manifest()["currentTestBuild"])
+        receipt_path = receipt_root / "test.json"
+        current["receipt"] = str(receipt_path)
+        identity = {
+            field: current[field]
+            for field in (
+                "channel",
+                "build",
+                "sequence",
+                "commit",
+                "bundleId",
+                "deviceId",
+            )
+        }
+        receipt_path.write_text(
+            json.dumps(
+                {
+                    "schemaVersion": 1,
+                    **identity,
+                    "status": "installed-and-launched",
+                    "launchPending": False,
+                    "recordedAt": "2000-01-01T00:00:00Z",
+                }
+            )
+        )
+        ready_path = ready_root / "test.json"
+        ready_path.write_text(json.dumps({"schemaVersion": 1, **identity}))
+        return current, receipt_root, receipt_path, ready_path
+
+    def test_thread_record_schema_drift_is_a_reported_anomaly(self):
+        with tempfile.TemporaryDirectory() as directory:
+            db = Path(directory) / "state.sqlite"
+            connection = sqlite3.connect(db)
+            connection.execute("CREATE TABLE projection_threads (thread_id TEXT)")
+            connection.close()
+            errors = io.StringIO()
+            with redirect_stderr(errors):
+                self.assertEqual(stream.thread_records([], db), [])
+        self.assertIn("projection schema", errors.getvalue())
+
+    def test_branch_allowlists_beat_generic_title_words(self):
+        self.assertTrue(stream.relevant_thread("Audit SwiftUI Log View", None))
+        self.assertFalse(
+            stream.relevant_thread(
+                "SwiftUI Dev/Test Feature Approval Workflow",
+                "t3code/swiftui-testing-approval",
+            )
+        )
+        self.assertTrue(
+            stream.relevant_thread("SwiftUI Feature Approval Workflow", None)
+        )
+        self.assertTrue(
+            stream.relevant_thread(
+                "Audit lane", "t3code/sync-electron-github-work"
+            )
+        )
+        self.assertTrue(stream.relevant_thread("SwiftUI Command Palette", None))
+
+    def test_manifest_requires_a_receipt_field(self):
+        value = stream.load_json(ROOT / "stream.json")
+        del value["currentTestBuild"]["receipt"]
+        with self.assertRaises(SystemExit):
+            stream.validate_manifest(value)
+
+    def test_approval_list_is_exact_build_order(self):
+        with tempfile.TemporaryDirectory() as directory:
+            value = stream.manifest()
+            current = dict(value["currentTestBuild"])
+            for feature in value["features"]:
+                if feature.get("state") in stream.APPROVAL_STATES:
+                    feature["testBuild"] = current["build"]
+            current, receipt_root, _, ready_path = self.receipt_fixture(
+                directory, current
+            )
+            value["currentTestBuild"] = current
+            with (
+                patch.object(stream, "manifest", return_value=value),
+                patch.object(stream, "DEVICE_RECEIPTS_ROOT", receipt_root),
+                patch.object(stream, "TEST_READY_POINTER", ready_path),
+            ):
+                items = stream.approval_list()
+
+        self.assertTrue(items)
+        self.assertEqual(
+            [item.get("order", 1_000_000) for item in items],
+            sorted(item.get("order", 1_000_000) for item in items),
+        )
+        self.assertTrue(all(item["testBuild"] == current["build"] for item in items))
+        self.assertNotIn("dev-title-label", {item["id"] for item in items})
+
+    def test_approval_list_fails_closed_when_device_receipt_does_not_match(self):
+        with tempfile.TemporaryDirectory() as directory:
+            current, receipt_root, receipt_path, ready_path = self.receipt_fixture(
+                directory
+            )
+            receipt = json.loads(receipt_path.read_text())
+            receipt["build"] += 1
+            receipt_path.write_text(json.dumps(receipt))
+            with (
+                patch.object(stream, "manifest", return_value={"currentTestBuild": current}),
+                patch.object(stream, "DEVICE_RECEIPTS_ROOT", receipt_root),
+                patch.object(stream, "TEST_READY_POINTER", ready_path),
+                patch.object(stream, "catalog", return_value=[]),
+                self.assertRaises(SystemExit),
+            ):
+                stream.approval_list()
+
+    def test_receipt_must_match_the_ready_pointer_device(self):
+        with tempfile.TemporaryDirectory() as directory:
+            current, receipt_root, _, ready_path = self.receipt_fixture(directory)
+            pointer = json.loads(ready_path.read_text())
+            pointer["deviceId"] = "another-device"
+            ready_path.write_text(json.dumps(pointer))
+            with (
+                patch.object(stream, "manifest", return_value={"currentTestBuild": current}),
+                patch.object(stream, "DEVICE_RECEIPTS_ROOT", receipt_root),
+                patch.object(stream, "TEST_READY_POINTER", ready_path),
+                self.assertRaises(SystemExit),
+            ):
+                stream.require_installed_test_receipt()
+
+    def test_receipt_path_rejects_traversal_and_symlinks(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            current, receipt_root, receipt_path, ready_path = self.receipt_fixture(
+                directory
+            )
+            valid_receipt = receipt_path.read_text()
+            outside = root / "outside.json"
+            outside.write_text(valid_receipt)
+            for name, path in (
+                ("traversal", receipt_root / ".." / "outside.json"),
+                ("outside", outside),
+            ):
+                with self.subTest(name=name):
+                    current["receipt"] = str(path)
+                    with (
+                        patch.object(
+                            stream,
+                            "manifest",
+                            return_value={"currentTestBuild": current},
+                        ),
+                        patch.object(stream, "DEVICE_RECEIPTS_ROOT", receipt_root),
+                        patch.object(stream, "TEST_READY_POINTER", ready_path),
+                        self.assertRaises(SystemExit),
+                    ):
+                        stream.require_installed_test_receipt()
+            receipt_path.unlink()
+            receipt_path.symlink_to(outside)
+            current["receipt"] = str(receipt_path)
+            with (
+                patch.object(stream, "manifest", return_value={"currentTestBuild": current}),
+                patch.object(stream, "DEVICE_RECEIPTS_ROOT", receipt_root),
+                patch.object(stream, "TEST_READY_POINTER", ready_path),
+                self.assertRaises(SystemExit),
+            ):
+                stream.require_installed_test_receipt()
+
+    def test_promotion_queue_cannot_bypass_the_receipt_gate(self):
+        with (
+            patch.object(
+                stream,
+                "require_installed_test_receipt",
+                side_effect=SystemExit(1),
+            ) as receipt_gate,
+            patch.object(stream, "queue_items") as queue_items,
+            self.assertRaises(SystemExit),
+        ):
+            stream.command_queue(Namespace(path="queue.json", json=True))
+        receipt_gate.assert_called_once_with()
+        queue_items.assert_not_called()
+
+    def test_receipt_gate_cli_accepts_an_exact_bound_receipt(self):
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory)
+            state = home / ".t3/swiftui-stream"
+            receipts = state / "device-receipts"
+            ready = state / "ready"
+            receipts.mkdir(parents=True)
+            ready.mkdir()
+            current = stream.manifest()["currentTestBuild"]
+            identity = {
+                field: current[field]
+                for field in (
+                    "channel",
+                    "build",
+                    "sequence",
+                    "commit",
+                    "bundleId",
+                    "deviceId",
+                )
+            }
+            (ready / "test.json").write_text(
+                json.dumps({"schemaVersion": 1, **identity})
+            )
+            (receipts / "test.json").write_text(
+                json.dumps(
+                    {
+                        "schemaVersion": 1,
+                        **identity,
+                        "status": "installed-and-launched",
+                        "launchPending": False,
+                    }
+                )
+            )
+            environment = dict(os.environ)
+            environment["HOME"] = str(home)
+            result = subprocess.run(
+                [
+                    "python3",
+                    str(ROOT / "stream.py"),
+                    "require-installed-test-receipt",
+                ],
+                cwd=stream.REPO_ROOT,
+                env=environment,
+                text=True,
+                capture_output=True,
+            )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(
+            json.loads(result.stdout),
+            {
+                **identity,
+                "status": "installed-and-launched",
+                "launchPending": False,
+            },
+        )
+
+    def test_device_receipt_requires_successful_launch(self):
+        current = {
+            "channel": "test",
+            "build": 41,
+            "sequence": 41,
+            "commit": "f" * 40,
+            "bundleId": "test.bundle",
+            "deviceId": "phone",
+            "status": "installed-and-launched",
+            "launchPending": False,
+        }
+        receipt = {
+            "schemaVersion": 1,
+            **current,
+            "status": "installed-awaiting-unlock",
+            "launchPending": True,
+        }
+        errors = stream.installed_test_receipt_errors(current, receipt)
+        self.assertTrue(any("status" in error for error in errors))
+        self.assertTrue(any("pending launch" in error for error in errors))
+
+    def test_device_receipt_requires_all_identity_fields(self):
+        current = {
+            "channel": "test",
+            "build": 41,
+            "sequence": 41,
+            "commit": "f" * 40,
+            "bundleId": "test.bundle",
+            "deviceId": "phone",
+            "status": "installed-and-launched",
+            "launchPending": False,
+        }
+        receipt = {
+            "schemaVersion": 1,
+            **current,
+            "status": "installed-and-launched",
+            "launchPending": False,
+        }
+        del current["commit"]
+        del receipt["sequence"]
+        errors = stream.installed_test_receipt_errors(current, receipt)
+        self.assertIn("catalog field commit is missing", errors)
+        self.assertIn("device receipt field sequence is missing", errors)
+
+    def test_device_receipt_binds_every_ready_pointer_identity_field(self):
+        current = {
+            "channel": "test",
+            "build": 55,
+            "sequence": 55,
+            "commit": "f" * 40,
+            "bundleId": "test.bundle",
+            "deviceId": "phone",
+            "status": "installed-and-launched",
+            "launchPending": False,
+        }
+        ready = {"schemaVersion": 1, **current}
+        del ready["status"]
+        del ready["launchPending"]
+        for field in (
+            "channel",
+            "build",
+            "sequence",
+            "commit",
+            "bundleId",
+            "deviceId",
+        ):
+            with self.subTest(field=field):
+                receipt = {
+                    "schemaVersion": 1,
+                    **current,
+                    field: "wrong" if isinstance(current[field], str) else 56,
+                }
+                errors = stream.installed_test_receipt_errors(
+                    current, receipt, ready
+                )
+                self.assertTrue(
+                    any(
+                        f"device receipt {field}" in error
+                        and "ready pointer" in error
+                        for error in errors
+                    )
+                )
+
+    def test_validate_checks_uniqueness_with_projection_records(self):
+        value = {"prDelivery": "delivery.json", "lifecycle": ["developing"]}
+        duplicate = {"id": "duplicate", "state": "developing"}
+        with (
+            patch.object(stream, "manifest", return_value=value),
+            patch.object(stream, "load_json", return_value={}),
+            patch.object(stream, "validate_delivery_inventory"),
+            patch.object(
+                stream,
+                "catalog",
+                return_value=[duplicate, dict(duplicate)],
+            ) as catalog,
+            self.assertRaises(SystemExit),
+        ):
+            stream.command_validate(Namespace())
+        catalog.assert_called_once_with(True)
+
     def test_build_number_peek_does_not_consume_the_counter(self):
         with tempfile.TemporaryDirectory() as directory:
             environment = dict(os.environ, HOME=directory)
@@ -221,24 +562,6 @@ class StreamTests(unittest.TestCase):
             self.assertTrue(stream.relevant_thread("Legacy title", branch))
         self.assertFalse(stream.relevant_thread("Electron GitHub work", "t3code/other"))
 
-    def test_operational_swiftui_threads_are_not_features(self):
-        self.assertFalse(stream.relevant_thread("Audit SwiftUI Commit Upstream Status", None))
-        self.assertFalse(
-            stream.relevant_thread(
-                "SwiftUI Dev/Test Feature Approval Workflow",
-                "t3code/swiftui-testing-approval",
-            )
-        )
-        self.assertFalse(
-            stream.relevant_thread("SwiftUI Feature Approval Workflow", None)
-        )
-        self.assertFalse(
-            stream.relevant_thread(
-                "Audit lane", "t3code/sync-electron-github-work"
-            )
-        )
-        self.assertTrue(stream.relevant_thread("SwiftUI Command Palette", None))
-
     def test_manifest_and_catalog_are_unique(self):
         value = stream.manifest()
         records = stream.catalog(False)
@@ -282,7 +605,17 @@ class StreamTests(unittest.TestCase):
         value = {
             "schemaVersion": 1,
             "lifecycle": ["developing", "proved"],
-            "currentTestBuild": {"build": 1},
+            "currentTestBuild": {
+                "channel": "test",
+                "build": 1,
+                "sequence": 1,
+                "commit": "c" * 40,
+                "bundleId": "test.bundle",
+                "deviceId": "phone",
+                "receipt": "~/.t3/swiftui-stream/device-receipts/test.json",
+                "status": "installed-and-launched",
+                "launchPending": False,
+            },
             "features": [base_feature],
         }
 
@@ -409,24 +742,6 @@ Annotated screenshot: https://evidence.example/annotated.png
             validate(body.replace("Annotated screenshot:", "Evidence:"))
         with self.assertRaises(SystemExit):
             validate(body.replace("https://evidence.example/annotated.png", ""))
-
-    def test_approval_list_carries_forward_installed_features_in_order(self):
-        items = stream.approval_list()
-        current = stream.manifest()["currentTestBuild"]["build"]
-        self.assertTrue(items)
-        self.assertEqual(
-            [item.get("order", 1_000_000) for item in items],
-            sorted(item.get("order", 1_000_000) for item in items),
-        )
-        self.assertTrue(all(item["testBuild"] <= current for item in items))
-        self.assertNotIn("dev-title-label", {item["id"] for item in items})
-        future_ids = {
-            item["id"]
-            for item in stream.catalog(False)
-            if item.get("state") in stream.APPROVAL_STATES
-            and item["testBuild"] > current
-        }
-        self.assertTrue(future_ids.isdisjoint(item["id"] for item in items))
 
     def test_fuzzy_match_prefers_command_palette(self):
         pending = (
@@ -800,6 +1115,45 @@ Annotated screenshot: https://evidence.example/annotated.png
 
 
 class WatcherTests(unittest.TestCase):
+    def test_process_channel_refreshes_a_receipt_without_the_resolved_device(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            ready = root / "test.json"
+            pointer = {
+                "schemaVersion": 1,
+                "channel": "test",
+                "build": 55,
+                "sequence": 55,
+                "commit": "c" * 40,
+                "bundleId": "test.bundle",
+                "appPath": str(root / "T3Code.app"),
+                "zipPath": str(root / "T3Code.app.zip"),
+                "sha256": "d" * 64,
+                "deviceId": "pointer-device",
+            }
+            ready.write_text(json.dumps(pointer))
+            receipts = root / "receipts"
+            receipts.mkdir()
+            previous = watcher.receipt(
+                pointer,
+                "resolved-device",
+                "installed-and-launched",
+                False,
+            )
+            del previous["deviceId"]
+            (receipts / "test.json").write_text(json.dumps(previous))
+            completed = subprocess.CompletedProcess([], 0, "", "")
+            with (
+                patch.object(watcher, "RECEIPTS", receipts),
+                patch.object(watcher, "valid_pointer", return_value=True),
+                patch.object(watcher, "installed_build", return_value=55),
+                patch.object(watcher, "run", return_value=completed) as run,
+            ):
+                watcher.process_channel(ready, {"deviceId": "resolved-device"})
+            self.assertTrue(any("launch" in call.args for call in run.call_args_list))
+            refreshed = json.loads((receipts / "test.json").read_text())
+            self.assertEqual(refreshed["deviceId"], "resolved-device")
+
     def test_valid_pointer_checks_bundle_and_build(self):
         with tempfile.TemporaryDirectory() as directory:
             app = Path(directory) / "T3Code.app"
