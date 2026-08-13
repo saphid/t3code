@@ -111,6 +111,7 @@ struct FeatureNewTaskPresentationCoordinator: Equatable, Sendable {
 
 public struct WorkspaceView: View {
     @SwiftUI.Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @SwiftUI.Environment(\.accessibilityReduceMotion) private var accessibilityReduceMotion
 
     @Bindable var model: FeatureRootModel
     private let navigationRequest: FeatureWorkspaceNavigationRequest?
@@ -143,6 +144,9 @@ public struct WorkspaceView: View {
     @AppStorage(BuildChangelogPrompt.lastOpenedBuildStorageKey)
     private var lastOpenedBuildIdentifier = ""
     @State private var showingCommandPalette = false
+    @State private var commandPaletteIsMounted = false
+    @State private var commandPaletteIsInteractive = false
+    @State private var commandPaletteDragDistance: CGFloat = 0
     @State private var renamingThread: FeatureThread?
     @State private var renameTitle = ""
     @State private var regeneratingThreadIDs: Set<String> = []
@@ -334,30 +338,56 @@ public struct WorkspaceView: View {
     }
 
     private var workspaceShell: some View {
-        ZStack(alignment: .top) {
-            NavigationSplitView(preferredCompactColumn: $preferredCompactColumn) {
-                sidebar
-                    .navigationSplitViewColumnWidth(
-                        min: T3Metrics.minimumSidebarWidth,
-                        ideal: T3Metrics.sidebarWidth,
-                        max: T3Metrics.maximumSidebarWidth
+        GeometryReader { proxy in
+            let panelHeight = FeatureCommandPaletteGesture.panelHeight(
+                availableHeight: proxy.size.height
+            )
+            let travel = FeatureCommandPaletteGesture.travel(
+                isPresented: showingCommandPalette,
+                dragDistance: commandPaletteDragDistance,
+                panelHeight: panelHeight
+            )
+            let revealProgress = FeatureCommandPaletteGesture.revealProgress(
+                travel: travel,
+                panelHeight: panelHeight
+            )
+
+            ZStack(alignment: .top) {
+                NavigationSplitView(preferredCompactColumn: $preferredCompactColumn) {
+                    sidebar
+                        .navigationSplitViewColumnWidth(
+                            min: T3Metrics.minimumSidebarWidth,
+                            ideal: T3Metrics.sidebarWidth,
+                            max: T3Metrics.maximumSidebarWidth
+                        )
+                } detail: {
+                    detail
+                }
+                .navigationSplitViewStyle(.balanced)
+                .offset(y: accessibilityReduceMotion ? 0 : travel)
+                .accessibilityHidden(showingCommandPalette)
+
+                if commandPaletteIsMounted {
+                    commandPaletteScrim
+                        .opacity(revealProgress)
+                        .allowsHitTesting(commandPaletteIsInteractive)
+                        .zIndex(1)
+
+                    commandPalettePanel(
+                        panelHeight: panelHeight,
+                        topInset: proxy.safeAreaInsets.top,
+                        revealedHeight: accessibilityReduceMotion ? panelHeight : travel,
+                        revealProgress: revealProgress
                     )
-            } detail: {
-                detail
-            }
-            .navigationSplitViewStyle(.balanced)
-            .accessibilityHidden(showingCommandPalette)
-
-            if showingCommandPalette {
-                commandPaletteScrim
-                    .transition(.opacity)
-                    .zIndex(1)
-
-                commandPalettePanel
-                    .transition(.move(edge: .top))
-                    .zIndex(1)
+                    .zIndex(2)
+                }
             }
         }
+        .sensoryFeedback(
+            .impact(weight: .light),
+            trigger: showingCommandPalette,
+            condition: { _, isPresented in isPresented }
+        )
     }
 
     private var sidebar: some View {
@@ -489,7 +519,9 @@ public struct WorkspaceView: View {
                 model: model,
                 thread: thread,
                 submitMessage: submitMessage,
-                onNavigateBack: closeSelectedThread
+                onNavigateBack: closeSelectedThread,
+                onCommandPaletteDragChanged: updateCommandPaletteDrag,
+                onCommandPaletteDragEnded: settleCommandPaletteDrag
             )
             .id(id)
         } else {
@@ -596,12 +628,10 @@ public struct WorkspaceView: View {
         .frame(height: 49)
         .background(T3Colors.background)
         .background {
-            FeatureCommandPaletteGestureInstaller {
-                isSearchFocused = false
-                withAnimation(.snappy(duration: 0.32)) {
-                    showingCommandPalette = true
-                }
-            }
+            FeatureCommandPaletteGestureInstaller(
+                onChanged: updateCommandPaletteDrag,
+                onEnded: settleCommandPaletteDrag
+            )
         }
     }
 
@@ -850,27 +880,35 @@ public struct WorkspaceView: View {
     }
 
     private var commandPaletteScrim: some View {
-        Color.black.opacity(0.32)
-            .ignoresSafeArea()
-            .contentShape(Rectangle())
-            .onTapGesture(perform: dismissCommandPalette)
-            .accessibilityHidden(true)
+        Button(action: dismissCommandPalette) {
+            Color.black.opacity(0.32)
+                .ignoresSafeArea()
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityHidden(true)
     }
 
-    private var commandPalettePanel: some View {
-        GeometryReader { proxy in
+    private func commandPalettePanel(
+        panelHeight: CGFloat,
+        topInset: CGFloat,
+        revealedHeight: CGFloat,
+        revealProgress: CGFloat
+    ) -> some View {
+        ZStack(alignment: .top) {
             ZStack(alignment: .top) {
                 T3Colors.background
                 FeatureCommandPaletteView(
                     model: model,
                     activeProjectID: commandPaletteActiveProjectID,
+                    isActive: commandPaletteIsInteractive,
                     onDismiss: dismissCommandPalette,
                     onSelect: handleCommandPaletteAction
                 )
-                .padding(.top, proxy.safeAreaInsets.top)
+                .padding(.top, topInset)
             }
             .frame(maxWidth: .infinity)
-            .frame(height: max(360, proxy.size.height * 0.72))
+            .frame(height: panelHeight)
             .clipShape(
                 UnevenRoundedRectangle(
                     bottomLeadingRadius: 20,
@@ -879,8 +917,14 @@ public struct WorkspaceView: View {
             )
             .shadow(color: .black.opacity(0.22), radius: 18, y: 8)
         }
+        .frame(maxWidth: .infinity)
+        .frame(height: revealedHeight, alignment: .top)
+        .clipped()
+        .opacity(accessibilityReduceMotion ? revealProgress : 1)
         .ignoresSafeArea(.container, edges: .top)
         .ignoresSafeArea(.keyboard, edges: .bottom)
+        .allowsHitTesting(commandPaletteIsInteractive)
+        .accessibilityHidden(!commandPaletteIsInteractive)
         .accessibilityIdentifier("command-palette-drawer")
         .accessibilityAddTraits(.isModal)
         .accessibilityAction(.escape) { dismissCommandPalette() }
@@ -1028,10 +1072,56 @@ public struct WorkspaceView: View {
         }
     }
 
-    private func dismissCommandPalette() {
-        withAnimation(.snappy(duration: 0.24)) {
-            showingCommandPalette = false
+    private func updateCommandPaletteDrag(_ distance: CGFloat) {
+        guard !showingCommandPalette else { return }
+        if distance > 0 {
+            commandPaletteIsMounted = true
         }
+        commandPaletteDragDistance = distance
+    }
+
+    private func settleCommandPaletteDrag(shouldPresent: Bool) {
+        if shouldPresent {
+            isSearchFocused = false
+            commandPaletteIsMounted = true
+            commandPaletteIsInteractive = false
+            withAnimation(commandPaletteSettleAnimation) {
+                showingCommandPalette = true
+                commandPaletteDragDistance = 0
+            } completion: {
+                guard showingCommandPalette, commandPaletteDragDistance == 0 else { return }
+                commandPaletteIsInteractive = true
+            }
+        } else {
+            commandPaletteIsInteractive = false
+            withAnimation(commandPaletteSettleAnimation) {
+                showingCommandPalette = false
+                commandPaletteDragDistance = 0
+            } completion: {
+                unmountCommandPaletteIfClosed()
+            }
+        }
+    }
+
+    private var commandPaletteSettleAnimation: Animation {
+        accessibilityReduceMotion
+            ? .easeOut(duration: 0.16)
+            : .spring(duration: 0.42, bounce: 0.08)
+    }
+
+    private func dismissCommandPalette() {
+        commandPaletteIsInteractive = false
+        withAnimation(commandPaletteSettleAnimation) {
+            showingCommandPalette = false
+            commandPaletteDragDistance = 0
+        } completion: {
+            unmountCommandPaletteIfClosed()
+        }
+    }
+
+    private func unmountCommandPaletteIfClosed() {
+        guard !showingCommandPalette, commandPaletteDragDistance == 0 else { return }
+        commandPaletteIsMounted = false
     }
 
     private func consumeNavigationRequest() {
@@ -1238,150 +1328,6 @@ public struct WorkspaceView: View {
             return project.name
         }
         return "\(project.name) · \(environment.name)"
-    }
-}
-
-private struct FeatureCommandPaletteGestureInstaller: UIViewRepresentable {
-    let onPresent: () -> Void
-
-    func makeUIView(context _: Context) -> InstallerView {
-        InstallerView(onPresent: onPresent)
-    }
-
-    func updateUIView(_ view: InstallerView, context _: Context) {
-        view.configure(onPresent: onPresent)
-    }
-
-    static func dismantleUIView(_ view: InstallerView, coordinator _: Void) {
-        view.uninstallGesture()
-    }
-
-    final class InstallerView: UIView {
-        private var onPresent: () -> Void
-        private weak var gestureHost: UIView?
-        private var panGesture: UIPanGestureRecognizer?
-        private var gestureDelegate: GestureDelegate?
-
-        init(onPresent: @escaping () -> Void) {
-            self.onPresent = onPresent
-            super.init(frame: .zero)
-            isUserInteractionEnabled = false
-        }
-
-        @available(*, unavailable)
-        required init?(coder _: NSCoder) {
-            fatalError("init(coder:) has not been implemented")
-        }
-
-        deinit {
-            uninstallGesture()
-        }
-
-        override func didMoveToWindow() {
-            super.didMoveToWindow()
-            installGestureIfPossible()
-        }
-
-        override func layoutSubviews() {
-            super.layoutSubviews()
-            installGestureIfPossible()
-        }
-
-        func configure(onPresent: @escaping () -> Void) {
-            self.onPresent = onPresent
-            installGestureIfPossible()
-        }
-
-        func uninstallGesture() {
-            if let panGesture, let gestureHost {
-                gestureHost.removeGestureRecognizer(panGesture)
-            }
-            panGesture = nil
-            gestureDelegate = nil
-            gestureHost = nil
-        }
-
-        private func installGestureIfPossible() {
-            guard let host = window?.rootViewController?.view else {
-                uninstallGesture()
-                return
-            }
-            guard gestureHost !== host else { return }
-
-            uninstallGesture()
-            let panGesture = UIPanGestureRecognizer(
-                target: self,
-                action: #selector(handlePan(_:))
-            )
-            let gestureDelegate = GestureDelegate(owner: self)
-            panGesture.delegate = gestureDelegate
-            panGesture.cancelsTouchesInView = false
-            panGesture.delaysTouchesBegan = false
-            panGesture.maximumNumberOfTouches = 1
-            host.addGestureRecognizer(panGesture)
-            gestureHost = host
-            self.panGesture = panGesture
-            self.gestureDelegate = gestureDelegate
-        }
-
-        @objc private func handlePan(_ gesture: UIPanGestureRecognizer) {
-            guard gesture.state == .ended, let gestureHost else { return }
-            let translation = gesture.translation(in: gestureHost)
-            guard FeatureCommandPaletteGesture.shouldPresent(
-                translation: CGSize(width: translation.x, height: translation.y)
-            ) else { return }
-            onPresent()
-        }
-
-        private func shouldReceive(_ touch: UITouch) -> Bool {
-            guard let gestureHost, let window, window === gestureHost.window else { return false }
-            let point = touch.location(in: gestureHost)
-            return FeatureCommandPaletteGesture.shouldReceive(
-                point: point,
-                surfaceFrame: convert(bounds, to: gestureHost),
-                hasPresentedViewController: Self.hasPresentedViewController(
-                    in: gestureHost.window?.rootViewController
-                )
-            )
-        }
-
-        private static func hasPresentedViewController(in controller: UIViewController?) -> Bool {
-            guard let controller else { return false }
-            if controller.presentedViewController != nil { return true }
-            return controller.children.contains { hasPresentedViewController(in: $0) }
-        }
-
-        private final class GestureDelegate: NSObject, UIGestureRecognizerDelegate {
-            private weak var owner: InstallerView?
-
-            init(owner: InstallerView) {
-                self.owner = owner
-            }
-
-            func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
-                guard let panGesture = gestureRecognizer as? UIPanGestureRecognizer else {
-                    return false
-                }
-                return FeatureCommandPaletteGesture.shouldBegin(
-                    velocity: panGesture.velocity(in: panGesture.view),
-                    translation: panGesture.translation(in: panGesture.view)
-                )
-            }
-
-            func gestureRecognizer(
-                _ gestureRecognizer: UIGestureRecognizer,
-                shouldReceive touch: UITouch
-            ) -> Bool {
-                owner?.shouldReceive(touch) == true
-            }
-
-            func gestureRecognizer(
-                _ gestureRecognizer: UIGestureRecognizer,
-                shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer
-            ) -> Bool {
-                otherGestureRecognizer.view is UIScrollView
-            }
-        }
     }
 }
 

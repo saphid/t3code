@@ -125,7 +125,7 @@ struct FeatureCommandPaletteTests {
         #expect(recent.count == FeatureCommandPaletteCatalog.recentThreadLimit)
         #expect(recent.first?.title == "Thread 13")
         #expect(recent.last?.title == "Thread 2")
-        #expect(!recent.contains { $0.title == "Archived" })
+        #expect(recent.contains { $0.title == "Archived" } == false)
     }
 
     @Test
@@ -159,90 +159,122 @@ struct FeatureCommandPaletteTests {
     }
 
     @Test
-    func swipeDownPresentsOnlyAfterEnoughVerticalTravel() {
+    func downwardDragTracksTheFingerAndRejectsSidewaysMotion() {
         #expect(
-            FeatureCommandPaletteGesture.shouldPresent(
-                translation: CGSize(width: 2, height: 90)
-            )
+            FeatureCommandPaletteGesture.dragDistance(
+                translation: CGSize(width: 8, height: 54)
+            ) == 54
         )
         #expect(
-            !FeatureCommandPaletteGesture.shouldPresent(
-                translation: CGSize(width: 0, height: 71)
-            )
+            FeatureCommandPaletteGesture.dragDistance(
+                translation: CGSize(width: 80, height: 20)
+            ) == 0
         )
         #expect(
-            FeatureCommandPaletteGesture.shouldPresent(
-                translation: CGSize(width: 0, height: 72)
-            )
-        )
-        #expect(
-            !FeatureCommandPaletteGesture.shouldPresent(
-                translation: CGSize(width: 80, height: 90)
-            )
-        )
-        #expect(
-            !FeatureCommandPaletteGesture.shouldPresent(
-                translation: CGSize(width: 0, height: -90)
-            )
+            FeatureCommandPaletteGesture.dragDistance(
+                translation: CGSize(width: 0, height: -30)
+            ) == 0
         )
     }
 
     @Test
-    func commandPalettePanReceivesOnlyTouchesInsideTheHomeHeader() {
+    func dragSettlesOpenAfterDistanceOrDeliberateFlick() {
+        #expect(
+            FeatureCommandPaletteGesture.shouldPresent(
+                translation: CGSize(width: 2, height: 96),
+                velocity: CGPoint(x: 0, y: 200)
+            )
+        )
+        #expect(
+            FeatureCommandPaletteGesture.shouldPresent(
+                translation: CGSize(width: 2, height: 30),
+                velocity: CGPoint(x: 20, y: 1_000)
+            )
+        )
+        #expect(
+            FeatureCommandPaletteGesture.shouldPresent(
+                translation: CGSize(width: 2, height: 23),
+                velocity: CGPoint(x: 0, y: 1_200)
+            ) == false
+        )
+        #expect(
+            FeatureCommandPaletteGesture.shouldPresent(
+                translation: CGSize(width: 90, height: 96),
+                velocity: CGPoint(x: 1_000, y: 100)
+            ) == false
+        )
+    }
+
+    @Test
+    func panReceivesTouchesOnlyFromTheTopBarWithoutAnotherPresentation() {
         let header = CGRect(x: 0, y: 59, width: 393, height: 49)
 
-        #expect(
-            FeatureCommandPaletteGesture.shouldReceive(
-                point: CGPoint(x: 180, y: 80),
-                surfaceFrame: header,
-                hasPresentedViewController: false
-            )
-        )
-        #expect(
-            FeatureCommandPaletteGesture.shouldReceive(
-                point: CGPoint(x: 180, y: 20),
-                surfaceFrame: header,
-                hasPresentedViewController: false
-            )
-        )
-        #expect(
-            !FeatureCommandPaletteGesture.shouldReceive(
-                point: CGPoint(x: 180, y: 300),
-                surfaceFrame: header,
-                hasPresentedViewController: false
-            )
-        )
-        #expect(
-            !FeatureCommandPaletteGesture.shouldReceive(
-                point: CGPoint(x: 180, y: 80),
-                surfaceFrame: header,
-                hasPresentedViewController: true
-            )
-        )
+        #expect(FeatureCommandPaletteGesture.shouldReceive(
+            point: CGPoint(x: 180, y: 80),
+            surfaceFrame: header,
+            hasPresentedViewController: false
+        ))
+        #expect(FeatureCommandPaletteGesture.shouldReceive(
+            point: CGPoint(x: 180, y: 20),
+            surfaceFrame: header,
+            hasPresentedViewController: false
+        ))
+        #expect(FeatureCommandPaletteGesture.shouldReceive(
+            point: CGPoint(x: 180, y: 180),
+            surfaceFrame: header,
+            hasPresentedViewController: false
+        ) == false)
+        #expect(FeatureCommandPaletteGesture.shouldReceive(
+            point: CGPoint(x: 180, y: 80),
+            surfaceFrame: header,
+            hasPresentedViewController: true
+        ) == false)
     }
 
     @Test
-    func commandPalettePanBeginsOnlyOnDownwardIntent() {
-        #expect(
-            FeatureCommandPaletteGesture.shouldBegin(
-                velocity: CGPoint(x: 8, y: 120)
-            )
+    func compactThreadTitleExpandsItsGestureSurfaceAcrossTheTopBar() {
+        let title = CGRect(x: 92, y: 58, width: 210, height: 46)
+        let compactTopBar = FeatureCommandPaletteGesture.captureSurfaceFrame(
+            surfaceFrame: title,
+            hostWidth: 393,
+            capturesFullWidth: true
         )
-        #expect(
-            !FeatureCommandPaletteGesture.shouldBegin(
-                velocity: CGPoint(x: 8, y: -120)
-            )
-        )
-        #expect(
-            !FeatureCommandPaletteGesture.shouldBegin(
-                velocity: CGPoint(x: 120, y: 8)
-            )
-        )
-        #expect(
-            FeatureCommandPaletteGesture.shouldBegin(
-                velocity: .zero,
-                translation: CGPoint(x: 2, y: 20)
-            )
-        )
+
+        #expect(compactTopBar == CGRect(x: 0, y: 58, width: 393, height: 46))
+        #expect(FeatureCommandPaletteGesture.shouldReceive(
+            point: CGPoint(x: 24, y: 82),
+            surfaceFrame: compactTopBar,
+            hasPresentedViewController: false
+        ))
+        #expect(FeatureCommandPaletteGesture.shouldReceive(
+            point: CGPoint(x: 24, y: 180),
+            surfaceFrame: compactTopBar,
+            hasPresentedViewController: false
+        ) == false)
+        #expect(FeatureCommandPaletteGesture.captureSurfaceFrame(
+            surfaceFrame: title,
+            hostWidth: 393,
+            capturesFullWidth: false
+        ) == title)
+    }
+
+    @Test
+    func paletteAndWorkspaceRemainAttachedAcrossTheDrag() {
+        let panelHeight = FeatureCommandPaletteGesture.panelHeight(availableHeight: 800)
+        #expect(panelHeight == 576)
+        #expect(FeatureCommandPaletteGesture.travel(
+            isPresented: false,
+            dragDistance: 132,
+            panelHeight: panelHeight
+        ) == 132)
+        #expect(FeatureCommandPaletteGesture.travel(
+            isPresented: true,
+            dragDistance: 0,
+            panelHeight: panelHeight
+        ) == panelHeight)
+        #expect(FeatureCommandPaletteGesture.revealProgress(
+            travel: 144,
+            panelHeight: panelHeight
+        ) == 0.25)
     }
 }
