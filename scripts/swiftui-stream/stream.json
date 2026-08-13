@@ -85,11 +85,15 @@
     {
       "id": "command-palette-top-drawer",
       "name": "Command palette top drawer",
-      "aliases": ["command palette", "swipe-down command palette"],
-      "state": "needs-you",
-      "sourceCommit": "ed91d0cb",
-      "testBuild": 41,
-      "order": 4
+      "aliases": ["command palette", "swipe-down command palette", "physical command palette drag"],
+      "summary": "Makes the top bar and workspace track the finger as one physical surface while the command palette is pulled into view, then settle open or closed with spring motion.",
+      "whatToCheck": "Drag down from the home top bar slowly and release both below and above the threshold. Try a short deliberate flick, horizontal swipes, normal list scrolling, dismissal, and opening while the keyboard is visible.",
+      "successLooksLike": "The top bar stays under the finger, the page and palette remain visually attached throughout the pull, release settles naturally without a jump, and ordinary scrolling or horizontal gestures do not open the palette.",
+      "state": "developing",
+      "sourceBranch": "fix/swiftui-physical-command-palette-drag-20260813",
+      "sourceCommit": "4764e6bf5",
+      "sourceThread": "9DD22B40-3832-4FE7-B482-69D9C7BEDE0A",
+      "sourceThreadTitle": "Fix Command Palette Top Drawer"
     },
     {
       "id": "development-build-source-thread",
