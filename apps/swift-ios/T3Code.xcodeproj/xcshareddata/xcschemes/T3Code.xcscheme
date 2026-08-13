@@ -35,6 +35,20 @@
                ReferencedContainer = "container:T3Code.xcodeproj">
             </BuildableReference>
          </BuildActionEntry>
+         <BuildActionEntry
+            buildForTesting = "YES"
+            buildForRunning = "NO"
+            buildForProfiling = "NO"
+            buildForArchiving = "NO"
+            buildForAnalyzing = "NO">
+            <BuildableReference
+               BuildableIdentifier = "primary"
+               BlueprintIdentifier = "A50000000000000000000003"
+               BuildableName = "T3CodeUITests.xctest"
+               BlueprintName = "T3CodeUITests"
+               ReferencedContainer = "container:T3Code.xcodeproj">
+            </BuildableReference>
+         </BuildActionEntry>
       </BuildActionEntries>
    </BuildAction>
    <TestAction
@@ -49,6 +63,15 @@
                BlueprintIdentifier = "A50000000000000000000002"
                BuildableName = "T3CodeTests.xctest"
                BlueprintName = "T3CodeTests"
+               ReferencedContainer = "container:T3Code.xcodeproj">
+            </BuildableReference>
+         </TestableReference>
+         <TestableReference skipped = "NO" parallelizable = "NO">
+            <BuildableReference
+               BuildableIdentifier = "primary"
+               BlueprintIdentifier = "A50000000000000000000003"
+               BuildableName = "T3CodeUITests.xctest"
+               BlueprintName = "T3CodeUITests"
                ReferencedContainer = "container:T3Code.xcodeproj">
             </BuildableReference>
          </TestableReference>

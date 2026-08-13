@@ -1,0 +1,526 @@
+import XCTest
+
+@MainActor
+final class AppFlowUITests: XCTestCase {
+    private static var testedApplicationIsRegistered = false
+    private var app: XCUIApplication!
+
+    override func setUp() {
+        super.setUp()
+        continueAfterFailure = false
+    }
+
+    func testDirectConnectionOnboardingHappyPath() {
+        launch(scenario: "onboarding")
+
+        assertExists("Enter details manually").tap()
+        let serverAddress = assertExists("Server address")
+        let pairingCode = assertExists("Pairing code")
+        serverAddress.tap()
+        serverAddress.typeText("http://127.0.0.1:3773")
+        pairingCode.tap()
+        pairingCode.typeText("fixture-code")
+
+        XCTAssertTrue(assertExists("Connect").isEnabled)
+        capture("onboarding-manual-connection")
+    }
+
+    func testWorkspaceNavigationAndMenus() {
+        launch()
+
+        let primaryThread = assertIdentifier("thread-fixture-main")
+        capture("workspace-home")
+
+        assertIdentifier("sidebar-search-button").tap()
+        let search = assertIdentifier("sidebar-search-field")
+        search.typeText("regression")
+        XCTAssertTrue(primaryThread.exists)
+        capture("workspace-search")
+        assertIdentifier("sidebar-search-button").tap()
+
+        assertIdentifier("sidebar-project-filter").tap()
+        assertExists("All projects")
+        assertExists("T3 Code").tap()
+
+        assertIdentifier("sidebar-settings-button").tap()
+        assertExists("Settings")
+        assertExists("Connections")
+        assertExists("Usage")
+        assertHittableButton(labelStartsWith: "Theme,").tap()
+        assertExists("System")
+        assertExists("Light")
+        assertExists("Dark")
+        capture("settings-theme-menu")
+        assertHittableButton("System").tap()
+
+        assertHittableButton(labelStartsWith: "Connections,").tap()
+        assertIdentifier("connections-add-button")
+        capture("settings-connections")
+    }
+
+    func testNewTaskComposerMenus() {
+        exerciseNewTaskComposerMenus()
+    }
+
+    func testSettingsSecondarySurfaces() {
+        launch()
+        assertIdentifier("sidebar-settings-button").tap()
+        assertExists("Haptics")
+        assertExists("Notifications")
+        assertExists("Live Activities")
+
+        assertHittableButton(labelStartsWith: "Usage").tap()
+        assertExists("Usage")
+        assertExists("7 days")
+        assertExists("30 days")
+        assertExists("90 days")
+        capture("settings-usage")
+    }
+
+    func testCreateTaskAndSendFollowUpHappyPath() {
+        launch()
+        assertIdentifier("sidebar-new-task-button").tap()
+
+        let initialMessage = "Verify the native happy path"
+        let newTaskComposer = assertIdentifier("message-composer")
+        replaceText(in: newTaskComposer, with: initialMessage)
+        assertIdentifier("message-send").tap()
+
+        assertIdentifier("message-fixture-message-1")
+        assertMessageCount(1)
+        assertSingleMessageText(initialMessage)
+        capture("created-task-detail")
+
+        let followUp = "Confirm the follow-up path"
+        if !app.descendants(matching: .any)["message-composer"].firstMatch.exists {
+            assertHittableButton("Message agent").tap()
+        }
+        let followUpComposer = assertIdentifier("message-composer")
+        followUpComposer.tap()
+        if !app.keyboards.firstMatch.waitForExistence(timeout: 2) {
+            followUpComposer.tap()
+        }
+        XCTAssertTrue(
+            app.keyboards.firstMatch.waitForExistence(timeout: 2),
+            "Thread composer did not accept keyboard focus"
+        )
+        replaceText(in: followUpComposer, with: followUp)
+        assertIdentifier("message-send").tap()
+        assertMessageCount(2)
+        assertSingleMessageText(followUp)
+        capture("sent-follow-up")
+    }
+
+    private func exerciseNewTaskComposerMenus() {
+        launch()
+        assertIdentifier("sidebar-new-task-button").tap()
+
+        let workspaceMenu = assertHittableButton("Current checkout")
+        workspaceMenu.tap()
+        assertExists("New worktree")
+        capture("new-task-workspace-menu")
+        assertHittableButton("New worktree").tap()
+        assertExists("Base branch")
+        assertExists("Latest origin")
+        assertHittableButton("Base branch").tap()
+        assertExists("main")
+        assertExists("personal/swiftui-feature/app-flow-regression-tests")
+        capture("new-task-base-branch-picker")
+        assertHittableButton("Cancel").tap()
+        assertHittableButton("New worktree").tap()
+        assertHittableButton("Current checkout").tap()
+
+        tapAndAssertResponse(
+            assertExists("Choose model"),
+            destination: "Search models"
+        )
+        assertExists("GPT-5.6 Sol")
+        capture("new-task-model-picker")
+        assertHittableButton("Cancel").tap()
+
+        assertHittableButton("Choose reasoning level").tap()
+        assertExists("Medium")
+        assertExists("High")
+        capture("new-task-reasoning-menu")
+        assertHittableButton("High").tap()
+
+        assertIdentifier("image-attachment-picker").tap()
+        assertExists("Photo Library")
+        assertExists("Files")
+        capture("new-task-attachment-menu")
+        assertExists("What should we build").tap()
+        XCTAssertTrue(
+            app.buttons["Photo Library"].waitForNonExistence(timeout: 4),
+            "Attachment menu did not dismiss after tapping outside it"
+        )
+    }
+
+    func testProjectAndConnectionEntryPoints() {
+        launch()
+
+        tapAndAssertResponse(
+            assertIdentifier("sidebar-add-project-button"),
+            destination: "Add project"
+        )
+        assertExists("Folder")
+        assertExists("Clone")
+        capture("add-project-entry")
+        assertHittableButton("Cancel").tap()
+
+        assertIdentifier("sidebar-settings-button").tap()
+        assertHittableButton(labelStartsWith: "Connections,").tap()
+        assertHittableButton(labelStartsWith: "Fixture Mac,").tap()
+        XCTAssertTrue(app.navigationBars["Fixture Mac"].waitForExistence(timeout: 4))
+        assertExists("Remove connection")
+        capture("connection-detail")
+        assertHittableButton("Done").tap()
+
+        assertHittableButton("Devices and sessions").tap()
+        assertExists("Devices")
+        assertExists("No devices found")
+        capture("settings-devices")
+        assertHittableButton("Done").tap()
+
+        tapAndAssertResponse(
+            assertIdentifier("connections-add-button"),
+            destination: "Enter details manually"
+        )
+        assertExists("Scan QR code")
+        assertExists("Paste connection link")
+        capture("add-connection-entry")
+    }
+
+    func testThreadContextMenuInventory() {
+        launch()
+
+        let thread = assertIdentifier("thread-fixture-main")
+        thread.press(forDuration: 1)
+
+        let expectedItems = [
+            "New thread on personal/swiftui-feature/app-flow-regression-tests",
+            "Pin thread",
+            "Settle thread",
+            "Snooze",
+            "Rename thread",
+            "Regenerate title",
+            "Archive",
+            "Copy path",
+            "Copy branch",
+            "Copy Thread ID",
+            "Delete",
+        ]
+        for item in expectedItems {
+            assertExists(item)
+        }
+        capture("thread-context-menu")
+
+        assertExists("Snooze").tap()
+        XCTAssertTrue(
+            app.buttons.matching(
+                NSPredicate(format: "label BEGINSWITH %@", "In 1 hour")
+            ).firstMatch.waitForExistence(timeout: 4)
+        )
+        capture("thread-snooze-menu")
+    }
+
+    func testThreadWorkspaceToolSurfaces() {
+        verifyToolSurface(menuItem: "Files", title: "Files", evidence: "thread-files")
+        verifyToolSurface(menuItem: "Review changes", title: "Review", evidence: "thread-review")
+        verifyToolSurface(
+            menuItem: "Source Control",
+            title: "Source Control",
+            evidence: "thread-source-control"
+        )
+        verifyToolSurface(menuItem: "Terminal", title: "Terminal", evidence: "thread-terminal")
+    }
+
+    func testKnownIssueThreadToolSheetHasExplicitDoneControl() throws {
+        guard ProcessInfo.processInfo.environment["T3_APP_FLOW_RUN_KNOWN_FAILURES"] == "1" else {
+            throw XCTSkip("Tracked product defect: https://github.com/saphid/t3code-personal/issues/60")
+        }
+
+        launch()
+        assertIdentifier("thread-fixture-main").tap()
+        assertExists("Thread actions").tap()
+        assertExists("Files").tap()
+        assertExists("Files")
+        assertExists("Done")
+    }
+
+    func testKnownIssueAddConnectionSheetHasExplicitCloseControl() throws {
+        guard ProcessInfo.processInfo.environment["T3_APP_FLOW_RUN_KNOWN_FAILURES"] == "1" else {
+            throw XCTSkip("Tracked product defect: https://github.com/saphid/t3code-personal/issues/61")
+        }
+
+        launch()
+        assertIdentifier("sidebar-settings-button").tap()
+        assertHittableButton(labelStartsWith: "Connections,").tap()
+        assertIdentifier("connections-add-button").tap()
+        assertExists("Enter details manually")
+        assertExists("Close")
+    }
+
+    func testKnownIssueNewTaskCancelDismissesComposer() throws {
+        guard ProcessInfo.processInfo.environment["T3_APP_FLOW_RUN_KNOWN_FAILURES"] == "1" else {
+            throw XCTSkip("Tracked product defect: https://github.com/saphid/t3code-personal/issues/62")
+        }
+
+        exerciseNewTaskComposerMenus()
+        let composerTitle = assertExists("What should we build")
+        assertHittableButton("Cancel").tap()
+        XCTAssertTrue(
+            composerTitle.waitForNonExistence(timeout: 4),
+            "New Task did not dismiss after tapping its visible Cancel button"
+        )
+    }
+
+    private func launch(scenario: String = "workspace") {
+        if !Self.testedApplicationIsRegistered {
+            // XCUITest can report PID 0 for an app left running by an earlier
+            // interactive session. Register and terminate that process before
+            // the first journey so its fixture arguments are not ignored.
+            let preflight = XCUIApplication()
+            preflight.launchArguments = fixtureLaunchArguments(scenario: "workspace")
+            preflight.launchEnvironment["T3_APP_FLOW_FIXTURE_SCENARIO"] = "workspace"
+            preflight.launch()
+            preflight.terminate()
+            Self.testedApplicationIsRegistered = true
+        }
+
+        app = XCUIApplication()
+        app.terminate()
+        app.launchEnvironment["T3_APP_FLOW_FIXTURE_SCENARIO"] = scenario
+        app.launchArguments = fixtureLaunchArguments(scenario: scenario)
+        app.launch()
+    }
+
+    private func fixtureLaunchArguments(scenario: String) -> [String] {
+        [
+            "-app-flow-fixture",
+            "-app-flow-scenario",
+            scenario,
+            "-ApplePersistenceIgnoreState",
+            "YES",
+        ]
+    }
+
+    @discardableResult
+    private func assertIdentifier(
+        _ identifier: String,
+        timeout: TimeInterval = 8,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) -> XCUIElement {
+        let element = app.descendants(matching: .any)[identifier].firstMatch
+        XCTAssertTrue(
+            element.waitForExistence(timeout: timeout),
+            "Missing accessibility identifier: \(identifier)",
+            file: file,
+            line: line
+        )
+        return element
+    }
+
+    @discardableResult
+    private func assertExists(
+        _ label: String,
+        timeout: TimeInterval = 8,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) -> XCUIElement {
+        let element = app.descendants(matching: .any)[label].firstMatch
+        XCTAssertTrue(
+            element.waitForExistence(timeout: timeout),
+            "Missing accessible label: \(label)",
+            file: file,
+            line: line
+        )
+        return element
+    }
+
+    @discardableResult
+    private func assertHittableButton(
+        _ label: String,
+        timeout: TimeInterval = 8,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) -> XCUIElement {
+        let deadline = Date().addingTimeInterval(timeout)
+        let buttons = app.buttons.matching(NSPredicate(format: "label == %@", label))
+
+        repeat {
+            for index in 0 ..< buttons.count {
+                let button = buttons.element(boundBy: index)
+                if button.exists, button.isHittable {
+                    return button
+                }
+            }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+        } while Date() < deadline
+
+        XCTFail("Missing hittable button: \(label)", file: file, line: line)
+        return buttons.firstMatch
+    }
+
+    @discardableResult
+    private func assertHittableButton(
+        labelStartsWith prefix: String,
+        timeout: TimeInterval = 8,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) -> XCUIElement {
+        let deadline = Date().addingTimeInterval(timeout)
+        let buttons = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", prefix))
+
+        repeat {
+            for index in 0 ..< buttons.count {
+                let button = buttons.element(boundBy: index)
+                if button.exists, button.isHittable {
+                    return button
+                }
+            }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+        } while Date() < deadline
+
+        XCTFail("Missing hittable button beginning with: \(prefix)", file: file, line: line)
+        return buttons.firstMatch
+    }
+
+    private func verifyToolSurface(menuItem: String, title: String, evidence: String) {
+        launch()
+        assertIdentifier("thread-fixture-main").tap()
+        assertIdentifier("message-fixture-user")
+        if menuItem == "Files" {
+            capture("thread-detail")
+        }
+        assertExists("Thread actions").tap()
+        assertExists("Pin")
+        assertExists("Reload")
+        assertExists("Archive")
+        assertExists(menuItem).tap()
+        assertExists(title)
+
+        switch menuItem {
+        case "Files":
+            assertExists("Sources")
+            assertExists("README.md")
+            assertHittableButton("File browser options").tap()
+            assertExists("Show hidden files")
+            assertExists("Reload")
+        case "Review changes":
+            assertExists("Working tree")
+            assertExists("AppFlowFixtureClient.swift")
+        case "Source Control":
+            assertExists("Commit changes")
+            assertExists("Commit and push")
+            assertExists("Commit, push, and create PR")
+            assertExists("Push")
+            assertExists("Create pull request")
+        case "Terminal":
+            assertHittableButton("Terminal options").tap()
+            assertExists("Open new terminal")
+            assertExists("Clear")
+            assertExists("Stop terminal")
+            XCTAssertTrue(
+                app.buttons.matching(
+                    NSPredicate(format: "label BEGINSWITH %@", "Text size ·")
+                ).firstMatch.waitForExistence(timeout: 4)
+            )
+        default:
+            XCTFail("Unhandled tool surface: \(menuItem)")
+        }
+        capture(evidence)
+    }
+
+    private func tapAndAssertResponse(
+        _ element: XCUIElement,
+        destination label: String,
+        maximumLatency: TimeInterval = 3,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
+        let startedAt = Date()
+        element.tap()
+        let destination = app.descendants(matching: .any)[label].firstMatch
+        XCTAssertTrue(
+            destination.waitForExistence(timeout: maximumLatency),
+            "\(label) did not appear within \(maximumLatency) seconds",
+            file: file,
+            line: line
+        )
+        XCTAssertLessThanOrEqual(
+            Date().timeIntervalSince(startedAt),
+            maximumLatency,
+            "\(label) responded too slowly",
+            file: file,
+            line: line
+        )
+    }
+
+    private func replaceText(in element: XCUIElement, with text: String) {
+        element.tap()
+        XCTAssertTrue(
+            app.keyboards.firstMatch.waitForExistence(timeout: 2),
+            "Text input did not accept keyboard focus"
+        )
+        if let value = element.value as? String,
+           !value.isEmpty,
+           value != "Ask anything…" {
+            XCTFail("Fixture composer opened with a stale draft: \(value)")
+            return
+        }
+        element.typeText(text)
+    }
+
+    private func assertMessageCount(
+        _ expectedCount: Int,
+        timeout: TimeInterval = 4,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
+        let matches = app.cells.matching(
+            NSPredicate(format: "identifier BEGINSWITH %@", "message-cell-")
+        )
+        let deadline = Date().addingTimeInterval(timeout)
+        repeat {
+            if matches.count == expectedCount {
+                RunLoop.current.run(until: Date().addingTimeInterval(0.5))
+                if matches.count == expectedCount { return }
+            }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+        } while Date() < deadline
+
+        XCTFail(
+            "Expected \(expectedCount) rendered fixture messages but found \(matches.count)",
+            file: file,
+            line: line
+        )
+    }
+
+    private func assertSingleMessageText(
+        _ text: String,
+        timeout: TimeInterval = 4,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
+        let matches = app.staticTexts.matching(NSPredicate(format: "value == %@", text))
+        let deadline = Date().addingTimeInterval(timeout)
+        repeat {
+            if matches.count == 1 { return }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+        } while Date() < deadline
+
+        XCTFail(
+            "Expected one rendered message with exact text but found \(matches.count): \(text)",
+            file: file,
+            line: line
+        )
+    }
+
+    private func capture(_ name: String) {
+        let attachment = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+        attachment.name = name
+        attachment.lifetime = .keepAlways
+        add(attachment)
+    }
+}

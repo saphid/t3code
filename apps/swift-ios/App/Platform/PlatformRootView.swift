@@ -3,6 +3,7 @@ import SwiftUI
 struct PlatformRootView: View {
     @SwiftUI.Environment(\.scenePhase) private var scenePhase
     @Bindable private var model: FeatureRootModel
+    private let draftStore: FeatureComposerDraftStore
 
     @State private var navigationRequest: FeatureWorkspaceNavigationRequest?
     @State private var pendingRoute: PlatformRoute?
@@ -14,8 +15,12 @@ struct PlatformRootView: View {
     @State private var stagedIncomingShareID: String?
     @State private var recentThreadsPersistenceTask: Task<Void, Never>?
 
-    init(model: FeatureRootModel) {
+    init(
+        model: FeatureRootModel,
+        draftStore: FeatureComposerDraftStore = .shared
+    ) {
         self.model = model
+        self.draftStore = draftStore
     }
 
     var body: some View {
@@ -33,7 +38,8 @@ struct PlatformRootView: View {
                 if stagedIncomingShareID?.caseInsensitiveCompare(shareID) == .orderedSame {
                     stagedIncomingShareID = nil
                 }
-            }
+            },
+            draftStore: draftStore
         )
         .onOpenURL { url in
             handle(url: url, letOnboardingConfirmConnection: true)

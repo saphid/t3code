@@ -88,6 +88,11 @@
 			path = Tests;
 			sourceTree = "<group>";
 		};
+		A10000000000000000000007 /* UITests */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = UITests;
+			sourceTree = "<group>";
+		};
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -102,6 +107,13 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 		A20000000000000000000002 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		A20000000000000000000003 /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -126,6 +138,13 @@
 
 /* Begin PBXContainerItemProxy section */
 		AC0000000000000000000001 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = A90000000000000000000001 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = A50000000000000000000001;
+			remoteInfo = T3Code;
+		};
+		AC0000000000000000000002 /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
 			containerPortal = A90000000000000000000001 /* Project object */;
 			proxyType = 1;
@@ -158,6 +177,7 @@
 				A10000000000000000000004 /* DesignSystem */,
 				A10000000000000000000005 /* Resources */,
 				A10000000000000000000006 /* Tests */,
+				A10000000000000000000007 /* UITests */,
 				C30000000000000000000001 /* Extensions */,
 				D40000000000000000000001 /* GhosttyKit.xcframework */,
 				A30000000000000000000002 /* Products */,
@@ -169,6 +189,7 @@
 			children = (
 				A40000000000000000000001 /* T3 Code.app */,
 				A40000000000000000000002 /* T3CodeTests.xctest */,
+				A40000000000000000000003 /* T3CodeUITests.xctest */,
 				C4000000000000000000000F /* T3CodeWidgets.appex */,
 				C40000000000000000000010 /* T3CodeShare.appex */,
 			);
@@ -286,6 +307,29 @@
 			productReference = A40000000000000000000002 /* T3CodeTests.xctest */;
 			productType = "com.apple.product-type.bundle.unit-test";
 		};
+		A50000000000000000000003 /* T3CodeUITests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = A60000000000000000000004 /* Build configuration list for PBXNativeTarget "T3CodeUITests" */;
+			buildPhases = (
+				A70000000000000000000003 /* Sources */,
+				A20000000000000000000003 /* Frameworks */,
+				A80000000000000000000003 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				AD0000000000000000000002 /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				A10000000000000000000007 /* UITests */,
+			);
+			name = T3CodeUITests;
+			packageProductDependencies = (
+			);
+			productName = T3CodeUITests;
+			productReference = A40000000000000000000003 /* T3CodeUITests.xctest */;
+			productType = "com.apple.product-type.bundle.ui-testing";
+		};
 		C50000000000000000000003 /* T3CodeWidgets */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = C60000000000000000000004 /* Build configuration list for PBXNativeTarget "T3CodeWidgets" */;
@@ -355,6 +399,10 @@
 						CreatedOnToolsVersion = 16.0;
 						TestTargetID = A50000000000000000000001;
 					};
+					A50000000000000000000003 = {
+						CreatedOnToolsVersion = 16.0;
+						TestTargetID = A50000000000000000000001;
+					};
 					C50000000000000000000003 = {
 						CreatedOnToolsVersion = 16.0;
 						SystemCapabilities = {
@@ -393,6 +441,7 @@
 			targets = (
 				A50000000000000000000001 /* T3Code */,
 				A50000000000000000000002 /* T3CodeTests */,
+				A50000000000000000000003 /* T3CodeUITests */,
 				C50000000000000000000003 /* T3CodeWidgets */,
 				C50000000000000000000004 /* T3CodeShare */,
 			);
@@ -408,6 +457,13 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 		A80000000000000000000002 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		A80000000000000000000003 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -450,6 +506,13 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		A70000000000000000000003 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		C70000000000000000000003 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -481,6 +544,11 @@
 			isa = PBXTargetDependency;
 			target = A50000000000000000000001 /* T3Code */;
 			targetProxy = AC0000000000000000000001 /* PBXContainerItemProxy */;
+		};
+		AD0000000000000000000002 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = A50000000000000000000001 /* T3Code */;
+			targetProxy = AC0000000000000000000002 /* PBXContainerItemProxy */;
 		};
 		CD0000000000000000000002 /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
@@ -757,6 +825,16 @@
 				TARGETED_DEVICE_FAMILY = "1,2";
 				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/T3Code.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/T3Code";
 			};
+			name = Release;
+		};
+		AB0000000000000000000007 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = { CODE_SIGN_STYLE = Automatic; GENERATE_INFOPLIST_FILE = YES; IPHONEOS_DEPLOYMENT_TARGET = 17.0; PRODUCT_BUNDLE_IDENTIFIER = com.t3tools.t3code.swiftui.uitests; PRODUCT_NAME = "$(TARGET_NAME)"; SDKROOT = iphoneos; SUPPORTED_PLATFORMS = "iphoneos iphonesimulator"; SWIFT_VERSION = 5.0; TARGETED_DEVICE_FAMILY = "1,2"; TEST_TARGET_NAME = T3Code; };
+			name = Debug;
+		};
+		AB0000000000000000000008 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = { CODE_SIGN_STYLE = Automatic; GENERATE_INFOPLIST_FILE = YES; IPHONEOS_DEPLOYMENT_TARGET = 17.0; PRODUCT_BUNDLE_IDENTIFIER = com.t3tools.t3code.swiftui.uitests; PRODUCT_NAME = "$(TARGET_NAME)"; SDKROOT = iphoneos; SUPPORTED_PLATFORMS = "iphoneos iphonesimulator"; SWIFT_VERSION = 5.0; TARGETED_DEVICE_FAMILY = "1,2"; TEST_TARGET_NAME = T3Code; };
 			name = Release;
 		};
 		CB0000000000000000000007 /* Debug */ = {
@@ -1123,6 +1201,16 @@
 			buildSettings = { APPLICATION_EXTENSION_API_ONLY = YES; CODE_SIGN_ENTITLEMENTS = Extensions/Shared/T3CodeDev.entitlements; CODE_SIGN_STYLE = Automatic; CURRENT_PROJECT_VERSION = 1; GENERATE_INFOPLIST_FILE = YES; INFOPLIST_FILE = Extensions/Share/Info.plist; INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO; IPHONEOS_DEPLOYMENT_TARGET = 17.0; LD_RUNPATH_SEARCH_PATHS = ("$(inherited)", "@executable_path/Frameworks", "@executable_path/../../Frameworks", ); MARKETING_VERSION = 0.1.0; PRODUCT_BUNDLE_IDENTIFIER = com.alxs.t3code.typed-swiftui.dev.sharing; PRODUCT_NAME = "$(TARGET_NAME)"; SDKROOT = iphoneos; SKIP_INSTALL = YES; SUPPORTED_PLATFORMS = "iphoneos iphonesimulator"; SUPPORTS_MACCATALYST = NO; SWIFT_EMIT_LOC_STRINGS = YES; SWIFT_VERSION = 5.0; T3CODE_APP_GROUP_IDENTIFIER = group.com.alxs.t3code.typed-swiftui.dev; T3CODE_SHARE_DISPLAY_NAME = "SwiftUI Test"; T3CODE_URL_SCHEME = t3code-swiftui-personal; TARGETED_DEVICE_FAMILY = "1,2"; };
 			name = Test;
 		};
+		DB000000000000000000000B /* Dev */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = { CODE_SIGN_STYLE = Automatic; GENERATE_INFOPLIST_FILE = YES; IPHONEOS_DEPLOYMENT_TARGET = 17.0; PRODUCT_BUNDLE_IDENTIFIER = com.saphid.t3code.swiftui.dev.uitests; PRODUCT_NAME = "$(TARGET_NAME)"; SDKROOT = iphoneos; SUPPORTED_PLATFORMS = "iphoneos iphonesimulator"; SWIFT_VERSION = 5.0; TARGETED_DEVICE_FAMILY = "1,2"; TEST_TARGET_NAME = T3Code; };
+			name = Dev;
+		};
+		DB000000000000000000000C /* Test */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = { CODE_SIGN_STYLE = Automatic; GENERATE_INFOPLIST_FILE = YES; IPHONEOS_DEPLOYMENT_TARGET = 17.0; PRODUCT_BUNDLE_IDENTIFIER = com.alxs.t3code.typed-swiftui.dev.uitests; PRODUCT_NAME = "$(TARGET_NAME)"; SDKROOT = iphoneos; SUPPORTED_PLATFORMS = "iphoneos iphonesimulator"; SWIFT_VERSION = 5.0; TARGETED_DEVICE_FAMILY = "1,2"; TEST_TARGET_NAME = T3Code; };
+			name = Test;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -1155,6 +1243,17 @@
 				DB0000000000000000000005 /* Dev */,
 				DB0000000000000000000006 /* Test */,
 				AB0000000000000000000006 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		A60000000000000000000004 /* Build configuration list for PBXNativeTarget "T3CodeUITests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				AB0000000000000000000007 /* Debug */,
+				DB000000000000000000000B /* Dev */,
+				DB000000000000000000000C /* Test */,
+				AB0000000000000000000008 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
@@ -1220,6 +1319,13 @@
 			explicitFileType = wrapper.cfbundle;
 			includeInIndex = 0;
 			path = T3CodeTests.xctest;
+			sourceTree = BUILT_PRODUCTS_DIR;
+		};
+		A40000000000000000000003 /* T3CodeUITests.xctest */ = {
+			isa = PBXFileReference;
+			explicitFileType = wrapper.cfbundle;
+			includeInIndex = 0;
+			path = T3CodeUITests.xctest;
 			sourceTree = BUILT_PRODUCTS_DIR;
 		};
 		C40000000000000000000001 /* AgentActivityAttributes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentActivityAttributes.swift; sourceTree = "<group>"; };

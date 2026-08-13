@@ -30,6 +30,8 @@ the active selection are stored separately in Application Support.
 - `DesignSystem` contains the small set of shared visual tokens.
 - `Resources` contains the asset catalog.
 - `Tests` covers pairing, wire contracts, persistence, and feature state changes.
+- `UITests` drives deterministic app-flow and menu journeys through the production
+  SwiftUI hierarchy and retains screenshots in the result bundle.
 
 `RootView` deliberately accepts any SwiftUI content. Production composition injects
 `FeatureRootView(client:)` there, keeping protocol adapters out of the UI shell.
@@ -83,12 +85,12 @@ The upstream configurations remain available. Alex's personal workflow adds
 separate Dev and Test schemes so both personal builds can remain installed
 beside each other and beside TestFlight:
 
-| Scheme / configuration | Display name    | Bundle identifier                    | URL scheme             |
-| ---------------------- | --------------- | ------------------------------------ | ---------------------- |
-| T3CodeDev / Dev        | SwiftUI Dev     | `com.saphid.t3code.swiftui.dev`       | `t3code-swiftui-personal-dev` |
-| T3CodeTest / Test      | SwiftUI Test    | `com.alxs.t3code.typed-swiftui.dev`   | `t3code-swiftui-personal`     |
-| T3Code / Debug         | T3 Swift Dev    | `com.t3tools.t3code.swiftui.dev`     | `t3code-swiftui-dev`   |
-| T3Code / Release       | T3 Code SwiftUI | `com.t3tools.t3code.swiftui`         | `t3code-swiftui`       |
+| Scheme / configuration | Display name    | Bundle identifier                   | URL scheme                    |
+| ---------------------- | --------------- | ----------------------------------- | ----------------------------- |
+| T3CodeDev / Dev        | SwiftUI Dev     | `com.saphid.t3code.swiftui.dev`     | `t3code-swiftui-personal-dev` |
+| T3CodeTest / Test      | SwiftUI Test    | `com.alxs.t3code.typed-swiftui.dev` | `t3code-swiftui-personal`     |
+| T3Code / Debug         | T3 Swift Dev    | `com.t3tools.t3code.swiftui.dev`    | `t3code-swiftui-dev`          |
+| T3Code / Release       | T3 Code SwiftUI | `com.t3tools.t3code.swiftui`        | `t3code-swiftui`              |
 
 Each personal identity has matching widget and share-extension bundle
 identifiers, a separate App Group, a distinct icon, and an in-app channel suffix.
@@ -107,6 +109,20 @@ chooses an available iPhone from the newest installed Simulator runtime:
 
 Set `T3_SWIFT_SIMULATOR_ID` to pin a specific simulator. CI can invoke this same
 entry point without duplicating the simulator-selection or signing policy.
+
+Run the focused native app-flow regression suite separately:
+
+```sh
+./Scripts/ci-app-flow-test.sh
+```
+
+It launches a debug-only, in-process fixture so routine navigation and menu
+checks do not need credentials or a live server. Set `T3_SWIFT_SCHEME` to
+`T3CodeDev` or `T3CodeTest` to exercise those configurations. Result bundles
+and their screenshot attachments are written under the ignored `.t3/evidence`
+directory by default. The coverage boundaries and live/TestFlight follow-up
+protocol are documented in
+[`../../docs/operations/swiftui-app-flow-regression-tests.md`](../../docs/operations/swiftui-app-flow-regression-tests.md).
 
 Contract fixtures are encoded from the TypeScript schemas and decoded by the
 Swift test target. Regenerate and verify them after a relevant wire change:
