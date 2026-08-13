@@ -141,6 +141,7 @@ public struct WorkspaceView: View {
     @State private var showingSettings = false
     @State private var showingCommandPalette = false
     @State private var commandPaletteIsMounted = false
+    @State private var commandPaletteIsInteractive = false
     @State private var commandPaletteDragDistance: CGFloat = 0
     @State private var renamingThread: FeatureThread?
     @State private var renameTitle = ""
@@ -257,7 +258,7 @@ public struct WorkspaceView: View {
                 if commandPaletteIsMounted {
                     commandPaletteScrim
                         .opacity(revealProgress)
-                        .allowsHitTesting(showingCommandPalette)
+                        .allowsHitTesting(commandPaletteIsInteractive)
                         .zIndex(1)
 
                     commandPalettePanel(
@@ -803,7 +804,7 @@ public struct WorkspaceView: View {
                 FeatureCommandPaletteView(
                     model: model,
                     activeProjectID: commandPaletteActiveProjectID,
-                    isActive: showingCommandPalette,
+                    isActive: commandPaletteIsInteractive,
                     onDismiss: dismissCommandPalette,
                     onSelect: handleCommandPaletteAction
                 )
@@ -825,8 +826,8 @@ public struct WorkspaceView: View {
         .opacity(accessibilityReduceMotion ? revealProgress : 1)
         .ignoresSafeArea(.container, edges: .top)
         .ignoresSafeArea(.keyboard, edges: .bottom)
-        .allowsHitTesting(showingCommandPalette)
-        .accessibilityHidden(!showingCommandPalette)
+        .allowsHitTesting(commandPaletteIsInteractive)
+        .accessibilityHidden(!commandPaletteIsInteractive)
         .accessibilityIdentifier("command-palette-drawer")
         .accessibilityAddTraits(.isModal)
         .accessibilityAction(.escape) { dismissCommandPalette() }
@@ -962,16 +963,21 @@ public struct WorkspaceView: View {
         if shouldPresent {
             isSearchFocused = false
             commandPaletteIsMounted = true
+            commandPaletteIsInteractive = false
             withAnimation(commandPaletteSettleAnimation) {
                 showingCommandPalette = true
                 commandPaletteDragDistance = 0
+            } completion: {
+                guard showingCommandPalette, commandPaletteDragDistance == 0 else { return }
+                commandPaletteIsInteractive = true
             }
         } else {
+            commandPaletteIsInteractive = false
             withAnimation(commandPaletteSettleAnimation) {
                 showingCommandPalette = false
                 commandPaletteDragDistance = 0
             } completion: {
-                commandPaletteIsMounted = false
+                unmountCommandPaletteIfClosed()
             }
         }
     }
@@ -983,12 +989,18 @@ public struct WorkspaceView: View {
     }
 
     private func dismissCommandPalette() {
+        commandPaletteIsInteractive = false
         withAnimation(commandPaletteSettleAnimation) {
             showingCommandPalette = false
             commandPaletteDragDistance = 0
         } completion: {
-            commandPaletteIsMounted = false
+            unmountCommandPaletteIfClosed()
         }
+    }
+
+    private func unmountCommandPaletteIfClosed() {
+        guard !showingCommandPalette, commandPaletteDragDistance == 0 else { return }
+        commandPaletteIsMounted = false
     }
 
     private func consumeNavigationRequest() {
