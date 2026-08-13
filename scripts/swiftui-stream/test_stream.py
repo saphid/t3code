@@ -180,21 +180,118 @@ class StreamTests(unittest.TestCase):
         self.assertGreaterEqual(value["currentTestBuild"]["build"], 40)
 
     def test_approval_list_is_exact_build_order(self):
-        items = stream.approval_list()
-        current = stream.manifest()["currentTestBuild"]["build"]
+        with tempfile.TemporaryDirectory() as directory:
+            value = stream.manifest()
+            current = dict(value["currentTestBuild"])
+            receipt_path = Path(directory) / "test.json"
+            receipt_path.write_text(json.dumps({
+                "schemaVersion": 1,
+                "channel": current["channel"],
+                "build": current["build"],
+                "sequence": current["sequence"],
+                "commit": current["commit"],
+                "status": "installed-and-launched",
+                "launchPending": False,
+            }))
+            current["receipt"] = str(receipt_path)
+            value["currentTestBuild"] = current
+            with patch.object(stream, "manifest", return_value=value):
+                items = stream.approval_list()
+
         self.assertTrue(items)
         self.assertEqual(
             [item.get("order", 1_000_000) for item in items],
             sorted(item.get("order", 1_000_000) for item in items),
         )
-        self.assertTrue(all(item["testBuild"] == current for item in items))
+        self.assertTrue(all(item["testBuild"] == current["build"] for item in items))
         self.assertNotIn("dev-title-label", {item["id"] for item in items})
 
+    def test_approval_list_fails_closed_when_device_receipt_does_not_match(self):
+        with tempfile.TemporaryDirectory() as directory:
+            receipt_path = Path(directory) / "test.json"
+            receipt_path.write_text(json.dumps({
+                "schemaVersion": 1,
+                "channel": "test",
+                "build": 42,
+                "sequence": 42,
+                "commit": "f" * 40,
+                "status": "installed-and-launched",
+                "launchPending": False,
+            }))
+            current = {
+                "channel": "test",
+                "build": 41,
+                "sequence": 41,
+                "commit": "f" * 40,
+                "receipt": str(receipt_path),
+            }
+            with (
+                patch.object(stream, "manifest", return_value={"currentTestBuild": current}),
+                patch.object(stream, "catalog", return_value=[]),
+                self.assertRaises(SystemExit),
+            ):
+                stream.approval_list()
+
+    def test_device_receipt_requires_successful_launch(self):
+        current = {
+            "channel": "test",
+            "build": 41,
+            "sequence": 41,
+            "commit": "f" * 40,
+        }
+        receipt = {
+            "schemaVersion": 1,
+            **current,
+            "status": "installed-awaiting-unlock",
+            "launchPending": True,
+        }
+        errors = stream.installed_test_receipt_errors(current, receipt)
+        self.assertTrue(any("status" in error for error in errors))
+        self.assertTrue(any("pending launch" in error for error in errors))
+
+    def test_device_receipt_requires_all_identity_fields(self):
+        current = {
+            "channel": "test",
+            "build": 41,
+            "sequence": 41,
+            "commit": "f" * 40,
+        }
+        receipt = {
+            "schemaVersion": 1,
+            **current,
+            "status": "installed-and-launched",
+            "launchPending": False,
+        }
+        del current["commit"]
+        del receipt["sequence"]
+        errors = stream.installed_test_receipt_errors(current, receipt)
+        self.assertIn("catalog field commit is missing", errors)
+        self.assertIn("device receipt field sequence is missing", errors)
+
     def test_fuzzy_match_prefers_command_palette(self):
-        ranked = sorted(
-            ((stream.score("palette", item), item["id"]) for item in stream.approval_list()),
-            reverse=True,
-        )
+        with tempfile.TemporaryDirectory() as directory:
+            value = stream.manifest()
+            current = dict(value["currentTestBuild"])
+            receipt_path = Path(directory) / "test.json"
+            receipt_path.write_text(json.dumps({
+                "schemaVersion": 1,
+                "channel": current["channel"],
+                "build": current["build"],
+                "sequence": current["sequence"],
+                "commit": current["commit"],
+                "status": "installed-and-launched",
+                "launchPending": False,
+            }))
+            current["receipt"] = str(receipt_path)
+            value["currentTestBuild"] = current
+            with patch.object(stream, "manifest", return_value=value):
+                ranked = sorted(
+                    (
+                        (stream.score("palette", item), item["id"])
+                        for item in stream.approval_list()
+                    ),
+                    reverse=True,
+                )
         self.assertEqual(ranked[0][1], "command-palette-top-drawer")
 
     def test_pr_delivery_inventory_is_complete(self):

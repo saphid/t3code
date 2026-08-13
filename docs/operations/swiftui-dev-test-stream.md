@@ -52,6 +52,9 @@ Invoke `$approve-swiftui-feature`.
 
 With no argument, the skill prints a frozen, stable, ordered numbered list of
 the features in the exact installed Test build and asks Alex to choose a number.
+A device receipt must match the Test channel, build, sequence, and commit. The
+receipt must also show a successful launch. The list command stops if the
+receipt does not match.
 A number always resolves against that frozen snapshot, followed by a fresh
 eligibility check. With text after the skill name, it ranks names, aliases,
 issues, behavior, branches, and commits; it confirms the best match, or offers a

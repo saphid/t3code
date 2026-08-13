@@ -371,9 +371,51 @@ def catalog(include_threads: bool = True) -> list[dict[str, Any]]:
     return records
 
 
+def installed_test_receipt_errors(
+    current: dict[str, Any], receipt: dict[str, Any]
+) -> list[str]:
+    """Return reasons that a device receipt cannot authorize Test approval."""
+    errors: list[str] = []
+    if receipt.get("schemaVersion") != 1:
+        errors.append("device receipt schemaVersion is not 1")
+    for field in ("channel", "build", "sequence", "commit"):
+        if field not in current or current[field] is None:
+            errors.append(f"catalog field {field} is missing")
+            continue
+        if field not in receipt or receipt[field] is None:
+            errors.append(f"device receipt field {field} is missing")
+            continue
+        if receipt.get(field) != current.get(field):
+            errors.append(
+                f"device receipt {field} {receipt.get(field)!r} does not match "
+                f"catalog {current.get(field)!r}"
+            )
+    if receipt.get("status") != "installed-and-launched":
+        errors.append(
+            "device receipt status is not installed-and-launched: "
+            f"{receipt.get('status')!r}"
+        )
+    if receipt.get("launchPending") is not False:
+        errors.append("device receipt still has a pending launch")
+    return errors
+
+
 def approval_list() -> list[dict[str, Any]]:
     current = manifest().get("currentTestBuild", {})
     build = current.get("build")
+    receipt_path = current.get("receipt")
+    if not isinstance(receipt_path, str) or not receipt_path:
+        fail("currentTestBuild.receipt is missing")
+    resolved_receipt_path = Path(receipt_path).expanduser()
+    if not resolved_receipt_path.is_absolute():
+        fail("currentTestBuild.receipt must resolve to an absolute path")
+    receipt = load_json(resolved_receipt_path)
+    if not isinstance(receipt, dict):
+        fail("installed Test receipt must be a JSON object")
+    receipt_errors = installed_test_receipt_errors(current, receipt)
+    if receipt_errors:
+        details = "; ".join(receipt_errors)
+        fail(f"installed Test receipt is not eligible for approval: {details}")
     pending = [
         feature for feature in catalog(False)
         if feature.get("state") in APPROVAL_STATES
