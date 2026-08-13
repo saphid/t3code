@@ -1,0 +1,1588 @@
+{
+  "acknowledgedAnomalies": [
+    "08c052d9dbd80707355b32a962b282783e5a8d1f",
+    "f76b4eab816dc9815611218747f1feade007430f",
+    "50309eba7cbcba03ca5f27033006f0d580ccadb5",
+    "28de749152b86976781acd0c06870dba33d3386e",
+    "ba8c7240425fa4f5642c453347e00dbd0a20f8c1",
+    "d041f5ad2013bcbe43c29c8f7545b4e1fe04f795",
+    "cb31705e3663c0810a44775c63a44b29cb8e471f",
+    "b8df15b91d56a9dd4505f479596c33c520802621",
+    "fa3ba1d16fd02b42d3624c7ecd2cd4a17aa5aadb",
+    "35ea2789de8c403227431717d817c6ed37bb02a7",
+    "cfe7eb025ab4a606782154892461f3e8f7ff9c44",
+    "4637e756914dd88fb8feb60fb1707176466b306b",
+    "9522aa0ae5bc2dd80f114a2058ad9ba8d4d538a8",
+    "945c98851d77364c72c1a6ff5b893cef302d2f62",
+    "c4a4bd0e4946fde52ec9e250940a8e94e22db94f",
+    "40fceb60f124c1b61a6457e360135e48b63304cc",
+    "8ef974258b9d2b38af5bcb02f680da4e23579704",
+    "f7850b5444051aa6ce913382ca5165ab93b96af2",
+    "d79d498f546c888971ca2f6807b7618c7d972ecb",
+    "1976e870b0e9fa57ca05c98c33370fc21030b8e2",
+    "5febace3bbee95b5ca2533f6bf082c30934321c3",
+    "3129ef8488e73b4cbff9ed1e8005b9db2da40200",
+    "ead6fa15233c78cdc784eb09586faee24fe6b087",
+    "cbae942274d6fcd62cfc365a32e1c9f7d826510d",
+    "2789aad6bda8a916cca9023b84420f46cf84c2ef",
+    "7f95310c3d407f92883b3c7e83b0e015a46b92c6",
+    "4764e6bf5be64e472da24a3aa8f73d3142d46276",
+    "353d533ef02c28cc250fe8e45eb11538abf4c210",
+    "11e99d6f5debc88c6f4b0d2e733321ff144327a0",
+    "5a46ed73f8afa118714921ff1fd32768e3cedd4e"
+  ],
+  "baseline": {
+    "branch": "origin/personal/swiftui-dev",
+    "devCommit": "125ed781e20716091222651092ed2708448bb6b6"
+  },
+  "classificationRule": {
+    "anomaly": "No exact source citation or structural rule supports another classification.",
+    "candidate": "The exact commit is cited by a checked-in source record.",
+    "integration": "The commit has two or more parents.",
+    "metadata": "The commit subject is chore(...) and only scripts/swiftui-stream/stream.json changes.",
+    "revert": "The commit subject starts with Revert."
+  },
+  "commits": [
+    {
+      "anomaly": "No checked-in source record cites this commit, and its diff changes behavior or control code.",
+      "category": "anomaly",
+      "changedPaths": [
+        "apps/server/src/persistence/Errors.ts",
+        "apps/server/src/persistence/Layers/ProjectionRepositories.test.ts"
+      ],
+      "commit": "08c052d9dbd80707355b32a962b282783e5a8d1f",
+      "parents": [
+        "b3f003f51f29fb84c3aaa80c69c2fd4a74f05765"
+      ],
+      "patchId": "10029c50766bb2b05864972b3364a23f61159fba",
+      "sourceRecords": [],
+      "subject": "fix(server): explain full database thread failures"
+    },
+    {
+      "anomaly": "No checked-in source record cites this commit, and its diff changes behavior or control code.",
+      "category": "anomaly",
+      "changedPaths": [
+        "apps/mobile/src/App.tsx",
+        "apps/mobile/src/components/HostStorageWarning.tsx",
+        "apps/server/src/auth/RpcAuthorization.ts",
+        "apps/server/src/resourceTelemetry/HostStorage.test.ts",
+        "apps/server/src/resourceTelemetry/HostStorage.ts",
+        "apps/server/src/server.test.ts",
+        "apps/server/src/ws.ts",
+        "apps/swift-ios/App/NativeFeatureClient.swift",
+        "apps/swift-ios/Core/ResourceTelemetryModels.swift",
+        "apps/swift-ios/Core/T3Client.swift",
+        "apps/swift-ios/Features/Root/FeatureRootModel.swift",
+        "apps/swift-ios/Features/Root/FeatureRootView.swift",
+        "apps/swift-ios/Features/Shared/FeatureModels.swift",
+        "apps/swift-ios/Tests/FeatureTests/FeatureRootModelTests.swift",
+        "apps/web/src/components/HostStorageWarning.tsx",
+        "apps/web/src/lib/resourceTelemetryState.ts",
+        "apps/web/src/routes/__root.tsx",
+        "docs/internals/resource-telemetry.md",
+        "docs/user/host-storage.md",
+        "packages/client-runtime/src/rpc/client.ts",
+        "packages/client-runtime/src/state/server.ts",
+        "packages/contracts/src/resourceTelemetry.ts",
+        "packages/contracts/src/rpc.ts"
+      ],
+      "commit": "f76b4eab816dc9815611218747f1feade007430f",
+      "parents": [
+        "08c052d9dbd80707355b32a962b282783e5a8d1f"
+      ],
+      "patchId": "ae69a32568d0b7848af1f67dbdf4a922488e017a",
+      "sourceRecords": [],
+      "subject": "feat: warn when host storage is low"
+    },
+    {
+      "anomaly": "No checked-in source record cites this commit, and its diff changes behavior or control code.",
+      "category": "anomaly",
+      "changedPaths": [
+        "apps/swift-ios/Features/Settings/SettingsView.swift",
+        "apps/swift-ios/Features/Shared/FeatureModels.swift",
+        "apps/swift-ios/Features/Workspace/DailyUXModels.swift",
+        "apps/swift-ios/Features/Workspace/HomeThreadCollectionView.swift",
+        "apps/swift-ios/Features/Workspace/WorkspaceView.swift",
+        "apps/swift-ios/Tests/FeatureTests/HomeThreadMetadataTests.swift",
+        "apps/swift-ios/Tests/PlatformTests/PlatformAgentAwarenessTests.swift"
+      ],
+      "commit": "50309eba7cbcba03ca5f27033006f0d580ccadb5",
+      "parents": [
+        "f76b4eab816dc9815611218747f1feade007430f"
+      ],
+      "patchId": "64f316a3db3e79a722f453fd97ff7a0d79428994",
+      "sourceRecords": [],
+      "subject": "feat(swift-ios): show time since thread completion"
+    },
+    {
+      "anomaly": "No checked-in source record cites this commit, and its diff changes behavior or control code.",
+      "category": "anomaly",
+      "changedPaths": [
+        "apps/swift-ios/Features/Chat/FeatureComposerView.swift",
+        "apps/swift-ios/Features/Workspace/NewThreadView.swift",
+        "apps/swift-ios/Tests/FeatureTests/FeatureComposerPowerTests.swift"
+      ],
+      "commit": "28de749152b86976781acd0c06870dba33d3386e",
+      "parents": [
+        "50309eba7cbcba03ca5f27033006f0d580ccadb5"
+      ],
+      "patchId": "3f2b116e46c49a59e4b6816ac4b21f517d8ac700",
+      "sourceRecords": [],
+      "subject": "fix(swift-ios): keep skills composer above keyboard"
+    },
+    {
+      "anomaly": "No checked-in source record cites this commit, and its diff changes behavior or control code.",
+      "category": "anomaly",
+      "changedPaths": [
+        "apps/swift-ios/Features/Chat/ThreadDetailView.swift",
+        "apps/swift-ios/Tests/FeatureTests/ThreadDetailPresentationTests.swift"
+      ],
+      "commit": "ba8c7240425fa4f5642c453347e00dbd0a20f8c1",
+      "parents": [
+        "28de749152b86976781acd0c06870dba33d3386e"
+      ],
+      "patchId": "e4427bfcfabb757dc68eeca6430db3c989658611",
+      "sourceRecords": [],
+      "subject": "fix(swift-ios): keep cached thread visible during refresh"
+    },
+    {
+      "anomaly": "No checked-in source record cites this commit, and its diff changes behavior or control code.",
+      "category": "anomaly",
+      "changedPaths": [
+        "apps/swift-ios/DesignSystem/T3Theme.swift",
+        "apps/swift-ios/Features/Chat/MarkdownMessageView.swift",
+        "apps/swift-ios/Features/Chat/MarkdownRenderCache.swift",
+        "apps/swift-ios/Features/Chat/ThreadDetailView.swift",
+        "apps/swift-ios/Features/Files/FeatureFilesView.swift",
+        "apps/swift-ios/Tests/FeatureTests/MarkdownDocumentTests.swift"
+      ],
+      "commit": "d041f5ad2013bcbe43c29c8f7545b4e1fe04f795",
+      "parents": [
+        "ba8c7240425fa4f5642c453347e00dbd0a20f8c1"
+      ],
+      "patchId": "4f9935059d11a2cba8fd14f3b4908ea951a560c7",
+      "sourceRecords": [],
+      "subject": "fix(swift-ios): enable granular text selection"
+    },
+    {
+      "anomaly": "No checked-in source record cites this commit, and its diff changes behavior or control code.",
+      "category": "anomaly",
+      "changedPaths": [
+        "apps/swift-ios/DesignSystem/T3Theme.swift",
+        "apps/swift-ios/Features/Chat/MarkdownMessageView.swift",
+        "apps/swift-ios/Features/Chat/MarkdownRenderCache.swift",
+        "apps/swift-ios/Tests/FeatureTests/MarkdownDocumentTests.swift"
+      ],
+      "commit": "cb31705e3663c0810a44775c63a44b29cb8e471f",
+      "parents": [
+        "d041f5ad2013bcbe43c29c8f7545b4e1fe04f795"
+      ],
+      "patchId": "8b42cdc331f66ce70b8353547fa7c58bc22c8fbc",
+      "sourceRecords": [],
+      "subject": "fix(swift-ios): select across markdown blocks"
+    },
+    {
+      "anomaly": "No checked-in source record cites this commit, and its diff changes behavior or control code.",
+      "category": "anomaly",
+      "changedPaths": [
+        "apps/swift-ios/Features/Chat/ThreadDetailView.swift",
+        "apps/swift-ios/Tests/FeatureTests/TranscriptViewportGeometryTests.swift"
+      ],
+      "commit": "b8df15b91d56a9dd4505f479596c33c520802621",
+      "parents": [
+        "cb31705e3663c0810a44775c63a44b29cb8e471f"
+      ],
+      "patchId": "b62c92d0c648b81c1dca6f4ea68f47559e4600bc",
+      "sourceRecords": [],
+      "subject": "fix(swiftui): restore thread scrolling and full-surface back swipe"
+    },
+    {
+      "anomaly": "No checked-in source record cites this commit, and its diff changes behavior or control code.",
+      "category": "anomaly",
+      "changedPaths": [
+        "apps/swift-ios/Features/Chat/ThreadDetailView.swift",
+        "apps/swift-ios/Tests/FeatureTests/TranscriptViewportGeometryTests.swift"
+      ],
+      "commit": "fa3ba1d16fd02b42d3624c7ecd2cd4a17aa5aadb",
+      "parents": [
+        "b8df15b91d56a9dd4505f479596c33c520802621"
+      ],
+      "patchId": "b8598bdeef81ff259ed724157cb78674675023d4",
+      "sourceRecords": [],
+      "subject": "fix(swift-ios): preserve text drags during back swipe"
+    },
+    {
+      "anomaly": "No checked-in source record cites this commit, and its diff changes behavior or control code.",
+      "category": "anomaly",
+      "changedPaths": [
+        "apps/swift-ios/Features/Chat/ThreadDetailView.swift",
+        "apps/swift-ios/Tests/FeatureTests/TranscriptViewportGeometryTests.swift"
+      ],
+      "commit": "35ea2789de8c403227431717d817c6ed37bb02a7",
+      "parents": [
+        "fa3ba1d16fd02b42d3624c7ecd2cd4a17aa5aadb"
+      ],
+      "patchId": "a4ca358ed0f45c3736dc791478971121b54f3426",
+      "sourceRecords": [],
+      "subject": "fix(swift-ios): preserve active text interactions during back swipe"
+    },
+    {
+      "anomaly": "No checked-in source record cites this commit, and its diff changes behavior or control code.",
+      "category": "anomaly",
+      "changedPaths": [
+        "apps/swift-ios/Features/Workspace/HomeThreadCollectionView.swift",
+        "apps/swift-ios/Features/Workspace/ThreadContextMenu.swift",
+        "apps/swift-ios/Tests/FeatureTests/ThreadContextMenuTests.swift"
+      ],
+      "commit": "cfe7eb025ab4a606782154892461f3e8f7ff9c44",
+      "parents": [
+        "35ea2789de8c403227431717d817c6ed37bb02a7"
+      ],
+      "patchId": "8143ca6a81bd260d8b64b9ace28ae812919e98f4",
+      "sourceRecords": [],
+      "subject": "feat(swift-ios): group thread menu closing actions"
+    },
+    {
+      "category": "candidate",
+      "changedPaths": [
+        "apps/server/src/auth/RpcAuthorization.ts",
+        "apps/server/src/environment/ServerEnvironment.ts",
+        "apps/server/src/ws.ts",
+        "apps/swift-ios/App/NativeFeatureClient.swift",
+        "apps/swift-ios/App/Platform/PlatformRootView.swift",
+        "apps/swift-ios/App/RootView.swift",
+        "apps/swift-ios/App/T3CodeApp.swift",
+        "apps/swift-ios/Core/Models.swift",
+        "apps/swift-ios/Core/T3Client.swift",
+        "apps/swift-ios/DesignSystem/T3Theme.swift",
+        "apps/swift-ios/DesignSystem/T3ThemeRuntime.swift",
+        "apps/swift-ios/Extensions/Share/ShareViewController.swift",
+        "apps/swift-ios/Extensions/Shared/ShareInbox.swift",
+        "apps/swift-ios/Features/Settings/SettingsView.swift",
+        "apps/swift-ios/Features/Settings/ThemeSettingsView.swift",
+        "apps/swift-ios/Features/Shared/FeatureClient.swift",
+        "apps/swift-ios/Features/Terminal/TerminalSurfaceView.swift",
+        "apps/swift-ios/Resources/theme-catalog-v1.json",
+        "apps/swift-ios/Tests/FeatureTests/ThemeRuntimeTests.swift",
+        "apps/web/src/themePalette.ts",
+        "apps/web/src/vscodeThemeImport.ts",
+        "packages/contracts/src/environment.ts",
+        "packages/contracts/src/index.ts",
+        "packages/contracts/src/rpc.ts",
+        "packages/contracts/src/theme.ts",
+        "packages/shared/package.json",
+        "packages/shared/src/openVsxThemes.ts",
+        "packages/shared/src/theme.ts",
+        "packages/shared/src/themeArtifact.test.ts",
+        "packages/shared/src/themeArtifact.ts",
+        "packages/shared/src/vscodeThemeImport.ts",
+        "packages/shared/tsconfig.json",
+        "pnpm-lock.yaml",
+        "scripts/generate-swift-theme-catalog.ts"
+      ],
+      "commit": "bd90247576eb8b0591b90058b8380a0c88e95823",
+      "parents": [
+        "cfe7eb025ab4a606782154892461f3e8f7ff9c44"
+      ],
+      "patchId": "44f55ae08adb10a6fecd162aaf84ff8b20970971",
+      "sourceRecords": [
+        {
+          "collection": "features",
+          "field": "integratedCommit",
+          "key": "id",
+          "snapshot": "streamManifest",
+          "value": "shared-electron-vscode-themes"
+        }
+      ],
+      "subject": "feat(swift): share Electron and VS Code themes"
+    },
+    {
+      "anomaly": "No checked-in source record cites this commit, and its diff changes behavior or control code.",
+      "category": "anomaly",
+      "changedPaths": [
+        "apps/swift-ios/DesignSystem/T3Theme.swift"
+      ],
+      "commit": "4637e756914dd88fb8feb60fb1707176466b306b",
+      "parents": [
+        "bd90247576eb8b0591b90058b8380a0c88e95823"
+      ],
+      "patchId": "7d366173ef5cf45b47c673884367066cea9be407",
+      "sourceRecords": [],
+      "subject": "fix(swift-ios): preserve selectable text color identity"
+    },
+    {
+      "anomaly": "No checked-in source record cites this commit, and its diff changes behavior or control code.",
+      "category": "anomaly",
+      "changedPaths": [
+        "apps/swift-ios/Features/Settings/BuildChangelog.swift",
+        "apps/swift-ios/Features/Workspace/HomeThreadCollectionView.swift",
+        "apps/swift-ios/Features/Workspace/WorkspaceView.swift",
+        "apps/swift-ios/Tests/FeatureTests/DailyUXSidebarTests.swift",
+        "apps/swift-ios/Tests/FeatureTests/SettingsAboutMetadataTests.swift"
+      ],
+      "commit": "9522aa0ae5bc2dd80f114a2058ad9ba8d4d538a8",
+      "parents": [
+        "4637e756914dd88fb8feb60fb1707176466b306b"
+      ],
+      "patchId": "590a0d55d1ce0521e84d345828eca63773b560b8",
+      "sourceRecords": [],
+      "subject": "fix(swift-ios): settle full swipes and surface whats new"
+    },
+    {
+      "anomaly": "No checked-in source record cites this commit, and its diff changes behavior or control code.",
+      "category": "anomaly",
+      "changedPaths": [
+        "apps/swift-ios/Features/Workspace/FeatureCommandPaletteModel.swift",
+        "apps/swift-ios/Features/Workspace/FeatureCommandPaletteView.swift",
+        "apps/swift-ios/Features/Workspace/WorkspaceView.swift",
+        "apps/swift-ios/Tests/FeatureTests/FeatureCommandPaletteTests.swift"
+      ],
+      "commit": "945c98851d77364c72c1a6ff5b893cef302d2f62",
+      "parents": [
+        "9522aa0ae5bc2dd80f114a2058ad9ba8d4d538a8"
+      ],
+      "patchId": "e3896d239b0e4519277fa6c0aed23a16655ecb3e",
+      "sourceRecords": [],
+      "subject": "feat(swiftui): add command palette swipe gesture"
+    },
+    {
+      "anomaly": "No checked-in source record cites this commit, and its diff changes behavior or control code.",
+      "category": "anomaly",
+      "changedPaths": [
+        "apps/swift-ios/Features/Chat/FeatureComposerView.swift",
+        "apps/swift-ios/Features/Workspace/NewThreadView.swift",
+        "apps/swift-ios/Tests/FeatureTests/FeatureComposerPowerTests.swift"
+      ],
+      "commit": "c4a4bd0e4946fde52ec9e250940a8e94e22db94f",
+      "parents": [
+        "945c98851d77364c72c1a6ff5b893cef302d2f62"
+      ],
+      "patchId": "0036cab25350a8a77636c256e8218459bb7d09bc",
+      "sourceRecords": [],
+      "subject": "fix(swift-ios): keep command menu clear of composer"
+    },
+    {
+      "category": "candidate",
+      "changedPaths": [
+        "apps/swift-ios/Features/Workspace/FeatureCommandPaletteModel.swift",
+        "apps/swift-ios/Features/Workspace/WorkspaceView.swift",
+        "apps/swift-ios/Tests/FeatureTests/FeatureCommandPaletteTests.swift"
+      ],
+      "commit": "cd7f6a44fb36980a2ae1193d5edc215dfb74b4b8",
+      "parents": [
+        "c4a4bd0e4946fde52ec9e250940a8e94e22db94f"
+      ],
+      "patchId": "87ca8da16d1aa17805eee398f3ab1767332a63f7",
+      "sourceRecords": [
+        {
+          "collection": "features",
+          "field": "integratedCommit",
+          "key": "id",
+          "snapshot": "streamManifest",
+          "value": "home-thread-list-scrolling"
+        }
+      ],
+      "subject": "fix(swift-ios): preserve home thread scrolling"
+    },
+    {
+      "anomaly": "No checked-in source record cites this commit, and its diff changes behavior or control code.",
+      "category": "anomaly",
+      "changedPaths": [
+        "apps/swift-ios/Features/Workspace/FeatureCommandPaletteModel.swift",
+        "apps/swift-ios/Features/Workspace/WorkspaceView.swift",
+        "apps/swift-ios/Tests/FeatureTests/FeatureCommandPaletteTests.swift",
+        "apps/swift-ios/Tests/FeatureTests/FeatureComposerPowerTests.swift"
+      ],
+      "commit": "40fceb60f124c1b61a6457e360135e48b63304cc",
+      "parents": [
+        "cd7f6a44fb36980a2ae1193d5edc215dfb74b4b8"
+      ],
+      "patchId": "ded01a84ef966dd28a67f99e1989ec8a506fc3c4",
+      "sourceRecords": [],
+      "subject": "fix(swift-ios): harden aggregate gesture integration"
+    },
+    {
+      "anomaly": "No checked-in source record cites this commit, and its diff changes behavior or control code.",
+      "category": "anomaly",
+      "changedPaths": [
+        "apps/swift-ios/Features/Workspace/FeatureCommandPaletteView.swift",
+        "apps/swift-ios/Features/Workspace/WorkspaceView.swift"
+      ],
+      "commit": "8ef974258b9d2b38af5bcb02f680da4e23579704",
+      "parents": [
+        "40fceb60f124c1b61a6457e360135e48b63304cc"
+      ],
+      "patchId": "a2818f020e47d4b39b3070a6698a4518be3a27fb",
+      "sourceRecords": [],
+      "subject": "fix(swift-ios): present command palette from top"
+    },
+    {
+      "category": "candidate",
+      "changedPaths": [
+        "apps/swift-ios/Features/Settings/BuildChangelog.swift",
+        "apps/swift-ios/Features/Settings/SettingsView.swift",
+        "apps/swift-ios/README.md",
+        "apps/swift-ios/Scripts/generate-build-changelog.swift",
+        "apps/swift-ios/Tests/FeatureTests/SettingsAboutMetadataTests.swift"
+      ],
+      "commit": "e1ca3cb09f0eadc6f02c33a959cc0da4912564c0",
+      "parents": [
+        "8ef974258b9d2b38af5bcb02f680da4e23579704"
+      ],
+      "patchId": "042177c949a9d6f9878574ae91c0a9b1b4d1ea01",
+      "sourceRecords": [
+        {
+          "collection": "features",
+          "field": "integratedCommit",
+          "key": "id",
+          "snapshot": "streamManifest",
+          "value": "development-build-source-thread"
+        }
+      ],
+      "subject": "feat(swift-ios): link dev builds to source thread"
+    },
+    {
+      "category": "candidate",
+      "changedPaths": [
+        "apps/swift-ios/Features/Root/FeatureRootModel.swift",
+        "apps/swift-ios/Tests/FeatureTests/FeatureRootModelTests.swift"
+      ],
+      "commit": "2c2f4fe27c248dc93ab4f9b36b627f72ab5daf57",
+      "parents": [
+        "e1ca3cb09f0eadc6f02c33a959cc0da4912564c0"
+      ],
+      "patchId": "66c247875bad6c55a3c253b3d580f095456ac963",
+      "sourceRecords": [
+        {
+          "collection": "features",
+          "field": "integratedCommit",
+          "key": "id",
+          "snapshot": "streamManifest",
+          "value": "initial-thread-live-updates"
+        }
+      ],
+      "subject": "fix(swift-ios): preserve initial live thread updates"
+    },
+    {
+      "category": "candidate",
+      "changedPaths": [
+        "apps/swift-ios/Features/Chat/FeatureComposerCommandPopover.swift",
+        "apps/swift-ios/Features/Chat/FeatureComposerView.swift",
+        "apps/swift-ios/Tests/FeatureTests/FeatureComposerPowerTests.swift"
+      ],
+      "commit": "dd72827894d37158335408770bca04fa26b5caab",
+      "parents": [
+        "2c2f4fe27c248dc93ab4f9b36b627f72ab5daf57"
+      ],
+      "patchId": "939afe741feb693ac95044291a193db08237d7d8",
+      "sourceRecords": [
+        {
+          "collection": "features",
+          "field": "integratedCommit",
+          "key": "id",
+          "snapshot": "streamManifest",
+          "value": "skills-popup-keyboard-clearance"
+        }
+      ],
+      "subject": "fix(swift-ios): keep composer controls above keyboard"
+    },
+    {
+      "anomaly": "No checked-in source record cites this commit, and its diff changes behavior or control code.",
+      "category": "anomaly",
+      "changedPaths": [
+        "apps/swift-ios/Features/Chat/ThreadDetailView.swift",
+        "apps/swift-ios/Features/Workspace/NewThreadView.swift",
+        "apps/swift-ios/Features/Workspace/WorkspaceView.swift",
+        "docs/operations/swiftui-approved-phone-lane.md"
+      ],
+      "commit": "f7850b5444051aa6ce913382ca5165ab93b96af2",
+      "parents": [
+        "dd72827894d37158335408770bca04fa26b5caab"
+      ],
+      "patchId": "43c2ad83c5f0a5a86671dfb59225b444e10a0006",
+      "sourceRecords": [],
+      "subject": "fix(swift-ios): replace orange dev bars with title label"
+    },
+    {
+      "category": "candidate",
+      "changedPaths": [
+        "apps/swift-ios/App/NativeFeatureClient.swift",
+        "apps/swift-ios/Core/HTTP.swift",
+        "apps/swift-ios/Core/Models.swift",
+        "apps/swift-ios/Core/PullRequestWireModels.swift",
+        "apps/swift-ios/Core/T3Client.swift",
+        "apps/swift-ios/Core/WebSocketRPC.swift",
+        "apps/swift-ios/Core/WorkspaceModels.swift",
+        "apps/swift-ios/Features/Shared/FeatureClient.swift",
+        "apps/swift-ios/Features/Shared/FeatureModels.swift",
+        "apps/swift-ios/Tests/CoreTests/PullRequestContractTests.swift"
+      ],
+      "commit": "455781e7e37fc0021671aa4660e1a5150d1777f7",
+      "parents": [
+        "f7850b5444051aa6ce913382ca5165ab93b96af2"
+      ],
+      "patchId": "cc1aaa95c73a25050b92fd17e1051a3ae2b27b05",
+      "sourceRecords": [
+        {
+          "collection": "features",
+          "field": "integratedCommit",
+          "key": "id",
+          "snapshot": "streamManifest",
+          "value": "pull-request-workspace-protocol"
+        }
+      ],
+      "subject": "feat(swift): add pull request protocol foundation"
+    },
+    {
+      "anomaly": "No checked-in source record cites this commit, and its diff changes behavior or control code.",
+      "category": "anomaly",
+      "changedPaths": [
+        "apps/swift-ios/Features/Devices/DeviceManagementCopy.swift",
+        "apps/swift-ios/Features/Devices/DevicesView.swift",
+        "apps/swift-ios/Features/Files/FeatureFilesView.swift",
+        "apps/swift-ios/Features/Review/FeatureReviewView.swift",
+        "apps/swift-ios/Features/Shared/FeatureLatestRequest.swift",
+        "apps/swift-ios/Features/Shared/FeatureToolErrorNotice.swift",
+        "apps/swift-ios/Features/Shared/FeatureToolErrorPresentation.swift",
+        "apps/swift-ios/Features/SourceControl/FeatureSourceControlRetry.swift",
+        "apps/swift-ios/Features/SourceControl/FeatureSourceControlView.swift",
+        "apps/swift-ios/Tests/FeatureTests/DeviceManagementTests.swift",
+        "apps/swift-ios/Tests/FeatureTests/FeatureErrorSurfaceTests.swift"
+      ],
+      "commit": "d79d498f546c888971ca2f6807b7618c7d972ecb",
+      "parents": [
+        "455781e7e37fc0021671aa4660e1a5150d1777f7"
+      ],
+      "patchId": "48930c324cf54f9eee74e5f31835676206505043",
+      "sourceRecords": [],
+      "subject": "fix(swift-ios): surface retained tool errors"
+    },
+    {
+      "anomaly": "No checked-in source record cites this commit, and its diff changes behavior or control code.",
+      "category": "anomaly",
+      "changedPaths": [
+        "apps/swift-ios/Features/Files/FeatureFilesView.swift",
+        "apps/swift-ios/Features/Files/FeatureLoadedPath.swift",
+        "apps/swift-ios/Features/Review/FeatureReviewView.swift",
+        "apps/swift-ios/Features/Shared/FeatureToolErrorNotice.swift",
+        "apps/swift-ios/Features/Shared/FeatureToolErrorPresentation.swift",
+        "apps/swift-ios/Features/SourceControl/FeatureSourceControlRetry.swift",
+        "apps/swift-ios/Features/SourceControl/FeatureSourceControlView.swift",
+        "apps/swift-ios/Tests/FeatureTests/FeatureErrorSurfaceTests.swift"
+      ],
+      "commit": "1976e870b0e9fa57ca05c98c33370fc21030b8e2",
+      "parents": [
+        "d79d498f546c888971ca2f6807b7618c7d972ecb"
+      ],
+      "patchId": "7bae6776d7548a8fee69c6b7612f22f4c1fc8959",
+      "sourceRecords": [],
+      "subject": "fix(swift-ios): harden tool error recovery"
+    },
+    {
+      "category": "candidate",
+      "changedPaths": [
+        "apps/swift-ios/Features/Shared/FeatureToolErrorNotice.swift",
+        "apps/swift-ios/Features/Shared/FeatureToolErrorPresentation.swift",
+        "apps/swift-ios/Features/SourceControl/FeatureSourceControlView.swift"
+      ],
+      "commit": "2b1cf46a76afb0825dff0cec505307807149992e",
+      "parents": [
+        "1976e870b0e9fa57ca05c98c33370fc21030b8e2"
+      ],
+      "patchId": "6899487ac0091a51bc2c6f35766784aed76cbfa0",
+      "sourceRecords": [
+        {
+          "collection": "features",
+          "field": "integratedCommit",
+          "key": "id",
+          "snapshot": "streamManifest",
+          "value": "safe-tool-content-recovery"
+        }
+      ],
+      "subject": "fix(swift-ios): preserve accessible retry focus"
+    },
+    {
+      "category": "integration",
+      "changedPaths": [
+        "apps/mobile/src/App.tsx",
+        "apps/mobile/src/components/HostStorageWarning.tsx",
+        "apps/server/src/auth/RpcAuthorization.ts",
+        "apps/server/src/environment/ServerEnvironment.ts",
+        "apps/server/src/persistence/Errors.ts",
+        "apps/server/src/persistence/Layers/ProjectionRepositories.test.ts",
+        "apps/server/src/resourceTelemetry/HostStorage.test.ts",
+        "apps/server/src/resourceTelemetry/HostStorage.ts",
+        "apps/server/src/server.test.ts",
+        "apps/server/src/ws.ts",
+        "apps/swift-ios/App/NativeFeatureClient.swift",
+        "apps/swift-ios/App/Platform/PlatformRootView.swift",
+        "apps/swift-ios/App/RootView.swift",
+        "apps/swift-ios/App/T3CodeApp.swift",
+        "apps/swift-ios/Core/HTTP.swift",
+        "apps/swift-ios/Core/Models.swift",
+        "apps/swift-ios/Core/PullRequestWireModels.swift",
+        "apps/swift-ios/Core/ResourceTelemetryModels.swift",
+        "apps/swift-ios/Core/T3Client.swift",
+        "apps/swift-ios/Core/WebSocketRPC.swift",
+        "apps/swift-ios/Core/WorkspaceModels.swift",
+        "apps/swift-ios/DesignSystem/T3Theme.swift",
+        "apps/swift-ios/DesignSystem/T3ThemeRuntime.swift",
+        "apps/swift-ios/Extensions/Share/ShareViewController.swift",
+        "apps/swift-ios/Extensions/Shared/ShareInbox.swift",
+        "apps/swift-ios/Features/Chat/FeatureComposerCommandPopover.swift",
+        "apps/swift-ios/Features/Chat/FeatureComposerView.swift",
+        "apps/swift-ios/Features/Chat/MarkdownMessageView.swift",
+        "apps/swift-ios/Features/Chat/MarkdownRenderCache.swift",
+        "apps/swift-ios/Features/Chat/ThreadDetailView.swift",
+        "apps/swift-ios/Features/Devices/DeviceManagementCopy.swift",
+        "apps/swift-ios/Features/Devices/DevicesView.swift",
+        "apps/swift-ios/Features/Files/FeatureFilesView.swift",
+        "apps/swift-ios/Features/Files/FeatureLoadedPath.swift",
+        "apps/swift-ios/Features/Review/FeatureReviewView.swift",
+        "apps/swift-ios/Features/Root/FeatureRootModel.swift",
+        "apps/swift-ios/Features/Root/FeatureRootView.swift",
+        "apps/swift-ios/Features/Settings/BuildChangelog.swift",
+        "apps/swift-ios/Features/Settings/SettingsView.swift",
+        "apps/swift-ios/Features/Settings/ThemeSettingsView.swift",
+        "apps/swift-ios/Features/Shared/FeatureClient.swift",
+        "apps/swift-ios/Features/Shared/FeatureLatestRequest.swift",
+        "apps/swift-ios/Features/Shared/FeatureModels.swift",
+        "apps/swift-ios/Features/Shared/FeatureToolErrorNotice.swift",
+        "apps/swift-ios/Features/Shared/FeatureToolErrorPresentation.swift",
+        "apps/swift-ios/Features/SourceControl/FeatureSourceControlView.swift",
+        "apps/swift-ios/Features/Terminal/TerminalSurfaceView.swift",
+        "apps/swift-ios/Features/Workspace/DailyUXModels.swift",
+        "apps/swift-ios/Features/Workspace/FeatureCommandPaletteModel.swift",
+        "apps/swift-ios/Features/Workspace/FeatureCommandPaletteView.swift",
+        "apps/swift-ios/Features/Workspace/HomeThreadCollectionView.swift",
+        "apps/swift-ios/Features/Workspace/ThreadContextMenu.swift",
+        "apps/swift-ios/Features/Workspace/WorkspaceView.swift",
+        "apps/swift-ios/README.md",
+        "apps/swift-ios/Resources/theme-catalog-v1.json",
+        "apps/swift-ios/Scripts/generate-build-changelog.swift",
+        "apps/swift-ios/Tests/CoreTests/PullRequestContractTests.swift",
+        "apps/swift-ios/Tests/FeatureTests/DailyUXSidebarTests.swift",
+        "apps/swift-ios/Tests/FeatureTests/DeviceManagementTests.swift",
+        "apps/swift-ios/Tests/FeatureTests/FeatureCommandPaletteTests.swift",
+        "apps/swift-ios/Tests/FeatureTests/FeatureComposerPowerTests.swift",
+        "apps/swift-ios/Tests/FeatureTests/FeatureErrorSurfaceTests.swift",
+        "apps/swift-ios/Tests/FeatureTests/FeatureRootModelTests.swift",
+        "apps/swift-ios/Tests/FeatureTests/HomeThreadMetadataTests.swift",
+        "apps/swift-ios/Tests/FeatureTests/MarkdownDocumentTests.swift",
+        "apps/swift-ios/Tests/FeatureTests/SettingsAboutMetadataTests.swift",
+        "apps/swift-ios/Tests/FeatureTests/ThemeRuntimeTests.swift",
+        "apps/swift-ios/Tests/FeatureTests/ThreadContextMenuTests.swift",
+        "apps/swift-ios/Tests/FeatureTests/ThreadDetailPresentationTests.swift",
+        "apps/swift-ios/Tests/FeatureTests/TranscriptViewportGeometryTests.swift",
+        "apps/swift-ios/Tests/PlatformTests/PlatformAgentAwarenessTests.swift",
+        "apps/web/src/components/HostStorageWarning.tsx",
+        "apps/web/src/lib/resourceTelemetryState.ts",
+        "apps/web/src/routes/__root.tsx",
+        "apps/web/src/themePalette.ts",
+        "apps/web/src/vscodeThemeImport.ts",
+        "docs/internals/resource-telemetry.md",
+        "docs/operations/swiftui-approved-phone-lane.md",
+        "docs/user/host-storage.md",
+        "packages/client-runtime/src/rpc/client.ts",
+        "packages/client-runtime/src/state/server.ts",
+        "packages/contracts/src/environment.ts",
+        "packages/contracts/src/index.ts",
+        "packages/contracts/src/resourceTelemetry.ts",
+        "packages/contracts/src/rpc.ts",
+        "packages/contracts/src/theme.ts",
+        "packages/shared/package.json",
+        "packages/shared/src/openVsxThemes.ts",
+        "packages/shared/src/theme.ts",
+        "packages/shared/src/themeArtifact.test.ts",
+        "packages/shared/src/themeArtifact.ts",
+        "packages/shared/src/vscodeThemeImport.ts",
+        "packages/shared/tsconfig.json",
+        "pnpm-lock.yaml",
+        "scripts/generate-swift-theme-catalog.ts"
+      ],
+      "commit": "c8e805ab116b89d10bb23e9c44b864926ace607f",
+      "mergeEvidence": {
+        "actualTree": "80fc80846edb1d4f328d4c65a3852908a64eb708",
+        "automaticMerge": "conflicts",
+        "automaticTree": "5c4aa85bf63a88bba324e083bb471680b3a234f0",
+        "resolution": "recorded",
+        "resolutionNote": "Git reported conflicts. The merge commit contains the recorded resolution."
+      },
+      "parents": [
+        "575e96c87db713a9832125065762458af5d93d6c",
+        "2b1cf46a76afb0825dff0cec505307807149992e"
+      ],
+      "patchId": null,
+      "sourceRecords": [],
+      "subject": "merge: integrate exact SwiftUI Test build 40 train"
+    },
+    {
+      "anomaly": "No checked-in source record cites this commit, and its diff changes behavior or control code.",
+      "category": "anomaly",
+      "changedPaths": [
+        "apps/swift-ios/Features/Shared/FeatureModels.swift",
+        "apps/swift-ios/Tests/CoreTests/EnvironmentConnectionStateTests.swift"
+      ],
+      "commit": "5febace3bbee95b5ca2533f6bf082c30934321c3",
+      "parents": [
+        "c8e805ab116b89d10bb23e9c44b864926ace607f"
+      ],
+      "patchId": "f86e86a470766bcce0f44f61f32b143a82f50699",
+      "sourceRecords": [],
+      "subject": "fix(swift-ios): preserve merged environment capabilities"
+    },
+    {
+      "category": "integration",
+      "changedPaths": [
+        "apps/swift-ios/Extensions/Shared/SharedContainer.swift",
+        "apps/swift-ios/README.md",
+        "apps/swift-ios/T3Code.xcodeproj/project.pbxproj",
+        "docs/operations/swiftui-dev-test-stream.md",
+        "scripts/swiftui-stream/build-ready.sh",
+        "scripts/swiftui-stream/test_stream.py"
+      ],
+      "commit": "f9e752d95ba1826681011b9136bf8ec6e84f7e32",
+      "mergeEvidence": {
+        "actualTree": "476d69b4a21f361539aefe3b7f732b41c4a8667e",
+        "automaticMerge": "clean",
+        "automaticTree": "476d69b4a21f361539aefe3b7f732b41c4a8667e",
+        "resolution": "automatic"
+      },
+      "parents": [
+        "5febace3bbee95b5ca2533f6bf082c30934321c3",
+        "57556bf257651a20b748b2e3866591af4435e9d3"
+      ],
+      "patchId": null,
+      "sourceRecords": [],
+      "subject": "Merge branch 'personal/swiftui-dev' into personal/swiftui-test"
+    },
+    {
+      "category": "integration",
+      "changedPaths": [
+        "scripts/swiftui-stream/stream.json"
+      ],
+      "commit": "e5a113e05ab91393fd52dda816cf2e66872f936d",
+      "mergeEvidence": {
+        "actualTree": "74015836419be20f0d61b59cd7b2b17a31645957",
+        "automaticMerge": "clean",
+        "automaticTree": "74015836419be20f0d61b59cd7b2b17a31645957",
+        "resolution": "automatic"
+      },
+      "parents": [
+        "f9e752d95ba1826681011b9136bf8ec6e84f7e32",
+        "8ecf0bf5e4827982463e51601fef6ae8c8d9e85e"
+      ],
+      "patchId": null,
+      "sourceRecords": [],
+      "subject": "Merge branch 'personal/swiftui-dev' into personal/swiftui-test"
+    },
+    {
+      "category": "integration",
+      "changedPaths": [
+        "scripts/swiftui-stream/drift-monitor.sh"
+      ],
+      "commit": "70d14fbd1aa113a84c385045ac66dc3d7c0f20cf",
+      "mergeEvidence": {
+        "actualTree": "85920d862e561a30c7ffbec3bd30cc16e06990df",
+        "automaticMerge": "clean",
+        "automaticTree": "85920d862e561a30c7ffbec3bd30cc16e06990df",
+        "resolution": "automatic"
+      },
+      "parents": [
+        "e5a113e05ab91393fd52dda816cf2e66872f936d",
+        "cabbd92291069de7f70a2020eac7a23b687068a8"
+      ],
+      "patchId": null,
+      "sourceRecords": [],
+      "subject": "Merge branch 'personal/swiftui-dev' into personal/swiftui-test"
+    },
+    {
+      "category": "integration",
+      "changedPaths": [
+        "docs/operations/swiftui-approved-phone-lane.md",
+        "docs/operations/swiftui-dev-test-stream.md",
+        "scripts/swiftui-stream/configure-drift-monitor.sh",
+        "scripts/swiftui-stream/drift-monitor.sh",
+        "scripts/swiftui-stream/phone-watch.py",
+        "scripts/swiftui-stream/pr-delivery.json",
+        "scripts/swiftui-stream/stream.json",
+        "scripts/swiftui-stream/stream.py",
+        "scripts/swiftui-stream/test_stream.py"
+      ],
+      "commit": "5292cad7102f0dff0cf4bd135e3cc985f15d2802",
+      "mergeEvidence": {
+        "actualTree": "17a9f85d2889561472e53bd51f84040eacb48fbd",
+        "automaticMerge": "clean",
+        "automaticTree": "17a9f85d2889561472e53bd51f84040eacb48fbd",
+        "resolution": "automatic"
+      },
+      "parents": [
+        "70d14fbd1aa113a84c385045ac66dc3d7c0f20cf",
+        "9eb9a64b3ffba341dbae0ed99a8367d934b3410a"
+      ],
+      "patchId": null,
+      "sourceRecords": [],
+      "subject": "Merge branch 'personal/swiftui-dev' into personal/swiftui-test"
+    },
+    {
+      "category": "integration",
+      "changedPaths": [
+        "scripts/swiftui-stream/drift-monitor.sh",
+        "scripts/swiftui-stream/phone-watch.py",
+        "scripts/swiftui-stream/stream.py",
+        "scripts/swiftui-stream/test_stream.py"
+      ],
+      "commit": "cf1be2302a2e9988014ff5c538f1eee769e92209",
+      "mergeEvidence": {
+        "actualTree": "562a6a148ac0eb3b3ebaea3e6aa32039fcd415e1",
+        "automaticMerge": "clean",
+        "automaticTree": "562a6a148ac0eb3b3ebaea3e6aa32039fcd415e1",
+        "resolution": "automatic"
+      },
+      "parents": [
+        "5292cad7102f0dff0cf4bd135e3cc985f15d2802",
+        "d79e45e3ae1e305b248c751d6a51bac7210fff6a"
+      ],
+      "patchId": null,
+      "sourceRecords": [],
+      "subject": "Merge branch 'personal/swiftui-dev' into personal/swiftui-test"
+    },
+    {
+      "category": "candidate",
+      "changedPaths": [
+        "apps/swift-ios/Core/PersonalFleetPairingError.swift",
+        "apps/swift-ios/Core/PersonalFleetPairingHost.swift",
+        "apps/swift-ios/Core/PersonalFleetPairingRequesting.swift",
+        "apps/swift-ios/Core/PersonalFleetPairingService.swift",
+        "apps/swift-ios/Features/Connection/ConnectionOnboardingView.swift",
+        "apps/swift-ios/Features/Connection/PersonalConnectAvailability.swift",
+        "apps/swift-ios/Features/Connection/PersonalConnectHostLabel.swift",
+        "apps/swift-ios/Features/Connection/PersonalConnectView.swift",
+        "apps/swift-ios/T3Code.xcodeproj/project.pbxproj",
+        "apps/swift-ios/Tests/CoreTests/PersonalFleetPairingTests.swift",
+        "apps/swift-ios/Tests/FeatureTests/PersonalBuildChannelTests.swift",
+        "docs/operations/swiftui-dev-test-stream.md",
+        "scripts/swiftui-stream/stream.json"
+      ],
+      "commit": "fb9af99ef8ab664956368d34329584529be4e7c9",
+      "parents": [
+        "cf1be2302a2e9988014ff5c538f1eee769e92209"
+      ],
+      "patchId": "f0d6a38a4021c06ef8548f975d04c6014ba1ec18",
+      "sourceRecords": [
+        {
+          "collection": "features",
+          "field": "integratedCommit",
+          "key": "id",
+          "snapshot": "streamManifest",
+          "value": "swiftui-test-personal-connect"
+        }
+      ],
+      "subject": "feat(swiftui): add private Test pairing"
+    },
+    {
+      "category": "metadata",
+      "changedPaths": [
+        "scripts/swiftui-stream/stream.json"
+      ],
+      "commit": "25aca9593953d433f808db8040759f48f5555f6f",
+      "parents": [
+        "fb9af99ef8ab664956368d34329584529be4e7c9"
+      ],
+      "patchId": "ec45cec40ff312acb7e37ed41d3c1a59fffadd9d",
+      "sourceRecords": [],
+      "subject": "chore(swiftui): stage personal connect in Test"
+    },
+    {
+      "anomaly": "No checked-in source record cites this commit, and its diff changes behavior or control code.",
+      "category": "anomaly",
+      "changedPaths": [
+        "scripts/swiftui-stream/stream.py",
+        "scripts/swiftui-stream/test_stream.py"
+      ],
+      "commit": "3129ef8488e73b4cbff9ed1e8005b9db2da40200",
+      "parents": [
+        "25aca9593953d433f808db8040759f48f5555f6f"
+      ],
+      "patchId": "9678a21673f16944d740e0489c67adf236fd315e",
+      "sourceRecords": [],
+      "subject": "fix(swiftui): carry approvals across Test builds"
+    },
+    {
+      "anomaly": "No checked-in source record cites this commit, and its diff changes behavior or control code.",
+      "category": "anomaly",
+      "changedPaths": [
+        "scripts/swiftui-stream/build-ready.sh"
+      ],
+      "commit": "ead6fa15233c78cdc784eb09586faee24fe6b087",
+      "parents": [
+        "3129ef8488e73b4cbff9ed1e8005b9db2da40200"
+      ],
+      "patchId": "e55fb52fad7d17c318411ef82da3df116bbd34f8",
+      "sourceRecords": [],
+      "subject": "fix(swiftui): publish while phone is offline"
+    },
+    {
+      "category": "metadata",
+      "changedPaths": [
+        "scripts/swiftui-stream/stream.json"
+      ],
+      "commit": "613ecefa8cf45498bfc46d21773d0cc70500ac4b",
+      "parents": [
+        "ead6fa15233c78cdc784eb09586faee24fe6b087"
+      ],
+      "patchId": "252c59852a986b8089b29d2d6163fa01fc0efd53",
+      "sourceRecords": [],
+      "subject": "chore(swiftui): record Personal Connect Test build 44"
+    },
+    {
+      "category": "candidate",
+      "changedPaths": [
+        "apps/swift-ios/Features/Workspace/HomeThreadCollectionView.swift",
+        "apps/swift-ios/Tests/FeatureTests/HomeThreadMetadataTests.swift",
+        "scripts/swiftui-stream/stream.json"
+      ],
+      "commit": "17ac7f22296043125a10c09f0392766ec69e6994",
+      "parents": [
+        "613ecefa8cf45498bfc46d21773d0cc70500ac4b"
+      ],
+      "patchId": "e385e7fbe61882ffd926e0a2ef059ffbd826c873",
+      "sourceRecords": [
+        {
+          "collection": "features",
+          "field": "integratedCommit",
+          "key": "id",
+          "snapshot": "streamManifest",
+          "value": "cold-boot-home-list-scrolling"
+        }
+      ],
+      "subject": "fix(swift-ios): integrate cold-launch scroll responsiveness"
+    },
+    {
+      "category": "metadata",
+      "changedPaths": [
+        "scripts/swiftui-stream/stream.json"
+      ],
+      "commit": "771af21d518df51fc7e1de6fa88211737158178b",
+      "parents": [
+        "17ac7f22296043125a10c09f0392766ec69e6994"
+      ],
+      "patchId": "73cdf6741b869db3dc84224647438b10c6e78f47",
+      "sourceRecords": [],
+      "subject": "chore(swiftui): freeze cold-launch scroll proof in Test"
+    },
+    {
+      "category": "metadata",
+      "changedPaths": [
+        "scripts/swiftui-stream/stream.json"
+      ],
+      "commit": "72b2cdbb2d24df02c5fffffa8cd3e0683943fd7e",
+      "parents": [
+        "771af21d518df51fc7e1de6fa88211737158178b"
+      ],
+      "patchId": "4ab0224c6c9b23b88b7973e9e47e0dfe15c7af0a",
+      "sourceRecords": [],
+      "subject": "chore(swiftui): record cold-launch scroll Test build 45"
+    },
+    {
+      "category": "metadata",
+      "changedPaths": [
+        "scripts/swiftui-stream/stream.json"
+      ],
+      "commit": "f23ed27e7934cedc8c64ed2bf30432985db6ed5f",
+      "parents": [
+        "72b2cdbb2d24df02c5fffffa8cd3e0683943fd7e"
+      ],
+      "patchId": "624173b2a82b98aac77ec77ee5b37e1ecfbc729f",
+      "sourceRecords": [],
+      "subject": "chore(swiftui): mark cold-launch scroll fix ready for approval"
+    },
+    {
+      "category": "metadata",
+      "changedPaths": [
+        "scripts/swiftui-stream/stream.json"
+      ],
+      "commit": "865435bec1cfa9ad64daeb4f328fd9ce9636a036",
+      "parents": [
+        "f23ed27e7934cedc8c64ed2bf30432985db6ed5f"
+      ],
+      "patchId": "445752c9efa13f254d4e00540f5a27807b495d93",
+      "sourceRecords": [],
+      "subject": "chore(swiftui): reconcile shared theme receipt in Test"
+    },
+    {
+      "category": "metadata",
+      "changedPaths": [
+        "scripts/swiftui-stream/stream.json"
+      ],
+      "commit": "5438ceeeec8e537f0cbec569b9156638dfae2ef7",
+      "parents": [
+        "865435bec1cfa9ad64daeb4f328fd9ce9636a036"
+      ],
+      "patchId": "7bcff4d9bd9df258a0e7472ead1f62aeec4f834c",
+      "sourceRecords": [],
+      "subject": "chore(swiftui): record theme Test build evidence"
+    },
+    {
+      "category": "integration",
+      "changedPaths": [
+        "scripts/swiftui-stream/stream.py",
+        "scripts/swiftui-stream/test_stream.py"
+      ],
+      "commit": "d4b2e2d7d1fd7431ad41e6ea34b27756b0925833",
+      "mergeEvidence": {
+        "actualTree": "eab2e89a6559518c0fc7d674dcc88dc75cd6292e",
+        "automaticMerge": "clean",
+        "automaticTree": "eab2e89a6559518c0fc7d674dcc88dc75cd6292e",
+        "resolution": "automatic"
+      },
+      "parents": [
+        "5438ceeeec8e537f0cbec569b9156638dfae2ef7",
+        "125ed781e20716091222651092ed2708448bb6b6"
+      ],
+      "patchId": null,
+      "sourceRecords": [],
+      "subject": "Merge branch 'personal/swiftui-dev' into personal/swiftui-test"
+    },
+    {
+      "category": "candidate",
+      "changedPaths": [
+        "apps/swift-ios/App/NativeFeatureClient.swift",
+        "apps/swift-ios/Features/PullRequests/PullRequestDetailView.swift",
+        "apps/swift-ios/Features/PullRequests/PullRequestInboxClient.swift",
+        "apps/swift-ios/Features/PullRequests/PullRequestInboxModel.swift",
+        "apps/swift-ios/Features/PullRequests/PullRequestInboxView.swift",
+        "apps/swift-ios/Features/PullRequests/PullRequestListContent.swift",
+        "apps/swift-ios/Features/PullRequests/PullRequestRowView.swift",
+        "apps/swift-ios/Features/PullRequests/PullRequestSummarySection.swift",
+        "apps/swift-ios/Features/PullRequests/PullRequestSummaryView.swift",
+        "apps/swift-ios/Features/PullRequests/PullRequestTimelineRow.swift",
+        "apps/swift-ios/Features/PullRequests/PullRequestTimelineView.swift",
+        "apps/swift-ios/Features/Shared/FeatureModels.swift",
+        "apps/swift-ios/Features/Workspace/WorkspaceView.swift",
+        "apps/swift-ios/Tests/FeatureTests/PullRequestInboxModelTests.swift",
+        "scripts/swiftui-stream/stream.json"
+      ],
+      "commit": "12febfd914a51f10d4222deb3d759702d0a75c36",
+      "parents": [
+        "d4b2e2d7d1fd7431ad41e6ea34b27756b0925833"
+      ],
+      "patchId": "29401228b60bdcdb77ba41484cddaf8da550a678",
+      "sourceRecords": [
+        {
+          "collection": "features",
+          "field": "integratedCommit",
+          "key": "id",
+          "snapshot": "streamManifest",
+          "value": "pull-request-inbox-summary-timeline"
+        }
+      ],
+      "subject": "feat(swiftui): add pull request inbox summary timeline"
+    },
+    {
+      "category": "candidate",
+      "changedPaths": [
+        "apps/swift-ios/Features/Workspace/DebugBuildMetadata.swift",
+        "apps/swift-ios/Features/Workspace/WorkspaceView.swift",
+        "apps/swift-ios/Tests/FeatureTests/DebugBuildMetadataTests.swift",
+        "scripts/swiftui-stream/stream.json"
+      ],
+      "commit": "c17fefddfcdb1a9ba244cb508a12cd6190c0701e",
+      "parents": [
+        "d4b2e2d7d1fd7431ad41e6ea34b27756b0925833"
+      ],
+      "patchId": "65ebc905826bbabb4be5bd036d15eda9d829eeab",
+      "sourceRecords": [
+        {
+          "collection": "features",
+          "field": "integratedCommit",
+          "key": "id",
+          "snapshot": "streamManifest",
+          "value": "home-build-number-swipe-space"
+        }
+      ],
+      "subject": "fix(swiftui): free home header swipe area"
+    },
+    {
+      "category": "metadata",
+      "changedPaths": [
+        "scripts/swiftui-stream/stream.json"
+      ],
+      "commit": "9705f832559b177fae12dadca51114ffdcb45103",
+      "parents": [
+        "c17fefddfcdb1a9ba244cb508a12cd6190c0701e"
+      ],
+      "patchId": "510b63c3e3d77c853d2a7ae51e882703de31e198",
+      "sourceRecords": [],
+      "subject": "chore(swiftui): record home build badge in Test"
+    },
+    {
+      "category": "metadata",
+      "changedPaths": [
+        "scripts/swiftui-stream/stream.json"
+      ],
+      "commit": "864b9df0f41a7a5e2da13503a672cc9fc7e96f5a",
+      "parents": [
+        "12febfd914a51f10d4222deb3d759702d0a75c36"
+      ],
+      "patchId": "dc9d8902af5a08347c2b6a68e7072483def16afa",
+      "sourceRecords": [],
+      "subject": "chore(swiftui): promote pull request inbox to Test"
+    },
+    {
+      "category": "integration",
+      "changedPaths": [
+        "apps/swift-ios/App/NativeFeatureClient.swift",
+        "apps/swift-ios/Features/PullRequests/PullRequestDetailView.swift",
+        "apps/swift-ios/Features/PullRequests/PullRequestInboxClient.swift",
+        "apps/swift-ios/Features/PullRequests/PullRequestInboxModel.swift",
+        "apps/swift-ios/Features/PullRequests/PullRequestInboxView.swift",
+        "apps/swift-ios/Features/PullRequests/PullRequestListContent.swift",
+        "apps/swift-ios/Features/PullRequests/PullRequestRowView.swift",
+        "apps/swift-ios/Features/PullRequests/PullRequestSummarySection.swift",
+        "apps/swift-ios/Features/PullRequests/PullRequestSummaryView.swift",
+        "apps/swift-ios/Features/PullRequests/PullRequestTimelineRow.swift",
+        "apps/swift-ios/Features/PullRequests/PullRequestTimelineView.swift",
+        "apps/swift-ios/Features/Shared/FeatureModels.swift",
+        "apps/swift-ios/Features/Workspace/WorkspaceView.swift",
+        "apps/swift-ios/Tests/FeatureTests/PullRequestInboxModelTests.swift",
+        "scripts/swiftui-stream/stream.json"
+      ],
+      "commit": "270c5c8c6b5f523965161ec69159d54388855dd0",
+      "mergeEvidence": {
+        "actualTree": "06cc5aad367619f03bd42faac08ab32d5df27f23",
+        "automaticMerge": "clean",
+        "automaticTree": "06cc5aad367619f03bd42faac08ab32d5df27f23",
+        "resolution": "automatic"
+      },
+      "parents": [
+        "9705f832559b177fae12dadca51114ffdcb45103",
+        "864b9df0f41a7a5e2da13503a672cc9fc7e96f5a"
+      ],
+      "patchId": null,
+      "sourceRecords": [],
+      "subject": "Merge concurrent SwiftUI Test candidates"
+    },
+    {
+      "category": "metadata",
+      "changedPaths": [
+        "scripts/swiftui-stream/stream.json"
+      ],
+      "commit": "2c08204501adaa470a0b5acd3a7a807f3b0168c4",
+      "parents": [
+        "270c5c8c6b5f523965161ec69159d54388855dd0"
+      ],
+      "patchId": "43c191550c24c96d779556936218c3ff575895a2",
+      "sourceRecords": [],
+      "subject": "chore(swiftui): record blocked Test publication"
+    },
+    {
+      "category": "metadata",
+      "changedPaths": [
+        "scripts/swiftui-stream/stream.json"
+      ],
+      "commit": "8aecdf116a5c014c2094f870dba739b2e28c6b9e",
+      "parents": [
+        "2c08204501adaa470a0b5acd3a7a807f3b0168c4"
+      ],
+      "patchId": "f1e335bd09854d43201d6d3d79ee10f06f256476",
+      "sourceRecords": [],
+      "subject": "chore(swiftui): assign PR inbox Test build 50"
+    },
+    {
+      "anomaly": "No checked-in source record cites this commit, and its diff changes behavior or control code.",
+      "category": "anomaly",
+      "changedPaths": [
+        "apps/swift-ios/Features/Chat/FeatureComposerCommandPopover.swift",
+        "apps/swift-ios/Features/Chat/FeatureComposerPowerFeatures.swift",
+        "apps/swift-ios/Features/Chat/FeatureComposerView.swift",
+        "apps/swift-ios/Features/Chat/ThreadDetailView.swift",
+        "apps/swift-ios/Features/Workspace/NewThreadView.swift",
+        "apps/swift-ios/Tests/FeatureTests/FeatureComposerPowerTests.swift",
+        "scripts/swiftui-stream/stream.json"
+      ],
+      "commit": "cbae942274d6fcd62cfc365a32e1c9f7d826510d",
+      "parents": [
+        "8aecdf116a5c014c2094f870dba739b2e28c6b9e"
+      ],
+      "patchId": "79ea698de9bbd262447077969109b429c274df11",
+      "sourceRecords": [],
+      "subject": "fix(swift-ios): expand readable skill popup"
+    },
+    {
+      "category": "candidate",
+      "changedPaths": [
+        "apps/swift-ios/Features/Chat/FeatureComposerView.swift",
+        "apps/swift-ios/Tests/FeatureTests/FeatureComposerPowerTests.swift"
+      ],
+      "commit": "7fc758cc1adc58d6426eb4fec413c2dc37e3841b",
+      "parents": [
+        "cbae942274d6fcd62cfc365a32e1c9f7d826510d"
+      ],
+      "patchId": "5c86462d1e241e0534432b13f4becc2e52920575",
+      "sourceRecords": [
+        {
+          "collection": "features",
+          "field": "integratedCommit",
+          "key": "id",
+          "snapshot": "streamManifest",
+          "value": "skill-popup-readability-and-height"
+        }
+      ],
+      "subject": "fix(swift-ios): anchor tall command menu above composer"
+    },
+    {
+      "category": "metadata",
+      "changedPaths": [
+        "scripts/swiftui-stream/stream.json"
+      ],
+      "commit": "f8b9394ea1874f601832a3b21fcbf36e734e6c7f",
+      "parents": [
+        "7fc758cc1adc58d6426eb4fec413c2dc37e3841b"
+      ],
+      "patchId": "ec14691dfced2cf809fe0c350aa1e48382f80eef",
+      "sourceRecords": [],
+      "subject": "chore(swiftui): stage readable skill popup in Test"
+    },
+    {
+      "category": "candidate",
+      "changedPaths": [
+        "apps/swift-ios/App/Platform/PlatformRouteResolver.swift",
+        "apps/swift-ios/Features/Settings/BuildTestingCommitRow.swift",
+        "apps/swift-ios/Features/Settings/BuildTestingDecision.swift",
+        "apps/swift-ios/Features/Settings/BuildTestingFeatureView.swift",
+        "apps/swift-ios/Features/Settings/BuildTestingManifest.swift",
+        "apps/swift-ios/Features/Settings/BuildTestingPresentation.swift",
+        "apps/swift-ios/Features/Settings/BuildTestingThreadRow.swift",
+        "apps/swift-ios/Features/Settings/BuildTestingVerdictStore.swift",
+        "apps/swift-ios/Features/Settings/BuildTestingView.swift",
+        "apps/swift-ios/Features/Settings/SettingsView.swift",
+        "apps/swift-ios/Resources/Info.plist",
+        "apps/swift-ios/Tests/FeatureTests/BuildTestingManifestTests.swift",
+        "apps/swift-ios/Tests/PlatformTests/PlatformDeepLinkTests.swift",
+        "docs/operations/swiftui-dev-test-stream.md",
+        "scripts/swiftui-stream/build-ready.sh",
+        "scripts/swiftui-stream/generate_testing_manifest.py",
+        "scripts/swiftui-stream/next-build.py",
+        "scripts/swiftui-stream/stream.json",
+        "scripts/swiftui-stream/stream.py",
+        "scripts/swiftui-stream/test_stream.py"
+      ],
+      "commit": "71c0b00ac78b5d0d3fea10b6c0b5fce3f6ddaaa0",
+      "parents": [
+        "f8b9394ea1874f601832a3b21fcbf36e734e6c7f"
+      ],
+      "patchId": "2c35562eaca57ba2fcefa08cb31566ee77848d43",
+      "sourceRecords": [
+        {
+          "collection": "features",
+          "field": "integratedCommits",
+          "key": "id",
+          "snapshot": "streamManifest",
+          "value": "in-app-stream-approval-control"
+        }
+      ],
+      "subject": "feat(swift-ios): add in-app stream approvals"
+    },
+    {
+      "category": "candidate",
+      "changedPaths": [
+        "apps/swift-ios/Features/Settings/BuildTestingDecision.swift",
+        "apps/swift-ios/Features/Settings/BuildTestingFeatureView.swift",
+        "apps/swift-ios/Features/Settings/BuildTestingManifest.swift",
+        "apps/swift-ios/Features/Settings/BuildTestingPresentation.swift",
+        "apps/swift-ios/Features/Settings/BuildTestingReviewGuide.swift",
+        "apps/swift-ios/Features/Settings/BuildTestingView.swift",
+        "apps/swift-ios/Tests/FeatureTests/BuildTestingManifestTests.swift",
+        "docs/operations/swiftui-dev-test-stream.md",
+        "scripts/swiftui-stream/generate_testing_manifest.py",
+        "scripts/swiftui-stream/stream.json",
+        "scripts/swiftui-stream/stream.py",
+        "scripts/swiftui-stream/test_stream.py"
+      ],
+      "commit": "d0a397a9b8b1b9a0a14c0d781c829c2f71af8675",
+      "parents": [
+        "71c0b00ac78b5d0d3fea10b6c0b5fce3f6ddaaa0"
+      ],
+      "patchId": "353c6b53c42cfa3bac3bc2aa9cfc28e72901b6e4",
+      "sourceRecords": [
+        {
+          "collection": "features",
+          "field": "integratedCommits",
+          "key": "id",
+          "snapshot": "streamManifest",
+          "value": "in-app-stream-approval-control"
+        }
+      ],
+      "subject": "fix(swift-ios): clarify staged feature approvals"
+    },
+    {
+      "category": "candidate",
+      "changedPaths": [
+        "scripts/swiftui-stream/generate_testing_manifest.py",
+        "scripts/swiftui-stream/test_stream.py"
+      ],
+      "commit": "c332364a814bd86d919ae32334d8bd44a8651747",
+      "parents": [
+        "d0a397a9b8b1b9a0a14c0d781c829c2f71af8675"
+      ],
+      "patchId": "d50a3e0e3265eeb4774798834a821e2ce5d4f76c",
+      "sourceRecords": [
+        {
+          "collection": "features",
+          "field": "integratedCommit",
+          "key": "id",
+          "snapshot": "streamManifest",
+          "value": "in-app-stream-approval-control"
+        }
+      ],
+      "subject": "fix(swiftui): exclude proof-only commits from candidates"
+    },
+    {
+      "category": "metadata",
+      "changedPaths": [
+        "scripts/swiftui-stream/stream.json"
+      ],
+      "commit": "20fd9b7d3df0b2c877ce0adcaba9938f69a32486",
+      "parents": [
+        "c332364a814bd86d919ae32334d8bd44a8651747"
+      ],
+      "patchId": "538cf33e7b8d222fc81d304db04699a838fd9b79",
+      "sourceRecords": [],
+      "subject": "chore(swiftui): stage approval workflow in Test"
+    },
+    {
+      "category": "metadata",
+      "changedPaths": [
+        "scripts/swiftui-stream/stream.json"
+      ],
+      "commit": "7e2daf23a12483e78190f028c9c8a0ab18bf76b7",
+      "parents": [
+        "20fd9b7d3df0b2c877ce0adcaba9938f69a32486"
+      ],
+      "patchId": "3ca8dfa23426c3d250f56d4c76a09f425f06c1c6",
+      "sourceRecords": [],
+      "subject": "chore(swiftui): record Test approval build"
+    },
+    {
+      "anomaly": "No checked-in source record cites this commit, and its diff changes behavior or control code.",
+      "category": "anomaly",
+      "changedPaths": [
+        "apps/swift-ios/Features/Workspace/FeatureCommandPaletteModel.swift",
+        "apps/swift-ios/Features/Workspace/FeatureCommandPaletteView.swift",
+        "apps/swift-ios/Features/Workspace/WorkspaceView.swift",
+        "apps/swift-ios/Tests/FeatureTests/FeatureCommandPaletteTests.swift"
+      ],
+      "commit": "2789aad6bda8a916cca9023b84420f46cf84c2ef",
+      "parents": [
+        "125ed781e20716091222651092ed2708448bb6b6"
+      ],
+      "patchId": "e3ead01ad8558df38a3f878ef193772b168ffb37",
+      "sourceRecords": [],
+      "subject": "feat(swiftui): add command palette swipe gesture"
+    },
+    {
+      "anomaly": "No checked-in source record cites this commit, and its diff changes behavior or control code.",
+      "category": "anomaly",
+      "changedPaths": [
+        "apps/swift-ios/Features/Workspace/FeatureCommandPaletteView.swift",
+        "apps/swift-ios/Features/Workspace/WorkspaceView.swift"
+      ],
+      "commit": "7f95310c3d407f92883b3c7e83b0e015a46b92c6",
+      "parents": [
+        "2789aad6bda8a916cca9023b84420f46cf84c2ef"
+      ],
+      "patchId": "c9da00c47baf08579c9ffc8309f36ac2f433884e",
+      "sourceRecords": [],
+      "subject": "fix(swift-ios): present command palette from top"
+    },
+    {
+      "anomaly": "No checked-in source record cites this commit, and its diff changes behavior or control code.",
+      "category": "anomaly",
+      "changedPaths": [
+        "apps/swift-ios/Features/Workspace/FeatureCommandPaletteGestureInstaller.swift",
+        "apps/swift-ios/Features/Workspace/FeatureCommandPaletteModel.swift",
+        "apps/swift-ios/Features/Workspace/FeatureCommandPaletteView.swift",
+        "apps/swift-ios/Features/Workspace/WorkspaceView.swift",
+        "apps/swift-ios/Tests/FeatureTests/FeatureCommandPaletteTests.swift"
+      ],
+      "commit": "4764e6bf5be64e472da24a3aa8f73d3142d46276",
+      "parents": [
+        "7f95310c3d407f92883b3c7e83b0e015a46b92c6"
+      ],
+      "patchId": "8eccb5ebce6d1eb5b6148c5affbac2f054b0490f",
+      "sourceRecords": [],
+      "subject": "fix(swiftui): make command palette drag physical"
+    },
+    {
+      "category": "metadata",
+      "changedPaths": [
+        "scripts/swiftui-stream/stream.json"
+      ],
+      "commit": "051b326a8f8d898427e94326e0a0027b0ebcf3d2",
+      "parents": [
+        "4764e6bf5be64e472da24a3aa8f73d3142d46276"
+      ],
+      "patchId": "3c3b419967c856fd35a4fa80c0bd6590c530c393",
+      "sourceRecords": [],
+      "subject": "chore(swiftui): reopen command palette drag candidate"
+    },
+    {
+      "anomaly": "No checked-in source record cites this commit, and its diff changes behavior or control code.",
+      "category": "anomaly",
+      "changedPaths": [
+        "apps/swift-ios/Features/Workspace/WorkspaceView.swift"
+      ],
+      "commit": "353d533ef02c28cc250fe8e45eb11538abf4c210",
+      "parents": [
+        "051b326a8f8d898427e94326e0a0027b0ebcf3d2"
+      ],
+      "patchId": "b2d7904cc3b0e5c0161240098d5ecb57fd56e96e",
+      "sourceRecords": [],
+      "subject": "fix(swiftui): hide palette after return spring"
+    },
+    {
+      "category": "metadata",
+      "changedPaths": [
+        "scripts/swiftui-stream/stream.json"
+      ],
+      "commit": "372f25510ad82b2dcba0abafaa266b84f663e027",
+      "parents": [
+        "353d533ef02c28cc250fe8e45eb11538abf4c210"
+      ],
+      "patchId": "6d35a312cffc3216f6798684931dc53515655ef9",
+      "sourceRecords": [],
+      "subject": "chore(swiftui): refresh command palette candidate head"
+    },
+    {
+      "anomaly": "No checked-in source record cites this commit, and its diff changes behavior or control code.",
+      "category": "anomaly",
+      "changedPaths": [
+        "apps/swift-ios/Features/Workspace/WorkspaceView.swift"
+      ],
+      "commit": "11e99d6f5debc88c6f4b0d2e733321ff144327a0",
+      "parents": [
+        "372f25510ad82b2dcba0abafaa266b84f663e027"
+      ],
+      "patchId": "5001bf97b708ba5add66861e47f1c38b5c486d3c",
+      "sourceRecords": [],
+      "subject": "fix(swiftui): delay palette focus until settled"
+    },
+    {
+      "category": "metadata",
+      "changedPaths": [
+        "scripts/swiftui-stream/stream.json"
+      ],
+      "commit": "f6f8a61ab5f7d05734d389e4c22b430dea0e7652",
+      "parents": [
+        "11e99d6f5debc88c6f4b0d2e733321ff144327a0"
+      ],
+      "patchId": "d6b0acdd82de533f4612710641609ab9e0b34857",
+      "sourceRecords": [],
+      "subject": "chore(swiftui): update palette candidate head"
+    },
+    {
+      "anomaly": "No checked-in source record cites this commit, and its diff changes behavior or control code.",
+      "category": "anomaly",
+      "changedPaths": [
+        "apps/swift-ios/Features/Chat/ThreadDetailView.swift",
+        "apps/swift-ios/Features/Workspace/FeatureCommandPaletteGestureInstaller.swift",
+        "apps/swift-ios/Features/Workspace/FeatureCommandPaletteModel.swift",
+        "apps/swift-ios/Features/Workspace/WorkspaceView.swift",
+        "apps/swift-ios/Tests/FeatureTests/FeatureCommandPaletteTests.swift"
+      ],
+      "commit": "5a46ed73f8afa118714921ff1fd32768e3cedd4e",
+      "parents": [
+        "f6f8a61ab5f7d05734d389e4c22b430dea0e7652"
+      ],
+      "patchId": "91eb989f19b0afb5a2f6fcc2ff4fadba62c965cd",
+      "sourceRecords": [],
+      "subject": "fix(swiftui): open palette from thread top bar"
+    },
+    {
+      "category": "metadata",
+      "changedPaths": [
+        "scripts/swiftui-stream/stream.json"
+      ],
+      "commit": "0c363cf5b17adfba84bea5581eb65ea377be160f",
+      "parents": [
+        "5a46ed73f8afa118714921ff1fd32768e3cedd4e"
+      ],
+      "patchId": "140fe1f4196aadd30fbe756d3be2724b6e852e33",
+      "sourceRecords": [],
+      "subject": "chore(swiftui): freeze palette surface candidate"
+    },
+    {
+      "category": "integration",
+      "changedPaths": [
+        "apps/swift-ios/Features/Chat/ThreadDetailView.swift",
+        "apps/swift-ios/Features/Workspace/FeatureCommandPaletteGestureInstaller.swift",
+        "apps/swift-ios/Features/Workspace/FeatureCommandPaletteModel.swift",
+        "apps/swift-ios/Features/Workspace/FeatureCommandPaletteView.swift",
+        "apps/swift-ios/Features/Workspace/WorkspaceView.swift",
+        "apps/swift-ios/Tests/FeatureTests/FeatureCommandPaletteTests.swift"
+      ],
+      "commit": "8395257e8edb1e9d9f04c2f3e6a7e585632e09fa",
+      "mergeEvidence": {
+        "actualTree": "381f6773551701848070b46e4235761956a3f2e8",
+        "automaticMerge": "conflicts",
+        "automaticTree": "75a0e3ea931d29439700df7c57c011351909dfe4",
+        "resolution": "recorded",
+        "resolutionNote": "Git reported conflicts. The merge commit contains the recorded resolution."
+      },
+      "parents": [
+        "7e2daf23a12483e78190f028c9c8a0ab18bf76b7",
+        "0c363cf5b17adfba84bea5581eb65ea377be160f"
+      ],
+      "patchId": null,
+      "sourceRecords": [
+        {
+          "collection": "features",
+          "field": "integratedCommit",
+          "key": "id",
+          "snapshot": "streamManifest",
+          "value": "command-palette-top-drawer"
+        }
+      ],
+      "subject": "merge: stage physical command palette in Test"
+    },
+    {
+      "category": "metadata",
+      "changedPaths": [
+        "scripts/swiftui-stream/stream.json"
+      ],
+      "commit": "e9f4dbd510f862717188d2118fe30d33ab999022",
+      "parents": [
+        "8395257e8edb1e9d9f04c2f3e6a7e585632e09fa"
+      ],
+      "patchId": "afb6314a0448f6754003cc1fb46d3ddfedea25a9",
+      "sourceRecords": [],
+      "subject": "chore(swiftui): record physical palette Test build"
+    }
+  ],
+  "installedTestBuild": {
+    "build": 54,
+    "bundleId": "com.alxs.t3code.typed-swiftui.dev",
+    "channel": "test",
+    "commit": "e9f4dbd510f862717188d2118fe30d33ab999022",
+    "schemaVersion": 1,
+    "sequence": 54
+  },
+  "integrationChangedPathsRule": "Diff the merge tree against its first parent.",
+  "observedTestTip": {
+    "branch": "origin/personal/swiftui-test",
+    "commit": "2af2d3c31228405bf1e0cbde6e3433263a9d801d",
+    "note": "The remote Test branch moved to this commit after the build 54 attribution snapshot. It is not part of installed Test build 54 and was not reconciled here."
+  },
+  "schemaVersion": 1,
+  "sourceSnapshots": {
+    "legacyManifest": {
+      "commit": "e9f4dbd510f862717188d2118fe30d33ab999022",
+      "path": "scripts/t3-swift-approved/manifest.json"
+    },
+    "streamManifest": {
+      "commit": "e9f4dbd510f862717188d2118fe30d33ab999022",
+      "path": "scripts/swiftui-stream/stream.json"
+    }
+  }
+}
