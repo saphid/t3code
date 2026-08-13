@@ -25,7 +25,9 @@ struct BuildTestingView: View {
 
     var body: some View {
         ScrollView {
-            LazyVStack(alignment: .leading, spacing: 14) {
+            // Review cards own disclosure and verdict state. Keeping this stack
+            // materialized preserves that state while Alex checks long evidence.
+            VStack(alignment: .leading, spacing: 14) {
                 VStack(alignment: .leading, spacing: 6) {
                     if let manifest, manifest.channel == presentation.channel {
                         Text("Build \(manifest.build) · Revision \(String(manifest.revision.prefix(7)))")
@@ -49,6 +51,8 @@ struct BuildTestingView: View {
                 if let manifest, manifest.channel == presentation.channel,
                     !manifest.entries.isEmpty
                 {
+                    BuildTestingPipelineDiagram()
+
                     ForEach(manifest.entries) { entry in
                         BuildTestingFeatureView(
                             entry: entry,

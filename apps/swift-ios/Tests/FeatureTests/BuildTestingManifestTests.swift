@@ -8,7 +8,7 @@ struct BuildTestingManifestTests {
     @Test("Loads exact embedded stream metadata", .bug("https://github.com/saphid/t3code-personal/issues/56"))
     func loadsEmbeddedManifest() throws {
         let json =
-            #"{"schemaVersion":1,"channel":"test","build":42,"revision":"abcdef123456","repositoryURL":"https://github.com/saphid/t3code-personal","entries":[{"id":"feature-one","name":"Feature one","summary":"Explains the change.","whatToCheck":"Exercise the changed flow.","successLooksLike":"The flow works without regression.","state":"needs-you","commits":[{"sha":"1234567890abcdef","title":"Add feature one","role":"integrated"}],"threads":[{"id":"THREAD-ONE","title":"Feature one thread"}],"issueURL":"https://github.com/saphid/t3code-personal/issues/56"}]}"#
+            #"{"schemaVersion":1,"channel":"test","build":42,"revision":"abcdef123456","repositoryURL":"https://github.com/saphid/t3code-personal","entries":[{"id":"feature-one","name":"Feature one","summary":"Explains the change.","whatToCheck":"Exercise the changed flow.","successLooksLike":"The flow works without regression.","state":"needs-you","commits":[{"sha":"1234567890abcdef","title":"Add feature one","role":"integrated"}],"threads":[{"id":"THREAD-ONE","title":"Feature one thread"}],"issueURL":"https://github.com/saphid/t3code-personal/issues/56","visualEvidence":[{"kind":"video","title":"Feature walkthrough","caption":"Shows the successful interaction.","appearance":"dark","cleanURL":"https://evidence.example/clean.mp4","annotatedURL":"https://evidence.example/annotated.mp4"}]}]}"#
         let info = ["T3BuildTesting": Data(json.utf8).base64EncodedString()]
         let manifest = try #require(BuildTestingManifest.load(info: info))
 
@@ -18,6 +18,8 @@ struct BuildTestingManifestTests {
         #expect(manifest.entries.first?.threads.first?.id == "THREAD-ONE")
         #expect(manifest.entries.first?.stateLabel == "Needs You")
         #expect(manifest.entries.first?.whatToCheck == "Exercise the changed flow.")
+        #expect(manifest.entries.first?.evidence.first?.kind == .video)
+        #expect(manifest.entries.first?.evidence.first?.isDarkMode == true)
         #expect(BuildTestingManifest.load(info: nil) == nil)
         #expect(BuildTestingManifest.load(info: ["T3BuildTesting": "not base64"]) == nil)
         #expect(BuildTestingManifest.load(info: ["T3BuildTesting": "$(T3_BUILD_TESTING)"]) == nil)
@@ -36,6 +38,19 @@ struct BuildTestingManifestTests {
         #expect(BuildTestingPresentation(channel: .test)?.pipelinePosition.contains("Development → Test → Dev → Upstream") == true)
         #expect(BuildTestingPresentation(channel: .debug) == nil)
         #expect(BuildTestingPresentation(channel: .upstream) == nil)
+    }
+
+    @Test("Explains every proposed PR promotion gate")
+    func explainsPromotionPipeline() {
+        let stages = BuildTestingPipelineStage.stages
+
+        #expect(stages.map(\.number) == Array(1 ... 6))
+        #expect(stages.first?.title == "Candidate PR into Test")
+        #expect(stages.contains { $0.gate == .human && $0.title == "You approve the feature" })
+        #expect(stages.contains { $0.detail.contains("orange Dev app") })
+        #expect(stages.last?.title == "Upstream PR")
+        #expect(Set(stages.map(\.id)).count == stages.count)
+        #expect(stages.allSatisfy { $0.detail.contains("would") })
     }
 
     @Test("Builds exact auditable verdict prompts")

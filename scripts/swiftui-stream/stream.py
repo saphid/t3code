@@ -14,6 +14,7 @@ import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 REPO_ROOT = SCRIPT_DIR.parent.parent
@@ -105,6 +106,39 @@ def validate_manifest(value: dict[str, Any]) -> None:
             for key in ("summary", "whatToCheck", "successLooksLike"):
                 if not isinstance(feature.get(key), str) or not feature[key].strip():
                     fail(f"{feature_id} is reviewable without {key}")
+        evidence = feature.get("visualEvidence")
+        if evidence is not None:
+            if not feature.get("visualChange"):
+                fail(f"{feature_id} has visualEvidence without visualChange")
+            if not isinstance(evidence, list) or not evidence:
+                fail(f"{feature_id} has invalid visualEvidence")
+            kinds = set()
+            for item in evidence:
+                kind = item.get("kind") if isinstance(item, dict) else None
+                if kind not in {"image", "video"}:
+                    fail(f"{feature_id} has invalid visual evidence kind {kind}")
+                kinds.add(kind)
+                if item.get("appearance") != "dark":
+                    fail(f"{feature_id} visual evidence must use dark appearance")
+                for key in ("title", "caption", "cleanURL", "annotatedURL"):
+                    field = item.get(key)
+                    if not isinstance(field, str) or not field.strip():
+                        fail(f"{feature_id} visual evidence is missing {key}")
+                for key in ("cleanURL", "annotatedURL"):
+                    url = item[key]
+                    parsed = urlparse(url)
+                    if parsed.scheme != "https" or not parsed.netloc:
+                        fail(f"{feature_id} visual evidence {key} must use HTTPS")
+        if feature.get("visualChange"):
+            if not isinstance(evidence, list) or not evidence:
+                fail(f"{feature_id} is a visual change without visualEvidence")
+            if "image" not in kinds:
+                fail(f"{feature_id} visual change has no image evidence")
+            if feature.get("interactionChange") and "video" not in kinds:
+                fail(f"{feature_id} interaction change has no video evidence")
+            receipt = feature.get("proofMediaReceipt")
+            if not isinstance(receipt, str) or not receipt.strip():
+                fail(f"{feature_id} visual evidence has no proofMediaReceipt")
         if feature.get("state") == "proved":
             source_branch = feature.get("sourceBranch")
             candidate = feature.get("candidateCommit")
@@ -547,6 +581,27 @@ def command_validate_pr(args: argparse.Namespace) -> None:
             fail(
                 f"PR {args.number} body does not match inventory delivery/dependencies"
             )
+    feature = next(
+        (item for item in manifest().get("features", []) if item.get("id") == args.feature_id),
+        None,
+    )
+    if feature is None:
+        fail(f"feature {args.feature_id} is absent from the stream catalog")
+    if feature.get("visualChange"):
+        if not re.search(r"(?mi)^Dark mode evidence:\s*yes\s*$", text):
+            fail("a visual-change PR must say 'Dark mode evidence: yes'")
+        labels = {
+            ("image", "cleanURL"): "Clean screenshot",
+            ("image", "annotatedURL"): "Annotated screenshot",
+            ("video", "cleanURL"): "Clean video",
+            ("video", "annotatedURL"): "Annotated video",
+        }
+        for item in feature.get("visualEvidence", []):
+            for key in ("cleanURL", "annotatedURL"):
+                label = labels[(item["kind"], key)]
+                pattern = rf"(?mi)^{re.escape(label)}:\s*{re.escape(item[key])}\s*$"
+                if not re.search(pattern, text):
+                    fail(f"PR body is missing {label}: {item[key]}")
     theo = git("rev-parse", manifest()["branches"]["theo"])
     resolved = git("rev-parse", validated_commit)
     if resolved != theo:
@@ -631,6 +686,7 @@ def parser() -> argparse.ArgumentParser:
     pr = commands.add_parser("validate-pr-body")
     pr.add_argument("--body")
     pr.add_argument("--number", type=int)
+    pr.add_argument("--feature-id", required=True)
     pr.set_defaults(func=command_validate_pr)
     queue = commands.add_parser("queue-order")
     queue.add_argument("--path", default="~/.t3/swiftui-stream/promotion-queue.json")

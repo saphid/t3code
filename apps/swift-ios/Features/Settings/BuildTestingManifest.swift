@@ -35,6 +35,23 @@ struct BuildTestingManifest: Codable, Equatable, Sendable {
 
     }
 
+    struct VisualEvidence: Codable, Equatable, Identifiable, Sendable {
+        enum Kind: String, Codable, Equatable, Sendable {
+            case image
+            case video
+        }
+
+        let kind: Kind
+        let title: String
+        let caption: String
+        let appearance: String
+        let cleanURL: URL
+        let annotatedURL: URL
+
+        var id: String { "\(kind.rawValue):\(annotatedURL.absoluteString)" }
+        var isDarkMode: Bool { appearance == "dark" }
+    }
+
     struct Entry: Codable, Equatable, Identifiable, Sendable {
         let id: String
         let name: String
@@ -45,6 +62,33 @@ struct BuildTestingManifest: Codable, Equatable, Sendable {
         let commits: [Commit]
         let threads: [Thread]
         let issueURL: URL?
+        let visualEvidence: [VisualEvidence]?
+
+        init(
+            id: String,
+            name: String,
+            summary: String,
+            whatToCheck: String,
+            successLooksLike: String,
+            state: String,
+            commits: [Commit],
+            threads: [Thread],
+            issueURL: URL?,
+            visualEvidence: [VisualEvidence]? = nil
+        ) {
+            self.id = id
+            self.name = name
+            self.summary = summary
+            self.whatToCheck = whatToCheck
+            self.successLooksLike = successLooksLike
+            self.state = state
+            self.commits = commits
+            self.threads = threads
+            self.issueURL = issueURL
+            self.visualEvidence = visualEvidence
+        }
+
+        var evidence: [VisualEvidence] { visualEvidence ?? [] }
 
         var stateLabel: String {
             state.replacingOccurrences(of: "-", with: " ").capitalized

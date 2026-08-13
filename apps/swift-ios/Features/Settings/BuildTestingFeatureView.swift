@@ -17,6 +17,10 @@ struct BuildTestingFeatureView: View {
             VStack(alignment: .leading, spacing: 14) {
                 BuildTestingReviewGuide(entry: entry)
 
+                if !entry.evidence.isEmpty {
+                    BuildTestingVisualEvidenceView(evidence: entry.evidence)
+                }
+
                 if !entry.commits.isEmpty {
                     VStack(alignment: .leading, spacing: 8) {
                         Text("Commits")

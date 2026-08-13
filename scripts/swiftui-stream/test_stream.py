@@ -265,6 +265,120 @@ class StreamTests(unittest.TestCase):
             with self.assertRaises(SystemExit):
                 stream.approval_list()
 
+    def test_visual_candidates_require_dark_paired_media(self):
+        base_feature = {
+            "id": "visual",
+            "name": "Visual",
+            "state": "proved",
+            "summary": "Changes the interface.",
+            "whatToCheck": "Exercise the interface.",
+            "successLooksLike": "The interface works.",
+            "visualChange": True,
+            "interactionChange": True,
+            "sourceBranch": "feat/visual",
+            "startingBaseline": "a" * 40,
+            "candidateCommit": "b" * 40,
+        }
+        value = {
+            "schemaVersion": 1,
+            "lifecycle": ["developing", "proved"],
+            "currentTestBuild": {"build": 1},
+            "features": [base_feature],
+        }
+
+        with self.assertRaises(SystemExit):
+            stream.validate_manifest(value)
+
+        base_feature["visualEvidence"] = [{
+            "kind": "image",
+            "title": "Result",
+            "caption": "Shows the result.",
+            "appearance": "light",
+            "cleanURL": "https://evidence.example/clean.png",
+            "annotatedURL": "https://evidence.example/annotated.png",
+        }]
+        with self.assertRaises(SystemExit):
+            stream.validate_manifest(value)
+
+        base_feature["visualEvidence"][0]["appearance"] = "dark"
+        with self.assertRaises(SystemExit):
+            stream.validate_manifest(value)
+
+        caption = base_feature["visualEvidence"][0].pop("caption")
+        with self.assertRaises(SystemExit):
+            stream.validate_manifest(value)
+        base_feature["visualEvidence"][0]["caption"] = caption
+
+        base_feature["visualEvidence"].append({
+            "kind": "video",
+            "title": "Interaction",
+            "caption": "Shows the interaction.",
+            "appearance": "dark",
+            "cleanURL": "https://evidence.example/clean.mp4",
+            "annotatedURL": "https://evidence.example/annotated.mp4",
+        })
+        with self.assertRaises(SystemExit):
+            stream.validate_manifest(value)
+
+        base_feature["proofMediaReceipt"] = "~/.t3/evidence/visual/receipt.json"
+        stream.validate_manifest(value)
+
+        base_feature["visualEvidence"][0]["cleanURL"] = "http://evidence.example/clean.png"
+        with self.assertRaises(SystemExit):
+            stream.validate_manifest(value)
+        base_feature["visualEvidence"][0]["cleanURL"] = "https://evidence.example/clean.png"
+
+        base_feature["visualChange"] = False
+        with self.assertRaises(SystemExit):
+            stream.validate_manifest(value)
+
+    def test_visual_pr_body_requires_every_evidence_link(self):
+        feature = {
+            "id": "visual",
+            "visualChange": True,
+            "visualEvidence": [{
+                "kind": "image",
+                "cleanURL": "https://evidence.example/clean.png",
+                "annotatedURL": "https://evidence.example/annotated.png",
+            }],
+        }
+        body = """\
+Delivery: direct
+Validated against Theo commit: aaaaaaa
+Depends on: none
+Merge order: this PR only
+Validation status: focused tests pass
+Dark mode evidence: yes
+Clean screenshot: https://evidence.example/clean.png
+Annotated screenshot: https://evidence.example/annotated.png
+"""
+
+        def validate(candidate_body):
+            with tempfile.NamedTemporaryFile(mode="w", suffix=".md") as file:
+                file.write(candidate_body)
+                file.flush()
+                args = type("Args", (), {
+                    "body": file.name,
+                    "number": None,
+                    "feature_id": "visual",
+                })()
+                with (
+                    patch.object(stream, "manifest", return_value={
+                        "features": [feature],
+                        "branches": {"theo": "theo"},
+                    }),
+                    patch.object(stream, "git", side_effect=["a" * 40, "a" * 40]),
+                ):
+                    stream.command_validate_pr(args)
+
+        validate(body)
+        with self.assertRaises(SystemExit):
+            validate(body.replace("Dark mode evidence: yes", "Dark mode evidence: no"))
+        with self.assertRaises(SystemExit):
+            validate(body.replace("Annotated screenshot:", "Evidence:"))
+        with self.assertRaises(SystemExit):
+            validate(body.replace("https://evidence.example/annotated.png", ""))
+
     def test_approval_list_carries_forward_installed_features_in_order(self):
         items = stream.approval_list()
         current = stream.manifest()["currentTestBuild"]["build"]

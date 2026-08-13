@@ -86,9 +86,32 @@ Merge order: this PR only|#123 → #124 → this PR
 Validation status: <focused tests, review, Simulator, CI/conflict state>
 ```
 
+For a visual feature or fix, the PR body must additionally contain the exact
+dark-mode proof packet used by the review build:
+
+```text
+Dark mode evidence: yes
+Clean screenshot: <durable HTTPS URL>
+Annotated screenshot: <durable HTTPS URL>
+Clean video: <durable HTTPS URL> # required for interaction or motion
+Annotated video: <durable HTTPS URL> # required for interaction or motion
+```
+
+Create paired clean and annotated outputs with `prepare-proof-media`. The
+annotated media carries visible tap and swipe animations plus concise `Next:`
+and `Expected:` captions; clean media shows the same frames without overlays.
+Deliver it through `share-video-evidence`, verify that every intended reviewer
+can fetch and play it, and retain the proof-media receipt under durable
+`~/.t3` storage. A private Tailnet URL is acceptable for personal Dev/Test PRs;
+before an upstream PR, rehost the byte-identical packet at an access-controlled
+endpoint the maintainers can reach and preserve its hashes in the receipt.
+Light-mode captures, local-only file paths, stale or synthetic captures, or an
+unplayable URL do not satisfy this gate. Validate every PR body with
+`--feature-id <catalog-id>` and also `--number` when applicable.
+
 A chain PR must name every dependency and its order. A direct PR says
 `Depends on: none` and `Merge order: this PR only`. Validate a prepared body
-with `scripts/swiftui-stream/stream.py validate-pr-body --number <PR> --body <file>`. After a
+with `scripts/swiftui-stream/stream.py validate-pr-body --feature-id <catalog-id> --number <PR> --body <file>`. After a
 parent lands, rebase and validate the child again; convert it to direct when the
 dependency disappears.
 
@@ -208,7 +231,12 @@ The purple Test app's **What’s testing** section contains the exact aggregate
 Test-build candidates. Every Dev and Test review item carries a plain-language
 summary, what Alex should check, and the observable signs of success. Both
 screens show the complete `Development → Test → Dev → Upstream` path and name
-their current gate. Test's confirmed **Ready for Dev** dialog sends an
+their current gate. When review items are present, both screens also offer a
+collapsed **Proposed PR promotion flow** diagram. It explains a possible future
+PR-gated pipeline and uses conditional language; it does not claim those PR
+approval, auto-merge, build, or deployment actions are implemented. The current
+receipt-based workflow in this runbook remains authoritative. Test's confirmed
+**Ready for Dev** dialog sends an
 evidence-carrying request into the existing per-feature promotion or rejection
 path. The approval skill still shows the frozen evidence and asks for its
 required final human confirmation before promoting the feature into Dev; only
@@ -219,6 +247,12 @@ remembered for that exact channel, build, revision, and feature; submitting the
 opposite verdict remains available as the explicit reversal. The app never
 changes Git refs itself. Release and ordinary Debug builds expose neither
 section.
+
+Visual review items also contain a collapsed **Visual evidence** section. It
+shows the annotated dark-mode image or playable annotated video in the app and
+links to both the clean and annotated versions. Those URLs must be the same
+durable proof packet named in the candidate's Dev and upstream-delivery PR
+bodies; metadata alone or a host-local path is not review evidence.
 
 Every Test record carries both `sourceCommit` for attribution and the full
 `integratedCommit` that is actually in Test. The app labels those roles and uses

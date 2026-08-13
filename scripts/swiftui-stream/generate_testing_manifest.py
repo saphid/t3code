@@ -293,6 +293,7 @@ def build_manifest(repository, channel, build):
             "commits": commits,
             "threads": threads,
             "issueURL": feature.get("sourceIssue"),
+            "visualEvidence": feature.get("visualEvidence", []),
         })
 
     remote = git(repository, "remote", "get-url", "origin")
