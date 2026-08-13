@@ -140,6 +140,7 @@ public struct WorkspaceView: View {
     @State private var showingAddProject = false
     @State private var showingSettings = false
     @State private var showingCommandPalette = false
+    @State private var commandPaletteIsMounted = false
     @State private var commandPaletteDragDistance: CGFloat = 0
     @State private var renamingThread: FeatureThread?
     @State private var renameTitle = ""
@@ -253,18 +254,20 @@ public struct WorkspaceView: View {
                 .offset(y: accessibilityReduceMotion ? 0 : travel)
                 .accessibilityHidden(showingCommandPalette)
 
-                commandPaletteScrim
-                    .opacity(revealProgress)
-                    .allowsHitTesting(showingCommandPalette)
-                    .zIndex(1)
+                if commandPaletteIsMounted {
+                    commandPaletteScrim
+                        .opacity(revealProgress)
+                        .allowsHitTesting(showingCommandPalette)
+                        .zIndex(1)
 
-                commandPalettePanel(
-                    panelHeight: panelHeight,
-                    topInset: proxy.safeAreaInsets.top,
-                    revealedHeight: accessibilityReduceMotion ? panelHeight : travel,
-                    revealProgress: revealProgress
-                )
-                .zIndex(2)
+                    commandPalettePanel(
+                        panelHeight: panelHeight,
+                        topInset: proxy.safeAreaInsets.top,
+                        revealedHeight: accessibilityReduceMotion ? panelHeight : travel,
+                        revealProgress: revealProgress
+                    )
+                    .zIndex(2)
+                }
             }
         }
         .sheet(isPresented: $showingNewTask, onDismiss: {
@@ -949,16 +952,27 @@ public struct WorkspaceView: View {
 
     private func updateCommandPaletteDrag(_ distance: CGFloat) {
         guard !showingCommandPalette else { return }
+        if distance > 0 {
+            commandPaletteIsMounted = true
+        }
         commandPaletteDragDistance = distance
     }
 
     private func settleCommandPaletteDrag(shouldPresent: Bool) {
         if shouldPresent {
             isSearchFocused = false
-        }
-        withAnimation(commandPaletteSettleAnimation) {
-            showingCommandPalette = shouldPresent
-            commandPaletteDragDistance = 0
+            commandPaletteIsMounted = true
+            withAnimation(commandPaletteSettleAnimation) {
+                showingCommandPalette = true
+                commandPaletteDragDistance = 0
+            }
+        } else {
+            withAnimation(commandPaletteSettleAnimation) {
+                showingCommandPalette = false
+                commandPaletteDragDistance = 0
+            } completion: {
+                commandPaletteIsMounted = false
+            }
         }
     }
 
@@ -972,6 +986,8 @@ public struct WorkspaceView: View {
         withAnimation(commandPaletteSettleAnimation) {
             showingCommandPalette = false
             commandPaletteDragDistance = 0
+        } completion: {
+            commandPaletteIsMounted = false
         }
     }
 
