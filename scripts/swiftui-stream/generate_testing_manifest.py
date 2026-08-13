@@ -37,6 +37,13 @@ def is_ancestor(repository, ancestor, descendant):
     raise RuntimeError(result.stderr.strip() or "git merge-base --is-ancestor failed")
 
 
+def is_stream_metadata_only(repository, commit):
+    changed = set(
+        git(repository, "diff-tree", "--no-commit-id", "--name-only", "-r", commit).splitlines()
+    )
+    return bool(changed) and changed <= {"scripts/swiftui-stream/stream.json"}
+
+
 def public_repository_url(value):
     value = re.sub(r"\.git$", "", value.strip())
     if value.startswith("git@"):
@@ -228,9 +235,13 @@ def build_manifest(repository, channel, build):
             for value in [*features[0].get("commits", []), candidate]
             if isinstance(value, str) and value
         }
-        actual = set(
-            git(repository, "rev-list", "%s..%s" % (starting_baseline, candidate_sha)).splitlines()
-        )
+        actual = {
+            commit
+            for commit in git(
+                repository, "rev-list", "%s..%s" % (starting_baseline, candidate_sha)
+            ).splitlines()
+            if not is_stream_metadata_only(repository, commit)
+        }
         if actual != declared:
             raise RuntimeError(
                 "%s baseline-to-candidate range does not match its declared commits"

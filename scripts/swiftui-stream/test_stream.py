@@ -408,6 +408,19 @@ class StreamTests(unittest.TestCase):
             self.assertEqual(manifest["entries"][0]["commits"][0]["role"], "candidate")
             self.assertEqual(len(manifest["entries"][0]["commits"]), 1)
 
+            (repository / "Feature.swift").write_text("let feature = false\n")
+            corrected = commit_all(repository, "correct feature")
+            feature["candidateCommit"] = corrected
+            feature["commits"] = [candidate, corrected]
+            write_stream(repository, [feature])
+            refrozen = commit_all(repository, "refreeze metadata")
+            git(repository, "update-ref", "refs/remotes/origin/feat/one", refrozen)
+            corrected_manifest = testing_manifest.build_manifest(repository, "dev", 3)
+            self.assertEqual(
+                [commit["sha"] for commit in corrected_manifest["entries"][0]["commits"]],
+                [candidate, corrected],
+            )
+
             (repository / "Unexpected.swift").write_text("let unexpected = true\n")
             unexpected = commit_all(repository, "unexpected executable tail")
             git(repository, "update-ref", "refs/remotes/origin/feat/one", unexpected)
