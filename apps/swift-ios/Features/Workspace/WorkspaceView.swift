@@ -110,6 +110,7 @@ struct FeatureNewTaskPresentationCoordinator: Equatable, Sendable {
 }
 
 public struct WorkspaceView: View {
+    @SwiftUI.Environment(\.accessibilityReduceMotion) private var accessibilityReduceMotion
     @SwiftUI.Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     @Bindable var model: FeatureRootModel
@@ -139,6 +140,7 @@ public struct WorkspaceView: View {
     @State private var showingAddProject = false
     @State private var showingSettings = false
     @State private var showingCommandPalette = false
+    @State private var commandPaletteDragDistance: CGFloat = 0
     @State private var renamingThread: FeatureThread?
     @State private var renameTitle = ""
     @State private var regeneratingThreadIDs: Set<String> = []
@@ -222,28 +224,47 @@ public struct WorkspaceView: View {
     }
 
     public var body: some View {
-        ZStack(alignment: .top) {
-            NavigationSplitView(preferredCompactColumn: $preferredCompactColumn) {
-                sidebar
-                    .navigationSplitViewColumnWidth(
-                        min: T3Metrics.minimumSidebarWidth,
-                        ideal: T3Metrics.sidebarWidth,
-                        max: T3Metrics.maximumSidebarWidth
-                    )
-            } detail: {
-                detail
-            }
-            .navigationSplitViewStyle(.balanced)
-            .accessibilityHidden(showingCommandPalette)
+        GeometryReader { proxy in
+            let panelHeight = FeatureCommandPaletteGesture.panelHeight(
+                availableHeight: proxy.size.height
+            )
+            let travel = FeatureCommandPaletteGesture.travel(
+                isPresented: showingCommandPalette,
+                dragDistance: commandPaletteDragDistance,
+                panelHeight: panelHeight
+            )
+            let revealProgress = FeatureCommandPaletteGesture.revealProgress(
+                travel: travel,
+                panelHeight: panelHeight
+            )
 
-            if showingCommandPalette {
+            ZStack(alignment: .top) {
+                NavigationSplitView(preferredCompactColumn: $preferredCompactColumn) {
+                    sidebar
+                        .navigationSplitViewColumnWidth(
+                            min: T3Metrics.minimumSidebarWidth,
+                            ideal: T3Metrics.sidebarWidth,
+                            max: T3Metrics.maximumSidebarWidth
+                        )
+                } detail: {
+                    detail
+                }
+                .navigationSplitViewStyle(.balanced)
+                .offset(y: accessibilityReduceMotion ? 0 : travel)
+                .accessibilityHidden(showingCommandPalette)
+
                 commandPaletteScrim
-                    .transition(.opacity)
+                    .opacity(revealProgress)
+                    .allowsHitTesting(showingCommandPalette)
                     .zIndex(1)
 
-                commandPalettePanel
-                    .transition(.move(edge: .top))
-                    .zIndex(1)
+                commandPalettePanel(
+                    panelHeight: panelHeight,
+                    topInset: proxy.safeAreaInsets.top,
+                    revealedHeight: accessibilityReduceMotion ? panelHeight : travel,
+                    revealProgress: revealProgress
+                )
+                .zIndex(2)
             }
         }
         .sheet(isPresented: $showingNewTask, onDismiss: {
@@ -332,7 +353,11 @@ public struct WorkspaceView: View {
                 return
             }
         }
-        .highPriorityGesture(commandPaletteGesture)
+        .sensoryFeedback(
+            .impact(weight: .light),
+            trigger: showingCommandPalette,
+            condition: { _, isPresented in isPresented }
+        )
     }
 
     private var sidebar: some View {
@@ -520,6 +545,12 @@ public struct WorkspaceView: View {
         .padding(.trailing, 8)
         .frame(height: 49)
         .background(T3Colors.background)
+        .background {
+            FeatureCommandPaletteGestureInstaller(
+                onChanged: updateCommandPaletteDrag,
+                onEnded: settleCommandPaletteDrag
+            )
+        }
     }
 
     private static let devBuildMetadata = DebugBuildMetadata(info: Bundle.main.infoDictionary)
@@ -748,27 +779,35 @@ public struct WorkspaceView: View {
     }
 
     private var commandPaletteScrim: some View {
-        Color.black.opacity(0.32)
-            .ignoresSafeArea()
-            .contentShape(Rectangle())
-            .onTapGesture(perform: dismissCommandPalette)
-            .accessibilityHidden(true)
+        Button(action: dismissCommandPalette) {
+            Color.black.opacity(0.32)
+                .ignoresSafeArea()
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityHidden(true)
     }
 
-    private var commandPalettePanel: some View {
-        GeometryReader { proxy in
+    private func commandPalettePanel(
+        panelHeight: CGFloat,
+        topInset: CGFloat,
+        revealedHeight: CGFloat,
+        revealProgress: CGFloat
+    ) -> some View {
+        ZStack(alignment: .top) {
             ZStack(alignment: .top) {
                 T3Colors.background
                 FeatureCommandPaletteView(
                     model: model,
                     activeProjectID: commandPaletteActiveProjectID,
+                    isActive: showingCommandPalette,
                     onDismiss: dismissCommandPalette,
                     onSelect: handleCommandPaletteAction
                 )
-                .padding(.top, proxy.safeAreaInsets.top)
+                .padding(.top, topInset)
             }
             .frame(maxWidth: .infinity)
-            .frame(height: max(360, proxy.size.height * 0.72))
+            .frame(height: panelHeight)
             .clipShape(
                 UnevenRoundedRectangle(
                     bottomLeadingRadius: 20,
@@ -777,8 +816,14 @@ public struct WorkspaceView: View {
             )
             .shadow(color: .black.opacity(0.22), radius: 18, y: 8)
         }
+        .frame(maxWidth: .infinity)
+        .frame(height: revealedHeight, alignment: .top)
+        .clipped()
+        .opacity(accessibilityReduceMotion ? revealProgress : 1)
         .ignoresSafeArea(.container, edges: .top)
         .ignoresSafeArea(.keyboard, edges: .bottom)
+        .allowsHitTesting(showingCommandPalette)
+        .accessibilityHidden(!showingCommandPalette)
         .accessibilityIdentifier("command-palette-drawer")
         .accessibilityAddTraits(.isModal)
         .accessibilityAction(.escape) { dismissCommandPalette() }
@@ -902,26 +947,31 @@ public struct WorkspaceView: View {
         }
     }
 
-    private var commandPaletteGesture: some Gesture {
-        DragGesture(minimumDistance: 24, coordinateSpace: .global)
-            .onEnded { value in
-                guard !showingCommandPalette,
-                      FeatureCommandPaletteGesture.shouldPresent(
-                    startY: value.startLocation.y,
-                    translation: value.translation
-                ) else {
-                    return
-                }
-                isSearchFocused = false
-                withAnimation(.snappy(duration: 0.32)) {
-                    showingCommandPalette = true
-                }
-            }
+    private func updateCommandPaletteDrag(_ distance: CGFloat) {
+        guard !showingCommandPalette else { return }
+        commandPaletteDragDistance = distance
+    }
+
+    private func settleCommandPaletteDrag(shouldPresent: Bool) {
+        if shouldPresent {
+            isSearchFocused = false
+        }
+        withAnimation(commandPaletteSettleAnimation) {
+            showingCommandPalette = shouldPresent
+            commandPaletteDragDistance = 0
+        }
+    }
+
+    private var commandPaletteSettleAnimation: Animation {
+        accessibilityReduceMotion
+            ? .easeOut(duration: 0.16)
+            : .spring(duration: 0.42, bounce: 0.08)
     }
 
     private func dismissCommandPalette() {
-        withAnimation(.snappy(duration: 0.24)) {
+        withAnimation(commandPaletteSettleAnimation) {
             showingCommandPalette = false
+            commandPaletteDragDistance = 0
         }
     }
 

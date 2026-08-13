@@ -50,16 +50,56 @@ enum FeatureCommandPaletteMode: Equatable {
 }
 
 enum FeatureCommandPaletteGesture {
-    static let maximumStartY: CGFloat = 88
-    static let minimumDownwardTranslation: CGFloat = 72
+    static let minimumDownwardTranslation: CGFloat = 96
+    static let minimumFlickTranslation: CGFloat = 24
+    static let minimumDownwardVelocity: CGFloat = 900
+    private static let verticalDominanceRatio: CGFloat = 1.15
 
-    static func shouldPresent(startY: CGFloat, translation: CGSize) -> Bool {
-        guard startY <= maximumStartY,
-              translation.height >= minimumDownwardTranslation else {
-            return false
+    static func shouldBegin(velocity: CGPoint, translation: CGPoint = .zero) -> Bool {
+        let intent = velocity == .zero ? translation : velocity
+        return intent.y > 0 && intent.y > abs(intent.x) * verticalDominanceRatio
+    }
+
+    static func shouldReceive(
+        point: CGPoint,
+        surfaceFrame: CGRect,
+        hasPresentedViewController: Bool
+    ) -> Bool {
+        !hasPresentedViewController
+            && surfaceFrame.minX...surfaceFrame.maxX ~= point.x
+            && 0...surfaceFrame.maxY ~= point.y
+    }
+
+    static func dragDistance(translation: CGSize) -> CGFloat {
+        guard translation.height > 0,
+              translation.height > abs(translation.width) * verticalDominanceRatio else {
+            return 0
         }
+        return translation.height
+    }
 
-        return translation.height > abs(translation.width) * 1.15
+    static func shouldPresent(translation: CGSize, velocity: CGPoint) -> Bool {
+        let distance = dragDistance(translation: translation)
+        guard distance >= minimumFlickTranslation else { return false }
+        return distance >= minimumDownwardTranslation
+            || shouldBegin(velocity: velocity) && velocity.y >= minimumDownwardVelocity
+    }
+
+    static func panelHeight(availableHeight: CGFloat) -> CGFloat {
+        min(availableHeight, max(360, availableHeight * 0.72))
+    }
+
+    static func travel(
+        isPresented: Bool,
+        dragDistance: CGFloat,
+        panelHeight: CGFloat
+    ) -> CGFloat {
+        isPresented ? panelHeight : min(max(0, dragDistance), panelHeight)
+    }
+
+    static func revealProgress(travel: CGFloat, panelHeight: CGFloat) -> CGFloat {
+        guard panelHeight > 0 else { return 0 }
+        return min(max(0, travel / panelHeight), 1)
     }
 }
 

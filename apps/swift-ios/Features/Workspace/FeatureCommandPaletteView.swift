@@ -4,6 +4,7 @@ struct FeatureCommandPaletteView: View {
     @Bindable var model: FeatureRootModel
 
     let activeProjectID: String?
+    let isActive: Bool
     let onDismiss: () -> Void
     let onSelect: (FeatureCommandPaletteAction) -> Void
 
@@ -14,11 +15,13 @@ struct FeatureCommandPaletteView: View {
     init(
         model: FeatureRootModel,
         activeProjectID: String?,
+        isActive: Bool,
         onDismiss: @escaping () -> Void,
         onSelect: @escaping (FeatureCommandPaletteAction) -> Void
     ) {
         self.model = model
         self.activeProjectID = activeProjectID
+        self.isActive = isActive
         self.onDismiss = onDismiss
         self.onSelect = onSelect
     }
@@ -58,7 +61,16 @@ struct FeatureCommandPaletteView: View {
                 }
             }
         }
-        .onAppear { focusSearch() }
+        .onAppear {
+            if isActive { focusSearch() }
+        }
+        .onChange(of: isActive) { _, isActive in
+            if isActive {
+                focusSearch()
+            } else {
+                searchIsFocused = false
+            }
+        }
     }
 
     private var availableProjects: [FeatureProject] {

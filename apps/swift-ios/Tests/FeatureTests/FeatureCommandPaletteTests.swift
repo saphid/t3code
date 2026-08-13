@@ -125,7 +125,7 @@ struct FeatureCommandPaletteTests {
         #expect(recent.count == FeatureCommandPaletteCatalog.recentThreadLimit)
         #expect(recent.first?.title == "Thread 13")
         #expect(recent.last?.title == "Thread 2")
-        #expect(!recent.contains { $0.title == "Archived" })
+        #expect(recent.contains { $0.title == "Archived" } == false)
     }
 
     @Test
@@ -159,30 +159,95 @@ struct FeatureCommandPaletteTests {
     }
 
     @Test
-    func swipeDownOnlyPresentsFromTheTopEdge() {
+    func downwardDragTracksTheFingerAndRejectsSidewaysMotion() {
+        #expect(
+            FeatureCommandPaletteGesture.dragDistance(
+                translation: CGSize(width: 8, height: 54)
+            ) == 54
+        )
+        #expect(
+            FeatureCommandPaletteGesture.dragDistance(
+                translation: CGSize(width: 80, height: 20)
+            ) == 0
+        )
+        #expect(
+            FeatureCommandPaletteGesture.dragDistance(
+                translation: CGSize(width: 0, height: -30)
+            ) == 0
+        )
+    }
+
+    @Test
+    func dragSettlesOpenAfterDistanceOrDeliberateFlick() {
         #expect(
             FeatureCommandPaletteGesture.shouldPresent(
-                startY: 20,
-                translation: CGSize(width: 2, height: 90)
+                translation: CGSize(width: 2, height: 96),
+                velocity: CGPoint(x: 0, y: 200)
             )
         )
         #expect(
-            !FeatureCommandPaletteGesture.shouldPresent(
-                startY: 120,
-                translation: CGSize(width: 0, height: 90)
+            FeatureCommandPaletteGesture.shouldPresent(
+                translation: CGSize(width: 2, height: 30),
+                velocity: CGPoint(x: 20, y: 1_000)
             )
         )
         #expect(
-            !FeatureCommandPaletteGesture.shouldPresent(
-                startY: 20,
-                translation: CGSize(width: 80, height: 90)
-            )
+            FeatureCommandPaletteGesture.shouldPresent(
+                translation: CGSize(width: 2, height: 23),
+                velocity: CGPoint(x: 0, y: 1_200)
+            ) == false
         )
         #expect(
-            !FeatureCommandPaletteGesture.shouldPresent(
-                startY: 20,
-                translation: CGSize(width: 0, height: -90)
-            )
+            FeatureCommandPaletteGesture.shouldPresent(
+                translation: CGSize(width: 90, height: 96),
+                velocity: CGPoint(x: 1_000, y: 100)
+            ) == false
         )
+    }
+
+    @Test
+    func panReceivesTouchesOnlyFromTheTopBarWithoutAnotherPresentation() {
+        let header = CGRect(x: 0, y: 59, width: 393, height: 49)
+
+        #expect(FeatureCommandPaletteGesture.shouldReceive(
+            point: CGPoint(x: 180, y: 80),
+            surfaceFrame: header,
+            hasPresentedViewController: false
+        ))
+        #expect(FeatureCommandPaletteGesture.shouldReceive(
+            point: CGPoint(x: 180, y: 20),
+            surfaceFrame: header,
+            hasPresentedViewController: false
+        ))
+        #expect(FeatureCommandPaletteGesture.shouldReceive(
+            point: CGPoint(x: 180, y: 180),
+            surfaceFrame: header,
+            hasPresentedViewController: false
+        ) == false)
+        #expect(FeatureCommandPaletteGesture.shouldReceive(
+            point: CGPoint(x: 180, y: 80),
+            surfaceFrame: header,
+            hasPresentedViewController: true
+        ) == false)
+    }
+
+    @Test
+    func paletteAndWorkspaceRemainAttachedAcrossTheDrag() {
+        let panelHeight = FeatureCommandPaletteGesture.panelHeight(availableHeight: 800)
+        #expect(panelHeight == 576)
+        #expect(FeatureCommandPaletteGesture.travel(
+            isPresented: false,
+            dragDistance: 132,
+            panelHeight: panelHeight
+        ) == 132)
+        #expect(FeatureCommandPaletteGesture.travel(
+            isPresented: true,
+            dragDistance: 0,
+            panelHeight: panelHeight
+        ) == panelHeight)
+        #expect(FeatureCommandPaletteGesture.revealProgress(
+            travel: 144,
+            panelHeight: panelHeight
+        ) == 0.25)
     }
 }
