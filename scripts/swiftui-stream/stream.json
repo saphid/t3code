@@ -26,11 +26,14 @@
   ],
   "currentTestBuild": {
     "channel": "test",
-    "build": 52,
-    "sequence": 52,
-    "commit": "20fd9b7d3df0b2c877ce0adcaba9938f69a32486",
+    "build": 55,
+    "sequence": 55,
+    "commit": "2af2d3c31228405bf1e0cbde6e3433263a9d801d",
+    "bundleId": "com.alxs.t3code.typed-swiftui.dev",
+    "deviceId": "2571CB7A-1DDF-5BFA-8C99-D7D17B6B5A5A",
     "receipt": "~/.t3/swiftui-stream/device-receipts/test.json",
-    "status": "installed-and-launched"
+    "status": "installed-and-launched",
+    "launchPending": false
   },
   "features": [
     {
