@@ -477,7 +477,9 @@ public struct WorkspaceView: View {
                 model: model,
                 thread: thread,
                 submitMessage: submitMessage,
-                onNavigateBack: closeSelectedThread
+                onNavigateBack: closeSelectedThread,
+                onCommandPaletteDragChanged: updateCommandPaletteDrag,
+                onCommandPaletteDragEnded: settleCommandPaletteDrag
             )
             .id(id)
         } else {

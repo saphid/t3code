@@ -232,6 +232,33 @@ struct FeatureCommandPaletteTests {
     }
 
     @Test
+    func compactThreadTitleExpandsItsGestureSurfaceAcrossTheTopBar() {
+        let title = CGRect(x: 92, y: 58, width: 210, height: 46)
+        let compactTopBar = FeatureCommandPaletteGesture.captureSurfaceFrame(
+            surfaceFrame: title,
+            hostWidth: 393,
+            capturesFullWidth: true
+        )
+
+        #expect(compactTopBar == CGRect(x: 0, y: 58, width: 393, height: 46))
+        #expect(FeatureCommandPaletteGesture.shouldReceive(
+            point: CGPoint(x: 24, y: 82),
+            surfaceFrame: compactTopBar,
+            hasPresentedViewController: false
+        ))
+        #expect(FeatureCommandPaletteGesture.shouldReceive(
+            point: CGPoint(x: 24, y: 180),
+            surfaceFrame: compactTopBar,
+            hasPresentedViewController: false
+        ) == false)
+        #expect(FeatureCommandPaletteGesture.captureSurfaceFrame(
+            surfaceFrame: title,
+            hostWidth: 393,
+            capturesFullWidth: false
+        ) == title)
+    }
+
+    @Test
     func paletteAndWorkspaceRemainAttachedAcrossTheDrag() {
         let panelHeight = FeatureCommandPaletteGesture.panelHeight(availableHeight: 800)
         #expect(panelHeight == 576)

@@ -10,6 +10,8 @@ public struct ThreadDetailView: View {
     let thread: FeatureThread
     let submitMessage: (FeatureMessageSubmission) async -> Bool
     let onNavigateBack: () -> Void
+    let onCommandPaletteDragChanged: (CGFloat) -> Void
+    let onCommandPaletteDragEnded: (Bool) -> Void
     private let draftStore: FeatureComposerDraftStore
 
     @State private var draft = ""
@@ -29,12 +31,16 @@ public struct ThreadDetailView: View {
         thread: FeatureThread,
         submitMessage: @escaping (FeatureMessageSubmission) async -> Bool,
         onNavigateBack: @escaping () -> Void = {},
+        onCommandPaletteDragChanged: @escaping (CGFloat) -> Void = { _ in },
+        onCommandPaletteDragEnded: @escaping (Bool) -> Void = { _ in },
         draftStore: FeatureComposerDraftStore = .shared
     ) {
         self.model = model
         self.thread = thread
         self.submitMessage = submitMessage
         self.onNavigateBack = onNavigateBack
+        self.onCommandPaletteDragChanged = onCommandPaletteDragChanged
+        self.onCommandPaletteDragEnded = onCommandPaletteDragEnded
         self.draftStore = draftStore
     }
 
@@ -219,6 +225,20 @@ public struct ThreadDetailView: View {
                 ? .updatesFrequently
                 : []
         )
+        .background {
+            FeatureCommandPaletteGestureInstaller(
+                capturesFullWidth: horizontalSizeClass == .compact,
+                onChanged: handleCommandPaletteDragChanged,
+                onEnded: onCommandPaletteDragEnded
+            )
+        }
+    }
+
+    private func handleCommandPaletteDragChanged(_ distance: CGFloat) {
+        if distance > 0 {
+            composerFocused = false
+        }
+        onCommandPaletteDragChanged(distance)
     }
 
     @ViewBuilder

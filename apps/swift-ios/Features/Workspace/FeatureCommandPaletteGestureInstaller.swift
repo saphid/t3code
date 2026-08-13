@@ -2,15 +2,34 @@ import SwiftUI
 import UIKit
 
 struct FeatureCommandPaletteGestureInstaller: UIViewRepresentable {
+    let capturesFullWidth: Bool
     let onChanged: (CGFloat) -> Void
     let onEnded: (Bool) -> Void
 
+    init(
+        capturesFullWidth: Bool = false,
+        onChanged: @escaping (CGFloat) -> Void,
+        onEnded: @escaping (Bool) -> Void
+    ) {
+        self.capturesFullWidth = capturesFullWidth
+        self.onChanged = onChanged
+        self.onEnded = onEnded
+    }
+
     func makeUIView(context _: Context) -> InstallerView {
-        InstallerView(onChanged: onChanged, onEnded: onEnded)
+        InstallerView(
+            capturesFullWidth: capturesFullWidth,
+            onChanged: onChanged,
+            onEnded: onEnded
+        )
     }
 
     func updateUIView(_ view: InstallerView, context _: Context) {
-        view.configure(onChanged: onChanged, onEnded: onEnded)
+        view.configure(
+            capturesFullWidth: capturesFullWidth,
+            onChanged: onChanged,
+            onEnded: onEnded
+        )
     }
 
     static func dismantleUIView(_ view: InstallerView, coordinator _: Void) {
@@ -18,6 +37,7 @@ struct FeatureCommandPaletteGestureInstaller: UIViewRepresentable {
     }
 
     final class InstallerView: UIView {
+        private var capturesFullWidth: Bool
         private var onChanged: (CGFloat) -> Void
         private var onEnded: (Bool) -> Void
         private weak var gestureHost: UIView?
@@ -25,9 +45,11 @@ struct FeatureCommandPaletteGestureInstaller: UIViewRepresentable {
         private var gestureDelegate: GestureDelegate?
 
         init(
+            capturesFullWidth: Bool,
             onChanged: @escaping (CGFloat) -> Void,
             onEnded: @escaping (Bool) -> Void
         ) {
+            self.capturesFullWidth = capturesFullWidth
             self.onChanged = onChanged
             self.onEnded = onEnded
             super.init(frame: .zero)
@@ -50,9 +72,11 @@ struct FeatureCommandPaletteGestureInstaller: UIViewRepresentable {
         }
 
         func configure(
+            capturesFullWidth: Bool,
             onChanged: @escaping (CGFloat) -> Void,
             onEnded: @escaping (Bool) -> Void
         ) {
+            self.capturesFullWidth = capturesFullWidth
             self.onChanged = onChanged
             self.onEnded = onEnded
             installGestureIfPossible()
@@ -116,7 +140,11 @@ struct FeatureCommandPaletteGestureInstaller: UIViewRepresentable {
             let point = touch.location(in: gestureHost)
             return FeatureCommandPaletteGesture.shouldReceive(
                 point: point,
-                surfaceFrame: convert(bounds, to: gestureHost),
+                surfaceFrame: FeatureCommandPaletteGesture.captureSurfaceFrame(
+                    surfaceFrame: convert(bounds, to: gestureHost),
+                    hostWidth: gestureHost.bounds.width,
+                    capturesFullWidth: capturesFullWidth
+                ),
                 hasPresentedViewController: Self.hasPresentedViewController(
                     in: gestureHost.window?.rootViewController
                 )

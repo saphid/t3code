@@ -70,6 +70,20 @@ enum FeatureCommandPaletteGesture {
             && 0...surfaceFrame.maxY ~= point.y
     }
 
+    static func captureSurfaceFrame(
+        surfaceFrame: CGRect,
+        hostWidth: CGFloat,
+        capturesFullWidth: Bool
+    ) -> CGRect {
+        guard capturesFullWidth else { return surfaceFrame }
+        return CGRect(
+            x: 0,
+            y: surfaceFrame.minY,
+            width: hostWidth,
+            height: surfaceFrame.height
+        )
+    }
+
     static func dragDistance(translation: CGSize) -> CGFloat {
         guard translation.height > 0,
               translation.height > abs(translation.width) * verticalDominanceRatio else {
