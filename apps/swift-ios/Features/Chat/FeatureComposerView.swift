@@ -116,10 +116,15 @@ struct FeatureComposerView: View {
                         dynamicTypeSize: dynamicTypeSize,
                         onSelect: selectCommandItem
                     )
-                    .alignmentGuide(.top) { dimensions in
-                        // Keep the menu clear of the text entry surface so the
-                        // active `$`/`@`/`/` token remains readable while typing.
-                        dimensions[.bottom] + FeatureComposerTextLayout.commandMenuGap
+                    .visualEffect { content, geometry in
+                        // Move the rendered menu by its measured height. The
+                        // old alignment-guide approach stopped repositioning
+                        // once the popover adopted an explicit dynamic height.
+                        content.offset(
+                            y: FeatureComposerTextLayout.commandMenuVerticalOffset(
+                                menuHeight: geometry.size.height
+                            )
+                        )
                     }
                 }
             }
@@ -824,6 +829,10 @@ enum FeatureComposerTextLayout {
     ) -> CGFloat {
         guard composerMinY > 0 else { return commandMenuFallbackHeight }
         return max(0, composerMinY - topBoundary - commandMenuTopPadding - commandMenuGap)
+    }
+
+    static func commandMenuVerticalOffset(menuHeight: CGFloat) -> CGFloat {
+        -(max(0, menuHeight) + commandMenuGap)
     }
 
     static func commandMenuHeight(

@@ -165,6 +165,10 @@ struct FeatureComposerPowerTests {
 
         #expect(maximumHeight == 625)
         #expect(
+            FeatureComposerTextLayout.commandMenuVerticalOffset(menuHeight: maximumHeight)
+                == -649
+        )
+        #expect(
             FeatureComposerTextLayout.commandMenuHeight(
                 itemCount: 20,
                 usesExpandedRows: true,
