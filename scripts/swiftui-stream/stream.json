@@ -91,7 +91,7 @@
       "successLooksLike": "The top bar stays under the finger, the page and palette remain visually attached throughout the pull, release settles naturally without a jump, and ordinary scrolling or horizontal gestures do not open the palette.",
       "state": "developing",
       "sourceBranch": "fix/swiftui-physical-command-palette-drag-20260813",
-      "sourceCommit": "353d533ef",
+      "sourceCommit": "11e99d6f5",
       "sourceThread": "9DD22B40-3832-4FE7-B482-69D9C7BEDE0A",
       "sourceThreadTitle": "Fix Command Palette Top Drawer"
     },
