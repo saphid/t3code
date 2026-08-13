@@ -26,11 +26,11 @@
   ],
   "currentTestBuild": {
     "channel": "test",
-    "build": 47,
-    "sequence": 47,
-    "commit": "865435bec1cfa9ad64daeb4f328fd9ce9636a036",
+    "build": 52,
+    "sequence": 52,
+    "commit": "20fd9b7d3df0b2c877ce0adcaba9938f69a32486",
     "receipt": "~/.t3/swiftui-stream/device-receipts/test.json",
-    "status": "installed-awaiting-unlock"
+    "status": "installed-and-launched"
   },
   "features": [
     {
@@ -40,7 +40,7 @@
       "summary": "Adds an in-app review queue that shows exactly which feature commits and T3 threads are in the installed Dev or Test build, then sends an auditable readiness verdict from that exact build.",
       "whatToCheck": "In Dev, open Settings → What’s ready for testing; in Test, open Settings → What’s testing. Expand this item and confirm the pipeline, this guidance, commits, thread, issue, confirmation dialog, and both readiness choices are clear.",
       "successLooksLike": "Dev offers Ready for Test. Test offers Ready for Dev. Both show Development → Test → Dev → Upstream, preserve exact build evidence, and queue a verdict only after confirmation.",
-      "state": "in-test",
+      "state": "needs-you",
       "sourceBranch": "feat/swiftui-stream-approval-control",
       "sourceThread": "7F1BCA94-9E0D-4CF6-A833-99995121ADFB",
       "sourceThreadTitle": "Dev/Test Feature Approval Workflow",
