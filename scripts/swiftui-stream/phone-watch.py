@@ -156,7 +156,12 @@ def extract_verified_app(pointer: dict[str, Any], directory: Path) -> Path | Non
     return app if signature.returncode == 0 and app_metadata_matches(app, pointer) else None
 
 
-def receipt(pointer: dict[str, Any], status: str, launch_pending: bool) -> dict[str, Any]:
+def receipt(
+    pointer: dict[str, Any],
+    device: str,
+    status: str,
+    launch_pending: bool,
+) -> dict[str, Any]:
     return {
         "schemaVersion": 1,
         "channel": pointer["channel"],
@@ -164,9 +169,24 @@ def receipt(pointer: dict[str, Any], status: str, launch_pending: bool) -> dict[
         "sequence": pointer["sequence"],
         "commit": pointer["commit"],
         "bundleId": pointer["bundleId"],
+        "deviceId": device,
         "status": status,
         "launchPending": launch_pending,
     }
+
+
+def receipt_matches_pointer(
+    pointer: dict[str, Any],
+    value: dict[str, Any],
+    device: str,
+) -> bool:
+    expected = receipt(
+        pointer,
+        device,
+        value.get("status"),
+        value.get("launchPending"),
+    )
+    return all(value.get(field) == expected[field] for field in expected)
 
 
 def process_channel(path: Path, config: dict[str, Any]) -> None:
@@ -184,7 +204,12 @@ def process_channel(path: Path, config: dict[str, Any]) -> None:
     if current is not None and current > int(pointer["build"]):
         return
     needs_install = current is None or current < int(pointer["build"])
-    needs_launch = needs_install or previous.get("launchPending", False)
+    needs_launch = (
+        needs_install
+        or previous.get("launchPending", False)
+        or previous.get("status") != "installed-and-launched"
+        or not receipt_matches_pointer(pointer, previous, device)
+    )
     if not needs_install and not needs_launch:
         return
 
@@ -192,7 +217,10 @@ def process_channel(path: Path, config: dict[str, Any]) -> None:
         with tempfile.TemporaryDirectory(prefix="swiftui-phone-install-") as directory:
             app = extract_verified_app(pointer, Path(directory))
             if app is None:
-                atomic_json(receipt_path, receipt(pointer, "rejected-invalid-signature", True))
+                atomic_json(
+                    receipt_path,
+                    receipt(pointer, device, "rejected-invalid-signature", True),
+                )
                 return
             result = run(
                 "xcrun", "devicectl", "device", "install", "app",
@@ -200,7 +228,10 @@ def process_channel(path: Path, config: dict[str, Any]) -> None:
             )
             if result.returncode:
                 reason = "locked" if "Locked" in (result.stderr + result.stdout) else "unavailable"
-                atomic_json(receipt_path, receipt(pointer, f"waiting-{reason}", True))
+                atomic_json(
+                    receipt_path,
+                    receipt(pointer, device, f"waiting-{reason}", True),
+                )
                 notify(
                     config,
                     channel,
@@ -214,13 +245,19 @@ def process_channel(path: Path, config: dict[str, Any]) -> None:
         "--device", device, pointer["bundleId"],
     )
     locked = launch.returncode != 0 and "Locked" in (launch.stderr + launch.stdout)
-    atomic_json(receipt_path, receipt(
-        pointer,
-        "installed-awaiting-unlock" if locked else (
-            "installed-and-launched" if launch.returncode == 0 else "installed-launch-failed"
+    atomic_json(
+        receipt_path,
+        receipt(
+            pointer,
+            device,
+            "installed-awaiting-unlock" if locked else (
+                "installed-and-launched"
+                if launch.returncode == 0
+                else "installed-launch-failed"
+            ),
+            launch.returncode != 0,
         ),
-        launch.returncode != 0,
-    ))
+    )
     if launch.returncode:
         notify(
             config,

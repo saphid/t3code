@@ -35,6 +35,11 @@ machine-readable catalog is
 `scripts/swiftui-stream/stream.json`; `stream.py` also imports the frozen
 legacy manifest and read-only T3 thread projections.
 
+The `inactive-development-thread` reason means that a projected development
+thread has no live session with a valid recent activity record. Check the T3
+projection schema and its activity timestamp. Resume the thread or repair the
+projection before you treat it as active work.
+
 After an upstream PR exists:
 
 - Metadata or evidence-only changes remain `upstream-pr`.
@@ -52,13 +57,36 @@ Invoke `$approve-swiftui-feature`.
 
 With no argument, the skill prints a frozen, stable, ordered numbered list of
 the features in the exact installed Test build and asks Alex to choose a number.
-A device receipt must match the Test channel, build, sequence, and commit. The
-receipt must also show a successful launch. The list command stops if the
-receipt does not match.
 A number always resolves against that frozen snapshot, followed by a fresh
 eligibility check. With text after the skill name, it ranks names, aliases,
 issues, behavior, branches, and commits; it confirms the best match, or offers a
 short numbered list when ambiguous. It always asks for final human confirmation.
+
+### Installed Test gate
+
+Before the tool lists or promotes a feature, it runs
+`stream.py require-installed-test-receipt`. The catalog, the Test ready pointer,
+and the device receipt must agree on these fields:
+
+- channel;
+- build;
+- sequence;
+- commit;
+- bundle ID;
+- device ID;
+- status;
+- pending-launch state.
+
+The status must be `installed-and-launched`. The pending-launch state must be
+false. `phone-watch.py` writes the receipt after it starts the app on the device.
+The `currentTestBuild.receipt` field in `stream.json` names that receipt. The
+path must stay below `~/.t3/swiftui-stream/device-receipts`. The path must not
+use a symbolic link.
+
+If the receipt does not agree with the catalog record and the ready pointer,
+the command stops. Install the current Test build on the named phone and start
+the app. Then run the command again. The receipt has no time limit. A different
+ready pointer makes the receipt invalid.
 
 Approval is per feature. If the feature has dependencies, the skill expands to
 the smallest explicit dependency group and confirms the group. Under the single

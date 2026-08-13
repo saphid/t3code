@@ -18,6 +18,9 @@ from typing import Any
 SCRIPT_DIR = Path(__file__).resolve().parent
 REPO_ROOT = SCRIPT_DIR.parent.parent
 MANIFEST_PATH = SCRIPT_DIR / "stream.json"
+STREAM_STATE_ROOT = Path.home() / ".t3/swiftui-stream"
+DEVICE_RECEIPTS_ROOT = STREAM_STATE_ROOT / "device-receipts"
+TEST_READY_POINTER = STREAM_STATE_ROOT / "ready/test.json"
 APPROVAL_STATES = {"in-test", "needs-you"}
 VALID_DELIVERY = {"direct", "chain", "blocked", "local-only"}
 APPROVED_OR_LATER = {
@@ -88,9 +91,19 @@ def validate_manifest(value: dict[str, Any]) -> None:
     states = value.get("lifecycle", [])
     if len(states) != len(set(states)) or not states:
         fail("lifecycle states must be non-empty and unique")
-    current_build = value.get("currentTestBuild", {}).get("build")
-    if not isinstance(current_build, int) or current_build < 1:
+    current = value.get("currentTestBuild", {})
+    if not isinstance(current, dict):
+        fail("currentTestBuild must be an object")
+    current_build = current.get("build")
+    if type(current_build) is not int or current_build < 1:
         fail("currentTestBuild.build must be a positive integer")
+    if type(current.get("sequence")) is not int or current["sequence"] < 1:
+        fail("currentTestBuild.sequence must be a positive integer")
+    for field in ("channel", "commit", "bundleId", "deviceId", "status", "receipt"):
+        if not isinstance(current.get(field), str) or not current[field]:
+            fail(f"currentTestBuild.{field} must be a non-empty string")
+    if not isinstance(current.get("launchPending"), bool):
+        fail("currentTestBuild.launchPending must be true or false")
     ids: set[str] = set()
     for feature in value.get("features", []):
         feature_id = feature.get("id")
@@ -246,20 +259,27 @@ def relevant_thread(title: str, branch: str | None) -> bool:
         "iphone environment", "mobile thread", "new thread list", "dev banner",
         "thread size prefix", "header clearance", "xcode login", "bonjour discovery",
     )
-    title_tokens = set(normalize(title).split())
     branch_key = (branch or "").lower()
-    branch_tokens = set(normalize(branch_key).split())
-    is_operational = (
-        branch_key in NON_FEATURE_THREAD_BRANCHES
-        or "audit" in title_tokens
-        or "audit" in branch_tokens
-        or {"approval", "workflow"} <= title_tokens
-    )
-    if is_operational:
-        return False
     if branch_key in EXPLICIT_SWIFTUI_THREAD_BRANCHES:
         return True
+    if branch_key in NON_FEATURE_THREAD_BRANCHES:
+        return False
     return any(token in value for token in explicit)
+
+
+def projection_activity(
+    last_activity_at: str | None,
+    reference: datetime,
+) -> datetime | None:
+    try:
+        activity = datetime.fromisoformat(
+            (last_activity_at or "").replace("Z", "+00:00")
+        )
+    except (AttributeError, TypeError, ValueError):
+        return None
+    if activity.tzinfo is None or activity > reference + timedelta(minutes=5):
+        return None
+    return activity
 
 
 def projection_thread_state(
@@ -272,15 +292,11 @@ def projection_thread_state(
     if archived_at:
         return "blocked", "migration-triage-required"
     reference = now or datetime.now(timezone.utc)
-    try:
-        activity = datetime.fromisoformat((last_activity_at or "").replace("Z", "+00:00"))
-        is_fresh = (
-            activity.tzinfo is not None
-            and activity >= reference - timedelta(minutes=30)
-        )
-    except (AttributeError, TypeError, ValueError):
-        activity = None
-        is_fresh = False
+    activity = projection_activity(last_activity_at, reference)
+    is_fresh = (
+        activity is not None
+        and activity >= reference - timedelta(minutes=30)
+    )
     is_live = session_status == "starting" or (
         session_status == "running" and active_turn_id
     )
@@ -303,7 +319,15 @@ def thread_records(
     connection = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
     try:
         rows = connection.execute(
-            """SELECT threads.thread_id, threads.title, threads.branch,
+            """WITH ranked_sessions AS (
+                 SELECT sessions.*,
+                        ROW_NUMBER() OVER (
+                          PARTITION BY sessions.thread_id
+                          ORDER BY sessions.updated_at DESC, sessions.rowid DESC
+                        ) AS session_rank
+                   FROM projection_thread_sessions sessions
+               )
+               SELECT threads.thread_id, threads.title, threads.branch,
                       threads.archived_at, sessions.status, sessions.active_turn_id,
                       MAX(
                         sessions.updated_at,
@@ -323,11 +347,19 @@ def thread_records(
                         )
                       ) AS last_activity_at
                FROM projection_threads threads
-               LEFT JOIN projection_thread_sessions sessions
+               LEFT JOIN ranked_sessions sessions
                  ON sessions.thread_id = threads.thread_id
+                AND sessions.session_rank = 1
                WHERE threads.deleted_at IS NULL
                ORDER BY threads.created_at, threads.thread_id"""
         ).fetchall()
+    except sqlite3.OperationalError as error:
+        print(
+            f"[swiftui-stream] anomaly: projection schema cannot supply thread "
+            f"records: {error}",
+            file=sys.stderr,
+        )
+        return []
     finally:
         connection.close()
     records = []
@@ -342,6 +374,20 @@ def thread_records(
     ) in rows:
         if thread_id in known_threads or not relevant_thread(title, branch):
             continue
+        reference = datetime.now(timezone.utc)
+        is_live = session_status == "starting" or (
+            session_status == "running" and active_turn_id
+        )
+        if (
+            not archived_at
+            and is_live
+            and projection_activity(last_activity_at, reference) is None
+        ):
+            print(
+                f"[swiftui-stream] anomaly: thread {thread_id} has an invalid "
+                "activity timestamp; it is not treated as active",
+                file=sys.stderr,
+            )
         state, blocked_reason = projection_thread_state(
             archived_at,
             session_status,
@@ -372,13 +418,16 @@ def catalog(include_threads: bool = True) -> list[dict[str, Any]]:
 
 
 def installed_test_receipt_errors(
-    current: dict[str, Any], receipt: dict[str, Any]
+    current: dict[str, Any],
+    receipt: dict[str, Any],
+    ready: dict[str, Any] | None = None,
 ) -> list[str]:
     """Return reasons that a device receipt cannot authorize Test approval."""
     errors: list[str] = []
     if receipt.get("schemaVersion") != 1:
         errors.append("device receipt schemaVersion is not 1")
-    for field in ("channel", "build", "sequence", "commit"):
+    identity_fields = ("channel", "build", "sequence", "commit", "bundleId", "deviceId")
+    for field in (*identity_fields, "status", "launchPending"):
         if field not in current or current[field] is None:
             errors.append(f"catalog field {field} is missing")
             continue
@@ -390,6 +439,23 @@ def installed_test_receipt_errors(
                 f"device receipt {field} {receipt.get(field)!r} does not match "
                 f"catalog {current.get(field)!r}"
             )
+    if ready is not None:
+        if ready.get("schemaVersion") != 1:
+            errors.append("ready pointer schemaVersion is not 1")
+        for field in identity_fields:
+            if field not in ready or ready[field] is None:
+                errors.append(f"ready pointer field {field} is missing")
+                continue
+            if current.get(field) != ready.get(field):
+                errors.append(
+                    f"catalog {field} {current.get(field)!r} does not match "
+                    f"ready pointer {ready.get(field)!r}"
+                )
+            if receipt.get(field) != ready.get(field):
+                errors.append(
+                    f"device receipt {field} {receipt.get(field)!r} does not match "
+                    f"ready pointer {ready.get(field)!r}"
+                )
     if receipt.get("status") != "installed-and-launched":
         errors.append(
             "device receipt status is not installed-and-launched: "
@@ -400,22 +466,56 @@ def installed_test_receipt_errors(
     return errors
 
 
-def approval_list() -> list[dict[str, Any]]:
-    current = manifest().get("currentTestBuild", {})
-    build = current.get("build")
-    receipt_path = current.get("receipt")
+def contained_receipt_path(receipt_path: Any) -> Path:
     if not isinstance(receipt_path, str) or not receipt_path:
         fail("currentTestBuild.receipt is missing")
-    resolved_receipt_path = Path(receipt_path).expanduser()
-    if not resolved_receipt_path.is_absolute():
+    path = Path(receipt_path).expanduser()
+    if not path.is_absolute():
         fail("currentTestBuild.receipt must resolve to an absolute path")
-    receipt = load_json(resolved_receipt_path)
+    root = DEVICE_RECEIPTS_ROOT.expanduser()
+    if root.is_symlink():
+        fail("the device receipt directory cannot be a symbolic link")
+    try:
+        relative = path.relative_to(root)
+    except ValueError:
+        fail(f"currentTestBuild.receipt must be below {root}")
+    if ".." in relative.parts:
+        fail("currentTestBuild.receipt cannot contain path traversal")
+    candidate = root
+    for part in relative.parts:
+        candidate /= part
+        if candidate.is_symlink():
+            fail("currentTestBuild.receipt cannot use a symbolic link")
+    resolved_root = root.resolve(strict=False)
+    resolved_path = path.resolve(strict=False)
+    try:
+        resolved_path.relative_to(resolved_root)
+    except ValueError:
+        fail(f"currentTestBuild.receipt must resolve below {resolved_root}")
+    return resolved_path
+
+
+def require_installed_test_receipt(
+    current: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    current = current or manifest().get("currentTestBuild", {})
+    receipt = load_json(contained_receipt_path(current.get("receipt")))
     if not isinstance(receipt, dict):
         fail("installed Test receipt must be a JSON object")
-    receipt_errors = installed_test_receipt_errors(current, receipt)
+    ready = load_json(TEST_READY_POINTER)
+    if not isinstance(ready, dict):
+        fail("Test ready pointer must be a JSON object")
+    receipt_errors = installed_test_receipt_errors(current, receipt, ready)
     if receipt_errors:
         details = "; ".join(receipt_errors)
         fail(f"installed Test receipt is not eligible for approval: {details}")
+    return receipt
+
+
+def approval_list() -> list[dict[str, Any]]:
+    current = manifest().get("currentTestBuild", {})
+    build = current.get("build")
+    require_installed_test_receipt(current)
     pending = [
         feature for feature in catalog(False)
         if feature.get("state") in APPROVAL_STATES
@@ -575,6 +675,7 @@ def queue_items(path: Path) -> list[dict[str, Any]]:
 
 
 def command_queue(args: argparse.Namespace) -> None:
+    require_installed_test_receipt()
     items = queue_items(Path(args.path).expanduser())
     item_ids = [item.get("id") for item in items]
     if any(not item_id for item_id in item_ids) or len(item_ids) != len(set(item_ids)):
@@ -611,7 +712,7 @@ def command_queue(args: argparse.Namespace) -> None:
 def command_validate(_: argparse.Namespace) -> None:
     value = manifest()
     validate_delivery_inventory(load_json(REPO_ROOT / value["prDelivery"]), value["lifecycle"])
-    records = catalog(False)
+    records = catalog(True)
     if len({item["id"] for item in records}) != len(records):
         fail("catalog contains duplicate ids")
     for item in records:
@@ -619,7 +720,29 @@ def command_validate(_: argparse.Namespace) -> None:
             fail(f"catalog record {item['id']} has invalid state {item.get('state')}")
         if item.get("delivery") is not None and item.get("delivery") not in VALID_DELIVERY:
             fail(f"catalog record {item['id']} has invalid delivery {item.get('delivery')}")
-    print(f"stream manifest valid: {len(records)} durable feature records")
+    print(f"stream manifest valid: {len(records)} catalog records")
+
+
+def command_require_receipt(_: argparse.Namespace) -> None:
+    receipt = require_installed_test_receipt()
+    print(
+        json.dumps(
+            {
+                field: receipt[field]
+                for field in (
+                    "channel",
+                    "build",
+                    "sequence",
+                    "commit",
+                    "bundleId",
+                    "deviceId",
+                    "status",
+                    "launchPending",
+                )
+            },
+            sort_keys=True,
+        )
+    )
 
 
 def parser() -> argparse.ArgumentParser:
@@ -649,6 +772,8 @@ def parser() -> argparse.ArgumentParser:
     queue.add_argument("--path", default="~/.t3/swiftui-stream/promotion-queue.json")
     queue.add_argument("--json", action="store_true")
     queue.set_defaults(func=command_queue)
+    receipt = commands.add_parser("require-installed-test-receipt")
+    receipt.set_defaults(func=command_require_receipt)
     return result
 
 
