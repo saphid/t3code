@@ -1,0 +1,130 @@
+---
+name: prepare-proof-media
+description: Create concise PR and test evidence from raw screen recordings and screenshots. Produce paired clean and annotated MP4 videos and PNG images, visible tap and swipe animations, explanatory captions, deterministic idle trimming, contact sheets, and edit receipts. Use after web, desktop, iOS Simulator, or Android verification. Also use when a proof video, demo, walkthrough, comparison image, or interaction recording needs editing, and before attaching UI media to a PR.
+---
+
+# Prepare Proof Media
+
+Preserve the raw capture. Derive matched clean and annotated proof. Use the
+bundled script instead of designing an edit in the model context.
+
+## Capture one truthful source
+
+1. Record only the affected flow with the recorder owned by the current test
+   surface. Keep secrets and unrelated personal data outside the frame.
+2. Record semantic actions in a timeline while driving the UI. Use normalized
+   coordinates (`0` to `1`) so annotations survive resolution changes.
+3. Leave at least `0.4` seconds before an action and `1.0` second after it so
+   the source contains the app's real pressed, transition, and result states.
+4. Keep the raw recording immutable. Gesture overlays supplement the real UI
+   animation; they never replace a missing or cut-off product response.
+
+Create and append to a timeline without hand-writing JSON:
+
+```bash
+MEDIA=.agents/skills/prepare-proof-media/scripts/prepare_proof_media.py
+python3 "$MEDIA" timeline-init <timeline.json> --title "Focused proof"
+python3 "$MEDIA" timeline-add <timeline.json> --kind tap --at 1.8 \
+  --point 0.84,0.92 --label "New session" \
+  --expect "The composer opens without changing projects"
+python3 "$MEDIA" timeline-add <timeline.json> --kind swipe --at 3.1 \
+  --duration 0.6 --from 0.5,0.8 --to 0.5,0.3 \
+  --label "Session list" --expect "Older sessions remain reachable"
+```
+
+Use timestamps from the recorder's source clock or the automation action
+history. The renderer performs the source-to-output time mapping.
+
+Read [timeline-schema.md](references/timeline-schema.md) only when creating or
+debugging a timeline by hand.
+
+## Build the proof packet
+
+Require `python3`, `ffmpeg`, `ffprobe`, and ImageMagick 7 (`magick`). Then run:
+
+```bash
+python3 "$MEDIA" build \
+  <raw-recording.mp4> \
+  --timeline <timeline.json> \
+  --output-dir <artifact-directory> \
+  --stem <proof-name>
+```
+
+The media artifacts are byte-for-byte repeatable on the same machine with the
+same tool versions, inputs, and build options. The build emits:
+
+- `<stem>-clean.mp4`: concise footage with no added marks or captions;
+- `<stem>-annotated.mp4`: the same cut with animated taps, swipes, and captions;
+- matched clean and annotated poster PNGs;
+- an annotated contact sheet for quick PR review; and
+- `<stem>-receipt.json`: hashes, durations, cuts, mapped actions, and tool
+  versions.
+
+The raw source remains the unmodified provenance artifact. The clean MP4 shows
+the viewing cut without added marks or captions. Its only edit removes excess
+idle time.
+
+For an existing screenshot, select the timeline event that the image proves:
+
+```bash
+python3 "$MEDIA" image <raw-screenshot.png> \
+  --timeline <timeline.json> \
+  --event 0 \
+  --output-dir <artifact-directory> \
+  --stem <proof-name>
+```
+
+This emits `<stem>-image-clean.png`, `<stem>-image-annotated.png`, and
+`<stem>-image-receipt.json`. Omit `--event` to annotate the last timeline
+event. Keep before and after states as separate source images. Do not compose a
+comparison that hides detail.
+
+By default the script shortens long frozen intervals with FFmpeg's
+`freezedetect`. For sources with audio, the script shortens only frozen and
+silent intervals. This rule keeps spoken narration and audible state changes.
+The script protects the lead-in, complete gesture, app response, and every
+explicit keep range. Use `--no-auto-trim` when timing itself is the claim.
+Use explicit `keep` ranges in the timeline when a moving spinner or animation
+prevents freeze detection from recognizing an excessive wait.
+
+The renderer refuses known pairing and API credential shapes in captions, labels,
+and expected-result text. Add repeatable `--deny-secret-pattern <regex>` options
+for project-specific identifiers that must never appear in rendered evidence.
+
+## Annotate the claim
+
+Write captions for a reviewer who has no task context. Name the action and the
+observable expected result, for example:
+
+```json
+{
+  "kind": "tap",
+  "at": 1.8,
+  "x": 0.84,
+  "y": 0.92,
+  "label": "New session",
+  "expect": "The composer opens without changing projects"
+}
+```
+
+The script turns that into a short `Next:` and `Expected:` caption and a tap
+pulse. Supply `caption` to override the generated wording. For a swipe, include
+`from`, `to`, and `duration`; the annotated cut shows the path and a moving
+touch point. Use two to six decisive actions. Do not record a narrated tour.
+
+## Inspect before delivery
+
+1. Compare both videos at the same timestamps. Require the same content and
+   duration, with overlays as the only visual difference.
+2. Confirm every gesture animation begins just before the real action, remains
+   visible during it, and leaves the product response unobscured.
+3. Confirm captions describe what is about to happen and the state that proves
+   success. Shorten or move them if they cover the affected control.
+4. Inspect the contact sheet and both poster PNGs. Rebuild with an explicit
+   `--poster-at <source-seconds>` when the default frame is weak.
+5. Check the receipt's hashes and duration reduction. Treat a large reduction
+   or an unexpected cut as a reason to watch the whole clean cut.
+
+After inspection, use `share-video-evidence` for playable delivery. For a PR,
+keep the raw and receipt in private/local evidence storage and attach the clean
+and annotated derivatives through the repository's approved media path.

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Prepare Proof Media"
+  short_description: "Create concise clean and annotated proof media"
+  default_prompt: "Use $prepare-proof-media to turn a raw test recording and action timeline into concise clean and annotated PR evidence."

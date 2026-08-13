@@ -171,9 +171,22 @@ Pairing credentials are secret, short-lived, and single-use. Create a different 
 
 ## Drive and observe the affected flow
 
+For a user-visible change, PR proof, or requested walkthrough, load and follow
+[`prepare-proof-media`](../prepare-proof-media/SKILL.md). Record one focused
+hero run after pairing and setup, logging source-relative semantic actions and
+visible postconditions into its timeline. Keep the recorder, semantic driver,
+and timeline pinned to the same device.
+
 ### iOS
 
 Use `snapshot_ui` and current element references from XcodeBuildMCP for taps and typing. Stream the same UDID through `ios-simulator-browser` so the user can watch in T3 Code when the host supports it. Use the stream as a visual feed rather than a reason to switch to fragile browser coordinates.
+
+Use XcodeBuildMCP `record_sim_video` to start and stop the raw recording. For
+each semantic tap or gesture, store the action time, normalized element center
+or gesture path, accessibility label, and expected visible result. Stop after
+the final state settles, then build and inspect the matched clean and annotated
+proof packet. Simulator recording and serve-sim streaming are separate; the
+stream is not the source file.
 
 ### Android
 
@@ -181,16 +194,24 @@ Prefer semantic Android automation exposed by the current agent host. Otherwise 
 
 Android does not use serve-sim. Use a browser-compatible Android mirror when the host already provides one; otherwise return focused emulator screenshots as evidence rather than installing unrelated streaming infrastructure during verification.
 
+When video proof is required, use `adb shell screenrecord` for the raw capture,
+pull the exact MP4, and keep Android's Show taps disabled so the canonical
+source remains clean. Log `adb shell input` or semantic-driver action times and
+normalized paths in the same timeline, then build both derivatives with
+`prepare-proof-media`. Keep the recording below Android's platform time limit.
+
 ## Verify and clean up
 
 Exercise only the affected flow on one representative device unless the change specifically concerns platform, OS version, or screen size. Before finishing:
 
 1. Confirm the app connected to the intended disposable environment instead of merely rendering an empty disconnected state.
 2. Capture the relevant final state.
-3. Remove the disposable environment from T3 Code Dev.
-4. Remove any `adb reverse` rule created for this test with `adb -s <emulator-serial> reverse --remove tcp:<metro-port>`.
-5. Stop only the serve-sim, Metro, backend, emulator, and log processes started by this test.
-6. Remove only base directories and temporary Git repositories deliberately created for this test. Preserve them when they contain useful reproduction evidence.
+3. When proof media is required, confirm the clean and annotated videos have
+   matching duration and content, and that the receipt retains the raw hash.
+4. Remove the disposable environment from T3 Code Dev.
+5. Remove any `adb reverse` rule created for this test with `adb -s <emulator-serial> reverse --remove tcp:<metro-port>`.
+6. Stop only the serve-sim, Metro, backend, emulator, recording, and log processes started by this test.
+7. Remove only base directories and temporary Git repositories deliberately created for this test. Preserve them when they contain useful reproduction evidence.
 
 Keep local verification focused. Do not turn this workflow into a full repository test run.
 
