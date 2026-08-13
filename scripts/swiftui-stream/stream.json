@@ -30,7 +30,7 @@
     "sequence": 45,
     "commit": "771af21d518df51fc7e1de6fa88211737158178b",
     "receipt": "~/.t3/swiftui-stream/device-receipts/test.json",
-    "status": "ready-awaiting-device-receipt"
+    "status": "installed-and-launched-awaiting-approval"
   },
   "features": [
     {
@@ -146,7 +146,7 @@
       "id": "cold-boot-home-list-scrolling",
       "name": "Keep the Home list scrollable during cold-boot metadata loading",
       "aliases": ["cold boot scrolling", "cold launch home list", "startup list scroll"],
-      "state": "in-test",
+      "state": "needs-you",
       "branch": "fix/swiftui-cold-boot-list-scroll-20260813",
       "sourceCommit": "276d2e427a5aad188cf45adb68aa43075dc4d03d",
       "candidateCommit": "9b5c591cebdf1d47f5c954f116470141b5060011",
