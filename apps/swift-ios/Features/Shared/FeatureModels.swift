@@ -39,6 +39,9 @@ public struct FeatureEnvironment: Identifiable, Sendable, Equatable, Hashable, C
     /// Internal stream-leader compatibility. Product routing must use the
     /// project or thread environment instead.
     public var supportsPullRequests: Bool
+    /// `nil` remains meaningful while the environment descriptor is still loading.
+    public var pullRequestCapability: Bool?
+    public var pullRequestCapabilityKnown: Bool
     public var isActive: Bool
     public var isEnabled: Bool
     public var source: Source
@@ -53,6 +56,8 @@ public struct FeatureEnvironment: Identifiable, Sendable, Equatable, Hashable, C
         endpoint: String,
         serverVersion: String? = nil,
         supportsPullRequests: Bool = false,
+        pullRequestCapability: Bool? = nil,
+        pullRequestCapabilityKnown: Bool = false,
         isActive: Bool = false,
         isEnabled: Bool = true,
         source: Source = .direct,
@@ -63,7 +68,9 @@ public struct FeatureEnvironment: Identifiable, Sendable, Equatable, Hashable, C
         self.name = name
         self.endpoint = endpoint
         self.serverVersion = serverVersion
-        self.supportsPullRequests = supportsPullRequests
+        self.pullRequestCapability = pullRequestCapability
+        self.pullRequestCapabilityKnown = pullRequestCapabilityKnown
+        self.supportsPullRequests = pullRequestCapability == true || supportsPullRequests
         self.isActive = isActive
         self.isEnabled = isEnabled
         self.source = source
@@ -77,6 +84,8 @@ public struct FeatureEnvironment: Identifiable, Sendable, Equatable, Hashable, C
         case endpoint
         case serverVersion
         case supportsPullRequests
+        case pullRequestCapability
+        case pullRequestCapabilityKnown
         case isActive
         case isEnabled
         case source
@@ -90,9 +99,18 @@ public struct FeatureEnvironment: Identifiable, Sendable, Equatable, Hashable, C
         name = try container.decode(String.self, forKey: .name)
         endpoint = try container.decode(String.self, forKey: .endpoint)
         serverVersion = try container.decodeIfPresent(String.self, forKey: .serverVersion)
-        supportsPullRequests = try container.decodeIfPresent(
+        let decodedSupportsPullRequests = try container.decodeIfPresent(
             Bool.self,
             forKey: .supportsPullRequests
+        ) ?? false
+        pullRequestCapability = try container.decodeIfPresent(
+            Bool.self,
+            forKey: .pullRequestCapability
+        )
+        supportsPullRequests = pullRequestCapability == true || decodedSupportsPullRequests
+        pullRequestCapabilityKnown = try container.decodeIfPresent(
+            Bool.self,
+            forKey: .pullRequestCapabilityKnown
         ) ?? false
         isActive = try container.decodeIfPresent(Bool.self, forKey: .isActive) ?? false
         isEnabled = try container.decodeIfPresent(Bool.self, forKey: .isEnabled) ?? true
