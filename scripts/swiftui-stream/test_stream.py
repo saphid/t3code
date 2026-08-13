@@ -429,8 +429,12 @@ Annotated screenshot: https://evidence.example/annotated.png
         self.assertTrue(future_ids.isdisjoint(item["id"] for item in items))
 
     def test_fuzzy_match_prefers_command_palette(self):
+        pending = (
+            item for item in stream.catalog(False)
+            if item.get("state") in stream.APPROVAL_STATES
+        )
         ranked = sorted(
-            ((stream.score("palette", item), item["id"]) for item in stream.approval_list()),
+            ((stream.score("palette", item), item["id"]) for item in pending),
             reverse=True,
         )
         self.assertEqual(ranked[0][1], "command-palette-top-drawer")

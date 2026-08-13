@@ -35,24 +35,55 @@
   "features": [
     {
       "id": "in-app-stream-approval-control",
-      "name": "Approve features through Development, Test, Dev, and upstream",
-      "aliases": ["what's testing", "testing approvals", "dev approvals"],
-      "summary": "Adds an in-app review queue that shows exactly which feature commits and T3 threads are in the installed Dev or Test build, then sends an auditable readiness verdict from that exact build.",
-      "whatToCheck": "In Dev, open Settings → What’s ready for testing; in Test, open Settings → What’s testing. Expand this item and confirm the pipeline, this guidance, commits, thread, issue, confirmation dialog, and both readiness choices are clear.",
-      "successLooksLike": "Dev offers Ready for Test. Test offers Ready for Dev. Both show Development → Test → Dev → Upstream, preserve exact build evidence, and queue a verdict only after confirmation.",
-      "state": "needs-you",
-      "sourceBranch": "feat/swiftui-stream-approval-control",
+      "name": "Review features and visualize their PR promotion pipeline",
+      "aliases": ["what's testing", "testing approvals", "dev approvals", "pipeline diagram", "PR promotion flow"],
+      "summary": "Adds an in-app review queue for exact Dev and Test build contents, plus a phone-readable diagram of the proposed PR-based path from a proved candidate through Test, Dev, and upstream.",
+      "whatToCheck": "In Dev, open Settings → What’s ready for testing; in Test, open Settings → What’s testing. Confirm the six-step proposed PR promotion diagram is readable without horizontal scrolling and clearly separates automated, human, and maintainer gates. Expand this item, open Visual evidence, confirm the annotated dark-mode image loads and the annotated video plays, then verify the guidance, commits, thread, issue, confirmation dialog, and both readiness choices.",
+      "successLooksLike": "The diagram clearly shows candidate PR → Test build → your Test approval → Dev build → your upstream approval → upstream PR. The visual proof expands in place with working clean and annotated links. Dev offers Ready for Test, Test offers Ready for Dev, and both preserve exact build evidence before queuing a verdict.",
+      "visualChange": true,
+      "interactionChange": true,
+      "proofMediaReceipt": "~/.t3/artifacts/swiftui-stream/evidence/pipeline-diagram-20260813/swiftui-pipeline-diagram-receipt.json",
+      "visualEvidence": [
+        {
+          "kind": "image",
+          "title": "Dark-mode PR promotion flow",
+          "caption": "Shows the proposed pipeline stages and their automated and human review gates.",
+          "appearance": "dark",
+          "cleanURL": "https://alexs-macbook-pro-1.tail4e5636.ts.net:10022/swiftui-pipeline-diagram-clean.png",
+          "annotatedURL": "https://alexs-macbook-pro-1.tail4e5636.ts.net:10022/swiftui-pipeline-diagram-annotated.png"
+        },
+        {
+          "kind": "video",
+          "title": "Dark-mode pipeline walkthrough",
+          "caption": "Opens the Dev review, expands the proposed flow, and swipes through the Dev and upstream gates with visible gestures and captions.",
+          "appearance": "dark",
+          "cleanURL": "https://alexs-macbook-pro-1.tail4e5636.ts.net:10022/swiftui-pipeline-diagram-clean.mp4",
+          "annotatedURL": "https://alexs-macbook-pro-1.tail4e5636.ts.net:10022/swiftui-pipeline-diagram-annotated.mp4"
+        }
+      ],
+      "state": "in-test",
+      "sourceBranch": "feat/swiftui-pipeline-diagram-20260813",
       "sourceThread": "7F1BCA94-9E0D-4CF6-A833-99995121ADFB",
       "sourceThreadTitle": "Dev/Test Feature Approval Workflow",
       "sourceIssue": "https://github.com/saphid/t3code-personal/issues/56",
       "startingBaseline": "125ed781e20716091222651092ed2708448bb6b6",
-      "sourceCommit": "f1f1cc39ca295f6909522be09f95d758a4e1f065",
+      "sourceCommit": "e832100ac8d2d446e9c6cbe9f024dc482f107209",
+      "candidateCommit": "e832100ac8d2d446e9c6cbe9f024dc482f107209",
+      "commits": [
+        "2421a23ff82a7cdf5e60c16b745e1a33603146e9",
+        "13127b18e4132843989732d464f5da66038c0fb4",
+        "bada856364abd5a09fa8d56f1e87bb24d5282ed7",
+        "ede9558e046153143c8be11d7edf899aa58f37db",
+        "e832100ac8d2d446e9c6cbe9f024dc482f107209"
+      ],
       "integratedCommits": [
         "71c0b00ac78b5d0d3fea10b6c0b5fce3f6ddaaa0",
-        "d0a397a9b8b1b9a0a14c0d781c829c2f71af8675"
+        "d0a397a9b8b1b9a0a14c0d781c829c2f71af8675",
+        "c332364a814bd86d919ae32334d8bd44a8651747",
+        "08d75bf0a678a850edc55c1339d23acf7f1ff129"
       ],
-      "integratedCommit": "c332364a814bd86d919ae32334d8bd44a8651747",
-      "testBuild": 52,
+      "integratedCommit": "256f9b764b5f975aeb50b10e5e99d3d986f5d681",
+      "testBuild": 55,
       "order": 15,
       "tentativeDelivery": "local-only"
     },
