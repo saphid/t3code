@@ -35,6 +35,25 @@ enum HomeThreadSwipeActions {
     }
 }
 
+struct HomeThreadPendingMetadataRefreshes<Identifier: Hashable> {
+    private(set) var identifiers = Set<Identifier>()
+
+    mutating func recordCompletion(
+        matching: Set<Identifier>,
+        refreshed: Set<Identifier>
+    ) {
+        identifiers.formUnion(matching.subtracting(refreshed))
+    }
+
+    mutating func consume(_ identifier: Identifier) -> Bool {
+        identifiers.remove(identifier) != nil
+    }
+
+    mutating func prune(to current: Set<Identifier>) {
+        identifiers.formIntersection(current)
+    }
+}
+
 /// A recycled, diffable Home surface. SwiftUI still owns the surrounding shell,
 /// while UIKit keeps row creation and updates proportional to visible threads.
 struct HomeThreadCollectionView: UIViewRepresentable {
@@ -117,6 +136,9 @@ struct HomeThreadCollectionView: UIViewRepresentable {
         private var dataSource: UICollectionViewDiffableDataSource<Section, HomeCollectionItem.ID>?
         private var registration: UICollectionView.CellRegistration<HomeCollectionCell, HomeCollectionItem.ID>?
         private var itemsByID: [HomeCollectionItem.ID: HomeCollectionItem] = [:]
+        private var pullRequestIdentifiersByKey: [
+            PullRequestLookupKey: Set<HomeCollectionItem.ID>
+        ] = [:]
         private var selectedThreadID: String?
         private weak var collectionView: UICollectionView?
         private var timer: Timer?
@@ -127,6 +149,9 @@ struct HomeThreadCollectionView: UIViewRepresentable {
         private var pullRequestQueue: [PullRequestLookupRequest] = []
         private var pullRequestWorker: Task<Void, Never>?
         private var activePullRequestLookupKey: PullRequestLookupKey?
+        private var pendingPullRequestRefreshes = HomeThreadPendingMetadataRefreshes<
+            HomeCollectionItem.ID
+        >()
         private var foregroundObserver: NSObjectProtocol?
 
         init(parent: HomeThreadCollectionView) {
@@ -179,6 +204,11 @@ struct HomeThreadCollectionView: UIViewRepresentable {
                 seenIdentifiers.insert(item.id).inserted
             }
             itemsByID = Dictionary(uniqueKeysWithValues: items.map { ($0.id, $0) })
+            pullRequestIdentifiersByKey = items.reduce(into: [:]) { index, item in
+                guard case let .thread(thread, _, _, _, _) = item else { return }
+                index[PullRequestLookupKey(thread: thread), default: []].insert(item.id)
+            }
+            pendingPullRequestRefreshes.prune(to: Set(items.map(\.id)))
             prunePullRequestLookups()
             // After items land: picks 1 Hz when a working thread is present,
             // 60s otherwise, and is a no-op when the interval is unchanged.
@@ -236,10 +266,10 @@ struct HomeThreadCollectionView: UIViewRepresentable {
         private func refreshPullRequestsAfterForeground() {
             invalidatePullRequestLookups()
             stalePullRequestKeys.formUnion(pullRequestCache.keys)
-            refreshVisibleRowsForPullRequests()
+            refreshVisibleRows()
         }
 
-        private func refreshVisibleRowsForPullRequests() {
+        private func refreshVisibleRows() {
             guard let collectionView, let dataSource else { return }
             for indexPath in collectionView.indexPathsForVisibleItems {
                 guard let identifier = dataSource.itemIdentifier(for: indexPath),
@@ -248,6 +278,18 @@ struct HomeThreadCollectionView: UIViewRepresentable {
                 }
                 configure(cell, identifier: identifier, now: .now)
             }
+        }
+
+        func collectionView(
+            _ collectionView: UICollectionView,
+            willDisplay cell: UICollectionViewCell,
+            forItemAt indexPath: IndexPath
+        ) {
+            guard let dataSource,
+                  let identifier = dataSource.itemIdentifier(for: indexPath),
+                  let cell = cell as? HomeCollectionCell,
+                  pendingPullRequestRefreshes.consume(identifier) else { return }
+            configure(cell, identifier: identifier, now: .now)
         }
 
         func collectionView(_ collectionView: UICollectionView, didSelectItemAt indexPath: IndexPath) {
@@ -365,6 +407,7 @@ struct HomeThreadCollectionView: UIViewRepresentable {
             now: Date
         ) {
             guard let item = itemsByID[identifier] else { return }
+            _ = pendingPullRequestRefreshes.consume(identifier)
             let resolvedPullRequest: FeaturePullRequest?
             if case let .thread(thread, _, _, _, _) = item {
                 loadPullRequestIfNeeded(for: thread)
@@ -414,9 +457,8 @@ struct HomeThreadCollectionView: UIViewRepresentable {
             guard pullRequestWorker == nil else { return }
             guard !pullRequestQueue.isEmpty else { return }
             // Requests enter this queue only while UIKit is configuring an
-            // on-screen cell. Do not consult indexPathsForVisibleItems here:
-            // during initial configuration UIKit has not published that index
-            // path yet, which would incorrectly discard the lookup.
+            // on-screen cell, including initial configuration before UIKit has
+            // published its visible index paths.
             let request = pullRequestQueue.removeFirst()
 
             let client = parent.projectFaviconClient
@@ -440,22 +482,35 @@ struct HomeThreadCollectionView: UIViewRepresentable {
                     // foregrounded again, avoiding a background failure loop.
                     pullRequestCache[request.key] = PullRequestCacheEntry(pullRequest: nil)
                 }
-                reconfigureThreadRows(matching: request.key)
+                refreshThreadRows(matching: request.key)
                 startNextPullRequestLookup()
             }
         }
 
-        private func reconfigureThreadRows(matching key: PullRequestLookupKey) {
-            guard let dataSource else { return }
-            let identifiers = itemsByID.compactMap { id, item -> HomeCollectionItem.ID? in
-                guard case let .thread(thread, _, _, _, _) = item,
-                      PullRequestLookupKey(thread: thread) == key else { return nil }
-                return id
+        private func refreshThreadRows(matching key: PullRequestLookupKey) {
+            guard let collectionView, let dataSource else { return }
+
+            // Pull-request lookups complete one row at a time during cold launch.
+            // Reapplying the diffable snapshot for every result repeatedly resets
+            // collection-view interaction while the user is starting a scroll.
+            // Live cells consume metadata directly without touching the
+            // diffable snapshot. Rows without a cell refresh when UIKit next
+            // displays them, keeping lookup completion out of scroll handling.
+            let matchingIdentifiers = pullRequestIdentifiersByKey[key] ?? []
+            var refreshedIdentifiers = Set<HomeCollectionItem.ID>()
+            for identifier in matchingIdentifiers {
+                guard let indexPath = dataSource.indexPath(for: identifier),
+                      let cell = collectionView.cellForItem(at: indexPath)
+                          as? HomeCollectionCell else {
+                    continue
+                }
+                configure(cell, identifier: identifier, now: .now)
+                refreshedIdentifiers.insert(identifier)
             }
-            guard !identifiers.isEmpty else { return }
-            var snapshot = dataSource.snapshot()
-            snapshot.reconfigureItems(identifiers)
-            dataSource.apply(snapshot, animatingDifferences: false)
+            pendingPullRequestRefreshes.recordCompletion(
+                matching: matchingIdentifiers,
+                refreshed: refreshedIdentifiers
+            )
         }
 
         private func prunePullRequestLookups() {

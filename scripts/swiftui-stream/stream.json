@@ -141,6 +141,17 @@
       "sourceThread": "019ff7b4-531e-7d43-9233-ced5bc44bb3b",
       "startingBaseline": "d79e45e3ae1e305b248c751d6a51bac7210fff6a",
       "delivery": "local-only"
+    },
+    {
+      "id": "cold-boot-home-list-scrolling",
+      "name": "Keep the Home list scrollable during cold-boot metadata loading",
+      "aliases": ["cold boot scrolling", "cold launch home list", "startup list scroll"],
+      "state": "developing",
+      "branch": "fix/swiftui-cold-boot-list-scroll-20260813",
+      "sourceIssue": "https://github.com/saphid/t3code-personal/issues/55",
+      "sourceThread": "019ff86d-be17-7772-beae-d39646e325ac",
+      "startingBaseline": "d79e45e3ae1e305b248c751d6a51bac7210fff6a",
+      "delivery": "direct"
     }
   ]
 }

@@ -6,6 +6,46 @@ import Testing
 struct HomeThreadMetadataTests {
     private let now = Date(timeIntervalSince1970: 10_000)
 
+    @Test(
+        "Cold metadata refreshes defer rows that have no visible cell",
+        .bug("https://github.com/saphid/t3code-personal/issues/55")
+    )
+    func coldMetadataRefreshPreservesRowsWithoutAVisibleCell() {
+        var state = HomeThreadPendingMetadataRefreshes<String>()
+        state.recordCompletion(
+            matching: Set(["visible", "prefetched"]),
+            refreshed: Set(["visible"])
+        )
+
+        #expect(state.identifiers == Set(["prefetched"]))
+    }
+
+    @Test(
+        "Cold metadata pending rows coalesce and consume exactly once",
+        .bug("https://github.com/saphid/t3code-personal/issues/55")
+    )
+    func coldMetadataRefreshesCoalesceUntilRowsDisplay() {
+        var state = HomeThreadPendingMetadataRefreshes<String>()
+        state.recordCompletion(
+            matching: Set(["visible", "prefetched"]),
+            refreshed: Set(["visible"])
+        )
+        state.recordCompletion(
+            matching: Set(["prefetched", "second"]),
+            refreshed: []
+        )
+
+        #expect(state.identifiers == Set(["prefetched", "second"]))
+        let consumedOnce = state.consume("prefetched")
+        let consumedAgain = state.consume("prefetched")
+        #expect(consumedOnce)
+        #expect(!consumedAgain)
+        #expect(state.identifiers == Set(["second"]))
+
+        state.prune(to: Set(["visible"]))
+        #expect(state.identifiers.isEmpty)
+    }
+
     @Test
     func statusLabelsFollowTheWebV2RowVocabulary() {
         let expected: [(FeatureThreadState, HomeThreadStatus, String?)] = [
