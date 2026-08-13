@@ -64,6 +64,18 @@
       "order": 1
     },
     {
+      "id": "skill-popup-readability-and-height",
+      "name": "Readable, full-height SwiftUI skill popup",
+      "aliases": ["skill name readability", "expanded skill picker", "full-height skills popup"],
+      "state": "developing",
+      "sourceIssue": "https://github.com/saphid/t3code-personal/issues/57",
+      "sourceThread": "A21E4994-5667-4935-9C26-EFCF66D4E869",
+      "sourceBranch": "t3code/improve-skill-popup-layout",
+      "branch": "fix/swiftui-skill-popup-readability-20260813",
+      "startingBaseline": "125ed781e20716091222651092ed2708448bb6b6",
+      "behavior": "Stack skill names above their descriptions and let the scrollable popup grow to the available vertical boundary above the composer."
+    },
+    {
       "id": "dev-title-label",
       "name": "Replace orange dev bars with a channel-colored title label",
       "aliases": ["orange dev bars", "dev title"],

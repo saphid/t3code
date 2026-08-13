@@ -153,6 +153,90 @@ struct FeatureComposerPowerTests {
         )
     }
 
+    @Test(
+        "Command menu can fill the space above the composer",
+        .bug("https://github.com/saphid/t3code-personal/issues/57")
+    )
+    func commandMenuUsesItsAvailableVerticalSpace() {
+        let maximumHeight = FeatureComposerTextLayout.commandMenuMaximumHeight(
+            composerMinY: 720,
+            topBoundary: 59
+        )
+
+        #expect(maximumHeight == 625)
+        #expect(
+            FeatureComposerTextLayout.commandMenuHeight(
+                itemCount: 20,
+                usesExpandedRows: true,
+                dynamicTypeSize: .large,
+                maximumHeight: maximumHeight
+            ) == maximumHeight
+        )
+    }
+
+    @Test(
+        "Skill rows reserve room for stacked names and descriptions",
+        .bug("https://github.com/saphid/t3code-personal/issues/57")
+    )
+    func skillMenuRowsUseTheReadableHeightEstimate() {
+        let standardHeight = FeatureComposerTextLayout.commandMenuHeight(
+            itemCount: 2,
+            usesExpandedRows: true,
+            dynamicTypeSize: .large,
+            maximumHeight: 1_000
+        )
+        let accessibilityHeight = FeatureComposerTextLayout.commandMenuHeight(
+            itemCount: 2,
+            usesExpandedRows: true,
+            dynamicTypeSize: .accessibility3,
+            maximumHeight: 1_000
+        )
+
+        #expect(standardHeight >= 132)
+        #expect(accessibilityHeight > standardHeight)
+    }
+
+    @Test(
+        "Command menu geometry has safe fallbacks and clamps",
+        .bug("https://github.com/saphid/t3code-personal/issues/57")
+    )
+    func commandMenuGeometryHandlesBoundaryValues() {
+        #expect(
+            FeatureComposerTextLayout.commandMenuMaximumHeight(
+                composerMinY: 0,
+                topBoundary: 0
+            ) == 188
+        )
+        #expect(
+            FeatureComposerTextLayout.commandMenuMaximumHeight(
+                composerMinY: 20,
+                topBoundary: 20
+            ) == 0
+        )
+        #expect(
+            FeatureComposerTextLayout.commandMenuHeight(
+                itemCount: 0,
+                usesExpandedRows: false,
+                dynamicTypeSize: .large,
+                maximumHeight: 60
+            ) >= 48
+        )
+    }
+
+    @Test(
+        "Only skill items use the expanded stacked presentation",
+        .bug("https://github.com/saphid/t3code-personal/issues/57")
+    )
+    func skillItemsChooseTheExpandedPresentation() {
+        #expect(FeatureComposerMenuItem.skill(.init(name: "test")).usesExpandedPresentation)
+        #expect(FeatureComposerMenuItem.modelCommand.usesExpandedPresentation == false)
+        #expect(
+            FeatureComposerMenuItem.path(
+                .init(path: "Sources/App.swift", kind: .file)
+            ).usesExpandedPresentation == false
+        )
+    }
+
     @Test
     func detectsCommandsModelsSkillsAndPathsAtTheCursor() {
         #expect(

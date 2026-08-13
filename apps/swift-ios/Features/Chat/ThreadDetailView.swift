@@ -22,6 +22,7 @@ public struct ThreadDetailView: View {
     @State private var draftSaveTask: Task<Void, Never>?
     @State private var toolSurface: FeatureThreadToolSurface?
     @State private var linkedFile: FeatureWorkspaceFileLink?
+    @State private var commandMenuTopBoundary: CGFloat = 0
     @FocusState private var composerFocused: Bool
 
     public init(
@@ -400,6 +401,7 @@ public struct ThreadDetailView: View {
                 pendingApprovals: detail.approvals,
                 pendingUserInputs: detail.userInputs,
                 isResolvingRequest: model.isPerformingAction,
+                commandMenuTopBoundary: commandMenuTopBoundary,
                 powerFeatures: composerPowerFeatures,
                 onApprovalDecision: { id, decision in
                     Task { await model.resolveApproval(id, decision: decision) }
@@ -410,6 +412,18 @@ public struct ThreadDetailView: View {
             )
             .simultaneousGesture(composerKeyboardDismissGesture)
         }
+        .safeAreaInset(edge: .top, spacing: 0) {
+            Color.clear
+                .frame(height: 0)
+                .onGeometryChange(for: CGFloat.self) { geometry in
+                    geometry.frame(
+                        in: .named(FeatureComposerTextLayout.commandMenuCoordinateSpace)
+                    ).maxY
+                } action: { topBoundary in
+                    commandMenuTopBoundary = topBoundary
+                }
+        }
+        .coordinateSpace(.named(FeatureComposerTextLayout.commandMenuCoordinateSpace))
     }
 
     private func openURL(_ url: URL) -> Bool {

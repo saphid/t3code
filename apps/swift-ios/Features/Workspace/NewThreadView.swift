@@ -32,6 +32,8 @@ public struct NewThreadView: View {
     @State private var draftRestoreContext: NewTaskDraftRestoreContext?
     @State private var draftSaveTask: Task<Void, Never>?
     @State private var immediateDraftSaveTasks: [String: Task<Void, Never>] = [:]
+    @State private var safeTopBoundary: CGFloat = 0
+    @State private var topBarBottomBoundary: CGFloat = 0
     @State private var submittedSuccessfully = false
     @State private var pendingIncomingShareID: String?
     @FocusState private var promptFocused: Bool
@@ -64,6 +66,13 @@ public struct NewThreadView: View {
 
             VStack(spacing: 0) {
                 topBar
+                    .onGeometryChange(for: CGFloat.self) { geometry in
+                        geometry.frame(
+                            in: .named(FeatureComposerTextLayout.commandMenuCoordinateSpace)
+                        ).maxY
+                    } action: { bottomBoundary in
+                        topBarBottomBoundary = bottomBoundary
+                    }
                 if creationProjects.isEmpty {
                     noProjects
                         .padding(.top, 82)
@@ -92,12 +101,25 @@ public struct NewThreadView: View {
                         onSend: startTask,
                         onStop: {},
                         forceExpanded: true,
+                        commandMenuTopBoundary: max(safeTopBoundary, topBarBottomBoundary),
                         powerFeatures: composerPowerFeatures
                     )
                 }
                 .background(T3Colors.background)
             }
         }
+        .safeAreaInset(edge: .top, spacing: 0) {
+            Color.clear
+                .frame(height: 0)
+                .onGeometryChange(for: CGFloat.self) { geometry in
+                    geometry.frame(
+                        in: .named(FeatureComposerTextLayout.commandMenuCoordinateSpace)
+                    ).maxY
+                } action: { topBoundary in
+                    safeTopBoundary = topBoundary
+                }
+        }
+        .coordinateSpace(.named(FeatureComposerTextLayout.commandMenuCoordinateSpace))
         .onAppear {
             if pendingIncomingShareID != nil {
                 if !creationProjects.isEmpty {
