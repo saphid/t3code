@@ -101,6 +101,10 @@ def validate_manifest(value: dict[str, Any]) -> None:
             fail(f"{feature_id} has no name")
         if feature.get("state") not in states:
             fail(f"{feature_id} has invalid state {feature.get('state')}")
+        if feature.get("state") in {"proved", *APPROVAL_STATES}:
+            for key in ("summary", "whatToCheck", "successLooksLike"):
+                if not isinstance(feature.get(key), str) or not feature[key].strip():
+                    fail(f"{feature_id} is reviewable without {key}")
         if feature.get("state") == "proved":
             source_branch = feature.get("sourceBranch")
             candidate = feature.get("candidateCommit")

@@ -31,7 +31,10 @@ struct BuildTestingView: View {
                         Text("Build \(manifest.build) · Revision \(String(manifest.revision.prefix(7)))")
                             .font(T3Typography.homeTitle)
                             .foregroundStyle(T3Colors.textPrimary)
-                        Text("Expand a feature to inspect its exact commits and source thread before recording a verdict.")
+                        Text(presentation.pipelinePosition)
+                            .font(T3Typography.supportingStrong)
+                            .foregroundStyle(T3Colors.textSecondary)
+                        Text("Expand each item for what changed, what to check, and the exact signs of success before recording a verdict.")
                             .font(T3Typography.supporting)
                             .foregroundStyle(T3Colors.textSecondary)
                     } else {

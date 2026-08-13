@@ -33,6 +33,11 @@ def git(repository: Path, *arguments: str) -> str:
 
 
 def write_stream(repository: Path, features: list[dict]) -> None:
+    for feature in features:
+        if feature.get("state") in {"proved", "in-test", "needs-you"}:
+            feature.setdefault("summary", "Explains the change under review.")
+            feature.setdefault("whatToCheck", "Exercise the changed behavior.")
+            feature.setdefault("successLooksLike", "The behavior works without regression.")
     path = repository / "scripts/swiftui-stream/stream.json"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps({"features": features}))

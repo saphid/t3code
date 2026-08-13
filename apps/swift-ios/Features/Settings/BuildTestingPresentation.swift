@@ -43,14 +43,21 @@ struct BuildTestingPresentation: Equatable {
     var emptyDescription: String {
         switch channel {
         case .dev: "This build has no proved features waiting to enter Test."
-        case .test: "This build has no features waiting for an upstream verdict."
+        case .test: "This build has no features waiting to be approved into Dev."
         }
     }
 
     var readyLabel: String {
         switch channel {
         case .dev: "Ready for Test"
-        case .test: "Ready upstream"
+        case .test: "Ready for Dev"
+        }
+    }
+
+    var pipelinePosition: String {
+        switch channel {
+        case .dev: "Development → Test → Dev → Upstream · Current gate: enter Test"
+        case .test: "Development → Test → Dev → Upstream · Current gate: enter Dev"
         }
     }
 

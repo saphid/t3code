@@ -126,6 +126,16 @@ def feature_thread_values(feature):
     return unique
 
 
+def review_guidance(feature):
+    guidance = {}
+    for key in ("summary", "whatToCheck", "successLooksLike"):
+        value = feature.get(key)
+        if not isinstance(value, str) or not value.strip():
+            raise RuntimeError("%s has no %s" % (feature.get("id", "feature"), key))
+        guidance[key] = value.strip()
+    return guidance
+
+
 def build_manifest(repository, channel, build):
     repository = Path(repository).resolve()
     stream_path = repository / "scripts/swiftui-stream/stream.json"
@@ -240,6 +250,7 @@ def build_manifest(repository, channel, build):
 
     entries = []
     for feature in features:
+        guidance = review_guidance(feature)
         resolved_commits = {}
         for value, role in feature_commit_values(feature, channel):
             try:
@@ -266,6 +277,7 @@ def build_manifest(repository, channel, build):
         entries.append({
             "id": feature["id"],
             "name": feature["name"],
+            **guidance,
             "state": feature["state"],
             "commits": commits,
             "threads": threads,

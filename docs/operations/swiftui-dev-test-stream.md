@@ -205,10 +205,14 @@ Dev verdict messages invoke `$swiftui-feature-fix`, the personal candidate
 workflow that re-audits the embedded receipt before changing Test.
 
 The purple Test app's **What’s testing** section contains the exact aggregate
-Test-build candidates. Its confirmed dialog sends an evidence-carrying request
-into the existing per-feature approval or rejection path. The approval skill
-still shows the frozen evidence and asks for its required final human
-confirmation. A **Not ready** Test verdict invokes `$swiftui-feature-fix` to
+Test-build candidates. Every Dev and Test review item carries a plain-language
+summary, what Alex should check, and the observable signs of success. Both
+screens show the complete `Development → Test → Dev → Upstream` path and name
+their current gate. Test's confirmed **Ready for Dev** dialog sends an
+evidence-carrying request into the existing per-feature promotion or rejection
+path. The approval skill still shows the frozen evidence and asks for its
+required final human confirmation before promoting the feature into Dev; only
+then does upstream validation begin. A **Not ready** Test verdict invokes `$swiftui-feature-fix` to
 record the rejection and construct a replacement Test train that removes only
 that feature while preserving every unrelated candidate. A queued verdict is
 remembered for that exact channel, build, revision, and feature; submitting the

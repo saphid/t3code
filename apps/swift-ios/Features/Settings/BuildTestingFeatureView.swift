@@ -15,6 +15,8 @@ struct BuildTestingFeatureView: View {
     var body: some View {
         DisclosureGroup(isExpanded: $isExpanded) {
             VStack(alignment: .leading, spacing: 14) {
+                BuildTestingReviewGuide(entry: entry)
+
                 if !entry.commits.isEmpty {
                     VStack(alignment: .leading, spacing: 8) {
                         Text("Commits")

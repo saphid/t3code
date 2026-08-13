@@ -38,6 +38,9 @@ struct BuildTestingManifest: Codable, Equatable, Sendable {
     struct Entry: Codable, Equatable, Identifiable, Sendable {
         let id: String
         let name: String
+        let summary: String
+        let whatToCheck: String
+        let successLooksLike: String
         let state: String
         let commits: [Commit]
         let threads: [Thread]

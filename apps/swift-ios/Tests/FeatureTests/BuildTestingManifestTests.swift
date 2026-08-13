@@ -8,7 +8,7 @@ struct BuildTestingManifestTests {
     @Test("Loads exact embedded stream metadata", .bug("https://github.com/saphid/t3code-personal/issues/56"))
     func loadsEmbeddedManifest() throws {
         let json =
-            #"{"schemaVersion":1,"channel":"test","build":42,"revision":"abcdef123456","repositoryURL":"https://github.com/saphid/t3code-personal","entries":[{"id":"feature-one","name":"Feature one","state":"needs-you","commits":[{"sha":"1234567890abcdef","title":"Add feature one","role":"integrated"}],"threads":[{"id":"THREAD-ONE","title":"Feature one thread"}],"issueURL":"https://github.com/saphid/t3code-personal/issues/56"}]}"#
+            #"{"schemaVersion":1,"channel":"test","build":42,"revision":"abcdef123456","repositoryURL":"https://github.com/saphid/t3code-personal","entries":[{"id":"feature-one","name":"Feature one","summary":"Explains the change.","whatToCheck":"Exercise the changed flow.","successLooksLike":"The flow works without regression.","state":"needs-you","commits":[{"sha":"1234567890abcdef","title":"Add feature one","role":"integrated"}],"threads":[{"id":"THREAD-ONE","title":"Feature one thread"}],"issueURL":"https://github.com/saphid/t3code-personal/issues/56"}]}"#
         let info = ["T3BuildTesting": Data(json.utf8).base64EncodedString()]
         let manifest = try #require(BuildTestingManifest.load(info: info))
 
@@ -17,6 +17,7 @@ struct BuildTestingManifestTests {
         #expect(manifest.entries.first?.commits.first?.shortSHA == "1234567")
         #expect(manifest.entries.first?.threads.first?.id == "THREAD-ONE")
         #expect(manifest.entries.first?.stateLabel == "Needs You")
+        #expect(manifest.entries.first?.whatToCheck == "Exercise the changed flow.")
         #expect(BuildTestingManifest.load(info: nil) == nil)
         #expect(BuildTestingManifest.load(info: ["T3BuildTesting": "not base64"]) == nil)
         #expect(BuildTestingManifest.load(info: ["T3BuildTesting": "$(T3_BUILD_TESTING)"]) == nil)
@@ -31,6 +32,8 @@ struct BuildTestingManifestTests {
     func limitsPresentationToPersonalChannels() {
         #expect(BuildTestingPresentation(channel: .dev)?.sectionTitle == "What’s ready for testing")
         #expect(BuildTestingPresentation(channel: .test)?.sectionTitle == "What’s testing")
+        #expect(BuildTestingPresentation(channel: .test)?.readyLabel == "Ready for Dev")
+        #expect(BuildTestingPresentation(channel: .test)?.pipelinePosition.contains("Development → Test → Dev → Upstream") == true)
         #expect(BuildTestingPresentation(channel: .debug) == nil)
         #expect(BuildTestingPresentation(channel: .upstream) == nil)
     }
@@ -40,6 +43,9 @@ struct BuildTestingManifestTests {
         let entry = BuildTestingManifest.Entry(
             id: "feature-one",
             name: "Feature one",
+            summary: "Explains feature one.",
+            whatToCheck: "Exercise feature one.",
+            successLooksLike: "Feature one works.",
             state: "needs-you",
             commits: [
                 .init(sha: "1234567890abcdef", title: "Integrate feature one", role: .integrated),
@@ -66,7 +72,10 @@ struct BuildTestingManifestTests {
         #expect(ready.prompt.contains("1234567890abcdef"))
         #expect(ready.prompt.contains("Source attribution commits (not build provenance): fedcba0987654321"))
         #expect(ready.prompt.contains("THREAD-ONE"))
-        #expect(rejected.prompt.contains("not ready for upstream delivery"))
+        #expect(ready.confirmationTitle == "Promote to Dev?")
+        #expect(ready.prompt.contains("approve this exact installed Test feature into SwiftUI Dev"))
+        #expect(ready.prompt.contains("followed by upstream validation"))
+        #expect(rejected.prompt.contains("not ready to enter Dev"))
     }
 
     @Test("Builds Dev promotion and rejection prompts")
@@ -74,6 +83,9 @@ struct BuildTestingManifestTests {
         let entry = BuildTestingManifest.Entry(
             id: "feature-one",
             name: "Feature one",
+            summary: "Explains feature one.",
+            whatToCheck: "Exercise feature one.",
+            successLooksLike: "Feature one works.",
             state: "proved",
             commits: [.init(sha: "1234567890abcdef", title: "Feature one", role: .candidate)],
             threads: [.init(id: "THREAD-ONE", title: "Feature one thread")],
