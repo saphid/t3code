@@ -3,9 +3,11 @@
 import importlib.util
 import json
 import plistlib
+import sqlite3
 import subprocess
 import tempfile
 import unittest
+from datetime import datetime, timedelta, timezone
 import zipfile
 from pathlib import Path
 from unittest.mock import patch
@@ -25,6 +27,152 @@ watcher = load_module("swiftui_phone_watch", ROOT / "phone-watch.py")
 
 
 class StreamTests(unittest.TestCase):
+    def test_projection_threads_are_developing_only_during_active_turns(self):
+        now = datetime(2026, 8, 13, tzinfo=timezone.utc)
+        fresh = now.isoformat()
+        stale = (now - timedelta(hours=1)).isoformat()
+        self.assertEqual(
+            stream.projection_thread_state(None, "starting", None, fresh, now),
+            ("developing", None),
+        )
+        self.assertEqual(
+            stream.projection_thread_state(None, "running", "turn-1", fresh, now),
+            ("developing", None),
+        )
+        for status, active_turn_id in (
+            (None, None),
+            ("idle", None),
+            ("ready", None),
+            ("running", None),
+            ("stopped", "turn-1"),
+        ):
+            self.assertEqual(
+                stream.projection_thread_state(None, status, active_turn_id, fresh, now),
+                ("blocked", "inactive-development-thread"),
+            )
+        self.assertEqual(
+            stream.projection_thread_state(None, "running", "turn-1", stale, now),
+            ("blocked", "inactive-development-thread"),
+        )
+        self.assertEqual(
+            stream.projection_thread_state(
+                "2026-08-13T00:00:00Z", "running", "turn-1", fresh, now
+            ),
+            ("blocked", "migration-triage-required"),
+        )
+
+    def test_thread_records_use_authoritative_session_liveness(self):
+        with tempfile.TemporaryDirectory() as directory:
+            db = Path(directory) / "state.sqlite"
+            connection = sqlite3.connect(db)
+            connection.executescript(
+                """
+                CREATE TABLE projection_threads (
+                  thread_id TEXT PRIMARY KEY,
+                  title TEXT NOT NULL,
+                  branch TEXT,
+                  created_at TEXT NOT NULL,
+                  archived_at TEXT,
+                  deleted_at TEXT
+                );
+                CREATE TABLE projection_thread_sessions (
+                  thread_id TEXT PRIMARY KEY,
+                  status TEXT NOT NULL,
+                  active_turn_id TEXT,
+                  updated_at TEXT NOT NULL
+                );
+                CREATE TABLE projection_thread_messages (
+                  message_id TEXT PRIMARY KEY,
+                  thread_id TEXT NOT NULL,
+                  turn_id TEXT,
+                  updated_at TEXT NOT NULL
+                );
+                CREATE TABLE projection_thread_activities (
+                  activity_id TEXT PRIMARY KEY,
+                  thread_id TEXT NOT NULL,
+                  turn_id TEXT,
+                  created_at TEXT NOT NULL
+                );
+                """
+            )
+            threads = [
+                ("active", "SwiftUI active", None, "1", None, None),
+                ("tool-active", "SwiftUI tool active", None, "1a", None, None),
+                ("starting", "SwiftUI starting", None, "2", None, None),
+                ("stale", "SwiftUI stale", None, "3", None, None),
+                ("archived", "SwiftUI archived", None, "4", "now", None),
+                ("deleted", "SwiftUI deleted", None, "5", None, "now"),
+                ("no-session", "SwiftUI no session", None, "6", None, None),
+            ]
+            connection.executemany(
+                "INSERT INTO projection_threads VALUES (?, ?, ?, ?, ?, ?)", threads
+            )
+            now = datetime.now(timezone.utc).isoformat()
+            connection.executemany(
+                "INSERT INTO projection_thread_sessions VALUES (?, ?, ?, ?)",
+                [
+                    ("active", "running", "turn-active", "2000-01-01T00:00:00Z"),
+                    ("tool-active", "running", "turn-tool", "2000-01-01T00:00:00Z"),
+                    ("starting", "starting", None, now),
+                    ("stale", "running", "turn-stale", "2000-01-01T00:00:00Z"),
+                    ("archived", "running", "turn-archived", now),
+                    ("deleted", "running", "turn-deleted", now),
+                ],
+            )
+            connection.execute(
+                "INSERT INTO projection_thread_messages VALUES (?, ?, ?, ?)",
+                ("message-active", "active", "turn-active", now),
+            )
+            connection.execute(
+                "INSERT INTO projection_thread_activities VALUES (?, ?, ?, ?)",
+                ("activity-tool", "tool-active", "turn-tool", now),
+            )
+            connection.commit()
+            connection.close()
+
+            with patch.object(stream.sqlite3, "connect", wraps=sqlite3.connect) as connect:
+                records = {
+                    item["sourceThread"]: item
+                    for item in stream.thread_records([], db)
+                }
+            connect.assert_called_once_with(f"file:{db}?mode=ro", uri=True)
+            self.assertEqual(records["active"]["state"], "developing")
+            self.assertEqual(records["tool-active"]["state"], "developing")
+            self.assertEqual(records["starting"]["state"], "developing")
+            self.assertEqual(records["stale"]["state"], "blocked")
+            self.assertEqual(
+                records["stale"]["blockedReason"], "inactive-development-thread"
+            )
+            self.assertEqual(records["archived"]["state"], "blocked")
+            self.assertEqual(
+                records["archived"]["blockedReason"], "migration-triage-required"
+            )
+            self.assertEqual(records["no-session"]["state"], "blocked")
+            self.assertNotIn("deleted", records)
+
+    def test_misleading_legacy_branches_are_explicitly_swiftui(self):
+        for branch in stream.EXPLICIT_SWIFTUI_THREAD_BRANCHES:
+            self.assertTrue(stream.relevant_thread("Legacy title", branch))
+        self.assertFalse(stream.relevant_thread("Electron GitHub work", "t3code/other"))
+
+    def test_operational_swiftui_threads_are_not_features(self):
+        self.assertFalse(stream.relevant_thread("Audit SwiftUI Commit Upstream Status", None))
+        self.assertFalse(
+            stream.relevant_thread(
+                "SwiftUI Dev/Test Feature Approval Workflow",
+                "t3code/swiftui-testing-approval",
+            )
+        )
+        self.assertFalse(
+            stream.relevant_thread("SwiftUI Feature Approval Workflow", None)
+        )
+        self.assertFalse(
+            stream.relevant_thread(
+                "Audit lane", "t3code/sync-electron-github-work"
+            )
+        )
+        self.assertTrue(stream.relevant_thread("SwiftUI Command Palette", None))
+
     def test_manifest_and_catalog_are_unique(self):
         value = stream.manifest()
         records = stream.catalog(False)

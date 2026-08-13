@@ -11,6 +11,7 @@ import re
 import sqlite3
 import subprocess
 import sys
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -225,6 +226,23 @@ def upstream_pr_features(value: dict[str, Any], existing: list[dict[str, Any]]) 
     return records
 
 
+EXPLICIT_SWIFTUI_THREAD_BRANCHES = {
+    # These cards predate the SwiftUI naming convention, but their messages,
+    # issues, and implementation branches are explicitly native SwiftUI work.
+    "t3code/share-electron-vscode-themes",
+    "t3code/sync-electron-github-work",
+}
+
+NON_FEATURE_THREAD_BRANCHES = {
+    # Operational threads can be live and mention SwiftUI heavily without
+    # developing a user-facing feature. They belong in the audit trail, not
+    # the feature-state catalog.
+    "t3code/audit-swiftui-thread-branches",
+    "t3code/review-recent-upstream-pr-status",
+    "t3code/swiftui-testing-approval",
+}
+
+
 def relevant_thread(title: str, branch: str | None) -> bool:
     value = normalize(f"{title} {branch or ''}")
     explicit = (
@@ -232,11 +250,54 @@ def relevant_thread(title: str, branch: str | None) -> bool:
         "iphone environment", "mobile thread", "new thread list", "dev banner",
         "thread size prefix", "header clearance", "xcode login", "bonjour discovery",
     )
+    title_tokens = set(normalize(title).split())
+    branch_key = (branch or "").lower()
+    branch_tokens = set(normalize(branch_key).split())
+    is_operational = (
+        branch_key in NON_FEATURE_THREAD_BRANCHES
+        or "audit" in title_tokens
+        or "audit" in branch_tokens
+        or {"approval", "workflow"} <= title_tokens
+    )
+    if is_operational:
+        return False
+    if branch_key in EXPLICIT_SWIFTUI_THREAD_BRANCHES:
+        return True
     return any(token in value for token in explicit)
 
 
-def thread_records(known: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    db = Path.home() / ".t3/userdata/state.sqlite"
+def projection_thread_state(
+    archived_at: str | None,
+    session_status: str | None,
+    active_turn_id: str | None,
+    last_activity_at: str | None,
+    now: datetime | None = None,
+) -> tuple[str, str | None]:
+    if archived_at:
+        return "blocked", "migration-triage-required"
+    reference = now or datetime.now(timezone.utc)
+    try:
+        activity = datetime.fromisoformat((last_activity_at or "").replace("Z", "+00:00"))
+        is_fresh = (
+            activity.tzinfo is not None
+            and activity >= reference - timedelta(minutes=30)
+        )
+    except (AttributeError, TypeError, ValueError):
+        activity = None
+        is_fresh = False
+    is_live = session_status == "starting" or (
+        session_status == "running" and active_turn_id
+    )
+    if is_live and is_fresh:
+        return "developing", None
+    return "blocked", "inactive-development-thread"
+
+
+def thread_records(
+    known: list[dict[str, Any]],
+    db_path: Path | None = None,
+) -> list[dict[str, Any]]:
+    db = db_path or Path.home() / ".t3/userdata/state.sqlite"
     if not db.exists():
         return []
     known_threads = {
@@ -246,25 +307,59 @@ def thread_records(known: list[dict[str, Any]]) -> list[dict[str, Any]]:
     connection = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
     try:
         rows = connection.execute(
-            """SELECT thread_id, title, branch, archived_at
-               FROM projection_threads
-               WHERE deleted_at IS NULL
-               ORDER BY created_at, thread_id"""
+            """SELECT threads.thread_id, threads.title, threads.branch,
+                      threads.archived_at, sessions.status, sessions.active_turn_id,
+                      MAX(
+                        sessions.updated_at,
+                        COALESCE(
+                          (SELECT MAX(messages.updated_at)
+                           FROM projection_thread_messages messages
+                           WHERE messages.thread_id = threads.thread_id
+                             AND messages.turn_id = sessions.active_turn_id),
+                          sessions.updated_at
+                        ),
+                        COALESCE(
+                          (SELECT MAX(activities.created_at)
+                           FROM projection_thread_activities activities
+                           WHERE activities.thread_id = threads.thread_id
+                             AND activities.turn_id = sessions.active_turn_id),
+                          sessions.updated_at
+                        )
+                      ) AS last_activity_at
+               FROM projection_threads threads
+               LEFT JOIN projection_thread_sessions sessions
+                 ON sessions.thread_id = threads.thread_id
+               WHERE threads.deleted_at IS NULL
+               ORDER BY threads.created_at, threads.thread_id"""
         ).fetchall()
     finally:
         connection.close()
     records = []
-    for thread_id, title, branch, archived_at in rows:
+    for (
+        thread_id,
+        title,
+        branch,
+        archived_at,
+        session_status,
+        active_turn_id,
+        last_activity_at,
+    ) in rows:
         if thread_id in known_threads or not relevant_thread(title, branch):
             continue
+        state, blocked_reason = projection_thread_state(
+            archived_at,
+            session_status,
+            active_turn_id,
+            last_activity_at,
+        )
         records.append({
             "id": f"thread-{thread_id.lower()}",
             "name": title,
             "aliases": [branch or ""],
-            "state": "blocked" if archived_at else "developing",
+            "state": state,
             "sourceThread": thread_id,
             "sourceBranch": branch,
-            "blockedReason": "migration-triage-required" if archived_at else None,
+            "blockedReason": blocked_reason,
             "projectionOnly": True,
         })
     return records
