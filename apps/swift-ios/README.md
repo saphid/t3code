@@ -123,6 +123,8 @@ and their screenshot attachments are written under the ignored `.t3/evidence`
 directory by default. The coverage boundaries and live/TestFlight follow-up
 protocol are documented in
 [`../../docs/operations/swiftui-app-flow-regression-tests.md`](../../docs/operations/swiftui-app-flow-regression-tests.md).
+Set `T3_APP_FLOW_LIVE_SERVER` and `T3_APP_FLOW_LIVE_TOKEN` only when running the
+opt-in real-pairing journey against disposable server state; otherwise it skips.
 
 Contract fixtures are encoded from the TypeScript schemas and decoded by the
 Swift test target. Regenerate and verify them after a relevant wire change:

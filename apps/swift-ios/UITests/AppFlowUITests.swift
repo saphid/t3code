@@ -25,6 +25,32 @@ final class AppFlowUITests: XCTestCase {
         capture("onboarding-manual-connection")
     }
 
+    func testLiveBackendPairingAndProjectDiscovery() throws {
+        let environment = ProcessInfo.processInfo.environment
+        guard let server = environment["T3_APP_FLOW_LIVE_SERVER"],
+              let token = environment["T3_APP_FLOW_LIVE_TOKEN"],
+              !server.isEmpty,
+              !token.isEmpty
+        else {
+            throw XCTSkip("Set T3_APP_FLOW_LIVE_SERVER and T3_APP_FLOW_LIVE_TOKEN for the opt-in live smoke journey")
+        }
+
+        launchLive()
+        assertExists("Enter details manually").tap()
+        let serverAddress = assertExists("Server address")
+        let pairingCode = assertExists("Pairing code")
+        serverAddress.tap()
+        serverAddress.typeText(server)
+        pairingCode.tap()
+        pairingCode.typeText(token)
+        assertHittableButton("Connect").tap()
+
+        let projectFilter = assertIdentifier("sidebar-project-filter", timeout: 20)
+        projectFilter.tap()
+        assertExists("App Flow Regression Fixture", timeout: 12)
+        capture("live-project-discovery")
+    }
+
     func testWorkspaceNavigationAndMenus() {
         launch()
 
@@ -291,6 +317,13 @@ final class AppFlowUITests: XCTestCase {
         app.terminate()
         app.launchEnvironment["T3_APP_FLOW_FIXTURE_SCENARIO"] = scenario
         app.launchArguments = fixtureLaunchArguments(scenario: scenario)
+        app.launch()
+    }
+
+    private func launchLive() {
+        app = XCUIApplication()
+        app.terminate()
+        app.launchArguments = ["-ApplePersistenceIgnoreState", "YES"]
         app.launch()
     }
 

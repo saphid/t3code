@@ -47,6 +47,8 @@ The fixture exists only in `DEBUG`. Release and TestFlight builds always compose
 
 The tests deliberately do not tap destructive confirmation actions, system
 photo/camera/file pickers, external URLs, or buttons that would send live data.
+An additional opt-in journey pairs a clean simulator to a disposable backend
+and asserts that its seeded project reaches the real Home project menu.
 
 ## Run and evidence
 
@@ -68,6 +70,18 @@ the routine pass. Run the red audit deliberately with:
 ```sh
 T3_APP_FLOW_RUN_KNOWN_FAILURES=1 ./apps/swift-ios/Scripts/ci-app-flow-test.sh
 ```
+
+Run the live transport smoke only against disposable state and a fresh,
+single-use pairing token:
+
+```sh
+T3_APP_FLOW_LIVE_SERVER=http://127.0.0.1:49631 \
+T3_APP_FLOW_LIVE_TOKEN='<single-use token>' \
+./apps/swift-ios/Scripts/ci-app-flow-test.sh
+```
+
+Without both values, the live journey skips. The routine fixture journeys still
+run, so use `-only-testing` when the intent is a focused live check.
 
 Do not teach a routine assertion to accept broken behavior. Isolate a confirmed
 red behind the audit flag, link its issue from the skip, and return it to the
@@ -117,6 +131,7 @@ several symptoms into “the app is broken.”
 | Dev baseline `125ed781e`      | Settings → Connections → Add has no visible or accessible Close control                                                         | Issue [#61](https://github.com/saphid/t3code-personal/issues/61), retained `add-connection-entry` screenshot                                                                                   | No staged fix found; same toolbar-placement family as #60                                                                       | P2                  |
 | Dev baseline `125ed781e`      | New Task's visible Cancel can fail after the attachment source popover has been dismissed                                       | Issue [#62](https://github.com/saphid/t3code-personal/issues/62), synthesized tap event and final accessibility hierarchy                                                                      | No staged fix found; promote to P1 if reproduced manually or dismissal is otherwise blocked                                     | P2                  |
 | Dev widget build 26           | Four `T3CodeWidgets` processes crashed with `EXC_BREAKPOINT` in `_EXRunningExtension._start` during one passing host-app UI run | Issue [#63](https://github.com/saphid/t3code-personal/issues/63), four `.ips` attachments in the result bundle                                                                                 | No staged fix found; confirm on physical Test/TestFlight before promotion                                                       | P2                  |
+| Debug baseline `125ed781e`    | `t3code-swiftui-dev://connections/new` is rejected as an unsupported link instead of opening Add Environment                    | Issue [#64](https://github.com/saphid/t3code-personal/issues/64), live Simulator screenshot                                                                                                    | No staged fix found; visible manual onboarding remains a workaround                                                             | P2                  |
 | Deterministic harness         | UIKit thread cells discarded the stable thread identifier, so automation could not select a known fixture thread                | Initial red UI run                                                                                                                                                                             | Fixed on this feature branch by assigning `thread-<id>` and clearing it on cell reuse                                           | Test infrastructure |
 | Deterministic harness         | Persisted composer drafts and fixture message IDs made typed text repeat and a follow-up render twice across focused reruns     | Visual review of `created-task-detail` and `sent-follow-up` from the first focused pass                                                                                                        | Fixed in the harness by replacing existing draft text, preserving submission identity, and asserting exactly one rendered value | Test infrastructure |
 
@@ -147,7 +162,7 @@ crash reports, tracked separately as #63 rather than hidden behind the passing
 host-app verdict.
 
 The frozen routine audit contains eight programmatic journeys and three
-issue-linked red audits. On iPhone 17e / iOS 26.5, one serial run passed seven,
+issue-linked red audits, plus one opt-in live transport journey. On iPhone 17e / iOS 26.5, one serial run passed seven,
 skipped the three known defects, and failed only because the Terminal test had
 hard-coded a user-configurable `14 pt` label. The corrected Terminal/tools
 journey then passed in 1m32s; together these results cover every routine journey
@@ -162,6 +177,14 @@ final visual evidence contains exactly one copy of each message. Result bundles:
 - create/follow-up: `test_sim_2026-08-13T06-53-45-992Z_pid50911_507a04a2.xcresult`;
 - Dev onboarding: `test_sim_2026-08-13T07-01-37-521Z_pid50911_68b2aa41.xcresult`;
 - Test onboarding: `test_sim_2026-08-13T07-02-52-435Z_pid50911_b817dc78.xcresult`.
+
+A separate clean-simulator run paired through the real HTTP/token exchange and
+found the seeded `App Flow Regression Fixture` project. It passed in 30.6s and
+retained a visually reviewed Home project-menu screenshot in
+`test_sim_2026-08-13T07-19-47-371Z_pid50911_f4d00dff.xcresult`. The screenshot
+showed the expected project with no loading or connection error. This verifies
+Debug manual pairing and project discovery; it does not stand in for Dev, Test,
+TestFlight, QR/camera, reconnect, task/message, or Apple-service checks.
 
 ## Existing fixes and current priority
 

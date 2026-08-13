@@ -12,6 +12,8 @@ DERIVED_DATA_PATH="${T3_SWIFT_DERIVED_DATA_PATH:-${DERIVED_DATA_ROOT}/swift-ios-
 RUN_STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
 RESULT_BUNDLE_PATH="${T3_SWIFT_RESULT_BUNDLE_PATH:-${REPO_ROOT}/.t3/evidence/swift-ios-app-flow-${RUN_STAMP}.xcresult}"
 KNOWN_FAILURE_AUDIT="${T3_APP_FLOW_RUN_KNOWN_FAILURES:-0}"
+LIVE_SERVER="${T3_APP_FLOW_LIVE_SERVER:-}"
+LIVE_TOKEN="${T3_APP_FLOW_LIVE_TOKEN:-}"
 
 die() {
   printf '[swift-ios-app-flow] error: %s\n' "$*" >&2
@@ -55,7 +57,10 @@ printf '[swift-ios-app-flow] scheme: %s\n' "${SCHEME}"
 printf '[swift-ios-app-flow] result bundle: %s\n' "${RESULT_BUNDLE_PATH}"
 printf '[swift-ios-app-flow] known-failure audit: %s\n' "${KNOWN_FAILURE_AUDIT}"
 
-TEST_RUNNER_T3_APP_FLOW_RUN_KNOWN_FAILURES="${KNOWN_FAILURE_AUDIT}" xcodebuild test \
+TEST_RUNNER_T3_APP_FLOW_RUN_KNOWN_FAILURES="${KNOWN_FAILURE_AUDIT}" \
+TEST_RUNNER_T3_APP_FLOW_LIVE_SERVER="${LIVE_SERVER}" \
+TEST_RUNNER_T3_APP_FLOW_LIVE_TOKEN="${LIVE_TOKEN}" \
+xcodebuild test \
   -project "${APP_DIR}/T3Code.xcodeproj" \
   -scheme "${SCHEME}" \
   -destination "platform=iOS Simulator,id=${SIMULATOR_ID}" \
