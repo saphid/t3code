@@ -83,6 +83,14 @@ struct PersonalFleetPairingTests {
             "lxso3",
             "nursedroid",
         ])
+        #expect(PersonalFleetPairingHost.all.map(\.label) == [
+            "MacBook Pro",
+            "MacBook Air",
+            "LXSO1",
+            "LXSO2",
+            "LXSO3",
+            "NurseDroid",
+        ])
         #expect(PersonalFleetPairingHost.all.map(\.httpsBaseURL.absoluteString) == [
             "https://alexs-macbook-pro-1.tail4e5636.ts.net:4001",
             "https://alexs-macbook-air.tail4e5636.ts.net:4001",

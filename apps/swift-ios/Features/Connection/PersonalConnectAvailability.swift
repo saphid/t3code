@@ -1,7 +1,7 @@
 enum PersonalConnectAvailability {
     static func isVisible(
         for buildChannel: PersonalBuildChannel,
-        hasConfiguredHosts: Bool = PersonalFleetPairingHost.all.isEmpty == false
+        hasConfiguredHosts: Bool
     ) -> Bool {
         buildChannel == .test && hasConfiguredHosts
     }
