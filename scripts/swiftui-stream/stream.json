@@ -303,14 +303,45 @@
       "sourceCommit": "ed15ca2a",
       "integratedCommits": [
         "e1ca3cb09f0eadc6f02c33a959cc0da4912564c0",
-        "bdfee17f1e9d9bca071488fb9261de53f70d3464"
+        "bdfee17f1e9d9bca071488fb9261de53f70d3464",
+        "a1fd13793591f79237d2447e2d7d06fceaeebc1d"
       ],
-      "integratedCommit": "bdfee17f1e9d9bca071488fb9261de53f70d3464",
+      "integratedCommit": "a1fd13793591f79237d2447e2d7d06fceaeebc1d",
       "sourceThread": "508739B1-477F-4CAB-BA79-8816FCCEA000",
       "sourceThreadTitle": "Add Thread Links to What’s New",
       "sourceIssue": "https://github.com/saphid/t3code-personal/issues/85",
       "testBuild": 59,
       "order": 5
+    },
+    {
+      "id": "widget-build-channel-links",
+      "name": "Keep widget links inside their installed build channel",
+      "aliases": [
+        "widget new task link",
+        "test widget deep link"
+      ],
+      "summary": "Builds every recent-tasks widget fallback from the URL scheme configured for that copy of T3 Code, so Test opens Test, Dev opens Dev, and release opens release.",
+      "problem": "The widget fallback hardcoded the release URL scheme. In SwiftUI Test, tapping New task or an empty widget could open the App Store build or do nothing when that build was absent.",
+      "reproductionSteps": [
+        "Install SwiftUI Test without relying on another T3 Code build.",
+        "Add the recent-tasks widget and use a state with no usable task deep link.",
+        "Tap New task or the empty widget and observe which app and destination open."
+      ],
+      "whatToCheck": "From a recent-tasks widget with no usable task destination, tap New task and the widget body. Confirm the installed SwiftUI Test app opens directly at New task rather than another channel or a dead link.",
+      "successLooksLike": "Every fallback tap opens this same SwiftUI Test installation at New task. No App Store, Dev, or Debug copy opens, and the tap is never ignored.",
+      "validationSummary": "The focused TestTrain contract run passed 12 tests with zero failures. Fresh Test 59 aggregate validation and phone proof are pending.",
+      "knownLimitations": "The phone acceptance step needs the recent-tasks widget on the Home Screen and a state without a usable task deep link.",
+      "reviewPriority": 3,
+      "reviewGroup": "Build isolation",
+      "interactionChange": true,
+      "state": "in-test",
+      "sourceCommit": "a1fd13793591f79237d2447e2d7d06fceaeebc1d",
+      "integratedCommit": "a1fd13793591f79237d2447e2d7d06fceaeebc1d",
+      "sourceThread": "508739B1-477F-4CAB-BA79-8816FCCEA000",
+      "sourceThreadTitle": "Add Thread Links to What’s New",
+      "sourceIssue": "https://github.com/saphid/t3code-personal/issues/89",
+      "testBuild": 59,
+      "order": 16
     },
     {
       "id": "initial-thread-live-updates",
