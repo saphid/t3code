@@ -40,9 +40,23 @@ public struct ConnectionOnboardingView: View {
         #else
         readinessChecker = LocalNetworkAccessChecker()
         #endif
+        #if DEBUG
+        if AppFlowFixtureLaunch.isEnabled,
+           AppFlowFixtureLaunch.scenario == .personalConnect
+        {
+            personalFleetPairingRequester = AppFlowFixturePersonalFleetPairingRequester()
+            personalFleetHosts = AppFlowFixturePersonalFleetPairingRequester.hosts
+            buildChannel = .test
+        } else {
+            personalFleetPairingRequester = PersonalFleetPairingService.shared
+            personalFleetHosts = PersonalFleetPairingHost.all
+            buildChannel = .current
+        }
+        #else
         personalFleetPairingRequester = PersonalFleetPairingService.shared
         personalFleetHosts = PersonalFleetPairingHost.all
         buildChannel = .current
+        #endif
         self.onConnected = onConnected
         self.onCancel = onCancel
     }

@@ -28,6 +28,7 @@ struct PersonalConnectView: View {
                     }
                     .buttonStyle(.plain)
                     .disabled(connectingHostID != nil)
+                    .accessibilityIdentifier("personal-connect-host-\(host.id)")
                     .accessibilityHint(
                         "Requests a private one-time pairing link and connects automatically"
                     )

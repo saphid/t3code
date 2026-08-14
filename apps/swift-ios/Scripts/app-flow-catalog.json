@@ -127,6 +127,33 @@
       "checkpoints": ["home-thread-list-scrolled"]
     },
     {
+      "id": "cold-boot-home-list-scrolling",
+      "test": "testColdBootHomeListScrollsWhileMetadataArrivesAndAfterReturning",
+      "lane": "fixture",
+      "persona": "cold-start-user",
+      "estimatedSeconds": 35,
+      "surfaces": ["cold launch", "Home metadata updates", "vertical scrolling", "thread reopen"],
+      "checkpoints": [
+        "cold-boot-home-first-scroll",
+        "cold-boot-home-returned-scroll"
+      ],
+      "issue": "https://github.com/saphid/t3code-personal/issues/55"
+    },
+    {
+      "id": "swiftui-test-personal-connect",
+      "test": "testPersonalConnectShowsFailureConnectsAndPersistsAcrossReopen",
+      "lane": "fixture",
+      "persona": "private-fleet-user",
+      "estimatedSeconds": 35,
+      "surfaces": ["Personal Connect", "unavailable host", "automatic pairing", "reopen"],
+      "checkpoints": [
+        "personal-connect-unavailable",
+        "personal-connect-connected-home",
+        "personal-connect-reopened-home"
+      ],
+      "issue": "https://github.com/saphid/t3code-personal/issues/54"
+    },
+    {
       "id": "command-palette-top-drawer",
       "test": "testCommandPaletteTopDrawerThresholdAndGestureIsolation",
       "lane": "fixture",
@@ -199,6 +226,8 @@
         "Not ready confirmation"
       ],
       "checkpoints": [
+        "stream-approval-pipeline",
+        "stream-approval-proof-pending",
         "stream-approval-review-guide",
         "stream-approval-ready-confirmation",
         "stream-approval-ready-recorded",
@@ -291,6 +320,8 @@
         "long-lived-history-search",
         "skills-popup-keyboard-readability",
         "home-thread-list-scrolling",
+        "cold-boot-home-list-scrolling",
+        "swiftui-test-personal-connect",
         "command-palette-top-drawer",
         "project-connection-entry",
         "thread-context-menu",
@@ -342,7 +373,11 @@
       {
         "id": "onboarding-and-connections",
         "patterns": ["apps/swift-ios/Features/Connection/**"],
-        "journeys": ["onboarding-manual", "project-connection-entry"]
+        "journeys": [
+          "onboarding-manual",
+          "project-connection-entry",
+          "swiftui-test-personal-connect"
+        ]
       },
       {
         "id": "thread-workspace-tools",
@@ -382,7 +417,9 @@
         "journeys": [
           "in-app-stream-approval-control",
           "initial-thread-live-updates",
-          "proof-event-emitter-contract"
+          "proof-event-emitter-contract",
+          "cold-boot-home-list-scrolling",
+          "swiftui-test-personal-connect"
         ]
       },
       {
@@ -404,7 +441,11 @@
           "apps/swift-ios/Features/Workspace/HomeThreadCollectionView.swift",
           "apps/swift-ios/Features/Workspace/WorkspaceView.swift"
         ],
-        "journeys": ["home-thread-list-scrolling", "command-palette-top-drawer"]
+        "journeys": [
+          "home-thread-list-scrolling",
+          "cold-boot-home-list-scrolling",
+          "command-palette-top-drawer"
+        ]
       },
       {
         "id": "credential-ingress",

@@ -10,6 +10,7 @@ final class AppFlowProofEventEmitter {
     static let actionMapPathEnvironment = "T3_APP_FLOW_PROOF_ACTION_MAP_PATH"
     static let recordingStartEnvironment = "T3_APP_FLOW_PROOF_RECORDING_STARTED_AT"
     static let planEnvironment = "T3_APP_FLOW_PROOF_PLAN"
+    static let testNamePlaceholder = "{test}"
 
     private struct Session: Codable {
         let schemaVersion = 1
@@ -33,12 +34,17 @@ final class AppFlowProofEventEmitter {
         var selector: String?
         var action: String?
         var postcondition: String?
+        var point: [Double]?
+        var from: [Double]?
+        var to: [Double]?
+        var duration: Double?
         var actionID: String?
         var result: String?
         var observation: String?
 
         enum CodingKeys: String, CodingKey {
             case id, phase, at, elapsedSeconds, selector, action, postcondition
+            case point, from, to, duration
             case actionID = "actionid"
             case result, observation
         }
@@ -60,11 +66,14 @@ final class AppFlowProofEventEmitter {
         let actionID: String
         let at: Double
         let kind: String
-        let point: [Double]
+        var point: [Double]?
+        var from: [Double]?
+        var to: [Double]?
+        var duration: Double?
 
         enum CodingKeys: String, CodingKey {
             case actionID = "action_id"
-            case at, kind, point
+            case at, kind, point, from, to, duration
         }
     }
 
@@ -81,16 +90,21 @@ final class AppFlowProofEventEmitter {
 
     init(
         environment: [String: String] = ProcessInfo.processInfo.environment,
+        testName: String? = nil,
         wallAnchor: Date = Date(),
         monotonicAnchor: TimeInterval = ProcessInfo.processInfo.systemUptime,
         monotonicNow: @escaping () -> TimeInterval = {
             ProcessInfo.processInfo.systemUptime
         }
     ) {
-        let sessionPath = environment[Self.sessionPathEnvironment]
-            .flatMap { $0.isEmpty ? nil : $0 }
-        let actionMapPath = environment[Self.actionMapPathEnvironment]
-            .flatMap { $0.isEmpty ? nil : $0 }
+        let sessionPath = Self.outputPath(
+            environment[Self.sessionPathEnvironment],
+            testName: testName
+        )
+        let actionMapPath = Self.outputPath(
+            environment[Self.actionMapPathEnvironment],
+            testName: testName
+        )
         sessionURL = sessionPath.map { URL(fileURLWithPath: $0) }
         actionMapURL = actionMapPath.map { URL(fileURLWithPath: $0) }
         self.wallAnchor = wallAnchor
@@ -127,7 +141,8 @@ final class AppFlowProofEventEmitter {
                 elapsedSeconds: timing.elapsed,
                 selector: selector,
                 action: "tap",
-                postcondition: postcondition
+                postcondition: postcondition,
+                point: [point.x, point.y]
             )
         )
         actionMap.actions.append(
@@ -136,6 +151,49 @@ final class AppFlowProofEventEmitter {
                 at: max(0, timing.wallDate.timeIntervalSince(recordingStart)),
                 kind: "tap",
                 point: [point.x, point.y]
+            )
+        )
+        persist()
+        return eventID
+    }
+
+    @discardableResult
+    func recordSwipe(
+        selector: String,
+        from: CGPoint,
+        to: CGPoint,
+        duration: TimeInterval,
+        postcondition: String
+    ) -> String? {
+        guard isEnabled else { return nil }
+        guard duration > 0 else {
+            XCTFail("App-flow proof swipe duration must be positive")
+            return nil
+        }
+        let eventID = "event-\(session.events.count + 1)"
+        let timing = currentTiming()
+        session.events.append(
+            Event(
+                id: eventID,
+                phase: "act",
+                at: Self.timestamp(timing.wallDate),
+                elapsedSeconds: timing.elapsed,
+                selector: selector,
+                action: "swipe",
+                postcondition: postcondition,
+                from: [from.x, from.y],
+                to: [to.x, to.y],
+                duration: duration
+            )
+        )
+        actionMap.actions.append(
+            ActionMapping(
+                actionID: eventID,
+                at: max(0, timing.wallDate.timeIntervalSince(recordingStart)),
+                kind: "swipe",
+                from: [from.x, from.y],
+                to: [to.x, to.y],
+                duration: duration
             )
         )
         persist()
@@ -193,6 +251,21 @@ final class AppFlowProofEventEmitter {
 
     private static func parseTimestamp(_ value: String) -> Date? {
         formatter().date(from: value)
+    }
+
+    private static func outputPath(_ value: String?, testName: String?) -> String? {
+        guard let value, !value.isEmpty else { return nil }
+        guard value.contains(testNamePlaceholder) else { return value }
+        let component = testName.map(safePathComponent) ?? "xctest"
+        return value.replacingOccurrences(of: testNamePlaceholder, with: component)
+    }
+
+    private static func safePathComponent(_ value: String) -> String {
+        let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "-_"))
+        let scalars = value.unicodeScalars.map { allowed.contains($0) ? Character(String($0)) : "-" }
+        return String(scalars)
+            .replacingOccurrences(of: "--", with: "-")
+            .trimmingCharacters(in: CharacterSet(charactersIn: "-"))
     }
 
     private static func formatter() -> ISO8601DateFormatter {

@@ -10,7 +10,7 @@ final class AppFlowUITests: XCTestCase {
     override func setUp() {
         super.setUp()
         continueAfterFailure = false
-        proofEvents = AppFlowProofEventEmitter()
+        proofEvents = AppFlowProofEventEmitter(testName: name)
         addUIInterruptionMonitor(withDescription: "System permission") { alert in
             MainActor.assumeIsolated {
                 let containsLocalNetworkText = alert.label
@@ -222,11 +222,59 @@ final class AppFlowUITests: XCTestCase {
         proofPassed(openReview, observation: "Build 5,601 · Revision 56f17e0 is visible")
         assertExists("Development → Test → Dev → Upstream · Current gate: enter Test")
 
+        let pipeline = assertExists("Proposed PR promotion flow")
+        let inspectPipeline = proofTap(
+            pipeline,
+            selector: "Proposed PR promotion flow",
+            postcondition: "All six phone and branch promotion stages are visible"
+        )
+        for stage in [
+            "Candidate PR into Test",
+            "SwiftUI Test build",
+            "You approve the feature",
+            "SwiftUI Dev build",
+            "You approve upstream delivery",
+            "Upstream PR",
+        ] {
+            assertExists(stage)
+        }
+        proofPassed(inspectPipeline, observation: "Candidate, Test, Dev, approvals, and upstream stages are visible")
+        capture("stream-approval-pipeline")
+        pipeline.tap()
+
         let entry = assertIdentifier("build-testing-entry-in-app-stream-approval-control")
         XCTAssertTrue(entry.label.hasPrefix("In-app stream approval control"))
         XCTAssertTrue(entry.label.contains("Priority 1, Release control"))
         XCTAssertTrue(entry.label.contains("1 commits · 1 thread"))
         XCTAssertTrue(entry.label.hasSuffix("Proved"))
+
+        let pendingEntry = assertIdentifier("build-testing-entry-fixture-pending-proof")
+        XCTAssertGreaterThan(
+            pendingEntry.frame.minY,
+            entry.frame.minY,
+            "Review cards are not ordered by ascending priority"
+        )
+        scrollToHittable(pendingEntry)
+        let inspectPending = proofTap(
+            pendingEntry,
+            selector: "build-testing-entry-fixture-pending-proof",
+            postcondition: "Pending-proof notice is visible and approval is blocked"
+        )
+        assertIdentifier("build-testing-proof-pending-fixture-pending-proof")
+        assertExists(
+            "Fresh Test proof is being recorded. This item is not ready for approval."
+        )
+        let pendingReady = assertIdentifier("build-testing-ready-fixture-pending-proof")
+        XCTAssertFalse(pendingReady.isEnabled, "Pending proof did not block Ready for Test")
+        XCTAssertTrue(
+            assertIdentifier("build-testing-not-ready-fixture-pending-proof").isEnabled,
+            "Pending proof unexpectedly blocked the Not ready safety verdict"
+        )
+        proofPassed(inspectPending, observation: "Pending proof blocks approval but preserves rejection")
+        capture("stream-approval-proof-pending")
+        pendingEntry.tap()
+
+        scrollToHittable(entry)
         let expandEntry = proofTap(
             entry,
             selector: "build-testing-entry-in-app-stream-approval-control",
@@ -372,6 +420,18 @@ final class AppFlowUITests: XCTestCase {
         )
         uptime = 100.5
         emitter.recordPassed(actionID: actionID, observation: "fixture result is visible")
+        uptime = 100.75
+        let swipeID = try XCTUnwrap(
+            emitter.recordSwipe(
+                selector: "fixture-list",
+                from: CGPoint(x: 0.5, y: 0.8),
+                to: CGPoint(x: 0.5, y: 0.3),
+                duration: 0.6,
+                postcondition: "older fixture content is visible"
+            )
+        )
+        uptime = 101.0
+        emitter.recordPassed(actionID: swipeID, observation: "older fixture content is visible")
 
         let session = try XCTUnwrap(
             JSONSerialization.jsonObject(with: Data(contentsOf: sessionURL))
@@ -380,11 +440,20 @@ final class AppFlowUITests: XCTestCase {
         XCTAssertEqual(session["schemaVersion"] as? Int, 1)
         XCTAssertEqual(session["plan"] as? String, "proof-contract")
         let events = try XCTUnwrap(session["events"] as? [[String: Any]])
-        XCTAssertEqual(events.map { $0["phase"] as? String }, ["act", "assert"])
+        XCTAssertEqual(
+            events.map { $0["phase"] as? String },
+            ["act", "assert", "act", "assert"]
+        )
         XCTAssertEqual(events[0]["id"] as? String, "event-1")
         XCTAssertEqual(events[0]["elapsedSeconds"] as? Double, 0.25)
+        XCTAssertEqual(events[0]["point"] as? [Double], [0.25, 0.75])
         XCTAssertEqual(events[1]["actionid"] as? String, "event-1")
         XCTAssertEqual(events[1]["result"] as? String, "passed")
+        XCTAssertEqual(events[2]["action"] as? String, "swipe")
+        XCTAssertEqual(events[2]["from"] as? [Double], [0.5, 0.8])
+        XCTAssertEqual(events[2]["to"] as? [Double], [0.5, 0.3])
+        XCTAssertEqual(events[2]["duration"] as? Double, 0.6)
+        XCTAssertEqual(events[3]["actionid"] as? String, "event-3")
 
         let actionMap = try XCTUnwrap(
             JSONSerialization.jsonObject(with: Data(contentsOf: mapURL))
@@ -400,6 +469,12 @@ final class AppFlowUITests: XCTestCase {
         XCTAssertEqual(actions[0]["kind"] as? String, "tap")
         XCTAssertEqual(actions[0]["at"] as? Double, 1.25)
         XCTAssertEqual(actions[0]["point"] as? [Double], [0.25, 0.75])
+        XCTAssertEqual(actions[1]["action_id"] as? String, "event-3")
+        XCTAssertEqual(actions[1]["kind"] as? String, "swipe")
+        XCTAssertEqual(actions[1]["at"] as? Double, 1.75)
+        XCTAssertEqual(actions[1]["from"] as? [Double], [0.5, 0.8])
+        XCTAssertEqual(actions[1]["to"] as? [Double], [0.5, 0.3])
+        XCTAssertEqual(actions[1]["duration"] as? Double, 0.6)
 
         let disabled = AppFlowProofEventEmitter(environment: [:])
         XCTAssertFalse(disabled.isEnabled)
@@ -596,6 +671,108 @@ final class AppFlowUITests: XCTestCase {
             "Home did not scroll to the final accumulated fixture thread"
         )
         capture("home-thread-list-scrolled")
+    }
+
+    func testColdBootHomeListScrollsWhileMetadataArrivesAndAfterReturning() throws {
+        launch(scenario: "cold-boot")
+
+        let list = app.collectionViews.firstMatch
+        XCTAssertTrue(list.waitForExistence(timeout: 8), "Cold-boot Home list did not appear")
+        let initialTopThread = assertIdentifier("thread-fixture-history-24")
+        XCTAssertTrue(initialTopThread.isHittable, "Cold-boot Home did not contain fixture history")
+        let metadataReady = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "label CONTAINS %@", "metadata ready"),
+            object: initialTopThread
+        )
+        XCTAssertEqual(
+            XCTWaiter.wait(for: [metadataReady], timeout: 4),
+            .completed,
+            "Cold-boot metadata fixture did not begin its update sequence"
+        )
+        let firstScroll = proofSwipe(
+            list,
+            selector: "cold-boot Home collection view",
+            from: CGVector(dx: 0.5, dy: 0.76),
+            to: CGVector(dx: 0.5, dy: 0.28),
+            duration: 0.6,
+            postcondition: "The first drag moves the populated list while metadata snapshots arrive"
+        )
+        XCTAssertFalse(
+            initialTopThread.isHittable,
+            "The first cold-boot drag did not move the initial top thread off screen"
+        )
+        assertCommandPaletteClosed("Cold-boot list scrolling opened the command palette")
+        proofPassed(firstScroll, observation: "The first drag moved Home without opening the drawer")
+        capture("cold-boot-home-first-scroll")
+
+        let visibleThread = try XCTUnwrap(
+            app.descendants(matching: .any).allElementsBoundByIndex.first {
+                $0.identifier.hasPrefix("thread-fixture-history-") && $0.isHittable
+            },
+            "No history thread remained hittable after the first cold-boot drag"
+        )
+        let openedThread = proofTap(
+            visibleThread,
+            selector: visibleThread.identifier,
+            postcondition: "The selected history thread opens during metadata loading"
+        )
+        XCTAssertTrue(app.navigationBars.firstMatch.waitForExistence(timeout: 4))
+        proofPassed(openedThread, observation: "A history thread opened from the moving Home list")
+
+        let back = app.navigationBars.firstMatch.buttons.firstMatch
+        XCTAssertTrue(back.waitForExistence(timeout: 4))
+        back.tap()
+        XCTAssertTrue(list.waitForExistence(timeout: 4), "Home did not return after opening a thread")
+
+        let returnScroll = proofSwipe(
+            list,
+            selector: "returned cold-boot Home collection view",
+            from: CGVector(dx: 0.5, dy: 0.32),
+            to: CGVector(dx: 0.5, dy: 0.72),
+            duration: 0.6,
+            postcondition: "The returned Home list responds without snapping back"
+        )
+        assertCommandPaletteClosed("Returned cold-boot list scrolling opened the command palette")
+        proofPassed(returnScroll, observation: "Home remained scrollable after opening and returning")
+        capture("cold-boot-home-returned-scroll")
+    }
+
+    func testPersonalConnectShowsFailureConnectsAndPersistsAcrossReopen() {
+        launch(
+            scenario: "personal-connect",
+            extraEnvironment: ["T3_APP_FLOW_PERSONAL_CONNECT_RESET": "1"]
+        )
+        assertExists("PERSONAL CONNECT")
+        assertExists("Pair directly through your private Tailnet. No code entry required.")
+
+        let unavailable = assertIdentifier("personal-connect-host-fixture-unavailable")
+        let requestUnavailable = proofTap(
+            unavailable,
+            selector: "personal-connect-host-fixture-unavailable",
+            postcondition: "The unavailable private host explains the failure"
+        )
+        assertExists("Offline Fixture Mac pairing is unavailable (HTTP 503).")
+        proofPassed(requestUnavailable, observation: "Unavailable host failure is visible and specific")
+        capture("personal-connect-unavailable")
+
+        let reachable = assertIdentifier("personal-connect-host-fixture-reachable")
+        let requestConnection = proofTap(
+            reachable,
+            selector: "personal-connect-host-fixture-reachable",
+            postcondition: "One action connects without manual code entry"
+        )
+        assertIdentifier("thread-fixture-main", timeout: 12)
+        proofPassed(requestConnection, observation: "Personal Connect reached the fixture Home")
+        capture("personal-connect-connected-home")
+
+        app.terminate()
+        launch(scenario: "personal-connect")
+        assertIdentifier("thread-fixture-main", timeout: 12)
+        XCTAssertFalse(
+            app.descendants(matching: .any)["PERSONAL CONNECT"].firstMatch.exists,
+            "The persisted fixture connection reopened onboarding"
+        )
+        capture("personal-connect-reopened-home")
     }
 
     func testCommandPaletteTopDrawerThresholdAndGestureIsolation() {
@@ -861,7 +1038,8 @@ final class AppFlowUITests: XCTestCase {
 
     private func launch(
         scenario: String = "workspace",
-        usesStagedCredentials: Bool = false
+        usesStagedCredentials: Bool = false,
+        extraEnvironment: [String: String] = [:]
     ) {
         permissionPolicy = .denyAll
         if !Self.testedApplicationIsRegistered {
@@ -872,6 +1050,9 @@ final class AppFlowUITests: XCTestCase {
             let preflight = XCUIApplication()
             preflight.launchArguments = fixtureLaunchArguments(scenario: scenario)
             preflight.launchEnvironment["T3_APP_FLOW_FIXTURE_SCENARIO"] = scenario
+            for (key, value) in extraEnvironment {
+                preflight.launchEnvironment[key] = value
+            }
             preflight.launch()
             preflight.terminate()
             Self.testedApplicationIsRegistered = true
@@ -880,6 +1061,9 @@ final class AppFlowUITests: XCTestCase {
         app = XCUIApplication()
         app.terminate()
         app.launchEnvironment["T3_APP_FLOW_FIXTURE_SCENARIO"] = scenario
+        for (key, value) in extraEnvironment {
+            app.launchEnvironment[key] = value
+        }
         app.launchArguments = fixtureLaunchArguments(
             scenario: scenario,
             usesStagedCredentials: usesStagedCredentials
@@ -1003,6 +1187,63 @@ final class AppFlowUITests: XCTestCase {
 
     private func proofPassed(_ actionID: String?, observation: String) {
         proofEvents.recordPassed(actionID: actionID, observation: observation)
+    }
+
+    @discardableResult
+    private func proofSwipe(
+        _ element: XCUIElement,
+        selector: String,
+        from startOffset: CGVector,
+        to endOffset: CGVector,
+        duration: TimeInterval,
+        postcondition: String,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) -> String? {
+        let applicationFrame = app.frame
+        let elementFrame = element.frame
+        XCTAssertGreaterThan(applicationFrame.width, 0, file: file, line: line)
+        XCTAssertGreaterThan(applicationFrame.height, 0, file: file, line: line)
+        XCTAssertGreaterThan(elementFrame.width, 0, file: file, line: line)
+        XCTAssertGreaterThan(elementFrame.height, 0, file: file, line: line)
+
+        func normalizedApplicationPoint(_ offset: CGVector) -> CGPoint {
+            CGPoint(
+                x: min(
+                    1,
+                    max(
+                        0,
+                        (elementFrame.minX + elementFrame.width * offset.dx
+                            - applicationFrame.minX) / applicationFrame.width
+                    )
+                ),
+                y: min(
+                    1,
+                    max(
+                        0,
+                        (elementFrame.minY + elementFrame.height * offset.dy
+                            - applicationFrame.minY) / applicationFrame.height
+                    )
+                )
+            )
+        }
+
+        let start = element.coordinate(withNormalizedOffset: startOffset)
+        let end = element.coordinate(withNormalizedOffset: endOffset)
+        let actionID = proofEvents.recordSwipe(
+            selector: selector,
+            from: normalizedApplicationPoint(startOffset),
+            to: normalizedApplicationPoint(endOffset),
+            duration: duration,
+            postcondition: postcondition
+        )
+        start.press(
+            forDuration: 0.1,
+            thenDragTo: end,
+            withVelocity: .slow,
+            thenHoldForDuration: 0.1
+        )
+        return actionID
     }
 
     private func scrollToHittable(

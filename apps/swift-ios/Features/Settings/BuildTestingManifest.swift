@@ -178,6 +178,30 @@ extension BuildTestingManifest {
                 ],
                 issueURL: URL(string: "https://github.com/saphid/t3code-personal/issues/56")
             ),
+            Entry(
+                id: "fixture-pending-proof",
+                name: "Pending visual proof fixture",
+                problem: "A reviewer must not approve an item before its fresh proof packet exists.",
+                reproductionSteps: [
+                    "Open Review Dev candidates.",
+                    "Expand this pending-proof item.",
+                    "Inspect the verdict controls while proof is being recorded.",
+                ],
+                summary: "The review card names the pending proof state and blocks only the approval action.",
+                whatToCheck: "Confirm the pending-proof notice is readable and Ready for Test is disabled.",
+                successLooksLike: "The item cannot move forward until fresh proof exists, while Not ready remains available.",
+                validationSummary: "A deterministic XCUITest inspects the production pending-proof gate.",
+                knownLimitations: "This fixture does not create or publish a proof packet.",
+                reviewPriority: 2,
+                reviewGroup: "Proof integrity",
+                state: "proved",
+                commits: [],
+                threads: [
+                    Thread(id: "fixture-main", title: "App flow regression audit"),
+                ],
+                issueURL: URL(string: "https://github.com/saphid/t3code-personal/issues/56"),
+                proofPending: true
+            ),
         ]
     )
 }

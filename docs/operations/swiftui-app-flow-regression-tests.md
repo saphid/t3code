@@ -46,16 +46,22 @@ The fixture exists only in `DEBUG`. Release and TestFlight builds always compose
   unfiltered bottom-row selection, and filtered selection;
 - ordinary upward and downward Home-list scrolling, including top-edge rubber
   banding, without opening the command palette;
+- cold-launch Home scrolling while deterministic metadata snapshots arrive,
+  followed by a thread open, return, and second list drag;
 - command-palette direction isolation and drag thresholds from both Home and a
   keyboard-focused thread;
 - the complete non-destructive thread context-menu inventory;
 - thread detail plus Files, Review, Source Control, and Terminal surfaces;
-- exact Dev build and feature attribution plus both in-app approval confirmations;
+- exact Dev build and feature attribution, the six-stage promotion diagram,
+  pending-proof approval blocking, and both verdict confirmations;
+- Personal Connect host failure, one-action fixture pairing, and the persisted
+  connected Home after an app reopen;
 - a newer live thread update winning over stale initial history, with the same
   ordered timeline after reopening the thread;
-- a default-off XCUITest proof-event emitter that writes actual action centers,
-  passed postconditions, and monotonic recording offsets in the existing
-  app-flow-agent session and proof-map schemas when output paths are supplied;
+- a default-off XCUITest proof-event emitter that writes actual tap centers,
+  normalized swipe paths, passed postconditions, and monotonic recording
+  offsets in the existing app-flow-agent session and proof-map schemas when
+  output paths are supplied;
 - retained screenshots and semantic accessibility hierarchies at the meaningful
   checkpoints;
 - four pinned onboarding snapshot smokes: light/standard, dark/accessibility
@@ -63,10 +69,11 @@ The fixture exists only in `DEBUG`. Release and TestFlight builds always compose
 - a separate critical-screen accessibility lane that rejects duplicate nonempty
   identifiers across onboarding, Home, and Settings.
 
-The 17 fixture journeys cover thirteen named personas: first-run user, returning
+The 19 fixture journeys cover fifteen named personas: first-run user, returning
 user, task author, error-recovery user, permissions-denied user, long-lived
 user, one-handed mobile user, environment manager, thread operator, and
-developer, release reviewer, conversation user, and proof operator.
+developer, release reviewer, conversation user, proof operator, cold-start
+user, and private-fleet user.
 
 The tests deliberately do not tap destructive actions against retained state,
 system photo/camera/file pickers, external URLs, or buttons that would send live
@@ -74,6 +81,30 @@ data. The approval-control journey records its verdict only in the isolated
 in-process fixture and resets that fixture receipt before each launch.
 An additional opt-in journey pairs a clean simulator to a disposable backend
 and asserts that its seeded project reaches the real Home project menu.
+
+### Proof-pending review-item coverage audit
+
+This table maps the fifteen `proofPending` stream items to deterministic app
+coverage. It does not change any review state. Every item remains proof pending
+until its required clean and annotated media passes the separate proof gates.
+
+| Priority | Review item | Current deterministic coverage | Remaining acceptance gap |
+| --- | --- | --- | --- |
+| 1 | `in-app-stream-approval-control` | Exact build identity, six pipeline stages, priority order, pending-proof block, review text, attribution, and both verdict confirmations | Capture and validate the final clean and annotated media against the installed Test build |
+| 2 | `initial-thread-live-updates` | A controlled initial-load race proves that newer live state wins once and stays ordered after reopen | Capture the installed Test build under a real busy-thread update |
+| 3 | `cold-boot-home-list-scrolling` | Metadata snapshots arrive while the first Home drag runs; the test opens a thread, returns, and drags again | Capture the installed Test build during real cold metadata loading |
+| 3 | `command-palette-top-drawer` | Home and thread drags cover direction isolation, close and open thresholds, and keyboard state | Capture the final dark-mode gesture video |
+| 3 | `home-thread-list-scrolling` | Top rubber-band, upward scroll, downward scroll, and accumulated-history reachability | Capture the final dark-mode gesture video |
+| 3 | `widget-build-channel-links` | Extension contract tests prove the Test URL scheme and `new-task` URL | A simulator journey still must tap the installed widget body and its New task link |
+| 4 | `skill-popup-readability-and-height` | The keyboard-visible popup checks full long labels, row height, full-list scrolling, and bottom selection | Capture the final dark-mode gesture video and annotated images |
+| 4 | `skills-popup-keyboard-clearance` | The same journey checks menu-to-keyboard clearance before and after filtering and selection | Capture the final dark-mode gesture video and annotated images |
+| 5 | `swiftui-test-personal-connect` | A Test-channel fixture shows the private host list, exact unavailable state, one-action connection, and persisted reopen | Run the same path against the private Tailnet host in the installed Test build |
+| 6 | `shared-electron-vscode-themes` | Theme catalog navigation, one named dark card, visual snapshots, and accessibility labels have coverage | Search, broad light/dark selection, relaunch persistence, and native/terminal color agreement need one focused journey |
+| 7 | `pull-request-inbox-summary-timeline` | Pull-request models and wire contracts have focused lower-level tests | No deterministic connected inbox, Summary, and Timeline XCUITest journey exists |
+| 7 | `pull-request-workspace-protocol` | Pull-request protocol and HTTP/RPC contracts have focused lower-level tests | No deterministic PR workspace UI journey exists |
+| 8 | `safe-tool-content-recovery` | General tool surfaces and explicit sheet dismissal have UI coverage | Retained error content, accessible Retry, focus recovery, and duplicate prevention are not covered as one journey |
+| 9 | `development-build-source-thread` | The approval fixture proves thread attribution for a review item | Build changelog expansion and source-thread routing do not have a stable fixture journey |
+| 10 | `app-flow-regression-tests` | Catalog checks, XCUITest receipts, screenshots, accessibility exports, and the opt-in tap/swipe ledger have deterministic contracts | The complete recorded, annotated, secret-scanned proof packet still needs an end-to-end evidence run |
 
 ## Run and evidence
 
@@ -142,6 +173,10 @@ passed semantic `assert`. `proof-map` rejects untimed, unasserted, or
 geometry-free actions and hashes the raw recording. Build and `validate-packet`
 create the clean and annotated videos named in the proof catalog. The
 fake-recorder test exercises this assembly contract without producing proof.
+
+For a focused XCUITest command that runs more than one method, put `{test}` in
+the session and action-map output paths. The test runner replaces it with a
+safe method name, so one journey cannot overwrite another journey's ledger.
 
 An XCTest `performAccessibilityAudit` prototype was not promoted. On Xcode 26.6
 and iOS 26.5, combined, split-screen, and single-screen contrast-only probes all

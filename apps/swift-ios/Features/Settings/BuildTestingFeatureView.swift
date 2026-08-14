@@ -24,7 +24,7 @@ struct BuildTestingFeatureView: View {
                     )
                     .font(T3Typography.supportingStrong)
                     .foregroundStyle(T3Colors.warning)
-                    .accessibilityIdentifier("build-testing-proof-pending")
+                    .accessibilityIdentifier("build-testing-proof-pending-\(entry.id)")
                 }
 
                 if !entry.evidence.isEmpty {

@@ -9,12 +9,15 @@ enum AppFlowFixtureScenario: String {
     case longLived = "long-lived"
     case streamApproval = "stream-approval"
     case liveUpdateRace = "live-update-race"
+    case coldBoot = "cold-boot"
+    case personalConnect = "personal-connect"
 }
 
 enum AppFlowFixtureLaunch {
     static let enableArgument = "-app-flow-fixture"
     static let scenarioArgument = "-app-flow-scenario"
     static let scenarioEnvironment = "T3_APP_FLOW_FIXTURE_SCENARIO"
+    static let personalConnectResetEnvironment = "T3_APP_FLOW_PERSONAL_CONNECT_RESET"
 
     static var isEnabled: Bool {
         ProcessInfo.processInfo.arguments.contains(enableArgument)
@@ -47,7 +50,11 @@ final class AppFlowFixtureClient: FeatureClient, FeatureProjectCreationClient {
     private var details: [String: FeatureThreadDetail]
     private let scenario: AppFlowFixtureScenario
     private var didRunInitialLiveUpdateRace = false
+    private var coldBootMetadataTask: Task<Void, Never>?
+    private var didStartColdBootMetadata = false
     var waitUntilLiveUpdateIsApplied: (@MainActor (String) async -> Void)?
+
+    private static let personalConnectPairedKey = "T3AppFlowFixturePersonalConnectPaired"
 
     init(scenario: AppFlowFixtureScenario) {
         self.scenario = scenario
@@ -73,15 +80,33 @@ final class AppFlowFixtureClient: FeatureClient, FeatureProjectCreationClient {
         case .longLived:
             snapshot = Self.longLivedSnapshot
             details = Self.threadDetails.merging(Self.longLivedThreadDetails) { _, latest in latest }
+        case .coldBoot:
+            snapshot = Self.longLivedSnapshot
+            details = Self.threadDetails.merging(Self.longLivedThreadDetails) { _, latest in latest }
+        case .personalConnect:
+            if ProcessInfo.processInfo.environment[
+                AppFlowFixtureLaunch.personalConnectResetEnvironment
+            ] == "1" {
+                UserDefaults.standard.removeObject(forKey: Self.personalConnectPairedKey)
+            }
+            if UserDefaults.standard.bool(forKey: Self.personalConnectPairedKey) {
+                snapshot = Self.workspaceSnapshot
+                details = Self.threadDetails
+            } else {
+                snapshot = FeatureSnapshot()
+                details = [:]
+            }
         }
     }
 
     deinit {
+        coldBootMetadataTask?.cancel()
         continuation.finish()
     }
 
     func initialSnapshot() async throws -> FeatureSnapshot {
-        snapshot
+        startColdBootMetadataIfNeeded()
+        return snapshot
     }
 
     func events() -> AsyncStream<FeatureEvent> {
@@ -91,7 +116,47 @@ final class AppFlowFixtureClient: FeatureClient, FeatureProjectCreationClient {
     func pair(endpoint _: String, token _: String?) async throws {
         snapshot = Self.workspaceSnapshot
         details = Self.threadDetails
+        if scenario == .personalConnect {
+            UserDefaults.standard.set(true, forKey: Self.personalConnectPairedKey)
+        }
         continuation.yield(.snapshot(snapshot))
+    }
+
+    private func startColdBootMetadataIfNeeded() {
+        guard scenario == .coldBoot, !didStartColdBootMetadata else { return }
+        didStartColdBootMetadata = true
+        coldBootMetadataTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                try await Task.sleep(for: .milliseconds(100))
+            } catch {
+                return
+            }
+            guard let markerIndex = snapshot.threads.firstIndex(where: {
+                $0.id == "fixture-history-24"
+            }) else { return }
+            snapshot.threads[markerIndex].title =
+                "Long-lived project history item 24 · metadata ready"
+            continuation.yield(.snapshot(snapshot))
+
+            do {
+                try await Task.sleep(for: .milliseconds(150))
+            } catch {
+                return
+            }
+            for batch in 1 ... 24 {
+                guard !Task.isCancelled else { return }
+                let threadIndex = 2 + ((batch - 1) % Self.longLivedThreads.count)
+                snapshot.threads[threadIndex].preview =
+                    "Cold-boot metadata batch \(batch) loaded without replacing the row."
+                continuation.yield(.snapshot(snapshot))
+                do {
+                    try await Task.sleep(for: .milliseconds(80))
+                } catch {
+                    return
+                }
+            }
+        }
     }
 
     func createThread(
@@ -653,5 +718,26 @@ final class AppFlowFixtureClient: FeatureClient, FeatureProjectCreationClient {
             backgroundWorkIsActive: true
         ),
     ]
+}
+
+struct AppFlowFixturePersonalFleetPairingRequester: PersonalFleetPairingRequesting {
+    static let reachableHost = PersonalFleetPairingHost(
+        id: "fixture-reachable",
+        label: "Fixture Mac",
+        httpsBaseURL: URL(string: "https://fixture-reachable.invalid")!
+    )
+    static let unavailableHost = PersonalFleetPairingHost(
+        id: "fixture-unavailable",
+        label: "Offline Fixture Mac",
+        httpsBaseURL: URL(string: "https://fixture-unavailable.invalid")!
+    )
+    static let hosts = [reachableHost, unavailableHost]
+
+    func pairingURL(for host: PersonalFleetPairingHost) async throws -> String {
+        guard host.id == Self.reachableHost.id else {
+            throw PersonalFleetPairingError.unavailable(host: host.label, status: 503)
+        }
+        return "t3code://connect?endpoint=http%3A%2F%2Ffixture.invalid&token=fixture-personal-code"
+    }
 }
 #endif
