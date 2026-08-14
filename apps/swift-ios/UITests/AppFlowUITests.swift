@@ -141,8 +141,13 @@ final class AppFlowUITests: XCTestCase {
         let primaryThread = assertIdentifier("thread-fixture-main")
         capture("workspace-home")
 
-        assertIdentifier("sidebar-search-button").tap()
+        let openSearch = proofTap(
+            assertIdentifier("sidebar-search-button"),
+            selector: "sidebar-search-button",
+            postcondition: "Deterministic task search is visible"
+        )
         let search = assertIdentifier("sidebar-search-field")
+        proofPassed(openSearch, observation: "The deterministic task search is visible")
         search.typeText("regression")
         XCTAssertTrue(primaryThread.exists)
         capture("workspace-search")
@@ -1256,6 +1261,114 @@ final class AppFlowUITests: XCTestCase {
         XCTAssertEqual(identifierCount("thread-fixture-working"), 0)
         proofPassed(openAction, observation: "The existing fixture-main conversation opened with each expected message once")
         capture("build-changelog-source-thread")
+    }
+
+    func testWidgetChannelFallbackRouteOpensInteractiveNewTask() {
+        launch(scenario: "widget-new-task")
+
+        assertExists("What should we build")
+        let workspace = assertHittableButton("Current checkout")
+        let inspectWorkspace = proofTap(
+            workspace,
+            selector: "new-task-workspace-menu",
+            postcondition: "The channel-routed New task composer is interactive"
+        )
+        assertExists("New worktree")
+        proofPassed(
+            inspectWorkspace,
+            observation: "The widget fallback reached an interactive New task composer"
+        )
+        capture("widget-channel-new-task")
+    }
+
+    func testPullRequestInboxSummaryAndTimelineStayReadOnlyAndScoped() {
+        launch(scenario: "pull-requests")
+
+        let openInbox = proofTap(
+            assertIdentifier("sidebar-pull-requests-button"),
+            selector: "sidebar-pull-requests-button",
+            postcondition: "The active environment pull-request inbox is visible"
+        )
+        XCTAssertTrue(app.navigationBars["Pull requests"].waitForExistence(timeout: 8))
+        let firstRow = assertIdentifier(
+            "pull-request-row-github.com saphid/t3code-personal#94"
+        )
+        let secondRow = assertIdentifier(
+            "pull-request-row-github.com saphid/t3code-personal#95"
+        )
+        XCTAssertTrue(firstRow.label.contains("Native pull-request inbox proof"))
+        XCTAssertTrue(secondRow.label.contains("Review deterministic proof receipts"))
+        XCTAssertTrue(firstRow.label.contains("saphid/t3code-personal"))
+        XCTAssertTrue(secondRow.label.contains("saphid/t3code-personal"))
+        proofPassed(
+            openInbox,
+            observation: "Only the Fixture Mac repository pull requests are listed"
+        )
+        capture("pull-request-single-environment-inbox")
+
+        let openDetail = proofTap(
+            firstRow,
+            selector: "pull-request-row-github.com saphid/t3code-personal#94",
+            postcondition: "Pull request 94 Summary is visible"
+        )
+        XCTAssertTrue(app.navigationBars["#94"].waitForExistence(timeout: 8))
+        assertIdentifier("pull-request-summary")
+        assertExists("Native pull-request inbox proof")
+        assertExists("Branches")
+        assertExists("Changes")
+        assertExists("Focused SwiftUI tests")
+        XCTAssertEqual(app.buttons["Merge"].count, 0)
+        XCTAssertEqual(app.buttons["Comment"].count, 0)
+        XCTAssertEqual(app.buttons["Approve"].count, 0)
+        proofPassed(openDetail, observation: "The read-only Summary for pull request 94 is visible")
+        capture("pull-request-summary")
+
+        let timeline = assertExists("Timeline")
+        let openTimeline = proofTap(
+            timeline,
+            selector: "pull-request-detail-timeline",
+            postcondition: "Chronological pull-request activity is visible"
+        )
+        let opened = assertIdentifier("pull-request-timeline-lifecycle-opened")
+        let commit = assertIdentifier("pull-request-timeline-commit-fixture94")
+        let comment = assertIdentifier("pull-request-timeline-comment-fixture-comment-94")
+        let review = assertIdentifier(
+            "pull-request-timeline-thread-fixture-thread-94-fixture-thread-comment-94"
+        )
+        XCTAssertTrue(opened.label.contains("alex opened this pull request"))
+        XCTAssertTrue(commit.label.contains("alex Add native pull-request review surface"))
+        XCTAssertTrue(comment.label.contains("reviewer commented"))
+        XCTAssertTrue(review.label.contains("alex reviewed and resolved"))
+        XCTAssertLessThan(opened.frame.minY, commit.frame.minY)
+        XCTAssertLessThan(commit.frame.minY, comment.frame.minY)
+        XCTAssertLessThan(comment.frame.minY, review.frame.minY)
+        proofPassed(
+            openTimeline,
+            observation: "Opened, commit, comment, and resolved-review activity is visible in order"
+        )
+        capture("pull-request-timeline")
+    }
+
+    func testPullRequestCapabilityGateKeepsOrdinaryWorkspaceAvailable() {
+        launch()
+
+        let pullRequests = assertIdentifier("sidebar-pull-requests-button")
+        XCTAssertFalse(
+            pullRequests.isEnabled,
+            "A server without an advertised pull-request capability enabled the inbox"
+        )
+        let openThread = proofTap(
+            assertIdentifier("thread-fixture-main"),
+            selector: "thread-fixture-main",
+            postcondition: "The ordinary non-pull-request workspace opens"
+        )
+        assertIdentifier("message-fixture-user")
+        assertIdentifier("message-fixture-assistant")
+        proofPassed(
+            openThread,
+            observation: "The ordinary workspace opened without a pull-request probe or malformed content"
+        )
+        capture("pull-request-capability-gate-workspace")
     }
 
     func testKnownIssueThreadToolSheetHasExplicitDoneControl() throws {

@@ -43,6 +43,14 @@ struct T3CodeApp: App {
             if AppFlowFixtureLaunch.scenario == .streamApproval {
                 BuildTestingVerdictStore.clear(for: .appFlowApprovalFixture)
             }
+            if AppFlowFixtureLaunch.scenario == .widgetNewTask {
+                let fallbackURL = URL(
+                    string: "\(PlatformRoute.nativeScheme)://new-task"
+                )!
+                PlatformRouteMailbox.shared.put(
+                    try! PlatformDeepLinkParser.parse(fallbackURL)
+                )
+            }
             _model = State(initialValue: fixtureModel)
             return
         }

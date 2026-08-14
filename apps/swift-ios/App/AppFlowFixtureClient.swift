@@ -14,6 +14,8 @@ enum AppFlowFixtureScenario: String {
     case themeCatalog = "theme-catalog"
     case toolRecovery = "tool-recovery"
     case buildSourceThread = "build-source-thread"
+    case pullRequests = "pull-requests"
+    case widgetNewTask = "widget-new-task"
 }
 
 enum AppFlowFixtureLaunch {
@@ -72,8 +74,11 @@ final class AppFlowFixtureClient: FeatureClient, FeatureProjectCreationClient,
 
         switch scenario {
         case .workspace, .streamApproval, .liveUpdateRace, .themeCatalog,
-             .toolRecovery, .buildSourceThread:
+             .toolRecovery, .buildSourceThread, .widgetNewTask:
             snapshot = Self.workspaceSnapshot
+            details = Self.threadDetails
+        case .pullRequests:
+            snapshot = Self.pullRequestSnapshot
             details = Self.threadDetails
         case .onboarding:
             snapshot = FeatureSnapshot()
@@ -458,6 +463,80 @@ final class AppFlowFixtureClient: FeatureClient, FeatureProjectCreationClient,
         )
     }
 
+    func pullRequestsList(
+        environmentID: String,
+        input _: PullRequestListInput
+    ) async throws -> PullRequestListResult {
+        try requirePullRequestFixture(environmentID)
+        return PullRequestListResult(
+            viewers: ["github.com": "alex"],
+            providers: [
+                PullRequestProviderSummary(
+                    host: "github.com",
+                    kind: .github,
+                    searchesOnHost: true,
+                    projectCount: 1,
+                    configured: true,
+                    detail: nil
+                ),
+            ],
+            entries: Self.pullRequestEntries,
+            errors: [],
+            truncated: false,
+            nextCursors: [:]
+        )
+    }
+
+    func pullRequestsListStats(
+        environmentID: String,
+        input: PullRequestListStatsInput
+    ) async throws -> PullRequestListStatsResult {
+        try requirePullRequestFixture(environmentID)
+        return PullRequestListStatsResult(
+            stats: input.refs.map {
+                PullRequestDiffStat(
+                    projectId: $0.projectId,
+                    repository: $0.repository,
+                    number: $0.number,
+                    additions: $0.number == 94 ? 128 : 34,
+                    deletions: $0.number == 94 ? 21 : 5
+                )
+            }
+        )
+    }
+
+    func pullRequestDetail(
+        environmentID: String,
+        reference: PullRequestRef
+    ) async throws -> PullRequestDetail {
+        try requirePullRequestFixture(environmentID)
+        guard Self.pullRequestEntries.contains(where: {
+            $0.projectId == reference.projectId
+                && $0.repository == reference.repository
+                && $0.number == reference.number
+        }) else {
+            throw FeatureCapabilityUnavailable("Fixture pull request #\(reference.number)")
+        }
+        return Self.pullRequestDetail(number: reference.number)
+    }
+
+    func pullRequestActivity(
+        environmentID: String,
+        reference: PullRequestRef
+    ) async throws -> PullRequestActivity {
+        try requirePullRequestFixture(environmentID)
+        guard Self.pullRequestEntries.contains(where: { $0.number == reference.number }) else {
+            throw FeatureCapabilityUnavailable("Fixture pull request #\(reference.number)")
+        }
+        return Self.pullRequestActivity(number: reference.number)
+    }
+
+    private func requirePullRequestFixture(_ environmentID: String) throws {
+        guard scenario == .pullRequests, environmentID == "fixture-environment" else {
+            throw PullRequestCapabilityUnavailableError()
+        }
+    }
+
     func armSourceControlRecoveryFailure() {
         guard scenario == .toolRecovery else { return }
         shouldFailNextSourceControlLoad = true
@@ -675,6 +754,187 @@ final class AppFlowFixtureClient: FeatureClient, FeatureProjectCreationClient,
         ],
         settings: FeatureSettings(defaultSelection: selection)
     )
+
+    private static var pullRequestSnapshot: FeatureSnapshot {
+        var value = workspaceSnapshot
+        value.environments[0] = FeatureEnvironment(
+            id: "fixture-environment",
+            name: "Fixture Mac",
+            endpoint: "http://fixture.invalid",
+            serverVersion: "fixture-1",
+            supportsPullRequests: true,
+            pullRequestCapability: true,
+            pullRequestCapabilityKnown: true,
+            isActive: true,
+            connectionState: .connected
+        )
+        return value
+    }
+
+    private static let pullRequestEntries = [
+        PullRequestListEntry(
+            provider: .github,
+            host: "github.com",
+            projectId: "fixture-project",
+            projectTitle: "T3 Code",
+            repository: "saphid/t3code-personal",
+            number: 94,
+            title: "Native pull-request inbox proof",
+            url: "https://github.com/saphid/t3code-personal/pull/94",
+            author: PullRequestActor(login: "alex", name: "Alex", avatarUrl: nil),
+            headBranch: "feature/native-pr-inbox",
+            baseBranch: "main",
+            state: .open,
+            isDraft: false,
+            mergeability: .mergeable,
+            additions: 0,
+            deletions: 0,
+            createdAt: "2026-08-14T01:00:00Z",
+            updatedAt: "2026-08-14T03:00:00Z",
+            viewerReviewRequested: false,
+            labels: [PullRequestLabel(name: "swiftui", color: "7c3aed")]
+        ),
+        PullRequestListEntry(
+            provider: .github,
+            host: "github.com",
+            projectId: "fixture-project",
+            projectTitle: "T3 Code",
+            repository: "saphid/t3code-personal",
+            number: 95,
+            title: "Review deterministic proof receipts",
+            url: "https://github.com/saphid/t3code-personal/pull/95",
+            author: PullRequestActor(login: "reviewer", name: "Reviewer", avatarUrl: nil),
+            headBranch: "test/proof-receipts",
+            baseBranch: "main",
+            state: .open,
+            isDraft: false,
+            mergeability: .mergeable,
+            additions: 0,
+            deletions: 0,
+            createdAt: "2026-08-14T02:00:00Z",
+            updatedAt: "2026-08-14T04:00:00Z",
+            viewerReviewRequested: true,
+            labels: []
+        ),
+    ]
+
+    private static func pullRequestDetail(number: Int) -> PullRequestDetail {
+        PullRequestDetail(
+            provider: .github,
+            capabilities: PullRequestCapabilities(
+                diff: true,
+                comment: true,
+                actions: [.merge],
+                mergeMethods: [.squash],
+                search: true,
+                review: PullRequestReviewCapabilities(
+                    inlineComment: true,
+                    reply: true,
+                    resolve: true,
+                    verdicts: [.approve]
+                ),
+                reviewers: PullRequestReviewerCapabilities(
+                    request: true,
+                    listCandidates: true
+                )
+            ),
+            viewerPermissions: PullRequestViewerPermissions(
+                actions: [.merge],
+                comment: true,
+                resolve: true,
+                verdicts: [.approve],
+                requestReviewers: true
+            ),
+            projectId: "fixture-project",
+            projectTitle: "T3 Code",
+            workspaceRoot: "/workspace/t3code",
+            repository: "saphid/t3code-personal",
+            number: number,
+            title: number == 94
+                ? "Native pull-request inbox proof"
+                : "Review deterministic proof receipts",
+            body: "## Summary\n\nA deterministic read-only fixture for phone review.",
+            url: "https://github.com/saphid/t3code-personal/pull/\(number)",
+            author: PullRequestActor(login: number == 94 ? "alex" : "reviewer", name: nil, avatarUrl: nil),
+            state: .open,
+            isDraft: false,
+            mergeability: .mergeable,
+            additions: number == 94 ? 128 : 34,
+            deletions: number == 94 ? 21 : 5,
+            changedFiles: number == 94 ? 8 : 3,
+            headBranch: number == 94 ? "feature/native-pr-inbox" : "test/proof-receipts",
+            baseBranch: "main",
+            createdAt: "2026-08-14T01:00:00Z",
+            updatedAt: "2026-08-14T03:00:00Z",
+            mergedAt: nil,
+            closedAt: nil,
+            reviewers: [PullRequestActor(login: "reviewer", name: nil, avatarUrl: nil)],
+            labels: [PullRequestLabel(name: "swiftui", color: "7c3aed")],
+            checks: [
+                PullRequestCheck(
+                    name: "Focused SwiftUI tests",
+                    status: .success,
+                    description: "Deterministic fixture checks passed",
+                    url: nil
+                ),
+            ],
+            mergeCapabilities: PullRequestMergeCapabilities(
+                merge: true,
+                squash: true,
+                rebase: true
+            )
+        )
+    }
+
+    private static func pullRequestActivity(number: Int) -> PullRequestActivity {
+        PullRequestActivity(
+            author: PullRequestActor(login: number == 94 ? "alex" : "reviewer", name: nil, avatarUrl: nil),
+            reviewers: [PullRequestActor(login: "reviewer", name: nil, avatarUrl: nil)],
+            comments: [
+                PullRequestComment(
+                    id: "fixture-comment-\(number)",
+                    kind: .issueComment,
+                    author: PullRequestActor(login: "reviewer", name: nil, avatarUrl: nil),
+                    body: "The Summary and Timeline are ready for review.",
+                    createdAt: "2026-08-14T02:00:00Z",
+                    url: nil,
+                    path: nil,
+                    reviewState: nil
+                ),
+            ],
+            commentCount: 1,
+            commentsTruncated: false,
+            reviewThreads: [
+                PullRequestReviewThread(
+                    id: "fixture-thread-\(number)",
+                    path: "apps/swift-ios/Features/PullRequests/PullRequestInboxView.swift",
+                    line: 48,
+                    side: .right,
+                    isResolved: true,
+                    isOutdated: false,
+                    comments: [
+                        PullRequestThreadComment(
+                            id: "fixture-thread-comment-\(number)",
+                            author: PullRequestActor(login: "alex", name: nil, avatarUrl: nil),
+                            body: "The read-only scope is explicit.",
+                            createdAt: "2026-08-14T02:30:00Z",
+                            url: nil
+                        ),
+                    ]
+                ),
+            ],
+            commits: [
+                PullRequestCommit(
+                    oid: "fixture\(number)",
+                    messageHeadline: "Add native pull-request review surface",
+                    committedDate: "2026-08-14T01:30:00Z",
+                    additions: number == 94 ? 128 : 34,
+                    deletions: number == 94 ? 21 : 5,
+                    authors: [PullRequestActor(login: "alex", name: nil, avatarUrl: nil)]
+                ),
+            ]
+        )
+    }
 
     private static var recoverySnapshot: FeatureSnapshot {
         var value = workspaceSnapshot

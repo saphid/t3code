@@ -148,6 +148,10 @@ python3 {AGENT} assert --session {session} --action-id "$swipe_id" --result pass
                 "skills-popup-keyboard-clearance",
                 "home-thread-list-scrolling",
                 "command-palette-top-drawer",
+                "widget-build-channel-links",
+                "pull-request-workspace-protocol",
+                "pull-request-inbox-summary-timeline",
+                "app-flow-regression-tests",
             },
         )
         video_names: set[str] = set()

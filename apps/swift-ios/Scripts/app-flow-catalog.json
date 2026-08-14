@@ -325,6 +325,52 @@
       "checkpoints": []
     },
     {
+      "id": "widget-channel-new-task",
+      "test": "testWidgetChannelFallbackRouteOpensInteractiveNewTask",
+      "lane": "fixture",
+      "persona": "multi-channel-widget-user",
+      "estimatedSeconds": 20,
+      "surfaces": [
+        "configured widget fallback URL",
+        "channel-specific New task route",
+        "interactive New task composer"
+      ],
+      "checkpoints": ["widget-channel-new-task"],
+      "issue": "https://github.com/saphid/t3code-personal/issues/89"
+    },
+    {
+      "id": "pull-request-capability-gate",
+      "test": "testPullRequestCapabilityGateKeepsOrdinaryWorkspaceAvailable",
+      "lane": "fixture",
+      "persona": "standard-workspace-user",
+      "estimatedSeconds": 20,
+      "surfaces": [
+        "pull-request capability gate",
+        "ordinary workspace",
+        "non-PR thread detail"
+      ],
+      "checkpoints": ["pull-request-capability-gate-workspace"],
+      "issue": "https://github.com/saphid/personal-ops/issues/94"
+    },
+    {
+      "id": "pull-request-inbox-summary-timeline",
+      "test": "testPullRequestInboxSummaryAndTimelineStayReadOnlyAndScoped",
+      "lane": "fixture",
+      "persona": "pull-request-reviewer",
+      "estimatedSeconds": 35,
+      "surfaces": [
+        "single-environment pull-request inbox",
+        "read-only Summary",
+        "chronological Timeline"
+      ],
+      "checkpoints": [
+        "pull-request-single-environment-inbox",
+        "pull-request-summary",
+        "pull-request-timeline"
+      ],
+      "issue": "https://github.com/saphid/personal-ops/issues/94"
+    },
+    {
       "id": "known-red-tool-sheet-close",
       "test": "testKnownIssueThreadToolSheetHasExplicitDoneControl",
       "lane": "known-red",
@@ -389,7 +435,10 @@
         "shared-electron-vscode-themes",
         "safe-tool-content-recovery",
         "development-build-source-thread",
-        "proof-event-emitter-contract"
+        "proof-event-emitter-contract",
+        "widget-channel-new-task",
+        "pull-request-capability-gate",
+        "pull-request-inbox-summary-timeline"
       ]
     },
     "live": {
@@ -503,8 +552,33 @@
           "safe-tool-content-recovery",
           "development-build-source-thread",
           "proof-event-emitter-contract",
+          "widget-channel-new-task",
+          "pull-request-capability-gate",
+          "pull-request-inbox-summary-timeline",
           "cold-boot-home-list-scrolling",
           "swiftui-test-personal-connect"
+        ]
+      },
+      {
+        "id": "widget-channel-links",
+        "patterns": [
+          "apps/swift-ios/Extensions/Shared/SharedContainer.swift",
+          "apps/swift-ios/Extensions/Widgets/**",
+          "apps/swift-ios/App/Platform/PlatformDeepLinks.swift",
+          "apps/swift-ios/App/Platform/PlatformRootView.swift"
+        ],
+        "journeys": ["widget-channel-new-task"]
+      },
+      {
+        "id": "pull-request-workspace",
+        "patterns": [
+          "apps/swift-ios/Core/PullRequestWireModels.swift",
+          "apps/swift-ios/Features/PullRequests/**",
+          "apps/swift-ios/Features/Workspace/WorkspaceView.swift"
+        ],
+        "journeys": [
+          "pull-request-capability-gate",
+          "pull-request-inbox-summary-timeline"
         ]
       },
       {
@@ -555,8 +629,8 @@
     },
     {
       "surface": "Settings Build Changelog",
-      "status": "uncovered",
-      "reason": "Requires a stable local changelog fixture."
+      "status": "covered",
+      "reason": "The build-source-thread fixture checks attribution and exact source-thread routing."
     },
     {
       "surface": "T3 Connect",

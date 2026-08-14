@@ -45,5 +45,6 @@ struct PullRequestTimelineView: View {
             .padding(.bottom, 32)
         }
         .scrollIndicators(.hidden)
+        .accessibilityIdentifier("pull-request-timeline")
     }
 }

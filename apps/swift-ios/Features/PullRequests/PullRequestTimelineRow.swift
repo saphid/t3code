@@ -49,6 +49,7 @@ struct PullRequestTimelineRow: View {
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("pull-request-timeline-\(item.id)")
     }
 
     private var image: String {

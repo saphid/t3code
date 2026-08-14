@@ -117,6 +117,7 @@ struct PullRequestSummaryView: View {
             .padding(.bottom, 32)
         }
         .scrollIndicators(.hidden)
+        .accessibilityIdentifier("pull-request-summary")
     }
 
     private var stateLabel: String {

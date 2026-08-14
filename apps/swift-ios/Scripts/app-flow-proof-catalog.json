@@ -154,6 +154,156 @@
           "expect": "The command palette opens above the keyboard from the thread header"
         }
       ]
+    },
+    {
+      "featureId": "widget-build-channel-links",
+      "journeyId": "widget-channel-new-task",
+      "testMethod": "testWidgetChannelFallbackRouteOpensInteractiveNewTask",
+      "appearance": "dark",
+      "imageProofInputs": [
+        {
+          "checkpoint": "widget-channel-new-task",
+          "gateInput": "xcresult checkpoint PNG",
+          "cleanInput": "widget-channel-new-task-raw.png from the recorded proof replay",
+          "annotateWithAction": "inspect-widget-routed-composer"
+        }
+      ],
+      "videoProofInput": {
+        "raw": "widget-channel-new-task-raw.mov",
+        "actionMap": "widget-channel-new-task-action-map.json",
+        "timeline": "widget-channel-new-task-timeline.json",
+        "clean": "widget-channel-new-task-clean.mp4",
+        "annotated": "widget-channel-new-task-annotated.mp4",
+        "validation": "widget-channel-new-task-validation.json"
+      },
+      "captureActions": [
+        {
+          "key": "inspect-widget-routed-composer",
+          "kind": "tap",
+          "selector": "new-task-workspace-menu",
+          "geometry": "record the actual Current checkout control center",
+          "expect": "The channel-routed New task composer is interactive"
+        }
+      ]
+    },
+    {
+      "featureId": "pull-request-workspace-protocol",
+      "journeyId": "pull-request-capability-gate",
+      "testMethod": "testPullRequestCapabilityGateKeepsOrdinaryWorkspaceAvailable",
+      "appearance": "dark",
+      "imageProofInputs": [
+        {
+          "checkpoint": "pull-request-capability-gate-workspace",
+          "gateInput": "xcresult checkpoint PNG",
+          "cleanInput": "pull-request-capability-gate-workspace-raw.png from the recorded proof replay",
+          "annotateWithAction": "open-ordinary-workspace"
+        }
+      ],
+      "videoProofInput": {
+        "raw": "pull-request-capability-gate-raw.mov",
+        "actionMap": "pull-request-capability-gate-action-map.json",
+        "timeline": "pull-request-capability-gate-timeline.json",
+        "clean": "pull-request-capability-gate-clean.mp4",
+        "annotated": "pull-request-capability-gate-annotated.mp4",
+        "validation": "pull-request-capability-gate-validation.json"
+      },
+      "captureActions": [
+        {
+          "key": "open-ordinary-workspace",
+          "kind": "tap",
+          "selector": "thread-fixture-main",
+          "geometry": "record the actual ordinary thread-row center",
+          "expect": "A non-PR workspace opens while the unadvertised PR capability stays disabled"
+        }
+      ]
+    },
+    {
+      "featureId": "pull-request-inbox-summary-timeline",
+      "journeyId": "pull-request-inbox-summary-timeline",
+      "testMethod": "testPullRequestInboxSummaryAndTimelineStayReadOnlyAndScoped",
+      "appearance": "dark",
+      "imageProofInputs": [
+        {
+          "checkpoint": "pull-request-single-environment-inbox",
+          "gateInput": "xcresult checkpoint PNG",
+          "cleanInput": "pull-request-single-environment-inbox-raw.png from the recorded proof replay",
+          "annotateWithAction": "open-pr-inbox"
+        },
+        {
+          "checkpoint": "pull-request-summary",
+          "gateInput": "xcresult checkpoint PNG",
+          "cleanInput": "pull-request-summary-raw.png from the recorded proof replay",
+          "annotateWithAction": "open-pr-summary"
+        },
+        {
+          "checkpoint": "pull-request-timeline",
+          "gateInput": "xcresult checkpoint PNG",
+          "cleanInput": "pull-request-timeline-raw.png from the recorded proof replay",
+          "annotateWithAction": "open-pr-timeline"
+        }
+      ],
+      "videoProofInput": {
+        "raw": "pull-request-inbox-summary-timeline-raw.mov",
+        "actionMap": "pull-request-inbox-summary-timeline-action-map.json",
+        "timeline": "pull-request-inbox-summary-timeline-timeline.json",
+        "clean": "pull-request-inbox-summary-timeline-clean.mp4",
+        "annotated": "pull-request-inbox-summary-timeline-annotated.mp4",
+        "validation": "pull-request-inbox-summary-timeline-validation.json"
+      },
+      "captureActions": [
+        {
+          "key": "open-pr-inbox",
+          "kind": "tap",
+          "selector": "sidebar-pull-requests-button",
+          "geometry": "record the actual Home pull-request control center",
+          "expect": "Only the active fixture environment's pull requests are listed"
+        },
+        {
+          "key": "open-pr-summary",
+          "kind": "tap",
+          "selector": "pull-request-row-github.com saphid/t3code-personal#94",
+          "geometry": "record the actual first pull-request row center",
+          "expect": "The selected pull request opens a read-only Summary"
+        },
+        {
+          "key": "open-pr-timeline",
+          "kind": "tap",
+          "selector": "pull-request-detail-timeline",
+          "geometry": "record the actual Timeline segment center",
+          "expect": "Opened, commit, comment, and resolved-review activity is chronological"
+        }
+      ]
+    },
+    {
+      "featureId": "app-flow-regression-tests",
+      "journeyId": "workspace-navigation",
+      "testMethod": "testWorkspaceNavigationAndMenus",
+      "appearance": "dark",
+      "imageProofInputs": [
+        {
+          "checkpoint": "workspace-search",
+          "gateInput": "xcresult checkpoint PNG",
+          "cleanInput": "workspace-search-raw.png from the recorded proof replay",
+          "annotateWithAction": "open-deterministic-search"
+        }
+      ],
+      "videoProofInput": {
+        "raw": "app-flow-regression-tests-raw.mov",
+        "actionMap": "app-flow-regression-tests-action-map.json",
+        "timeline": "app-flow-regression-tests-timeline.json",
+        "clean": "app-flow-regression-tests-clean.mp4",
+        "annotated": "app-flow-regression-tests-annotated.mp4",
+        "validation": "app-flow-regression-tests-validation.json"
+      },
+      "captureActions": [
+        {
+          "key": "open-deterministic-search",
+          "kind": "tap",
+          "selector": "sidebar-search-button",
+          "geometry": "record the actual deterministic Home search control center",
+          "expect": "The fixture search opens and the declared semantic checkpoint is retained"
+        }
+      ]
     }
   ]
 }
