@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import difflib
+import hashlib
 import json
 import os
 import re
@@ -73,21 +74,51 @@ def load_json(path: Path) -> Any:
         fail(f"cannot read {path}: {error}")
 
 
+def configured_manifest_path() -> Path:
+    return Path(os.environ.get("SWIFTUI_STREAM_MANIFEST", str(MANIFEST_PATH))).expanduser()
+
+
+def configured_device_receipts_root() -> Path:
+    state_root = os.environ.get("SWIFTUI_STREAM_STATE_DIR")
+    return (
+        Path(state_root).expanduser() / "device-receipts"
+        if state_root
+        else DEVICE_RECEIPTS_ROOT.expanduser()
+    )
+
+
+def configured_ready_pointer() -> Path:
+    state_root = os.environ.get("SWIFTUI_STREAM_STATE_DIR")
+    return (
+        Path(state_root).expanduser() / "ready/test.json"
+        if state_root
+        else TEST_READY_POINTER.expanduser()
+    )
+
+
 def manifest_path_value(key: str) -> str:
-    value = load_json(MANIFEST_PATH)
+    value = load_json(configured_manifest_path())
     path = value.get(key)
     if not isinstance(path, str) or not path:
         fail(f"stream.json is missing {key}")
     return path
 
 
-def manifest() -> dict[str, Any]:
-    value = load_json(MANIFEST_PATH)
-    validate_manifest(value, verify_repository=True)
+def manifest(verify_evidence: bool = False) -> dict[str, Any]:
+    value = load_json(configured_manifest_path())
+    validate_manifest(
+        value,
+        verify_repository=True,
+        verify_evidence=verify_evidence,
+    )
     return value
 
 
-def validate_manifest(value: dict[str, Any], verify_repository: bool = False) -> None:
+def validate_manifest(
+    value: dict[str, Any],
+    verify_repository: bool = False,
+    verify_evidence: bool = False,
+) -> None:
     if value.get("schemaVersion") != 1:
         fail("stream.json schemaVersion must be 1")
     states = value.get("lifecycle", [])
@@ -107,6 +138,7 @@ def validate_manifest(value: dict[str, Any], verify_repository: bool = False) ->
     if not isinstance(current.get("launchPending"), bool):
         fail("currentTestBuild.launchPending must be true or false")
     ids: set[str] = set()
+    seen_media_proof: dict[str, tuple[str, str]] = {}
     for feature in value.get("features", []):
         feature_id = feature.get("id")
         if not feature_id or feature_id in ids:
@@ -149,10 +181,13 @@ def validate_manifest(value: dict[str, Any], verify_repository: bool = False) ->
         if proof_pending:
             if feature.get("state") != "in-test":
                 fail(f"{feature_id} can only stage proofPending while in-test")
-            if feature.get("visualChange") is not True:
-                fail(f"{feature_id} proofPending requires visualChange")
             if evidence is not None:
                 fail(f"{feature_id} proofPending cannot carry stale visualEvidence")
+            if feature.get("reviewMedia") is True:
+                fail(f"{feature_id} proofPending cannot carry stale reviewMedia")
+            for stale_field in ("proofMediaReceipt", "proofCommit"):
+                if feature.get(stale_field) is not None:
+                    fail(f"{feature_id} proofPending cannot carry stale {stale_field}")
         carries_review_media = bool(
             feature.get("visualChange")
             or feature.get("reviewMedia")
@@ -191,12 +226,34 @@ def validate_manifest(value: dict[str, Any], verify_repository: bool = False) ->
             receipt = feature.get("proofMediaReceipt")
             if not isinstance(receipt, str) or not receipt.strip():
                 fail(f"{feature_id} visual evidence has no proofMediaReceipt")
-            validate_proof_media_receipt(
-                feature_id,
-                evidence,
-                receipt,
-                feature.get("proofCommit") or feature.get("candidateCommit"),
-            )
+            if verify_evidence:
+                media_proof = validate_proof_media_receipt(
+                    feature_id,
+                    evidence,
+                    receipt,
+                    feature.get("proofCommit") or feature.get("candidateCommit"),
+                    feature.get("testBuild"),
+                )
+                for clean_hash, annotated_hash in media_proof:
+                    for variant, digest in (
+                        ("clean", clean_hash),
+                        ("annotated", annotated_hash),
+                    ):
+                        prior = seen_media_proof.get(digest)
+                        if prior is not None:
+                            prior_feature, prior_variant = prior
+                            if prior_feature == feature_id:
+                                fail(
+                                    f"{feature_id} reuses {variant} media proof "
+                                    f"from another {prior_variant} entry in the "
+                                    "same feature"
+                                )
+                            fail(
+                                f"{feature_id} reuses {variant} media proof "
+                                f"from {prior_feature} ({prior_variant}); each "
+                                "review item needs feature-specific media evidence"
+                            )
+                        seen_media_proof[digest] = (feature_id, variant)
         if feature.get("state") == "proved":
             source_branch = feature.get("sourceBranch")
             candidate = feature.get("candidateCommit")
@@ -304,7 +361,8 @@ def validate_proof_media_receipt(
     evidence: list[dict[str, Any]],
     receipt_path: str,
     candidate_commit: str | None = None,
-) -> None:
+    test_build: int | None = None,
+) -> list[tuple[str, str]]:
     receipt_root = Path(
         os.environ.get(
             "SWIFTUI_STREAM_EVIDENCE_DIR",
@@ -325,6 +383,11 @@ def validate_proof_media_receipt(
         fail(f"{feature_id} proofMediaReceipt names another feature")
     if candidate_commit is not None and receipt.get("candidateCommit") != candidate_commit:
         fail(f"{feature_id} proofMediaReceipt names another candidate")
+    receipt_test_build = receipt.get("testBuild")
+    if type(receipt_test_build) is not int or receipt_test_build < 1:
+        fail(f"{feature_id} proofMediaReceipt has no valid testBuild")
+    if test_build is not None and receipt_test_build != test_build:
+        fail(f"{feature_id} proofMediaReceipt names another Test build")
     receipt_media = receipt.get("media")
     if not isinstance(receipt_media, list):
         fail(f"{feature_id} proofMediaReceipt has no media inventory")
@@ -333,21 +396,60 @@ def validate_proof_media_receipt(
         for item in evidence
     }
     attested = set()
+    media_proof: list[tuple[str, str]] = []
     for item in receipt_media:
         if not isinstance(item, dict):
             fail(f"{feature_id} proofMediaReceipt has invalid media")
         for prefix in ("clean", "annotated"):
             digest = item.get(f"{prefix}Sha256")
             size = item.get(f"{prefix}Bytes")
+            artifact_path = item.get(f"{prefix}Path")
             if not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest):
                 fail(f"{feature_id} proofMediaReceipt has invalid {prefix}Sha256")
             if not isinstance(size, int) or size < 1:
                 fail(f"{feature_id} proofMediaReceipt has invalid {prefix}Bytes")
+            if not isinstance(artifact_path, str) or not artifact_path.strip():
+                fail(f"{feature_id} proofMediaReceipt has no {prefix}Path")
+            artifact_file = Path(artifact_path).expanduser()
+            try:
+                artifact_file.resolve().relative_to(receipt_root.resolve())
+            except ValueError:
+                fail(
+                    f"{feature_id} proofMediaReceipt {prefix}Path is outside "
+                    "durable evidence storage"
+                )
+            if artifact_file.is_symlink() or not artifact_file.is_file():
+                fail(
+                    f"{feature_id} proofMediaReceipt {prefix}Path is not a "
+                    "regular evidence file"
+                )
+            actual_size = artifact_file.stat().st_size
+            if actual_size != size:
+                fail(
+                    f"{feature_id} proofMediaReceipt {prefix}Bytes does not "
+                    "match its file"
+                )
+            actual_digest = hashlib.sha256()
+            with artifact_file.open("rb") as handle:
+                for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                    actual_digest.update(chunk)
+            if actual_digest.hexdigest() != digest:
+                fail(
+                    f"{feature_id} proofMediaReceipt {prefix}Sha256 does not "
+                    "match its file"
+                )
         attested.add(
             (item.get("kind"), item.get("appearance"), item.get("cleanURL"), item.get("annotatedURL"))
         )
+        if item["cleanSha256"] == item["annotatedSha256"]:
+            fail(
+                f"{feature_id} proofMediaReceipt {item.get('kind')} uses "
+                "identical clean and annotated proof"
+            )
+        media_proof.append((item["cleanSha256"], item["annotatedSha256"]))
     if declared != attested:
         fail(f"{feature_id} visualEvidence does not match its proofMediaReceipt")
+    return media_proof
 
 
 def validate_integrated_commit(feature_id: str, commit: str, test_ref: str) -> None:
@@ -739,7 +841,7 @@ def contained_receipt_path(receipt_path: Any) -> Path:
     path = Path(receipt_path).expanduser()
     if not path.is_absolute():
         fail("currentTestBuild.receipt must resolve to an absolute path")
-    root = DEVICE_RECEIPTS_ROOT.expanduser()
+    root = configured_device_receipts_root()
     if root.is_symlink():
         fail("the device receipt directory cannot be a symbolic link")
     try:
@@ -769,7 +871,7 @@ def require_installed_test_receipt(
     receipt = load_json(contained_receipt_path(current.get("receipt")))
     if not isinstance(receipt, dict):
         fail("installed Test receipt must be a JSON object")
-    ready = load_json(TEST_READY_POINTER)
+    ready = load_json(configured_ready_pointer())
     if not isinstance(ready, dict):
         fail("Test ready pointer must be a JSON object")
     receipt_errors = installed_test_receipt_errors(current, receipt, ready)
@@ -1003,7 +1105,7 @@ def command_queue(args: argparse.Namespace) -> None:
 
 
 def command_validate(_: argparse.Namespace) -> None:
-    value = manifest()
+    value = manifest(verify_evidence=True)
     validate_delivery_inventory(load_json(REPO_ROOT / value["prDelivery"]), value["lifecycle"])
     records = catalog(True)
     if len({item["id"] for item in records}) != len(records):

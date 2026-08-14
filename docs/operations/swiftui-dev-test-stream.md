@@ -142,6 +142,22 @@ Light-mode captures, local-only file paths, stale or synthetic captures, or an
 unplayable URL do not satisfy this gate. Validate every PR body with
 `--feature-id <catalog-id>` and also `--number` when applicable.
 
+The catalog's aggregate `proofMediaReceipt` is separate from the edit receipt
+that `prepare-proof-media` creates. Each entry in its `media` array contains
+`kind`, `appearance`, `cleanURL`, `annotatedURL`, `cleanPath`,
+`annotatedPath`, `cleanSha256`, `annotatedSha256`, `cleanBytes`, and
+`annotatedBytes`. It also identifies `featureId`, `candidateCommit`, and
+`testBuild`. Use `~/...` for portable durable paths. Both paths must resolve to
+regular, non-symbolic-link files below
+`~/.t3/artifacts/swiftui-stream/evidence`; the hashes and byte counts must be
+computed from those exact files, and the URLs must exactly match the catalog's
+clean and annotated links. `stream.py validate` recomputes and checks this
+inventory before a build becomes ready. Each review item needs its own media
+proof: a clean or annotated image or video digest cannot be reused by another
+feature or by another media entry of the same feature, and no media entry can
+use identical bytes for its clean and annotated copies. The receipt's positive
+integer `testBuild` must match the catalog item.
+
 A chain PR must name every dependency and its order. A direct PR says
 `Depends on: none` and `Merge order: this PR only`. Validate a prepared body
 with `scripts/swiftui-stream/stream.py validate-pr-body --feature-id <catalog-id> --number <PR> --body <file>`. After a
@@ -293,8 +309,10 @@ swipes and use captions to state the expected result. Those URLs must be the
 same durable proof packet named in the candidate's Dev and upstream-delivery
 PR bodies. A metadata record or host-local path is not review evidence. Before
 the item enters `needs-you`, the operator performs and retains a separate real
-GET and video range-request check. The stream validator enforces the local
-receipt hashes and commit binding; it does not make network requests.
+GET and video range-request check. The explicit `stream.py validate` gate and
+`build-ready.sh` enforce the local receipt hashes and commit binding; ordinary
+catalog reads do not access host-local evidence and no validator makes network
+requests.
 
 `reviewMedia: true` states that the media is the acceptance packet for the
 review item. This is separate from `visualChange`, which states that the
@@ -303,10 +321,11 @@ product itself changed visually. `proofCommit` must be a full SHA named by
 that same SHA. Thus, media for an earlier version cannot reopen the gate for a
 newer build.
 
-A visual item can use `proofPending: true` only while it is `in-test`. This
-keeps stale media out of a staged build while the replacement Test proof is
-being recorded. The flag, the missing-media state, and the `in-test` state must
-all be replaced before the item can enter `needs-you`.
+Any item that needs acceptance media can use `proofPending: true` only while it
+is `in-test`. This keeps stale media, receipts, and proof commits out of a
+staged build while replacement Test proof is being recorded. The flag, the
+missing-media state, and the `in-test` state must all be replaced before the
+item can enter `needs-you`.
 
 Before upstream delivery, these gates run in the private deterministic build
 workflow and `build-ready.sh`; they do not use GitHub Actions. Upstream CI is

@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import importlib.util
+import hashlib
 import io
 import json
 import os
@@ -119,6 +120,8 @@ class StreamTests(unittest.TestCase):
         ready_root = root / "ready"
         ready_root.mkdir()
         current = dict(current or stream.manifest()["currentTestBuild"])
+        current["status"] = "installed-and-launched"
+        current["launchPending"] = False
         receipt_path = receipt_root / "test.json"
         current["receipt"] = str(receipt_path)
         identity = {
@@ -324,8 +327,21 @@ class StreamTests(unittest.TestCase):
                     }
                 )
             )
+            manifest_path = home / "stream.json"
+            manifest_path.write_text(json.dumps({
+                "schemaVersion": 1,
+                "lifecycle": ["in-test", "needs-you"],
+                "currentTestBuild": {
+                    **current,
+                    "receipt": str(receipts / "test.json"),
+                    "status": "installed-and-launched",
+                    "launchPending": False,
+                },
+                "features": [],
+            }))
             environment = dict(os.environ)
-            environment["HOME"] = str(home)
+            environment["SWIFTUI_STREAM_STATE_DIR"] = str(state)
+            environment["SWIFTUI_STREAM_MANIFEST"] = str(manifest_path)
             result = subprocess.run(
                 [
                     "python3",
@@ -954,11 +970,21 @@ class StreamTests(unittest.TestCase):
         feature["proofPending"] = True
         stream.validate_manifest(value)
 
+        for field, stale_value in (
+            ("reviewMedia", True),
+            ("proofMediaReceipt", "~/.t3/evidence/stale.json"),
+            ("proofCommit", "d" * 40),
+        ):
+            with self.subTest(stale_field=field):
+                feature[field] = stale_value
+                errors = io.StringIO()
+                with redirect_stderr(errors), self.assertRaises(SystemExit):
+                    stream.validate_manifest(value)
+                self.assertIn(f"stale {field}", errors.getvalue())
+                feature.pop(field)
+
         feature.pop("visualChange")
-        errors = io.StringIO()
-        with redirect_stderr(errors), self.assertRaises(SystemExit):
-            stream.validate_manifest(value)
-        self.assertIn("requires visualChange", errors.getvalue())
+        stream.validate_manifest(value)
         feature["visualChange"] = True
 
         feature["visualEvidence"] = []
@@ -990,33 +1016,354 @@ class StreamTests(unittest.TestCase):
         }]
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
+            clean = root / "clean.png"
+            annotated = root / "annotated.png"
+            clean.write_bytes(b"clean")
+            annotated.write_bytes(b"annotated")
             receipt = root / "receipt.json"
             receipt.write_text(json.dumps({
                 "featureId": "visual",
                 "candidateCommit": "c" * 40,
+                "testBuild": 1,
                 "media": [{
                     **evidence[0],
-                    "cleanSha256": "a" * 64,
-                    "cleanBytes": 1,
-                    "annotatedSha256": "b" * 64,
-                    "annotatedBytes": 2,
+                    "cleanPath": str(clean),
+                    "cleanSha256": hashlib.sha256(clean.read_bytes()).hexdigest(),
+                    "cleanBytes": clean.stat().st_size,
+                    "annotatedPath": str(annotated),
+                    "annotatedSha256": hashlib.sha256(annotated.read_bytes()).hexdigest(),
+                    "annotatedBytes": annotated.stat().st_size,
                 }],
             }))
             with patch.dict(os.environ, {"SWIFTUI_STREAM_EVIDENCE_DIR": directory}):
-                stream.validate_proof_media_receipt(
-                    "visual", evidence, str(receipt), "c" * 40
+                self.assertEqual(
+                    stream.validate_proof_media_receipt(
+                        "visual", evidence, str(receipt), "c" * 40
+                    ),
+                    [
+                        (
+                            hashlib.sha256(b"clean").hexdigest(),
+                            hashlib.sha256(b"annotated").hexdigest(),
+                        )
+                    ],
                 )
+                receipt_value = json.loads(receipt.read_text())
+                for invalid_build in (None, 0, True, "1"):
+                    with self.subTest(invalid_test_build=invalid_build):
+                        if invalid_build is None:
+                            receipt_value.pop("testBuild", None)
+                        else:
+                            receipt_value["testBuild"] = invalid_build
+                        receipt.write_text(json.dumps(receipt_value))
+                        errors = io.StringIO()
+                        with redirect_stderr(errors), self.assertRaises(SystemExit):
+                            stream.validate_proof_media_receipt(
+                                "visual", evidence, str(receipt), "c" * 40
+                            )
+                        self.assertIn("no valid testBuild", errors.getvalue())
+                receipt_value["testBuild"] = 1
+                receipt.write_text(json.dumps(receipt_value))
+                annotated.write_bytes(b"clean")
+                receipt_value["media"][0]["annotatedSha256"] = hashlib.sha256(
+                    annotated.read_bytes()
+                ).hexdigest()
+                receipt_value["media"][0]["annotatedBytes"] = annotated.stat().st_size
+                receipt.write_text(json.dumps(receipt_value))
+                with self.assertRaises(SystemExit):
+                    stream.validate_proof_media_receipt(
+                        "visual", evidence, str(receipt), "c" * 40
+                    )
+                annotated.write_bytes(b"annotated")
+                receipt_value["media"][0]["annotatedSha256"] = hashlib.sha256(
+                    annotated.read_bytes()
+                ).hexdigest()
+                receipt_value["media"][0]["annotatedBytes"] = annotated.stat().st_size
+                receipt.write_text(json.dumps(receipt_value))
+                clean.write_bytes(b"tampered")
+                with self.assertRaises(SystemExit):
+                    stream.validate_proof_media_receipt(
+                        "visual", evidence, str(receipt), "c" * 40
+                    )
+                clean.write_bytes(b"clean")
+                receipt_value = json.loads(receipt.read_text())
+                receipt_value["media"][0]["cleanSha256"] = "0" * 64
+                receipt.write_text(json.dumps(receipt_value))
+                with self.assertRaises(SystemExit):
+                    stream.validate_proof_media_receipt(
+                        "visual", evidence, str(receipt), "c" * 40
+                    )
+                receipt_value["media"][0]["cleanSha256"] = hashlib.sha256(
+                    clean.read_bytes()
+                ).hexdigest()
+                receipt.write_text(json.dumps(receipt_value))
                 with self.assertRaises(SystemExit):
                     stream.validate_proof_media_receipt(
                         "visual", evidence, str(receipt), "d" * 40
                     )
+                with self.assertRaises(SystemExit):
+                    stream.validate_proof_media_receipt(
+                        "visual", evidence, str(receipt), "c" * 40, 2
+                    )
                 evidence[0]["annotatedURL"] = "https://evidence.example/changed.png"
                 with self.assertRaises(SystemExit):
                     stream.validate_proof_media_receipt("visual", evidence, str(receipt))
+
+    def test_visual_receipt_rejects_symlink_and_outside_media_paths(self):
+        evidence = [{
+            "kind": "image",
+            "appearance": "dark",
+            "cleanURL": "https://evidence.example/clean.png",
+            "annotatedURL": "https://evidence.example/annotated.png",
+        }]
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            clean = root / "clean.png"
+            annotated = root / "annotated.png"
+            clean.write_bytes(b"clean")
+            annotated.write_bytes(b"annotated")
+            clean_link = root / "clean-link.png"
+            clean_link.symlink_to(clean)
+            outside = root.parent / f"{root.name}-outside.png"
+            outside.write_bytes(b"outside")
+            self.addCleanup(outside.unlink, missing_ok=True)
+            receipt = root / "receipt.json"
+
+            def write_receipt(clean_path: Path) -> None:
+                receipt.write_text(json.dumps({
+                    "featureId": "visual",
+                    "candidateCommit": "c" * 40,
+                    "testBuild": 1,
+                    "media": [{
+                        **evidence[0],
+                        "cleanPath": str(clean_path),
+                        "cleanSha256": hashlib.sha256(
+                            clean_path.read_bytes()
+                        ).hexdigest(),
+                        "cleanBytes": clean_path.stat().st_size,
+                        "annotatedPath": str(annotated),
+                        "annotatedSha256": hashlib.sha256(
+                            annotated.read_bytes()
+                        ).hexdigest(),
+                        "annotatedBytes": annotated.stat().st_size,
+                    }],
+                }))
+
+            with patch.dict(os.environ, {"SWIFTUI_STREAM_EVIDENCE_DIR": directory}):
+                write_receipt(clean_link)
+                with self.assertRaises(SystemExit):
+                    stream.validate_proof_media_receipt(
+                        "visual", evidence, str(receipt), "c" * 40
+                    )
+                write_receipt(outside)
+                with self.assertRaises(SystemExit):
+                    stream.validate_proof_media_receipt(
+                        "visual", evidence, str(receipt), "c" * 40
+                    )
                 evidence[0]["annotatedURL"] = "https://evidence.example/annotated.png"
                 receipt.unlink()
                 with self.assertRaises(SystemExit):
                     stream.validate_proof_media_receipt("visual", evidence, str(receipt))
+
+    def test_visual_receipt_rejects_identical_video_pair(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            clean = root / "clean.mp4"
+            annotated = root / "annotated.mp4"
+            clean.write_bytes(b"same-video")
+            annotated.write_bytes(b"same-video")
+            evidence = [{
+                "kind": "video",
+                "appearance": "dark",
+                "cleanURL": "https://evidence.example/clean.mp4",
+                "annotatedURL": "https://evidence.example/annotated.mp4",
+            }]
+            digest = hashlib.sha256(clean.read_bytes()).hexdigest()
+            receipt = root / "receipt.json"
+            receipt.write_text(json.dumps({
+                "featureId": "visual",
+                "candidateCommit": "c" * 40,
+                "testBuild": 1,
+                "media": [{
+                    **evidence[0],
+                    "cleanPath": str(clean),
+                    "cleanSha256": digest,
+                    "cleanBytes": clean.stat().st_size,
+                    "annotatedPath": str(annotated),
+                    "annotatedSha256": digest,
+                    "annotatedBytes": annotated.stat().st_size,
+                }],
+            }))
+            with patch.dict(os.environ, {"SWIFTUI_STREAM_EVIDENCE_DIR": directory}):
+                errors = io.StringIO()
+                with redirect_stderr(errors), self.assertRaises(SystemExit):
+                    stream.validate_proof_media_receipt(
+                        "visual", evidence, str(receipt), "c" * 40, 1
+                    )
+            self.assertIn("video uses identical", errors.getvalue())
+
+    def test_manifest_rejects_image_and_video_reusing_the_same_pair(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            clean = root / "clean.bin"
+            annotated = root / "annotated.bin"
+            clean.write_bytes(b"clean-proof")
+            annotated.write_bytes(b"annotated-proof")
+            evidence = [
+                {
+                    "kind": kind,
+                    "title": f"{kind} proof",
+                    "caption": f"Shows the {kind} proof.",
+                    "appearance": "dark",
+                    "cleanURL": f"https://evidence.example/{kind}-clean",
+                    "annotatedURL": f"https://evidence.example/{kind}-annotated",
+                }
+                for kind in ("image", "video")
+            ]
+            media = []
+            for item in evidence:
+                media.append({
+                    "kind": item["kind"],
+                    "appearance": "dark",
+                    "cleanURL": item["cleanURL"],
+                    "annotatedURL": item["annotatedURL"],
+                    "cleanPath": str(clean),
+                    "cleanSha256": hashlib.sha256(clean.read_bytes()).hexdigest(),
+                    "cleanBytes": clean.stat().st_size,
+                    "annotatedPath": str(annotated),
+                    "annotatedSha256": hashlib.sha256(
+                        annotated.read_bytes()
+                    ).hexdigest(),
+                    "annotatedBytes": annotated.stat().st_size,
+                })
+            receipt = root / "receipt.json"
+            receipt.write_text(json.dumps({
+                "featureId": "review-item",
+                "testBuild": 1,
+                "media": media,
+            }))
+            value = self.review_manifest_fixture()
+            feature = value["features"][0]
+            feature.update({
+                "visualChange": True,
+                "interactionChange": True,
+                "reviewMedia": True,
+                "proofMediaReceipt": str(receipt),
+                "visualEvidence": evidence,
+            })
+            with patch.dict(os.environ, {"SWIFTUI_STREAM_EVIDENCE_DIR": directory}):
+                errors = io.StringIO()
+                with redirect_stderr(errors), self.assertRaises(SystemExit):
+                    stream.validate_manifest(value, verify_evidence=True)
+            self.assertIn("reuses clean media proof", errors.getvalue())
+
+    def test_manifest_rejects_reused_image_proof(self):
+        value = self.review_manifest_fixture()
+        feature = value["features"][0]
+        feature.update({
+            "visualChange": True,
+            "proofMediaReceipt": "~/.t3/evidence/review-item.json",
+            "visualEvidence": [{
+                "kind": "image",
+                "title": "Review item",
+                "caption": "Shows the review item.",
+                "appearance": "dark",
+                "cleanURL": "https://evidence.example/review-item-clean.png",
+                "annotatedURL": "https://evidence.example/review-item-annotated.png",
+            }],
+        })
+        duplicate = json.loads(json.dumps(feature))
+        duplicate["id"] = "duplicate-item"
+        duplicate["name"] = "Duplicate item"
+        duplicate["sourceIssue"] = "https://github.com/saphid/t3code-personal/issues/2"
+        duplicate["proofMediaReceipt"] = "~/.t3/evidence/duplicate-item.json"
+        duplicate["visualEvidence"][0]["cleanURL"] = "https://evidence.example/duplicate-clean.png"
+        duplicate["visualEvidence"][0]["annotatedURL"] = "https://evidence.example/duplicate-annotated.png"
+        value["features"].append(duplicate)
+        with patch.object(
+            stream,
+            "validate_proof_media_receipt",
+            side_effect=[
+                {("a" * 64, "b" * 64)},
+                {("b" * 64, "c" * 64)},
+            ],
+        ):
+            errors = io.StringIO()
+            with redirect_stderr(errors), self.assertRaises(SystemExit):
+                stream.validate_manifest(value, verify_evidence=True)
+        self.assertIn("reuses clean media proof", errors.getvalue())
+        self.assertIn("(annotated)", errors.getvalue())
+
+    def test_structural_manifest_load_does_not_require_local_evidence(self):
+        value = stream.load_json(ROOT / "stream.json")
+        with patch.object(
+            stream,
+            "validate_proof_media_receipt",
+            side_effect=AssertionError("local evidence must not be read"),
+        ) as receipt_check:
+            stream.validate_manifest(value)
+        receipt_check.assert_not_called()
+
+        feature = value["features"][0]
+        feature.pop("proofPending", None)
+        feature["interactionChange"] = False
+        feature["proofMediaReceipt"] = "/tmp/nonexistent-evidence-store/receipt.json"
+        feature["visualEvidence"] = [{
+            "kind": "image",
+            "title": "Local proof",
+            "caption": "Requires local evidence verification.",
+            "appearance": "dark",
+            "cleanURL": "https://evidence.example/clean.png",
+            "annotatedURL": "https://evidence.example/annotated.png",
+        }]
+        with patch.object(
+            stream,
+            "validate_proof_media_receipt",
+            side_effect=AssertionError("local evidence must not be read"),
+        ) as receipt_check:
+            stream.validate_manifest(value)
+        receipt_check.assert_not_called()
+
+        with patch.dict(
+            os.environ,
+            {"SWIFTUI_STREAM_EVIDENCE_DIR": "/tmp/nonexistent-evidence-store"},
+        ):
+            with self.assertRaises(SystemExit):
+                stream.validate_manifest(value, verify_evidence=True)
+
+    def test_runtime_path_overrides_are_read_dynamically(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            manifest_path = root / "stream.json"
+            manifest_path.write_text(json.dumps({
+                "schemaVersion": 1,
+                "lifecycle": ["in-test", "needs-you"],
+                "currentTestBuild": {
+                    "channel": "test",
+                    "build": 1,
+                    "sequence": 1,
+                    "commit": "c" * 40,
+                    "bundleId": "test.bundle",
+                    "deviceId": "phone",
+                    "receipt": str(root / "state/device-receipts/test.json"),
+                    "status": "installed-and-launched",
+                    "launchPending": False,
+                },
+                "features": [],
+            }))
+            state_root = root / "state"
+            with patch.dict(os.environ, {
+                "SWIFTUI_STREAM_MANIFEST": str(manifest_path),
+                "SWIFTUI_STREAM_STATE_DIR": str(state_root),
+            }):
+                self.assertEqual(stream.manifest()["features"], [])
+                self.assertEqual(
+                    stream.configured_device_receipts_root(),
+                    state_root / "device-receipts",
+                )
+                self.assertEqual(
+                    stream.configured_ready_pointer(),
+                    state_root / "ready/test.json",
+                )
 
     def test_visual_pr_body_requires_every_evidence_link(self):
         feature = {

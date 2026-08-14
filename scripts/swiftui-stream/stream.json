@@ -26,14 +26,14 @@
   ],
   "currentTestBuild": {
     "channel": "test",
-    "build": 58,
-    "sequence": 58,
-    "commit": "d989a78d7ee4395fc8c26cbc275e080f0530aadf",
+    "build": 59,
+    "sequence": 59,
+    "commit": "3dfc1d5a7543317daa99e27269367581b42acf41",
     "bundleId": "com.alxs.t3code.typed-swiftui.dev",
     "deviceId": "2571CB7A-6A14-5E81-97D6-7F03DA41C11B",
     "receipt": "~/.t3/swiftui-stream/device-receipts/test.json",
-    "status": "installed-and-launched",
-    "launchPending": false
+    "status": "installed-awaiting-unlock",
+    "launchPending": true
   },
   "features": [
     {
@@ -55,13 +55,12 @@
       "summary": "Adds an in-app review queue for exact Dev and Test build contents, plus a phone-readable diagram of the proposed PR-based path from a proved candidate through Test, Dev, and upstream.",
       "whatToCheck": "In Test, open Settings → What’s testing. Confirm items are ordered by priority and show their review group. Expand this item and verify Original problem, numbered Steps to reproduce, What changed, What to check, Success looks like, Automated validation, and Known limits. If the app says fresh proof is being recorded, confirm Ready for Dev is disabled and wait for the replacement packet. When Visual evidence appears, verify its links, commits, thread, issue, confirmation dialog, and both readiness choices.",
       "successLooksLike": "The priority order is clear and every required section is readable without trimmed text. A pending-proof item explains its state and cannot be approved. A review-ready item expands working clean and annotated links. The diagram shows candidate PR → Test build → your Test approval → Dev build → your upstream approval → upstream PR. Test preserves exact build evidence before queuing a verdict.",
-      "validationSummary": "Fresh Test 59 aggregate validation is pending. The prior Test 58 regression train passed and is retained only as historical baseline evidence.",
+      "validationSummary": "Test 59 aggregate validation passed 54 stream checks and the 532-test TestTrain (531 passed, 1 skipped). The uplifted control plane now passes 60 focused stream checks. All 11 app-flow journeys passed. The fresh dark-mode rerun also passed all 11 journeys and retained 27 screenshots plus 27 accessibility exports. Exact acceptance-surface image and interaction proof are pending.",
       "knownLimitations": "Installing a build does not approve any item. SwiftUI Dev and upstream remain unchanged until the explicit human gates are completed. Commit 11658353d7175c55ab745c469f0c8861c1448db5 also strengthens the theme accessibility test, so this staged item and the theme item share that rollback dependency.",
       "reviewPriority": 1,
       "reviewGroup": "Review safety",
       "visualChange": true,
       "interactionChange": true,
-      "proofPending": true,
       "state": "in-test",
       "sourceBranch": "feat/swiftui-pipeline-diagram-20260813",
       "sourceThread": "7F1BCA94-9E0D-4CF6-A833-99995121ADFB",
@@ -98,7 +97,9 @@
       "integratedCommit": "4a68943c683df233c4730028ca40cb86233dfd7c",
       "testBuild": 59,
       "order": 15,
-      "tentativeDelivery": "local-only"
+      "tentativeDelivery": "local-only",
+      "reviewMedia": false,
+      "proofPending": true
     },
     {
       "id": "swiftui-stream-infrastructure",
@@ -144,7 +145,7 @@
       ],
       "whatToCheck": "Open a thread, focus the composer so the keyboard appears, then open and use the Skills popup. Type, scroll the results, choose a skill, and dismiss the keyboard.",
       "successLooksLike": "The text entry box, relevant popup results, and selection controls stay visible and usable above the keyboard without jumping, overlap, or trapped empty space.",
-      "validationSummary": "Fresh Test 59 aggregate validation is pending. The prior Test 58 regression train passed and is retained only as historical baseline evidence.",
+      "validationSummary": "Test 59 aggregate validation passed 54 stream checks and the 532-test TestTrain (531 passed, 1 skipped). The uplifted control plane now passes 60 focused stream checks. All 11 app-flow journeys passed. The fresh dark-mode rerun also passed all 11 journeys and retained 27 screenshots plus 27 accessibility exports. Exact acceptance-surface image and interaction proof are pending.",
       "knownLimitations": "Review this item with the full-height Skills popup item because both changes affect the same surface.",
       "reviewPriority": 4,
       "reviewGroup": "Composer and Skills",
@@ -161,7 +162,9 @@
         }
       ],
       "testBuild": 59,
-      "order": 1
+      "order": 1,
+      "reviewMedia": false,
+      "proofPending": true
     },
     {
       "id": "skill-popup-readability-and-height",
@@ -180,7 +183,7 @@
       ],
       "whatToCheck": "Open Skills with the keyboard visible, inspect short and long skill names and descriptions, scroll through the list, choose a skill near the bottom, and rotate or change keyboard state if convenient.",
       "successLooksLike": "Names are no longer squeezed beside descriptions, rows remain legible, the popup grows without covering the composer, the full list scrolls, and selection still works.",
-      "validationSummary": "Fresh Test 59 aggregate validation is pending. The prior Test 58 regression train passed and is retained only as historical baseline evidence.",
+      "validationSummary": "Test 59 aggregate validation passed 54 stream checks and the 532-test TestTrain (531 passed, 1 skipped). The uplifted control plane now passes 60 focused stream checks. All 11 app-flow journeys passed. The fresh dark-mode rerun also passed all 11 journeys and retained 27 screenshots plus 27 accessibility exports. Exact acceptance-surface image and interaction proof are pending.",
       "knownLimitations": "Review this item with keyboard clearance because both items share the same popup and composer boundary.",
       "reviewPriority": 4,
       "reviewGroup": "Composer and Skills",
@@ -199,7 +202,9 @@
       "order": 14,
       "startingBaseline": "125ed781e20716091222651092ed2708448bb6b6",
       "behavior": "Stack skill names above their descriptions and let the scrollable popup grow to the available vertical boundary above the composer.",
-      "delivery": "direct"
+      "delivery": "direct",
+      "reviewMedia": false,
+      "proofPending": true
     },
     {
       "id": "dev-title-label",
@@ -230,7 +235,7 @@
       ],
       "whatToCheck": "On Home, drag the thread list up and down from several positions, including near the top edge and over a thread row. Also try the intended top-edge command gesture.",
       "successLooksLike": "Normal swipes scroll the list immediately and smoothly, while the command gesture still works only from its intended top area.",
-      "validationSummary": "Fresh Test 59 aggregate validation is pending. The prior Test 58 regression train passed and is retained only as historical baseline evidence.",
+      "validationSummary": "Test 59 aggregate validation passed 54 stream checks and the 532-test TestTrain (531 passed, 1 skipped). The uplifted control plane now passes 60 focused stream checks. All 11 app-flow journeys passed. The fresh dark-mode rerun also passed all 11 journeys and retained 27 screenshots plus 27 accessibility exports. Exact acceptance-surface image and interaction proof are pending.",
       "knownLimitations": "Review this item with the top drawer and cold-boot scrolling items because they share Home gesture ownership.",
       "reviewPriority": 3,
       "reviewGroup": "Home navigation",
@@ -241,7 +246,9 @@
       "sourceThreadTitle": "Fix Threads List Scrolling",
       "sourceIssue": "https://github.com/saphid/t3code-personal/issues/82",
       "testBuild": 59,
-      "order": 3
+      "order": 3,
+      "reviewMedia": false,
+      "proofPending": true
     },
     {
       "id": "command-palette-top-drawer",
@@ -260,7 +267,7 @@
       ],
       "whatToCheck": "In dark mode, drag down slowly from the top bar on both the home thread list and an open thread, releasing below and above the threshold. Try a short deliberate flick, horizontal swipes, normal list or thread scrolling, dismissal, and opening while the keyboard is visible.",
       "successLooksLike": "On both home and thread pages, the top bar stays under the finger, the page and palette remain visually attached throughout the pull, release settles naturally without a jump, and ordinary scrolling or horizontal gestures do not open the palette.",
-      "validationSummary": "Fresh Test 59 aggregate validation is pending. The prior Test 58 regression train passed and is retained only as historical baseline evidence.",
+      "validationSummary": "Test 59 aggregate validation passed 54 stream checks and the 532-test TestTrain (531 passed, 1 skipped). The uplifted control plane now passes 60 focused stream checks. All 11 app-flow journeys passed. The fresh dark-mode rerun also passed all 11 journeys and retained 27 screenshots plus 27 accessibility exports. Exact acceptance-surface image and interaction proof are pending.",
       "knownLimitations": "Review this item with both Home scrolling items because they share the top-edge gesture boundary.",
       "reviewPriority": 3,
       "reviewGroup": "Home navigation",
@@ -277,7 +284,9 @@
       "sourceThreadTitle": "Fix Command Palette Top Drawer",
       "sourceIssue": "https://github.com/saphid/t3code-personal/issues/86",
       "testBuild": 59,
-      "order": 4
+      "order": 4,
+      "reviewMedia": false,
+      "proofPending": true
     },
     {
       "id": "development-build-source-thread",
@@ -295,7 +304,7 @@
       ],
       "whatToCheck": "Open Settings → Build changelog, expand a development change, and use its source-thread link. Return to Settings and try another entry if available.",
       "successLooksLike": "Each supported development change clearly names its source thread and opens the correct existing T3 thread rather than a duplicate, wrong thread, or dead destination.",
-      "validationSummary": "Fresh Test 59 aggregate validation is pending. The prior Test 58 regression train passed and is retained only as historical baseline evidence.",
+      "validationSummary": "Test 59 aggregate validation passed 54 stream checks and the 532-test TestTrain (531 passed, 1 skipped). The uplifted control plane now passes 60 focused stream checks. All 11 app-flow journeys passed. The fresh dark-mode rerun also passed all 11 journeys and retained 27 screenshots plus 27 accessibility exports. Exact acceptance-surface image and interaction proof are pending.",
       "knownLimitations": "Only entries that carry a source T3 thread can show a thread link.",
       "reviewPriority": 9,
       "reviewGroup": "Traceability",
@@ -310,7 +319,9 @@
       "sourceThreadTitle": "Add Thread Links to What’s New",
       "sourceIssue": "https://github.com/saphid/t3code-personal/issues/85",
       "testBuild": 59,
-      "order": 5
+      "order": 5,
+      "reviewMedia": false,
+      "proofPending": true
     },
     {
       "id": "widget-build-channel-links",
@@ -328,13 +339,12 @@
       ],
       "whatToCheck": "From a recent-tasks widget with no usable task destination, tap New task and the widget body. Confirm the installed SwiftUI Test app opens directly at New task rather than another channel or a dead link.",
       "successLooksLike": "Every fallback tap opens this same SwiftUI Test installation at New task. No App Store, Dev, or Debug copy opens, and the tap is never ignored.",
-      "validationSummary": "The focused TestTrain contract run passed 12 tests with zero failures. Fresh Test 59 aggregate validation and phone proof are pending.",
+      "validationSummary": "The focused TestTrain contract run passed 12 tests with zero failures. Test 59 aggregate validation passed 54 stream checks and the 532-test TestTrain (531 passed, 1 skipped). The uplifted control plane now passes 60 focused stream checks. All 11 app-flow journeys passed. The fresh dark-mode rerun also passed all 11 journeys and retained 27 screenshots plus 27 accessibility exports. Exact Home Screen widget fallback-tap proof is pending on the physical phone.",
       "knownLimitations": "The phone acceptance step needs the recent-tasks widget on the Home Screen and a state without a usable task deep link.",
       "reviewPriority": 3,
       "reviewGroup": "Build isolation",
       "visualChange": true,
       "interactionChange": true,
-      "proofPending": true,
       "state": "in-test",
       "sourceCommit": "a1fd13793591f79237d2447e2d7d06fceaeebc1d",
       "integratedCommits": [
@@ -347,7 +357,9 @@
       "sourceThreadTitle": "Add Thread Links to What’s New",
       "sourceIssue": "https://github.com/saphid/t3code-personal/issues/89",
       "testBuild": 59,
-      "order": 16
+      "order": 16,
+      "reviewMedia": false,
+      "proofPending": true
     },
     {
       "id": "initial-thread-live-updates",
@@ -365,7 +377,7 @@
       ],
       "whatToCheck": "Open a busy or actively responding thread from Home and watch the first load. Send or receive an update during opening if practical, then leave and reopen the thread.",
       "successLooksLike": "Messages and status move forward without briefly appearing and then disappearing, duplicating, reverting, or requiring a manual refresh.",
-      "validationSummary": "Fresh Test 59 aggregate validation is pending. The prior Test 58 regression train passed and is retained only as historical baseline evidence.",
+      "validationSummary": "The initial-task and follow-up regression journey passed. Test 59 aggregate validation passed 54 stream checks and the 532-test TestTrain (531 passed, 1 skipped). The uplifted control plane now passes 60 focused stream checks. All 11 app-flow journeys passed. The fresh dark-mode rerun also passed all 11 journeys and retained 27 screenshots plus 27 accessibility exports. Exact clean-run visual proof is pending.",
       "knownLimitations": "A useful manual check needs a thread with a live update during the initial history request.",
       "reviewPriority": 2,
       "reviewGroup": "Core reliability",
@@ -376,7 +388,9 @@
       "sourceThreadTitle": "Fix SwiftUI Thread Initial Updates",
       "sourceIssue": "https://github.com/saphid/t3code-personal/issues/83",
       "testBuild": 59,
-      "order": 6
+      "order": 6,
+      "reviewMedia": false,
+      "proofPending": true
     },
     {
       "id": "pull-request-workspace-protocol",
@@ -394,7 +408,7 @@
       ],
       "whatToCheck": "Exercise any available pull-request workspace or review entry points against a repository with an open PR. Inspect metadata and diffs, and verify ordinary non-PR workspaces still open normally.",
       "successLooksLike": "Supported PR information loads accurately without crashes, malformed content, or regressions to standard workspace and review behavior. Missing capabilities fail clearly rather than showing incorrect data.",
-      "validationSummary": "Fresh Test 59 aggregate validation is pending. The prior Test 58 regression train passed and is retained only as historical baseline evidence.",
+      "validationSummary": "The PR-tools journey passed its separate commit, push, and Pull Request surface checks. Test 59 aggregate validation passed 54 stream checks and the 532-test TestTrain (531 passed, 1 skipped). The uplifted control plane now passes 60 focused stream checks. All 11 app-flow journeys passed. The fresh dark-mode rerun also passed all 11 journeys and retained 27 screenshots plus 27 accessibility exports. Exact clean-run visual proof is pending.",
       "knownLimitations": "This is a dependency of the visible PR inbox. Review both PR items as one workflow; the protocol has no useful standalone phone acceptance step.",
       "reviewPriority": 7,
       "reviewGroup": "Pull requests",
@@ -405,7 +419,9 @@
       "sourceThreadTitle": "Port PR and GitHub Features",
       "sourceIssue": "https://github.com/saphid/personal-ops/issues/94",
       "testBuild": 59,
-      "order": 7
+      "order": 7,
+      "reviewMedia": false,
+      "proofPending": true
     },
     {
       "id": "pull-request-inbox-summary-timeline",
@@ -424,7 +440,7 @@
       ],
       "whatToCheck": "In a connected environment with open pull requests, open the PR inbox, compare titles and status with GitHub, enter several PRs, switch between Summary and Timeline, and return to the workspace.",
       "successLooksLike": "The list represents the active environment accurately, details load for the selected PR, Summary and Timeline show the expected content in order, and navigation remains responsive without mixing environments.",
-      "validationSummary": "Fresh Test 59 aggregate validation is pending. The prior Test 58 regression train passed and is retained only as historical baseline evidence.",
+      "validationSummary": "Test 59 aggregate validation passed 54 stream checks and the 532-test TestTrain (531 passed, 1 skipped). The uplifted control plane now passes 60 focused stream checks. All 11 app-flow journeys passed. The fresh dark-mode rerun also passed all 11 journeys and retained 27 screenshots plus 27 accessibility exports. Exact acceptance-surface image and interaction proof are pending.",
       "knownLimitations": "The first version is scoped to the active environment. Review it with the protocol foundation that supplies its data.",
       "reviewPriority": 7,
       "reviewGroup": "Pull requests",
@@ -440,7 +456,9 @@
       "dependsOn": [
         "pull-request-workspace-protocol"
       ],
-      "delivery": "direct"
+      "delivery": "direct",
+      "reviewMedia": false,
+      "proofPending": true
     },
     {
       "id": "safe-tool-content-recovery",
@@ -458,7 +476,7 @@
       ],
       "whatToCheck": "Trigger or revisit a recoverable tool/source-control error, read the retained error content with normal navigation or VoiceOver, activate Retry, and observe focus after recovery.",
       "successLooksLike": "The useful error content remains visible, Retry is clearly labeled and operable, focus moves to a sensible element, and successful recovery does not duplicate or erase prior context.",
-      "validationSummary": "Fresh Test 59 aggregate validation is pending. The prior Test 58 regression train passed and is retained only as historical baseline evidence.",
+      "validationSummary": "Test 59 aggregate validation passed 54 stream checks and the 532-test TestTrain (531 passed, 1 skipped). The uplifted control plane now passes 60 focused stream checks. All 11 app-flow journeys passed. The fresh dark-mode rerun also passed all 11 journeys and retained 27 screenshots plus 27 accessibility exports. Exact acceptance-surface image and interaction proof are pending.",
       "knownLimitations": "The manual path needs a retained recoverable tool error; the proof fixture supplies one without using credentials.",
       "reviewPriority": 8,
       "reviewGroup": "Accessible recovery",
@@ -474,7 +492,9 @@
       "sourceThreadTitle": "Audit and Uplift SwiftUI Code",
       "sourceIssue": "https://github.com/saphid/t3code-personal/issues/87",
       "testBuild": 59,
-      "order": 8
+      "order": 8,
+      "reviewMedia": false,
+      "proofPending": true
     },
     {
       "id": "swiftui-test-personal-connect",
@@ -493,7 +513,7 @@
       ],
       "whatToCheck": "From an unpaired or disconnected Test app on Tailnet, choose the personal connection option, complete the connection, reopen the app, and also inspect the unavailable/error state with the host unreachable if practical.",
       "successLooksLike": "The intended private host is identified clearly, one action establishes the connection without a code, it persists on reopen, and failures explain what is unavailable without altering other saved connections.",
-      "validationSummary": "Fresh Test 59 aggregate validation is pending. The prior Test 58 regression train passed and is retained only as historical baseline evidence.",
+      "validationSummary": "The manual connection and project-selection journey passed. Test 59 aggregate validation passed 54 stream checks and the 532-test TestTrain (531 passed, 1 skipped). The uplifted control plane now passes 60 focused stream checks. All 11 app-flow journeys passed. The fresh dark-mode rerun also passed all 11 journeys and retained 27 screenshots plus 27 accessibility exports. Exact clean-run visual proof is pending.",
       "knownLimitations": "The private route works only on Alex's Tailnet and is intentionally excluded from upstream delivery.",
       "reviewPriority": 5,
       "reviewGroup": "Connection safety",
@@ -513,7 +533,9 @@
       "sourceIssue": "https://github.com/saphid/t3code-personal/issues/54",
       "sourceThread": "019ff7b4-531e-7d43-9233-ced5bc44bb3b",
       "startingBaseline": "d79e45e3ae1e305b248c751d6a51bac7210fff6a",
-      "delivery": "local-only"
+      "delivery": "local-only",
+      "reviewMedia": false,
+      "proofPending": true
     },
     {
       "id": "cold-boot-home-list-scrolling",
@@ -532,7 +554,7 @@
       ],
       "whatToCheck": "Force-close Test, relaunch it cold with a populated Home list, immediately scroll up and down before metadata finishes, open a thread, return Home, and repeat once while the connection is slow if possible.",
       "successLooksLike": "The list responds to the first drag without freezing or snapping back, metadata fills in without stealing touch handling, and opening or returning to Home does not regress scrolling.",
-      "validationSummary": "Fresh Test 59 aggregate validation is pending. The prior Test 58 regression train passed and is retained only as historical baseline evidence.",
+      "validationSummary": "The Home navigation journey passed from a fresh app launch. Test 59 aggregate validation passed 54 stream checks and the 532-test TestTrain (531 passed, 1 skipped). The uplifted control plane now passes 60 focused stream checks. All 11 app-flow journeys passed. The fresh dark-mode rerun also passed all 11 journeys and retained 27 screenshots plus 27 accessibility exports. Exact clean-run visual proof is pending.",
       "knownLimitations": "Review this item with ordinary Home scrolling and the command drawer because all three affect Home interaction.",
       "reviewPriority": 3,
       "reviewGroup": "Home navigation",
@@ -547,7 +569,9 @@
       "sourceIssue": "https://github.com/saphid/t3code-personal/issues/55",
       "sourceThread": "019ff86d-be17-7772-beae-d39646e325ac",
       "startingBaseline": "d79e45e3ae1e305b248c751d6a51bac7210fff6a",
-      "delivery": "direct"
+      "delivery": "direct",
+      "reviewMedia": false,
+      "proofPending": true
     },
     {
       "id": "shared-electron-vscode-themes",
@@ -568,7 +592,7 @@
       ],
       "whatToCheck": "Open Settings → Theme, browse and search the catalog, select several light and dark themes, inspect Home, chat, settings, code/tool content, and terminal text, then relaunch the app. With VoiceOver on, focus theme cards and confirm each is announced as its theme name followed by light or dark.",
       "successLooksLike": "The catalog is readable and responsive, VoiceOver announces a real theme name and appearance instead of placeholder text, selections apply consistently with usable contrast, terminal and native colors agree, the choice persists after relaunch, and switching back to System works.",
-      "validationSummary": "Fresh Test 59 aggregate validation is pending. The prior Test 58 regression train passed and is retained only as historical baseline evidence.",
+      "validationSummary": "The Home navigation journey passed its dark Settings and Themes entry-point checks. Test 59 aggregate validation passed 54 stream checks and the 532-test TestTrain (531 passed, 1 skipped). The uplifted control plane now passes 60 focused stream checks. All 11 app-flow journeys passed. The fresh dark-mode rerun also passed all 11 journeys and retained 27 screenshots plus 27 accessibility exports. Exact clean-run visual proof is pending.",
       "knownLimitations": "The prior packet contained a literal VoiceOver label placeholder. This replacement build must include and prove the correction before review. Commit 11658353d7175c55ab745c469f0c8861c1448db5 strengthens both this theme test and the review-packet gate, so those two staged items share that rollback dependency.",
       "reviewPriority": 6,
       "reviewGroup": "Themes and accessibility",
@@ -588,7 +612,9 @@
       "sourceIssue": "https://github.com/saphid/t3code-personal/issues/51",
       "sourceThread": "9bed9116-ac61-4787-9b19-e6e8b90bb80f",
       "startingBaseline": "b3f003f51f29fb84c3aaa80c69c2fd4a74f05765",
-      "delivery": "direct"
+      "delivery": "direct",
+      "reviewMedia": false,
+      "proofPending": true
     },
     {
       "id": "home-build-number-swipe-space",
@@ -629,7 +655,7 @@
       ],
       "whatToCheck": "Run the focused candidate and Test-train plans, inspect the retained phone screenshots, confirm taps, swipes, and captions align in annotated proof, and verify that credentials do not enter evidence.",
       "successLooksLike": "All selected journeys and native suites pass from one built test product, screenshots are readable and unobscured, annotated proof matches the action ledger, and receipts bind the evidence to the candidate commit.",
-      "validationSummary": "Fresh Test 59 aggregate validation is pending. The prior Test 58 regression train passed and is retained only as historical baseline evidence.",
+      "validationSummary": "All four grouped interaction recordings completed their focused XCUITest journeys successfully. Test 59 aggregate validation passed 54 stream checks and the 532-test TestTrain (531 passed, 1 skipped). The uplifted control plane now passes 60 focused stream checks. All 11 app-flow journeys passed. The fresh dark-mode rerun also passed all 11 journeys and retained 27 screenshots plus 27 accessibility exports. Exact clean-run visual proof is pending.",
       "knownLimitations": "This item is verification infrastructure, not a standalone phone feature. Review its receipts and proof controls after the visible product groups.",
       "reviewPriority": 10,
       "reviewGroup": "Verification infrastructure",
@@ -643,7 +669,9 @@
       "integratedCommit": "19459ed2ee8b689710c55efc42d17cff3493b9e4",
       "testBuild": 59,
       "receipt": ".t3/evidence/integrated-pr-final-20260814T0715Z/verification.receipt.json",
-      "delivery": "local-only"
+      "delivery": "local-only",
+      "reviewMedia": false,
+      "proofPending": true
     }
   ]
 }
