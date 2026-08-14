@@ -43,7 +43,10 @@
         "workspace-search",
         "settings-theme-menu",
         "settings-connections"
-      ]
+      ],
+      "checkpointAlternatives": {
+        "settings-theme-menu": ["settings-theme-catalog"]
+      }
     },
     {
       "id": "new-task-options",

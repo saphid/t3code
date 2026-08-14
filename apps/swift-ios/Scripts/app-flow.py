@@ -85,6 +85,28 @@ def catalog_data(path: Path, test_source: Path) -> dict[str, Any]:
             fail(f"journey {journey_id} needs a checkpoints array")
         if len(checkpoints) != len(set(checkpoints)):
             fail(f"journey {journey_id} contains duplicate checkpoints")
+        checkpoint_alternatives = journey.get("checkpointAlternatives", {})
+        if not isinstance(checkpoint_alternatives, dict):
+            fail(f"journey {journey_id} checkpointAlternatives must be an object")
+        for checkpoint, alternatives in checkpoint_alternatives.items():
+            if checkpoint not in checkpoints:
+                fail(
+                    f"journey {journey_id} has alternatives for unknown checkpoint "
+                    f"{checkpoint!r}"
+                )
+            if not isinstance(alternatives, list) or not alternatives or not all(
+                isinstance(alternative, str) and alternative
+                for alternative in alternatives
+            ):
+                fail(
+                    f"journey {journey_id} checkpoint {checkpoint!r} needs a "
+                    "non-empty alternatives array"
+                )
+            if len(alternatives) != len(set(alternatives)):
+                fail(
+                    f"journey {journey_id} checkpoint {checkpoint!r} contains "
+                    "duplicate alternatives"
+                )
         duplicate_checkpoints = all_checkpoints.intersection(checkpoints)
         if duplicate_checkpoints:
             fail(
@@ -670,12 +692,19 @@ def attachment_evidence(
     root: Path, journeys: list[dict[str, Any]]
 ) -> tuple[dict[str, Any] | None, str | None]:
     manifest_path = root / "manifest.json"
-    expected = {
-        (checkpoint, extension)
+    expected = [
+        (
+            checkpoint,
+            extension,
+            {
+                checkpoint,
+                *journey.get("checkpointAlternatives", {}).get(checkpoint, []),
+            },
+        )
         for journey in journeys
         for checkpoint in journey["checkpoints"]
         for extension in ("png", "txt")
-    }
+    ]
     if not manifest_path.is_file():
         return None, f"attachment manifest does not exist: {manifest_path}"
     try:
@@ -714,7 +743,14 @@ def attachment_evidence(
                     "sha256": sha256_file(path),
                 }
             )
-    missing = sorted(expected - observed)
+    missing = sorted(
+        (checkpoint, extension)
+        for checkpoint, extension, accepted_names in expected
+        if not any(
+            (accepted_name, extension) in observed
+            for accepted_name in accepted_names
+        )
+    )
     if missing:
         formatted = ", ".join(f"{name}.{extension}" for name, extension in missing)
         return None, f"missing required checkpoint attachments: {formatted}"
