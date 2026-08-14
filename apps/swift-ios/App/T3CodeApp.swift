@@ -1,3 +1,4 @@
+import Foundation
 import SwiftUI
 
 @main
@@ -6,8 +7,30 @@ struct T3CodeApp: App {
     @UIApplicationDelegateAdaptor(T3PlatformAppDelegate.self) private var appDelegate
     @State private var model: FeatureRootModel
     @State private var themeRuntime = T3ThemeRuntime.shared
+    private let draftStore: FeatureComposerDraftStore
 
     init() {
+        #if DEBUG
+        if AppFlowFixtureLaunch.isEnabled {
+            let fixtureID = UUID().uuidString
+            draftStore = FeatureComposerDraftStore(
+                fileURL: FileManager.default.temporaryDirectory
+                    .appendingPathComponent("t3-app-flow-\(fixtureID)-drafts.json")
+            )
+            _model = State(
+                initialValue: FeatureRootModel(
+                    client: AppFlowFixtureClient(scenario: AppFlowFixtureLaunch.scenario),
+                    outboxStore: FeatureOutboxStore(
+                        fileURL: FileManager.default.temporaryDirectory
+                            .appendingPathComponent("t3-app-flow-\(fixtureID)-outbox.json")
+                    )
+                )
+            )
+            return
+        }
+        #endif
+
+        draftStore = .shared
         let client = NativeFeatureClient()
         let model = FeatureRootModel(client: client)
         _model = State(initialValue: model)
@@ -23,7 +46,7 @@ struct T3CodeApp: App {
     var body: some Scene {
         WindowGroup {
             RootView {
-                PlatformRootView(model: model)
+                PlatformRootView(model: model, draftStore: draftStore)
             }
             .environment(themeRuntime)
         }

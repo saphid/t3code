@@ -30,7 +30,15 @@ public struct ConnectionOnboardingView: View {
         onCancel: (@MainActor () -> Void)? = nil
     ) {
         self.model = model
+        #if DEBUG
+        if AppFlowFixtureLaunch.isEnabled {
+            readinessChecker = AppFlowFixtureConnectionReadinessChecker()
+        } else {
+            readinessChecker = LocalNetworkAccessChecker()
+        }
+        #else
         readinessChecker = LocalNetworkAccessChecker()
+        #endif
         personalFleetPairingRequester = PersonalFleetPairingService.shared
         buildChannel = .current
         self.onConnected = onConnected
@@ -119,6 +127,17 @@ public struct ConnectionOnboardingView: View {
             cancelConnectionAttempt()
             cancelPersonalFleetPairing()
         }
+        #if DEBUG
+        .onAppear {
+            if let credentials = AppFlowStagedCredentials.consumeIfRequested() {
+                endpoint = credentials.server
+                pairingCode = credentials.token
+                entryHeading = "Confirm connection"
+                errorMessage = nil
+                stage = .details
+            }
+        }
+        #endif
     }
 
     private var welcomeView: some View {
@@ -169,7 +188,8 @@ public struct ConnectionOnboardingView: View {
                     connectionAction(
                         title: "Scan QR code",
                         subtitle: "Pair directly with a computer nearby",
-                        systemImage: "qrcode.viewfinder"
+                        systemImage: "qrcode.viewfinder",
+                        accessibilityIdentifier: "connection-action-scan-qr"
                     ) {
                         cancelPersonalFleetPairing()
                         showingScanner = true
@@ -180,7 +200,8 @@ public struct ConnectionOnboardingView: View {
                     connectionAction(
                         title: "Paste connection link",
                         subtitle: "Copy it from T3 Code on your computer",
-                        systemImage: "doc.on.clipboard"
+                        systemImage: "doc.on.clipboard",
+                        accessibilityIdentifier: "connection-action-paste-link"
                     ) {
                         pasteConnectionLink()
                     }
@@ -190,7 +211,8 @@ public struct ConnectionOnboardingView: View {
                     connectionAction(
                         title: "Enter details manually",
                         subtitle: "Use the server address and pairing code",
-                        systemImage: "keyboard"
+                        systemImage: "keyboard",
+                        accessibilityIdentifier: "connection-action-manual"
                     ) {
                         entryHeading = "Connect manually"
                         cancelPersonalFleetPairing()
@@ -279,7 +301,13 @@ public struct ConnectionOnboardingView: View {
                         .font(T3Typography.eyebrow)
                         .foregroundStyle(T3Colors.textSecondary)
 
-                    TextField("http://192.168.1.5:3773", text: $endpoint)
+                    Group {
+                        if hidesStagedAppFlowCredentials {
+                            SecureField("Server address", text: $endpoint)
+                        } else {
+                            TextField("http://192.168.1.5:3773", text: $endpoint)
+                        }
+                    }
                         .textInputAutocapitalization(.never)
                         .keyboardType(.URL)
                         .autocorrectionDisabled()
@@ -296,7 +324,13 @@ public struct ConnectionOnboardingView: View {
                         .font(T3Typography.eyebrow)
                         .foregroundStyle(T3Colors.textSecondary)
 
-                    TextField("12-character code", text: $pairingCode)
+                    Group {
+                        if hidesStagedAppFlowCredentials {
+                            SecureField("12-character code", text: $pairingCode)
+                        } else {
+                            TextField("12-character code", text: $pairingCode)
+                        }
+                    }
                         .textInputAutocapitalization(.never)
                         .textContentType(.oneTimeCode)
                         .autocorrectionDisabled()
@@ -348,6 +382,16 @@ public struct ConnectionOnboardingView: View {
                 }
             }
         }
+    }
+
+    private var hidesStagedAppFlowCredentials: Bool {
+        #if DEBUG
+        ProcessInfo.processInfo.arguments.contains(
+            AppFlowStagedCredentials.enableArgument
+        )
+        #else
+        false
+        #endif
     }
 
     private var progressView: some View {
@@ -405,6 +449,7 @@ public struct ConnectionOnboardingView: View {
         title: String,
         subtitle: String,
         systemImage: String,
+        accessibilityIdentifier: String,
         action: @escaping () -> Void
     ) -> some View {
         Button(action: action) {
@@ -412,6 +457,7 @@ public struct ConnectionOnboardingView: View {
                 Image(systemName: systemImage)
                     .font(.system(size: 18, weight: .medium))
                     .frame(width: 28)
+                    .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: 3) {
                     Text(title)
                         .font(.body.weight(.semibold))
@@ -423,12 +469,16 @@ public struct ConnectionOnboardingView: View {
                 Image(systemName: "chevron.right")
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(.tertiary)
+                    .accessibilityHidden(true)
             }
             .foregroundStyle(.primary)
             .contentShape(Rectangle())
             .padding(.vertical, 14)
         }
         .buttonStyle(.plain)
+        .accessibilityIdentifier(accessibilityIdentifier)
+        .accessibilityLabel(title)
+        .accessibilityHint(subtitle)
     }
 
     private func connectionError(message: String) -> some View {
@@ -653,6 +703,12 @@ public struct ConnectionOnboardingView: View {
         personalFleetConnectingID = nil
     }
 }
+
+#if DEBUG
+private struct AppFlowFixtureConnectionReadinessChecker: ConnectionReadinessChecking {
+    func check(endpoint _: String) async -> ConnectionReadiness { .ready }
+}
+#endif
 
 private enum ConnectionStage: Equatable {
     case welcome

@@ -1,0 +1,105 @@
+env:
+  T3_SWIFT_PIPELINE_RECEIPT_DIR: ".t3/swiftui-private-ci-artifacts"
+
+agents:
+  queue: "swiftui-private-mac"
+
+steps:
+  - label: ":package: Pinned private CI tools"
+    key: "private-ci-tools"
+    command: "scripts/swiftui-pipeline/fastlane.sh --install"
+
+  - label: ":mag: Candidate verification"
+    key: "candidate-verification"
+    depends_on: "private-ci-tools"
+    command: "scripts/swiftui-pipeline/fastlane.sh swiftui_candidate_verification"
+    concurrency: 1
+    concurrency_group: "swiftui/native-build"
+    artifact_paths:
+      - ".t3/swiftui-private-ci-artifacts/**/*"
+
+  - label: ":iphone: Candidate Simulator"
+    key: "candidate-simulator"
+    depends_on: "candidate-verification"
+    command: "scripts/swiftui-pipeline/fastlane.sh swiftui_candidate_simulator"
+    concurrency: 1
+    concurrency_group: "swiftui/simulator"
+    artifact_paths:
+      - ".t3/swiftui-private-ci-artifacts/**/*"
+
+  - label: ":test_tube: SwiftUI Test train"
+    key: "test-train"
+    depends_on: "candidate-simulator"
+    command: "scripts/swiftui-pipeline/fastlane.sh swiftui_test_train"
+    concurrency: 1
+    concurrency_group: "swiftui/native-build"
+    artifact_paths:
+      - ".t3/swiftui-private-ci-artifacts/**/*"
+
+  - label: ":lock: Build signed SwiftUI Test"
+    key: "test-phone-build"
+    depends_on: "test-train"
+    command: "scripts/swiftui-pipeline/fastlane.sh swiftui_test_phone_build"
+    concurrency: 1
+    concurrency_group: "swiftui/signing"
+    artifact_paths:
+      - ".t3/swiftui-private-ci-artifacts/**/*"
+
+  - label: ":iphone: Reconcile SwiftUI Test phone"
+    key: "test-phone-install"
+    depends_on: "test-phone-build"
+    command: "scripts/swiftui-pipeline/fastlane.sh swiftui_test_phone_install"
+    concurrency: 1
+    concurrency_group: "swiftui/test-phone"
+    artifact_paths:
+      - ".t3/swiftui-private-ci-artifacts/**/*"
+
+  - block: ":raised_hand: Human acceptance for installed SwiftUI Test"
+    key: "human-acceptance"
+    depends_on: "test-phone-install"
+    prompt: "Approve only the exact installed Test receipt and the named Candidate set."
+    fields:
+      - text: "Approval receipt reference"
+        key: "approval-receipt-reference"
+        required: true
+
+  - label: ":arrow_up: Validate Dev promotion"
+    key: "dev-promotion"
+    depends_on: "human-acceptance"
+    command: >-
+      T3_SWIFT_APPROVAL_RECEIPT_REFERENCE="$(buildkite-agent meta-data get approval-receipt-reference)"
+      scripts/swiftui-pipeline/fastlane.sh swiftui_dev_promotion
+    concurrency: 1
+    concurrency_group: "swiftui/native-build"
+    artifact_paths:
+      - ".t3/swiftui-private-ci-artifacts/**/*"
+
+  - label: ":lock: Build signed SwiftUI Dev"
+    key: "dev-phone-build"
+    depends_on: "dev-promotion"
+    command: "scripts/swiftui-pipeline/fastlane.sh swiftui_dev_phone_build"
+    concurrency: 1
+    concurrency_group: "swiftui/signing"
+    artifact_paths:
+      - ".t3/swiftui-private-ci-artifacts/**/*"
+
+  - label: ":iphone: Reconcile SwiftUI Dev phone"
+    key: "dev-phone-install"
+    depends_on: "dev-phone-build"
+    command: "scripts/swiftui-pipeline/fastlane.sh swiftui_dev_phone_install"
+    concurrency: 1
+    concurrency_group: "swiftui/dev-phone"
+    artifact_paths:
+      - ".t3/swiftui-private-ci-artifacts/**/*"
+
+  - label: ":package: Validate upstream handoff"
+    key: "upstream-handoff"
+    depends_on: "dev-phone-install"
+    command: >-
+      scripts/swiftui-pipeline/fastlane.sh swiftui_upstream_handoff
+      pr_body:"${T3_SWIFT_UPSTREAM_PR_BODY}"
+      pr_number:"${T3_SWIFT_UPSTREAM_PR_NUMBER}"
+    concurrency: 1
+    concurrency_group: "swiftui/native-build"
+    artifact_paths:
+      - ".t3/swiftui-private-ci-artifacts/**/*"

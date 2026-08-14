@@ -62,6 +62,13 @@ Use `gesture` or scoped swipe actions when needed. If a gesture is unreliable, r
 - Use debugger tools only when the task requires runtime diagnosis; attach to the selected simulator and app rather than an ambiguous process.
 - Summarize relevant errors instead of returning unbounded logs.
 
+For requested proof video, use `record_sim_video` on the selected simulator and
+load [`prepare-proof-media`](../prepare-proof-media/SKILL.md) for post-production.
+Record semantic action timestamps and normalized element centers or gesture
+paths while driving the UI. Stop the raw capture only after the visible
+postcondition settles; the proof-media skill preserves it and derives matched
+clean and annotated outputs.
+
 ## Clean up
 
 Stop only log captures, debugger sessions, apps, or simulators started for the current test. Leave pre-existing simulators and unrelated sessions alone.

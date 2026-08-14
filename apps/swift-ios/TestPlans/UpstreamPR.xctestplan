@@ -1,0 +1,38 @@
+{
+  "configurations" : [
+    {
+      "id" : "50000000-0000-4000-8000-000000000005",
+      "name" : "Upstream pull request",
+      "options" : {
+
+      }
+    }
+  ],
+  "defaultOptions" : {
+    "codeCoverage" : false,
+    "targetForVariableExpansion" : {
+      "containerPath" : "container:T3Code.xcodeproj",
+      "identifier" : "A50000000000000000000001",
+      "name" : "T3Code"
+    }
+  },
+  "testTargets" : [
+    {
+      "parallelizable" : true,
+      "target" : {
+        "containerPath" : "container:T3Code.xcodeproj",
+        "identifier" : "A50000000000000000000002",
+        "name" : "T3CodeTests"
+      }
+    },
+    {
+      "parallelizable" : false,
+      "target" : {
+        "containerPath" : "container:T3Code.xcodeproj",
+        "identifier" : "A50000000000000000000003",
+        "name" : "T3CodeUITests"
+      }
+    }
+  ],
+  "version" : 1
+}

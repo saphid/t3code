@@ -532,9 +532,11 @@ struct HomeThreadCollectionView: UIViewRepresentable {
             item: HomeCollectionItem,
             now: Date
         ) {
+            cell.accessibilityIdentifier = nil
             switch item {
             case let .thread(thread, context, _, _, _):
                 cell.isAccessibilityElement = true
+                cell.accessibilityIdentifier = "thread-\(thread.id)"
                 cell.accessibilityTraits = selectedThreadID == thread.id
                     ? [.button, .selected]
                     : .button
@@ -974,6 +976,7 @@ private final class HomeCollectionCell: UICollectionViewListCell {
     override func prepareForReuse() {
         super.prepareForReuse()
         onAccessibilityActivate = nil
+        accessibilityIdentifier = nil
         accessibilityCustomActions = nil
     }
 }

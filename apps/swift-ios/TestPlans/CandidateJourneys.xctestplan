@@ -1,0 +1,30 @@
+{
+  "configurations" : [
+    {
+      "id" : "20000000-0000-4000-8000-000000000002",
+      "name" : "Candidate journeys",
+      "options" : {
+
+      }
+    }
+  ],
+  "defaultOptions" : {
+    "codeCoverage" : false,
+    "targetForVariableExpansion" : {
+      "containerPath" : "container:T3Code.xcodeproj",
+      "identifier" : "A50000000000000000000001",
+      "name" : "T3Code"
+    }
+  },
+  "testTargets" : [
+    {
+      "parallelizable" : false,
+      "target" : {
+        "containerPath" : "container:T3Code.xcodeproj",
+        "identifier" : "A50000000000000000000003",
+        "name" : "T3CodeUITests"
+      }
+    }
+  ],
+  "version" : 1
+}

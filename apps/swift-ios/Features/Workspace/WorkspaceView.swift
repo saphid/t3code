@@ -120,6 +120,7 @@ public struct WorkspaceView: View {
     private let submitMessage: (FeatureMessageSubmission) async -> Bool
     private let acknowledgeIncomingShare: (String) async -> Void
     private let releaseIncomingSharePresentation: @MainActor (String) -> Void
+    private let draftStore: FeatureComposerDraftStore
 
     @State private var selectedThreadID: String?
     @State private var selectedPullRequestEnvironmentID: String?
@@ -159,7 +160,8 @@ public struct WorkspaceView: View {
     public init(
         model: FeatureRootModel,
         submitNewTask: ((NewTaskRequest) async -> FeatureThread?)? = nil,
-        submitMessage: ((FeatureMessageSubmission) async -> Bool)? = nil
+        submitMessage: ((FeatureMessageSubmission) async -> Bool)? = nil,
+        draftStore: FeatureComposerDraftStore = .shared
     ) {
         self.init(
             model: model,
@@ -168,7 +170,8 @@ public struct WorkspaceView: View {
             submitNewTask: submitNewTask,
             submitMessage: submitMessage,
             acknowledgeIncomingShare: { _ in },
-            releaseIncomingSharePresentation: { _ in }
+            releaseIncomingSharePresentation: { _ in },
+            draftStore: draftStore
         )
     }
 
@@ -179,13 +182,15 @@ public struct WorkspaceView: View {
         submitNewTask: ((NewTaskRequest) async -> FeatureThread?)? = nil,
         submitMessage: ((FeatureMessageSubmission) async -> Bool)? = nil,
         acknowledgeIncomingShare: @escaping (String) async -> Void = { _ in },
-        releaseIncomingSharePresentation: @escaping @MainActor (String) -> Void = { _ in }
+        releaseIncomingSharePresentation: @escaping @MainActor (String) -> Void = { _ in },
+        draftStore: FeatureComposerDraftStore = .shared
     ) {
         self.model = model
         self.navigationRequest = navigationRequest
         self.onNavigationRequestConsumed = onNavigationRequestConsumed
         self.acknowledgeIncomingShare = acknowledgeIncomingShare
         self.releaseIncomingSharePresentation = releaseIncomingSharePresentation
+        self.draftStore = draftStore
         self.submitNewTask = submitNewTask ?? { request in
             do {
                 let thread = try await model.client.createThreadAndSend(
@@ -251,7 +256,8 @@ public struct WorkspaceView: View {
                     initialProjectID: presentation?.initialProjectID,
                     initialWorkspace: presentation?.initialWorkspace,
                     incomingShareID: presentation?.incomingShareID,
-                    acknowledgeIncomingShare: acknowledgeIncomingShare
+                    acknowledgeIncomingShare: acknowledgeIncomingShare,
+                    draftStore: draftStore
                 )
                 .id(newTaskPresentation.presentationID)
                 .onAppear {
@@ -521,7 +527,8 @@ public struct WorkspaceView: View {
                 submitMessage: submitMessage,
                 onNavigateBack: closeSelectedThread,
                 onCommandPaletteDragChanged: updateCommandPaletteDrag,
-                onCommandPaletteDragEnded: settleCommandPaletteDrag
+                onCommandPaletteDragEnded: settleCommandPaletteDrag,
+                draftStore: draftStore
             )
             .id(id)
         } else {
@@ -1493,9 +1500,13 @@ struct HomeThreadRowContext: Equatable {
             let explicitProvider = thread.providerName?
                 .trimmingCharacters(in: .whitespacesAndNewlines)
             let configuredProvider = thread.providerID.flatMap { providerID in
-                environmentID.flatMap {
+                let environmentProvider = environmentID.flatMap {
                     snapshot.providersByEnvironment?[$0]?.first(where: { $0.id == providerID })
                 }
+                return environmentProvider
+                    ?? (snapshot.providersByEnvironment == nil
+                        ? snapshot.providers.first(where: { $0.id == providerID })
+                        : nil)
             }
             let providerName = (explicitProvider?.isEmpty == false ? explicitProvider : nil)
                 ?? configuredProvider?.name

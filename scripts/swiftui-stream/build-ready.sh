@@ -67,10 +67,13 @@ else
 fi
 COMMIT="$(git -C "$REPO_ROOT" rev-parse HEAD)"
 DERIVED="${T3_SWIFT_DERIVED_DATA_PATH:-$APP_DIR/.derivedData/ready-$CHANNEL}"
+CLONED_SOURCE_PACKAGES_PATH="${T3_SWIFT_CLONED_SOURCE_PACKAGES_PATH:-$HOME/.t3/cache/swift-ios/source-packages}"
+COMPILATION_CACHE_PATH="${T3_SWIFT_COMPILATION_CACHE_PATH:-$HOME/.t3/cache/swift-ios/compilation-cache}"
 DESTINATION="generic/platform=iOS"
 python3 "$SCRIPT_DIR/generate_testing_manifest.py" \
   "$REPO_ROOT" "$CHANNEL" "$BUILD" "$TESTING_MANIFEST"
 BUILD_TESTING="$(base64 < "$TESTING_MANIFEST" | tr -d '\n')"
+mkdir -p "$CLONED_SOURCE_PACKAGES_PATH" "$COMPILATION_CACHE_PATH"
 
 xcodebuild build \
   -quiet \
@@ -79,10 +82,13 @@ xcodebuild build \
   -configuration "$CONFIGURATION" \
   -destination "$DESTINATION" \
   -derivedDataPath "$DERIVED" \
+  -clonedSourcePackagesDirPath "$CLONED_SOURCE_PACKAGES_PATH" \
+  -disablePackageRepositoryCache \
   -allowProvisioningUpdates \
   -allowProvisioningDeviceRegistration \
   "DEVELOPMENT_TEAM=$TEAM" \
   "CURRENT_PROJECT_VERSION=$BUILD" \
+  "COMPILATION_CACHE_CAS_PATH=$COMPILATION_CACHE_PATH" \
   "T3_GIT_COMMIT=$COMMIT" \
   "T3_GIT_REPO_URL=https://github.com/saphid/t3code-personal" \
   "T3_GIT_BASE_REF=upstream/t3code/rebuild-mobile-app-swift" \

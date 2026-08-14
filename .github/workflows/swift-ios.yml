@@ -1,5 +1,8 @@
 name: SwiftUI iOS
 
+permissions:
+  contents: read
+
 on:
   pull_request:
     paths:
@@ -31,12 +34,24 @@ concurrency:
 jobs:
   test:
     name: Contract fixtures and native tests
-    runs-on: blacksmith-6vcpu-macos-26
-    timeout-minutes: 25
+    # GitHub's macos-26 image publishes the exact Xcode/runtime inventory below;
+    # fail closed until another runner image documents the same snapshot stack.
+    runs-on: macos-26
+    # Keep this above the sum of the runner's own fail-closed build/test
+    # budgets so component timeouts can still emit uploadable evidence.
+    timeout-minutes: 65
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.6.app/Contents/Developer
+      T3_SWIFT_EXPECTED_TOOLCHAIN: Xcode 26.6|Build version 17F113
+      T3_SWIFT_EXPECTED_SIMULATOR_NAME: T3Code-CI
+      T3_SWIFT_EXPECTED_SIMULATOR_OS: "26.5"
+      T3_SWIFT_SIMULATOR_DEVICE_TYPE: com.apple.CoreSimulator.SimDeviceType.iPhone-17-Pro
+      T3_SWIFT_SIMULATOR_RUNTIME: com.apple.CoreSimulator.SimRuntime.iOS-26-5
     steps:
       - name: Checkout
         uses: actions/checkout@v6
         with:
+          fetch-depth: 0
           sparse-checkout: |
             /*
             !/.repos/
@@ -54,5 +69,62 @@ jobs:
       - name: Verify generated wire fixtures
         run: node scripts/generate-swift-wire-fixtures.ts --check
 
-      - name: Test SwiftUI client
-        run: apps/swift-ios/Scripts/ci-test.sh
+      - name: Select fail-safe pull-request plan
+        if: github.event_name == 'pull_request'
+        run: |
+          selection_path="${RUNNER_TEMP}/swift-ios-selection.json"
+          selected_plan="$(python3 apps/swift-ios/Scripts/app-flow.py select-plan \
+            --base-ref "${{ github.event.pull_request.base.sha }}" \
+            --head-ref "${{ github.event.pull_request.head.sha }}" \
+            --output "${selection_path}")"
+          echo "T3_SWIFT_PR_PLAN=${selected_plan}" >>"${GITHUB_ENV}"
+          echo "T3_SWIFT_SELECTION_DECISION=${selection_path}" >>"${GITHUB_ENV}"
+
+      - name: Verify SwiftUI pull request
+        if: github.event_name == 'pull_request'
+        run: apps/swift-ios/Scripts/ci-verify.sh "${T3_SWIFT_PR_PLAN}"
+        env:
+          T3_SWIFT_EVIDENCE_DIR: ${{ runner.temp }}/swift-ios-evidence
+          T3_SWIFT_XCODE_TEST_PLAN: UpstreamPR
+
+      - name: Verify SwiftUI main
+        if: github.event_name == 'push'
+        run: apps/swift-ios/Scripts/ci-verify.sh regression
+        env:
+          T3_SWIFT_EVIDENCE_DIR: ${{ runner.temp }}/swift-ios-evidence
+          T3_SWIFT_XCODE_TEST_PLAN: OfficialRelease
+
+      - name: Upload SwiftUI verification receipts
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: swift-ios-verification-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/swift-ios-evidence/*.receipt.json
+            ${{ runner.temp }}/swift-ios-evidence/*.summary.json
+            ${{ runner.temp }}/swift-ios-evidence/*.tests.json
+            ${{ runner.temp }}/swift-ios-evidence/*.attachments/**
+            ${{ runner.temp }}/swift-ios-evidence/*.manifest.json
+            ${{ runner.temp }}/swift-ios-selection.json
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Preserve structured SwiftUI result bundles
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: swift-ios-result-bundles-${{ github.sha }}
+          path: ${{ runner.temp }}/swift-ios-evidence/*.xcresult
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Upload failed snapshot diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: swift-ios-snapshot-diagnostics-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/swift-ios-evidence/native-unit.attachments/**
+            ${{ runner.temp }}/swift-ios-evidence/*.xcodebuild.log
+          if-no-files-found: warn
+          retention-days: 14

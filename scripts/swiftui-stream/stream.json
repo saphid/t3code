@@ -353,6 +353,23 @@
       "sourceBranch": "t3code/remove-github-version-hash",
       "startingBaseline": "125ed781e20716091222651092ed2708448bb6b6",
       "delivery": "local-only"
+    },
+    {
+      "id": "app-flow-regression-tests",
+      "name": "Automate native SwiftUI happy-path and menu regression coverage",
+      "aliases": ["app flow tests", "UI journey tests", "menu regression coverage"],
+      "summary": "Adds deterministic native SwiftUI happy-path, menu, accessibility, security, and proof-media regression coverage with reusable Xcode Test Plans.",
+      "whatToCheck": "Run the focused candidate and Test-train plans, inspect the retained phone screenshots, confirm taps, swipes, and captions align in annotated proof, and verify that credentials do not enter evidence.",
+      "successLooksLike": "All selected journeys and native suites pass from one built test product, screenshots are readable and unobscured, annotated proof matches the action ledger, and receipts bind the evidence to the candidate commit.",
+      "state": "proved",
+      "sourceBranch": "t3code/deterministic-swiftui-pipeline-20260814",
+      "sourceThread": "019ff9b0-3de8-7f31-8f7d-b6d1b9545949",
+      "sourceIssue": "https://github.com/saphid/t3code-personal/issues/58",
+      "startingBaseline": "a7d313021f312e3c6c00eeb9afd0e12e79ccad8c",
+      "sourceCommit": "d7f1bbd2e61755f42d7ae9378914f1c6443a9a1d",
+      "candidateCommit": "d7f1bbd2e61755f42d7ae9378914f1c6443a9a1d",
+      "receipt": ".t3/evidence/integrated-pr-final-20260814T0715Z/verification.receipt.json",
+      "delivery": "local-only"
     }
   ]
 }

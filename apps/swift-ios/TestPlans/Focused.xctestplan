@@ -1,0 +1,30 @@
+{
+  "configurations" : [
+    {
+      "id" : "10000000-0000-4000-8000-000000000001",
+      "name" : "Focused",
+      "options" : {
+
+      }
+    }
+  ],
+  "defaultOptions" : {
+    "codeCoverage" : false,
+    "targetForVariableExpansion" : {
+      "containerPath" : "container:T3Code.xcodeproj",
+      "identifier" : "A50000000000000000000001",
+      "name" : "T3Code"
+    }
+  },
+  "testTargets" : [
+    {
+      "parallelizable" : true,
+      "target" : {
+        "containerPath" : "container:T3Code.xcodeproj",
+        "identifier" : "A50000000000000000000002",
+        "name" : "T3CodeTests"
+      }
+    }
+  ],
+  "version" : 1
+}

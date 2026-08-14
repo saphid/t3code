@@ -6,6 +6,7 @@ public struct FeatureRootView: View {
     private let onNavigationRequestConsumed: @MainActor (UUID) -> Void
     private let acknowledgeIncomingShare: (String) async -> Void
     private let releaseIncomingSharePresentation: @MainActor (String) -> Void
+    private let draftStore: FeatureComposerDraftStore
 
     public init(client: any FeatureClient) {
         _model = State(initialValue: FeatureRootModel(client: client))
@@ -13,6 +14,7 @@ public struct FeatureRootView: View {
         onNavigationRequestConsumed = { _ in }
         acknowledgeIncomingShare = { _ in }
         releaseIncomingSharePresentation = { _ in }
+        draftStore = .shared
     }
 
     init(
@@ -20,13 +22,15 @@ public struct FeatureRootView: View {
         navigationRequest: FeatureWorkspaceNavigationRequest? = nil,
         onNavigationRequestConsumed: @escaping @MainActor (UUID) -> Void = { _ in },
         acknowledgeIncomingShare: @escaping (String) async -> Void = { _ in },
-        releaseIncomingSharePresentation: @escaping @MainActor (String) -> Void = { _ in }
+        releaseIncomingSharePresentation: @escaping @MainActor (String) -> Void = { _ in },
+        draftStore: FeatureComposerDraftStore = .shared
     ) {
         _model = State(initialValue: model)
         self.navigationRequest = navigationRequest
         self.onNavigationRequestConsumed = onNavigationRequestConsumed
         self.acknowledgeIncomingShare = acknowledgeIncomingShare
         self.releaseIncomingSharePresentation = releaseIncomingSharePresentation
+        self.draftStore = draftStore
     }
 
     public var body: some View {
@@ -45,7 +49,8 @@ public struct FeatureRootView: View {
                         await model.sendMessage(submission)
                     },
                     acknowledgeIncomingShare: acknowledgeIncomingShare,
-                    releaseIncomingSharePresentation: releaseIncomingSharePresentation
+                    releaseIncomingSharePresentation: releaseIncomingSharePresentation,
+                    draftStore: draftStore
                 )
             } else {
                 ConnectionOnboardingView(model: model)

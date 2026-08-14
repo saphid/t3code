@@ -69,6 +69,27 @@ Read [references/sqlite-fixtures.md](references/sqlite-fixtures.md) before chang
 
 The helper refuses to write to the shared `~/.t3` directory by default and creates a database backup before each mutation.
 
+## Capture user-visible proof
+
+For a user-visible change, PR proof, or requested walkthrough, load and follow
+[`prepare-proof-media`](../prepare-proof-media/SKILL.md). Capture one focused
+hero run after setup and before teardown:
+
+1. Start the T3 preview recorder immediately before the affected flow. Retain
+   its `startedAt` value and keep the tab ID fixed.
+2. Drive the flow with semantic preview actions. For every decisive click or
+   scroll, record its source-relative time, normalized target or gesture
+   coordinates, accessible label, and visible expected postcondition. Use the
+   snapshot's action history and element bounds rather than reconstructing
+   coordinates from memory.
+3. Stop the recorder immediately after the final postcondition settles. Treat
+   the returned recording path as the immutable raw source.
+4. Build one clean and one annotated derivative with `prepare-proof-media`.
+   Inspect both, the matched poster images, the contact sheet, and the receipt.
+
+Keep authentication and fixture setup outside the hero run. Pairing tokens and
+other secrets must not appear in the recording, timeline captions, or posters.
+
 ## Tear down only when the testing loop is finished
 
 Tear down when the user explicitly asks, confirms the iteration is finished, or the overall task is genuinely complete with no pending human review. Do not infer completion from the end of an assistant turn.
