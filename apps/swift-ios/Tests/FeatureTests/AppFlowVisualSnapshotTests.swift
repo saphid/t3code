@@ -90,7 +90,11 @@ final class AppFlowVisualSnapshotTests: XCTestCase {
         let model = FeatureRootModel(
             client: AppFlowFixtureClient(scenario: .onboarding)
         )
-        let view = ConnectionOnboardingView(model: model)
+        let view = ConnectionOnboardingView(
+            model: model,
+            readinessChecker: LocalNetworkAccessChecker(),
+            buildChannel: .upstream
+        )
             .environment(\.locale, locale)
             .environment(\.layoutDirection, layoutDirection)
             .environment(\.sizeCategory, sizeCategory)
