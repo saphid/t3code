@@ -47,6 +47,10 @@ def write_stream(repository: Path, features: list[dict]) -> None:
             feature.setdefault("knownLimitations", "None known.")
             feature.setdefault("reviewPriority", 1)
             feature.setdefault("reviewGroup", "Core reliability")
+            feature.setdefault(
+                "sourceIssue",
+                "https://github.com/saphid/t3code-personal/issues/1",
+            )
     path = repository / "scripts/swiftui-stream/stream.json"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps({"features": features}))
@@ -589,8 +593,9 @@ class StreamTests(unittest.TestCase):
         feature = next(
             item
             for item in value["features"]
-            if item.get("state") == "needs-you"
+            if item.get("state") in stream.APPROVAL_STATES
         )
+        feature["state"] = "needs-you"
         feature["testBuild"] = value["currentTestBuild"]["build"] - 1
         with self.assertRaises(SystemExit):
             stream.validate_manifest(value)
@@ -606,17 +611,40 @@ class StreamTests(unittest.TestCase):
             "knownLimitations",
             "reviewPriority",
             "reviewGroup",
+            "sourceIssue",
         )
         for field in required:
             with self.subTest(field=field):
                 value = json.loads(json.dumps(stream.manifest()))
                 feature = next(
                     item for item in value["features"]
-                    if item.get("state") == "needs-you"
+                    if item.get("state") in stream.APPROVAL_STATES
                 )
                 feature.pop(field)
-                with self.assertRaises(SystemExit):
+                errors = io.StringIO()
+                with redirect_stderr(errors), self.assertRaises(SystemExit):
                     stream.validate_manifest(value)
+                self.assertIn(field, errors.getvalue())
+
+    def test_integrated_commit_chain_is_exact_and_includes_the_tip(self):
+        invalid_values = (
+            [],
+            ["short"],
+            ["a" * 40, "a" * 40],
+            ["a" * 40],
+        )
+        for commits in invalid_values:
+            with self.subTest(commits=commits):
+                value = json.loads(json.dumps(stream.manifest()))
+                feature = next(
+                    item for item in value["features"]
+                    if item.get("state") in stream.APPROVAL_STATES
+                )
+                feature["integratedCommits"] = commits
+                errors = io.StringIO()
+                with redirect_stderr(errors), self.assertRaises(SystemExit):
+                    stream.validate_manifest(value)
+                self.assertIn("integratedCommits", errors.getvalue())
 
     def test_in_test_feature_may_stage_a_future_build(self):
         value = json.loads(json.dumps(stream.manifest()))
@@ -665,6 +693,7 @@ class StreamTests(unittest.TestCase):
             "knownLimitations": "None known.",
             "reviewPriority": 1,
             "reviewGroup": "Visual behavior",
+            "sourceIssue": "https://github.com/saphid/t3code-personal/issues/1",
             "visualChange": True,
             "interactionChange": True,
             "sourceBranch": "feat/visual",
@@ -885,6 +914,37 @@ Annotated screenshot: https://evidence.example/annotated.png
             [item["id"] for item in testing_manifest.selected_features(value, "test", 42)],
             ["test-42", "test-41"],
         )
+
+    def test_testing_manifest_requires_complete_review_guidance(self):
+        complete = {
+            "id": "complete",
+            "problem": "The prior behavior fails.",
+            "reproductionSteps": ["Open the flow.", "Trigger the action."],
+            "summary": "Fixes the behavior.",
+            "whatToCheck": "Exercise the flow.",
+            "successLooksLike": "The flow succeeds.",
+            "validationSummary": "Focused tests pass.",
+            "knownLimitations": "None known.",
+            "reviewPriority": 1,
+            "reviewGroup": "Core reliability",
+            "sourceIssue": "https://github.com/saphid/t3code-personal/issues/1",
+        }
+        guidance = testing_manifest.review_guidance(complete)
+        self.assertEqual(guidance["reproductionSteps"], complete["reproductionSteps"])
+        self.assertEqual(guidance["reviewPriority"], 1)
+
+        invalid_values = {
+            "reviewPriority": (True, 0),
+            "reproductionSteps": ([], [" "], "text"),
+            "sourceIssue": (None, "http://example.com/issues/1"),
+        }
+        for field, values in invalid_values.items():
+            for invalid in values:
+                with self.subTest(field=field, invalid=invalid):
+                    feature = dict(complete)
+                    feature[field] = invalid
+                    with self.assertRaisesRegex(RuntimeError, field):
+                        testing_manifest.review_guidance(feature)
 
     def test_testing_manifest_deduplicates_threads_and_commits(self):
         feature = {

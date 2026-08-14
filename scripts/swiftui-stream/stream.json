@@ -80,7 +80,7 @@
           "annotatedURL": "https://alexs-macbook-pro-1.tail4e5636.ts.net:10022/swiftui-pipeline-diagram-annotated.mp4"
         }
       ],
-      "state": "needs-you",
+      "state": "in-test",
       "sourceBranch": "feat/swiftui-pipeline-diagram-20260813",
       "sourceThread": "7F1BCA94-9E0D-4CF6-A833-99995121ADFB",
       "sourceThreadTitle": "Dev/Test Feature Approval Workflow",
@@ -99,17 +99,23 @@
         "71c0b00ac78b5d0d3fea10b6c0b5fce3f6ddaaa0",
         "d0a397a9b8b1b9a0a14c0d781c829c2f71af8675",
         "c332364a814bd86d919ae32334d8bd44a8651747",
-        "08d75bf0a678a850edc55c1339d23acf7f1ff129"
+        "08d75bf0a678a850edc55c1339d23acf7f1ff129",
+        "256f9b764b5f975aeb50b10e5e99d3d986f5d681",
+        "df2f044f5d5e03c8b9adc9bb48f4e8bcb680035c"
       ],
-      "integratedCommit": "256f9b764b5f975aeb50b10e5e99d3d986f5d681",
-      "testBuild": 58,
+      "integratedCommit": "df2f044f5d5e03c8b9adc9bb48f4e8bcb680035c",
+      "testBuild": 59,
       "order": 15,
       "tentativeDelivery": "local-only"
     },
     {
       "id": "swiftui-stream-infrastructure",
       "name": "SwiftUI Dev/Test branch, build, approval, and delivery stream",
-      "aliases": ["branches and builds", "approval workflow", "dev test stream"],
+      "aliases": [
+        "branches and builds",
+        "approval workflow",
+        "dev test stream"
+      ],
       "state": "in-dev",
       "approvedBy": "Alex Southwell",
       "approvedAt": "2026-08-12T21:45:00+10:00",
@@ -121,7 +127,10 @@
     {
       "id": "legacy-dev-title-chrome",
       "name": "Show orange debug chrome on SwiftUI home and new task",
-      "aliases": ["orange debug chrome", "legacy dev title bars"],
+      "aliases": [
+        "orange debug chrome",
+        "legacy dev title bars"
+      ],
       "state": "superseded",
       "sourceCommit": "124a7b88cf053eb9a72810915e945c51f8152371",
       "supersededBy": "swiftui-stream-infrastructure",
@@ -130,64 +139,71 @@
     {
       "id": "skills-popup-keyboard-clearance",
       "name": "Skills popup composer clearance and keyboard refinement",
-      "aliases": ["skills popup", "keyboard clearance"],
-    "summary": "Keeps the composer text field and Skills popup controls visible above the keyboard instead of letting the keyboard cover the area you need to type or select a skill.",
-    "problem": "With the keyboard open, the composer or Skills popup can cover the text entry and selection controls, so a person cannot see or complete the action.",
-    "reproductionSteps": [
-      "Open a thread and focus the composer to show the keyboard.",
-      "Open Skills and type enough text to filter the results.",
-      "Scroll the results and try to select a skill near the bottom."
-    ],
-    "whatToCheck": "Open a thread, focus the composer so the keyboard appears, then open and use the Skills popup. Type, scroll the results, choose a skill, and dismiss the keyboard.",
-    "successLooksLike": "The text entry box, relevant popup results, and selection controls stay visible and usable above the keyboard without jumping, overlap, or trapped empty space.",
-    "validationSummary": "The focused keyboard-clearance tests and the Test 58 regression train passed. The train completed 11 of 11 UI journeys and 528 native tests, with one documented allowlisted skip.",
-    "knownLimitations": "Review this item with the full-height Skills popup item because both changes affect the same surface.",
-    "reviewPriority": 4,
-    "reviewGroup": "Composer and Skills",
-      "state": "needs-you",
+      "aliases": [
+        "skills popup",
+        "keyboard clearance"
+      ],
+      "summary": "Keeps the composer text field and Skills popup controls visible above the keyboard instead of letting the keyboard cover the area you need to type or select a skill.",
+      "problem": "With the keyboard open, the composer or Skills popup can cover the text entry and selection controls, so a person cannot see or complete the action.",
+      "reproductionSteps": [
+        "Open a thread and focus the composer to show the keyboard.",
+        "Open Skills and type enough text to filter the results.",
+        "Scroll the results and try to select a skill near the bottom."
+      ],
+      "whatToCheck": "Open a thread, focus the composer so the keyboard appears, then open and use the Skills popup. Type, scroll the results, choose a skill, and dismiss the keyboard.",
+      "successLooksLike": "The text entry box, relevant popup results, and selection controls stay visible and usable above the keyboard without jumping, overlap, or trapped empty space.",
+      "validationSummary": "The focused keyboard-clearance tests and the Test 58 regression train passed. The train completed 11 of 11 UI journeys and 528 native tests, with one documented allowlisted skip.",
+      "knownLimitations": "Review this item with the full-height Skills popup item because both changes affect the same surface.",
+      "reviewPriority": 4,
+      "reviewGroup": "Composer and Skills",
+      "state": "in-test",
       "sourceCommit": "9cb21674",
       "integratedCommit": "dd72827894d37158335408770bca04fa26b5caab",
       "sourceThread": "876DD4F4-77A5-4719-B652-B8446ACD4ED9",
-    "sourceThreadTitle": "Fix Hidden Text Entry Box",
-    "sourceIssue": "https://github.com/saphid/t3code-personal/issues/84",
+      "sourceThreadTitle": "Fix Hidden Text Entry Box",
+      "sourceIssue": "https://github.com/saphid/t3code-personal/issues/84",
       "relatedThreads": [
         {
           "id": "060A4D25-0220-4BAD-A3CE-614A2E2BAEF2",
           "title": "Fix Skills Popup Keyboard Overlap"
         }
       ],
-      "testBuild": 58,
+      "testBuild": 59,
       "order": 1
     },
     {
       "id": "skill-popup-readability-and-height",
       "name": "Readable, full-height SwiftUI skill popup",
-      "aliases": ["skill name readability", "expanded skill picker", "full-height skills popup"],
-    "summary": "Makes skill names readable by placing them above their descriptions and lets the skill picker use the available height above the composer.",
-    "problem": "Skill names and descriptions compete for one narrow row, and the popup does not use the safe space above the composer, so long entries are hard to read and reach.",
-    "reproductionSteps": [
-      "Open a thread and show the keyboard.",
-      "Open Skills and inspect entries with long names and descriptions.",
-      "Scroll to the end of the list and select a lower item."
-    ],
-    "whatToCheck": "Open Skills with the keyboard visible, inspect short and long skill names and descriptions, scroll through the list, choose a skill near the bottom, and rotate or change keyboard state if convenient.",
-    "successLooksLike": "Names are no longer squeezed beside descriptions, rows remain legible, the popup grows without covering the composer, the full list scrolls, and selection still works.",
-    "validationSummary": "Focused popup layout tests and the Test 58 regression train passed. The train completed 11 of 11 UI journeys and 528 native tests, with one documented allowlisted skip.",
-    "knownLimitations": "Review this item with keyboard clearance because both items share the same popup and composer boundary.",
-    "reviewPriority": 4,
-    "reviewGroup": "Composer and Skills",
-      "state": "needs-you",
+      "aliases": [
+        "skill name readability",
+        "expanded skill picker",
+        "full-height skills popup"
+      ],
+      "summary": "Makes skill names readable by placing them above their descriptions and lets the skill picker use the available height above the composer.",
+      "problem": "Skill names and descriptions compete for one narrow row, and the popup does not use the safe space above the composer, so long entries are hard to read and reach.",
+      "reproductionSteps": [
+        "Open a thread and show the keyboard.",
+        "Open Skills and inspect entries with long names and descriptions.",
+        "Scroll to the end of the list and select a lower item."
+      ],
+      "whatToCheck": "Open Skills with the keyboard visible, inspect short and long skill names and descriptions, scroll through the list, choose a skill near the bottom, and rotate or change keyboard state if convenient.",
+      "successLooksLike": "Names are no longer squeezed beside descriptions, rows remain legible, the popup grows without covering the composer, the full list scrolls, and selection still works.",
+      "validationSummary": "Focused popup layout tests and the Test 58 regression train passed. The train completed 11 of 11 UI journeys and 528 native tests, with one documented allowlisted skip.",
+      "knownLimitations": "Review this item with keyboard clearance because both items share the same popup and composer boundary.",
+      "reviewPriority": 4,
+      "reviewGroup": "Composer and Skills",
+      "state": "in-test",
       "sourceIssue": "https://github.com/saphid/t3code-personal/issues/57",
       "sourceThread": "A21E4994-5667-4935-9C26-EFCF66D4E869",
       "sourceBranch": "t3code/improve-skill-popup-layout",
       "branch": "fix/swiftui-skill-popup-readability-20260813",
-    "sourceCommit": "09f309bcba3a2d822c2e81f48dbf728a8c969488",
-    "integratedCommits": [
-      "cbae9422799d9bd0d5405f56f6241203186aa9fb",
-      "7fc758cc1adc58d6426eb4fec413c2dc37e3841b"
-    ],
-    "integratedCommit": "7fc758cc1adc58d6426eb4fec413c2dc37e3841b",
-      "testBuild": 58,
+      "sourceCommit": "09f309bcba3a2d822c2e81f48dbf728a8c969488",
+      "integratedCommits": [
+        "cbae9422799d9bd0d5405f56f6241203186aa9fb",
+        "7fc758cc1adc58d6426eb4fec413c2dc37e3841b"
+      ],
+      "integratedCommit": "7fc758cc1adc58d6426eb4fec413c2dc37e3841b",
+      "testBuild": 59,
       "order": 14,
       "startingBaseline": "125ed781e20716091222651092ed2708448bb6b6",
       "behavior": "Stack skill names above their descriptions and let the scrollable popup grow to the available vertical boundary above the composer.",
@@ -196,7 +212,10 @@
     {
       "id": "dev-title-label",
       "name": "Replace orange dev bars with a channel-colored title label",
-      "aliases": ["orange dev bars", "dev title"],
+      "aliases": [
+        "orange dev bars",
+        "dev title"
+      ],
       "state": "superseded",
       "sourceCommit": "181bb7a1",
       "supersededBy": "swiftui-stream-infrastructure",
@@ -206,221 +225,250 @@
     {
       "id": "home-thread-list-scrolling",
       "name": "Home thread-list scrolling",
-      "aliases": ["home scrolling", "thread list scroll"],
-    "summary": "Stops the workspace command gesture from stealing ordinary vertical swipes, so the home thread list scrolls reliably.",
-    "problem": "The command gesture can win the touch competition on Home and consume an ordinary list swipe, which makes the thread list appear stuck.",
-    "reproductionSteps": [
-      "Open Home with enough threads to require scrolling.",
-      "Drag up and down from the middle of a thread row and near the top edge.",
-      "Compare an ordinary list drag with the deliberate top-edge command gesture."
-    ],
-    "whatToCheck": "On Home, drag the thread list up and down from several positions, including near the top edge and over a thread row. Also try the intended top-edge command gesture.",
-    "successLooksLike": "Normal swipes scroll the list immediately and smoothly, while the command gesture still works only from its intended top area.",
-    "validationSummary": "Focused gesture tests and the Test 58 regression train passed. The train completed 11 of 11 UI journeys and 528 native tests, with one documented allowlisted skip.",
-    "knownLimitations": "Review this item with the top drawer and cold-boot scrolling items because they share Home gesture ownership.",
-    "reviewPriority": 3,
-    "reviewGroup": "Home navigation",
-      "state": "needs-you",
+      "aliases": [
+        "home scrolling",
+        "thread list scroll"
+      ],
+      "summary": "Stops the workspace command gesture from stealing ordinary vertical swipes, so the home thread list scrolls reliably.",
+      "problem": "The command gesture can win the touch competition on Home and consume an ordinary list swipe, which makes the thread list appear stuck.",
+      "reproductionSteps": [
+        "Open Home with enough threads to require scrolling.",
+        "Drag up and down from the middle of a thread row and near the top edge.",
+        "Compare an ordinary list drag with the deliberate top-edge command gesture."
+      ],
+      "whatToCheck": "On Home, drag the thread list up and down from several positions, including near the top edge and over a thread row. Also try the intended top-edge command gesture.",
+      "successLooksLike": "Normal swipes scroll the list immediately and smoothly, while the command gesture still works only from its intended top area.",
+      "validationSummary": "Focused gesture tests and the Test 58 regression train passed. The train completed 11 of 11 UI journeys and 528 native tests, with one documented allowlisted skip.",
+      "knownLimitations": "Review this item with the top drawer and cold-boot scrolling items because they share Home gesture ownership.",
+      "reviewPriority": 3,
+      "reviewGroup": "Home navigation",
+      "state": "in-test",
       "sourceCommit": "7cc3a611",
       "integratedCommit": "cd7f6a44fb36980a2ae1193d5edc215dfb74b4b8",
       "sourceThread": "483B0392-396C-4D09-9658-FF378C410BC3",
-    "sourceThreadTitle": "Fix Threads List Scrolling",
-    "sourceIssue": "https://github.com/saphid/t3code-personal/issues/82",
-      "testBuild": 58,
+      "sourceThreadTitle": "Fix Threads List Scrolling",
+      "sourceIssue": "https://github.com/saphid/t3code-personal/issues/82",
+      "testBuild": 59,
       "order": 3
     },
     {
       "id": "command-palette-top-drawer",
       "name": "Command palette top drawer",
-      "aliases": ["command palette", "swipe-down command palette", "physical command palette drag"],
-    "summary": "Makes the top bar and current page track the finger as one physical surface while the command palette is pulled into view from either the home thread list or an open thread, then settle open or closed with spring motion.",
-    "problem": "The command palette did not behave as one attached surface during an interactive pull, and its gesture could conflict with ordinary page scrolling.",
-    "reproductionSteps": [
-      "On Home, pull down slowly from the top bar and release on each side of the settle threshold.",
-      "Repeat from an open thread and while the keyboard is visible.",
-      "Try ordinary vertical and horizontal swipes away from the top-bar start area."
-    ],
-    "whatToCheck": "In dark mode, drag down slowly from the top bar on both the home thread list and an open thread, releasing below and above the threshold. Try a short deliberate flick, horizontal swipes, normal list or thread scrolling, dismissal, and opening while the keyboard is visible.",
-    "successLooksLike": "On both home and thread pages, the top bar stays under the finger, the page and palette remain visually attached throughout the pull, release settles naturally without a jump, and ordinary scrolling or horizontal gestures do not open the palette.",
-    "validationSummary": "Focused gesture integration tests and the Test 58 regression train passed. The train completed 11 of 11 UI journeys and 528 native tests, with one documented allowlisted skip.",
-    "knownLimitations": "Review this item with both Home scrolling items because they share the top-edge gesture boundary.",
-    "reviewPriority": 3,
-    "reviewGroup": "Home navigation",
-      "state": "needs-you",
+      "aliases": [
+        "command palette",
+        "swipe-down command palette",
+        "physical command palette drag"
+      ],
+      "summary": "Makes the top bar and current page track the finger as one physical surface while the command palette is pulled into view from either the home thread list or an open thread, then settle open or closed with spring motion.",
+      "problem": "The command palette did not behave as one attached surface during an interactive pull, and its gesture could conflict with ordinary page scrolling.",
+      "reproductionSteps": [
+        "On Home, pull down slowly from the top bar and release on each side of the settle threshold.",
+        "Repeat from an open thread and while the keyboard is visible.",
+        "Try ordinary vertical and horizontal swipes away from the top-bar start area."
+      ],
+      "whatToCheck": "In dark mode, drag down slowly from the top bar on both the home thread list and an open thread, releasing below and above the threshold. Try a short deliberate flick, horizontal swipes, normal list or thread scrolling, dismissal, and opening while the keyboard is visible.",
+      "successLooksLike": "On both home and thread pages, the top bar stays under the finger, the page and palette remain visually attached throughout the pull, release settles naturally without a jump, and ordinary scrolling or horizontal gestures do not open the palette.",
+      "validationSummary": "Focused gesture integration tests and the Test 58 regression train passed. The train completed 11 of 11 UI journeys and 528 native tests, with one documented allowlisted skip.",
+      "knownLimitations": "Review this item with both Home scrolling items because they share the top-edge gesture boundary.",
+      "reviewPriority": 3,
+      "reviewGroup": "Home navigation",
+      "state": "in-test",
       "sourceBranch": "fix/swiftui-physical-command-palette-drag-20260813",
-    "sourceCommit": "5a46ed73f",
-    "integratedCommits": [
-      "945c98851d77364c72c1a6ff5b893cef302d2f62",
-      "8ef974258f04dbf5209b2033180ee7c055a18af7",
-      "8395257e8edb1e9d9f04c2f3e6a7e585632e09fa"
-    ],
-    "integratedCommit": "8395257e8edb1e9d9f04c2f3e6a7e585632e09fa",
+      "sourceCommit": "5a46ed73f",
+      "integratedCommits": [
+        "945c98851d77364c72c1a6ff5b893cef302d2f62",
+        "8ef974258f04dbf5209b2033180ee7c055a18af7",
+        "8395257e8edb1e9d9f04c2f3e6a7e585632e09fa"
+      ],
+      "integratedCommit": "8395257e8edb1e9d9f04c2f3e6a7e585632e09fa",
       "sourceThread": "9DD22B40-3832-4FE7-B482-69D9C7BEDE0A",
-    "sourceThreadTitle": "Fix Command Palette Top Drawer",
-    "sourceIssue": "https://github.com/saphid/t3code-personal/issues/86",
-      "testBuild": 58,
+      "sourceThreadTitle": "Fix Command Palette Top Drawer",
+      "sourceIssue": "https://github.com/saphid/t3code-personal/issues/86",
+      "testBuild": 59,
       "order": 4
     },
     {
       "id": "development-build-source-thread",
       "name": "Link development builds to their source T3 thread",
-      "aliases": ["source thread link", "whats new thread"],
-    "summary": "Adds the originating T3 work thread to development-build changelog entries so you can move from a visible change to the conversation and evidence that produced it.",
-    "problem": "A development changelog entry identifies a change but does not identify the T3 thread that contains its requirements, decisions, and proof.",
-    "reproductionSteps": [
-      "Open Settings and open the build changelog.",
-      "Expand a development change that has source-thread metadata.",
-      "Open its thread link and compare the destination with the named change."
-    ],
-    "whatToCheck": "Open Settings → Build changelog, expand a development change, and use its source-thread link. Return to Settings and try another entry if available.",
-    "successLooksLike": "Each supported development change clearly names its source thread and opens the correct existing T3 thread rather than a duplicate, wrong thread, or dead destination.",
-    "validationSummary": "Focused deep-link and changelog tests and the Test 58 regression train passed. The train completed 11 of 11 UI journeys and 528 native tests, with one documented allowlisted skip.",
-    "knownLimitations": "Only entries that carry a source T3 thread can show a thread link.",
-    "reviewPriority": 9,
-    "reviewGroup": "Traceability",
-      "state": "needs-you",
+      "aliases": [
+        "source thread link",
+        "whats new thread"
+      ],
+      "summary": "Adds the originating T3 work thread to development-build changelog entries so you can move from a visible change to the conversation and evidence that produced it.",
+      "problem": "A development changelog entry identifies a change but does not identify the T3 thread that contains its requirements, decisions, and proof.",
+      "reproductionSteps": [
+        "Open Settings and open the build changelog.",
+        "Expand a development change that has source-thread metadata.",
+        "Open its thread link and compare the destination with the named change."
+      ],
+      "whatToCheck": "Open Settings → Build changelog, expand a development change, and use its source-thread link. Return to Settings and try another entry if available.",
+      "successLooksLike": "Each supported development change clearly names its source thread and opens the correct existing T3 thread rather than a duplicate, wrong thread, or dead destination.",
+      "validationSummary": "Focused deep-link and changelog tests and the Test 58 regression train passed. The train completed 11 of 11 UI journeys and 528 native tests, with one documented allowlisted skip.",
+      "knownLimitations": "Only entries that carry a source T3 thread can show a thread link.",
+      "reviewPriority": 9,
+      "reviewGroup": "Traceability",
+      "state": "in-test",
       "sourceCommit": "ed15ca2a",
       "integratedCommit": "e1ca3cb09f0eadc6f02c33a959cc0da4912564c0",
       "sourceThread": "508739B1-477F-4CAB-BA79-8816FCCEA000",
-    "sourceThreadTitle": "Add Thread Links to What’s New",
-    "sourceIssue": "https://github.com/saphid/t3code-personal/issues/85",
-      "testBuild": 58,
+      "sourceThreadTitle": "Add Thread Links to What’s New",
+      "sourceIssue": "https://github.com/saphid/t3code-personal/issues/85",
+      "testBuild": 59,
       "order": 5
     },
     {
       "id": "initial-thread-live-updates",
       "name": "Preserve live updates during initial thread open",
-      "aliases": ["initial thread updates", "thread refresh"],
-    "summary": "Prevents the first thread-history response from overwriting newer live messages or status updates that arrive while the thread is opening.",
-    "problem": "A slower initial history response can replace a newer live event, so a message or status can appear and then disappear or revert during first open.",
-    "reproductionSteps": [
-      "Choose a thread that is receiving a response or another live update.",
-      "Open the thread while its stored history is still loading.",
-      "Watch the newest message and status through the first load, then leave and reopen."
-    ],
-    "whatToCheck": "Open a busy or actively responding thread from Home and watch the first load. Send or receive an update during opening if practical, then leave and reopen the thread.",
-    "successLooksLike": "Messages and status move forward without briefly appearing and then disappearing, duplicating, reverting, or requiring a manual refresh.",
-    "validationSummary": "Focused reducer ordering tests and the Test 58 regression train passed. The train completed 11 of 11 UI journeys and 528 native tests, with one documented allowlisted skip.",
-    "knownLimitations": "A useful manual check needs a thread with a live update during the initial history request.",
-    "reviewPriority": 2,
-    "reviewGroup": "Core reliability",
-      "state": "needs-you",
+      "aliases": [
+        "initial thread updates",
+        "thread refresh"
+      ],
+      "summary": "Prevents the first thread-history response from overwriting newer live messages or status updates that arrive while the thread is opening.",
+      "problem": "A slower initial history response can replace a newer live event, so a message or status can appear and then disappear or revert during first open.",
+      "reproductionSteps": [
+        "Choose a thread that is receiving a response or another live update.",
+        "Open the thread while its stored history is still loading.",
+        "Watch the newest message and status through the first load, then leave and reopen."
+      ],
+      "whatToCheck": "Open a busy or actively responding thread from Home and watch the first load. Send or receive an update during opening if practical, then leave and reopen the thread.",
+      "successLooksLike": "Messages and status move forward without briefly appearing and then disappearing, duplicating, reverting, or requiring a manual refresh.",
+      "validationSummary": "Focused reducer ordering tests and the Test 58 regression train passed. The train completed 11 of 11 UI journeys and 528 native tests, with one documented allowlisted skip.",
+      "knownLimitations": "A useful manual check needs a thread with a live update during the initial history request.",
+      "reviewPriority": 2,
+      "reviewGroup": "Core reliability",
+      "state": "in-test",
       "sourceCommit": "dd2ecbb",
       "integratedCommit": "2c2f4fe27c248dc93ab4f9b36b627f72ab5daf57",
       "sourceThread": "1B30199A-3681-4A1B-B938-B735767508C4",
-    "sourceThreadTitle": "Fix SwiftUI Thread Initial Updates",
-    "sourceIssue": "https://github.com/saphid/t3code-personal/issues/83",
-      "testBuild": 58,
+      "sourceThreadTitle": "Fix SwiftUI Thread Initial Updates",
+      "sourceIssue": "https://github.com/saphid/t3code-personal/issues/83",
+      "testBuild": 59,
       "order": 6
     },
     {
       "id": "pull-request-workspace-protocol",
       "name": "Native pull-request workspace protocol foundation",
-      "aliases": ["pull request protocol", "pr workspace"],
-    "summary": "Adds the native data and transport foundation for pull-request workspace features, including typed PR metadata, diffs, comments, and related server requests.",
-    "problem": "The native client had no typed protocol for pull-request metadata, diffs, comments, or related requests, so a reliable native PR experience could not be built.",
-    "reproductionSteps": [
-      "Connect to an environment whose repository has an open pull request.",
-      "Open the pull-request inbox and select a pull request.",
-      "Inspect its metadata, Summary, and Timeline, then return to a normal workspace."
-    ],
-    "whatToCheck": "Exercise any available pull-request workspace or review entry points against a repository with an open PR. Inspect metadata and diffs, and verify ordinary non-PR workspaces still open normally.",
-    "successLooksLike": "Supported PR information loads accurately without crashes, malformed content, or regressions to standard workspace and review behavior. Missing capabilities fail clearly rather than showing incorrect data.",
-    "validationSummary": "Focused protocol decoding and transport tests and the Test 58 regression train passed. The train completed 11 of 11 UI journeys and 528 native tests, with one documented allowlisted skip.",
-    "knownLimitations": "This is a dependency of the visible PR inbox. Review both PR items as one workflow; the protocol has no useful standalone phone acceptance step.",
-    "reviewPriority": 7,
-    "reviewGroup": "Pull requests",
-      "state": "needs-you",
+      "aliases": [
+        "pull request protocol",
+        "pr workspace"
+      ],
+      "summary": "Adds the native data and transport foundation for pull-request workspace features, including typed PR metadata, diffs, comments, and related server requests.",
+      "problem": "The native client had no typed protocol for pull-request metadata, diffs, comments, or related requests, so a reliable native PR experience could not be built.",
+      "reproductionSteps": [
+        "Connect to an environment whose repository has an open pull request.",
+        "Open the pull-request inbox and select a pull request.",
+        "Inspect its metadata, Summary, and Timeline, then return to a normal workspace."
+      ],
+      "whatToCheck": "Exercise any available pull-request workspace or review entry points against a repository with an open PR. Inspect metadata and diffs, and verify ordinary non-PR workspaces still open normally.",
+      "successLooksLike": "Supported PR information loads accurately without crashes, malformed content, or regressions to standard workspace and review behavior. Missing capabilities fail clearly rather than showing incorrect data.",
+      "validationSummary": "Focused protocol decoding and transport tests and the Test 58 regression train passed. The train completed 11 of 11 UI journeys and 528 native tests, with one documented allowlisted skip.",
+      "knownLimitations": "This is a dependency of the visible PR inbox. Review both PR items as one workflow; the protocol has no useful standalone phone acceptance step.",
+      "reviewPriority": 7,
+      "reviewGroup": "Pull requests",
+      "state": "in-test",
       "sourceCommit": "4f967ba4",
       "integratedCommit": "455781e7e37fc0021671aa4660e1a5150d1777f7",
       "sourceThread": "ECA79DCF-1DD0-4FDD-B736-870854E7FDAB",
-    "sourceThreadTitle": "Port PR and GitHub Features",
-    "sourceIssue": "https://github.com/saphid/personal-ops/issues/94",
-      "testBuild": 58,
+      "sourceThreadTitle": "Port PR and GitHub Features",
+      "sourceIssue": "https://github.com/saphid/personal-ops/issues/94",
+      "testBuild": 59,
       "order": 7
     },
     {
       "id": "pull-request-inbox-summary-timeline",
       "name": "Single-environment pull-request inbox with Summary and Timeline detail",
-      "aliases": ["pull request inbox", "pr summary", "pr timeline"],
-    "summary": "Adds a native pull-request inbox for the active environment with a PR detail screen split into clear Summary and Timeline views.",
-    "problem": "The native client does not provide one place to see the active environment's pull requests and inspect a selected pull request as a concise summary plus event timeline.",
-    "reproductionSteps": [
-      "Connect to an environment whose repository has more than one open pull request.",
-      "Open the pull-request inbox and compare the list with the repository.",
-      "Open a pull request, switch between Summary and Timeline, then return to the list."
-    ],
-    "whatToCheck": "In a connected environment with open pull requests, open the PR inbox, compare titles and status with GitHub, enter several PRs, switch between Summary and Timeline, and return to the workspace.",
-    "successLooksLike": "The list represents the active environment accurately, details load for the selected PR, Summary and Timeline show the expected content in order, and navigation remains responsive without mixing environments.",
-    "validationSummary": "Focused PR inbox presentation tests and the Test 58 regression train passed. The train completed 11 of 11 UI journeys and 528 native tests, with one documented allowlisted skip.",
-    "knownLimitations": "The first version is scoped to the active environment. Review it with the protocol foundation that supplies its data.",
-    "reviewPriority": 7,
-    "reviewGroup": "Pull requests",
-      "state": "needs-you",
+      "aliases": [
+        "pull request inbox",
+        "pr summary",
+        "pr timeline"
+      ],
+      "summary": "Adds a native pull-request inbox for the active environment with a PR detail screen split into clear Summary and Timeline views.",
+      "problem": "The native client does not provide one place to see the active environment's pull requests and inspect a selected pull request as a concise summary plus event timeline.",
+      "reproductionSteps": [
+        "Connect to an environment whose repository has more than one open pull request.",
+        "Open the pull-request inbox and compare the list with the repository.",
+        "Open a pull request, switch between Summary and Timeline, then return to the list."
+      ],
+      "whatToCheck": "In a connected environment with open pull requests, open the PR inbox, compare titles and status with GitHub, enter several PRs, switch between Summary and Timeline, and return to the workspace.",
+      "successLooksLike": "The list represents the active environment accurately, details load for the selected PR, Summary and Timeline show the expected content in order, and navigation remains responsive without mixing environments.",
+      "validationSummary": "Focused PR inbox presentation tests and the Test 58 regression train passed. The train completed 11 of 11 UI journeys and 528 native tests, with one documented allowlisted skip.",
+      "knownLimitations": "The first version is scoped to the active environment. Review it with the protocol foundation that supplies its data.",
+      "reviewPriority": 7,
+      "reviewGroup": "Pull requests",
+      "state": "in-test",
       "branch": "personal/swiftui-pr-inbox-summary-timeline-20260813",
       "sourceCommit": "09ffaedd32cf32550af6ed262186549481c97838",
       "integratedCommit": "12febfd914a51f10d4222deb3d759702d0a75c36",
-      "testBuild": 58,
+      "testBuild": 59,
       "order": 12,
       "sourceIssue": "https://github.com/saphid/personal-ops/issues/94",
       "sourceThread": "ECA79DCF-1DD0-4FDD-B736-870854E7FDAB",
       "startingBaseline": "125ed781e20716091222651092ed2708448bb6b6",
-      "dependsOn": ["pull-request-workspace-protocol"],
+      "dependsOn": [
+        "pull-request-workspace-protocol"
+      ],
       "delivery": "direct"
     },
     {
       "id": "safe-tool-content-recovery",
       "name": "Preserve SwiftUI tool content with safe accessible recovery",
-      "aliases": ["tool content", "accessible recovery"],
-    "summary": "Keeps failed tool output available and makes retry recovery accessible, including predictable focus after an error instead of losing content or focus context.",
-    "problem": "A failed tool event can lose useful error content, and Retry can leave VoiceOver or keyboard focus in an unclear place after recovery.",
-    "reproductionSteps": [
-      "Open a thread that contains a failed or recoverable tool result.",
-      "Read the retained failure content and move accessibility focus to Retry.",
-      "Activate Retry and observe the result, retained context, and new focus target."
-    ],
-    "whatToCheck": "Trigger or revisit a recoverable tool/source-control error, read the retained error content with normal navigation or VoiceOver, activate Retry, and observe focus after recovery.",
-    "successLooksLike": "The useful error content remains visible, Retry is clearly labeled and operable, focus moves to a sensible element, and successful recovery does not duplicate or erase prior context.",
-    "validationSummary": "Focused tool-content and accessibility recovery tests and the Test 58 regression train passed. The train completed 11 of 11 UI journeys and 528 native tests, with one documented allowlisted skip.",
-    "knownLimitations": "The manual path needs a retained recoverable tool error; the proof fixture supplies one without using credentials.",
-    "reviewPriority": 8,
-    "reviewGroup": "Accessible recovery",
-      "state": "needs-you",
-    "sourceCommit": "9006b8de",
-    "integratedCommits": [
-      "d79d498f5610398eaad1ef3ba481f8da5b88b34c",
-      "1976e870b0e9fa57ca05c98c33370fc21030b8e2",
-      "2b1cf46a76afb0825dff0cec505307807149992e"
-    ],
-    "integratedCommit": "2b1cf46a76afb0825dff0cec505307807149992e",
+      "aliases": [
+        "tool content",
+        "accessible recovery"
+      ],
+      "summary": "Keeps failed tool output available and makes retry recovery accessible, including predictable focus after an error instead of losing content or focus context.",
+      "problem": "A failed tool event can lose useful error content, and Retry can leave VoiceOver or keyboard focus in an unclear place after recovery.",
+      "reproductionSteps": [
+        "Open a thread that contains a failed or recoverable tool result.",
+        "Read the retained failure content and move accessibility focus to Retry.",
+        "Activate Retry and observe the result, retained context, and new focus target."
+      ],
+      "whatToCheck": "Trigger or revisit a recoverable tool/source-control error, read the retained error content with normal navigation or VoiceOver, activate Retry, and observe focus after recovery.",
+      "successLooksLike": "The useful error content remains visible, Retry is clearly labeled and operable, focus moves to a sensible element, and successful recovery does not duplicate or erase prior context.",
+      "validationSummary": "Focused tool-content and accessibility recovery tests and the Test 58 regression train passed. The train completed 11 of 11 UI journeys and 528 native tests, with one documented allowlisted skip.",
+      "knownLimitations": "The manual path needs a retained recoverable tool error; the proof fixture supplies one without using credentials.",
+      "reviewPriority": 8,
+      "reviewGroup": "Accessible recovery",
+      "state": "in-test",
+      "sourceCommit": "9006b8de",
+      "integratedCommits": [
+        "d79d498f5610398eaad1ef3ba481f8da5b88b34c",
+        "1976e870b0e9fa57ca05c98c33370fc21030b8e2",
+        "2b1cf46a76afb0825dff0cec505307807149992e"
+      ],
+      "integratedCommit": "2b1cf46a76afb0825dff0cec505307807149992e",
       "sourceThread": "84C318E3-49C0-4F00-8E6D-9874969057D0",
-    "sourceThreadTitle": "Audit and Uplift SwiftUI Code",
-    "sourceIssue": "https://github.com/saphid/t3code-personal/issues/87",
-      "testBuild": 58,
+      "sourceThreadTitle": "Audit and Uplift SwiftUI Code",
+      "sourceIssue": "https://github.com/saphid/t3code-personal/issues/87",
+      "testBuild": 59,
       "order": 8
     },
     {
       "id": "swiftui-test-personal-connect",
       "name": "Pair SwiftUI Test through the private Tailnet without entering a code",
-      "aliases": ["personal connect", "one-tap pairing", "test app pairing"],
-    "summary": "Adds a private one-tap connection route for the Test app so it can pair with the known personal T3 host over Tailnet without manually entering a pairing code.",
-    "problem": "If another phone build breaks the normal T3 connection flow, Test needs an independent private recovery route that does not require copying a short-lived pairing code.",
-    "reproductionSteps": [
-      "Start SwiftUI Test while it is unpaired or disconnected and the phone is on Tailnet.",
-      "Choose the personal connection option.",
-      "Complete the connection, relaunch the app, and confirm the saved environment remains available."
-    ],
-    "whatToCheck": "From an unpaired or disconnected Test app on Tailnet, choose the personal connection option, complete the connection, reopen the app, and also inspect the unavailable/error state with the host unreachable if practical.",
-    "successLooksLike": "The intended private host is identified clearly, one action establishes the connection without a code, it persists on reopen, and failures explain what is unavailable without altering other saved connections.",
-    "validationSummary": "Focused personal-connect route tests and the Test 58 regression train passed. The train completed 11 of 11 UI journeys and 528 native tests, with one documented allowlisted skip.",
-    "knownLimitations": "The private route works only on Alex's Tailnet and is intentionally excluded from upstream delivery.",
-    "reviewPriority": 5,
-    "reviewGroup": "Connection safety",
-      "state": "needs-you",
+      "aliases": [
+        "personal connect",
+        "one-tap pairing",
+        "test app pairing"
+      ],
+      "summary": "Adds a private one-tap connection route for the Test app so it can pair with the known personal T3 host over Tailnet without manually entering a pairing code.",
+      "problem": "If another phone build breaks the normal T3 connection flow, Test needs an independent private recovery route that does not require copying a short-lived pairing code.",
+      "reproductionSteps": [
+        "Start SwiftUI Test while it is unpaired or disconnected and the phone is on Tailnet.",
+        "Choose the personal connection option.",
+        "Complete the connection, relaunch the app, and confirm the saved environment remains available."
+      ],
+      "whatToCheck": "From an unpaired or disconnected Test app on Tailnet, choose the personal connection option, complete the connection, reopen the app, and also inspect the unavailable/error state with the host unreachable if practical.",
+      "successLooksLike": "The intended private host is identified clearly, one action establishes the connection without a code, it persists on reopen, and failures explain what is unavailable without altering other saved connections.",
+      "validationSummary": "Focused personal-connect route tests and the Test 58 regression train passed. The train completed 11 of 11 UI journeys and 528 native tests, with one documented allowlisted skip.",
+      "knownLimitations": "The private route works only on Alex's Tailnet and is intentionally excluded from upstream delivery.",
+      "reviewPriority": 5,
+      "reviewGroup": "Connection safety",
+      "state": "in-test",
       "branch": "feat/swiftui-personal-connect-test",
       "sourceCommit": "727d9ac4c132fe86ba2a1ce385f2e1a66be89da0",
       "integratedCommit": "fb9af99ef8ab664956368d34329584529be4e7c9",
-      "testBuild": 58,
+      "testBuild": 59,
       "order": 9,
       "sourceIssue": "https://github.com/saphid/t3code-personal/issues/54",
       "sourceThread": "019ff7b4-531e-7d43-9233-ced5bc44bb3b",
@@ -430,27 +478,31 @@
     {
       "id": "cold-boot-home-list-scrolling",
       "name": "Keep the Home list scrollable during cold-boot metadata loading",
-      "aliases": ["cold boot scrolling", "cold launch home list", "startup list scroll"],
-    "summary": "Keeps the Home thread list responsive during a cold launch while task metadata and badges are still loading in the background.",
-    "problem": "During a cold launch, metadata loading can repeatedly update Home and interrupt the first drag, which makes the populated thread list freeze or snap back.",
-    "reproductionSteps": [
-      "Force-close SwiftUI Test with a populated Home list.",
-      "Launch it and immediately drag the list before badges and metadata finish loading.",
-      "Open a thread, return Home, and repeat the first drag."
-    ],
-    "whatToCheck": "Force-close Test, relaunch it cold with a populated Home list, immediately scroll up and down before metadata finishes, open a thread, return Home, and repeat once while the connection is slow if possible.",
-    "successLooksLike": "The list responds to the first drag without freezing or snapping back, metadata fills in without stealing touch handling, and opening or returning to Home does not regress scrolling.",
-    "validationSummary": "Focused cold-launch tests passed in normal and accessibility text sizes. The Test 58 regression train also completed 11 of 11 UI journeys and 528 native tests, with one documented allowlisted skip.",
-    "knownLimitations": "Review this item with ordinary Home scrolling and the command drawer because all three affect Home interaction.",
-    "reviewPriority": 3,
-    "reviewGroup": "Home navigation",
-      "state": "needs-you",
+      "aliases": [
+        "cold boot scrolling",
+        "cold launch home list",
+        "startup list scroll"
+      ],
+      "summary": "Keeps the Home thread list responsive during a cold launch while task metadata and badges are still loading in the background.",
+      "problem": "During a cold launch, metadata loading can repeatedly update Home and interrupt the first drag, which makes the populated thread list freeze or snap back.",
+      "reproductionSteps": [
+        "Force-close SwiftUI Test with a populated Home list.",
+        "Launch it and immediately drag the list before badges and metadata finish loading.",
+        "Open a thread, return Home, and repeat the first drag."
+      ],
+      "whatToCheck": "Force-close Test, relaunch it cold with a populated Home list, immediately scroll up and down before metadata finishes, open a thread, return Home, and repeat once while the connection is slow if possible.",
+      "successLooksLike": "The list responds to the first drag without freezing or snapping back, metadata fills in without stealing touch handling, and opening or returning to Home does not regress scrolling.",
+      "validationSummary": "Focused cold-launch tests passed in normal and accessibility text sizes. The Test 58 regression train also completed 11 of 11 UI journeys and 528 native tests, with one documented allowlisted skip.",
+      "knownLimitations": "Review this item with ordinary Home scrolling and the command drawer because all three affect Home interaction.",
+      "reviewPriority": 3,
+      "reviewGroup": "Home navigation",
+      "state": "in-test",
       "branch": "fix/swiftui-cold-boot-list-scroll-20260813",
       "sourceCommit": "276d2e427a5aad188cf45adb68aa43075dc4d03d",
       "candidateCommit": "9b5c591cebdf1d47f5c954f116470141b5060011",
       "integratedCommit": "17ac7f22296043125a10c09f0392766ec69e6994",
       "featureReceipt": "~/.t3/swiftui-stream/feature-receipts/cold-boot-home-list-scrolling/9b5c591cebdf1d47f5c954f116470141b5060011/receipt.json",
-      "testBuild": 58,
+      "testBuild": 59,
       "order": 10,
       "sourceIssue": "https://github.com/saphid/t3code-personal/issues/55",
       "sourceThread": "019ff86d-be17-7772-beae-d39646e325ac",
@@ -460,27 +512,36 @@
     {
       "id": "shared-electron-vscode-themes",
       "name": "Share Electron and VS Code themes with SwiftUI",
-      "aliases": ["shared themes", "VS Code themes", "theme selector", "SwiftUI themes"],
-    "summary": "Lets SwiftUI discover and use the same Electron and VS Code-derived theme catalog, applying the selected palette across native screens and terminal surfaces.",
-    "problem": "SwiftUI cannot discover or apply the same theme catalog as the desktop editors, so native screens and terminal surfaces cannot share a chosen palette.",
-    "reproductionSteps": [
-      "Open Settings, open Theme, and search for a VS Code-derived theme.",
-      "Select light and dark themes and inspect Home, a thread, Settings, tool content, and terminal text.",
-      "Relaunch the app, confirm persistence, then switch back to System."
-    ],
-    "whatToCheck": "Open Settings → Theme, browse and search the catalog, select several light and dark themes, inspect Home, chat, settings, code/tool content, and terminal text, then relaunch the app.",
-    "successLooksLike": "The catalog is readable and responsive, selections apply consistently with usable contrast, terminal and native colors agree, the choice persists after relaunch, and switching back to System works.",
-    "validationSummary": "Focused theme catalog and persistence tests and the Test 58 regression train passed. The train completed 11 of 11 UI journeys and 528 native tests, with one documented allowlisted skip.",
-    "knownLimitations": "The prior packet contained a literal VoiceOver label placeholder. This replacement build must include and prove the correction before review.",
-    "reviewPriority": 6,
-    "reviewGroup": "Themes and accessibility",
-      "state": "needs-you",
+      "aliases": [
+        "shared themes",
+        "VS Code themes",
+        "theme selector",
+        "SwiftUI themes"
+      ],
+      "summary": "Lets SwiftUI discover and use the same Electron and VS Code-derived theme catalog, applying the selected palette across native screens and terminal surfaces.",
+      "problem": "SwiftUI cannot discover or apply the same theme catalog as the desktop editors, so native screens and terminal surfaces cannot share a chosen palette.",
+      "reproductionSteps": [
+        "Open Settings, open Theme, and search for a VS Code-derived theme.",
+        "Select light and dark themes and inspect Home, a thread, Settings, tool content, and terminal text.",
+        "Relaunch the app, confirm persistence, then switch back to System."
+      ],
+      "whatToCheck": "Open Settings → Theme, browse and search the catalog, select several light and dark themes, inspect Home, chat, settings, code/tool content, and terminal text, then relaunch the app.",
+      "successLooksLike": "The catalog is readable and responsive, selections apply consistently with usable contrast, terminal and native colors agree, the choice persists after relaunch, and switching back to System works.",
+      "validationSummary": "Focused theme catalog and persistence tests and the Test 58 regression train passed. The train completed 11 of 11 UI journeys and 528 native tests, with one documented allowlisted skip.",
+      "knownLimitations": "The prior packet contained a literal VoiceOver label placeholder. This replacement build must include and prove the correction before review.",
+      "reviewPriority": 6,
+      "reviewGroup": "Themes and accessibility",
+      "state": "in-test",
       "branch": "personal/swift-theme-sharing",
       "sourceCommit": "66da910135c997078c82dec5d30fcc01a6712e08",
       "candidateCommit": "66da910135c997078c82dec5d30fcc01a6712e08",
-      "integratedCommit": "bd90247576eb8b0591b90058b8380a0c88e95823",
+      "integratedCommits": [
+        "bd90247576eb8b0591b90058b8380a0c88e95823",
+        "217f8fba4aa4c0f3b3afd4a8646dcff10f1d0efe"
+      ],
+      "integratedCommit": "217f8fba4aa4c0f3b3afd4a8646dcff10f1d0efe",
       "featureReceipt": "~/.t3/swiftui-stream/feature-receipts/shared-electron-vscode-themes/66da910135c997078c82dec5d30fcc01a6712e08-v2/receipt.json",
-      "testBuild": 58,
+      "testBuild": 59,
       "order": 11,
       "sourceIssue": "https://github.com/saphid/t3code-personal/issues/51",
       "sourceThread": "9bed9116-ac61-4787-9b19-e6e8b90bb80f",
@@ -490,7 +551,11 @@
     {
       "id": "home-build-number-swipe-space",
       "name": "Remove the GitHub commit link from the SwiftUI home build number",
-      "aliases": ["home version hash", "GitHub hash", "build number swipe space"],
+      "aliases": [
+        "home version hash",
+        "GitHub hash",
+        "build number swipe space"
+      ],
       "state": "blocked",
       "branch": "fix/swiftui-remove-home-version-hash-20260813",
       "sourceCommit": "9845d86d4",
@@ -508,21 +573,25 @@
     {
       "id": "app-flow-regression-tests",
       "name": "Automate native SwiftUI happy-path and menu regression coverage",
-      "aliases": ["app flow tests", "UI journey tests", "menu regression coverage"],
-    "summary": "Adds deterministic native SwiftUI happy-path, menu, accessibility, security, and proof-media regression coverage with reusable Xcode Test Plans.",
-    "problem": "Native changes were being proved with inconsistent one-off agent runs, which made regression scope, action traces, screenshots, and credential safety hard to reproduce.",
-    "reproductionSteps": [
-      "Run the candidate or Test-train command against the deterministic fixture.",
-      "Open the retained verification receipt and action ledger.",
-      "Compare the clean and annotated proof, including visible tap and swipe markers and explanatory captions."
-    ],
-    "whatToCheck": "Run the focused candidate and Test-train plans, inspect the retained phone screenshots, confirm taps, swipes, and captions align in annotated proof, and verify that credentials do not enter evidence.",
-    "successLooksLike": "All selected journeys and native suites pass from one built test product, screenshots are readable and unobscured, annotated proof matches the action ledger, and receipts bind the evidence to the candidate commit.",
-    "validationSummary": "The integrated Test 58 train passed 11 of 11 UI journeys, 528 native tests, visual checks, and security checks. One test was skipped by a documented allowlist.",
-    "knownLimitations": "This item is verification infrastructure, not a standalone phone feature. Review its receipts and proof controls after the visible product groups.",
-    "reviewPriority": 10,
-    "reviewGroup": "Verification infrastructure",
-      "state": "needs-you",
+      "aliases": [
+        "app flow tests",
+        "UI journey tests",
+        "menu regression coverage"
+      ],
+      "summary": "Adds deterministic native SwiftUI happy-path, menu, accessibility, security, and proof-media regression coverage with reusable Xcode Test Plans.",
+      "problem": "Native changes were being proved with inconsistent one-off agent runs, which made regression scope, action traces, screenshots, and credential safety hard to reproduce.",
+      "reproductionSteps": [
+        "Run the candidate or Test-train command against the deterministic fixture.",
+        "Open the retained verification receipt and action ledger.",
+        "Compare the clean and annotated proof, including visible tap and swipe markers and explanatory captions."
+      ],
+      "whatToCheck": "Run the focused candidate and Test-train plans, inspect the retained phone screenshots, confirm taps, swipes, and captions align in annotated proof, and verify that credentials do not enter evidence.",
+      "successLooksLike": "All selected journeys and native suites pass from one built test product, screenshots are readable and unobscured, annotated proof matches the action ledger, and receipts bind the evidence to the candidate commit.",
+      "validationSummary": "The integrated Test 58 train passed 11 of 11 UI journeys, 528 native tests, visual checks, and security checks. One test was skipped by a documented allowlist.",
+      "knownLimitations": "This item is verification infrastructure, not a standalone phone feature. Review its receipts and proof controls after the visible product groups.",
+      "reviewPriority": 10,
+      "reviewGroup": "Verification infrastructure",
+      "state": "in-test",
       "sourceBranch": "t3code/deterministic-swiftui-pipeline-20260814",
       "sourceThread": "019ff9b0-3de8-7f31-8f7d-b6d1b9545949",
       "sourceIssue": "https://github.com/saphid/t3code-personal/issues/58",
@@ -530,7 +599,7 @@
       "sourceCommit": "d7f1bbd2e61755f42d7ae9378914f1c6443a9a1d",
       "candidateCommit": "d7f1bbd2e61755f42d7ae9378914f1c6443a9a1d",
       "integratedCommit": "19459ed2ee8b689710c55efc42d17cff3493b9e4",
-      "testBuild": 58,
+      "testBuild": 59,
       "receipt": ".t3/evidence/integrated-pr-final-20260814T0715Z/verification.receipt.json",
       "delivery": "local-only"
     }

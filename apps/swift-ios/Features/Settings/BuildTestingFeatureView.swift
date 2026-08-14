@@ -100,6 +100,9 @@ struct BuildTestingFeatureView: View {
                 Text("Priority \(entry.reviewPriority) · \(entry.reviewGroup)")
                     .font(T3Typography.supportingStrong)
                     .foregroundStyle(T3Colors.accent)
+                    .accessibilityLabel(
+                        "Priority \(entry.reviewPriority), \(entry.reviewGroup)"
+                    )
                 Text("^[\(entry.commits.count) commit](inflect: true) · ^[\(entry.threads.count) thread](inflect: true)")
                     .font(T3Typography.supporting)
                     .foregroundStyle(T3Colors.textSecondary)

@@ -137,6 +137,12 @@ def validate_manifest(value: dict[str, Any]) -> None:
             priority = feature.get("reviewPriority")
             if not isinstance(priority, int) or isinstance(priority, bool) or priority < 1:
                 fail(f"{feature_id} is reviewable without valid reviewPriority")
+            source_issue = feature.get("sourceIssue")
+            if not isinstance(source_issue, str) or not source_issue.strip():
+                fail(f"{feature_id} is reviewable without sourceIssue")
+            parsed_issue = urlparse(source_issue)
+            if parsed_issue.scheme != "https" or not parsed_issue.netloc:
+                fail(f"{feature_id} sourceIssue must use HTTPS")
         evidence = feature.get("visualEvidence")
         if evidence is not None:
             if not feature.get("visualChange"):
@@ -201,6 +207,31 @@ def validate_manifest(value: dict[str, Any]) -> None:
                 )
             if not isinstance(integrated, str) or not re.fullmatch(r"[0-9a-f]{40}", integrated):
                 fail(f"{feature_id} is in Test without a full integratedCommit")
+            integrated_commits = feature.get("integratedCommits")
+            if integrated_commits is not None:
+                if (
+                    not isinstance(integrated_commits, list)
+                    or not integrated_commits
+                    or any(
+                        not isinstance(commit, str)
+                        or not re.fullmatch(r"[0-9a-f]{40}", commit)
+                        for commit in integrated_commits
+                    )
+                    or len(integrated_commits) != len(set(integrated_commits))
+                    or integrated not in integrated_commits
+                ):
+                    fail(
+                        f"{feature_id} integratedCommits must contain unique full SHAs "
+                        "including integratedCommit"
+                    )
+            if state == "needs-you":
+                if not isinstance(evidence, list) or not evidence:
+                    fail(f"{feature_id} is reviewable without visualEvidence")
+                evidence_kinds = {
+                    item.get("kind") for item in evidence if isinstance(item, dict)
+                }
+                if not {"image", "video"} <= evidence_kinds:
+                    fail(f"{feature_id} review evidence needs an image and video")
             if not feature.get("sourceThread"):
                 fail(f"{feature_id} is in Test without a sourceThread")
         delivery = feature.get("delivery")

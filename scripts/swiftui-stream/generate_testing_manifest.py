@@ -161,6 +161,9 @@ def review_guidance(feature):
         raise RuntimeError("%s has invalid reviewPriority" % feature.get("id", "feature"))
     guidance["reproductionSteps"] = [step.strip() for step in steps]
     guidance["reviewPriority"] = priority
+    source_issue = feature.get("sourceIssue")
+    if not isinstance(source_issue, str) or not source_issue.startswith("https://"):
+        raise RuntimeError("%s has invalid sourceIssue" % feature.get("id", "feature"))
     return guidance
 
 
