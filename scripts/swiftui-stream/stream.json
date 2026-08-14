@@ -303,10 +303,9 @@
       "sourceCommit": "ed15ca2a",
       "integratedCommits": [
         "e1ca3cb09f0eadc6f02c33a959cc0da4912564c0",
-        "bdfee17f1e9d9bca071488fb9261de53f70d3464",
-        "a1fd13793591f79237d2447e2d7d06fceaeebc1d"
+        "bdfee17f1e9d9bca071488fb9261de53f70d3464"
       ],
-      "integratedCommit": "a1fd13793591f79237d2447e2d7d06fceaeebc1d",
+      "integratedCommit": "bdfee17f1e9d9bca071488fb9261de53f70d3464",
       "sourceThread": "508739B1-477F-4CAB-BA79-8816FCCEA000",
       "sourceThreadTitle": "Add Thread Links to What’s New",
       "sourceIssue": "https://github.com/saphid/t3code-personal/issues/85",
@@ -333,10 +332,16 @@
       "knownLimitations": "The phone acceptance step needs the recent-tasks widget on the Home Screen and a state without a usable task deep link.",
       "reviewPriority": 3,
       "reviewGroup": "Build isolation",
+      "visualChange": true,
       "interactionChange": true,
+      "proofPending": true,
       "state": "in-test",
       "sourceCommit": "a1fd13793591f79237d2447e2d7d06fceaeebc1d",
-      "integratedCommit": "a1fd13793591f79237d2447e2d7d06fceaeebc1d",
+      "integratedCommits": [
+        "a1fd13793591f79237d2447e2d7d06fceaeebc1d",
+        "b17869548cc8932710b4dd10fb79fbb97466423a"
+      ],
+      "integratedCommit": "b17869548cc8932710b4dd10fb79fbb97466423a",
       "sourceThread": "508739B1-477F-4CAB-BA79-8816FCCEA000",
       "sourceThreadTitle": "Add Thread Links to What’s New",
       "sourceIssue": "https://github.com/saphid/t3code-personal/issues/89",
