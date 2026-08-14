@@ -28,11 +28,14 @@ retains that exact authority reference.
 
 1. `candidate-verification` validates the stream and branch graph.
 2. `candidate-simulator` runs the focused native suite and the selected
-   CandidateJourneys app-flow gate.
+   CandidateJourneys app-flow gate. It supplies an exact commit-bound
+   proof-build receipt.
 3. `test-train` repeats the stream and branch gates, then runs the TestTrain
    native suite and complete regression app-flow set on the combined train.
+   Its successful receipt can also supply the proof-build binding.
 4. `test-catalog` proves that the reserved Test build and all pending feature
-   records were staged in one catalog-only commit.
+   records were staged in one catalog-only commit. It also recalculates all
+   proof receipt and media hashes and resolves every source commit.
 5. `test-phone-build` creates the signed, immutable Test artifact and ready
    pointer.
 6. `test-phone-install` runs the deterministic phone reconciler.
@@ -46,11 +49,16 @@ retains that exact authority reference.
 11. `upstream-handoff` validates the stream, branch graph, and prepared pull
     request body. It does not push code or start GitHub Actions.
 
-Run `stream.py stage-test-build` and commit its one-file change before this
-pipeline starts. Set `T3_SWIFT_BUILD_NUMBER` to its reserved build. The
-`test-catalog` stage and `build-ready.sh test` run the same fail-closed guard.
-They do not change the catalog. No catalog attribution changes are allowed after
-signing.
+Complete the candidate or Test-train proof run first. Create paired clean and
+annotated proof media. Add its acceptance-point coverage and immutable receipts
+to the catalog. Then run `stream.py review-readiness --verify-files
+--verify-commits`.
+
+Only after that command succeeds, run `stream.py stage-test-build` and commit
+its one-file change. Set `T3_SWIFT_BUILD_NUMBER` to its reserved build. The
+stage command checks proof before it calls the allocator. The `test-catalog`
+stage and `build-ready.sh test` run the same fail-closed guard. They do not
+change the catalog. No catalog attribution changes are allowed after signing.
 
 The Candidate-to-Dev integration remains in the existing approval workflow.
 This CI layer does not implement a second merge policy. The `dev-promotion`
@@ -134,6 +142,11 @@ The receipt uses
 
 A non-dry-run Dev promotion receipt also records the exact human approval
 receipt reference from the Buildkite block.
+
+For feature proof, retain the successful `candidate-simulator` or `test-train`
+receipt. Store its absolute path and SHA-256 hash in the feature proof object.
+The proof object `buildId` must equal the receipt `runId`. The receipt repository
+commit must equal the feature source commit.
 
 The runner writes a failed receipt and preserves both logs when a child command
 fails. It stops before later commands. A dry run writes a `planned` receipt and

@@ -781,6 +781,318 @@ def atomic_manifest(value: dict[str, Any]) -> None:
     os.replace(temporary, MANIFEST_PATH)
 
 
+def file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as file:
+        for chunk in iter(lambda: file.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def proof_file_errors(
+    path_value: Any,
+    digest_value: Any,
+    label: str,
+    verify_files: bool,
+    parse_json: bool = True,
+) -> tuple[list[str], dict[str, Any] | None]:
+    errors: list[str] = []
+    if not isinstance(path_value, str) or not path_value:
+        return [f"{label} path must be a non-empty absolute path"], None
+    path = Path(path_value).expanduser()
+    if not path.is_absolute():
+        errors.append(f"{label} path must be a non-empty absolute path")
+    if not isinstance(digest_value, str) or not re.fullmatch(
+        r"[0-9a-f]{64}", digest_value
+    ):
+        errors.append(f"{label} SHA-256 must be 64 lowercase hex characters")
+    if errors or not verify_files:
+        return errors, None
+    if not path.is_file() or path.is_symlink():
+        return [f"{label} file is missing or is a symbolic link: {path}"], None
+    try:
+        actual = file_sha256(path)
+    except OSError as error:
+        return [f"{label} file cannot be read: {path}: {error}"], None
+    if actual != digest_value:
+        errors.append(f"{label} SHA-256 does not match {path}")
+        return errors, None
+    if not parse_json:
+        return errors, None
+    try:
+        value = json.loads(path.read_text())
+    except (OSError, json.JSONDecodeError) as error:
+        errors.append(f"{label} is not valid JSON: {error}")
+        return errors, None
+    if not isinstance(value, dict):
+        errors.append(f"{label} must contain a JSON object")
+        return errors, None
+    return errors, value
+
+
+def proof_packet_errors(
+    feature_id: str,
+    packet: dict[str, Any],
+    acceptance_ids: set[str],
+    verify_files: bool,
+) -> tuple[list[str], set[str]]:
+    packet_id = packet.get("id")
+    label = f"{feature_id} proof packet {packet_id!r}"
+    errors: list[str] = []
+    covered: set[str] = set()
+    if not isinstance(packet_id, str) or not packet_id:
+        errors.append(f"{feature_id} proof packet id must be non-empty")
+    point_ids = packet.get("acceptancePointIds")
+    if not isinstance(point_ids, list) or not point_ids or any(
+        not isinstance(point_id, str) or not point_id for point_id in point_ids
+    ):
+        errors.append(f"{label} acceptancePointIds must be a non-empty string list")
+    else:
+        covered = set(point_ids)
+        unknown = sorted(covered - acceptance_ids)
+        if unknown:
+            errors.append(f"{label} names unknown acceptance points: {', '.join(unknown)}")
+    reference_errors, receipt = proof_file_errors(
+        packet.get("receiptPath"),
+        packet.get("receiptSha256"),
+        f"{label} receipt",
+        verify_files,
+    )
+    errors.extend(reference_errors)
+    if receipt is None:
+        return errors, covered
+    if receipt.get("version") != 1:
+        errors.append(f"{label} receipt version must be 1")
+    artifacts = receipt.get("artifacts")
+    if not isinstance(artifacts, dict):
+        errors.append(f"{label} receipt artifacts must be an object")
+        return errors, covered
+    video_pair = {"clean_video", "annotated_video"}
+    image_pair = {"clean_image", "annotated_image"}
+    if video_pair <= set(artifacts):
+        pair = video_pair
+        events = receipt.get("events")
+        if not isinstance(events, list) or not events:
+            errors.append(f"{label} annotated video must contain timeline events")
+        else:
+            if not any(isinstance(event, dict) and event.get("caption") for event in events):
+                errors.append(f"{label} annotated video must contain a caption")
+            if not any(
+                isinstance(event, dict) and event.get("kind") in {"tap", "swipe"}
+                for event in events
+            ):
+                errors.append(f"{label} annotated video must show a tap or swipe")
+    elif image_pair <= set(artifacts):
+        pair = image_pair
+        event = receipt.get("event")
+        if not isinstance(event, dict) or not event.get("caption"):
+            errors.append(f"{label} annotated image must contain a caption")
+    else:
+        errors.append(f"{label} must contain a clean and annotated proof pair")
+        pair = set(artifacts) & (video_pair | image_pair)
+    for artifact_name in sorted(pair):
+        record = artifacts.get(artifact_name)
+        if not isinstance(record, dict):
+            errors.append(f"{label} artifact {artifact_name} must be an object")
+            continue
+        artifact_errors, _ = proof_file_errors(
+            record.get("path"),
+            record.get("sha256"),
+            f"{label} artifact {artifact_name}",
+            verify_files,
+            parse_json=False,
+        )
+        errors.extend(artifact_errors)
+    return errors, covered
+
+
+def review_readiness_errors(
+    feature: dict[str, Any],
+    *,
+    current_build: int,
+    verify_files: bool,
+) -> list[str]:
+    """Return every reason a pending feature cannot be shown for review."""
+    feature_id = feature.get("id") or "<missing-id>"
+    errors: list[str] = []
+    source_commit = feature.get("sourceCommit")
+    if not isinstance(source_commit, str) or not re.fullmatch(
+        r"[0-9a-f]{40}", source_commit
+    ):
+        errors.append(f"{feature_id} sourceCommit must be a full 40-character SHA")
+    if feature.get("testBuild") != current_build:
+        errors.append(
+            f"{feature_id} testBuild {feature.get('testBuild')!r} does not match "
+            f"current Test build {current_build}"
+        )
+    if type(feature.get("order")) is not int or feature["order"] < 1:
+        errors.append(f"{feature_id} order must be a positive integer")
+    if not isinstance(feature.get("behavior"), str) or not feature["behavior"].strip():
+        errors.append(f"{feature_id} behavior must be a non-empty string")
+    delivery = feature.get("delivery")
+    if delivery not in VALID_DELIVERY:
+        errors.append(f"{feature_id} delivery must be classified")
+    dependencies = feature.get("dependsOn")
+    if not isinstance(dependencies, list) or any(
+        not isinstance(dependency, str) or not dependency
+        for dependency in dependencies or []
+    ):
+        errors.append(f"{feature_id} dependsOn must be a string list")
+    elif delivery == "chain" and not dependencies:
+        errors.append(f"{feature_id} chain delivery requires dependsOn")
+
+    points = feature.get("acceptancePoints")
+    acceptance_ids: set[str] = set()
+    if not isinstance(points, list) or not points:
+        errors.append(f"{feature_id} acceptancePoints must be a non-empty list")
+    else:
+        for index, point in enumerate(points):
+            if not isinstance(point, dict):
+                errors.append(f"{feature_id} acceptancePoints[{index}] must be an object")
+                continue
+            point_id = point.get("id")
+            if not isinstance(point_id, str) or not point_id:
+                errors.append(f"{feature_id} acceptancePoints[{index}].id must be non-empty")
+            elif point_id in acceptance_ids:
+                errors.append(f"{feature_id} duplicates acceptance point {point_id}")
+            else:
+                acceptance_ids.add(point_id)
+            if not isinstance(point.get("text"), str) or not point["text"].strip():
+                errors.append(
+                    f"{feature_id} acceptancePoints[{index}].text must be non-empty"
+                )
+
+    proof = feature.get("proof")
+    if not isinstance(proof, dict):
+        errors.append(f"{feature_id} proof must be an object")
+        return errors
+    if proof.get("schemaVersion") != 1:
+        errors.append(f"{feature_id} proof schemaVersion must be 1")
+    if proof.get("sourceCommit") != source_commit:
+        errors.append(f"{feature_id} proof sourceCommit must match the feature")
+    build_id = proof.get("buildId")
+    if not isinstance(build_id, str) or not build_id:
+        errors.append(f"{feature_id} proof buildId must be non-empty")
+    build_reference = proof.get("buildReceipt")
+    if not isinstance(build_reference, dict):
+        errors.append(f"{feature_id} proof buildReceipt must be an object")
+    else:
+        reference_errors, build_receipt = proof_file_errors(
+            build_reference.get("path"),
+            build_reference.get("sha256"),
+            f"{feature_id} build receipt",
+            verify_files,
+        )
+        errors.extend(reference_errors)
+        if build_receipt is not None:
+            if build_receipt.get("schemaVersion") != 1:
+                errors.append(f"{feature_id} build receipt schemaVersion must be 1")
+            if build_receipt.get("pipeline") != "swiftui-private-ci":
+                errors.append(f"{feature_id} build receipt pipeline is not private CI")
+            if build_receipt.get("stage") not in {"candidate-simulator", "test-train"}:
+                errors.append(f"{feature_id} build receipt is not a proof build stage")
+            if build_receipt.get("runId") != build_id:
+                errors.append(f"{feature_id} build receipt buildId does not match proof")
+            repository = build_receipt.get("repository")
+            if not isinstance(repository, dict) or repository.get("commit") != source_commit:
+                errors.append(
+                    f"{feature_id} build receipt sourceCommit does not match feature"
+                )
+            if build_receipt.get("status") != "passed" or build_receipt.get(
+                "exitStatus"
+            ) != 0:
+                errors.append(f"{feature_id} build receipt did not pass")
+
+    packets = proof.get("packets")
+    covered: set[str] = set()
+    packet_ids: set[str] = set()
+    if not isinstance(packets, list) or not packets:
+        errors.append(f"{feature_id} proof packets must be a non-empty list")
+    else:
+        for packet in packets:
+            if not isinstance(packet, dict):
+                errors.append(f"{feature_id} proof packet must be an object")
+                continue
+            packet_id = packet.get("id")
+            if isinstance(packet_id, str) and packet_id:
+                if packet_id in packet_ids:
+                    errors.append(f"{feature_id} duplicates proof packet {packet_id}")
+                packet_ids.add(packet_id)
+            packet_errors, packet_coverage = proof_packet_errors(
+                feature_id, packet, acceptance_ids, verify_files
+            )
+            errors.extend(packet_errors)
+            covered.update(packet_coverage)
+    uncovered = sorted(acceptance_ids - covered)
+    if uncovered:
+        errors.append(
+            f"{feature_id} acceptance points lack proof: {', '.join(uncovered)}"
+        )
+    return errors
+
+
+def catalog_review_readiness_errors(
+    value: dict[str, Any],
+    *,
+    verify_files: bool,
+    verify_commits: bool,
+) -> list[str]:
+    current_build = value.get("currentTestBuild", {}).get("build")
+    errors: list[str] = []
+    pending = [
+        feature
+        for feature in value.get("features", [])
+        if feature.get("state") in APPROVAL_STATES
+    ]
+    orders = [
+        feature.get("order")
+        for feature in pending
+        if type(feature.get("order")) is int and feature["order"] > 0
+    ]
+    if len(orders) != len(set(orders)):
+        errors.append("pending review order values must be unique")
+    for feature in pending:
+        errors.extend(
+            review_readiness_errors(
+                feature,
+                current_build=current_build,
+                verify_files=verify_files,
+            )
+        )
+    if not verify_commits:
+        return errors
+    for feature in pending:
+        commit = feature.get("sourceCommit")
+        if not isinstance(commit, str) or not re.fullmatch(r"[0-9a-f]{40}", commit):
+            continue
+        result = subprocess.run(
+            ["git", "cat-file", "-e", f"{commit}^{{commit}}"],
+            cwd=REPO_ROOT,
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode:
+            errors.append(f"{feature['id']} sourceCommit does not resolve: {commit}")
+    return errors
+
+
+def require_review_ready_catalog(
+    value: dict[str, Any],
+    *,
+    verify_files: bool = True,
+    verify_commits: bool = True,
+) -> None:
+    errors = catalog_review_readiness_errors(
+        value,
+        verify_files=verify_files,
+        verify_commits=verify_commits,
+    )
+    if errors:
+        visible = "; ".join(errors[:20])
+        suffix = f"; and {len(errors) - 20} more" if len(errors) > 20 else ""
+        fail(f"Test catalog is not review-ready: {visible}{suffix}")
+
+
 def validate_delivery_inventory(value: dict[str, Any], states: list[str]) -> None:
     records = value.get("pullRequests", [])
     numbers = [item.get("number") for item in records]
@@ -1155,7 +1467,9 @@ def require_installed_test_receipt(
 
 
 def approval_list() -> list[dict[str, Any]]:
-    current = manifest().get("currentTestBuild", {})
+    value = manifest()
+    require_review_ready_catalog(value)
+    current = value.get("currentTestBuild", {})
     build = current.get("build")
     require_installed_test_receipt(current)
     pending = [
@@ -1401,6 +1715,8 @@ def command_stage_test_build(args: argparse.Namespace) -> None:
         if git("status", "--porcelain"):
             fail("Test catalog staging requires a clean worktree")
         source_commit = git("rev-parse", "HEAD")
+        value = manifest()
+        require_review_ready_catalog(value)
         allocator = [str(SCRIPT_DIR / "next-build.py"), "test"]
         if args.build is not None:
             allocator.extend(("--requested", str(args.build)))
@@ -1416,7 +1732,6 @@ def command_stage_test_build(args: argparse.Namespace) -> None:
             build = int(result.stdout.strip())
         except ValueError:
             fail(f"Test build allocator returned an invalid build: {result.stdout!r}")
-        value = manifest()
         staged = staged_test_manifest(value, build, source_commit)
         validate_manifest(staged)
         atomic_manifest(staged)
@@ -1440,6 +1755,7 @@ def command_stage_test_build(args: argparse.Namespace) -> None:
 
 def command_validate_test_build_catalog(args: argparse.Namespace) -> None:
     current = manifest()
+    require_review_ready_catalog(current)
     source_commit = current["currentTestBuild"]["commit"]
     head_commit = git("rev-parse", "HEAD")
     git("rev-parse", "--verify", f"{source_commit}^{{commit}}")
@@ -1483,6 +1799,31 @@ def command_validate_test_build_catalog(args: argparse.Namespace) -> None:
             sort_keys=True,
         )
     )
+
+
+def command_review_readiness(args: argparse.Namespace) -> None:
+    value = load_json(Path(args.manifest)) if args.manifest else manifest()
+    errors = catalog_review_readiness_errors(
+        value,
+        verify_files=args.verify_files,
+        verify_commits=args.verify_commits,
+    )
+    result = {
+        "catalogBuild": value.get("currentTestBuild", {}).get("build"),
+        "errorCount": len(errors),
+        "errors": errors,
+        "reviewReady": not errors,
+        "reviewItemCount": len(
+            [
+                feature
+                for feature in value.get("features", [])
+                if feature.get("state") in APPROVAL_STATES
+            ]
+        ),
+    }
+    print(json.dumps(result, indent=2, sort_keys=True))
+    if errors:
+        raise SystemExit(1)
 
 
 def command_require_receipt(_: argparse.Namespace) -> None:
@@ -1543,6 +1884,11 @@ def parser() -> argparse.ArgumentParser:
     validate_test = commands.add_parser("validate-test-build-catalog")
     validate_test.add_argument("--build", type=int, required=True)
     validate_test.set_defaults(func=command_validate_test_build_catalog)
+    review = commands.add_parser("review-readiness")
+    review.add_argument("--manifest")
+    review.add_argument("--verify-files", action="store_true")
+    review.add_argument("--verify-commits", action="store_true")
+    review.set_defaults(func=command_review_readiness)
     return result
 
 

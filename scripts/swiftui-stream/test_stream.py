@@ -331,6 +331,309 @@ class StreamTests(unittest.TestCase):
         self.assertIn('"T3_GIT_COMMIT=$SOURCE_COMMIT"', script)
         self.assertIn('--arg catalogCommit "$CATALOG_COMMIT"', script)
 
+    def test_review_readiness_rejects_missing_full_details_and_proof(self):
+        feature = {
+            "id": "candidate-a",
+            "name": "Candidate A",
+            "state": "in-test",
+            "sourceCommit": "abc1234",
+            "testBuild": 59,
+        }
+
+        errors = stream.review_readiness_errors(
+            feature,
+            current_build=59,
+            verify_files=False,
+        )
+
+        self.assertTrue(any("full 40-character" in error for error in errors))
+        self.assertTrue(any("order" in error for error in errors))
+        self.assertTrue(any("behavior" in error for error in errors))
+        self.assertTrue(any("delivery" in error for error in errors))
+        self.assertTrue(any("acceptancePoints" in error for error in errors))
+        self.assertTrue(any("proof" in error for error in errors))
+
+    def test_catalog_review_readiness_reports_bad_order_without_crashing(self):
+        value = {
+            "currentTestBuild": {"build": 59},
+            "features": [
+                {
+                    "id": "candidate-a",
+                    "state": "in-test",
+                    "sourceCommit": "a" * 40,
+                    "testBuild": 59,
+                    "order": [1],
+                }
+            ],
+        }
+
+        errors = stream.catalog_review_readiness_errors(
+            value,
+            verify_files=False,
+            verify_commits=False,
+        )
+
+        self.assertTrue(any("order must be a positive integer" in error for error in errors))
+
+    def test_catalog_review_readiness_resolves_valid_commits_despite_other_errors(self):
+        value = {
+            "currentTestBuild": {"build": 59},
+            "features": [
+                {
+                    "id": "candidate-a",
+                    "state": "in-test",
+                    "sourceCommit": "a" * 40,
+                    "testBuild": 59,
+                }
+            ],
+        }
+        result = subprocess.CompletedProcess([], 1, "", "missing")
+
+        with patch.object(stream.subprocess, "run", return_value=result) as run:
+            errors = stream.catalog_review_readiness_errors(
+                value,
+                verify_files=False,
+                verify_commits=True,
+            )
+
+        run.assert_called_once()
+        self.assertTrue(any("sourceCommit does not resolve" in error for error in errors))
+
+    def test_review_readiness_accepts_commit_build_bound_proof_pairs(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            clean = root / "clean.mp4"
+            annotated = root / "annotated.mp4"
+            clean.write_bytes(b"clean proof")
+            annotated.write_bytes(b"annotated proof")
+            source_commit = "a" * 40
+            build_receipt = root / "build.json"
+            build_receipt.write_text(
+                json.dumps(
+                    {
+                        "schemaVersion": 1,
+                        "pipeline": "swiftui-private-ci",
+                        "stage": "candidate-simulator",
+                        "runId": "candidate-a-simulator-1",
+                        "status": "passed",
+                        "exitStatus": 0,
+                        "repository": {"commit": source_commit},
+                    }
+                )
+            )
+            packet_receipt = root / "drawer-receipt.json"
+            packet_receipt.write_text(
+                json.dumps(
+                    {
+                        "version": 1,
+                        "events": [
+                            {"kind": "tap", "caption": "Drawer opens"}
+                        ],
+                        "artifacts": {
+                            "clean_video": {
+                                "path": str(clean),
+                                "sha256": hashlib.sha256(
+                                    clean.read_bytes()
+                                ).hexdigest(),
+                            },
+                            "annotated_video": {
+                                "path": str(annotated),
+                                "sha256": hashlib.sha256(
+                                    annotated.read_bytes()
+                                ).hexdigest(),
+                            },
+                        },
+                    }
+                )
+            )
+            feature = {
+                "id": "candidate-a",
+                "name": "Candidate A",
+                "state": "in-test",
+                "sourceCommit": source_commit,
+                "testBuild": 60,
+                "order": 1,
+                "behavior": "Open the drawer and keep the selected item visible.",
+                "delivery": "direct",
+                "dependsOn": [],
+                "acceptancePoints": [
+                    {"id": "drawer-visible", "text": "The full drawer is visible."}
+                ],
+                "proof": {
+                    "schemaVersion": 1,
+                    "sourceCommit": source_commit,
+                    "buildId": "candidate-a-simulator-1",
+                    "buildReceipt": {
+                        "path": str(build_receipt),
+                        "sha256": hashlib.sha256(
+                            build_receipt.read_bytes()
+                        ).hexdigest(),
+                    },
+                    "packets": [
+                        {
+                            "id": "drawer-flow",
+                            "receiptPath": str(packet_receipt),
+                            "receiptSha256": hashlib.sha256(
+                                packet_receipt.read_bytes()
+                            ).hexdigest(),
+                            "acceptancePointIds": ["drawer-visible"],
+                        },
+                    ],
+                },
+            }
+
+            self.assertEqual(
+                stream.review_readiness_errors(
+                    feature,
+                    current_build=60,
+                    verify_files=True,
+                ),
+                [],
+            )
+
+            feature["proof"]["buildId"] = "another-build"
+            build_errors = stream.review_readiness_errors(
+                feature,
+                current_build=60,
+                verify_files=True,
+            )
+            self.assertTrue(
+                any("buildId does not match proof" in error for error in build_errors)
+            )
+
+            feature["proof"]["buildId"] = "candidate-a-simulator-1"
+            build_value = json.loads(build_receipt.read_text())
+            build_value["repository"]["commit"] = "b" * 40
+            build_receipt.write_text(json.dumps(build_value))
+            feature["proof"]["buildReceipt"]["sha256"] = hashlib.sha256(
+                build_receipt.read_bytes()
+            ).hexdigest()
+            commit_errors = stream.review_readiness_errors(
+                feature,
+                current_build=60,
+                verify_files=True,
+            )
+            self.assertTrue(
+                any(
+                    "sourceCommit does not match feature" in error
+                    for error in commit_errors
+                )
+            )
+
+    def test_review_readiness_rejects_wrong_hash_and_unpaired_acceptance(self):
+        with tempfile.TemporaryDirectory() as directory:
+            clean = Path(directory) / "clean.png"
+            clean.write_bytes(b"clean")
+            source_commit = "a" * 40
+            build_receipt = Path(directory) / "build.json"
+            build_receipt.write_text(
+                json.dumps(
+                    {
+                        "schemaVersion": 1,
+                        "pipeline": "swiftui-private-ci",
+                        "stage": "candidate-simulator",
+                        "runId": "candidate-a-simulator-1",
+                        "status": "passed",
+                        "exitStatus": 0,
+                        "repository": {"commit": source_commit},
+                    }
+                )
+            )
+            packet_receipt = Path(directory) / "packet.json"
+            packet_receipt.write_text(
+                json.dumps(
+                    {
+                        "version": 1,
+                        "event": {"kind": "tap", "caption": "Final state"},
+                        "artifacts": {
+                            "clean_image": {
+                                "path": str(clean),
+                                "sha256": "0" * 64,
+                            }
+                        },
+                    }
+                )
+            )
+            feature = {
+                "id": "candidate-a",
+                "name": "Candidate A",
+                "state": "in-test",
+                "sourceCommit": source_commit,
+                "testBuild": 60,
+                "order": 1,
+                "behavior": "Show the final state.",
+                "delivery": "local-only",
+                "dependsOn": [],
+                "acceptancePoints": [
+                    {"id": "final-state", "text": "The final state is visible."}
+                ],
+                "proof": {
+                    "schemaVersion": 1,
+                    "sourceCommit": source_commit,
+                    "buildId": "candidate-a-simulator-1",
+                    "buildReceipt": {
+                        "path": str(build_receipt),
+                        "sha256": hashlib.sha256(
+                            build_receipt.read_bytes()
+                        ).hexdigest(),
+                    },
+                    "packets": [
+                        {
+                            "id": "only-clean",
+                            "receiptPath": str(packet_receipt),
+                            "receiptSha256": hashlib.sha256(
+                                packet_receipt.read_bytes()
+                            ).hexdigest(),
+                            "acceptancePointIds": ["final-state"],
+                        }
+                    ],
+                },
+            }
+
+            errors = stream.review_readiness_errors(
+                feature,
+                current_build=60,
+                verify_files=True,
+            )
+
+            self.assertTrue(any("SHA-256 does not match" in error for error in errors))
+            self.assertTrue(any("clean and annotated proof pair" in error for error in errors))
+
+    def test_stage_test_build_checks_proof_before_allocating_a_number(self):
+        incomplete = stream.manifest()
+        with tempfile.TemporaryDirectory() as directory:
+            lock = Path(directory) / "catalog.lock"
+            with (
+                patch.object(stream, "TEST_CATALOG_LOCK", lock),
+                patch.object(
+                    stream,
+                    "git",
+                    side_effect=["personal/swiftui-test", "", "a" * 40],
+                ),
+                patch.object(stream, "manifest", return_value=incomplete),
+                patch.object(stream.subprocess, "run") as run,
+                self.assertRaises(SystemExit),
+            ):
+                stream.command_stage_test_build(Namespace(build=None))
+            self.assertFalse(
+                any(
+                    call.args
+                    and call.args[0]
+                    and "next-build.py" in str(call.args[0][0])
+                    for call in run.call_args_list
+                )
+            )
+
+    def test_approval_list_checks_proof_before_phone_receipt(self):
+        incomplete = stream.manifest()
+        with (
+            patch.object(stream, "manifest", return_value=incomplete),
+            patch.object(stream, "require_installed_test_receipt") as receipt_gate,
+            self.assertRaises(SystemExit),
+        ):
+            stream.approval_list()
+        receipt_gate.assert_not_called()
+
     def test_approval_list_is_exact_build_order(self):
         with tempfile.TemporaryDirectory() as directory:
             value = stream.manifest()
@@ -344,6 +647,7 @@ class StreamTests(unittest.TestCase):
             value["currentTestBuild"] = current
             with (
                 patch.object(stream, "manifest", return_value=value),
+                patch.object(stream, "require_review_ready_catalog"),
                 patch.object(stream, "DEVICE_RECEIPTS_ROOT", receipt_root),
                 patch.object(stream, "TEST_READY_POINTER", ready_path),
             ):
@@ -368,6 +672,7 @@ class StreamTests(unittest.TestCase):
             receipt_path.write_text(json.dumps(receipt))
             with (
                 patch.object(stream, "manifest", return_value={"currentTestBuild": current}),
+                patch.object(stream, "require_review_ready_catalog"),
                 patch.object(stream, "DEVICE_RECEIPTS_ROOT", receipt_root),
                 patch.object(stream, "TEST_READY_POINTER", ready_path),
                 patch.object(stream, "catalog", return_value=[]),
@@ -1827,14 +2132,29 @@ Annotated screenshot: https://evidence.example/annotated.png
             validate(body.replace("https://evidence.example/annotated.png", ""))
 
     def test_fuzzy_match_prefers_command_palette(self):
-        pending = (
-            item for item in stream.catalog(False)
-            if item.get("state") in stream.APPROVAL_STATES
-        )
-        ranked = sorted(
-            ((stream.score("palette", item), item["id"]) for item in pending),
-            reverse=True,
-        )
+        with tempfile.TemporaryDirectory() as directory:
+            value = stream.manifest()
+            current = dict(value["currentTestBuild"])
+            for feature in value["features"]:
+                if feature.get("state") in stream.APPROVAL_STATES:
+                    feature["testBuild"] = current["build"]
+            current, receipt_root, _, ready_path = self.receipt_fixture(
+                directory, current
+            )
+            value["currentTestBuild"] = current
+            with (
+                patch.object(stream, "manifest", return_value=value),
+                patch.object(stream, "require_review_ready_catalog"),
+                patch.object(stream, "DEVICE_RECEIPTS_ROOT", receipt_root),
+                patch.object(stream, "TEST_READY_POINTER", ready_path),
+            ):
+                ranked = sorted(
+                    (
+                        (stream.score("palette", item), item["id"])
+                        for item in stream.approval_list()
+                    ),
+                    reverse=True,
+                )
         self.assertEqual(ranked[0][1], "command-palette-top-drawer")
 
     def test_pr_delivery_inventory_is_complete(self):

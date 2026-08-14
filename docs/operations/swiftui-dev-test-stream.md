@@ -62,6 +62,58 @@ eligibility check. With text after the skill name, it ranks names, aliases,
 issues, behavior, branches, and commits; it confirms the best match, or offers a
 short numbered list when ambiguous. It always asks for final human confirmation.
 
+### Proof-complete review gate
+
+No pending item can enter the approval list or reserve a Test build number until
+its catalog record is proof-complete. Each `in-test` or `needs-you` record must
+contain:
+
+- a full 40-character source commit;
+- the current Test build number;
+- a unique positive review order;
+- a plain-language behavior statement;
+- a delivery classification and an explicit dependency list;
+- one or more user acceptance points, each with a unique ID and clear text;
+- a proof object that names the exact source commit and proof build;
+- a successful private-CI receipt for that source commit;
+- one or more proof-media receipts that cover every acceptance point.
+
+Run the complete gate before Test build staging:
+
+```sh
+scripts/swiftui-stream/stream.py review-readiness \
+  --verify-files \
+  --verify-commits
+```
+
+The proof build is a successful `candidate-simulator` or `test-train` private-CI
+run. Its immutable receipt binds the proof to the exact source commit and run
+ID. The later catalog-only staging commit binds the same items to the reserved
+signed Test build number. These are two separate bindings. This rule prevents
+a circular dependency: proof must exist before the Test build allocator can
+run.
+
+Each proof-media receipt must identify a clean and an annotated output. The
+annotated output must contain a caption. An annotated video must also contain a
+tap or swipe event. The catalog stores the receipt path and SHA-256 hash. The
+gate recalculates the receipt and artifact hashes, rejects symbolic links, and
+rejects an acceptance point that has no proof packet.
+
+Use `prepare-proof-media` to render the paired output from a truthful raw
+capture and a semantic event timeline. Keep the clean output suitable for
+product review. Use the annotated output to show taps, swipes, and the expected
+result. Inspect both outputs before you add the receipt to the catalog.
+
+The following commands all run the same gate with file, hash, and commit
+verification:
+
+- `stage-test-build`, before it calls the build-number allocator;
+- `validate-test-build-catalog`, before a signed Test build;
+- `approval-list` and `match`, before they read the installed phone receipt.
+
+The commands stop on any mismatch. They do not infer missing acceptance text,
+replace missing evidence, or accept a different commit or build receipt.
+
 ### Installed Test gate
 
 Before the tool lists or promotes a feature, it runs
@@ -213,7 +265,8 @@ independent and monotonically increasing.
 ## Build and automatic phone install
 
 Stage Test attribution before a Test build. Run this command on a clean
-`personal/swiftui-test` branch after the Test train is complete:
+`personal/swiftui-test` branch after every pending item passes the proof-complete
+review gate:
 
 ```sh
 scripts/swiftui-stream/stream.py stage-test-build
@@ -224,6 +277,9 @@ The command reserves the next Test build number. It changes only
 `in-test` or `needs-you` feature to the reserved build. Review this diff. Commit
 it as one catalog-only commit. Keep the JSON output because it contains the
 reserved build number.
+
+The command verifies proof before it calls the allocator. An invalid catalog
+does not consume a build number.
 
 The catalog records the app-source commit that is the parent of the catalog
 commit. This rule avoids an impossible self-reference. The catalog commit
@@ -283,6 +339,7 @@ scripts/swiftui-stream/configure-phone-watcher.sh
 
 ```sh
 scripts/swiftui-stream/stream.py validate
+scripts/swiftui-stream/stream.py review-readiness --verify-files --verify-commits
 scripts/swiftui-stream/stream.py status
 scripts/swiftui-stream/stream.py status --verbose
 scripts/swiftui-stream/stream.py approval-list
