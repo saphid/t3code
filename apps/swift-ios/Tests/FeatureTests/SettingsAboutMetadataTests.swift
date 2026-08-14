@@ -65,7 +65,7 @@ struct SettingsAboutMetadataTests {
         #expect(changelog.entries.first?.shortCommit == "abc123")
         #expect(
             changelog.sourceThreadURL?.absoluteString
-                == "t3code-swiftui-dev://threads?thread=thread-7"
+                == "\(PlatformRoute.nativeScheme)://threads?thread=thread-7"
         )
         #expect(BuildChangelog.load(info: nil) == nil)
         #expect(BuildChangelog.load(info: ["T3BuildChangelog": "not base64"]) == nil)
