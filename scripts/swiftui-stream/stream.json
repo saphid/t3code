@@ -98,6 +98,31 @@
       "testBuild": 59,
       "order": 15,
       "tentativeDelivery": "local-only",
+      "behavior": "Show the exact contents and evidence of personal Dev and Test builds, and require a confirmed verdict for the exact feature and build before stream promotion.",
+      "delivery": "local-only",
+      "dependsOn": [],
+      "acceptancePoints": [
+        {
+          "id": "exact-build-metadata",
+          "text": "Embedded review metadata is deterministic and identifies the exact build channel, revision, feature commits, source thread, and issue."
+        },
+        {
+          "id": "personal-channel-visibility",
+          "text": "The review section appears in personal Dev and Test builds and does not appear in Release or ordinary Debug builds."
+        },
+        {
+          "id": "complete-review-guidance",
+          "text": "Each review item shows the problem, reproduction steps, change summary, checks, expected success, validation, limits, and attribution without trimmed text."
+        },
+        {
+          "id": "proof-pending-blocks-verdict",
+          "text": "An item with fresh proof pending explains that state and cannot submit a Ready for Dev verdict."
+        },
+        {
+          "id": "confirmed-auditable-verdict",
+          "text": "Ready and Not ready require confirmation and preserve the exact build and feature identity in the queued verdict."
+        }
+      ],
       "reviewMedia": false,
       "proofPending": true
     },
@@ -150,7 +175,12 @@
       "reviewPriority": 4,
       "reviewGroup": "Composer and Skills",
       "state": "in-test",
-      "sourceCommit": "9cb21674",
+      "sourceCommit": "9cb21674ea335e4e53d2d4d7680dfc7b0f5c1189",
+      "integratedCommits": [
+        "c4a4bd0e4946fde52ec9e250940a8e94e22db94f",
+        "40fceb60f124c1b61a6457e360135e48b63304cc",
+        "dd72827894d37158335408770bca04fa26b5caab"
+      ],
       "integratedCommit": "dd72827894d37158335408770bca04fa26b5caab",
       "sourceThread": "876DD4F4-77A5-4719-B652-B8446ACD4ED9",
       "sourceThreadTitle": "Fix Hidden Text Entry Box",
@@ -163,6 +193,27 @@
       ],
       "testBuild": 59,
       "order": 1,
+      "behavior": "Keep the composer, Skills query, results, selection controls, and dismissal path visible and usable while the software keyboard is open.",
+      "delivery": "direct",
+      "dependsOn": [],
+      "acceptancePoints": [
+        {
+          "id": "composer-above-keyboard",
+          "text": "Composer controls remain visible above the software keyboard while Skills is open."
+        },
+        {
+          "id": "scroll-without-overlap",
+          "text": "The Skills results list scrolls without covering the composer or trapping empty space."
+        },
+        {
+          "id": "selection-and-dismissal",
+          "text": "Filtering, selecting a lower result, dismissing the keyboard, and dismissing Skills remain usable."
+        },
+        {
+          "id": "accessible-text-sizes",
+          "text": "Selection and dismissal remain usable at standard and accessibility text sizes."
+        }
+      ],
       "reviewMedia": false,
       "proofPending": true
     },
@@ -203,6 +254,25 @@
       "startingBaseline": "125ed781e20716091222651092ed2708448bb6b6",
       "behavior": "Stack skill names above their descriptions and let the scrollable popup grow to the available vertical boundary above the composer.",
       "delivery": "direct",
+      "dependsOn": [],
+      "acceptancePoints": [
+        {
+          "id": "skill-name-primary-width",
+          "text": "Ordinary skill names use the primary row width and are not truncated to keep the description on the same line."
+        },
+        {
+          "id": "readable-description",
+          "text": "Supporting descriptions remain readable below their skill names."
+        },
+        {
+          "id": "available-popup-height",
+          "text": "The popup grows upward to the available boundary instead of stopping at the former fixed height cap."
+        },
+        {
+          "id": "scrollable-without-overlap",
+          "text": "Long result lists remain scrollable, do not overlap the composer, and allow selection near the bottom."
+        }
+      ],
       "reviewMedia": false,
       "proofPending": true
     },
@@ -240,13 +310,38 @@
       "reviewPriority": 3,
       "reviewGroup": "Home navigation",
       "state": "in-test",
-      "sourceCommit": "7cc3a611",
+      "sourceCommit": "7cc3a6119a9f836891d66c66e4816266e74ba602",
+      "integratedCommits": [
+        "cd7f6a44fb36980a2ae1193d5edc215dfb74b4b8",
+        "40fceb60f124c1b61a6457e360135e48b63304cc"
+      ],
       "integratedCommit": "cd7f6a44fb36980a2ae1193d5edc215dfb74b4b8",
       "sourceThread": "483B0392-396C-4D09-9658-FF378C410BC3",
       "sourceThreadTitle": "Fix Threads List Scrolling",
       "sourceIssue": "https://github.com/saphid/t3code-personal/issues/82",
       "testBuild": 59,
       "order": 3,
+      "behavior": "Limit the command-palette recognizer to its top gesture region so ordinary vertical drags scroll the Home thread list from normal list positions.",
+      "delivery": "direct",
+      "dependsOn": [],
+      "acceptancePoints": [
+        {
+          "id": "first-drag-scrolls",
+          "text": "The Home thread list starts scrolling on the first ordinary vertical drag."
+        },
+        {
+          "id": "rows-do-not-steal-drag",
+          "text": "Dragging from the middle of a thread row scrolls the list instead of being consumed by row content or the command gesture."
+        },
+        {
+          "id": "top-command-gesture-remains",
+          "text": "The intentional command-palette gesture remains available from its defined top region."
+        },
+        {
+          "id": "gesture-isolation",
+          "text": "Ordinary list swipes do not open the command palette."
+        }
+      ],
       "reviewMedia": false,
       "proofPending": true
     },
@@ -273,7 +368,7 @@
       "reviewGroup": "Home navigation",
       "state": "in-test",
       "sourceBranch": "fix/swiftui-physical-command-palette-drag-20260813",
-      "sourceCommit": "5a46ed73f",
+      "sourceCommit": "5a46ed73f8afa118714921ff1fd32768e3cedd4e",
       "integratedCommits": [
         "945c98851d77364c72c1a6ff5b893cef302d2f62",
         "8ef974258b9d2b38af5bcb02f680da4e23579704",
@@ -285,6 +380,27 @@
       "sourceIssue": "https://github.com/saphid/t3code-personal/issues/86",
       "testBuild": 59,
       "order": 4,
+      "behavior": "Make the command palette behave as a physical top drawer whose top bar and page track the finger and settle without stealing ordinary scrolling.",
+      "delivery": "direct",
+      "dependsOn": [],
+      "acceptancePoints": [
+        {
+          "id": "home-and-thread-consistency",
+          "text": "The top-drawer gesture behaves consistently on Home and in an open thread."
+        },
+        {
+          "id": "attached-motion",
+          "text": "The top bar, page, and palette stay visually attached to the finger throughout the pull."
+        },
+        {
+          "id": "stable-settle",
+          "text": "Threshold and flick releases settle open or closed without a jump."
+        },
+        {
+          "id": "keyboard-motion-scroll-isolation",
+          "text": "Keyboard and Reduce Motion states remain usable, and ordinary vertical or horizontal scrolling does not open the palette."
+        }
+      ],
       "reviewMedia": false,
       "proofPending": true
     },
@@ -309,7 +425,7 @@
       "reviewPriority": 9,
       "reviewGroup": "Traceability",
       "state": "in-test",
-      "sourceCommit": "ed15ca2a",
+      "sourceCommit": "ed15ca2ae993df1ad9435b088cc84b3d65e66716",
       "integratedCommits": [
         "e1ca3cb09f0eadc6f02c33a959cc0da4912564c0",
         "bdfee17f1e9d9bca071488fb9261de53f70d3464"
@@ -320,6 +436,27 @@
       "sourceIssue": "https://github.com/saphid/t3code-personal/issues/85",
       "testBuild": 59,
       "order": 5,
+      "behavior": "Show a development change's originating T3 thread and open that exact existing thread from the build changelog when source metadata is available.",
+      "delivery": "direct",
+      "dependsOn": [],
+      "acceptancePoints": [
+        {
+          "id": "source-thread-title",
+          "text": "A supported development-build entry shows a clear source-thread title."
+        },
+        {
+          "id": "thread-identity-preserved",
+          "text": "The link preserves the source thread identity and opens the correct existing T3 thread."
+        },
+        {
+          "id": "no-duplicate-or-wrong-route",
+          "text": "Activating the link does not create a duplicate thread or open an unrelated project or thread."
+        },
+        {
+          "id": "missing-source-state",
+          "text": "An entry without source-thread metadata shows a clear noninteractive state."
+        }
+      ],
       "reviewMedia": false,
       "proofPending": true
     },
@@ -358,6 +495,27 @@
       "sourceIssue": "https://github.com/saphid/t3code-personal/issues/89",
       "testBuild": 59,
       "order": 16,
+      "behavior": "Build every recent-tasks widget fallback from the URL scheme of its installed channel so a fallback opens the same app at New task.",
+      "delivery": "direct",
+      "dependsOn": [],
+      "acceptancePoints": [
+        {
+          "id": "configured-url-scheme",
+          "text": "The widget constructs its fallback URL from the configured T3CodeURLScheme value."
+        },
+        {
+          "id": "channel-isolation",
+          "text": "Dev, Test, Debug, and Release widget fallbacks remain isolated to their own app channels."
+        },
+        {
+          "id": "new-task-fallback",
+          "text": "Tapping New task or an empty recent-tasks widget opens the same installed app at New task."
+        },
+        {
+          "id": "fallback-never-dead",
+          "text": "The fallback does not open another channel and is not ignored when the Release app is absent."
+        }
+      ],
       "reviewMedia": false,
       "proofPending": true
     },
@@ -382,13 +540,37 @@
       "reviewPriority": 2,
       "reviewGroup": "Core reliability",
       "state": "in-test",
-      "sourceCommit": "dd2ecbb",
+      "sourceCommit": "dd2ecbb4a53a16e9c4b0c907ecfddcfe30de8e0b",
+      "integratedCommits": [
+        "2c2f4fe27c248dc93ab4f9b36b627f72ab5daf57"
+      ],
       "integratedCommit": "2c2f4fe27c248dc93ab4f9b36b627f72ab5daf57",
       "sourceThread": "1B30199A-3681-4A1B-B938-B735767508C4",
       "sourceThreadTitle": "Fix SwiftUI Thread Initial Updates",
       "sourceIssue": "https://github.com/saphid/t3code-personal/issues/83",
       "testBuild": 59,
       "order": 6,
+      "behavior": "Merge initial thread history with newer live events so the first history response cannot erase, duplicate, or revert messages and working state that arrived during opening.",
+      "delivery": "direct",
+      "dependsOn": [],
+      "acceptancePoints": [
+        {
+          "id": "newer-live-state-wins",
+          "text": "Newer live messages and working state win over stale initial history."
+        },
+        {
+          "id": "no-disappear-duplicate-revert",
+          "text": "A message or status does not disappear, duplicate, or revert when the initial history response arrives."
+        },
+        {
+          "id": "stable-reopen-order",
+          "text": "Leaving and reopening the thread produces the same forward-moving ordered timeline."
+        },
+        {
+          "id": "deterministic-race-contract",
+          "text": "A deterministic initial-load race covers the merge behavior."
+        }
+      ],
       "reviewMedia": false,
       "proofPending": true
     },
@@ -413,13 +595,37 @@
       "reviewPriority": 7,
       "reviewGroup": "Pull requests",
       "state": "in-test",
-      "sourceCommit": "4f967ba4",
+      "sourceCommit": "4f967ba4617fe75839d1da1fcc2e45227eb04b7f",
+      "integratedCommits": [
+        "455781e7e37fc0021671aa4660e1a5150d1777f7"
+      ],
       "integratedCommit": "455781e7e37fc0021671aa4660e1a5150d1777f7",
       "sourceThread": "ECA79DCF-1DD0-4FDD-B736-870854E7FDAB",
       "sourceThreadTitle": "Port PR and GitHub Features",
       "sourceIssue": "https://github.com/saphid/personal-ops/issues/94",
       "testBuild": 59,
       "order": 7,
+      "behavior": "Provide typed native pull-request models, RPC requests, authenticated patch loading, structured errors, and capability gating without probing servers that do not advertise pull-request support.",
+      "delivery": "direct",
+      "dependsOn": [],
+      "acceptancePoints": [
+        {
+          "id": "typed-protocol-contract",
+          "text": "Native models and requests preserve pull-request metadata, diffs, comments, and the reviewed upstream wire names."
+        },
+        {
+          "id": "authenticated-patch-loading",
+          "text": "Pull-request patches use the authenticated HTTP path and preserve structured status and error information."
+        },
+        {
+          "id": "capability-no-probe-gate",
+          "text": "The client does not probe pull-request APIs when capabilities.pullRequests is absent."
+        },
+        {
+          "id": "ordinary-workspace-regression-safety",
+          "text": "Standard non-pull-request workspaces continue to open and load without malformed PR content or crashes."
+        }
+      ],
       "reviewMedia": false,
       "proofPending": true
     },
@@ -447,6 +653,9 @@
       "state": "in-test",
       "branch": "personal/swiftui-pr-inbox-summary-timeline-20260813",
       "sourceCommit": "09ffaedd32cf32550af6ed262186549481c97838",
+      "integratedCommits": [
+        "12febfd914a51f10d4222deb3d759702d0a75c36"
+      ],
       "integratedCommit": "12febfd914a51f10d4222deb3d759702d0a75c36",
       "testBuild": 59,
       "order": 12,
@@ -457,6 +666,29 @@
         "pull-request-workspace-protocol"
       ],
       "delivery": "direct",
+      "behavior": "Show a read-only pull-request inbox for one active environment and push a selected pull request into distinct Summary and chronological Timeline detail views.",
+      "acceptancePoints": [
+        {
+          "id": "single-environment-inbox",
+          "text": "The inbox lists pull requests for the active environment without mixing repositories or environments."
+        },
+        {
+          "id": "accurate-list-metadata",
+          "text": "Pull-request titles, state, involvement, project, host, and deferred statistics agree with the connected repository."
+        },
+        {
+          "id": "summary-detail",
+          "text": "Selecting a pull request opens its expected read-only Summary content."
+        },
+        {
+          "id": "chronological-timeline",
+          "text": "Timeline shows the selected pull request's activity in stable chronological order."
+        },
+        {
+          "id": "read-only-scope-boundary",
+          "text": "The slice does not expose diff, mutation, comment, reviewer-management, or merge actions."
+        }
+      ],
       "reviewMedia": false,
       "proofPending": true
     },
@@ -481,7 +713,7 @@
       "reviewPriority": 8,
       "reviewGroup": "Accessible recovery",
       "state": "in-test",
-      "sourceCommit": "9006b8de",
+      "sourceCommit": "9006b8de9bf6e27e466efed43ef232aa2163c4ff",
       "integratedCommits": [
         "d79d498f546c888971ca2f6807b7618c7d972ecb",
         "1976e870b0e9fa57ca05c98c33370fc21030b8e2",
@@ -493,6 +725,27 @@
       "sourceIssue": "https://github.com/saphid/t3code-personal/issues/87",
       "testBuild": 59,
       "order": 8,
+      "behavior": "Retain useful failed tool or source-control content, expose a clearly labelled Retry action, and move accessibility focus predictably through failure and recovery.",
+      "delivery": "direct",
+      "dependsOn": [],
+      "acceptancePoints": [
+        {
+          "id": "error-content-retained",
+          "text": "Useful error content remains available before and after Retry appears."
+        },
+        {
+          "id": "accessible-retry-target",
+          "text": "Retry has a stable accessibility label and a predictable focus target."
+        },
+        {
+          "id": "cancellation-is-not-failure",
+          "text": "Cancellation does not present a false failure."
+        },
+        {
+          "id": "recovery-preserves-context",
+          "text": "Successful recovery does not duplicate or erase the prior tool or source-control context."
+        }
+      ],
       "reviewMedia": false,
       "proofPending": true
     },
@@ -534,6 +787,30 @@
       "sourceThread": "019ff7b4-531e-7d43-9233-ced5bc44bb3b",
       "startingBaseline": "d79e45e3ae1e305b248c751d6a51bac7210fff6a",
       "delivery": "local-only",
+      "behavior": "Let SwiftUI Test request a one-minute pairing URL from an allowlisted Tailnet host and reuse the existing direct-pairing flow without manual code entry.",
+      "dependsOn": [],
+      "acceptancePoints": [
+        {
+          "id": "test-only-private-route",
+          "text": "The one-tap Personal Connect route is available only in the SwiftUI Test channel."
+        },
+        {
+          "id": "allowlisted-tailnet-hosts",
+          "text": "The route contacts only configured allowlisted Tailnet pairing brokers and validates their responses."
+        },
+        {
+          "id": "one-action-pairing",
+          "text": "One action completes broker minting, direct token exchange, and connection handoff without copying a pairing code."
+        },
+        {
+          "id": "connection-persists",
+          "text": "The connected environment remains available after the app is reopened."
+        },
+        {
+          "id": "manual-fallbacks-remain",
+          "text": "QR, paste, and manual pairing remain available, and an unreachable host shows a clear error without altering other saved connections."
+        }
+      ],
       "reviewMedia": false,
       "proofPending": true
     },
@@ -563,6 +840,9 @@
       "sourceCommit": "276d2e427a5aad188cf45adb68aa43075dc4d03d",
       "candidateCommit": "9b5c591cebdf1d47f5c954f116470141b5060011",
       "integratedCommit": "17ac7f22296043125a10c09f0392766ec69e6994",
+      "integratedCommits": [
+        "17ac7f22296043125a10c09f0392766ec69e6994"
+      ],
       "featureReceipt": "~/.t3/swiftui-stream/feature-receipts/cold-boot-home-list-scrolling/9b5c591cebdf1d47f5c954f116470141b5060011/receipt.json",
       "testBuild": 59,
       "order": 10,
@@ -570,6 +850,28 @@
       "sourceThread": "019ff86d-be17-7772-beae-d39646e325ac",
       "startingBaseline": "d79e45e3ae1e305b248c751d6a51bac7210fff6a",
       "delivery": "direct",
+      "behavior": "Update live Home cells and warm metadata caches without reapplying the collection snapshot, so cold-start metadata completion cannot interrupt the first list drag.",
+      "dependsOn": [
+        "home-thread-list-scrolling"
+      ],
+      "acceptancePoints": [
+        {
+          "id": "first-cold-drag-responds",
+          "text": "The populated Home list responds to the first drag immediately after a cold launch."
+        },
+        {
+          "id": "metadata-does-not-steal-scroll",
+          "text": "Metadata and badge completion does not freeze, snap back, or reapply the Home snapshot during scrolling."
+        },
+        {
+          "id": "return-home-remains-scrollable",
+          "text": "After opening a thread and returning Home, the first drag remains responsive."
+        },
+        {
+          "id": "normal-and-accessibility-layout",
+          "text": "Cold-start scrolling remains usable at normal and accessibility text sizes without clipped multi-line rows."
+        }
+      ],
       "reviewMedia": false,
       "proofPending": true
     },
@@ -613,6 +915,34 @@
       "sourceThread": "9bed9116-ac61-4787-9b19-e6e8b90bb80f",
       "startingBaseline": "b3f003f51f29fb84c3aaa80c69c2fd4a74f05765",
       "delivery": "direct",
+      "behavior": "Compile Electron and VS Code-derived themes into an offline native catalog and apply a persisted selection across SwiftUI, UIKit, and terminal surfaces.",
+      "dependsOn": [],
+      "acceptancePoints": [
+        {
+          "id": "theme-catalog-browse-search",
+          "text": "Settings exposes a readable theme catalog that can be browsed and searched."
+        },
+        {
+          "id": "light-dark-selection",
+          "text": "Selecting light and dark themes applies usable colors across Home, chat, Settings, code, tool, and terminal surfaces."
+        },
+        {
+          "id": "voiceover-theme-labels",
+          "text": "VoiceOver announces each theme's real name and light or dark appearance instead of placeholder text."
+        },
+        {
+          "id": "terminal-native-agreement",
+          "text": "Terminal and native surfaces use the selected palette consistently within the documented v1 limits."
+        },
+        {
+          "id": "selection-persists",
+          "text": "The selected theme persists after relaunch."
+        },
+        {
+          "id": "system-theme-restore",
+          "text": "Switching back to System restores system-controlled appearance."
+        }
+      ],
       "reviewMedia": false,
       "proofPending": true
     },
@@ -667,9 +997,37 @@
       "sourceCommit": "d7f1bbd2e61755f42d7ae9378914f1c6443a9a1d",
       "candidateCommit": "d7f1bbd2e61755f42d7ae9378914f1c6443a9a1d",
       "integratedCommit": "19459ed2ee8b689710c55efc42d17cff3493b9e4",
+      "integratedCommits": [
+        "19459ed2ee8b689710c55efc42d17cff3493b9e4"
+      ],
       "testBuild": 59,
+      "order": 17,
       "receipt": ".t3/evidence/integrated-pr-final-20260814T0715Z/verification.receipt.json",
       "delivery": "local-only",
+      "behavior": "Run deterministic native happy-path and menu journeys with stable semantic assertions, retained screenshots and accessibility exports, and machine-readable action receipts for proof assembly.",
+      "dependsOn": [],
+      "acceptancePoints": [
+        {
+          "id": "deterministic-journey-inventory",
+          "text": "The catalog resolves every selected journey and rejects missing tests, duplicate checkpoints, or mixed lane semantics."
+        },
+        {
+          "id": "programmatic-verdicts",
+          "text": "Routine happy-path and menu verdicts come from deterministic assertions rather than model judgment."
+        },
+        {
+          "id": "retained-semantic-evidence",
+          "text": "Each declared checkpoint retains a readable screenshot and semantic accessibility export in the result receipt."
+        },
+        {
+          "id": "safe-fixture-boundary",
+          "text": "The fixture remains DEBUG-only, avoids destructive confirmations, and keeps credentials and private payloads out of retained evidence."
+        },
+        {
+          "id": "action-proof-mapping",
+          "text": "The action ledger maps taps, swipes, captions, and clean checkpoints to the exact passing journey and candidate commit."
+        }
+      ],
       "reviewMedia": false,
       "proofPending": true
     }

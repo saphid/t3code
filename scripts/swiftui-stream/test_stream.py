@@ -353,6 +353,30 @@ class StreamTests(unittest.TestCase):
         self.assertTrue(any("acceptancePoints" in error for error in errors))
         self.assertTrue(any("proof" in error for error in errors))
 
+    def test_current_catalog_has_only_explicit_proof_readiness_gaps(self):
+        value = stream.load_json(ROOT / "stream.json")
+        pending = [
+            feature
+            for feature in value["features"]
+            if feature.get("state") in stream.APPROVAL_STATES
+        ]
+
+        self.assertEqual(len(pending), 15)
+        self.assertTrue(all(feature.get("proofPending") is True for feature in pending))
+        for feature in pending:
+            self.assertRegex(feature["sourceCommit"], r"^[0-9a-f]{40}$")
+            self.assertIn(feature["integratedCommit"], feature["integratedCommits"])
+            self.assertTrue(feature["acceptancePoints"])
+
+        self.assertEqual(
+            stream.catalog_review_readiness_errors(
+                value,
+                verify_files=False,
+                verify_commits=False,
+            ),
+            [f"{feature['id']} proof must be an object" for feature in pending],
+        )
+
     def test_catalog_review_readiness_reports_bad_order_without_crashing(self):
         value = {
             "currentTestBuild": {"build": 59},

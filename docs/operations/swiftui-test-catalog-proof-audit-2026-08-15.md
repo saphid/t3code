@@ -2,27 +2,29 @@
 
 ## Audit target
 
-This audit uses `origin/personal/swiftui-test` at full commit
-`56ca5318a1d50c364dce6f22d8f908130b8009d2`.
+This catalog uplift is based directly on `origin/personal/swiftui-test` at full
+commit `9d7b61c8e8085ff27c71459954c8c4ca4d763814`.
 
 The catalog contains 15 records in the `in-test` state. All 15 records name
-Test build 59. The audit did not infer or create missing product details. The
-feature owner or source thread must supply them.
+Test build 59. Product facts come from the named issues, source threads, source
+commits, integration manifests, immutable feature receipts, and the app-flow
+coverage catalog. The uplift does not create proof.
 
 ## Result
 
-The catalog is not review-ready. The deterministic validator reports 75
-blocking errors.
+The catalog is not review-ready. The deterministic validator reports 15
+blocking errors. Each error is a missing proof object for one item.
 
 | Required field or evidence | Complete | Missing or invalid |
 | --- | ---: | ---: |
 | Test build 59 binding | 15 | 0 |
-| Full 40-character source commit | 8 | 7 |
-| Unique positive review order | 14 | 1 |
-| Behavior statement | 1 | 14 |
-| Delivery classification | 6 | 9 |
-| Explicit dependency list | 1 | 14 |
-| User acceptance points | 0 | 15 |
+| Full 40-character source commit | 15 | 0 |
+| Explicit integrated-commit chain | 15 | 0 |
+| Unique positive review order | 15 | 0 |
+| Behavior statement | 15 | 0 |
+| Delivery classification | 15 | 0 |
+| Explicit dependency list | 15 | 0 |
+| User acceptance points | 15 | 0 |
 | Commit- and build-bound proof packets | 0 | 15 |
 
 Zero items can appear in the approval list. Zero items can reserve the next
@@ -30,33 +32,50 @@ Test build number.
 
 ## Item findings
 
-The codes in this table have these meanings:
-
-- `C`: source commit is abbreviated;
-- `O`: review order is missing;
-- `B`: behavior statement is missing;
-- `D`: delivery classification is missing;
-- `N`: explicit dependency list is missing;
-- `A`: user acceptance points are missing;
-- `P`: proof object and proof packets are missing.
+`P` means that the proof object and proof packets are missing.
 
 | Item | Blocking codes |
 | --- | --- |
-| `in-app-stream-approval-control` | B, D, N, A, P |
-| `skill-popup-readability-and-height` | N, A, P |
-| `skills-popup-keyboard-clearance` | C, B, N, A, P |
-| `home-thread-list-scrolling` | C, B, D, N, A, P |
-| `command-palette-top-drawer` | C, B, D, N, A, P |
-| `development-build-source-thread` | C, B, D, N, A, P |
-| `widget-build-channel-links` | B, D, N, A, P |
-| `initial-thread-live-updates` | C, B, D, N, A, P |
-| `pull-request-workspace-protocol` | C, B, D, N, A, P |
-| `pull-request-inbox-summary-timeline` | B, A, P |
-| `safe-tool-content-recovery` | C, B, D, N, A, P |
-| `swiftui-test-personal-connect` | B, N, A, P |
-| `cold-boot-home-list-scrolling` | B, N, A, P |
-| `shared-electron-vscode-themes` | B, N, A, P |
-| `app-flow-regression-tests` | O, B, N, A, P |
+| `in-app-stream-approval-control` | P |
+| `skill-popup-readability-and-height` | P |
+| `skills-popup-keyboard-clearance` | P |
+| `home-thread-list-scrolling` | P |
+| `command-palette-top-drawer` | P |
+| `development-build-source-thread` | P |
+| `widget-build-channel-links` | P |
+| `initial-thread-live-updates` | P |
+| `pull-request-workspace-protocol` | P |
+| `pull-request-inbox-summary-timeline` | P |
+| `safe-tool-content-recovery` | P |
+| `swiftui-test-personal-connect` | P |
+| `cold-boot-home-list-scrolling` | P |
+| `shared-electron-vscode-themes` | P |
+| `app-flow-regression-tests` | P |
+
+## Factual dependency and delivery decisions
+
+- `pull-request-inbox-summary-timeline` depends on
+  `pull-request-workspace-protocol`. Issue 94 and its immutable receipt define
+  that sequence.
+- `cold-boot-home-list-scrolling` depends on
+  `home-thread-list-scrolling`. Issue 55 states this dependency.
+- Shared acceptance surfaces do not create a dependency. The two Skills items
+  and the three Home gesture items can be reviewed together but remain separate
+  changes.
+- `in-app-stream-approval-control`, `swiftui-test-personal-connect`, and
+  `app-flow-regression-tests` are local-only. Their source material limits them
+  to the personal workflow, private Tailnet, or personal regression harness.
+- The other items are bounded direct changes. Existing source receipts, commit
+  ranges, and upstream delivery records identify no feature dependency for
+  those changes.
+
+The catalog delivery value describes the current feature package. It does not
+claim that an upstream pull request is ready or mergeable. The upstream handoff
+must revalidate its exact base, dependencies, and PR delivery block.
+
+The GitHub connector returned 404 for every private issue. The authenticated
+read-only GitHub CLI returned the known issues. This access anomaly did not
+become evidence that an issue was absent.
 
 ## Review-ready contract
 
@@ -84,22 +103,17 @@ pipeline run, incomplete media pair, or uncovered acceptance point.
 ## Deterministic sequence for the next proof-complete Test build
 
 1. Keep the audit source pinned to the full commit above.
-2. Resolve each abbreviated source commit to the exact full commit.
-3. Add the missing behavior, order, delivery class, and explicit dependency
-   list. Use an empty dependency list when the item has no dependency.
-4. Add clear user acceptance points. Do not use a general feature title as the
-   only acceptance point.
-5. At the exact source commit, run `candidate-verification` and
+2. At the exact source commit, run `candidate-verification` and
    `candidate-simulator`. For the combined train, also run `test-train`.
-6. Keep the successful private-CI receipt. Record its absolute path, SHA-256
+3. Keep the successful private-CI receipt. Record its absolute path, SHA-256
    hash, run ID, and source commit.
-7. Capture each acceptance flow without overlays. Record a semantic event
+4. Capture each acceptance flow without overlays. Record a semantic event
    timeline for the taps, swipes, and expected results.
-8. Use `prepare-proof-media` to create paired clean and annotated outputs.
+5. Use `prepare-proof-media` to create paired clean and annotated outputs.
    Inspect all outputs. Keep the proof-media receipt and its SHA-256 hash.
-9. Add the proof object to each item. Bind each packet to its acceptance-point
+6. Add the proof object to each item. Bind each packet to its acceptance-point
    IDs. Bind the proof to the exact private-CI run ID and source commit.
-10. Run:
+7. Run:
 
     ```sh
     scripts/swiftui-stream/stream.py review-readiness \
@@ -107,33 +121,30 @@ pipeline run, incomplete media pair, or uncovered acceptance point.
       --verify-commits
     ```
 
-11. Continue only if the command exits with status 0.
-12. On a clean `personal/swiftui-test`, run `stream.py stage-test-build`. This
+8. Continue only if the command exits with status 0.
+9. On a clean `personal/swiftui-test`, run `stream.py stage-test-build`. This
     is the first step that can reserve a new Test build number.
-13. Review the catalog attribution diff. Commit only `stream.json` in the
+10. Review the catalog attribution diff. Commit only `stream.json` in the
     catalog commit.
-14. Set `T3_SWIFT_BUILD_NUMBER` to the reserved number. Run the private
+11. Set `T3_SWIFT_BUILD_NUMBER` to the reserved number. Run the private
     pipeline through `test-catalog` and `test-phone-build`.
-15. The Test build guard must pass before signing and before the ready pointer
+12. The Test build guard must pass before signing and before the ready pointer
     changes.
-16. Let the deterministic phone watcher install and launch the exact ready
+13. Let the deterministic phone watcher install and launch the exact ready
     build. Keep its installed-device receipt.
-17. Run `approval-list`. It rechecks the proof hashes, source commits, Test
+14. Run `approval-list`. It rechecks the proof hashes, source commits, Test
     build binding, ready pointer, and installed-device receipt.
-18. Review each acceptance point on the phone. Record the human verdict for the
+15. Review each acceptance point on the phone. Record the human verdict for the
     exact item and Test build.
 
-The current catalog fails step 10. Therefore this audit does not allocate,
+The current catalog fails step 7. Therefore this audit does not allocate,
 sign, install, or approve a build.
 
 ## Reproduce the audit
 
-Extract `scripts/swiftui-stream/stream.json` from the pinned commit. Then run:
-
 ```sh
-scripts/swiftui-stream/stream.py review-readiness \
-  --manifest <path-to-extracted-stream.json>
+scripts/swiftui-stream/stream.py review-readiness
 ```
 
-The expected result is exit status 1, `reviewItemCount` 15, `errorCount` 75,
+The expected result is exit status 1, `reviewItemCount` 15, `errorCount` 15,
 and `reviewReady` false.
