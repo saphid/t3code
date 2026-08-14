@@ -91,7 +91,7 @@ def probe_video(ffprobe: str, source: Path) -> Dict[str, Any]:
     if video is None:
         raise ProofMediaError("Source contains no video stream: {0}".format(source))
     duration = float(payload.get("format", {}).get("duration", 0))
-    if duration <= 0:
+    if not math.isfinite(duration) or duration <= 0:
         raise ProofMediaError("Source has no positive duration: {0}".format(source))
     return {
         "duration": duration,
@@ -181,7 +181,10 @@ def reject_secrets(
 def number(value: Any, label: str) -> float:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise ProofMediaError("{0} must be a number".format(label))
-    return float(value)
+    result = float(value)
+    if not math.isfinite(result):
+        raise ProofMediaError("{0} must be finite".format(label))
+    return result
 
 
 def validate_event(event: Any, index: int, duration: float, coordinate_space: str) -> None:
@@ -232,14 +235,17 @@ def validate_coordinate_values(point: Sequence[float], coordinate_space: str, in
 
 
 def event_start(event: Dict[str, Any]) -> float:
-    return float(event.get("at", event.get("start", 0)))
+    return number(event.get("at", event.get("start", 0)), "event time")
 
 
 def event_end(event: Dict[str, Any]) -> float:
     start = event_start(event)
     if "end" in event:
-        return float(event["end"])
-    return start + float(event.get("duration", 0.6 if event.get("kind") == "swipe" else 0.0))
+        return number(event["end"], "event end")
+    return start + number(
+        event.get("duration", 0.6 if event.get("kind") == "swipe" else 0.0),
+        "event duration",
+    )
 
 
 def clamp_interval(interval: Interval, duration: float) -> Optional[Interval]:
@@ -1033,7 +1039,143 @@ def video_ssim(ffmpeg: str, clean: Path, annotated: Path) -> float:
     matches = re.findall(r"All:([0-9.]+)", result.stderr)
     if not matches:
         raise ProofMediaError("Could not calculate clean/annotated video similarity")
-    return float(matches[-1])
+    return number(float(matches[-1]), "video SSIM")
+
+
+def decoded_video_frame_hash(ffmpeg: str, source: Path, timestamp: float) -> str:
+    timestamp = number(timestamp, "overlay sample time")
+    result = run(
+        [
+            ffmpeg,
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-i",
+            str(source),
+            "-ss",
+            "{0:.6f}".format(timestamp),
+            "-map",
+            "0:v:0",
+            "-frames:v",
+            "1",
+            "-f",
+            "hash",
+            "-hash",
+            "sha256",
+            "-",
+        ],
+        capture=True,
+    )
+    match = re.search(r"SHA256=([0-9a-fA-F]{64})", result.stdout)
+    if match is None:
+        raise ProofMediaError(
+            "Could not hash decoded video frame at {0:.6f}: {1}".format(
+                timestamp, source
+            )
+        )
+    return match.group(1).lower()
+
+
+def require_overlay_window_difference(
+    ffmpeg: str,
+    clean: Path,
+    annotated: Path,
+    label: str,
+    start: float,
+    end: float,
+    sample: float,
+) -> Dict[str, Any]:
+    start = number(start, "{0} start".format(label))
+    end = number(end, "{0} end".format(label))
+    sample = number(sample, "{0} sample".format(label))
+    if end <= start or sample < start or sample > end:
+        raise ProofMediaError("Invalid declared overlay window: {0}".format(label))
+    clean_hash = decoded_video_frame_hash(ffmpeg, clean, sample)
+    annotated_hash = decoded_video_frame_hash(ffmpeg, annotated, sample)
+    if clean_hash == annotated_hash:
+        raise ProofMediaError(
+            "Annotated video has no visible overlay in declared window: {0}".format(
+                label
+            )
+        )
+    return {
+        "kind": label.split(":", 1)[0],
+        "id": label.split(":", 1)[1],
+        "start": start,
+        "end": end,
+        "sample": sample,
+        "cleanFrameSha256": clean_hash,
+        "annotatedFrameSha256": annotated_hash,
+    }
+
+
+def validate_overlay_windows(
+    ffmpeg: str,
+    clean: Path,
+    annotated: Path,
+    packet_events: Sequence[Dict[str, Any]],
+    output_duration: float,
+) -> List[Dict[str, Any]]:
+    output_duration = number(output_duration, "output duration")
+    windows: List[Dict[str, Any]] = []
+    for index, mapped in enumerate(packet_events):
+        output_at = number(
+            mapped.get("output_at"), "proof receipt events[{0}].output_at".format(index)
+        )
+        action_id = str(mapped.get("action_id", index))
+        if mapped.get("kind") == "tap":
+            start = max(0.0, output_at - 0.08)
+            end = min(output_duration, output_at + 0.365)
+            sample = min(end, output_at + 0.1)
+            windows.append(
+                require_overlay_window_difference(
+                    ffmpeg,
+                    clean,
+                    annotated,
+                    "action:{0}".format(action_id),
+                    start,
+                    end,
+                    sample,
+                )
+            )
+        elif mapped.get("kind") == "swipe":
+            end = number(
+                mapped.get("output_end"),
+                "proof receipt events[{0}].output_end".format(index),
+            )
+            windows.append(
+                require_overlay_window_difference(
+                    ffmpeg,
+                    clean,
+                    annotated,
+                    "action:{0}".format(action_id),
+                    output_at,
+                    end,
+                    output_at + (end - output_at) / 2,
+                )
+            )
+        if mapped.get("caption") is not None:
+            caption_output = mapped.get("caption_output")
+            if not isinstance(caption_output, list) or len(caption_output) != 2:
+                raise ProofMediaError(
+                    "Proof receipt has no declared caption window: {0}".format(action_id)
+                )
+            start = number(caption_output[0], "caption window start")
+            end = number(caption_output[1], "caption window end")
+            windows.append(
+                require_overlay_window_difference(
+                    ffmpeg,
+                    clean,
+                    annotated,
+                    "caption:{0}".format(action_id),
+                    start,
+                    end,
+                    start + (end - start) / 2,
+                )
+            )
+    if not windows:
+        raise ProofMediaError("Proof receipt declares no overlay windows")
+    return windows
 
 
 def verify_video_record_metadata(
@@ -1152,18 +1294,35 @@ def validate_packet_action_ledger(
             raise ProofMediaError(
                 "Every tap and swipe requires an expected result: {0}".format(action_id)
             )
-        if not isinstance(expected_caption, str) or "Expected:" not in expected_caption:
+        expected_line = "Expected: {0}".format(expected_result)
+        caption_lines = (
+            [line.strip() for line in expected_caption.splitlines()]
+            if isinstance(expected_caption, str)
+            else []
+        )
+        if expected_line not in caption_lines:
             raise ProofMediaError(
-                "Every tap and swipe requires an Expected: caption: {0}".format(action_id)
+                "Action caption does not bind its exact expected result: {0}".format(
+                    action_id
+                )
             )
         caption_output = mapped.get("caption_output")
+        if not isinstance(caption_output, list) or len(caption_output) != 2:
+            raise ProofMediaError(
+                "Proof receipt has no expected-result caption interval: {0}".format(
+                    action_id
+                )
+            )
+        caption_start = number(
+            caption_output[0], "caption interval start for {0}".format(action_id)
+        )
+        caption_end = number(
+            caption_output[1], "caption interval end for {0}".format(action_id)
+        )
         if (
-            not isinstance(caption_output, list)
-            or len(caption_output) != 2
-            or any(isinstance(value, bool) or not isinstance(value, (int, float)) for value in caption_output)
-            or caption_output[0] < 0
-            or caption_output[1] <= caption_output[0]
-            or caption_output[1] > output_duration
+            caption_start < 0
+            or caption_end <= caption_start
+            or caption_end > output_duration
         ):
             raise ProofMediaError(
                 "Proof receipt has no expected-result caption interval: {0}".format(
@@ -1492,7 +1651,20 @@ def validate_packet(args: argparse.Namespace) -> None:
     edit = packet.get("edit")
     if not isinstance(edit, dict):
         raise ProofMediaError("Proof edit receipt has no video edit record")
-    source_duration = number(edit.get("source_duration"), "edit.source_duration")
+    recorded_source_duration = number(
+        edit.get("source_duration"), "edit.source_duration"
+    )
+    source_path, source_record = verified_attested_file(
+        packet.get("source"), "source"
+    )
+    source_info = probe_video(tools["ffprobe"], source_path)
+    verify_video_record_metadata(packet["source"], source_info, "source")
+    if abs(recorded_source_duration - source_info["duration"]) > 0.001:
+        raise ProofMediaError(
+            "edit.source_duration does not match the probed raw source"
+        )
+    source_duration = source_info["duration"]
+    source_record.update(source_info)
     timeline = load_timeline(
         timeline_path, source_duration, args.deny_secret_pattern
     )
@@ -1502,9 +1674,6 @@ def validate_packet(args: argparse.Namespace) -> None:
     if timeline_record.get("sha256") != input_hashes[timeline_path]:
         raise ProofMediaError("Proof edit receipt does not bind the supplied timeline")
 
-    source_path, source_record = verified_attested_file(
-        packet.get("source"), "source"
-    )
     artifacts: Dict[str, Dict[str, Any]] = {}
     artifact_paths: Dict[str, Path] = {}
     for name, record in packet["artifacts"].items():
@@ -1551,6 +1720,13 @@ def validate_packet(args: argparse.Namespace) -> None:
         packet,
         clean_info["width"],
         clean_info["height"],
+        clean_info["duration"],
+    )
+    overlay_windows = validate_overlay_windows(
+        tools["ffmpeg"],
+        clean,
+        annotated,
+        packet["events"],
         clean_info["duration"],
     )
     source_history = timeline.get("source_history")
@@ -1611,6 +1787,7 @@ def validate_packet(args: argparse.Namespace) -> None:
         "artifacts": artifacts,
         "actions": actions,
         "actionCount": len(actions),
+        "overlayWindows": overlay_windows,
         "pairing": {
             "width": clean_info["width"],
             "height": clean_info["height"],

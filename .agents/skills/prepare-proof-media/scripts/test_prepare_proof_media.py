@@ -445,6 +445,7 @@ class PacketValidationTests(unittest.TestCase):
                 [item["action_id"] for item in value["actions"]],
                 ["event-1", "event-3"],
             )
+            self.assertEqual(len(value["overlayWindows"]), 4)
 
     def test_rejects_missing_history_unmapped_actions_and_credentials(self) -> None:
         with tempfile.TemporaryDirectory(prefix="proof-packet-rejections-") as temporary:
@@ -509,6 +510,92 @@ class PacketValidationTests(unittest.TestCase):
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("not content-paired", result.stderr)
             self.assertFalse(validation.exists())
+
+    def test_rejects_non_finite_values_and_untrusted_source_duration(self) -> None:
+        for value in (float("nan"), float("inf"), float("-inf")):
+            with self.subTest(value=value), self.assertRaisesRegex(
+                MEDIA.ProofMediaError, "finite"
+            ):
+                MEDIA.number(value, "mutation")
+        with tempfile.TemporaryDirectory(prefix="proof-packet-finite-") as temporary:
+            root = Path(temporary)
+            _, history, timeline, receipt, validation = self.build_app_flow_packet(root)
+            packet = json.loads(receipt.read_text(encoding="utf-8"))
+            timeline_value = MEDIA.load_timeline(timeline, 4.0)
+            packet["events"][0]["caption_output"][0] = float("nan")
+            with self.assertRaisesRegex(MEDIA.ProofMediaError, "finite"):
+                MEDIA.validate_packet_action_ledger(
+                    timeline_value, packet, 320, 480, 4.0
+                )
+
+            non_finite_minimum = subprocess.run(
+                self.validate_command(receipt, timeline, history, validation)
+                + ["--minimum-ssim", "nan"],
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+            self.assertNotEqual(non_finite_minimum.returncode, 0)
+            self.assertIn("must be finite", non_finite_minimum.stderr)
+
+            packet = json.loads(receipt.read_text(encoding="utf-8"))
+            packet["edit"]["source_duration"] += 1.0
+            receipt.write_text(json.dumps(packet), encoding="utf-8")
+            wrong_source_duration = subprocess.run(
+                self.validate_command(receipt, timeline, history, validation),
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+            self.assertNotEqual(wrong_source_duration.returncode, 0)
+            self.assertIn("probed raw source", wrong_source_duration.stderr)
+
+    def test_rejects_annotation_free_remux_in_every_overlay_window(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="proof-packet-overlay-") as temporary:
+            root = Path(temporary)
+            _, history, timeline, receipt, validation = self.build_app_flow_packet(root)
+            packet = json.loads(receipt.read_text(encoding="utf-8"))
+            clean = Path(packet["artifacts"]["clean_video"]["path"])
+            remux = root / "annotation-free.mp4"
+            subprocess.run(
+                [
+                    "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+                    "-i", str(clean), "-map", "0", "-c", "copy",
+                    "-metadata", "comment=annotation-free", str(remux),
+                ],
+                check=True,
+            )
+            packet["artifacts"]["annotated_video"] = MEDIA.artifact_record(
+                "ffprobe", remux
+            )
+            receipt.write_text(json.dumps(packet), encoding="utf-8")
+
+            result = subprocess.run(
+                self.validate_command(receipt, timeline, history, validation),
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("no visible overlay", result.stderr)
+            self.assertFalse(validation.exists())
+
+    def test_custom_caption_binds_the_exact_expected_result(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="proof-packet-caption-") as temporary:
+            root = Path(temporary)
+            _, _, timeline, receipt, _ = self.build_app_flow_packet(root)
+            timeline_value = MEDIA.load_timeline(timeline, 4.0)
+            packet = json.loads(receipt.read_text(encoding="utf-8"))
+            wrong_caption = "Next: new\nExpected: a different result"
+            timeline_value["events"][0]["caption"] = wrong_caption
+            packet["events"][0]["caption"] = wrong_caption
+
+            with self.assertRaisesRegex(
+                MEDIA.ProofMediaError, "exact expected result"
+            ):
+                MEDIA.validate_packet_action_ledger(
+                    timeline_value, packet, 320, 480, 4.0
+                )
 
 
 @unittest.skipUnless(

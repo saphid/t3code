@@ -111,10 +111,11 @@ Omit `--history` for a hand-authored timeline. The validator requires a unique
 `action_id`, an expected result, and a rendered `Expected:` caption for every
 tap and swipe. It verifies all packet hashes, exact timeline-to-receipt action
 mapping, video metadata and duration, decoded audio equality, and clean versus
-annotated visual similarity. An app-flow timeline additionally requires its
-hash-bound session and a passed assertion for every action. The output is a
-sealed `proof-packet-validation` receipt with the verified action inventory and
-pairing measurements.
+annotated visual similarity. It also compares decoded frames inside every
+declared action and caption window, so an annotation-free remux cannot pass. An
+app-flow timeline additionally requires its hash-bound session and a passed
+assertion for every action. The output is a sealed `proof-packet-validation`
+receipt with the verified action inventory and pairing measurements.
 
 For an existing screenshot, select the timeline event that the image proves:
 

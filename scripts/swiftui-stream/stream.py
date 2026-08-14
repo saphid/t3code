@@ -7,6 +7,7 @@ import argparse
 import difflib
 import hashlib
 import json
+import math
 import os
 import re
 import sqlite3
@@ -539,6 +540,52 @@ def validate_packet_validation_receipt(
             )
         ):
             fail(f"{feature_id} packet validation has an incomplete action")
+    overlay_windows = validation.get("overlayWindows")
+    if not isinstance(overlay_windows, list):
+        fail(f"{feature_id} packet validation has no overlay-window inventory")
+    declared_windows: set[tuple[str, str]] = set()
+    for window in overlay_windows:
+        if not isinstance(window, dict):
+            fail(f"{feature_id} packet validation has an invalid overlay window")
+        kind = window.get("kind")
+        action_id = window.get("id")
+        start = window.get("start")
+        end = window.get("end")
+        sample = window.get("sample")
+        if (
+            kind not in ("action", "caption")
+            or not isinstance(action_id, str)
+            or not action_id
+            or isinstance(start, bool)
+            or not isinstance(start, (int, float))
+            or not math.isfinite(start)
+            or isinstance(end, bool)
+            or not isinstance(end, (int, float))
+            or not math.isfinite(end)
+            or isinstance(sample, bool)
+            or not isinstance(sample, (int, float))
+            or not math.isfinite(sample)
+            or start < 0
+            or end <= start
+            or sample < start
+            or sample > end
+            or not re.fullmatch(
+                r"[0-9a-f]{64}", str(window.get("cleanFrameSha256", ""))
+            )
+            or not re.fullmatch(
+                r"[0-9a-f]{64}", str(window.get("annotatedFrameSha256", ""))
+            )
+            or window.get("cleanFrameSha256") == window.get("annotatedFrameSha256")
+        ):
+            fail(f"{feature_id} packet validation has an invalid overlay window")
+        if (kind, action_id) in declared_windows:
+            fail(f"{feature_id} packet validation has duplicate overlay windows")
+        declared_windows.add((kind, action_id))
+    for action_id in action_ids:
+        if ("action", action_id) not in declared_windows:
+            fail(f"{feature_id} packet validation has no action overlay window")
+        if ("caption", action_id) not in declared_windows:
+            fail(f"{feature_id} packet validation has no caption overlay window")
     pairing = validation.get("pairing")
     if not isinstance(pairing, dict):
         fail(f"{feature_id} packet validation has no content-pairing result")
@@ -548,14 +595,17 @@ def validate_packet_validation_receipt(
     if (
         isinstance(similarity, bool)
         or not isinstance(similarity, (int, float))
+        or not math.isfinite(similarity)
         or similarity < 0
         or similarity > 1
         or isinstance(minimum, bool)
         or not isinstance(minimum, (int, float))
+        or not math.isfinite(minimum)
         or minimum < 0.75
         or similarity < minimum
         or isinstance(duration_delta, bool)
         or not isinstance(duration_delta, (int, float))
+        or not math.isfinite(duration_delta)
         or duration_delta < 0
         or duration_delta > 1 / 24
     ):
