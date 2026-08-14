@@ -8,6 +8,7 @@ import os
 import plistlib
 import sqlite3
 import subprocess
+import sys
 import tempfile
 import unittest
 from argparse import Namespace
@@ -184,6 +185,151 @@ class StreamTests(unittest.TestCase):
         del value["currentTestBuild"]["receipt"]
         with self.assertRaises(SystemExit):
             stream.validate_manifest(value)
+
+    def test_test_build_catalog_rejects_build60_with_build59_attribution(self):
+        source_commit = "a" * 40
+        head_commit = "b" * 40
+        previous = {
+            "schemaVersion": 1,
+            "currentTestBuild": {
+                "build": 59,
+                "sequence": 59,
+                "commit": "9" * 40,
+            },
+            "features": [
+                {"id": "candidate-a", "state": "in-test", "testBuild": 59},
+                {"id": "candidate-b", "state": "needs-you", "testBuild": 59},
+            ],
+        }
+        current = json.loads(json.dumps(previous))
+
+        errors = stream.test_build_catalog_errors(
+            previous,
+            current,
+            requested_build=60,
+            source_commit=source_commit,
+            head_commit=head_commit,
+            changed_paths=["scripts/swiftui-stream/stream.json"],
+            commit_count=1,
+        )
+
+        self.assertTrue(any("currentTestBuild.build 59" in error for error in errors))
+        self.assertTrue(any("candidate-a testBuild 59" in error for error in errors))
+        self.assertTrue(any("candidate-b testBuild 59" in error for error in errors))
+
+    def test_test_build_catalog_accepts_one_catalog_only_staging_commit(self):
+        source_commit = "a" * 40
+        head_commit = "b" * 40
+        previous = {
+            "schemaVersion": 1,
+            "currentTestBuild": {
+                "build": 59,
+                "sequence": 59,
+                "commit": "9" * 40,
+                "bundleId": "test.bundle",
+            },
+            "features": [
+                {"id": "candidate-a", "state": "in-test", "testBuild": 59},
+                {"id": "candidate-b", "state": "needs-you", "testBuild": 59},
+                {"id": "approved", "state": "approved", "testBuild": 58},
+            ],
+        }
+        current = json.loads(json.dumps(previous))
+        current["currentTestBuild"].update(
+            {"build": 60, "sequence": 60, "commit": source_commit}
+        )
+        for feature in current["features"][:2]:
+            feature["testBuild"] = 60
+
+        self.assertEqual(
+            stream.test_build_catalog_errors(
+                previous,
+                current,
+                requested_build=60,
+                source_commit=source_commit,
+                head_commit=head_commit,
+                changed_paths=["scripts/swiftui-stream/stream.json"],
+                commit_count=1,
+            ),
+            [],
+        )
+
+    def test_test_build_catalog_rejects_non_catalog_staging_changes(self):
+        source_commit = "a" * 40
+        previous = {
+            "schemaVersion": 1,
+            "currentTestBuild": {"build": 59, "sequence": 59, "commit": "9" * 40},
+            "features": [
+                {"id": "candidate-a", "name": "Before", "state": "in-test", "testBuild": 59}
+            ],
+        }
+        current = json.loads(json.dumps(previous))
+        current["currentTestBuild"].update(
+            {"build": 60, "sequence": 60, "commit": source_commit}
+        )
+        current["features"][0].update({"name": "After", "testBuild": 60})
+
+        errors = stream.test_build_catalog_errors(
+            previous,
+            current,
+            requested_build=60,
+            source_commit=source_commit,
+            head_commit="b" * 40,
+            changed_paths=[
+                "apps/swift-ios/App/T3CodeApp.swift",
+                "scripts/swiftui-stream/stream.json",
+            ],
+            commit_count=1,
+        )
+
+        self.assertIn("catalog staging changed paths other than stream.json", errors)
+        self.assertIn("catalog staging changed fields outside build attribution", errors)
+
+    def test_reserved_test_build_can_be_claimed_once_before_ready_pointer_moves(self):
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory)
+            state = home / ".t3/swiftui-stream"
+            ready = state / "ready"
+            ready.mkdir(parents=True)
+            (state / "build-counters.json").write_text('{"test": 60}\n')
+            (ready / "test.json").write_text('{"build": 59}\n')
+            environment = dict(os.environ)
+            environment["HOME"] = str(home)
+            command = [
+                sys.executable,
+                str(ROOT / "next-build.py"),
+                "test",
+                "--requested",
+                "60",
+                "--accept-reserved",
+            ]
+
+            accepted = subprocess.run(
+                command,
+                env=environment,
+                text=True,
+                capture_output=True,
+            )
+            self.assertEqual(accepted.returncode, 0, accepted.stderr)
+            self.assertEqual(accepted.stdout.strip(), "60")
+
+            (ready / "test.json").write_text('{"build": 60}\n')
+            already_ready = subprocess.run(
+                command,
+                env=environment,
+                text=True,
+                capture_output=True,
+            )
+            self.assertNotEqual(already_ready.returncode, 0)
+            self.assertIn("not the current unbuilt reservation", already_ready.stderr)
+
+    def test_build_ready_guards_catalog_before_xcodebuild(self):
+        script = (ROOT / "build-ready.sh").read_text()
+        guard = 'validate-test-build-catalog --build "$BUILD"'
+        self.assertIn(guard, script)
+        self.assertLess(script.index(guard), script.index("xcodebuild build"))
+        self.assertIn('"T3_GIT_COMMIT=$SOURCE_COMMIT"', script)
+        self.assertIn('--arg catalogCommit "$CATALOG_COMMIT"', script)
 
     def test_approval_list_is_exact_build_order(self):
         with tempfile.TemporaryDirectory() as directory:

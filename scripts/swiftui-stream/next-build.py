@@ -14,7 +14,11 @@ parser.add_argument("channel", choices=("dev", "test"))
 parser.add_argument("--minimum", type=int, default=40)
 parser.add_argument("--requested", type=int)
 parser.add_argument("--peek", action="store_true")
+parser.add_argument("--accept-reserved", action="store_true")
 args = parser.parse_args()
+
+if args.accept_reserved and args.requested is None:
+    raise SystemExit("--accept-reserved requires --requested")
 
 root = Path.home() / ".t3/swiftui-stream"
 root.mkdir(parents=True, exist_ok=True)
@@ -31,13 +35,19 @@ with lock_path.open("a+") as lock:
         ready = json.loads(ready_path.read_text()) if ready_path.exists() else {}
     except json.JSONDecodeError:
         raise SystemExit(f"invalid {ready_path}")
-    floor = max(
-        int(counters.get(args.channel, 0)),
-        int(ready.get("build", 0)),
-        args.minimum,
-    )
+    counter = int(counters.get(args.channel, 0))
+    ready_build = int(ready.get("build", 0))
+    floor = max(counter, ready_build, args.minimum)
     if args.requested is not None:
-        if args.requested <= floor:
+        if args.accept_reserved:
+            if args.requested != counter or args.requested <= max(
+                ready_build, args.minimum
+            ):
+                raise SystemExit(
+                    f"requested {args.channel} build {args.requested} is not the "
+                    "current unbuilt reservation"
+                )
+        elif args.requested <= floor:
             raise SystemExit(
                 f"requested {args.channel} build {args.requested} must be greater than {floor}"
             )

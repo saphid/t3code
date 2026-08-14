@@ -4,7 +4,9 @@
 from __future__ import annotations
 
 import argparse
+import copy
 import difflib
+import fcntl
 import hashlib
 import json
 import math
@@ -13,6 +15,7 @@ import re
 import sqlite3
 import subprocess
 import sys
+import tempfile
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -24,12 +27,14 @@ MANIFEST_PATH = SCRIPT_DIR / "stream.json"
 STREAM_STATE_ROOT = Path.home() / ".t3/swiftui-stream"
 DEVICE_RECEIPTS_ROOT = STREAM_STATE_ROOT / "device-receipts"
 TEST_READY_POINTER = STREAM_STATE_ROOT / "ready/test.json"
+TEST_CATALOG_LOCK = Path.home() / ".t3/locks/swiftui-test-catalog.lock"
 APPROVAL_STATES = {"in-test", "needs-you"}
 VALID_DELIVERY = {"direct", "chain", "blocked", "local-only"}
 APPROVED_OR_LATER = {
     "approved", "in-dev", "upstream-validation", "needs-pr", "upstream-pr", "landed"
 }
 VERIFIED_INTEGRATED_COMMITS: set[tuple[str, str, str, str]] = set()
+STREAM_MANIFEST_RELATIVE = "scripts/swiftui-stream/stream.json"
 
 
 def pr_number(url: str | None) -> int | None:
@@ -698,6 +703,84 @@ def validate_integrated_commit(feature_id: str, commit: str, test_ref: str) -> N
     VERIFIED_INTEGRATED_COMMITS.add(cache_key)
 
 
+def staged_test_manifest(
+    value: dict[str, Any],
+    build: int,
+    source_commit: str,
+) -> dict[str, Any]:
+    staged = copy.deepcopy(value)
+    staged["currentTestBuild"].update(
+        {"build": build, "sequence": build, "commit": source_commit}
+    )
+    for feature in staged.get("features", []):
+        if feature.get("state") in APPROVAL_STATES:
+            feature["testBuild"] = build
+    return staged
+
+
+def test_build_catalog_errors(
+    previous: dict[str, Any],
+    current: dict[str, Any],
+    *,
+    requested_build: int,
+    source_commit: str,
+    head_commit: str,
+    changed_paths: list[str],
+    commit_count: int,
+) -> list[str]:
+    """Return reasons that Test catalog staging cannot authorize a build."""
+    errors: list[str] = []
+    previous_build = previous.get("currentTestBuild", {}).get("build")
+    current_build = current.get("currentTestBuild", {}).get("build")
+    current_sequence = current.get("currentTestBuild", {}).get("sequence")
+    current_source = current.get("currentTestBuild", {}).get("commit")
+    if current_build != requested_build:
+        errors.append(
+            f"currentTestBuild.build {current_build!r} does not match requested "
+            f"build {requested_build}"
+        )
+    if current_sequence != requested_build:
+        errors.append(
+            f"currentTestBuild.sequence {current_sequence!r} does not match "
+            f"requested build {requested_build}"
+        )
+    if current_source != source_commit:
+        errors.append(
+            f"currentTestBuild.commit {current_source!r} does not match app source "
+            f"commit {source_commit}"
+        )
+    if type(previous_build) is not int or requested_build <= previous_build:
+        errors.append(
+            f"requested build {requested_build} must be newer than catalog build "
+            f"{previous_build!r}"
+        )
+    for feature in current.get("features", []):
+        if (
+            feature.get("state") in APPROVAL_STATES
+            and feature.get("testBuild") != requested_build
+        ):
+            errors.append(
+                f"{feature.get('id')} testBuild {feature.get('testBuild')!r} does not "
+                f"match requested build {requested_build}"
+            )
+    if source_commit == head_commit or commit_count != 1:
+        errors.append("Test build requires exactly one catalog staging commit")
+    if set(changed_paths) != {STREAM_MANIFEST_RELATIVE}:
+        errors.append("catalog staging changed paths other than stream.json")
+    expected = staged_test_manifest(previous, requested_build, source_commit)
+    if current != expected:
+        errors.append("catalog staging changed fields outside build attribution")
+    return errors
+
+
+def atomic_manifest(value: dict[str, Any]) -> None:
+    with tempfile.NamedTemporaryFile("w", dir=MANIFEST_PATH.parent, delete=False) as file:
+        json.dump(value, file, indent=2)
+        file.write("\n")
+        temporary = Path(file.name)
+    os.replace(temporary, MANIFEST_PATH)
+
+
 def validate_delivery_inventory(value: dict[str, Any], states: list[str]) -> None:
     records = value.get("pullRequests", [])
     numbers = [item.get("number") for item in records]
@@ -1308,6 +1391,100 @@ def command_validate(_: argparse.Namespace) -> None:
     print(f"stream manifest valid: {len(records)} catalog records")
 
 
+def command_stage_test_build(args: argparse.Namespace) -> None:
+    TEST_CATALOG_LOCK.parent.mkdir(parents=True, exist_ok=True)
+    with TEST_CATALOG_LOCK.open("a+") as lock:
+        fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+        branch = git("branch", "--show-current")
+        if branch != "personal/swiftui-test":
+            fail(f"Test catalog staging requires personal/swiftui-test, not {branch}")
+        if git("status", "--porcelain"):
+            fail("Test catalog staging requires a clean worktree")
+        source_commit = git("rev-parse", "HEAD")
+        allocator = [str(SCRIPT_DIR / "next-build.py"), "test"]
+        if args.build is not None:
+            allocator.extend(("--requested", str(args.build)))
+        result = subprocess.run(
+            allocator,
+            cwd=REPO_ROOT,
+            text=True,
+            capture_output=True,
+        )
+        if result.returncode:
+            fail(result.stderr.strip() or "cannot reserve the next Test build")
+        try:
+            build = int(result.stdout.strip())
+        except ValueError:
+            fail(f"Test build allocator returned an invalid build: {result.stdout!r}")
+        value = manifest()
+        staged = staged_test_manifest(value, build, source_commit)
+        validate_manifest(staged)
+        atomic_manifest(staged)
+        print(
+            json.dumps(
+                {
+                    "build": build,
+                    "catalogPath": str(MANIFEST_PATH),
+                    "sourceCommit": source_commit,
+                    "pendingFeatureIds": [
+                        feature["id"]
+                        for feature in staged["features"]
+                        if feature.get("state") in APPROVAL_STATES
+                    ],
+                },
+                indent=2,
+                sort_keys=True,
+            )
+        )
+
+
+def command_validate_test_build_catalog(args: argparse.Namespace) -> None:
+    current = manifest()
+    source_commit = current["currentTestBuild"]["commit"]
+    head_commit = git("rev-parse", "HEAD")
+    git("rev-parse", "--verify", f"{source_commit}^{{commit}}")
+    if subprocess.run(
+        ["git", "merge-base", "--is-ancestor", source_commit, head_commit],
+        cwd=REPO_ROOT,
+    ).returncode:
+        fail(f"catalog app source {source_commit} is not an ancestor of {head_commit}")
+    try:
+        previous = json.loads(
+            git("show", f"{source_commit}:{STREAM_MANIFEST_RELATIVE}")
+        )
+    except json.JSONDecodeError as error:
+        fail(f"cannot read source catalog at {source_commit}: {error}")
+    changed_output = git("diff", "--name-only", f"{source_commit}..{head_commit}")
+    changed_paths = changed_output.splitlines() if changed_output else []
+    try:
+        commit_count = int(
+            git("rev-list", "--count", f"{source_commit}..{head_commit}")
+        )
+    except ValueError:
+        fail("cannot count Test catalog staging commits")
+    errors = test_build_catalog_errors(
+        previous,
+        current,
+        requested_build=args.build,
+        source_commit=source_commit,
+        head_commit=head_commit,
+        changed_paths=changed_paths,
+        commit_count=commit_count,
+    )
+    if errors:
+        fail("Test build catalog is not staged: " + "; ".join(errors))
+    print(
+        json.dumps(
+            {
+                "build": args.build,
+                "catalogCommit": head_commit,
+                "sourceCommit": source_commit,
+            },
+            sort_keys=True,
+        )
+    )
+
+
 def command_require_receipt(_: argparse.Namespace) -> None:
     receipt = require_installed_test_receipt()
     print(
@@ -1360,6 +1537,12 @@ def parser() -> argparse.ArgumentParser:
     queue.set_defaults(func=command_queue)
     receipt = commands.add_parser("require-installed-test-receipt")
     receipt.set_defaults(func=command_require_receipt)
+    stage_test = commands.add_parser("stage-test-build")
+    stage_test.add_argument("--build", type=int)
+    stage_test.set_defaults(func=command_stage_test_build)
+    validate_test = commands.add_parser("validate-test-build-catalog")
+    validate_test.add_argument("--build", type=int, required=True)
+    validate_test.set_defaults(func=command_validate_test_build_catalog)
     return result
 
 

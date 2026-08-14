@@ -37,6 +37,7 @@ class PipelineTests(unittest.TestCase):
         command: list[str] | None = None,
         dry_run: bool = False,
         approval_reference: str | None = None,
+        build_number: int | None = None,
     ) -> subprocess.CompletedProcess[str]:
         receipt_root = Path(directory) / "artifacts"
         arguments = [
@@ -55,6 +56,8 @@ class PipelineTests(unittest.TestCase):
             arguments.append("--dry-run")
         if approval_reference is not None:
             arguments.extend(("--approval-receipt-reference", approval_reference))
+        if build_number is not None:
+            arguments.extend(("--build-number", str(build_number)))
         environment = dict(os.environ)
         environment["T3_SWIFT_PIPELINE_LOCK_ROOT"] = str(Path(directory) / "locks")
         return subprocess.run(
@@ -141,6 +144,25 @@ class PipelineTests(unittest.TestCase):
             self.assertIn("githubAllowed does not match stage policy", errors)
             self.assertTrue(any("SHA-256" in error for error in errors))
 
+    def test_test_catalog_requires_and_records_the_reserved_build_command(self):
+        with tempfile.TemporaryDirectory() as directory:
+            missing = self.run_stage(directory, "test-catalog", dry_run=True)
+            self.assertEqual(missing.returncode, 2)
+            self.assertIn("test-catalog requires --build-number", missing.stderr)
+
+            planned = self.run_stage(
+                directory,
+                "test-catalog",
+                dry_run=True,
+                build_number=60,
+            )
+            self.assertEqual(planned.returncode, 0, planned.stderr)
+            value = self.receipt(directory, "test-catalog")
+            self.assertEqual(
+                value["commands"][0]["argv"][-3:],
+                ["validate-test-build-catalog", "--build", "60"],
+            )
+
     def test_dev_promotion_requires_and_records_exact_human_authority(self):
         with tempfile.TemporaryDirectory() as directory:
             missing = self.run_stage(
@@ -182,6 +204,7 @@ class PipelineTests(unittest.TestCase):
             "candidate-verification",
             "candidate-simulator",
             "test-train",
+            "test-catalog",
             "test-phone-build",
             "test-phone-install",
             "human-acceptance",
@@ -192,6 +215,7 @@ class PipelineTests(unittest.TestCase):
         ]
         offsets = [content.index(f'key: "{key}"') for key in keys]
         self.assertEqual(offsets, sorted(offsets))
+        self.assertIn('depends_on: "test-catalog"', content)
         self.assertIn('depends_on: "human-acceptance"', content)
         self.assertIn(
             "buildkite-agent meta-data get approval-receipt-reference", content

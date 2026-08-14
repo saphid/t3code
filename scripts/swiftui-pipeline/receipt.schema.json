@@ -29,6 +29,7 @@
         "candidate-verification",
         "candidate-simulator",
         "test-train",
+        "test-catalog",
         "test-phone-build",
         "test-phone-install",
         "dev-promotion",

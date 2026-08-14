@@ -81,6 +81,10 @@ STAGES: dict[str, Stage] = {
         ),
         resources=("native-build", "simulator"),
     ),
+    "test-catalog": Stage(
+        commands=(),
+        resources=("native-build",),
+    ),
     "test-phone-build": Stage(
         commands=((str(BUILD_READY), "test"),),
         resources=("native-build", "signing", "simulator"),
@@ -184,11 +188,25 @@ def command_plan(
     fake_command: tuple[str, ...] | None,
     pr_body: str | None,
     pr_number: int | None,
+    build_number: int | None,
 ) -> list[tuple[str, ...]]:
     stage = STAGES[stage_name]
     if fake_command:
         return [fake_command]
     commands = list(stage.commands)
+    if stage_name == "test-catalog":
+        if build_number is None:
+            raise ValueError(
+                "test-catalog requires --build-number or T3_SWIFT_BUILD_NUMBER"
+            )
+        commands.append(
+            (
+                str(STREAM),
+                "validate-test-build-catalog",
+                "--build",
+                str(build_number),
+            )
+        )
     if stage_name == "upstream-handoff":
         if not pr_body or pr_number is None:
             raise ValueError("upstream-handoff requires --pr-body and --pr-number")
@@ -354,8 +372,15 @@ def run_stage(args: argparse.Namespace) -> int:
         return 2
     try:
         fake_command = parse_fake_command(args.fake_command_json)
+        build_number = args.build_number
+        if build_number is None and os.environ.get("T3_SWIFT_BUILD_NUMBER"):
+            build_number = int(os.environ["T3_SWIFT_BUILD_NUMBER"])
         commands = command_plan(
-            args.stage, fake_command, args.pr_body, args.pr_number
+            args.stage,
+            fake_command,
+            args.pr_body,
+            args.pr_number,
+            build_number,
         )
     except ValueError as error:
         print(f"[swiftui-private-ci] {error}", file=sys.stderr)
@@ -487,6 +512,7 @@ def parser() -> argparse.ArgumentParser:
     run.add_argument("--pr-body")
     run.add_argument("--pr-number", type=int)
     run.add_argument("--approval-receipt-reference")
+    run.add_argument("--build-number", type=int)
     run.set_defaults(func=run_stage)
     validate = commands.add_parser("validate-receipt")
     validate.add_argument("path")

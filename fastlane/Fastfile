@@ -51,6 +51,10 @@ platform :ios do
     swiftui_pipeline_stage(stage: "test-train")
   end
 
+  lane :swiftui_test_catalog do
+    swiftui_pipeline_stage(stage: "test-catalog")
+  end
+
   lane :swiftui_test_phone_build do
     swiftui_pipeline_stage(stage: "test-phone-build")
   end

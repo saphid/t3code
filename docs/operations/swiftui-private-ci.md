@@ -31,18 +31,26 @@ retains that exact authority reference.
    CandidateJourneys app-flow gate.
 3. `test-train` repeats the stream and branch gates, then runs the TestTrain
    native suite and complete regression app-flow set on the combined train.
-4. `test-phone-build` creates the signed, immutable Test artifact and ready
+4. `test-catalog` proves that the reserved Test build and all pending feature
+   records were staged in one catalog-only commit.
+5. `test-phone-build` creates the signed, immutable Test artifact and ready
    pointer.
-5. `test-phone-install` runs the deterministic phone reconciler.
-6. `human-acceptance` blocks until the exact installed Test receipt has a human
+6. `test-phone-install` runs the deterministic phone reconciler.
+7. `human-acceptance` blocks until the exact installed Test receipt has a human
    verdict.
-7. `dev-promotion` verifies the installed Test receipt, promotion queue, stream,
+8. `dev-promotion` verifies the installed Test receipt, promotion queue, stream,
    and branch graph after the approved integration workflow updates Dev.
-8. `dev-phone-build` creates the signed, immutable Dev artifact and ready
+9. `dev-phone-build` creates the signed, immutable Dev artifact and ready
    pointer.
-9. `dev-phone-install` runs the deterministic Dev phone reconciler.
-10. `upstream-handoff` validates the stream, branch graph, and prepared pull
+10. `dev-phone-install` runs the deterministic Dev phone reconciler.
+11. `upstream-handoff` validates the stream, branch graph, and prepared pull
     request body. It does not push code or start GitHub Actions.
+
+Run `stream.py stage-test-build` and commit its one-file change before this
+pipeline starts. Set `T3_SWIFT_BUILD_NUMBER` to its reserved build. The
+`test-catalog` stage and `build-ready.sh test` run the same fail-closed guard.
+They do not change the catalog. No catalog attribution changes are allowed after
+signing.
 
 The Candidate-to-Dev integration remains in the existing approval workflow.
 This CI layer does not implement a second merge policy. The `dev-promotion`

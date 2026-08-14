@@ -212,6 +212,24 @@ independent and monotonically increasing.
 
 ## Build and automatic phone install
 
+Stage Test attribution before a Test build. Run this command on a clean
+`personal/swiftui-test` branch after the Test train is complete:
+
+```sh
+scripts/swiftui-stream/stream.py stage-test-build
+```
+
+The command reserves the next Test build number. It changes only
+`scripts/swiftui-stream/stream.json`. It sets `currentTestBuild` and every
+`in-test` or `needs-you` feature to the reserved build. Review this diff. Commit
+it as one catalog-only commit. Keep the JSON output because it contains the
+reserved build number.
+
+The catalog records the app-source commit that is the parent of the catalog
+commit. This rule avoids an impossible self-reference. The catalog commit
+cannot contain its own Git SHA. The signed app records the app-source commit.
+The ready pointer also records the catalog commit.
+
 On the matching clean branch, publish an immutable signed artifact:
 
 ```sh
@@ -221,13 +239,26 @@ scripts/swiftui-stream/build-ready.sh dev
 
 T3_SWIFT_DEVICE_ID="<CoreDevice or UDID>" \
 T3_SWIFT_DEVELOPMENT_TEAM="<team>" \
+T3_SWIFT_BUILD_NUMBER="<reserved Test build>" \
 scripts/swiftui-stream/build-ready.sh test
 ```
 
 The build command verifies the channel identity, embedded channel, signature,
-exact full commit, and monotonic counter, stores the artifact below
-`~/.t3/artifacts/swiftui-stream/<channel>/`, then atomically advances that
-channel's ready pointer.
+exact app-source and catalog commits, and monotonic counter. It stores the
+artifact below `~/.t3/artifacts/swiftui-stream/<channel>/`. It then atomically
+advances that channel's ready pointer.
+
+Before a Test build starts, the command also verifies this contract:
+
+- The requested build is the current unbuilt reservation.
+- `currentTestBuild.build` and `sequence` equal the reserved build.
+- Every `in-test` and `needs-you` feature has that `testBuild`.
+- The app-source commit has exactly one descendant commit.
+- That descendant changes only `stream.json` build attribution.
+
+The guard runs before `xcodebuild`. A mismatch creates no signed artifact and
+does not advance the ready pointer. Do not repair the catalog after signing.
+Stage a new build instead.
 
 `com.saphid.t3-swiftui-phone-watch` is a normally dormant 60-second
 LaunchAgent. It uses no model and no tokens. While a ready build is pending, it

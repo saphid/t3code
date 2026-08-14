@@ -36,9 +36,18 @@ steps:
     artifact_paths:
       - ".t3/swiftui-private-ci-artifacts/**/*"
 
+  - label: ":bookmark_tabs: Validate staged Test catalog"
+    key: "test-catalog"
+    depends_on: "test-train"
+    command: "scripts/swiftui-pipeline/fastlane.sh swiftui_test_catalog"
+    concurrency: 1
+    concurrency_group: "swiftui/native-build"
+    artifact_paths:
+      - ".t3/swiftui-private-ci-artifacts/**/*"
+
   - label: ":lock: Build signed SwiftUI Test"
     key: "test-phone-build"
-    depends_on: "test-train"
+    depends_on: "test-catalog"
     command: "scripts/swiftui-pipeline/fastlane.sh swiftui_test_phone_build"
     concurrency: 1
     concurrency_group: "swiftui/simulator"

@@ -77,12 +77,33 @@ fi
 python3 "$SCRIPT_DIR/generate_testing_manifest.py" \
   "$REPO_ROOT" "$CHANNEL" "$PREFLIGHT_BUILD" "$PREFLIGHT_MANIFEST"
 
-if [[ -n "${T3_SWIFT_BUILD_NUMBER:-}" ]]; then
+if [[ "$CHANNEL" == test ]]; then
+  [[ -n "${T3_SWIFT_BUILD_NUMBER:-}" ]] || {
+    echo "Test builds require a number reserved by stream.py stage-test-build" >&2
+    exit 1
+  }
+  BUILD="$(
+    "$SCRIPT_DIR/next-build.py" test \
+      --requested "$T3_SWIFT_BUILD_NUMBER" \
+      --accept-reserved
+  )"
+elif [[ -n "${T3_SWIFT_BUILD_NUMBER:-}" ]]; then
   BUILD="$("$SCRIPT_DIR/next-build.py" "$CHANNEL" --requested "$T3_SWIFT_BUILD_NUMBER")"
 else
   BUILD="$("$SCRIPT_DIR/next-build.py" "$CHANNEL")"
 fi
-COMMIT="$(git -C "$REPO_ROOT" rev-parse HEAD)"
+CATALOG_COMMIT="$(git -C "$REPO_ROOT" rev-parse HEAD)"
+SOURCE_COMMIT="$CATALOG_COMMIT"
+if [[ "$CHANNEL" == test ]]; then
+  CATALOG_CONTRACT="$(
+    "$SCRIPT_DIR/stream.py" validate-test-build-catalog --build "$BUILD"
+  )"
+  SOURCE_COMMIT="$(jq -r .sourceCommit <<<"$CATALOG_CONTRACT")"
+  [[ "$SOURCE_COMMIT" =~ ^[0-9a-f]{40}$ ]] || {
+    echo "invalid Test catalog source commit: $SOURCE_COMMIT" >&2
+    exit 1
+  }
+fi
 DERIVED="${T3_SWIFT_DERIVED_DATA_PATH:-$APP_DIR/.derivedData/ready-$CHANNEL}"
 CLONED_SOURCE_PACKAGES_PATH="${T3_SWIFT_CLONED_SOURCE_PACKAGES_PATH:-$HOME/.t3/cache/swift-ios/source-packages}"
 COMPILATION_CACHE_PATH="${T3_SWIFT_COMPILATION_CACHE_PATH:-$HOME/.t3/cache/swift-ios/compilation-cache}"
@@ -106,7 +127,7 @@ xcodebuild build \
   "DEVELOPMENT_TEAM=$TEAM" \
   "CURRENT_PROJECT_VERSION=$BUILD" \
   "COMPILATION_CACHE_CAS_PATH=$COMPILATION_CACHE_PATH" \
-  "T3_GIT_COMMIT=$COMMIT" \
+  "T3_GIT_COMMIT=$SOURCE_COMMIT" \
   "T3_GIT_REPO_URL=https://github.com/saphid/t3code-personal" \
   "T3_GIT_BASE_REF=upstream/t3code/rebuild-mobile-app-swift" \
   "T3_BUILD_TESTING=$BUILD_TESTING"
@@ -121,7 +142,7 @@ ACTUAL_TESTING="$(plutil -extract T3BuildTesting raw -o - "$APP_PATH/Info.plist"
 [[ "$ACTUAL_BUNDLE" == "$BUNDLE_ID" ]] || { echo "unexpected bundle $ACTUAL_BUNDLE" >&2; exit 1; }
 [[ "$ACTUAL_BUILD" == "$BUILD" ]] || { echo "unexpected build $ACTUAL_BUILD" >&2; exit 1; }
 [[ "$ACTUAL_CHANNEL" == "$CHANNEL" ]] || { echo "unexpected channel $ACTUAL_CHANNEL" >&2; exit 1; }
-[[ "$ACTUAL_COMMIT" == "$COMMIT" ]] || { echo "unexpected commit $ACTUAL_COMMIT" >&2; exit 1; }
+[[ "$ACTUAL_COMMIT" == "$SOURCE_COMMIT" ]] || { echo "unexpected commit $ACTUAL_COMMIT" >&2; exit 1; }
 [[ "$ACTUAL_TESTING" == "$BUILD_TESTING" ]] || { echo "unexpected testing manifest" >&2; exit 1; }
 codesign --verify --deep --strict "$APP_PATH"
 WIDGET_PATH="$APP_PATH/PlugIns/T3CodeWidgets.appex"
@@ -135,7 +156,7 @@ SHARE_BUNDLE="$(plutil -extract CFBundleIdentifier raw -o - "$SHARE_PATH/Info.pl
 [[ "$WIDGET_BUNDLE" == "$BUNDLE_ID.widgets" ]] || { echo "unexpected widget bundle $WIDGET_BUNDLE" >&2; exit 1; }
 [[ "$SHARE_BUNDLE" == "$BUNDLE_ID.sharing" ]] || { echo "unexpected share bundle $SHARE_BUNDLE" >&2; exit 1; }
 
-ARTIFACT_DIR="$ARTIFACT_ROOT/$CHANNEL/$BUILD-$COMMIT"
+ARTIFACT_DIR="$ARTIFACT_ROOT/$CHANNEL/$BUILD-$SOURCE_COMMIT"
 mkdir -p "$ARTIFACT_DIR"
 ditto "$APP_PATH" "$ARTIFACT_DIR/T3Code.app"
 ditto -c -k --sequesterRsrc --keepParent "$ARTIFACT_DIR/T3Code.app" "$ARTIFACT_DIR/T3Code.app.zip"
@@ -147,13 +168,14 @@ jq -n \
   --arg channel "$CHANNEL" \
   --argjson build "$BUILD" \
   --argjson sequence "$BUILD" \
-  --arg commit "$COMMIT" \
+  --arg commit "$SOURCE_COMMIT" \
+  --arg catalogCommit "$CATALOG_COMMIT" \
   --arg bundleId "$BUNDLE_ID" \
   --arg appPath "$ARTIFACT_DIR/T3Code.app" \
   --arg zipPath "$ARTIFACT_DIR/T3Code.app.zip" \
   --arg sha256 "$SHA256" \
   --arg deviceId "$DEVICE_ID" \
-  '{schemaVersion:1,channel:$channel,build:$build,sequence:$sequence,commit:$commit,bundleId:$bundleId,appPath:$appPath,zipPath:$zipPath,sha256:$sha256,deviceId:$deviceId}' \
+  '{schemaVersion:1,channel:$channel,build:$build,sequence:$sequence,commit:$commit,catalogCommit:$catalogCommit,bundleId:$bundleId,appPath:$appPath,zipPath:$zipPath,sha256:$sha256,deviceId:$deviceId}' \
   > "$POINTER_TMP"
 cp "$POINTER_TMP" "$ARTIFACT_DIR/artifact.json"
 chmod -R a-w "$ARTIFACT_DIR"
