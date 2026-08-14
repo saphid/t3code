@@ -5,6 +5,9 @@ permissions:
 
 on:
   pull_request:
+    branches:
+      - main
+      - rebuild-mobile-app-swift
     paths:
       - "apps/swift-ios/**"
       - "packages/contracts/**"

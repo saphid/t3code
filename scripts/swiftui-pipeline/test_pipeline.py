@@ -10,6 +10,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 
 ROOT = Path(__file__).resolve().parent
@@ -214,6 +215,35 @@ class PipelineTests(unittest.TestCase):
         self.assertIn("FASTLANE_HIDE_GITHUB_ISSUES=1", wrapper)
         self.assertIn("FASTLANE_SKIP_DOCS=1", wrapper)
         self.assertIn('FL_REPORT_PATH="$CACHE_ROOT/reports"', wrapper)
+
+    def test_private_stages_strip_github_credentials_and_select_exact_plans(self):
+        with patch.dict(
+            os.environ,
+            {"GH_TOKEN": "secret", "GITHUB_TOKEN": "secret", "GITHUB_REPOSITORY": "owner/repo"},
+        ):
+            private = pipeline.environment_for_stage(pipeline.STAGES["test-train"])
+            upstream = pipeline.environment_for_stage(pipeline.STAGES["upstream-handoff"])
+        self.assertNotIn("GH_TOKEN", private)
+        self.assertNotIn("GITHUB_TOKEN", private)
+        self.assertNotIn("GITHUB_REPOSITORY", private)
+        self.assertEqual(private["T3_SWIFT_GITHUB_ALLOWED"], "0")
+        self.assertEqual(upstream["GH_TOKEN"], "secret")
+
+        test_train = " ".join(
+            argument
+            for command in pipeline.STAGES["test-train"].commands
+            for argument in command
+        )
+        candidate = " ".join(
+            argument
+            for command in pipeline.STAGES["candidate-simulator"].commands
+            for argument in command
+        )
+        self.assertIn("T3_SWIFT_XCODE_TEST_PLAN=TestTrain", test_train)
+        self.assertIn("T3_SWIFT_XCODE_TEST_PLAN=CandidateJourneys", candidate)
+        self.assertIn("T3_APP_FLOW_PLAN=pr", candidate)
+        self.assertIn("simulator", pipeline.STAGES["test-phone-build"].resources)
+        self.assertIn("simulator", pipeline.STAGES["dev-phone-build"].resources)
 
     def test_declared_json_schema_matches_runtime_stage_names(self):
         schema = json.loads((ROOT / "receipt.schema.json").read_text())

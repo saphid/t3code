@@ -41,10 +41,18 @@ python3 "$SCRIPT_DIR/test_stream.py"
   echo "refusing to publish a non-reproducible dirty build" >&2
   exit 1
 }
+unset T3_SWIFT_RESULT_BUNDLE_PATH T3_SWIFT_TEST_PRODUCTS_PATH \
+  T3_SWIFT_BUILD_MANIFEST_PATH T3_SWIFT_SUMMARY_PATH T3_SWIFT_TESTS_PATH \
+  T3_SWIFT_RECEIPT_PATH T3_SWIFT_ATTACHMENTS_PATH
 T3_SWIFT_SCHEME="$SCHEME" \
 T3_SWIFT_XCODE_TEST_PLAN=Focused \
 T3_SWIFT_SIMULATOR_ID="${T3_SWIFT_SIMULATOR_ID:-}" \
   "$APP_DIR/Scripts/ci-test.sh"
+T3_SWIFT_SCHEME="$SCHEME" \
+T3_SWIFT_XCODE_TEST_PLAN=CandidateJourneys \
+T3_APP_FLOW_PLAN=pr \
+T3_SWIFT_SIMULATOR_ID="${T3_SWIFT_SIMULATOR_ID:-}" \
+  "$APP_DIR/Scripts/ci-app-flow-test.sh"
 if [[ "$CHANNEL" == "test" ]]; then
   [[ "$BRANCH" == "$EXPECTED_BRANCH" ]] || {
     echo "Test builds must be published from $EXPECTED_BRANCH, not $BRANCH" >&2

@@ -24,6 +24,7 @@ STREAM = REPO_ROOT / "scripts/swiftui-stream/stream.py"
 BUILD_READY = REPO_ROOT / "scripts/swiftui-stream/build-ready.sh"
 PHONE_WATCH = REPO_ROOT / "scripts/swiftui-stream/phone-watch.py"
 NATIVE_TEST = REPO_ROOT / "apps/swift-ios/Scripts/ci-test.sh"
+APP_FLOW_TEST = REPO_ROOT / "apps/swift-ios/Scripts/ci-app-flow-test.sh"
 SCHEMA_PATH = SCRIPT_DIR / "receipt.schema.json"
 DEFAULT_RECEIPT_ROOT = REPO_ROOT / ".t3/swiftui-private-ci-artifacts"
 DEFAULT_LOCK_ROOT = Path.home() / ".t3/locks/swiftui-private-ci"
@@ -46,20 +47,27 @@ STAGES: dict[str, Stage] = {
         resources=("native-build",),
     ),
     "candidate-simulator": Stage(
-        commands=((str(NATIVE_TEST),),),
-        resources=("simulator",),
+        commands=(
+            (
+                "env",
+                "T3_SWIFT_XCODE_TEST_PLAN=CandidateJourneys",
+                "T3_APP_FLOW_PLAN=pr",
+                str(APP_FLOW_TEST),
+            ),
+        ),
+        resources=("native-build", "simulator"),
     ),
     "test-train": Stage(
         commands=(
             (str(STREAM), "validate"),
             (str(STREAM), "verify-branches"),
-            (str(NATIVE_TEST),),
+            ("env", "T3_SWIFT_XCODE_TEST_PLAN=TestTrain", str(NATIVE_TEST)),
         ),
         resources=("native-build", "simulator"),
     ),
     "test-phone-build": Stage(
         commands=((str(BUILD_READY), "test"),),
-        resources=("native-build", "signing"),
+        resources=("native-build", "signing", "simulator"),
     ),
     "test-phone-install": Stage(
         commands=((sys.executable, str(PHONE_WATCH)),),
@@ -76,7 +84,7 @@ STAGES: dict[str, Stage] = {
     ),
     "dev-phone-build": Stage(
         commands=((str(BUILD_READY), "dev"),),
-        resources=("native-build", "signing"),
+        resources=("native-build", "signing", "simulator"),
     ),
     "dev-phone-install": Stage(
         commands=((sys.executable, str(PHONE_WATCH)),),
@@ -95,6 +103,18 @@ STAGES: dict[str, Stage] = {
 
 def utc_now() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def environment_for_stage(stage: Stage) -> dict[str, str]:
+    environment = dict(os.environ)
+    if stage.github_allowed:
+        return environment
+    for key in tuple(environment):
+        upper = key.upper()
+        if upper in {"GH_TOKEN", "GITHUB_TOKEN"} or upper.startswith("GITHUB_"):
+            environment.pop(key)
+    environment["T3_SWIFT_GITHUB_ALLOWED"] = "0"
+    return environment
 
 
 def sha256(path: Path) -> str:
@@ -349,7 +369,7 @@ def run_stage(args: argparse.Namespace) -> int:
                 result = subprocess.run(
                     list(argv),
                     cwd=REPO_ROOT,
-                    env=dict(os.environ),
+                    env=environment_for_stage(stage),
                     text=True,
                     capture_output=True,
                     check=False,
