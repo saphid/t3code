@@ -109,7 +109,29 @@ runtime; CI creates an iPhone 17 Pro on iOS 26.5 and selects Xcode 26.6:
 ```
 
 Set `T3_SWIFT_SIMULATOR_ID` to pin a specific simulator. CI can invoke this same
-entry point without duplicating the simulator-selection or signing policy.
+entry point without duplicating the simulator-selection or signing policy. The
+script uses `build-for-testing` and `test-without-building`. It always writes an
+`.xcresult` under `.t3/evidence`, unless `T3_SWIFT_RESULT_BUNDLE_PATH` selects an
+unused path. Set `T3_SWIFT_REUSE_TEST_PRODUCTS=1` only for a source-bound
+`.xctestproducts` directory with its generated manifest.
+
+The shared Xcode Test Plans define the deterministic gate, while the app-flow
+catalog selects the exact UI journeys inside that gate:
+
+| Xcode Test Plan    | Test targets                 | Owner and use                         |
+| ------------------ | ---------------------------- | ------------------------------------- |
+| Focused            | Native unit tests            | Candidate-focused checks              |
+| CandidateJourneys  | Deterministic UI journeys    | One feature or fix                    |
+| TestTrain          | Native unit and UI tests     | SwiftUI Test integration              |
+| DevPromotion       | Native unit and UI tests     | SwiftUI Dev promotion                 |
+| UpstreamPR         | Native unit and UI tests     | Upstream pull request                 |
+| OfficialRelease    | Native unit and UI tests     | Authorized upstream release candidate |
+
+`T3CodeTest` defaults to `TestTrain`. `T3CodeDev` defaults to `DevPromotion`.
+The upstream `T3Code` scheme defaults to `UpstreamPR`. Set
+`T3_SWIFT_XCODE_TEST_PLAN` to choose another plan at a controlled gate.
+Compilation caching is enabled for Debug, Dev, and Test. Release keeps Xcode's
+release defaults.
 
 Run the focused native app-flow regression suite separately:
 
@@ -126,7 +148,8 @@ cadence in `Scripts/app-flow-catalog.json`. Set `T3_SWIFT_SCHEME` to
 and a portable JSON summary, exact executed-test inventory, exported screenshots
 and accessibility trees, source-bound build manifest, and verdict receipt are
 written under the ignored `.t3/evidence` directory by default. The runner builds
-one portable test product and supports source-verified reuse with
+one portable test product with `build-for-testing`, runs selected journeys with
+`test-without-building`, and supports source-verified reuse with
 `T3_SWIFT_REUSE_TEST_PRODUCTS=1`. The coverage boundaries and live/TestFlight
 follow-up protocol are documented in
 [`../../docs/operations/swiftui-app-flow-regression-tests.md`](../../docs/operations/swiftui-app-flow-regression-tests.md).

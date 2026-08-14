@@ -231,6 +231,34 @@ fixture suite:
 | Share extension, widgets, Live Activities | Required                | Required                 | Separate extension processes and App Group |
 | iPad layout                               | Required before release | Required before release  | One representative iPad journey            |
 
+## Deterministic Xcode gates
+
+The checked-in Xcode Test Plan is the gate contract. The app-flow catalog is the
+journey-selection contract. Do not use an agent to replace either contract.
+
+| Gate               | Scheme      | Xcode Test Plan   | Required result                         |
+| ------------------ | ----------- | ----------------- | --------------------------------------- |
+| Focused work       | T3Code      | Focused           | Native `.xcresult`                      |
+| Candidate proof    | Any         | CandidateJourneys | Catalog receipt and UI `.xcresult`      |
+| SwiftUI Test train | T3CodeTest  | TestTrain         | Train receipt and complete `.xcresult`  |
+| SwiftUI Dev gate   | T3CodeDev   | DevPromotion      | Promotion receipt and phone proof       |
+| Upstream PR        | T3Code      | UpstreamPR        | PR receipt and complete `.xcresult`     |
+| Official release   | T3Code      | OfficialRelease   | Authorized release receipt and evidence |
+
+The native and UI runners build a reusable `.xctestproducts` directory with
+`build-for-testing`. They run selected tests with `test-without-building`. A
+sealed manifest binds reused products to the source, scheme, toolchain, package
+resolution, and artifact hashes. Each invocation uses an unused
+`-resultBundlePath`. It keeps the structured `.xcresult`, JSON summary, test
+inventory, attachments, and receipt.
+
+Xcode 26 compilation caching is enabled only for Debug, Dev, and Test. This
+helps clean and branch-switch builds. It does not change Release build settings.
+
+GitHub Actions starts only for an upstream pull request or a push to upstream
+`main`. It uses `UpstreamPR` for pull requests and `OfficialRelease` for `main`.
+The private SwiftUI Test and SwiftUI Dev lanes do not depend on GitHub Actions.
+
 ## Failure ledger
 
 Issue [#58](https://github.com/saphid/t3code-personal/issues/58) is the durable

@@ -7,6 +7,7 @@ APP_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 REPO_ROOT="$(cd "${APP_DIR}/../.." && pwd)"
 source "${SCRIPT_DIR}/lib/swift-ios-common.sh"
 SCHEME="${T3_SWIFT_SCHEME:-T3Code}"
+XCODE_TEST_PLAN="${T3_SWIFT_XCODE_TEST_PLAN:-CandidateJourneys}"
 SIMULATOR_ID="${T3_SWIFT_SIMULATOR_ID:-}"
 DERIVED_DATA_ROOT="${RUNNER_TEMP:-${APP_DIR}/.derivedData}"
 DERIVED_DATA_PATH="${T3_SWIFT_DERIVED_DATA_PATH:-${DERIVED_DATA_ROOT}/swift-ios-app-flow}"
@@ -53,6 +54,7 @@ require_cmd awk
 require_cmd cp
 require_cmd date
 require_cmd find
+require_cmd grep
 require_cmd python3
 require_cmd tr
 require_cmd "${XCODEBUILD_COMMAND}"
@@ -64,6 +66,11 @@ fi
 TOOLCHAIN_ID="${ACTUAL_TOOLCHAIN_ID}"
 
 python3 "${CATALOG_TOOL}" check >/dev/null || die "app-flow catalog validation failed"
+case "${XCODE_TEST_PLAN}" in
+  CandidateJourneys | TestTrain | DevPromotion | UpstreamPR | OfficialRelease) ;;
+  Focused) die "Focused excludes the UI-test target; use CandidateJourneys or a wider gate" ;;
+  *) die "unknown checked-in Xcode test plan: ${XCODE_TEST_PLAN}" ;;
+esac
 while IFS= read -r selection; do
   [[ -n "${selection}" ]] && TEST_SELECTIONS+=("${selection}")
 done < <(python3 "${CATALOG_TOOL}" resolve --plan "${PLAN}")
@@ -168,7 +175,6 @@ elif [[ -n "${T3_APP_FLOW_LIVE_DISPOSABLE_SIMULATOR:-}" ]]; then
 fi
 
 if [[ -n "${LIVE_CREDENTIALS_FILE}" ]]; then
-  require_cmd grep
   LIVE_CREDENTIALS_SNAPSHOT="$(mktemp "${TMPDIR:-/tmp}/t3-app-flow-credentials.XXXXXX")"
   SECRET_PATTERN_FILE="$(mktemp "${TMPDIR:-/tmp}/t3-app-flow-secret.XXXXXX")"
   chmod 600 "${LIVE_CREDENTIALS_SNAPSHOT}" "${SECRET_PATTERN_FILE}"
@@ -264,6 +270,7 @@ mkdir -p "$(dirname "${RESULT_BUNDLE_PATH}")"
 
 printf '[swift-ios-app-flow] simulator: %s\n' "${SIMULATOR_ID}"
 printf '[swift-ios-app-flow] scheme: %s\n' "${SCHEME}"
+printf '[swift-ios-app-flow] Xcode test plan: %s\n' "${XCODE_TEST_PLAN}"
 printf '[swift-ios-app-flow] plan: %s (%s journeys)\n' "${PLAN}" "${#TEST_SELECTIONS[@]}"
 printf '[swift-ios-app-flow] test products: %s\n' "${TEST_PRODUCTS_PATH}"
 printf '[swift-ios-app-flow] build manifest: %s\n' "${BUILD_MANIFEST_PATH}"
@@ -280,6 +287,7 @@ if [[ ! -e "${TEST_PRODUCTS_PATH}" ]]; then
     "${XCODEBUILD_COMMAND}" build-for-testing \
     -project "${APP_DIR}/T3Code.xcodeproj" \
     -scheme "${SCHEME}" \
+    -testPlan "${XCODE_TEST_PLAN}" \
     -destination "platform=iOS Simulator,id=${SIMULATOR_ID}" \
     -derivedDataPath "${DERIVED_DATA_PATH}" \
     -testProductsPath "${TEST_PRODUCTS_PATH}" \
@@ -302,6 +310,8 @@ python3 "${CATALOG_TOOL}" verify-build-manifest \
   --scheme "${SCHEME}" \
   --toolchain "${TOOLCHAIN_ID}" >/dev/null \
   || die "test products do not match the current source/toolchain"
+find "${TEST_PRODUCTS_PATH}" -type d -name 'T3CodeUITests.xctest' -print -quit \
+  | grep -q . || die "test products do not contain T3CodeUITests.xctest"
 
 SELECTION_ARGUMENTS=()
 if [[ -n "${SELECTION_DECISION_PATH}" ]]; then

@@ -4,6 +4,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 RUNNER="${SCRIPT_DIR}/ci-app-flow-test.sh"
+UNIT_RUNNER="${SCRIPT_DIR}/ci-test.sh"
 TEST_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/t3-app-flow-runner-test.XXXXXX")"
 FAKE_XCODEBUILD="${SCRIPT_DIR}/TestFixtures/fake-xcodebuild.sh"
 FAKE_XCRUN="${SCRIPT_DIR}/TestFixtures/fake-xcrun.sh"
@@ -23,6 +24,49 @@ cleanup() {
 }
 
 trap cleanup EXIT
+
+python3 - "${SCRIPT_DIR}/../TestPlans" "${SCRIPT_DIR}/../T3Code.xcodeproj/xcshareddata/xcschemes" <<'PY'
+import json
+from pathlib import Path
+import sys
+import xml.etree.ElementTree as ET
+
+plans_root = Path(sys.argv[1])
+schemes_root = Path(sys.argv[2])
+expected_targets = {
+    "Focused": {"T3CodeTests"},
+    "CandidateJourneys": {"T3CodeUITests"},
+    "TestTrain": {"T3CodeTests", "T3CodeUITests"},
+    "DevPromotion": {"T3CodeTests", "T3CodeUITests"},
+    "UpstreamPR": {"T3CodeTests", "T3CodeUITests"},
+    "OfficialRelease": {"T3CodeTests", "T3CodeUITests"},
+}
+for name, targets in expected_targets.items():
+    payload = json.loads((plans_root / f"{name}.xctestplan").read_text(encoding="utf-8"))
+    assert payload["version"] == 1
+    assert payload["defaultOptions"]["targetForVariableExpansion"]["name"] == "T3Code"
+    assert {item["target"]["name"] for item in payload["testTargets"]} == targets
+
+expected_defaults = {
+    "T3Code.xcscheme": "UpstreamPR",
+    "T3CodeDev.xcscheme": "DevPromotion",
+    "T3CodeTest.xcscheme": "TestTrain",
+}
+for file_name, expected_default in expected_defaults.items():
+    root = ET.parse(schemes_root / file_name).getroot()
+    references = root.findall("./TestAction/TestPlans/TestPlanReference")
+    names = {
+        Path(item.attrib["reference"].removeprefix("container:")).stem
+        for item in references
+    }
+    assert names == set(expected_targets)
+    defaults = [
+        Path(item.attrib["reference"].removeprefix("container:")).stem
+        for item in references
+        if item.attrib.get("default") == "YES"
+    ]
+    assert defaults == [expected_default]
+PY
 
 python3 "${CATALOG_TOOL}" check >/dev/null
 [[ "$(python3 "${CATALOG_TOOL}" resolve --plan pr | wc -l | tr -d ' ')" == "4" ]]
@@ -586,6 +630,8 @@ expect_status 0 env \
   T3_SWIFT_RESULT_BUNDLE_PATH="${RESULT}" \
   T3_FAKE_ARGUMENT_LOG="${ARGUMENT_LOG}" \
   "${RUNNER}"
+grep -A1 -q -- '-testPlan' "${ARGUMENT_LOG}"
+grep -q '^CandidateJourneys$' "${ARGUMENT_LOG}"
 if grep -q -- '-test-iterations' "${ARGUMENT_LOG}"; then
   fail "non-stability plan unexpectedly enabled test iterations"
 fi
@@ -845,5 +891,38 @@ expect_status 1 env \
   T3_SWIFT_REUSE_TEST_PRODUCTS=1 \
   "${RUNNER}"
 grep -q "do not match the current source/toolchain" "${TEST_ROOT}/stderr"
+
+UNIT_RESULT="${TEST_ROOT}/native-focused.xcresult"
+UNIT_PRODUCTS="${TEST_ROOT}/native-focused.xctestproducts"
+UNIT_ARGUMENT_LOG="${TEST_ROOT}/native-focused-xcodebuild-arguments.txt"
+expect_status 0 env \
+  T3_SWIFT_XCODEBUILD_COMMAND="${FAKE_XCODEBUILD}" \
+  T3_SWIFT_SIMULATOR_ID="00000000-0000-0000-0000-000000000001" \
+  T3_SWIFT_RESULT_BUNDLE_PATH="${UNIT_RESULT}" \
+  T3_SWIFT_TEST_PRODUCTS_PATH="${UNIT_PRODUCTS}" \
+  T3_FAKE_ARGUMENT_LOG="${UNIT_ARGUMENT_LOG}" \
+  "${UNIT_RUNNER}"
+[[ -d "${UNIT_RESULT}" ]]
+[[ -f "${UNIT_PRODUCTS}.manifest.json" ]]
+grep -q '^build-for-testing$' "${UNIT_ARGUMENT_LOG}"
+grep -q '^test-without-building$' "${UNIT_ARGUMENT_LOG}"
+grep -A1 -q -- '-testPlan' "${UNIT_ARGUMENT_LOG}"
+grep -q '^Focused$' "${UNIT_ARGUMENT_LOG}"
+grep -A1 -q -- '-resultBundlePath' "${UNIT_ARGUMENT_LOG}"
+
+UNIT_REUSE_RESULT="${TEST_ROOT}/native-focused-reuse.xcresult"
+UNIT_REUSE_ARGUMENT_LOG="${TEST_ROOT}/native-focused-reuse-xcodebuild-arguments.txt"
+expect_status 0 env \
+  T3_SWIFT_XCODEBUILD_COMMAND="${FAKE_XCODEBUILD}" \
+  T3_SWIFT_SIMULATOR_ID="00000000-0000-0000-0000-000000000001" \
+  T3_SWIFT_RESULT_BUNDLE_PATH="${UNIT_REUSE_RESULT}" \
+  T3_SWIFT_TEST_PRODUCTS_PATH="${UNIT_PRODUCTS}" \
+  T3_SWIFT_REUSE_TEST_PRODUCTS=1 \
+  T3_FAKE_ARGUMENT_LOG="${UNIT_REUSE_ARGUMENT_LOG}" \
+  "${UNIT_RUNNER}"
+if grep -q '^build-for-testing$' "${UNIT_REUSE_ARGUMENT_LOG}"; then
+  fail "native unit reuse unexpectedly rebuilt test products"
+fi
+grep -q '^test-without-building$' "${UNIT_REUSE_ARGUMENT_LOG}"
 
 printf 'ci-app-flow-test safety checks passed\n'

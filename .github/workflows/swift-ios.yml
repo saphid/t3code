@@ -4,9 +4,6 @@ permissions:
   contents: read
 
 on:
-  workflow_dispatch:
-  schedule:
-    - cron: "17 3 * * 1"
   pull_request:
     paths:
       - "apps/swift-ios/**"
@@ -88,18 +85,14 @@ jobs:
         run: apps/swift-ios/Scripts/ci-verify.sh "${T3_SWIFT_PR_PLAN}"
         env:
           T3_SWIFT_EVIDENCE_DIR: ${{ runner.temp }}/swift-ios-evidence
+          T3_SWIFT_XCODE_TEST_PLAN: UpstreamPR
 
       - name: Verify SwiftUI main
         if: github.event_name == 'push'
         run: apps/swift-ios/Scripts/ci-verify.sh regression
         env:
           T3_SWIFT_EVIDENCE_DIR: ${{ runner.temp }}/swift-ios-evidence
-
-      - name: Verify SwiftUI stability
-        if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
-        run: apps/swift-ios/Scripts/ci-verify.sh stability
-        env:
-          T3_SWIFT_EVIDENCE_DIR: ${{ runner.temp }}/swift-ios-evidence
+          T3_SWIFT_XCODE_TEST_PLAN: OfficialRelease
 
       - name: Upload SwiftUI verification receipts
         if: always()
@@ -116,11 +109,11 @@ jobs:
           if-no-files-found: warn
           retention-days: 30
 
-      - name: Upload failed SwiftUI result bundles
-        if: failure()
+      - name: Preserve structured SwiftUI result bundles
+        if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: swift-ios-failures-${{ github.sha }}
+          name: swift-ios-result-bundles-${{ github.sha }}
           path: ${{ runner.temp }}/swift-ios-evidence/*.xcresult
           if-no-files-found: warn
           retention-days: 14

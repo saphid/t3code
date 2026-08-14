@@ -14,7 +14,14 @@
     </BuildActionEntries>
   </BuildAction>
   <TestAction buildConfiguration="Test" selectedDebuggerIdentifier="Xcode.DebuggerFoundation.Debugger.LLDB" selectedLauncherIdentifier="Xcode.DebuggerFoundation.Launcher.LLDB" shouldUseLaunchSchemeArgsEnv="YES">
-    <Testables><TestableReference skipped="NO" parallelizable="YES"><BuildableReference BuildableIdentifier="primary" BlueprintIdentifier="A50000000000000000000002" BuildableName="T3CodeTests.xctest" BlueprintName="T3CodeTests" ReferencedContainer="container:T3Code.xcodeproj"/></TestableReference><TestableReference skipped="NO" parallelizable="NO"><BuildableReference BuildableIdentifier="primary" BlueprintIdentifier="A50000000000000000000003" BuildableName="T3CodeUITests.xctest" BlueprintName="T3CodeUITests" ReferencedContainer="container:T3Code.xcodeproj"/></TestableReference></Testables>
+    <TestPlans>
+      <TestPlanReference reference="container:TestPlans/Focused.xctestplan"/>
+      <TestPlanReference reference="container:TestPlans/CandidateJourneys.xctestplan"/>
+      <TestPlanReference reference="container:TestPlans/TestTrain.xctestplan" default="YES"/>
+      <TestPlanReference reference="container:TestPlans/DevPromotion.xctestplan"/>
+      <TestPlanReference reference="container:TestPlans/UpstreamPR.xctestplan"/>
+      <TestPlanReference reference="container:TestPlans/OfficialRelease.xctestplan"/>
+    </TestPlans>
   </TestAction>
   <LaunchAction buildConfiguration="Test" selectedDebuggerIdentifier="Xcode.DebuggerFoundation.Debugger.LLDB" selectedLauncherIdentifier="Xcode.DebuggerFoundation.Launcher.LLDB" launchStyle="0" useCustomWorkingDirectory="NO" ignoresPersistentStateOnLaunch="NO" debugDocumentVersioning="YES" debugServiceExtension="internal" allowLocationSimulation="YES">
     <BuildableProductRunnable runnableDebuggingMode="0"><BuildableReference BuildableIdentifier="primary" BlueprintIdentifier="A50000000000000000000001" BuildableName="T3 Code.app" BlueprintName="T3Code" ReferencedContainer="container:T3Code.xcodeproj"/></BuildableProductRunnable>

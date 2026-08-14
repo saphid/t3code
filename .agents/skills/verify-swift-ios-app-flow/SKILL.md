@@ -14,12 +14,19 @@ no-model replay.
 Read the repository `AGENTS.md`, then read:
 
 - `apps/swift-ios/Scripts/app-flow-catalog.json`
+- `apps/swift-ios/TestPlans/*.xctestplan`
 - `docs/operations/swiftui-app-flow-regression-tests.md`
 
 Run `python3 apps/swift-ios/Scripts/app-flow.py check`. Stop on catalog drift.
 Choose one cataloged plan. Use `visual-accessibility` for the critical semantic
 lane and `known-red` only for issue-linked defect audits. Let CI's reviewed
 impact map select `pr` or the fail-safe `regression` fallback.
+
+Choose the Xcode gate separately. Use `CandidateJourneys` for one candidate,
+`TestTrain` for SwiftUI Test, `DevPromotion` for SwiftUI Dev, `UpstreamPR` for
+an upstream pull request, and `OfficialRelease` only under release authority.
+Use `Focused` for native unit tests. Set `T3_SWIFT_XCODE_TEST_PLAN`; do not edit
+a plan at run time.
 
 ## 2. Prepare one owned run
 
@@ -39,7 +46,9 @@ snapshots provide the automated visual and Dynamic Type smoke. The runbook
 records why `performAccessibilityAudit` is not currently a required oracle.
 
 Reuse `.xctestproducts` only through `T3_SWIFT_REUSE_TEST_PRODUCTS=1`; the
-source/build manifest must validate. For an upstream CI-equivalent pass, run
+source/build manifest must validate. The runners use `build-for-testing` once
+and `test-without-building` for each selected lane. For an upstream
+CI-equivalent pass, run
 `apps/swift-ios/Scripts/ci-verify.sh pr` or `regression`.
 
 ## 3. Explore through the typed semantic surface
