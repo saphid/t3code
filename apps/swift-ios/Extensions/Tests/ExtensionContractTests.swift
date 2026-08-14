@@ -39,9 +39,28 @@ final class ExtensionContractTests: XCTestCase {
     }
 
     func testNewTaskURLUsesTheConfiguredBuildChannelScheme() {
+        for (channel, scheme) in [
+            ("dev", "t3code-swiftui-personal-dev"),
+            ("test", "t3code-swiftui-personal"),
+            ("debug", "t3code-swiftui-dev"),
+            ("release", "t3code-swiftui"),
+        ] {
+            let resolvedScheme = T3SharedContainer.configuredURLScheme([
+                "T3BuildChannel": channel,
+            ])
+            XCTAssertEqual(resolvedScheme, scheme)
+            XCTAssertEqual(
+                T3SharedContainer.newTaskURL(scheme: resolvedScheme).absoluteString,
+                "\(scheme)://new-task"
+            )
+        }
+
         XCTAssertEqual(
-            T3SharedContainer.newTaskURL.absoluteString,
-            "\(T3SharedContainer.urlScheme)://new-task"
+            T3SharedContainer.configuredURLScheme([
+                "T3BuildChannel": "test",
+                "T3CodeURLScheme": "configured-test-scheme",
+            ]),
+            "configured-test-scheme"
         )
     }
 

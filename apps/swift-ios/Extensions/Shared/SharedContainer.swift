@@ -13,12 +13,15 @@ enum T3SharedContainer {
     }
 
     static var urlScheme: String {
-        guard let value = Bundle.main.object(forInfoDictionaryKey: "T3CodeURLScheme") as? String,
+        configuredURLScheme(Bundle.main.infoDictionary)
+    }
+
+    static func configuredURLScheme(_ info: [String: Any]?) -> String {
+        guard let value = info?["T3CodeURLScheme"] as? String,
               !value.isEmpty,
               !value.hasPrefix("$(")
         else {
-            let channel = (Bundle.main.object(forInfoDictionaryKey: "T3BuildChannel") as? String)?
-                .lowercased()
+            let channel = (info?["T3BuildChannel"] as? String)?.lowercased()
             return switch channel {
             case "dev": "t3code-swiftui-personal-dev"
             case "test": "t3code-swiftui-personal"
@@ -30,8 +33,12 @@ enum T3SharedContainer {
     }
 
     static var newTaskURL: URL {
+        newTaskURL(scheme: urlScheme)
+    }
+
+    static func newTaskURL(scheme: String) -> URL {
         var components = URLComponents()
-        components.scheme = urlScheme
+        components.scheme = scheme
         components.host = "new-task"
         return components.url!
     }
