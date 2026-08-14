@@ -4,17 +4,20 @@ struct FeatureToolErrorNotice: View {
     let message: String
     let isRetrying: Bool
     let retryTitle: String
+    let accessibilityIdentifierPrefix: String
     let retry: @MainActor () async -> Void
 
     init(
         message: String,
         isRetrying: Bool,
         retryTitle: String = "Try again",
+        accessibilityIdentifierPrefix: String = "feature-tool-error",
         retry: @escaping @MainActor () async -> Void
     ) {
         self.message = message
         self.isRetrying = isRetrying
         self.retryTitle = retryTitle
+        self.accessibilityIdentifierPrefix = accessibilityIdentifierPrefix
         self.retry = retry
     }
 
@@ -28,6 +31,8 @@ struct FeatureToolErrorNotice: View {
         }
         .font(T3Typography.control)
         .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("\(accessibilityIdentifierPrefix)-message")
 
         let retryControl = Button {
             Task { await retry() }
@@ -44,6 +49,7 @@ struct FeatureToolErrorNotice: View {
         .disabled(isRetrying)
         .accessibilityLabel(retryTitle)
         .accessibilityValue(isRetrying ? "In progress" : "")
+        .accessibilityIdentifier("\(accessibilityIdentifierPrefix)-retry")
 
         ViewThatFits(in: .horizontal) {
             HStack(alignment: .firstTextBaseline, spacing: 12) {

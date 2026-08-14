@@ -178,6 +178,7 @@ struct BuildChangelogView: View {
                 .foregroundStyle(T3Colors.accent)
                 .buttonStyle(.plain)
                 .accessibilityHint("Opens the T3 Code thread used to create this build")
+                .accessibilityIdentifier("build-changelog-open-source-thread")
                 .padding(.top, 2)
             }
         }
@@ -247,3 +248,33 @@ struct BuildChangelogView: View {
         .foregroundStyle(T3Colors.accent)
     }
 }
+
+#if DEBUG
+extension BuildChangelog {
+    static let appFlowSourceThreadFixture = BuildChangelog(
+        revision: "85a11ce55c9a43a3f72db0ea91fc67b83a847b5d",
+        baseRevision: "84b00d0000000000000000000000000000000000",
+        repositoryURL: URL(string: "https://github.com/pingdotgg/t3code"),
+        generatedBy: "app-flow fixture",
+        sourceThreadID: "fixture-main",
+        entries: [
+            Entry(
+                commit: "84b00d0f13579bdf2468ace02468ace013579bdf",
+                title: "Preserve build source context",
+                summary: "The build record keeps the originating commit and thread together.",
+                pullRequest: 84,
+                pullRequestURL: URL(string: "https://github.com/pingdotgg/t3code/pull/84"),
+                committedAt: nil
+            ),
+            Entry(
+                commit: "85a11ce55c9a43a3f72db0ea91fc67b83a847b5d",
+                title: "Open the exact development thread",
+                summary: "The build changelog now routes back to the thread that produced this build.",
+                pullRequest: 85,
+                pullRequestURL: URL(string: "https://github.com/pingdotgg/t3code/pull/85"),
+                committedAt: nil
+            ),
+        ]
+    )
+}
+#endif

@@ -124,6 +124,7 @@ struct ThemeSettingsView: View {
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
                     .onSubmit { Task { await searchOpenVsx() } }
+                    .accessibilityIdentifier("theme-open-vsx-search-field")
                 Button {
                     Task { await searchOpenVsx() }
                 } label: {
@@ -134,6 +135,7 @@ struct ThemeSettingsView: View {
                     }
                 }
                 .buttonStyle(.borderedProminent)
+                .accessibilityIdentifier("theme-open-vsx-search-button")
                 .disabled(
                     openVsxQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                         || isSearchingOpenVsx
@@ -162,6 +164,7 @@ struct ThemeSettingsView: View {
                     }
                     .buttonStyle(.bordered)
                     .disabled(installingExtensionID != nil)
+                    .accessibilityIdentifier("theme-open-vsx-install-\(extensionInfo.id)")
                 }
                 .padding(12)
                 .background(T3Colors.surface, in: RoundedRectangle(cornerRadius: 12))
@@ -323,7 +326,22 @@ private struct ThemeCard: View {
         }
         .buttonStyle(.plain)
         .accessibilityLabel(ThemeCardAccessibility.label(theme: theme.label, mode: mode.rawValue))
+        .accessibilityIdentifier("theme-card-\(theme.id)-\(mode.rawValue)")
+        .accessibilityValue(accessibilityValue)
         .accessibilityAddTraits(isSelected ? .isSelected : [])
+    }
+
+    private var accessibilityValue: String {
+        let colors = theme.palette(for: mode)?.colors ?? [:]
+        let selection = isSelected ? "Selected" : "Not selected"
+        return [
+            selection,
+            "canvas \(colors["canvas"]?.css ?? "unavailable")",
+            "accent \(colors["accent"]?.css ?? "unavailable")",
+            "terminal background \(colors["terminalBackground"]?.css ?? "unavailable")",
+            "terminal foreground \(colors["terminalForeground"]?.css ?? "unavailable")",
+            "terminal cursor \(colors["terminalCursor"]?.css ?? "unavailable")",
+        ].joined(separator: ", ")
     }
 
     private var preview: some View {

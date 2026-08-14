@@ -253,6 +253,64 @@
       "issue": "https://github.com/saphid/t3code-personal/issues/83"
     },
     {
+      "id": "shared-electron-vscode-themes",
+      "test": "testThemeSearchSelectionPersistenceAndNativeTerminalColorAgreement",
+      "lane": "fixture",
+      "persona": "theme-user",
+      "estimatedSeconds": 55,
+      "surfaces": [
+        "Open VSX search",
+        "light and dark theme selection",
+        "relaunch persistence",
+        "native and terminal color roles"
+      ],
+      "checkpoints": [
+        "theme-open-vsx-search",
+        "theme-selected-light-dark",
+        "theme-native-light",
+        "theme-persisted-dark",
+        "theme-terminal-dark-agreement"
+      ],
+      "issue": "https://github.com/saphid/t3code-personal/issues/51"
+    },
+    {
+      "id": "safe-tool-content-recovery",
+      "test": "testSourceControlRetainsContentRetriesAndRestoresFocusTarget",
+      "lane": "fixture",
+      "persona": "error-recovery-user",
+      "estimatedSeconds": 30,
+      "surfaces": [
+        "retained source-control content",
+        "inline error",
+        "accessible Retry",
+        "recovery focus target",
+        "duplicate prevention"
+      ],
+      "checkpoints": [
+        "source-control-retained-error",
+        "source-control-recovered"
+      ],
+      "issue": "https://github.com/saphid/t3code-personal/issues/87"
+    },
+    {
+      "id": "development-build-source-thread",
+      "test": "testBuildChangelogOpensExactSourceThread",
+      "lane": "fixture",
+      "persona": "build-reviewer",
+      "estimatedSeconds": 25,
+      "surfaces": [
+        "build changelog",
+        "revision and summary attribution",
+        "source-thread route",
+        "existing conversation"
+      ],
+      "checkpoints": [
+        "build-changelog-source-attribution",
+        "build-changelog-source-thread"
+      ],
+      "issue": "https://github.com/saphid/t3code-personal/issues/85"
+    },
+    {
       "id": "proof-event-emitter-contract",
       "test": "testProofEventEmitterWritesCompatibleOptInSessionAndActionMap",
       "lane": "fixture",
@@ -328,6 +386,9 @@
         "thread-workspace-tools",
         "in-app-stream-approval-control",
         "initial-thread-live-updates",
+        "shared-electron-vscode-themes",
+        "safe-tool-content-recovery",
+        "development-build-source-thread",
         "proof-event-emitter-contract"
       ]
     },
@@ -390,13 +451,34 @@
         "journeys": ["thread-workspace-tools"]
       },
       {
+        "id": "safe-tool-content-recovery",
+        "patterns": [
+          "apps/swift-ios/Features/SourceControl/**",
+          "apps/swift-ios/Features/Shared/FeatureToolErrorNotice.swift",
+          "apps/swift-ios/Features/Shared/FeatureToolErrorPresentation.swift"
+        ],
+        "journeys": ["safe-tool-content-recovery"]
+      },
+      {
         "id": "stream-approval-control",
         "patterns": [
           "apps/swift-ios/Features/Settings/BuildTesting*.swift",
           "apps/swift-ios/Features/Settings/SettingsView.swift",
           "apps/swift-ios/Features/Workspace/PersonalBuildChannel.swift"
         ],
-        "journeys": ["in-app-stream-approval-control"]
+        "journeys": [
+          "in-app-stream-approval-control",
+          "development-build-source-thread"
+        ]
+      },
+      {
+        "id": "theme-settings",
+        "patterns": [
+          "apps/swift-ios/DesignSystem/T3ThemeRuntime.swift",
+          "apps/swift-ios/Features/Settings/ThemeSettingsView.swift",
+          "apps/swift-ios/Resources/theme-catalog-v1.json"
+        ],
+        "journeys": ["shared-electron-vscode-themes"]
       },
       {
         "id": "initial-thread-live-update",
@@ -417,6 +499,9 @@
         "journeys": [
           "in-app-stream-approval-control",
           "initial-thread-live-updates",
+          "shared-electron-vscode-themes",
+          "safe-tool-content-recovery",
+          "development-build-source-thread",
           "proof-event-emitter-contract",
           "cold-boot-home-list-scrolling",
           "swiftui-test-personal-connect"

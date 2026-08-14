@@ -264,7 +264,14 @@ public struct SettingsView: View {
     }
 
     private var buildChangelog: BuildChangelog? {
-        BuildChangelog.load(info: Bundle.main.infoDictionary)
+        #if DEBUG
+        if AppFlowFixtureLaunch.isEnabled,
+           AppFlowFixtureLaunch.scenario == .buildSourceThread
+        {
+            return .appFlowSourceThreadFixture
+        }
+        #endif
+        return BuildChangelog.load(info: Bundle.main.infoDictionary)
     }
 
     private var buildTestingManifest: BuildTestingManifest? {

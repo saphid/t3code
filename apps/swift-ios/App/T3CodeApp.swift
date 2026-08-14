@@ -12,6 +12,13 @@ struct T3CodeApp: App {
     init() {
         #if DEBUG
         if AppFlowFixtureLaunch.isEnabled {
+            if AppFlowFixtureLaunch.scenario == .themeCatalog,
+               ProcessInfo.processInfo.environment["T3_APP_FLOW_THEME_RESET"] == "1"
+            {
+                try? T3ThemeRuntime.shared.removeInstalledTheme(id: "fixture-night")
+                T3ThemeRuntime.shared.selectBoth(themeID: "t3-code")
+                T3ThemeRuntime.shared.setAppearance(.system)
+            }
             let fixtureID = UUID().uuidString
             let fixtureClient = AppFlowFixtureClient(scenario: AppFlowFixtureLaunch.scenario)
             draftStore = FeatureComposerDraftStore(

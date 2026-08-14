@@ -1081,6 +1081,168 @@ final class AppFlowUITests: XCTestCase {
         verifyToolSurface(menuItem: "Terminal", title: "Terminal", evidence: "thread-terminal")
     }
 
+    func testThemeSearchSelectionPersistenceAndNativeTerminalColorAgreement() {
+        launch(
+            scenario: "theme-catalog",
+            extraEnvironment: ["T3_APP_FLOW_THEME_RESET": "1"]
+        )
+        assertIdentifier("sidebar-settings-button").tap()
+        assertIdentifier("settings-themes").tap()
+        assertExists("VS Code themes from Open VSX")
+
+        let search = assertIdentifier("theme-open-vsx-search-field")
+        search.tap()
+        search.typeText("fixture night")
+        let searchAction = proofTap(
+            assertIdentifier("theme-open-vsx-search-button"),
+            selector: "theme-open-vsx-search-button",
+            postcondition: "The deterministic Open VSX result is visible"
+        )
+        let install = assertIdentifier("theme-open-vsx-install-fixture.night-theme")
+        scrollToHittable(install)
+        XCTAssertEqual(app.staticTexts["Fixture Night Theme"].count, 1)
+        proofPassed(searchAction, observation: "One compatible Fixture Night Theme result is visible")
+        capture("theme-open-vsx-search")
+
+        let installAction = proofTap(
+            install,
+            selector: "theme-open-vsx-install-fixture.night-theme",
+            postcondition: "Fixture Night is installed and selected for light and dark appearances"
+        )
+        assertExists("Installed 1 theme from Fixture Night Theme.")
+        assertHittableButton("OK").tap()
+
+        let lightCard = app.descendants(matching: .any)["theme-card-fixture-night-light"].firstMatch
+        scrollToHittable(lightCard)
+        XCTAssertTrue(lightCard.isSelected)
+        XCTAssertTrue((lightCard.value as? String)?.contains("canvas #f5f3ff") == true)
+        XCTAssertTrue((lightCard.value as? String)?.contains("terminal background #f5f3ff") == true)
+        let darkCard = app.descendants(matching: .any)["theme-card-fixture-night-dark"].firstMatch
+        scrollToHittable(darkCard)
+        XCTAssertTrue(darkCard.isSelected)
+        XCTAssertTrue((darkCard.value as? String)?.contains("canvas #111827") == true)
+        XCTAssertTrue((darkCard.value as? String)?.contains("terminal background #111827") == true)
+        proofPassed(installAction, observation: "Light and dark cards are selected and expose matching native and terminal canvas colors")
+        capture("theme-selected-light-dark")
+
+        for _ in 0 ..< 6 {
+            app.swipeDown()
+        }
+        let lightControl = assertHittableButton("Light")
+        let lightAction = proofTap(
+            lightControl,
+            selector: "Appearance.Light",
+            postcondition: "The Fixture Night light native canvas is active"
+        )
+        XCTAssertTrue(lightControl.isSelected)
+        proofPassed(lightAction, observation: "The selected light theme remains Fixture Night")
+        capture("theme-native-light")
+
+        launch(scenario: "theme-catalog")
+        assertIdentifier("sidebar-settings-button").tap()
+        assertIdentifier("settings-themes").tap()
+        let persistedLightCard = app.descendants(matching: .any)["theme-card-fixture-night-light"].firstMatch
+        scrollToHittable(persistedLightCard)
+        XCTAssertTrue(persistedLightCard.isSelected)
+        for _ in 0 ..< 6 {
+            app.swipeDown()
+        }
+        let persistedAction = proofTap(
+            assertHittableButton("Dark"),
+            selector: "Appearance.Dark",
+            postcondition: "The persisted dark Fixture Night theme is active"
+        )
+        let persistedDarkCard = app.descendants(matching: .any)["theme-card-fixture-night-dark"].firstMatch
+        scrollToHittable(persistedDarkCard)
+        XCTAssertTrue(persistedDarkCard.isSelected)
+        proofPassed(persistedAction, observation: "Fixture Night persisted across app relaunch and is selected in dark appearance")
+        capture("theme-persisted-dark")
+
+        let back = app.navigationBars["Themes"].buttons.firstMatch
+        XCTAssertTrue(back.waitForExistence(timeout: 8))
+        back.tap()
+        assertHittableButton("Cancel").tap()
+        assertIdentifier("thread-fixture-main").tap()
+        assertExists("Thread actions").tap()
+        let terminalAction = proofTap(
+            assertExists("Terminal"),
+            selector: "Thread actions.Terminal",
+            postcondition: "Terminal opens with the persisted Fixture Night dark roles"
+        )
+        XCTAssertTrue(app.navigationBars["Terminal"].waitForExistence(timeout: 8))
+        proofPassed(terminalAction, observation: "Terminal is visible under the same persisted dark theme")
+        capture("theme-terminal-dark-agreement")
+    }
+
+    func testSourceControlRetainsContentRetriesAndRestoresFocusTarget() {
+        launch(scenario: "tool-recovery")
+        assertIdentifier("thread-fixture-main").tap()
+        assertExists("Thread actions").tap()
+        assertExists("Source Control").tap()
+
+        let branch = assertIdentifier("source-control-branch")
+        assertExists("AppFlowFixtureClient.swift")
+        XCTAssertEqual(app.descendants(matching: .any)["source-control-branch"].count, 1)
+        XCTAssertEqual(app.staticTexts["AppFlowFixtureClient.swift"].count, 1)
+
+        let reloadAction = proofTap(
+            assertHittableButton("Reload source control"),
+            selector: "Reload source control",
+            postcondition: "The last known branch and file remain visible beside a recoverable error"
+        )
+        let message = assertIdentifier("source-control-recovery-message")
+        XCTAssertEqual(
+            message.label,
+            "Fixture source-control refresh failed. The last known working tree is retained."
+        )
+        XCTAssertTrue(branch.exists)
+        XCTAssertEqual(app.staticTexts["AppFlowFixtureClient.swift"].count, 1)
+        proofPassed(reloadAction, observation: "The exact error is inline and retained content has no duplicate rows")
+        capture("source-control-retained-error")
+
+        let retry = assertIdentifier("source-control-recovery-retry")
+        XCTAssertEqual(retry.label, "Refresh status")
+        let retryAction = proofTap(
+            retry,
+            selector: "source-control-recovery-retry",
+            postcondition: "The error clears and accessibility focus returns to the retained branch"
+        )
+        XCTAssertTrue(message.waitForNonExistence(timeout: 8))
+        XCTAssertTrue(branch.exists)
+        XCTAssertEqual(app.staticTexts["AppFlowFixtureClient.swift"].count, 1)
+        proofPassed(retryAction, observation: "Recovery cleared the notice, retained one file row, and targeted the branch for accessibility focus")
+        capture("source-control-recovered")
+    }
+
+    func testBuildChangelogOpensExactSourceThread() {
+        launch(scenario: "build-source-thread")
+        assertIdentifier("sidebar-settings-button").tap()
+        let changelogRow = app.descendants(matching: .any)["Build changelog"].firstMatch
+        scrollToHittable(changelogRow)
+        changelogRow.tap()
+
+        assertExists("What’s in this build")
+        assertExists("Revision 85a11ce · Summaries by app-flow fixture")
+        assertExists("Open the exact development thread")
+        assertExists("The build changelog now routes back to the thread that produced this build.")
+        assertExists("85a11ce")
+        capture("build-changelog-source-attribution")
+
+        let openAction = proofTap(
+            assertIdentifier("build-changelog-open-source-thread"),
+            selector: "build-changelog-open-source-thread",
+            postcondition: "The exact existing fixture-main thread opens once"
+        )
+        assertIdentifier("message-fixture-user")
+        assertIdentifier("message-fixture-assistant")
+        assertExists("App flow regression audit")
+        XCTAssertEqual(app.descendants(matching: .any)["message-fixture-user"].count, 1)
+        XCTAssertEqual(app.descendants(matching: .any)["message-fixture-assistant"].count, 1)
+        XCTAssertEqual(app.descendants(matching: .any)["thread-fixture-working"].count, 0)
+        proofPassed(openAction, observation: "The existing fixture-main conversation opened with each expected message once")
+        capture("build-changelog-source-thread")
+    }
+
     func testKnownIssueThreadToolSheetHasExplicitDoneControl() throws {
         guard ProcessInfo.processInfo.environment["T3_APP_FLOW_RUN_KNOWN_FAILURES"] == "1" else {
             throw XCTSkip("Tracked product defect: https://github.com/saphid/t3code-personal/issues/60")

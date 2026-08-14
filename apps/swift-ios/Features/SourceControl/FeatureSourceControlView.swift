@@ -12,6 +12,11 @@ public struct FeatureSourceControlView: View {
     @State private var pendingCommitAction: FeatureSourceControlAction?
     @State private var needsLoadAfterAction = false
     @State private var loadRequests = FeatureLatestRequest()
+    @AccessibilityFocusState private var recoveryFocus: RecoveryFocus?
+
+    private enum RecoveryFocus: Hashable {
+        case branch
+    }
 
     private var errorPresentation: FeatureToolErrorPresentation {
         .resolve(
@@ -82,7 +87,8 @@ public struct FeatureSourceControlView: View {
                 FeatureToolErrorNotice(
                     message: errorMessage,
                     isRetrying: isLoading || isRunningAction,
-                    retryTitle: "Refresh status"
+                    retryTitle: "Refresh status",
+                    accessibilityIdentifierPrefix: "source-control-recovery"
                 ) {
                     await load()
                 }
@@ -94,6 +100,8 @@ public struct FeatureSourceControlView: View {
         List {
             Section("Repository") {
                 LabeledContent("Branch", value: status.branch ?? "Detached HEAD")
+                    .accessibilityIdentifier("source-control-branch")
+                    .accessibilityFocused($recoveryFocus, equals: .branch)
                 if let upstream = status.upstream {
                     LabeledContent("Upstream", value: upstream)
                 }
@@ -189,11 +197,15 @@ public struct FeatureSourceControlView: View {
                 isLoading = false
             }
         }
+        let isRecovery = errorMessage != nil && status?.isRepository == true
         do {
             let loadedStatus = try await client.sourceControlStatus(threadID: threadID)
             guard loadRequests.isCurrent(request) else { return }
             status = loadedStatus
             errorMessage = nil
+            if isRecovery {
+                recoveryFocus = .branch
+            }
         } catch {
             guard loadRequests.isCurrent(request) else { return }
             guard let message = FeatureToolErrorPresentation.message(

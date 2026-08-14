@@ -11,6 +11,9 @@ enum AppFlowFixtureScenario: String {
     case liveUpdateRace = "live-update-race"
     case coldBoot = "cold-boot"
     case personalConnect = "personal-connect"
+    case themeCatalog = "theme-catalog"
+    case toolRecovery = "tool-recovery"
+    case buildSourceThread = "build-source-thread"
 }
 
 enum AppFlowFixtureLaunch {
@@ -43,7 +46,9 @@ enum AppFlowFixtureLaunch {
 /// production SwiftUI hierarchy while keeping credentials, network timing, and
 /// live user data outside the routine regression verdict.
 @MainActor
-final class AppFlowFixtureClient: FeatureClient, FeatureProjectCreationClient {
+final class AppFlowFixtureClient: FeatureClient, FeatureProjectCreationClient,
+    ThemeConversionCapable
+{
     private let stream: AsyncStream<FeatureEvent>
     private let continuation: AsyncStream<FeatureEvent>.Continuation
     private var snapshot: FeatureSnapshot
@@ -52,6 +57,7 @@ final class AppFlowFixtureClient: FeatureClient, FeatureProjectCreationClient {
     private var didRunInitialLiveUpdateRace = false
     private var coldBootMetadataTask: Task<Void, Never>?
     private var didStartColdBootMetadata = false
+    private var sourceControlLoadAttempts = 0
     var waitUntilLiveUpdateIsApplied: (@MainActor (String) async -> Void)?
 
     private static let personalConnectPairedKey = "T3AppFlowFixturePersonalConnectPaired"
@@ -65,7 +71,8 @@ final class AppFlowFixtureClient: FeatureClient, FeatureProjectCreationClient {
         continuation = pair.continuation
 
         switch scenario {
-        case .workspace, .streamApproval, .liveUpdateRace:
+        case .workspace, .streamApproval, .liveUpdateRace, .themeCatalog,
+             .toolRecovery, .buildSourceThread:
             snapshot = Self.workspaceSnapshot
             details = Self.threadDetails
         case .onboarding:
@@ -353,6 +360,46 @@ final class AppFlowFixtureClient: FeatureClient, FeatureProjectCreationClient {
         continuation.yield(.snapshot(snapshot))
     }
 
+    var themeConversionEnvironmentName: String? {
+        scenario == .themeCatalog ? "Fixture Mac" : nil
+    }
+
+    var canConvertThemes: Bool {
+        scenario == .themeCatalog
+    }
+
+    func compileTheme(fileName _: String, contents _: String) async throws
+        -> T3ResolvedThemeArtifact
+    {
+        try Self.fixtureThemeArtifact()
+    }
+
+    func searchOpenVsxThemes(query: String) async throws -> [T3OpenVsxThemeExtension] {
+        guard scenario == .themeCatalog else { return [] }
+        guard query.localizedCaseInsensitiveContains("fixture")
+            || query.localizedCaseInsensitiveContains("night")
+        else { return [] }
+        return [
+            T3OpenVsxThemeExtension(
+                id: "fixture.night-theme",
+                name: "Fixture Night Theme",
+                publisher: "App Flow Fixtures",
+                description: "A deterministic light and dark theme for native and terminal color checks.",
+                downloadCount: 1,
+                iconUrl: nil,
+                version: "1.0.0",
+                license: "MIT"
+            ),
+        ]
+    }
+
+    func installOpenVsxTheme(extensionID: String) async throws -> T3ResolvedThemeArtifact {
+        guard scenario == .themeCatalog, extensionID == "fixture.night-theme" else {
+            throw FeatureCapabilityUnavailable("Fixture Open VSX theme")
+        }
+        return try Self.fixtureThemeArtifact()
+    }
+
     func listFiles(threadID _: String, path: String?) async throws -> [FeatureFileEntry] {
         if path == "Sources" {
             return [
@@ -393,7 +440,11 @@ final class AppFlowFixtureClient: FeatureClient, FeatureProjectCreationClient {
     }
 
     func sourceControlStatus(threadID _: String) async throws -> FeatureSourceControlStatus {
-        FeatureSourceControlStatus(
+        sourceControlLoadAttempts += 1
+        if scenario == .toolRecovery, sourceControlLoadAttempts == 2 {
+            throw AppFlowFixtureRecoverableToolError()
+        }
+        return FeatureSourceControlStatus(
             branch: "personal/swiftui-feature/app-flow-regression-tests",
             upstream: "origin/personal/swiftui-dev",
             aheadCount: 1,
@@ -718,6 +769,84 @@ final class AppFlowFixtureClient: FeatureClient, FeatureProjectCreationClient {
             backgroundWorkIsActive: true
         ),
     ]
+
+    private static func fixtureThemeArtifact() throws -> T3ResolvedThemeArtifact {
+        let base = T3ThemeRuntime.shared.artifact
+        guard let source = base.themes.first(where: { $0.id == "t3-code" }),
+              let sourceLight = source.palette(for: .light),
+              let sourceDark = source.palette(for: .dark)
+        else {
+            throw FeatureCapabilityUnavailable("Bundled fixture theme base")
+        }
+
+        func palette(
+            source: T3ResolvedThemePalette,
+            canvas: T3ThemeColorValue,
+            text: T3ThemeColorValue,
+            accent: T3ThemeColorValue
+        ) -> T3ResolvedThemePalette {
+            var colors = source.colors
+            colors["canvas"] = canvas
+            colors["text"] = text
+            colors["accent"] = accent
+            colors["terminalBackground"] = canvas
+            colors["terminalForeground"] = text
+            colors["terminalCursor"] = accent
+            return T3ResolvedThemePalette(
+                appearance: source.appearance,
+                colors: colors
+            )
+        }
+
+        return T3ResolvedThemeArtifact(
+            artifactVersion: 1,
+            engineVersion: base.engineVersion,
+            roleManifest: base.roleManifest,
+            roleSchema: base.roleSchema,
+            themes: [
+                T3ResolvedThemeDefinition(
+                    id: "fixture-night",
+                    label: "Fixture Night",
+                    modes: [
+                        palette(
+                            source: sourceLight,
+                            canvas: fixtureColor("#f5f3ff", 0.961, 0.953, 1),
+                            text: fixtureColor("#1e1b4b", 0.118, 0.106, 0.294),
+                            accent: fixtureColor("#7c3aed", 0.486, 0.227, 0.929)
+                        ),
+                        palette(
+                            source: sourceDark,
+                            canvas: fixtureColor("#111827", 0.067, 0.094, 0.153),
+                            text: fixtureColor("#f9fafb", 0.976, 0.98, 0.984),
+                            accent: fixtureColor("#a78bfa", 0.655, 0.545, 0.98)
+                        ),
+                    ]
+                ),
+            ]
+        )
+    }
+
+    private static func fixtureColor(
+        _ css: String,
+        _ red: Double,
+        _ green: Double,
+        _ blue: Double
+    ) -> T3ThemeColorValue {
+        T3ThemeColorValue(
+            css: css,
+            colorSpace: "srgb",
+            red: red,
+            green: green,
+            blue: blue,
+            alpha: 1
+        )
+    }
+}
+
+private struct AppFlowFixtureRecoverableToolError: LocalizedError {
+    var errorDescription: String? {
+        "Fixture source-control refresh failed. The last known working tree is retained."
+    }
 }
 
 struct AppFlowFixturePersonalFleetPairingRequester: PersonalFleetPairingRequesting {
