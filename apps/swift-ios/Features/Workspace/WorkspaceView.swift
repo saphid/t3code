@@ -743,6 +743,7 @@ public struct WorkspaceView: View {
                 }
             }
             .font(.system(size: 16))
+            .fixedSize(horizontal: true, vertical: false)
             .accessibilityElement(children: .combine)
             .accessibilityLabel(
                 PersonalBuildChannel.current.titleSuffix.map { "T3 Code \($0)" }
