@@ -58,9 +58,18 @@ public struct FeatureSourceControlView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
-                Button { Task { await load() } } label: { Image(systemName: "arrow.clockwise") }
-                    .disabled(isLoading || isRunningAction)
-                    .accessibilityLabel("Reload source control")
+                Button {
+                    Task {
+                        #if DEBUG
+                        (client as? AppFlowFixtureClient)?.armSourceControlRecoveryFailure()
+                        #endif
+                        await load()
+                    }
+                } label: {
+                    Image(systemName: "arrow.clockwise")
+                }
+                .disabled(isLoading || isRunningAction)
+                .accessibilityLabel("Reload source control")
             }
         }
         .alert("Commit changes", isPresented: Binding(
@@ -161,6 +170,7 @@ public struct FeatureSourceControlView: View {
                         }
                     }
                     .accessibilityElement(children: .combine)
+                    .accessibilityIdentifier("source-control-file-\(file.path)")
                 }
             }
         }

@@ -57,7 +57,7 @@ final class AppFlowFixtureClient: FeatureClient, FeatureProjectCreationClient,
     private var didRunInitialLiveUpdateRace = false
     private var coldBootMetadataTask: Task<Void, Never>?
     private var didStartColdBootMetadata = false
-    private var sourceControlLoadAttempts = 0
+    private var shouldFailNextSourceControlLoad = false
     var waitUntilLiveUpdateIsApplied: (@MainActor (String) async -> Void)?
 
     private static let personalConnectPairedKey = "T3AppFlowFixturePersonalConnectPaired"
@@ -440,8 +440,8 @@ final class AppFlowFixtureClient: FeatureClient, FeatureProjectCreationClient,
     }
 
     func sourceControlStatus(threadID _: String) async throws -> FeatureSourceControlStatus {
-        sourceControlLoadAttempts += 1
-        if scenario == .toolRecovery, sourceControlLoadAttempts == 2 {
+        if scenario == .toolRecovery, shouldFailNextSourceControlLoad {
+            shouldFailNextSourceControlLoad = false
             throw AppFlowFixtureRecoverableToolError()
         }
         return FeatureSourceControlStatus(
@@ -456,6 +456,11 @@ final class AppFlowFixtureClient: FeatureClient, FeatureProjectCreationClient,
                 ),
             ]
         )
+    }
+
+    func armSourceControlRecoveryFailure() {
+        guard scenario == .toolRecovery else { return }
+        shouldFailNextSourceControlLoad = true
     }
 
     func terminalSnapshot(

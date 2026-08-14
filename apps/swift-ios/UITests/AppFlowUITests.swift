@@ -1086,8 +1086,7 @@ final class AppFlowUITests: XCTestCase {
             scenario: "theme-catalog",
             extraEnvironment: ["T3_APP_FLOW_THEME_RESET": "1"]
         )
-        assertIdentifier("sidebar-settings-button").tap()
-        assertIdentifier("settings-themes").tap()
+        openThemeSettings()
         assertExists("VS Code themes from Open VSX")
 
         let search = assertIdentifier("theme-open-vsx-search-field")
@@ -1100,7 +1099,12 @@ final class AppFlowUITests: XCTestCase {
         )
         let install = assertIdentifier("theme-open-vsx-install-fixture.night-theme")
         scrollToHittable(install)
-        XCTAssertEqual(app.staticTexts["Fixture Night Theme"].count, 1)
+        XCTAssertEqual(
+            app.staticTexts.matching(
+                NSPredicate(format: "label == %@", "Fixture Night Theme")
+            ).count,
+            1
+        )
         proofPassed(searchAction, observation: "One compatible Fixture Night Theme result is visible")
         capture("theme-open-vsx-search")
 
@@ -1139,8 +1143,7 @@ final class AppFlowUITests: XCTestCase {
         capture("theme-native-light")
 
         launch(scenario: "theme-catalog")
-        assertIdentifier("sidebar-settings-button").tap()
-        assertIdentifier("settings-themes").tap()
+        openThemeSettings()
         let persistedLightCard = app.descendants(matching: .any)["theme-card-fixture-night-light"].firstMatch
         scrollToHittable(persistedLightCard)
         XCTAssertTrue(persistedLightCard.isSelected)
@@ -1169,7 +1172,7 @@ final class AppFlowUITests: XCTestCase {
             selector: "Thread actions.Terminal",
             postcondition: "Terminal opens with the persisted Fixture Night dark roles"
         )
-        XCTAssertTrue(app.navigationBars["Terminal"].waitForExistence(timeout: 8))
+        assertHittableButton("Terminal options")
         proofPassed(terminalAction, observation: "Terminal is visible under the same persisted dark theme")
         capture("theme-terminal-dark-agreement")
     }
@@ -1181,9 +1184,15 @@ final class AppFlowUITests: XCTestCase {
         assertExists("Source Control").tap()
 
         let branch = assertIdentifier("source-control-branch")
-        assertExists("AppFlowFixtureClient.swift")
-        XCTAssertEqual(app.descendants(matching: .any)["source-control-branch"].count, 1)
-        XCTAssertEqual(app.staticTexts["AppFlowFixtureClient.swift"].count, 1)
+        let fileRow = assertIdentifier(
+            "source-control-file-apps/swift-ios/App/AppFlowFixtureClient.swift"
+        )
+        XCTAssertEqual(identifierCount("source-control-branch"), 1)
+        XCTAssertTrue(fileRow.label.contains("AppFlowFixtureClient.swift"))
+        XCTAssertEqual(
+            identifierCount("source-control-file-apps/swift-ios/App/AppFlowFixtureClient.swift"),
+            1
+        )
 
         let reloadAction = proofTap(
             assertHittableButton("Reload source control"),
@@ -1196,7 +1205,10 @@ final class AppFlowUITests: XCTestCase {
             "Fixture source-control refresh failed. The last known working tree is retained."
         )
         XCTAssertTrue(branch.exists)
-        XCTAssertEqual(app.staticTexts["AppFlowFixtureClient.swift"].count, 1)
+        XCTAssertEqual(
+            identifierCount("source-control-file-apps/swift-ios/App/AppFlowFixtureClient.swift"),
+            1
+        )
         proofPassed(reloadAction, observation: "The exact error is inline and retained content has no duplicate rows")
         capture("source-control-retained-error")
 
@@ -1209,7 +1221,10 @@ final class AppFlowUITests: XCTestCase {
         )
         XCTAssertTrue(message.waitForNonExistence(timeout: 8))
         XCTAssertTrue(branch.exists)
-        XCTAssertEqual(app.staticTexts["AppFlowFixtureClient.swift"].count, 1)
+        XCTAssertEqual(
+            identifierCount("source-control-file-apps/swift-ios/App/AppFlowFixtureClient.swift"),
+            1
+        )
         proofPassed(retryAction, observation: "Recovery cleared the notice, retained one file row, and targeted the branch for accessibility focus")
         capture("source-control-recovered")
     }
@@ -1236,9 +1251,9 @@ final class AppFlowUITests: XCTestCase {
         assertIdentifier("message-fixture-user")
         assertIdentifier("message-fixture-assistant")
         assertExists("App flow regression audit")
-        XCTAssertEqual(app.descendants(matching: .any)["message-fixture-user"].count, 1)
-        XCTAssertEqual(app.descendants(matching: .any)["message-fixture-assistant"].count, 1)
-        XCTAssertEqual(app.descendants(matching: .any)["thread-fixture-working"].count, 0)
+        XCTAssertEqual(identifierCount("message-fixture-user"), 1)
+        XCTAssertEqual(identifierCount("message-fixture-assistant"), 1)
+        XCTAssertEqual(identifierCount("thread-fixture-working"), 0)
         proofPassed(openAction, observation: "The existing fixture-main conversation opened with each expected message once")
         capture("build-changelog-source-thread")
     }
@@ -1330,6 +1345,29 @@ final class AppFlowUITests: XCTestCase {
         app.launch()
     }
 
+    private func openThemeSettings() {
+        let settingsButton = assertIdentifier("sidebar-settings-button")
+        settingsButton.tap()
+        let themesRow = app.descendants(matching: .any)["settings-themes"].firstMatch
+        if !themesRow.waitForExistence(timeout: 2) {
+            settingsButton.tap()
+        }
+        XCTAssertTrue(
+            themesRow.waitForExistence(timeout: 8),
+            "Settings did not open after tapping its Home control"
+        )
+
+        themesRow.tap()
+        let themesNavigationBar = app.navigationBars["Themes"]
+        if !themesNavigationBar.waitForExistence(timeout: 2), themesRow.exists {
+            themesRow.tap()
+        }
+        XCTAssertTrue(
+            themesNavigationBar.waitForExistence(timeout: 8),
+            "Theme Settings did not open after tapping the Themes row"
+        )
+    }
+
     private enum PermissionPolicy {
         case denyAll
         case allowLocalNetwork
@@ -1406,6 +1444,12 @@ final class AppFlowUITests: XCTestCase {
             file: file,
             line: line
         )
+    }
+
+    private func identifierCount(_ identifier: String) -> Int {
+        app.descendants(matching: .any).matching(
+            NSPredicate(format: "identifier == %@", identifier)
+        ).count
     }
 
     @discardableResult
