@@ -62,6 +62,15 @@ final class ExtensionContractTests: XCTestCase {
             ]),
             "configured-test-scheme"
         )
+        for invalidScheme in ["", "$(T3CODE_URL_SCHEME)"] {
+            XCTAssertEqual(
+                T3SharedContainer.configuredURLScheme([
+                    "T3BuildChannel": "test",
+                    "T3CodeURLScheme": invalidScheme,
+                ]),
+                "t3code-swiftui-personal"
+            )
+        }
     }
 
     func testLiveActivityDecodesTheRelayAPNSEnvelope() throws {
