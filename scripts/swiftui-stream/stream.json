@@ -502,9 +502,10 @@
       "sourceCommit": "727d9ac4c132fe86ba2a1ce385f2e1a66be89da0",
       "integratedCommits": [
         "fb9af99ef8ab664956368d34329584529be4e7c9",
-        "8ade837f1a154ffdbccca8f816315cb1f0659e4c"
+        "8ade837f1a154ffdbccca8f816315cb1f0659e4c",
+        "fe67305ab5be0d3795f41ad33c05a650d60eb249"
       ],
-      "integratedCommit": "8ade837f1a154ffdbccca8f816315cb1f0659e4c",
+      "integratedCommit": "fe67305ab5be0d3795f41ad33c05a650d60eb249",
       "testBuild": 59,
       "order": 9,
       "sourceIssue": "https://github.com/saphid/t3code-personal/issues/54",
