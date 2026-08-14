@@ -1331,6 +1331,16 @@ final class AppFlowUITests: XCTestCase {
         )
         let opened = assertIdentifier("pull-request-timeline-lifecycle-opened")
         let commit = assertIdentifier("pull-request-timeline-commit-fixture94")
+        XCTAssertLessThan(opened.frame.minY, commit.frame.minY)
+
+        let scrollTimeline = proofSwipe(
+            assertIdentifier("pull-request-timeline"),
+            selector: "pull-request-timeline",
+            from: CGVector(dx: 0.5, dy: 0.8),
+            to: CGVector(dx: 0.5, dy: 0.3),
+            duration: 0.6,
+            postcondition: "Later chronological activity is visible"
+        )
         let comment = assertIdentifier("pull-request-timeline-comment-fixture-comment-94")
         let review = assertIdentifier(
             "pull-request-timeline-thread-fixture-thread-94-fixture-thread-comment-94"
@@ -1339,9 +1349,11 @@ final class AppFlowUITests: XCTestCase {
         XCTAssertTrue(commit.label.contains("alex Add native pull-request review surface"))
         XCTAssertTrue(comment.label.contains("reviewer commented"))
         XCTAssertTrue(review.label.contains("alex reviewed and resolved"))
-        XCTAssertLessThan(opened.frame.minY, commit.frame.minY)
-        XCTAssertLessThan(commit.frame.minY, comment.frame.minY)
         XCTAssertLessThan(comment.frame.minY, review.frame.minY)
+        proofPassed(
+            scrollTimeline,
+            observation: "The later comment and resolved-review activity is visible in order"
+        )
         proofPassed(
             openTimeline,
             observation: "Opened, commit, comment, and resolved-review activity is visible in order"

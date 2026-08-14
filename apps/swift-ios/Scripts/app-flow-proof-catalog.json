@@ -239,7 +239,7 @@
           "checkpoint": "pull-request-timeline",
           "gateInput": "xcresult checkpoint PNG",
           "cleanInput": "pull-request-timeline-raw.png from the recorded proof replay",
-          "annotateWithAction": "open-pr-timeline"
+          "annotateWithAction": "scroll-pr-timeline"
         }
       ],
       "videoProofInput": {
@@ -271,6 +271,13 @@
           "selector": "pull-request-detail-timeline",
           "geometry": "record the actual Timeline segment center",
           "expect": "Opened, commit, comment, and resolved-review activity is chronological"
+        },
+        {
+          "key": "scroll-pr-timeline",
+          "kind": "swipe",
+          "selector": "pull-request-timeline",
+          "geometry": "record the actual vertical Timeline swipe",
+          "expect": "Later comment and resolved-review activity remains chronological"
         }
       ]
     },
