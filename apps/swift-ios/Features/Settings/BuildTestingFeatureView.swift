@@ -17,6 +17,16 @@ struct BuildTestingFeatureView: View {
             VStack(alignment: .leading, spacing: 14) {
                 BuildTestingReviewGuide(entry: entry)
 
+                if entry.isProofPending {
+                    Label(
+                        "Fresh Test proof is being recorded. This item is not ready for approval.",
+                        systemImage: "record.circle"
+                    )
+                    .font(T3Typography.supportingStrong)
+                    .foregroundStyle(T3Colors.warning)
+                    .accessibilityIdentifier("build-testing-proof-pending")
+                }
+
                 if !entry.evidence.isEmpty {
                     BuildTestingVisualEvidenceView(evidence: entry.evidence)
                 }
@@ -60,7 +70,9 @@ struct BuildTestingFeatureView: View {
                         isConfirmingVerdict = true
                     }
                     .buttonStyle(.borderedProminent)
-                    .disabled(isSubmitting || submittedVerdict == .ready)
+                    .disabled(
+                        entry.isProofPending || isSubmitting || submittedVerdict == .ready
+                    )
 
                     Button("Not ready", role: .destructive) {
                         pendingVerdict = .notReady

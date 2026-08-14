@@ -53,8 +53,8 @@
         "Choose a verdict and inspect the confirmation before canceling or submitting it."
       ],
       "summary": "Adds an in-app review queue for exact Dev and Test build contents, plus a phone-readable diagram of the proposed PR-based path from a proved candidate through Test, Dev, and upstream.",
-      "whatToCheck": "In Test, open Settings → What’s testing. Confirm items are ordered by priority and show their review group. Expand this item and verify Original problem, numbered Steps to reproduce, What changed, What to check, Success looks like, Automated validation, and Known limits. Open Visual evidence, then verify commits, thread, issue, confirmation dialog, and both readiness choices.",
-      "successLooksLike": "The priority order is clear, every required section is readable without trimmed text, and the proof expands with working clean and annotated links. The diagram shows candidate PR → Test build → your Test approval → Dev build → your upstream approval → upstream PR. Test offers Ready for Dev and preserves exact build evidence before queuing a verdict.",
+      "whatToCheck": "In Test, open Settings → What’s testing. Confirm items are ordered by priority and show their review group. Expand this item and verify Original problem, numbered Steps to reproduce, What changed, What to check, Success looks like, Automated validation, and Known limits. If the app says fresh proof is being recorded, confirm Ready for Dev is disabled and wait for the replacement packet. When Visual evidence appears, verify its links, commits, thread, issue, confirmation dialog, and both readiness choices.",
+      "successLooksLike": "The priority order is clear and every required section is readable without trimmed text. A pending-proof item explains its state and cannot be approved. A review-ready item expands working clean and annotated links. The diagram shows candidate PR → Test build → your Test approval → Dev build → your upstream approval → upstream PR. Test preserves exact build evidence before queuing a verdict.",
       "validationSummary": "Fresh Test 59 aggregate validation is pending. The prior Test 58 regression train passed and is retained only as historical baseline evidence.",
       "knownLimitations": "Installing a build does not approve any item. SwiftUI Dev and upstream remain unchanged until the explicit human gates are completed. Commit 11658353d7175c55ab745c469f0c8861c1448db5 also strengthens the theme accessibility test, so this staged item and the theme item share that rollback dependency.",
       "reviewPriority": 1,
@@ -85,6 +85,7 @@
         "256f9b764b5f975aeb50b10e5e99d3d986f5d681",
         "df2f044f5d5e03c8b9adc9bb48f4e8bcb680035c",
         "11658353d7175c55ab745c469f0c8861c1448db5",
+        "31c4ff00a0f09bf9385f69fd6adc1dd893c9509f",
         "a7397a9c888f139494eb32d075f6b189eb20b5c7",
         "4b80738f772346c94d98306d37db6ca051042726"
       ],

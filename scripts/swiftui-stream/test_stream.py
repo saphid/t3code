@@ -617,11 +617,8 @@ class StreamTests(unittest.TestCase):
         self.assertGreaterEqual(value["currentTestBuild"]["build"], 40)
 
     def test_pending_feature_requires_positive_integer_test_build(self):
-        value = json.loads(json.dumps(stream.manifest()))
-        pending = next(
-            item for item in value["features"]
-            if item["state"] in stream.APPROVAL_STATES
-        )
+        value = self.review_manifest_fixture()
+        pending = value["features"][0]
         pending["testBuild"] = "42"
         with self.assertRaises(SystemExit):
             stream.validate_manifest(value)
@@ -777,11 +774,21 @@ class StreamTests(unittest.TestCase):
             git(repository, "init")
             git(repository, "config", "user.email", "test@example.com")
             git(repository, "config", "user.name", "Test")
+            base = repository / "README.md"
+            base.write_text("base\n")
+            commit_all(repository, "base")
+            base_branch = git(repository, "branch", "--show-current")
+            git(repository, "checkout", "-b", "test")
             product = repository / "Product.swift"
             product.write_text("let value = 1\n")
             product_commit = commit_all(repository, "product change")
+            git(repository, "checkout", base_branch)
+            dev = repository / "Dev.swift"
+            dev.write_text("let dev = true\n")
+            commit_all(repository, "dev change")
 
             value = self.review_manifest_fixture()
+            value["branches"] = {"test": "test"}
             feature = value["features"][0]
             feature["integratedCommit"] = product_commit
             feature["integratedCommits"] = [product_commit]
@@ -797,6 +804,7 @@ class StreamTests(unittest.TestCase):
 
                 feature["integratedCommit"] = product_commit
                 feature["integratedCommits"] = [product_commit]
+                git(repository, "checkout", "test")
                 metadata = repository / "scripts/swiftui-stream/stream.json"
                 metadata.parent.mkdir(parents=True)
                 metadata.write_text("{}\n")
@@ -809,25 +817,18 @@ class StreamTests(unittest.TestCase):
                 self.assertIn("metadata-only", errors.getvalue())
 
     def test_in_test_feature_may_stage_a_future_build(self):
-        value = json.loads(json.dumps(stream.manifest()))
-        feature = next(
-            item
-            for item in value["features"]
-            if item.get("state") in stream.APPROVAL_STATES
-        )
+        value = self.review_manifest_fixture()
+        feature = value["features"][0]
         feature["state"] = "in-test"
         feature["testBuild"] = value["currentTestBuild"]["build"] + 1
         stream.validate_manifest(value)
 
     def test_in_test_feature_cannot_reference_a_stale_build(self):
-        value = json.loads(json.dumps(stream.manifest()))
-        feature = next(
-            item
-            for item in value["features"]
-            if item.get("state") in stream.APPROVAL_STATES
-        )
+        value = self.review_manifest_fixture()
+        value["currentTestBuild"]["build"] = 2
+        feature = value["features"][0]
         feature["state"] = "in-test"
-        feature["testBuild"] = value["currentTestBuild"]["build"] - 1
+        feature["testBuild"] = 1
         with self.assertRaises(SystemExit):
             stream.validate_manifest(value)
 
@@ -925,6 +926,33 @@ class StreamTests(unittest.TestCase):
         base_feature["visualChange"] = False
         with self.assertRaises(SystemExit):
             stream.validate_manifest(value)
+
+    def test_visual_item_can_stage_proof_only_while_in_test(self):
+        value = self.review_manifest_fixture()
+        feature = value["features"][0]
+        feature["visualChange"] = True
+        feature["proofPending"] = True
+        stream.validate_manifest(value)
+
+        feature["visualEvidence"] = []
+        errors = io.StringIO()
+        with redirect_stderr(errors), self.assertRaises(SystemExit):
+            stream.validate_manifest(value)
+        self.assertIn("cannot carry stale visualEvidence", errors.getvalue())
+        feature.pop("visualEvidence")
+
+        feature["state"] = "needs-you"
+        errors = io.StringIO()
+        with redirect_stderr(errors), self.assertRaises(SystemExit):
+            stream.validate_manifest(value)
+        self.assertIn("proofPending", errors.getvalue())
+
+        feature["state"] = "in-test"
+        feature.pop("proofPending")
+        errors = io.StringIO()
+        with redirect_stderr(errors), self.assertRaises(SystemExit):
+            stream.validate_manifest(value)
+        self.assertIn("without visualEvidence", errors.getvalue())
 
     def test_visual_receipt_binds_every_declared_url_and_hash(self):
         evidence = [{

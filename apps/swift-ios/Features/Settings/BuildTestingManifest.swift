@@ -68,6 +68,7 @@ struct BuildTestingManifest: Codable, Equatable, Sendable {
         let commits: [Commit]
         let threads: [Thread]
         let issueURL: URL?
+        let proofPending: Bool?
         let visualEvidence: [VisualEvidence]?
 
         init(
@@ -86,6 +87,7 @@ struct BuildTestingManifest: Codable, Equatable, Sendable {
             commits: [Commit],
             threads: [Thread],
             issueURL: URL?,
+            proofPending: Bool? = nil,
             visualEvidence: [VisualEvidence]? = nil
         ) {
             self.id = id
@@ -103,10 +105,12 @@ struct BuildTestingManifest: Codable, Equatable, Sendable {
             self.commits = commits
             self.threads = threads
             self.issueURL = issueURL
+            self.proofPending = proofPending
             self.visualEvidence = visualEvidence
         }
 
         var evidence: [VisualEvidence] { visualEvidence ?? [] }
+        var isProofPending: Bool { proofPending == true }
 
         var stateLabel: String {
             state.replacingOccurrences(of: "-", with: " ").capitalized

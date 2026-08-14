@@ -8,7 +8,7 @@ struct BuildTestingManifestTests {
     @Test("Loads exact embedded stream metadata", .bug("https://github.com/saphid/t3code-personal/issues/56"))
     func loadsEmbeddedManifest() throws {
         let json =
-            #"{"schemaVersion":1,"channel":"test","build":42,"revision":"abcdef123456","repositoryURL":"https://github.com/saphid/t3code-personal","entries":[{"id":"feature-one","name":"Feature one","problem":"The old flow loses work.","reproductionSteps":["Open the flow.","Trigger the action."],"summary":"Explains the change.","whatToCheck":"Exercise the changed flow.","successLooksLike":"The flow works without regression.","validationSummary":"Focused tests pass.","knownLimitations":"None known.","reviewPriority":1,"reviewGroup":"Core reliability","state":"needs-you","commits":[{"sha":"1234567890abcdef","title":"Add feature one","role":"integrated"}],"threads":[{"id":"THREAD-ONE","title":"Feature one thread"}],"issueURL":"https://github.com/saphid/t3code-personal/issues/56","visualEvidence":[{"kind":"video","title":"Feature walkthrough","caption":"Shows the successful interaction.","appearance":"dark","cleanURL":"https://evidence.example/clean.mp4","annotatedURL":"https://evidence.example/annotated.mp4"}]}]}"#
+            #"{"schemaVersion":1,"channel":"test","build":42,"revision":"abcdef123456","repositoryURL":"https://github.com/saphid/t3code-personal","entries":[{"id":"feature-one","name":"Feature one","problem":"The old flow loses work.","reproductionSteps":["Open the flow.","Trigger the action."],"summary":"Explains the change.","whatToCheck":"Exercise the changed flow.","successLooksLike":"The flow works without regression.","validationSummary":"Focused tests pass.","knownLimitations":"None known.","reviewPriority":1,"reviewGroup":"Core reliability","state":"in-test","commits":[{"sha":"1234567890abcdef","title":"Add feature one","role":"integrated"}],"threads":[{"id":"THREAD-ONE","title":"Feature one thread"}],"issueURL":"https://github.com/saphid/t3code-personal/issues/56","proofPending":true,"visualEvidence":[]}] }"#
         let info = ["T3BuildTesting": Data(json.utf8).base64EncodedString()]
         let manifest = try #require(BuildTestingManifest.load(info: info))
 
@@ -20,8 +20,8 @@ struct BuildTestingManifestTests {
         #expect(manifest.entries.first?.whatToCheck == "Exercise the changed flow.")
         #expect(manifest.entries.first?.reproductionSteps.count == 2)
         #expect(manifest.entries.first?.reviewPriority == 1)
-        #expect(manifest.entries.first?.evidence.first?.kind == .video)
-        #expect(manifest.entries.first?.evidence.first?.isDarkMode == true)
+        #expect(manifest.entries.first?.isProofPending == true)
+        #expect(manifest.entries.first?.evidence.isEmpty == true)
         #expect(BuildTestingManifest.load(info: nil) == nil)
         #expect(BuildTestingManifest.load(info: ["T3BuildTesting": "not base64"]) == nil)
         #expect(BuildTestingManifest.load(info: ["T3BuildTesting": "$(T3_BUILD_TESTING)"]) == nil)

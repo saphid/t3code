@@ -35,6 +35,7 @@ if [[ "$CHANNEL" == "dev" && "$BRANCH" != "$EXPECTED_BRANCH" ]]; then
   }
   git -C "$REPO_ROOT" fetch --no-tags origin personal/swiftui-dev "$BRANCH"
 fi
+python3 -m unittest "$SCRIPT_DIR/test_stream.py"
 "$SCRIPT_DIR/stream.py" validate
 [[ -z "$(git -C "$REPO_ROOT" status --porcelain)" ]] || {
   echo "refusing to publish a non-reproducible dirty build" >&2

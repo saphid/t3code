@@ -324,6 +324,7 @@ def build_manifest(repository, channel, build):
             "commits": commits,
             "threads": threads,
             "issueURL": feature.get("sourceIssue"),
+            "proofPending": feature.get("proofPending", False),
             "visualEvidence": feature.get("visualEvidence", []),
         })
 

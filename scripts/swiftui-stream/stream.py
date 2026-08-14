@@ -144,6 +144,14 @@ def validate_manifest(value: dict[str, Any], verify_repository: bool = False) ->
             if parsed_issue.scheme != "https" or not parsed_issue.netloc:
                 fail(f"{feature_id} sourceIssue must use HTTPS")
         evidence = feature.get("visualEvidence")
+        proof_pending = feature.get("proofPending") is True
+        if proof_pending:
+            if feature.get("state") != "in-test":
+                fail(f"{feature_id} can only stage proofPending while in-test")
+            if feature.get("visualChange") is not True:
+                fail(f"{feature_id} proofPending requires visualChange")
+            if evidence is not None:
+                fail(f"{feature_id} proofPending cannot carry stale visualEvidence")
         carries_review_media = bool(
             feature.get("visualChange")
             or feature.get("reviewMedia")
@@ -172,9 +180,6 @@ def validate_manifest(value: dict[str, Any], verify_repository: bool = False) ->
                     if parsed.scheme != "https" or not parsed.netloc:
                         fail(f"{feature_id} visual evidence {key} must use HTTPS")
         if feature.get("visualChange"):
-            proof_pending = feature.get("proofPending") is True
-            if proof_pending and feature.get("state") != "in-test":
-                fail(f"{feature_id} can only stage proofPending while in-test")
             if (not isinstance(evidence, list) or not evidence) and not proof_pending:
                 fail(f"{feature_id} is a visual change without visualEvidence")
             if evidence and "image" not in kinds:
@@ -239,7 +244,11 @@ def validate_manifest(value: dict[str, Any], verify_repository: bool = False) ->
             declared_commits = integrated_commits or [integrated]
             if verify_repository:
                 for commit in declared_commits:
-                    validate_integrated_commit(feature_id, commit)
+                    validate_integrated_commit(
+                        feature_id,
+                        commit,
+                        value.get("branches", {}).get("test", "HEAD"),
+                    )
             if state == "needs-you":
                 if feature.get("reviewMedia") is not True:
                     fail(f"{feature_id} is reviewable without reviewMedia")
@@ -340,7 +349,7 @@ def validate_proof_media_receipt(
         fail(f"{feature_id} visualEvidence does not match its proofMediaReceipt")
 
 
-def validate_integrated_commit(feature_id: str, commit: str) -> None:
+def validate_integrated_commit(feature_id: str, commit: str, test_ref: str) -> None:
     exists = subprocess.run(
         ["git", "-C", str(REPO_ROOT), "cat-file", "-e", f"{commit}^{{commit}}"],
         text=True,
@@ -348,19 +357,29 @@ def validate_integrated_commit(feature_id: str, commit: str) -> None:
     )
     if exists.returncode:
         fail(f"{feature_id} integrated commit does not exist: {commit}")
-    ancestor = subprocess.run(
-        ["git", "-C", str(REPO_ROOT), "merge-base", "--is-ancestor", commit, "HEAD"],
+    targets = [test_ref]
+    test_to_head = subprocess.run(
+        ["git", "-C", str(REPO_ROOT), "merge-base", "--is-ancestor", test_ref, "HEAD"],
         text=True,
         capture_output=True,
     )
-    if ancestor.returncode == 1:
-        fail(f"{feature_id} integrated commit is not in this build: {commit}")
-    if ancestor.returncode:
-        fail(ancestor.stderr.strip() or f"cannot inspect integrated commit {commit}")
+    if test_to_head.returncode == 0 and test_ref != "HEAD":
+        targets.append("HEAD")
+    elif test_to_head.returncode not in {0, 1}:
+        fail(test_to_head.stderr.strip() or f"cannot inspect Test ref {test_ref}")
+    if not any(
+        subprocess.run(
+            ["git", "-C", str(REPO_ROOT), "merge-base", "--is-ancestor", commit, target],
+            text=True,
+            capture_output=True,
+        ).returncode == 0
+        for target in targets
+    ):
+        fail(f"{feature_id} integrated commit is not in canonical Test: {commit}")
     changed = set(
         subprocess.run(
             [
-                "git", "-C", str(REPO_ROOT), "diff-tree", "--no-commit-id",
+                "git", "-C", str(REPO_ROOT), "diff-tree", "--root", "-m", "--no-commit-id",
                 "--name-only", "-r", commit,
             ],
             check=True,
