@@ -914,6 +914,7 @@ grep -q '^COMPILATION_CACHE_CAS_PATH=' "${UNIT_ARGUMENT_LOG}"
 grep -q '^test-without-building$' "${UNIT_ARGUMENT_LOG}"
 grep -A1 -q -- '-testPlan' "${UNIT_ARGUMENT_LOG}"
 grep -q '^Focused$' "${UNIT_ARGUMENT_LOG}"
+[[ "$(grep -c -- '^-only-testing:T3CodeTests$' "${UNIT_ARGUMENT_LOG}")" -eq 2 ]]
 grep -A1 -q -- '-resultBundlePath' "${UNIT_ARGUMENT_LOG}"
 
 UNIT_REUSE_RESULT="${TEST_ROOT}/native-focused-reuse.xcresult"
