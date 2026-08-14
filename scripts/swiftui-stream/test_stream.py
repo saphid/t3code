@@ -583,7 +583,28 @@ class StreamTests(unittest.TestCase):
         feature = next(
             item
             for item in value["features"]
-            if item.get("state") in stream.APPROVAL_STATES
+            if item.get("state") == "needs-you"
+        )
+        feature["testBuild"] = value["currentTestBuild"]["build"] - 1
+        with self.assertRaises(SystemExit):
+            stream.validate_manifest(value)
+
+    def test_in_test_feature_may_stage_a_future_build(self):
+        value = json.loads(json.dumps(stream.manifest()))
+        feature = next(
+            item
+            for item in value["features"]
+            if item.get("state") == "in-test"
+        )
+        feature["testBuild"] = value["currentTestBuild"]["build"] + 1
+        stream.validate_manifest(value)
+
+    def test_in_test_feature_cannot_reference_a_stale_build(self):
+        value = json.loads(json.dumps(stream.manifest()))
+        feature = next(
+            item
+            for item in value["features"]
+            if item.get("state") == "in-test"
         )
         feature["testBuild"] = value["currentTestBuild"]["build"] - 1
         with self.assertRaises(SystemExit):

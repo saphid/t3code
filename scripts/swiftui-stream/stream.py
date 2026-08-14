@@ -170,10 +170,16 @@ def validate_manifest(value: dict[str, Any]) -> None:
             integrated = feature.get("integratedCommit")
             if not isinstance(test_build, int) or isinstance(test_build, bool) or test_build < 1:
                 fail(f"{feature_id} is in Test without a positive testBuild")
-            if test_build != current_build:
+            state = feature.get("state")
+            if state == "needs-you" and test_build != current_build:
                 fail(
                     f"{feature_id} is reviewable in Test build {test_build}, "
                     f"not current build {current_build}"
+                )
+            if state == "in-test" and test_build < current_build:
+                fail(
+                    f"{feature_id} is staged for Test build {test_build}, "
+                    f"behind current build {current_build}"
                 )
             if not isinstance(integrated, str) or not re.fullmatch(r"[0-9a-f]{40}", integrated):
                 fail(f"{feature_id} is in Test without a full integratedCommit")
