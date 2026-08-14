@@ -795,6 +795,8 @@ final class AppFlowUITests: XCTestCase {
     }
 
     private func capture(_ name: String) {
+        resolvePendingSystemPermissionBeforeCapture()
+
         let screenshot = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
         screenshot.name = name
         screenshot.lifetime = .keepAlways
@@ -807,6 +809,29 @@ final class AppFlowUITests: XCTestCase {
         accessibility.name = "\(name)-accessibility"
         accessibility.lifetime = .keepAlways
         add(accessibility)
+    }
+
+    private func resolvePendingSystemPermissionBeforeCapture() {
+        let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
+        let alert = springboard.alerts.firstMatch
+        guard alert.waitForExistence(timeout: 1) else { return }
+
+        let containsLocalNetworkText = alert.label
+            .localizedCaseInsensitiveContains("local network")
+            || alert.staticTexts.allElementsBoundByIndex
+            .contains { $0.label.localizedCaseInsensitiveContains("local network") }
+        let preferredButton = permissionPolicy == .allowLocalNetwork && containsLocalNetworkText
+            ? alert.buttons["Allow"]
+            : alert.buttons["Don’t Allow"]
+        XCTAssertTrue(
+            preferredButton.exists,
+            "Pending system permission has no policy-approved action"
+        )
+        preferredButton.tap()
+        XCTAssertTrue(
+            alert.waitForNonExistence(timeout: 3),
+            "System permission remained visible before proof capture"
+        )
     }
 
 }

@@ -13,6 +13,7 @@ SIMULATOR_ID="${T3_SWIFT_SIMULATOR_ID:-}"
 DERIVED_DATA_ROOT="${RUNNER_TEMP:-${APP_DIR}/.derivedData}"
 DERIVED_DATA_PATH="${T3_SWIFT_DERIVED_DATA_PATH:-${DERIVED_DATA_ROOT}/swift-ios-ci}"
 CLONED_SOURCE_PACKAGES_PATH="${T3_SWIFT_CLONED_SOURCE_PACKAGES_PATH:-$HOME/.t3/cache/swift-ios/source-packages}"
+COMPILATION_CACHE_PATH="${T3_SWIFT_COMPILATION_CACHE_PATH:-$HOME/.t3/cache/swift-ios/compilation-cache}"
 RESULT_BUNDLE_PATH="${T3_SWIFT_RESULT_BUNDLE_PATH:-${REPO_ROOT}/.t3/evidence/swift-ios-native-${RUN_STAMP}.xcresult}"
 TEST_PRODUCTS_PATH="${T3_SWIFT_TEST_PRODUCTS_PATH:-${RESULT_BUNDLE_PATH%.xcresult}.xctestproducts}"
 BUILD_MANIFEST_PATH="${T3_SWIFT_BUILD_MANIFEST_PATH:-${TEST_PRODUCTS_PATH}.manifest.json}"
@@ -38,7 +39,7 @@ require_cmd grep
 require_cmd "${XCODEBUILD_COMMAND}"
 require_cmd xcrun
 require_cmd python3
-mkdir -p "${CLONED_SOURCE_PACKAGES_PATH}"
+mkdir -p "${CLONED_SOURCE_PACKAGES_PATH}" "${COMPILATION_CACHE_PATH}"
 
 if [[ -z "${SIMULATOR_ID}" ]]; then
   # simctl groups devices by runtime. Keeping the last available iPhone picks
@@ -89,6 +90,7 @@ else
     -testProductsPath "${TEST_PRODUCTS_PATH}" \
     -maximum-concurrent-test-simulator-destinations 1 \
     -parallel-testing-enabled NO \
+    "COMPILATION_CACHE_CAS_PATH=${COMPILATION_CACHE_PATH}" \
     CODE_SIGNING_ALLOWED=NO
   python3 "${CATALOG_TOOL}" write-build-manifest \
     --output "${BUILD_MANIFEST_PATH}" \

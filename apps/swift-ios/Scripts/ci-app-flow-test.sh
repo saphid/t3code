@@ -12,6 +12,7 @@ SIMULATOR_ID="${T3_SWIFT_SIMULATOR_ID:-}"
 DERIVED_DATA_ROOT="${RUNNER_TEMP:-${APP_DIR}/.derivedData}"
 DERIVED_DATA_PATH="${T3_SWIFT_DERIVED_DATA_PATH:-${DERIVED_DATA_ROOT}/swift-ios-app-flow}"
 CLONED_SOURCE_PACKAGES_PATH="${T3_SWIFT_CLONED_SOURCE_PACKAGES_PATH:-$HOME/.t3/cache/swift-ios/source-packages}"
+COMPILATION_CACHE_PATH="${T3_SWIFT_COMPILATION_CACHE_PATH:-$HOME/.t3/cache/swift-ios/compilation-cache}"
 RUN_STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
 RESULT_BUNDLE_PATH="${T3_SWIFT_RESULT_BUNDLE_PATH:-${REPO_ROOT}/.t3/evidence/swift-ios-app-flow-${RUN_STAMP}.xcresult}"
 TEST_PRODUCTS_PATH="${T3_SWIFT_TEST_PRODUCTS_PATH:-${RESULT_BUNDLE_PATH%.xcresult}.xctestproducts}"
@@ -60,7 +61,7 @@ require_cmd python3
 require_cmd tr
 require_cmd "${XCODEBUILD_COMMAND}"
 require_cmd "${XCRUN_COMMAND}"
-mkdir -p "${CLONED_SOURCE_PACKAGES_PATH}"
+mkdir -p "${CLONED_SOURCE_PACKAGES_PATH}" "${COMPILATION_CACHE_PATH}"
 ACTUAL_TOOLCHAIN_ID="$("${XCODEBUILD_COMMAND}" -version | tr '\n' ' ')"
 if [[ -n "${TOOLCHAIN_ID}" && "${TOOLCHAIN_ID}" != "${ACTUAL_TOOLCHAIN_ID}" ]]; then
   die "configured toolchain identity does not match ${XCODEBUILD_COMMAND}"
@@ -296,7 +297,8 @@ if [[ ! -e "${TEST_PRODUCTS_PATH}" ]]; then
     -disablePackageRepositoryCache \
     -testProductsPath "${TEST_PRODUCTS_PATH}" \
     -maximum-concurrent-test-simulator-destinations 1 \
-    -parallel-testing-enabled NO
+    -parallel-testing-enabled NO \
+    "COMPILATION_CACHE_CAS_PATH=${COMPILATION_CACHE_PATH}"
   python3 "${CATALOG_TOOL}" write-build-manifest \
     --output "${BUILD_MANIFEST_PATH}" \
     --test-products "${TEST_PRODUCTS_PATH}" \
