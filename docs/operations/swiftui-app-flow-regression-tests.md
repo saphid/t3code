@@ -88,6 +88,53 @@ and result status own the verdict.
 Retained accessibility trees are diagnostic evidence, not an accessibility
 oracle by themselves.
 
+### Deterministic acceptance-proof assembly
+
+The XCUITest receipt remains the semantic verdict. It retains checkpoint PNGs
+and accessibility trees but does not contain an action-timed raw video. Use the
+separate proof replay only after the exact cataloged journey passes. The
+machine-readable mapping is
+`apps/swift-ios/Scripts/app-flow-proof-catalog.json`:
+
+| Feature | Green journey | Dark image states | Recorded video claim |
+| --- | --- | --- | --- |
+| `skills-popup-keyboard-clearance` | `skills-popup-keyboard-readability` | `thread-skills-popup-scrolled`, `thread-skills-popup-selected` | Scroll the complete menu and select the bottom and filtered skill without losing keyboard clearance. |
+| `home-thread-list-scrolling` | `home-thread-list-scrolling` | `home-thread-list-scrolled` | Rubber-band and ordinary list swipes move Home without opening the command palette. |
+| `command-palette-top-drawer` | `command-palette-top-drawer` | `command-palette-home-threshold`, `command-palette-thread-keyboard` | Below-threshold drags stay closed; above-threshold drags open from Home and a keyboard-focused thread. |
+
+For each image, the `.xcresult` checkpoint is gate evidence. Capture the
+mapping's `cleanInput` PNG during the same dark proof replay that records the
+video; use that raw PNG to derive the paired clean and annotated images. This
+keeps the image geometry and action ledger from the same UI attempt.
+
+Prepare one session, then give `record` a semantic driver that performs only
+the mapping's `captureActions`:
+
+```sh
+AGENT=apps/swift-ios/Scripts/app-flow-agent.py
+python3 "$AGENT" prepare \
+  --session "$EVIDENCE/session.json" --simulator-id "$SIMULATOR_UDID" \
+  --plan regression
+python3 "$AGENT" record \
+  --session "$EVIDENCE/session.json" --journey-id <journey-id> \
+  --video "$EVIDENCE/<journey>-raw.mov" -- <semantic-driver-command>
+python3 "$AGENT" proof-map \
+  --session "$EVIDENCE/session.json" \
+  --output "$EVIDENCE/<journey>-action-map.json" --title "<proof title>"
+python3 .agents/skills/prepare-proof-media/scripts/prepare_proof_media.py \
+  timeline-from-app-flow "$EVIDENCE/session.json" \
+  --action-map "$EVIDENCE/<journey>-action-map.json" \
+  --output "$EVIDENCE/<journey>-timeline.json"
+```
+
+The recording wrapper sets the Simulator to dark before `simctl recordVideo`
+starts. Each driver `act` supplies normalized visual geometry and receives a
+source-video timestamp from the recording clock; each action then receives a
+passed semantic `assert`. `proof-map` rejects untimed, unasserted, or
+geometry-free actions and hashes the raw recording. Build and `validate-packet`
+create the clean and annotated videos named in the proof catalog. The
+fake-recorder test exercises this assembly contract without producing proof.
+
 An XCTest `performAccessibilityAudit` prototype was not promoted. On Xcode 26.6
 and iOS 26.5, combined, split-screen, and single-screen contrast-only probes all
 hit process deadlines without finalizing a valid result bundle. The catalog

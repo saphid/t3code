@@ -76,6 +76,27 @@ and prompts. The repository runner masks both staged fields, quarantines and
 scans credential-bearing command output, and uninstalls the app afterward; do
 not bypass that ingress. A model's visual opinion diagnoses; semantic assertions decide.
 
+For clean and annotated acceptance proof after a cataloged journey is green,
+read `Scripts/app-flow-proof-catalog.json`. Replay only that journey's listed
+capture actions through the semantic agent surface. Wrap the driver so the raw
+video and action ledger share one clock:
+
+```sh
+python3 Scripts/app-flow-agent.py record \
+  --session <session.json> \
+  --journey-id <cataloged-journey-id> \
+  --video <journey-raw.mov> -- <semantic-driver-command>
+python3 Scripts/app-flow-agent.py proof-map \
+  --session <session.json> --output <action-map.json> --title "<proof title>"
+```
+
+The wrapper pins Simulator appearance to dark. During the driver, every `act`
+must supply `--point x,y` or `--from-point x,y --to-point x,y --duration s`
+using normalized coordinates from the actual element or gesture. Bind a passed
+`assert` before export. Convert the emitted map with `prepare-proof-media`
+`timeline-from-app-flow`, then build and validate the packet. A fake-recorder
+contract run proves assembly only; it is never UI evidence.
+
 ## 4. Promote discoveries
 
 When exploration finds a durable journey:

@@ -1,0 +1,159 @@
+{
+  "schemaVersion": 1,
+  "features": [
+    {
+      "featureId": "skills-popup-keyboard-clearance",
+      "journeyId": "skills-popup-keyboard-readability",
+      "testMethod": "testSkillsPopupStaysReadableAboveKeyboardAndSelectsBottomSkill",
+      "appearance": "dark",
+      "imageProofInputs": [
+        {
+          "checkpoint": "thread-skills-popup-scrolled",
+          "gateInput": "xcresult checkpoint PNG",
+          "cleanInput": "thread-skills-popup-scrolled-raw.png from the recorded proof replay",
+          "annotateWithAction": "select-bottom-skill"
+        },
+        {
+          "checkpoint": "thread-skills-popup-selected",
+          "gateInput": "xcresult checkpoint PNG",
+          "cleanInput": "thread-skills-popup-selected-raw.png from the recorded proof replay",
+          "annotateWithAction": "select-filtered-skill"
+        }
+      ],
+      "videoProofInput": {
+        "raw": "skills-popup-keyboard-readability-raw.mov",
+        "actionMap": "skills-popup-keyboard-readability-action-map.json",
+        "timeline": "skills-popup-keyboard-readability-timeline.json",
+        "clean": "skills-popup-keyboard-readability-clean.mp4",
+        "annotated": "skills-popup-keyboard-readability-annotated.mp4",
+        "validation": "skills-popup-keyboard-readability-validation.json"
+      },
+      "captureActions": [
+        {
+          "key": "scroll-full-skill-list",
+          "kind": "swipe",
+          "selector": "composer-command-menu",
+          "geometry": "record the actual menu-frame swipe from lower-middle to upper-middle",
+          "expect": "The final full skill row is visible above the keyboard"
+        },
+        {
+          "key": "select-bottom-skill",
+          "kind": "tap",
+          "selector": "composer-suggestion-skill:zeta-release-proof-archive",
+          "geometry": "record the selected row center",
+          "expect": "The popup closes and the full skill token replaces the trigger"
+        },
+        {
+          "key": "select-filtered-skill",
+          "kind": "tap",
+          "selector": "composer-suggestion-skill:zeta-release-proof-archive",
+          "geometry": "record the filtered row center",
+          "expect": "The filtered popup closes and the same full skill token remains selected"
+        }
+      ]
+    },
+    {
+      "featureId": "home-thread-list-scrolling",
+      "journeyId": "home-thread-list-scrolling",
+      "testMethod": "testHomeListScrollDoesNotOpenCommandPalette",
+      "appearance": "dark",
+      "imageProofInputs": [
+        {
+          "checkpoint": "home-thread-list-scrolled",
+          "gateInput": "xcresult checkpoint PNG",
+          "cleanInput": "home-thread-list-scrolled-raw.png from the recorded proof replay",
+          "annotateWithAction": "scroll-accumulated-history"
+        }
+      ],
+      "videoProofInput": {
+        "raw": "home-thread-list-scrolling-raw.mov",
+        "actionMap": "home-thread-list-scrolling-action-map.json",
+        "timeline": "home-thread-list-scrolling-timeline.json",
+        "clean": "home-thread-list-scrolling-clean.mp4",
+        "annotated": "home-thread-list-scrolling-annotated.mp4",
+        "validation": "home-thread-list-scrolling-validation.json"
+      },
+      "captureActions": [
+        {
+          "key": "top-rubber-band",
+          "kind": "swipe",
+          "selector": "Home collection view near top",
+          "geometry": "record the actual downward 110-point drag",
+          "expect": "The Home list rubber-bands and the command palette stays closed"
+        },
+        {
+          "key": "ordinary-list-scroll",
+          "kind": "swipe",
+          "selector": "Home collection view",
+          "geometry": "record the actual upward list swipe",
+          "expect": "The Home thread list scrolls and the command palette stays closed"
+        },
+        {
+          "key": "scroll-accumulated-history",
+          "kind": "swipe",
+          "selector": "Home collection view",
+          "geometry": "record the final upward swipe that reveals thread-fixture-main",
+          "expect": "The accumulated fixture thread is visible and the command palette stays closed"
+        }
+      ]
+    },
+    {
+      "featureId": "command-palette-top-drawer",
+      "journeyId": "command-palette-top-drawer",
+      "testMethod": "testCommandPaletteTopDrawerThresholdAndGestureIsolation",
+      "appearance": "dark",
+      "imageProofInputs": [
+        {
+          "checkpoint": "command-palette-home-threshold",
+          "gateInput": "xcresult checkpoint PNG",
+          "cleanInput": "command-palette-home-threshold-raw.png from the recorded proof replay",
+          "annotateWithAction": "open-home-drawer"
+        },
+        {
+          "checkpoint": "command-palette-thread-keyboard",
+          "gateInput": "xcresult checkpoint PNG",
+          "cleanInput": "command-palette-thread-keyboard-raw.png from the recorded proof replay",
+          "annotateWithAction": "open-thread-drawer"
+        }
+      ],
+      "videoProofInput": {
+        "raw": "command-palette-top-drawer-raw.mov",
+        "actionMap": "command-palette-top-drawer-action-map.json",
+        "timeline": "command-palette-top-drawer-timeline.json",
+        "clean": "command-palette-top-drawer-clean.mp4",
+        "annotated": "command-palette-top-drawer-annotated.mp4",
+        "validation": "command-palette-top-drawer-validation.json"
+      },
+      "captureActions": [
+        {
+          "key": "reject-home-subthreshold",
+          "kind": "swipe",
+          "selector": "sidebar-search-button",
+          "geometry": "record the actual vertical 70-point drag",
+          "expect": "The command palette stays closed below the Home threshold"
+        },
+        {
+          "key": "open-home-drawer",
+          "kind": "swipe",
+          "selector": "sidebar-search-button",
+          "geometry": "record the actual vertical 120-point drag",
+          "expect": "The command palette opens from the Home bar above threshold"
+        },
+        {
+          "key": "reject-thread-subthreshold",
+          "kind": "swipe",
+          "selector": "thread navigation bar with keyboard visible",
+          "geometry": "record the actual vertical 70-point drag",
+          "expect": "The command palette stays closed below the thread-header threshold"
+        },
+        {
+          "key": "open-thread-drawer",
+          "kind": "swipe",
+          "selector": "thread navigation bar with keyboard visible",
+          "geometry": "record the actual vertical 120-point drag",
+          "expect": "The command palette opens above the keyboard from the thread header"
+        }
+      ]
+    }
+  ]
+}

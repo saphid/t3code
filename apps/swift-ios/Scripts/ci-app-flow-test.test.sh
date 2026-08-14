@@ -69,6 +69,7 @@ for file_name, expected_default in expected_defaults.items():
 PY
 
 python3 "${CATALOG_TOOL}" check >/dev/null
+python3 "${SCRIPT_DIR}/app-flow-agent.test.py" >/dev/null
 [[ "$(python3 "${CATALOG_TOOL}" resolve --plan pr | wc -l | tr -d ' ')" == "4" ]]
 printf '%s\n' \
   'docs/operations/swiftui-app-flow-regression-tests.md' \
@@ -658,7 +659,7 @@ assert receipt["plan"] == "regression"
 assert len(receipt["selection"]) == expected
 assert len(receipt["execution"]["executedTests"]) == expected
 assert receipt["source"]["contentSha256"] == receipt["evidence"]["buildManifest"]["source"]["contentSha256"]
-' "${TEST_ROOT}/regression.receipt.json" "${ROOT}/app-flow-catalog.json"
+' "${TEST_ROOT}/regression.receipt.json" "${SCRIPT_DIR}/app-flow-catalog.json"
 
 T3_FAKE_PASSED_TESTS=4 T3_FAKE_SKIPPED_TESTS=1 \
   "${FAKE_XCRUN}" xcresulttool get test-results summary \

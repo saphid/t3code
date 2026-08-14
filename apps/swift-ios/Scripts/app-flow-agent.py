@@ -8,7 +8,9 @@ import argparse
 import hashlib
 import json
 import os
+import signal
 import subprocess
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -24,6 +26,16 @@ def fail(message: str) -> None:
 
 def now() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def normalized_point(value: str) -> list[float]:
+    try:
+        point = [float(part) for part in value.split(",")]
+    except ValueError as error:
+        fail(f"invalid normalized point: {value}")
+    if len(point) != 2 or any(coordinate < 0 or coordinate > 1 for coordinate in point):
+        fail(f"normalized point must be x,y within 0..1: {value}")
+    return point
 
 
 def sha256_file(path: Path) -> str:
@@ -99,6 +111,30 @@ def append_event(args: argparse.Namespace, phase: str) -> int:
         value = getattr(args, key, None)
         if value is not None:
             event[key.replace("_", "")] = value
+    if phase == "act":
+        point = getattr(args, "point", None)
+        from_point = getattr(args, "from_point", None)
+        to_point = getattr(args, "to_point", None)
+        if point is not None:
+            if from_point is not None or to_point is not None:
+                fail("an action cannot combine --point with a swipe path")
+            event["point"] = point
+        elif from_point is not None or to_point is not None:
+            if from_point is None or to_point is None:
+                fail("a swipe action requires both --from-point and --to-point")
+            if args.duration <= 0:
+                fail("a swipe action requires a positive --duration")
+            event["from"] = from_point
+            event["to"] = to_point
+            event["duration"] = args.duration
+        recording = payload.get("recording")
+        if isinstance(recording, dict) and recording.get("status") == "recording":
+            if "point" not in event and "from" not in event:
+                fail("recorded actions require --point or a complete swipe path")
+            event["sourceat"] = round(
+                (time.time_ns() - recording["startedEpochNs"]) / 1_000_000_000,
+                6,
+            )
     payload["events"].append(event)
     write_atomic(args.session, payload)
     print(event_id)
@@ -119,6 +155,144 @@ def command_collect(args: argparse.Namespace) -> int:
         }
     )
     write_atomic(args.session, payload)
+    return 0
+
+
+def command_record(args: argparse.Namespace) -> int:
+    payload = read_session(args.session)
+    if payload.get("recording") is not None:
+        fail("exploration session already has a recording")
+    if args.video.exists():
+        fail(f"raw recording already exists: {args.video}")
+    driver = list(args.driver)
+    if driver and driver[0] == "--":
+        driver = driver[1:]
+    if not driver:
+        fail("record requires a driver command after --")
+    args.video.parent.mkdir(parents=True, exist_ok=True)
+    xcrun = os.environ.get("T3_SWIFT_XCRUN_COMMAND", "xcrun")
+    subprocess.run(
+        [xcrun, "simctl", "ui", payload["simulatorId"], "appearance", "dark"],
+        check=True,
+    )
+    started_at = now()
+    started_epoch_ns = time.time_ns()
+    recorder = subprocess.Popen(
+        [
+            xcrun,
+            "simctl",
+            "io",
+            payload["simulatorId"],
+            "recordVideo",
+            "--codec=h264",
+            "--force",
+            str(args.video.resolve()),
+        ],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    payload["recording"] = {
+        "status": "recording",
+        "journeyId": args.journey_id,
+        "appearance": "dark",
+        "video": str(args.video.resolve()),
+        "recordingStartedAt": started_at,
+        "startedEpochNs": started_epoch_ns,
+        "recorderPid": recorder.pid,
+    }
+    write_atomic(args.session, payload)
+    driver_status = 1
+    recorder_status = 1
+    try:
+        time.sleep(0.2)
+        driver_status = subprocess.run(driver, check=False).returncode
+    finally:
+        if recorder.poll() is None:
+            recorder.send_signal(signal.SIGINT)
+        try:
+            recorder_status = recorder.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            recorder.kill()
+            recorder_status = recorder.wait(timeout=5)
+    payload = read_session(args.session)
+    recording = payload.get("recording")
+    if not isinstance(recording, dict) or recording.get("status") != "recording":
+        fail("recording state changed while the driver was active")
+    recording.update(
+        {
+            "status": "complete" if driver_status == 0 and recorder_status == 0 else "failed",
+            "driverStatus": driver_status,
+            "recorderStatus": recorder_status,
+            "recordingFinishedAt": now(),
+        }
+    )
+    recording.pop("startedEpochNs", None)
+    recording.pop("recorderPid", None)
+    if args.video.is_file() and args.video.stat().st_size > 0:
+        video_record = {
+            "kind": "raw-video",
+            "name": args.video.name,
+            "path": str(args.video.resolve()),
+            "bytes": args.video.stat().st_size,
+            "sha256": sha256_file(args.video),
+            "collectedAt": now(),
+        }
+        recording["artifact"] = video_record
+        payload["artifacts"].append(video_record)
+    write_atomic(args.session, payload)
+    if driver_status != 0:
+        fail(f"recording driver failed with status {driver_status}")
+    if recorder_status != 0:
+        fail(f"Simulator recorder failed with status {recorder_status}")
+    if not args.video.is_file() or args.video.stat().st_size == 0:
+        fail("Simulator recorder produced no raw video")
+    return 0
+
+
+def command_proof_map(args: argparse.Namespace) -> int:
+    payload = read_session(args.session)
+    recording = payload.get("recording")
+    if not isinstance(recording, dict) or recording.get("status") != "complete":
+        fail("proof-map requires one completed recording")
+    actions = [event for event in payload["events"] if event.get("phase") == "act"]
+    assertions = [event for event in payload["events"] if event.get("phase") == "assert"]
+    if not actions:
+        fail("proof-map requires at least one recorded action")
+    mapped_actions = []
+    for action in actions:
+        if not any(
+            assertion.get("actionid") == action["id"]
+            and assertion.get("result") == "passed"
+            for assertion in assertions
+        ):
+            fail(f"recorded action has no passed assertion: {action['id']}")
+        if "sourceat" not in action:
+            fail(f"action was not timed by the recorder: {action['id']}")
+        mapped = {"action_id": action["id"], "at": action["sourceat"]}
+        if "point" in action:
+            mapped["point"] = action["point"]
+        elif "from" in action and "to" in action:
+            mapped.update(
+                {
+                    "from": action["from"],
+                    "to": action["to"],
+                    "duration": action["duration"],
+                }
+            )
+        else:
+            fail(f"recorded action has no visual geometry: {action['id']}")
+        mapped_actions.append(mapped)
+    result = {
+        "version": 1,
+        "title": args.title,
+        "journey_id": recording["journeyId"],
+        "appearance": recording["appearance"],
+        "recording_started_at": recording["recordingStartedAt"],
+        "raw_video": recording["artifact"],
+        "actions": mapped_actions,
+    }
+    write_atomic(args.output, result)
+    print(args.output)
     return 0
 
 
@@ -190,6 +364,11 @@ def parser() -> argparse.ArgumentParser:
     act.add_argument("--selector", required=True)
     act.add_argument("--action", required=True)
     act.add_argument("--postcondition", required=True)
+    geometry = act.add_mutually_exclusive_group()
+    geometry.add_argument("--point", type=normalized_point)
+    geometry.add_argument("--from-point", type=normalized_point)
+    act.add_argument("--to-point", type=normalized_point)
+    act.add_argument("--duration", type=float, default=0.6)
     act.set_defaults(run=lambda args: append_event(args, "act"))
     assertion = commands.add_parser("assert")
     assertion.add_argument("--session", type=Path, required=True)
@@ -202,6 +381,17 @@ def parser() -> argparse.ArgumentParser:
     collect.add_argument("--artifact", type=Path, required=True)
     collect.add_argument("--kind", choices=["screenshot", "accessibility-tree", "log"], required=True)
     collect.set_defaults(run=command_collect)
+    record = commands.add_parser("record")
+    record.add_argument("--session", type=Path, required=True)
+    record.add_argument("--journey-id", required=True)
+    record.add_argument("--video", type=Path, required=True)
+    record.add_argument("driver", nargs=argparse.REMAINDER)
+    record.set_defaults(run=command_record)
+    proof_map = commands.add_parser("proof-map")
+    proof_map.add_argument("--session", type=Path, required=True)
+    proof_map.add_argument("--output", type=Path, required=True)
+    proof_map.add_argument("--title", required=True)
+    proof_map.set_defaults(run=command_proof_map)
     promote = commands.add_parser("promote")
     promote.add_argument("--session", type=Path, required=True)
     promote.add_argument("--output", type=Path, required=True)
