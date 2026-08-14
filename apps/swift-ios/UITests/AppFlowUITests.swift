@@ -158,14 +158,14 @@ final class AppFlowUITests: XCTestCase {
         if themeCatalog.waitForExistence(timeout: 1) {
             themeCatalog.tap()
             let themesNavigationBar = app.navigationBars["Themes"]
-            XCTAssertTrue(themesNavigationBar.waitForExistence(timeout: timeout))
+            XCTAssertTrue(themesNavigationBar.waitForExistence(timeout: 8))
             assertExists("Appearance")
             assertExists("System")
             assertExists("Light")
             assertExists("Dark")
             capture("settings-theme-catalog")
             let backButton = themesNavigationBar.buttons.firstMatch
-            XCTAssertTrue(backButton.waitForExistence(timeout: timeout))
+            XCTAssertTrue(backButton.waitForExistence(timeout: 8))
             backButton.tap()
         } else {
             assertHittableButton(labelStartsWith: "Theme,").tap()
