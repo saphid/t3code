@@ -87,7 +87,9 @@ for that claim. The catalog must contain:
 3. A stable review order.
 4. A delivery class and explicit feature dependencies.
 5. One or more acceptance points with unique IDs and clear text.
-6. A successful private-CI proof-build receipt for the same source commit.
+6. A successful private-CI proof-build receipt for the exact final application
+   revision. This build revision is separate from the feature's provenance
+   commit.
 7. A proof-media receipt for each proof packet.
 8. A clean and annotated image pair, or a clean and annotated video pair.
 9. A caption in each annotated proof. An annotated video must also show a tap
@@ -111,9 +113,14 @@ pipeline run, incomplete media pair, or uncovered acceptance point.
    timeline for the taps, swipes, and expected results.
 5. Use `prepare-proof-media` to create paired clean and annotated outputs.
    Inspect all outputs. Keep the proof-media receipt and its SHA-256 hash.
-6. Add the proof object to each item. Bind each packet to its acceptance-point
-   IDs. Bind the proof to the exact private-CI run ID and source commit.
-7. Run:
+6. Run `prepare_proof_media.py validate-packet` with `--feature-id` and the
+   successful final-head `--build-receipt`. This creates a sealed packet
+   validation that binds the media to the Review Item, source revision, and
+   private-CI run without hand-entering those values.
+7. Use `assemble_review_proof.py assemble` to create a candidate catalog file.
+   Bind each packet to its acceptance-point IDs. The assembler never edits the
+   live catalog and never allocates a build number.
+8. Run:
 
     ```sh
     scripts/swiftui-stream/stream.py review-readiness \
@@ -121,23 +128,24 @@ pipeline run, incomplete media pair, or uncovered acceptance point.
       --verify-commits
     ```
 
-8. Continue only if the command exits with status 0.
-9. On a clean `personal/swiftui-test`, run `stream.py stage-test-build`. This
+9. Continue only if the command exits with status 0.
+10. Replace `stream.json` with the inspected assembler output. On a clean
+    `personal/swiftui-test`, run `stream.py stage-test-build`. This
     is the first step that can reserve a new Test build number.
-10. Review the catalog attribution diff. Commit only `stream.json` in the
+11. Review the catalog attribution diff. Commit only `stream.json` in the
     catalog commit.
-11. Set `T3_SWIFT_BUILD_NUMBER` to the reserved number. Run the private
+12. Set `T3_SWIFT_BUILD_NUMBER` to the reserved number. Run the private
     pipeline through `test-catalog` and `test-phone-build`.
-12. The Test build guard must pass before signing and before the ready pointer
+13. The Test build guard must pass before signing and before the ready pointer
     changes.
-13. Let the deterministic phone watcher install and launch the exact ready
+14. Let the deterministic phone watcher install and launch the exact ready
     build. Keep its installed-device receipt.
-14. Run `approval-list`. It rechecks the proof hashes, source commits, Test
+15. Run `approval-list`. It rechecks the proof hashes, source commits, Test
     build binding, ready pointer, and installed-device receipt.
-15. Review each acceptance point on the phone. Record the human verdict for the
+16. Review each acceptance point on the phone. Record the human verdict for the
     exact item and Test build.
 
-The current catalog fails step 7. Therefore this audit does not allocate,
+The current catalog fails step 8. Therefore this audit does not allocate,
 sign, install, or approve a build.
 
 ## Reproduce the audit

@@ -338,6 +338,7 @@ class PacketValidationTests(unittest.TestCase):
             json.dumps(
                 {
                     "schemaVersion": 1,
+                    "createdAt": "2026-08-15T01:00:00Z",
                     "plan": "pr",
                     "events": [
                         {
@@ -437,6 +438,23 @@ class PacketValidationTests(unittest.TestCase):
                 value["seal"]["canonicalPayloadSha256"],
                 MEDIA.validation_seal(unsigned),
             )
+
+            stale_build = json.loads(build_receipt.read_text(encoding="utf-8"))
+            stale_build["startedAt"] = "2026-08-15T01:00:01Z"
+            build_receipt.write_text(json.dumps(stale_build), encoding="utf-8")
+            rejected = subprocess.run(
+                self.validate_command(receipt, timeline, history, validation)
+                + [
+                    "--feature-id", "review-item",
+                    "--build-receipt", str(build_receipt),
+                    "--overwrite",
+                ],
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+            self.assertNotEqual(rejected.returncode, 0)
+            self.assertIn("capture started before", rejected.stderr)
             self.assertGreaterEqual(value["pairing"]["videoSsim"], 0.75)
             self.assertRegex(
                 value["pairing"]["decodedAudioSha256"], r"^[0-9a-f]{64}$"
@@ -451,6 +469,61 @@ class PacketValidationTests(unittest.TestCase):
                     window["localVideoSsim"], window["maximumLocalVideoSsim"]
                 )
                 self.assertEqual(len(window["crop"]), 4)
+
+    def test_binds_packet_to_clean_passed_private_ci_build(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="proof-packet-build-binding-") as temporary:
+            root = Path(temporary)
+            _, history, timeline, receipt, validation = self.build_app_flow_packet(root)
+            build_receipt = root / "build-receipt.json"
+            build_receipt.write_text(
+                json.dumps(
+                    {
+                        "schemaVersion": 1,
+                        "pipeline": "swiftui-private-ci",
+                        "stage": "test-train",
+                        "runId": "final-head-run",
+                        "status": "passed",
+                        "exitStatus": 0,
+                        "dryRun": False,
+                        "startedAt": "2026-08-15T00:59:59Z",
+                        "finishedAt": "2026-08-15T01:00:04Z",
+                        "repository": {
+                            "commit": "a" * 40,
+                            "dirty": False,
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            subprocess.run(
+                self.validate_command(receipt, timeline, history, validation)
+                + [
+                    "--feature-id", "review-item",
+                    "--build-receipt", str(build_receipt),
+                ],
+                check=True,
+                stdout=subprocess.DEVNULL,
+            )
+            value = json.loads(validation.read_text(encoding="utf-8"))
+
+            self.assertEqual(
+                value["proofBinding"],
+                {
+                    "featureId": "review-item",
+                    "sourceCommit": "a" * 40,
+                    "buildId": "final-head-run",
+                    "buildReceipt": {
+                        "path": str(build_receipt.resolve()),
+                        "sha256": MEDIA.sha256(build_receipt),
+                    },
+                },
+            )
+            unsigned = {key: item for key, item in value.items() if key != "seal"}
+            self.assertEqual(
+                value["seal"]["canonicalPayloadSha256"],
+                MEDIA.validation_seal(unsigned),
+            )
 
     def test_validates_non_mp4_source_by_content(self) -> None:
         with tempfile.TemporaryDirectory(prefix="proof-packet-mov-") as temporary:

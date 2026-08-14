@@ -84,6 +84,23 @@ python3 "$MEDIA" build \
   --stem <proof-name>
 ```
 
+For a Review Item, bind the finished video packet to the clean, passed private-CI
+proof build before catalog assembly:
+
+```bash
+python3 "$MEDIA" validate-packet <proof-name-receipt.json> \
+  --timeline <timeline.json> \
+  --history <app-flow-session.json> \
+  --feature-id <review-item-id> \
+  --build-receipt <candidate-simulator-or-test-train-receipt.json> \
+  --output <validation.json>
+```
+
+The private-CI receipt supplies the source revision and run ID. The validator
+rejects a failed, planned, dirty, or non-proof build. Do not type these binding
+values by hand. It also rejects an app-flow session that started before the
+bound build run, so an older capture cannot be relabeled as final-head proof.
+
 The media artifacts are byte-for-byte repeatable on the same machine with the
 same tool versions, inputs, and build options. The build emits:
 

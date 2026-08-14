@@ -1936,8 +1936,9 @@ def validate_packet(args: argparse.Namespace) -> None:
             or source_history.get("sha256") != input_hashes[history_path]
         ):
             raise ProofMediaError("Timeline does not bind the supplied app-flow history")
+        history_value = read_json_object(history_path, "app-flow history")
         validate_history_actions(
-            read_json_object(history_path, "app-flow history"),
+            history_value,
             [action["action_id"] for action in actions],
             args.deny_secret_pattern,
         )
@@ -1963,6 +1964,62 @@ def validate_packet(args: argparse.Namespace) -> None:
             raise ProofMediaError("Proof artifact changed during verification: {0}".format(name))
     if sha256(source_path) != source_record["sha256"]:
         raise ProofMediaError("Raw source changed during verification")
+
+    proof_binding: Optional[Dict[str, Any]] = None
+    if args.feature_id is not None or args.build_receipt is not None:
+        if not args.feature_id or not args.build_receipt:
+            raise ProofMediaError(
+                "--feature-id and --build-receipt must be supplied together"
+            )
+        if not re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", args.feature_id):
+            raise ProofMediaError("--feature-id must be a lowercase kebab-case id")
+        requested_build_receipt = Path(args.build_receipt).expanduser()
+        if requested_build_receipt.is_symlink() or not requested_build_receipt.is_file():
+            raise ProofMediaError(
+                "--build-receipt must name a regular private-CI receipt file"
+            )
+        build_receipt_path = requested_build_receipt.resolve()
+        build_receipt = read_json_object(build_receipt_path, "private-CI build receipt")
+        repository = build_receipt.get("repository")
+        if (
+            build_receipt.get("schemaVersion") != 1
+            or build_receipt.get("pipeline") != "swiftui-private-ci"
+            or build_receipt.get("stage") not in ("candidate-simulator", "test-train")
+            or build_receipt.get("status") != "passed"
+            or build_receipt.get("exitStatus") != 0
+            or build_receipt.get("dryRun") is not False
+            or not isinstance(repository, dict)
+            or repository.get("dirty") is not False
+            or not re.fullmatch(r"[0-9a-f]{40}", str(repository.get("commit", "")))
+            or not isinstance(build_receipt.get("runId"), str)
+            or not build_receipt["runId"]
+        ):
+            raise ProofMediaError(
+                "--build-receipt must name a clean, passed proof-build receipt"
+            )
+        if history_path is None:
+            raise ProofMediaError(
+                "a build-bound Review Item packet requires --history"
+            )
+        capture_started = parse_aware_datetime(
+            history_value.get("createdAt"), "app-flow history createdAt"
+        )
+        build_started = parse_aware_datetime(
+            build_receipt.get("startedAt"), "private-CI build startedAt"
+        )
+        if capture_started < build_started:
+            raise ProofMediaError(
+                "app-flow capture started before the bound private-CI build"
+            )
+        proof_binding = {
+            "featureId": args.feature_id,
+            "sourceCommit": repository["commit"],
+            "buildId": build_receipt["runId"],
+            "buildReceipt": {
+                "path": str(build_receipt_path),
+                "sha256": sha256(build_receipt_path),
+            },
+        }
 
     receipt: Dict[str, Any] = {
         "version": 1,
@@ -1999,6 +2056,8 @@ def validate_packet(args: argparse.Namespace) -> None:
             "ffprobe": tool_version(tools["ffprobe"]),
         },
     }
+    if proof_binding is not None:
+        receipt["proofBinding"] = proof_binding
     receipt["seal"] = {
         "algorithm": "sha256",
         "canonicalPayloadSha256": validation_seal(receipt),
@@ -2431,6 +2490,14 @@ def parser() -> argparse.ArgumentParser:
     validate_parser.add_argument("--output", required=True)
     validate_parser.add_argument("--minimum-ssim", type=float, default=0.75)
     validate_parser.add_argument("--deny-secret-pattern", action="append", default=[])
+    validate_parser.add_argument(
+        "--feature-id",
+        help="bind this validation to one Review Item; requires --build-receipt",
+    )
+    validate_parser.add_argument(
+        "--build-receipt",
+        help="clean passed private-CI receipt that supplies the exact source revision and run id",
+    )
     validate_parser.add_argument("--overwrite", action="store_true")
     validate_parser.set_defaults(handler=validate_packet)
 

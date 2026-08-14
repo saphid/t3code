@@ -835,6 +835,11 @@ def proof_packet_errors(
     packet: dict[str, Any],
     acceptance_ids: set[str],
     verify_files: bool,
+    *,
+    proof_schema: int = 1,
+    proof_source_commit: str | None = None,
+    proof_build_id: str | None = None,
+    proof_build_reference: dict[str, Any] | None = None,
 ) -> tuple[list[str], set[str]]:
     packet_id = packet.get("id")
     label = f"{feature_id} proof packet {packet_id!r}"
@@ -859,6 +864,50 @@ def proof_packet_errors(
         verify_files,
     )
     errors.extend(reference_errors)
+    if proof_schema == 2:
+        validation_errors, validation = proof_file_errors(
+            packet.get("validationPath"),
+            packet.get("validationSha256"),
+            f"{label} validation",
+            verify_files,
+        )
+        errors.extend(validation_errors)
+        if validation is not None:
+            seal = validation.get("seal")
+            unsigned = {
+                key: value for key, value in validation.items() if key != "seal"
+            }
+            canonical_digest = hashlib.sha256(
+                json.dumps(
+                    unsigned, sort_keys=True, separators=(",", ":")
+                ).encode("utf-8")
+            ).hexdigest()
+            if (
+                validation.get("version") != 1
+                or validation.get("kind") != "proof-packet-validation"
+                or validation.get("verdict") != "passed"
+            ):
+                errors.append(f"{label} validation is not passed")
+            if (
+                not isinstance(seal, dict)
+                or seal.get("algorithm") != "sha256"
+                or seal.get("canonicalPayloadSha256") != canonical_digest
+            ):
+                errors.append(f"{label} validation seal is invalid")
+            expected_binding = {
+                "featureId": feature_id,
+                "sourceCommit": proof_source_commit,
+                "buildId": proof_build_id,
+                "buildReceipt": proof_build_reference,
+            }
+            if validation.get("proofBinding") != expected_binding:
+                errors.append(f"{label} validation proofBinding does not match proof")
+            packet_reference = validation.get("packet_receipt")
+            if packet_reference != {
+                "path": packet.get("receiptPath"),
+                "sha256": packet.get("receiptSha256"),
+            }:
+                errors.append(f"{label} validation does not bind its packet receipt")
     if receipt is None:
         return errors, covered
     if receipt.get("version") != 1:
@@ -966,10 +1015,18 @@ def review_readiness_errors(
     if not isinstance(proof, dict):
         errors.append(f"{feature_id} proof must be an object")
         return errors
-    if proof.get("schemaVersion") != 1:
-        errors.append(f"{feature_id} proof schemaVersion must be 1")
-    if proof.get("sourceCommit") != source_commit:
+    proof_schema = proof.get("schemaVersion")
+    if proof_schema not in {1, 2}:
+        errors.append(f"{feature_id} proof schemaVersion must be 1 or 2")
+    if proof_schema == 1 and proof.get("sourceCommit") != source_commit:
         errors.append(f"{feature_id} proof sourceCommit must match the feature")
+    if proof_schema == 2:
+        if proof.get("featureCommit") != source_commit:
+            errors.append(f"{feature_id} proof featureCommit must match the feature")
+        if not isinstance(proof.get("sourceCommit"), str) or not re.fullmatch(
+            r"[0-9a-f]{40}", proof["sourceCommit"]
+        ):
+            errors.append(f"{feature_id} proof sourceCommit must be a full build SHA")
     build_id = proof.get("buildId")
     if not isinstance(build_id, str) or not build_id:
         errors.append(f"{feature_id} proof buildId must be non-empty")
@@ -994,14 +1051,28 @@ def review_readiness_errors(
             if build_receipt.get("runId") != build_id:
                 errors.append(f"{feature_id} build receipt buildId does not match proof")
             repository = build_receipt.get("repository")
-            if not isinstance(repository, dict) or repository.get("commit") != source_commit:
+            expected_build_commit = (
+                proof.get("sourceCommit") if proof_schema == 2 else source_commit
+            )
+            if (
+                not isinstance(repository, dict)
+                or repository.get("commit") != expected_build_commit
+            ):
                 errors.append(
-                    f"{feature_id} build receipt sourceCommit does not match feature"
+                    f"{feature_id} build receipt sourceCommit does not match proof"
                 )
             if build_receipt.get("status") != "passed" or build_receipt.get(
                 "exitStatus"
             ) != 0:
                 errors.append(f"{feature_id} build receipt did not pass")
+            if proof_schema == 2:
+                if build_receipt.get("dryRun") is not False:
+                    errors.append(f"{feature_id} build receipt is a dry run")
+                if (
+                    not isinstance(repository, dict)
+                    or repository.get("dirty") is not False
+                ):
+                    errors.append(f"{feature_id} build receipt used a dirty repository")
 
     packets = proof.get("packets")
     covered: set[str] = set()
@@ -1019,7 +1090,14 @@ def review_readiness_errors(
                     errors.append(f"{feature_id} duplicates proof packet {packet_id}")
                 packet_ids.add(packet_id)
             packet_errors, packet_coverage = proof_packet_errors(
-                feature_id, packet, acceptance_ids, verify_files
+                feature_id,
+                packet,
+                acceptance_ids,
+                verify_files,
+                proof_schema=proof_schema,
+                proof_source_commit=proof.get("sourceCommit"),
+                proof_build_id=build_id,
+                proof_build_reference=build_reference,
             )
             errors.extend(packet_errors)
             covered.update(packet_coverage)
