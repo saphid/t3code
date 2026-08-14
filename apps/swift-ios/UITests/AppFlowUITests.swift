@@ -280,7 +280,7 @@ final class AppFlowUITests: XCTestCase {
         )
         XCTAssertGreaterThanOrEqual(
             firstSkill.frame.height,
-            60,
+            90,
             "The long skill row collapsed below its readable expanded height"
         )
         assertMenu(menu, clears: keyboard)
@@ -295,21 +295,55 @@ final class AppFlowUITests: XCTestCase {
             isFullyContained(lastSkill, in: menu),
             "Could not scroll the full final fixture skill row into view"
         )
+        XCTAssertGreaterThanOrEqual(
+            lastSkill.frame.height,
+            90,
+            "The full final skill row collapsed below its readable expanded height"
+        )
         assertMenu(menu, clears: keyboard)
         capture("thread-skills-popup-scrolled")
 
-        composer.typeText("release")
-        XCTAssertTrue(lastSkill.waitForExistence(timeout: 4))
-        XCTAssertTrue(lastSkill.isHittable, "The filtered final skill is not selectable")
+        XCTAssertTrue(lastSkill.isHittable, "The full-popup final skill is not selectable")
         lastSkill.tap()
-
         XCTAssertTrue(menu.waitForNonExistence(timeout: 4), "Skills popup did not dismiss")
+        let fullSelection = "$zeta-release-proof-archive "
         XCTAssertEqual(
             composer.value as? String,
-            "$zeta-release-proof-archive ",
-            "Selecting the filtered skill did not replace the trigger"
+            fullSelection,
+            "Selecting the full-popup final skill did not replace the trigger"
         )
         XCTAssertTrue(keyboard.exists, "Selecting a skill unexpectedly dismissed the keyboard")
+
+        launch()
+        assertIdentifier("thread-fixture-main").tap()
+        assertIdentifier("message-fixture-user")
+        if !app.descendants(matching: .any)["message-composer"].firstMatch.exists {
+            assertHittableButton("Message agent").tap()
+        }
+        let filteredComposer = assertIdentifier("message-composer")
+        filteredComposer.tap()
+        let filteredKeyboard = app.keyboards.firstMatch
+        XCTAssertTrue(
+            filteredKeyboard.waitForExistence(timeout: 4),
+            "Thread composer did not accept keyboard focus for filtering"
+        )
+        filteredComposer.typeText("$release")
+        let filteredMenu = assertIdentifier("composer-command-menu")
+        let filteredSkill = assertIdentifier(
+            "composer-suggestion-skill:zeta-release-proof-archive"
+        )
+        assertMenu(filteredMenu, clears: filteredKeyboard)
+        XCTAssertTrue(filteredSkill.isHittable, "The filtered final skill is not selectable")
+        filteredSkill.tap()
+        XCTAssertTrue(
+            filteredMenu.waitForNonExistence(timeout: 4),
+            "Filtered Skills popup did not dismiss"
+        )
+        XCTAssertEqual(
+            filteredComposer.value as? String,
+            fullSelection,
+            "Selecting the filtered skill did not replace the trigger"
+        )
         capture("thread-skills-popup-selected")
     }
 
@@ -319,17 +353,22 @@ final class AppFlowUITests: XCTestCase {
         let list = app.collectionViews.firstMatch
         XCTAssertTrue(list.waitForExistence(timeout: 8), "Home thread list did not appear")
         XCTAssertTrue(assertIdentifier("thread-fixture-history-24").isHittable)
-        list.swipeUp()
-        assertCommandPaletteClosed("A normal Home-list swipe opened the command palette")
 
         let nearTop = list.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.12))
         nearTop.press(
             forDuration: 0.15,
-            thenDragTo: nearTop.withOffset(CGVector(dx: 0, dy: -70)),
+            thenDragTo: nearTop.withOffset(CGVector(dx: 0, dy: 110)),
             withVelocity: .slow,
             thenHoldForDuration: 0.1
         )
-        assertCommandPaletteClosed("A swipe near the top of the Home list opened the command palette")
+        assertCommandPaletteClosed(
+            "A downward rubber-band gesture at the top of Home opened the command palette"
+        )
+
+        list.swipeUp()
+        assertCommandPaletteClosed("A normal Home-list swipe opened the command palette")
+        list.swipeDown()
+        assertCommandPaletteClosed("A downward Home-list scroll opened the command palette")
 
         let accumulatedThread = app.descendants(matching: .any)["thread-fixture-main"].firstMatch
         for _ in 0 ..< 10 where !accumulatedThread.isHittable {
@@ -384,6 +423,20 @@ final class AppFlowUITests: XCTestCase {
 
         let navigationBar = app.navigationBars.firstMatch
         XCTAssertTrue(navigationBar.waitForExistence(timeout: 4))
+        drag(
+            from: navigationBar,
+            offset: CGVector(dx: -120, dy: 18),
+            velocity: .slow
+        )
+        assertCommandPaletteClosed("A horizontal thread-header gesture opened the command palette")
+
+        drag(
+            from: navigationBar,
+            offset: CGVector(dx: 0, dy: 70),
+            velocity: .slow
+        )
+        assertCommandPaletteClosed("A below-threshold thread-header drag opened the command palette")
+
         drag(
             from: navigationBar,
             offset: CGVector(dx: 0, dy: 120),
@@ -913,8 +966,23 @@ final class AppFlowUITests: XCTestCase {
         line: UInt = #line
     ) {
         let windowFrame = app.windows.firstMatch.frame
+        let navigationBar = app.navigationBars.firstMatch
+        XCTAssertTrue(
+            navigationBar.exists,
+            "Thread navigation bar is unavailable for safe-top measurement",
+            file: file,
+            line: line
+        )
+        let safeTop = navigationBar.frame.maxY
         XCTAssertGreaterThanOrEqual(menu.frame.minX, windowFrame.minX, file: file, line: line)
         XCTAssertLessThanOrEqual(menu.frame.maxX, windowFrame.maxX, file: file, line: line)
+        XCTAssertGreaterThanOrEqual(
+            menu.frame.minY,
+            safeTop,
+            "Skills popup entered the navigation and safe-top area",
+            file: file,
+            line: line
+        )
         XCTAssertLessThanOrEqual(
             menu.frame.maxY,
             keyboard.frame.minY + 2,
@@ -947,11 +1015,17 @@ final class AppFlowUITests: XCTestCase {
 
     private func assertCommandPaletteClosed(
         _ message: String,
+        settlingFor settleInterval: TimeInterval = 1,
         file: StaticString = #filePath,
         line: UInt = #line
     ) {
         let drawer = app.descendants(matching: .any)["command-palette-drawer"].firstMatch
         XCTAssertTrue(drawer.waitForNonExistence(timeout: 2), message, file: file, line: line)
+        let deadline = Date().addingTimeInterval(settleInterval)
+        repeat {
+            XCTAssertFalse(drawer.exists, message, file: file, line: line)
+            RunLoop.current.run(until: min(deadline, Date().addingTimeInterval(0.1)))
+        } while Date() < deadline
     }
 
     private func assertCommandPaletteOpen(

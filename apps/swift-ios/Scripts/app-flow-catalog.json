@@ -311,6 +311,7 @@
       {
         "id": "home-scroll-and-command-palette",
         "patterns": [
+          "apps/swift-ios/Features/Chat/ThreadDetailView.swift",
           "apps/swift-ios/Features/Workspace/FeatureCommandPaletteGestureInstaller.swift",
           "apps/swift-ios/Features/Workspace/FeatureCommandPaletteModel.swift",
           "apps/swift-ios/Features/Workspace/FeatureCommandPaletteView.swift",

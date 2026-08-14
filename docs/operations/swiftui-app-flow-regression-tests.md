@@ -42,6 +42,12 @@ The fixture exists only in `DEBUG`. Release and TestFlight builds always compose
 - task creation plus a follow-up message through the production composer;
 - add-project and add-connection entry points without creating or deleting data;
 - Settings, theme choices, connection list, and connection detail;
+- a keyboard-safe Skills popup with readable long rows, full-list scrolling,
+  unfiltered bottom-row selection, and filtered selection;
+- ordinary upward and downward Home-list scrolling, including top-edge rubber
+  banding, without opening the command palette;
+- command-palette direction isolation and drag thresholds from both Home and a
+  keyboard-focused thread;
 - the complete non-destructive thread context-menu inventory;
 - thread detail plus Files, Review, Source Control, and Terminal surfaces;
 - retained screenshots and semantic accessibility hierarchies at the meaningful
@@ -50,6 +56,11 @@ The fixture exists only in `DEBUG`. Release and TestFlight builds always compose
   XXL, right-to-left, and iPad Mini;
 - a separate critical-screen accessibility lane that rejects duplicate nonempty
   identifiers across onboarding, Home, and Settings.
+
+The 14 fixture journeys cover ten named personas: first-run user, returning
+user, task author, error-recovery user, permissions-denied user, long-lived
+user, one-handed mobile user, environment manager, thread operator, and
+developer.
 
 The tests deliberately do not tap destructive confirmation actions, system
 photo/camera/file pickers, external URLs, or buttons that would send live data.
@@ -139,7 +150,7 @@ Simulator by default; an explicit UDID is treated as caller-owned.
 | Plan                   | Purpose                                                                     | Retry policy                                 |
 | ---------------------- | --------------------------------------------------------------------------- | -------------------------------------------- |
 | `pr`                   | Four critical deterministic journeys for pull requests                      | None; first failure is red                   |
-| `regression`           | Every fixture journey across nine named personas, with zero expected skips  | None                                         |
+| `regression`           | Every fixture journey across ten named personas, with zero expected skips   | None                                         |
 | `stability`            | Three fresh-runner repetitions of onboarding and task/follow-up             | No retry-to-green; all attempts are retained |
 | `live`                 | One disposable-backend pairing/project smoke                                | None; requires a fresh one-time code         |
 | `security`             | Staged credential ingress and evidence-leak audit                           | None; valid-format sentinel only             |
