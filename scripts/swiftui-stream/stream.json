@@ -369,7 +369,7 @@
       "sourceCommit": "d7f1bbd2e61755f42d7ae9378914f1c6443a9a1d",
       "candidateCommit": "d7f1bbd2e61755f42d7ae9378914f1c6443a9a1d",
       "integratedCommit": "19459ed2ee8b689710c55efc42d17cff3493b9e4",
-      "testBuild": 57,
+      "testBuild": 58,
       "receipt": ".t3/evidence/integrated-pr-final-20260814T0715Z/verification.receipt.json",
       "delivery": "local-only"
     }
