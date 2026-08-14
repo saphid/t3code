@@ -35,8 +35,14 @@ final class T3ConnectNativeCapabilityTests: XCTestCase {
 
         try await client.connectT3Environment(managed)
 
-        let event = await events.next()
-        guard case let .snapshot(snapshot)? = event else {
+        var connectedSnapshot: FeatureSnapshot?
+        while let event = await events.next() {
+            if case let .snapshot(snapshot) = event {
+                connectedSnapshot = snapshot
+                break
+            }
+        }
+        guard let snapshot = connectedSnapshot else {
             return XCTFail("Managed connect did not publish its initial Home snapshot")
         }
         XCTAssertEqual(snapshot.connection.state, .connected)
