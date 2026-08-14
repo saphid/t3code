@@ -61,25 +61,7 @@
       "reviewGroup": "Review safety",
       "visualChange": true,
       "interactionChange": true,
-      "proofMediaReceipt": "~/.t3/artifacts/swiftui-stream/evidence/pipeline-diagram-20260813/swiftui-pipeline-diagram-receipt.json",
-      "visualEvidence": [
-        {
-          "kind": "image",
-          "title": "Dark-mode PR promotion flow",
-          "caption": "Shows the proposed pipeline stages and their automated and human review gates.",
-          "appearance": "dark",
-          "cleanURL": "https://alexs-macbook-pro-1.tail4e5636.ts.net:10022/swiftui-pipeline-diagram-clean.png",
-          "annotatedURL": "https://alexs-macbook-pro-1.tail4e5636.ts.net:10022/swiftui-pipeline-diagram-annotated.png"
-        },
-        {
-          "kind": "video",
-          "title": "Dark-mode pipeline walkthrough",
-          "caption": "Opens the Dev review, expands the proposed flow, and swipes through the Dev and upstream gates with visible gestures and captions.",
-          "appearance": "dark",
-          "cleanURL": "https://alexs-macbook-pro-1.tail4e5636.ts.net:10022/swiftui-pipeline-diagram-clean.mp4",
-          "annotatedURL": "https://alexs-macbook-pro-1.tail4e5636.ts.net:10022/swiftui-pipeline-diagram-annotated.mp4"
-        }
-      ],
+      "proofPending": true,
       "state": "in-test",
       "sourceBranch": "feat/swiftui-pipeline-diagram-20260813",
       "sourceThread": "7F1BCA94-9E0D-4CF6-A833-99995121ADFB",
@@ -103,8 +85,6 @@
         "256f9b764b5f975aeb50b10e5e99d3d986f5d681",
         "df2f044f5d5e03c8b9adc9bb48f4e8bcb680035c",
         "11658353d7175c55ab745c469f0c8861c1448db5",
-        "31c4ff00a0f09bf9385f69fd6adc1dd893c9509f",
-        "42ca7e67399fc15f9246eb733f6167a4f5c72721",
         "a7397a9c888f139494eb32d075f6b189eb20b5c7"
       ],
       "integratedCommit": "a7397a9c888f139494eb32d075f6b189eb20b5c7",
@@ -203,7 +183,7 @@
       "branch": "fix/swiftui-skill-popup-readability-20260813",
       "sourceCommit": "09f309bcba3a2d822c2e81f48dbf728a8c969488",
       "integratedCommits": [
-        "cbae9422799d9bd0d5405f56f6241203186aa9fb",
+        "cbae942274d6fcd62cfc365a32e1c9f7d826510d",
         "7fc758cc1adc58d6426eb4fec413c2dc37e3841b"
       ],
       "integratedCommit": "7fc758cc1adc58d6426eb4fec413c2dc37e3841b",
@@ -281,7 +261,7 @@
       "sourceCommit": "5a46ed73f",
       "integratedCommits": [
         "945c98851d77364c72c1a6ff5b893cef302d2f62",
-        "8ef974258f04dbf5209b2033180ee7c055a18af7",
+        "8ef974258b9d2b38af5bcb02f680da4e23579704",
         "8395257e8edb1e9d9f04c2f3e6a7e585632e09fa"
       ],
       "integratedCommit": "8395257e8edb1e9d9f04c2f3e6a7e585632e09fa",
@@ -436,7 +416,7 @@
       "state": "in-test",
       "sourceCommit": "9006b8de",
       "integratedCommits": [
-        "d79d498f5610398eaad1ef3ba481f8da5b88b34c",
+        "d79d498f546c888971ca2f6807b7618c7d972ecb",
         "1976e870b0e9fa57ca05c98c33370fc21030b8e2",
         "2b1cf46a76afb0825dff0cec505307807149992e"
       ],

@@ -163,6 +163,7 @@ final class AppFlowUITests: XCTestCase {
             assertExists("System")
             assertExists("Light")
             assertExists("Dark")
+            assertExists("T3 Code, dark")
             capture("settings-theme-catalog")
             let backButton = themesNavigationBar.buttons.firstMatch
             XCTAssertTrue(backButton.waitForExistence(timeout: 8))

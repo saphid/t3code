@@ -82,11 +82,11 @@ def manifest_path_value(key: str) -> str:
 
 def manifest() -> dict[str, Any]:
     value = load_json(MANIFEST_PATH)
-    validate_manifest(value)
+    validate_manifest(value, verify_repository=True)
     return value
 
 
-def validate_manifest(value: dict[str, Any]) -> None:
+def validate_manifest(value: dict[str, Any], verify_repository: bool = False) -> None:
     if value.get("schemaVersion") != 1:
         fail("stream.json schemaVersion must be 1")
     states = value.get("lifecycle", [])
@@ -172,11 +172,14 @@ def validate_manifest(value: dict[str, Any]) -> None:
                     if parsed.scheme != "https" or not parsed.netloc:
                         fail(f"{feature_id} visual evidence {key} must use HTTPS")
         if feature.get("visualChange"):
-            if not isinstance(evidence, list) or not evidence:
+            proof_pending = feature.get("proofPending") is True
+            if proof_pending and feature.get("state") != "in-test":
+                fail(f"{feature_id} can only stage proofPending while in-test")
+            if (not isinstance(evidence, list) or not evidence) and not proof_pending:
                 fail(f"{feature_id} is a visual change without visualEvidence")
-            if "image" not in kinds:
+            if evidence and "image" not in kinds:
                 fail(f"{feature_id} visual change has no image evidence")
-            if feature.get("interactionChange") and "video" not in kinds:
+            if evidence and feature.get("interactionChange") and "video" not in kinds:
                 fail(f"{feature_id} interaction change has no video evidence")
         if evidence is not None:
             receipt = feature.get("proofMediaReceipt")
@@ -233,6 +236,10 @@ def validate_manifest(value: dict[str, Any]) -> None:
                         f"{feature_id} integratedCommits must contain unique full SHAs "
                         "including integratedCommit"
                     )
+            declared_commits = integrated_commits or [integrated]
+            if verify_repository:
+                for commit in declared_commits:
+                    validate_integrated_commit(feature_id, commit)
             if state == "needs-you":
                 if feature.get("reviewMedia") is not True:
                     fail(f"{feature_id} is reviewable without reviewMedia")
@@ -244,7 +251,7 @@ def validate_manifest(value: dict[str, Any]) -> None:
                 if not {"image", "video"} <= evidence_kinds:
                     fail(f"{feature_id} review evidence needs an image and video")
                 proof_commit = feature.get("proofCommit")
-                declared_commits = set(integrated_commits or [integrated])
+                declared_commits = set(declared_commits)
                 if (
                     not isinstance(proof_commit, str)
                     or not re.fullmatch(r"[0-9a-f]{40}", proof_commit)
@@ -294,8 +301,8 @@ def validate_proof_media_receipt(
             str(Path.home() / ".t3/artifacts/swiftui-stream/evidence"),
         )
     ).expanduser()
-    if not receipt_root.exists():
-        return
+    if not receipt_root.is_dir():
+        fail(f"{feature_id} durable evidence storage does not exist")
     receipt_file = Path(receipt_path).expanduser()
     try:
         receipt_file.resolve().relative_to(receipt_root.resolve())
@@ -331,6 +338,38 @@ def validate_proof_media_receipt(
         )
     if declared != attested:
         fail(f"{feature_id} visualEvidence does not match its proofMediaReceipt")
+
+
+def validate_integrated_commit(feature_id: str, commit: str) -> None:
+    exists = subprocess.run(
+        ["git", "-C", str(REPO_ROOT), "cat-file", "-e", f"{commit}^{{commit}}"],
+        text=True,
+        capture_output=True,
+    )
+    if exists.returncode:
+        fail(f"{feature_id} integrated commit does not exist: {commit}")
+    ancestor = subprocess.run(
+        ["git", "-C", str(REPO_ROOT), "merge-base", "--is-ancestor", commit, "HEAD"],
+        text=True,
+        capture_output=True,
+    )
+    if ancestor.returncode == 1:
+        fail(f"{feature_id} integrated commit is not in this build: {commit}")
+    if ancestor.returncode:
+        fail(ancestor.stderr.strip() or f"cannot inspect integrated commit {commit}")
+    changed = set(
+        subprocess.run(
+            [
+                "git", "-C", str(REPO_ROOT), "diff-tree", "--no-commit-id",
+                "--name-only", "-r", commit,
+            ],
+            check=True,
+            text=True,
+            capture_output=True,
+        ).stdout.splitlines()
+    )
+    if changed and changed <= {"scripts/swiftui-stream/stream.json"}:
+        fail(f"{feature_id} integrated commit is metadata-only: {commit}")
 
 
 def validate_delivery_inventory(value: dict[str, Any], states: list[str]) -> None:
@@ -729,6 +768,7 @@ def approval_list() -> list[dict[str, Any]]:
     return sorted(
         eligible,
         key=lambda feature: (
+            feature.get("reviewPriority", 1_000_000),
             feature.get("order", 1_000_000),
             normalize(feature["name"]),
             feature["id"],

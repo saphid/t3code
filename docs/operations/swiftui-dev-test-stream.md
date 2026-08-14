@@ -301,6 +301,15 @@ product itself changed visually. `proofCommit` must be a full SHA named by
 that same SHA. Thus, media for an earlier version cannot reopen the gate for a
 newer build.
 
+A visual item can use `proofPending: true` only while it is `in-test`. This
+keeps stale media out of a staged build while the replacement Test proof is
+being recorded. The flag, the missing-media state, and the `in-test` state must
+all be replaced before the item can enter `needs-you`.
+
+Before upstream delivery, these gates run in the private deterministic build
+workflow and `build-ready.sh`; they do not use GitHub Actions. Upstream CI is
+allowed only after the code enters the upstream PR path.
+
 When `integratedCommits` is present, it contains unique full commit SHAs and
 includes `integratedCommit`. If one commit affects more than one review item,
 every affected item records that commit and its rollback coupling.

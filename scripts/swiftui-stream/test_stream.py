@@ -71,6 +71,43 @@ testing_manifest = load_module(
 
 
 class StreamTests(unittest.TestCase):
+    def review_manifest_fixture(self) -> dict:
+        commit = "b" * 40
+        return {
+            "schemaVersion": 1,
+            "lifecycle": ["in-test", "needs-you"],
+            "currentTestBuild": {
+                "channel": "test",
+                "build": 1,
+                "sequence": 1,
+                "commit": "c" * 40,
+                "bundleId": "test.bundle",
+                "deviceId": "phone",
+                "receipt": "~/.t3/swiftui-stream/device-receipts/test.json",
+                "status": "installed-and-launched",
+                "launchPending": False,
+            },
+            "features": [{
+                "id": "review-item",
+                "name": "Review item",
+                "state": "in-test",
+                "problem": "The prior behavior fails.",
+                "reproductionSteps": ["Open the flow.", "Exercise the behavior."],
+                "summary": "Fixes the behavior.",
+                "whatToCheck": "Exercise the flow.",
+                "successLooksLike": "The flow succeeds.",
+                "validationSummary": "Focused checks pass.",
+                "knownLimitations": "None known.",
+                "reviewPriority": 1,
+                "reviewGroup": "Core reliability",
+                "sourceIssue": "https://github.com/saphid/t3code-personal/issues/1",
+                "sourceThread": "THREAD-1",
+                "integratedCommit": commit,
+                "integratedCommits": [commit],
+                "testBuild": 1,
+            }],
+        }
+
     def receipt_fixture(
         self,
         directory: str,
@@ -164,10 +201,11 @@ class StreamTests(unittest.TestCase):
                 items = stream.approval_list()
 
         self.assertTrue(items)
-        self.assertEqual(
-            [item.get("order", 1_000_000) for item in items],
-            sorted(item.get("order", 1_000_000) for item in items),
-        )
+        ordering = [
+            (item.get("reviewPriority", 1_000_000), item.get("order", 1_000_000))
+            for item in items
+        ]
+        self.assertEqual(ordering, sorted(ordering))
         self.assertTrue(all(item["testBuild"] == current["build"] for item in items))
         self.assertNotIn("dev-title-label", {item["id"] for item in items})
 
@@ -589,16 +627,15 @@ class StreamTests(unittest.TestCase):
             stream.validate_manifest(value)
 
     def test_reviewable_feature_requires_the_exact_current_test_build(self):
-        value = json.loads(json.dumps(stream.manifest()))
-        feature = next(
-            item
-            for item in value["features"]
-            if item.get("state") in stream.APPROVAL_STATES
-        )
+        value = self.review_manifest_fixture()
+        feature = value["features"][0]
         feature["state"] = "needs-you"
-        feature["testBuild"] = value["currentTestBuild"]["build"] - 1
-        with self.assertRaises(SystemExit):
+        value["currentTestBuild"]["build"] = 2
+        feature["testBuild"] = 1
+        errors = io.StringIO()
+        with redirect_stderr(errors), self.assertRaises(SystemExit):
             stream.validate_manifest(value)
+        self.assertIn("not current build", errors.getvalue())
 
     def test_needs_you_feature_requires_image_and_video_evidence(self):
         commit = "b" * 40
@@ -651,7 +688,7 @@ class StreamTests(unittest.TestCase):
             },
             "features": [feature],
         }
-        with patch.dict(os.environ, {"SWIFTUI_STREAM_EVIDENCE_DIR": "/missing/evidence-root"}):
+        with patch.object(stream, "validate_proof_media_receipt"):
             stream.validate_manifest(value)
 
             for kind in ("image", "video"):
@@ -686,11 +723,8 @@ class StreamTests(unittest.TestCase):
     def test_reviewable_feature_requires_an_https_source_issue(self):
         for source_issue in ("http://example.com/issues/1", "https://", "https:///issues/1"):
             with self.subTest(source_issue=source_issue):
-                value = json.loads(json.dumps(stream.manifest()))
-                feature = next(
-                    item for item in value["features"]
-                    if item.get("state") in stream.APPROVAL_STATES
-                )
+                value = self.review_manifest_fixture()
+                feature = value["features"][0]
                 feature["sourceIssue"] = source_issue
                 errors = io.StringIO()
                 with redirect_stderr(errors), self.assertRaises(SystemExit):
@@ -712,11 +746,8 @@ class StreamTests(unittest.TestCase):
         )
         for field in required:
             with self.subTest(field=field):
-                value = json.loads(json.dumps(stream.manifest()))
-                feature = next(
-                    item for item in value["features"]
-                    if item.get("state") in stream.APPROVAL_STATES
-                )
+                value = self.review_manifest_fixture()
+                feature = value["features"][0]
                 feature.pop(field)
                 errors = io.StringIO()
                 with redirect_stderr(errors), self.assertRaises(SystemExit):
@@ -732,16 +763,50 @@ class StreamTests(unittest.TestCase):
         )
         for commits in invalid_values:
             with self.subTest(commits=commits):
-                value = json.loads(json.dumps(stream.manifest()))
-                feature = next(
-                    item for item in value["features"]
-                    if item.get("state") in stream.APPROVAL_STATES
-                )
+                value = self.review_manifest_fixture()
+                feature = value["features"][0]
                 feature["integratedCommits"] = commits
                 errors = io.StringIO()
                 with redirect_stderr(errors), self.assertRaises(SystemExit):
                     stream.validate_manifest(value)
                 self.assertIn("integratedCommits", errors.getvalue())
+
+    def test_integrated_commit_must_exist_in_the_build_and_change_product_files(self):
+        with tempfile.TemporaryDirectory() as directory:
+            repository = Path(directory)
+            git(repository, "init")
+            git(repository, "config", "user.email", "test@example.com")
+            git(repository, "config", "user.name", "Test")
+            product = repository / "Product.swift"
+            product.write_text("let value = 1\n")
+            product_commit = commit_all(repository, "product change")
+
+            value = self.review_manifest_fixture()
+            feature = value["features"][0]
+            feature["integratedCommit"] = product_commit
+            feature["integratedCommits"] = [product_commit]
+            with patch.object(stream, "REPO_ROOT", repository):
+                stream.validate_manifest(value, verify_repository=True)
+
+                feature["integratedCommit"] = "d" * 40
+                feature["integratedCommits"] = ["d" * 40]
+                errors = io.StringIO()
+                with redirect_stderr(errors), self.assertRaises(SystemExit):
+                    stream.validate_manifest(value, verify_repository=True)
+                self.assertIn("does not exist", errors.getvalue())
+
+                feature["integratedCommit"] = product_commit
+                feature["integratedCommits"] = [product_commit]
+                metadata = repository / "scripts/swiftui-stream/stream.json"
+                metadata.parent.mkdir(parents=True)
+                metadata.write_text("{}\n")
+                metadata_commit = commit_all(repository, "metadata only")
+                feature["integratedCommit"] = metadata_commit
+                feature["integratedCommits"] = [metadata_commit]
+                errors = io.StringIO()
+                with redirect_stderr(errors), self.assertRaises(SystemExit):
+                    stream.validate_manifest(value, verify_repository=True)
+                self.assertIn("metadata-only", errors.getvalue())
 
     def test_in_test_feature_may_stage_a_future_build(self):
         value = json.loads(json.dumps(stream.manifest()))
@@ -849,7 +914,7 @@ class StreamTests(unittest.TestCase):
             stream.validate_manifest(value)
 
         base_feature["proofMediaReceipt"] = "~/.t3/evidence/visual/receipt.json"
-        with patch.dict(os.environ, {"SWIFTUI_STREAM_EVIDENCE_DIR": "/missing/evidence-root"}):
+        with patch.object(stream, "validate_proof_media_receipt"):
             stream.validate_manifest(value)
 
         base_feature["visualEvidence"][0]["cleanURL"] = "http://evidence.example/clean.png"
@@ -873,6 +938,7 @@ class StreamTests(unittest.TestCase):
             receipt = root / "receipt.json"
             receipt.write_text(json.dumps({
                 "featureId": "visual",
+                "candidateCommit": "c" * 40,
                 "media": [{
                     **evidence[0],
                     "cleanSha256": "a" * 64,
@@ -882,7 +948,13 @@ class StreamTests(unittest.TestCase):
                 }],
             }))
             with patch.dict(os.environ, {"SWIFTUI_STREAM_EVIDENCE_DIR": directory}):
-                stream.validate_proof_media_receipt("visual", evidence, str(receipt))
+                stream.validate_proof_media_receipt(
+                    "visual", evidence, str(receipt), "c" * 40
+                )
+                with self.assertRaises(SystemExit):
+                    stream.validate_proof_media_receipt(
+                        "visual", evidence, str(receipt), "d" * 40
+                    )
                 evidence[0]["annotatedURL"] = "https://evidence.example/changed.png"
                 with self.assertRaises(SystemExit):
                     stream.validate_proof_media_receipt("visual", evidence, str(receipt))
