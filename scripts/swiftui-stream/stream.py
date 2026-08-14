@@ -446,10 +446,120 @@ def validate_proof_media_receipt(
                 f"{feature_id} proofMediaReceipt {item.get('kind')} uses "
                 "identical clean and annotated proof"
             )
+        if item.get("kind") == "video":
+            validate_packet_validation_receipt(feature_id, item, receipt_root)
         media_proof.append((item["cleanSha256"], item["annotatedSha256"]))
     if declared != attested:
         fail(f"{feature_id} visualEvidence does not match its proofMediaReceipt")
     return media_proof
+
+
+def validate_packet_validation_receipt(
+    feature_id: str, media: dict[str, Any], evidence_root: Path
+) -> None:
+    path_value = media.get("packetValidationPath")
+    expected_digest = media.get("packetValidationSha256")
+    if not isinstance(path_value, str) or not path_value.strip():
+        fail(f"{feature_id} video proof has no packetValidationPath")
+    if not isinstance(expected_digest, str) or not re.fullmatch(
+        r"[0-9a-f]{64}", expected_digest
+    ):
+        fail(f"{feature_id} video proof has invalid packetValidationSha256")
+    validation_path = Path(path_value).expanduser()
+    try:
+        validation_path.resolve().relative_to(evidence_root.resolve())
+    except ValueError:
+        fail(f"{feature_id} packetValidationPath is outside durable evidence storage")
+    if validation_path.is_symlink() or not validation_path.is_file():
+        fail(f"{feature_id} packetValidationPath is not a regular evidence file")
+    actual_digest = hashlib.sha256(validation_path.read_bytes()).hexdigest()
+    if actual_digest != expected_digest:
+        fail(f"{feature_id} packetValidationSha256 does not match its file")
+    validation = load_json(validation_path)
+    if (
+        not isinstance(validation, dict)
+        or validation.get("version") != 1
+        or validation.get("kind") != "proof-packet-validation"
+        or validation.get("verdict") != "passed"
+    ):
+        fail(f"{feature_id} video proof has no passed packet validation")
+    for binding_name in ("packet_receipt", "timeline", "ledger"):
+        binding = validation.get(binding_name)
+        if (
+            not isinstance(binding, dict)
+            or not isinstance(binding.get("path"), str)
+            or not re.fullmatch(r"[0-9a-f]{64}", str(binding.get("sha256", "")))
+        ):
+            fail(f"{feature_id} packet validation has no valid {binding_name} binding")
+    seal = validation.get("seal")
+    unsigned = {key: value for key, value in validation.items() if key != "seal"}
+    canonical_digest = hashlib.sha256(
+        json.dumps(unsigned, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+    if (
+        not isinstance(seal, dict)
+        or seal.get("algorithm") != "sha256"
+        or seal.get("canonicalPayloadSha256") != canonical_digest
+    ):
+        fail(f"{feature_id} video proof has an invalid packet validation seal")
+    artifacts = validation.get("artifacts")
+    if not isinstance(artifacts, dict):
+        fail(f"{feature_id} packet validation has no artifact inventory")
+    for name, media_field in (
+        ("clean_video", "cleanSha256"),
+        ("annotated_video", "annotatedSha256"),
+    ):
+        artifact = artifacts.get(name)
+        if not isinstance(artifact, dict) or artifact.get("sha256") != media[media_field]:
+            fail(f"{feature_id} packet validation does not bind {name}")
+    actions = validation.get("actions")
+    action_count = validation.get("actionCount")
+    if (
+        not isinstance(actions, list)
+        or type(action_count) is not int
+        or action_count < 1
+        or len(actions) != action_count
+    ):
+        fail(f"{feature_id} packet validation has no complete action inventory")
+    action_ids = [
+        action.get("action_id") if isinstance(action, dict) else None
+        for action in actions
+    ]
+    if any(not isinstance(action_id, str) or not action_id for action_id in action_ids):
+        fail(f"{feature_id} packet validation has an invalid action id")
+    if len(action_ids) != len(set(action_ids)):
+        fail(f"{feature_id} packet validation has duplicate action ids")
+    for action in actions:
+        if (
+            action.get("kind") not in ("tap", "swipe")
+            or not isinstance(action.get("expect"), str)
+            or not action["expect"].strip()
+            or not re.fullmatch(
+                r"[0-9a-f]{64}", str(action.get("caption_sha256", ""))
+            )
+        ):
+            fail(f"{feature_id} packet validation has an incomplete action")
+    pairing = validation.get("pairing")
+    if not isinstance(pairing, dict):
+        fail(f"{feature_id} packet validation has no content-pairing result")
+    similarity = pairing.get("videoSsim")
+    minimum = pairing.get("minimumVideoSsim")
+    duration_delta = pairing.get("durationDelta")
+    if (
+        isinstance(similarity, bool)
+        or not isinstance(similarity, (int, float))
+        or similarity < 0
+        or similarity > 1
+        or isinstance(minimum, bool)
+        or not isinstance(minimum, (int, float))
+        or minimum < 0.75
+        or similarity < minimum
+        or isinstance(duration_delta, bool)
+        or not isinstance(duration_delta, (int, float))
+        or duration_delta < 0
+        or duration_delta > 1 / 24
+    ):
+        fail(f"{feature_id} packet validation has no valid content pairing")
 
 
 def validate_integrated_commit(feature_id: str, commit: str, test_ref: str) -> None:

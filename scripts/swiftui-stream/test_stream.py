@@ -1201,6 +1201,108 @@ class StreamTests(unittest.TestCase):
                     )
             self.assertIn("video uses identical", errors.getvalue())
 
+    def test_video_receipt_requires_sealed_action_packet_validation(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            clean = root / "clean.mp4"
+            annotated = root / "annotated.mp4"
+            clean.write_bytes(b"clean-video")
+            annotated.write_bytes(b"annotated-video")
+            clean_digest = hashlib.sha256(clean.read_bytes()).hexdigest()
+            annotated_digest = hashlib.sha256(annotated.read_bytes()).hexdigest()
+            evidence = [{
+                "kind": "video",
+                "appearance": "dark",
+                "cleanURL": "https://evidence.example/clean.mp4",
+                "annotatedURL": "https://evidence.example/annotated.mp4",
+            }]
+            validation = {
+                "version": 1,
+                "kind": "proof-packet-validation",
+                "verdict": "passed",
+                "packet_receipt": {"path": "/packet.json", "sha256": "1" * 64},
+                "timeline": {"path": "/timeline.json", "sha256": "2" * 64},
+                "ledger": {"path": "/ledger.json", "sha256": "3" * 64},
+                "artifacts": {
+                    "clean_video": {"sha256": clean_digest},
+                    "annotated_video": {"sha256": annotated_digest},
+                },
+                "actions": [{
+                    "action_id": "event-1",
+                    "kind": "tap",
+                    "expect": "The view opens",
+                    "caption_sha256": "4" * 64,
+                }],
+                "actionCount": 1,
+                "pairing": {
+                    "videoSsim": 0.95,
+                    "minimumVideoSsim": 0.75,
+                    "durationDelta": 0.0,
+                },
+            }
+            validation["seal"] = {
+                "algorithm": "sha256",
+                "canonicalPayloadSha256": hashlib.sha256(
+                    json.dumps(
+                        validation, sort_keys=True, separators=(",", ":")
+                    ).encode("utf-8")
+                ).hexdigest(),
+            }
+            validation_path = root / "packet-validation.json"
+            validation_path.write_text(json.dumps(validation))
+            media = {
+                **evidence[0],
+                "cleanPath": str(clean),
+                "cleanSha256": clean_digest,
+                "cleanBytes": clean.stat().st_size,
+                "annotatedPath": str(annotated),
+                "annotatedSha256": annotated_digest,
+                "annotatedBytes": annotated.stat().st_size,
+                "packetValidationPath": str(validation_path),
+                "packetValidationSha256": hashlib.sha256(
+                    validation_path.read_bytes()
+                ).hexdigest(),
+            }
+            receipt = root / "receipt.json"
+
+            def write_receipt(item: dict) -> None:
+                receipt.write_text(json.dumps({
+                    "featureId": "visual",
+                    "candidateCommit": "c" * 40,
+                    "testBuild": 1,
+                    "media": [item],
+                }))
+
+            write_receipt(media)
+            with patch.dict(os.environ, {"SWIFTUI_STREAM_EVIDENCE_DIR": directory}):
+                self.assertEqual(
+                    stream.validate_proof_media_receipt(
+                        "visual", evidence, str(receipt), "c" * 40, 1
+                    ),
+                    [(clean_digest, annotated_digest)],
+                )
+                missing = dict(media)
+                missing.pop("packetValidationPath")
+                write_receipt(missing)
+                errors = io.StringIO()
+                with redirect_stderr(errors), self.assertRaises(SystemExit):
+                    stream.validate_proof_media_receipt(
+                        "visual", evidence, str(receipt), "c" * 40, 1
+                    )
+                self.assertIn("no packetValidationPath", errors.getvalue())
+
+                validation["actionCount"] = 2
+                validation_path.write_text(json.dumps(validation))
+                invalid = dict(media)
+                invalid["packetValidationSha256"] = hashlib.sha256(
+                    validation_path.read_bytes()
+                ).hexdigest()
+                write_receipt(invalid)
+                with self.assertRaises(SystemExit):
+                    stream.validate_proof_media_receipt(
+                        "visual", evidence, str(receipt), "c" * 40, 1
+                    )
+
     def test_manifest_rejects_image_and_video_reusing_the_same_pair(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -1221,7 +1323,7 @@ class StreamTests(unittest.TestCase):
             ]
             media = []
             for item in evidence:
-                media.append({
+                media_item = {
                     "kind": item["kind"],
                     "appearance": "dark",
                     "cleanURL": item["cleanURL"],
@@ -1234,7 +1336,57 @@ class StreamTests(unittest.TestCase):
                         annotated.read_bytes()
                     ).hexdigest(),
                     "annotatedBytes": annotated.stat().st_size,
-                })
+                }
+                if item["kind"] == "video":
+                    validation = {
+                        "version": 1,
+                        "kind": "proof-packet-validation",
+                        "verdict": "passed",
+                        "packet_receipt": {
+                            "path": "/packet.json", "sha256": "1" * 64,
+                        },
+                        "timeline": {
+                            "path": "/timeline.json", "sha256": "2" * 64,
+                        },
+                        "ledger": {
+                            "path": "/ledger.json", "sha256": "3" * 64,
+                        },
+                        "artifacts": {
+                            "clean_video": {"sha256": media_item["cleanSha256"]},
+                            "annotated_video": {
+                                "sha256": media_item["annotatedSha256"]
+                            },
+                        },
+                        "actions": [{
+                            "action_id": "event-1",
+                            "kind": "tap",
+                            "expect": "The view opens",
+                            "caption_sha256": "4" * 64,
+                        }],
+                        "actionCount": 1,
+                        "pairing": {
+                            "videoSsim": 0.95,
+                            "minimumVideoSsim": 0.75,
+                            "durationDelta": 0.0,
+                        },
+                    }
+                    validation["seal"] = {
+                        "algorithm": "sha256",
+                        "canonicalPayloadSha256": hashlib.sha256(
+                            json.dumps(
+                                validation, sort_keys=True, separators=(",", ":")
+                            ).encode("utf-8")
+                        ).hexdigest(),
+                    }
+                    validation_path = root / "packet-validation.json"
+                    validation_path.write_text(json.dumps(validation))
+                    media_item.update({
+                        "packetValidationPath": str(validation_path),
+                        "packetValidationSha256": hashlib.sha256(
+                            validation_path.read_bytes()
+                        ).hexdigest(),
+                    })
+                media.append(media_item)
             receipt = root / "receipt.json"
             receipt.write_text(json.dumps({
                 "featureId": "review-item",

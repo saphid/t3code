@@ -724,7 +724,14 @@ def build_annotations(
         source_at = event_start(event)
         output_at = map_time(source_at, cuts)
         output_end = map_time(event_end(event), cuts)
-        mapped_event: Dict[str, Any] = {"kind": event["kind"], "source_at": source_at, "output_at": output_at}
+        mapped_event: Dict[str, Any] = {
+            "index": index,
+            "kind": event["kind"],
+            "source_at": source_at,
+            "output_at": output_at,
+        }
+        if event.get("action_id") is not None:
+            mapped_event["action_id"] = event["action_id"]
         if event["kind"] == "tap":
             x, y = normalized_point((float(event["x"]), float(event["y"])), width, height, timeline["coordinate_space"])
             sprite_size = int(run([magick, "identify", "-format", "%w", str(tap_sprites[0])], capture=True).stdout)
@@ -896,6 +903,8 @@ def build_image_annotations(
     overlays: List[Tuple[Path, int, int]] = []
     base = max(24, int(round(min(width, height) * 0.035)))
     mapped: Dict[str, Any] = {"index": selected_index, "kind": event["kind"]}
+    if event.get("action_id") is not None:
+        mapped["action_id"] = event["action_id"]
     if event["kind"] == "tap":
         x, y = normalized_point((float(event["x"]), float(event["y"])), width, height, timeline["coordinate_space"])
         sprite = make_tap_sprites(magick, work, base)[2]
@@ -941,11 +950,274 @@ def verify_pair(ffprobe: str, clean: Path, annotated: Path) -> None:
     for field in ("width", "height", "frame_rate", "has_audio"):
         if clean_info[field] != annotated_info[field]:
             raise ProofMediaError("Clean and annotated outputs differ in {0}".format(field))
-    if clean_info["frame_count"] is not None and clean_info["frame_count"] != annotated_info["frame_count"]:
+    if clean_info["frame_count"] != annotated_info["frame_count"]:
         raise ProofMediaError("Clean and annotated outputs differ in frame count")
     frame_duration = 1.0 / 24.0
     if abs(clean_info["duration"] - annotated_info["duration"]) > frame_duration:
         raise ProofMediaError("Clean and annotated outputs differ in duration")
+
+
+def verified_attested_file(record: Any, label: str) -> Tuple[Path, Dict[str, Any]]:
+    if not isinstance(record, dict):
+        raise ProofMediaError("{0} has no artifact record".format(label))
+    path_value = record.get("path")
+    digest = record.get("sha256")
+    size = record.get("bytes")
+    if not isinstance(path_value, str) or not path_value:
+        raise ProofMediaError("{0}.path is required".format(label))
+    if not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest):
+        raise ProofMediaError("{0}.sha256 is invalid".format(label))
+    if type(size) is not int or size < 1:
+        raise ProofMediaError("{0}.bytes is invalid".format(label))
+    path = Path(path_value).expanduser()
+    if path.is_symlink() or not path.is_file():
+        raise ProofMediaError("{0} is not a regular file".format(label))
+    actual_size = path.stat().st_size
+    actual_digest = sha256(path)
+    if actual_size != size:
+        raise ProofMediaError("{0}.bytes does not match its file".format(label))
+    if actual_digest != digest:
+        raise ProofMediaError("{0}.sha256 does not match its file".format(label))
+    return path, {
+        "path": str(path.resolve()),
+        "bytes": actual_size,
+        "sha256": actual_digest,
+    }
+
+
+def decoded_audio_hash(ffmpeg: str, source: Path) -> str:
+    result = run(
+        [
+            ffmpeg,
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-i",
+            str(source),
+            "-map",
+            "0:a:0",
+            "-f",
+            "hash",
+            "-hash",
+            "sha256",
+            "-",
+        ],
+        capture=True,
+    )
+    match = re.search(r"SHA256=([0-9a-fA-F]{64})", result.stdout)
+    if match is None:
+        raise ProofMediaError("Could not hash decoded audio: {0}".format(source))
+    return match.group(1).lower()
+
+
+def video_ssim(ffmpeg: str, clean: Path, annotated: Path) -> float:
+    result = run(
+        [
+            ffmpeg,
+            "-hide_banner",
+            "-loglevel",
+            "info",
+            "-i",
+            str(clean),
+            "-i",
+            str(annotated),
+            "-filter_complex",
+            "[0:v:0][1:v:0]ssim",
+            "-an",
+            "-f",
+            "null",
+            "-",
+        ],
+        capture=True,
+    )
+    matches = re.findall(r"All:([0-9.]+)", result.stderr)
+    if not matches:
+        raise ProofMediaError("Could not calculate clean/annotated video similarity")
+    return float(matches[-1])
+
+
+def verify_video_record_metadata(
+    record: Dict[str, Any], actual: Dict[str, Any], label: str
+) -> None:
+    for field in ("width", "height", "frame_rate", "frame_count", "has_audio"):
+        if record.get(field) != actual[field]:
+            raise ProofMediaError(
+                "{0}.{1} does not match its file".format(label, field)
+            )
+    recorded_duration = number(record.get("duration"), "{0}.duration".format(label))
+    if abs(recorded_duration - actual["duration"]) > 0.001:
+        raise ProofMediaError("{0}.duration does not match its file".format(label))
+
+
+def compile_secret_patterns(values: Sequence[str]) -> Tuple[re.Pattern[str], ...]:
+    try:
+        return tuple(re.compile(pattern) for pattern in values)
+    except re.error as exc:
+        raise ProofMediaError("Invalid --deny-secret-pattern: {0}".format(exc)) from exc
+
+
+def validate_history_actions(
+    history: Dict[str, Any], expected_ids: Sequence[str], extra_patterns: Sequence[str]
+) -> None:
+    if history.get("schemaVersion") != 1 or not isinstance(history.get("events"), list):
+        raise ProofMediaError(
+            "App-flow history must use schemaVersion 1 with an events list"
+        )
+    patterns = compile_secret_patterns(extra_patterns)
+    action_ids: List[str] = []
+    assertions: List[Dict[str, Any]] = []
+    for index, event in enumerate(history["events"]):
+        if not isinstance(event, dict):
+            raise ProofMediaError("App-flow events[{0}] must be an object".format(index))
+        if event.get("phase") == "act":
+            action_id = event.get("id")
+            if not isinstance(action_id, str) or not action_id:
+                raise ProofMediaError("App-flow act events require a non-empty id")
+            for field in ("selector", "action", "postcondition"):
+                if not isinstance(event.get(field), str) or not event[field].strip():
+                    raise ProofMediaError(
+                        "App-flow act event {0} requires {1}".format(action_id, field)
+                    )
+            action_ids.append(action_id)
+            reject_secrets(
+                {
+                    "label": event.get("selector"),
+                    "caption": event.get("action"),
+                    "expect": event.get("postcondition"),
+                },
+                index,
+                patterns,
+            )
+        elif event.get("phase") == "assert":
+            assertions.append(event)
+            reject_secrets(
+                {"expect": event.get("observation")}, index, patterns
+            )
+    if len(action_ids) != len(set(action_ids)):
+        raise ProofMediaError("App-flow history has duplicate action ids")
+    if sorted(action_ids) != sorted(expected_ids):
+        raise ProofMediaError("App-flow history actions do not match the proof timeline")
+    for action_id in action_ids:
+        if not any(
+            assertion.get("result") == "passed"
+            and assertion.get("actionid", assertion.get("action_id")) == action_id
+            for assertion in assertions
+        ):
+            raise ProofMediaError(
+                "App-flow action has no passed assertion: {0}".format(action_id)
+            )
+
+
+def validate_packet_action_ledger(
+    timeline: Dict[str, Any],
+    packet: Dict[str, Any],
+    width: int,
+    height: int,
+    output_duration: float,
+) -> List[Dict[str, Any]]:
+    packet_events = packet.get("events")
+    timeline_events = timeline["events"]
+    if not isinstance(packet_events, list) or len(packet_events) != len(timeline_events):
+        raise ProofMediaError("Proof receipt does not map every timeline event")
+    action_ids: List[str] = []
+    actions: List[Dict[str, Any]] = []
+    for index, (event, mapped) in enumerate(zip(timeline_events, packet_events)):
+        if not isinstance(mapped, dict):
+            raise ProofMediaError("Proof receipt events[{0}] is invalid".format(index))
+        if mapped.get("index") != index or mapped.get("kind") != event["kind"]:
+            raise ProofMediaError("Proof receipt event order does not match the timeline")
+        source_at = number(
+            mapped.get("source_at"), "proof receipt events[{0}].source_at".format(index)
+        )
+        if abs(source_at - event_start(event)) > 0.000001:
+            raise ProofMediaError("Proof receipt event time does not match the timeline")
+        output_at = number(
+            mapped.get("output_at"), "proof receipt events[{0}].output_at".format(index)
+        )
+        if output_at < 0 or output_at > output_duration:
+            raise ProofMediaError("Proof receipt event output time is outside the video")
+        expected_caption = caption_text(event)
+        if mapped.get("caption") != expected_caption:
+            raise ProofMediaError("Proof receipt caption does not match the timeline")
+        if event["kind"] not in ("tap", "swipe"):
+            continue
+        action_id = event.get("action_id")
+        if not isinstance(action_id, str) or not action_id:
+            raise ProofMediaError("Every tap and swipe requires action_id")
+        if mapped.get("action_id") != action_id:
+            raise ProofMediaError("Proof receipt has an unmapped action id")
+        action_ids.append(action_id)
+        expected_result = event.get("expect")
+        if not isinstance(expected_result, str) or not expected_result.strip():
+            raise ProofMediaError(
+                "Every tap and swipe requires an expected result: {0}".format(action_id)
+            )
+        if not isinstance(expected_caption, str) or "Expected:" not in expected_caption:
+            raise ProofMediaError(
+                "Every tap and swipe requires an Expected: caption: {0}".format(action_id)
+            )
+        caption_output = mapped.get("caption_output")
+        if (
+            not isinstance(caption_output, list)
+            or len(caption_output) != 2
+            or any(isinstance(value, bool) or not isinstance(value, (int, float)) for value in caption_output)
+            or caption_output[0] < 0
+            or caption_output[1] <= caption_output[0]
+            or caption_output[1] > output_duration
+        ):
+            raise ProofMediaError(
+                "Proof receipt has no expected-result caption interval: {0}".format(
+                    action_id
+                )
+            )
+        action_record: Dict[str, Any] = {
+            "action_id": action_id,
+            "kind": event["kind"],
+            "source_at": source_at,
+            "output_at": output_at,
+            "expect": expected_result,
+            "caption_sha256": hashlib.sha256(
+                expected_caption.encode("utf-8")
+            ).hexdigest(),
+        }
+        if event["kind"] == "tap":
+            expected_point = list(
+                normalized_point(
+                    (float(event["x"]), float(event["y"])),
+                    width,
+                    height,
+                    timeline["coordinate_space"],
+                )
+            )
+            if mapped.get("point") != expected_point:
+                raise ProofMediaError("Proof receipt tap point does not match the timeline")
+            action_record["point"] = expected_point
+        else:
+            expected_from = list(
+                normalized_point(
+                    event["from"], width, height, timeline["coordinate_space"]
+                )
+            )
+            expected_to = list(
+                normalized_point(
+                    event["to"], width, height, timeline["coordinate_space"]
+                )
+            )
+            if mapped.get("from") != expected_from or mapped.get("to") != expected_to:
+                raise ProofMediaError("Proof receipt swipe path does not match the timeline")
+            action_record.update({"from": expected_from, "to": expected_to})
+        actions.append(action_record)
+    if not action_ids:
+        raise ProofMediaError("Proof timeline contains no tap or swipe actions")
+    if len(action_ids) != len(set(action_ids)):
+        raise ProofMediaError("Proof timeline has duplicate action ids")
+    if sorted(action_ids) != sorted(
+        mapped.get("action_id")
+        for mapped in packet_events
+        if mapped.get("kind") in ("tap", "swipe")
+    ):
+        raise ProofMediaError("Proof receipt has missing or duplicate mapped actions")
+    return actions
 
 
 def atomic_write_json(path: Path, payload: Dict[str, Any]) -> None:
@@ -1101,6 +1373,7 @@ def convert_app_flow_timeline(
                 )
             )
         event: Dict[str, Any] = {
+            "action_id": action_id,
             "kind": kind,
             "at": at,
             "label": mapping.get(
@@ -1178,6 +1451,198 @@ def timeline_from_app_flow(args: argparse.Namespace) -> None:
     }
     atomic_write_json(output_path, timeline)
     print(str(output_path))
+
+
+def validation_seal(payload: Dict[str, Any]) -> str:
+    canonical = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode(
+        "utf-8"
+    )
+    return hashlib.sha256(canonical).hexdigest()
+
+
+def validate_packet(args: argparse.Namespace) -> None:
+    tools = require_tools()
+    receipt_path = Path(args.receipt).resolve()
+    timeline_path = Path(args.timeline).resolve()
+    output_path = Path(args.output).resolve()
+    history_path = Path(args.history).resolve() if args.history else None
+    for path, label in (
+        (receipt_path, "Proof edit receipt"),
+        (timeline_path, "Proof timeline"),
+    ):
+        if path.is_symlink() or not path.is_file():
+            raise ProofMediaError("{0} is not a regular file: {1}".format(label, path))
+    if history_path is not None and (
+        history_path.is_symlink() or not history_path.is_file()
+    ):
+        raise ProofMediaError(
+            "App-flow history is not a regular file: {0}".format(history_path)
+        )
+    if output_path.exists() and not args.overwrite:
+        raise ProofMediaError("Validation receipt exists; pass --overwrite to replace it")
+    input_paths = [receipt_path, timeline_path]
+    if history_path is not None:
+        input_paths.append(history_path)
+    validate_packet_paths(input_paths, (output_path,))
+    input_hashes = {path: sha256(path) for path in input_paths}
+
+    packet = read_json_object(receipt_path, "proof edit receipt")
+    if packet.get("version") != 1 or not isinstance(packet.get("artifacts"), dict):
+        raise ProofMediaError("Proof edit receipt must use version 1 with artifacts")
+    edit = packet.get("edit")
+    if not isinstance(edit, dict):
+        raise ProofMediaError("Proof edit receipt has no video edit record")
+    source_duration = number(edit.get("source_duration"), "edit.source_duration")
+    timeline = load_timeline(
+        timeline_path, source_duration, args.deny_secret_pattern
+    )
+    timeline_record = packet.get("timeline")
+    if not isinstance(timeline_record, dict):
+        raise ProofMediaError("Proof edit receipt has no timeline record")
+    if timeline_record.get("sha256") != input_hashes[timeline_path]:
+        raise ProofMediaError("Proof edit receipt does not bind the supplied timeline")
+
+    source_path, source_record = verified_attested_file(
+        packet.get("source"), "source"
+    )
+    artifacts: Dict[str, Dict[str, Any]] = {}
+    artifact_paths: Dict[str, Path] = {}
+    for name, record in packet["artifacts"].items():
+        artifact_path, verified = verified_attested_file(record, "artifacts.{0}".format(name))
+        artifact_paths[name] = artifact_path
+        artifacts[name] = verified
+    if "clean_video" not in artifacts or "annotated_video" not in artifacts:
+        raise ProofMediaError("Proof packet requires clean_video and annotated_video")
+    clean = artifact_paths["clean_video"]
+    annotated = artifact_paths["annotated_video"]
+    if artifacts["clean_video"]["sha256"] == artifacts["annotated_video"]["sha256"]:
+        raise ProofMediaError("Clean and annotated videos must not be identical")
+
+    verify_pair(tools["ffprobe"], clean, annotated)
+    clean_info = probe_video(tools["ffprobe"], clean)
+    annotated_info = probe_video(tools["ffprobe"], annotated)
+    verify_video_record_metadata(
+        packet["artifacts"]["clean_video"], clean_info, "artifacts.clean_video"
+    )
+    verify_video_record_metadata(
+        packet["artifacts"]["annotated_video"],
+        annotated_info,
+        "artifacts.annotated_video",
+    )
+    similarity = video_ssim(tools["ffmpeg"], clean, annotated)
+    minimum_ssim = number(args.minimum_ssim, "--minimum-ssim")
+    if minimum_ssim < 0.75 or minimum_ssim > 1:
+        raise ProofMediaError("--minimum-ssim must be between 0.75 and 1")
+    if similarity < minimum_ssim:
+        raise ProofMediaError(
+            "Clean and annotated videos are not content-paired: SSIM {0:.6f} < {1:.6f}".format(
+                similarity, minimum_ssim
+            )
+        )
+    clean_audio_hash: Optional[str] = None
+    if clean_info["has_audio"]:
+        clean_audio_hash = decoded_audio_hash(tools["ffmpeg"], clean)
+        annotated_audio_hash = decoded_audio_hash(tools["ffmpeg"], annotated)
+        if clean_audio_hash != annotated_audio_hash:
+            raise ProofMediaError("Clean and annotated decoded audio does not match")
+
+    actions = validate_packet_action_ledger(
+        timeline,
+        packet,
+        clean_info["width"],
+        clean_info["height"],
+        clean_info["duration"],
+    )
+    source_history = timeline.get("source_history")
+    ledger: Dict[str, Any]
+    if source_history is not None:
+        if history_path is None:
+            raise ProofMediaError(
+                "This timeline requires its bound app-flow history via --history"
+            )
+        if (
+            not isinstance(source_history, dict)
+            or source_history.get("kind") != "app-flow-agent-session"
+            or source_history.get("sha256") != input_hashes[history_path]
+        ):
+            raise ProofMediaError("Timeline does not bind the supplied app-flow history")
+        validate_history_actions(
+            read_json_object(history_path, "app-flow history"),
+            [action["action_id"] for action in actions],
+            args.deny_secret_pattern,
+        )
+        ledger = {
+            "kind": "app-flow-agent-session",
+            "path": str(history_path),
+            "sha256": input_hashes[history_path],
+        }
+    else:
+        if history_path is not None:
+            raise ProofMediaError("Timeline does not declare an app-flow source history")
+        ledger = {
+            "kind": "proof-timeline",
+            "path": str(timeline_path),
+            "sha256": input_hashes[timeline_path],
+        }
+
+    for path, digest in input_hashes.items():
+        if sha256(path) != digest:
+            raise ProofMediaError("Validation input changed during verification: {0}".format(path))
+    for name, path in artifact_paths.items():
+        if sha256(path) != artifacts[name]["sha256"]:
+            raise ProofMediaError("Proof artifact changed during verification: {0}".format(name))
+    if sha256(source_path) != source_record["sha256"]:
+        raise ProofMediaError("Raw source changed during verification")
+
+    receipt: Dict[str, Any] = {
+        "version": 1,
+        "kind": "proof-packet-validation",
+        "verdict": "passed",
+        "packet_receipt": {
+            "path": str(receipt_path),
+            "sha256": input_hashes[receipt_path],
+        },
+        "timeline": {
+            "path": str(timeline_path),
+            "sha256": input_hashes[timeline_path],
+        },
+        "ledger": ledger,
+        "source": source_record,
+        "artifacts": artifacts,
+        "actions": actions,
+        "actionCount": len(actions),
+        "pairing": {
+            "width": clean_info["width"],
+            "height": clean_info["height"],
+            "frameRate": clean_info["frame_rate"],
+            "frameCount": clean_info["frame_count"],
+            "cleanDuration": clean_info["duration"],
+            "annotatedDuration": annotated_info["duration"],
+            "durationDelta": abs(clean_info["duration"] - annotated_info["duration"]),
+            "videoSsim": similarity,
+            "minimumVideoSsim": minimum_ssim,
+            "decodedAudioSha256": clean_audio_hash,
+        },
+        "tools": {
+            "ffmpeg": tool_version(tools["ffmpeg"]),
+            "ffprobe": tool_version(tools["ffprobe"]),
+        },
+    }
+    receipt["seal"] = {
+        "algorithm": "sha256",
+        "canonicalPayloadSha256": validation_seal(receipt),
+    }
+    atomic_write_json(output_path, receipt)
+    print(
+        json.dumps(
+            {
+                "verdict": "passed",
+                "actions": len(actions),
+                "receipt": str(output_path),
+            },
+            indent=2,
+        )
+    )
 
 
 def validate_packet_paths(inputs: Sequence[Path], destinations: Sequence[Path]) -> None:
@@ -1306,6 +1771,25 @@ def timeline_add(args: argparse.Namespace) -> None:
         event.update({"start": args.at, "end": args.at + args.duration, "caption": args.caption})
     else:
         event["at"] = args.at
+        action_id = args.action_id
+        if action_id is None:
+            used_ids = {
+                item.get("action_id")
+                for item in payload["events"]
+                if isinstance(item, dict)
+            }
+            candidate = 1
+            while "action-{0}".format(candidate) in used_ids:
+                candidate += 1
+            action_id = "action-{0}".format(candidate)
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]*", action_id):
+            raise ProofMediaError("--action-id has invalid characters")
+        if any(
+            isinstance(item, dict) and item.get("action_id") == action_id
+            for item in payload["events"]
+        ):
+            raise ProofMediaError("--action-id must be unique")
+        event["action_id"] = action_id
         if args.kind == "tap":
             if args.point is None:
                 raise ProofMediaError("tap events require --point x,y")
@@ -1546,6 +2030,7 @@ def parser() -> argparse.ArgumentParser:
     add_parser.add_argument("--kind", choices=("tap", "swipe", "caption"), required=True)
     add_parser.add_argument("--at", type=float, required=True)
     add_parser.add_argument("--duration", type=float, default=0.6)
+    add_parser.add_argument("--action-id")
     add_parser.add_argument("--point", type=parse_point)
     add_parser.add_argument("--from", dest="from_point", type=parse_point)
     add_parser.add_argument("--to", dest="to_point", type=parse_point)
@@ -1564,6 +2049,19 @@ def parser() -> argparse.ArgumentParser:
     app_flow_parser.add_argument("--output", required=True)
     app_flow_parser.add_argument("--overwrite", action="store_true")
     app_flow_parser.set_defaults(handler=timeline_from_app_flow)
+
+    validate_parser = commands.add_parser(
+        "validate-packet",
+        help="verify a video packet against its timeline and optional app-flow ledger",
+    )
+    validate_parser.add_argument("receipt")
+    validate_parser.add_argument("--timeline", required=True)
+    validate_parser.add_argument("--history")
+    validate_parser.add_argument("--output", required=True)
+    validate_parser.add_argument("--minimum-ssim", type=float, default=0.75)
+    validate_parser.add_argument("--deny-secret-pattern", action="append", default=[])
+    validate_parser.add_argument("--overwrite", action="store_true")
+    validate_parser.set_defaults(handler=validate_packet)
 
     image_parser = commands.add_parser("image", help="build paired clean and annotated PNG proof")
     image_parser.add_argument("source")

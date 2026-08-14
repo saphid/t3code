@@ -113,6 +113,7 @@ class AppFlowAdapterTests(unittest.TestCase):
             timeline["events"],
             [
                 {
+                    "action_id": "event-1",
                     "kind": "tap",
                     "at": 1.25,
                     "label": "sidebar settings button",
@@ -121,6 +122,7 @@ class AppFlowAdapterTests(unittest.TestCase):
                     "y": 0.1,
                 },
                 {
+                    "action_id": "event-3",
                     "kind": "swipe",
                     "at": 2.0,
                     "label": "settings list",
@@ -310,7 +312,209 @@ class SafetyTests(unittest.TestCase):
             self.assertTrue(any("injected restore failure" in item for item in evidence["recovery_errors"]))
 
 
-@unittest.skipUnless(all(shutil.which(name) for name in ("ffmpeg", "ffprobe", "magick")), "media tools unavailable")
+@unittest.skipUnless(
+    all(shutil.which(name) for name in ("ffmpeg", "ffprobe", "magick")),
+    "media tools unavailable",
+)
+class PacketValidationTests(unittest.TestCase):
+    def build_app_flow_packet(self, root: Path) -> tuple:
+        source = root / "raw.mp4"
+        history = root / "agent-session.json"
+        action_map = root / "action-map.json"
+        timeline = root / "timeline.json"
+        artifacts = root / "artifacts"
+        validation = root / "validation.json"
+        subprocess.run(
+            [
+                "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+                "-f", "lavfi", "-i", "testsrc2=s=320x480:d=4:r=30",
+                "-f", "lavfi", "-i", "sine=frequency=440:duration=4",
+                "-c:v", "libx264", "-pix_fmt", "yuv420p",
+                "-c:a", "aac", "-shortest", str(source),
+            ],
+            check=True,
+        )
+        history.write_text(
+            json.dumps(
+                {
+                    "schemaVersion": 1,
+                    "plan": "pr",
+                    "events": [
+                        {
+                            "id": "event-1", "phase": "act",
+                            "at": "2026-08-15T01:00:01Z",
+                            "selector": "new", "action": "tap",
+                            "postcondition": "open",
+                        },
+                        {
+                            "id": "event-2", "phase": "assert",
+                            "at": "2026-08-15T01:00:01.2Z",
+                            "actionid": "event-1", "result": "passed",
+                            "observation": "open",
+                        },
+                        {
+                            "id": "event-3", "phase": "act",
+                            "at": "2026-08-15T01:00:02Z",
+                            "selector": "options", "action": "swipe-up",
+                            "postcondition": "picker",
+                        },
+                        {
+                            "id": "event-4", "phase": "assert",
+                            "at": "2026-08-15T01:00:02.7Z",
+                            "actionid": "event-3", "result": "passed",
+                            "observation": "picker",
+                        },
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+        action_map.write_text(
+            json.dumps(
+                {
+                    "version": 1,
+                    "recording_started_at": "2026-08-15T01:00:00Z",
+                    "actions": [
+                        {"action_id": "event-1", "point": [0.8, 0.9]},
+                        {
+                            "action_id": "event-3", "from": [0.5, 0.8],
+                            "to": [0.5, 0.3], "duration": 0.5,
+                        },
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+        subprocess.run(
+            [
+                "python3", str(SCRIPT), "timeline-from-app-flow", str(history),
+                "--action-map", str(action_map), "--output", str(timeline),
+            ],
+            check=True,
+        )
+        subprocess.run(
+            [
+                "python3", str(SCRIPT), "build", str(source),
+                "--timeline", str(timeline), "--output-dir", str(artifacts),
+                "--stem", "flow", "--no-auto-trim",
+            ],
+            check=True,
+        )
+        return source, history, timeline, artifacts / "flow-receipt.json", validation
+
+    def validate_command(
+        self, receipt: Path, timeline: Path, history: Path, output: Path
+    ) -> list:
+        return [
+            "python3", str(SCRIPT), "validate-packet", str(receipt),
+            "--timeline", str(timeline), "--history", str(history),
+            "--output", str(output),
+        ]
+
+    def test_validates_and_seals_complete_app_flow_packet_deterministically(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="proof-packet-validation-") as temporary:
+            root = Path(temporary)
+            _, history, timeline, receipt, validation = self.build_app_flow_packet(root)
+            command = self.validate_command(receipt, timeline, history, validation)
+
+            first = subprocess.run(
+                command, check=True, text=True, stdout=subprocess.PIPE
+            )
+            first_hash = MEDIA.sha256(validation)
+            second = subprocess.run(
+                command + ["--overwrite"], check=True, text=True,
+                stdout=subprocess.PIPE,
+            )
+            value = json.loads(validation.read_text(encoding="utf-8"))
+            unsigned = {key: item for key, item in value.items() if key != "seal"}
+
+            self.assertIn('"verdict": "passed"', first.stdout)
+            self.assertIn('"actions": 2', second.stdout)
+            self.assertEqual(first_hash, MEDIA.sha256(validation))
+            self.assertEqual(value["verdict"], "passed")
+            self.assertEqual(value["actionCount"], 2)
+            self.assertEqual(
+                value["seal"]["canonicalPayloadSha256"],
+                MEDIA.validation_seal(unsigned),
+            )
+            self.assertGreaterEqual(value["pairing"]["videoSsim"], 0.75)
+            self.assertRegex(
+                value["pairing"]["decodedAudioSha256"], r"^[0-9a-f]{64}$"
+            )
+            self.assertEqual(
+                [item["action_id"] for item in value["actions"]],
+                ["event-1", "event-3"],
+            )
+
+    def test_rejects_missing_history_unmapped_actions_and_credentials(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="proof-packet-rejections-") as temporary:
+            root = Path(temporary)
+            _, history, timeline, receipt, validation = self.build_app_flow_packet(root)
+            without_history = subprocess.run(
+                [
+                    "python3", str(SCRIPT), "validate-packet", str(receipt),
+                    "--timeline", str(timeline), "--output", str(validation),
+                ],
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+            self.assertNotEqual(without_history.returncode, 0)
+            self.assertIn("requires its bound app-flow history", without_history.stderr)
+
+            packet = json.loads(receipt.read_text(encoding="utf-8"))
+            packet["events"][1]["action_id"] = "event-1"
+            with self.assertRaisesRegex(MEDIA.ProofMediaError, "unmapped action id"):
+                timeline_value = MEDIA.load_timeline(timeline, 4.0)
+                MEDIA.validate_packet_action_ledger(
+                    timeline_value, packet, 320, 480, 4.0
+                )
+
+            secret_history = json.loads(history.read_text(encoding="utf-8"))
+            secret_history["events"][0]["postcondition"] = (
+                "Token: ABCDEFGHIJKLMNOP"
+            )
+            with self.assertRaisesRegex(MEDIA.ProofMediaError, "credential"):
+                MEDIA.validate_history_actions(
+                    secret_history, ["event-1", "event-3"], []
+                )
+
+    def test_rejects_unrelated_same_shape_annotated_video(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="proof-packet-content-") as temporary:
+            root = Path(temporary)
+            _, history, timeline, receipt, validation = self.build_app_flow_packet(root)
+            packet = json.loads(receipt.read_text(encoding="utf-8"))
+            annotated = Path(packet["artifacts"]["annotated_video"]["path"])
+            subprocess.run(
+                [
+                    "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+                    "-f", "lavfi", "-i", "color=c=red:s=320x480:d=4:r=30",
+                    "-f", "lavfi", "-i", "sine=frequency=440:duration=4",
+                    "-c:v", "libx264", "-pix_fmt", "yuv420p",
+                    "-c:a", "aac", "-shortest", str(annotated),
+                ],
+                check=True,
+            )
+            packet["artifacts"]["annotated_video"] = MEDIA.artifact_record(
+                "ffprobe", annotated
+            )
+            receipt.write_text(json.dumps(packet), encoding="utf-8")
+
+            result = subprocess.run(
+                self.validate_command(receipt, timeline, history, validation),
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("not content-paired", result.stderr)
+            self.assertFalse(validation.exists())
+
+
+@unittest.skipUnless(
+    all(shutil.which(name) for name in ("ffmpeg", "ffprobe", "magick")),
+    "media tools unavailable",
+)
 class RenderSmokeTest(unittest.TestCase):
     def extract_video_frame(
         self, video: Path, timestamp: str, destination: Path
@@ -402,11 +606,13 @@ class RenderSmokeTest(unittest.TestCase):
                 timeline_payload["events"],
                 [
                     {
-                        "kind": "swipe", "at": 0.8, "from": [0.2, 0.8],
+                        "kind": "swipe", "at": 0.8, "action_id": "action-1",
+                        "from": [0.2, 0.8],
                         "to": [0.8, 0.2], "duration": 0.6,
                     },
                     {
-                        "kind": "swipe", "at": 2.2, "from": [0.8, 0.2],
+                        "kind": "swipe", "at": 2.2, "action_id": "action-2",
+                        "from": [0.8, 0.2],
                         "to": [0.2, 0.8], "duration": 0.6,
                     },
                 ],

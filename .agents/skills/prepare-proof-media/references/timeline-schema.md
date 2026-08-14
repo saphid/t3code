@@ -16,6 +16,7 @@ capture resolution is fixed.
   ],
   "events": [
     {
+      "action_id": "new-session",
       "kind": "tap",
       "at": 1.8,
       "x": 0.84,
@@ -24,6 +25,7 @@ capture resolution is fixed.
       "expect": "The composer opens"
     },
     {
+      "action_id": "session-list",
       "kind": "swipe",
       "at": 3.0,
       "duration": 0.55,
@@ -69,6 +71,11 @@ or gesture; `expect` names a visible postcondition rather than an internal
 implementation result. Captions must fit within three rendered lines; shorten
 the action or expected result if the builder rejects a longer caption.
 
+`validate-packet` requires every tap and swipe to have a unique `action_id` and
+a non-empty `expect`. `timeline-add` assigns `action-1`, `action-2`, and so on
+when `--action-id` is omitted. A custom action caption must retain an
+`Expected:` section so the validation receipt can attest the expected result.
+
 ## Explicit cuts
 
 Set top-level `cuts` to a list of source `{start, end}` intervals to bypass
@@ -89,3 +96,13 @@ The adapter rejects missing, duplicate, or unknown action IDs and actions with
 no passed assertion. The generated timeline records the SHA-256 hash of both
 inputs. Optional action-map fields are `title`, and per action `kind`, `label`,
 `expect`, `caption`, and `caption_position`.
+
+## Packet validation receipt
+
+`validate-packet` accepts a version 1 video edit receipt and its exact timeline.
+Pass `--history` when the timeline has `source_history`. The version 1 output
+has `kind: proof-packet-validation`, `verdict: passed`, the input hashes, the
+verified source and artifact inventory, one record per action, video/audio
+pairing measurements, tool versions, and a SHA-256 seal over the canonical JSON
+payload without `seal`. The command writes no receipt on failure and replaces an
+existing receipt only with `--overwrite`.

@@ -158,6 +158,16 @@ feature or by another media entry of the same feature, and no media entry can
 use identical bytes for its clean and annotated copies. The receipt's positive
 integer `testBuild` must match the catalog item.
 
+Every `video` entry also contains `packetValidationPath` and
+`packetValidationSha256`. Create that sealed receipt with
+`prepare_proof_media.py validate-packet` after the edit receipt and action
+timeline are frozen. Keep it below the same durable evidence root. The stream
+validator checks its file hash and seal, requires at least one unique action,
+binds the clean and annotated video hashes, and requires the recorded duration
+and SSIM content-pairing gate to pass. For an app-flow capture, pass the bound
+agent session with `--history`; its actions and passed assertions must match the
+timeline exactly. Image-only evidence does not use a packet-validation receipt.
+
 A chain PR must name every dependency and its order. A direct PR says
 `Depends on: none` and `Merge order: this PR only`. Validate a prepared body
 with `scripts/swiftui-stream/stream.py validate-pr-body --feature-id <catalog-id> --number <PR> --body <file>`. After a

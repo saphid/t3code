@@ -25,10 +25,11 @@ Create and append to a timeline without hand-writing JSON:
 MEDIA=.agents/skills/prepare-proof-media/scripts/prepare_proof_media.py
 python3 "$MEDIA" timeline-init <timeline.json> --title "Focused proof"
 python3 "$MEDIA" timeline-add <timeline.json> --kind tap --at 1.8 \
-  --point 0.84,0.92 --label "New session" \
+  --action-id new-session --point 0.84,0.92 --label "New session" \
   --expect "The composer opens without changing projects"
 python3 "$MEDIA" timeline-add <timeline.json> --kind swipe --at 3.1 \
-  --duration 0.6 --from 0.5,0.8 --to 0.5,0.3 \
+  --action-id session-list --duration 0.6 \
+  --from 0.5,0.8 --to 0.5,0.3 \
   --label "Session list" --expect "Older sessions remain reachable"
 ```
 
@@ -96,6 +97,24 @@ same tool versions, inputs, and build options. The build emits:
 The raw source remains the unmodified provenance artifact. The clean MP4 shows
 the viewing cut without added marks or captions. Its only edit removes excess
 idle time.
+
+Validate an interaction packet before it enters a review or stream receipt:
+
+```bash
+python3 "$MEDIA" validate-packet <proof-name-receipt.json> \
+  --timeline <timeline.json> \
+  --history <agent-session.json> \
+  --output <proof-name-validation.json>
+```
+
+Omit `--history` for a hand-authored timeline. The validator requires a unique
+`action_id`, an expected result, and a rendered `Expected:` caption for every
+tap and swipe. It verifies all packet hashes, exact timeline-to-receipt action
+mapping, video metadata and duration, decoded audio equality, and clean versus
+annotated visual similarity. An app-flow timeline additionally requires its
+hash-bound session and a passed assertion for every action. The output is a
+sealed `proof-packet-validation` receipt with the verified action inventory and
+pairing measurements.
 
 For an existing screenshot, select the timeline event that the image proves:
 
