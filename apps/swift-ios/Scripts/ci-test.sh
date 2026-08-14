@@ -83,6 +83,7 @@ else
     -project "${APP_DIR}/T3Code.xcodeproj" \
     -scheme "${SCHEME}" \
     -testPlan "${XCODE_TEST_PLAN}" \
+    -only-testing:T3CodeTests \
     -destination "platform=iOS Simulator,id=${SIMULATOR_ID}" \
     -derivedDataPath "${DERIVED_DATA_PATH}" \
     -clonedSourcePackagesDirPath "${CLONED_SOURCE_PACKAGES_PATH}" \

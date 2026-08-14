@@ -222,7 +222,12 @@ class PipelineTests(unittest.TestCase):
     def test_private_stages_strip_github_credentials_and_select_exact_plans(self):
         with patch.dict(
             os.environ,
-            {"GH_TOKEN": "secret", "GITHUB_TOKEN": "secret", "GITHUB_REPOSITORY": "owner/repo"},
+            {
+                "GH_TOKEN": "secret",
+                "GITHUB_TOKEN": "secret",
+                "GITHUB_REPOSITORY": "owner/repo",
+                "T3_SWIFT_RESULT_BUNDLE_PATH": "/tmp/shared.xcresult",
+            },
         ):
             private = pipeline.environment_for_stage(pipeline.STAGES["test-train"])
             upstream = pipeline.environment_for_stage(pipeline.STAGES["upstream-handoff"])
@@ -230,6 +235,8 @@ class PipelineTests(unittest.TestCase):
         self.assertNotIn("GITHUB_TOKEN", private)
         self.assertNotIn("GITHUB_REPOSITORY", private)
         self.assertEqual(private["T3_SWIFT_GITHUB_ALLOWED"], "0")
+        self.assertNotIn("T3_SWIFT_RESULT_BUNDLE_PATH", private)
+        self.assertTrue(Path(private["GH_CONFIG_DIR"]).is_dir())
         self.assertEqual(upstream["GH_TOKEN"], "secret")
 
         test_train = " ".join(

@@ -29,6 +29,15 @@ SCHEMA_PATH = SCRIPT_DIR / "receipt.schema.json"
 DEFAULT_RECEIPT_ROOT = REPO_ROOT / ".t3/swiftui-private-ci-artifacts"
 DEFAULT_LOCK_ROOT = Path.home() / ".t3/locks/swiftui-private-ci"
 RECEIPT_SCHEMA_VERSION = 1
+PRIVATE_OUTPUT_OVERRIDES = {
+    "T3_SWIFT_RESULT_BUNDLE_PATH",
+    "T3_SWIFT_TEST_PRODUCTS_PATH",
+    "T3_SWIFT_BUILD_MANIFEST_PATH",
+    "T3_SWIFT_SUMMARY_PATH",
+    "T3_SWIFT_TESTS_PATH",
+    "T3_SWIFT_RECEIPT_PATH",
+    "T3_SWIFT_ATTACHMENTS_PATH",
+}
 
 
 @dataclass(frozen=True)
@@ -116,6 +125,8 @@ def environment_for_stage(stage: Stage) -> dict[str, str]:
     environment = dict(os.environ)
     if stage.github_allowed:
         return environment
+    for key in PRIVATE_OUTPUT_OVERRIDES:
+        environment.pop(key, None)
     for key in tuple(environment):
         upper = key.upper()
         if upper.startswith("GH_") or upper.startswith("GITHUB_"):
