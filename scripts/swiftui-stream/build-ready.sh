@@ -15,12 +15,16 @@ case "$CHANNEL" in
     SCHEME=T3CodeDev
     BUNDLE_ID=com.saphid.t3code.swiftui.dev
     EXPECTED_BRANCH=personal/swiftui-dev
+    NATIVE_PLAN=DevPromotion
+    UI_PLAN=DevPromotion
     ;;
   test)
     CONFIGURATION=Test
     SCHEME=T3CodeTest
     BUNDLE_ID=com.alxs.t3code.typed-swiftui.dev
     EXPECTED_BRANCH=personal/swiftui-test
+    NATIVE_PLAN=TestTrain
+    UI_PLAN=TestTrain
     ;;
   *) printf 'usage: %s dev|test\n' "$0" >&2; exit 2 ;;
 esac
@@ -45,12 +49,12 @@ unset T3_SWIFT_RESULT_BUNDLE_PATH T3_SWIFT_TEST_PRODUCTS_PATH \
   T3_SWIFT_BUILD_MANIFEST_PATH T3_SWIFT_SUMMARY_PATH T3_SWIFT_TESTS_PATH \
   T3_SWIFT_RECEIPT_PATH T3_SWIFT_ATTACHMENTS_PATH
 T3_SWIFT_SCHEME="$SCHEME" \
-T3_SWIFT_XCODE_TEST_PLAN=Focused \
+T3_SWIFT_XCODE_TEST_PLAN="$NATIVE_PLAN" \
 T3_SWIFT_SIMULATOR_ID="${T3_SWIFT_SIMULATOR_ID:-}" \
   "$APP_DIR/Scripts/ci-test.sh"
 T3_SWIFT_SCHEME="$SCHEME" \
-T3_SWIFT_XCODE_TEST_PLAN=CandidateJourneys \
-T3_APP_FLOW_PLAN=pr \
+T3_SWIFT_XCODE_TEST_PLAN="$UI_PLAN" \
+T3_APP_FLOW_PLAN=regression \
 T3_SWIFT_SIMULATOR_ID="${T3_SWIFT_SIMULATOR_ID:-}" \
   "$APP_DIR/Scripts/ci-app-flow-test.sh"
 if [[ "$CHANNEL" == "test" ]]; then

@@ -48,6 +48,7 @@ STAGES: dict[str, Stage] = {
     ),
     "candidate-simulator": Stage(
         commands=(
+            ("env", "T3_SWIFT_XCODE_TEST_PLAN=Focused", str(NATIVE_TEST)),
             (
                 "env",
                 "T3_SWIFT_XCODE_TEST_PLAN=CandidateJourneys",
@@ -62,6 +63,12 @@ STAGES: dict[str, Stage] = {
             (str(STREAM), "validate"),
             (str(STREAM), "verify-branches"),
             ("env", "T3_SWIFT_XCODE_TEST_PLAN=TestTrain", str(NATIVE_TEST)),
+            (
+                "env",
+                "T3_SWIFT_XCODE_TEST_PLAN=TestTrain",
+                "T3_APP_FLOW_PLAN=regression",
+                str(APP_FLOW_TEST),
+            ),
         ),
         resources=("native-build", "simulator"),
     ),
@@ -111,8 +118,11 @@ def environment_for_stage(stage: Stage) -> dict[str, str]:
         return environment
     for key in tuple(environment):
         upper = key.upper()
-        if upper in {"GH_TOKEN", "GITHUB_TOKEN"} or upper.startswith("GITHUB_"):
+        if upper.startswith("GH_") or upper.startswith("GITHUB_"):
             environment.pop(key)
+    disabled_config = REPO_ROOT / ".t3/swiftui-private-ci-no-github"
+    disabled_config.mkdir(parents=True, exist_ok=True)
+    environment["GH_CONFIG_DIR"] = str(disabled_config)
     environment["T3_SWIFT_GITHUB_ALLOWED"] = "0"
     return environment
 

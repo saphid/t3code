@@ -173,7 +173,6 @@ class PipelineTests(unittest.TestCase):
         groups = {
             "swiftui/native-build",
             "swiftui/simulator",
-            "swiftui/signing",
             "swiftui/test-phone",
             "swiftui/dev-phone",
         }
@@ -197,6 +196,10 @@ class PipelineTests(unittest.TestCase):
         self.assertIn(
             "buildkite-agent meta-data get approval-receipt-reference", content
         )
+        for key in ("test-train", "test-phone-build", "dev-phone-build"):
+            block = content[content.index(f'key: "{key}"'):]
+            block = block.split("artifact_paths:", 1)[0]
+            self.assertIn('concurrency_group: "swiftui/simulator"', block)
 
     def test_github_boundary_is_closed_until_upstream_handoff(self):
         for name, stage in pipeline.STAGES.items():

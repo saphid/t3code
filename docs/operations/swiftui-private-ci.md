@@ -27,9 +27,10 @@ retains that exact authority reference.
 ## Stage order
 
 1. `candidate-verification` validates the stream and branch graph.
-2. `candidate-simulator` runs the native test entry point.
-3. `test-train` repeats the stream, branch, and native regression gates on the
-   combined Test train.
+2. `candidate-simulator` runs the focused native suite and the selected
+   CandidateJourneys app-flow gate.
+3. `test-train` repeats the stream and branch gates, then runs the TestTrain
+   native suite and complete regression app-flow set on the combined train.
 4. `test-phone-build` creates the signed, immutable Test artifact and ready
    pointer.
 5. `test-phone-install` runs the deterministic phone reconciler.
@@ -55,13 +56,14 @@ of one:
 
 - `swiftui/native-build`;
 - `swiftui/simulator`;
-- `swiftui/signing`;
 - `swiftui/test-phone`;
 - `swiftui/dev-phone`.
 
-Some stages use more than one resource. The command runner also takes local
-file leases for every declared resource. It takes leases in sorted order. This
-rule prevents a deadlock and protects local runs outside Buildkite.
+All Buildkite stages that use a simulator, including signed phone builds, use
+the shared `swiftui/simulator` group. This serializes them across agents. Some
+stages use more than one local resource; the command runner also takes sorted
+file leases for every declared resource, including signing. This prevents a
+deadlock and protects local runs outside Buildkite.
 
 ## Local commands
 

@@ -32,7 +32,7 @@ steps:
     depends_on: "candidate-simulator"
     command: "scripts/swiftui-pipeline/fastlane.sh swiftui_test_train"
     concurrency: 1
-    concurrency_group: "swiftui/native-build"
+    concurrency_group: "swiftui/simulator"
     artifact_paths:
       - ".t3/swiftui-private-ci-artifacts/**/*"
 
@@ -41,7 +41,7 @@ steps:
     depends_on: "test-train"
     command: "scripts/swiftui-pipeline/fastlane.sh swiftui_test_phone_build"
     concurrency: 1
-    concurrency_group: "swiftui/signing"
+    concurrency_group: "swiftui/simulator"
     artifact_paths:
       - ".t3/swiftui-private-ci-artifacts/**/*"
 
@@ -79,7 +79,7 @@ steps:
     depends_on: "dev-promotion"
     command: "scripts/swiftui-pipeline/fastlane.sh swiftui_dev_phone_build"
     concurrency: 1
-    concurrency_group: "swiftui/signing"
+    concurrency_group: "swiftui/simulator"
     artifact_paths:
       - ".t3/swiftui-private-ci-artifacts/**/*"
 
