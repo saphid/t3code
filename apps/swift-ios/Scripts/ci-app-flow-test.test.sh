@@ -632,6 +632,8 @@ expect_status 0 env \
   "${RUNNER}"
 grep -A1 -q -- '-testPlan' "${ARGUMENT_LOG}"
 grep -q '^CandidateJourneys$' "${ARGUMENT_LOG}"
+grep -A1 -q -- '-clonedSourcePackagesDirPath' "${ARGUMENT_LOG}"
+grep -q -- '-disablePackageRepositoryCache' "${ARGUMENT_LOG}"
 if grep -q -- '-test-iterations' "${ARGUMENT_LOG}"; then
   fail "non-stability plan unexpectedly enabled test iterations"
 fi
@@ -905,6 +907,8 @@ expect_status 0 env \
 [[ -d "${UNIT_RESULT}" ]]
 [[ -f "${UNIT_PRODUCTS}.manifest.json" ]]
 grep -q '^build-for-testing$' "${UNIT_ARGUMENT_LOG}"
+grep -A1 -q -- '-clonedSourcePackagesDirPath' "${UNIT_ARGUMENT_LOG}"
+grep -q -- '-disablePackageRepositoryCache' "${UNIT_ARGUMENT_LOG}"
 grep -q '^test-without-building$' "${UNIT_ARGUMENT_LOG}"
 grep -A1 -q -- '-testPlan' "${UNIT_ARGUMENT_LOG}"
 grep -q '^Focused$' "${UNIT_ARGUMENT_LOG}"

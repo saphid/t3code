@@ -12,6 +12,7 @@ XCODE_TEST_PLAN="${T3_SWIFT_XCODE_TEST_PLAN:-Focused}"
 SIMULATOR_ID="${T3_SWIFT_SIMULATOR_ID:-}"
 DERIVED_DATA_ROOT="${RUNNER_TEMP:-${APP_DIR}/.derivedData}"
 DERIVED_DATA_PATH="${T3_SWIFT_DERIVED_DATA_PATH:-${DERIVED_DATA_ROOT}/swift-ios-ci}"
+CLONED_SOURCE_PACKAGES_PATH="${T3_SWIFT_CLONED_SOURCE_PACKAGES_PATH:-$HOME/.t3/cache/swift-ios/source-packages}"
 RESULT_BUNDLE_PATH="${T3_SWIFT_RESULT_BUNDLE_PATH:-${REPO_ROOT}/.t3/evidence/swift-ios-native-${RUN_STAMP}.xcresult}"
 TEST_PRODUCTS_PATH="${T3_SWIFT_TEST_PRODUCTS_PATH:-${RESULT_BUNDLE_PATH%.xcresult}.xctestproducts}"
 BUILD_MANIFEST_PATH="${T3_SWIFT_BUILD_MANIFEST_PATH:-${TEST_PRODUCTS_PATH}.manifest.json}"
@@ -37,6 +38,7 @@ require_cmd grep
 require_cmd "${XCODEBUILD_COMMAND}"
 require_cmd xcrun
 require_cmd python3
+mkdir -p "${CLONED_SOURCE_PACKAGES_PATH}"
 
 if [[ -z "${SIMULATOR_ID}" ]]; then
   # simctl groups devices by runtime. Keeping the last available iPhone picks
@@ -82,6 +84,8 @@ else
     -testPlan "${XCODE_TEST_PLAN}" \
     -destination "platform=iOS Simulator,id=${SIMULATOR_ID}" \
     -derivedDataPath "${DERIVED_DATA_PATH}" \
+    -clonedSourcePackagesDirPath "${CLONED_SOURCE_PACKAGES_PATH}" \
+    -disablePackageRepositoryCache \
     -testProductsPath "${TEST_PRODUCTS_PATH}" \
     -maximum-concurrent-test-simulator-destinations 1 \
     -parallel-testing-enabled NO \

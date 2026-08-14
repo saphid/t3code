@@ -45,7 +45,9 @@ else
 fi
 COMMIT="$(git -C "$REPO_ROOT" rev-parse HEAD)"
 DERIVED="${T3_SWIFT_DERIVED_DATA_PATH:-$APP_DIR/.derivedData/ready-$CHANNEL}"
+CLONED_SOURCE_PACKAGES_PATH="${T3_SWIFT_CLONED_SOURCE_PACKAGES_PATH:-$HOME/.t3/cache/swift-ios/source-packages}"
 DESTINATION="platform=iOS,id=$DEVICE_ID"
+mkdir -p "$CLONED_SOURCE_PACKAGES_PATH"
 
 xcodebuild build \
   -quiet \
@@ -54,6 +56,8 @@ xcodebuild build \
   -configuration "$CONFIGURATION" \
   -destination "$DESTINATION" \
   -derivedDataPath "$DERIVED" \
+  -clonedSourcePackagesDirPath "$CLONED_SOURCE_PACKAGES_PATH" \
+  -disablePackageRepositoryCache \
   -allowProvisioningUpdates \
   -allowProvisioningDeviceRegistration \
   "DEVELOPMENT_TEAM=$TEAM" \
