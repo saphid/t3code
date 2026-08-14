@@ -339,9 +339,10 @@
       "sourceCommit": "a1fd13793591f79237d2447e2d7d06fceaeebc1d",
       "integratedCommits": [
         "a1fd13793591f79237d2447e2d7d06fceaeebc1d",
-        "b17869548cc8932710b4dd10fb79fbb97466423a"
+        "b17869548cc8932710b4dd10fb79fbb97466423a",
+        "8ce46a22af48d98babff3084daf42eb2319dcd61"
       ],
-      "integratedCommit": "b17869548cc8932710b4dd10fb79fbb97466423a",
+      "integratedCommit": "8ce46a22af48d98babff3084daf42eb2319dcd61",
       "sourceThread": "508739B1-477F-4CAB-BA79-8816FCCEA000",
       "sourceThreadTitle": "Add Thread Links to What’s New",
       "sourceIssue": "https://github.com/saphid/t3code-personal/issues/89",
