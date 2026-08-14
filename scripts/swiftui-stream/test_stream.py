@@ -594,8 +594,9 @@ class StreamTests(unittest.TestCase):
         feature = next(
             item
             for item in value["features"]
-            if item.get("state") == "in-test"
+            if item.get("state") in stream.APPROVAL_STATES
         )
+        feature["state"] = "in-test"
         feature["testBuild"] = value["currentTestBuild"]["build"] + 1
         stream.validate_manifest(value)
 
@@ -604,8 +605,9 @@ class StreamTests(unittest.TestCase):
         feature = next(
             item
             for item in value["features"]
-            if item.get("state") == "in-test"
+            if item.get("state") in stream.APPROVAL_STATES
         )
+        feature["state"] = "in-test"
         feature["testBuild"] = value["currentTestBuild"]["build"] - 1
         with self.assertRaises(SystemExit):
             stream.validate_manifest(value)
