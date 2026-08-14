@@ -43,7 +43,20 @@ if [[ "${1:-}" == "simctl" && "${2:-}" == "get_app_container" && -n "${4:-}" ]];
 fi
 
 if [[ "${1:-}" == "xcresulttool" && "${2:-}" == "get" && "${4:-}" == "summary" ]]; then
-  passed="${T3_FAKE_PASSED_TESTS:-11}"
+  if [[ -n "${T3_FAKE_PASSED_TESTS:-}" ]]; then
+    passed="${T3_FAKE_PASSED_TESTS}"
+  else
+    passed="$(python3 - "${SCRIPT_DIR}/../app-flow-catalog.json" "${T3_APP_FLOW_PLAN:-regression}" <<'PY'
+import json
+from pathlib import Path
+import sys
+
+catalog = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+plan = catalog["plans"][sys.argv[2]]
+print(len(plan["journeys"]) * plan.get("repetitions", 1))
+PY
+)"
+  fi
   failed="${T3_FAKE_FAILED_TESTS:-0}"
   skipped="${T3_FAKE_SKIPPED_TESTS:-0}"
   total=$((passed + failed + skipped))

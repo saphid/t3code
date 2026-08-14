@@ -651,12 +651,14 @@ python3 -c '
 import json
 import sys
 receipt = json.load(open(sys.argv[1], encoding="utf-8"))
+catalog = json.load(open(sys.argv[2], encoding="utf-8"))
+expected = len(catalog["plans"]["regression"]["journeys"])
 assert receipt["verdict"] == "passed"
 assert receipt["plan"] == "regression"
-assert len(receipt["selection"]) == 11
-assert len(receipt["execution"]["executedTests"]) == 11
+assert len(receipt["selection"]) == expected
+assert len(receipt["execution"]["executedTests"]) == expected
 assert receipt["source"]["contentSha256"] == receipt["evidence"]["buildManifest"]["source"]["contentSha256"]
-' "${TEST_ROOT}/regression.receipt.json"
+' "${TEST_ROOT}/regression.receipt.json" "${ROOT}/app-flow-catalog.json"
 
 T3_FAKE_PASSED_TESTS=4 T3_FAKE_SKIPPED_TESTS=1 \
   "${FAKE_XCRUN}" xcresulttool get test-results summary \
