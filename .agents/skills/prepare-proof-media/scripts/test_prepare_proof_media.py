@@ -49,6 +49,148 @@ class IntervalTests(unittest.TestCase):
         )
 
 
+class AppFlowAdapterTests(unittest.TestCase):
+    def history(self) -> dict:
+        return {
+            "schemaVersion": 1,
+            "plan": "pr",
+            "events": [
+                {
+                    "id": "event-1",
+                    "phase": "act",
+                    "at": "2026-08-14T01:00:01.250000+00:00",
+                    "selector": "sidebar-settings-button",
+                    "action": "tap",
+                    "postcondition": "settings-visible",
+                },
+                {
+                    "id": "event-2",
+                    "phase": "assert",
+                    "at": "2026-08-14T01:00:01.500000+00:00",
+                    "actionid": "event-1",
+                    "result": "passed",
+                    "observation": "settings-visible",
+                },
+                {
+                    "id": "event-3",
+                    "phase": "act",
+                    "at": "2026-08-14T01:00:02.000000Z",
+                    "selector": "settings-list",
+                    "action": "swipe-up",
+                    "postcondition": "usage-row-visible",
+                },
+                {
+                    "id": "event-4",
+                    "phase": "assert",
+                    "at": "2026-08-14T01:00:02.750000+00:00",
+                    "actionid": "event-3",
+                    "result": "passed",
+                    "observation": "usage-row-visible",
+                },
+            ],
+        }
+
+    def action_map(self) -> dict:
+        return {
+            "version": 1,
+            "recording_started_at": "2026-08-14T01:00:00Z",
+            "actions": [
+                {"action_id": "event-1", "point": [0.9, 0.1]},
+                {
+                    "action_id": "event-3",
+                    "from": [0.5, 0.8],
+                    "to": [0.5, 0.3],
+                    "duration": 0.5,
+                },
+            ],
+        }
+
+    def test_converts_passed_actions_to_timed_visual_events(self) -> None:
+        timeline = MEDIA.convert_app_flow_timeline(self.history(), self.action_map())
+
+        self.assertEqual(timeline["title"], "App-flow pr proof")
+        self.assertEqual(
+            timeline["events"],
+            [
+                {
+                    "kind": "tap",
+                    "at": 1.25,
+                    "label": "sidebar settings button",
+                    "expect": "settings visible",
+                    "x": 0.9,
+                    "y": 0.1,
+                },
+                {
+                    "kind": "swipe",
+                    "at": 2.0,
+                    "label": "settings list",
+                    "expect": "usage row visible",
+                    "from": [0.5, 0.8],
+                    "to": [0.5, 0.3],
+                    "duration": 0.5,
+                },
+            ],
+        )
+
+    def test_requires_exact_action_coverage_and_passed_assertions(self) -> None:
+        missing = self.action_map()
+        missing["actions"].pop()
+        with self.assertRaisesRegex(
+            MEDIA.ProofMediaError, "Missing visual mapping.*event-3"
+        ):
+            MEDIA.convert_app_flow_timeline(self.history(), missing)
+
+        unknown = self.action_map()
+        unknown["actions"].append({"action_id": "event-99", "point": [0.5, 0.5]})
+        with self.assertRaisesRegex(
+            MEDIA.ProofMediaError, "unknown app-flow actions.*event-99"
+        ):
+            MEDIA.convert_app_flow_timeline(self.history(), unknown)
+
+        unproved = self.history()
+        unproved["events"][-1]["result"] = "failed"
+        with self.assertRaisesRegex(
+            MEDIA.ProofMediaError, "no passed assertion.*event-3"
+        ):
+            MEDIA.convert_app_flow_timeline(unproved, self.action_map())
+
+        conflicting = self.action_map()
+        conflicting["actions"][0]["kind"] = "swipe"
+        conflicting["actions"][0]["from"] = [0.5, 0.8]
+        conflicting["actions"][0]["to"] = [0.5, 0.3]
+        with self.assertRaisesRegex(
+            MEDIA.ProofMediaError, "conflicts with semantic action"
+        ):
+            MEDIA.convert_app_flow_timeline(self.history(), conflicting)
+
+    def test_cli_binds_source_hashes_without_overwriting_by_default(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="proof-app-flow-") as temporary:
+            root = Path(temporary)
+            history_path = root / "session.json"
+            map_path = root / "visual-map.json"
+            output_path = root / "timeline.json"
+            history_path.write_text(json.dumps(self.history()), encoding="utf-8")
+            map_path.write_text(json.dumps(self.action_map()), encoding="utf-8")
+            command = [
+                "python3", str(SCRIPT), "timeline-from-app-flow", str(history_path),
+                "--action-map", str(map_path), "--output", str(output_path),
+            ]
+            first = subprocess.run(
+                command, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE
+            )
+            second = subprocess.run(
+                command, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE
+            )
+
+            self.assertEqual(first.returncode, 0, first.stderr)
+            self.assertNotEqual(second.returncode, 0)
+            timeline = json.loads(output_path.read_text(encoding="utf-8"))
+            self.assertEqual(
+                timeline["source_history"]["sha256"], MEDIA.sha256(history_path)
+            )
+            self.assertEqual(timeline["action_map"]["sha256"], MEDIA.sha256(map_path))
+
+
 class SafetyTests(unittest.TestCase):
     def test_rejects_pairing_credentials_non_strings_and_custom_patterns(self) -> None:
         rejected = [

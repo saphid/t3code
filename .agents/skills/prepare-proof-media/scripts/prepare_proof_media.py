@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+from datetime import datetime
 import hashlib
 import json
 import math
@@ -954,6 +955,231 @@ def atomic_write_json(path: Path, payload: Dict[str, Any]) -> None:
     temporary.replace(path)
 
 
+def read_json_object(path: Path, label: str) -> Dict[str, Any]:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ProofMediaError(
+            "Could not read {0} {1}: {2}".format(label, path, exc)
+        ) from exc
+    if not isinstance(payload, dict):
+        raise ProofMediaError("{0} must contain a JSON object".format(label))
+    return payload
+
+
+def parse_aware_datetime(value: Any, label: str) -> datetime:
+    if not isinstance(value, str):
+        raise ProofMediaError("{0} must be an ISO 8601 timestamp".format(label))
+    normalized = value[:-1] + "+00:00" if value.endswith("Z") else value
+    try:
+        parsed = datetime.fromisoformat(normalized)
+    except ValueError as exc:
+        raise ProofMediaError("{0} must be an ISO 8601 timestamp".format(label)) from exc
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        raise ProofMediaError("{0} must include a timezone".format(label))
+    return parsed
+
+
+def readable_semantic_text(value: Any, fallback: str) -> str:
+    if not isinstance(value, str) or not value.strip():
+        return fallback
+    return re.sub(r"[-_]+", " ", value).strip()
+
+
+def convert_app_flow_timeline(
+    history: Dict[str, Any], action_map: Dict[str, Any]
+) -> Dict[str, Any]:
+    if history.get("schemaVersion") != 1 or not isinstance(
+        history.get("events"), list
+    ):
+        raise ProofMediaError(
+            "App-flow history must use schemaVersion 1 with an events list"
+        )
+    if action_map.get("version") != 1 or not isinstance(
+        action_map.get("actions"), list
+    ):
+        raise ProofMediaError(
+            "App-flow action map must use version 1 with an actions list"
+        )
+
+    actions: List[Dict[str, Any]] = []
+    action_ids = set()
+    assertions: List[Dict[str, Any]] = []
+    for index, raw_event in enumerate(history["events"]):
+        if not isinstance(raw_event, dict):
+            raise ProofMediaError("App-flow events[{0}] must be an object".format(index))
+        if raw_event.get("phase") == "act":
+            action_id = raw_event.get("id")
+            if not isinstance(action_id, str) or not action_id:
+                raise ProofMediaError("App-flow act events require a non-empty id")
+            if action_id in action_ids:
+                raise ProofMediaError("Duplicate app-flow action id: {0}".format(action_id))
+            action_ids.add(action_id)
+            actions.append(raw_event)
+        elif raw_event.get("phase") == "assert":
+            assertions.append(raw_event)
+    if not actions:
+        raise ProofMediaError("App-flow history contains no act events")
+
+    mappings: Dict[str, Dict[str, Any]] = {}
+    for index, raw_mapping in enumerate(action_map["actions"]):
+        if not isinstance(raw_mapping, dict):
+            raise ProofMediaError(
+                "App-flow action map actions[{0}] must be an object".format(index)
+            )
+        action_id = raw_mapping.get("action_id")
+        if not isinstance(action_id, str) or not action_id:
+            raise ProofMediaError("App-flow action mappings require action_id")
+        if action_id in mappings:
+            raise ProofMediaError("Duplicate mapped action id: {0}".format(action_id))
+        mappings[action_id] = raw_mapping
+    missing = sorted(action_ids - set(mappings))
+    unknown = sorted(set(mappings) - action_ids)
+    if missing:
+        raise ProofMediaError(
+            "Missing visual mapping for app-flow actions: {0}".format(", ".join(missing))
+        )
+    if unknown:
+        raise ProofMediaError(
+            "Visual mapping names unknown app-flow actions: {0}".format(
+                ", ".join(unknown)
+            )
+        )
+
+    recording_start: Optional[datetime] = None
+    if action_map.get("recording_started_at") is not None:
+        recording_start = parse_aware_datetime(
+            action_map["recording_started_at"], "recording_started_at"
+        )
+    events: List[Dict[str, Any]] = []
+    for action in actions:
+        action_id = action["id"]
+        mapping = mappings[action_id]
+        passed = any(
+            assertion.get("result") == "passed"
+            and assertion.get("actionid", assertion.get("action_id")) == action_id
+            for assertion in assertions
+        )
+        if not passed:
+            raise ProofMediaError(
+                "App-flow action has no passed assertion: {0}".format(action_id)
+            )
+
+        if "at" in mapping:
+            at = number(mapping["at"], "mapping for {0}.at".format(action_id))
+        else:
+            if recording_start is None:
+                raise ProofMediaError(
+                    "recording_started_at is required when a mapped action has no at value"
+                )
+            event_time = parse_aware_datetime(
+                action.get("at"), "App-flow action {0}.at".format(action_id)
+            )
+            at = round((event_time - recording_start).total_seconds(), 6)
+        if at < 0:
+            raise ProofMediaError(
+                "App-flow action occurs before the recording: {0}".format(action_id)
+            )
+
+        semantic_action = str(action.get("action", "")).lower()
+        inferred_kind = (
+            "swipe"
+            if "swipe" in semantic_action
+            else "tap"
+            if semantic_action in ("tap", "press")
+            else None
+        )
+        kind = mapping.get("kind", inferred_kind)
+        if kind not in ("tap", "swipe"):
+            raise ProofMediaError(
+                "Mapping for {0} must set kind to tap or swipe".format(action_id)
+            )
+        if inferred_kind is not None and kind != inferred_kind:
+            raise ProofMediaError(
+                "Mapping kind for {0} conflicts with semantic action {1}".format(
+                    action_id, action.get("action")
+                )
+            )
+        event: Dict[str, Any] = {
+            "kind": kind,
+            "at": at,
+            "label": mapping.get(
+                "label", readable_semantic_text(action.get("selector"), action_id)
+            ),
+            "expect": mapping.get(
+                "expect",
+                readable_semantic_text(action.get("postcondition"), "Visible result"),
+            ),
+        }
+        if kind == "tap":
+            point = mapping.get("point")
+            if not isinstance(point, list) or len(point) != 2:
+                raise ProofMediaError(
+                    "Tap mapping for {0} requires point [x, y]".format(action_id)
+                )
+            event.update({"x": point[0], "y": point[1]})
+        else:
+            event["from"] = mapping.get("from")
+            event["to"] = mapping.get("to")
+            event["duration"] = mapping.get("duration", 0.6)
+        for field in ("caption", "caption_position"):
+            if field in mapping:
+                event[field] = mapping[field]
+        validate_event(event, len(events), float("inf"), "normalized")
+        reject_secrets(event, len(events))
+        events.append(event)
+
+    timeline: Dict[str, Any] = {
+        "version": 1,
+        "coordinate_space": "normalized",
+        "events": sorted(events, key=event_start),
+    }
+    if action_map.get("title") is not None:
+        if not isinstance(action_map["title"], str):
+            raise ProofMediaError("App-flow action map title must be a string")
+        timeline["title"] = action_map["title"]
+    elif isinstance(history.get("plan"), str):
+        timeline["title"] = "App-flow {0} proof".format(history["plan"])
+    return timeline
+
+
+def timeline_from_app_flow(args: argparse.Namespace) -> None:
+    history_path = Path(args.history).resolve()
+    action_map_path = Path(args.action_map).resolve()
+    output_path = Path(args.output).resolve()
+    if not history_path.is_file():
+        raise ProofMediaError("App-flow history does not exist: {0}".format(history_path))
+    if not action_map_path.is_file():
+        raise ProofMediaError(
+            "App-flow action map does not exist: {0}".format(action_map_path)
+        )
+    if output_path.exists() and not args.overwrite:
+        raise ProofMediaError("Timeline exists; pass --overwrite to replace it")
+    validate_packet_paths((history_path, action_map_path), (output_path,))
+    history_hash = sha256(history_path)
+    action_map_hash = sha256(action_map_path)
+    timeline = convert_app_flow_timeline(
+        read_json_object(history_path, "app-flow history"),
+        read_json_object(action_map_path, "app-flow action map"),
+    )
+    if (
+        sha256(history_path) != history_hash
+        or sha256(action_map_path) != action_map_hash
+    ):
+        raise ProofMediaError("App-flow inputs changed while they were being read")
+    timeline["source_history"] = {
+        "kind": "app-flow-agent-session",
+        "name": history_path.name,
+        "sha256": history_hash,
+    }
+    timeline["action_map"] = {
+        "name": action_map_path.name,
+        "sha256": action_map_hash,
+    }
+    atomic_write_json(output_path, timeline)
+    print(str(output_path))
+
+
 def validate_packet_paths(inputs: Sequence[Path], destinations: Sequence[Path]) -> None:
     for destination in destinations:
         if destination.is_symlink():
@@ -1328,6 +1554,16 @@ def parser() -> argparse.ArgumentParser:
     add_parser.add_argument("--caption")
     add_parser.add_argument("--caption-position", choices=("top", "bottom"), default="bottom")
     add_parser.set_defaults(handler=timeline_add)
+
+    app_flow_parser = commands.add_parser(
+        "timeline-from-app-flow",
+        help="convert an app-flow agent history and normalized action map to a timeline",
+    )
+    app_flow_parser.add_argument("history")
+    app_flow_parser.add_argument("--action-map", required=True)
+    app_flow_parser.add_argument("--output", required=True)
+    app_flow_parser.add_argument("--overwrite", action="store_true")
+    app_flow_parser.set_defaults(handler=timeline_from_app_flow)
 
     image_parser = commands.add_parser("image", help="build paired clean and annotated PNG proof")
     image_parser.add_argument("source")

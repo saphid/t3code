@@ -75,3 +75,17 @@ Set top-level `cuts` to a list of source `{start, end}` intervals to bypass
 freeze-derived editing completely. Cuts must be ordered, non-overlapping, and
 contain every event. Use this for timing-sensitive demonstrations or moving
 loading states that cannot be classified as frozen frames.
+
+## App-flow action-map adapter
+
+`timeline-from-app-flow` accepts a version 1 `app-flow-agent.py` session plus a
+version 1 visual action map. The map has `recording_started_at` and one `actions`
+entry for every semantic `act` event. Each entry names `action_id` and supplies
+either `point` for a tap or `from`, `to`, and optional `duration` for a swipe.
+Use normalized coordinates. An explicit per-action `at` overrides wall-clock
+conversion when the recorder has its own source-clock timestamp.
+
+The adapter rejects missing, duplicate, or unknown action IDs and actions with
+no passed assertion. The generated timeline records the SHA-256 hash of both
+inputs. Optional action-map fields are `title`, and per action `kind`, `label`,
+`expect`, `caption`, and `caption_position`.

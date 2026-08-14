@@ -35,6 +35,39 @@ python3 "$MEDIA" timeline-add <timeline.json> --kind swipe --at 3.1 \
 Use timestamps from the recorder's source clock or the automation action
 history. The renderer performs the source-to-output time mapping.
 
+For a `verify-swift-ios-app-flow` exploration ledger, convert its passed
+actions instead of copying the semantic labels or times. The ledger does not
+contain screen coordinates, so provide one small normalized action map:
+
+```json
+{
+  "version": 1,
+  "recording_started_at": "2026-08-14T01:00:00Z",
+  "actions": [
+    { "action_id": "event-1", "point": [0.84, 0.92] },
+    {
+      "action_id": "event-3",
+      "from": [0.5, 0.8],
+      "to": [0.5, 0.3],
+      "duration": 0.6
+    }
+  ]
+}
+```
+
+Then run:
+
+```bash
+python3 "$MEDIA" timeline-from-app-flow <agent-session.json> \
+  --action-map <visual-action-map.json> --output <timeline.json>
+```
+
+The adapter requires exact action coverage and a passed assertion for every
+action. It derives relative source times from `recording_started_at`, uses the
+stable selector and postcondition for `Next:` and `Expected:`, and binds both
+input hashes into the generated timeline. Set an action's `at` in the map only
+when the recorder provides an authoritative source-clock timestamp.
+
 Read [timeline-schema.md](references/timeline-schema.md) only when creating or
 debugging a timeline by hand.
 
