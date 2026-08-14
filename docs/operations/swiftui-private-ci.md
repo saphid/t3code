@@ -15,7 +15,7 @@ The Buildkite queue is `swiftui-private-mac`. Its first step installs the exact
 Fastlane dependency graph from `Gemfile.lock`. The cache stays below
 `~/.t3/cache/swiftui-private-ci`. It does not make the source tree dirty.
 The wrapper disables Fastlane update checks, usage reports, and GitHub issue
-lookups.
+lookups. It stores generated Fastlane reports outside the source tree.
 
 The human acceptance block is an approval boundary. It does not create an
 approval by itself. The existing SwiftUI approval workflow must record an exact

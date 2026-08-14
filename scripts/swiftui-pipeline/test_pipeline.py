@@ -212,6 +212,8 @@ class PipelineTests(unittest.TestCase):
         self.assertNotIn("workflow_dispatch", buildkite)
         wrapper = (ROOT / "fastlane.sh").read_text()
         self.assertIn("FASTLANE_HIDE_GITHUB_ISSUES=1", wrapper)
+        self.assertIn("FASTLANE_SKIP_DOCS=1", wrapper)
+        self.assertIn('FL_REPORT_PATH="$CACHE_ROOT/reports"', wrapper)
 
     def test_declared_json_schema_matches_runtime_stage_names(self):
         schema = json.loads((ROOT / "receipt.schema.json").read_text())
