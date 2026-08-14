@@ -68,8 +68,9 @@ All events accept `caption` as exact on-screen wording and optional
 
 Automatic captions begin shortly before an action. `label` names the control
 or gesture; `expect` names a visible postcondition rather than an internal
-implementation result. Captions must fit within three rendered lines; shorten
-the action or expected result if the builder rejects a longer caption.
+implementation result. An `expect` must be one trimmed line. Captions must fit
+within three rendered lines; shorten the action or expected result if the
+builder rejects a longer caption.
 
 `validate-packet` requires every tap and swipe to have a unique `action_id` and
 a non-empty `expect`. `timeline-add` assigns `action-1`, `action-2`, and so on
@@ -104,7 +105,8 @@ inputs. Optional action-map fields are `title`, and per action `kind`, `label`,
 Pass `--history` when the timeline has `source_history`. The version 1 output
 has `kind: proof-packet-validation`, `verdict: passed`, the input hashes, the
 verified source and artifact inventory, one record per action, video/audio
-pairing measurements, decoded-frame evidence for every action and caption
-window, tool versions, and a SHA-256 seal over the canonical JSON payload
-without `seal`. The command writes no receipt on failure and replaces an
-existing receipt only with `--overwrite`.
+pairing measurements, and decoded-frame hashes plus cropped local-similarity
+evidence for every action and caption window. Standalone caption ids use the
+qualified form `event-<index>`. Tool versions and a SHA-256 seal cover the
+canonical JSON payload without `seal`. The command writes no receipt on failure
+and replaces an existing receipt only with `--overwrite`.

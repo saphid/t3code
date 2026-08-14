@@ -165,10 +165,12 @@ timeline are frozen. Keep it below the same durable evidence root. The stream
 validator checks its file hash and seal, requires at least one unique action,
 binds the clean and annotated video hashes, and requires the recorded duration
 and SSIM content-pairing gate to pass. It also requires different decoded frame
-hashes inside every declared action and expected-caption window. For an app-flow
-capture, pass the bound agent session with `--history`; its actions and passed
-assertions must match the timeline exactly. Image-only evidence does not use a
-packet-validation receipt.
+hashes plus localized similarity below the whole-video baseline and fixed
+ceiling inside every expected tap, swipe, and caption region. This rejects both
+annotation-free remuxes and lossy re-encodes. For an app-flow capture, pass the
+bound agent session with `--history`; its actions and passed assertions must
+match the timeline exactly. Image-only evidence does not use a packet-validation
+receipt.
 
 A chain PR must name every dependency and its order. A direct PR says
 `Depends on: none` and `Merge order: this PR only`. Validate a prepared body

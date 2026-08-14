@@ -1238,14 +1238,20 @@ class StreamTests(unittest.TestCase):
                     {
                         "kind": "action", "id": "event-1",
                         "start": 0.9, "end": 1.3, "sample": 1.1,
+                        "crop": [10, 20, 64, 64],
                         "cleanFrameSha256": "5" * 64,
                         "annotatedFrameSha256": "6" * 64,
+                        "localVideoSsim": 0.8,
+                        "maximumLocalVideoSsim": 0.949,
                     },
                     {
                         "kind": "caption", "id": "event-1",
                         "start": 0.6, "end": 2.0, "sample": 1.3,
+                        "crop": [0, 300, 300, 180],
                         "cleanFrameSha256": "7" * 64,
                         "annotatedFrameSha256": "8" * 64,
+                        "localVideoSsim": 0.7,
+                        "maximumLocalVideoSsim": 0.949,
                     },
                 ],
                 "pairing": {
@@ -1359,6 +1365,28 @@ class StreamTests(unittest.TestCase):
                         "visual", evidence, str(receipt), "c" * 40, 1
                     )
 
+                invalid_localized = json.loads(json.dumps(validation))
+                invalid_localized.pop("seal")
+                invalid_localized["overlayWindows"][0]["localVideoSsim"] = 0.99
+                invalid_localized["seal"] = {
+                    "algorithm": "sha256",
+                    "canonicalPayloadSha256": hashlib.sha256(
+                        json.dumps(
+                            invalid_localized, sort_keys=True, separators=(",", ":")
+                        ).encode("utf-8")
+                    ).hexdigest(),
+                }
+                validation_path.write_text(json.dumps(invalid_localized))
+                invalid = dict(media)
+                invalid["packetValidationSha256"] = hashlib.sha256(
+                    validation_path.read_bytes()
+                ).hexdigest()
+                write_receipt(invalid)
+                with self.assertRaises(SystemExit):
+                    stream.validate_proof_media_receipt(
+                        "visual", evidence, str(receipt), "c" * 40, 1
+                    )
+
                 validation["actionCount"] = 2
                 validation_path.write_text(json.dumps(validation))
                 invalid = dict(media)
@@ -1436,14 +1464,20 @@ class StreamTests(unittest.TestCase):
                             {
                                 "kind": "action", "id": "event-1",
                                 "start": 0.9, "end": 1.3, "sample": 1.1,
+                                "crop": [10, 20, 64, 64],
                                 "cleanFrameSha256": "5" * 64,
                                 "annotatedFrameSha256": "6" * 64,
+                                "localVideoSsim": 0.8,
+                                "maximumLocalVideoSsim": 0.949,
                             },
                             {
                                 "kind": "caption", "id": "event-1",
                                 "start": 0.6, "end": 2.0, "sample": 1.3,
+                                "crop": [0, 300, 300, 180],
                                 "cleanFrameSha256": "7" * 64,
                                 "annotatedFrameSha256": "8" * 64,
+                                "localVideoSsim": 0.7,
+                                "maximumLocalVideoSsim": 0.949,
                             },
                         ],
                         "pairing": {

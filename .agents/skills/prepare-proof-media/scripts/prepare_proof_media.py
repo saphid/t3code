@@ -159,6 +159,9 @@ SECRET_PATTERNS = (
 
 FREEZE_NOISE = 0.002
 SILENCE_NOISE = "-45dB"
+EMPTY_SHA256 = hashlib.sha256(b"").hexdigest()
+OVERLAY_SSIM_MARGIN = 0.001
+MAX_OVERLAY_LOCAL_SSIM = 0.98
 
 
 def reject_secrets(
@@ -193,6 +196,14 @@ def validate_event(event: Any, index: int, duration: float, coordinate_space: st
     kind = event.get("kind")
     if kind not in ("tap", "swipe", "caption"):
         raise ProofMediaError("events[{0}].kind must be tap, swipe, or caption".format(index))
+    expected_result = event.get("expect")
+    if kind in ("tap", "swipe") and expected_result is not None:
+        if not isinstance(expected_result, str):
+            raise ProofMediaError("events[{0}].expect must be a string".format(index))
+        if expected_result != expected_result.strip() or "\n" in expected_result or "\r" in expected_result:
+            raise ProofMediaError(
+                "events[{0}].expect must be one trimmed line".format(index)
+            )
     at = number(event.get("at", event.get("start", 0)), "events[{0}] time".format(index))
     if at < 0 or at > duration:
         raise ProofMediaError("events[{0}] starts outside the source".format(index))
@@ -864,8 +875,11 @@ def build_contact_sheet(ffmpeg: str, magick: str, font: str, source: Path, durat
 
 def artifact_record(ffprobe: str, path: Path) -> Dict[str, Any]:
     record: Dict[str, Any] = {"path": str(path.resolve()), "bytes": path.stat().st_size, "sha256": sha256(path)}
-    if path.suffix.lower() == ".mp4":
+    try:
         info = probe_video(ffprobe, path)
+    except (ProofMediaError, subprocess.CalledProcessError, json.JSONDecodeError, KeyError, ValueError):
+        info = None
+    if info is not None:
         record.update(
             {
                 "duration": info["duration"],
@@ -1042,38 +1056,169 @@ def video_ssim(ffmpeg: str, clean: Path, annotated: Path) -> float:
     return number(float(matches[-1]), "video SSIM")
 
 
-def decoded_video_frame_hash(ffmpeg: str, source: Path, timestamp: float) -> str:
+def decoded_video_frame_bytes(
+    ffmpeg: str,
+    source: Path,
+    timestamp: float,
+    crop: Optional[Sequence[int]] = None,
+) -> bytes:
     timestamp = number(timestamp, "overlay sample time")
-    result = run(
-        [
-            ffmpeg,
-            "-hide_banner",
-            "-loglevel",
-            "error",
-            "-i",
-            str(source),
-            "-ss",
-            "{0:.6f}".format(timestamp),
-            "-map",
-            "0:v:0",
-            "-frames:v",
-            "1",
-            "-f",
-            "hash",
-            "-hash",
-            "sha256",
-            "-",
-        ],
-        capture=True,
+    command = [
+        ffmpeg,
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-ss",
+        "{0:.6f}".format(timestamp),
+        "-i",
+        str(source),
+        "-map",
+        "0:v:0",
+    ]
+    if crop is not None:
+        x, y, width, height = crop
+        command.extend(
+            ["-vf", "crop={0}:{1}:{2}:{3}".format(width, height, x, y)]
+        )
+    command.extend(
+        ["-frames:v", "1", "-pix_fmt", "rgb24", "-f", "rawvideo", "-"]
     )
-    match = re.search(r"SHA256=([0-9a-fA-F]{64})", result.stdout)
-    if match is None:
+    result = subprocess.run(
+        command, check=False, stdout=subprocess.PIPE, stderr=subprocess.PIPE
+    )
+    if result.returncode != 0 or not result.stdout:
         raise ProofMediaError(
-            "Could not hash decoded video frame at {0:.6f}: {1}".format(
+            "Could not decode video frame at {0:.6f}: {1}".format(
                 timestamp, source
             )
         )
-    return match.group(1).lower()
+    if crop is not None and len(result.stdout) != crop[2] * crop[3] * 3:
+        raise ProofMediaError(
+            "Decoded overlay region has an unexpected size: {0}".format(source)
+        )
+    return result.stdout
+
+
+def decoded_video_frame_hash(ffmpeg: str, source: Path, timestamp: float) -> str:
+    digest = hashlib.sha256(
+        decoded_video_frame_bytes(ffmpeg, source, timestamp)
+    ).hexdigest()
+    if digest == EMPTY_SHA256:
+        raise ProofMediaError("Could not hash decoded video frame: {0}".format(source))
+    return digest
+
+
+def frame_rate_value(frame_rate: str) -> float:
+    parts = str(frame_rate).split("/", 1)
+    try:
+        numerator = float(parts[0])
+        denominator = float(parts[1]) if len(parts) == 2 else 1.0
+    except ValueError as exc:
+        raise ProofMediaError("Invalid video frame rate: {0}".format(frame_rate)) from exc
+    value = number(numerator, "video frame-rate numerator")
+    denominator = number(denominator, "video frame-rate denominator")
+    if value <= 0 or denominator <= 0:
+        raise ProofMediaError("Video frame rate must be positive")
+    return value / denominator
+
+
+def normalized_crop(
+    x: int, y: int, width: int, height: int, frame_width: int, frame_height: int
+) -> List[int]:
+    x = max(0, min(int(x), frame_width - 2))
+    y = max(0, min(int(y), frame_height - 2))
+    width = max(2, min(int(width), frame_width - x))
+    height = max(2, min(int(height), frame_height - y))
+    x -= x % 2
+    y -= y % 2
+    width = min(frame_width - x, width + width % 2)
+    height = min(frame_height - y, height + height % 2)
+    width -= width % 2
+    height -= height % 2
+    if width < 2 or height < 2:
+        raise ProofMediaError("Overlay comparison region is empty")
+    return [x, y, width, height]
+
+
+def overlay_crop(
+    mapped: Dict[str, Any],
+    event: Dict[str, Any],
+    kind: str,
+    frame_width: int,
+    frame_height: int,
+) -> List[int]:
+    base = max(24, int(round(min(frame_width, frame_height) * 0.035)))
+    if kind == "action" and mapped.get("kind") == "tap":
+        point = mapped.get("point")
+        if not isinstance(point, list) or len(point) != 2:
+            raise ProofMediaError("Tap overlay has no mapped point")
+        size = max(64, int(round(base * 2.4)))
+        return normalized_crop(
+            int(point[0]) - size // 2,
+            int(point[1]) - size // 2,
+            size,
+            size,
+            frame_width,
+            frame_height,
+        )
+    if kind == "action" and mapped.get("kind") == "swipe":
+        start = mapped.get("from")
+        end = mapped.get("to")
+        if not isinstance(start, list) or not isinstance(end, list) or len(start) != 2 or len(end) != 2:
+            raise ProofMediaError("Swipe overlay has no mapped path")
+        margin = base * 2
+        left = min(int(start[0]), int(end[0])) - margin
+        top = min(int(start[1]), int(end[1])) - margin
+        width = abs(int(end[0]) - int(start[0])) + margin * 2 + 1
+        height = abs(int(end[1]) - int(start[1])) + margin * 2 + 1
+        return normalized_crop(left, top, width, height, frame_width, frame_height)
+    card_width = int(round(frame_width * 0.9))
+    region_height = max(2, int(round(frame_height * 0.4)))
+    top = 0 if event.get("caption_position", "bottom") == "top" else frame_height - region_height
+    return normalized_crop(
+        (frame_width - card_width) // 2,
+        top,
+        card_width,
+        region_height,
+        frame_width,
+        frame_height,
+    )
+
+
+def video_frame_ssim(
+    ffmpeg: str,
+    clean: Path,
+    annotated: Path,
+    timestamp: float,
+    crop: Sequence[int],
+) -> float:
+    clean_pixels = decoded_video_frame_bytes(ffmpeg, clean, timestamp, crop)
+    annotated_pixels = decoded_video_frame_bytes(ffmpeg, annotated, timestamp, crop)
+    count = len(clean_pixels)
+    if count != len(annotated_pixels) or count == 0:
+        raise ProofMediaError("Could not compare localized overlay frames")
+    clean_mean = sum(clean_pixels) / count
+    annotated_mean = sum(annotated_pixels) / count
+    clean_variance = sum((value - clean_mean) ** 2 for value in clean_pixels) / count
+    annotated_variance = sum(
+        (value - annotated_mean) ** 2 for value in annotated_pixels
+    ) / count
+    covariance = sum(
+        (clean_value - clean_mean) * (annotated_value - annotated_mean)
+        for clean_value, annotated_value in zip(clean_pixels, annotated_pixels)
+    ) / count
+    c1 = (0.01 * 255) ** 2
+    c2 = (0.03 * 255) ** 2
+    denominator = (
+        (clean_mean ** 2 + annotated_mean ** 2 + c1)
+        * (clean_variance + annotated_variance + c2)
+    )
+    if denominator <= 0:
+        raise ProofMediaError("Could not calculate localized overlay similarity")
+    result = (
+        (2 * clean_mean * annotated_mean + c1) * (2 * covariance + c2)
+    ) / denominator
+    return number(max(-1.0, min(1.0, result)), "localized overlay SSIM")
 
 
 def require_overlay_window_difference(
@@ -1084,6 +1229,8 @@ def require_overlay_window_difference(
     start: float,
     end: float,
     sample: float,
+    crop: Sequence[int],
+    global_ssim: float,
 ) -> Dict[str, Any]:
     start = number(start, "{0} start".format(label))
     end = number(end, "{0} end".format(label))
@@ -1092,10 +1239,16 @@ def require_overlay_window_difference(
         raise ProofMediaError("Invalid declared overlay window: {0}".format(label))
     clean_hash = decoded_video_frame_hash(ffmpeg, clean, sample)
     annotated_hash = decoded_video_frame_hash(ffmpeg, annotated, sample)
-    if clean_hash == annotated_hash:
+    local_ssim = video_frame_ssim(ffmpeg, clean, annotated, sample, crop)
+    maximum_local_ssim = min(
+        MAX_OVERLAY_LOCAL_SSIM,
+        number(global_ssim, "whole-video SSIM") - OVERLAY_SSIM_MARGIN,
+    )
+    if clean_hash == annotated_hash or local_ssim > maximum_local_ssim:
         raise ProofMediaError(
-            "Annotated video has no visible overlay in declared window: {0}".format(
-                label
+            "Annotated video has no localized visible overlay in declared window: "
+            "{0} (local SSIM {1:.6f} > {2:.6f})".format(
+                label, local_ssim, maximum_local_ssim
             )
         )
     return {
@@ -1104,8 +1257,11 @@ def require_overlay_window_difference(
         "start": start,
         "end": end,
         "sample": sample,
+        "crop": list(crop),
         "cleanFrameSha256": clean_hash,
         "annotatedFrameSha256": annotated_hash,
+        "localVideoSsim": local_ssim,
+        "maximumLocalVideoSsim": maximum_local_ssim,
     }
 
 
@@ -1114,19 +1270,31 @@ def validate_overlay_windows(
     clean: Path,
     annotated: Path,
     packet_events: Sequence[Dict[str, Any]],
+    timeline_events: Sequence[Dict[str, Any]],
     output_duration: float,
+    frame_width: int,
+    frame_height: int,
+    frame_rate: str,
+    global_ssim: float,
 ) -> List[Dict[str, Any]]:
     output_duration = number(output_duration, "output duration")
+    frame_interval = 1.0 / frame_rate_value(frame_rate)
     windows: List[Dict[str, Any]] = []
     for index, mapped in enumerate(packet_events):
+        event = timeline_events[index]
         output_at = number(
             mapped.get("output_at"), "proof receipt events[{0}].output_at".format(index)
         )
-        action_id = str(mapped.get("action_id", index))
+        action_id = (
+            str(mapped["action_id"])
+            if mapped.get("kind") in ("tap", "swipe")
+            else "event-{0}".format(index)
+        )
         if mapped.get("kind") == "tap":
             start = max(0.0, output_at - 0.08)
             end = min(output_duration, output_at + 0.365)
-            sample = min(end, output_at + 0.1)
+            latest_sample = min(end - frame_interval, output_duration - frame_interval)
+            sample = min(output_at + 0.1, latest_sample)
             windows.append(
                 require_overlay_window_difference(
                     ffmpeg,
@@ -1136,6 +1304,8 @@ def validate_overlay_windows(
                     start,
                     end,
                     sample,
+                    overlay_crop(mapped, event, "action", frame_width, frame_height),
+                    global_ssim,
                 )
             )
         elif mapped.get("kind") == "swipe":
@@ -1151,7 +1321,13 @@ def validate_overlay_windows(
                     "action:{0}".format(action_id),
                     output_at,
                     end,
-                    output_at + (end - output_at) / 2,
+                    min(
+                        output_at + (end - output_at) / 2,
+                        end - frame_interval,
+                        output_duration - frame_interval,
+                    ),
+                    overlay_crop(mapped, event, "action", frame_width, frame_height),
+                    global_ssim,
                 )
             )
         if mapped.get("caption") is not None:
@@ -1170,7 +1346,13 @@ def validate_overlay_windows(
                     "caption:{0}".format(action_id),
                     start,
                     end,
-                    start + (end - start) / 2,
+                    min(
+                        start + (end - start) / 2,
+                        end - frame_interval,
+                        output_duration - frame_interval,
+                    ),
+                    overlay_crop(mapped, event, "caption", frame_width, frame_height),
+                    global_ssim,
                 )
             )
     if not windows:
@@ -1294,7 +1476,7 @@ def validate_packet_action_ledger(
             raise ProofMediaError(
                 "Every tap and swipe requires an expected result: {0}".format(action_id)
             )
-        expected_line = "Expected: {0}".format(expected_result)
+        expected_line = "Expected: {0}".format(expected_result.strip())
         caption_lines = (
             [line.strip() for line in expected_caption.splitlines()]
             if isinstance(expected_caption, str)
@@ -1727,7 +1909,12 @@ def validate_packet(args: argparse.Namespace) -> None:
         clean,
         annotated,
         packet["events"],
+        timeline["events"],
         clean_info["duration"],
+        clean_info["width"],
+        clean_info["height"],
+        clean_info["frame_rate"],
+        similarity,
     )
     source_history = timeline.get("source_history")
     ledger: Dict[str, Any]

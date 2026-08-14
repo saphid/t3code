@@ -552,6 +552,9 @@ def validate_packet_validation_receipt(
         start = window.get("start")
         end = window.get("end")
         sample = window.get("sample")
+        crop = window.get("crop")
+        local_similarity = window.get("localVideoSsim")
+        maximum_local_similarity = window.get("maximumLocalVideoSsim")
         if (
             kind not in ("action", "caption")
             or not isinstance(action_id, str)
@@ -569,6 +572,27 @@ def validate_packet_validation_receipt(
             or end <= start
             or sample < start
             or sample > end
+            or not isinstance(crop, list)
+            or len(crop) != 4
+            or any(
+                isinstance(value, bool) or not isinstance(value, int)
+                for value in crop
+            )
+            or crop[0] < 0
+            or crop[1] < 0
+            or crop[2] <= 0
+            or crop[3] <= 0
+            or isinstance(local_similarity, bool)
+            or not isinstance(local_similarity, (int, float))
+            or not math.isfinite(local_similarity)
+            or local_similarity < 0
+            or local_similarity > 1
+            or isinstance(maximum_local_similarity, bool)
+            or not isinstance(maximum_local_similarity, (int, float))
+            or not math.isfinite(maximum_local_similarity)
+            or maximum_local_similarity < 0
+            or maximum_local_similarity > 0.98
+            or local_similarity > maximum_local_similarity
             or not re.fullmatch(
                 r"[0-9a-f]{64}", str(window.get("cleanFrameSha256", ""))
             )
@@ -610,6 +634,12 @@ def validate_packet_validation_receipt(
         or duration_delta > 1 / 24
     ):
         fail(f"{feature_id} packet validation has no valid content pairing")
+    expected_local_maximum = min(0.98, similarity - 0.001)
+    if expected_local_maximum < 0 or any(
+        abs(window["maximumLocalVideoSsim"] - expected_local_maximum) > 0.000001
+        for window in overlay_windows
+    ):
+        fail(f"{feature_id} packet validation has invalid localized overlay evidence")
 
 
 def validate_integrated_commit(feature_id: str, commit: str, test_ref: str) -> None:

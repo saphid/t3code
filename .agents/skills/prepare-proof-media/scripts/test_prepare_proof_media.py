@@ -317,8 +317,8 @@ class SafetyTests(unittest.TestCase):
     "media tools unavailable",
 )
 class PacketValidationTests(unittest.TestCase):
-    def build_app_flow_packet(self, root: Path) -> tuple:
-        source = root / "raw.mp4"
+    def build_app_flow_packet(self, root: Path, source_name: str = "raw.mp4") -> tuple:
+        source = root / source_name
         history = root / "agent-session.json"
         action_map = root / "action-map.json"
         timeline = root / "timeline.json"
@@ -446,6 +446,30 @@ class PacketValidationTests(unittest.TestCase):
                 ["event-1", "event-3"],
             )
             self.assertEqual(len(value["overlayWindows"]), 4)
+            for window in value["overlayWindows"]:
+                self.assertLessEqual(
+                    window["localVideoSsim"], window["maximumLocalVideoSsim"]
+                )
+                self.assertEqual(len(window["crop"]), 4)
+
+    def test_validates_non_mp4_source_by_content(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="proof-packet-mov-") as temporary:
+            root = Path(temporary)
+            _, history, timeline, receipt, validation = self.build_app_flow_packet(
+                root, "raw.mov"
+            )
+            packet = json.loads(receipt.read_text(encoding="utf-8"))
+            self.assertEqual(packet["source"]["width"], 320)
+            self.assertEqual(packet["source"]["height"], 480)
+            subprocess.run(
+                self.validate_command(receipt, timeline, history, validation),
+                check=True,
+                stdout=subprocess.DEVNULL,
+            )
+            self.assertEqual(
+                json.loads(validation.read_text(encoding="utf-8"))["verdict"],
+                "passed",
+            )
 
     def test_rejects_missing_history_unmapped_actions_and_credentials(self) -> None:
         with tempfile.TemporaryDirectory(prefix="proof-packet-rejections-") as temporary:
@@ -550,7 +574,7 @@ class PacketValidationTests(unittest.TestCase):
             self.assertNotEqual(wrong_source_duration.returncode, 0)
             self.assertIn("probed raw source", wrong_source_duration.stderr)
 
-    def test_rejects_annotation_free_remux_in_every_overlay_window(self) -> None:
+    def test_rejects_annotation_free_remux_and_reencode(self) -> None:
         with tempfile.TemporaryDirectory(prefix="proof-packet-overlay-") as temporary:
             root = Path(temporary)
             _, history, timeline, receipt, validation = self.build_app_flow_packet(root)
@@ -577,7 +601,37 @@ class PacketValidationTests(unittest.TestCase):
                 stderr=subprocess.PIPE,
             )
             self.assertNotEqual(result.returncode, 0)
-            self.assertIn("no visible overlay", result.stderr)
+            self.assertIn("no localized visible overlay", result.stderr)
+            self.assertFalse(validation.exists())
+
+        with tempfile.TemporaryDirectory(prefix="proof-packet-reencode-") as temporary:
+            root = Path(temporary)
+            _, history, timeline, receipt, validation = self.build_app_flow_packet(root)
+            packet = json.loads(receipt.read_text(encoding="utf-8"))
+            clean = Path(packet["artifacts"]["clean_video"]["path"])
+            reencoded = root / "annotation-free-reencoded.mp4"
+            subprocess.run(
+                [
+                    "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+                    "-i", str(clean), "-c:v", "libx264", "-crf", "20",
+                    "-preset", "medium", "-x264-params",
+                    "keyint=30:min-keyint=30:scenecut=0", "-pix_fmt", "yuv420p",
+                    "-c:a", "copy", str(reencoded),
+                ],
+                check=True,
+            )
+            packet["artifacts"]["annotated_video"] = MEDIA.artifact_record(
+                "ffprobe", reencoded
+            )
+            receipt.write_text(json.dumps(packet), encoding="utf-8")
+            result = subprocess.run(
+                self.validate_command(receipt, timeline, history, validation),
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("no localized visible overlay", result.stderr)
             self.assertFalse(validation.exists())
 
     def test_custom_caption_binds_the_exact_expected_result(self) -> None:
@@ -596,6 +650,153 @@ class PacketValidationTests(unittest.TestCase):
                 MEDIA.validate_packet_action_ledger(
                     timeline_value, packet, 320, 480, 4.0
                 )
+
+    def test_rejects_untrimmed_or_multiline_expected_result_at_authoring(self) -> None:
+        for expected_result in ("open ", " open", "opens\nfully", "opens\rfully"):
+            with self.subTest(expect=expected_result), self.assertRaisesRegex(
+                MEDIA.ProofMediaError, "one trimmed line"
+            ):
+                MEDIA.validate_event(
+                    {
+                        "kind": "tap", "at": 1.0, "x": 0.5, "y": 0.5,
+                        "expect": expected_result,
+                    },
+                    0,
+                    4.0,
+                    "normalized",
+                )
+
+    def test_tail_action_uses_last_decodable_frame(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="proof-packet-tail-") as temporary:
+            root = Path(temporary)
+            source = root / "raw.mp4"
+            timeline = root / "timeline.json"
+            artifacts = root / "artifacts"
+            validation = root / "validation.json"
+            subprocess.run(
+                [
+                    "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+                    "-f", "lavfi", "-i", "testsrc2=s=320x480:d=4:r=30",
+                    "-c:v", "libx264", "-pix_fmt", "yuv420p", str(source),
+                ],
+                check=True,
+            )
+            timeline.write_text(
+                json.dumps(
+                    {
+                        "version": 1,
+                        "events": [{
+                            "kind": "tap", "action_id": "tail", "at": 3.9,
+                            "x": 0.5, "y": 0.5, "label": "Tail",
+                            "expect": "The final frame remains visible",
+                        }],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            subprocess.run(
+                [
+                    "python3", str(SCRIPT), "build", str(source), "--timeline",
+                    str(timeline), "--output-dir", str(artifacts), "--stem", "tail",
+                    "--no-auto-trim",
+                ],
+                check=True,
+                stdout=subprocess.DEVNULL,
+            )
+            subprocess.run(
+                [
+                    "python3", str(SCRIPT), "validate-packet",
+                    str(artifacts / "tail-receipt.json"), "--timeline", str(timeline),
+                    "--output", str(validation),
+                ],
+                check=True,
+                stdout=subprocess.DEVNULL,
+            )
+            action_window = next(
+                window for window in json.loads(validation.read_text())["overlayWindows"]
+                if window["kind"] == "action"
+            )
+            self.assertLess(action_window["sample"], 4.0)
+            self.assertGreaterEqual(action_window["sample"], 3.9)
+
+    def test_standalone_caption_id_cannot_collide_with_numeric_action_id(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="proof-packet-window-id-") as temporary:
+            root = Path(temporary)
+            source = root / "raw.mp4"
+            timeline = root / "timeline.json"
+            artifacts = root / "artifacts"
+            validation = root / "validation.json"
+            subprocess.run(
+                [
+                    "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+                    "-f", "lavfi", "-i", "testsrc2=s=320x480:d=3:r=30",
+                    "-c:v", "libx264", "-pix_fmt", "yuv420p", str(source),
+                ],
+                check=True,
+            )
+            timeline.write_text(
+                json.dumps(
+                    {
+                        "version": 1,
+                        "events": [
+                            {
+                                "kind": "tap", "action_id": "1", "at": 0.8,
+                                "x": 0.5, "y": 0.5, "label": "Open",
+                                "expect": "The view opens",
+                            },
+                            {
+                                "kind": "caption", "start": 1.8, "end": 2.5,
+                                "caption": "The final state remains visible",
+                            },
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            subprocess.run(
+                [
+                    "python3", str(SCRIPT), "build", str(source), "--timeline",
+                    str(timeline), "--output-dir", str(artifacts), "--stem", "ids",
+                    "--no-auto-trim",
+                ],
+                check=True,
+                stdout=subprocess.DEVNULL,
+            )
+            subprocess.run(
+                [
+                    "python3", str(SCRIPT), "validate-packet",
+                    str(artifacts / "ids-receipt.json"), "--timeline", str(timeline),
+                    "--output", str(validation),
+                ],
+                check=True,
+                stdout=subprocess.DEVNULL,
+            )
+            keys = {
+                (window["kind"], window["id"])
+                for window in json.loads(validation.read_text())["overlayWindows"]
+            }
+            self.assertIn(("caption", "1"), keys)
+            self.assertIn(("caption", "event-1"), keys)
+            self.assertEqual(len(keys), 3)
+
+    def test_frame_decode_seeks_before_input_and_rejects_empty_output(self) -> None:
+        completed = subprocess.CompletedProcess(
+            args=[], returncode=0, stdout=b"\x00\x01\x02", stderr=b""
+        )
+        with mock.patch.object(MEDIA.subprocess, "run", return_value=completed) as runner:
+            self.assertEqual(
+                MEDIA.decoded_video_frame_bytes("ffmpeg", Path("proof.mp4"), 2.5),
+                b"\x00\x01\x02",
+            )
+        command = runner.call_args.args[0]
+        self.assertLess(command.index("-ss"), command.index("-i"))
+
+        empty = subprocess.CompletedProcess(
+            args=[], returncode=0, stdout=b"", stderr=b""
+        )
+        with mock.patch.object(MEDIA.subprocess, "run", return_value=empty):
+            with self.assertRaisesRegex(MEDIA.ProofMediaError, "Could not decode"):
+                MEDIA.decoded_video_frame_bytes("ffmpeg", Path("proof.mp4"), 2.5)
 
 
 @unittest.skipUnless(
