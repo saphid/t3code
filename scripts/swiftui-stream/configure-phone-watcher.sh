@@ -39,7 +39,10 @@ cat > "$PLIST_TMP" <<PLIST
 PLIST
 plutil -lint "$PLIST_TMP"
 mv "$PLIST_TMP" "$PLIST"
-launchctl bootout "gui/$(id -u)/com.saphid.t3-swiftui-phone-watch" 2>/dev/null || true
-launchctl bootstrap "gui/$(id -u)" "$PLIST"
-launchctl kickstart -k "gui/$(id -u)/com.saphid.t3-swiftui-phone-watch"
+DOMAIN="gui/$(id -u)"
+LABEL="com.saphid.t3-swiftui-phone-watch"
+launchctl bootout "$DOMAIN/$LABEL" 2>/dev/null || true
+launchctl enable "$DOMAIN/$LABEL"
+launchctl bootstrap "$DOMAIN" "$PLIST"
+launchctl kickstart -k "$DOMAIN/$LABEL"
 echo "configured $PLIST"
