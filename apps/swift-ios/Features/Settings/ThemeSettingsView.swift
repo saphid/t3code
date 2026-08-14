@@ -322,7 +322,7 @@ private struct ThemeCard: View {
             }
         }
         .buttonStyle(.plain)
-        .accessibilityLabel("(theme.label), (mode.rawValue)")
+        .accessibilityLabel(ThemeCardAccessibility.label(theme: theme.label, mode: mode.rawValue))
         .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
 
@@ -345,5 +345,11 @@ private struct ThemeCard: View {
     private func color(_ value: T3ThemeColorValue?) -> Color {
         guard let value else { return .clear }
         return Color(uiColor: value.uiColor)
+    }
+}
+
+enum ThemeCardAccessibility {
+    static func label(theme: String, mode: String) -> String {
+        "\(theme), \(mode)"
     }
 }
