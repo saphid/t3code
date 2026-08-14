@@ -186,6 +186,58 @@
       ]
     },
     {
+      "id": "in-app-stream-approval-control",
+      "test": "testInAppStreamApprovalControlRequiresExactVerdictConfirmation",
+      "lane": "fixture",
+      "persona": "release-reviewer",
+      "estimatedSeconds": 45,
+      "surfaces": [
+        "Dev build identity",
+        "feature review guide",
+        "commit and thread attribution",
+        "Ready for Test confirmation",
+        "Not ready confirmation"
+      ],
+      "checkpoints": [
+        "stream-approval-review-guide",
+        "stream-approval-ready-confirmation",
+        "stream-approval-ready-recorded",
+        "stream-approval-not-ready-confirmation"
+      ],
+      "issue": "https://github.com/saphid/t3code-personal/issues/56"
+    },
+    {
+      "id": "initial-thread-live-updates",
+      "test": "testInitialThreadLiveUpdateWinsAndTimelineStaysStableOnReopen",
+      "lane": "fixture",
+      "persona": "conversation-user",
+      "estimatedSeconds": 30,
+      "surfaces": [
+        "initial thread history load",
+        "newer live detail",
+        "ordered timeline reopen"
+      ],
+      "checkpoints": [
+        "initial-thread-live-update",
+        "reopened-thread-live-update"
+      ],
+      "issue": "https://github.com/saphid/t3code-personal/issues/83"
+    },
+    {
+      "id": "proof-event-emitter-contract",
+      "test": "testProofEventEmitterWritesCompatibleOptInSessionAndActionMap",
+      "lane": "fixture",
+      "persona": "proof-operator",
+      "estimatedSeconds": 5,
+      "surfaces": [
+        "opt-in action ledger",
+        "app-flow-agent session schema",
+        "proof action-map schema",
+        "monotonic recording offsets"
+      ],
+      "checkpoints": []
+    },
+    {
       "id": "known-red-tool-sheet-close",
       "test": "testKnownIssueThreadToolSheetHasExplicitDoneControl",
       "lane": "known-red",
@@ -242,7 +294,10 @@
         "command-palette-top-drawer",
         "project-connection-entry",
         "thread-context-menu",
-        "thread-workspace-tools"
+        "thread-workspace-tools",
+        "in-app-stream-approval-control",
+        "initial-thread-live-updates",
+        "proof-event-emitter-contract"
       ]
     },
     "live": {
@@ -298,6 +353,37 @@
           "apps/swift-ios/Features/Terminal/**"
         ],
         "journeys": ["thread-workspace-tools"]
+      },
+      {
+        "id": "stream-approval-control",
+        "patterns": [
+          "apps/swift-ios/Features/Settings/BuildTesting*.swift",
+          "apps/swift-ios/Features/Settings/SettingsView.swift",
+          "apps/swift-ios/Features/Workspace/PersonalBuildChannel.swift"
+        ],
+        "journeys": ["in-app-stream-approval-control"]
+      },
+      {
+        "id": "initial-thread-live-update",
+        "patterns": [
+          "apps/swift-ios/Features/Root/FeatureRootModel.swift",
+          "apps/swift-ios/Features/Chat/ThreadDetailView.swift"
+        ],
+        "journeys": ["initial-thread-live-updates"]
+      },
+      {
+        "id": "deterministic-app-flow-fixtures",
+        "patterns": [
+          "apps/swift-ios/App/AppFlowFixtureClient.swift",
+          "apps/swift-ios/App/T3CodeApp.swift",
+          "apps/swift-ios/UITests/AppFlowUITests.swift",
+          "apps/swift-ios/UITests/AppFlowProofEventEmitter.swift"
+        ],
+        "journeys": [
+          "in-app-stream-approval-control",
+          "initial-thread-live-updates",
+          "proof-event-emitter-contract"
+        ]
       },
       {
         "id": "composer-skills-popup",

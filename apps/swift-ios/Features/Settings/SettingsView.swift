@@ -267,10 +267,26 @@ public struct SettingsView: View {
         BuildChangelog.load(info: Bundle.main.infoDictionary)
     }
 
-    private var buildTestingManifest: BuildTestingManifest? { BuildTestingManifest.current }
+    private var buildTestingManifest: BuildTestingManifest? {
+        #if DEBUG
+        if AppFlowFixtureLaunch.isEnabled,
+           AppFlowFixtureLaunch.scenario == .streamApproval
+        {
+            return .appFlowApprovalFixture
+        }
+        #endif
+        return BuildTestingManifest.current
+    }
 
     private var testingPresentation: BuildTestingPresentation? {
-        BuildTestingPresentation(channel: PersonalBuildChannel.current)
+        #if DEBUG
+        if AppFlowFixtureLaunch.isEnabled,
+           AppFlowFixtureLaunch.scenario == .streamApproval
+        {
+            return BuildTestingPresentation(channel: .dev)
+        }
+        #endif
+        return BuildTestingPresentation(channel: PersonalBuildChannel.current)
     }
 
     private var canSave: Bool {

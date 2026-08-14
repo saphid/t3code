@@ -5,10 +5,12 @@ final class AppFlowUITests: XCTestCase {
     private static var testedApplicationIsRegistered = false
     private var app: XCUIApplication!
     private var permissionPolicy = PermissionPolicy.denyAll
+    private var proofEvents: AppFlowProofEventEmitter!
 
     override func setUp() {
         super.setUp()
         continueAfterFailure = false
+        proofEvents = AppFlowProofEventEmitter()
         addUIInterruptionMonitor(withDescription: "System permission") { alert in
             MainActor.assumeIsolated {
                 let containsLocalNetworkText = alert.label
@@ -194,6 +196,220 @@ final class AppFlowUITests: XCTestCase {
         assertExists("30 days")
         assertExists("90 days")
         capture("settings-usage")
+    }
+
+    func testInAppStreamApprovalControlRequiresExactVerdictConfirmation() {
+        launch(scenario: "stream-approval")
+        let openSettings = proofTap(
+            assertIdentifier("sidebar-settings-button"),
+            selector: "sidebar-settings-button",
+            postcondition: "Settings is visible"
+        )
+        assertExists("Settings")
+        proofPassed(openSettings, observation: "Settings is visible")
+
+        let reviewRow = app.descendants(matching: .any)["Review Dev candidates"].firstMatch
+        scrollToHittable(reviewRow)
+        let openReview = proofTap(
+            reviewRow,
+            selector: "Review Dev candidates",
+            postcondition: "Exact Dev build identity is visible"
+        )
+
+        XCTAssertTrue(app.navigationBars["Ready for testing"].waitForExistence(timeout: 8))
+        let identity = assertIdentifier("build-testing-build-identity")
+        XCTAssertEqual(identity.label, "Build 5,601 · Revision 56f17e0")
+        proofPassed(openReview, observation: "Build 5,601 · Revision 56f17e0 is visible")
+        assertExists("Development → Test → Dev → Upstream · Current gate: enter Test")
+
+        let entry = assertIdentifier("build-testing-entry-in-app-stream-approval-control")
+        XCTAssertTrue(entry.label.hasPrefix("In-app stream approval control"))
+        XCTAssertTrue(entry.label.contains("Priority 1, Release control"))
+        XCTAssertTrue(entry.label.contains("1 commits · 1 thread"))
+        XCTAssertTrue(entry.label.hasSuffix("Proved"))
+        let expandEntry = proofTap(
+            entry,
+            selector: "build-testing-entry-in-app-stream-approval-control",
+            postcondition: "The exact feature review guide is visible"
+        )
+
+        assertExists("What changed")
+        assertExists(
+            "The Dev review screen now binds one feature, build, revision, commit, and T3 thread to an auditable verdict."
+        )
+        assertExists("What to check")
+        assertExists(
+            "Confirm the exact build identity and review guide, then inspect both verdict confirmations."
+        )
+        assertExists("Success looks like")
+        assertExists(
+            "Ready for Test and Not ready each require confirmation for this feature and exact build before a verdict is sent."
+        )
+        assertExists("5600000")
+        assertExists("App flow regression audit")
+        proofPassed(expandEntry, observation: "Feature, commit, and thread attribution are visible")
+        capture("stream-approval-review-guide")
+
+        let ready = app.buttons["build-testing-ready-in-app-stream-approval-control"].firstMatch
+        scrollToHittable(ready)
+        XCTAssertEqual(ready.label, "Ready for Test")
+        let requestReady = proofTap(
+            ready,
+            selector: "build-testing-ready-in-app-stream-approval-control",
+            postcondition: "Ready for Test confirmation is visible"
+        )
+        assertExists("Send to Test?")
+        assertExists(
+            "This sends an auditable verdict for In-app stream approval control from exact build 5,601 to its owning T3 thread."
+        )
+        proofPassed(requestReady, observation: "Ready confirmation names feature and exact build")
+        capture("stream-approval-ready-confirmation")
+
+        let confirmReady = proofTap(
+            assertHittableButton("Ready for Test"),
+            selector: "Ready for Test confirmation action",
+            postcondition: "The exact verdict is queued"
+        )
+        assertExists("Testing verdict")
+        assertExists("Verdict queued for App flow regression audit.")
+        proofPassed(confirmReady, observation: "Exact verdict queued for owning T3 thread")
+        capture("stream-approval-ready-recorded")
+        assertHittableButton("OK").tap()
+        assertExists("Submitted: Ready for Test")
+
+        let notReady = assertIdentifier(
+            "build-testing-not-ready-in-app-stream-approval-control"
+        )
+        scrollToHittable(notReady)
+        XCTAssertEqual(notReady.label, "Not ready")
+        let requestNotReady = proofTap(
+            notReady,
+            selector: "build-testing-not-ready-in-app-stream-approval-control",
+            postcondition: "Not ready confirmation is visible"
+        )
+        assertExists("Mark as not ready?")
+        assertExists(
+            "This sends an auditable verdict for In-app stream approval control from exact build 5,601 to its owning T3 thread."
+        )
+        proofPassed(requestNotReady, observation: "Not ready confirmation names feature and exact build")
+        capture("stream-approval-not-ready-confirmation")
+    }
+
+    func testInitialThreadLiveUpdateWinsAndTimelineStaysStableOnReopen() {
+        launch(scenario: "live-update-race")
+        let initialOpen = proofTap(
+            assertIdentifier("thread-fixture-main"),
+            selector: "thread-fixture-main",
+            postcondition: "Newer live detail wins during initial history load"
+        )
+
+        let initial = assertIdentifier("message-fixture-assistant")
+        let live = assertIdentifier("message-fixture-live-update")
+        assertSingleMessageText(
+            "This live update arrived while initial history was still loading."
+        )
+        assertMessageCount(3)
+        XCTAssertLessThan(initial.frame.minY, live.frame.minY)
+        proofPassed(initialOpen, observation: "Live message is present once after initial open")
+        capture("initial-thread-live-update")
+
+        let navigationBar = app.navigationBars.firstMatch
+        XCTAssertTrue(navigationBar.waitForExistence(timeout: 4))
+        let back = navigationBar.buttons.firstMatch
+        XCTAssertTrue(back.isHittable, "Thread navigation did not expose a back button")
+        let returnHome = proofTap(
+            back,
+            selector: "BackButton",
+            postcondition: "Home thread row is visible"
+        )
+        let threadRow = assertIdentifier("thread-fixture-main")
+        proofPassed(returnHome, observation: "Home thread row is visible")
+        let reopen = proofTap(
+            threadRow,
+            selector: "thread-fixture-main",
+            postcondition: "The same ordered timeline is visible after reopen"
+        )
+
+        let reopenedInitial = assertIdentifier("message-fixture-assistant")
+        let reopenedLive = assertIdentifier("message-fixture-live-update")
+        assertMessageCount(3)
+        XCTAssertLessThan(reopenedInitial.frame.minY, reopenedLive.frame.minY)
+        assertSingleMessageText(
+            "This live update arrived while initial history was still loading."
+        )
+        proofPassed(reopen, observation: "Live message remains present once and in order")
+        capture("reopened-thread-live-update")
+    }
+
+    func testProofEventEmitterWritesCompatibleOptInSessionAndActionMap() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("app-flow-proof-emitter-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let sessionURL = root.appendingPathComponent("session.json")
+        let mapURL = root.appendingPathComponent("action-map.json")
+        let anchor = try XCTUnwrap(
+            ISO8601DateFormatter().date(from: "2026-08-15T00:00:00Z")
+        )
+        var uptime = 100.0
+        let emitter = AppFlowProofEventEmitter(
+            environment: [
+                AppFlowProofEventEmitter.sessionPathEnvironment: sessionURL.path,
+                AppFlowProofEventEmitter.actionMapPathEnvironment: mapURL.path,
+                AppFlowProofEventEmitter.recordingStartEnvironment: "2026-08-14T23:59:59.000Z",
+                AppFlowProofEventEmitter.planEnvironment: "proof-contract",
+            ],
+            wallAnchor: anchor,
+            monotonicAnchor: uptime,
+            monotonicNow: { uptime }
+        )
+        uptime = 100.25
+        let actionID = try XCTUnwrap(
+            emitter.recordTap(
+                selector: "fixture-control",
+                point: CGPoint(x: 0.25, y: 0.75),
+                postcondition: "fixture result is visible"
+            )
+        )
+        uptime = 100.5
+        emitter.recordPassed(actionID: actionID, observation: "fixture result is visible")
+
+        let session = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: Data(contentsOf: sessionURL))
+                as? [String: Any]
+        )
+        XCTAssertEqual(session["schemaVersion"] as? Int, 1)
+        XCTAssertEqual(session["plan"] as? String, "proof-contract")
+        let events = try XCTUnwrap(session["events"] as? [[String: Any]])
+        XCTAssertEqual(events.map { $0["phase"] as? String }, ["act", "assert"])
+        XCTAssertEqual(events[0]["id"] as? String, "event-1")
+        XCTAssertEqual(events[0]["elapsedSeconds"] as? Double, 0.25)
+        XCTAssertEqual(events[1]["actionid"] as? String, "event-1")
+        XCTAssertEqual(events[1]["result"] as? String, "passed")
+
+        let actionMap = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: Data(contentsOf: mapURL))
+                as? [String: Any]
+        )
+        XCTAssertEqual(actionMap["version"] as? Int, 1)
+        XCTAssertEqual(
+            actionMap["recording_started_at"] as? String,
+            "2026-08-14T23:59:59.000Z"
+        )
+        let actions = try XCTUnwrap(actionMap["actions"] as? [[String: Any]])
+        XCTAssertEqual(actions[0]["action_id"] as? String, "event-1")
+        XCTAssertEqual(actions[0]["kind"] as? String, "tap")
+        XCTAssertEqual(actions[0]["at"] as? Double, 1.25)
+        XCTAssertEqual(actions[0]["point"] as? [Double], [0.25, 0.75])
+
+        let disabled = AppFlowProofEventEmitter(environment: [:])
+        XCTAssertFalse(disabled.isEnabled)
+        XCTAssertNil(
+            disabled.recordTap(
+                selector: "disabled",
+                point: .zero,
+                postcondition: "no output"
+            )
+        )
     }
 
     func testAccessibilitySemanticsCriticalScreens() {
@@ -756,6 +972,51 @@ final class AppFlowUITests: XCTestCase {
             control.value as? String,
             isOn ? "1" : "0",
             "Unexpected switch value: \(label)",
+            file: file,
+            line: line
+        )
+    }
+
+    @discardableResult
+    private func proofTap(
+        _ element: XCUIElement,
+        selector: String,
+        postcondition: String,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) -> String? {
+        let applicationFrame = app.frame
+        XCTAssertGreaterThan(applicationFrame.width, 0, file: file, line: line)
+        XCTAssertGreaterThan(applicationFrame.height, 0, file: file, line: line)
+        let point = CGPoint(
+            x: min(1, max(0, (element.frame.midX - applicationFrame.minX) / applicationFrame.width)),
+            y: min(1, max(0, (element.frame.midY - applicationFrame.minY) / applicationFrame.height))
+        )
+        let actionID = proofEvents.recordTap(
+            selector: selector,
+            point: point,
+            postcondition: postcondition
+        )
+        element.tap()
+        return actionID
+    }
+
+    private func proofPassed(_ actionID: String?, observation: String) {
+        proofEvents.recordPassed(actionID: actionID, observation: observation)
+    }
+
+    private func scrollToHittable(
+        _ element: XCUIElement,
+        maximumSwipes: Int = 8,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
+        for _ in 0 ..< maximumSwipes where !element.isHittable {
+            app.swipeUp()
+        }
+        XCTAssertTrue(
+            element.exists && element.isHittable,
+            "Could not scroll element into view: \(element.identifier) \(element.label)",
             file: file,
             line: line
         )

@@ -70,6 +70,7 @@ struct BuildTestingFeatureView: View {
                         isConfirmingVerdict = true
                     }
                     .buttonStyle(.borderedProminent)
+                    .accessibilityIdentifier("build-testing-ready-\(entry.id)")
                     .disabled(
                         entry.isProofPending || isSubmitting || submittedVerdict == .ready
                     )
@@ -79,6 +80,7 @@ struct BuildTestingFeatureView: View {
                         isConfirmingVerdict = true
                     }
                     .buttonStyle(.bordered)
+                    .accessibilityIdentifier("build-testing-not-ready-\(entry.id)")
                     .disabled(isSubmitting || submittedVerdict == .notReady)
                 }
                 .confirmationDialog(
@@ -109,6 +111,7 @@ struct BuildTestingFeatureView: View {
                     .font(T3Typography.threadBody)
                     .bold()
                     .foregroundStyle(T3Colors.textPrimary)
+                    .accessibilityIdentifier("build-testing-entry-\(entry.id)")
                 Text("Priority \(entry.reviewPriority) · \(entry.reviewGroup)")
                     .font(T3Typography.supportingStrong)
                     .foregroundStyle(T3Colors.accent)

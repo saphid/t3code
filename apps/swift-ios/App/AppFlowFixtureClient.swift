@@ -7,6 +7,8 @@ enum AppFlowFixtureScenario: String {
     case recovery
     case permissionsDenied = "permissions-denied"
     case longLived = "long-lived"
+    case streamApproval = "stream-approval"
+    case liveUpdateRace = "live-update-race"
 }
 
 enum AppFlowFixtureLaunch {
@@ -43,8 +45,12 @@ final class AppFlowFixtureClient: FeatureClient, FeatureProjectCreationClient {
     private let continuation: AsyncStream<FeatureEvent>.Continuation
     private var snapshot: FeatureSnapshot
     private var details: [String: FeatureThreadDetail]
+    private let scenario: AppFlowFixtureScenario
+    private var didRunInitialLiveUpdateRace = false
+    var waitUntilLiveUpdateIsApplied: (@MainActor (String) async -> Void)?
 
     init(scenario: AppFlowFixtureScenario) {
+        self.scenario = scenario
         let pair = AsyncStream<FeatureEvent>.makeStream(
             bufferingPolicy: .bufferingNewest(16)
         )
@@ -52,7 +58,7 @@ final class AppFlowFixtureClient: FeatureClient, FeatureProjectCreationClient {
         continuation = pair.continuation
 
         switch scenario {
-        case .workspace:
+        case .workspace, .streamApproval, .liveUpdateRace:
             snapshot = Self.workspaceSnapshot
             details = Self.threadDetails
         case .onboarding:
@@ -209,6 +215,24 @@ final class AppFlowFixtureClient: FeatureClient, FeatureProjectCreationClient {
     func loadThread(id: String) async throws -> FeatureThreadDetail {
         guard let detail = details[id] else {
             throw FeatureCapabilityUnavailable("Fixture thread \(id)")
+        }
+        if scenario == .liveUpdateRace,
+           id == Self.mainThread.id,
+           !didRunInitialLiveUpdateRace
+        {
+            didRunInitialLiveUpdateRace = true
+            var liveDetail = detail
+            liveDetail.messages.append(
+                FeatureMessage(
+                    id: "fixture-live-update",
+                    role: .assistant,
+                    text: "This live update arrived while initial history was still loading."
+                )
+            )
+            details[id] = liveDetail
+            continuation.yield(.detail(liveDetail))
+            await waitUntilLiveUpdateIsApplied?(id)
+            return detail
         }
         return detail
     }

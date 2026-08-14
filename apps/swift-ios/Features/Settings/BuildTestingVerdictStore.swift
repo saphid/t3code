@@ -25,6 +25,15 @@ struct BuildTestingVerdictStore {
         defaults.set(try? JSONEncoder().encode(encoded), forKey: key(for: manifest))
     }
 
+    #if DEBUG
+    static func clear(
+        for manifest: BuildTestingManifest,
+        defaults: UserDefaults = .standard
+    ) {
+        defaults.removeObject(forKey: key(for: manifest))
+    }
+    #endif
+
     private static func key(for manifest: BuildTestingManifest) -> String {
         "build-testing-verdicts.v1.\(manifest.channel.rawValue).\(manifest.build).\(manifest.revision)"
     }

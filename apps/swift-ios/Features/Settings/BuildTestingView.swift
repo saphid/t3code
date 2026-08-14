@@ -33,6 +33,7 @@ struct BuildTestingView: View {
                         Text("Build \(manifest.build) · Revision \(String(manifest.revision.prefix(7)))")
                             .font(T3Typography.homeTitle)
                             .foregroundStyle(T3Colors.textPrimary)
+                            .accessibilityIdentifier("build-testing-build-identity")
                         Text(presentation.pipelinePosition)
                             .font(T3Typography.supportingStrong)
                             .foregroundStyle(T3Colors.textSecondary)

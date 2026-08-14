@@ -13,19 +13,30 @@ struct T3CodeApp: App {
         #if DEBUG
         if AppFlowFixtureLaunch.isEnabled {
             let fixtureID = UUID().uuidString
+            let fixtureClient = AppFlowFixtureClient(scenario: AppFlowFixtureLaunch.scenario)
             draftStore = FeatureComposerDraftStore(
                 fileURL: FileManager.default.temporaryDirectory
                     .appendingPathComponent("t3-app-flow-\(fixtureID)-drafts.json")
             )
-            _model = State(
-                initialValue: FeatureRootModel(
-                    client: AppFlowFixtureClient(scenario: AppFlowFixtureLaunch.scenario),
-                    outboxStore: FeatureOutboxStore(
-                        fileURL: FileManager.default.temporaryDirectory
-                            .appendingPathComponent("t3-app-flow-\(fixtureID)-outbox.json")
-                    )
+            let fixtureModel = FeatureRootModel(
+                client: fixtureClient,
+                outboxStore: FeatureOutboxStore(
+                    fileURL: FileManager.default.temporaryDirectory
+                        .appendingPathComponent("t3-app-flow-\(fixtureID)-outbox.json")
                 )
             )
+            fixtureClient.waitUntilLiveUpdateIsApplied = { [weak fixtureModel] threadID in
+                guard let fixtureModel else { return }
+                while fixtureModel.details[threadID]?.messages.contains(where: {
+                    $0.id == "fixture-live-update"
+                }) != true {
+                    await Task.yield()
+                }
+            }
+            if AppFlowFixtureLaunch.scenario == .streamApproval {
+                BuildTestingVerdictStore.clear(for: .appFlowApprovalFixture)
+            }
+            _model = State(initialValue: fixtureModel)
             return
         }
         #endif

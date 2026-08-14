@@ -139,3 +139,46 @@ struct BuildTestingManifest: Codable, Equatable, Sendable {
         return manifest
     }
 }
+
+#if DEBUG
+extension BuildTestingManifest {
+    static let appFlowApprovalFixture = BuildTestingManifest(
+        schemaVersion: 1,
+        channel: .dev,
+        build: 5601,
+        revision: "56f17e0000000000000000000000000000000001",
+        repositoryURL: URL(string: "https://github.com/saphid/t3code-personal"),
+        entries: [
+            Entry(
+                id: "in-app-stream-approval-control",
+                name: "In-app stream approval control",
+                problem: "A reviewer cannot approve or reject an exact personal build from the app.",
+                reproductionSteps: [
+                    "Open Settings in a personal Dev build.",
+                    "Open Review Dev candidates and select this feature.",
+                    "Record a Ready for Test or Not ready verdict.",
+                ],
+                summary: "The Dev review screen now binds one feature, build, revision, commit, and T3 thread to an auditable verdict.",
+                whatToCheck: "Confirm the exact build identity and review guide, then inspect both verdict confirmations.",
+                successLooksLike: "Ready for Test and Not ready each require confirmation for this feature and exact build before a verdict is sent.",
+                validationSummary: "Deterministic unit and XCUITest coverage exercise the frozen fixture metadata and production Settings hierarchy.",
+                knownLimitations: "The fixture does not contact GitHub or a live T3 backend.",
+                reviewPriority: 1,
+                reviewGroup: "Release control",
+                state: "proved",
+                commits: [
+                    Commit(
+                        sha: "5600000000000000000000000000000000000001",
+                        title: "Add in-app stream approval control",
+                        role: .candidate
+                    ),
+                ],
+                threads: [
+                    Thread(id: "fixture-main", title: "App flow regression audit"),
+                ],
+                issueURL: URL(string: "https://github.com/saphid/t3code-personal/issues/56")
+            ),
+        ]
+    )
+}
+#endif

@@ -50,6 +50,12 @@ The fixture exists only in `DEBUG`. Release and TestFlight builds always compose
   keyboard-focused thread;
 - the complete non-destructive thread context-menu inventory;
 - thread detail plus Files, Review, Source Control, and Terminal surfaces;
+- exact Dev build and feature attribution plus both in-app approval confirmations;
+- a newer live thread update winning over stale initial history, with the same
+  ordered timeline after reopening the thread;
+- a default-off XCUITest proof-event emitter that writes actual action centers,
+  passed postconditions, and monotonic recording offsets in the existing
+  app-flow-agent session and proof-map schemas when output paths are supplied;
 - retained screenshots and semantic accessibility hierarchies at the meaningful
   checkpoints;
 - four pinned onboarding snapshot smokes: light/standard, dark/accessibility
@@ -57,13 +63,15 @@ The fixture exists only in `DEBUG`. Release and TestFlight builds always compose
 - a separate critical-screen accessibility lane that rejects duplicate nonempty
   identifiers across onboarding, Home, and Settings.
 
-The 14 fixture journeys cover ten named personas: first-run user, returning
+The 17 fixture journeys cover thirteen named personas: first-run user, returning
 user, task author, error-recovery user, permissions-denied user, long-lived
 user, one-handed mobile user, environment manager, thread operator, and
-developer.
+developer, release reviewer, conversation user, and proof operator.
 
-The tests deliberately do not tap destructive confirmation actions, system
-photo/camera/file pickers, external URLs, or buttons that would send live data.
+The tests deliberately do not tap destructive actions against retained state,
+system photo/camera/file pickers, external URLs, or buttons that would send live
+data. The approval-control journey records its verdict only in the isolated
+in-process fixture and resets that fixture receipt before each launch.
 An additional opt-in journey pairs a clean simulator to a disposable backend
 and asserts that its seeded project reaches the real Home project menu.
 
@@ -197,7 +205,7 @@ Simulator by default; an explicit UDID is treated as caller-owned.
 | Plan                   | Purpose                                                                     | Retry policy                                 |
 | ---------------------- | --------------------------------------------------------------------------- | -------------------------------------------- |
 | `pr`                   | Four critical deterministic journeys for pull requests                      | None; first failure is red                   |
-| `regression`           | Every fixture journey across ten named personas, with zero expected skips   | None                                         |
+| `regression`           | Every fixture journey across thirteen named personas, with zero expected skips | None                                         |
 | `stability`            | Three fresh-runner repetitions of onboarding and task/follow-up             | No retry-to-green; all attempts are retained |
 | `live`                 | One disposable-backend pairing/project smoke                                | None; requires a fresh one-time code         |
 | `security`             | Staged credential ingress and evidence-leak audit                           | None; valid-format sentinel only             |
@@ -402,12 +410,12 @@ approval:
 | -------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------- |
 | Home does not accept scrolling during cold-start metadata work | [#55](https://github.com/saphid/t3code-personal/issues/55)                                        | Test build 45, `needs-you`, installed-and-launched receipt                  |
 | Ordinary Home thread-list scrolling                            | `home-thread-list-scrolling`                                                                      | Test build 41, `needs-you`                                                  |
-| Initial thread open loses live updates                         | `initial-thread-live-updates`                                                                     | Test build 41, `needs-you`                                                  |
+| Initial thread open loses live updates                         | `initial-thread-live-updates`                                                                     | Test build 41, `needs-you`; deterministic initial-open and reopen journey   |
 | Composer/skill menu collides with the keyboard or is too small | `skills-popup-keyboard-clearance` plus [#57](https://github.com/saphid/t3code-personal/issues/57) | Build 41 awaits approval; expanded popup is in Test build 51                |
 | Retained tool errors hide recoverable content                  | `safe-tool-content-recovery`                                                                      | Test build 41, `needs-you`; this does not fix the missing sheet exit in #60 |
 | Test cannot be paired conveniently                             | [#54](https://github.com/saphid/t3code-personal/issues/54)                                        | Personal Connect is in Test build 44                                        |
 | Pull-request workspace/inbox is absent                         | `pull-request-workspace-protocol` plus the PR inbox feature                                       | Foundation awaits approval in build 41; inbox is in Test build 50           |
-| Test feature approval must happen in app                       | [#56](https://github.com/saphid/t3code-personal/issues/56)                                        | Test build 52 is recorded installed-and-launched                            |
+| Test feature approval must happen in app                       | [#56](https://github.com/saphid/t3code-personal/issues/56)                                        | Test build 52 is installed; deterministic exact-verdict journey added       |
 
 The latest durable device receipts observed during this audit are Dev build 45
 at `6d150260` and Test build 52 at `20fd9b7d`, both installed-and-launched. The
