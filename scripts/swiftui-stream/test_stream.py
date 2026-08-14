@@ -38,9 +38,15 @@ def git(repository: Path, *arguments: str) -> str:
 def write_stream(repository: Path, features: list[dict]) -> None:
     for feature in features:
         if feature.get("state") in {"proved", "in-test", "needs-you"}:
+            feature.setdefault("problem", "The previous behavior does not meet the acceptance contract.")
+            feature.setdefault("reproductionSteps", ["Open the affected flow.", "Exercise the behavior."])
             feature.setdefault("summary", "Explains the change under review.")
             feature.setdefault("whatToCheck", "Exercise the changed behavior.")
             feature.setdefault("successLooksLike", "The behavior works without regression.")
+            feature.setdefault("validationSummary", "Focused automated checks pass.")
+            feature.setdefault("knownLimitations", "None known.")
+            feature.setdefault("reviewPriority", 1)
+            feature.setdefault("reviewGroup", "Core reliability")
     path = repository / "scripts/swiftui-stream/stream.json"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps({"features": features}))
@@ -589,6 +595,29 @@ class StreamTests(unittest.TestCase):
         with self.assertRaises(SystemExit):
             stream.validate_manifest(value)
 
+    def test_reviewable_feature_requires_a_complete_acceptance_packet(self):
+        required = (
+            "problem",
+            "reproductionSteps",
+            "summary",
+            "whatToCheck",
+            "successLooksLike",
+            "validationSummary",
+            "knownLimitations",
+            "reviewPriority",
+            "reviewGroup",
+        )
+        for field in required:
+            with self.subTest(field=field):
+                value = json.loads(json.dumps(stream.manifest()))
+                feature = next(
+                    item for item in value["features"]
+                    if item.get("state") == "needs-you"
+                )
+                feature.pop(field)
+                with self.assertRaises(SystemExit):
+                    stream.validate_manifest(value)
+
     def test_in_test_feature_may_stage_a_future_build(self):
         value = json.loads(json.dumps(stream.manifest()))
         feature = next(
@@ -627,9 +656,15 @@ class StreamTests(unittest.TestCase):
             "id": "visual",
             "name": "Visual",
             "state": "proved",
+            "problem": "The previous interface is incorrect.",
+            "reproductionSteps": ["Open the interface.", "Use the changed control."],
             "summary": "Changes the interface.",
             "whatToCheck": "Exercise the interface.",
             "successLooksLike": "The interface works.",
+            "validationSummary": "Focused visual tests pass.",
+            "knownLimitations": "None known.",
+            "reviewPriority": 1,
+            "reviewGroup": "Visual behavior",
             "visualChange": True,
             "interactionChange": True,
             "sourceBranch": "feat/visual",
@@ -824,8 +859,20 @@ Annotated screenshot: https://evidence.example/annotated.png
             "features": [
                 {"id": "developing", "name": "Developing", "state": "developing"},
                 {"id": "proved", "name": "Proved", "state": "proved"},
-                {"id": "test-41", "name": "Test 41", "state": "needs-you", "testBuild": 41},
-                {"id": "test-42", "name": "Test 42", "state": "in-test", "testBuild": 42},
+                {
+                    "id": "test-41",
+                    "name": "Test 41",
+                    "state": "needs-you",
+                    "testBuild": 41,
+                    "reviewPriority": 2,
+                },
+                {
+                    "id": "test-42",
+                    "name": "Test 42",
+                    "state": "in-test",
+                    "testBuild": 42,
+                    "reviewPriority": 1,
+                },
                 {"id": "shipped", "name": "Shipped", "state": "in-dev"},
             ]
         }
@@ -836,7 +883,7 @@ Annotated screenshot: https://evidence.example/annotated.png
         )
         self.assertEqual(
             [item["id"] for item in testing_manifest.selected_features(value, "test", 42)],
-            ["test-41", "test-42"],
+            ["test-42", "test-41"],
         )
 
     def test_testing_manifest_deduplicates_threads_and_commits(self):

@@ -70,6 +70,7 @@ def selected_features(stream, channel, build):
     return sorted(
         selected,
         key=lambda feature: (
+            feature.get("reviewPriority", 1_000_000),
             feature.get("order", 1_000_000),
             feature.get("name", "").casefold(),
             feature.get("id", ""),
@@ -135,11 +136,31 @@ def feature_thread_values(feature):
 
 def review_guidance(feature):
     guidance = {}
-    for key in ("summary", "whatToCheck", "successLooksLike"):
+    for key in (
+        "problem",
+        "summary",
+        "whatToCheck",
+        "successLooksLike",
+        "validationSummary",
+        "knownLimitations",
+        "reviewGroup",
+    ):
         value = feature.get(key)
         if not isinstance(value, str) or not value.strip():
             raise RuntimeError("%s has no %s" % (feature.get("id", "feature"), key))
         guidance[key] = value.strip()
+    steps = feature.get("reproductionSteps")
+    if (
+        not isinstance(steps, list)
+        or not steps
+        or any(not isinstance(step, str) or not step.strip() for step in steps)
+    ):
+        raise RuntimeError("%s has invalid reproductionSteps" % feature.get("id", "feature"))
+    priority = feature.get("reviewPriority")
+    if not isinstance(priority, int) or isinstance(priority, bool) or priority < 1:
+        raise RuntimeError("%s has invalid reviewPriority" % feature.get("id", "feature"))
+    guidance["reproductionSteps"] = [step.strip() for step in steps]
+    guidance["reviewPriority"] = priority
     return guidance
 
 

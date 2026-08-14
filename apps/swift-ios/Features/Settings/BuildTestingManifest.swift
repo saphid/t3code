@@ -55,9 +55,15 @@ struct BuildTestingManifest: Codable, Equatable, Sendable {
     struct Entry: Codable, Equatable, Identifiable, Sendable {
         let id: String
         let name: String
+        let problem: String
+        let reproductionSteps: [String]
         let summary: String
         let whatToCheck: String
         let successLooksLike: String
+        let validationSummary: String
+        let knownLimitations: String
+        let reviewPriority: Int
+        let reviewGroup: String
         let state: String
         let commits: [Commit]
         let threads: [Thread]
@@ -67,9 +73,15 @@ struct BuildTestingManifest: Codable, Equatable, Sendable {
         init(
             id: String,
             name: String,
+            problem: String,
+            reproductionSteps: [String],
             summary: String,
             whatToCheck: String,
             successLooksLike: String,
+            validationSummary: String,
+            knownLimitations: String,
+            reviewPriority: Int,
+            reviewGroup: String,
             state: String,
             commits: [Commit],
             threads: [Thread],
@@ -78,9 +90,15 @@ struct BuildTestingManifest: Codable, Equatable, Sendable {
         ) {
             self.id = id
             self.name = name
+            self.problem = problem
+            self.reproductionSteps = reproductionSteps
             self.summary = summary
             self.whatToCheck = whatToCheck
             self.successLooksLike = successLooksLike
+            self.validationSummary = validationSummary
+            self.knownLimitations = knownLimitations
+            self.reviewPriority = reviewPriority
+            self.reviewGroup = reviewGroup
             self.state = state
             self.commits = commits
             self.threads = threads

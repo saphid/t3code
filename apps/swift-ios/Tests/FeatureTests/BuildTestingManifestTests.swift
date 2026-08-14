@@ -8,7 +8,7 @@ struct BuildTestingManifestTests {
     @Test("Loads exact embedded stream metadata", .bug("https://github.com/saphid/t3code-personal/issues/56"))
     func loadsEmbeddedManifest() throws {
         let json =
-            #"{"schemaVersion":1,"channel":"test","build":42,"revision":"abcdef123456","repositoryURL":"https://github.com/saphid/t3code-personal","entries":[{"id":"feature-one","name":"Feature one","summary":"Explains the change.","whatToCheck":"Exercise the changed flow.","successLooksLike":"The flow works without regression.","state":"needs-you","commits":[{"sha":"1234567890abcdef","title":"Add feature one","role":"integrated"}],"threads":[{"id":"THREAD-ONE","title":"Feature one thread"}],"issueURL":"https://github.com/saphid/t3code-personal/issues/56","visualEvidence":[{"kind":"video","title":"Feature walkthrough","caption":"Shows the successful interaction.","appearance":"dark","cleanURL":"https://evidence.example/clean.mp4","annotatedURL":"https://evidence.example/annotated.mp4"}]}]}"#
+            #"{"schemaVersion":1,"channel":"test","build":42,"revision":"abcdef123456","repositoryURL":"https://github.com/saphid/t3code-personal","entries":[{"id":"feature-one","name":"Feature one","problem":"The old flow loses work.","reproductionSteps":["Open the flow.","Trigger the action."],"summary":"Explains the change.","whatToCheck":"Exercise the changed flow.","successLooksLike":"The flow works without regression.","validationSummary":"Focused tests pass.","knownLimitations":"None known.","reviewPriority":1,"reviewGroup":"Core reliability","state":"needs-you","commits":[{"sha":"1234567890abcdef","title":"Add feature one","role":"integrated"}],"threads":[{"id":"THREAD-ONE","title":"Feature one thread"}],"issueURL":"https://github.com/saphid/t3code-personal/issues/56","visualEvidence":[{"kind":"video","title":"Feature walkthrough","caption":"Shows the successful interaction.","appearance":"dark","cleanURL":"https://evidence.example/clean.mp4","annotatedURL":"https://evidence.example/annotated.mp4"}]}]}"#
         let info = ["T3BuildTesting": Data(json.utf8).base64EncodedString()]
         let manifest = try #require(BuildTestingManifest.load(info: info))
 
@@ -18,6 +18,8 @@ struct BuildTestingManifestTests {
         #expect(manifest.entries.first?.threads.first?.id == "THREAD-ONE")
         #expect(manifest.entries.first?.stateLabel == "Needs You")
         #expect(manifest.entries.first?.whatToCheck == "Exercise the changed flow.")
+        #expect(manifest.entries.first?.reproductionSteps.count == 2)
+        #expect(manifest.entries.first?.reviewPriority == 1)
         #expect(manifest.entries.first?.evidence.first?.kind == .video)
         #expect(manifest.entries.first?.evidence.first?.isDarkMode == true)
         #expect(BuildTestingManifest.load(info: nil) == nil)
@@ -58,9 +60,15 @@ struct BuildTestingManifestTests {
         let entry = BuildTestingManifest.Entry(
             id: "feature-one",
             name: "Feature one",
+            problem: "The old flow loses work.",
+            reproductionSteps: ["Open the flow.", "Trigger the action."],
             summary: "Explains feature one.",
             whatToCheck: "Exercise feature one.",
             successLooksLike: "Feature one works.",
+            validationSummary: "Focused tests pass.",
+            knownLimitations: "None known.",
+            reviewPriority: 1,
+            reviewGroup: "Core reliability",
             state: "needs-you",
             commits: [
                 .init(sha: "1234567890abcdef", title: "Integrate feature one", role: .integrated),
@@ -98,9 +106,15 @@ struct BuildTestingManifestTests {
         let entry = BuildTestingManifest.Entry(
             id: "feature-one",
             name: "Feature one",
+            problem: "The old flow loses work.",
+            reproductionSteps: ["Open the flow.", "Trigger the action."],
             summary: "Explains feature one.",
             whatToCheck: "Exercise feature one.",
             successLooksLike: "Feature one works.",
+            validationSummary: "Focused tests pass.",
+            knownLimitations: "None known.",
+            reviewPriority: 1,
+            reviewGroup: "Core reliability",
             state: "proved",
             commits: [.init(sha: "1234567890abcdef", title: "Feature one", role: .candidate)],
             threads: [.init(id: "THREAD-ONE", title: "Feature one thread")],

@@ -116,9 +116,27 @@ def validate_manifest(value: dict[str, Any]) -> None:
         if feature.get("state") not in states:
             fail(f"{feature_id} has invalid state {feature.get('state')}")
         if feature.get("state") in {"proved", *APPROVAL_STATES}:
-            for key in ("summary", "whatToCheck", "successLooksLike"):
+            for key in (
+                "problem",
+                "summary",
+                "whatToCheck",
+                "successLooksLike",
+                "validationSummary",
+                "knownLimitations",
+                "reviewGroup",
+            ):
                 if not isinstance(feature.get(key), str) or not feature[key].strip():
                     fail(f"{feature_id} is reviewable without {key}")
+            steps = feature.get("reproductionSteps")
+            if (
+                not isinstance(steps, list)
+                or not steps
+                or any(not isinstance(step, str) or not step.strip() for step in steps)
+            ):
+                fail(f"{feature_id} is reviewable without valid reproductionSteps")
+            priority = feature.get("reviewPriority")
+            if not isinstance(priority, int) or isinstance(priority, bool) or priority < 1:
+                fail(f"{feature_id} is reviewable without valid reviewPriority")
         evidence = feature.get("visualEvidence")
         if evidence is not None:
             if not feature.get("visualChange"):
