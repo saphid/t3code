@@ -247,6 +247,152 @@ final class AppFlowUITests: XCTestCase {
         capture("long-lived-history-search")
     }
 
+    func testSkillsPopupStaysReadableAboveKeyboardAndSelectsBottomSkill() {
+        launch()
+        assertIdentifier("thread-fixture-main").tap()
+        assertIdentifier("message-fixture-user")
+
+        if !app.descendants(matching: .any)["message-composer"].firstMatch.exists {
+            assertHittableButton("Message agent").tap()
+        }
+        let composer = assertIdentifier("message-composer")
+        composer.tap()
+        let keyboard = app.keyboards.firstMatch
+        XCTAssertTrue(
+            keyboard.waitForExistence(timeout: 4),
+            "Thread composer did not accept keyboard focus"
+        )
+        composer.typeText("$")
+
+        let menu = assertIdentifier("composer-command-menu")
+        let firstSkill = assertIdentifier(
+            "composer-suggestion-skill:accessibility-workflow-review"
+        )
+        XCTAssertTrue(
+            firstSkill.label.contains(
+                "Accessibility workflow review for compact mobile screens"
+            ),
+            "The long skill name was not exposed in full: \(firstSkill.label)"
+        )
+        XCTAssertTrue(
+            firstSkill.label.contains("safe-area clearance"),
+            "The skill description was not exposed in full: \(firstSkill.label)"
+        )
+        XCTAssertGreaterThanOrEqual(
+            firstSkill.frame.height,
+            60,
+            "The long skill row collapsed below its readable expanded height"
+        )
+        assertMenu(menu, clears: keyboard)
+
+        let lastSkill = assertIdentifier(
+            "composer-suggestion-skill:zeta-release-proof-archive"
+        )
+        for _ in 0 ..< 8 where !isFullyContained(lastSkill, in: menu) {
+            menu.swipeUp()
+        }
+        XCTAssertTrue(
+            isFullyContained(lastSkill, in: menu),
+            "Could not scroll the full final fixture skill row into view"
+        )
+        assertMenu(menu, clears: keyboard)
+        capture("thread-skills-popup-scrolled")
+
+        composer.typeText("release")
+        XCTAssertTrue(lastSkill.waitForExistence(timeout: 4))
+        XCTAssertTrue(lastSkill.isHittable, "The filtered final skill is not selectable")
+        lastSkill.tap()
+
+        XCTAssertTrue(menu.waitForNonExistence(timeout: 4), "Skills popup did not dismiss")
+        XCTAssertEqual(
+            composer.value as? String,
+            "$zeta-release-proof-archive ",
+            "Selecting the filtered skill did not replace the trigger"
+        )
+        XCTAssertTrue(keyboard.exists, "Selecting a skill unexpectedly dismissed the keyboard")
+        capture("thread-skills-popup-selected")
+    }
+
+    func testHomeListScrollDoesNotOpenCommandPalette() {
+        launch(scenario: "long-lived")
+
+        let list = app.collectionViews.firstMatch
+        XCTAssertTrue(list.waitForExistence(timeout: 8), "Home thread list did not appear")
+        XCTAssertTrue(assertIdentifier("thread-fixture-history-24").isHittable)
+        list.swipeUp()
+        assertCommandPaletteClosed("A normal Home-list swipe opened the command palette")
+
+        let nearTop = list.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.12))
+        nearTop.press(
+            forDuration: 0.15,
+            thenDragTo: nearTop.withOffset(CGVector(dx: 0, dy: -70)),
+            withVelocity: .slow,
+            thenHoldForDuration: 0.1
+        )
+        assertCommandPaletteClosed("A swipe near the top of the Home list opened the command palette")
+
+        let accumulatedThread = app.descendants(matching: .any)["thread-fixture-main"].firstMatch
+        for _ in 0 ..< 10 where !accumulatedThread.isHittable {
+            list.swipeUp()
+            assertCommandPaletteClosed("Scrolling accumulated history opened the command palette")
+        }
+        XCTAssertTrue(
+            accumulatedThread.isHittable,
+            "Home did not scroll to the final accumulated fixture thread"
+        )
+        capture("home-thread-list-scrolled")
+    }
+
+    func testCommandPaletteTopDrawerThresholdAndGestureIsolation() {
+        launch()
+
+        let homeGestureSurface = assertIdentifier("sidebar-search-button")
+        drag(
+            from: homeGestureSurface,
+            offset: CGVector(dx: -120, dy: 18),
+            velocity: .slow
+        )
+        assertCommandPaletteClosed("A horizontal Home-bar gesture opened the command palette")
+
+        drag(
+            from: homeGestureSurface,
+            offset: CGVector(dx: 0, dy: 70),
+            velocity: .slow
+        )
+        assertCommandPaletteClosed("A below-threshold Home-bar drag opened the command palette")
+
+        drag(
+            from: homeGestureSurface,
+            offset: CGVector(dx: 0, dy: 120),
+            velocity: .slow
+        )
+        assertCommandPaletteOpen()
+        capture("command-palette-home-threshold")
+        dismissCommandPalette()
+
+        assertIdentifier("thread-fixture-main").tap()
+        assertIdentifier("message-fixture-user")
+        if !app.descendants(matching: .any)["message-composer"].firstMatch.exists {
+            assertHittableButton("Message agent").tap()
+        }
+        let composer = assertIdentifier("message-composer")
+        composer.tap()
+        XCTAssertTrue(
+            app.keyboards.firstMatch.waitForExistence(timeout: 4),
+            "Thread composer did not accept keyboard focus"
+        )
+
+        let navigationBar = app.navigationBars.firstMatch
+        XCTAssertTrue(navigationBar.waitForExistence(timeout: 4))
+        drag(
+            from: navigationBar,
+            offset: CGVector(dx: 0, dy: 120),
+            velocity: .slow
+        )
+        assertCommandPaletteOpen()
+        capture("command-palette-thread-keyboard")
+    }
+
     func testCreateTaskAndSendFollowUpHappyPath() {
         launch()
         assertIdentifier("sidebar-new-task-button").tap()
@@ -758,6 +904,78 @@ final class AppFlowUITests: XCTestCase {
             return
         }
         element.typeText(text)
+    }
+
+    private func assertMenu(
+        _ menu: XCUIElement,
+        clears keyboard: XCUIElement,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
+        let windowFrame = app.windows.firstMatch.frame
+        XCTAssertGreaterThanOrEqual(menu.frame.minX, windowFrame.minX, file: file, line: line)
+        XCTAssertLessThanOrEqual(menu.frame.maxX, windowFrame.maxX, file: file, line: line)
+        XCTAssertLessThanOrEqual(
+            menu.frame.maxY,
+            keyboard.frame.minY + 2,
+            "Skills popup overlaps the software keyboard",
+            file: file,
+            line: line
+        )
+    }
+
+    private func isFullyContained(_ element: XCUIElement, in container: XCUIElement) -> Bool {
+        let elementFrame = element.frame
+        let containerFrame = container.frame
+        return elementFrame.minY >= containerFrame.minY
+            && elementFrame.maxY <= containerFrame.maxY
+    }
+
+    private func drag(
+        from element: XCUIElement,
+        offset: CGVector,
+        velocity: XCUIGestureVelocity
+    ) {
+        let start = element.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+        start.press(
+            forDuration: 0.15,
+            thenDragTo: start.withOffset(offset),
+            withVelocity: velocity,
+            thenHoldForDuration: 0.1
+        )
+    }
+
+    private func assertCommandPaletteClosed(
+        _ message: String,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
+        let drawer = app.descendants(matching: .any)["command-palette-drawer"].firstMatch
+        XCTAssertTrue(drawer.waitForNonExistence(timeout: 2), message, file: file, line: line)
+    }
+
+    private func assertCommandPaletteOpen(
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
+        XCTAssertTrue(
+            app.descendants(matching: .any)["command-palette-drawer"].firstMatch
+                .waitForExistence(timeout: 5),
+            "Command palette did not settle open",
+            file: file,
+            line: line
+        )
+        XCTAssertTrue(
+            app.textFields["command-palette-search"].firstMatch.waitForExistence(timeout: 4),
+            "Command palette search did not become interactive",
+            file: file,
+            line: line
+        )
+    }
+
+    private func dismissCommandPalette() {
+        assertHittableButton("Done").tap()
+        assertCommandPaletteClosed("Command palette did not dismiss")
     }
 
     private func assertMessageCount(

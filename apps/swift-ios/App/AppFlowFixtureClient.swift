@@ -440,6 +440,31 @@ final class AppFlowFixtureClient: FeatureClient, FeatureProjectCreationClient {
         workingStartedAt: Date(timeIntervalSince1970: 1_786_590_000)
     )
 
+    private static let skills = [
+        FeatureProviderSkill(
+            name: "accessibility-workflow-review",
+            displayName: "Accessibility workflow review for compact mobile screens",
+            shortDescription: "Checks readable labels, safe-area clearance, and one-finger interaction paths."
+        ),
+        FeatureProviderSkill(name: "app-flow-audit", displayName: "App flow audit"),
+        FeatureProviderSkill(name: "build-hygiene", displayName: "Build hygiene"),
+        FeatureProviderSkill(name: "code-review", displayName: "Code review"),
+        FeatureProviderSkill(name: "diagnosing-bugs", displayName: "Diagnosing bugs"),
+        FeatureProviderSkill(name: "ios-debugger-agent", displayName: "iOS debugger agent"),
+        FeatureProviderSkill(name: "prepare-proof-media", displayName: "Prepare proof media"),
+        FeatureProviderSkill(name: "release-checklist", displayName: "Release checklist"),
+        FeatureProviderSkill(name: "research", displayName: "Research"),
+        FeatureProviderSkill(name: "share-video-evidence", displayName: "Share video evidence"),
+        FeatureProviderSkill(name: "swift-testing-pro", displayName: "Swift testing pro"),
+        FeatureProviderSkill(name: "swiftui-pro", displayName: "SwiftUI pro"),
+        FeatureProviderSkill(name: "test-t3-mobile", displayName: "Test T3 mobile"),
+        FeatureProviderSkill(
+            name: "zeta-release-proof-archive",
+            displayName: "Zeta release proof archive and delivery receipt verification",
+            shortDescription: "Collects the final annotated evidence and verifies its durable delivery receipt."
+        ),
+    ]
+
     private static let provider = FeatureProvider(
         id: "codex",
         name: "Codex",
@@ -465,7 +490,8 @@ final class AppFlowFixtureClient: FeatureClient, FeatureProjectCreationClient {
                     ),
                 ]
             ),
-        ]
+        ],
+        skills: skills
     )
 
     private static let workspaceSnapshot = FeatureSnapshot(

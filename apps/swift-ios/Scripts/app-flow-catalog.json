@@ -109,6 +109,36 @@
       "checkpoints": ["long-lived-history-search"]
     },
     {
+      "id": "skills-popup-keyboard-readability",
+      "test": "testSkillsPopupStaysReadableAboveKeyboardAndSelectsBottomSkill",
+      "lane": "fixture",
+      "persona": "task-author",
+      "estimatedSeconds": 35,
+      "surfaces": ["thread composer", "software keyboard", "Skills popup", "skill filtering"],
+      "checkpoints": ["thread-skills-popup-scrolled", "thread-skills-popup-selected"]
+    },
+    {
+      "id": "home-thread-list-scrolling",
+      "test": "testHomeListScrollDoesNotOpenCommandPalette",
+      "lane": "fixture",
+      "persona": "long-lived-user",
+      "estimatedSeconds": 30,
+      "surfaces": ["Home", "accumulated thread history", "vertical scrolling"],
+      "checkpoints": ["home-thread-list-scrolled"]
+    },
+    {
+      "id": "command-palette-top-drawer",
+      "test": "testCommandPaletteTopDrawerThresholdAndGestureIsolation",
+      "lane": "fixture",
+      "persona": "one-handed-mobile-user",
+      "estimatedSeconds": 45,
+      "surfaces": ["Home bar", "thread header", "command palette", "software keyboard"],
+      "checkpoints": [
+        "command-palette-home-threshold",
+        "command-palette-thread-keyboard"
+      ]
+    },
+    {
       "id": "project-connection-entry",
       "test": "testProjectAndConnectionEntryPoints",
       "lane": "fixture",
@@ -207,6 +237,9 @@
         "recovery-last-known-workspace",
         "permissions-denied-settings",
         "long-lived-history-search",
+        "skills-popup-keyboard-readability",
+        "home-thread-list-scrolling",
+        "command-palette-top-drawer",
         "project-connection-entry",
         "thread-context-menu",
         "thread-workspace-tools"
@@ -265,6 +298,26 @@
           "apps/swift-ios/Features/Terminal/**"
         ],
         "journeys": ["thread-workspace-tools"]
+      },
+      {
+        "id": "composer-skills-popup",
+        "patterns": [
+          "apps/swift-ios/Features/Chat/FeatureComposerCommandPopover.swift",
+          "apps/swift-ios/Features/Chat/FeatureComposerPowerFeatures.swift",
+          "apps/swift-ios/Features/Chat/FeatureComposerView.swift"
+        ],
+        "journeys": ["skills-popup-keyboard-readability"]
+      },
+      {
+        "id": "home-scroll-and-command-palette",
+        "patterns": [
+          "apps/swift-ios/Features/Workspace/FeatureCommandPaletteGestureInstaller.swift",
+          "apps/swift-ios/Features/Workspace/FeatureCommandPaletteModel.swift",
+          "apps/swift-ios/Features/Workspace/FeatureCommandPaletteView.swift",
+          "apps/swift-ios/Features/Workspace/HomeThreadCollectionView.swift",
+          "apps/swift-ios/Features/Workspace/WorkspaceView.swift"
+        ],
+        "journeys": ["home-thread-list-scrolling", "command-palette-top-drawer"]
       },
       {
         "id": "credential-ingress",
