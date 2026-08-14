@@ -144,9 +144,14 @@ def validate_manifest(value: dict[str, Any]) -> None:
             if parsed_issue.scheme != "https" or not parsed_issue.netloc:
                 fail(f"{feature_id} sourceIssue must use HTTPS")
         evidence = feature.get("visualEvidence")
+        carries_review_media = bool(
+            feature.get("visualChange")
+            or feature.get("reviewMedia")
+            or feature.get("state") == "needs-you"
+        )
         if evidence is not None:
-            if not feature.get("visualChange"):
-                fail(f"{feature_id} has visualEvidence without visualChange")
+            if not carries_review_media:
+                fail(f"{feature_id} has visualEvidence without a media scope")
             if not isinstance(evidence, list) or not evidence:
                 fail(f"{feature_id} has invalid visualEvidence")
             kinds = set()
@@ -173,11 +178,15 @@ def validate_manifest(value: dict[str, Any]) -> None:
                 fail(f"{feature_id} visual change has no image evidence")
             if feature.get("interactionChange") and "video" not in kinds:
                 fail(f"{feature_id} interaction change has no video evidence")
+        if evidence is not None:
             receipt = feature.get("proofMediaReceipt")
             if not isinstance(receipt, str) or not receipt.strip():
                 fail(f"{feature_id} visual evidence has no proofMediaReceipt")
             validate_proof_media_receipt(
-                feature_id, evidence, receipt, feature.get("candidateCommit")
+                feature_id,
+                evidence,
+                receipt,
+                feature.get("proofCommit") or feature.get("candidateCommit"),
             )
         if feature.get("state") == "proved":
             source_branch = feature.get("sourceBranch")
@@ -225,6 +234,8 @@ def validate_manifest(value: dict[str, Any]) -> None:
                         "including integratedCommit"
                     )
             if state == "needs-you":
+                if feature.get("reviewMedia") is not True:
+                    fail(f"{feature_id} is reviewable without reviewMedia")
                 if not isinstance(evidence, list) or not evidence:
                     fail(f"{feature_id} is reviewable without visualEvidence")
                 evidence_kinds = {
@@ -232,6 +243,16 @@ def validate_manifest(value: dict[str, Any]) -> None:
                 }
                 if not {"image", "video"} <= evidence_kinds:
                     fail(f"{feature_id} review evidence needs an image and video")
+                proof_commit = feature.get("proofCommit")
+                declared_commits = set(integrated_commits or [integrated])
+                if (
+                    not isinstance(proof_commit, str)
+                    or not re.fullmatch(r"[0-9a-f]{40}", proof_commit)
+                    or proof_commit not in declared_commits
+                ):
+                    fail(
+                        f"{feature_id} proofCommit must name an integrated feature commit"
+                    )
             if not feature.get("sourceThread"):
                 fail(f"{feature_id} is in Test without a sourceThread")
         delivery = feature.get("delivery")

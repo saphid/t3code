@@ -294,6 +294,13 @@ same durable proof packet named in the candidate's Dev and upstream-delivery
 PR bodies. A metadata record, a host-local path, or a URL that does not pass a
 real playback fetch is not review evidence.
 
+`reviewMedia: true` states that the media is the acceptance packet for the
+review item. This is separate from `visualChange`, which states that the
+product itself changed visually. `proofCommit` must be a full SHA named by
+`integratedCommit` or `integratedCommits`, and the proof-media receipt must name
+that same SHA. Thus, media for an earlier version cannot reopen the gate for a
+newer build.
+
 When `integratedCommits` is present, it contains unique full commit SHAs and
 includes `integratedCommit`. If one commit affects more than one review item,
 every affected item records that commit and its rollback coupling.

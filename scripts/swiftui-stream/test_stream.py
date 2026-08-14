@@ -601,26 +601,101 @@ class StreamTests(unittest.TestCase):
             stream.validate_manifest(value)
 
     def test_needs_you_feature_requires_image_and_video_evidence(self):
-        value = json.loads(json.dumps(stream.manifest()))
-        feature = next(
-            item for item in value["features"]
-            if item.get("id") == "in-app-stream-approval-control"
-        )
-        feature["state"] = "needs-you"
-        feature["testBuild"] = value["currentTestBuild"]["build"]
-        stream.validate_manifest(value)
-
-        value = json.loads(json.dumps(stream.manifest()))
-        feature = next(
-            item for item in value["features"]
-            if item.get("id") == "skills-popup-keyboard-clearance"
-        )
-        feature["state"] = "needs-you"
-        feature["testBuild"] = value["currentTestBuild"]["build"]
-        errors = io.StringIO()
-        with redirect_stderr(errors), self.assertRaises(SystemExit):
+        commit = "b" * 40
+        feature = {
+            "id": "review-item",
+            "name": "Review item",
+            "state": "needs-you",
+            "problem": "The prior behavior fails.",
+            "reproductionSteps": ["Open the flow.", "Exercise the behavior."],
+            "summary": "Fixes the behavior.",
+            "whatToCheck": "Exercise the flow.",
+            "successLooksLike": "The flow succeeds.",
+            "validationSummary": "Focused checks pass.",
+            "knownLimitations": "None known.",
+            "reviewPriority": 1,
+            "reviewGroup": "Core reliability",
+            "sourceIssue": "https://github.com/saphid/t3code-personal/issues/1",
+            "sourceThread": "THREAD-1",
+            "integratedCommit": commit,
+            "integratedCommits": [commit],
+            "proofCommit": commit,
+            "testBuild": 1,
+            "reviewMedia": True,
+            "proofMediaReceipt": "/missing/evidence-root/receipt.json",
+            "visualEvidence": [
+                {
+                    "kind": kind,
+                    "title": kind.title(),
+                    "caption": f"Shows the {kind} result.",
+                    "appearance": "dark",
+                    "cleanURL": f"https://evidence.example/clean.{kind}",
+                    "annotatedURL": f"https://evidence.example/annotated.{kind}",
+                }
+                for kind in ("image", "video")
+            ],
+        }
+        value = {
+            "schemaVersion": 1,
+            "lifecycle": ["in-test", "needs-you"],
+            "currentTestBuild": {
+                "channel": "test",
+                "build": 1,
+                "sequence": 1,
+                "commit": "c" * 40,
+                "bundleId": "test.bundle",
+                "deviceId": "phone",
+                "receipt": "~/.t3/swiftui-stream/device-receipts/test.json",
+                "status": "installed-and-launched",
+                "launchPending": False,
+            },
+            "features": [feature],
+        }
+        with patch.dict(os.environ, {"SWIFTUI_STREAM_EVIDENCE_DIR": "/missing/evidence-root"}):
             stream.validate_manifest(value)
-        self.assertIn("visualEvidence", errors.getvalue())
+
+            for kind in ("image", "video"):
+                with self.subTest(missing_kind=kind):
+                    invalid = json.loads(json.dumps(value))
+                    invalid["features"][0]["visualEvidence"] = [
+                        item
+                        for item in invalid["features"][0]["visualEvidence"]
+                        if item["kind"] != kind
+                    ]
+                    errors = io.StringIO()
+                    with redirect_stderr(errors), self.assertRaises(SystemExit):
+                        stream.validate_manifest(invalid)
+                    self.assertIn("image and video", errors.getvalue())
+
+            for field in ("reviewMedia", "proofCommit"):
+                with self.subTest(missing_field=field):
+                    invalid = json.loads(json.dumps(value))
+                    invalid["features"][0].pop(field)
+                    errors = io.StringIO()
+                    with redirect_stderr(errors), self.assertRaises(SystemExit):
+                        stream.validate_manifest(invalid)
+                    self.assertIn(field, errors.getvalue())
+
+            invalid = json.loads(json.dumps(value))
+            invalid["features"][0]["proofCommit"] = "d" * 40
+            errors = io.StringIO()
+            with redirect_stderr(errors), self.assertRaises(SystemExit):
+                stream.validate_manifest(invalid)
+            self.assertIn("proofCommit", errors.getvalue())
+
+    def test_reviewable_feature_requires_an_https_source_issue(self):
+        for source_issue in ("http://example.com/issues/1", "https://", "https:///issues/1"):
+            with self.subTest(source_issue=source_issue):
+                value = json.loads(json.dumps(stream.manifest()))
+                feature = next(
+                    item for item in value["features"]
+                    if item.get("state") in stream.APPROVAL_STATES
+                )
+                feature["sourceIssue"] = source_issue
+                errors = io.StringIO()
+                with redirect_stderr(errors), self.assertRaises(SystemExit):
+                    stream.validate_manifest(value)
+                self.assertIn("sourceIssue must use HTTPS", errors.getvalue())
 
     def test_reviewable_feature_requires_a_complete_acceptance_packet(self):
         required = (
