@@ -261,8 +261,12 @@ Dev verdict messages invoke `$swiftui-feature-fix`, the personal candidate
 workflow that re-audits the embedded receipt before changing Test.
 
 The purple Test app's **What’s testing** section contains the exact aggregate
-Test-build candidates. Every Dev and Test review item carries a plain-language
-summary, what Alex should check, and the observable signs of success. Both
+Test-build candidates. Every Dev and Test review item carries the original
+problem, numbered reproduction steps, a plain-language change summary, what
+Alex should check, the observable signs of success, the automated validation
+result, known limits, a review priority and group, an owning issue, and a
+source T3 thread. The app orders items by priority, then by the stable catalog
+order. Both
 screens show the complete `Development → Test → Dev → Upstream` path and name
 their current gate. When review items are present, both screens also offer a
 collapsed **Proposed PR promotion flow** diagram. It explains a possible future
@@ -281,11 +285,18 @@ opposite verdict remains available as the explicit reversal. The app never
 changes Git refs itself. Release and ordinary Debug builds expose neither
 section.
 
-Visual review items also contain a collapsed **Visual evidence** section. It
-shows the annotated dark-mode image or playable annotated video in the app and
-links to both the clean and annotated versions. Those URLs must be the same
-durable proof packet named in the candidate's Dev and upstream-delivery PR
-bodies; metadata alone or a host-local path is not review evidence.
+An item cannot enter `needs-you` without a collapsed **Visual evidence**
+section that contains both a clean and annotated dark-mode image and a clean
+and annotated playable video. The paired media must show the affected flow or
+the exact grouped acceptance path. The annotated video must show taps and
+swipes and use captions to state the expected result. Those URLs must be the
+same durable proof packet named in the candidate's Dev and upstream-delivery
+PR bodies. A metadata record, a host-local path, or a URL that does not pass a
+real playback fetch is not review evidence.
+
+When `integratedCommits` is present, it contains unique full commit SHAs and
+includes `integratedCommit`. If one commit affects more than one review item,
+every affected item records that commit and its rollback coupling.
 
 Every Test record carries both `sourceCommit` for attribution and the full
 `integratedCommit` that is actually in Test. The app labels those roles and uses

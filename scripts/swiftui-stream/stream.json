@@ -53,8 +53,8 @@
         "Choose a verdict and inspect the confirmation before canceling or submitting it."
       ],
       "summary": "Adds an in-app review queue for exact Dev and Test build contents, plus a phone-readable diagram of the proposed PR-based path from a proved candidate through Test, Dev, and upstream.",
-      "whatToCheck": "In Dev, open Settings → What’s ready for testing; in Test, open Settings → What’s testing. Confirm the six-step proposed PR promotion diagram is readable without horizontal scrolling and clearly separates automated, human, and maintainer gates. Expand this item, open Visual evidence, confirm the annotated dark-mode image loads and the annotated video plays, then verify the guidance, commits, thread, issue, confirmation dialog, and both readiness choices.",
-      "successLooksLike": "The diagram clearly shows candidate PR → Test build → your Test approval → Dev build → your upstream approval → upstream PR. The visual proof expands in place with working clean and annotated links. Dev offers Ready for Test, Test offers Ready for Dev, and both preserve exact build evidence before queuing a verdict.",
+      "whatToCheck": "In Test, open Settings → What’s testing. Confirm items are ordered by priority and show their review group. Expand this item and verify Original problem, numbered Steps to reproduce, What changed, What to check, Success looks like, Automated validation, and Known limits. Open Visual evidence, then verify commits, thread, issue, confirmation dialog, and both readiness choices.",
+      "successLooksLike": "The priority order is clear, every required section is readable without trimmed text, and the proof expands with working clean and annotated links. The diagram shows candidate PR → Test build → your Test approval → Dev build → your upstream approval → upstream PR. Test offers Ready for Dev and preserves exact build evidence before queuing a verdict.",
       "validationSummary": "Focused manifest, deep-link, verdict, and evidence tests passed. The Test 58 regression train also completed 11 of 11 UI journeys and 528 native tests, with one documented allowlisted skip.",
       "knownLimitations": "Installing a build does not approve any item. SwiftUI Dev and upstream remain unchanged until the explicit human gates are completed.",
       "reviewPriority": 1,
@@ -529,7 +529,7 @@
       "whatToCheck": "Open Settings → Theme, browse and search the catalog, select several light and dark themes, inspect Home, chat, settings, code/tool content, and terminal text, then relaunch the app.",
       "successLooksLike": "The catalog is readable and responsive, selections apply consistently with usable contrast, terminal and native colors agree, the choice persists after relaunch, and switching back to System works.",
       "validationSummary": "Focused theme catalog and persistence tests and the Test 58 regression train passed. The train completed 11 of 11 UI journeys and 528 native tests, with one documented allowlisted skip.",
-      "knownLimitations": "The prior packet contained a literal VoiceOver label placeholder. This replacement build must include and prove the correction before review.",
+      "knownLimitations": "The prior packet contained a literal VoiceOver label placeholder. This replacement build must include and prove the correction before review. Commit 11658353d7175c55ab745c469f0c8861c1448db5 strengthens both this theme test and the review-packet gate, so those two staged items share that rollback dependency.",
       "reviewPriority": 6,
       "reviewGroup": "Themes and accessibility",
       "state": "in-test",
@@ -538,7 +538,8 @@
       "candidateCommit": "66da910135c997078c82dec5d30fcc01a6712e08",
       "integratedCommits": [
         "bd90247576eb8b0591b90058b8380a0c88e95823",
-        "217f8fba4aa4c0f3b3afd4a8646dcff10f1d0efe"
+        "217f8fba4aa4c0f3b3afd4a8646dcff10f1d0efe",
+        "11658353d7175c55ab745c469f0c8861c1448db5"
       ],
       "integratedCommit": "217f8fba4aa4c0f3b3afd4a8646dcff10f1d0efe",
       "featureReceipt": "~/.t3/swiftui-stream/feature-receipts/shared-electron-vscode-themes/66da910135c997078c82dec5d30fcc01a6712e08-v2/receipt.json",

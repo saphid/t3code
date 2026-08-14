@@ -6,6 +6,7 @@ import json
 import re
 import subprocess
 from pathlib import Path
+from urllib.parse import urlparse
 
 
 DEV_STATES = {"proved"}
@@ -162,7 +163,12 @@ def review_guidance(feature):
     guidance["reproductionSteps"] = [step.strip() for step in steps]
     guidance["reviewPriority"] = priority
     source_issue = feature.get("sourceIssue")
-    if not isinstance(source_issue, str) or not source_issue.startswith("https://"):
+    parsed_issue = urlparse(source_issue) if isinstance(source_issue, str) else None
+    if (
+        parsed_issue is None
+        or parsed_issue.scheme != "https"
+        or not parsed_issue.netloc
+    ):
         raise RuntimeError("%s has invalid sourceIssue" % feature.get("id", "feature"))
     return guidance
 

@@ -600,6 +600,28 @@ class StreamTests(unittest.TestCase):
         with self.assertRaises(SystemExit):
             stream.validate_manifest(value)
 
+    def test_needs_you_feature_requires_image_and_video_evidence(self):
+        value = json.loads(json.dumps(stream.manifest()))
+        feature = next(
+            item for item in value["features"]
+            if item.get("id") == "in-app-stream-approval-control"
+        )
+        feature["state"] = "needs-you"
+        feature["testBuild"] = value["currentTestBuild"]["build"]
+        stream.validate_manifest(value)
+
+        value = json.loads(json.dumps(stream.manifest()))
+        feature = next(
+            item for item in value["features"]
+            if item.get("id") == "skills-popup-keyboard-clearance"
+        )
+        feature["state"] = "needs-you"
+        feature["testBuild"] = value["currentTestBuild"]["build"]
+        errors = io.StringIO()
+        with redirect_stderr(errors), self.assertRaises(SystemExit):
+            stream.validate_manifest(value)
+        self.assertIn("visualEvidence", errors.getvalue())
+
     def test_reviewable_feature_requires_a_complete_acceptance_packet(self):
         required = (
             "problem",
@@ -936,7 +958,12 @@ Annotated screenshot: https://evidence.example/annotated.png
         invalid_values = {
             "reviewPriority": (True, 0),
             "reproductionSteps": ([], [" "], "text"),
-            "sourceIssue": (None, "http://example.com/issues/1"),
+            "sourceIssue": (
+                None,
+                "http://example.com/issues/1",
+                "https://",
+                "https:///issues/1",
+            ),
         }
         for field, values in invalid_values.items():
             for invalid in values:
