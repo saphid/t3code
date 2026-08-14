@@ -1,0 +1,101 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://t3.codes/schemas/swiftui-private-ci-receipt-v1.json",
+  "title": "SwiftUI private CI stage receipt",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "pipeline",
+    "stage",
+    "runId",
+    "status",
+    "startedAt",
+    "finishedAt",
+    "exitStatus",
+    "dryRun",
+    "githubAllowed",
+    "approvalReceiptReference",
+    "resources",
+    "repository",
+    "commands",
+    "artifacts"
+  ],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "pipeline": { "const": "swiftui-private-ci" },
+    "stage": {
+      "enum": [
+        "candidate-verification",
+        "candidate-simulator",
+        "test-train",
+        "test-phone-build",
+        "test-phone-install",
+        "dev-promotion",
+        "dev-phone-build",
+        "dev-phone-install",
+        "upstream-handoff"
+      ]
+    },
+    "runId": { "type": "string", "minLength": 1 },
+    "status": { "enum": ["passed", "failed", "planned"] },
+    "startedAt": { "type": "string", "format": "date-time" },
+    "finishedAt": { "type": "string", "format": "date-time" },
+    "exitStatus": { "type": "integer", "minimum": 0 },
+    "dryRun": { "type": "boolean" },
+    "githubAllowed": { "type": "boolean" },
+    "approvalReceiptReference": { "type": ["string", "null"] },
+    "resources": { "type": "array", "items": { "type": "string" } },
+    "repository": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["root", "commit", "branch", "dirty"],
+      "properties": {
+        "root": { "type": "string" },
+        "commit": { "type": "string" },
+        "branch": { "type": "string" },
+        "dirty": { "type": "boolean" }
+      }
+    },
+    "commands": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "argv",
+          "startedAt",
+          "finishedAt",
+          "status",
+          "exitStatus",
+          "stdoutPath",
+          "stderrPath"
+        ],
+        "properties": {
+          "argv": { "type": "array", "minItems": 1, "items": { "type": "string" } },
+          "startedAt": { "type": "string", "format": "date-time" },
+          "finishedAt": { "type": "string", "format": "date-time" },
+          "status": { "enum": ["passed", "failed", "planned"] },
+          "exitStatus": { "type": ["integer", "null"], "minimum": 0 },
+          "stdoutPath": { "type": "string" },
+          "stderrPath": { "type": "string" }
+        }
+      }
+    },
+    "artifacts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["kind", "path", "sha256", "sizeBytes"],
+        "properties": {
+          "kind": { "type": "string" },
+          "path": { "type": "string" },
+          "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+          "sizeBytes": { "type": "integer", "minimum": 0 }
+        }
+      }
+    }
+  }
+}
