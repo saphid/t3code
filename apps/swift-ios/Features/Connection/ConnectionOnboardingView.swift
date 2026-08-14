@@ -7,6 +7,7 @@ public struct ConnectionOnboardingView: View {
 
     private let readinessChecker: any ConnectionReadinessChecking
     private let personalFleetPairingRequester: any PersonalFleetPairingRequesting
+    private let personalFleetHosts: [PersonalFleetPairingHost]
     private let buildChannel: PersonalBuildChannel
     private let onConnected: @MainActor () -> Void
     private let onCancel: (@MainActor () -> Void)?
@@ -40,6 +41,7 @@ public struct ConnectionOnboardingView: View {
         readinessChecker = LocalNetworkAccessChecker()
         #endif
         personalFleetPairingRequester = PersonalFleetPairingService.shared
+        personalFleetHosts = PersonalFleetPairingHost.all
         buildChannel = .current
         self.onConnected = onConnected
         self.onCancel = onCancel
@@ -49,6 +51,7 @@ public struct ConnectionOnboardingView: View {
         model: FeatureRootModel,
         readinessChecker: any ConnectionReadinessChecking,
         personalFleetPairingRequester: any PersonalFleetPairingRequesting = PersonalFleetPairingService.shared,
+        personalFleetHosts: [PersonalFleetPairingHost] = PersonalFleetPairingHost.all,
         buildChannel: PersonalBuildChannel = .current,
         onConnected: @escaping @MainActor () -> Void = {},
         onCancel: (@MainActor () -> Void)? = nil
@@ -56,6 +59,7 @@ public struct ConnectionOnboardingView: View {
         self.model = model
         self.readinessChecker = readinessChecker
         self.personalFleetPairingRequester = personalFleetPairingRequester
+        self.personalFleetHosts = personalFleetHosts
         self.buildChannel = buildChannel
         self.onConnected = onConnected
         self.onCancel = onCancel
@@ -176,8 +180,12 @@ public struct ConnectionOnboardingView: View {
                     .accessibilityHint("Sign in to connect an environment linked to your T3 account")
                 }
 
-                if PersonalConnectAvailability.isVisible(for: buildChannel) {
+                if PersonalConnectAvailability.isVisible(
+                    for: buildChannel,
+                    hasConfiguredHosts: !personalFleetHosts.isEmpty
+                ) {
                     PersonalConnectView(
+                        hosts: personalFleetHosts,
                         connectingHostID: personalFleetConnectingID,
                         errorMessage: errorMessage,
                         onSelect: requestPersonalFleetPairing

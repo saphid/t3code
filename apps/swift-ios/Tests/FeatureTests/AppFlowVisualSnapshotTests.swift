@@ -110,6 +110,7 @@ final class AppFlowVisualSnapshotTests: XCTestCase {
         let view = ConnectionOnboardingView(
             model: model,
             readinessChecker: LocalNetworkAccessChecker(),
+            personalFleetHosts: snapshotPersonalFleetHosts,
             buildChannel: buildChannel
         )
             .environment(\.locale, locale)
@@ -117,5 +118,17 @@ final class AppFlowVisualSnapshotTests: XCTestCase {
             .environment(\.sizeCategory, sizeCategory)
             .environment(\.colorScheme, colorScheme)
         return UIHostingController(rootView: view)
+    }
+
+    private var snapshotPersonalFleetHosts: [PersonalFleetPairingHost] {
+        ["MacBook Pro", "MacBook Air", "LXSO1", "LXSO2", "LXSO3", "NurseDroid"]
+            .enumerated()
+            .map { index, label in
+                PersonalFleetPairingHost(
+                    id: "snapshot-host-\(index)",
+                    label: label,
+                    httpsBaseURL: URL(string: "https://host-\(index).example")!
+                )
+            }
     }
 }

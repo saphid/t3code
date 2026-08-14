@@ -1,6 +1,7 @@
 import SwiftUI
 
 struct PersonalConnectView: View {
+    let hosts: [PersonalFleetPairingHost]
     let connectingHostID: String?
     let errorMessage: String?
     let onSelect: (PersonalFleetPairingHost) -> Void
@@ -16,7 +17,7 @@ struct PersonalConnectView: View {
                 .foregroundStyle(T3Colors.textSecondary)
 
             VStack(spacing: 0) {
-                ForEach(PersonalFleetPairingHost.all) { host in
+                ForEach(hosts) { host in
                     Button {
                         onSelect(host)
                     } label: {
@@ -31,7 +32,7 @@ struct PersonalConnectView: View {
                         "Requests a private one-time pairing link and connects automatically"
                     )
 
-                    if host.id != PersonalFleetPairingHost.all.last?.id {
+                    if host.id != hosts.last?.id {
                         Divider().overlay(T3Colors.border)
                     }
                 }
