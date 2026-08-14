@@ -61,6 +61,22 @@ final class AppFlowVisualSnapshotTests: XCTestCase {
         )
     }
 
+    func testOnboardingWelcomeWithPersonalConnectOnTestChannel() {
+        assertSnapshot(
+            of: onboardingController(
+                sizeCategory: .large,
+                colorScheme: .light,
+                buildChannel: .test
+            ),
+            as: .image(
+                on: snapshotDevice,
+                precision: 0.99,
+                perceptualPrecision: 0.98
+            ),
+            named: "welcome-light-personal-connect-test"
+        )
+    }
+
     /// Point-Free's device presets define points and size classes but inherit
     /// the host Simulator's display scale. Pinning the reviewed references at
     /// 3x makes them independent of whether tests execute on an SE, 17e, or CI's
@@ -85,7 +101,8 @@ final class AppFlowVisualSnapshotTests: XCTestCase {
         sizeCategory: ContentSizeCategory,
         colorScheme: ColorScheme,
         locale: Locale = Locale(identifier: "en_US"),
-        layoutDirection: LayoutDirection = .leftToRight
+        layoutDirection: LayoutDirection = .leftToRight,
+        buildChannel: PersonalBuildChannel = .upstream
     ) -> UIViewController {
         let model = FeatureRootModel(
             client: AppFlowFixtureClient(scenario: .onboarding)
@@ -93,7 +110,7 @@ final class AppFlowVisualSnapshotTests: XCTestCase {
         let view = ConnectionOnboardingView(
             model: model,
             readinessChecker: LocalNetworkAccessChecker(),
-            buildChannel: .upstream
+            buildChannel: buildChannel
         )
             .environment(\.locale, locale)
             .environment(\.layoutDirection, layoutDirection)
