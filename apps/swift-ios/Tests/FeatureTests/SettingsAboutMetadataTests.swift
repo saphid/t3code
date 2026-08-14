@@ -63,6 +63,14 @@ struct SettingsAboutMetadataTests {
         #expect(changelog.entries.first?.pullRequestURL?.absoluteString == "https://github.com/pingdotgg/t3code/pull/42")
         #expect(changelog.repositoryURL?.absoluteString == "https://github.com/pingdotgg/t3code")
         #expect(changelog.entries.first?.shortCommit == "abc123")
+        let configuredScheme = try #require(
+            Bundle.main.object(forInfoDictionaryKey: "T3CodeURLScheme") as? String
+        )
+        let registeredSchemes = (Bundle.main.object(forInfoDictionaryKey: "CFBundleURLTypes") as? [[String: Any]] ?? [])
+            .compactMap { $0["CFBundleURLSchemes"] as? [String] }
+            .flatMap { $0 }
+        #expect(PlatformRoute.nativeScheme == configuredScheme)
+        #expect(registeredSchemes.contains(configuredScheme))
         #expect(
             changelog.sourceThreadURL?.absoluteString
                 == "\(PlatformRoute.nativeScheme)://threads?thread=thread-7"

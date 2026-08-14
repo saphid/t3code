@@ -29,6 +29,13 @@ enum T3SharedContainer {
         return value
     }
 
+    static var newTaskURL: URL {
+        var components = URLComponents()
+        components.scheme = urlScheme
+        components.host = "new-task"
+        return components.url!
+    }
+
     static var appGroupID: String {
         configuredAppGroupID(
             Bundle.main.object(forInfoDictionaryKey: "T3CodeAppGroupIdentifier") as? String
