@@ -510,10 +510,11 @@
       "reproductionSteps": [
         "Open Settings, open Theme, and search for a VS Code-derived theme.",
         "Select light and dark themes and inspect Home, a thread, Settings, tool content, and terminal text.",
+        "Turn on VoiceOver, focus a light and dark theme card, and listen to the announced theme name and appearance.",
         "Relaunch the app, confirm persistence, then switch back to System."
       ],
-      "whatToCheck": "Open Settings → Theme, browse and search the catalog, select several light and dark themes, inspect Home, chat, settings, code/tool content, and terminal text, then relaunch the app.",
-      "successLooksLike": "The catalog is readable and responsive, selections apply consistently with usable contrast, terminal and native colors agree, the choice persists after relaunch, and switching back to System works.",
+      "whatToCheck": "Open Settings → Theme, browse and search the catalog, select several light and dark themes, inspect Home, chat, settings, code/tool content, and terminal text, then relaunch the app. With VoiceOver on, focus theme cards and confirm each is announced as its theme name followed by light or dark.",
+      "successLooksLike": "The catalog is readable and responsive, VoiceOver announces a real theme name and appearance instead of placeholder text, selections apply consistently with usable contrast, terminal and native colors agree, the choice persists after relaunch, and switching back to System works.",
       "validationSummary": "Fresh Test 59 aggregate validation is pending. The prior Test 58 regression train passed and is retained only as historical baseline evidence.",
       "knownLimitations": "The prior packet contained a literal VoiceOver label placeholder. This replacement build must include and prove the correction before review. Commit 11658353d7175c55ab745c469f0c8861c1448db5 strengthens both this theme test and the review-packet gate, so those two staged items share that rollback dependency.",
       "reviewPriority": 6,

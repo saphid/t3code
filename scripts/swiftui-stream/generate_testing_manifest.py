@@ -40,7 +40,16 @@ def is_ancestor(repository, ancestor, descendant):
 
 def is_stream_metadata_only(repository, commit):
     changed = set(
-        git(repository, "diff-tree", "--no-commit-id", "--name-only", "-r", commit).splitlines()
+        git(
+            repository,
+            "diff-tree",
+            "--root",
+            "-m",
+            "--no-commit-id",
+            "--name-only",
+            "-r",
+            commit,
+        ).splitlines()
     )
     return bool(changed) and changed <= {"scripts/swiftui-stream/stream.json"}
 

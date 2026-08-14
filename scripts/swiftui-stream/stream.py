@@ -27,6 +27,7 @@ VALID_DELIVERY = {"direct", "chain", "blocked", "local-only"}
 APPROVED_OR_LATER = {
     "approved", "in-dev", "upstream-validation", "needs-pr", "upstream-pr", "landed"
 }
+VERIFIED_INTEGRATED_COMMITS: set[tuple[str, str, str, str]] = set()
 
 
 def pr_number(url: str | None) -> int | None:
@@ -350,6 +351,15 @@ def validate_proof_media_receipt(
 
 
 def validate_integrated_commit(feature_id: str, commit: str, test_ref: str) -> None:
+    head = subprocess.run(
+        ["git", "-C", str(REPO_ROOT), "rev-parse", "HEAD"],
+        check=True,
+        text=True,
+        capture_output=True,
+    ).stdout.strip()
+    cache_key = (str(REPO_ROOT), commit, test_ref, head)
+    if cache_key in VERIFIED_INTEGRATED_COMMITS:
+        return
     exists = subprocess.run(
         ["git", "-C", str(REPO_ROOT), "cat-file", "-e", f"{commit}^{{commit}}"],
         text=True,
@@ -367,14 +377,18 @@ def validate_integrated_commit(feature_id: str, commit: str, test_ref: str) -> N
         targets.append("HEAD")
     elif test_to_head.returncode not in {0, 1}:
         fail(test_to_head.stderr.strip() or f"cannot inspect Test ref {test_ref}")
-    if not any(
-        subprocess.run(
+    reachable = False
+    for target in targets:
+        result = subprocess.run(
             ["git", "-C", str(REPO_ROOT), "merge-base", "--is-ancestor", commit, target],
             text=True,
             capture_output=True,
-        ).returncode == 0
-        for target in targets
-    ):
+        )
+        if result.returncode == 0:
+            reachable = True
+        elif result.returncode != 1:
+            fail(result.stderr.strip() or f"cannot inspect integrated commit {commit}")
+    if not reachable:
         fail(f"{feature_id} integrated commit is not in canonical Test: {commit}")
     changed = set(
         subprocess.run(
@@ -389,6 +403,7 @@ def validate_integrated_commit(feature_id: str, commit: str, test_ref: str) -> N
     )
     if changed and changed <= {"scripts/swiftui-stream/stream.json"}:
         fail(f"{feature_id} integrated commit is metadata-only: {commit}")
+    VERIFIED_INTEGRATED_COMMITS.add(cache_key)
 
 
 def validate_delivery_inventory(value: dict[str, Any], states: list[str]) -> None:

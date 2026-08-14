@@ -291,8 +291,10 @@ and annotated playable video. The paired media must show the affected flow or
 the exact grouped acceptance path. The annotated video must show taps and
 swipes and use captions to state the expected result. Those URLs must be the
 same durable proof packet named in the candidate's Dev and upstream-delivery
-PR bodies. A metadata record, a host-local path, or a URL that does not pass a
-real playback fetch is not review evidence.
+PR bodies. A metadata record or host-local path is not review evidence. Before
+the item enters `needs-you`, the operator performs and retains a separate real
+GET and video range-request check. The stream validator enforces the local
+receipt hashes and commit binding; it does not make network requests.
 
 `reviewMedia: true` states that the media is the acceptance packet for the
 review item. This is separate from `visualChange`, which states that the

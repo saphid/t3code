@@ -816,6 +816,26 @@ class StreamTests(unittest.TestCase):
                     stream.validate_manifest(value, verify_repository=True)
                 self.assertIn("metadata-only", errors.getvalue())
 
+                git(repository, "checkout", "-b", "candidate", "test")
+                candidate = repository / "Candidate.swift"
+                candidate.write_text("let candidate = true\n")
+                candidate_commit = commit_all(repository, "candidate change")
+                feature["integratedCommit"] = candidate_commit
+                feature["integratedCommits"] = [candidate_commit]
+                stream.validate_manifest(value, verify_repository=True)
+
+                git(repository, "checkout", "-b", "unrelated", base_branch)
+                unrelated = repository / "Unrelated.swift"
+                unrelated.write_text("let unrelated = true\n")
+                unrelated_commit = commit_all(repository, "unrelated change")
+                git(repository, "checkout", base_branch)
+                feature["integratedCommit"] = unrelated_commit
+                feature["integratedCommits"] = [unrelated_commit]
+                errors = io.StringIO()
+                with redirect_stderr(errors), self.assertRaises(SystemExit):
+                    stream.validate_manifest(value, verify_repository=True)
+                self.assertIn("not in canonical Test", errors.getvalue())
+
     def test_in_test_feature_may_stage_a_future_build(self):
         value = self.review_manifest_fixture()
         feature = value["features"][0]
@@ -933,6 +953,13 @@ class StreamTests(unittest.TestCase):
         feature["visualChange"] = True
         feature["proofPending"] = True
         stream.validate_manifest(value)
+
+        feature.pop("visualChange")
+        errors = io.StringIO()
+        with redirect_stderr(errors), self.assertRaises(SystemExit):
+            stream.validate_manifest(value)
+        self.assertIn("requires visualChange", errors.getvalue())
+        feature["visualChange"] = True
 
         feature["visualEvidence"] = []
         errors = io.StringIO()

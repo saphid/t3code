@@ -35,12 +35,16 @@ if [[ "$CHANNEL" == "dev" && "$BRANCH" != "$EXPECTED_BRANCH" ]]; then
   }
   git -C "$REPO_ROOT" fetch --no-tags origin personal/swiftui-dev "$BRANCH"
 fi
-python3 -m unittest "$SCRIPT_DIR/test_stream.py"
+python3 "$SCRIPT_DIR/test_stream.py"
 "$SCRIPT_DIR/stream.py" validate
 [[ -z "$(git -C "$REPO_ROOT" status --porcelain)" ]] || {
   echo "refusing to publish a non-reproducible dirty build" >&2
   exit 1
 }
+T3_SWIFT_SCHEME="$SCHEME" \
+T3_SWIFT_XCODE_TEST_PLAN=Focused \
+T3_SWIFT_SIMULATOR_ID="${T3_SWIFT_SIMULATOR_ID:-}" \
+  "$APP_DIR/Scripts/ci-test.sh"
 if [[ "$CHANNEL" == "test" ]]; then
   [[ "$BRANCH" == "$EXPECTED_BRANCH" ]] || {
     echo "Test builds must be published from $EXPECTED_BRANCH, not $BRANCH" >&2

@@ -16,7 +16,7 @@ struct BuildTestingManifestTests {
         #expect(manifest.build == 42)
         #expect(manifest.entries.first?.commits.first?.shortSHA == "1234567")
         #expect(manifest.entries.first?.threads.first?.id == "THREAD-ONE")
-        #expect(manifest.entries.first?.stateLabel == "Needs You")
+        #expect(manifest.entries.first?.stateLabel == "In Test")
         #expect(manifest.entries.first?.whatToCheck == "Exercise the changed flow.")
         #expect(manifest.entries.first?.reproductionSteps.count == 2)
         #expect(manifest.entries.first?.reviewPriority == 1)
