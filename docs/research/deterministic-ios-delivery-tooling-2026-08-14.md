@@ -1,7 +1,7 @@
 # Deterministic iOS delivery tooling for the T3 Code Dev/Test stream
 
-**Research date:** 2026-08-14  
-**Scope:** The private SwiftUI Test and SwiftUI Dev tracks, the upstream contribution path, and the official release boundary.  
+**Research date:** 2026-08-14
+**Scope:** The private SwiftUI Test and SwiftUI Dev tracks, the upstream contribution path, and the official release boundary.
 **Method:** Primary sources only: product documentation, Apple documentation, and source repositories owned by the tool maintainers. This report does not assign calendar phases or time estimates.
 
 ## Decision
