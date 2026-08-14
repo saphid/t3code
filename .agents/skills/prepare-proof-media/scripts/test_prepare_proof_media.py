@@ -1194,6 +1194,56 @@ class RenderSmokeTest(unittest.TestCase):
                 (320, 240),
             )
 
+    def test_low_frame_rate_odd_duration_keeps_video_pair_frame_exact(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="proof-frame-pair-") as temporary:
+            root = Path(temporary)
+            source = root / "raw.mp4"
+            timeline = root / "timeline.json"
+            output = root / "artifacts"
+            subprocess.run(
+                [
+                    "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+                    "-f", "lavfi", "-i", "testsrc2=s=320x240:d=3.137:r=12",
+                    "-c:v", "libx264", "-pix_fmt", "yuv420p", str(source),
+                ],
+                check=True,
+            )
+            timeline.write_text(
+                json.dumps(
+                    {
+                        "version": 1,
+                        "events": [
+                            {
+                                "action_id": "tap-1",
+                                "kind": "tap",
+                                "at": 1.5,
+                                "x": 0.5,
+                                "y": 0.5,
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            subprocess.run(
+                [
+                    "python3", str(SCRIPT), "build", str(source), "--timeline",
+                    str(timeline), "--output-dir", str(output), "--stem", "paired",
+                    "--no-auto-trim",
+                ],
+                check=True,
+            )
+
+            receipt = json.loads(
+                (output / "paired-receipt.json").read_text(encoding="utf-8")
+            )
+            clean = receipt["artifacts"]["clean_video"]
+            annotated = receipt["artifacts"]["annotated_video"]
+            self.assertEqual(clean["frame_rate"], "30/1")
+            self.assertEqual(clean["frame_rate"], annotated["frame_rate"])
+            self.assertEqual(clean["frame_count"], annotated["frame_count"])
+
     def test_rejects_display_rotation_that_changes_rendered_dimensions(self) -> None:
         with tempfile.TemporaryDirectory(prefix="proof-rotated-dimensions-") as temporary:
             root = Path(temporary)

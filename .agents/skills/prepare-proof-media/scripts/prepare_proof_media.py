@@ -18,6 +18,7 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 
 Interval = Tuple[float, float]
+PROOF_FRAME_RATE = 30
 
 
 class ProofMediaError(RuntimeError):
@@ -490,7 +491,15 @@ def build_normalized(ffmpeg: str, source: Path, destination: Path, cuts: Sequenc
         if has_audio:
             graph.append("[0:a]atrim=start={0:.6f}:end={1:.6f},asetpts=PTS-STARTPTS[a{2}]".format(start, end, index))
             concat_inputs.append("[a{0}]".format(index))
-    graph.append("{0}concat=n={1}:v=1:a={2}[vout]{3}".format("".join(concat_inputs), len(cuts), 1 if has_audio else 0, "[aout]" if has_audio else ""))
+    graph.append(
+        "{0}concat=n={1}:v=1:a={2}[vcat]{3}".format(
+            "".join(concat_inputs),
+            len(cuts),
+            1 if has_audio else 0,
+            "[aout]" if has_audio else "",
+        )
+    )
+    graph.append("[vcat]fps=fps={0}:round=near[vout]".format(PROOF_FRAME_RATE))
     command = [ffmpeg, "-hide_banner", "-loglevel", "error", "-y", "-i", str(source), "-filter_complex", ";".join(graph), "-map", "[vout]"]
     if has_audio:
         command.extend(["-map", "[aout]", "-c:a", "pcm_s16le", "-flags:a", "+bitexact"])
@@ -829,17 +838,15 @@ def build_annotations(
             "-flags:v",
             "+bitexact",
             "-c:a",
-            "aac",
-            "-b:a",
-            "160k",
-            "-flags:a",
-            "+bitexact",
+            "copy",
             "-map_metadata",
             "-1",
             "-map_chapters",
             "-1",
             "-fflags",
             "+bitexact",
+            "-fps_mode",
+            "passthrough",
             "-movflags",
             "+faststart",
             str(destination),
@@ -2314,7 +2321,7 @@ def build(args: argparse.Namespace) -> None:
             tools["ffmpeg"],
             tools["magick"],
             font,
-            normalized,
+            staged[clean],
             staged[annotated],
             timeline,
             cuts,

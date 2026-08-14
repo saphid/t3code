@@ -580,7 +580,19 @@ final class AppFlowUITests: XCTestCase {
             "composer-suggestion-skill:zeta-release-proof-archive"
         )
         for _ in 0 ..< 8 where !isFullyContained(lastSkill, in: menu) {
-            menu.swipeUp()
+            let scroll = proofSwipe(
+                menu,
+                selector: "composer-command-menu",
+                from: CGVector(dx: 0.5, dy: 0.78),
+                to: CGVector(dx: 0.5, dy: 0.24),
+                duration: 0.6,
+                postcondition: "The Skills popup scrolls and remains clear of the keyboard"
+            )
+            assertMenu(menu, clears: keyboard)
+            proofPassed(
+                scroll,
+                observation: "The Skills popup remained readable above the keyboard"
+            )
         }
         XCTAssertTrue(
             isFullyContained(lastSkill, in: menu),
@@ -595,7 +607,11 @@ final class AppFlowUITests: XCTestCase {
         capture("thread-skills-popup-scrolled")
 
         XCTAssertTrue(lastSkill.isHittable, "The full-popup final skill is not selectable")
-        lastSkill.tap()
+        let selectFullSkill = proofTap(
+            lastSkill,
+            selector: "composer-suggestion-skill:zeta-release-proof-archive",
+            postcondition: "The full-popup skill replaces the trigger"
+        )
         XCTAssertTrue(menu.waitForNonExistence(timeout: 4), "Skills popup did not dismiss")
         let fullSelection = "$zeta-release-proof-archive "
         XCTAssertEqual(
@@ -604,6 +620,10 @@ final class AppFlowUITests: XCTestCase {
             "Selecting the full-popup final skill did not replace the trigger"
         )
         XCTAssertTrue(keyboard.exists, "Selecting a skill unexpectedly dismissed the keyboard")
+        proofPassed(
+            selectFullSkill,
+            observation: "The full-popup skill replaced the trigger and kept the keyboard open"
+        )
 
         launch()
         assertIdentifier("thread-fixture-main").tap()
@@ -625,7 +645,11 @@ final class AppFlowUITests: XCTestCase {
         )
         assertMenu(filteredMenu, clears: filteredKeyboard)
         XCTAssertTrue(filteredSkill.isHittable, "The filtered final skill is not selectable")
-        filteredSkill.tap()
+        let selectFilteredSkill = proofTap(
+            filteredSkill,
+            selector: "filtered composer-suggestion-skill:zeta-release-proof-archive",
+            postcondition: "The filtered skill replaces the trigger"
+        )
         XCTAssertTrue(
             filteredMenu.waitForNonExistence(timeout: 4),
             "Filtered Skills popup did not dismiss"
@@ -634,6 +658,10 @@ final class AppFlowUITests: XCTestCase {
             filteredComposer.value as? String,
             fullSelection,
             "Selecting the filtered skill did not replace the trigger"
+        )
+        proofPassed(
+            selectFilteredSkill,
+            observation: "The filtered skill replaced the trigger"
         )
         capture("thread-skills-popup-selected")
     }
@@ -645,26 +673,56 @@ final class AppFlowUITests: XCTestCase {
         XCTAssertTrue(list.waitForExistence(timeout: 8), "Home thread list did not appear")
         XCTAssertTrue(assertIdentifier("thread-fixture-history-24").isHittable)
 
-        let nearTop = list.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.12))
-        nearTop.press(
-            forDuration: 0.15,
-            thenDragTo: nearTop.withOffset(CGVector(dx: 0, dy: 110)),
-            withVelocity: .slow,
-            thenHoldForDuration: 0.1
+        let rubberBandEnd = min(0.95, 0.12 + 110 / list.frame.height)
+        let rubberBand = proofSwipe(
+            list,
+            selector: "Home collection view at top",
+            from: CGVector(dx: 0.5, dy: 0.12),
+            to: CGVector(dx: 0.5, dy: rubberBandEnd),
+            duration: 0.6,
+            postcondition: "The top rubber-band gesture leaves the command palette closed"
         )
         assertCommandPaletteClosed(
             "A downward rubber-band gesture at the top of Home opened the command palette"
         )
+        proofPassed(rubberBand, observation: "The top rubber-band gesture kept the drawer closed")
 
-        list.swipeUp()
+        let scrollDown = proofSwipe(
+            list,
+            selector: "Home collection view",
+            from: CGVector(dx: 0.5, dy: 0.76),
+            to: CGVector(dx: 0.5, dy: 0.28),
+            duration: 0.6,
+            postcondition: "A normal Home-list swipe leaves the command palette closed"
+        )
         assertCommandPaletteClosed("A normal Home-list swipe opened the command palette")
-        list.swipeDown()
+        proofPassed(scrollDown, observation: "The Home list scrolled without opening the drawer")
+        let scrollUp = proofSwipe(
+            list,
+            selector: "Home collection view",
+            from: CGVector(dx: 0.5, dy: 0.28),
+            to: CGVector(dx: 0.5, dy: 0.76),
+            duration: 0.6,
+            postcondition: "A downward Home-list scroll leaves the command palette closed"
+        )
         assertCommandPaletteClosed("A downward Home-list scroll opened the command palette")
+        proofPassed(scrollUp, observation: "The Home list scrolled back without opening the drawer")
 
         let accumulatedThread = app.descendants(matching: .any)["thread-fixture-main"].firstMatch
         for _ in 0 ..< 10 where !accumulatedThread.isHittable {
-            list.swipeUp()
+            let historyScroll = proofSwipe(
+                list,
+                selector: "accumulated Home history",
+                from: CGVector(dx: 0.5, dy: 0.76),
+                to: CGVector(dx: 0.5, dy: 0.28),
+                duration: 0.6,
+                postcondition: "Accumulated history scrolls with the command palette closed"
+            )
             assertCommandPaletteClosed("Scrolling accumulated history opened the command palette")
+            proofPassed(
+                historyScroll,
+                observation: "Accumulated history scrolled with the drawer closed"
+            )
         }
         XCTAssertTrue(
             accumulatedThread.isHittable,
@@ -779,26 +837,38 @@ final class AppFlowUITests: XCTestCase {
         launch()
 
         let homeGestureSurface = assertIdentifier("sidebar-search-button")
-        drag(
+        let homeHorizontal = proofDrag(
             from: homeGestureSurface,
             offset: CGVector(dx: -120, dy: 18),
-            velocity: .slow
+            velocity: .slow,
+            selector: "Home search button horizontal drag",
+            postcondition: "A horizontal Home-bar drag leaves the command palette closed"
         )
         assertCommandPaletteClosed("A horizontal Home-bar gesture opened the command palette")
+        proofPassed(homeHorizontal, observation: "The horizontal Home drag kept the drawer closed")
 
-        drag(
+        let homeBelowThreshold = proofDrag(
             from: homeGestureSurface,
             offset: CGVector(dx: 0, dy: 70),
-            velocity: .slow
+            velocity: .slow,
+            selector: "Home search button short downward drag",
+            postcondition: "A below-threshold Home drag leaves the command palette closed"
         )
         assertCommandPaletteClosed("A below-threshold Home-bar drag opened the command palette")
+        proofPassed(
+            homeBelowThreshold,
+            observation: "The short Home drag kept the drawer closed"
+        )
 
-        drag(
+        let homeOpen = proofDrag(
             from: homeGestureSurface,
             offset: CGVector(dx: 0, dy: 120),
-            velocity: .slow
+            velocity: .slow,
+            selector: "Home search button full downward drag",
+            postcondition: "A full Home drag opens the command palette"
         )
         assertCommandPaletteOpen()
+        proofPassed(homeOpen, observation: "The full Home drag opened the drawer")
         capture("command-palette-home-threshold")
         dismissCommandPalette()
 
@@ -816,26 +886,41 @@ final class AppFlowUITests: XCTestCase {
 
         let navigationBar = app.navigationBars.firstMatch
         XCTAssertTrue(navigationBar.waitForExistence(timeout: 4))
-        drag(
+        let threadHorizontal = proofDrag(
             from: navigationBar,
             offset: CGVector(dx: -120, dy: 18),
-            velocity: .slow
+            velocity: .slow,
+            selector: "Thread header horizontal drag",
+            postcondition: "A horizontal thread-header drag leaves the command palette closed"
         )
         assertCommandPaletteClosed("A horizontal thread-header gesture opened the command palette")
+        proofPassed(
+            threadHorizontal,
+            observation: "The horizontal thread drag kept the drawer closed"
+        )
 
-        drag(
+        let threadBelowThreshold = proofDrag(
             from: navigationBar,
             offset: CGVector(dx: 0, dy: 70),
-            velocity: .slow
+            velocity: .slow,
+            selector: "Thread header short downward drag",
+            postcondition: "A below-threshold thread drag leaves the command palette closed"
         )
         assertCommandPaletteClosed("A below-threshold thread-header drag opened the command palette")
+        proofPassed(
+            threadBelowThreshold,
+            observation: "The short thread drag kept the drawer closed"
+        )
 
-        drag(
+        let threadOpen = proofDrag(
             from: navigationBar,
             offset: CGVector(dx: 0, dy: 120),
-            velocity: .slow
+            velocity: .slow,
+            selector: "Thread header full downward drag",
+            postcondition: "A full thread drag opens the command palette"
         )
         assertCommandPaletteOpen()
+        proofPassed(threadOpen, observation: "The full thread drag opened the drawer")
         capture("command-palette-thread-keyboard")
     }
 
@@ -1501,18 +1586,46 @@ final class AppFlowUITests: XCTestCase {
             && elementFrame.maxY <= containerFrame.maxY
     }
 
-    private func drag(
+    @discardableResult
+    private func proofDrag(
         from element: XCUIElement,
         offset: CGVector,
-        velocity: XCUIGestureVelocity
-    ) {
+        velocity: XCUIGestureVelocity,
+        selector: String,
+        postcondition: String,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) -> String? {
+        let applicationFrame = app.frame
+        XCTAssertGreaterThan(applicationFrame.width, 0, file: file, line: line)
+        XCTAssertGreaterThan(applicationFrame.height, 0, file: file, line: line)
+        XCTAssertGreaterThan(element.frame.width, 0, file: file, line: line)
+        XCTAssertGreaterThan(element.frame.height, 0, file: file, line: line)
+        let startPoint = CGPoint(x: element.frame.midX, y: element.frame.midY)
+        let endPoint = CGPoint(x: startPoint.x + offset.dx, y: startPoint.y + offset.dy)
+
+        func normalizedApplicationPoint(_ point: CGPoint) -> CGPoint {
+            CGPoint(
+                x: min(1, max(0, (point.x - applicationFrame.minX) / applicationFrame.width)),
+                y: min(1, max(0, (point.y - applicationFrame.minY) / applicationFrame.height))
+            )
+        }
+
         let start = element.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+        let actionID = proofEvents.recordSwipe(
+            selector: selector,
+            from: normalizedApplicationPoint(startPoint),
+            to: normalizedApplicationPoint(endPoint),
+            duration: 0.6,
+            postcondition: postcondition
+        )
         start.press(
             forDuration: 0.15,
             thenDragTo: start.withOffset(offset),
             withVelocity: velocity,
             thenHoldForDuration: 0.1
         )
+        return actionID
     }
 
     private func assertCommandPaletteClosed(
