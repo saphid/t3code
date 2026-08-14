@@ -160,6 +160,7 @@ public struct SettingsView: View {
                     )
                 }
                 .buttonStyle(.plain)
+                .accessibilityIdentifier("settings-themes")
 
                 settingsDivider
                 SettingsToggleRow(

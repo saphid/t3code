@@ -154,12 +154,27 @@ final class AppFlowUITests: XCTestCase {
         assertExists("Settings")
         assertExists("Connections")
         assertExists("Usage")
-        assertHittableButton(labelStartsWith: "Theme,").tap()
-        assertExists("System")
-        assertExists("Light")
-        assertExists("Dark")
-        capture("settings-theme-menu")
-        assertHittableButton("System").tap()
+        let themeCatalog = app.descendants(matching: .any)["settings-themes"].firstMatch
+        if themeCatalog.waitForExistence(timeout: 1) {
+            themeCatalog.tap()
+            let themesNavigationBar = app.navigationBars["Themes"]
+            XCTAssertTrue(themesNavigationBar.waitForExistence(timeout: timeout))
+            assertExists("Appearance")
+            assertExists("System")
+            assertExists("Light")
+            assertExists("Dark")
+            capture("settings-theme-catalog")
+            let backButton = themesNavigationBar.buttons.firstMatch
+            XCTAssertTrue(backButton.waitForExistence(timeout: timeout))
+            backButton.tap()
+        } else {
+            assertHittableButton(labelStartsWith: "Theme,").tap()
+            assertExists("System")
+            assertExists("Light")
+            assertExists("Dark")
+            capture("settings-theme-menu")
+            assertHittableButton("System").tap()
+        }
 
         assertHittableButton(labelStartsWith: "Connections,").tap()
         assertIdentifier("connections-add-button")
