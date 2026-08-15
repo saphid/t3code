@@ -159,7 +159,7 @@ final class AppFlowUITests: XCTestCase {
 
         assertIdentifier("sidebar-settings-button").tap()
         assertExists("Settings")
-        assertExists("Connections")
+        assertExists("Environments")
         assertExists("Usage")
         let themeCatalog = assertIdentifier("settings-themes")
         themeCatalog.tap()
@@ -179,7 +179,7 @@ final class AppFlowUITests: XCTestCase {
         XCTAssertTrue(backButton.waitForExistence(timeout: 8))
         backButton.tap()
 
-        assertHittableButton(labelStartsWith: "Connections,").tap()
+        assertExists("Environments").tap()
         assertIdentifier("connections-add-button")
         capture("settings-connections")
     }
@@ -1090,7 +1090,7 @@ final class AppFlowUITests: XCTestCase {
         assertHittableButton("Cancel").tap()
 
         assertIdentifier("sidebar-settings-button").tap()
-        assertHittableButton(labelStartsWith: "Connections,").tap()
+        assertExists("Environments").tap()
         assertHittableButton(labelStartsWith: "Fixture Mac,").tap()
         XCTAssertTrue(app.navigationBars["Fixture Mac"].waitForExistence(timeout: 4))
         assertExists("Remove connection")
@@ -1480,7 +1480,7 @@ final class AppFlowUITests: XCTestCase {
 
         launch()
         assertIdentifier("sidebar-settings-button").tap()
-        assertHittableButton(labelStartsWith: "Connections,").tap()
+        assertExists("Environments").tap()
         assertIdentifier("connections-add-button").tap()
         assertExists("Enter details manually")
         assertExists("Close")
