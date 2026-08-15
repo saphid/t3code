@@ -42,6 +42,7 @@ struct T3CodeApp: App {
             }
             if AppFlowFixtureLaunch.scenario == .streamApproval {
                 BuildTestingVerdictStore.clear(for: .appFlowApprovalFixture)
+                BuildTestingCurrentReviewStore.clear(for: .appFlowApprovalFixture)
             }
             if AppFlowFixtureLaunch.scenario == .widgetNewTask {
                 let fallbackURL = URL(

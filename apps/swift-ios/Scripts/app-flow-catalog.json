@@ -222,6 +222,9 @@
         "Dev build identity",
         "feature review guide",
         "commit and thread attribution",
+        "one exact-build current review",
+        "active source thread routing",
+        "context-filled new discussion",
         "Ready for Test confirmation",
         "Not ready confirmation"
       ],
@@ -229,9 +232,12 @@
         "stream-approval-pipeline",
         "stream-approval-proof-pending",
         "stream-approval-review-guide",
+        "stream-approval-current-review",
         "stream-approval-ready-confirmation",
         "stream-approval-ready-recorded",
-        "stream-approval-not-ready-confirmation"
+        "stream-approval-not-ready-confirmation",
+        "stream-approval-active-thread",
+        "stream-approval-new-discussion"
       ],
       "issue": "https://github.com/saphid/t3code-personal/issues/56"
     },
@@ -402,6 +408,12 @@
     }
   ],
   "plans": {
+    "review-control": {
+      "description": "Focused deterministic gate for exact-build review selection and discussion routing.",
+      "journeys": [
+        "in-app-stream-approval-control"
+      ]
+    },
     "pr": {
       "description": "Fast deterministic gate for native pull requests.",
       "journeys": [

@@ -303,6 +303,20 @@ final class AppFlowUITests: XCTestCase {
         proofPassed(expandEntry, observation: "Feature, commit, and thread attribution are visible")
         capture("stream-approval-review-guide")
 
+        let selectCurrent = assertIdentifier(
+            "build-testing-select-current-in-app-stream-approval-control"
+        )
+        scrollToHittable(selectCurrent)
+        let selectReview = proofTap(
+            selectCurrent,
+            selector: "build-testing-select-current-in-app-stream-approval-control",
+            postcondition: "This exact-build item is the current review"
+        )
+        assertIdentifier("build-testing-current-review")
+        assertExists("Current review: In-app stream approval control")
+        proofPassed(selectReview, observation: "One exact-build item is marked as the current review")
+        capture("stream-approval-current-review")
+
         let ready = app.buttons["build-testing-ready-in-app-stream-approval-control"].firstMatch
         scrollToHittable(ready)
         XCTAssertEqual(ready.label, "Ready for Test")
@@ -346,6 +360,62 @@ final class AppFlowUITests: XCTestCase {
         )
         proofPassed(requestNotReady, observation: "Not ready confirmation names feature and exact build")
         capture("stream-approval-not-ready-confirmation")
+
+        reopenStreamApprovalReviewAndSelectCurrent()
+        let openActiveThread = assertIdentifier(
+            "build-testing-open-thread-in-app-stream-approval-control"
+        )
+        scrollToHittable(openActiveThread)
+        let openExisting = proofTap(
+            openActiveThread,
+            selector: "build-testing-open-thread-in-app-stream-approval-control",
+            postcondition: "The exact active source thread opens inside the app"
+        )
+        assertIdentifier("message-fixture-assistant")
+        proofPassed(openExisting, observation: "The attributed active source thread is open")
+        capture("stream-approval-active-thread")
+
+        reopenStreamApprovalReviewAndSelectCurrent()
+        let newDiscussion = assertIdentifier(
+            "build-testing-new-thread-in-app-stream-approval-control"
+        )
+        scrollToHittable(newDiscussion)
+        let startNew = proofTap(
+            newDiscussion,
+            selector: "build-testing-new-thread-in-app-stream-approval-control",
+            postcondition: "A separate review thread opens with the issue context"
+        )
+        let contextualMessage = app.staticTexts.matching(
+            NSPredicate(
+                format: "label CONTAINS %@",
+                "Feature ID: in-app-stream-approval-control"
+            )
+        ).firstMatch
+        XCTAssertTrue(contextualMessage.waitForExistence(timeout: 8))
+        XCTAssertTrue(contextualMessage.label.contains("issues/56"))
+        XCTAssertTrue(contextualMessage.label.contains("Installed candidate: dev build 5601"))
+        XCTAssertTrue(contextualMessage.label.contains("Do not approve or reject"))
+        proofPassed(startNew, observation: "The new thread contains the feature, issue, and exact build context")
+        capture("stream-approval-new-discussion")
+    }
+
+    private func reopenStreamApprovalReviewAndSelectCurrent() {
+        launch(scenario: "stream-approval")
+        assertIdentifier("sidebar-settings-button").tap()
+        let reviewRow = app.descendants(matching: .any)["Review Dev candidates"].firstMatch
+        scrollToHittable(reviewRow)
+        reviewRow.tap()
+        XCTAssertTrue(app.navigationBars["Ready for testing"].waitForExistence(timeout: 8))
+
+        let entry = assertIdentifier("build-testing-entry-in-app-stream-approval-control")
+        scrollToHittable(entry)
+        entry.tap()
+        let selection = assertIdentifier(
+            "build-testing-select-current-in-app-stream-approval-control"
+        )
+        scrollToHittable(selection)
+        selection.tap()
+        assertIdentifier("build-testing-current-review")
     }
 
     func testInitialThreadLiveUpdateWinsAndTimelineStaysStableOnReopen() {
