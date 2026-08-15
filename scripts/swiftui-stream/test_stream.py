@@ -2099,6 +2099,13 @@ class StreamTests(unittest.TestCase):
             "appearance": "dark",
             "cleanURL": "https://evidence.example/clean.png",
             "annotatedURL": "https://evidence.example/annotated.png",
+        }, {
+            "kind": "video",
+            "title": "Local proof flow",
+            "caption": "Requires local evidence verification.",
+            "appearance": "dark",
+            "cleanURL": "https://evidence.example/clean.mp4",
+            "annotatedURL": "https://evidence.example/annotated.mp4",
         }]
         with patch.object(
             stream,
