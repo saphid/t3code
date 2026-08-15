@@ -22,7 +22,7 @@
       "name": "Debug build distance from base",
       "delivery": "direct",
       "dependsOn": [],
-      "state": "upstream-pr"
+      "state": "superseded"
     },
     {
       "number": 5790,

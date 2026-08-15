@@ -85,28 +85,59 @@ build_settings=(
 if [[ "${CONFIGURATION}" == "Debug" ]]; then
   GIT_COMMIT="$(git -C "${APP_DIR}" rev-parse --short HEAD 2>/dev/null || echo unknown)"
   if [[ "${GIT_COMMIT}" != "unknown" ]] && \
-     [[ -n "$(git -C "${APP_DIR}" status --porcelain -- . 2>/dev/null)" ]]; then
+     [[ -n "$(git -C "${APP_DIR}" status --porcelain 2>/dev/null)" ]]; then
     GIT_COMMIT="${GIT_COMMIT}-dirty"
   fi
 
-  GIT_REPO_URL="$(git -C "${APP_DIR}" remote get-url upstream 2>/dev/null || true)"
-  if [[ -z "${GIT_REPO_URL}" ]]; then
-    GIT_REPO_URL="$(git -C "${APP_DIR}" remote get-url origin 2>/dev/null || true)"
+  GIT_BASE_REF="${T3_SWIFT_BASE_REF:-}"
+  GIT_REPO_REMOTE="upstream"
+  if [[ "${GIT_BASE_REF}" == */* ]]; then
+    GIT_BASE_REMOTE="${GIT_BASE_REF%%/*}"
+    if git -C "${APP_DIR}" remote get-url "${GIT_BASE_REMOTE}" >/dev/null 2>&1; then
+      GIT_REPO_REMOTE="${GIT_BASE_REMOTE}"
+    fi
   fi
+  if ! git -C "${APP_DIR}" remote get-url "${GIT_REPO_REMOTE}" >/dev/null 2>&1; then
+    GIT_REPO_REMOTE="origin"
+  fi
+  # Prefer an explicit comparison line, then the public repository's default.
+  if [[ -z "${GIT_BASE_REF}" ]] || \
+     ! git -C "${APP_DIR}" rev-parse --verify --quiet "${GIT_BASE_REF}^{commit}" >/dev/null; then
+    GIT_TERMINAL_PROMPT=0 git -C "${APP_DIR}" \
+      -c "core.sshCommand=ssh -o BatchMode=yes -o ConnectTimeout=10 -o ServerAliveInterval=5 -o ServerAliveCountMax=1" \
+      -c http.lowSpeedLimit=1 \
+      -c http.lowSpeedTime=15 \
+      fetch --quiet "${GIT_REPO_REMOTE}" 2>/dev/null || true
+  fi
+  if [[ -n "${GIT_BASE_REF}" ]] && \
+     ! git -C "${APP_DIR}" rev-parse --verify --quiet "${GIT_BASE_REF}^{commit}" >/dev/null; then
+    die "T3_SWIFT_BASE_REF does not resolve to a commit: ${GIT_BASE_REF}"
+  fi
+  GIT_REMOTE_CONTAINMENT="$(
+    git -C "${APP_DIR}" branch -r --contains HEAD --format='%(refname:short)' 2>/dev/null || true
+  )"
+  GIT_REPO_REMOTE=""
+  if [[ "${GIT_COMMIT}" != *-dirty ]]; then
+    for candidate in upstream origin; do
+      if grep -Eq "^${candidate}/" <<< "${GIT_REMOTE_CONTAINMENT}"; then
+        GIT_REPO_REMOTE="${candidate}"
+        break
+      fi
+    done
+  fi
+  GIT_REPO_URL="$(git -C "${APP_DIR}" remote get-url "${GIT_REPO_REMOTE}" 2>/dev/null || true)"
   GIT_REPO_URL="${GIT_REPO_URL%.git}"
   case "${GIT_REPO_URL}" in
     https://*@*) GIT_REPO_URL="https://${GIT_REPO_URL#*@}" ;;
     ssh://git@*) GIT_REPO_URL="https://${GIT_REPO_URL#ssh://git@}" ;;
     git@*) GIT_REPO_URL="https://$(printf '%s' "${GIT_REPO_URL#git@}" | tr ':' '/')" ;;
   esac
-  # Prefer the branch's configured base, then the public repository's default
-  # branch. Release and PR builds can supply an exact comparison line.
-  GIT_BASE_REF="${T3_SWIFT_BASE_REF:-}"
-  if [[ -z "${GIT_BASE_REF}" ]]; then
-    GIT_BASE_REF="$(git -C "${APP_DIR}" rev-parse --abbrev-ref --symbolic-full-name '@{upstream}' 2>/dev/null || true)"
-  fi
   if [[ -z "${GIT_BASE_REF}" ]]; then
     GIT_BASE_REF="$(git -C "${APP_DIR}" symbolic-ref --short refs/remotes/upstream/HEAD 2>/dev/null || true)"
+  fi
+  if [[ -z "${GIT_BASE_REF}" ]] && \
+     git -C "${APP_DIR}" rev-parse --verify --quiet "refs/remotes/upstream/main^{commit}" >/dev/null; then
+    GIT_BASE_REF="upstream/main"
   fi
   if [[ -z "${GIT_BASE_REF}" ]]; then
     GIT_BASE_REF="$(git -C "${APP_DIR}" symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null || true)"
@@ -115,6 +146,7 @@ if [[ "${CONFIGURATION}" == "Debug" ]]; then
   GIT_AHEAD_COUNT=""
   GIT_BEHIND_COUNT=""
   if [[ -n "${GIT_BASE_REF}" ]] && git -C "${APP_DIR}" rev-parse --verify --quiet "${GIT_BASE_REF}^{commit}" >/dev/null; then
+    # --left-right emits the base-only (behind) count before the HEAD-only (ahead) count.
     read -r GIT_BEHIND_COUNT GIT_AHEAD_COUNT < <(
       git -C "${APP_DIR}" rev-list --left-right --count "${GIT_BASE_REF}...HEAD"
     ) || true

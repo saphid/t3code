@@ -556,13 +556,6 @@ public struct WorkspaceView: View {
             homeBrand
                 .frame(maxWidth: .infinity, alignment: .leading)
 
-            if PersonalBuildChannel.current.showsBuildIdentity {
-                devBuildBadge
-                    .frame(maxWidth: 120, alignment: .trailing)
-                    .layoutPriority(-1)
-                    .padding(.trailing, 4)
-            }
-
             if shouldShowBuildChangelogPrompt {
                 Button(action: openBuildChangelog) {
                     ZStack {
@@ -662,31 +655,6 @@ public struct WorkspaceView: View {
         showingBuildChangelog = true
     }
 
-    private static let devBuildMetadata = DebugBuildMetadata(info: Bundle.main.infoDictionary)
-
-    @ViewBuilder
-    private var devBuildBadge: some View {
-        if Self.devBuildMetadata.build == "?" {
-            EmptyView()
-        } else {
-            devBuildBadgeLabel
-                .foregroundStyle(T3Colors.textSecondary)
-                .accessibilityElement(children: .combine)
-                .accessibilityLabel(Self.devBuildMetadata.accessibilityLabel)
-        }
-    }
-
-    private var devBuildBadgeLabel: some View {
-        VStack(alignment: .trailing, spacing: 0) {
-            Text(Self.devBuildMetadata.build)
-            if let distance = Self.devBuildMetadata.distanceLabel {
-                Text(distance)
-            }
-        }
-        .font(.caption2.weight(.semibold).monospaced())
-        .lineLimit(1)
-        .minimumScaleFactor(0.75)
-    }
     private var homeBrand: some View {
         connectionBrand
     }

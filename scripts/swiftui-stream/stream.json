@@ -1677,6 +1677,25 @@
           "annotatedURL": "https://alexs-macbook-pro-1.tail4e5636.ts.net:10025/test-dae630726/app-flow-regression-tests/app-flow-regression-tests-annotated.mp4"
         }
       ]
+    },
+    {
+      "id": "debug-build-metadata-settings-redesign",
+      "name": "Move SwiftUI debug build identity and base distance into Settings",
+      "aliases": [
+        "debug build distance",
+        "development build settings row",
+        "PR 5789"
+      ],
+      "state": "developing",
+      "sourceBranch": "fix/swiftui-debug-build-settings-redesign-20260815",
+      "sourceThread": "81fefb3c-df48-4aba-addf-d73f61c9f768",
+      "sourceIssue": "https://github.com/pingdotgg/t3code/issues/5786",
+      "pullRequest": "https://github.com/pingdotgg/t3code/pull/5789",
+      "delivery": "direct",
+      "dependsOnPullRequests": [],
+      "revises": "legacy-candidate-5",
+      "upstreamHead": "be51a3abbbafa053b5c3983a7720215598c2edd5",
+      "order": 9
     }
   ],
   "legacyManifest": "scripts/t3-swift-approved/manifest.json",
