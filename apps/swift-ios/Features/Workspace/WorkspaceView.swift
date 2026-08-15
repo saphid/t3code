@@ -346,7 +346,8 @@ public struct WorkspaceView: View {
     private var workspaceShell: some View {
         GeometryReader { proxy in
             let panelHeight = FeatureCommandPaletteGesture.panelHeight(
-                availableHeight: proxy.size.height
+                availableHeight: proxy.size.height,
+                topInset: proxy.safeAreaInsets.top
             )
             let travel = FeatureCommandPaletteGesture.travel(
                 isPresented: showingCommandPalette,

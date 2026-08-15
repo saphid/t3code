@@ -996,6 +996,12 @@ final class AppFlowUITests: XCTestCase {
         )
         assertCommandPaletteOpen()
         proofPassed(threadOpen, observation: "The full thread drag opened the drawer")
+        let drawer = app.descendants(matching: .any)["command-palette-drawer"].firstMatch
+        XCTAssertLessThanOrEqual(
+            abs(drawer.frame.maxY - app.frame.maxY),
+            1,
+            "Command palette did not extend behind the keyboard to the screen bottom"
+        )
         capture("command-palette-thread-keyboard")
     }
 

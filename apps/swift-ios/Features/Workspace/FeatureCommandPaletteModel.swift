@@ -99,8 +99,8 @@ enum FeatureCommandPaletteGesture {
             || shouldBegin(velocity: velocity) && velocity.y >= minimumDownwardVelocity
     }
 
-    static func panelHeight(availableHeight: CGFloat) -> CGFloat {
-        max(0, availableHeight)
+    static func panelHeight(availableHeight: CGFloat, topInset: CGFloat) -> CGFloat {
+        max(0, availableHeight) + max(0, topInset)
     }
 
     static func travel(

@@ -260,7 +260,10 @@ struct FeatureCommandPaletteTests {
 
     @Test
     func paletteAndWorkspaceRemainAttachedAcrossTheDrag() {
-        let panelHeight = FeatureCommandPaletteGesture.panelHeight(availableHeight: 800)
+        let panelHeight = FeatureCommandPaletteGesture.panelHeight(
+            availableHeight: 741,
+            topInset: 59
+        )
         #expect(panelHeight == 800)
         #expect(FeatureCommandPaletteGesture.travel(
             isPresented: false,
