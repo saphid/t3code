@@ -137,6 +137,55 @@ final class NativeMultiEnvironmentTests: XCTestCase {
         await fixture.client.disconnect()
     }
 
+    func testSelectedActiveThreadRefreshesAfterCompletionScopedStreamEnds() async throws {
+        let fixture = try await makeFixture(
+            selectedDetailPollingInterval: .milliseconds(40),
+            webSocketConnector: CompletingMultiEnvironmentWebSocketConnector()
+        )
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+
+        let snapshot = try await fixture.client.initialSnapshot()
+        let thread = try XCTUnwrap(
+            snapshot.threads.first(where: { $0.wireID == "thread-one" })
+        )
+        let events = fixture.client.events()
+        let updateArrived = expectation(description: "remote detail update arrived")
+        let observer = Task {
+            for await event in events {
+                let detail: FeatureThreadDetail?
+                switch event {
+                case let .detail(value), let .detailDelta(value, _):
+                    detail = value
+                default:
+                    detail = nil
+                }
+                if detail?.messages.contains(where: { $0.id == "remote-message" }) == true {
+                    updateArrived.fulfill()
+                    return
+                }
+            }
+        }
+
+        _ = try await fixture.client.loadThread(id: thread.id)
+        await fixture.transport.waitForDetailReadCount(2, host: "one.example")
+        await fixture.transport.setDetailMessages([
+            OrchestrationMessage(
+                id: "remote-message",
+                role: "assistant",
+                text: "Arrived from another client",
+                attachments: nil,
+                turnId: "remote-turn",
+                streaming: false,
+                createdAt: "2026-07-31T12:01:00.000Z",
+                updatedAt: "2026-07-31T12:01:00.000Z"
+            ),
+        ], host: "one.example")
+
+        await fulfillment(of: [updateArrived], timeout: 1)
+        observer.cancel()
+        await fixture.client.disconnect()
+    }
+
     func testBackgroundLivenessKeepsASettledThreadWorking() async throws {
         let fixture = try await makeFixture()
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
@@ -541,6 +590,7 @@ final class NativeMultiEnvironmentTests: XCTestCase {
         repositoryIdentity: RepositoryIdentity? = nil,
         fallbackPollingInitialDelay: Duration = .seconds(3),
         fallbackPollingInterval: Duration = .seconds(2),
+        selectedDetailPollingInterval: Duration = .seconds(2),
         aggregateRefreshInterval: Duration = .seconds(20),
         webSocketConnector: any WebSocketConnecting =
             UnavailableMultiEnvironmentWebSocketConnector(),
@@ -611,6 +661,7 @@ final class NativeMultiEnvironmentTests: XCTestCase {
                 settingsStore: settings,
                 fallbackPollingInitialDelay: fallbackPollingInitialDelay,
                 fallbackPollingInterval: fallbackPollingInterval,
+                selectedDetailPollingInterval: selectedDetailPollingInterval,
                 aggregateRefreshInterval: aggregateRefreshInterval,
                 aggregateEnvironmentLoader: aggregateEnvironmentLoader
             )
@@ -807,6 +858,11 @@ private actor MultiEnvironmentHTTPTransport: HTTPTransport {
     private var shellReadsEnabledHosts: Set<String>
     private var dispatched: [MultiEnvironmentDispatchRecord] = []
     private var hostsDroppingNextCreateReply = Set<String>()
+    private var detailMessagesByHost: [String: [OrchestrationMessage]] = [:]
+    private var detailReadCounts: [String: Int] = [:]
+    private var detailReadWaiters: [
+        String: [(target: Int, continuation: CheckedContinuation<Void, Never>)]
+    ] = [:]
 
     init(shells: [String: OrchestrationShellSnapshot]) {
         self.shells = shells
@@ -835,6 +891,17 @@ private actor MultiEnvironmentHTTPTransport: HTTPTransport {
         shellData[host] = try! JSONEncoder.t3.encode(shell)
     }
 
+    func setDetailMessages(_ messages: [OrchestrationMessage], host: String) {
+        detailMessagesByHost[host] = messages
+    }
+
+    func waitForDetailReadCount(_ target: Int, host: String) async {
+        guard detailReadCounts[host, default: 0] < target else { return }
+        await withCheckedContinuation { continuation in
+            detailReadWaiters[host, default: []].append((target, continuation))
+        }
+    }
+
     func dispatchHosts() -> [String] {
         dispatched.map(\.host)
     }
@@ -859,13 +926,26 @@ private actor MultiEnvironmentHTTPTransport: HTTPTransport {
             return (data, multiEnvironmentResponse(request))
         }
         if path.hasPrefix("/api/orchestration/threads/") {
+            detailReadCounts[host, default: 0] += 1
+            let completedReadCount = detailReadCounts[host, default: 0]
+            let completedWaiters = detailReadWaiters[host, default: []].filter {
+                completedReadCount >= $0.target
+            }
+            detailReadWaiters[host] = detailReadWaiters[host, default: []].filter {
+                completedReadCount < $0.target
+            }
+            completedWaiters.forEach { $0.continuation.resume() }
             let threadID = request.url?.lastPathComponent.removingPercentEncoding ?? "thread"
             let projectID = shells[host]?.threads
                 .first(where: { $0.id == threadID })?
                 .projectId ?? shells[host]?.projects.first?.id ?? "project"
             return (
                 try JSONEncoder.t3.encode(
-                    multiEnvironmentDetail(projectID: projectID, threadID: threadID)
+                    multiEnvironmentDetail(
+                        projectID: projectID,
+                        threadID: threadID,
+                        messages: detailMessagesByHost[host] ?? []
+                    )
                 ),
                 multiEnvironmentResponse(request)
             )
@@ -919,6 +999,55 @@ private struct MultiEnvironmentDispatchRecord: Sendable {
 private struct UnavailableMultiEnvironmentWebSocketConnector: WebSocketConnecting {
     func connect(to _: URL) async throws -> any WebSocketConnection {
         throw URLError(.cannotConnectToHost)
+    }
+}
+
+private struct CompletingMultiEnvironmentWebSocketConnector: WebSocketConnecting {
+    func connect(to _: URL) async throws -> any WebSocketConnection {
+        CompletingMultiEnvironmentWebSocketConnection()
+    }
+}
+
+private actor CompletingMultiEnvironmentWebSocketConnection: WebSocketConnection {
+    private var responses: [Data] = []
+    private var receiver: CheckedContinuation<Data, Error>?
+    private var isClosed = false
+
+    func send(_ data: Data) throws {
+        let request = try JSONDecoder.t3.decode(JSONValue.self, from: data)
+        guard case let .number(rawID) = request["id"] else { return }
+        let response = JSONValue.object([
+            "_tag": .string("Exit"),
+            "requestId": .number(rawID),
+            "exit": .object([
+                "_tag": .string("Success"),
+                "value": .null,
+            ]),
+        ])
+        enqueue(try JSONEncoder.t3.encode(response))
+    }
+
+    func receive() async throws -> Data {
+        if !responses.isEmpty { return responses.removeFirst() }
+        if isClosed { throw CancellationError() }
+        return try await withCheckedThrowingContinuation { continuation in
+            receiver = continuation
+        }
+    }
+
+    func close() {
+        isClosed = true
+        receiver?.resume(throwing: CancellationError())
+        receiver = nil
+    }
+
+    private func enqueue(_ data: Data) {
+        if let receiver {
+            self.receiver = nil
+            receiver.resume(returning: data)
+        } else {
+            responses.append(data)
+        }
     }
 }
 
@@ -1122,7 +1251,8 @@ private func multiEnvironmentShell(
 
 private func multiEnvironmentDetail(
     projectID: String,
-    threadID: String
+    threadID: String,
+    messages: [OrchestrationMessage] = []
 ) -> OrchestrationThreadDetailSnapshot {
     let timestamp = "2026-07-31T12:00:00.000Z"
     return OrchestrationThreadDetailSnapshot(
@@ -1146,7 +1276,7 @@ private func multiEnvironmentDetail(
             snoozedAt: nil,
             pinnedAt: nil,
             deletedAt: nil,
-            messages: [],
+            messages: messages,
             activities: [],
             checkpoints: [],
             session: nil

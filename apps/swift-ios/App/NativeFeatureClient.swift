@@ -45,6 +45,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
     private let projectFaviconStore: FeatureProjectFaviconStore
     private let fallbackPollingInitialDelay: Duration
     private let fallbackPollingInterval: Duration
+    private let selectedDetailPollingInterval: Duration
     private let aggregateRefreshInterval: Duration
     private let environmentShellTimeoutInterval: TimeInterval
     private let aggregateEnvironmentLoader: @Sendable (EnvironmentRuntime) async throws -> [Environment]
@@ -153,6 +154,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         projectFaviconStore: FeatureProjectFaviconStore = FeatureProjectFaviconStore(),
         fallbackPollingInitialDelay: Duration = .seconds(3),
         fallbackPollingInterval: Duration = .seconds(2),
+        selectedDetailPollingInterval: Duration = .seconds(2),
         aggregateRefreshInterval: Duration = .seconds(20),
         environmentShellTimeoutInterval: TimeInterval = 6,
         aggregateEnvironmentLoader: @escaping @Sendable (EnvironmentRuntime) async throws -> [Environment] = {
@@ -183,6 +185,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         self.projectFaviconStore = projectFaviconStore
         self.fallbackPollingInitialDelay = fallbackPollingInitialDelay
         self.fallbackPollingInterval = fallbackPollingInterval
+        self.selectedDetailPollingInterval = selectedDetailPollingInterval
         self.aggregateRefreshInterval = aggregateRefreshInterval
         self.environmentShellTimeoutInterval = environmentShellTimeoutInterval
         self.aggregateEnvironmentLoader = aggregateEnvironmentLoader
@@ -3265,20 +3268,20 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         }
         detailStreamTask = nil
         scheduleDetailRefresh(threadID: route.uiID, client: route.client)
-        startPassiveDetailPolling(route)
+        startSelectedDetailPolling(route)
     }
 
-    /// Passive environments intentionally avoid full shell WebSocket streams.
-    /// A selected passive thread is still live enough to drive remotely.
-    private func startPassiveDetailPolling(_ route: NativeThreadRoute) {
+    /// Completion-scoped detail streams end when the current turn settles.
+    /// Keep the selected thread fresh so turns started by another client land
+    /// without requiring the user to leave and reopen the thread.
+    private func startSelectedDetailPolling(_ route: NativeThreadRoute) {
         passiveDetailPollingTask?.cancel()
         passiveDetailPollingTask = nil
-        guard route.environmentID != activeEnvironment?.id else { return }
         let generation = environmentGeneration
         passiveDetailPollingTask = Task { [weak self] in
             while !Task.isCancelled {
                 do {
-                    try await Task.sleep(for: .seconds(2))
+                    try await Task.sleep(for: selectedDetailPollingInterval)
                 } catch {
                     return
                 }
