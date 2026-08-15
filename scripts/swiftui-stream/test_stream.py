@@ -338,6 +338,10 @@ class StreamTests(unittest.TestCase):
         guard = 'validate-test-build-catalog --build "$BUILD"'
         self.assertIn(guard, script)
         self.assertLess(script.index(guard), script.index("xcodebuild build"))
+        self.assertIn(
+            'next-build.py" test --peek --requested "$T3_SWIFT_BUILD_NUMBER" --accept-reserved',
+            script,
+        )
         self.assertIn('"T3_GIT_COMMIT=$SOURCE_COMMIT"', script)
         self.assertIn('--arg catalogCommit "$CATALOG_COMMIT"', script)
 

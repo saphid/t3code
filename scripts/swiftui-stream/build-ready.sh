@@ -82,7 +82,13 @@ fi
 PREFLIGHT_MANIFEST="$(mktemp -t t3-swift-testing-preflight.XXXXXX)"
 TESTING_MANIFEST="$(mktemp -t t3-swift-testing.XXXXXX)"
 trap 'unlink "$PREFLIGHT_MANIFEST" 2>/dev/null || true; unlink "$TESTING_MANIFEST" 2>/dev/null || true' EXIT
-if [[ -n "${T3_SWIFT_BUILD_NUMBER:-}" ]]; then
+if [[ "$CHANNEL" == test && "$UAT_CANDIDATE" != 1 ]]; then
+  [[ -n "${T3_SWIFT_BUILD_NUMBER:-}" ]] || {
+    echo "Test builds require a number reserved by stream.py stage-test-build" >&2
+    exit 1
+  }
+  PREFLIGHT_BUILD="$("$SCRIPT_DIR/next-build.py" test --peek --requested "$T3_SWIFT_BUILD_NUMBER" --accept-reserved)"
+elif [[ -n "${T3_SWIFT_BUILD_NUMBER:-}" ]]; then
   PREFLIGHT_BUILD="$("$SCRIPT_DIR/next-build.py" "$CHANNEL" --peek --requested "$T3_SWIFT_BUILD_NUMBER")"
 else
   PREFLIGHT_BUILD="$("$SCRIPT_DIR/next-build.py" "$CHANNEL" --peek)"
