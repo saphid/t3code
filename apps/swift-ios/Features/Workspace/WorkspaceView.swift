@@ -958,7 +958,9 @@ public struct WorkspaceView: View {
     }
 
     private var pullRequestEnvironments: [FeatureEnvironment] {
-        model.snapshot.environments.filter(\.isEnabled)
+        model.snapshot.environments.filter {
+            $0.isEnabled && $0.pullRequestCapability == true
+        }
     }
 
     private var preferredPullRequestEnvironment: FeatureEnvironment? {

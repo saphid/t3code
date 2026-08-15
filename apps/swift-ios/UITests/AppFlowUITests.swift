@@ -1317,9 +1317,9 @@ final class AppFlowUITests: XCTestCase {
         assertExists("Branches")
         assertExists("Changes")
         assertExists("Focused SwiftUI tests")
-        XCTAssertEqual(app.buttons["Merge"].count, 0)
-        XCTAssertEqual(app.buttons["Comment"].count, 0)
-        XCTAssertEqual(app.buttons["Approve"].count, 0)
+        XCTAssertFalse(app.buttons["Merge"].exists)
+        XCTAssertFalse(app.buttons["Comment"].exists)
+        XCTAssertFalse(app.buttons["Approve"].exists)
         proofPassed(openDetail, observation: "The read-only Summary for pull request 94 is visible")
         capture("pull-request-summary")
 
