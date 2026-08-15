@@ -112,6 +112,31 @@ final class NativeMultiEnvironmentTests: XCTestCase {
         await fixture.client.disconnect()
     }
 
+    func testAcceptedFollowUpRestartsCompletionScopedDetailStream() async throws {
+        let fixture = try await makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+
+        let snapshot = try await fixture.client.initialSnapshot()
+        let thread = try XCTUnwrap(
+            snapshot.threads.first(where: { $0.wireID == "thread-one" })
+        )
+        _ = try await fixture.client.loadThread(id: thread.id)
+        let completedStreamGeneration = fixture.client.detailStreamGenerationForTesting
+
+        try await fixture.client.sendMessage(
+            threadID: thread.id,
+            text: "Follow up after completion",
+            selection: nil
+        )
+
+        XCTAssertGreaterThan(
+            fixture.client.detailStreamGenerationForTesting,
+            completedStreamGeneration,
+            "An accepted follow-up must replace the completion-scoped detail stream."
+        )
+        await fixture.client.disconnect()
+    }
+
     func testBackgroundLivenessKeepsASettledThreadWorking() async throws {
         let fixture = try await makeFixture()
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
