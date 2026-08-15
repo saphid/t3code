@@ -1190,6 +1190,14 @@ final class AppFlowUITests: XCTestCase {
         )
         assertExists("Installed 1 theme from Fixture Night Theme.")
         assertHittableButton("OK").tap()
+        if app.keyboards.firstMatch.exists {
+            search.tap()
+            search.typeText("\n")
+            XCTAssertTrue(
+                app.keyboards.firstMatch.waitForNonExistence(timeout: 4),
+                "Theme search keyboard did not dismiss after submitting the query"
+            )
+        }
 
         let lightCard = app.descendants(matching: .any)["theme-card-fixture-night-light"].firstMatch
         scrollToHittable(lightCard)
@@ -1204,10 +1212,7 @@ final class AppFlowUITests: XCTestCase {
         proofPassed(installAction, observation: "Light and dark cards are selected and expose matching native and terminal canvas colors")
         capture("theme-selected-light-dark")
 
-        for _ in 0 ..< 6 {
-            app.swipeDown()
-        }
-        let lightControl = assertHittableButton("Light")
+        let lightControl = scrollDownToHittableButton("Light")
         let lightAction = proofTap(
             lightControl,
             selector: "Appearance.Light",
@@ -1222,11 +1227,8 @@ final class AppFlowUITests: XCTestCase {
         let persistedLightCard = app.descendants(matching: .any)["theme-card-fixture-night-light"].firstMatch
         scrollToHittable(persistedLightCard)
         XCTAssertTrue(persistedLightCard.isSelected)
-        for _ in 0 ..< 6 {
-            app.swipeDown()
-        }
         let persistedAction = proofTap(
-            assertHittableButton("Dark"),
+            scrollDownToHittableButton("Dark"),
             selector: "Appearance.Dark",
             postcondition: "The persisted dark Fixture Night theme is active"
         )
@@ -1754,6 +1756,25 @@ final class AppFlowUITests: XCTestCase {
             file: file,
             line: line
         )
+    }
+
+    private func scrollDownToHittableButton(
+        _ label: String,
+        maximumSwipes: Int = 8,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) -> XCUIElement {
+        let buttons = app.buttons.matching(NSPredicate(format: "label == %@", label))
+        for _ in 0 ..< maximumSwipes {
+            for index in 0 ..< buttons.count {
+                let button = buttons.element(boundBy: index)
+                if button.exists, button.isHittable {
+                    return button
+                }
+            }
+            app.swipeDown()
+        }
+        return assertHittableButton(label, file: file, line: line)
     }
 
     private func assertUniqueAccessibilityIdentifiers(
