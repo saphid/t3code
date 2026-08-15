@@ -439,22 +439,6 @@ class PacketValidationTests(unittest.TestCase):
                 MEDIA.validation_seal(unsigned),
             )
 
-            stale_build = json.loads(build_receipt.read_text(encoding="utf-8"))
-            stale_build["startedAt"] = "2026-08-15T01:00:01Z"
-            build_receipt.write_text(json.dumps(stale_build), encoding="utf-8")
-            rejected = subprocess.run(
-                self.validate_command(receipt, timeline, history, validation)
-                + [
-                    "--feature-id", "review-item",
-                    "--build-receipt", str(build_receipt),
-                    "--overwrite",
-                ],
-                text=True,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-            )
-            self.assertNotEqual(rejected.returncode, 0)
-            self.assertIn("capture started before", rejected.stderr)
             self.assertGreaterEqual(value["pairing"]["videoSsim"], 0.75)
             self.assertRegex(
                 value["pairing"]["decodedAudioSha256"], r"^[0-9a-f]{64}$"
@@ -524,6 +508,23 @@ class PacketValidationTests(unittest.TestCase):
                 value["seal"]["canonicalPayloadSha256"],
                 MEDIA.validation_seal(unsigned),
             )
+
+            stale_build = json.loads(build_receipt.read_text(encoding="utf-8"))
+            stale_build["startedAt"] = "2026-08-15T01:00:01Z"
+            build_receipt.write_text(json.dumps(stale_build), encoding="utf-8")
+            rejected = subprocess.run(
+                self.validate_command(receipt, timeline, history, validation)
+                + [
+                    "--feature-id", "review-item",
+                    "--build-receipt", str(build_receipt),
+                    "--overwrite",
+                ],
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+            self.assertNotEqual(rejected.returncode, 0)
+            self.assertIn("capture started before", rejected.stderr)
 
     def test_validates_non_mp4_source_by_content(self) -> None:
         with tempfile.TemporaryDirectory(prefix="proof-packet-mov-") as temporary:

@@ -299,6 +299,21 @@ T3_SWIFT_BUILD_NUMBER="<reserved Test build>" \
 scripts/swiftui-stream/build-ready.sh test
 ```
 
+After focused verification, a clean Test tip may publish an unapproved phone
+candidate before the proof catalog is complete:
+
+```sh
+T3_SWIFT_UAT_CANDIDATE=1 \
+T3_SWIFT_DEVICE_ID="<CoreDevice or UDID>" \
+T3_SWIFT_DEVELOPMENT_TEAM="<team>" \
+scripts/swiftui-stream/build-ready.sh test
+```
+
+This path allocates the next monotonic Test build and marks its ready pointer
+as `uat`. It does not change the catalog, make an item approval-eligible, or
+relax the ordinary signed approval-build gate. Promotion and upstream delivery
+still require the complete proof catalog and an approval build.
+
 The build command verifies the channel identity, embedded channel, signature,
 exact app-source and catalog commits, and monotonic counter. It stores the
 artifact below `~/.t3/artifacts/swiftui-stream/<channel>/`. It then atomically

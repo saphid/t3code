@@ -331,6 +331,15 @@ class StreamTests(unittest.TestCase):
         self.assertIn('"T3_GIT_COMMIT=$SOURCE_COMMIT"', script)
         self.assertIn('--arg catalogCommit "$CATALOG_COMMIT"', script)
 
+    def test_build_ready_marks_uat_candidate_without_weakening_approval_gate(self):
+        script = (ROOT / "build-ready.sh").read_text()
+        self.assertIn('UAT_CANDIDATE="${T3_SWIFT_UAT_CANDIDATE:-0}"', script)
+        self.assertIn('"$CHANNEL" == test && "$UAT_CANDIDATE" == 1', script)
+        self.assertIn('"$SCRIPT_DIR/next-build.py" test', script)
+        self.assertIn('"$CHANNEL" == test && "$UAT_CANDIDATE" != 1', script)
+        self.assertIn('validate-test-build-catalog --build "$BUILD"', script)
+        self.assertIn('--arg candidateKind', script)
+
     def test_review_readiness_rejects_missing_full_details_and_proof(self):
         feature = {
             "id": "candidate-a",
@@ -539,7 +548,7 @@ class StreamTests(unittest.TestCase):
             )
             self.assertTrue(
                 any(
-                    "sourceCommit does not match feature" in error
+                    "sourceCommit does not match proof" in error
                     for error in commit_errors
                 )
             )

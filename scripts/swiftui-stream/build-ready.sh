@@ -8,6 +8,12 @@ CHANNEL="${1:-}"
 TEAM="${T3_SWIFT_DEVELOPMENT_TEAM:-}"
 DEVICE_ID="${T3_SWIFT_DEVICE_ID:-}"
 ARTIFACT_ROOT="${T3_SWIFT_ARTIFACT_ROOT:-$HOME/.t3/artifacts/swiftui-stream}"
+UAT_CANDIDATE="${T3_SWIFT_UAT_CANDIDATE:-0}"
+
+[[ "$UAT_CANDIDATE" == 0 || "$UAT_CANDIDATE" == 1 ]] || {
+  echo "T3_SWIFT_UAT_CANDIDATE must be 0 or 1" >&2
+  exit 1
+}
 
 case "$CHANNEL" in
   dev)
@@ -62,6 +68,13 @@ if [[ "$CHANNEL" == "test" ]]; then
     echo "Test builds must be published from $EXPECTED_BRANCH, not $BRANCH" >&2
     exit 1
   }
+  if [[ "$UAT_CANDIDATE" == 1 && -n "${T3_SWIFT_BUILD_NUMBER:-}" ]]; then
+    echo "UAT Test candidates allocate their own monotonic build number" >&2
+    exit 1
+  fi
+elif [[ "$UAT_CANDIDATE" == 1 ]]; then
+  echo "T3_SWIFT_UAT_CANDIDATE is valid only for the Test channel" >&2
+  exit 1
 elif [[ "$BRANCH" != "$EXPECTED_BRANCH" ]]; then
   printf '[swiftui-stream] preparing one proved Dev candidate from %s\n' "$BRANCH"
 fi
@@ -77,7 +90,9 @@ fi
 python3 "$SCRIPT_DIR/generate_testing_manifest.py" \
   "$REPO_ROOT" "$CHANNEL" "$PREFLIGHT_BUILD" "$PREFLIGHT_MANIFEST"
 
-if [[ "$CHANNEL" == test ]]; then
+if [[ "$CHANNEL" == test && "$UAT_CANDIDATE" == 1 ]]; then
+  BUILD="$("$SCRIPT_DIR/next-build.py" test)"
+elif [[ "$CHANNEL" == test ]]; then
   [[ -n "${T3_SWIFT_BUILD_NUMBER:-}" ]] || {
     echo "Test builds require a number reserved by stream.py stage-test-build" >&2
     exit 1
@@ -94,7 +109,7 @@ else
 fi
 CATALOG_COMMIT="$(git -C "$REPO_ROOT" rev-parse HEAD)"
 SOURCE_COMMIT="$CATALOG_COMMIT"
-if [[ "$CHANNEL" == test ]]; then
+if [[ "$CHANNEL" == test && "$UAT_CANDIDATE" != 1 ]]; then
   CATALOG_CONTRACT="$(
     "$SCRIPT_DIR/stream.py" validate-test-build-catalog --build "$BUILD"
   )"
@@ -103,6 +118,9 @@ if [[ "$CHANNEL" == test ]]; then
     echo "invalid Test catalog source commit: $SOURCE_COMMIT" >&2
     exit 1
   }
+fi
+if [[ "$CHANNEL" == test && "$UAT_CANDIDATE" == 1 ]]; then
+  printf '[swiftui-stream] preparing unapproved Test UAT candidate from %s\n' "$SOURCE_COMMIT"
 fi
 DERIVED="${T3_SWIFT_DERIVED_DATA_PATH:-$APP_DIR/.derivedData/ready-$CHANNEL}"
 CLONED_SOURCE_PACKAGES_PATH="${T3_SWIFT_CLONED_SOURCE_PACKAGES_PATH:-$HOME/.t3/cache/swift-ios/source-packages}"
@@ -175,7 +193,8 @@ jq -n \
   --arg zipPath "$ARTIFACT_DIR/T3Code.app.zip" \
   --arg sha256 "$SHA256" \
   --arg deviceId "$DEVICE_ID" \
-  '{schemaVersion:1,channel:$channel,build:$build,sequence:$sequence,commit:$commit,catalogCommit:$catalogCommit,bundleId:$bundleId,appPath:$appPath,zipPath:$zipPath,sha256:$sha256,deviceId:$deviceId}' \
+  --arg candidateKind "$(if [[ "$UAT_CANDIDATE" == 1 ]]; then printf uat; else printf approval; fi)" \
+  '{schemaVersion:1,channel:$channel,build:$build,sequence:$sequence,commit:$commit,catalogCommit:$catalogCommit,bundleId:$bundleId,appPath:$appPath,zipPath:$zipPath,sha256:$sha256,deviceId:$deviceId,candidateKind:$candidateKind}' \
   > "$POINTER_TMP"
 cp "$POINTER_TMP" "$ARTIFACT_DIR/artifact.json"
 chmod -R a-w "$ARTIFACT_DIR"
