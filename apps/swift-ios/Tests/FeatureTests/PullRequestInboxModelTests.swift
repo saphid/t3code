@@ -76,6 +76,26 @@ struct PullRequestInboxModelTests {
     }
 
     @Test
+    func initialAutomaticLoadStartsBeforeItsViewTaskCanBeCancelled() async {
+        var listCalls = 0
+        let model = Self.model(
+            client: Self.client(list: { _, _ in
+                listCalls += 1
+                return Self.page(entries: [Self.entry(number: 42)])
+            })
+        )
+
+        let automaticLoad = Task {
+            await model.loadForCurrentFilterIfNeeded()
+        }
+        await Task.yield()
+        automaticLoad.cancel()
+        await automaticLoad.value
+
+        #expect(listCalls == 1)
+    }
+
+    @Test
     func paginationUsesHostCursorsAndNeverDuplicatesRows() async throws {
         var inputs: [PullRequestListInput] = []
         let model = Self.model(

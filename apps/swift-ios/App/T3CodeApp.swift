@@ -51,6 +51,14 @@ struct T3CodeApp: App {
                     try! PlatformDeepLinkParser.parse(fallbackURL)
                 )
             }
+            if AppFlowFixtureLaunch.scenario == .pullRequests {
+                PlatformRouteMailbox.shared.put(
+                    .project(
+                        environmentID: "fixture-environment",
+                        projectID: "fixture-project"
+                    )
+                )
+            }
             _model = State(initialValue: fixtureModel)
             return
         }

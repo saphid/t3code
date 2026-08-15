@@ -220,7 +220,7 @@
     {
       "featureId": "pull-request-inbox-summary-timeline",
       "journeyId": "pull-request-inbox-summary-timeline",
-      "testMethod": "testPullRequestInboxSummaryAndTimelineStayReadOnlyAndScoped",
+      "testMethod": "testProjectLinkPullRequestInboxAutomaticallyLoadsAndStaysReadOnly",
       "appearance": "dark",
       "imageProofInputs": [
         {

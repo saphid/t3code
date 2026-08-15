@@ -122,13 +122,7 @@ struct PullRequestListContent: View {
         .searchable(text: $model.query, prompt: "Search pull requests")
         .refreshable { await model.load() }
         .task(id: model.filterKey) {
-            guard model.loadedFilterKey != model.filterKey else { return }
-            do {
-                try await Task.sleep(for: .milliseconds(250))
-                await model.load()
-            } catch {
-                return
-            }
+            await model.loadForCurrentFilterIfNeeded()
         }
     }
 

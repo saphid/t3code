@@ -1281,8 +1281,15 @@ final class AppFlowUITests: XCTestCase {
         capture("widget-channel-new-task")
     }
 
-    func testPullRequestInboxSummaryAndTimelineStayReadOnlyAndScoped() {
+    func testProjectLinkPullRequestInboxAutomaticallyLoadsAndStaysReadOnly() {
         launch(scenario: "pull-requests")
+
+        let projectFilter = assertHittableButton("Project filter")
+        XCTAssertEqual(
+            projectFilter.value as? String,
+            "T3 Code",
+            "The Project Link did not select its project before the inbox opened"
+        )
 
         let openInbox = proofTap(
             assertIdentifier("sidebar-pull-requests-button"),

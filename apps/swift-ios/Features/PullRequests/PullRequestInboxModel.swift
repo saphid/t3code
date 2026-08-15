@@ -242,6 +242,23 @@ final class PullRequestInboxModel {
         statsByEntryID[entry.id]
     }
 
+    func loadForCurrentFilterIfNeeded() async {
+        guard loadedFilterKey != filterKey else { return }
+
+        // The first request must start as soon as the inbox appears. A view task
+        // can be cancelled while compact-column navigation settles, so delaying
+        // this request can leave the inbox empty until a manual refresh.
+        if loadedFilterKey != nil {
+            do {
+                try await Task.sleep(for: .milliseconds(250))
+            } catch {
+                return
+            }
+        }
+
+        await load()
+    }
+
     func load(reset: Bool = true) async {
         guard scope.capability == .available else { return }
         if !reset {

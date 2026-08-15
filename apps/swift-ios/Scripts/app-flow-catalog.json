@@ -354,7 +354,7 @@
     },
     {
       "id": "pull-request-inbox-summary-timeline",
-      "test": "testPullRequestInboxSummaryAndTimelineStayReadOnlyAndScoped",
+      "test": "testProjectLinkPullRequestInboxAutomaticallyLoadsAndStaysReadOnly",
       "lane": "fixture",
       "persona": "pull-request-reviewer",
       "estimatedSeconds": 35,
@@ -409,6 +409,13 @@
         "workspace-navigation",
         "task-and-follow-up",
         "thread-workspace-tools"
+      ]
+    },
+    "pull-request": {
+      "description": "Focused deterministic gate for pull-request workspace behavior.",
+      "journeys": [
+        "pull-request-capability-gate",
+        "pull-request-inbox-summary-timeline"
       ]
     },
     "regression": {
