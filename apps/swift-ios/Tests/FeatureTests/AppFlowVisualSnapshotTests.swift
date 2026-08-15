@@ -6,75 +6,85 @@ import XCTest
 @MainActor
 final class AppFlowVisualSnapshotTests: XCTestCase {
     func testOnboardingWelcomeAtStandardType() {
-        assertSnapshot(
-            of: onboardingController(sizeCategory: .large, colorScheme: .light),
-            as: .image(
-                on: snapshotDevice,
-                precision: 0.99,
-                perceptualPrecision: 0.98
-            ),
-            named: "welcome-light-standard"
-        )
+        withStandardTheme {
+            assertSnapshot(
+                of: onboardingController(sizeCategory: .large, colorScheme: .light),
+                as: .image(
+                    on: snapshotDevice,
+                    precision: 0.99,
+                    perceptualPrecision: 0.98
+                ),
+                named: "welcome-light-standard"
+            )
+        }
     }
 
     func testOnboardingWelcomeAtAccessibilityTypeInDarkMode() {
-        assertSnapshot(
-            of: onboardingController(
-                sizeCategory: .accessibilityExtraExtraLarge,
-                colorScheme: .dark
-            ),
-            as: .image(
-                on: snapshotDevice,
-                precision: 0.99,
-                perceptualPrecision: 0.98
-            ),
-            named: "welcome-dark-accessibility-xxl"
-        )
+        withStandardTheme {
+            assertSnapshot(
+                of: onboardingController(
+                    sizeCategory: .accessibilityExtraExtraLarge,
+                    colorScheme: .dark
+                ),
+                as: .image(
+                    on: snapshotDevice,
+                    precision: 0.99,
+                    perceptualPrecision: 0.98
+                ),
+                named: "welcome-dark-accessibility-xxl"
+            )
+        }
     }
 
     func testOnboardingWelcomeRightToLeft() {
-        assertSnapshot(
-            of: onboardingController(
-                sizeCategory: .large,
-                colorScheme: .light,
-                locale: Locale(identifier: "ar_SA"),
-                layoutDirection: .rightToLeft
-            ),
-            as: .image(
-                on: snapshotDevice,
-                precision: 0.99,
-                perceptualPrecision: 0.98
-            ),
-            named: "welcome-light-right-to-left"
-        )
+        withStandardTheme {
+            assertSnapshot(
+                of: onboardingController(
+                    sizeCategory: .large,
+                    colorScheme: .light,
+                    locale: Locale(identifier: "ar_SA"),
+                    layoutDirection: .rightToLeft
+                ),
+                as: .image(
+                    on: snapshotDevice,
+                    precision: 0.99,
+                    perceptualPrecision: 0.98
+                ),
+                named: "welcome-light-right-to-left"
+            )
+        }
     }
 
     func testOnboardingWelcomeOnIPad() {
-        assertSnapshot(
-            of: onboardingController(sizeCategory: .large, colorScheme: .light),
-            as: .image(
-                on: snapshotTablet,
-                precision: 0.99,
-                perceptualPrecision: 0.98
-            ),
-            named: "welcome-light-ipad-mini"
-        )
+        withStandardTheme {
+            assertSnapshot(
+                of: onboardingController(sizeCategory: .large, colorScheme: .light),
+                as: .image(
+                    on: snapshotTablet,
+                    precision: 0.99,
+                    perceptualPrecision: 0.98
+                ),
+                named: "welcome-light-ipad-mini"
+            )
+        }
     }
 
     func testOnboardingWelcomeWithPersonalConnectOnTestChannel() {
-        assertSnapshot(
-            of: onboardingController(
-                sizeCategory: .large,
-                colorScheme: .light,
-                buildChannel: .test
-            ),
-            as: .image(
-                on: snapshotDevice,
-                precision: 0.99,
-                perceptualPrecision: 0.98
-            ),
-            named: "welcome-light-personal-connect-test"
-        )
+        withStandardTheme {
+            assertSnapshot(
+                of: onboardingController(
+                    sizeCategory: .large,
+                    colorScheme: .light,
+                    buildChannel: .test
+                ),
+                as: .image(
+                    on: snapshotDevice,
+                    precision: 0.99,
+                    perceptualPrecision: 0.98
+                ),
+                named: "welcome-light-personal-connect-test"
+            )
+        }
     }
 
     /// Point-Free's device presets define points and size classes but inherit
@@ -95,6 +105,24 @@ final class AppFlowVisualSnapshotTests: XCTestCase {
             $0.displayScale = 2
         }
         return configuration
+    }
+
+    private func withStandardTheme(_ body: () -> Void) {
+        let previous = T3ThemeRuntime.shared.selection
+        T3ThemeRuntime.shared.selectBoth(themeID: "t3-code")
+        T3ThemeRuntime.shared.setAppearance(.system)
+        defer {
+            T3ThemeRuntime.shared.select(
+                themeID: previous.lightThemeId,
+                for: .light
+            )
+            T3ThemeRuntime.shared.select(
+                themeID: previous.darkThemeId,
+                for: .dark
+            )
+            T3ThemeRuntime.shared.setAppearance(previous.appearance)
+        }
+        body()
     }
 
     private func onboardingController(
