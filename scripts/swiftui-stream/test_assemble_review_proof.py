@@ -165,7 +165,7 @@ class AssembleReviewProofTests(unittest.TestCase):
         value = assembler.plan_value(manifest, HEAD)
         pending = assembler.pending_features(manifest)
 
-        self.assertEqual(len(value["reviewItems"]), 15)
+        self.assertEqual(len(value["reviewItems"]), 16)
         self.assertEqual(
             {item["id"] for item in value["reviewItems"]},
             {item["id"] for item in pending},

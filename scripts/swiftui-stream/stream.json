@@ -1679,23 +1679,104 @@
       ]
     },
     {
-      "id": "debug-build-metadata-settings-redesign",
-      "name": "Move SwiftUI debug build identity and base distance into Settings",
+      "acceptancePoints": [
+        {
+          "id": "clear-home-header",
+          "text": "The SwiftUI Home header no longer carries the development build badge, leaving its controls and swipe space clear."
+        },
+        {
+          "id": "settings-build-identity",
+          "text": "Settings About shows the exact development build, revision, upstream ahead/behind distance, and commit link with a complete accessibility label."
+        }
+      ],
       "aliases": [
         "debug build distance",
         "development build settings row",
         "PR 5789"
       ],
-      "state": "developing",
-      "sourceBranch": "fix/swiftui-debug-build-settings-redesign-20260815",
-      "sourceThread": "81fefb3c-df48-4aba-addf-d73f61c9f768",
-      "sourceIssue": "https://github.com/pingdotgg/t3code/issues/5786",
+      "behavior": "Keep the Home header uncluttered and place exact development-build identity, upstream distance, and commit navigation in Settings About.",
+      "candidateCommit": "fb086f2ecac452b6069c711fc57ad8b9dd1771f5",
       "pullRequest": "https://github.com/pingdotgg/t3code/pull/5789",
       "delivery": "direct",
+      "dependsOn": [],
       "dependsOnPullRequests": [],
+      "id": "debug-build-metadata-settings-redesign",
+      "integratedCommit": "e7423731c383f07869c8be48735ec1d8efbb3489",
+      "integratedCommits": [
+        "e7423731c383f07869c8be48735ec1d8efbb3489"
+      ],
+      "interactionChange": true,
+      "knownLimitations": "The row is intentionally limited to development configurations. Ahead/behind values reflect the metadata embedded by the build pipeline; the public Release app remains unchanged.",
+      "name": "Move SwiftUI debug build identity and base distance into Settings",
+      "order": 18,
+      "problem": "The old development badge occupied scarce Home-header space while showing only partial build identity. It competed with navigation and swipe controls and did not explain how far the build was from Theo's SwiftUI base.",
+      "proof": {
+        "buildId": "pr5789-test-bbbf98dff-20260815",
+        "buildReceipt": {
+          "path": "/private/tmp/t3-pr5789-proof.XatsGU/worktree/.t3/swiftui-private-ci-artifacts/receipts/pr5789-test-bbbf98dff-20260815/candidate-simulator.json",
+          "sha256": "28aea392b0db8ae74a31f5c74c3435967b339ad59f1170a38e6a6e22529fa976"
+        },
+        "featureCommit": "fb086f2ecac452b6069c711fc57ad8b9dd1771f5",
+        "packets": [
+          {
+            "acceptancePointIds": [
+              "clear-home-header",
+              "settings-build-identity"
+            ],
+            "id": "debug-build-metadata-settings-flow",
+            "receiptPath": "/Users/saphid/.t3/artifacts/swiftui-stream/evidence/test-bbbf98dff-pr5789-20260815/debug-build-metadata-settings-redesign/final/debug-build-settings-bound-receipt.json",
+            "receiptSha256": "4ac2be23945ca8642f08989efd990a9bec7dc32dcaa794f47aad672cb332ebe9",
+            "validationPath": "/Users/saphid/.t3/artifacts/swiftui-stream/evidence/test-bbbf98dff-pr5789-20260815/debug-build-metadata-settings-redesign/final/debug-build-settings-bound-validation.json",
+            "validationSha256": "d612fbdc76ea9f99e3fff9c08d5a48998b24ff04e26e534133c65c7fb10de806"
+          }
+        ],
+        "schemaVersion": 2,
+        "sourceCommit": "bbbf98dffbaa4c088cc4dfc4044e14b519aabc75"
+      },
+      "proofCommit": "e7423731c383f07869c8be48735ec1d8efbb3489",
+      "proofMediaReceipt": "/Users/saphid/.t3/artifacts/swiftui-stream/evidence/test-bbbf98dff-pr5789-20260815/debug-build-metadata-settings-redesign/proof-media-receipt.json",
+      "reproductionSteps": [
+        "Open a personal SwiftUI build and inspect the Home header beside its navigation and action controls.",
+        "Open Settings and scroll to About.",
+        "Read the Development build row and inspect its commit-link affordance and accessibility description."
+      ],
       "revises": "legacy-candidate-5",
+      "reviewGroup": "Build identity",
+      "reviewMedia": true,
+      "reviewPriority": 2,
+      "sourceBranch": "fix/swiftui-debug-build-settings-redesign-20260815",
+      "sourceCommit": "fb086f2ecac452b6069c711fc57ad8b9dd1771f5",
+      "sourceIssue": "https://github.com/pingdotgg/t3code/issues/5786",
+      "sourceReceipt": "~/.t3/swiftui-stream/feature-receipts/debug-build-metadata-settings-redesign/fb086f2ecac452b6069c711fc57ad8b9dd1771f5/receipt.json",
+      "sourceThread": "81fefb3c-df48-4aba-addf-d73f61c9f768",
+      "sourceThreadTitle": "SwiftUI pipeline stability and PR #5789 shipment",
+      "startingBaseline": "f97091eb6a7c39db075b97a1448c76378a9e79d1",
+      "state": "in-test",
+      "successLooksLike": "Home has no development badge. Settings About shows build 60, the exact bbbf98df revision, 461 commits ahead and 0 behind Theo's SwiftUI branch, exposes the commit link, and announces the full identity accessibly.",
+      "summary": "Removes the compact debug badge from Home and adds a dedicated Development build row in Settings About with full revision, upstream distance, commit navigation, and accessibility metadata.",
+      "testBuild": 68,
       "upstreamHead": "be51a3abbbafa053b5c3983a7720215598c2edd5",
-      "order": 9
+      "validationSummary": "Exact aggregate proof commit bbbf98dffbaa4c088cc4dfc4044e14b519aabc75 passed 416 focused native tests in 43 suites and all 4 PR-level UI journeys. The feature's five focused metadata tests also passed. Dark-mode Simulator evidence and accessibility inspection confirmed build 60, the full revision, and 461 ahead / 0 behind.",
+      "visualChange": true,
+      "visualEvidence": [
+        {
+          "annotatedURL": "https://alexs-macbook-pro-1.tail4e5636.ts.net:10025/test-bbbf98dff/debug-build-metadata-settings-redesign/debug-build-settings-annotated.png",
+          "appearance": "dark",
+          "caption": "Shows the exact development build identity and upstream distance in Settings About.",
+          "cleanURL": "https://alexs-macbook-pro-1.tail4e5636.ts.net:10025/test-bbbf98dff/debug-build-metadata-settings-redesign/debug-build-settings-clean.png",
+          "kind": "image",
+          "title": "Development build identity in Settings"
+        },
+        {
+          "annotatedURL": "https://alexs-macbook-pro-1.tail4e5636.ts.net:10025/test-bbbf98dff/debug-build-metadata-settings-redesign/debug-build-settings-annotated.mp4",
+          "appearance": "dark",
+          "caption": "Shows the clear Home header, Settings navigation, and the resulting exact build row.",
+          "cleanURL": "https://alexs-macbook-pro-1.tail4e5636.ts.net:10025/test-bbbf98dff/debug-build-metadata-settings-redesign/debug-build-settings-clean.mp4",
+          "kind": "video",
+          "title": "Move build identity from Home to Settings"
+        }
+      ],
+      "whatToCheck": "On Home, confirm the build badge is gone and header controls have clear space. Open Settings, scroll to About, and verify the Development build row shows the expected build, revision, and upstream distance. Tap the row to confirm it targets the corresponding commit."
     }
   ],
   "legacyManifest": "scripts/t3-swift-approved/manifest.json",

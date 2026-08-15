@@ -384,7 +384,7 @@ class StreamTests(unittest.TestCase):
             if feature.get("state") in stream.APPROVAL_STATES
         ]
 
-        self.assertEqual(len(pending), 15)
+        self.assertEqual(len(pending), 16)
         self.assertTrue(all(feature.get("proofPending") is not True for feature in pending))
         for feature in pending:
             self.assertRegex(feature["sourceCommit"], r"^[0-9a-f]{40}$")
