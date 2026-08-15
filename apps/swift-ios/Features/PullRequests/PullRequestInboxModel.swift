@@ -109,6 +109,7 @@ final class PullRequestInboxModel {
     private var listLoadID: UUID?
     private var detailLoadID: UUID?
     private var selectedEntryID: String?
+    private var scheduledListLoad: (filterKey: String, task: Task<Void, Never>)?
     private let pageSize = 30
 
     init(scope: Scope, client: PullRequestInboxClient) {
@@ -243,20 +244,32 @@ final class PullRequestInboxModel {
     }
 
     func loadForCurrentFilterIfNeeded() async {
-        guard loadedFilterKey != filterKey else { return }
-
-        // The first request must start as soon as the inbox appears. A view task
-        // can be cancelled while compact-column navigation settles, so delaying
-        // this request can leave the inbox empty until a manual refresh.
-        if loadedFilterKey != nil {
-            do {
-                try await Task.sleep(for: .milliseconds(250))
-            } catch {
-                return
-            }
+        let requestedFilterKey = filterKey
+        guard loadedFilterKey != requestedFilterKey else { return }
+        if let scheduledListLoad,
+           scheduledListLoad.filterKey == requestedFilterKey {
+            await scheduledListLoad.task.value
+            return
         }
 
-        await load()
+        scheduledListLoad?.task.cancel()
+        let shouldDebounce = loadedFilterKey != nil
+        let task = Task { @MainActor [weak self] in
+            if shouldDebounce {
+                do {
+                    try await Task.sleep(for: .milliseconds(250))
+                } catch {
+                    return
+                }
+            }
+            guard let self, self.filterKey == requestedFilterKey else { return }
+            await self.load()
+        }
+        scheduledListLoad = (requestedFilterKey, task)
+        await task.value
+        if scheduledListLoad?.filterKey == requestedFilterKey {
+            scheduledListLoad = nil
+        }
     }
 
     func load(reset: Bool = true) async {

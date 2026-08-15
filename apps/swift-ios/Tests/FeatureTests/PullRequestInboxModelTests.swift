@@ -76,11 +76,14 @@ struct PullRequestInboxModelTests {
     }
 
     @Test
-    func initialAutomaticLoadStartsBeforeItsViewTaskCanBeCancelled() async {
+    func initialAutomaticLoadFinishesAfterItsViewTaskIsCancelled() async {
+        let gate = DetailGate()
         var listCalls = 0
         let model = Self.model(
             client: Self.client(list: { _, _ in
                 listCalls += 1
+                await gate.wait()
+                try Task.checkCancellation()
                 return Self.page(entries: [Self.entry(number: 42)])
             })
         )
@@ -88,11 +91,15 @@ struct PullRequestInboxModelTests {
         let automaticLoad = Task {
             await model.loadForCurrentFilterIfNeeded()
         }
-        await Task.yield()
+        await gate.waitUntilEntered()
+        #expect(model.isLoading)
         automaticLoad.cancel()
+        gate.release()
         await automaticLoad.value
 
         #expect(listCalls == 1)
+        #expect(model.entries.map(\.number) == [42])
+        #expect(model.isLoading == false)
     }
 
     @Test

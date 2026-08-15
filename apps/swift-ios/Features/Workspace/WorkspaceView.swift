@@ -512,8 +512,7 @@ public struct WorkspaceView: View {
                 environment: environment,
                 environments: pullRequestEnvironments,
                 client: model.client,
-                onSelectEnvironment: openPullRequests,
-                onNavigateBack: closePullRequests
+                onSelectEnvironment: openPullRequests
             )
             .id(
                 "\(environmentID):\(environment.pullRequestCapabilityKnown):"

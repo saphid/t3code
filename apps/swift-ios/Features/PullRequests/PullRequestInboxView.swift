@@ -3,19 +3,16 @@ import SwiftUI
 struct PullRequestInboxView: View {
     private let environments: [FeatureEnvironment]
     private let onSelectEnvironment: @MainActor (String) -> Void
-    private let onNavigateBack: @MainActor () -> Void
     @State private var model: PullRequestInboxModel
 
     init(
         environment: FeatureEnvironment,
         environments: [FeatureEnvironment],
         client: any FeatureClient,
-        onSelectEnvironment: @escaping @MainActor (String) -> Void,
-        onNavigateBack: @escaping @MainActor () -> Void
+        onSelectEnvironment: @escaping @MainActor (String) -> Void
     ) {
         self.environments = environments
         self.onSelectEnvironment = onSelectEnvironment
-        self.onNavigateBack = onNavigateBack
         _model = State(
             initialValue: PullRequestInboxModel(
                 scope: .init(environment: environment),
@@ -49,9 +46,6 @@ struct PullRequestInboxView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar(.visible, for: .navigationBar)
             .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
-                    Button("Tasks", systemImage: "chevron.left", action: onNavigateBack)
-                }
                 if environments.count > 1 {
                     ToolbarItem(placement: .topBarTrailing) {
                         Menu("Environment", systemImage: "server.rack") {
