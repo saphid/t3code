@@ -116,6 +116,10 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
     private var threadHistoryEpoch = 0
     private var pendingOlderThreadPage: PendingOlderThreadPage?
 
+#if DEBUG
+    var detailStreamGenerationForTesting: Int { detailStreamGeneration }
+#endif
+
     init(
         runtime: EnvironmentRuntime? = nil,
         t3ConnectController: T3ConnectController? = nil,
@@ -1645,6 +1649,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         guard isKnownClient(client, environmentID: environmentID, generation: generation) else {
             throw CancellationError()
         }
+        restartDetailStreamAfterAcceptedTurn(route)
         if pendingTurnSubmissions[route.uiID]?.identity == pending.identity {
             pendingTurnSubmissions[route.uiID] = nil
         }
@@ -1653,6 +1658,23 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         // duplicate user turn.
         try? await refreshThread(id: route.uiID, client: client)
         try? await refresh(client: client)
+    }
+
+    /// A thread subscription is completion-scoped. Once a turn finishes, the
+    /// server closes it after the completion marker, so an accepted follow-up
+    /// needs a fresh subscription even while the same detail remains visible.
+    private func restartDetailStreamAfterAcceptedTurn(_ route: NativeThreadRoute) {
+        guard activeThreadID == route.uiID,
+              activeThreadEnvironmentID == route.environmentID else { return }
+        let supportsPagination = serverConfigsByEnvironmentID[
+            route.environmentID
+        ]?.threadSnapshotPagination == true
+        resetDetailStream()
+        startDetailStream(
+            route,
+            after: activeThreadSequence ?? 0,
+            turnLimit: supportsPagination ? Self.initialThreadUserTurnLimit : nil
+        )
     }
 
     private func messageWasCommitted(
