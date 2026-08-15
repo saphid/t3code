@@ -110,6 +110,16 @@ class StreamTests(unittest.TestCase):
             }],
         }
 
+    def test_ready_build_uses_stream_owned_package_clones(self):
+        publisher = (ROOT / "build-ready.sh").read_text()
+
+        self.assertIn("T3_SWIFT_CLONED_SOURCE_PACKAGES_PATH", publisher)
+        self.assertIn(
+            '-clonedSourcePackagesDirPath "$CLONED_SOURCE_PACKAGES_PATH"',
+            publisher,
+        )
+        self.assertIn("-disablePackageRepositoryCache", publisher)
+
     def receipt_fixture(
         self,
         directory: str,
