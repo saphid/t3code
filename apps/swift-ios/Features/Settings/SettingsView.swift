@@ -2,6 +2,7 @@ import SwiftUI
 
 public struct SettingsView: View {
     @SwiftUI.Environment(\.dismiss) private var dismiss
+    @SwiftUI.Environment(\.openURL) private var openURL
     @Bindable private var model: FeatureRootModel
     @State private var settings: FeatureSettings
     @State private var isSaving = false
@@ -31,7 +32,8 @@ public struct SettingsView: View {
                                     BuildTestingView(
                                         model: model,
                                         manifest: buildTestingManifest,
-                                        presentation: testingPresentation
+                                        presentation: testingPresentation,
+                                        onOpenThread: openThread
                                     )
                                 } label: {
                                     SettingsNavigationRow(
@@ -85,6 +87,18 @@ public struct SettingsView: View {
             }
         }
         .presentationDragIndicator(.visible)
+    }
+
+    private func openThread(_ thread: FeatureThread) {
+        guard let url = PlatformRoute.thread(
+            environmentID: thread.environmentID,
+            threadID: thread.wireID ?? thread.id
+        ).url else { return }
+        dismiss()
+        Task { @MainActor in
+            await Task.yield()
+            openURL(url)
+        }
     }
 
     private var settingsHeader: some View {

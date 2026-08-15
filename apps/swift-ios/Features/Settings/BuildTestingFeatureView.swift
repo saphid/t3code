@@ -5,7 +5,12 @@ struct BuildTestingFeatureView: View {
     let manifest: BuildTestingManifest
     let presentation: BuildTestingPresentation
     let isSubmitting: Bool
+    let isCurrentReview: Bool
+    let isStartingDiscussion: Bool
     let submittedVerdict: BuildTestingDecision.Verdict?
+    let onSelectForReview: () -> Void
+    let onOpenActiveThread: () -> Void
+    let onStartDiscussion: () -> Void
     let onDecision: (BuildTestingDecision) -> Void
 
     @State private var isExpanded = false
@@ -15,6 +20,19 @@ struct BuildTestingFeatureView: View {
     var body: some View {
         DisclosureGroup(isExpanded: $isExpanded) {
             VStack(alignment: .leading, spacing: 14) {
+                Button {
+                    onSelectForReview()
+                } label: {
+                    Label(
+                        isCurrentReview ? "Current review" : "Review this item",
+                        systemImage: isCurrentReview ? "checkmark.circle.fill" : "circle"
+                    )
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .buttonStyle(.bordered)
+                .tint(isCurrentReview ? T3Colors.accent : T3Colors.textSecondary)
+                .accessibilityIdentifier("build-testing-select-current-\(entry.id)")
+
                 BuildTestingReviewGuide(entry: entry)
 
                 if entry.isProofPending {
@@ -62,6 +80,35 @@ struct BuildTestingFeatureView: View {
                     }
                     .font(T3Typography.supportingStrong)
                     .foregroundStyle(T3Colors.accent)
+                }
+
+                if isCurrentReview {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Discuss this issue")
+                            .font(T3Typography.supportingStrong)
+                            .foregroundStyle(T3Colors.textSecondary)
+                        Text("Continue in the active source thread, or start a separate discussion with this build, issue, reproduction steps, expected result, commits, and source threads already included.")
+                            .font(T3Typography.supporting)
+                            .foregroundStyle(T3Colors.textSecondary)
+
+                        Button(action: onOpenActiveThread) {
+                            Label("Open active thread", systemImage: "bubble.left.and.bubble.right.fill")
+                                .frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .accessibilityIdentifier("build-testing-open-thread-\(entry.id)")
+
+                        Button(action: onStartDiscussion) {
+                            Label(
+                                isStartingDiscussion ? "Starting…" : "Start new discussion",
+                                systemImage: "plus.bubble"
+                            )
+                            .frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(.bordered)
+                        .disabled(isStartingDiscussion)
+                        .accessibilityIdentifier("build-testing-new-thread-\(entry.id)")
+                    }
                 }
 
                 HStack(spacing: 10) {
@@ -124,6 +171,11 @@ struct BuildTestingFeatureView: View {
                 Text(entry.stateLabel)
                     .font(T3Typography.supporting)
                     .foregroundStyle(T3Colors.textTertiary)
+                if isCurrentReview {
+                    Label("Current review", systemImage: "checkmark.circle.fill")
+                        .font(T3Typography.supportingStrong)
+                        .foregroundStyle(T3Colors.accent)
+                }
                 if let submittedVerdict {
                     Label(
                         "Submitted: \(presentation.verdictLabel(submittedVerdict))",
@@ -140,6 +192,12 @@ struct BuildTestingFeatureView: View {
         .overlay {
             RoundedRectangle(cornerRadius: 14)
                 .stroke(T3Colors.border, lineWidth: 1)
+        }
+        .onAppear {
+            if isCurrentReview { isExpanded = true }
+        }
+        .onChange(of: isCurrentReview) { _, current in
+            if current { isExpanded = true }
         }
     }
 

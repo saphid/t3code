@@ -17,6 +17,7 @@ struct BuildTestingManifestTests {
         #expect(manifest.entries.first?.commits.first?.shortSHA == "1234567")
         #expect(manifest.entries.first?.threads.first?.id == "THREAD-ONE")
         #expect(manifest.entries.first?.stateLabel == "In Test")
+        #expect(manifest.entries.first?.problem == "The old flow loses work.")
         #expect(manifest.entries.first?.whatToCheck == "Exercise the changed flow.")
         #expect(manifest.entries.first?.reproductionSteps.count == 2)
         #expect(manifest.entries.first?.reviewPriority == 1)
@@ -75,7 +76,7 @@ struct BuildTestingManifestTests {
                 .init(sha: "fedcba0987654321", title: "Source feature one", role: .source),
             ],
             threads: [.init(id: "THREAD-ONE", title: "Feature one thread")],
-            issueURL: nil
+            issueURL: URL(string: "https://github.com/saphid/t3code-personal/issues/56")
         )
         let manifest = BuildTestingManifest(
             schemaVersion: 1,
@@ -95,6 +96,7 @@ struct BuildTestingManifestTests {
         #expect(ready.prompt.contains("1234567890abcdef"))
         #expect(ready.prompt.contains("Source attribution commits (not build provenance): fedcba0987654321"))
         #expect(ready.prompt.contains("THREAD-ONE"))
+        #expect(ready.prompt.contains("https://github.com/saphid/t3code-personal/issues/56"))
         #expect(ready.confirmationTitle == "Promote to Dev?")
         #expect(ready.prompt.contains("approve this exact installed Test feature into SwiftUI Dev"))
         #expect(ready.prompt.contains("followed by upstream validation"))
@@ -168,5 +170,91 @@ struct BuildTestingManifestTests {
             entries: []
         )
         #expect(BuildTestingVerdictStore.verdicts(for: laterBuild, defaults: defaults).isEmpty)
+    }
+
+    @Test("Persists one current review for an exact build only")
+    func persistsExactCurrentReview() throws {
+        let suite = "build-testing-current-review-\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let entry = reviewEntry()
+        let manifest = reviewManifest(entry: entry)
+
+        BuildTestingCurrentReviewStore.select(
+            entryID: entry.id,
+            manifest: manifest,
+            defaults: defaults
+        )
+        #expect(BuildTestingCurrentReviewStore.entryID(for: manifest, defaults: defaults) == entry.id)
+
+        let laterBuild = BuildTestingManifest(
+            schemaVersion: 1,
+            channel: .test,
+            build: 43,
+            revision: "fedcba654321",
+            repositoryURL: manifest.repositoryURL,
+            entries: [entry]
+        )
+        #expect(BuildTestingCurrentReviewStore.entryID(for: laterBuild, defaults: defaults) == nil)
+
+        BuildTestingCurrentReviewStore.select(
+            entryID: "not-in-this-build",
+            manifest: manifest,
+            defaults: defaults
+        )
+        #expect(BuildTestingCurrentReviewStore.entryID(for: manifest, defaults: defaults) == entry.id)
+    }
+
+    @Test("Builds a complete new-review discussion prompt")
+    func buildsReviewDiscussionPrompt() {
+        let entry = reviewEntry()
+        let prompt = BuildTestingDiscussion(
+            manifest: reviewManifest(entry: entry),
+            entry: entry
+        ).prompt
+
+        #expect(prompt.contains("Do not approve or reject"))
+        #expect(prompt.contains("Feature ID: feature-one"))
+        #expect(prompt.contains("Owning issue: https://github.com/saphid/t3code-personal/issues/56"))
+        #expect(prompt.contains("Installed candidate: test build 42"))
+        #expect(prompt.contains("Revision: abcdef123456"))
+        #expect(prompt.contains("1. Open feature one."))
+        #expect(prompt.contains("2. Trigger its action."))
+        #expect(prompt.contains("Feature one works."))
+        #expect(prompt.contains("THREAD-ONE"))
+        #expect(prompt.contains("1234567890abcdef"))
+    }
+
+    private func reviewEntry() -> BuildTestingManifest.Entry {
+        BuildTestingManifest.Entry(
+            id: "feature-one",
+            name: "Feature one",
+            problem: "Feature one fails before the change.",
+            reproductionSteps: ["Open feature one.", "Trigger its action."],
+            summary: "Explains feature one.",
+            whatToCheck: "Exercise feature one.",
+            successLooksLike: "Feature one works.",
+            validationSummary: "Focused tests pass.",
+            knownLimitations: "None known.",
+            reviewPriority: 1,
+            reviewGroup: "Core reliability",
+            state: "in-test",
+            commits: [.init(sha: "1234567890abcdef", title: "Feature one", role: .integrated)],
+            threads: [.init(id: "THREAD-ONE", title: "Feature one thread")],
+            issueURL: URL(string: "https://github.com/saphid/t3code-personal/issues/56")
+        )
+    }
+
+    private func reviewManifest(
+        entry: BuildTestingManifest.Entry
+    ) -> BuildTestingManifest {
+        BuildTestingManifest(
+            schemaVersion: 1,
+            channel: .test,
+            build: 42,
+            revision: "abcdef123456",
+            repositoryURL: URL(string: "https://github.com/saphid/t3code-personal"),
+            entries: [entry]
+        )
     }
 }

@@ -28,12 +28,13 @@ struct BuildTestingDecision: Equatable, Identifiable {
             .map(\.sha)
             .joined(separator: ", ")
         let threadList = entry.threads.map(\.id).joined(separator: ", ")
+        let issue = entry.issueURL?.absoluteString ?? "none"
         let sourceEvidence =
             sourceCommitList.isEmpty
             ? ""
             : " Source attribution commits (not build provenance): \(sourceCommitList)."
         let evidence =
-            "Feature: \(entry.name) (\(entry.id)). Stream state: \(entry.state). Exact \(manifest.channel.rawValue) build: \(manifest.build). Revision: \(manifest.revision). In-build commits: \(buildCommitList).\(sourceEvidence) Source threads: \(threadList)."
+            "Feature: \(entry.name) (\(entry.id)). Owning issue: \(issue). Stream state: \(entry.state). Exact \(manifest.channel.rawValue) build: \(manifest.build). Revision: \(manifest.revision). In-build commits: \(buildCommitList).\(sourceEvidence) Source threads: \(threadList)."
 
         return switch (manifest.channel, verdict) {
         case (.dev, .ready):
