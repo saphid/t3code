@@ -6,14 +6,14 @@
     "theo": "upstream/t3code/rebuild-mobile-app-swift"
   },
   "currentTestBuild": {
-    "build": 59,
+    "build": 67,
     "bundleId": "com.alxs.t3code.typed-swiftui.dev",
     "channel": "test",
-    "commit": "3dfc1d5a7543317daa99e27269367581b42acf41",
+    "commit": "9b8aafa9593a842f22638de7a6eba9d590ec275f",
     "deviceId": "2571CB7A-6A14-5E81-97D6-7F03DA41C11B",
     "launchPending": true,
     "receipt": "~/.t3/swiftui-stream/device-receipts/test.json",
-    "sequence": 59,
+    "sequence": 67,
     "status": "installed-awaiting-unlock"
   },
   "features": [
@@ -110,7 +110,7 @@
         "sourceCommit": "dae6307263f54d207fe78a7e5f9930be5684e9d6"
       },
       "reproductionSteps": [
-        "Open Settings in SwiftUI Test and open What’s testing.",
+        "Open Settings in SwiftUI Test and open What\u2019s testing.",
         "Expand a review item and inspect its guidance, proof, commits, source thread, and issue.",
         "Choose a verdict and inspect the confirmation before canceling or submitting it."
       ],
@@ -124,19 +124,19 @@
       "sourceThreadTitle": "Dev/Test Feature Approval Workflow",
       "startingBaseline": "125ed781e20716091222651092ed2708448bb6b6",
       "state": "in-test",
-      "successLooksLike": "The priority order is clear and every required section is readable without trimmed text. A pending-proof item explains its state and cannot be approved. A review-ready item expands working clean and annotated links. The diagram shows candidate PR → Test build → your Test approval → Dev build → your upstream approval → upstream PR. Test preserves exact build evidence before queuing a verdict.",
+      "successLooksLike": "The priority order is clear and every required section is readable without trimmed text. A pending-proof item explains its state and cannot be approved. A review-ready item expands working clean and annotated links. The diagram shows candidate PR \u2192 Test build \u2192 your Test approval \u2192 Dev build \u2192 your upstream approval \u2192 upstream PR. Test preserves exact build evidence before queuing a verdict.",
       "summary": "Adds an in-app review queue for exact Dev and Test build contents, plus a phone-readable diagram of the proposed PR-based path from a proved candidate through Test, Dev, and upstream.",
       "tentativeDelivery": "local-only",
-      "testBuild": 59,
+      "testBuild": 67,
       "validationSummary": "Exact Test source dae630726 passed 414 native tests across 43 suites, the 130-test XCTest aggregate (129 passed, 1 skipped), and all 25 UI journeys. Fifteen schema-v2 proof packets are sealed, and the review-readiness gate reports 15 items with zero errors.",
       "visualChange": true,
-      "whatToCheck": "In Test, open Settings → What’s testing. Confirm items are ordered by priority and show their review group. Expand this item and verify Original problem, numbered Steps to reproduce, What changed, What to check, Success looks like, Automated validation, and Known limits. If the app says fresh proof is being recorded, confirm Ready for Dev is disabled and wait for the replacement packet. When Visual evidence appears, verify its links, commits, thread, issue, confirmation dialog, and both readiness choices.",
+      "whatToCheck": "In Test, open Settings \u2192 What\u2019s testing. Confirm items are ordered by priority and show their review group. Expand this item and verify Original problem, numbered Steps to reproduce, What changed, What to check, Success looks like, Automated validation, and Known limits. If the app says fresh proof is being recorded, confirm Ready for Dev is disabled and wait for the replacement packet. When Visual evidence appears, verify its links, commits, thread, issue, confirmation dialog, and both readiness choices.",
       "proofCommit": "4a68943c683df233c4730028ca40cb86233dfd7c",
       "proofMediaReceipt": "/Users/saphid/.t3/artifacts/swiftui-stream/evidence/test-dae630726-exact-20260815/in-app-stream-approval-control/proof-media-receipt.json",
       "visualEvidence": [
         {
           "kind": "image",
-          "title": "Review features and visualize their PR promotion pipeline — image proof",
+          "title": "Review features and visualize their PR promotion pipeline \u2014 image proof",
           "caption": "Shows the dark-mode acceptance state.",
           "appearance": "dark",
           "cleanURL": "https://alexs-macbook-pro-1.tail4e5636.ts.net:10025/test-dae630726/in-app-stream-approval-control/in-app-stream-approval-control-clean.png",
@@ -144,7 +144,7 @@
         },
         {
           "kind": "video",
-          "title": "Review features and visualize their PR promotion pipeline — interaction proof",
+          "title": "Review features and visualize their PR promotion pipeline \u2014 interaction proof",
           "caption": "Shows the recorded acceptance interaction and expected result.",
           "appearance": "dark",
           "cleanURL": "https://alexs-macbook-pro-1.tail4e5636.ts.net:10025/test-dae630726/in-app-stream-approval-control/in-app-stream-approval-control-clean.mp4",
@@ -263,7 +263,7 @@
       "state": "in-test",
       "successLooksLike": "The text entry box, relevant popup results, and selection controls stay visible and usable above the keyboard without jumping, overlap, or trapped empty space.",
       "summary": "Keeps the composer text field and Skills popup controls visible above the keyboard instead of letting the keyboard cover the area you need to type or select a skill.",
-      "testBuild": 59,
+      "testBuild": 67,
       "validationSummary": "Exact Test source dae630726 passed 414 native tests across 43 suites, the 130-test XCTest aggregate (129 passed, 1 skipped), and all 25 UI journeys. Fifteen schema-v2 proof packets are sealed, and the review-readiness gate reports 15 items with zero errors.",
       "whatToCheck": "Open a thread, focus the composer so the keyboard appears, then open and use the Skills popup. Type, scroll the results, choose a skill, and dismiss the keyboard.",
       "proofCommit": "dd72827894d37158335408770bca04fa26b5caab",
@@ -271,7 +271,7 @@
       "visualEvidence": [
         {
           "kind": "image",
-          "title": "Skills popup composer clearance and keyboard refinement — image proof",
+          "title": "Skills popup composer clearance and keyboard refinement \u2014 image proof",
           "caption": "Shows the dark-mode acceptance state.",
           "appearance": "dark",
           "cleanURL": "https://alexs-macbook-pro-1.tail4e5636.ts.net:10025/test-dae630726/skills-popup-keyboard-clearance/skills-popup-keyboard-clearance-clean.png",
@@ -279,7 +279,7 @@
         },
         {
           "kind": "video",
-          "title": "Skills popup composer clearance and keyboard refinement — interaction proof",
+          "title": "Skills popup composer clearance and keyboard refinement \u2014 interaction proof",
           "caption": "Shows the recorded acceptance interaction and expected result.",
           "appearance": "dark",
           "cleanURL": "https://alexs-macbook-pro-1.tail4e5636.ts.net:10025/test-dae630726/skills-popup-keyboard-clearance/skills-popup-keyboard-clearance-clean.mp4",
@@ -366,7 +366,7 @@
       "state": "in-test",
       "successLooksLike": "Names are no longer squeezed beside descriptions, rows remain legible, the popup grows without covering the composer, the full list scrolls, and selection still works.",
       "summary": "Makes skill names readable by placing them above their descriptions and lets the skill picker use the available height above the composer.",
-      "testBuild": 59,
+      "testBuild": 67,
       "validationSummary": "Exact Test source dae630726 passed 414 native tests across 43 suites, the 130-test XCTest aggregate (129 passed, 1 skipped), and all 25 UI journeys. Fifteen schema-v2 proof packets are sealed, and the review-readiness gate reports 15 items with zero errors.",
       "whatToCheck": "Open Skills with the keyboard visible, inspect short and long skill names and descriptions, scroll through the list, choose a skill near the bottom, and rotate or change keyboard state if convenient.",
       "proofCommit": "7fc758cc1adc58d6426eb4fec413c2dc37e3841b",
@@ -374,7 +374,7 @@
       "visualEvidence": [
         {
           "kind": "image",
-          "title": "Readable, full-height SwiftUI skill popup — image proof",
+          "title": "Readable, full-height SwiftUI skill popup \u2014 image proof",
           "caption": "Shows the dark-mode acceptance state.",
           "appearance": "dark",
           "cleanURL": "https://alexs-macbook-pro-1.tail4e5636.ts.net:10025/test-dae630726/skill-popup-readability-and-height/skill-popup-readability-and-height-clean.png",
@@ -382,7 +382,7 @@
         },
         {
           "kind": "video",
-          "title": "Readable, full-height SwiftUI skill popup — interaction proof",
+          "title": "Readable, full-height SwiftUI skill popup \u2014 interaction proof",
           "caption": "Shows the recorded acceptance interaction and expected result.",
           "appearance": "dark",
           "cleanURL": "https://alexs-macbook-pro-1.tail4e5636.ts.net:10025/test-dae630726/skill-popup-readability-and-height/skill-popup-readability-and-height-clean.mp4",
@@ -479,7 +479,7 @@
       "state": "in-test",
       "successLooksLike": "Normal swipes scroll the list immediately and smoothly, while the command gesture still works only from its intended top area.",
       "summary": "Stops the workspace command gesture from stealing ordinary vertical swipes, so the home thread list scrolls reliably.",
-      "testBuild": 59,
+      "testBuild": 67,
       "validationSummary": "Exact Test source dae630726 passed 414 native tests across 43 suites, the 130-test XCTest aggregate (129 passed, 1 skipped), and all 25 UI journeys. Fifteen schema-v2 proof packets are sealed, and the review-readiness gate reports 15 items with zero errors.",
       "whatToCheck": "On Home, drag the thread list up and down from several positions, including near the top edge and over a thread row. Also try the intended top-edge command gesture.",
       "proofCommit": "cd7f6a44fb36980a2ae1193d5edc215dfb74b4b8",
@@ -487,7 +487,7 @@
       "visualEvidence": [
         {
           "kind": "image",
-          "title": "Home thread-list scrolling — image proof",
+          "title": "Home thread-list scrolling \u2014 image proof",
           "caption": "Shows the dark-mode acceptance state.",
           "appearance": "dark",
           "cleanURL": "https://alexs-macbook-pro-1.tail4e5636.ts.net:10025/test-dae630726/home-thread-list-scrolling/home-thread-list-scrolling-clean.png",
@@ -495,7 +495,7 @@
         },
         {
           "kind": "video",
-          "title": "Home thread-list scrolling — interaction proof",
+          "title": "Home thread-list scrolling \u2014 interaction proof",
           "caption": "Shows the recorded acceptance interaction and expected result.",
           "appearance": "dark",
           "cleanURL": "https://alexs-macbook-pro-1.tail4e5636.ts.net:10025/test-dae630726/home-thread-list-scrolling/home-thread-list-scrolling-clean.mp4",
@@ -582,7 +582,7 @@
       "state": "in-test",
       "successLooksLike": "On both home and thread pages, the top bar stays under the finger, the page and palette remain visually attached throughout the pull, release settles naturally without a jump, and ordinary scrolling or horizontal gestures do not open the palette.",
       "summary": "Makes the top bar and current page track the finger as one physical surface while the command palette is pulled into view from either the home thread list or an open thread, then settle open or closed with spring motion.",
-      "testBuild": 59,
+      "testBuild": 67,
       "validationSummary": "Exact Test source dae630726 passed 414 native tests across 43 suites, the 130-test XCTest aggregate (129 passed, 1 skipped), and all 25 UI journeys. Fifteen schema-v2 proof packets are sealed, and the review-readiness gate reports 15 items with zero errors.",
       "whatToCheck": "In dark mode, drag down slowly from the top bar on both the home thread list and an open thread, releasing below and above the threshold. Try a short deliberate flick, horizontal swipes, normal list or thread scrolling, dismissal, and opening while the keyboard is visible.",
       "proofCommit": "8395257e8edb1e9d9f04c2f3e6a7e585632e09fa",
@@ -590,7 +590,7 @@
       "visualEvidence": [
         {
           "kind": "image",
-          "title": "Command palette top drawer — image proof",
+          "title": "Command palette top drawer \u2014 image proof",
           "caption": "Shows the dark-mode acceptance state.",
           "appearance": "dark",
           "cleanURL": "https://alexs-macbook-pro-1.tail4e5636.ts.net:10025/test-dae630726/command-palette-top-drawer/command-palette-top-drawer-clean.png",
@@ -598,7 +598,7 @@
         },
         {
           "kind": "video",
-          "title": "Command palette top drawer — interaction proof",
+          "title": "Command palette top drawer \u2014 interaction proof",
           "caption": "Shows the recorded acceptance interaction and expected result.",
           "appearance": "dark",
           "cleanURL": "https://alexs-macbook-pro-1.tail4e5636.ts.net:10025/test-dae630726/command-palette-top-drawer/command-palette-top-drawer-clean.mp4",
@@ -678,19 +678,19 @@
       "sourceCommit": "ed15ca2ae993df1ad9435b088cc84b3d65e66716",
       "sourceIssue": "https://github.com/saphid/t3code-personal/issues/85",
       "sourceThread": "508739B1-477F-4CAB-BA79-8816FCCEA000",
-      "sourceThreadTitle": "Add Thread Links to What’s New",
+      "sourceThreadTitle": "Add Thread Links to What\u2019s New",
       "state": "in-test",
       "successLooksLike": "Each supported development change clearly names its source thread and opens the correct existing T3 thread rather than a duplicate, wrong thread, or dead destination.",
       "summary": "Adds the originating T3 work thread to development-build changelog entries so you can move from a visible change to the conversation and evidence that produced it.",
-      "testBuild": 59,
+      "testBuild": 67,
       "validationSummary": "Exact Test source dae630726 passed 414 native tests across 43 suites, the 130-test XCTest aggregate (129 passed, 1 skipped), and all 25 UI journeys. Fifteen schema-v2 proof packets are sealed, and the review-readiness gate reports 15 items with zero errors.",
-      "whatToCheck": "Open Settings → Build changelog, expand a development change, and use its source-thread link. Return to Settings and try another entry if available.",
+      "whatToCheck": "Open Settings \u2192 Build changelog, expand a development change, and use its source-thread link. Return to Settings and try another entry if available.",
       "proofCommit": "bdfee17f1e9d9bca071488fb9261de53f70d3464",
       "proofMediaReceipt": "/Users/saphid/.t3/artifacts/swiftui-stream/evidence/test-dae630726-exact-20260815/development-build-source-thread/proof-media-receipt.json",
       "visualEvidence": [
         {
           "kind": "image",
-          "title": "Link development builds to their source T3 thread — image proof",
+          "title": "Link development builds to their source T3 thread \u2014 image proof",
           "caption": "Shows the dark-mode acceptance state.",
           "appearance": "dark",
           "cleanURL": "https://alexs-macbook-pro-1.tail4e5636.ts.net:10025/test-dae630726/development-build-source-thread/development-build-source-thread-clean.png",
@@ -698,7 +698,7 @@
         },
         {
           "kind": "video",
-          "title": "Link development builds to their source T3 thread — interaction proof",
+          "title": "Link development builds to their source T3 thread \u2014 interaction proof",
           "caption": "Shows the recorded acceptance interaction and expected result.",
           "appearance": "dark",
           "cleanURL": "https://alexs-macbook-pro-1.tail4e5636.ts.net:10025/test-dae630726/development-build-source-thread/development-build-source-thread-clean.mp4",
@@ -780,11 +780,11 @@
       "sourceCommit": "a1fd13793591f79237d2447e2d7d06fceaeebc1d",
       "sourceIssue": "https://github.com/saphid/t3code-personal/issues/89",
       "sourceThread": "508739B1-477F-4CAB-BA79-8816FCCEA000",
-      "sourceThreadTitle": "Add Thread Links to What’s New",
+      "sourceThreadTitle": "Add Thread Links to What\u2019s New",
       "state": "in-test",
       "successLooksLike": "Every fallback tap opens this same SwiftUI Test installation at New task. No App Store, Dev, or Debug copy opens, and the tap is never ignored.",
       "summary": "Builds every recent-tasks widget fallback from the URL scheme configured for that copy of T3 Code, so Test opens Test, Dev opens Dev, and release opens release.",
-      "testBuild": 59,
+      "testBuild": 67,
       "validationSummary": "Exact Test source dae630726 passed 414 native tests across 43 suites, the 130-test XCTest aggregate (129 passed, 1 skipped), and all 25 UI journeys. Fifteen schema-v2 proof packets are sealed, and the review-readiness gate reports 15 items with zero errors.",
       "visualChange": true,
       "whatToCheck": "From a recent-tasks widget with no usable task destination, tap New task and the widget body. Confirm the installed SwiftUI Test app opens directly at New task rather than another channel or a dead link.",
@@ -793,7 +793,7 @@
       "visualEvidence": [
         {
           "kind": "image",
-          "title": "Keep widget links inside their installed build channel — image proof",
+          "title": "Keep widget links inside their installed build channel \u2014 image proof",
           "caption": "Shows the dark-mode acceptance state.",
           "appearance": "dark",
           "cleanURL": "https://alexs-macbook-pro-1.tail4e5636.ts.net:10025/test-dae630726/widget-build-channel-links/widget-build-channel-links-clean.png",
@@ -801,7 +801,7 @@
         },
         {
           "kind": "video",
-          "title": "Keep widget links inside their installed build channel — interaction proof",
+          "title": "Keep widget links inside their installed build channel \u2014 interaction proof",
           "caption": "Shows the recorded acceptance interaction and expected result.",
           "appearance": "dark",
           "cleanURL": "https://alexs-macbook-pro-1.tail4e5636.ts.net:10025/test-dae630726/widget-build-channel-links/widget-build-channel-links-clean.mp4",
@@ -884,7 +884,7 @@
       "state": "in-test",
       "successLooksLike": "Messages and status move forward without briefly appearing and then disappearing, duplicating, reverting, or requiring a manual refresh.",
       "summary": "Prevents the first thread-history response from overwriting newer live messages or status updates that arrive while the thread is opening.",
-      "testBuild": 59,
+      "testBuild": 67,
       "validationSummary": "Exact Test source dae630726 passed 414 native tests across 43 suites, the 130-test XCTest aggregate (129 passed, 1 skipped), and all 25 UI journeys. Fifteen schema-v2 proof packets are sealed, and the review-readiness gate reports 15 items with zero errors.",
       "whatToCheck": "Open a busy or actively responding thread from Home and watch the first load. Send or receive an update during opening if practical, then leave and reopen the thread.",
       "proofCommit": "2c2f4fe27c248dc93ab4f9b36b627f72ab5daf57",
@@ -892,7 +892,7 @@
       "visualEvidence": [
         {
           "kind": "image",
-          "title": "Preserve live updates during initial thread open — image proof",
+          "title": "Preserve live updates during initial thread open \u2014 image proof",
           "caption": "Shows the dark-mode acceptance state.",
           "appearance": "dark",
           "cleanURL": "https://alexs-macbook-pro-1.tail4e5636.ts.net:10025/test-dae630726/initial-thread-live-updates/initial-thread-live-updates-clean.png",
@@ -900,7 +900,7 @@
         },
         {
           "kind": "video",
-          "title": "Preserve live updates during initial thread open — interaction proof",
+          "title": "Preserve live updates during initial thread open \u2014 interaction proof",
           "caption": "Shows the recorded acceptance interaction and expected result.",
           "appearance": "dark",
           "cleanURL": "https://alexs-macbook-pro-1.tail4e5636.ts.net:10025/test-dae630726/initial-thread-live-updates/initial-thread-live-updates-clean.mp4",
@@ -983,7 +983,7 @@
       "state": "in-test",
       "successLooksLike": "Supported PR information loads accurately without crashes, malformed content, or regressions to standard workspace and review behavior. Missing capabilities fail clearly rather than showing incorrect data.",
       "summary": "Adds the native data and transport foundation for pull-request workspace features, including typed PR metadata, diffs, comments, and related server requests.",
-      "testBuild": 59,
+      "testBuild": 67,
       "validationSummary": "Exact Test source dae630726 passed 414 native tests across 43 suites, the 130-test XCTest aggregate (129 passed, 1 skipped), and all 25 UI journeys. Fifteen schema-v2 proof packets are sealed, and the review-readiness gate reports 15 items with zero errors.",
       "whatToCheck": "Exercise any available pull-request workspace or review entry points against a repository with an open PR. Inspect metadata and diffs, and verify ordinary non-PR workspaces still open normally.",
       "proofCommit": "455781e7e37fc0021671aa4660e1a5150d1777f7",
@@ -991,7 +991,7 @@
       "visualEvidence": [
         {
           "kind": "image",
-          "title": "Native pull-request workspace protocol foundation — image proof",
+          "title": "Native pull-request workspace protocol foundation \u2014 image proof",
           "caption": "Shows the dark-mode acceptance state.",
           "appearance": "dark",
           "cleanURL": "https://alexs-macbook-pro-1.tail4e5636.ts.net:10025/test-dae630726/pull-request-workspace-protocol/pull-request-workspace-protocol-clean.png",
@@ -999,7 +999,7 @@
         },
         {
           "kind": "video",
-          "title": "Native pull-request workspace protocol foundation — interaction proof",
+          "title": "Native pull-request workspace protocol foundation \u2014 interaction proof",
           "caption": "Shows the recorded acceptance interaction and expected result.",
           "appearance": "dark",
           "cleanURL": "https://alexs-macbook-pro-1.tail4e5636.ts.net:10025/test-dae630726/pull-request-workspace-protocol/pull-request-workspace-protocol-clean.mp4",
@@ -1068,9 +1068,9 @@
             ],
             "id": "pull-request-inbox-summary-timeline-flow",
             "receiptPath": "/Users/saphid/.t3/artifacts/swiftui-stream/evidence/test-dae630726-exact-20260815/pull-request-inbox-summary-timeline/pull-request-inbox-summary-timeline-receipt.json",
-        "receiptSha256": "4b545de7673832d7d0f2a65aa969beb53781cdd6f2fc54f30529843b8d5d1edd",
+            "receiptSha256": "4b545de7673832d7d0f2a65aa969beb53781cdd6f2fc54f30529843b8d5d1edd",
             "validationPath": "/Users/saphid/.t3/artifacts/swiftui-stream/evidence/test-dae630726-exact-20260815/pull-request-inbox-summary-timeline/packet-validation.json",
-        "validationSha256": "d77898685a45c2fd9e17485c4b2abb996f22fb15cf11b602bbaaafc3f1e2f004"
+            "validationSha256": "d77898685a45c2fd9e17485c4b2abb996f22fb15cf11b602bbaaafc3f1e2f004"
           }
         ],
         "schemaVersion": 2,
@@ -1091,7 +1091,7 @@
       "state": "in-test",
       "successLooksLike": "The list represents the active environment accurately, details load for the selected PR, Summary and Timeline show the expected content in order, and navigation remains responsive without mixing environments.",
       "summary": "Adds a native pull-request inbox for the active environment with a PR detail screen split into clear Summary and Timeline views.",
-      "testBuild": 59,
+      "testBuild": 67,
       "validationSummary": "Exact Test source dae630726 passed 414 native tests across 43 suites, the 130-test XCTest aggregate (129 passed, 1 skipped), and all 25 UI journeys. Fifteen schema-v2 proof packets are sealed, and the review-readiness gate reports 15 items with zero errors.",
       "whatToCheck": "In a connected environment with open pull requests, open the PR inbox, compare titles and status with GitHub, enter several PRs, switch between Summary and Timeline, and return to the workspace.",
       "proofCommit": "12febfd914a51f10d4222deb3d759702d0a75c36",
@@ -1099,7 +1099,7 @@
       "visualEvidence": [
         {
           "kind": "image",
-          "title": "Single-environment pull-request inbox with Summary and Timeline detail — image proof",
+          "title": "Single-environment pull-request inbox with Summary and Timeline detail \u2014 image proof",
           "caption": "Shows the dark-mode acceptance state.",
           "appearance": "dark",
           "cleanURL": "https://alexs-macbook-pro-1.tail4e5636.ts.net:10025/test-dae630726/pull-request-inbox-summary-timeline/pull-request-inbox-summary-timeline-clean.png",
@@ -1107,7 +1107,7 @@
         },
         {
           "kind": "video",
-          "title": "Single-environment pull-request inbox with Summary and Timeline detail — interaction proof",
+          "title": "Single-environment pull-request inbox with Summary and Timeline detail \u2014 interaction proof",
           "caption": "Shows the recorded acceptance interaction and expected result.",
           "appearance": "dark",
           "cleanURL": "https://alexs-macbook-pro-1.tail4e5636.ts.net:10025/test-dae630726/pull-request-inbox-summary-timeline/pull-request-inbox-summary-timeline-clean.mp4",
@@ -1192,7 +1192,7 @@
       "state": "in-test",
       "successLooksLike": "The useful error content remains visible, Retry is clearly labeled and operable, focus moves to a sensible element, and successful recovery does not duplicate or erase prior context.",
       "summary": "Keeps failed tool output available and makes retry recovery accessible, including predictable focus after an error instead of losing content or focus context.",
-      "testBuild": 59,
+      "testBuild": 67,
       "validationSummary": "Exact Test source dae630726 passed 414 native tests across 43 suites, the 130-test XCTest aggregate (129 passed, 1 skipped), and all 25 UI journeys. Fifteen schema-v2 proof packets are sealed, and the review-readiness gate reports 15 items with zero errors.",
       "whatToCheck": "Trigger or revisit a recoverable tool/source-control error, read the retained error content with normal navigation or VoiceOver, activate Retry, and observe focus after recovery.",
       "proofCommit": "2b1cf46a76afb0825dff0cec505307807149992e",
@@ -1200,7 +1200,7 @@
       "visualEvidence": [
         {
           "kind": "image",
-          "title": "Preserve SwiftUI tool content with safe accessible recovery — image proof",
+          "title": "Preserve SwiftUI tool content with safe accessible recovery \u2014 image proof",
           "caption": "Shows the dark-mode acceptance state.",
           "appearance": "dark",
           "cleanURL": "https://alexs-macbook-pro-1.tail4e5636.ts.net:10025/test-dae630726/safe-tool-content-recovery/safe-tool-content-recovery-clean.png",
@@ -1208,7 +1208,7 @@
         },
         {
           "kind": "video",
-          "title": "Preserve SwiftUI tool content with safe accessible recovery — interaction proof",
+          "title": "Preserve SwiftUI tool content with safe accessible recovery \u2014 interaction proof",
           "caption": "Shows the recorded acceptance interaction and expected result.",
           "appearance": "dark",
           "cleanURL": "https://alexs-macbook-pro-1.tail4e5636.ts.net:10025/test-dae630726/safe-tool-content-recovery/safe-tool-content-recovery-clean.mp4",
@@ -1302,7 +1302,7 @@
       "state": "in-test",
       "successLooksLike": "The intended private host is identified clearly, one action establishes the connection without a code, it persists on reopen, and failures explain what is unavailable without altering other saved connections.",
       "summary": "Adds a private one-tap connection route for the Test app so it can pair with the known personal T3 host over Tailnet without manually entering a pairing code.",
-      "testBuild": 59,
+      "testBuild": 67,
       "validationSummary": "Exact Test source dae630726 passed 414 native tests across 43 suites, the 130-test XCTest aggregate (129 passed, 1 skipped), and all 25 UI journeys. Fifteen schema-v2 proof packets are sealed, and the review-readiness gate reports 15 items with zero errors.",
       "whatToCheck": "From an unpaired or disconnected Test app on Tailnet, choose the personal connection option, complete the connection, reopen the app, and also inspect the unavailable/error state with the host unreachable if practical.",
       "proofCommit": "cf5a183ad3eecefd6f28513d7f8da9bd6827b38b",
@@ -1310,7 +1310,7 @@
       "visualEvidence": [
         {
           "kind": "image",
-          "title": "Pair SwiftUI Test through the private Tailnet without entering a code — image proof",
+          "title": "Pair SwiftUI Test through the private Tailnet without entering a code \u2014 image proof",
           "caption": "Shows the dark-mode acceptance state.",
           "appearance": "dark",
           "cleanURL": "https://alexs-macbook-pro-1.tail4e5636.ts.net:10025/test-dae630726/swiftui-test-personal-connect/swiftui-test-personal-connect-clean.png",
@@ -1318,7 +1318,7 @@
         },
         {
           "kind": "video",
-          "title": "Pair SwiftUI Test through the private Tailnet without entering a code — interaction proof",
+          "title": "Pair SwiftUI Test through the private Tailnet without entering a code \u2014 interaction proof",
           "caption": "Shows the recorded acceptance interaction and expected result.",
           "appearance": "dark",
           "cleanURL": "https://alexs-macbook-pro-1.tail4e5636.ts.net:10025/test-dae630726/swiftui-test-personal-connect/swiftui-test-personal-connect-clean.mp4",
@@ -1407,7 +1407,7 @@
       "state": "in-test",
       "successLooksLike": "The list responds to the first drag without freezing or snapping back, metadata fills in without stealing touch handling, and opening or returning to Home does not regress scrolling.",
       "summary": "Keeps the Home thread list responsive during a cold launch while task metadata and badges are still loading in the background.",
-      "testBuild": 59,
+      "testBuild": 67,
       "validationSummary": "Exact Test source dae630726 passed 414 native tests across 43 suites, the 130-test XCTest aggregate (129 passed, 1 skipped), and all 25 UI journeys. Fifteen schema-v2 proof packets are sealed, and the review-readiness gate reports 15 items with zero errors.",
       "whatToCheck": "Force-close Test, relaunch it cold with a populated Home list, immediately scroll up and down before metadata finishes, open a thread, return Home, and repeat once while the connection is slow if possible.",
       "proofCommit": "17ac7f22296043125a10c09f0392766ec69e6994",
@@ -1415,7 +1415,7 @@
       "visualEvidence": [
         {
           "kind": "image",
-          "title": "Keep the Home list scrollable during cold-boot metadata loading — image proof",
+          "title": "Keep the Home list scrollable during cold-boot metadata loading \u2014 image proof",
           "caption": "Shows the dark-mode acceptance state.",
           "appearance": "dark",
           "cleanURL": "https://alexs-macbook-pro-1.tail4e5636.ts.net:10025/test-dae630726/cold-boot-home-list-scrolling/cold-boot-home-list-scrolling-clean.png",
@@ -1423,7 +1423,7 @@
         },
         {
           "kind": "video",
-          "title": "Keep the Home list scrollable during cold-boot metadata loading — interaction proof",
+          "title": "Keep the Home list scrollable during cold-boot metadata loading \u2014 interaction proof",
           "caption": "Shows the recorded acceptance interaction and expected result.",
           "appearance": "dark",
           "cleanURL": "https://alexs-macbook-pro-1.tail4e5636.ts.net:10025/test-dae630726/cold-boot-home-list-scrolling/cold-boot-home-list-scrolling-clean.mp4",
@@ -1524,15 +1524,15 @@
       "state": "in-test",
       "successLooksLike": "The catalog is readable and responsive, VoiceOver announces a real theme name and appearance instead of placeholder text, selections apply consistently with usable contrast, terminal and native colors agree, the choice persists after relaunch, and switching back to System works.",
       "summary": "Lets SwiftUI discover and use the same Electron and VS Code-derived theme catalog, applying the selected palette across native screens and terminal surfaces.",
-      "testBuild": 59,
+      "testBuild": 67,
       "validationSummary": "Exact Test source dae630726 passed 414 native tests across 43 suites, the 130-test XCTest aggregate (129 passed, 1 skipped), and all 25 UI journeys. Fifteen schema-v2 proof packets are sealed, and the review-readiness gate reports 15 items with zero errors.",
-      "whatToCheck": "Open Settings → Theme, browse and search the catalog, select several light and dark themes, inspect Home, chat, settings, code/tool content, and terminal text, then relaunch the app. With VoiceOver on, focus theme cards and confirm each is announced as its theme name followed by light or dark.",
+      "whatToCheck": "Open Settings \u2192 Theme, browse and search the catalog, select several light and dark themes, inspect Home, chat, settings, code/tool content, and terminal text, then relaunch the app. With VoiceOver on, focus theme cards and confirm each is announced as its theme name followed by light or dark.",
       "proofCommit": "217f8fba4aa4c0f3b3afd4a8646dcff10f1d0efe",
       "proofMediaReceipt": "/Users/saphid/.t3/artifacts/swiftui-stream/evidence/test-dae630726-exact-20260815/shared-electron-vscode-themes/proof-media-receipt.json",
       "visualEvidence": [
         {
           "kind": "image",
-          "title": "Share Electron and VS Code themes with SwiftUI — image proof",
+          "title": "Share Electron and VS Code themes with SwiftUI \u2014 image proof",
           "caption": "Shows the dark-mode acceptance state.",
           "appearance": "dark",
           "cleanURL": "https://alexs-macbook-pro-1.tail4e5636.ts.net:10025/test-dae630726/shared-electron-vscode-themes/shared-electron-vscode-themes-clean.png",
@@ -1540,7 +1540,7 @@
         },
         {
           "kind": "video",
-          "title": "Share Electron and VS Code themes with SwiftUI — interaction proof",
+          "title": "Share Electron and VS Code themes with SwiftUI \u2014 interaction proof",
           "caption": "Shows the recorded acceptance interaction and expected result.",
           "appearance": "dark",
           "cleanURL": "https://alexs-macbook-pro-1.tail4e5636.ts.net:10025/test-dae630726/shared-electron-vscode-themes/shared-electron-vscode-themes-clean.mp4",
@@ -1654,7 +1654,7 @@
       "state": "in-test",
       "successLooksLike": "All selected journeys and native suites pass from one built test product, screenshots are readable and unobscured, annotated proof matches the action ledger, and receipts bind the evidence to the candidate commit.",
       "summary": "Adds deterministic native SwiftUI happy-path, menu, accessibility, security, and proof-media regression coverage with reusable Xcode Test Plans.",
-      "testBuild": 59,
+      "testBuild": 67,
       "validationSummary": "Exact Test source dae630726 passed 414 native tests across 43 suites, the 130-test XCTest aggregate (129 passed, 1 skipped), and all 25 UI journeys. Fifteen schema-v2 proof packets are sealed, and the review-readiness gate reports 15 items with zero errors.",
       "whatToCheck": "Run the focused candidate and Test-train plans, inspect the retained phone screenshots, confirm taps, swipes, and captions align in annotated proof, and verify that credentials do not enter evidence.",
       "proofCommit": "19459ed2ee8b689710c55efc42d17cff3493b9e4",
@@ -1662,7 +1662,7 @@
       "visualEvidence": [
         {
           "kind": "image",
-          "title": "Automate native SwiftUI happy-path and menu regression coverage — image proof",
+          "title": "Automate native SwiftUI happy-path and menu regression coverage \u2014 image proof",
           "caption": "Shows the dark-mode acceptance state.",
           "appearance": "dark",
           "cleanURL": "https://alexs-macbook-pro-1.tail4e5636.ts.net:10025/test-dae630726/app-flow-regression-tests/app-flow-regression-tests-clean.png",
@@ -1670,7 +1670,7 @@
         },
         {
           "kind": "video",
-          "title": "Automate native SwiftUI happy-path and menu regression coverage — interaction proof",
+          "title": "Automate native SwiftUI happy-path and menu regression coverage \u2014 interaction proof",
           "caption": "Shows the recorded acceptance interaction and expected result.",
           "appearance": "dark",
           "cleanURL": "https://alexs-macbook-pro-1.tail4e5636.ts.net:10025/test-dae630726/app-flow-regression-tests/app-flow-regression-tests-clean.mp4",
