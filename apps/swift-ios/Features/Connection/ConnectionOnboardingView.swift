@@ -11,6 +11,7 @@ public struct ConnectionOnboardingView: View {
     private let buildChannel: PersonalBuildChannel
     private let onConnected: @MainActor () -> Void
     private let onCancel: (@MainActor () -> Void)?
+    private let showsT3ConnectOption: Bool
 
     @State private var stage = ConnectionStage.welcome
     @State private var endpoint = ""
@@ -27,6 +28,7 @@ public struct ConnectionOnboardingView: View {
 
     public init(
         model: FeatureRootModel,
+        showsT3ConnectOption: Bool = true,
         onConnected: @escaping @MainActor () -> Void = {},
         onCancel: (@MainActor () -> Void)? = nil
     ) {
@@ -57,6 +59,7 @@ public struct ConnectionOnboardingView: View {
         personalFleetHosts = PersonalFleetPairingHost.all
         buildChannel = .current
         #endif
+        self.showsT3ConnectOption = showsT3ConnectOption
         self.onConnected = onConnected
         self.onCancel = onCancel
     }
@@ -67,6 +70,7 @@ public struct ConnectionOnboardingView: View {
         personalFleetPairingRequester: any PersonalFleetPairingRequesting = PersonalFleetPairingService.shared,
         personalFleetHosts: [PersonalFleetPairingHost] = PersonalFleetPairingHost.all,
         buildChannel: PersonalBuildChannel = .current,
+        showsT3ConnectOption: Bool = true,
         onConnected: @escaping @MainActor () -> Void = {},
         onCancel: (@MainActor () -> Void)? = nil
     ) {
@@ -75,6 +79,7 @@ public struct ConnectionOnboardingView: View {
         self.personalFleetPairingRequester = personalFleetPairingRequester
         self.personalFleetHosts = personalFleetHosts
         self.buildChannel = buildChannel
+        self.showsT3ConnectOption = showsT3ConnectOption
         self.onConnected = onConnected
         self.onCancel = onCancel
     }
@@ -178,7 +183,8 @@ public struct ConnectionOnboardingView: View {
                     .foregroundStyle(T3Colors.textSecondary)
                     .padding(.top, 12)
 
-                if let capability = model.client as? any T3ConnectCapable,
+                if showsT3ConnectOption,
+                   let capability = model.client as? any T3ConnectCapable,
                    capability.t3ConnectController.unavailableReason == nil {
                     NavigationLink {
                         T3ConnectView(capability: capability) {
@@ -256,7 +262,7 @@ public struct ConnectionOnboardingView: View {
 
     @ViewBuilder
     private var knownEnvironments: some View {
-        if !model.snapshot.environments.isEmpty {
+        if !knownEnvironmentValues.isEmpty {
             VStack(alignment: .leading, spacing: 0) {
                 Text("KNOWN SERVERS")
                     .font(T3Typography.eyebrow)
@@ -264,7 +270,7 @@ public struct ConnectionOnboardingView: View {
                     .padding(.top, 34)
                     .padding(.bottom, 8)
 
-                ForEach(model.snapshot.environments) { environment in
+                ForEach(knownEnvironmentValues) { environment in
                     Button {
                         connect(
                             .activate(
@@ -298,12 +304,17 @@ public struct ConnectionOnboardingView: View {
                     .buttonStyle(.plain)
                     .accessibilityHint("Reconnects to this server")
 
-                    if environment.id != model.snapshot.environments.last?.id {
+                    if environment.id != knownEnvironmentValues.last?.id {
                         Divider().overlay(T3Colors.border)
                     }
                 }
             }
         }
+    }
+
+    private var knownEnvironmentValues: [FeatureEnvironment] {
+        guard !showsT3ConnectOption else { return model.snapshot.environments }
+        return model.snapshot.environments.filter { $0.source == .direct }
     }
 
     private var detailsView: some View {

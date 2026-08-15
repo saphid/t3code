@@ -12,6 +12,9 @@ enum T3Colors {
     static let uiTextPrimary = themed("text", light: rgb(0x262626), dark: rgb(0xF5F5F5))
     static let uiTextSecondary = themed(
         "textMuted", light: rgb(0x525252), dark: rgb(0xA3A3A3))
+    static let uiSurfaceRaised = themed(
+        "surfaceRaised", light: rgb(0xF5F5F5), dark: rgb(0x1C1C1C))
+    static let uiAccent = themed("accent", light: rgb(0x007AFF), dark: rgb(0x0A84FF))
 
     static var background: Color { Color(uiColor: uiBackground) }
     static var sheet: Color {
@@ -19,9 +22,7 @@ enum T3Colors {
             "surfaceOverlay", light: rgb(0xF2F2F7, alpha: 0.98), dark: rgb(0x0E0E0E, alpha: 0.98))
     }
     static var surface: Color { themedColor("surface", light: rgb(0xFFFFFF), dark: rgb(0x171717)) }
-    static var surfaceRaised: Color {
-        themedColor("surfaceRaised", light: rgb(0xF5F5F5), dark: rgb(0x1C1C1C))
-    }
+    static var surfaceRaised: Color { Color(uiColor: uiSurfaceRaised) }
     static var input: Color { themedColor("input", light: rgb(0xFFFFFF), dark: rgb(0x141414)) }
     static var border: Color {
         themedColor("border", light: rgb(0x000000, alpha: 0.08), dark: rgb(0xFFFFFF, alpha: 0.06))
@@ -67,7 +68,7 @@ enum T3Colors {
     static var primaryActionForeground: Color {
         themedColor("messageActionForeground", light: rgb(0xFFFFFF), dark: rgb(0x0A0A0A))
     }
-    static var accent: Color { themedColor("accent", light: rgb(0x007AFF), dark: rgb(0x0A84FF)) }
+    static var accent: Color { Color(uiColor: uiAccent) }
     static let statusRunning = color(light: rgb(0x0284C7), dark: rgb(0x22D3EE))
     static let statusInput = color(light: rgb(0x4F46E5), dark: rgb(0xA5B4FC))
     static let success = color(light: rgb(0x16A34A), dark: rgb(0x30D158))
