@@ -8,6 +8,7 @@ CHANNEL="${1:-}"
 TEAM="${T3_SWIFT_DEVELOPMENT_TEAM:-}"
 DEVICE_ID="${T3_SWIFT_DEVICE_ID:-}"
 ARTIFACT_ROOT="${T3_SWIFT_ARTIFACT_ROOT:-$HOME/.t3/artifacts/swiftui-stream}"
+SOURCE_PACKAGES="${T3_SWIFT_SOURCE_PACKAGES_PATH:-$HOME/.t3/cache/swift-ios/source-packages}"
 
 case "$CHANNEL" in
   dev)
@@ -46,6 +47,7 @@ fi
 COMMIT="$(git -C "$REPO_ROOT" rev-parse HEAD)"
 DERIVED="${T3_SWIFT_DERIVED_DATA_PATH:-$APP_DIR/.derivedData/ready-$CHANNEL}"
 DESTINATION="platform=iOS,id=$DEVICE_ID"
+mkdir -p "$SOURCE_PACKAGES"
 
 xcodebuild build \
   -quiet \
@@ -54,6 +56,8 @@ xcodebuild build \
   -configuration "$CONFIGURATION" \
   -destination "$DESTINATION" \
   -derivedDataPath "$DERIVED" \
+  -clonedSourcePackagesDirPath "$SOURCE_PACKAGES" \
+  -disablePackageRepositoryCache \
   -allowProvisioningUpdates \
   -allowProvisioningDeviceRegistration \
   "DEVELOPMENT_TEAM=$TEAM" \

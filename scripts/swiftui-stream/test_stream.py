@@ -31,6 +31,13 @@ watcher = load_module("swiftui_phone_watch", ROOT / "phone-watch.py")
 
 
 class StreamTests(unittest.TestCase):
+    def test_ready_build_uses_stream_owned_package_clones(self):
+        publisher = (ROOT / "build-ready.sh").read_text()
+
+        self.assertIn("T3_SWIFT_SOURCE_PACKAGES_PATH", publisher)
+        self.assertIn('-clonedSourcePackagesDirPath "$SOURCE_PACKAGES"', publisher)
+        self.assertIn("-disablePackageRepositoryCache", publisher)
+
     def receipt_fixture(
         self,
         directory: str,
