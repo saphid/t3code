@@ -100,7 +100,7 @@ enum FeatureCommandPaletteGesture {
     }
 
     static func panelHeight(availableHeight: CGFloat) -> CGFloat {
-        min(availableHeight, max(360, availableHeight * 0.72))
+        min(availableHeight, 360)
     }
 
     static func travel(
