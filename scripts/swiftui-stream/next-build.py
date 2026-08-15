@@ -40,12 +40,12 @@ with lock_path.open("a+") as lock:
     floor = max(counter, ready_build, args.minimum)
     if args.requested is not None:
         if args.accept_reserved:
-            if args.requested != counter or args.requested <= max(
+            if args.requested > counter or args.requested <= max(
                 ready_build, args.minimum
             ):
                 raise SystemExit(
-                    f"requested {args.channel} build {args.requested} is not the "
-                    "current unbuilt reservation"
+                    f"requested {args.channel} build {args.requested} is not "
+                    "an unbuilt reservation"
                 )
         elif args.requested <= floor:
             raise SystemExit(
@@ -55,7 +55,7 @@ with lock_path.open("a+") as lock:
     else:
         number = floor + 1
     if not args.peek:
-        counters[args.channel] = number
+        counters[args.channel] = max(counter, number)
         temporary = path.with_suffix(".tmp")
         temporary.write_text(json.dumps(counters, indent=2, sort_keys=True) + "\n")
         os.replace(temporary, path)

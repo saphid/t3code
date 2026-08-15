@@ -295,13 +295,13 @@ class StreamTests(unittest.TestCase):
         self.assertIn("catalog staging changed paths other than stream.json", errors)
         self.assertIn("catalog staging changed fields outside build attribution", errors)
 
-    def test_reserved_test_build_can_be_claimed_once_before_ready_pointer_moves(self):
+    def test_reserved_test_build_can_be_claimed_after_newer_reservation(self):
         with tempfile.TemporaryDirectory() as directory:
             home = Path(directory)
             state = home / ".t3/swiftui-stream"
             ready = state / "ready"
             ready.mkdir(parents=True)
-            (state / "build-counters.json").write_text('{"test": 60}\n')
+            (state / "build-counters.json").write_text('{"test": 62}\n')
             (ready / "test.json").write_text('{"build": 59}\n')
             environment = dict(os.environ)
             environment["HOME"] = str(home)
@@ -322,6 +322,19 @@ class StreamTests(unittest.TestCase):
             )
             self.assertEqual(accepted.returncode, 0, accepted.stderr)
             self.assertEqual(accepted.stdout.strip(), "60")
+            self.assertEqual(
+                json.loads((state / "build-counters.json").read_text())["test"],
+                62,
+            )
+
+            future = subprocess.run(
+                [*command[:4], "63", "--accept-reserved"],
+                env=environment,
+                text=True,
+                capture_output=True,
+            )
+            self.assertNotEqual(future.returncode, 0)
+            self.assertIn("not an unbuilt reservation", future.stderr)
 
             (ready / "test.json").write_text('{"build": 60}\n')
             already_ready = subprocess.run(
@@ -331,7 +344,7 @@ class StreamTests(unittest.TestCase):
                 capture_output=True,
             )
             self.assertNotEqual(already_ready.returncode, 0)
-            self.assertIn("not the current unbuilt reservation", already_ready.stderr)
+            self.assertIn("not an unbuilt reservation", already_ready.stderr)
 
     def test_build_ready_guards_catalog_before_xcodebuild(self):
         script = (ROOT / "build-ready.sh").read_text()
