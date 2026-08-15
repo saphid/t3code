@@ -1779,18 +1779,61 @@
       "whatToCheck": "On Home, confirm the build badge is gone and header controls have clear space. Open Settings, scroll to About, and verify the Development build row shows the expected build, revision, and upstream distance. Tap the row to confirm it targets the corresponding commit."
     },
     {
+      "acceptancePoints": [
+        {
+          "id": "optimized-test-executable",
+          "text": "The personal Test app is compiled with Swift optimization and whole-module compilation, strips build products, and does not load the Xcode debug dylib."
+        },
+        {
+          "id": "test-capabilities-preserved",
+          "text": "DEBUG fixtures, T3_PERSONAL_BUILD behavior, and testability remain available in the optimized Test configuration while Dev remains debuggable."
+        },
+        {
+          "id": "first-home-drag-responds",
+          "text": "After a cold launch reaches Home, the populated list accepts its first drag and visibly moves without a dead interaction period."
+        }
+      ],
       "aliases": [
         "launch lag",
         "cold launch responsiveness",
         "unresponsive startup"
       ],
+      "behavior": "Compile only the personal Test channel as an optimized, directly linked executable so a restored launch snapshot is not left visible while a large debug image finishes loading.",
+      "candidateCommit": "96714ac7be719cdf47b0592a76126e0abf36acc1",
       "delivery": "local-only",
+      "dependsOn": [],
+      "featureReceipt": "~/.t3/swiftui-stream/feature-receipts/test-build-cold-launch-responsiveness/96714ac7be719cdf47b0592a76126e0abf36acc1/receipt.json",
       "id": "test-build-cold-launch-responsiveness",
       "integratedCommit": "5616f3bcfa521bc85dacbb9faea63e59480a54b6",
       "interactionChange": true,
       "knownLimitations": "The optimization is intentionally limited to the personal Test configuration. Dev remains unoptimized for debugging, and the final cold-launch judgment still requires the physical phone build with real Test data.",
       "name": "Make Test builds interactive immediately after cold launch",
+      "order": 19,
       "problem": "The personal Test channel shipped an unoptimized debug image and could display its saved Home snapshot while the app was still loading, making the visible interface appear unresponsive for several seconds.",
+      "proof": {
+        "buildId": "build74-launch-proof-20260816",
+        "buildReceipt": {
+          "path": "/private/tmp/t3-test-replacement.HIdxXb/.t3/swiftui-private-ci-artifacts/receipts/build74-launch-proof-20260816/candidate-simulator.json",
+          "sha256": "5a316c9535ccc374042c729b7e196f507b18d8ad5758fd81c11f5bd198096798"
+        },
+        "featureCommit": "96714ac7be719cdf47b0592a76126e0abf36acc1",
+        "packets": [
+          {
+            "acceptancePointIds": [
+              "optimized-test-executable",
+              "test-capabilities-preserved",
+              "first-home-drag-responds"
+            ],
+            "id": "test-build-cold-launch-responsiveness-flow",
+            "receiptPath": "/Users/saphid/.t3/artifacts/swiftui-stream/evidence/build74-launch-responsiveness/test-build-cold-launch-responsiveness/cold-launch-responsiveness-receipt.json",
+            "receiptSha256": "76fbff6b177514459cb3a28f505c365198856e5231d35e056220e7c1987363c3",
+            "validationPath": "/Users/saphid/.t3/artifacts/swiftui-stream/evidence/build74-launch-responsiveness/test-build-cold-launch-responsiveness/packet-validation.json",
+            "validationSha256": "83e6ae32fef281539df01a98f5df6a665920f64d4a4e7d66cbf0644903797bb3"
+          }
+        ],
+        "schemaVersion": 2,
+        "sourceCommit": "28f3d729ce2f8bb50ad7c40df48eb8f0eb630c38"
+      },
       "reproductionSteps": [
         "Force-quit SwiftUI Test.",
         "Cold-launch SwiftUI Test and immediately swipe the Home list or tap Settings.",
@@ -1808,8 +1851,8 @@
       "state": "in-test",
       "summary": "Builds the personal Test channel with optimized Swift and direct executable linking while retaining its DEBUG fixtures and testability.",
       "successLooksLike": "SwiftUI Test accepts its first Home scroll or Settings tap immediately after a cold launch while all Test-only features and fixtures continue to work.",
-      "testBuild": 74,
-      "validationSummary": "The source candidate passed 31 focused FeatureRootModel tests under the optimized Test configuration. Its Simulator app contained no debug dylib, launched in 0.75 seconds, and accepted a semantic Settings tap.",
+      "testBuild": 71,
+      "validationSummary": "The frozen integrated commit passed 416 native tests across 43 suites and four Candidate journeys. The final optimized Test configuration separately passed 33 FeatureRootModel tests and the focused cold-boot Home journey; the built app contained no debug dylib and accepted its first recorded Home drag.",
       "visualChange": false,
       "whatToCheck": "Cold-launch SwiftUI Test and immediately scroll Home or tap Settings. The first input should respond without the previous several-second dead period."
     }
