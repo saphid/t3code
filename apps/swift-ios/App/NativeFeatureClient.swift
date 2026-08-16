@@ -24,7 +24,8 @@ private struct T3ConnectManagedCleanupError: LocalizedError {
 /// Composes the transport-focused Core layer with the UI-focused Features layer.
 @MainActor
 final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
-    FeatureProjectCreationClient, FeatureWorkspaceAssetResolving, T3ConnectCapable
+    FeatureProjectCreationClient, FeatureWorkspaceAssetResolving, T3ConnectCapable,
+    ThemeConversionCapable
 {
     private static let maximumRetainedThreadDetails = 6
     private static let t3ConnectLogger = Logger(
@@ -44,6 +45,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
     private let projectFaviconStore: FeatureProjectFaviconStore
     private let fallbackPollingInitialDelay: Duration
     private let fallbackPollingInterval: Duration
+    private let selectedDetailPollingInterval: Duration
     private let aggregateRefreshInterval: Duration
     private let environmentShellTimeoutInterval: TimeInterval
     private let aggregateEnvironmentLoader: @Sendable (EnvironmentRuntime) async throws -> [Environment]
@@ -52,6 +54,29 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
 
     private var activeEnvironment: Environment?
     private var client: T3Client?
+
+    var themeConversionEnvironmentName: String? { activeEnvironment?.label }
+
+    var canConvertThemes: Bool {
+        activeEnvironment?.descriptor?.capabilities.themeConversion == true && client != nil
+    }
+
+    func compileTheme(fileName: String, contents: String) async throws -> T3ResolvedThemeArtifact {
+        guard canConvertThemes, let client else {
+            throw NativeFeatureClientError.notConnected
+        }
+        return try await client.compileTheme(fileName: fileName, contents: contents)
+    }
+
+    func searchOpenVsxThemes(query: String) async throws -> [T3OpenVsxThemeExtension] {
+        guard canConvertThemes, let client else { throw NativeFeatureClientError.notConnected }
+        return try await client.searchOpenVsxThemes(query: query)
+    }
+
+    func installOpenVsxTheme(extensionID: String) async throws -> T3ResolvedThemeArtifact {
+        guard canConvertThemes, let client else { throw NativeFeatureClientError.notConnected }
+        return try await client.installOpenVsxTheme(extensionID: extensionID)
+    }
     private var latestShell: OrchestrationShellSnapshot?
     private var environmentClients: [String: T3Client] = [:]
     private var shellsByEnvironmentID: [String: OrchestrationShellSnapshot] = [:]
@@ -96,6 +121,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
     private var pollingTask: Task<Void, Never>?
     private var fallbackPollingTask: Task<Void, Never>?
     private var configurationTask: Task<Void, Never>?
+    private var hostStorageTask: Task<Void, Never>?
     private var aggregateRefreshTask: Task<Void, Never>?
     private var aggregateRefreshID: UUID?
     private var shellPublishTask: Task<Void, Never>?
@@ -105,6 +131,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
     private var detailPublishTask: Task<Void, Never>?
     private var passiveDetailPollingTask: Task<Void, Never>?
     private var detailRefreshPending = false
+    private var detailRefreshPendingForce = false
     private var detailRefreshGeneration = 0
     private var detailStreamGeneration = 0
     private var pendingDetailRenderMutations = NativeDetailRenderMutations()
@@ -116,6 +143,10 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
     private var threadHistoryEpoch = 0
     private var pendingOlderThreadPage: PendingOlderThreadPage?
 
+#if DEBUG
+    var detailStreamGenerationForTesting: Int { detailStreamGeneration }
+#endif
+
     init(
         runtime: EnvironmentRuntime? = nil,
         t3ConnectController: T3ConnectController? = nil,
@@ -124,6 +155,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         projectFaviconStore: FeatureProjectFaviconStore = FeatureProjectFaviconStore(),
         fallbackPollingInitialDelay: Duration = .seconds(3),
         fallbackPollingInterval: Duration = .seconds(2),
+        selectedDetailPollingInterval: Duration = .seconds(2),
         aggregateRefreshInterval: Duration = .seconds(20),
         environmentShellTimeoutInterval: TimeInterval = 6,
         aggregateEnvironmentLoader: @escaping @Sendable (EnvironmentRuntime) async throws -> [Environment] = {
@@ -154,6 +186,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         self.projectFaviconStore = projectFaviconStore
         self.fallbackPollingInitialDelay = fallbackPollingInitialDelay
         self.fallbackPollingInterval = fallbackPollingInterval
+        self.selectedDetailPollingInterval = selectedDetailPollingInterval
         self.aggregateRefreshInterval = aggregateRefreshInterval
         self.environmentShellTimeoutInterval = environmentShellTimeoutInterval
         self.aggregateEnvironmentLoader = aggregateEnvironmentLoader
@@ -166,6 +199,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         pollingTask?.cancel()
         fallbackPollingTask?.cancel()
         configurationTask?.cancel()
+        hostStorageTask?.cancel()
         aggregateRefreshTask?.cancel()
         shellPublishTask?.cancel()
         archivedRefreshTask?.cancel()
@@ -179,9 +213,9 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
     }
 
     func initialSnapshot() async throws -> FeatureSnapshot {
-        let environments = try await runtime.environments()
         guard let activeClient = try await runtime.activeClient() else {
             await clearActiveEnvironment()
+            let environments = try await runtime.environments()
             let snapshot = disconnectedSnapshot(environments: environments)
             latestSnapshot = snapshot
             return snapshot
@@ -189,7 +223,12 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         // The runtime actor can change its active selection at any suspension
         // point. Derive both values from one client so the snapshot cannot pair
         // one environment with another environment's connection.
-        let environment = activeClient.environment
+        let environment = (try? await runtime.refreshDescriptor(
+            for: activeClient.environment,
+            timeoutInterval: environmentShellTimeoutInterval
+        ))
+            ?? activeClient.environment
+        let environments = try await runtime.environments()
 
         await adoptEnvironment(environment, client: activeClient)
         let generation = environmentGeneration
@@ -458,6 +497,102 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         }
     }
 
+    func pullRequestsList(
+        environmentID: String,
+        input: PullRequestListInput
+    ) async throws -> PullRequestListResult {
+        try await pullRequestClient(environmentID: environmentID).pullRequestsList(input)
+    }
+
+    func pullRequestsListStats(
+        environmentID: String,
+        input: PullRequestListStatsInput
+    ) async throws -> PullRequestListStatsResult {
+        try await pullRequestClient(environmentID: environmentID).pullRequestsListStats(input)
+    }
+
+    func pullRequestDetail(
+        environmentID: String,
+        reference: PullRequestRef
+    ) async throws -> PullRequestDetail {
+        try await pullRequestClient(environmentID: environmentID).pullRequestDetail(reference)
+    }
+
+    func pullRequestActivity(
+        environmentID: String,
+        reference: PullRequestRef
+    ) async throws -> PullRequestActivity {
+        try await pullRequestClient(environmentID: environmentID).pullRequestActivity(reference)
+    }
+
+    func pullRequestDiff(
+        environmentID: String,
+        input: PullRequestDiffInput
+    ) async throws -> PullRequestDiffResult {
+        try await pullRequestClient(environmentID: environmentID).pullRequestDiff(input)
+    }
+
+    func pullRequestDiffFileContents(
+        environmentID: String,
+        input: PullRequestDiffFileContentsInput
+    ) async throws -> PullRequestDiffFileContentsResult {
+        try await pullRequestClient(environmentID: environmentID)
+            .pullRequestDiffFileContents(input)
+    }
+
+    func runPullRequestAction(environmentID: String, input: PullRequestActionInput) async throws {
+        try await pullRequestClient(environmentID: environmentID).runPullRequestAction(input)
+    }
+
+    func commentOnPullRequest(environmentID: String, input: PullRequestCommentInput) async throws {
+        try await pullRequestClient(environmentID: environmentID).commentOnPullRequest(input)
+    }
+
+    func submitPullRequestReview(
+        environmentID: String,
+        input: PullRequestSubmitReviewInput
+    ) async throws {
+        try await pullRequestClient(environmentID: environmentID).submitPullRequestReview(input)
+    }
+
+    func replyToPullRequestThread(
+        environmentID: String,
+        input: PullRequestThreadReplyInput
+    ) async throws {
+        try await pullRequestClient(environmentID: environmentID).replyToPullRequestThread(input)
+    }
+
+    func setPullRequestThreadResolution(
+        environmentID: String,
+        input: PullRequestThreadResolutionInput
+    ) async throws {
+        try await pullRequestClient(environmentID: environmentID)
+            .setPullRequestThreadResolution(input)
+    }
+
+    func invalidatePullRequests(
+        environmentID: String,
+        input: PullRequestInvalidateInput
+    ) async throws {
+        try await pullRequestClient(environmentID: environmentID).invalidatePullRequests(input)
+    }
+
+    func pullRequestReviewerCandidates(
+        environmentID: String,
+        reference: PullRequestRef
+    ) async throws -> PullRequestReviewerCandidateList {
+        try await pullRequestClient(environmentID: environmentID)
+            .pullRequestReviewerCandidates(reference)
+    }
+
+    func requestPullRequestReviewers(
+        environmentID: String,
+        input: PullRequestReviewerRequestInput
+    ) async throws {
+        try await pullRequestClient(environmentID: environmentID)
+            .requestPullRequestReviewers(input)
+    }
+
     private func adoptEnvironment(
         _ environment: Environment,
         client newClient: T3Client
@@ -473,12 +608,14 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         pollingTask?.cancel()
         fallbackPollingTask?.cancel()
         configurationTask?.cancel()
+        hostStorageTask?.cancel()
         aggregateRefreshTask?.cancel()
         archivedRefreshTask?.cancel()
         passiveDetailPollingTask?.cancel()
         pollingTask = nil
         fallbackPollingTask = nil
         configurationTask = nil
+        hostStorageTask = nil
         aggregateRefreshTask = nil
         aggregateRefreshID = nil
         archivedRefreshTask = nil
@@ -499,12 +636,14 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         pollingTask?.cancel()
         fallbackPollingTask?.cancel()
         configurationTask?.cancel()
+        hostStorageTask?.cancel()
         aggregateRefreshTask?.cancel()
         archivedRefreshTask?.cancel()
         passiveDetailPollingTask?.cancel()
         pollingTask = nil
         fallbackPollingTask = nil
         configurationTask = nil
+        hostStorageTask = nil
         aggregateRefreshTask = nil
         aggregateRefreshID = nil
         archivedRefreshTask = nil
@@ -518,6 +657,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
     }
 
     private func clearEnvironmentState(preserveEnvironmentSnapshots: Bool = false) {
+        continuation.yield(.hostStorage(nil))
         environmentGeneration &+= 1
         resetDetailRefresh()
         resetDetailStream()
@@ -736,7 +876,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
                     )
                 }
                 throw error
-            case .remote, .protocolViolation:
+            case .remote, .remotePayload, .protocolViolation:
                 throw error
             }
         }
@@ -1284,7 +1424,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
             switch error {
             case .connectionUnavailable, .disconnected, .responseTimedOut:
                 return true
-            case .remote, .protocolViolation:
+            case .remote, .remotePayload, .protocolViolation:
                 return false
             }
         }
@@ -1292,7 +1432,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
             switch error {
             case .invalidResponse:
                 return true
-            case .status, .missingCredential, .incompatibleCredential,
+            case .status, .structuredStatus, .missingCredential, .incompatibleCredential, .environmentMismatch,
                  .managedAuthorizationUnavailable:
                 return false
             }
@@ -1306,6 +1446,12 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         let route = try threadRoute(for: id)
         _ = try await route.client.rename(threadID: route.wireID, title: title)
         updateCachedArchivedThread(id: route.uiID) { $0.title = title }
+        try? await refresh(client: route.client)
+    }
+
+    func regenerateThreadTitle(id: String) async throws {
+        let route = try threadRoute(for: id)
+        _ = try await route.client.regenerateTitle(threadID: route.wireID)
         try? await refresh(client: route.client)
     }
 
@@ -1634,6 +1780,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         guard isKnownClient(client, environmentID: environmentID, generation: generation) else {
             throw CancellationError()
         }
+        restartDetailStreamAfterAcceptedTurn(route)
         if pendingTurnSubmissions[route.uiID]?.identity == pending.identity {
             pendingTurnSubmissions[route.uiID] = nil
         }
@@ -1642,6 +1789,23 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         // duplicate user turn.
         try? await refreshThread(id: route.uiID, client: client)
         try? await refresh(client: client)
+    }
+
+    /// A thread subscription is completion-scoped. Once a turn finishes, the
+    /// server closes it after the completion marker, so an accepted follow-up
+    /// needs a fresh subscription even while the same detail remains visible.
+    private func restartDetailStreamAfterAcceptedTurn(_ route: NativeThreadRoute) {
+        guard activeThreadID == route.uiID,
+              activeThreadEnvironmentID == route.environmentID else { return }
+        let supportsPagination = serverConfigsByEnvironmentID[
+            route.environmentID
+        ]?.threadSnapshotPagination == true
+        resetDetailStream()
+        startDetailStream(
+            route,
+            after: activeThreadSequence ?? 0,
+            turnLimit: supportsPagination ? Self.initialThreadUserTurnLimit : nil
+        )
     }
 
     private func messageWasCommitted(
@@ -1872,8 +2036,32 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
     func sourceControlStatus(threadID: String) async throws -> FeatureSourceControlStatus {
         let route = try threadRoute(for: threadID)
         let context = try workspaceContext(route: route)
-        return NativeWorkspaceMapper.sourceControl(
-            try await route.client.refreshVCSStatus(cwd: context.cwd)
+        let events = await route.client.vcsStatusEvents(cwd: context.cwd)
+        var latestLocal: VCSLocalStatus?
+
+        for try await event in events {
+            switch event {
+            case let .snapshot(local, remote):
+                if let remote {
+                    return NativeWorkspaceMapper.sourceControl(local: local, remote: remote)
+                }
+                if !local.isRepo || !local.hasPrimaryRemote {
+                    return NativeWorkspaceMapper.sourceControl(local: local, remote: nil)
+                }
+                latestLocal = local
+            case let .localUpdated(local):
+                if !local.isRepo || !local.hasPrimaryRemote {
+                    return NativeWorkspaceMapper.sourceControl(local: local, remote: nil)
+                }
+                latestLocal = local
+            case let .remoteUpdated(remote):
+                guard let latestLocal else { continue }
+                return NativeWorkspaceMapper.sourceControl(local: latestLocal, remote: remote)
+            }
+        }
+
+        throw RPCError.protocolViolation(
+            "The source-control status stream ended before returning a snapshot."
         )
     }
 
@@ -2163,6 +2351,14 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         return client
     }
 
+    private func pullRequestClient(environmentID: String) async throws -> T3Client {
+        let client = try await projectCreationClient(environmentID: environmentID)
+        guard client.environment.descriptor?.capabilities.pullRequests == true else {
+            throw PullRequestCapabilityUnavailableError()
+        }
+        return client
+    }
+
     private func projectRoute(for projectID: String) throws -> NativeProjectRoute {
         guard let environmentID = projectEnvironmentIDs[projectID],
               let wireID = projectWireIDs[projectID],
@@ -2301,6 +2497,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
             snoozedUntil: thread.snoozedUntil,
             snoozedAt: thread.snoozedAt,
             pinnedAt: thread.pinnedAt,
+            titleRegeneration: thread.titleRegeneration,
             session: thread.session,
             latestUserMessageAt: thread.latestUserMessageAt,
             hasPendingApprovals: thread.hasPendingApprovals,
@@ -2439,6 +2636,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         pollingTask?.cancel()
         fallbackPollingTask?.cancel()
         configurationTask?.cancel()
+        hostStorageTask?.cancel()
         let generation = environmentGeneration
         pollingTask = Task { [weak self] in
             do {
@@ -2616,6 +2814,33 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
                 // that do not expose the provider catalogue subscription.
             }
         }
+        hostStorageTask = Task { [weak self] in
+            do {
+                for try await storage in await activeClient.hostStorageEvents() {
+                    guard !Task.isCancelled,
+                          let self,
+                          self.isCurrentSession(
+                              client: activeClient,
+                              generation: generation
+                          ) else {
+                        break
+                    }
+                    self.continuation.yield(.hostStorage(storage))
+                }
+            } catch is CancellationError {
+                return
+            } catch {
+                // Older servers may not expose host resource telemetry.
+                guard let self,
+                      self.isCurrentSession(
+                          client: activeClient,
+                          generation: generation
+                      ) else {
+                    return
+                }
+                self.continuation.yield(.hostStorage(nil))
+            }
+        }
     }
 
     /// Non-active environments do not hold WebSocket subscriptions. A quiet
@@ -2705,7 +2930,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         latestShell = shell
         await emitSnapshot(shell)
         if refreshActiveThread, let threadID = activeThreadID {
-            scheduleDetailRefresh(threadID: threadID, client: client)
+            scheduleDetailRefresh(threadID: threadID, client: client, force: true)
         }
     }
 
@@ -2730,7 +2955,10 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
               let threadID = activeThreadID else {
             return
         }
-        scheduleDetailRefresh(threadID: threadID, client: client)
+        // A shell snapshot can advance to Done before the completion-scoped
+        // detail subscription closes. Reconcile the selected transcript even
+        // while that stream task is still alive.
+        scheduleDetailRefresh(threadID: threadID, client: client, force: true)
     }
 
     private func consume(delta: ShellStreamItem, client: T3Client) async {
@@ -2764,6 +2992,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         var projects = current.projects
         var threads = current.threads
         var changedThreadID: String?
+        var completionNeedsDetailReconciliation = false
         var shouldRefreshArchived = false
 
         switch delta {
@@ -2785,8 +3014,18 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
                 }
             }
             if let index = threads.firstIndex(where: { $0.id == thread.id }) {
+                completionNeedsDetailReconciliation =
+                    Self.completionNeedsDetailReconciliation(
+                        previous: threads[index],
+                        next: thread
+                    )
                 threads[index] = thread
             } else {
+                completionNeedsDetailReconciliation =
+                    Self.completionNeedsDetailReconciliation(
+                        previous: nil,
+                        next: thread
+                    )
                 threads.append(thread)
             }
         case let .threadRemoved(_, threadID):
@@ -2828,7 +3067,24 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
             scheduleArchivedRefresh(client: client, environment: environment)
         }
         if let changedThreadID, activeThreadID == changedThreadID {
-            scheduleDetailRefresh(threadID: changedThreadID, client: client)
+            scheduleDetailRefresh(
+                threadID: changedThreadID,
+                client: client,
+                force: completionNeedsDetailReconciliation
+            )
+        }
+    }
+
+    private static func completionNeedsDetailReconciliation(
+        previous: OrchestrationThreadShell?,
+        next: OrchestrationThreadShell
+    ) -> Bool {
+        guard previous?.latestTurn != next.latestTurn else { return false }
+        switch next.latestTurn?.state {
+        case "completed", "error", "interrupted":
+            return true
+        default:
+            return false
         }
     }
 
@@ -2861,9 +3117,11 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         guard force || detailStreamTask == nil else { return }
         guard detailRefreshTask == nil else {
             detailRefreshPending = true
+            detailRefreshPendingForce = detailRefreshPendingForce || force
             return
         }
         detailRefreshPending = false
+        detailRefreshPendingForce = false
         detailRefreshGeneration &+= 1
         let generation = detailRefreshGeneration
         let sessionGeneration = environmentGeneration
@@ -3044,20 +3302,20 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         }
         detailStreamTask = nil
         scheduleDetailRefresh(threadID: route.uiID, client: route.client)
-        startPassiveDetailPolling(route)
+        startSelectedDetailPolling(route)
     }
 
-    /// Passive environments intentionally avoid full shell WebSocket streams.
-    /// A selected passive thread is still live enough to drive remotely.
-    private func startPassiveDetailPolling(_ route: NativeThreadRoute) {
+    /// Completion-scoped detail streams end when the current turn settles.
+    /// Keep the selected thread fresh so turns started by another client land
+    /// without requiring the user to leave and reopen the thread.
+    private func startSelectedDetailPolling(_ route: NativeThreadRoute) {
         passiveDetailPollingTask?.cancel()
         passiveDetailPollingTask = nil
-        guard route.environmentID != activeEnvironment?.id else { return }
         let generation = environmentGeneration
         passiveDetailPollingTask = Task { [weak self] in
             while !Task.isCancelled {
                 do {
-                    try await Task.sleep(for: .seconds(2))
+                    try await Task.sleep(for: selectedDetailPollingInterval)
                 } catch {
                     return
                 }
@@ -3079,9 +3337,15 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         guard detailRefreshGeneration == generation else { return }
         detailRefreshTask = nil
         let needsTrailingRefresh = detailRefreshPending
+        let trailingRefreshMustBypassStream = detailRefreshPendingForce
         detailRefreshPending = false
+        detailRefreshPendingForce = false
         if needsTrailingRefresh, let threadID = activeThreadID {
-            scheduleDetailRefresh(threadID: threadID, client: client)
+            scheduleDetailRefresh(
+                threadID: threadID,
+                client: client,
+                force: trailingRefreshMustBypassStream
+            )
         }
     }
 
@@ -3090,6 +3354,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         detailRefreshTask?.cancel()
         detailRefreshTask = nil
         detailRefreshPending = false
+        detailRefreshPendingForce = false
     }
 
     private func resetDetailStream() {
@@ -3825,6 +4090,10 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
             id: environment.id,
             name: environment.label,
             endpoint: environment.httpBaseURL.absoluteString,
+            serverVersion: environment.descriptor?.serverVersion,
+            supportsPullRequests: environment.descriptor?.capabilities.pullRequests == true,
+            pullRequestCapability: environment.descriptor?.capabilities.pullRequests,
+            pullRequestCapabilityKnown: environment.descriptor != nil,
             isActive: environment.id == activeID,
             isEnabled: environment.isEnabled,
             source: environment.kind == .managedDPoP ? .t3Connect : .direct,
@@ -3886,6 +4155,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
             supportsSnooze: environment.descriptor?.capabilities.threadSnooze,
             supportsPinning: environment.descriptor?.capabilities.threadPinning,
             supportsTitleRegeneration: environment.descriptor?.capabilities.threadTitleRegeneration,
+            isRegeneratingTitle: thread.titleRegeneration != nil,
             attentionAt: failureDate(
                 latestTurn: thread.latestTurn,
                 session: thread.session
@@ -3955,6 +4225,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
             supportsSnooze: environment.descriptor?.capabilities.threadSnooze,
             supportsPinning: environment.descriptor?.capabilities.threadPinning,
             supportsTitleRegeneration: environment.descriptor?.capabilities.threadTitleRegeneration,
+            isRegeneratingTitle: thread.titleRegeneration != nil,
             attentionAt: failureDate(
                 latestTurn: thread.latestTurn,
                 session: thread.session

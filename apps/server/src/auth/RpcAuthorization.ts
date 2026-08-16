@@ -63,6 +63,9 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.shellOpenInEditor]: AuthOrchestrationOperateScope,
   [WS_METHODS.filesystemBrowse]: AuthOrchestrationReadScope,
   [WS_METHODS.assetsCreateUrl]: AuthOrchestrationReadScope,
+  [WS_METHODS.themesCompile]: AuthOrchestrationReadScope,
+  [WS_METHODS.themesSearchOpenVsx]: AuthOrchestrationReadScope,
+  [WS_METHODS.themesInstallOpenVsx]: AuthOrchestrationReadScope,
   [WS_METHODS.subscribeVcsStatus]: AuthOrchestrationReadScope,
   [WS_METHODS.subscribeResourceTelemetry]: AuthOrchestrationReadScope,
   [WS_METHODS.vcsRefreshStatus]: AuthOrchestrationReadScope,
@@ -103,6 +106,7 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.subscribeServerLifecycle]: AuthOrchestrationReadScope,
   [WS_METHODS.subscribeAuthAccess]: AuthAccessReadScope,
   [WS_METHODS.subscribeBackgroundPolicy]: AuthOrchestrationReadScope,
+  [WS_METHODS.subscribeHostStorage]: AuthOrchestrationReadScope,
 } as const satisfies Readonly<Record<WsRpcMethod, AuthEnvironmentScope>>;
 
 export function requiredScopeForRpcMethod(method: string): AuthEnvironmentScope {

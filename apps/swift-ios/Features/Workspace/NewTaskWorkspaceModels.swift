@@ -69,6 +69,30 @@ enum NewTaskWorkspaceDefaults {
             ?? branches.first
     }
 
+    static func refreshedSelection(
+        _ selection: FeatureWorkspaceBranch?,
+        in branches: [FeatureWorkspaceBranch],
+        mode: FeatureWorkspaceMode,
+        preserveMissingSelection: Bool = false
+    ) -> FeatureWorkspaceBranch? {
+        guard let selection else {
+            return switch mode {
+            case .local: localBranch(in: branches)
+            case .worktree: worktreeBase(in: branches)
+            }
+        }
+        if let refreshed = branches.first(where: { $0.name == selection.name }) {
+            return refreshed
+        }
+        guard preserveMissingSelection else {
+            return switch mode {
+            case .local: localBranch(in: branches)
+            case .worktree: worktreeBase(in: branches)
+            }
+        }
+        return selection
+    }
+
     static func normalizedWorktreePath(
         for branch: FeatureWorkspaceBranch?,
         projectPath: String

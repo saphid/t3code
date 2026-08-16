@@ -1,0 +1,171 @@
+{
+  "baseAttribution": {
+    "acknowledgedAnomalyCount": 30,
+    "artifact": "test-build-attribution-54.json",
+    "attributionStatus": "incomplete",
+    "commitCount": 73,
+    "devCommit": "125ed781e20716091222651092ed2708448bb6b6",
+    "installedTestBuild": {
+      "build": 54,
+      "bundleId": "com.alxs.t3code.typed-swiftui.dev",
+      "channel": "test",
+      "commit": "e9f4dbd510f862717188d2118fe30d33ab999022",
+      "schemaVersion": 1,
+      "sequence": 54
+    },
+    "integrationEvidenceCount": 9,
+    "schemaVersion": 1,
+    "sha256": "c026b6bd8204a329e1147b6536bfa24b3c12be79455b097e4d03145bdebdccfc",
+    "sourceCommit": "b8f9c6616d82880768bcc8b92583a54f1319efc4",
+    "validation": "The base record is valid but incomplete. It has 30 acknowledged anomalies and deterministic evidence for 9 integration commits."
+  },
+  "catalog": {
+    "durableRecordCount": 88,
+    "sourceCommit": "2af2d3c31228405bf1e0cbde6e3433263a9d801d",
+    "states": {
+      "blocked": 1,
+      "in-dev": 1,
+      "in-test": 4,
+      "needs-you": 9,
+      "superseded": 2,
+      "upstream-pr": 34,
+      "upstream-validation": 37
+    }
+  },
+  "classificationRule": {
+    "anomaly": "No exact source citation or structural rule supports another classification.",
+    "candidate": "The exact delta commit has fewer than two parents and is cited by a checked-in build-55 source record.",
+    "integration": "The delta commit has exactly two parents.",
+    "metadata": "The subject is chore(...) and only the stream manifest or its focused tests change.",
+    "revert": "The commit subject starts with Revert."
+  },
+  "commits": [
+    {
+      "category": "metadata",
+      "changedPaths": [
+        "scripts/swiftui-stream/stream.json"
+      ],
+      "commit": "603851bab151a306ccf673bee9bfa309d4b64080",
+      "parents": [
+        "e9f4dbd510f862717188d2118fe30d33ab999022"
+      ],
+      "patchId": "dd437fbb3519c338c47f872f9fa1e09be0e58cb1",
+      "sourceRecords": [],
+      "subject": "chore(swiftui): correct palette Test build receipt"
+    },
+    {
+      "category": "candidate",
+      "changedPaths": [
+        "apps/swift-ios/Features/Settings/BuildTestingEvidenceImage.swift",
+        "apps/swift-ios/Features/Settings/BuildTestingEvidenceVideo.swift",
+        "apps/swift-ios/Features/Settings/BuildTestingFeatureView.swift",
+        "apps/swift-ios/Features/Settings/BuildTestingManifest.swift",
+        "apps/swift-ios/Features/Settings/BuildTestingPipelineDiagram.swift",
+        "apps/swift-ios/Features/Settings/BuildTestingPipelineStage.swift",
+        "apps/swift-ios/Features/Settings/BuildTestingPipelineStageRow.swift",
+        "apps/swift-ios/Features/Settings/BuildTestingView.swift",
+        "apps/swift-ios/Features/Settings/BuildTestingVisualEvidenceItemView.swift",
+        "apps/swift-ios/Features/Settings/BuildTestingVisualEvidenceView.swift",
+        "apps/swift-ios/Tests/FeatureTests/BuildTestingManifestTests.swift",
+        "docs/operations/swiftui-dev-test-stream.md",
+        "scripts/swiftui-stream/generate_testing_manifest.py",
+        "scripts/swiftui-stream/stream.py",
+        "scripts/swiftui-stream/test_stream.py"
+      ],
+      "commit": "08d75bf0a678a850edc55c1339d23acf7f1ff129",
+      "parents": [
+        "603851bab151a306ccf673bee9bfa309d4b64080"
+      ],
+      "patchId": "511569e6ce173862f2f00f33165f7ae0d1083191",
+      "sourceRecords": [
+        {
+          "collection": "features",
+          "field": "integratedCommits",
+          "key": "id",
+          "snapshot": "streamManifest",
+          "value": "in-app-stream-approval-control"
+        }
+      ],
+      "subject": "feat(swift-ios): visualize review pipeline evidence"
+    },
+    {
+      "category": "candidate",
+      "changedPaths": [
+        "apps/swift-ios/Features/Settings/BuildTestingEvidenceVideo.swift",
+        "apps/swift-ios/Features/Settings/BuildTestingVisualEvidenceItemView.swift",
+        "docs/operations/swiftui-dev-test-stream.md",
+        "scripts/swiftui-stream/generate_testing_manifest.py",
+        "scripts/swiftui-stream/stream.py",
+        "scripts/swiftui-stream/test_stream.py"
+      ],
+      "commit": "256f9b764b5f975aeb50b10e5e99d3d986f5d681",
+      "parents": [
+        "08d75bf0a678a850edc55c1339d23acf7f1ff129"
+      ],
+      "patchId": "55561106a7b3aa4c8eebe484de9da87b6e110215",
+      "sourceRecords": [
+        {
+          "collection": "features",
+          "field": "integratedCommit",
+          "key": "id",
+          "snapshot": "streamManifest",
+          "value": "in-app-stream-approval-control"
+        }
+      ],
+      "subject": "fix(swiftui): bind visual review evidence"
+    },
+    {
+      "category": "metadata",
+      "changedPaths": [
+        "scripts/swiftui-stream/stream.json",
+        "scripts/swiftui-stream/test_stream.py"
+      ],
+      "commit": "2af2d3c31228405bf1e0cbde6e3433263a9d801d",
+      "parents": [
+        "256f9b764b5f975aeb50b10e5e99d3d986f5d681"
+      ],
+      "patchId": "af144ff122b5a24d341a03707ad69145c6705332",
+      "sourceRecords": [],
+      "subject": "chore(swiftui): stage pipeline review in Test"
+    }
+  ],
+  "deviceGate": {
+    "approvalEligible": true,
+    "observedReceipt": {
+      "build": 55,
+      "bundleId": "com.alxs.t3code.typed-swiftui.dev",
+      "channel": "test",
+      "commit": "2af2d3c31228405bf1e0cbde6e3433263a9d801d",
+      "launchPending": false,
+      "schemaVersion": 1,
+      "sequence": 55,
+      "status": "installed-and-launched"
+    },
+    "reason": "Build 55 is installed and launched on the physical Test device.",
+    "status": "ready"
+  },
+  "installedTestBuild": {
+    "build": 55,
+    "bundleId": "com.alxs.t3code.typed-swiftui.dev",
+    "channel": "test",
+    "commit": "2af2d3c31228405bf1e0cbde6e3433263a9d801d",
+    "schemaVersion": 1,
+    "sequence": 55
+  },
+  "schemaVersion": 1,
+  "sourceSnapshots": {
+    "legacyManifest": {
+      "commit": "2af2d3c31228405bf1e0cbde6e3433263a9d801d",
+      "path": "scripts/t3-swift-approved/manifest.json"
+    },
+    "prDelivery": {
+      "commit": "2af2d3c31228405bf1e0cbde6e3433263a9d801d",
+      "path": "scripts/swiftui-stream/pr-delivery.json"
+    },
+    "streamManifest": {
+      "commit": "2af2d3c31228405bf1e0cbde6e3433263a9d801d",
+      "path": "scripts/swiftui-stream/stream.json"
+    }
+  },
+  "supersedesInstalledBuild": 54
+}

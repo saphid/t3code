@@ -6,6 +6,46 @@ import Testing
 struct HomeThreadMetadataTests {
     private let now = Date(timeIntervalSince1970: 10_000)
 
+    @Test(
+        "Cold metadata refreshes defer rows that have no visible cell",
+        .bug("https://github.com/saphid/t3code-personal/issues/55")
+    )
+    func coldMetadataRefreshPreservesRowsWithoutAVisibleCell() {
+        var state = HomeThreadPendingMetadataRefreshes<String>()
+        state.recordCompletion(
+            matching: Set(["visible", "prefetched"]),
+            refreshed: Set(["visible"])
+        )
+
+        #expect(state.identifiers == Set(["prefetched"]))
+    }
+
+    @Test(
+        "Cold metadata pending rows coalesce and consume exactly once",
+        .bug("https://github.com/saphid/t3code-personal/issues/55")
+    )
+    func coldMetadataRefreshesCoalesceUntilRowsDisplay() {
+        var state = HomeThreadPendingMetadataRefreshes<String>()
+        state.recordCompletion(
+            matching: Set(["visible", "prefetched"]),
+            refreshed: Set(["visible"])
+        )
+        state.recordCompletion(
+            matching: Set(["prefetched", "second"]),
+            refreshed: []
+        )
+
+        #expect(state.identifiers == Set(["prefetched", "second"]))
+        let consumedOnce = state.consume("prefetched")
+        let consumedAgain = state.consume("prefetched")
+        #expect(consumedOnce)
+        #expect(!consumedAgain)
+        #expect(state.identifiers == Set(["second"]))
+
+        state.prune(to: Set(["visible"]))
+        #expect(state.identifiers.isEmpty)
+    }
+
     @Test
     func statusLabelsFollowTheWebV2RowVocabulary() {
         let expected: [(FeatureThreadState, HomeThreadStatus, String?)] = [
@@ -32,64 +72,62 @@ struct HomeThreadMetadataTests {
     }
 
     @Test
-    func completedAndIdleRowsUseQuietRelativeAges() {
-        let updatedAt = now.addingTimeInterval(-120)
-        let completed = FeatureThread(
-            id: "completed",
-            projectID: "project",
-            title: "Done task",
-            updatedAt: updatedAt,
-            state: .completed
-        )
-        let idle = FeatureThread(
-            id: "idle",
-            projectID: "project",
-            title: "Idle task",
-            updatedAt: updatedAt,
-            state: .idle
-        )
-
-        #expect(completed.homeRowStatusLabel(at: now) == "2m")
-        #expect(idle.homeRowStatusLabel(at: now) == "2m")
+    func futureWorkingStartClampsToZeroSeconds() {
+        #expect(workingDuration(startedAtOffset: 5) == "0s")
     }
 
     @Test
-    func completedDetailHeadersDoNotShowAStatusBadge() {
-        let completed = FeatureThread(
-            id: "completed",
-            projectID: "project",
-            title: "Completed task",
-            state: .completed
-        )
-        let working = FeatureThread(
-            id: "working",
-            projectID: "project",
-            title: "Working task",
-            state: .working
-        )
-
-        #expect(completed.detailHeaderStatusLabel == nil)
-        #expect(completed.detailHeaderStatusIcon == nil)
-        #expect(working.detailHeaderStatusLabel == "Working")
-        #expect(working.detailHeaderStatusIcon == "circle.dotted")
+    func workingDurationUsesSecondsBelowOneMinute() {
+        #expect(workingDuration(startedAtOffset: -42) == "42s")
     }
 
     @Test
-    func workingDurationMatchesTheCompactWebFormatAndClampsFutureDates() {
-        let thread = FeatureThread(
-            id: "working",
-            projectID: "project",
-            title: "Build",
-            state: .working,
-            workingStartedAt: now.addingTimeInterval(-5_465)
+    func queuedThreadsUseWorkingDuration() {
+        #expect(workingDuration(state: .queued, startedAtOffset: -42) == "42s")
+    }
+
+    @Test
+    func workingDurationSwitchesToMinutesAtOneMinute() {
+        #expect(workingDuration(startedAtOffset: -60) == "1m")
+    }
+
+    @Test
+    func workingDurationSwitchesToHoursAtOneHour() {
+        #expect(workingDuration(startedAtOffset: -3_600) == "1h 0m")
+    }
+
+    @Test
+    func workingDurationUsesHoursAndRemainingMinutes() {
+        #expect(workingDuration(startedAtOffset: -5_465) == "1h 31m")
+    }
+
+    @Test
+    func accessibilityDurationSpellsOutSingularUnits() {
+        #expect(accessibilityDuration(startedAtOffset: -1) == "1 second")
+        #expect(accessibilityDuration(startedAtOffset: -60) == "1 minute")
+        #expect(accessibilityDuration(startedAtOffset: -3_600) == "1 hour")
+    }
+
+    @Test
+    func futureAccessibilityDurationClampsToZeroSeconds() {
+        #expect(accessibilityDuration(startedAtOffset: 5) == "0 seconds")
+    }
+
+    @Test
+    func accessibilityDurationSpellsOutPluralHours() {
+        #expect(accessibilityDuration(startedAtOffset: -7_200) == "2 hours")
+    }
+
+    @Test
+    func accessibilityDurationSpellsOutHoursAndMinutes() {
+        #expect(
+            accessibilityDuration(startedAtOffset: -5_465)
+                == "1 hour, 31 minutes"
         )
-        let future = FeatureThread(
-            id: "queued",
-            projectID: "project",
-            title: "Queue",
-            state: .queued,
-            workingStartedAt: now.addingTimeInterval(5)
-        )
+    }
+
+    @Test
+    func nonWorkingThreadsDoNotExposeWorkingDuration() {
         let idle = FeatureThread(
             id: "idle",
             projectID: "project",
@@ -105,58 +143,200 @@ struct HomeThreadMetadataTests {
             workingStartedAt: now.addingTimeInterval(-10)
         )
 
-        #expect(thread.homeWorkingDuration(at: now) == "1h 31m")
-        #expect(future.homeWorkingDuration(at: now) == "0s")
         #expect(idle.homeWorkingDuration(at: now) == nil)
         #expect(monitoring.homeWorkingDuration(at: now) == nil)
     }
 
     @Test
-    func accessibilityDurationSpellsOutUnitsAndClampsFutureDates() {
-        #expect(accessibilityDuration(startedAtOffset: 5) == "0 seconds")
-        #expect(accessibilityDuration(startedAtOffset: -1) == "1 second")
-        #expect(accessibilityDuration(startedAtOffset: -42) == "42 seconds")
-        #expect(accessibilityDuration(startedAtOffset: -60) == "1 minute")
-        #expect(accessibilityDuration(startedAtOffset: -120) == "2 minutes")
-        #expect(accessibilityDuration(startedAtOffset: -3_600) == "1 hour")
-        #expect(accessibilityDuration(startedAtOffset: -7_200) == "2 hours")
-        #expect(accessibilityDuration(startedAtOffset: -5_465) == "1 hour, 31 minutes")
+    func completedThreadExposesTimeSinceLatestTurnCompleted() {
+        let thread = FeatureThread(
+            id: "done",
+            projectID: "project",
+            title: "Ship it",
+            state: .completed,
+            latestTurnCompletedAt: now.addingTimeInterval(-5_465)
+        )
+
+        #expect(thread.homeDoneDuration(at: now) == "1h 31m")
+        #expect(thread.homeDoneAccessibilityDuration(at: now) == "1 hour, 31 minutes")
     }
 
     @Test
-    func accessibilityStatusDescribesOnlyLiveWorkingDurations() {
-        let working = thread(state: .working, startedAtOffset: -90)
-        let queuedWithoutStart = thread(state: .queued)
-        let monitoring = thread(state: .monitoring, startedAtOffset: -90)
-        let idle = thread(state: .idle)
+    func completedThreadShowsSecondsAndClampsFutureCompletion() {
+        let recent = FeatureThread(
+            id: "recent",
+            projectID: "project",
+            title: "Ship it",
+            state: .completed,
+            latestTurnCompletedAt: now.addingTimeInterval(-42)
+        )
+        let future = FeatureThread(
+            id: "future",
+            projectID: "project",
+            title: "Clock skew",
+            state: .completed,
+            latestTurnCompletedAt: now.addingTimeInterval(30)
+        )
 
-        #expect(working.hasLiveWorkingDuration)
-        #expect(working.homeStatusAccessibilityLabel(at: now) == "Agent is working for 1 minute")
-        #expect(!queuedWithoutStart.hasLiveWorkingDuration)
-        #expect(queuedWithoutStart.homeStatusAccessibilityLabel(at: now) == "Agent is working")
-        #expect(!monitoring.hasLiveWorkingDuration)
-        #expect(monitoring.homeStatusAccessibilityLabel(at: now) == "Monitoring")
-        #expect(!idle.hasLiveWorkingDuration)
-        #expect(idle.homeStatusAccessibilityLabel(at: now) == "Ready")
+        #expect(recent.homeDoneDuration(at: now) == "42s")
+        #expect(future.homeDoneDuration(at: now) == "0s")
+        #expect(future.homeDoneAccessibilityDuration(at: now) == "0 seconds")
+    }
+
+    @Test
+    func completedThreadUsesDaysForLongDurations() {
+        let thread = FeatureThread(
+            id: "done",
+            projectID: "project",
+            title: "Ship it",
+            state: .completed,
+            latestTurnCompletedAt: now.addingTimeInterval(-(49 * 3_600))
+        )
+
+        #expect(thread.homeDoneDuration(at: now) == "2d 1h")
+        #expect(thread.homeDoneAccessibilityDuration(at: now) == "2 days, 1 hour")
+    }
+
+    @Test
+    func incompleteThreadDoesNotExposeDoneDuration() {
+        let thread = FeatureThread(
+            id: "working",
+            projectID: "project",
+            title: "Keep going",
+            state: .working,
+            latestTurnCompletedAt: now.addingTimeInterval(-60)
+        )
+
+        #expect(thread.homeDoneDuration(at: now) == nil)
+        #expect(thread.homeDoneAccessibilityDuration(at: now) == nil)
+    }
+
+    @Test
+    func freshCompletionUsesFastRefreshWhenPreferenceIsEnabled() {
+        let thread = FeatureThread(
+            id: "done",
+            projectID: "project",
+            title: "Ship it",
+            state: .completed,
+            latestTurnCompletedAt: now.addingTimeInterval(-30)
+        )
+
+        #expect(HomeThreadRefreshCadence.interval(
+            threads: [thread],
+            showDoneDuration: true,
+            now: now
+        ) == 1)
+        #expect(HomeThreadRefreshCadence.interval(
+            threads: [thread],
+            showDoneDuration: false,
+            now: now
+        ) == 60)
+    }
+
+    @Test
+    func workingThreadUsesFastRefreshRegardlessOfDoneDurationPreference() {
+        let thread = FeatureThread(
+            id: "working",
+            projectID: "project",
+            title: "Building",
+            state: .working
+        )
+
+        for showDoneDuration in [false, true] {
+            #expect(HomeThreadRefreshCadence.interval(
+                threads: [thread],
+                showDoneDuration: showDoneDuration,
+                now: now
+            ) == 1)
+        }
+    }
+
+    @Test
+    func oldAndFutureCompletionsUseMinuteRefresh() {
+        for offset in [-60.0, 30.0] {
+            let thread = FeatureThread(
+                id: "done-\(offset)",
+                projectID: "project",
+                title: "Ship it",
+                state: .completed,
+                latestTurnCompletedAt: now.addingTimeInterval(offset)
+            )
+            #expect(HomeThreadRefreshCadence.interval(
+                threads: [thread],
+                showDoneDuration: true,
+                now: now
+            ) == 60)
+        }
+    }
+
+    @Test
+    func completionAtNowAndJustBeforeMinuteBoundaryUseFastRefresh() {
+        for offset in [0.0, -59.999] {
+            let thread = FeatureThread(
+                id: "done-\(offset)",
+                projectID: "project",
+                title: "Ship it",
+                state: .completed,
+                latestTurnCompletedAt: now.addingTimeInterval(offset)
+            )
+            #expect(HomeThreadRefreshCadence.interval(
+                threads: [thread],
+                showDoneDuration: true,
+                now: now
+            ) == 1)
+        }
+    }
+
+    @Test
+    func completionRefreshSurvivesDelayedMinuteBoundaryTick() {
+        let thread = FeatureThread(
+            id: "done",
+            projectID: "project",
+            title: "Ship it",
+            state: .completed,
+            latestTurnCompletedAt: now.addingTimeInterval(-60)
+        )
+
+        #expect(!HomeThreadRefreshCadence.isFreshCompletion(thread, now: now))
+        #expect(HomeThreadRefreshCadence.needsSecondPrecisionRefresh(thread, now: now))
+
+        let outsideRecoveryWindow = FeatureThread(
+            id: "older-done",
+            projectID: "project",
+            title: "Already refreshed",
+            state: .completed,
+            latestTurnCompletedAt: now.addingTimeInterval(-120)
+        )
+        #expect(!HomeThreadRefreshCadence.needsSecondPrecisionRefresh(outsideRecoveryWindow, now: now))
+
+        let incomplete = FeatureThread(
+            id: "incomplete",
+            projectID: "project",
+            title: "Still working",
+            state: .working,
+            latestTurnCompletedAt: now.addingTimeInterval(-60)
+        )
+        #expect(!HomeThreadRefreshCadence.needsSecondPrecisionRefresh(incomplete, now: now))
+    }
+
+    private func workingDuration(
+        state: FeatureThreadState = .working,
+        startedAtOffset: TimeInterval
+    ) -> String? {
+        FeatureThread(
+            id: "working",
+            projectID: "project",
+            title: "Build",
+            state: state,
+            workingStartedAt: now.addingTimeInterval(startedAtOffset)
+        )
+        .homeWorkingDuration(at: now)
     }
 
     private func accessibilityDuration(startedAtOffset: TimeInterval) -> String {
         HomeWorkingDuration.accessibility(
             since: now.addingTimeInterval(startedAtOffset),
             now: now
-        )
-    }
-
-    private func thread(
-        state: FeatureThreadState,
-        startedAtOffset: TimeInterval? = nil
-    ) -> FeatureThread {
-        FeatureThread(
-            id: state.rawValue,
-            projectID: "project",
-            title: "Task",
-            state: state,
-            workingStartedAt: startedAtOffset.map(now.addingTimeInterval)
         )
     }
 
@@ -222,9 +402,7 @@ struct HomeThreadMetadataTests {
                     path: "/work/t3code"
                 ),
             ],
-            providersByEnvironment: [
-                "device": [FeatureProvider(id: "claude", name: "Claude")],
-            ]
+            providers: [FeatureProvider(id: "claude", name: "Claude")]
         )
 
         #expect(thread.homeEnvironmentLabel(in: snapshot) == "steambox")
@@ -256,11 +434,9 @@ struct HomeThreadMetadataTests {
                 ),
             ],
             threads: [knownThread, customThread],
-            providersByEnvironment: [
-                "device": [
-                    FeatureProvider(id: "work-claude", name: "Claude Code", driver: "custom"),
-                    FeatureProvider(id: "acme-agent", name: "Acme Agent", driver: "custom"),
-                ],
+            providers: [
+                FeatureProvider(id: "work-claude", name: "Claude Code", driver: "custom"),
+                FeatureProvider(id: "acme-agent", name: "Acme Agent", driver: "custom"),
             ]
         )
 
@@ -290,5 +466,127 @@ struct HomeThreadMetadataTests {
                 providerName: custom.providerName
             ) == nil
         )
+    }
+
+    @Test
+    func environmentCatalogDoesNotFallBackToAnActiveEnvironmentProvider() throws {
+        let thread = FeatureThread(
+            id: "remote-thread",
+            projectID: "remote-project",
+            environmentID: "remote",
+            title: "Remote task",
+            providerID: "shared-provider"
+        )
+        let snapshot = FeatureSnapshot(
+            projects: [
+                FeatureProject(
+                    id: "remote-project",
+                    environmentID: "remote",
+                    name: "remote",
+                    path: "/remote/workspace"
+                ),
+            ],
+            threads: [thread],
+            providers: [
+                FeatureProvider(
+                    id: "shared-provider",
+                    name: "Active Environment Provider",
+                    driver: "active-driver"
+                ),
+            ],
+            providersByEnvironment: ["remote": []]
+        )
+
+        #expect(thread.homeProviderLabel(in: snapshot) == "shared-provider")
+        let context = try #require(HomeThreadRowContext.index(snapshot: snapshot)[thread.id])
+        #expect(context.providerName == "shared-provider")
+        #expect(context.providerDriver == "shared-provider")
+    }
+
+    @Test
+    func pullRequestRequiresTheStatusToMatchTheThreadBranch() {
+        let pullRequest = FeaturePullRequest(
+            number: 5178,
+            title: "Native SwiftUI client",
+            state: "open",
+            url: URL(string: "https://github.com/pingdotgg/t3code/pull/5178")
+        )
+        let thread = FeatureThread(
+            id: "thread",
+            projectID: "project",
+            title: "Build",
+            branch: "feature/native-pr-link"
+        )
+
+        #expect(HomeThreadPullRequest.related(
+            to: thread,
+            in: FeatureSourceControlStatus(
+                branch: "feature/native-pr-link",
+                pullRequest: pullRequest
+            )
+        ) == pullRequest)
+        #expect(HomeThreadPullRequest.related(
+            to: thread,
+            in: FeatureSourceControlStatus(
+                branch: "feature/another-thread",
+                pullRequest: pullRequest
+            )
+        ) == nil)
+
+        for missingBranch in [nil, "", "   "] {
+            var missingThreadBranch = thread
+            missingThreadBranch.branch = missingBranch
+            #expect(HomeThreadPullRequest.related(
+                to: missingThreadBranch,
+                in: FeatureSourceControlStatus(
+                    branch: "feature/native-pr-link",
+                    pullRequest: pullRequest
+                )
+            ) == nil)
+        }
+        #expect(HomeThreadPullRequest.related(
+            to: thread,
+            in: FeatureSourceControlStatus(branch: nil, pullRequest: pullRequest)
+        ) == nil)
+    }
+
+    @Test
+    func pullRequestLinksOnlyOpenSafeWebURLs() {
+        let safe = FeaturePullRequest(
+            number: 42,
+            title: "Safe",
+            state: "open",
+            url: URL(string: "https://github.com/pingdotgg/t3code/pull/42")
+        )
+        let customScheme = FeaturePullRequest(
+            number: 43,
+            title: "Unsafe",
+            state: "open",
+            url: URL(string: "t3code-swiftui://pull/43")
+        )
+        let credentialed = FeaturePullRequest(
+            number: 44,
+            title: "Credentialed",
+            state: "open",
+            url: URL(string: "https://token@example.com/pull/44")
+        )
+        let plainHTTP = FeaturePullRequest(
+            number: 45,
+            title: "Local",
+            state: "open",
+            url: URL(string: "HTTP://127.0.0.1/pull/45")
+        )
+        let missingURL = FeaturePullRequest(
+            number: 46,
+            title: "Missing",
+            state: "open"
+        )
+
+        #expect(safe.shortLabel == "#42")
+        #expect(safe.safeExternalURL == safe.url)
+        #expect(customScheme.safeExternalURL == nil)
+        #expect(credentialed.safeExternalURL == nil)
+        #expect(plainHTTP.safeExternalURL == plainHTTP.url)
+        #expect(missingURL.safeExternalURL == nil)
     }
 }

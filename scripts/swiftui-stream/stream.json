@@ -1,0 +1,1959 @@
+{
+  "branches": {
+    "dev": "origin/personal/swiftui-dev",
+    "legacy": "origin/personal/swiftui-approved",
+    "test": "origin/personal/swiftui-test",
+    "theo": "upstream/t3code/rebuild-mobile-app-swift"
+  },
+  "currentTestBuild": {
+    "build": 74,
+    "bundleId": "com.alxs.t3code.typed-swiftui.dev",
+    "channel": "test",
+    "commit": "df63f2bac23633835489291cd52ba2aaa8b28adf",
+    "deviceId": "2571CB7A-6A14-5E81-97D6-7F03DA41C11B",
+    "launchPending": false,
+    "receipt": "~/.t3/swiftui-stream/device-receipts/test.json",
+    "sequence": 74,
+    "status": "installed-and-launched"
+  },
+  "features": [
+    {
+      "acceptancePoints": [
+        {
+          "id": "exact-build-metadata",
+          "text": "Embedded review metadata is deterministic and identifies the exact build channel, revision, feature commits, source thread, and issue."
+        },
+        {
+          "id": "personal-channel-visibility",
+          "text": "The review section appears in personal Dev and Test builds and does not appear in Release or ordinary Debug builds."
+        },
+        {
+          "id": "complete-review-guidance",
+          "text": "Each review item shows the problem, reproduction steps, change summary, checks, expected success, validation, limits, and attribution without trimmed text."
+        },
+        {
+          "id": "proof-pending-blocks-verdict",
+          "text": "An item with fresh proof pending explains that state and cannot submit a Ready for Dev verdict."
+        },
+        {
+          "id": "confirmed-auditable-verdict",
+          "text": "Ready and Not ready require confirmation and preserve the exact build and feature identity in the queued verdict."
+        }
+      ],
+      "aliases": [
+        "what's testing",
+        "testing approvals",
+        "dev approvals",
+        "pipeline diagram",
+        "PR promotion flow"
+      ],
+      "behavior": "Show the exact contents and evidence of personal Dev and Test builds, and require a confirmed verdict for the exact feature and build before stream promotion.",
+      "candidateCommit": "e832100ac8d2d446e9c6cbe9f024dc482f107209",
+      "commits": [
+        "2421a23ff82a7cdf5e60c16b745e1a33603146e9",
+        "13127b18e4132843989732d464f5da66038c0fb4",
+        "bada856364abd5a09fa8d56f1e87bb24d5282ed7",
+        "ede9558e046153143c8be11d7edf899aa58f37db",
+        "e832100ac8d2d446e9c6cbe9f024dc482f107209"
+      ],
+      "delivery": "local-only",
+      "dependsOn": [],
+      "id": "in-app-stream-approval-control",
+      "integratedCommit": "4a68943c683df233c4730028ca40cb86233dfd7c",
+      "integratedCommits": [
+        "71c0b00ac78b5d0d3fea10b6c0b5fce3f6ddaaa0",
+        "d0a397a9b8b1b9a0a14c0d781c829c2f71af8675",
+        "c332364a814bd86d919ae32334d8bd44a8651747",
+        "08d75bf0a678a850edc55c1339d23acf7f1ff129",
+        "256f9b764b5f975aeb50b10e5e99d3d986f5d681",
+        "df2f044f5d5e03c8b9adc9bb48f4e8bcb680035c",
+        "11658353d7175c55ab745c469f0c8861c1448db5",
+        "31c4ff00a0f09bf9385f69fd6adc1dd893c9509f",
+        "a7397a9c888f139494eb32d075f6b189eb20b5c7",
+        "4b80738f772346c94d98306d37db6ca051042726",
+        "473355065c7e796415075c7846a536cc9834102f",
+        "3cc149be8e3c00fb68785c3d213cce5632c1e2d5",
+        "f90bf31bbb8fb89873f2b9188650550ea139d66d",
+        "d0f935542f560fa3a4ff97f15d9e551d6c8ca1bb",
+        "b8689b63ac537b4575fe50576d6171933f6591ab",
+        "4a68943c683df233c4730028ca40cb86233dfd7c"
+      ],
+      "interactionChange": true,
+      "knownLimitations": "Installing a build does not approve any item. SwiftUI Dev and upstream remain unchanged until the explicit human gates are completed. Commit 11658353d7175c55ab745c469f0c8861c1448db5 also strengthens the theme accessibility test, so this staged item and the theme item share that rollback dependency.",
+      "name": "Review features and visualize their PR promotion pipeline",
+      "order": 15,
+      "problem": "The phone had no exact-build review queue. A person could not tell which commits and source threads were installed, see their proof, or send an auditable verdict without leaving the app.",
+      "proof": {
+        "buildId": "test-dae630726-isolated-20260815",
+        "buildReceipt": {
+          "path": "/private/tmp/t3-swiftui-test-ci.914d929a/.t3/swiftui-private-ci-artifacts/receipts/test-dae630726-isolated-20260815/test-train.json",
+          "sha256": "8ab8cf5f6adedbd5001f2b5c011191a973673d0c44ef08e15406713e75b7c103"
+        },
+        "featureCommit": "e832100ac8d2d446e9c6cbe9f024dc482f107209",
+        "packets": [
+          {
+            "acceptancePointIds": [
+              "exact-build-metadata",
+              "personal-channel-visibility",
+              "complete-review-guidance",
+              "proof-pending-blocks-verdict",
+              "confirmed-auditable-verdict"
+            ],
+            "id": "in-app-stream-approval-control-flow",
+            "receiptPath": "/Users/saphid/.t3/artifacts/swiftui-stream/evidence/test-dae630726-exact-20260815/in-app-stream-approval-control/in-app-stream-approval-control-receipt.json",
+            "receiptSha256": "2b1fe1aa507b45ab0862f31d28ac8863f7a83042b2f1419b7af4b6ad6ce3d61d",
+            "validationPath": "/Users/saphid/.t3/artifacts/swiftui-stream/evidence/test-dae630726-exact-20260815/in-app-stream-approval-control/packet-validation.json",
+            "validationSha256": "1445be03cb1ef2ee6199d2b248e74eb5df6073bff29b547016a2f4f183a577cd"
+          }
+        ],
+        "schemaVersion": 2,
+        "sourceCommit": "dae6307263f54d207fe78a7e5f9930be5684e9d6"
+      },
+      "reproductionSteps": [
+        "Open Settings in SwiftUI Test and open What\u2019s testing.",
+        "Expand a review item and inspect its guidance, proof, commits, source thread, and issue.",
+        "Choose a verdict and inspect the confirmation before canceling or submitting it."
+      ],
+      "reviewGroup": "Review safety",
+      "reviewMedia": true,
+      "reviewPriority": 1,
+      "sourceBranch": "feat/swiftui-pipeline-diagram-20260813",
+      "sourceCommit": "e832100ac8d2d446e9c6cbe9f024dc482f107209",
+      "sourceIssue": "https://github.com/saphid/t3code-personal/issues/56",
+      "sourceThread": "7F1BCA94-9E0D-4CF6-A833-99995121ADFB",
+      "sourceThreadTitle": "Dev/Test Feature Approval Workflow",
+      "startingBaseline": "125ed781e20716091222651092ed2708448bb6b6",
+      "state": "needs-you",
+      "successLooksLike": "The priority order is clear and every required section is readable without trimmed text. A pending-proof item explains its state and cannot be approved. A review-ready item expands working clean and annotated links. The diagram shows candidate PR \u2192 Test build \u2192 your Test approval \u2192 Dev build \u2192 your upstream approval \u2192 upstream PR. Test preserves exact build evidence before queuing a verdict.",
+      "summary": "Adds an in-app review queue for exact Dev and Test build contents, plus a phone-readable diagram of the proposed PR-based path from a proved candidate through Test, Dev, and upstream.",
+      "tentativeDelivery": "local-only",
+      "testBuild": 74,
+      "validationSummary": "Exact Test source dae630726 passed 414 native tests across 43 suites, the 130-test XCTest aggregate (129 passed, 1 skipped), and all 25 UI journeys. Fifteen schema-v2 proof packets are sealed, and the review-readiness gate reports 15 items with zero errors.",
+      "visualChange": true,
+      "whatToCheck": "In Test, open Settings \u2192 What\u2019s testing. Confirm items are ordered by priority and show their review group. Expand this item and verify Original problem, numbered Steps to reproduce, What changed, What to check, Success looks like, Automated validation, and Known limits. If the app says fresh proof is being recorded, confirm Ready for Dev is disabled and wait for the replacement packet. When Visual evidence appears, verify its links, commits, thread, issue, confirmation dialog, and both readiness choices.",
+      "proofCommit": "4a68943c683df233c4730028ca40cb86233dfd7c",
+      "proofMediaReceipt": "/Users/saphid/.t3/artifacts/swiftui-stream/evidence/test-dae630726-exact-20260815/in-app-stream-approval-control/proof-media-receipt.json",
+      "visualEvidence": [
+        {
+          "kind": "image",
+          "title": "Review features and visualize their PR promotion pipeline \u2014 image proof",
+          "caption": "Shows the dark-mode acceptance state.",
+          "appearance": "dark",
+          "cleanURL": "https://alexs-macbook-pro-1.tail4e5636.ts.net:10025/test-dae630726/in-app-stream-approval-control/in-app-stream-approval-control-clean.png",
+          "annotatedURL": "https://alexs-macbook-pro-1.tail4e5636.ts.net:10025/test-dae630726/in-app-stream-approval-control/in-app-stream-approval-control-annotated.png"
+        },
+        {
+          "kind": "video",
+          "title": "Review features and visualize their PR promotion pipeline \u2014 interaction proof",
+          "caption": "Shows the recorded acceptance interaction and expected result.",
+          "appearance": "dark",
+          "cleanURL": "https://alexs-macbook-pro-1.tail4e5636.ts.net:10025/test-dae630726/in-app-stream-approval-control/in-app-stream-approval-control-clean.mp4",
+          "annotatedURL": "https://alexs-macbook-pro-1.tail4e5636.ts.net:10025/test-dae630726/in-app-stream-approval-control/in-app-stream-approval-control-annotated.mp4"
+        }
+      ]
+    },
+    {
+      "aliases": [
+        "branches and builds",
+        "approval workflow",
+        "dev test stream"
+      ],
+      "approvalEvidence": "User approved the complete grilled Dev/Test stream design and instructed implementation in the source T3 thread.",
+      "approvalReceipt": "~/.t3/swiftui-stream/approvals/swiftui-stream-infrastructure/cabbd92291069de7f70a2020eac7a23b687068a8.json",
+      "approvedAt": "2026-08-12T21:45:00+10:00",
+      "approvedBy": "Alex Southwell",
+      "approvedInThread": "dd129883-d2eb-4f81-9ccc-def28b9a2992",
+      "delivery": "local-only",
+      "id": "swiftui-stream-infrastructure",
+      "name": "SwiftUI Dev/Test branch, build, approval, and delivery stream",
+      "state": "in-dev"
+    },
+    {
+      "aliases": [
+        "orange debug chrome",
+        "legacy dev title bars"
+      ],
+      "id": "legacy-dev-title-chrome",
+      "name": "Show orange debug chrome on SwiftUI home and new task",
+      "sourceCommit": "124a7b88cf053eb9a72810915e945c51f8152371",
+      "state": "superseded",
+      "supersededBy": "swiftui-stream-infrastructure",
+      "supersessionEvidence": "The human-approved channel identity replaces generic debug chrome with explicit orange Dev and purple Test titles and icons."
+    },
+    {
+      "acceptancePoints": [
+        {
+          "id": "composer-above-keyboard",
+          "text": "Composer controls remain visible above the software keyboard while Skills is open."
+        },
+        {
+          "id": "scroll-without-overlap",
+          "text": "The Skills results list scrolls without covering the composer or trapping empty space."
+        },
+        {
+          "id": "selection-and-dismissal",
+          "text": "Filtering, selecting a lower result, dismissing the keyboard, and dismissing Skills remain usable."
+        },
+        {
+          "id": "accessible-text-sizes",
+          "text": "Selection and dismissal remain usable at standard and accessibility text sizes."
+        }
+      ],
+      "aliases": [
+        "skills popup",
+        "keyboard clearance"
+      ],
+      "behavior": "Keep the composer, Skills query, results, selection controls, and dismissal path visible and usable while the software keyboard is open.",
+      "delivery": "direct",
+      "dependsOn": [],
+      "id": "skills-popup-keyboard-clearance",
+      "integratedCommit": "dd72827894d37158335408770bca04fa26b5caab",
+      "integratedCommits": [
+        "c4a4bd0e4946fde52ec9e250940a8e94e22db94f",
+        "40fceb60f124c1b61a6457e360135e48b63304cc",
+        "dd72827894d37158335408770bca04fa26b5caab"
+      ],
+      "knownLimitations": "Review this item with the full-height Skills popup item because both changes affect the same surface.",
+      "name": "Skills popup composer clearance and keyboard refinement",
+      "order": 1,
+      "problem": "With the keyboard open, the composer or Skills popup can cover the text entry and selection controls, so a person cannot see or complete the action.",
+      "proof": {
+        "buildId": "test-dae630726-isolated-20260815",
+        "buildReceipt": {
+          "path": "/private/tmp/t3-swiftui-test-ci.914d929a/.t3/swiftui-private-ci-artifacts/receipts/test-dae630726-isolated-20260815/test-train.json",
+          "sha256": "8ab8cf5f6adedbd5001f2b5c011191a973673d0c44ef08e15406713e75b7c103"
+        },
+        "featureCommit": "9cb21674ea335e4e53d2d4d7680dfc7b0f5c1189",
+        "packets": [
+          {
+            "acceptancePointIds": [
+              "composer-above-keyboard",
+              "scroll-without-overlap",
+              "selection-and-dismissal",
+              "accessible-text-sizes"
+            ],
+            "id": "skills-popup-keyboard-clearance-flow",
+            "receiptPath": "/Users/saphid/.t3/artifacts/swiftui-stream/evidence/test-dae630726-exact-20260815/skills-popup-keyboard-clearance/skills-popup-keyboard-clearance-receipt.json",
+            "receiptSha256": "75ed7929a2b08d84d9f7ef48497407dcc9838b354ad5e1b50adc1b8f610f687d",
+            "validationPath": "/Users/saphid/.t3/artifacts/swiftui-stream/evidence/test-dae630726-exact-20260815/skills-popup-keyboard-clearance/packet-validation.json",
+            "validationSha256": "abeab21d9a2a788e23331dae495ada6560171f9fcb13143748bbaba699054195"
+          }
+        ],
+        "schemaVersion": 2,
+        "sourceCommit": "dae6307263f54d207fe78a7e5f9930be5684e9d6"
+      },
+      "relatedThreads": [
+        {
+          "id": "060A4D25-0220-4BAD-A3CE-614A2E2BAEF2",
+          "title": "Fix Skills Popup Keyboard Overlap"
+        }
+      ],
+      "reproductionSteps": [
+        "Open a thread and focus the composer to show the keyboard.",
+        "Open Skills and type enough text to filter the results.",
+        "Scroll the results and try to select a skill near the bottom."
+      ],
+      "reviewGroup": "Composer and Skills",
+      "reviewMedia": true,
+      "reviewPriority": 4,
+      "sourceCommit": "9cb21674ea335e4e53d2d4d7680dfc7b0f5c1189",
+      "sourceIssue": "https://github.com/saphid/t3code-personal/issues/84",
+      "sourceThread": "876DD4F4-77A5-4719-B652-B8446ACD4ED9",
+      "sourceThreadTitle": "Fix Hidden Text Entry Box",
+      "state": "needs-you",
+      "successLooksLike": "The text entry box, relevant popup results, and selection controls stay visible and usable above the keyboard without jumping, overlap, or trapped empty space.",
+      "summary": "Keeps the composer text field and Skills popup controls visible above the keyboard instead of letting the keyboard cover the area you need to type or select a skill.",
+      "testBuild": 74,
+      "validationSummary": "Exact Test source dae630726 passed 414 native tests across 43 suites, the 130-test XCTest aggregate (129 passed, 1 skipped), and all 25 UI journeys. Fifteen schema-v2 proof packets are sealed, and the review-readiness gate reports 15 items with zero errors.",
+      "whatToCheck": "Open a thread, focus the composer so the keyboard appears, then open and use the Skills popup. Type, scroll the results, choose a skill, and dismiss the keyboard.",
+      "proofCommit": "dd72827894d37158335408770bca04fa26b5caab",
+      "proofMediaReceipt": "/Users/saphid/.t3/artifacts/swiftui-stream/evidence/test-dae630726-exact-20260815/skills-popup-keyboard-clearance/proof-media-receipt.json",
+      "visualEvidence": [
+        {
+          "kind": "image",
+          "title": "Skills popup composer clearance and keyboard refinement \u2014 image proof",
+          "caption": "Shows the dark-mode acceptance state.",
+          "appearance": "dark",
+          "cleanURL": "https://alexs-macbook-pro-1.tail4e5636.ts.net:10025/test-dae630726/skills-popup-keyboard-clearance/skills-popup-keyboard-clearance-clean.png",
+          "annotatedURL": "https://alexs-macbook-pro-1.tail4e5636.ts.net:10025/test-dae630726/skills-popup-keyboard-clearance/skills-popup-keyboard-clearance-annotated.png"
+        },
+        {
+          "kind": "video",
+          "title": "Skills popup composer clearance and keyboard refinement \u2014 interaction proof",
+          "caption": "Shows the recorded acceptance interaction and expected result.",
+          "appearance": "dark",
+          "cleanURL": "https://alexs-macbook-pro-1.tail4e5636.ts.net:10025/test-dae630726/skills-popup-keyboard-clearance/skills-popup-keyboard-clearance-clean.mp4",
+          "annotatedURL": "https://alexs-macbook-pro-1.tail4e5636.ts.net:10025/test-dae630726/skills-popup-keyboard-clearance/skills-popup-keyboard-clearance-annotated.mp4"
+        }
+      ]
+    },
+    {
+      "acceptancePoints": [
+        {
+          "id": "skill-name-primary-width",
+          "text": "Ordinary skill names use the primary row width and are not truncated to keep the description on the same line."
+        },
+        {
+          "id": "readable-description",
+          "text": "Supporting descriptions remain readable below their skill names."
+        },
+        {
+          "id": "available-popup-height",
+          "text": "The popup grows upward to the available boundary instead of stopping at the former fixed height cap."
+        },
+        {
+          "id": "scrollable-without-overlap",
+          "text": "Long result lists remain scrollable, do not overlap the composer, and allow selection near the bottom."
+        }
+      ],
+      "aliases": [
+        "skill name readability",
+        "expanded skill picker",
+        "full-height skills popup"
+      ],
+      "behavior": "Stack skill names above their descriptions and let the scrollable popup grow to the available vertical boundary above the composer.",
+      "branch": "fix/swiftui-skill-popup-readability-20260813",
+      "delivery": "direct",
+      "dependsOn": [],
+      "id": "skill-popup-readability-and-height",
+      "integratedCommit": "7fc758cc1adc58d6426eb4fec413c2dc37e3841b",
+      "integratedCommits": [
+        "cbae942274d6fcd62cfc365a32e1c9f7d826510d",
+        "7fc758cc1adc58d6426eb4fec413c2dc37e3841b"
+      ],
+      "knownLimitations": "Review this item with keyboard clearance because both items share the same popup and composer boundary.",
+      "name": "Readable, full-height SwiftUI skill popup",
+      "order": 14,
+      "problem": "Skill names and descriptions compete for one narrow row, and the popup does not use the safe space above the composer, so long entries are hard to read and reach.",
+      "proof": {
+        "buildId": "test-dae630726-isolated-20260815",
+        "buildReceipt": {
+          "path": "/private/tmp/t3-swiftui-test-ci.914d929a/.t3/swiftui-private-ci-artifacts/receipts/test-dae630726-isolated-20260815/test-train.json",
+          "sha256": "8ab8cf5f6adedbd5001f2b5c011191a973673d0c44ef08e15406713e75b7c103"
+        },
+        "featureCommit": "09f309bcba3a2d822c2e81f48dbf728a8c969488",
+        "packets": [
+          {
+            "acceptancePointIds": [
+              "skill-name-primary-width",
+              "readable-description",
+              "available-popup-height",
+              "scrollable-without-overlap"
+            ],
+            "id": "skill-popup-readability-and-height-flow",
+            "receiptPath": "/Users/saphid/.t3/artifacts/swiftui-stream/evidence/test-dae630726-exact-20260815/skill-popup-readability-and-height/skill-popup-readability-and-height-receipt.json",
+            "receiptSha256": "b2094cc4a511162540a19abcf62b27323896e2c95b8b40656231c0171510e67b",
+            "validationPath": "/Users/saphid/.t3/artifacts/swiftui-stream/evidence/test-dae630726-exact-20260815/skill-popup-readability-and-height/packet-validation.json",
+            "validationSha256": "6e011f58f27a312eb4b45b263a2e56a2101221c72790e6b7836e6d9dec4372bc"
+          }
+        ],
+        "schemaVersion": 2,
+        "sourceCommit": "dae6307263f54d207fe78a7e5f9930be5684e9d6"
+      },
+      "reproductionSteps": [
+        "Open a thread and show the keyboard.",
+        "Open Skills and inspect entries with long names and descriptions.",
+        "Scroll to the end of the list and select a lower item."
+      ],
+      "reviewGroup": "Composer and Skills",
+      "reviewMedia": true,
+      "reviewPriority": 4,
+      "sourceBranch": "t3code/improve-skill-popup-layout",
+      "sourceCommit": "09f309bcba3a2d822c2e81f48dbf728a8c969488",
+      "sourceIssue": "https://github.com/saphid/t3code-personal/issues/57",
+      "sourceThread": "A21E4994-5667-4935-9C26-EFCF66D4E869",
+      "startingBaseline": "125ed781e20716091222651092ed2708448bb6b6",
+      "state": "needs-you",
+      "successLooksLike": "Names are no longer squeezed beside descriptions, rows remain legible, the popup grows without covering the composer, the full list scrolls, and selection still works.",
+      "summary": "Makes skill names readable by placing them above their descriptions and lets the skill picker use the available height above the composer.",
+      "testBuild": 74,
+      "validationSummary": "Exact Test source dae630726 passed 414 native tests across 43 suites, the 130-test XCTest aggregate (129 passed, 1 skipped), and all 25 UI journeys. Fifteen schema-v2 proof packets are sealed, and the review-readiness gate reports 15 items with zero errors.",
+      "whatToCheck": "Open Skills with the keyboard visible, inspect short and long skill names and descriptions, scroll through the list, choose a skill near the bottom, and rotate or change keyboard state if convenient.",
+      "proofCommit": "7fc758cc1adc58d6426eb4fec413c2dc37e3841b",
+      "proofMediaReceipt": "/Users/saphid/.t3/artifacts/swiftui-stream/evidence/test-dae630726-exact-20260815/skill-popup-readability-and-height/proof-media-receipt.json",
+      "visualEvidence": [
+        {
+          "kind": "image",
+          "title": "Readable, full-height SwiftUI skill popup \u2014 image proof",
+          "caption": "Shows the dark-mode acceptance state.",
+          "appearance": "dark",
+          "cleanURL": "https://alexs-macbook-pro-1.tail4e5636.ts.net:10025/test-dae630726/skill-popup-readability-and-height/skill-popup-readability-and-height-clean.png",
+          "annotatedURL": "https://alexs-macbook-pro-1.tail4e5636.ts.net:10025/test-dae630726/skill-popup-readability-and-height/skill-popup-readability-and-height-annotated.png"
+        },
+        {
+          "kind": "video",
+          "title": "Readable, full-height SwiftUI skill popup \u2014 interaction proof",
+          "caption": "Shows the recorded acceptance interaction and expected result.",
+          "appearance": "dark",
+          "cleanURL": "https://alexs-macbook-pro-1.tail4e5636.ts.net:10025/test-dae630726/skill-popup-readability-and-height/skill-popup-readability-and-height-clean.mp4",
+          "annotatedURL": "https://alexs-macbook-pro-1.tail4e5636.ts.net:10025/test-dae630726/skill-popup-readability-and-height/skill-popup-readability-and-height-annotated.mp4"
+        }
+      ]
+    },
+    {
+      "aliases": [
+        "orange dev bars",
+        "dev title"
+      ],
+      "id": "dev-title-label",
+      "name": "Replace orange dev bars with a channel-colored title label",
+      "order": 2,
+      "sourceCommit": "181bb7a1",
+      "state": "superseded",
+      "supersededBy": "swiftui-stream-infrastructure",
+      "testBuild": 41
+    },
+    {
+      "acceptancePoints": [
+        {
+          "id": "first-drag-scrolls",
+          "text": "The Home thread list starts scrolling on the first ordinary vertical drag."
+        },
+        {
+          "id": "rows-do-not-steal-drag",
+          "text": "Dragging from the middle of a thread row scrolls the list instead of being consumed by row content or the command gesture."
+        },
+        {
+          "id": "top-command-gesture-remains",
+          "text": "The intentional command-palette gesture remains available from its defined top region."
+        },
+        {
+          "id": "gesture-isolation",
+          "text": "Ordinary list swipes do not open the command palette."
+        }
+      ],
+      "aliases": [
+        "home scrolling",
+        "thread list scroll"
+      ],
+      "behavior": "Limit the command-palette recognizer to its top gesture region so ordinary vertical drags scroll the Home thread list from normal list positions.",
+      "delivery": "direct",
+      "dependsOn": [],
+      "id": "home-thread-list-scrolling",
+      "integratedCommit": "cd7f6a44fb36980a2ae1193d5edc215dfb74b4b8",
+      "integratedCommits": [
+        "cd7f6a44fb36980a2ae1193d5edc215dfb74b4b8",
+        "40fceb60f124c1b61a6457e360135e48b63304cc"
+      ],
+      "knownLimitations": "Review this item with the top drawer and cold-boot scrolling items because they share Home gesture ownership.",
+      "name": "Home thread-list scrolling",
+      "order": 3,
+      "problem": "The command gesture can win the touch competition on Home and consume an ordinary list swipe, which makes the thread list appear stuck.",
+      "proof": {
+        "buildId": "test-dae630726-isolated-20260815",
+        "buildReceipt": {
+          "path": "/private/tmp/t3-swiftui-test-ci.914d929a/.t3/swiftui-private-ci-artifacts/receipts/test-dae630726-isolated-20260815/test-train.json",
+          "sha256": "8ab8cf5f6adedbd5001f2b5c011191a973673d0c44ef08e15406713e75b7c103"
+        },
+        "featureCommit": "7cc3a6119a9f836891d66c66e4816266e74ba602",
+        "packets": [
+          {
+            "acceptancePointIds": [
+              "first-drag-scrolls",
+              "rows-do-not-steal-drag",
+              "top-command-gesture-remains",
+              "gesture-isolation"
+            ],
+            "id": "home-thread-list-scrolling-flow",
+            "receiptPath": "/Users/saphid/.t3/artifacts/swiftui-stream/evidence/test-dae630726-exact-20260815/home-thread-list-scrolling/home-thread-list-scrolling-receipt.json",
+            "receiptSha256": "dcb5d205743fb8f322130521f5982f2cd3b98d610645a61d88ee80c37a05343f",
+            "validationPath": "/Users/saphid/.t3/artifacts/swiftui-stream/evidence/test-dae630726-exact-20260815/home-thread-list-scrolling/packet-validation.json",
+            "validationSha256": "d1a7e04447fe0dab78457d42bdd549ce320fccc8de98491221ea4a9ddf28f408"
+          }
+        ],
+        "schemaVersion": 2,
+        "sourceCommit": "dae6307263f54d207fe78a7e5f9930be5684e9d6"
+      },
+      "reproductionSteps": [
+        "Open Home with enough threads to require scrolling.",
+        "Drag up and down from the middle of a thread row and near the top edge.",
+        "Compare an ordinary list drag with the deliberate top-edge command gesture."
+      ],
+      "reviewGroup": "Home navigation",
+      "reviewMedia": true,
+      "reviewPriority": 3,
+      "sourceCommit": "7cc3a6119a9f836891d66c66e4816266e74ba602",
+      "sourceIssue": "https://github.com/saphid/t3code-personal/issues/82",
+      "sourceThread": "483B0392-396C-4D09-9658-FF378C410BC3",
+      "sourceThreadTitle": "Fix Threads List Scrolling",
+      "state": "needs-you",
+      "successLooksLike": "Normal swipes scroll the list immediately and smoothly, while the command gesture still works only from its intended top area.",
+      "summary": "Stops the workspace command gesture from stealing ordinary vertical swipes, so the home thread list scrolls reliably.",
+      "testBuild": 74,
+      "validationSummary": "Exact Test source dae630726 passed 414 native tests across 43 suites, the 130-test XCTest aggregate (129 passed, 1 skipped), and all 25 UI journeys. Fifteen schema-v2 proof packets are sealed, and the review-readiness gate reports 15 items with zero errors.",
+      "whatToCheck": "On Home, drag the thread list up and down from several positions, including near the top edge and over a thread row. Also try the intended top-edge command gesture.",
+      "proofCommit": "cd7f6a44fb36980a2ae1193d5edc215dfb74b4b8",
+      "proofMediaReceipt": "/Users/saphid/.t3/artifacts/swiftui-stream/evidence/test-dae630726-exact-20260815/home-thread-list-scrolling/proof-media-receipt.json",
+      "visualEvidence": [
+        {
+          "kind": "image",
+          "title": "Home thread-list scrolling \u2014 image proof",
+          "caption": "Shows the dark-mode acceptance state.",
+          "appearance": "dark",
+          "cleanURL": "https://alexs-macbook-pro-1.tail4e5636.ts.net:10025/test-dae630726/home-thread-list-scrolling/home-thread-list-scrolling-clean.png",
+          "annotatedURL": "https://alexs-macbook-pro-1.tail4e5636.ts.net:10025/test-dae630726/home-thread-list-scrolling/home-thread-list-scrolling-annotated.png"
+        },
+        {
+          "kind": "video",
+          "title": "Home thread-list scrolling \u2014 interaction proof",
+          "caption": "Shows the recorded acceptance interaction and expected result.",
+          "appearance": "dark",
+          "cleanURL": "https://alexs-macbook-pro-1.tail4e5636.ts.net:10025/test-dae630726/home-thread-list-scrolling/home-thread-list-scrolling-clean.mp4",
+          "annotatedURL": "https://alexs-macbook-pro-1.tail4e5636.ts.net:10025/test-dae630726/home-thread-list-scrolling/home-thread-list-scrolling-annotated.mp4"
+        }
+      ]
+    },
+    {
+      "acceptancePoints": [
+        {
+          "id": "home-and-thread-consistency",
+          "text": "The top-drawer gesture behaves consistently on Home and in an open thread."
+        },
+        {
+          "id": "attached-motion",
+          "text": "The top bar, page, and palette stay visually attached to the finger throughout the pull."
+        },
+        {
+          "id": "stable-settle",
+          "text": "Threshold and flick releases settle open or closed without a jump."
+        },
+        {
+          "id": "keyboard-motion-scroll-isolation",
+          "text": "Keyboard and Reduce Motion states remain usable, and ordinary vertical or horizontal scrolling does not open the palette."
+        }
+      ],
+      "aliases": [
+        "command palette",
+        "swipe-down command palette",
+        "physical command palette drag"
+      ],
+      "behavior": "Make the command palette behave as a physical top drawer whose top bar and page track the finger and settle without stealing ordinary scrolling.",
+      "delivery": "direct",
+      "dependsOn": [],
+      "id": "command-palette-top-drawer",
+      "integratedCommit": "8395257e8edb1e9d9f04c2f3e6a7e585632e09fa",
+      "integratedCommits": [
+        "945c98851d77364c72c1a6ff5b893cef302d2f62",
+        "8ef974258b9d2b38af5bcb02f680da4e23579704",
+        "8395257e8edb1e9d9f04c2f3e6a7e585632e09fa"
+      ],
+      "knownLimitations": "Review this item with both Home scrolling items because they share the top-edge gesture boundary.",
+      "name": "Command palette top drawer",
+      "order": 4,
+      "problem": "The command palette did not behave as one attached surface during an interactive pull, and its gesture could conflict with ordinary page scrolling.",
+      "proof": {
+        "buildId": "test-dae630726-isolated-20260815",
+        "buildReceipt": {
+          "path": "/private/tmp/t3-swiftui-test-ci.914d929a/.t3/swiftui-private-ci-artifacts/receipts/test-dae630726-isolated-20260815/test-train.json",
+          "sha256": "8ab8cf5f6adedbd5001f2b5c011191a973673d0c44ef08e15406713e75b7c103"
+        },
+        "featureCommit": "5a46ed73f8afa118714921ff1fd32768e3cedd4e",
+        "packets": [
+          {
+            "acceptancePointIds": [
+              "home-and-thread-consistency",
+              "attached-motion",
+              "stable-settle",
+              "keyboard-motion-scroll-isolation"
+            ],
+            "id": "command-palette-top-drawer-flow",
+            "receiptPath": "/Users/saphid/.t3/artifacts/swiftui-stream/evidence/test-dae630726-exact-20260815/command-palette-top-drawer/command-palette-top-drawer-receipt.json",
+            "receiptSha256": "56f171edb83b9a806b73463357fc1893d57e51f203674da461961d519bd6ddfb",
+            "validationPath": "/Users/saphid/.t3/artifacts/swiftui-stream/evidence/test-dae630726-exact-20260815/command-palette-top-drawer/packet-validation.json",
+            "validationSha256": "5c20e4b467344e33e54358f1939de8c4d98eb88554a83b4b941871cfc69e0948"
+          }
+        ],
+        "schemaVersion": 2,
+        "sourceCommit": "dae6307263f54d207fe78a7e5f9930be5684e9d6"
+      },
+      "reproductionSteps": [
+        "On Home, pull down slowly from the top bar and release on each side of the settle threshold.",
+        "Repeat from an open thread and while the keyboard is visible.",
+        "Try ordinary vertical and horizontal swipes away from the top-bar start area."
+      ],
+      "reviewGroup": "Home navigation",
+      "reviewMedia": true,
+      "reviewPriority": 3,
+      "sourceBranch": "fix/swiftui-physical-command-palette-drag-20260813",
+      "sourceCommit": "5a46ed73f8afa118714921ff1fd32768e3cedd4e",
+      "sourceIssue": "https://github.com/saphid/t3code-personal/issues/86",
+      "sourceThread": "9DD22B40-3832-4FE7-B482-69D9C7BEDE0A",
+      "sourceThreadTitle": "Fix Command Palette Top Drawer",
+      "state": "needs-you",
+      "successLooksLike": "On both home and thread pages, the top bar stays under the finger, the page and palette remain visually attached throughout the pull, release settles naturally without a jump, and ordinary scrolling or horizontal gestures do not open the palette.",
+      "summary": "Makes the top bar and current page track the finger as one physical surface while the command palette is pulled into view from either the home thread list or an open thread, then settle open or closed with spring motion.",
+      "testBuild": 74,
+      "validationSummary": "Exact Test source dae630726 passed 414 native tests across 43 suites, the 130-test XCTest aggregate (129 passed, 1 skipped), and all 25 UI journeys. Fifteen schema-v2 proof packets are sealed, and the review-readiness gate reports 15 items with zero errors.",
+      "whatToCheck": "In dark mode, drag down slowly from the top bar on both the home thread list and an open thread, releasing below and above the threshold. Try a short deliberate flick, horizontal swipes, normal list or thread scrolling, dismissal, and opening while the keyboard is visible.",
+      "proofCommit": "8395257e8edb1e9d9f04c2f3e6a7e585632e09fa",
+      "proofMediaReceipt": "/Users/saphid/.t3/artifacts/swiftui-stream/evidence/test-dae630726-exact-20260815/command-palette-top-drawer/proof-media-receipt.json",
+      "visualEvidence": [
+        {
+          "kind": "image",
+          "title": "Command palette top drawer \u2014 image proof",
+          "caption": "Shows the dark-mode acceptance state.",
+          "appearance": "dark",
+          "cleanURL": "https://alexs-macbook-pro-1.tail4e5636.ts.net:10025/test-dae630726/command-palette-top-drawer/command-palette-top-drawer-clean.png",
+          "annotatedURL": "https://alexs-macbook-pro-1.tail4e5636.ts.net:10025/test-dae630726/command-palette-top-drawer/command-palette-top-drawer-annotated.png"
+        },
+        {
+          "kind": "video",
+          "title": "Command palette top drawer \u2014 interaction proof",
+          "caption": "Shows the recorded acceptance interaction and expected result.",
+          "appearance": "dark",
+          "cleanURL": "https://alexs-macbook-pro-1.tail4e5636.ts.net:10025/test-dae630726/command-palette-top-drawer/command-palette-top-drawer-clean.mp4",
+          "annotatedURL": "https://alexs-macbook-pro-1.tail4e5636.ts.net:10025/test-dae630726/command-palette-top-drawer/command-palette-top-drawer-annotated.mp4"
+        }
+      ]
+    },
+    {
+      "acceptancePoints": [
+        {
+          "id": "source-thread-title",
+          "text": "A supported development-build entry shows a clear source-thread title."
+        },
+        {
+          "id": "thread-identity-preserved",
+          "text": "The link preserves the source thread identity and opens the correct existing T3 thread."
+        },
+        {
+          "id": "no-duplicate-or-wrong-route",
+          "text": "Activating the link does not create a duplicate thread or open an unrelated project or thread."
+        },
+        {
+          "id": "missing-source-state",
+          "text": "An entry without source-thread metadata shows a clear noninteractive state."
+        }
+      ],
+      "aliases": [
+        "source thread link",
+        "whats new thread"
+      ],
+      "behavior": "Show a development change's originating T3 thread and open that exact existing thread from the build changelog when source metadata is available.",
+      "delivery": "direct",
+      "dependsOn": [],
+      "id": "development-build-source-thread",
+      "integratedCommit": "bdfee17f1e9d9bca071488fb9261de53f70d3464",
+      "integratedCommits": [
+        "e1ca3cb09f0eadc6f02c33a959cc0da4912564c0",
+        "bdfee17f1e9d9bca071488fb9261de53f70d3464"
+      ],
+      "knownLimitations": "Only entries that carry a source T3 thread can show a thread link.",
+      "name": "Link development builds to their source T3 thread",
+      "order": 5,
+      "problem": "A development changelog entry identifies a change but does not identify the T3 thread that contains its requirements, decisions, and proof.",
+      "proof": {
+        "buildId": "test-dae630726-isolated-20260815",
+        "buildReceipt": {
+          "path": "/private/tmp/t3-swiftui-test-ci.914d929a/.t3/swiftui-private-ci-artifacts/receipts/test-dae630726-isolated-20260815/test-train.json",
+          "sha256": "8ab8cf5f6adedbd5001f2b5c011191a973673d0c44ef08e15406713e75b7c103"
+        },
+        "featureCommit": "ed15ca2ae993df1ad9435b088cc84b3d65e66716",
+        "packets": [
+          {
+            "acceptancePointIds": [
+              "source-thread-title",
+              "thread-identity-preserved",
+              "no-duplicate-or-wrong-route",
+              "missing-source-state"
+            ],
+            "id": "development-build-source-thread-flow",
+            "receiptPath": "/Users/saphid/.t3/artifacts/swiftui-stream/evidence/test-dae630726-exact-20260815/development-build-source-thread/development-build-source-thread-receipt.json",
+            "receiptSha256": "cebfff91129868d2e22b93935bfac62290f601912b39bf8a7d272441cf4060bb",
+            "validationPath": "/Users/saphid/.t3/artifacts/swiftui-stream/evidence/test-dae630726-exact-20260815/development-build-source-thread/packet-validation.json",
+            "validationSha256": "8c06fe18462272ec9c290fcce052d19b28f4f41c5e226ad21f83dc0a57128af5"
+          }
+        ],
+        "schemaVersion": 2,
+        "sourceCommit": "dae6307263f54d207fe78a7e5f9930be5684e9d6"
+      },
+      "reproductionSteps": [
+        "Open Settings and open the build changelog.",
+        "Expand a development change that has source-thread metadata.",
+        "Open its thread link and compare the destination with the named change."
+      ],
+      "reviewGroup": "Traceability",
+      "reviewMedia": true,
+      "reviewPriority": 9,
+      "sourceCommit": "ed15ca2ae993df1ad9435b088cc84b3d65e66716",
+      "sourceIssue": "https://github.com/saphid/t3code-personal/issues/85",
+      "sourceThread": "508739B1-477F-4CAB-BA79-8816FCCEA000",
+      "sourceThreadTitle": "Add Thread Links to What\u2019s New",
+      "state": "needs-you",
+      "successLooksLike": "Each supported development change clearly names its source thread and opens the correct existing T3 thread rather than a duplicate, wrong thread, or dead destination.",
+      "summary": "Adds the originating T3 work thread to development-build changelog entries so you can move from a visible change to the conversation and evidence that produced it.",
+      "testBuild": 74,
+      "validationSummary": "Exact Test source dae630726 passed 414 native tests across 43 suites, the 130-test XCTest aggregate (129 passed, 1 skipped), and all 25 UI journeys. Fifteen schema-v2 proof packets are sealed, and the review-readiness gate reports 15 items with zero errors.",
+      "whatToCheck": "Open Settings \u2192 Build changelog, expand a development change, and use its source-thread link. Return to Settings and try another entry if available.",
+      "proofCommit": "bdfee17f1e9d9bca071488fb9261de53f70d3464",
+      "proofMediaReceipt": "/Users/saphid/.t3/artifacts/swiftui-stream/evidence/test-dae630726-exact-20260815/development-build-source-thread/proof-media-receipt.json",
+      "visualEvidence": [
+        {
+          "kind": "image",
+          "title": "Link development builds to their source T3 thread \u2014 image proof",
+          "caption": "Shows the dark-mode acceptance state.",
+          "appearance": "dark",
+          "cleanURL": "https://alexs-macbook-pro-1.tail4e5636.ts.net:10025/test-dae630726/development-build-source-thread/development-build-source-thread-clean.png",
+          "annotatedURL": "https://alexs-macbook-pro-1.tail4e5636.ts.net:10025/test-dae630726/development-build-source-thread/development-build-source-thread-annotated.png"
+        },
+        {
+          "kind": "video",
+          "title": "Link development builds to their source T3 thread \u2014 interaction proof",
+          "caption": "Shows the recorded acceptance interaction and expected result.",
+          "appearance": "dark",
+          "cleanURL": "https://alexs-macbook-pro-1.tail4e5636.ts.net:10025/test-dae630726/development-build-source-thread/development-build-source-thread-clean.mp4",
+          "annotatedURL": "https://alexs-macbook-pro-1.tail4e5636.ts.net:10025/test-dae630726/development-build-source-thread/development-build-source-thread-annotated.mp4"
+        }
+      ]
+    },
+    {
+      "acceptancePoints": [
+        {
+          "id": "configured-url-scheme",
+          "text": "The widget constructs its fallback URL from the configured T3CodeURLScheme value."
+        },
+        {
+          "id": "channel-isolation",
+          "text": "Dev, Test, Debug, and Release widget fallbacks remain isolated to their own app channels."
+        },
+        {
+          "id": "new-task-fallback",
+          "text": "Tapping New task or an empty recent-tasks widget opens the same installed app at New task."
+        },
+        {
+          "id": "fallback-never-dead",
+          "text": "The fallback does not open another channel and is not ignored when the Release app is absent."
+        }
+      ],
+      "aliases": [
+        "widget new task link",
+        "test widget deep link"
+      ],
+      "behavior": "Build every recent-tasks widget fallback from the URL scheme of its installed channel so a fallback opens the same app at New task.",
+      "delivery": "direct",
+      "dependsOn": [],
+      "id": "widget-build-channel-links",
+      "integratedCommit": "8ce46a22af48d98babff3084daf42eb2319dcd61",
+      "integratedCommits": [
+        "a1fd13793591f79237d2447e2d7d06fceaeebc1d",
+        "b17869548cc8932710b4dd10fb79fbb97466423a",
+        "8ce46a22af48d98babff3084daf42eb2319dcd61"
+      ],
+      "interactionChange": true,
+      "knownLimitations": "The phone acceptance step needs the recent-tasks widget on the Home Screen and a state without a usable task deep link.",
+      "name": "Keep widget links inside their installed build channel",
+      "order": 16,
+      "problem": "The widget fallback hardcoded the release URL scheme. In SwiftUI Test, tapping New task or an empty widget could open the App Store build or do nothing when that build was absent.",
+      "proof": {
+        "buildId": "test-dae630726-isolated-20260815",
+        "buildReceipt": {
+          "path": "/private/tmp/t3-swiftui-test-ci.914d929a/.t3/swiftui-private-ci-artifacts/receipts/test-dae630726-isolated-20260815/test-train.json",
+          "sha256": "8ab8cf5f6adedbd5001f2b5c011191a973673d0c44ef08e15406713e75b7c103"
+        },
+        "featureCommit": "a1fd13793591f79237d2447e2d7d06fceaeebc1d",
+        "packets": [
+          {
+            "acceptancePointIds": [
+              "configured-url-scheme",
+              "channel-isolation",
+              "new-task-fallback",
+              "fallback-never-dead"
+            ],
+            "id": "widget-build-channel-links-flow",
+            "receiptPath": "/Users/saphid/.t3/artifacts/swiftui-stream/evidence/test-dae630726-exact-20260815/widget-build-channel-links/widget-build-channel-links-receipt.json",
+            "receiptSha256": "236f87ce1fc4865912845a411fd29016d2d646cbe9753804da8b7849109ae2a0",
+            "validationPath": "/Users/saphid/.t3/artifacts/swiftui-stream/evidence/test-dae630726-exact-20260815/widget-build-channel-links/packet-validation.json",
+            "validationSha256": "4a04ffe612cf7fdf18dbeb1879559430c7d20b3db0a7c6574f24fd1fbc7b9885"
+          }
+        ],
+        "schemaVersion": 2,
+        "sourceCommit": "dae6307263f54d207fe78a7e5f9930be5684e9d6"
+      },
+      "reproductionSteps": [
+        "Install SwiftUI Test without relying on another T3 Code build.",
+        "Add the recent-tasks widget and use a state with no usable task deep link.",
+        "Tap New task or the empty widget and observe which app and destination open."
+      ],
+      "reviewGroup": "Build isolation",
+      "reviewMedia": true,
+      "reviewPriority": 3,
+      "sourceCommit": "a1fd13793591f79237d2447e2d7d06fceaeebc1d",
+      "sourceIssue": "https://github.com/saphid/t3code-personal/issues/89",
+      "sourceThread": "508739B1-477F-4CAB-BA79-8816FCCEA000",
+      "sourceThreadTitle": "Add Thread Links to What\u2019s New",
+      "state": "needs-you",
+      "successLooksLike": "Every fallback tap opens this same SwiftUI Test installation at New task. No App Store, Dev, or Debug copy opens, and the tap is never ignored.",
+      "summary": "Builds every recent-tasks widget fallback from the URL scheme configured for that copy of T3 Code, so Test opens Test, Dev opens Dev, and release opens release.",
+      "testBuild": 74,
+      "validationSummary": "Exact Test source dae630726 passed 414 native tests across 43 suites, the 130-test XCTest aggregate (129 passed, 1 skipped), and all 25 UI journeys. Fifteen schema-v2 proof packets are sealed, and the review-readiness gate reports 15 items with zero errors.",
+      "visualChange": true,
+      "whatToCheck": "From a recent-tasks widget with no usable task destination, tap New task and the widget body. Confirm the installed SwiftUI Test app opens directly at New task rather than another channel or a dead link.",
+      "proofCommit": "8ce46a22af48d98babff3084daf42eb2319dcd61",
+      "proofMediaReceipt": "/Users/saphid/.t3/artifacts/swiftui-stream/evidence/test-dae630726-exact-20260815/widget-build-channel-links/proof-media-receipt.json",
+      "visualEvidence": [
+        {
+          "kind": "image",
+          "title": "Keep widget links inside their installed build channel \u2014 image proof",
+          "caption": "Shows the dark-mode acceptance state.",
+          "appearance": "dark",
+          "cleanURL": "https://alexs-macbook-pro-1.tail4e5636.ts.net:10025/test-dae630726/widget-build-channel-links/widget-build-channel-links-clean.png",
+          "annotatedURL": "https://alexs-macbook-pro-1.tail4e5636.ts.net:10025/test-dae630726/widget-build-channel-links/widget-build-channel-links-annotated.png"
+        },
+        {
+          "kind": "video",
+          "title": "Keep widget links inside their installed build channel \u2014 interaction proof",
+          "caption": "Shows the recorded acceptance interaction and expected result.",
+          "appearance": "dark",
+          "cleanURL": "https://alexs-macbook-pro-1.tail4e5636.ts.net:10025/test-dae630726/widget-build-channel-links/widget-build-channel-links-clean.mp4",
+          "annotatedURL": "https://alexs-macbook-pro-1.tail4e5636.ts.net:10025/test-dae630726/widget-build-channel-links/widget-build-channel-links-annotated.mp4"
+        }
+      ]
+    },
+    {
+      "acceptancePoints": [
+        {
+          "id": "newer-live-state-wins",
+          "text": "Newer live messages and working state win over stale initial history."
+        },
+        {
+          "id": "no-disappear-duplicate-revert",
+          "text": "A message or status does not disappear, duplicate, or revert when the initial history response arrives."
+        },
+        {
+          "id": "stable-reopen-order",
+          "text": "Leaving and reopening the thread produces the same forward-moving ordered timeline."
+        },
+        {
+          "id": "deterministic-race-contract",
+          "text": "A deterministic initial-load race covers the merge behavior."
+        }
+      ],
+      "aliases": [
+        "initial thread updates",
+        "thread refresh"
+      ],
+      "behavior": "Merge initial thread history with newer live events so the first history response cannot erase, duplicate, or revert messages and working state that arrived during opening.",
+      "delivery": "direct",
+      "dependsOn": [],
+      "id": "initial-thread-live-updates",
+      "integratedCommit": "2c2f4fe27c248dc93ab4f9b36b627f72ab5daf57",
+      "integratedCommits": [
+        "2c2f4fe27c248dc93ab4f9b36b627f72ab5daf57"
+      ],
+      "knownLimitations": "A useful manual check needs a thread with a live update during the initial history request.",
+      "name": "Preserve live updates during initial thread open",
+      "order": 6,
+      "problem": "A slower initial history response can replace a newer live event, so a message or status can appear and then disappear or revert during first open.",
+      "proof": {
+        "buildId": "test-dae630726-isolated-20260815",
+        "buildReceipt": {
+          "path": "/private/tmp/t3-swiftui-test-ci.914d929a/.t3/swiftui-private-ci-artifacts/receipts/test-dae630726-isolated-20260815/test-train.json",
+          "sha256": "8ab8cf5f6adedbd5001f2b5c011191a973673d0c44ef08e15406713e75b7c103"
+        },
+        "featureCommit": "dd2ecbb4a53a16e9c4b0c907ecfddcfe30de8e0b",
+        "packets": [
+          {
+            "acceptancePointIds": [
+              "newer-live-state-wins",
+              "no-disappear-duplicate-revert",
+              "stable-reopen-order",
+              "deterministic-race-contract"
+            ],
+            "id": "initial-thread-live-updates-flow",
+            "receiptPath": "/Users/saphid/.t3/artifacts/swiftui-stream/evidence/test-dae630726-exact-20260815/initial-thread-live-updates/initial-thread-live-updates-receipt.json",
+            "receiptSha256": "55e3ba75c2ec1dc2ef659e3e91117e79613fc5cac0f4921fc4cc9aef83c46b44",
+            "validationPath": "/Users/saphid/.t3/artifacts/swiftui-stream/evidence/test-dae630726-exact-20260815/initial-thread-live-updates/packet-validation.json",
+            "validationSha256": "0c8ce1d1e93e739a2fc69957d80c7764ee3da16a7ce25de881ca87862cbdefce"
+          }
+        ],
+        "schemaVersion": 2,
+        "sourceCommit": "dae6307263f54d207fe78a7e5f9930be5684e9d6"
+      },
+      "reproductionSteps": [
+        "Choose a thread that is receiving a response or another live update.",
+        "Open the thread while its stored history is still loading.",
+        "Watch the newest message and status through the first load, then leave and reopen."
+      ],
+      "reviewGroup": "Core reliability",
+      "reviewMedia": true,
+      "reviewPriority": 2,
+      "sourceCommit": "dd2ecbb4a53a16e9c4b0c907ecfddcfe30de8e0b",
+      "sourceIssue": "https://github.com/saphid/t3code-personal/issues/83",
+      "sourceThread": "1B30199A-3681-4A1B-B938-B735767508C4",
+      "sourceThreadTitle": "Fix SwiftUI Thread Initial Updates",
+      "state": "needs-you",
+      "successLooksLike": "Messages and status move forward without briefly appearing and then disappearing, duplicating, reverting, or requiring a manual refresh.",
+      "summary": "Prevents the first thread-history response from overwriting newer live messages or status updates that arrive while the thread is opening.",
+      "testBuild": 74,
+      "validationSummary": "Exact Test source dae630726 passed 414 native tests across 43 suites, the 130-test XCTest aggregate (129 passed, 1 skipped), and all 25 UI journeys. Fifteen schema-v2 proof packets are sealed, and the review-readiness gate reports 15 items with zero errors.",
+      "whatToCheck": "Open a busy or actively responding thread from Home and watch the first load. Send or receive an update during opening if practical, then leave and reopen the thread.",
+      "proofCommit": "2c2f4fe27c248dc93ab4f9b36b627f72ab5daf57",
+      "proofMediaReceipt": "/Users/saphid/.t3/artifacts/swiftui-stream/evidence/test-dae630726-exact-20260815/initial-thread-live-updates/proof-media-receipt.json",
+      "visualEvidence": [
+        {
+          "kind": "image",
+          "title": "Preserve live updates during initial thread open \u2014 image proof",
+          "caption": "Shows the dark-mode acceptance state.",
+          "appearance": "dark",
+          "cleanURL": "https://alexs-macbook-pro-1.tail4e5636.ts.net:10025/test-dae630726/initial-thread-live-updates/initial-thread-live-updates-clean.png",
+          "annotatedURL": "https://alexs-macbook-pro-1.tail4e5636.ts.net:10025/test-dae630726/initial-thread-live-updates/initial-thread-live-updates-annotated.png"
+        },
+        {
+          "kind": "video",
+          "title": "Preserve live updates during initial thread open \u2014 interaction proof",
+          "caption": "Shows the recorded acceptance interaction and expected result.",
+          "appearance": "dark",
+          "cleanURL": "https://alexs-macbook-pro-1.tail4e5636.ts.net:10025/test-dae630726/initial-thread-live-updates/initial-thread-live-updates-clean.mp4",
+          "annotatedURL": "https://alexs-macbook-pro-1.tail4e5636.ts.net:10025/test-dae630726/initial-thread-live-updates/initial-thread-live-updates-annotated.mp4"
+        }
+      ]
+    },
+    {
+      "acceptancePoints": [
+        {
+          "id": "typed-protocol-contract",
+          "text": "Native models and requests preserve pull-request metadata, diffs, comments, and the reviewed upstream wire names."
+        },
+        {
+          "id": "authenticated-patch-loading",
+          "text": "Pull-request patches use the authenticated HTTP path and preserve structured status and error information."
+        },
+        {
+          "id": "capability-no-probe-gate",
+          "text": "The client does not probe pull-request APIs when capabilities.pullRequests is absent."
+        },
+        {
+          "id": "ordinary-workspace-regression-safety",
+          "text": "Standard non-pull-request workspaces continue to open and load without malformed PR content or crashes."
+        }
+      ],
+      "aliases": [
+        "pull request protocol",
+        "pr workspace"
+      ],
+      "behavior": "Provide typed native pull-request models, RPC requests, authenticated patch loading, structured errors, and capability gating without probing servers that do not advertise pull-request support.",
+      "delivery": "direct",
+      "dependsOn": [],
+      "id": "pull-request-workspace-protocol",
+      "integratedCommit": "455781e7e37fc0021671aa4660e1a5150d1777f7",
+      "integratedCommits": [
+        "455781e7e37fc0021671aa4660e1a5150d1777f7"
+      ],
+      "knownLimitations": "This is a dependency of the visible PR inbox. Review both PR items as one workflow; the protocol has no useful standalone phone acceptance step.",
+      "name": "Native pull-request workspace protocol foundation",
+      "order": 7,
+      "problem": "The native client had no typed protocol for pull-request metadata, diffs, comments, or related requests, so a reliable native PR experience could not be built.",
+      "proof": {
+        "buildId": "test-dae630726-isolated-20260815",
+        "buildReceipt": {
+          "path": "/private/tmp/t3-swiftui-test-ci.914d929a/.t3/swiftui-private-ci-artifacts/receipts/test-dae630726-isolated-20260815/test-train.json",
+          "sha256": "8ab8cf5f6adedbd5001f2b5c011191a973673d0c44ef08e15406713e75b7c103"
+        },
+        "featureCommit": "4f967ba4617fe75839d1da1fcc2e45227eb04b7f",
+        "packets": [
+          {
+            "acceptancePointIds": [
+              "typed-protocol-contract",
+              "authenticated-patch-loading",
+              "capability-no-probe-gate",
+              "ordinary-workspace-regression-safety"
+            ],
+            "id": "pull-request-workspace-protocol-flow",
+            "receiptPath": "/Users/saphid/.t3/artifacts/swiftui-stream/evidence/test-dae630726-exact-20260815/pull-request-workspace-protocol/pull-request-workspace-protocol-receipt.json",
+            "receiptSha256": "46e2380e71b9a6569f60e84455ed818e059ff5f19da02db21bddee0300d1cc97",
+            "validationPath": "/Users/saphid/.t3/artifacts/swiftui-stream/evidence/test-dae630726-exact-20260815/pull-request-workspace-protocol/packet-validation.json",
+            "validationSha256": "4f12e78260117e4f26d755669a1a44dc8c9364ddc1b27058aa5a4f1f39991ae3"
+          }
+        ],
+        "schemaVersion": 2,
+        "sourceCommit": "dae6307263f54d207fe78a7e5f9930be5684e9d6"
+      },
+      "reproductionSteps": [
+        "Connect to an environment whose repository has an open pull request.",
+        "Open the pull-request inbox and select a pull request.",
+        "Inspect its metadata, Summary, and Timeline, then return to a normal workspace."
+      ],
+      "reviewGroup": "Pull requests",
+      "reviewMedia": true,
+      "reviewPriority": 7,
+      "sourceCommit": "4f967ba4617fe75839d1da1fcc2e45227eb04b7f",
+      "sourceIssue": "https://github.com/saphid/personal-ops/issues/94",
+      "sourceThread": "ECA79DCF-1DD0-4FDD-B736-870854E7FDAB",
+      "sourceThreadTitle": "Port PR and GitHub Features",
+      "state": "needs-you",
+      "successLooksLike": "Supported PR information loads accurately without crashes, malformed content, or regressions to standard workspace and review behavior. Missing capabilities fail clearly rather than showing incorrect data.",
+      "summary": "Adds the native data and transport foundation for pull-request workspace features, including typed PR metadata, diffs, comments, and related server requests.",
+      "testBuild": 74,
+      "validationSummary": "Exact Test source dae630726 passed 414 native tests across 43 suites, the 130-test XCTest aggregate (129 passed, 1 skipped), and all 25 UI journeys. Fifteen schema-v2 proof packets are sealed, and the review-readiness gate reports 15 items with zero errors.",
+      "whatToCheck": "Exercise any available pull-request workspace or review entry points against a repository with an open PR. Inspect metadata and diffs, and verify ordinary non-PR workspaces still open normally.",
+      "proofCommit": "455781e7e37fc0021671aa4660e1a5150d1777f7",
+      "proofMediaReceipt": "/Users/saphid/.t3/artifacts/swiftui-stream/evidence/test-dae630726-exact-20260815/pull-request-workspace-protocol/proof-media-receipt.json",
+      "visualEvidence": [
+        {
+          "kind": "image",
+          "title": "Native pull-request workspace protocol foundation \u2014 image proof",
+          "caption": "Shows the dark-mode acceptance state.",
+          "appearance": "dark",
+          "cleanURL": "https://alexs-macbook-pro-1.tail4e5636.ts.net:10025/test-dae630726/pull-request-workspace-protocol/pull-request-workspace-protocol-clean.png",
+          "annotatedURL": "https://alexs-macbook-pro-1.tail4e5636.ts.net:10025/test-dae630726/pull-request-workspace-protocol/pull-request-workspace-protocol-annotated.png"
+        },
+        {
+          "kind": "video",
+          "title": "Native pull-request workspace protocol foundation \u2014 interaction proof",
+          "caption": "Shows the recorded acceptance interaction and expected result.",
+          "appearance": "dark",
+          "cleanURL": "https://alexs-macbook-pro-1.tail4e5636.ts.net:10025/test-dae630726/pull-request-workspace-protocol/pull-request-workspace-protocol-clean.mp4",
+          "annotatedURL": "https://alexs-macbook-pro-1.tail4e5636.ts.net:10025/test-dae630726/pull-request-workspace-protocol/pull-request-workspace-protocol-annotated.mp4"
+        }
+      ]
+    },
+    {
+      "acceptancePoints": [
+        {
+          "id": "single-environment-inbox",
+          "text": "The inbox lists pull requests for the active environment without mixing repositories or environments."
+        },
+        {
+          "id": "accurate-list-metadata",
+          "text": "Pull-request titles, state, involvement, project, host, and deferred statistics agree with the connected repository."
+        },
+        {
+          "id": "summary-detail",
+          "text": "Selecting a pull request opens its expected read-only Summary content."
+        },
+        {
+          "id": "chronological-timeline",
+          "text": "Timeline shows the selected pull request's activity in stable chronological order."
+        },
+        {
+          "id": "read-only-scope-boundary",
+          "text": "The slice does not expose diff, mutation, comment, reviewer-management, or merge actions."
+        }
+      ],
+      "aliases": [
+        "pull request inbox",
+        "pr summary",
+        "pr timeline"
+      ],
+      "behavior": "Show a read-only pull-request inbox for one active environment and push a selected pull request into distinct Summary and chronological Timeline detail views.",
+      "branch": "personal/swiftui-pr-inbox-summary-timeline-20260813",
+      "delivery": "direct",
+      "dependsOn": [
+        "pull-request-workspace-protocol"
+      ],
+      "id": "pull-request-inbox-summary-timeline",
+      "integratedCommit": "12febfd914a51f10d4222deb3d759702d0a75c36",
+      "integratedCommits": [
+        "12febfd914a51f10d4222deb3d759702d0a75c36"
+      ],
+      "knownLimitations": "The first version is scoped to the active environment. Review it with the protocol foundation that supplies its data.",
+      "name": "Single-environment pull-request inbox with Summary and Timeline detail",
+      "order": 12,
+      "problem": "The native client does not provide one place to see the active environment's pull requests and inspect a selected pull request as a concise summary plus event timeline.",
+      "proof": {
+        "buildId": "test-dae630726-isolated-20260815",
+        "buildReceipt": {
+          "path": "/private/tmp/t3-swiftui-test-ci.914d929a/.t3/swiftui-private-ci-artifacts/receipts/test-dae630726-isolated-20260815/test-train.json",
+          "sha256": "8ab8cf5f6adedbd5001f2b5c011191a973673d0c44ef08e15406713e75b7c103"
+        },
+        "featureCommit": "09ffaedd32cf32550af6ed262186549481c97838",
+        "packets": [
+          {
+            "acceptancePointIds": [
+              "single-environment-inbox",
+              "accurate-list-metadata",
+              "summary-detail",
+              "chronological-timeline",
+              "read-only-scope-boundary"
+            ],
+            "id": "pull-request-inbox-summary-timeline-flow",
+            "receiptPath": "/Users/saphid/.t3/artifacts/swiftui-stream/evidence/test-dae630726-exact-20260815/pull-request-inbox-summary-timeline/pull-request-inbox-summary-timeline-receipt.json",
+            "receiptSha256": "4b545de7673832d7d0f2a65aa969beb53781cdd6f2fc54f30529843b8d5d1edd",
+            "validationPath": "/Users/saphid/.t3/artifacts/swiftui-stream/evidence/test-dae630726-exact-20260815/pull-request-inbox-summary-timeline/packet-validation.json",
+            "validationSha256": "d77898685a45c2fd9e17485c4b2abb996f22fb15cf11b602bbaaafc3f1e2f004"
+          }
+        ],
+        "schemaVersion": 2,
+        "sourceCommit": "dae6307263f54d207fe78a7e5f9930be5684e9d6"
+      },
+      "reproductionSteps": [
+        "Connect to an environment whose repository has more than one open pull request.",
+        "Open the pull-request inbox and compare the list with the repository.",
+        "Open a pull request, switch between Summary and Timeline, then return to the list."
+      ],
+      "reviewGroup": "Pull requests",
+      "reviewMedia": true,
+      "reviewPriority": 7,
+      "sourceCommit": "09ffaedd32cf32550af6ed262186549481c97838",
+      "sourceIssue": "https://github.com/saphid/personal-ops/issues/94",
+      "sourceThread": "ECA79DCF-1DD0-4FDD-B736-870854E7FDAB",
+      "startingBaseline": "125ed781e20716091222651092ed2708448bb6b6",
+      "state": "needs-you",
+      "successLooksLike": "The list represents the active environment accurately, details load for the selected PR, Summary and Timeline show the expected content in order, and navigation remains responsive without mixing environments.",
+      "summary": "Adds a native pull-request inbox for the active environment with a PR detail screen split into clear Summary and Timeline views.",
+      "testBuild": 74,
+      "validationSummary": "Exact Test source dae630726 passed 414 native tests across 43 suites, the 130-test XCTest aggregate (129 passed, 1 skipped), and all 25 UI journeys. Fifteen schema-v2 proof packets are sealed, and the review-readiness gate reports 15 items with zero errors.",
+      "whatToCheck": "In a connected environment with open pull requests, open the PR inbox, compare titles and status with GitHub, enter several PRs, switch between Summary and Timeline, and return to the workspace.",
+      "proofCommit": "12febfd914a51f10d4222deb3d759702d0a75c36",
+      "proofMediaReceipt": "/Users/saphid/.t3/artifacts/swiftui-stream/evidence/test-dae630726-exact-20260815/pull-request-inbox-summary-timeline/proof-media-receipt.json",
+      "visualEvidence": [
+        {
+          "kind": "image",
+          "title": "Single-environment pull-request inbox with Summary and Timeline detail \u2014 image proof",
+          "caption": "Shows the dark-mode acceptance state.",
+          "appearance": "dark",
+          "cleanURL": "https://alexs-macbook-pro-1.tail4e5636.ts.net:10025/test-dae630726/pull-request-inbox-summary-timeline/pull-request-inbox-summary-timeline-clean.png",
+          "annotatedURL": "https://alexs-macbook-pro-1.tail4e5636.ts.net:10025/test-dae630726/pull-request-inbox-summary-timeline/pull-request-inbox-summary-timeline-annotated.png"
+        },
+        {
+          "kind": "video",
+          "title": "Single-environment pull-request inbox with Summary and Timeline detail \u2014 interaction proof",
+          "caption": "Shows the recorded acceptance interaction and expected result.",
+          "appearance": "dark",
+          "cleanURL": "https://alexs-macbook-pro-1.tail4e5636.ts.net:10025/test-dae630726/pull-request-inbox-summary-timeline/pull-request-inbox-summary-timeline-clean.mp4",
+          "annotatedURL": "https://alexs-macbook-pro-1.tail4e5636.ts.net:10025/test-dae630726/pull-request-inbox-summary-timeline/pull-request-inbox-summary-timeline-annotated.mp4"
+        }
+      ]
+    },
+    {
+      "acceptancePoints": [
+        {
+          "id": "error-content-retained",
+          "text": "Useful error content remains available before and after Retry appears."
+        },
+        {
+          "id": "accessible-retry-target",
+          "text": "Retry has a stable accessibility label and a predictable focus target."
+        },
+        {
+          "id": "cancellation-is-not-failure",
+          "text": "Cancellation does not present a false failure."
+        },
+        {
+          "id": "recovery-preserves-context",
+          "text": "Successful recovery does not duplicate or erase the prior tool or source-control context."
+        }
+      ],
+      "aliases": [
+        "tool content",
+        "accessible recovery"
+      ],
+      "behavior": "Retain useful failed tool or source-control content, expose a clearly labelled Retry action, and move accessibility focus predictably through failure and recovery.",
+      "delivery": "direct",
+      "dependsOn": [],
+      "id": "safe-tool-content-recovery",
+      "integratedCommit": "2b1cf46a76afb0825dff0cec505307807149992e",
+      "integratedCommits": [
+        "d79d498f546c888971ca2f6807b7618c7d972ecb",
+        "1976e870b0e9fa57ca05c98c33370fc21030b8e2",
+        "2b1cf46a76afb0825dff0cec505307807149992e"
+      ],
+      "knownLimitations": "The manual path needs a retained recoverable tool error; the proof fixture supplies one without using credentials.",
+      "name": "Preserve SwiftUI tool content with safe accessible recovery",
+      "order": 8,
+      "problem": "A failed tool event can lose useful error content, and Retry can leave VoiceOver or keyboard focus in an unclear place after recovery.",
+      "proof": {
+        "buildId": "test-dae630726-isolated-20260815",
+        "buildReceipt": {
+          "path": "/private/tmp/t3-swiftui-test-ci.914d929a/.t3/swiftui-private-ci-artifacts/receipts/test-dae630726-isolated-20260815/test-train.json",
+          "sha256": "8ab8cf5f6adedbd5001f2b5c011191a973673d0c44ef08e15406713e75b7c103"
+        },
+        "featureCommit": "9006b8de9bf6e27e466efed43ef232aa2163c4ff",
+        "packets": [
+          {
+            "acceptancePointIds": [
+              "error-content-retained",
+              "accessible-retry-target",
+              "cancellation-is-not-failure",
+              "recovery-preserves-context"
+            ],
+            "id": "safe-tool-content-recovery-flow",
+            "receiptPath": "/Users/saphid/.t3/artifacts/swiftui-stream/evidence/test-dae630726-exact-20260815/safe-tool-content-recovery/safe-tool-content-recovery-receipt.json",
+            "receiptSha256": "521fdbb2e7acdbc756273a6d2c5ff9e543635b7f7292a4f4ed63fc1c538704cb",
+            "validationPath": "/Users/saphid/.t3/artifacts/swiftui-stream/evidence/test-dae630726-exact-20260815/safe-tool-content-recovery/packet-validation.json",
+            "validationSha256": "65cc79aa689caf2ebaf2eaa475331a005dc476439624ac936b33eb6b3ddc4127"
+          }
+        ],
+        "schemaVersion": 2,
+        "sourceCommit": "dae6307263f54d207fe78a7e5f9930be5684e9d6"
+      },
+      "reproductionSteps": [
+        "Open a thread that contains a failed or recoverable tool result.",
+        "Read the retained failure content and move accessibility focus to Retry.",
+        "Activate Retry and observe the result, retained context, and new focus target."
+      ],
+      "reviewGroup": "Accessible recovery",
+      "reviewMedia": true,
+      "reviewPriority": 8,
+      "sourceCommit": "9006b8de9bf6e27e466efed43ef232aa2163c4ff",
+      "sourceIssue": "https://github.com/saphid/t3code-personal/issues/87",
+      "sourceThread": "84C318E3-49C0-4F00-8E6D-9874969057D0",
+      "sourceThreadTitle": "Audit and Uplift SwiftUI Code",
+      "state": "needs-you",
+      "successLooksLike": "The useful error content remains visible, Retry is clearly labeled and operable, focus moves to a sensible element, and successful recovery does not duplicate or erase prior context.",
+      "summary": "Keeps failed tool output available and makes retry recovery accessible, including predictable focus after an error instead of losing content or focus context.",
+      "testBuild": 74,
+      "validationSummary": "Exact Test source dae630726 passed 414 native tests across 43 suites, the 130-test XCTest aggregate (129 passed, 1 skipped), and all 25 UI journeys. Fifteen schema-v2 proof packets are sealed, and the review-readiness gate reports 15 items with zero errors.",
+      "whatToCheck": "Trigger or revisit a recoverable tool/source-control error, read the retained error content with normal navigation or VoiceOver, activate Retry, and observe focus after recovery.",
+      "proofCommit": "2b1cf46a76afb0825dff0cec505307807149992e",
+      "proofMediaReceipt": "/Users/saphid/.t3/artifacts/swiftui-stream/evidence/test-dae630726-exact-20260815/safe-tool-content-recovery/proof-media-receipt.json",
+      "visualEvidence": [
+        {
+          "kind": "image",
+          "title": "Preserve SwiftUI tool content with safe accessible recovery \u2014 image proof",
+          "caption": "Shows the dark-mode acceptance state.",
+          "appearance": "dark",
+          "cleanURL": "https://alexs-macbook-pro-1.tail4e5636.ts.net:10025/test-dae630726/safe-tool-content-recovery/safe-tool-content-recovery-clean.png",
+          "annotatedURL": "https://alexs-macbook-pro-1.tail4e5636.ts.net:10025/test-dae630726/safe-tool-content-recovery/safe-tool-content-recovery-annotated.png"
+        },
+        {
+          "kind": "video",
+          "title": "Preserve SwiftUI tool content with safe accessible recovery \u2014 interaction proof",
+          "caption": "Shows the recorded acceptance interaction and expected result.",
+          "appearance": "dark",
+          "cleanURL": "https://alexs-macbook-pro-1.tail4e5636.ts.net:10025/test-dae630726/safe-tool-content-recovery/safe-tool-content-recovery-clean.mp4",
+          "annotatedURL": "https://alexs-macbook-pro-1.tail4e5636.ts.net:10025/test-dae630726/safe-tool-content-recovery/safe-tool-content-recovery-annotated.mp4"
+        }
+      ]
+    },
+    {
+      "acceptancePoints": [
+        {
+          "id": "test-only-private-route",
+          "text": "The one-tap Personal Connect route is available only in the SwiftUI Test channel."
+        },
+        {
+          "id": "allowlisted-tailnet-hosts",
+          "text": "The route contacts only configured allowlisted Tailnet pairing brokers and validates their responses."
+        },
+        {
+          "id": "one-action-pairing",
+          "text": "One action completes broker minting, direct token exchange, and connection handoff without copying a pairing code."
+        },
+        {
+          "id": "connection-persists",
+          "text": "The connected environment remains available after the app is reopened."
+        },
+        {
+          "id": "manual-fallbacks-remain",
+          "text": "QR, paste, and manual pairing remain available, and an unreachable host shows a clear error without altering other saved connections."
+        }
+      ],
+      "aliases": [
+        "personal connect",
+        "one-tap pairing",
+        "test app pairing"
+      ],
+      "behavior": "Let SwiftUI Test request a one-minute pairing URL from an allowlisted Tailnet host and reuse the existing direct-pairing flow without manual code entry.",
+      "branch": "feat/swiftui-personal-connect-test",
+      "delivery": "local-only",
+      "dependsOn": [],
+      "id": "swiftui-test-personal-connect",
+      "integratedCommit": "cf5a183ad3eecefd6f28513d7f8da9bd6827b38b",
+      "integratedCommits": [
+        "fb9af99ef8ab664956368d34329584529be4e7c9",
+        "8ade837f1a154ffdbccca8f816315cb1f0659e4c",
+        "fe67305ab5be0d3795f41ad33c05a650d60eb249",
+        "f0a23344fa4c2b2538eec7f254d830630aa239b1",
+        "cf5a183ad3eecefd6f28513d7f8da9bd6827b38b"
+      ],
+      "knownLimitations": "The private route works only on Alex's Tailnet and is intentionally excluded from upstream delivery.",
+      "name": "Pair SwiftUI Test through the private Tailnet without entering a code",
+      "order": 9,
+      "problem": "If another phone build breaks the normal T3 connection flow, Test needs an independent private recovery route that does not require copying a short-lived pairing code.",
+      "proof": {
+        "buildId": "test-dae630726-isolated-20260815",
+        "buildReceipt": {
+          "path": "/private/tmp/t3-swiftui-test-ci.914d929a/.t3/swiftui-private-ci-artifacts/receipts/test-dae630726-isolated-20260815/test-train.json",
+          "sha256": "8ab8cf5f6adedbd5001f2b5c011191a973673d0c44ef08e15406713e75b7c103"
+        },
+        "featureCommit": "727d9ac4c132fe86ba2a1ce385f2e1a66be89da0",
+        "packets": [
+          {
+            "acceptancePointIds": [
+              "test-only-private-route",
+              "allowlisted-tailnet-hosts",
+              "one-action-pairing",
+              "connection-persists",
+              "manual-fallbacks-remain"
+            ],
+            "id": "swiftui-test-personal-connect-flow",
+            "receiptPath": "/Users/saphid/.t3/artifacts/swiftui-stream/evidence/test-dae630726-exact-20260815/swiftui-test-personal-connect/swiftui-test-personal-connect-receipt.json",
+            "receiptSha256": "1b8206e1cd28253325f881791b7436eb4a4111c9b02343a85394207a7e0e46e3",
+            "validationPath": "/Users/saphid/.t3/artifacts/swiftui-stream/evidence/test-dae630726-exact-20260815/swiftui-test-personal-connect/packet-validation.json",
+            "validationSha256": "1e0f612a3255452176ca6768d18767a18d0bfe341e183400944e204a784c19ab"
+          }
+        ],
+        "schemaVersion": 2,
+        "sourceCommit": "dae6307263f54d207fe78a7e5f9930be5684e9d6"
+      },
+      "reproductionSteps": [
+        "Start SwiftUI Test while it is unpaired or disconnected and the phone is on Tailnet.",
+        "Choose the personal connection option.",
+        "Complete the connection, relaunch the app, and confirm the saved environment remains available."
+      ],
+      "reviewGroup": "Connection safety",
+      "reviewMedia": true,
+      "reviewPriority": 5,
+      "sourceCommit": "727d9ac4c132fe86ba2a1ce385f2e1a66be89da0",
+      "sourceIssue": "https://github.com/saphid/t3code-personal/issues/54",
+      "sourceThread": "019ff7b4-531e-7d43-9233-ced5bc44bb3b",
+      "startingBaseline": "d79e45e3ae1e305b248c751d6a51bac7210fff6a",
+      "state": "needs-you",
+      "successLooksLike": "The intended private host is identified clearly, one action establishes the connection without a code, it persists on reopen, and failures explain what is unavailable without altering other saved connections.",
+      "summary": "Adds a private one-tap connection route for the Test app so it can pair with the known personal T3 host over Tailnet without manually entering a pairing code.",
+      "testBuild": 74,
+      "validationSummary": "Exact Test source dae630726 passed 414 native tests across 43 suites, the 130-test XCTest aggregate (129 passed, 1 skipped), and all 25 UI journeys. Fifteen schema-v2 proof packets are sealed, and the review-readiness gate reports 15 items with zero errors.",
+      "whatToCheck": "From an unpaired or disconnected Test app on Tailnet, choose the personal connection option, complete the connection, reopen the app, and also inspect the unavailable/error state with the host unreachable if practical.",
+      "proofCommit": "cf5a183ad3eecefd6f28513d7f8da9bd6827b38b",
+      "proofMediaReceipt": "/Users/saphid/.t3/artifacts/swiftui-stream/evidence/test-dae630726-exact-20260815/swiftui-test-personal-connect/proof-media-receipt.json",
+      "visualEvidence": [
+        {
+          "kind": "image",
+          "title": "Pair SwiftUI Test through the private Tailnet without entering a code \u2014 image proof",
+          "caption": "Shows the dark-mode acceptance state.",
+          "appearance": "dark",
+          "cleanURL": "https://alexs-macbook-pro-1.tail4e5636.ts.net:10025/test-dae630726/swiftui-test-personal-connect/swiftui-test-personal-connect-clean.png",
+          "annotatedURL": "https://alexs-macbook-pro-1.tail4e5636.ts.net:10025/test-dae630726/swiftui-test-personal-connect/swiftui-test-personal-connect-annotated.png"
+        },
+        {
+          "kind": "video",
+          "title": "Pair SwiftUI Test through the private Tailnet without entering a code \u2014 interaction proof",
+          "caption": "Shows the recorded acceptance interaction and expected result.",
+          "appearance": "dark",
+          "cleanURL": "https://alexs-macbook-pro-1.tail4e5636.ts.net:10025/test-dae630726/swiftui-test-personal-connect/swiftui-test-personal-connect-clean.mp4",
+          "annotatedURL": "https://alexs-macbook-pro-1.tail4e5636.ts.net:10025/test-dae630726/swiftui-test-personal-connect/swiftui-test-personal-connect-annotated.mp4"
+        }
+      ]
+    },
+    {
+      "acceptancePoints": [
+        {
+          "id": "first-cold-drag-responds",
+          "text": "The populated Home list responds to the first drag immediately after a cold launch."
+        },
+        {
+          "id": "metadata-does-not-steal-scroll",
+          "text": "Metadata and badge completion does not freeze, snap back, or reapply the Home snapshot during scrolling."
+        },
+        {
+          "id": "return-home-remains-scrollable",
+          "text": "After opening a thread and returning Home, the first drag remains responsive."
+        },
+        {
+          "id": "normal-and-accessibility-layout",
+          "text": "Cold-start scrolling remains usable at normal and accessibility text sizes without clipped multi-line rows."
+        }
+      ],
+      "aliases": [
+        "cold boot scrolling",
+        "cold launch home list",
+        "startup list scroll"
+      ],
+      "behavior": "Update live Home cells and warm metadata caches without reapplying the collection snapshot, so cold-start metadata completion cannot interrupt the first list drag.",
+      "branch": "fix/swiftui-cold-boot-list-scroll-20260813",
+      "candidateCommit": "9b5c591cebdf1d47f5c954f116470141b5060011",
+      "delivery": "direct",
+      "dependsOn": [
+        "home-thread-list-scrolling"
+      ],
+      "featureReceipt": "~/.t3/swiftui-stream/feature-receipts/cold-boot-home-list-scrolling/9b5c591cebdf1d47f5c954f116470141b5060011/receipt.json",
+      "id": "cold-boot-home-list-scrolling",
+      "integratedCommit": "17ac7f22296043125a10c09f0392766ec69e6994",
+      "integratedCommits": [
+        "17ac7f22296043125a10c09f0392766ec69e6994"
+      ],
+      "knownLimitations": "Review this item with ordinary Home scrolling and the command drawer because all three affect Home interaction.",
+      "name": "Keep the Home list scrollable during cold-boot metadata loading",
+      "order": 10,
+      "problem": "During a cold launch, metadata loading can repeatedly update Home and interrupt the first drag, which makes the populated thread list freeze or snap back.",
+      "proof": {
+        "buildId": "test-dae630726-isolated-20260815",
+        "buildReceipt": {
+          "path": "/private/tmp/t3-swiftui-test-ci.914d929a/.t3/swiftui-private-ci-artifacts/receipts/test-dae630726-isolated-20260815/test-train.json",
+          "sha256": "8ab8cf5f6adedbd5001f2b5c011191a973673d0c44ef08e15406713e75b7c103"
+        },
+        "featureCommit": "276d2e427a5aad188cf45adb68aa43075dc4d03d",
+        "packets": [
+          {
+            "acceptancePointIds": [
+              "first-cold-drag-responds",
+              "metadata-does-not-steal-scroll",
+              "return-home-remains-scrollable",
+              "normal-and-accessibility-layout"
+            ],
+            "id": "cold-boot-home-list-scrolling-flow",
+            "receiptPath": "/Users/saphid/.t3/artifacts/swiftui-stream/evidence/test-dae630726-exact-20260815/cold-boot-home-list-scrolling/cold-boot-home-list-scrolling-receipt.json",
+            "receiptSha256": "94db781f15a3252d0f3d54a1bedf5fd5ea1da097a5c3a0b715bee5c979fcbc4f",
+            "validationPath": "/Users/saphid/.t3/artifacts/swiftui-stream/evidence/test-dae630726-exact-20260815/cold-boot-home-list-scrolling/packet-validation.json",
+            "validationSha256": "dfb596a4438a919df12d286024e3538263868b7d8d40638073291e2e650e0263"
+          }
+        ],
+        "schemaVersion": 2,
+        "sourceCommit": "dae6307263f54d207fe78a7e5f9930be5684e9d6"
+      },
+      "reproductionSteps": [
+        "Force-close SwiftUI Test with a populated Home list.",
+        "Launch it and immediately drag the list before badges and metadata finish loading.",
+        "Open a thread, return Home, and repeat the first drag."
+      ],
+      "reviewGroup": "Home navigation",
+      "reviewMedia": true,
+      "reviewPriority": 3,
+      "sourceCommit": "276d2e427a5aad188cf45adb68aa43075dc4d03d",
+      "sourceIssue": "https://github.com/saphid/t3code-personal/issues/55",
+      "sourceThread": "019ff86d-be17-7772-beae-d39646e325ac",
+      "startingBaseline": "d79e45e3ae1e305b248c751d6a51bac7210fff6a",
+      "state": "needs-you",
+      "successLooksLike": "The list responds to the first drag without freezing or snapping back, metadata fills in without stealing touch handling, and opening or returning to Home does not regress scrolling.",
+      "summary": "Keeps the Home thread list responsive during a cold launch while task metadata and badges are still loading in the background.",
+      "testBuild": 74,
+      "validationSummary": "Exact Test source dae630726 passed 414 native tests across 43 suites, the 130-test XCTest aggregate (129 passed, 1 skipped), and all 25 UI journeys. Fifteen schema-v2 proof packets are sealed, and the review-readiness gate reports 15 items with zero errors.",
+      "whatToCheck": "Force-close Test, relaunch it cold with a populated Home list, immediately scroll up and down before metadata finishes, open a thread, return Home, and repeat once while the connection is slow if possible.",
+      "proofCommit": "17ac7f22296043125a10c09f0392766ec69e6994",
+      "proofMediaReceipt": "/Users/saphid/.t3/artifacts/swiftui-stream/evidence/test-dae630726-exact-20260815/cold-boot-home-list-scrolling/proof-media-receipt.json",
+      "visualEvidence": [
+        {
+          "kind": "image",
+          "title": "Keep the Home list scrollable during cold-boot metadata loading \u2014 image proof",
+          "caption": "Shows the dark-mode acceptance state.",
+          "appearance": "dark",
+          "cleanURL": "https://alexs-macbook-pro-1.tail4e5636.ts.net:10025/test-dae630726/cold-boot-home-list-scrolling/cold-boot-home-list-scrolling-clean.png",
+          "annotatedURL": "https://alexs-macbook-pro-1.tail4e5636.ts.net:10025/test-dae630726/cold-boot-home-list-scrolling/cold-boot-home-list-scrolling-annotated.png"
+        },
+        {
+          "kind": "video",
+          "title": "Keep the Home list scrollable during cold-boot metadata loading \u2014 interaction proof",
+          "caption": "Shows the recorded acceptance interaction and expected result.",
+          "appearance": "dark",
+          "cleanURL": "https://alexs-macbook-pro-1.tail4e5636.ts.net:10025/test-dae630726/cold-boot-home-list-scrolling/cold-boot-home-list-scrolling-clean.mp4",
+          "annotatedURL": "https://alexs-macbook-pro-1.tail4e5636.ts.net:10025/test-dae630726/cold-boot-home-list-scrolling/cold-boot-home-list-scrolling-annotated.mp4"
+        }
+      ]
+    },
+    {
+      "acceptancePoints": [
+        {
+          "id": "theme-catalog-browse-search",
+          "text": "Settings exposes a readable theme catalog that can be browsed and searched."
+        },
+        {
+          "id": "light-dark-selection",
+          "text": "Selecting light and dark themes applies usable colors across Home, chat, Settings, code, tool, and terminal surfaces."
+        },
+        {
+          "id": "voiceover-theme-labels",
+          "text": "VoiceOver announces each theme's real name and light or dark appearance instead of placeholder text."
+        },
+        {
+          "id": "terminal-native-agreement",
+          "text": "Terminal and native surfaces use the selected palette consistently within the documented v1 limits."
+        },
+        {
+          "id": "selection-persists",
+          "text": "The selected theme persists after relaunch."
+        },
+        {
+          "id": "system-theme-restore",
+          "text": "Switching back to System restores system-controlled appearance."
+        }
+      ],
+      "aliases": [
+        "shared themes",
+        "VS Code themes",
+        "theme selector",
+        "SwiftUI themes"
+      ],
+      "behavior": "Compile Electron and VS Code-derived themes into an offline native catalog and apply a persisted selection across SwiftUI, UIKit, and terminal surfaces.",
+      "branch": "personal/swift-theme-sharing",
+      "candidateCommit": "66da910135c997078c82dec5d30fcc01a6712e08",
+      "delivery": "direct",
+      "dependsOn": [],
+      "featureReceipt": "~/.t3/swiftui-stream/feature-receipts/shared-electron-vscode-themes/66da910135c997078c82dec5d30fcc01a6712e08-v2/receipt.json",
+      "id": "shared-electron-vscode-themes",
+      "integratedCommit": "217f8fba4aa4c0f3b3afd4a8646dcff10f1d0efe",
+      "integratedCommits": [
+        "bd90247576eb8b0591b90058b8380a0c88e95823",
+        "217f8fba4aa4c0f3b3afd4a8646dcff10f1d0efe",
+        "11658353d7175c55ab745c469f0c8861c1448db5"
+      ],
+      "knownLimitations": "The prior packet contained a literal VoiceOver label placeholder. This replacement build must include and prove the correction before review. Commit 11658353d7175c55ab745c469f0c8861c1448db5 strengthens both this theme test and the review-packet gate, so those two staged items share that rollback dependency.",
+      "name": "Share Electron and VS Code themes with SwiftUI",
+      "order": 11,
+      "problem": "SwiftUI cannot discover or apply the same theme catalog as the desktop editors, so native screens and terminal surfaces cannot share a chosen palette.",
+      "proof": {
+        "buildId": "test-dae630726-isolated-20260815",
+        "buildReceipt": {
+          "path": "/private/tmp/t3-swiftui-test-ci.914d929a/.t3/swiftui-private-ci-artifacts/receipts/test-dae630726-isolated-20260815/test-train.json",
+          "sha256": "8ab8cf5f6adedbd5001f2b5c011191a973673d0c44ef08e15406713e75b7c103"
+        },
+        "featureCommit": "66da910135c997078c82dec5d30fcc01a6712e08",
+        "packets": [
+          {
+            "acceptancePointIds": [
+              "theme-catalog-browse-search",
+              "light-dark-selection",
+              "voiceover-theme-labels",
+              "terminal-native-agreement",
+              "selection-persists",
+              "system-theme-restore"
+            ],
+            "id": "shared-electron-vscode-themes-flow",
+            "receiptPath": "/Users/saphid/.t3/artifacts/swiftui-stream/evidence/test-dae630726-exact-20260815/shared-electron-vscode-themes/shared-electron-vscode-themes-receipt.json",
+            "receiptSha256": "48d4ad53ce961f4234564420309bd06c79b85dace344f3f721a0d86fd36cf001",
+            "validationPath": "/Users/saphid/.t3/artifacts/swiftui-stream/evidence/test-dae630726-exact-20260815/shared-electron-vscode-themes/packet-validation.json",
+            "validationSha256": "f29deedd8aa8258df2e84074ba4f2ed895106b4f99e5924cea911d61ed193edc"
+          }
+        ],
+        "schemaVersion": 2,
+        "sourceCommit": "dae6307263f54d207fe78a7e5f9930be5684e9d6"
+      },
+      "reproductionSteps": [
+        "Open Settings, open Theme, and search for a VS Code-derived theme.",
+        "Select light and dark themes and inspect Home, a thread, Settings, tool content, and terminal text.",
+        "Turn on VoiceOver, focus a light and dark theme card, and listen to the announced theme name and appearance.",
+        "Relaunch the app, confirm persistence, then switch back to System."
+      ],
+      "reviewGroup": "Themes and accessibility",
+      "reviewMedia": true,
+      "reviewPriority": 6,
+      "sourceCommit": "66da910135c997078c82dec5d30fcc01a6712e08",
+      "sourceIssue": "https://github.com/saphid/t3code-personal/issues/51",
+      "sourceThread": "9bed9116-ac61-4787-9b19-e6e8b90bb80f",
+      "startingBaseline": "b3f003f51f29fb84c3aaa80c69c2fd4a74f05765",
+      "state": "needs-you",
+      "successLooksLike": "The catalog is readable and responsive, VoiceOver announces a real theme name and appearance instead of placeholder text, selections apply consistently with usable contrast, terminal and native colors agree, the choice persists after relaunch, and switching back to System works.",
+      "summary": "Lets SwiftUI discover and use the same Electron and VS Code-derived theme catalog, applying the selected palette across native screens and terminal surfaces.",
+      "testBuild": 74,
+      "validationSummary": "Exact Test source dae630726 passed 414 native tests across 43 suites, the 130-test XCTest aggregate (129 passed, 1 skipped), and all 25 UI journeys. Fifteen schema-v2 proof packets are sealed, and the review-readiness gate reports 15 items with zero errors.",
+      "whatToCheck": "Open Settings \u2192 Theme, browse and search the catalog, select several light and dark themes, inspect Home, chat, settings, code/tool content, and terminal text, then relaunch the app. With VoiceOver on, focus theme cards and confirm each is announced as its theme name followed by light or dark.",
+      "proofCommit": "217f8fba4aa4c0f3b3afd4a8646dcff10f1d0efe",
+      "proofMediaReceipt": "/Users/saphid/.t3/artifacts/swiftui-stream/evidence/test-dae630726-exact-20260815/shared-electron-vscode-themes/proof-media-receipt.json",
+      "visualEvidence": [
+        {
+          "kind": "image",
+          "title": "Share Electron and VS Code themes with SwiftUI \u2014 image proof",
+          "caption": "Shows the dark-mode acceptance state.",
+          "appearance": "dark",
+          "cleanURL": "https://alexs-macbook-pro-1.tail4e5636.ts.net:10025/test-dae630726/shared-electron-vscode-themes/shared-electron-vscode-themes-clean.png",
+          "annotatedURL": "https://alexs-macbook-pro-1.tail4e5636.ts.net:10025/test-dae630726/shared-electron-vscode-themes/shared-electron-vscode-themes-annotated.png"
+        },
+        {
+          "kind": "video",
+          "title": "Share Electron and VS Code themes with SwiftUI \u2014 interaction proof",
+          "caption": "Shows the recorded acceptance interaction and expected result.",
+          "appearance": "dark",
+          "cleanURL": "https://alexs-macbook-pro-1.tail4e5636.ts.net:10025/test-dae630726/shared-electron-vscode-themes/shared-electron-vscode-themes-clean.mp4",
+          "annotatedURL": "https://alexs-macbook-pro-1.tail4e5636.ts.net:10025/test-dae630726/shared-electron-vscode-themes/shared-electron-vscode-themes-annotated.mp4"
+        }
+      ]
+    },
+    {
+      "aliases": [
+        "home version hash",
+        "GitHub hash",
+        "build number swipe space"
+      ],
+      "blockedReason": "Test build publication failed with xcodebuild exit 65: no Xcode account or provisioning profiles for the Test app and extensions",
+      "branch": "fix/swiftui-remove-home-version-hash-20260813",
+      "candidateCommit": "9845d86d4",
+      "delivery": "local-only",
+      "featureReceipt": "~/.t3/swiftui-stream/feature-receipts/home-build-number-swipe-space/9845d86d4.json",
+      "id": "home-build-number-swipe-space",
+      "integratedCommit": "c17fefddfcdb1a9ba244cb508a12cd6190c0701e",
+      "name": "Remove the GitHub commit link from the SwiftUI home build number",
+      "order": 13,
+      "sourceBranch": "t3code/remove-github-version-hash",
+      "sourceCommit": "9845d86d4",
+      "sourceThread": "CB705BC7-F5A1-4D91-8353-EEFEE9165244",
+      "startingBaseline": "125ed781e20716091222651092ed2708448bb6b6",
+      "state": "blocked",
+      "testBuild": 48
+    },
+    {
+      "acceptancePoints": [
+        {
+          "id": "deterministic-journey-inventory",
+          "text": "The catalog resolves every selected journey and rejects missing tests, duplicate checkpoints, or mixed lane semantics."
+        },
+        {
+          "id": "programmatic-verdicts",
+          "text": "Routine happy-path and menu verdicts come from deterministic assertions rather than model judgment."
+        },
+        {
+          "id": "retained-semantic-evidence",
+          "text": "Each declared checkpoint retains a readable screenshot and semantic accessibility export in the result receipt."
+        },
+        {
+          "id": "safe-fixture-boundary",
+          "text": "The fixture remains DEBUG-only, avoids destructive confirmations, and keeps credentials and private payloads out of retained evidence."
+        },
+        {
+          "id": "action-proof-mapping",
+          "text": "The action ledger maps taps, swipes, captions, and clean checkpoints to the exact passing journey and candidate commit."
+        }
+      ],
+      "aliases": [
+        "app flow tests",
+        "UI journey tests",
+        "menu regression coverage"
+      ],
+      "behavior": "Run deterministic native happy-path and menu journeys with stable semantic assertions, retained screenshots and accessibility exports, and machine-readable action receipts for proof assembly.",
+      "candidateCommit": "d7f1bbd2e61755f42d7ae9378914f1c6443a9a1d",
+      "delivery": "local-only",
+      "dependsOn": [],
+      "id": "app-flow-regression-tests",
+      "integratedCommit": "19459ed2ee8b689710c55efc42d17cff3493b9e4",
+      "integratedCommits": [
+        "19459ed2ee8b689710c55efc42d17cff3493b9e4"
+      ],
+      "knownLimitations": "This item is verification infrastructure, not a standalone phone feature. Review its receipts and proof controls after the visible product groups.",
+      "name": "Automate native SwiftUI happy-path and menu regression coverage",
+      "order": 17,
+      "problem": "Native changes were being proved with inconsistent one-off agent runs, which made regression scope, action traces, screenshots, and credential safety hard to reproduce.",
+      "proof": {
+        "buildId": "test-dae630726-isolated-20260815",
+        "buildReceipt": {
+          "path": "/private/tmp/t3-swiftui-test-ci.914d929a/.t3/swiftui-private-ci-artifacts/receipts/test-dae630726-isolated-20260815/test-train.json",
+          "sha256": "8ab8cf5f6adedbd5001f2b5c011191a973673d0c44ef08e15406713e75b7c103"
+        },
+        "featureCommit": "d7f1bbd2e61755f42d7ae9378914f1c6443a9a1d",
+        "packets": [
+          {
+            "acceptancePointIds": [
+              "deterministic-journey-inventory",
+              "programmatic-verdicts",
+              "retained-semantic-evidence",
+              "safe-fixture-boundary",
+              "action-proof-mapping"
+            ],
+            "id": "app-flow-regression-tests-flow",
+            "receiptPath": "/Users/saphid/.t3/artifacts/swiftui-stream/evidence/test-dae630726-exact-20260815/app-flow-regression-tests/app-flow-regression-tests-receipt.json",
+            "receiptSha256": "dbbe62aa4382f64a96a84bd1ff624701962a56846f63dc6a6ae73b1613a6783a",
+            "validationPath": "/Users/saphid/.t3/artifacts/swiftui-stream/evidence/test-dae630726-exact-20260815/app-flow-regression-tests/packet-validation.json",
+            "validationSha256": "757c8c5e2afa1c18057733f2ef1641a3449d187eb89596464bc3e3598add6d65"
+          }
+        ],
+        "schemaVersion": 2,
+        "sourceCommit": "dae6307263f54d207fe78a7e5f9930be5684e9d6"
+      },
+      "receipt": ".t3/evidence/integrated-pr-final-20260814T0715Z/verification.receipt.json",
+      "reproductionSteps": [
+        "Run the candidate or Test-train command against the deterministic fixture.",
+        "Open the retained verification receipt and action ledger.",
+        "Compare the clean and annotated proof, including visible tap and swipe markers and explanatory captions."
+      ],
+      "reviewGroup": "Verification infrastructure",
+      "reviewMedia": true,
+      "reviewPriority": 10,
+      "sourceBranch": "t3code/deterministic-swiftui-pipeline-20260814",
+      "sourceCommit": "d7f1bbd2e61755f42d7ae9378914f1c6443a9a1d",
+      "sourceIssue": "https://github.com/saphid/t3code-personal/issues/58",
+      "sourceThread": "019ff9b0-3de8-7f31-8f7d-b6d1b9545949",
+      "startingBaseline": "a7d313021f312e3c6c00eeb9afd0e12e79ccad8c",
+      "state": "needs-you",
+      "successLooksLike": "All selected journeys and native suites pass from one built test product, screenshots are readable and unobscured, annotated proof matches the action ledger, and receipts bind the evidence to the candidate commit.",
+      "summary": "Adds deterministic native SwiftUI happy-path, menu, accessibility, security, and proof-media regression coverage with reusable Xcode Test Plans.",
+      "testBuild": 74,
+      "validationSummary": "Exact Test source dae630726 passed 414 native tests across 43 suites, the 130-test XCTest aggregate (129 passed, 1 skipped), and all 25 UI journeys. Fifteen schema-v2 proof packets are sealed, and the review-readiness gate reports 15 items with zero errors.",
+      "whatToCheck": "Run the focused candidate and Test-train plans, inspect the retained phone screenshots, confirm taps, swipes, and captions align in annotated proof, and verify that credentials do not enter evidence.",
+      "proofCommit": "19459ed2ee8b689710c55efc42d17cff3493b9e4",
+      "proofMediaReceipt": "/Users/saphid/.t3/artifacts/swiftui-stream/evidence/test-dae630726-exact-20260815/app-flow-regression-tests/proof-media-receipt.json",
+      "visualEvidence": [
+        {
+          "kind": "image",
+          "title": "Automate native SwiftUI happy-path and menu regression coverage \u2014 image proof",
+          "caption": "Shows the dark-mode acceptance state.",
+          "appearance": "dark",
+          "cleanURL": "https://alexs-macbook-pro-1.tail4e5636.ts.net:10025/test-dae630726/app-flow-regression-tests/app-flow-regression-tests-clean.png",
+          "annotatedURL": "https://alexs-macbook-pro-1.tail4e5636.ts.net:10025/test-dae630726/app-flow-regression-tests/app-flow-regression-tests-annotated.png"
+        },
+        {
+          "kind": "video",
+          "title": "Automate native SwiftUI happy-path and menu regression coverage \u2014 interaction proof",
+          "caption": "Shows the recorded acceptance interaction and expected result.",
+          "appearance": "dark",
+          "cleanURL": "https://alexs-macbook-pro-1.tail4e5636.ts.net:10025/test-dae630726/app-flow-regression-tests/app-flow-regression-tests-clean.mp4",
+          "annotatedURL": "https://alexs-macbook-pro-1.tail4e5636.ts.net:10025/test-dae630726/app-flow-regression-tests/app-flow-regression-tests-annotated.mp4"
+        }
+      ]
+    },
+    {
+      "acceptancePoints": [
+        {
+          "id": "clear-home-header",
+          "text": "The SwiftUI Home header no longer carries the development build badge, leaving its controls and swipe space clear."
+        },
+        {
+          "id": "settings-build-identity",
+          "text": "Settings About shows the exact development build, revision, upstream ahead/behind distance, and commit link with a complete accessibility label."
+        }
+      ],
+      "aliases": [
+        "debug build distance",
+        "development build settings row",
+        "PR 5789"
+      ],
+      "behavior": "Keep the Home header uncluttered and place exact development-build identity, upstream distance, and commit navigation in Settings About.",
+      "candidateCommit": "fb086f2ecac452b6069c711fc57ad8b9dd1771f5",
+      "pullRequest": "https://github.com/pingdotgg/t3code/pull/5789",
+      "delivery": "direct",
+      "dependsOn": [],
+      "dependsOnPullRequests": [],
+      "id": "debug-build-metadata-settings-redesign",
+      "integratedCommit": "e7423731c383f07869c8be48735ec1d8efbb3489",
+      "integratedCommits": [
+        "e7423731c383f07869c8be48735ec1d8efbb3489"
+      ],
+      "interactionChange": true,
+      "knownLimitations": "The row is intentionally limited to development configurations. Ahead/behind values reflect the metadata embedded by the build pipeline; the public Release app remains unchanged.",
+      "name": "Move SwiftUI debug build identity and base distance into Settings",
+      "order": 18,
+      "problem": "The old development badge occupied scarce Home-header space while showing only partial build identity. It competed with navigation and swipe controls and did not explain how far the build was from Theo's SwiftUI base.",
+      "proof": {
+        "buildId": "pr5789-test-bbbf98dff-20260815",
+        "buildReceipt": {
+          "path": "/private/tmp/t3-pr5789-proof.XatsGU/worktree/.t3/swiftui-private-ci-artifacts/receipts/pr5789-test-bbbf98dff-20260815/candidate-simulator.json",
+          "sha256": "28aea392b0db8ae74a31f5c74c3435967b339ad59f1170a38e6a6e22529fa976"
+        },
+        "featureCommit": "fb086f2ecac452b6069c711fc57ad8b9dd1771f5",
+        "packets": [
+          {
+            "acceptancePointIds": [
+              "clear-home-header",
+              "settings-build-identity"
+            ],
+            "id": "debug-build-metadata-settings-flow",
+            "receiptPath": "/Users/saphid/.t3/artifacts/swiftui-stream/evidence/test-bbbf98dff-pr5789-20260815/debug-build-metadata-settings-redesign/final/debug-build-settings-bound-receipt.json",
+            "receiptSha256": "4ac2be23945ca8642f08989efd990a9bec7dc32dcaa794f47aad672cb332ebe9",
+            "validationPath": "/Users/saphid/.t3/artifacts/swiftui-stream/evidence/test-bbbf98dff-pr5789-20260815/debug-build-metadata-settings-redesign/final/debug-build-settings-bound-validation.json",
+            "validationSha256": "d612fbdc76ea9f99e3fff9c08d5a48998b24ff04e26e534133c65c7fb10de806"
+          }
+        ],
+        "schemaVersion": 2,
+        "sourceCommit": "bbbf98dffbaa4c088cc4dfc4044e14b519aabc75"
+      },
+      "proofCommit": "e7423731c383f07869c8be48735ec1d8efbb3489",
+      "proofMediaReceipt": "/Users/saphid/.t3/artifacts/swiftui-stream/evidence/test-bbbf98dff-pr5789-20260815/debug-build-metadata-settings-redesign/proof-media-receipt.json",
+      "reproductionSteps": [
+        "Open a personal SwiftUI build and inspect the Home header beside its navigation and action controls.",
+        "Open Settings and scroll to About.",
+        "Read the Development build row and inspect its commit-link affordance and accessibility description."
+      ],
+      "revises": "legacy-candidate-5",
+      "reviewGroup": "Build identity",
+      "reviewMedia": true,
+      "reviewPriority": 2,
+      "sourceBranch": "fix/swiftui-debug-build-settings-redesign-20260815",
+      "sourceCommit": "fb086f2ecac452b6069c711fc57ad8b9dd1771f5",
+      "sourceIssue": "https://github.com/pingdotgg/t3code/issues/5786",
+      "sourceReceipt": "~/.t3/swiftui-stream/feature-receipts/debug-build-metadata-settings-redesign/fb086f2ecac452b6069c711fc57ad8b9dd1771f5/receipt.json",
+      "sourceThread": "81fefb3c-df48-4aba-addf-d73f61c9f768",
+      "sourceThreadTitle": "SwiftUI pipeline stability and PR #5789 shipment",
+      "startingBaseline": "f97091eb6a7c39db075b97a1448c76378a9e79d1",
+      "state": "needs-you",
+      "successLooksLike": "Home has no development badge. Settings About shows build 60, the exact bbbf98df revision, 461 commits ahead and 0 behind Theo's SwiftUI branch, exposes the commit link, and announces the full identity accessibly.",
+      "summary": "Removes the compact debug badge from Home and adds a dedicated Development build row in Settings About with full revision, upstream distance, commit navigation, and accessibility metadata.",
+      "testBuild": 74,
+      "upstreamHead": "be51a3abbbafa053b5c3983a7720215598c2edd5",
+      "validationSummary": "Exact aggregate proof commit bbbf98dffbaa4c088cc4dfc4044e14b519aabc75 passed 416 focused native tests in 43 suites and all 4 PR-level UI journeys. The feature's five focused metadata tests also passed. Dark-mode Simulator evidence and accessibility inspection confirmed build 60, the full revision, and 461 ahead / 0 behind.",
+      "visualChange": true,
+      "visualEvidence": [
+        {
+          "annotatedURL": "https://alexs-macbook-pro-1.tail4e5636.ts.net:10025/test-bbbf98dff/debug-build-metadata-settings-redesign/debug-build-settings-annotated.png",
+          "appearance": "dark",
+          "caption": "Shows the exact development build identity and upstream distance in Settings About.",
+          "cleanURL": "https://alexs-macbook-pro-1.tail4e5636.ts.net:10025/test-bbbf98dff/debug-build-metadata-settings-redesign/debug-build-settings-clean.png",
+          "kind": "image",
+          "title": "Development build identity in Settings"
+        },
+        {
+          "annotatedURL": "https://alexs-macbook-pro-1.tail4e5636.ts.net:10025/test-bbbf98dff/debug-build-metadata-settings-redesign/debug-build-settings-annotated.mp4",
+          "appearance": "dark",
+          "caption": "Shows the clear Home header, Settings navigation, and the resulting exact build row.",
+          "cleanURL": "https://alexs-macbook-pro-1.tail4e5636.ts.net:10025/test-bbbf98dff/debug-build-metadata-settings-redesign/debug-build-settings-clean.mp4",
+          "kind": "video",
+          "title": "Move build identity from Home to Settings"
+        }
+      ],
+      "whatToCheck": "On Home, confirm the build badge is gone and header controls have clear space. Open Settings, scroll to About, and verify the Development build row shows the expected build, revision, and upstream distance. Tap the row to confirm it targets the corresponding commit."
+    },
+    {
+      "acceptancePoints": [
+        {
+          "id": "optimized-test-executable",
+          "text": "The personal Test app is compiled with Swift optimization and whole-module compilation, strips build products, and does not load the Xcode debug dylib."
+        },
+        {
+          "id": "test-capabilities-preserved",
+          "text": "DEBUG fixtures, T3_PERSONAL_BUILD behavior, and testability remain available in the optimized Test configuration while Dev remains debuggable."
+        },
+        {
+          "id": "first-home-drag-responds",
+          "text": "After a cold launch reaches Home, the populated list accepts its first drag and visibly moves without a dead interaction period."
+        }
+      ],
+      "aliases": [
+        "launch lag",
+        "cold launch responsiveness",
+        "unresponsive startup"
+      ],
+      "behavior": "Compile only the personal Test channel as an optimized, directly linked executable so a restored launch snapshot is not left visible while a large debug image finishes loading.",
+      "candidateCommit": "96714ac7be719cdf47b0592a76126e0abf36acc1",
+      "delivery": "local-only",
+      "dependsOn": [],
+      "featureReceipt": "~/.t3/swiftui-stream/feature-receipts/test-build-cold-launch-responsiveness/96714ac7be719cdf47b0592a76126e0abf36acc1/receipt.json",
+      "id": "test-build-cold-launch-responsiveness",
+      "integratedCommit": "5616f3bcfa521bc85dacbb9faea63e59480a54b6",
+      "interactionChange": true,
+      "knownLimitations": "The optimization is intentionally limited to the personal Test configuration. Dev remains unoptimized for debugging, and the final cold-launch judgment still requires the physical phone build with real Test data.",
+      "name": "Make Test builds interactive immediately after cold launch",
+      "order": 19,
+      "problem": "The personal Test channel shipped an unoptimized debug image and could display its saved Home snapshot while the app was still loading, making the visible interface appear unresponsive for several seconds.",
+      "proof": {
+        "buildId": "build74-launch-proof-20260816",
+        "buildReceipt": {
+          "path": "/private/tmp/t3-test-replacement.HIdxXb/.t3/swiftui-private-ci-artifacts/receipts/build74-launch-proof-20260816/candidate-simulator.json",
+          "sha256": "5a316c9535ccc374042c729b7e196f507b18d8ad5758fd81c11f5bd198096798"
+        },
+        "featureCommit": "96714ac7be719cdf47b0592a76126e0abf36acc1",
+        "packets": [
+          {
+            "acceptancePointIds": [
+              "optimized-test-executable",
+              "test-capabilities-preserved",
+              "first-home-drag-responds"
+            ],
+            "id": "test-build-cold-launch-responsiveness-flow",
+            "receiptPath": "/Users/saphid/.t3/artifacts/swiftui-stream/evidence/build74-launch-responsiveness/test-build-cold-launch-responsiveness/cold-launch-responsiveness-receipt.json",
+            "receiptSha256": "76fbff6b177514459cb3a28f505c365198856e5231d35e056220e7c1987363c3",
+            "validationPath": "/Users/saphid/.t3/artifacts/swiftui-stream/evidence/build74-launch-responsiveness/test-build-cold-launch-responsiveness/packet-validation.json",
+            "validationSha256": "83e6ae32fef281539df01a98f5df6a665920f64d4a4e7d66cbf0644903797bb3"
+          }
+        ],
+        "schemaVersion": 2,
+        "sourceCommit": "28f3d729ce2f8bb50ad7c40df48eb8f0eb630c38"
+      },
+      "reproductionSteps": [
+        "Force-quit SwiftUI Test.",
+        "Cold-launch SwiftUI Test and immediately swipe the Home list or tap Settings.",
+        "Confirm the first input responds without waiting several seconds."
+      ],
+      "reviewGroup": "Startup performance",
+      "reviewPriority": 1,
+      "sourceBranch": "fix/swiftui-launch-interaction-lag-20260816",
+      "sourceCommit": "96714ac7be719cdf47b0592a76126e0abf36acc1",
+      "executableSourceCommit": "39f0a614223643481e33fc9c25eaa0aab2195a08",
+      "sourceIssue": "https://github.com/saphid/t3code-personal/issues/91",
+      "sourceReceipt": "~/.t3/swiftui-stream/feature-receipts/test-build-cold-launch-responsiveness/96714ac7be719cdf47b0592a76126e0abf36acc1/receipt.json",
+      "sourceThread": "622e0aa3-7d1f-4263-9b54-9dbd5a33b9b1",
+      "startingBaseline": "f97091eb6a7c39db075b97a1448c76378a9e79d1",
+      "state": "in-test",
+      "summary": "Builds the personal Test channel with optimized Swift and direct executable linking while retaining its DEBUG fixtures and testability.",
+      "successLooksLike": "SwiftUI Test accepts its first Home scroll or Settings tap immediately after a cold launch while all Test-only features and fixtures continue to work.",
+      "testBuild": 74,
+      "validationSummary": "The frozen integrated commit passed 416 native tests across 43 suites and four Candidate journeys. The final optimized Test configuration separately passed 33 FeatureRootModel tests and the focused cold-boot Home journey; the built app contained no debug dylib and accepted its first recorded Home drag.",
+      "visualChange": false,
+      "whatToCheck": "Cold-launch SwiftUI Test and immediately scroll Home or tap Settings. The first input should respond without the previous several-second dead period."
+    },
+    {
+      "acceptancePoints": [
+        {
+          "id": "done-includes-final-response",
+          "text": "When the list or header reports Done, the selected timeline renders the final assistant response without reopening."
+        },
+        {
+          "id": "completion-refresh-bypasses-live-stream",
+          "text": "A terminal shell update reconciles detail even while the detail subscription remains open."
+        },
+        {
+          "id": "forced-refresh-survives-coalescing",
+          "text": "A forced completion refresh remains forced when it is queued behind another in-flight detail refresh."
+        }
+      ],
+      "aliases": [
+        "stale done thread",
+        "missing final response",
+        "thread completion refresh"
+      ],
+      "behavior": "A terminal shell update forces a coalesced selected-Thread detail reconciliation even when the completion-scoped detail stream task has not closed.",
+      "candidateCommit": "39644806030940d5990a665a0b2e111eaab34068",
+      "delivery": "direct",
+      "dependsOn": [
+        "initial-thread-live-updates"
+      ],
+      "featureReceipt": "~/.t3/swiftui-stream/feature-receipts/selected-thread-completion-reconciliation/39644806030940d5990a665a0b2e111eaab34068/receipt.json",
+      "id": "selected-thread-completion-reconciliation",
+      "integratedCommit": "890915fb565aef0d3da607cb0212f33ba4f85c66",
+      "interactionChange": false,
+      "knownLimitations": "The forced reconciliation is limited to full/fallback shell snapshots and terminal latest-turn transitions; ordinary streaming deltas do not add HTTP refreshes.",
+      "name": "Refresh the selected Thread when completion arrives",
+      "order": 20,
+      "problem": "The Home list and selected Thread header can advance to Done while the open timeline is still missing the final assistant response.",
+      "proof": {
+        "buildId": "test75-thread-completion-20260816",
+        "buildReceipt": {
+          "path": "/private/tmp/t3-test-replacement.HIdxXb/.t3/swiftui-private-ci-artifacts/receipts/test75-thread-completion-20260816/test-train.json",
+          "sha256": "55eff1ffd6af44a5345cdc156255d98fb9357e7d9b9936c758de270c31514f50"
+        },
+        "featureCommit": "39644806030940d5990a665a0b2e111eaab34068",
+        "packets": [
+          {
+            "acceptancePointIds": [
+              "done-includes-final-response",
+              "completion-refresh-bypasses-live-stream",
+              "forced-refresh-survives-coalescing"
+            ],
+            "id": "selected-thread-completion-reconciliation-flow",
+            "receiptPath": "/Users/saphid/.t3/artifacts/swiftui-stream/evidence/test75-thread-completion-20260816/selected-thread-completion-reconciliation/selected-thread-completion-live-receipt.json",
+            "receiptSha256": "028eab8c5f1cb02bac360223bd1b570ab68dc97e6f3bfa13a0d23fea691ad163",
+            "validationPath": "/Users/saphid/.t3/artifacts/swiftui-stream/evidence/test75-thread-completion-20260816/selected-thread-completion-reconciliation/packet-validation.json",
+            "validationSha256": "2b7825efd1763ced733a661e8b148108f4a7a2cce63d51390dff59ac0344cde1"
+          }
+        ],
+        "schemaVersion": 2,
+        "sourceCommit": "b9b9aa4f0fd6f07493dea416a56584fab5f71b3b"
+      },
+      "reproductionSteps": [
+        "Open a working Thread and keep the detail view visible.",
+        "Allow the turn to complete while its detail subscription remains open.",
+        "Observe the Home list or Thread header advance to Done.",
+        "Confirm the final assistant response appears without leaving and reopening the Thread."
+      ],
+      "reviewGroup": "Core reliability",
+      "reviewPriority": 1,
+      "sourceBranch": "fix/swiftui-thread-completion-refresh-20260816",
+      "sourceCommit": "39644806030940d5990a665a0b2e111eaab34068",
+      "sourceIssue": "https://github.com/saphid/t3code-personal/issues/101",
+      "sourceReceipt": "~/.t3/swiftui-stream/feature-receipts/selected-thread-completion-reconciliation/39644806030940d5990a665a0b2e111eaab34068/receipt.json",
+      "sourceThread": "622e0aa3-7d1f-4263-9b54-9dbd5a33b9b1",
+      "startingBaseline": "f97091eb6a7c39db075b97a1448c76378a9e79d1",
+      "state": "in-test",
+      "summary": "Keeps the visible Thread timeline consistent with its Done status without requiring the user to reopen it.",
+      "successLooksLike": "Done status and the final assistant response arrive as one coherent visible state, with no duplicate messages or manual refresh.",
+      "testBuild": 74,
+      "validationSummary": "The source candidate passed its deterministic red/green regression, all 19 NativeMultiEnvironmentTests, and a real-turn integrated iPhone 17 Pro Simulator check while the Thread view remained open.",
+      "visualChange": false,
+      "whatToCheck": "Leave an active Thread open until it reports Done. Confirm the last assistant response appears automatically, then background and foreground the app and repeat."
+    }
+  ],
+  "legacyManifest": "scripts/t3-swift-approved/manifest.json",
+  "lifecycle": [
+    "developing",
+    "proved",
+    "in-test",
+    "needs-you",
+    "approved",
+    "in-dev",
+    "upstream-validation",
+    "needs-pr",
+    "upstream-pr",
+    "landed",
+    "blocked",
+    "rejected",
+    "superseded"
+  ],
+  "prDelivery": "scripts/swiftui-stream/pr-delivery.json",
+  "schemaVersion": 1,
+  "trackingIssue": "https://github.com/saphid/t3code-personal/issues/53"
+}

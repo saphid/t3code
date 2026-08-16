@@ -19,24 +19,28 @@ require_cmd() {
 }
 
 require_cmd awk
+require_cmd base64
+require_cmd git
+require_cmd jq
 require_cmd mktemp
+
+REPO_ROOT="$(git -C "${APP_DIR}" rev-parse --show-toplevel 2>/dev/null)" || die \
+  "SwiftUI source is not inside a Git worktree"
+"${REPO_ROOT}/scripts/t3-swift-approved/verify.sh"
+
 require_cmd plutil
 require_cmd xcodebuild
 require_cmd xcrun
 
-[[ "${CONFIGURATION}" == "Debug" || "${CONFIGURATION}" == "Release" ]] || die \
-  "T3_SWIFT_CONFIGURATION must be Debug or Release"
+[[ "${CONFIGURATION}" == "Debug" ]] || die \
+  "the approved personal phone lane supports only T3_SWIFT_CONFIGURATION=Debug"
 
-if [[ "${CONFIGURATION}" == "Debug" ]]; then
-  BUNDLE_IDENTIFIER="com.t3tools.t3code.swiftui.dev"
-else
-  BUNDLE_IDENTIFIER="com.t3tools.t3code.swiftui"
-fi
+BUNDLE_IDENTIFIER="com.saphid.t3code.swiftui.dev"
 WIDGET_BUNDLE_IDENTIFIER="${BUNDLE_IDENTIFIER}.widgets"
 SHARE_BUNDLE_IDENTIFIER="${BUNDLE_IDENTIFIER}.sharing"
 
 [[ -z "${T3_SWIFT_BUNDLE_IDENTIFIER:-}" || "${T3_SWIFT_BUNDLE_IDENTIFIER}" == "${BUNDLE_IDENTIFIER}" ]] || die \
-  "custom bundle identifiers are unsupported; select the Debug or Release identity with T3_SWIFT_CONFIGURATION"
+  "custom bundle identifiers are unsupported; this approved installer is Debug-only"
 
 bundle_identifier_for_target() {
   local target="$1"
@@ -71,17 +75,131 @@ fi
   "set T3_SWIFT_DEVICE_ID to a CoreDevice identifier or UDID from 'xcrun devicectl list devices --columns UDID'"
 [[ -n "${DEVELOPMENT_TEAM}" ]] || die \
   "set T3_SWIFT_DEVELOPMENT_TEAM to your Apple Developer team ID"
+[[ -n "${T3_SWIFT_BUILD_NUMBER:-}" ]] || die \
+  "set T3_SWIFT_BUILD_NUMBER to a number newer than the installed phone build"
 
 build_settings=(
   "DEVELOPMENT_TEAM=${DEVELOPMENT_TEAM}"
 )
 
+if [[ "${CONFIGURATION}" == "Debug" ]]; then
+  GIT_COMMIT="$(git -C "${APP_DIR}" rev-parse --short HEAD 2>/dev/null || echo unknown)"
+  if [[ "${GIT_COMMIT}" != "unknown" ]] && \
+     [[ -n "$(git -C "${APP_DIR}" status --porcelain 2>/dev/null)" ]]; then
+    GIT_COMMIT="${GIT_COMMIT}-dirty"
+  fi
+
+  GIT_BASE_REF="${T3_SWIFT_BASE_REF:-}"
+  GIT_REPO_REMOTE="upstream"
+  if [[ "${GIT_BASE_REF}" == */* ]]; then
+    GIT_BASE_REMOTE="${GIT_BASE_REF%%/*}"
+    if git -C "${APP_DIR}" remote get-url "${GIT_BASE_REMOTE}" >/dev/null 2>&1; then
+      GIT_REPO_REMOTE="${GIT_BASE_REMOTE}"
+    fi
+  fi
+  if ! git -C "${APP_DIR}" remote get-url "${GIT_REPO_REMOTE}" >/dev/null 2>&1; then
+    GIT_REPO_REMOTE="origin"
+  fi
+  # Prefer an explicit comparison line, then the public repository's default.
+  if [[ -z "${GIT_BASE_REF}" ]] || \
+     ! git -C "${APP_DIR}" rev-parse --verify --quiet "${GIT_BASE_REF}^{commit}" >/dev/null; then
+    GIT_TERMINAL_PROMPT=0 git -C "${APP_DIR}" \
+      -c "core.sshCommand=ssh -o BatchMode=yes -o ConnectTimeout=10 -o ServerAliveInterval=5 -o ServerAliveCountMax=1" \
+      -c http.lowSpeedLimit=1 \
+      -c http.lowSpeedTime=15 \
+      fetch --quiet "${GIT_REPO_REMOTE}" 2>/dev/null || true
+  fi
+  if [[ -n "${GIT_BASE_REF}" ]] && \
+     ! git -C "${APP_DIR}" rev-parse --verify --quiet "${GIT_BASE_REF}^{commit}" >/dev/null; then
+    die "T3_SWIFT_BASE_REF does not resolve to a commit: ${GIT_BASE_REF}"
+  fi
+  GIT_REMOTE_CONTAINMENT="$(
+    git -C "${APP_DIR}" branch -r --contains HEAD --format='%(refname:short)' 2>/dev/null || true
+  )"
+  GIT_REPO_REMOTE=""
+  if [[ "${GIT_COMMIT}" != *-dirty ]]; then
+    for candidate in upstream origin; do
+      if grep -Eq "^${candidate}/" <<< "${GIT_REMOTE_CONTAINMENT}"; then
+        GIT_REPO_REMOTE="${candidate}"
+        break
+      fi
+    done
+  fi
+  GIT_REPO_URL="$(git -C "${APP_DIR}" remote get-url "${GIT_REPO_REMOTE}" 2>/dev/null || true)"
+  GIT_REPO_URL="${GIT_REPO_URL%.git}"
+  case "${GIT_REPO_URL}" in
+    https://*@*) GIT_REPO_URL="https://${GIT_REPO_URL#*@}" ;;
+    ssh://git@*) GIT_REPO_URL="https://${GIT_REPO_URL#ssh://git@}" ;;
+    git@*) GIT_REPO_URL="https://$(printf '%s' "${GIT_REPO_URL#git@}" | tr ':' '/')" ;;
+  esac
+  if [[ -z "${GIT_BASE_REF}" ]]; then
+    GIT_BASE_REF="$(git -C "${APP_DIR}" symbolic-ref --short refs/remotes/upstream/HEAD 2>/dev/null || true)"
+  fi
+  if [[ -z "${GIT_BASE_REF}" ]] && \
+     git -C "${APP_DIR}" rev-parse --verify --quiet "refs/remotes/upstream/main^{commit}" >/dev/null; then
+    GIT_BASE_REF="upstream/main"
+  fi
+  if [[ -z "${GIT_BASE_REF}" ]]; then
+    GIT_BASE_REF="$(git -C "${APP_DIR}" symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null || true)"
+  fi
+
+  GIT_AHEAD_COUNT=""
+  GIT_BEHIND_COUNT=""
+  if [[ -n "${GIT_BASE_REF}" ]] && git -C "${APP_DIR}" rev-parse --verify --quiet "${GIT_BASE_REF}^{commit}" >/dev/null; then
+    # --left-right emits the base-only (behind) count before the HEAD-only (ahead) count.
+    read -r GIT_BEHIND_COUNT GIT_AHEAD_COUNT < <(
+      git -C "${APP_DIR}" rev-list --left-right --count "${GIT_BASE_REF}...HEAD"
+    ) || true
+  fi
+  build_settings+=(
+    "T3_GIT_COMMIT=${GIT_COMMIT}"
+    "T3_GIT_REPO_URL=${GIT_REPO_URL}"
+    "T3_GIT_BASE_REF=${GIT_BASE_REF}"
+    "T3_GIT_AHEAD_COUNT=${GIT_AHEAD_COUNT}"
+    "T3_GIT_BEHIND_COUNT=${GIT_BEHIND_COUNT}"
+  )
+
+  CHANGELOG_FILE="$(mktemp -t t3-swift-changelog.XXXXXX)"
+  CHANGELOG_BASE_REF="${T3_SWIFT_CHANGELOG_BASE_REF:-upstream/t3code/rebuild-mobile-app-swift}"
+  changelog_arguments=("${APP_DIR}/../.." "${CHANGELOG_BASE_REF}" "${CHANGELOG_FILE}")
+  CHANGELOG_SUMMARIES="${T3_SWIFT_CHANGELOG_SUMMARIES:-}"
+  if [[ "${T3_SWIFT_CHANGELOG_USE_LUNA:-0}" == "1" ]]; then
+    CHANGELOG_SUMMARIES="$(mktemp -t t3-swift-changelog-summaries.XXXXXX)"
+    "${SCRIPT_DIR}/generate-luna-changelog-summaries.sh" \
+      "${APP_DIR}/../.." "${CHANGELOG_BASE_REF}" "${CHANGELOG_SUMMARIES}"
+  fi
+  if [[ -n "${CHANGELOG_SUMMARIES}" ]]; then
+    changelog_arguments+=("${CHANGELOG_SUMMARIES}")
+  fi
+  xcrun swift "${SCRIPT_DIR}/generate-build-changelog.swift" "${changelog_arguments[@]}"
+  BUILD_CHANGELOG="$(base64 < "${CHANGELOG_FILE}" | tr -d '\n')"
+  unlink "${CHANGELOG_FILE}"
+  if [[ "${T3_SWIFT_CHANGELOG_USE_LUNA:-0}" == "1" ]]; then
+    unlink "${CHANGELOG_SUMMARIES}"
+  fi
+  build_settings+=("T3_BUILD_CHANGELOG=${BUILD_CHANGELOG}")
+fi
 DEVICE_JSON="$(mktemp -t t3-swift-devices.XXXXXX)"
-trap 'unlink "${DEVICE_JSON}" 2>/dev/null || true' EXIT
+INSTALLED_APPS_JSON="$(mktemp -t t3-swift-installed-apps.XXXXXX)"
+trap 'unlink "${DEVICE_JSON}" "${INSTALLED_APPS_JSON}" 2>/dev/null || true' EXIT
 xcrun devicectl list devices --json-output "${DEVICE_JSON}" --quiet >/dev/null
 DESTINATION_ID="$(
   xcrun swift "${SCRIPT_DIR}/resolve-device-udid.swift" "${DEVICE_JSON}" "${DEVICE_ID}"
 )" || die "could not resolve device '${DEVICE_ID}' to an Xcode destination UDID"
+
+xcrun devicectl device info apps \
+  --device "${DESTINATION_ID}" \
+  --bundle-id "${BUNDLE_IDENTIFIER}" \
+  --json-output "${INSTALLED_APPS_JSON}" \
+  --quiet >/dev/null
+INSTALLED_BUILD_NUMBER="$(
+  jq -r --arg bundle "${BUNDLE_IDENTIFIER}" \
+    'first(.result.apps[]? | select(.bundleIdentifier == $bundle) | .bundleVersion) // empty' \
+    "${INSTALLED_APPS_JSON}"
+)"
+"${SCRIPT_DIR}/validate-device-build-number.sh" \
+  "${T3_SWIFT_BUILD_NUMBER}" "${INSTALLED_BUILD_NUMBER}"
+build_settings+=("CURRENT_PROJECT_VERSION=${T3_SWIFT_BUILD_NUMBER}")
 
 for key in \
   T3CODE_CLERK_PUBLISHABLE_KEY \
@@ -96,10 +214,6 @@ done
 if [[ -n "${T3_SWIFT_VERSION:-}" ]]; then
   build_settings+=("MARKETING_VERSION=${T3_SWIFT_VERSION}")
 fi
-if [[ -n "${T3_SWIFT_BUILD_NUMBER:-}" ]]; then
-  build_settings+=("CURRENT_PROJECT_VERSION=${T3_SWIFT_BUILD_NUMBER}")
-fi
-
 printf '[swift-ios-device] building %s for %s\n' "${BUNDLE_IDENTIFIER}" "${DESTINATION_ID}"
 xcodebuild build \
   -project "${APP_DIR}/T3Code.xcodeproj" \

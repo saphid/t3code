@@ -1,0 +1,91 @@
+{
+  "schemaVersion": 1,
+  "build": 74,
+  "features": [
+    {
+      "id": "in-app-stream-approval-control",
+      "sourceCommit": "e832100ac8d2d446e9c6cbe9f024dc482f107209",
+      "testBuild": 74
+    },
+    {
+      "id": "skills-popup-keyboard-clearance",
+      "sourceCommit": "9cb21674ea335e4e53d2d4d7680dfc7b0f5c1189",
+      "testBuild": 74
+    },
+    {
+      "id": "skill-popup-readability-and-height",
+      "sourceCommit": "09f309bcba3a2d822c2e81f48dbf728a8c969488",
+      "testBuild": 74
+    },
+    {
+      "id": "home-thread-list-scrolling",
+      "sourceCommit": "7cc3a6119a9f836891d66c66e4816266e74ba602",
+      "testBuild": 74
+    },
+    {
+      "id": "command-palette-top-drawer",
+      "sourceCommit": "5a46ed73f8afa118714921ff1fd32768e3cedd4e",
+      "testBuild": 74
+    },
+    {
+      "id": "development-build-source-thread",
+      "sourceCommit": "ed15ca2ae993df1ad9435b088cc84b3d65e66716",
+      "testBuild": 74
+    },
+    {
+      "id": "widget-build-channel-links",
+      "sourceCommit": "a1fd13793591f79237d2447e2d7d06fceaeebc1d",
+      "testBuild": 74
+    },
+    {
+      "id": "initial-thread-live-updates",
+      "sourceCommit": "dd2ecbb4a53a16e9c4b0c907ecfddcfe30de8e0b",
+      "testBuild": 74
+    },
+    {
+      "id": "pull-request-workspace-protocol",
+      "sourceCommit": "4f967ba4617fe75839d1da1fcc2e45227eb04b7f",
+      "testBuild": 74
+    },
+    {
+      "id": "pull-request-inbox-summary-timeline",
+      "sourceCommit": "09ffaedd32cf32550af6ed262186549481c97838",
+      "testBuild": 74
+    },
+    {
+      "id": "safe-tool-content-recovery",
+      "sourceCommit": "9006b8de9bf6e27e466efed43ef232aa2163c4ff",
+      "testBuild": 74
+    },
+    {
+      "id": "swiftui-test-personal-connect",
+      "sourceCommit": "727d9ac4c132fe86ba2a1ce385f2e1a66be89da0",
+      "testBuild": 74
+    },
+    {
+      "id": "cold-boot-home-list-scrolling",
+      "sourceCommit": "276d2e427a5aad188cf45adb68aa43075dc4d03d",
+      "testBuild": 74
+    },
+    {
+      "id": "shared-electron-vscode-themes",
+      "sourceCommit": "66da910135c997078c82dec5d30fcc01a6712e08",
+      "testBuild": 74
+    },
+    {
+      "id": "app-flow-regression-tests",
+      "sourceCommit": "d7f1bbd2e61755f42d7ae9378914f1c6443a9a1d",
+      "testBuild": 74
+    },
+    {
+      "id": "debug-build-metadata-settings-redesign",
+      "sourceCommit": "fb086f2ecac452b6069c711fc57ad8b9dd1771f5",
+      "testBuild": 74
+    },
+    {
+      "id": "test-build-cold-launch-responsiveness",
+      "sourceCommit": "96714ac7be719cdf47b0592a76126e0abf36acc1",
+      "testBuild": 74
+    }
+  ]
+}

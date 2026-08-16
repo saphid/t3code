@@ -6,305 +6,185 @@ import UIKit
 @Suite("Message-first task creation")
 struct DailyUXNewTaskTests {
     @Test
-    func recentProjectRankingDrivesTheDefaultAndKeepsUnusedProjectsOut() {
-        let alpha = rankedProject("alpha", name: "Alpha")
-        let beta = rankedProject("beta", name: "Beta")
-        let unused = rankedProject("unused", name: "Unused")
-        let value = rankedSnapshot(
-            projects: [unused, beta, alpha],
+    func newTaskDefaultsToMostRecentlyUsedAvailableProject() throws {
+        let olderProject = project(id: "older", name: "Alpha")
+        let recentProject = project(id: "recent", name: "Zulu")
+        let snapshot = snapshot(
+            projects: [olderProject, recentProject],
             threads: [
-                rankedThread("older", projectID: alpha.id, activity: 10),
-                rankedThread("newer", projectID: beta.id, activity: 20),
+                thread(id: "older-thread", projectID: olderProject.id, updatedAt: 10),
+                thread(id: "recent-thread", projectID: recentProject.id, updatedAt: 20),
             ]
         )
 
-        let ranking = DailyUXCreationContext.recentProjects(in: value)
-
-        #expect(ranking.map(\.project.id) == [beta.id, alpha.id])
-        #expect(
-            DailyUXCreationContext.initialProject(in: value, requestedProjectID: nil)?.id
-                == ranking.first?.project.id
+        let selected = try #require(
+            DailyUXCreationContext.initialProject(in: snapshot, requestedProjectID: nil)
         )
+
+        #expect(selected.id == recentProject.id)
     }
 
     @Test
-    func recentProjectRankingIsStableForTiesAndIgnoresMissingProjects() {
-        let alpha = rankedProject("alpha", name: "Alpha")
-        let beta = rankedProject("beta", name: "Beta")
-        let value = rankedSnapshot(
-            projects: [alpha, beta],
+    func explicitNewTaskProjectOverridesRecentUse() throws {
+        let alphabeticalProject = project(id: "alphabetical", name: "Alpha")
+        let requestedProject = project(id: "requested", name: "Middle")
+        let recentProject = project(id: "recent", name: "Zulu")
+        let snapshot = snapshot(
+            projects: [recentProject, alphabeticalProject, requestedProject],
+            threads: [thread(id: "recent-thread", projectID: recentProject.id, updatedAt: 20)]
+        )
+
+        let selected = try #require(
+            DailyUXCreationContext.initialProject(
+                in: snapshot,
+                requestedProjectID: requestedProject.id
+            )
+        )
+
+        #expect(selected.id == requestedProject.id)
+    }
+
+    @Test
+    func staleRequestedProjectFallsThroughToRecentUse() throws {
+        let alphabeticalProject = project(id: "alphabetical", name: "Alpha")
+        let recentProject = project(id: "recent", name: "Zulu")
+        let value = snapshot(
+            projects: [alphabeticalProject, recentProject],
+            threads: [thread(id: "recent-thread", projectID: recentProject.id, updatedAt: 20)]
+        )
+
+        let selected = try #require(
+            DailyUXCreationContext.initialProject(
+                in: value,
+                requestedProjectID: "missing-project"
+            )
+        )
+
+        #expect(selected.id == recentProject.id)
+    }
+
+    @Test
+    func unavailableRecentProjectUsesNextAvailableRecentProject() throws {
+        let nextRecent = project(id: "zulu", name: "Zulu", environmentID: "connected")
+        let alpha = project(id: "alpha", name: "Alpha", environmentID: "connected")
+        let unavailable = project(
+            id: "unavailable",
+            name: "Unavailable",
+            environmentID: "disconnected"
+        )
+        let value = snapshot(
+            projects: [nextRecent, unavailable, alpha],
             threads: [
-                rankedThread("z-thread", projectID: alpha.id, activity: 20),
-                rankedThread("missing", projectID: "missing", activity: 30),
-                rankedThread("a-thread", projectID: beta.id, activity: 20),
+                thread(id: "recent", projectID: unavailable.id, updatedAt: 30),
+                thread(id: "next-recent", projectID: nextRecent.id, updatedAt: 20),
+            ],
+            environments: [
+                environment(id: "connected", isActive: true, state: .connected),
+                environment(id: "disconnected", isEnabled: false, state: .disconnected),
             ]
         )
 
-        #expect(
-            DailyUXCreationContext.recentProjects(in: value)
-                .map(\.project.id) == [beta.id, alpha.id]
+        let selected = try #require(
+            DailyUXCreationContext.initialProject(in: value, requestedProjectID: nil)
         )
+
+        #expect(selected.id == nextRecent.id)
     }
 
     @Test
-    func recentProjectRankingUsesActivityInsteadOfMetadataChanges() {
-        let alpha = rankedProject("alpha", name: "Alpha")
-        let beta = rankedProject("beta", name: "Beta")
-        let value = rankedSnapshot(
-            projects: [alpha, beta],
+    func noRecentUseFallsBackToAlphabeticalProject() throws {
+        let zulu = project(id: "zulu", name: "Zulu")
+        let alpha = project(id: "alpha", name: "Alpha")
+        let value = snapshot(projects: [zulu, alpha], threads: [])
+
+        let selected = try #require(
+            DailyUXCreationContext.initialProject(in: value, requestedProjectID: nil)
+        )
+
+        #expect(selected.id == alpha.id)
+    }
+
+    @Test
+    func equalRecencyUsesStableThreadIdentity() throws {
+        let alpha = project(id: "alpha", name: "Alpha")
+        let zulu = project(id: "zulu", name: "Zulu")
+        let value = snapshot(
+            projects: [alpha, zulu],
             threads: [
-                rankedThread(
-                    "metadata-change",
+                thread(id: "z-thread", projectID: alpha.id, updatedAt: 20),
+                thread(id: "a-thread", projectID: zulu.id, updatedAt: 20),
+            ]
+        )
+
+        let selected = try #require(
+            DailyUXCreationContext.initialProject(in: value, requestedProjectID: nil)
+        )
+
+        #expect(selected.id == zulu.id)
+    }
+
+    @Test
+    func recentUseSelectsTheMatchingEnvironmentForAGroupedProject() throws {
+        let identity = FeatureRepositoryIdentity(canonicalKey: "github.com:saphid/t3code")
+        let activeProject = FeatureProject(
+            id: "active-project",
+            environmentID: "active",
+            name: "T3 Code",
+            path: "/active/t3code",
+            repositoryIdentity: identity
+        )
+        let recentProject = FeatureProject(
+            id: "recent-project",
+            environmentID: "recent-environment",
+            name: "T3 Code",
+            path: "/recent/t3code",
+            repositoryIdentity: identity
+        )
+        let value = snapshot(
+            projects: [activeProject, recentProject],
+            threads: [
+                thread(
+                    id: "recent-thread",
+                    projectID: recentProject.id,
+                    environmentID: recentProject.environmentID,
+                    updatedAt: 20
+                ),
+            ],
+            environments: [
+                environment(id: "active", isActive: true, state: .connected),
+                environment(id: "recent-environment", state: .connected),
+            ]
+        )
+
+        let selected = try #require(
+            DailyUXCreationContext.initialProject(in: value, requestedProjectID: nil)
+        )
+
+        #expect(selected.id == recentProject.id)
+    }
+
+    @Test
+    func lastActivityTakesPrecedenceOverMetadataUpdateTime() throws {
+        let alpha = project(id: "alpha", name: "Alpha")
+        let zulu = project(id: "zulu", name: "Zulu")
+        let value = snapshot(
+            projects: [alpha, zulu],
+            threads: [
+                thread(
+                    id: "metadata-recent",
                     projectID: alpha.id,
                     updatedAt: 100,
                     lastActivityAt: 10
                 ),
-                rankedThread("actual-use", projectID: beta.id, activity: 20),
+                thread(id: "activity-recent", projectID: zulu.id, updatedAt: 20),
             ]
         )
 
-        #expect(
-            DailyUXCreationContext.recentProjects(in: value)
-                .map(\.project.id) == [beta.id, alpha.id]
-        )
-    }
-
-    @Test
-    func archivedAndSettledThreadsStillRepresentProjectUse() {
-        let archived = rankedProject("archived", name: "Archived")
-        let settled = rankedProject("settled", name: "Settled")
-        let value = rankedSnapshot(
-            projects: [archived, settled],
-            threads: [
-                rankedThread(
-                    "archived-thread",
-                    projectID: archived.id,
-                    activity: 30,
-                    isArchived: true
-                ),
-                rankedThread(
-                    "settled-thread",
-                    projectID: settled.id,
-                    activity: 20,
-                    isSettled: true
-                ),
-            ]
+        let selected = try #require(
+            DailyUXCreationContext.initialProject(in: value, requestedProjectID: nil)
         )
 
-        #expect(
-            DailyUXCreationContext.recentProjects(in: value)
-                .map(\.project.id) == [archived.id, settled.id]
-        )
-    }
-
-    @Test
-    func explicitProjectWinsAndNoActivityFallsBackAlphabetically() {
-        let zulu = rankedProject("zulu", name: "Zulu")
-        let alpha = rankedProject("alpha", name: "Alpha")
-        let withActivity = rankedSnapshot(
-            projects: [zulu, alpha],
-            threads: [rankedThread("recent", projectID: zulu.id, activity: 20)]
-        )
-        let withoutActivity = rankedSnapshot(projects: [zulu, alpha], threads: [])
-
-        #expect(
-            DailyUXCreationContext.initialProject(
-                in: withActivity,
-                requestedProjectID: alpha.id
-            )?.id == alpha.id
-        )
-        #expect(DailyUXCreationContext.recentProjects(in: withoutActivity).isEmpty)
-        #expect(
-            DailyUXCreationContext.initialProject(
-                in: withoutActivity,
-                requestedProjectID: nil
-            )?.id == alpha.id
-        )
-    }
-
-    @Test
-    func recentProjectRankingExcludesDisabledEnvironments() {
-        let enabled = rankedProject("enabled", name: "Enabled", environmentID: "enabled-env")
-        let disabled = rankedProject("disabled", name: "Disabled", environmentID: "disabled-env")
-        let value = rankedSnapshot(
-            environments: [
-                FeatureEnvironment(
-                    id: "enabled-env",
-                    name: "Enabled",
-                    endpoint: "http://enabled",
-                    isEnabled: true
-                ),
-                FeatureEnvironment(
-                    id: "disabled-env",
-                    name: "Disabled",
-                    endpoint: "http://disabled",
-                    isEnabled: false
-                ),
-            ],
-            projects: [enabled, disabled],
-            threads: [
-                rankedThread("enabled-thread", projectID: enabled.id, activity: 10),
-                rankedThread("disabled-thread", projectID: disabled.id, activity: 20),
-            ]
-        )
-
-        #expect(
-            DailyUXCreationContext.recentProjects(in: value).map(\.project.id) == [enabled.id]
-        )
-    }
-
-    @Test
-    func recentProjectRankingDeduplicatesARepositoryAcrossEnvironments() {
-        let local = rankedProject(
-            "local",
-            name: "Project",
-            environmentID: "local-env",
-            repositoryKey: "github.com/example/project"
-        )
-        let remote = rankedProject(
-            "remote",
-            name: "Project",
-            environmentID: "remote-env",
-            repositoryKey: "github.com/example/project"
-        )
-        let value = rankedSnapshot(
-            environments: [
-                FeatureEnvironment(
-                    id: "local-env",
-                    name: "Local",
-                    endpoint: "http://local"
-                ),
-                FeatureEnvironment(
-                    id: "remote-env",
-                    name: "Remote",
-                    endpoint: "http://remote"
-                ),
-            ],
-            projects: [local, remote],
-            threads: [
-                rankedThread(
-                    "local-thread",
-                    projectID: local.id,
-                    environmentID: "local-env",
-                    activity: 10
-                ),
-                rankedThread(
-                    "remote-thread",
-                    projectID: remote.id,
-                    environmentID: "remote-env",
-                    activity: 20
-                ),
-            ]
-        )
-
-        let ranking = DailyUXCreationContext.recentProjects(in: value)
-        #expect(ranking.count == 1)
-        #expect(ranking.first?.project.id == remote.id)
-    }
-
-    @Test
-    func recentProjectRankingKeepsTheExactWorktreeUsedByTheThread() {
-        let root = rankedProject(
-            "root",
-            name: "Project",
-            repositoryKey: "github.com/example/project"
-        )
-        let worktree = rankedProject(
-            "worktree",
-            name: "Project",
-            repositoryKey: "github.com/example/project"
-        )
-        let value = rankedSnapshot(
-            projects: [root, worktree],
-            threads: [rankedThread("recent", projectID: worktree.id, activity: 20)]
-        )
-
-        #expect(DailyUXCreationContext.recentProjects(in: value).first?.project.id == worktree.id)
-        #expect(
-            DailyUXCreationContext.initialProject(
-                in: value,
-                requestedProjectID: worktree.id
-            )?.id == worktree.id
-        )
-    }
-
-    @Test
-    func automaticProjectAdoptionWaitsForRestoreAndStopsAfterExplicitChoices() {
-        #expect(
-            DailyUXCreationContext.shouldAdoptAutomaticProject(
-                currentProjectID: "fallback",
-                nextRecentProjectID: "recent",
-                isAwaitingRecentActivity: true,
-                projectSelectionIsExplicit: false,
-                modelSelectionIsExplicit: false,
-                workspaceSelectionIsExplicit: false,
-                hasDraftContent: false,
-                draftRestoreIsComplete: true
-            )
-        )
-
-        for explicitChoice in 0..<3 {
-            #expect(
-                !DailyUXCreationContext.shouldAdoptAutomaticProject(
-                    currentProjectID: "fallback",
-                    nextRecentProjectID: "recent",
-                    isAwaitingRecentActivity: true,
-                    projectSelectionIsExplicit: explicitChoice == 0,
-                    modelSelectionIsExplicit: explicitChoice == 1,
-                    workspaceSelectionIsExplicit: explicitChoice == 2,
-                    hasDraftContent: false,
-                    draftRestoreIsComplete: true
-                )
-            )
-        }
-        #expect(
-            !DailyUXCreationContext.shouldAdoptAutomaticProject(
-                currentProjectID: "fallback",
-                nextRecentProjectID: "recent",
-                isAwaitingRecentActivity: true,
-                projectSelectionIsExplicit: false,
-                modelSelectionIsExplicit: false,
-                workspaceSelectionIsExplicit: false,
-                hasDraftContent: false,
-                draftRestoreIsComplete: false
-            )
-        )
-        #expect(
-            !DailyUXCreationContext.shouldAdoptAutomaticProject(
-                currentProjectID: "fallback",
-                nextRecentProjectID: "recent",
-                isAwaitingRecentActivity: true,
-                projectSelectionIsExplicit: false,
-                modelSelectionIsExplicit: false,
-                workspaceSelectionIsExplicit: false,
-                hasDraftContent: true,
-                draftRestoreIsComplete: true
-            )
-        )
-        #expect(
-            !DailyUXCreationContext.shouldAdoptAutomaticProject(
-                currentProjectID: "fallback",
-                nextRecentProjectID: "fallback",
-                isAwaitingRecentActivity: true,
-                projectSelectionIsExplicit: false,
-                modelSelectionIsExplicit: false,
-                workspaceSelectionIsExplicit: false,
-                hasDraftContent: false,
-                draftRestoreIsComplete: true
-            )
-        )
-        #expect(
-            !DailyUXCreationContext.shouldAdoptAutomaticProject(
-                currentProjectID: "fallback",
-                nextRecentProjectID: nil,
-                isAwaitingRecentActivity: true,
-                projectSelectionIsExplicit: false,
-                modelSelectionIsExplicit: false,
-                workspaceSelectionIsExplicit: false,
-                hasDraftContent: false,
-                draftRestoreIsComplete: true
-            )
-        )
+        #expect(selected.id == zulu.id)
     }
 
     @Test
@@ -646,6 +526,67 @@ struct DailyUXNewTaskTests {
     }
 
     @Test
+    func projectPickerShowsThreeRecentGroupsThenAlphabeticalProjects() {
+        let alpha = projectGroup(id: "alpha", name: "Alpha", memberIDs: ["alpha-studio"])
+        let bravo = projectGroup(id: "bravo", name: "Bravo", memberIDs: ["bravo-studio"])
+        let delta = projectGroup(
+            id: "delta",
+            name: "Delta",
+            memberIDs: ["delta-laptop", "delta-studio"]
+        )
+        let echo = projectGroup(id: "echo", name: "Echo", memberIDs: ["echo-studio"])
+        let zulu = projectGroup(id: "zulu", name: "Zulu", memberIDs: ["zulu-studio"])
+
+        let sections = NewTaskProjectListSections.split(
+            groups: [zulu, echo, delta, bravo, alpha],
+            recentProjectIDs: [
+                "delta-laptop",
+                "missing-project",
+                "zulu-studio",
+                "delta-studio",
+                "echo-studio",
+                "alpha-studio",
+            ]
+        )
+
+        #expect(sections.recent.map(\.id) == ["delta", "zulu", "echo"])
+        #expect(sections.remaining.map(\.id) == ["alpha", "bravo"])
+    }
+
+    @Test
+    func projectPickerWithoutRecentsSortsAllGroupsAlphabetically() {
+        let sections = NewTaskProjectListSections.split(
+            groups: [
+                projectGroup(id: "zulu", name: "zulu", memberIDs: ["zulu"]),
+                projectGroup(id: "alpha", name: "Alpha", memberIDs: ["alpha"]),
+            ],
+            recentProjectIDs: []
+        )
+
+        #expect(sections.recent.isEmpty)
+        #expect(sections.remaining.map(\.id) == ["alpha", "zulu"])
+    }
+
+    @Test
+    func recentProjectStoreKeepsEightNewestUniqueProjectIDs() throws {
+        let suiteName = "new-task-recent-project-store-tests"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defaults.removePersistentDomain(forName: suiteName)
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let store = NewTaskRecentProjectStore(
+            defaults: defaults,
+            key: "test.recent-projects",
+            capacity: 8
+        )
+
+        for id in ["a", "b", "c", "d", "e", "f", "g", "h", "a", "i"] {
+            store.record(id)
+        }
+
+        #expect(store.recentIDs() == ["i", "a", "h", "g", "f", "e", "d", "c"])
+    }
+
+    @Test
     func projectsWithoutRepositoryIdentityNeverGroupAcrossComputers() {
         let studio = FeatureProject(
             id: "studio",
@@ -664,6 +605,19 @@ struct DailyUXNewTaskTests {
 
         #expect(groups.count == 2)
         #expect(groups.allSatisfy { $0.projects.count == 1 })
+    }
+
+    private func projectGroup(
+        id: String,
+        name: String,
+        memberIDs: Set<String>
+    ) -> DailyUXProjectGroup {
+        DailyUXProjectGroup(
+            id: id,
+            name: name,
+            projects: [],
+            memberProjectIDs: memberIDs
+        )
     }
 
     @Test
@@ -700,21 +654,6 @@ struct DailyUXNewTaskTests {
 
         #expect(group.projects.map(\.id) == ["remote", "current"])
         #expect(group.memberProjectIDs == ["stale", "current", "remote"])
-
-        let snapshot = rankedSnapshot(
-            projects: [stale, current, remote],
-            threads: [rankedThread("recent", projectID: stale.id, activity: 20)]
-        )
-        #expect(
-            DailyUXCreationContext.recentProjects(in: snapshot).first?.project.id
-                == current.id
-        )
-        #expect(
-            DailyUXCreationContext.initialProject(
-                in: snapshot,
-                requestedProjectID: stale.id
-            )?.id == current.id
-        )
     }
 
     @Test
@@ -839,51 +778,65 @@ struct DailyUXNewTaskTests {
         #expect(attachment.mimeType == "image/jpeg")
     }
 
-    private func rankedProject(
-        _ id: String,
+    private func project(
+        id: String,
         name: String,
-        environmentID: String = "environment",
-        repositoryKey: String? = nil
+        environmentID: String = "environment"
     ) -> FeatureProject {
         FeatureProject(
             id: id,
             environmentID: environmentID,
             name: name,
-            path: "/\(id)",
-            repositoryIdentity: repositoryKey.map {
-                FeatureRepositoryIdentity(canonicalKey: $0)
-            }
+            path: "/projects/\(id)"
         )
     }
 
-    private func rankedThread(
-        _ id: String,
+    private func thread(
+        id: String,
         projectID: String,
         environmentID: String? = nil,
-        activity: TimeInterval? = nil,
-        updatedAt: TimeInterval? = nil,
-        lastActivityAt: TimeInterval? = nil,
-        isArchived: Bool = false,
-        isSettled: Bool = false
+        updatedAt: TimeInterval,
+        lastActivityAt: TimeInterval? = nil
     ) -> FeatureThread {
-        let updatedAt = updatedAt ?? activity ?? 0
-        return FeatureThread(
+        FeatureThread(
             id: id,
             projectID: projectID,
             environmentID: environmentID,
             title: id,
+            createdAt: Date(timeIntervalSince1970: updatedAt),
             updatedAt: Date(timeIntervalSince1970: updatedAt),
-            isArchived: isArchived,
-            isSettled: isSettled,
             lastActivityAt: lastActivityAt.map(Date.init(timeIntervalSince1970:))
         )
     }
 
-    private func rankedSnapshot(
-        environments: [FeatureEnvironment] = [],
+    private func environment(
+        id: String,
+        isActive: Bool = false,
+        isEnabled: Bool = true,
+        state: FeatureConnection.State
+    ) -> FeatureEnvironment {
+        FeatureEnvironment(
+            id: id,
+            name: id,
+            endpoint: "https://\(id).example",
+            isActive: isActive,
+            isEnabled: isEnabled,
+            connectionState: state
+        )
+    }
+
+    private func snapshot(
         projects: [FeatureProject],
-        threads: [FeatureThread]
+        threads: [FeatureThread],
+        environments: [FeatureEnvironment]? = nil
     ) -> FeatureSnapshot {
-        FeatureSnapshot(environments: environments, projects: projects, threads: threads)
+        FeatureSnapshot(
+            connection: .init(state: .connected),
+            environments: environments ?? [
+                environment(id: "environment", isActive: true, state: .connected),
+            ],
+            projects: projects,
+            threads: threads
+        )
     }
 }

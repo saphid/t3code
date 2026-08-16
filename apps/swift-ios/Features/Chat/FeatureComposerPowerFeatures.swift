@@ -248,6 +248,10 @@ enum FeatureComposerMenuItem: Identifiable, Sendable, Equatable {
         case let .path(entry): entry.parentPath
         }
     }
+
+    var usesExpandedPresentation: Bool {
+        if case .skill = self { true } else { false }
+    }
 }
 
 enum FeatureComposerMenuBuilder {

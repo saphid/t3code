@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+
 @testable import T3Code
 
 @Suite("Platform deep links")
@@ -48,6 +49,47 @@ struct PlatformDeepLinkTests {
     }
 
     @Test
+    func resolvesLoopbackWebThreadLinksTappedInApp() throws {
+        for value in [
+            "http://127.0.0.1:3773/environment-1/thread-7",
+            "http://127.12.34.56:3773/environment-1/thread-7",
+            "http://localhost:3773/environment-1/thread-7",
+            "http://[::1]:3773/environment-1/thread-7",
+        ] {
+            #expect(
+                try PlatformDeepLinkParser.parseInAppLink(try #require(URL(string: value)))
+                    == .thread(environmentID: "environment-1", threadID: "thread-7")
+            )
+        }
+    }
+
+    @Test
+    func resolvesElectronThreadLinksTappedInApp() throws {
+        #expect(
+            try PlatformDeepLinkParser.parseInAppLink(
+                try #require(URL(string: "t3code://app/environment-1/thread-7"))
+            ) == .thread(environmentID: "environment-1", threadID: "thread-7")
+        )
+        #expect(
+            try PlatformDeepLinkParser.parseInAppLink(
+                try #require(URL(string: "t3code-dev://app/environment-1/thread-7"))
+            ) == .thread(environmentID: "environment-1", threadID: "thread-7")
+        )
+    }
+
+    @Test
+    func leavesOrdinaryWebLinksForTheSystem() {
+        for value in [
+            "https://example.com/environment/thread",
+            "http://127.example.com/environment/thread",
+        ] {
+            #expect(throws: PlatformDeepLinkError.unsupportedURL) {
+                try PlatformDeepLinkParser.parseInAppLink(value)
+            }
+        }
+    }
+
+    @Test
     func rejectsUntrustedWebNavigationRoute() {
         #expect(throws: PlatformDeepLinkError.unsupportedURL) {
             try PlatformDeepLinkParser.parse("https://malicious.example/threads/env/thread")
@@ -70,6 +112,7 @@ struct PlatformDeepLinkTests {
             .project(environmentID: "environment 1", projectID: "project/1"),
             .thread(environmentID: "environment 1", threadID: "thread 1"),
             .newTask(environmentID: "environment 1", projectID: "project 1"),
+            .incomingShare(id: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"),
             .connection(endpoint: "https://remote.example.com", token: "PAIR"),
         ]
 
@@ -82,23 +125,29 @@ struct PlatformDeepLinkTests {
     }
 
     @Test
+    func incomingShareRouteRequiresAUUID() throws {
+        #expect(
+            try PlatformDeepLinkParser.parse(
+                "t3code-swiftui://share?id=AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE"
+            ) == .incomingShare(id: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
+        )
+        #expect(throws: PlatformDeepLinkError.invalidIdentifier) {
+            try PlatformDeepLinkParser.parse("t3code-swiftui://share?id=not-a-uuid")
+        }
+    }
+
+    @Test
     func acceptsLinksFromBothSwiftUIIdentitiesAndLegacyRoutes() throws {
-        #expect(
-            try PlatformDeepLinkParser.parse("t3code-swiftui://threads/environment/thread")
-                == .thread(environmentID: "environment", threadID: "thread")
-        )
-        #expect(
-            try PlatformDeepLinkParser.parse("t3code-swiftui-dev://threads/environment/thread")
-                == .thread(environmentID: "environment", threadID: "thread")
-        )
-        #expect(
-            try PlatformDeepLinkParser.parse("t3code://threads/environment/thread")
-                == .thread(environmentID: "environment", threadID: "thread")
-        )
-        #expect(
-            try PlatformDeepLinkParser.parse("t3://threads/environment/thread")
-                == .thread(environmentID: "environment", threadID: "thread")
-        )
+        for scheme in [
+            "t3code-swiftui", "t3code-swiftui-dev",
+            "t3code-swiftui-personal-dev", "t3code-swiftui-personal",
+            "t3code", "t3",
+        ] {
+            #expect(
+                try PlatformDeepLinkParser.parse("\(scheme)://threads/environment/thread")
+                    == .thread(environmentID: "environment", threadID: "thread")
+            )
+        }
     }
 
     @Test
@@ -176,21 +225,47 @@ struct PlatformDeepLinkTests {
             PlatformRouteResolver.thread(
                 in: snapshot,
                 environmentID: nil,
-                id: "shared-thread"
+                id: "SHARED-THREAD"
             ) == nil
         )
         #expect(
             PlatformRouteResolver.thread(
                 in: snapshot,
                 environmentID: passive.id,
-                id: "shared-thread"
+                id: "SHARED-THREAD"
             )?.id == passiveThread.id
+        )
+        let singleEnvironmentSnapshot = FeatureSnapshot(
+            environments: [passive],
+            projects: [passiveProject],
+            threads: [passiveThread]
+        )
+        #expect(
+            PlatformRouteResolver.thread(
+                in: singleEnvironmentSnapshot,
+                environmentID: nil,
+                id: "SHARED-THREAD"
+            )?.id == passiveThread.id
+        )
+        #expect(
+            PlatformRouteResolver.project(
+                in: singleEnvironmentSnapshot,
+                environmentID: nil,
+                id: "SHARED-PROJECT"
+            )?.id == passiveProject.id
+        )
+        #expect(
+            PlatformRouteResolver.project(
+                in: snapshot,
+                environmentID: nil,
+                id: "SHARED-PROJECT"
+            ) == nil
         )
         #expect(
             PlatformRouteResolver.project(
                 in: snapshot,
                 environmentID: passive.id,
-                id: "shared-project"
+                id: "SHARED-PROJECT"
             )?.id == passiveProject.id
         )
     }

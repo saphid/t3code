@@ -1,11 +1,16 @@
 import SwiftUI
 
 struct FeatureComposerCommandPopover: View {
+    @State private var contentHeight: CGFloat = 0
+    @State private var emptyContentHeight: CGFloat = 0
+
     let triggerKind: FeatureComposerTriggerKind
     let items: [FeatureComposerMenuItem]
     let isLoading: Bool
     let errorMessage: String?
     let pathSearchAvailable: Bool
+    let maximumHeight: CGFloat
+    let dynamicTypeSize: DynamicTypeSize
     let onSelect: (FeatureComposerMenuItem) -> Void
 
     var body: some View {
@@ -17,9 +22,15 @@ struct FeatureComposerCommandPopover: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.horizontal, 14)
                     .padding(.vertical, 12)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .onGeometryChange(for: CGFloat.self) { geometry in
+                        geometry.size.height
+                    } action: { height in
+                        emptyContentHeight = height
+                    }
             } else {
                 ScrollView {
-                    LazyVStack(spacing: 0) {
+                    VStack(spacing: 0) {
                         ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
                             Button {
                                 onSelect(item)
@@ -35,6 +46,11 @@ struct FeatureComposerCommandPopover: View {
                                     .padding(.leading, 40)
                             }
                         }
+                    }
+                    .onGeometryChange(for: CGFloat.self) { geometry in
+                        geometry.size.height
+                    } action: { height in
+                        contentHeight = height
                     }
                 }
                 .scrollIndicators(.hidden)
@@ -73,9 +89,18 @@ struct FeatureComposerCommandPopover: View {
     }
 
     private var menuHeight: CGFloat {
-        guard !items.isEmpty else { return 48 }
-        let rowHeight: CGFloat = 47
-        return min(CGFloat(items.count) * rowHeight, 188)
+        if items.isEmpty, emptyContentHeight > 0 {
+            return min(emptyContentHeight, maximumHeight)
+        }
+        if !items.isEmpty, contentHeight > 0 {
+            return min(contentHeight, maximumHeight)
+        }
+        return FeatureComposerTextLayout.commandMenuHeight(
+            itemCount: items.count,
+            usesExpandedRows: items.contains(where: \.usesExpandedPresentation),
+            dynamicTypeSize: dynamicTypeSize,
+            maximumHeight: maximumHeight
+        )
     }
 }
 
@@ -83,30 +108,58 @@ private struct FeatureComposerCommandRow: View {
     let item: FeatureComposerMenuItem
 
     var body: some View {
-        HStack(spacing: 10) {
+        HStack(alignment: isSkill ? .top : .center, spacing: 10) {
             Image(systemName: iconName)
-                .font(.system(size: 14, weight: .medium))
+                .font(
+                    isSkill
+                        ? T3Typography.control
+                        : .system(size: 14, weight: .medium)
+                )
                 .foregroundStyle(T3Colors.textTertiary)
                 .frame(width: 17)
 
-            Text(item.label)
-                .font(T3Typography.control)
-                .foregroundStyle(T3Colors.textPrimary)
-                .lineLimit(1)
+            if isSkill {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(item.label)
+                        .font(T3Typography.control)
+                        .foregroundStyle(T3Colors.textPrimary)
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
 
-            if !item.description.isEmpty {
-                Text(item.description)
-                    .font(T3Typography.supporting)
-                    .foregroundStyle(T3Colors.textTertiary)
-                    .lineLimit(1)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                    if !item.description.isEmpty {
+                        Text(item.description)
+                            .font(T3Typography.supporting)
+                            .foregroundStyle(T3Colors.textTertiary)
+                            .lineLimit(2)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
             } else {
-                Spacer(minLength: 0)
+                Text(item.label)
+                    .font(T3Typography.control)
+                    .foregroundStyle(T3Colors.textPrimary)
+                    .lineLimit(1)
+
+                if !item.description.isEmpty {
+                    Text(item.description)
+                        .font(T3Typography.supporting)
+                        .foregroundStyle(T3Colors.textTertiary)
+                        .lineLimit(1)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                } else {
+                    Spacer(minLength: 0)
+                }
             }
         }
         .padding(.horizontal, 14)
-        .frame(minHeight: 46)
+        .padding(.vertical, isSkill ? 10 : 0)
+        .frame(minHeight: isSkill ? 66 : 46)
         .contentShape(Rectangle())
+    }
+
+    private var isSkill: Bool {
+        item.usesExpandedPresentation
     }
 
     private var iconName: String {

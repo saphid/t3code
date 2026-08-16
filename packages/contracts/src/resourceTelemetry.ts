@@ -359,6 +359,18 @@ export const ResourceAttributionSnapshot = Schema.Struct({
 });
 export type ResourceAttributionSnapshot = typeof ResourceAttributionSnapshot.Type;
 
+export const HostStorageStatus = Schema.Literals(["ok", "warning", "critical"]);
+export type HostStorageStatus = typeof HostStorageStatus.Type;
+
+export const HostStorageSnapshot = Schema.Struct({
+  totalBytes: NonNegativeInt,
+  availableBytes: NonNegativeInt,
+  warningThresholdBytes: NonNegativeInt,
+  criticalThresholdBytes: NonNegativeInt,
+  status: HostStorageStatus,
+});
+export type HostStorageSnapshot = typeof HostStorageSnapshot.Type;
+
 export const ResourceTelemetrySnapshot = Schema.Struct({
   readAt: Schema.DateTimeUtc,
   sampleIntervalMs: NonNegativeInt,

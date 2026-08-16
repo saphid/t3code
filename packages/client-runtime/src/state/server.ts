@@ -702,6 +702,11 @@ export function createServerEnvironmentAtoms<R, E>(
       tag: WS_METHODS.subscribeResourceTelemetry,
       idleTtlMs: 0,
     }),
+    hostStorage: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
+      label: "environment-data:server:host-storage",
+      tag: WS_METHODS.subscribeHostStorage,
+      idleTtlMs: 0,
+    }),
     resourceTelemetryHistory: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:server:resource-telemetry-history",
       tag: WS_METHODS.serverGetResourceTelemetryHistory,

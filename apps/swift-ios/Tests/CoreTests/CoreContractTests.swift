@@ -112,6 +112,14 @@ final class CoreContractTests: XCTestCase {
             commandID: "command-unpin"
         )
         XCTAssertEqual(unpin["type"]?.stringValue, "thread.unpin")
+
+        let regenerateTitle = OrchestrationCommands.regenerateTitle(
+            threadID: "thread-1",
+            commandID: "command-regenerate-title"
+        )
+        XCTAssertEqual(regenerateTitle["type"]?.stringValue, "thread.meta.update")
+        XCTAssertEqual(regenerateTitle["threadId"]?.stringValue, "thread-1")
+        XCTAssertEqual(regenerateTitle["regenerateTitle"], .bool(true))
     }
 
     func testFirstSendCommandCarriesCanonicalBootstrapMetadata() throws {
@@ -246,6 +254,37 @@ final class CoreContractTests: XCTestCase {
         XCTAssertEqual(movedEnvironment.webSocketBaseURL, moved.webSocketBaseURL)
     }
 
+    func testRuntimeRefreshesAndPersistsCurrentServerDescriptor() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("t3-swift-descriptor-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let environment = Environment(
+            id: "same-server",
+            label: "Studio",
+            httpBaseURL: URL(string: "https://studio.example")!,
+            webSocketBaseURL: URL(string: "wss://studio.example")!
+        )
+        let store = EnvironmentStore(
+            fileURL: directory.appendingPathComponent("environments.json")
+        )
+        try await store.save([environment])
+        let runtime = EnvironmentRuntime(
+            environmentStore: store,
+            credentialStore: InMemoryCredentialStore(),
+            httpTransport: DescriptorHTTPTransport()
+        )
+
+        let refreshed = try await runtime.refreshDescriptor(
+            for: environment,
+            timeoutInterval: 1
+        )
+        let persisted = try await store.load()
+
+        XCTAssertEqual(refreshed.descriptor?.serverVersion, "2.3.4")
+        XCTAssertEqual(persisted.first?.descriptor?.serverVersion, "2.3.4")
+    }
+
     func testRuntimeRemovesCatalogEntryBeforeDestroyingCredential() async throws {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("t3-swift-removal-\(UUID().uuidString)", isDirectory: true)
@@ -278,6 +317,27 @@ final class CoreContractTests: XCTestCase {
         XCTAssertTrue(remaining.isEmpty)
         let credential = await credentials.credential(for: environment.id)
         XCTAssertNil(credential)
+    }
+}
+
+private actor DescriptorHTTPTransport: HTTPTransport {
+    func data(for request: URLRequest) async throws -> (Data, HTTPURLResponse) {
+        let body = """
+        {
+          "environmentId": "same-server",
+          "label": "Studio",
+          "platform": {"os": "darwin", "arch": "arm64"},
+          "serverVersion": "2.3.4",
+          "capabilities": {"repositoryIdentity": true}
+        }
+        """
+        let response = HTTPURLResponse(
+            url: request.url!,
+            statusCode: 200,
+            httpVersion: "HTTP/1.1",
+            headerFields: ["Content-Type": "application/json"]
+        )!
+        return (Data(body.utf8), response)
     }
 }
 

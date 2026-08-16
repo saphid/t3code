@@ -58,8 +58,6 @@ struct UsageDailyTotals: Identifiable, Equatable {
 }
 
 struct UsageCostQuality: Equatable {
-    let providerReportedShare: Double
-    let modelPricedShare: Double
     let unpricedShare: Double
     let cacheSavingsUsd: Double
 }
@@ -78,8 +76,6 @@ struct MergedUsage: Equatable {
     var models: [UsageModelTotals] = []
     var daily: [UsageDailyTotals] = []
     var costQuality = UsageCostQuality(
-        providerReportedShare: 0,
-        modelPricedShare: 0,
         unpricedShare: 0,
         cacheSavingsUsd: 0
     )
@@ -217,7 +213,6 @@ enum UsageMerger {
         result.staleEnvironments = staleEnvironmentIDs
 
         var cacheSavingsUsd = 0.0
-        var providerReportedRecords = 0
         var unpricedRecords = 0
         var providers: [UsageProviderKind: ProviderAccumulator] = [:]
         var models: [String: ModelAccumulator] = [:]
@@ -245,9 +240,6 @@ enum UsageMerger {
                 result.records += bucket.records
                 cacheSavingsUsd += bucket.cacheSavingsUsd
                 unpricedRecords += bucket.unpricedRecords
-                if bucket.costSource == .providerReported {
-                    providerReportedRecords += bucket.records
-                }
 
                 var provider = providers[bucket.provider] ?? ProviderAccumulator()
                 provider.costUsd += bucket.costUsd
@@ -315,13 +307,6 @@ enum UsageMerger {
         }
         .sorted { $0.day < $1.day }
         result.costQuality = UsageCostQuality(
-            providerReportedShare: result.records == 0
-                ? 0
-                : Double(providerReportedRecords) / Double(result.records),
-            modelPricedShare: result.records == 0
-                ? 0
-                : Double(result.records - providerReportedRecords - unpricedRecords)
-                    / Double(result.records),
             unpricedShare: result.records == 0
                 ? 0
                 : Double(unpricedRecords) / Double(result.records),

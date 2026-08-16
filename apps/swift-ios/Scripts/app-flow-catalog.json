@@ -1,0 +1,675 @@
+{
+  "schemaVersion": 1,
+  "suite": "T3CodeUITests/AppFlowUITests",
+  "journeys": [
+    {
+      "id": "onboarding-manual",
+      "test": "testDirectConnectionOnboardingHappyPath",
+      "lane": "fixture",
+      "persona": "first-run-user",
+      "estimatedSeconds": 30,
+      "surfaces": ["manual connection", "secure pairing code", "Home"],
+      "checkpoints": ["onboarding-connected-home"]
+    },
+    {
+      "id": "live-pairing-project-discovery",
+      "test": "testLiveBackendPairingAndProjectDiscovery",
+      "lane": "live",
+      "persona": "first-run-user",
+      "estimatedSeconds": 45,
+      "surfaces": ["HTTP pairing", "project discovery", "task creation", "follow-up"],
+      "checkpoints": ["live-project-discovery", "live-task-follow-up"],
+      "credentials": "required"
+    },
+    {
+      "id": "credential-ingress-audit",
+      "test": "testCredentialIngressDoesNotEnterEvidence",
+      "lane": "security",
+      "persona": "first-run-user",
+      "estimatedSeconds": 30,
+      "surfaces": ["staged credentials", "evidence leak scan"],
+      "checkpoints": ["credential-ingress-connected-home"],
+      "credentials": "required"
+    },
+    {
+      "id": "workspace-navigation",
+      "test": "testWorkspaceNavigationAndMenus",
+      "lane": "fixture",
+      "persona": "returning-user",
+      "estimatedSeconds": 35,
+      "surfaces": ["Home", "search", "project filter", "Settings", "Connections"],
+      "checkpoints": [
+        "workspace-home",
+        "workspace-search",
+        "settings-theme-menu",
+        "settings-connections"
+      ],
+      "checkpointAlternatives": {
+        "settings-theme-menu": ["settings-theme-catalog"]
+      }
+    },
+    {
+      "id": "new-task-options",
+      "test": "testNewTaskComposerMenus",
+      "lane": "fixture",
+      "persona": "task-author",
+      "estimatedSeconds": 40,
+      "surfaces": ["workspace", "base branch", "model", "reasoning", "attachments"],
+      "checkpoints": [
+        "new-task-workspace-menu",
+        "new-task-base-branch-picker",
+        "new-task-model-picker",
+        "new-task-reasoning-menu",
+        "new-task-attachment-menu"
+      ]
+    },
+    {
+      "id": "settings-secondary",
+      "test": "testSettingsSecondarySurfaces",
+      "lane": "fixture",
+      "persona": "returning-user",
+      "estimatedSeconds": 25,
+      "surfaces": ["notifications", "haptics", "Live Activities", "usage"],
+      "checkpoints": ["settings-usage"]
+    },
+    {
+      "id": "task-and-follow-up",
+      "test": "testCreateTaskAndSendFollowUpHappyPath",
+      "lane": "fixture",
+      "persona": "task-author",
+      "estimatedSeconds": 40,
+      "surfaces": ["new task", "message composer", "follow-up"],
+      "checkpoints": ["created-task-detail", "sent-follow-up"]
+    },
+    {
+      "id": "recovery-last-known-workspace",
+      "test": "testRecoveryPersonaKeepsLastKnownWorkspace",
+      "lane": "fixture",
+      "persona": "error-recovery-user",
+      "estimatedSeconds": 20,
+      "surfaces": ["reconnecting status", "last-known threads"],
+      "checkpoints": ["recovery-last-known-workspace"]
+    },
+    {
+      "id": "permissions-denied-settings",
+      "test": "testPermissionsDeniedPersonaReflectsSettings",
+      "lane": "fixture",
+      "persona": "permissions-denied-user",
+      "estimatedSeconds": 25,
+      "surfaces": ["haptics", "notifications", "Live Activities"],
+      "checkpoints": ["settings-permissions-denied"]
+    },
+    {
+      "id": "long-lived-history-search",
+      "test": "testLongLivedPersonaSearchesAccumulatedHistory",
+      "lane": "fixture",
+      "persona": "long-lived-user",
+      "estimatedSeconds": 25,
+      "surfaces": ["accumulated thread history", "search"],
+      "checkpoints": ["long-lived-history-search"]
+    },
+    {
+      "id": "skills-popup-keyboard-readability",
+      "test": "testSkillsPopupStaysReadableAboveKeyboardAndSelectsBottomSkill",
+      "lane": "fixture",
+      "persona": "task-author",
+      "estimatedSeconds": 35,
+      "surfaces": ["thread composer", "software keyboard", "Skills popup", "skill filtering"],
+      "checkpoints": ["thread-skills-popup-scrolled", "thread-skills-popup-selected"]
+    },
+    {
+      "id": "home-thread-list-scrolling",
+      "test": "testHomeListScrollDoesNotOpenCommandPalette",
+      "lane": "fixture",
+      "persona": "long-lived-user",
+      "estimatedSeconds": 30,
+      "surfaces": ["Home", "accumulated thread history", "vertical scrolling"],
+      "checkpoints": ["home-thread-list-scrolled"]
+    },
+    {
+      "id": "cold-boot-home-list-scrolling",
+      "test": "testColdBootHomeListScrollsWhileMetadataArrivesAndAfterReturning",
+      "lane": "fixture",
+      "persona": "cold-start-user",
+      "estimatedSeconds": 35,
+      "surfaces": ["cold launch", "Home metadata updates", "vertical scrolling", "thread reopen"],
+      "checkpoints": [
+        "cold-boot-home-first-scroll",
+        "cold-boot-home-returned-scroll"
+      ],
+      "issue": "https://github.com/saphid/t3code-personal/issues/55"
+    },
+    {
+      "id": "swiftui-test-personal-connect",
+      "test": "testPersonalConnectShowsFailureConnectsAndPersistsAcrossReopen",
+      "lane": "fixture",
+      "persona": "private-fleet-user",
+      "estimatedSeconds": 35,
+      "surfaces": ["Personal Connect", "unavailable host", "automatic pairing", "reopen"],
+      "checkpoints": [
+        "personal-connect-unavailable",
+        "personal-connect-connected-home",
+        "personal-connect-reopened-home"
+      ],
+      "issue": "https://github.com/saphid/t3code-personal/issues/54"
+    },
+    {
+      "id": "command-palette-top-drawer",
+      "test": "testCommandPaletteTopDrawerThresholdAndGestureIsolation",
+      "lane": "fixture",
+      "persona": "one-handed-mobile-user",
+      "estimatedSeconds": 45,
+      "surfaces": ["Home bar", "thread header", "command palette", "software keyboard"],
+      "checkpoints": [
+        "command-palette-home-threshold",
+        "command-palette-thread-keyboard"
+      ]
+    },
+    {
+      "id": "project-connection-entry",
+      "test": "testProjectAndConnectionEntryPoints",
+      "lane": "fixture",
+      "persona": "environment-manager",
+      "estimatedSeconds": 35,
+      "surfaces": ["add project", "connection detail", "devices", "add connection"],
+      "checkpoints": [
+        "add-project-entry",
+        "connection-detail",
+        "settings-devices",
+        "add-connection-entry"
+      ]
+    },
+    {
+      "id": "accessibility-critical-screens",
+      "test": "testAccessibilitySemanticsCriticalScreens",
+      "lane": "accessibility",
+      "persona": "assistive-technology-user",
+      "estimatedSeconds": 45,
+      "surfaces": ["onboarding semantics", "Home semantics", "Settings semantics"],
+      "checkpoints": ["accessibility-onboarding", "accessibility-home", "accessibility-settings"]
+    },
+    {
+      "id": "thread-context-menu",
+      "test": "testThreadContextMenuInventory",
+      "lane": "fixture",
+      "persona": "thread-operator",
+      "estimatedSeconds": 30,
+      "surfaces": ["pin", "reload", "archive", "tools"],
+      "checkpoints": ["thread-context-menu", "thread-snooze-menu"]
+    },
+    {
+      "id": "thread-workspace-tools",
+      "test": "testThreadWorkspaceToolSurfaces",
+      "lane": "fixture",
+      "persona": "developer",
+      "estimatedSeconds": 90,
+      "surfaces": ["Files", "Review", "Source Control", "Terminal"],
+      "checkpoints": [
+        "thread-detail",
+        "thread-files",
+        "thread-review",
+        "thread-source-control",
+        "thread-terminal"
+      ]
+    },
+    {
+      "id": "in-app-stream-approval-control",
+      "test": "testInAppStreamApprovalControlRequiresExactVerdictConfirmation",
+      "lane": "fixture",
+      "persona": "release-reviewer",
+      "estimatedSeconds": 45,
+      "surfaces": [
+        "Dev build identity",
+        "feature review guide",
+        "commit and thread attribution",
+        "one exact-build current review",
+        "active source thread routing",
+        "context-filled new discussion",
+        "Ready for Test confirmation",
+        "Not ready confirmation"
+      ],
+      "checkpoints": [
+        "stream-approval-pipeline",
+        "stream-approval-proof-pending",
+        "stream-approval-review-guide",
+        "stream-approval-current-review",
+        "stream-approval-ready-confirmation",
+        "stream-approval-ready-recorded",
+        "stream-approval-not-ready-confirmation",
+        "stream-approval-active-thread",
+        "stream-approval-new-discussion"
+      ],
+      "issue": "https://github.com/saphid/t3code-personal/issues/56"
+    },
+    {
+      "id": "initial-thread-live-updates",
+      "test": "testInitialThreadLiveUpdateWinsAndTimelineStaysStableOnReopen",
+      "lane": "fixture",
+      "persona": "conversation-user",
+      "estimatedSeconds": 30,
+      "surfaces": [
+        "initial thread history load",
+        "newer live detail",
+        "ordered timeline reopen"
+      ],
+      "checkpoints": [
+        "initial-thread-live-update",
+        "reopened-thread-live-update"
+      ],
+      "issue": "https://github.com/saphid/t3code-personal/issues/83"
+    },
+    {
+      "id": "shared-electron-vscode-themes",
+      "test": "testThemeSearchSelectionPersistenceAndNativeTerminalColorAgreement",
+      "lane": "fixture",
+      "persona": "theme-user",
+      "estimatedSeconds": 55,
+      "surfaces": [
+        "Open VSX search",
+        "light and dark theme selection",
+        "relaunch persistence",
+        "native and terminal color roles"
+      ],
+      "checkpoints": [
+        "theme-open-vsx-search",
+        "theme-selected-light-dark",
+        "theme-native-light",
+        "theme-persisted-dark",
+        "theme-terminal-dark-agreement"
+      ],
+      "issue": "https://github.com/saphid/t3code-personal/issues/51"
+    },
+    {
+      "id": "safe-tool-content-recovery",
+      "test": "testSourceControlRetainsContentRetriesAndRestoresFocusTarget",
+      "lane": "fixture",
+      "persona": "error-recovery-user",
+      "estimatedSeconds": 30,
+      "surfaces": [
+        "retained source-control content",
+        "inline error",
+        "accessible Retry",
+        "recovery focus target",
+        "duplicate prevention"
+      ],
+      "checkpoints": [
+        "source-control-retained-error",
+        "source-control-recovered"
+      ],
+      "issue": "https://github.com/saphid/t3code-personal/issues/87"
+    },
+    {
+      "id": "development-build-source-thread",
+      "test": "testBuildChangelogOpensExactSourceThread",
+      "lane": "fixture",
+      "persona": "build-reviewer",
+      "estimatedSeconds": 25,
+      "surfaces": [
+        "build changelog",
+        "revision and summary attribution",
+        "source-thread route",
+        "existing conversation"
+      ],
+      "checkpoints": [
+        "build-changelog-source-attribution",
+        "build-changelog-source-thread"
+      ],
+      "issue": "https://github.com/saphid/t3code-personal/issues/85"
+    },
+    {
+      "id": "proof-event-emitter-contract",
+      "test": "testProofEventEmitterWritesCompatibleOptInSessionAndActionMap",
+      "lane": "fixture",
+      "persona": "proof-operator",
+      "estimatedSeconds": 5,
+      "surfaces": [
+        "opt-in action ledger",
+        "app-flow-agent session schema",
+        "proof action-map schema",
+        "monotonic recording offsets"
+      ],
+      "checkpoints": []
+    },
+    {
+      "id": "widget-channel-new-task",
+      "test": "testWidgetChannelFallbackRouteOpensInteractiveNewTask",
+      "lane": "fixture",
+      "persona": "multi-channel-widget-user",
+      "estimatedSeconds": 20,
+      "surfaces": [
+        "configured widget fallback URL",
+        "channel-specific New task route",
+        "interactive New task composer"
+      ],
+      "checkpoints": ["widget-channel-new-task"],
+      "issue": "https://github.com/saphid/t3code-personal/issues/89"
+    },
+    {
+      "id": "pull-request-capability-gate",
+      "test": "testPullRequestCapabilityGateKeepsOrdinaryWorkspaceAvailable",
+      "lane": "fixture",
+      "persona": "standard-workspace-user",
+      "estimatedSeconds": 20,
+      "surfaces": [
+        "pull-request capability gate",
+        "ordinary workspace",
+        "non-PR thread detail"
+      ],
+      "checkpoints": ["pull-request-capability-gate-workspace"],
+      "issue": "https://github.com/saphid/personal-ops/issues/94"
+    },
+    {
+      "id": "pull-request-inbox-summary-timeline",
+      "test": "testProjectLinkPullRequestInboxAutomaticallyLoadsAndStaysReadOnly",
+      "lane": "fixture",
+      "persona": "pull-request-reviewer",
+      "estimatedSeconds": 35,
+      "surfaces": [
+        "single-environment pull-request inbox",
+        "read-only Summary",
+        "chronological Timeline"
+      ],
+      "checkpoints": [
+        "pull-request-single-environment-inbox",
+        "pull-request-summary",
+        "pull-request-timeline"
+      ],
+      "issue": "https://github.com/saphid/personal-ops/issues/94"
+    },
+    {
+      "id": "known-red-tool-sheet-close",
+      "test": "testKnownIssueThreadToolSheetHasExplicitDoneControl",
+      "lane": "known-red",
+      "persona": "developer",
+      "estimatedSeconds": 20,
+      "surfaces": ["tool-sheet dismissal"],
+      "checkpoints": [],
+      "issue": "https://github.com/saphid/t3code-personal/issues/60"
+    },
+    {
+      "id": "known-red-add-connection-close",
+      "test": "testKnownIssueAddConnectionSheetHasExplicitCloseControl",
+      "lane": "known-red",
+      "persona": "environment-manager",
+      "estimatedSeconds": 20,
+      "surfaces": ["add-connection dismissal"],
+      "checkpoints": [],
+      "issue": "https://github.com/saphid/t3code-personal/issues/61"
+    },
+    {
+      "id": "known-red-new-task-cancel",
+      "test": "testKnownIssueNewTaskCancelDismissesComposer",
+      "lane": "known-red",
+      "persona": "task-author",
+      "estimatedSeconds": 30,
+      "surfaces": ["new-task dismissal"],
+      "checkpoints": [],
+      "issue": "https://github.com/saphid/t3code-personal/issues/62"
+    }
+  ],
+  "plans": {
+    "review-control": {
+      "description": "Focused deterministic gate for exact-build review selection and discussion routing.",
+      "journeys": [
+        "in-app-stream-approval-control"
+      ]
+    },
+    "pr": {
+      "description": "Fast deterministic gate for native pull requests.",
+      "journeys": [
+        "onboarding-manual",
+        "workspace-navigation",
+        "task-and-follow-up",
+        "thread-workspace-tools"
+      ]
+    },
+    "pull-request": {
+      "description": "Focused deterministic gate for pull-request workspace behavior.",
+      "journeys": [
+        "pull-request-capability-gate",
+        "pull-request-inbox-summary-timeline"
+      ]
+    },
+    "regression": {
+      "description": "Complete deterministic fixture regression with no expected skips.",
+      "journeys": [
+        "onboarding-manual",
+        "workspace-navigation",
+        "new-task-options",
+        "settings-secondary",
+        "task-and-follow-up",
+        "recovery-last-known-workspace",
+        "permissions-denied-settings",
+        "long-lived-history-search",
+        "skills-popup-keyboard-readability",
+        "home-thread-list-scrolling",
+        "cold-boot-home-list-scrolling",
+        "swiftui-test-personal-connect",
+        "command-palette-top-drawer",
+        "project-connection-entry",
+        "thread-context-menu",
+        "thread-workspace-tools",
+        "in-app-stream-approval-control",
+        "initial-thread-live-updates",
+        "shared-electron-vscode-themes",
+        "safe-tool-content-recovery",
+        "development-build-source-thread",
+        "proof-event-emitter-contract",
+        "widget-channel-new-task",
+        "pull-request-capability-gate",
+        "pull-request-inbox-summary-timeline"
+      ]
+    },
+    "live": {
+      "description": "Opt-in disposable-backend pairing and project-discovery smoke.",
+      "journeys": ["live-pairing-project-discovery"]
+    },
+    "security": {
+      "description": "Credential ingress and retained-evidence leak audit.",
+      "journeys": ["credential-ingress-audit"]
+    },
+    "visual-accessibility": {
+      "description": "Critical-screen semantic uniqueness and accessibility evidence lane.",
+      "journeys": ["accessibility-critical-screens"]
+    },
+    "stability": {
+      "description": "Three fresh-runner repetitions of the two critical fixture journeys; any first failure remains red.",
+      "repetitions": 3,
+      "journeys": ["onboarding-manual", "task-and-follow-up"]
+    },
+    "known-red": {
+      "description": "Explicit audit of issue-linked product defects; failures are expected until fixed.",
+      "journeys": [
+        "known-red-tool-sheet-close",
+        "known-red-add-connection-close",
+        "known-red-new-task-cancel"
+      ]
+    }
+  },
+  "impactSelection": {
+    "fastPlan": "pr",
+    "fallbackPlan": "regression",
+    "rules": [
+      {
+        "id": "documentation-only",
+        "patterns": [
+          "docs/**",
+          ".agents/skills/verify-swift-ios-app-flow/**",
+          "apps/swift-ios/README.md"
+        ],
+        "journeys": []
+      },
+      {
+        "id": "onboarding-and-connections",
+        "patterns": ["apps/swift-ios/Features/Connection/**"],
+        "journeys": [
+          "onboarding-manual",
+          "project-connection-entry",
+          "swiftui-test-personal-connect"
+        ]
+      },
+      {
+        "id": "thread-workspace-tools",
+        "patterns": [
+          "apps/swift-ios/Features/Files/**",
+          "apps/swift-ios/Features/Review/**",
+          "apps/swift-ios/Features/SourceControl/**",
+          "apps/swift-ios/Features/Terminal/**"
+        ],
+        "journeys": ["thread-workspace-tools"]
+      },
+      {
+        "id": "safe-tool-content-recovery",
+        "patterns": [
+          "apps/swift-ios/Features/SourceControl/**",
+          "apps/swift-ios/Features/Shared/FeatureToolErrorNotice.swift",
+          "apps/swift-ios/Features/Shared/FeatureToolErrorPresentation.swift"
+        ],
+        "journeys": ["safe-tool-content-recovery"]
+      },
+      {
+        "id": "stream-approval-control",
+        "patterns": [
+          "apps/swift-ios/Features/Settings/BuildTesting*.swift",
+          "apps/swift-ios/Features/Settings/SettingsView.swift",
+          "apps/swift-ios/Features/Workspace/PersonalBuildChannel.swift"
+        ],
+        "journeys": [
+          "in-app-stream-approval-control",
+          "development-build-source-thread"
+        ]
+      },
+      {
+        "id": "theme-settings",
+        "patterns": [
+          "apps/swift-ios/DesignSystem/T3ThemeRuntime.swift",
+          "apps/swift-ios/Features/Settings/ThemeSettingsView.swift",
+          "apps/swift-ios/Resources/theme-catalog-v1.json"
+        ],
+        "journeys": ["shared-electron-vscode-themes"]
+      },
+      {
+        "id": "initial-thread-live-update",
+        "patterns": [
+          "apps/swift-ios/Features/Root/FeatureRootModel.swift",
+          "apps/swift-ios/Features/Chat/ThreadDetailView.swift"
+        ],
+        "journeys": ["initial-thread-live-updates"]
+      },
+      {
+        "id": "deterministic-app-flow-fixtures",
+        "patterns": [
+          "apps/swift-ios/App/AppFlowFixtureClient.swift",
+          "apps/swift-ios/App/T3CodeApp.swift",
+          "apps/swift-ios/UITests/AppFlowUITests.swift",
+          "apps/swift-ios/UITests/AppFlowProofEventEmitter.swift"
+        ],
+        "journeys": [
+          "in-app-stream-approval-control",
+          "initial-thread-live-updates",
+          "shared-electron-vscode-themes",
+          "safe-tool-content-recovery",
+          "development-build-source-thread",
+          "proof-event-emitter-contract",
+          "widget-channel-new-task",
+          "pull-request-capability-gate",
+          "pull-request-inbox-summary-timeline",
+          "cold-boot-home-list-scrolling",
+          "swiftui-test-personal-connect"
+        ]
+      },
+      {
+        "id": "widget-channel-links",
+        "patterns": [
+          "apps/swift-ios/Extensions/Shared/SharedContainer.swift",
+          "apps/swift-ios/Extensions/Widgets/**",
+          "apps/swift-ios/App/Platform/PlatformDeepLinks.swift",
+          "apps/swift-ios/App/Platform/PlatformRootView.swift"
+        ],
+        "journeys": ["widget-channel-new-task"]
+      },
+      {
+        "id": "pull-request-workspace",
+        "patterns": [
+          "apps/swift-ios/Core/PullRequestWireModels.swift",
+          "apps/swift-ios/Features/PullRequests/**",
+          "apps/swift-ios/Features/Workspace/WorkspaceView.swift"
+        ],
+        "journeys": [
+          "pull-request-capability-gate",
+          "pull-request-inbox-summary-timeline"
+        ]
+      },
+      {
+        "id": "composer-skills-popup",
+        "patterns": [
+          "apps/swift-ios/Features/Chat/FeatureComposerCommandPopover.swift",
+          "apps/swift-ios/Features/Chat/FeatureComposerPowerFeatures.swift",
+          "apps/swift-ios/Features/Chat/FeatureComposerView.swift"
+        ],
+        "journeys": ["skills-popup-keyboard-readability"]
+      },
+      {
+        "id": "home-scroll-and-command-palette",
+        "patterns": [
+          "apps/swift-ios/Features/Chat/ThreadDetailView.swift",
+          "apps/swift-ios/Features/Workspace/FeatureCommandPaletteGestureInstaller.swift",
+          "apps/swift-ios/Features/Workspace/FeatureCommandPaletteModel.swift",
+          "apps/swift-ios/Features/Workspace/FeatureCommandPaletteView.swift",
+          "apps/swift-ios/Features/Workspace/HomeThreadCollectionView.swift",
+          "apps/swift-ios/Features/Workspace/WorkspaceView.swift"
+        ],
+        "journeys": [
+          "home-thread-list-scrolling",
+          "cold-boot-home-list-scrolling",
+          "command-palette-top-drawer"
+        ]
+      },
+      {
+        "id": "credential-ingress",
+        "patterns": ["apps/swift-ios/App/AppFlowStagedCredentials.swift"],
+        "journeys": ["onboarding-manual"]
+      },
+      {
+        "id": "visual-snapshots",
+        "patterns": [
+          "apps/swift-ios/Tests/FeatureTests/AppFlowVisualSnapshotTests.swift",
+          "apps/swift-ios/Tests/FeatureTests/__Snapshots__/**"
+        ],
+        "journeys": ["onboarding-manual"]
+      }
+    ]
+  },
+  "reviewedInventory": [
+    {
+      "surface": "Choose Project",
+      "status": "uncovered",
+      "reason": "No deterministic project-picker journey yet."
+    },
+    {
+      "surface": "Settings Build Changelog",
+      "status": "covered",
+      "reason": "The build-source-thread fixture checks attribution and exact source-thread routing."
+    },
+    {
+      "surface": "T3 Connect",
+      "status": "live-only",
+      "reason": "Account, relay, and DPoP state must remain real."
+    },
+    {
+      "surface": "Connection enable and remove actions",
+      "status": "uncovered",
+      "reason": "Destructive actions need disposable connection state."
+    },
+    {
+      "surface": "Add Project clone source menu",
+      "status": "uncovered",
+      "reason": "Clone-source fixtures are not yet deterministic."
+    },
+    {
+      "surface": "XCTest performAccessibilityAudit",
+      "status": "uncovered",
+      "reason": "Xcode 26.6 timed out without a valid result bundle for combined, split-screen, and single-screen contrast probes; semantic evidence and pinned XXL snapshots remain required."
+    }
+  ]
+}

@@ -1,0 +1,85 @@
+require "shellwords"
+
+REPO_ROOT = File.expand_path("..", __dir__)
+
+default_platform(:ios)
+
+platform :ios do
+  private_lane :swiftui_pipeline_stage do |options|
+    stage = options.fetch(:stage)
+    receipt_dir = ENV.fetch(
+      "T3_SWIFT_PIPELINE_RECEIPT_DIR",
+      ".t3/swiftui-private-ci-artifacts"
+    )
+    command = [
+      "python3",
+      File.join(REPO_ROOT, "scripts/swiftui-pipeline/pipeline.py"),
+      "run",
+      stage,
+      "--receipt-dir",
+      receipt_dir,
+    ]
+    command.concat(["--run-id", ENV["BUILDKITE_BUILD_ID"]]) if ENV["BUILDKITE_BUILD_ID"]
+    command << "--dry-run" if ENV["T3_SWIFT_PIPELINE_DRY_RUN"] == "1"
+    if ENV["T3_SWIFT_PIPELINE_FAKE_COMMAND_JSON"]
+      command.concat(
+        ["--fake-command-json", ENV["T3_SWIFT_PIPELINE_FAKE_COMMAND_JSON"]]
+      )
+    end
+    if ENV["T3_SWIFT_APPROVAL_RECEIPT_REFERENCE"]
+      command.concat(
+        [
+          "--approval-receipt-reference",
+          ENV["T3_SWIFT_APPROVAL_RECEIPT_REFERENCE"],
+        ]
+      )
+    end
+    command.concat(["--pr-body", options[:pr_body]]) if options[:pr_body]
+    command.concat(["--pr-number", options[:pr_number].to_s]) if options[:pr_number]
+    sh(command.map { |part| Shellwords.escape(part) }.join(" "))
+  end
+
+  lane :swiftui_candidate_verification do
+    swiftui_pipeline_stage(stage: "candidate-verification")
+  end
+
+  lane :swiftui_candidate_simulator do
+    swiftui_pipeline_stage(stage: "candidate-simulator")
+  end
+
+  lane :swiftui_test_train do
+    swiftui_pipeline_stage(stage: "test-train")
+  end
+
+  lane :swiftui_test_catalog do
+    swiftui_pipeline_stage(stage: "test-catalog")
+  end
+
+  lane :swiftui_test_phone_build do
+    swiftui_pipeline_stage(stage: "test-phone-build")
+  end
+
+  lane :swiftui_test_phone_install do
+    swiftui_pipeline_stage(stage: "test-phone-install")
+  end
+
+  lane :swiftui_dev_promotion do
+    swiftui_pipeline_stage(stage: "dev-promotion")
+  end
+
+  lane :swiftui_dev_phone_build do
+    swiftui_pipeline_stage(stage: "dev-phone-build")
+  end
+
+  lane :swiftui_dev_phone_install do
+    swiftui_pipeline_stage(stage: "dev-phone-install")
+  end
+
+  lane :swiftui_upstream_handoff do |options|
+    swiftui_pipeline_stage(
+      stage: "upstream-handoff",
+      pr_body: options[:pr_body],
+      pr_number: options[:pr_number],
+    )
+  end
+end

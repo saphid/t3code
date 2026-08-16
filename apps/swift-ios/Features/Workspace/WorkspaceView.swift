@@ -6,6 +6,7 @@ struct FeatureWorkspaceNavigationRequest: Equatable, Sendable {
         case thread(id: String)
         case project(id: String)
         case newTask(projectID: String?)
+        case sharedNewTask(shareID: String)
     }
 
     let id: UUID
@@ -17,16 +18,112 @@ struct FeatureWorkspaceNavigationRequest: Equatable, Sendable {
     }
 }
 
+struct FeatureNewTaskPresentationRequest: Equatable, Sendable {
+    let initialProjectID: String?
+    let initialWorkspace: FeatureComposerWorkspaceDraft?
+    let incomingShareID: String?
+
+    static func newTask(
+        initialProjectID: String?,
+        initialWorkspace: FeatureComposerWorkspaceDraft? = nil
+    ) -> Self {
+        Self(
+            initialProjectID: initialProjectID,
+            initialWorkspace: initialWorkspace,
+            incomingShareID: nil
+        )
+    }
+
+    static func sharedNewTask(shareID: String) -> Self {
+        Self(initialProjectID: nil, initialWorkspace: nil, incomingShareID: shareID)
+    }
+}
+
+struct FeatureNewTaskPresentationRequestResult: Equatable, Sendable {
+    let shouldPresent: Bool
+    let displaced: FeatureNewTaskPresentationRequest?
+}
+
+struct FeatureNewTaskPresentationReplacement: Equatable, Sendable {
+    let current: FeatureNewTaskPresentationRequest?
+    let pending: FeatureNewTaskPresentationRequest?
+}
+
+struct FeatureNewTaskPresentationCoordinator: Equatable, Sendable {
+    private(set) var current: FeatureNewTaskPresentationRequest?
+    private(set) var pending: FeatureNewTaskPresentationRequest?
+    private(set) var presentationID = UUID()
+
+    mutating func request(
+        _ request: FeatureNewTaskPresentationRequest
+    ) -> FeatureNewTaskPresentationRequestResult {
+        guard current == nil else {
+            let displaced = pending
+            pending = request
+            return FeatureNewTaskPresentationRequestResult(
+                shouldPresent: false,
+                displaced: displaced
+            )
+        }
+        activate(request)
+        return FeatureNewTaskPresentationRequestResult(shouldPresent: true, displaced: nil)
+    }
+
+    mutating func didDismiss() -> FeatureNewTaskPresentationRequest? {
+        let dismissed = current
+        current = nil
+        if let pending {
+            self.pending = nil
+            activate(pending)
+        }
+        return dismissed
+    }
+
+    mutating func replaceInactiveCurrent(
+        with request: FeatureNewTaskPresentationRequest
+    ) -> FeatureNewTaskPresentationReplacement {
+        let displaced = FeatureNewTaskPresentationReplacement(
+            current: current,
+            pending: pending
+        )
+        pending = nil
+        activate(request)
+        return displaced
+    }
+
+    mutating func cancelPending() -> FeatureNewTaskPresentationRequest? {
+        let cancelled = pending
+        pending = nil
+        return cancelled
+    }
+
+    mutating func cancelCurrent() -> FeatureNewTaskPresentationRequest? {
+        let cancelled = current
+        current = nil
+        return cancelled
+    }
+
+    private mutating func activate(_ request: FeatureNewTaskPresentationRequest) {
+        current = request
+        presentationID = UUID()
+    }
+}
+
 public struct WorkspaceView: View {
     @SwiftUI.Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @SwiftUI.Environment(\.accessibilityReduceMotion) private var accessibilityReduceMotion
 
     @Bindable var model: FeatureRootModel
     private let navigationRequest: FeatureWorkspaceNavigationRequest?
     private let onNavigationRequestConsumed: @MainActor (UUID) -> Void
     private let submitNewTask: (NewTaskRequest) async -> FeatureThread?
     private let submitMessage: (FeatureMessageSubmission) async -> Bool
+    private let acknowledgeIncomingShare: (String) async -> Void
+    private let releaseIncomingSharePresentation: @MainActor (String) -> Void
+    private let draftStore: FeatureComposerDraftStore
 
     @State private var selectedThreadID: String?
+    @State private var selectedPullRequestEnvironmentID: String?
     @State private var selectedProjectID: String?
     @State private var searchText = ""
     @State private var isSearching = false
@@ -35,27 +132,46 @@ public struct WorkspaceView: View {
     @State private var isArchiveExpanded = false
     @State private var settledLimit = 12
     @State private var showingNewTask = false
-    @State private var newTaskInitialProjectID: String?
+    @State private var isDismissingNewTask = false
+    @State private var appearedNewTaskPresentationID: UUID?
+    @State private var dismissingNewTaskPresentationID: UUID?
+    @State private var completedNewTaskDismissalID: UUID?
+    @State private var newTaskPresentation = FeatureNewTaskPresentationCoordinator()
+    @State private var deferredNewTaskPresentation: FeatureNewTaskPresentationRequest?
+    @State private var newTaskPresentationEpoch = 0
     @State private var showingAddProject = false
     @State private var showingSettings = false
+    @State private var showingBuildChangelog = false
+    @AppStorage(BuildChangelogPrompt.lastOpenedBuildStorageKey)
+    private var lastOpenedBuildIdentifier = ""
+    @State private var showingCommandPalette = false
+    @State private var commandPaletteIsMounted = false
+    @State private var commandPaletteIsInteractive = false
+    @State private var commandPaletteDragDistance: CGFloat = 0
     @State private var renamingThread: FeatureThread?
     @State private var renameTitle = ""
+    @State private var regeneratingThreadIDs: Set<String> = []
     @State private var sidebarBoundaryNow = Date.now
     @State private var preferredCompactColumn = NavigationSplitViewColumn.sidebar
     @State private var homePresentationCache = HomePresentationCache()
+    @State private var consumedNavigationRequestID: UUID?
     @FocusState private var isSearchFocused: Bool
 
     public init(
         model: FeatureRootModel,
         submitNewTask: ((NewTaskRequest) async -> FeatureThread?)? = nil,
-        submitMessage: ((FeatureMessageSubmission) async -> Bool)? = nil
+        submitMessage: ((FeatureMessageSubmission) async -> Bool)? = nil,
+        draftStore: FeatureComposerDraftStore = .shared
     ) {
         self.init(
             model: model,
             navigationRequest: nil,
             onNavigationRequestConsumed: { _ in },
             submitNewTask: submitNewTask,
-            submitMessage: submitMessage
+            submitMessage: submitMessage,
+            acknowledgeIncomingShare: { _ in },
+            releaseIncomingSharePresentation: { _ in },
+            draftStore: draftStore
         )
     }
 
@@ -64,11 +180,17 @@ public struct WorkspaceView: View {
         navigationRequest: FeatureWorkspaceNavigationRequest?,
         onNavigationRequestConsumed: @escaping @MainActor (UUID) -> Void,
         submitNewTask: ((NewTaskRequest) async -> FeatureThread?)? = nil,
-        submitMessage: ((FeatureMessageSubmission) async -> Bool)? = nil
+        submitMessage: ((FeatureMessageSubmission) async -> Bool)? = nil,
+        acknowledgeIncomingShare: @escaping (String) async -> Void = { _ in },
+        releaseIncomingSharePresentation: @escaping @MainActor (String) -> Void = { _ in },
+        draftStore: FeatureComposerDraftStore = .shared
     ) {
         self.model = model
         self.navigationRequest = navigationRequest
         self.onNavigationRequestConsumed = onNavigationRequestConsumed
+        self.acknowledgeIncomingShare = acknowledgeIncomingShare
+        self.releaseIncomingSharePresentation = releaseIncomingSharePresentation
+        self.draftStore = draftStore
         self.submitNewTask = submitNewTask ?? { request in
             do {
                 let thread = try await model.client.createThreadAndSend(
@@ -113,79 +235,166 @@ public struct WorkspaceView: View {
     }
 
     public var body: some View {
-        NavigationSplitView(preferredCompactColumn: $preferredCompactColumn) {
-            sidebar
-                .navigationSplitViewColumnWidth(
-                    min: T3Metrics.minimumSidebarWidth,
-                    ideal: T3Metrics.sidebarWidth,
-                    max: T3Metrics.maximumSidebarWidth
+        workspaceShell
+            .sheet(isPresented: $showingNewTask, onDismiss: {
+                let presentationID = dismissingNewTaskPresentationID
+                    ?? appearedNewTaskPresentationID
+                    ?? completedNewTaskDismissalID
+                    ?? newTaskPresentation.presentationID
+                completeNewTaskDismissal(presentationID: presentationID)
+            }) {
+                let presentation = newTaskPresentation.current
+                let presentationID = newTaskPresentation.presentationID
+                NewThreadView(
+                    model: model,
+                    submit: submitNewTask,
+                    onCreated: { thread in
+                        openThread(thread.id)
+                        dismissNewTaskPresentation()
+                    },
+                    onCreateProject: openProjectCreation,
+                    initialProjectID: presentation?.initialProjectID,
+                    initialWorkspace: presentation?.initialWorkspace,
+                    incomingShareID: presentation?.incomingShareID,
+                    acknowledgeIncomingShare: acknowledgeIncomingShare,
+                    draftStore: draftStore
                 )
-        } detail: {
-            detail
-        }
-        .navigationSplitViewStyle(.balanced)
-        .sheet(isPresented: $showingNewTask) {
-            NewThreadView(
-                model: model,
-                submit: submitNewTask,
-                onCreated: { thread in
-                    openThread(thread.id)
-                    showingNewTask = false
-                },
-                onCreateProject: openProjectCreation,
-                initialProjectID: newTaskInitialProjectID
-            )
-        }
-        .sheet(isPresented: $showingAddProject) {
-            AddProjectView(model: model)
-        }
-        .sheet(isPresented: $showingSettings) {
-            SettingsView(model: model)
-        }
-        .alert(
-            "Rename thread",
-            isPresented: Binding(
-                get: { renamingThread != nil },
-                set: { if !$0 { renamingThread = nil } }
-            )
-        ) {
-            TextField("Thread title", text: $renameTitle)
-            Button("Cancel", role: .cancel) { renamingThread = nil }
-            Button("Save") {
-                guard let thread = renamingThread else { return }
-                let title = renameTitle
-                renamingThread = nil
-                Task { await model.renameThread(thread.id, title: title) }
+                .id(newTaskPresentation.presentationID)
+                .onAppear {
+                    appearedNewTaskPresentationID = presentationID
+                }
             }
-            .disabled(renameTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-        }
-        .onChange(of: selectedThreadIsAvailable) { _, isAvailable in
-            if !isAvailable { closeSelectedThread() }
-        }
-        .onChange(of: selectedThreadID) { _, newValue in
-            preferredCompactColumn = newValue == nil ? .sidebar : .detail
-        }
-        .onChange(of: selectedProjectIsAvailable) { _, isAvailable in
-            if !isAvailable { selectedProjectID = nil }
-        }
-        .onChange(of: navigationRequest?.id, initial: true) { _, _ in
-            consumeNavigationRequest()
-        }
-        // A request that arrives before its thread or project exists in the
-        // snapshot stays pending; retry it as data lands so cold-start deep
-        // links are not silently stranded.
-        .onChange(of: model.homePresentationRevision) { _, _ in
-            if navigationRequest != nil { consumeNavigationRequest() }
-        }
-        .task(id: nextSidebarBoundary) {
-            guard let boundary = nextSidebarBoundary else { return }
-            do {
-                try await Task.sleep(for: .seconds(max(0, boundary.timeIntervalSinceNow)))
-                sidebarBoundaryNow = max(.now, boundary)
-            } catch {
-                return
+            .sheet(isPresented: $showingAddProject, onDismiss: {
+                resumeDeferredNewTaskPresentation()
+            }) {
+                AddProjectView(model: model)
+            }
+            .sheet(isPresented: $showingSettings, onDismiss: {
+                resumeDeferredNewTaskPresentation()
+            }) {
+                SettingsView(model: model)
+            }
+            .sheet(isPresented: $showingBuildChangelog) {
+                NavigationStack {
+                    BuildChangelogView(
+                        changelog: Self.buildChangelog,
+                        versionLabel: Self.appVersionLabel
+                    )
+                    .toolbar {
+                        ToolbarItem(placement: .confirmationAction) {
+                            Button("Done") { showingBuildChangelog = false }
+                        }
+                    }
+                }
+            }
+            .alert(
+                "Rename thread",
+                isPresented: Binding(
+                    get: { renamingThread != nil },
+                    set: { if !$0 { renamingThread = nil } }
+                )
+            ) {
+                TextField("Thread title", text: $renameTitle)
+                Button("Cancel", role: .cancel) { renamingThread = nil }
+                Button("Save") {
+                    guard let thread = renamingThread else { return }
+                    let title = renameTitle
+                    renamingThread = nil
+                    Task { await model.renameThread(thread.id, title: title) }
+                }
+                .disabled(renameTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+            .onChange(of: selectedThreadIsAvailable) { _, isAvailable in
+                if !isAvailable { closeSelectedThread() }
+            }
+            .onChange(of: selectedThreadID) { _, newValue in
+                if selectedPullRequestEnvironmentID == nil {
+                    preferredCompactColumn = newValue == nil ? .sidebar : .detail
+                }
+            }
+            .onChange(of: selectedProjectIsAvailable) { _, isAvailable in
+                if !isAvailable { selectedProjectID = nil }
+            }
+            .onChange(of: selectedPullRequestEnvironmentIsAvailable) { _, isAvailable in
+                if !isAvailable { closePullRequests() }
+            }
+            .onChange(of: navigationRequest?.id, initial: true) { _, _ in
+                consumeNavigationRequest()
+            }
+            // A request that arrives before its thread or project exists in the
+            // snapshot stays pending; retry it as data lands so cold-start deep
+            // links are not silently stranded.
+            .onChange(of: model.homePresentationRevision) { _, _ in
+                if navigationRequest != nil { consumeNavigationRequest() }
+            }
+            .onChange(of: renamingThread?.id) { _, threadID in
+                if threadID == nil {
+                    resumeDeferredNewTaskPresentation()
+                }
+            }
+            .task(id: nextSidebarBoundary) {
+                guard let boundary = nextSidebarBoundary else { return }
+                do {
+                    try await Task.sleep(for: .seconds(max(0, boundary.timeIntervalSinceNow)))
+                    sidebarBoundaryNow = max(.now, boundary)
+                } catch {
+                    return
+                }
+            }
+    }
+
+    private var workspaceShell: some View {
+        GeometryReader { proxy in
+            let panelHeight = FeatureCommandPaletteGesture.panelHeight(
+                availableHeight: proxy.size.height,
+                topInset: proxy.safeAreaInsets.top
+            )
+            let travel = FeatureCommandPaletteGesture.travel(
+                isPresented: showingCommandPalette,
+                dragDistance: commandPaletteDragDistance,
+                panelHeight: panelHeight
+            )
+            let revealProgress = FeatureCommandPaletteGesture.revealProgress(
+                travel: travel,
+                panelHeight: panelHeight
+            )
+
+            ZStack(alignment: .top) {
+                NavigationSplitView(preferredCompactColumn: $preferredCompactColumn) {
+                    sidebar
+                        .navigationSplitViewColumnWidth(
+                            min: T3Metrics.minimumSidebarWidth,
+                            ideal: T3Metrics.sidebarWidth,
+                            max: T3Metrics.maximumSidebarWidth
+                        )
+                } detail: {
+                    detail
+                }
+                .navigationSplitViewStyle(.balanced)
+                .offset(y: accessibilityReduceMotion ? 0 : travel)
+                .accessibilityHidden(showingCommandPalette)
+
+                if commandPaletteIsMounted {
+                    commandPaletteScrim
+                        .opacity(revealProgress)
+                        .allowsHitTesting(commandPaletteIsInteractive)
+                        .zIndex(1)
+
+                    commandPalettePanel(
+                        panelHeight: panelHeight,
+                        topInset: proxy.safeAreaInsets.top,
+                        revealedHeight: accessibilityReduceMotion ? panelHeight : travel,
+                        revealProgress: revealProgress
+                    )
+                    .zIndex(2)
+                }
             }
         }
+        .sensoryFeedback(
+            .impact(weight: .light),
+            trigger: showingCommandPalette,
+            condition: { _, isPresented in isPresented }
+        )
     }
 
     private var sidebar: some View {
@@ -218,6 +427,11 @@ public struct WorkspaceView: View {
             projectID: selectedProjectID,
             now: sidebarBoundaryNow
         )
+        let serverRegeneratingThreadIDs = Set(
+            model.snapshot.threads.compactMap { thread in
+                thread.isRegeneratingTitle == true ? thread.id : nil
+            }
+        )
 
         return VStack(spacing: 0) {
             projectFilter
@@ -227,6 +441,7 @@ public struct WorkspaceView: View {
                 query: searchText,
                 selectedThreadID: selectedThreadID,
                 forceRichRows: dynamicTypeSize.isAccessibilitySize,
+                showThreadDoneDuration: model.snapshot.settings.showThreadDoneDuration,
                 isSnoozedExpanded: isSnoozedExpanded,
                 isSettledExpanded: isSettledExpanded,
                 isArchiveExpanded: isArchiveExpanded,
@@ -236,9 +451,23 @@ public struct WorkspaceView: View {
                 onToggleSettled: { isSettledExpanded.toggle() },
                 onToggleArchive: { isArchiveExpanded.toggle() },
                 onShowMoreSettled: { settledLimit += 25 },
+                regeneratingThreadIDs: regeneratingThreadIDs.union(
+                    serverRegeneratingThreadIDs
+                ),
+                canCreateThread: { thread in
+                    creationProjects.contains { $0.id == thread.projectID }
+                },
+                onNewThreadOnBranch: openNewTaskOnBranch,
                 onRename: { thread in
                     renameTitle = thread.title
                     renamingThread = thread
+                },
+                onRegenerateTitle: { thread in
+                    Task { @MainActor in
+                        guard regeneratingThreadIDs.insert(thread.id).inserted else { return }
+                        _ = await model.regenerateThreadTitle(thread.id)
+                        regeneratingThreadIDs.remove(thread.id)
+                    }
                 },
                 onArchive: { thread, archived in
                     Task { await model.setArchived(thread.id, archived: archived) }
@@ -252,6 +481,20 @@ public struct WorkspaceView: View {
                 onPin: { thread, pinned in
                     Task { await model.setPinned(thread.id, pinned: pinned) }
                 },
+                canCopyPath: { thread in
+                    workspacePath(for: thread) != nil
+                },
+                onCopyPath: { thread in
+                    guard let path = workspacePath(for: thread) else { return }
+                    UIPasteboard.general.string = path
+                },
+                onCopyBranch: { thread in
+                    UIPasteboard.general.string = thread.branch?
+                        .trimmingCharacters(in: .whitespacesAndNewlines)
+                },
+                onCopyThreadID: { thread in
+                    UIPasteboard.general.string = thread.wireID ?? thread.id
+                },
                 onDelete: { thread in
                     Task { await model.deleteThread(thread.id) }
                 }
@@ -262,13 +505,30 @@ public struct WorkspaceView: View {
 
     @ViewBuilder
     private var detail: some View {
-        if let id = selectedThreadID,
+        if let environmentID = selectedPullRequestEnvironmentID,
+           let environment = pullRequestEnvironments.first(where: {
+               $0.id == environmentID
+           }) {
+            PullRequestInboxView(
+                environment: environment,
+                environments: pullRequestEnvironments,
+                client: model.client,
+                onSelectEnvironment: openPullRequests
+            )
+            .id(
+                "\(environmentID):\(environment.pullRequestCapabilityKnown):"
+                    + "\(environment.pullRequestCapability.map(String.init) ?? "unknown")"
+            )
+        } else if let id = selectedThreadID,
            let thread = model.snapshot.threads.first(where: { $0.id == id }) {
             ThreadDetailView(
                 model: model,
                 thread: thread,
                 submitMessage: submitMessage,
-                onNavigateBack: closeSelectedThread
+                onNavigateBack: closeSelectedThread,
+                onCommandPaletteDragChanged: updateCommandPaletteDrag,
+                onCommandPaletteDragEnded: settleCommandPaletteDrag,
+                draftStore: draftStore
             )
             .id(id)
         } else {
@@ -293,8 +553,42 @@ public struct WorkspaceView: View {
 
     private var homeBar: some View {
         HStack(spacing: 2) {
-            connectionBrand
+            homeBrand
                 .frame(maxWidth: .infinity, alignment: .leading)
+
+            if shouldShowBuildChangelogPrompt {
+                Button(action: openBuildChangelog) {
+                    ZStack {
+                        Image(systemName: "gift.fill")
+                            .font(.system(size: 17, weight: .medium))
+                        Image(systemName: "sparkles")
+                            .font(.system(size: 8, weight: .bold))
+                            .offset(x: 9, y: -9)
+                    }
+                    .frame(width: 40, height: T3Metrics.minimumTapTarget)
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(T3Colors.primaryAction)
+                .accessibilityLabel("What’s New")
+                .accessibilityHint("Shows what changed in this build")
+                .accessibilityIdentifier("sidebar-whats-new-button")
+            }
+
+            Button {
+                if let environment = preferredPullRequestEnvironment {
+                    openPullRequests(environment.id)
+                }
+            } label: {
+                Image(systemName: "arrow.triangle.pull")
+                    .font(.system(size: 17, weight: .medium))
+                    .frame(width: 40, height: T3Metrics.minimumTapTarget)
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(T3Colors.textSecondary)
+            .disabled(preferredPullRequestEnvironment == nil)
+            .accessibilityLabel("Pull requests")
+            .accessibilityHint("Browse one environment's pull requests")
+            .accessibilityIdentifier("sidebar-pull-requests-button")
 
             Button {
                 withAnimation(.easeOut(duration: 0.16)) {
@@ -333,8 +627,37 @@ public struct WorkspaceView: View {
         .padding(.trailing, 8)
         .frame(height: 49)
         .background(T3Colors.background)
+        .background {
+            FeatureCommandPaletteGestureInstaller(
+                onChanged: updateCommandPaletteDrag,
+                onEnded: settleCommandPaletteDrag
+            )
+        }
     }
 
+    private static let buildChangelog = BuildChangelog.load(info: Bundle.main.infoDictionary)
+    private static let appVersionLabel = SettingsAboutMetadata.appVersionLabel(
+        info: Bundle.main.infoDictionary
+    )
+
+    private var shouldShowBuildChangelogPrompt: Bool {
+        BuildChangelogPrompt.shouldShow(
+            lastOpenedBuild: lastOpenedBuildIdentifier,
+            info: Bundle.main.infoDictionary
+        )
+    }
+
+    private func openBuildChangelog() {
+        guard let buildIdentifier = BuildChangelogPrompt.buildIdentifier(
+            info: Bundle.main.infoDictionary
+        ) else { return }
+        lastOpenedBuildIdentifier = buildIdentifier
+        showingBuildChangelog = true
+    }
+
+    private var homeBrand: some View {
+        connectionBrand
+    }
     @ViewBuilder
     private var connectionBrand: some View {
         if !unreachableEnvironments.isEmpty {
@@ -381,10 +704,19 @@ public struct WorkspaceView: View {
                 Text("Code")
                     .fontWeight(.medium)
                     .foregroundStyle(T3Colors.textSecondary)
+                if let suffix = PersonalBuildChannel.current.titleSuffix {
+                    Text(suffix)
+                        .fontWeight(.bold)
+                        .foregroundStyle(PersonalBuildChannel.current.color)
+                }
             }
             .font(.system(size: 16))
+            .fixedSize(horizontal: true, vertical: false)
             .accessibilityElement(children: .combine)
-            .accessibilityLabel("T3 Code")
+            .accessibilityLabel(
+                PersonalBuildChannel.current.titleSuffix.map { "T3 Code \($0)" }
+                    ?? "T3 Code"
+            )
         }
     }
 
@@ -510,6 +842,76 @@ public struct WorkspaceView: View {
         DailyUXCreationContext.projects(in: model.snapshot)
     }
 
+    private var commandPaletteActiveProjectID: String? {
+        if let selectedProjectID {
+            return selectedProjectID
+        }
+        if let selectedThreadID,
+           let selectedThread = model.snapshot.threads.first(where: {
+               $0.id == selectedThreadID
+           }) {
+            return selectedThread.projectID
+        }
+        return creationProjects.first?.id
+    }
+
+    private var commandPaletteScrim: some View {
+        Button(action: dismissCommandPalette) {
+            Color.black.opacity(0.32)
+                .ignoresSafeArea()
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityHidden(true)
+    }
+
+    private func commandPalettePanel(
+        panelHeight: CGFloat,
+        topInset: CGFloat,
+        revealedHeight: CGFloat,
+        revealProgress: CGFloat
+    ) -> some View {
+        ZStack(alignment: .top) {
+            ZStack(alignment: .top) {
+                T3Colors.background
+                FeatureCommandPaletteView(
+                    model: model,
+                    activeProjectID: commandPaletteActiveProjectID,
+                    isActive: commandPaletteIsInteractive,
+                    onDismiss: dismissCommandPalette,
+                    onSelect: handleCommandPaletteAction
+                )
+                .padding(.top, topInset)
+            }
+            .frame(maxWidth: .infinity)
+            .frame(height: panelHeight)
+            .clipShape(
+                UnevenRoundedRectangle(
+                    bottomLeadingRadius: 20,
+                    bottomTrailingRadius: 20
+                )
+            )
+            .shadow(color: .black.opacity(0.22), radius: 18, y: 8)
+        }
+        .frame(maxWidth: .infinity)
+        .frame(height: revealedHeight, alignment: .top)
+        .clipped()
+        .opacity(accessibilityReduceMotion ? revealProgress : 1)
+        .ignoresSafeArea(.container, edges: .top)
+        .ignoresSafeArea(.keyboard, edges: .bottom)
+        .allowsHitTesting(commandPaletteIsInteractive)
+        .accessibilityHidden(!commandPaletteIsInteractive)
+        .accessibilityIdentifier("command-palette-drawer")
+        .accessibilityAddTraits(.isModal)
+        .accessibilityAction(.escape) { dismissCommandPalette() }
+    }
+
+    private var connectionEnvironmentName: String {
+        model.snapshot.connection.environmentName
+            ?? model.snapshot.environments.first(where: \.isActive)?.name
+            ?? model.snapshot.environments.first?.name
+            ?? "Server"
+    }
     private var unreachableEnvironments: [FeatureEnvironment] {
         model.snapshot.environments.filter {
             $0.isEnabled && $0.connectionState == .disconnected
@@ -521,6 +923,16 @@ public struct WorkspaceView: View {
             $0.isEnabled
                 && ($0.connectionState == .connecting || $0.connectionState == .reconnecting)
         }
+    }
+
+    private var pullRequestEnvironments: [FeatureEnvironment] {
+        model.snapshot.environments.filter {
+            $0.isEnabled && $0.pullRequestCapability == true
+        }
+    }
+
+    private var preferredPullRequestEnvironment: FeatureEnvironment? {
+        pullRequestEnvironments.first(where: { $0.isActive }) ?? pullRequestEnvironments.first
     }
 
     private var unreachableBrandLabel: String {
@@ -547,9 +959,26 @@ public struct WorkspaceView: View {
         return model.snapshot.projects.contains { $0.id == selectedProjectID }
     }
 
+    private var selectedPullRequestEnvironmentIsAvailable: Bool {
+        guard let selectedPullRequestEnvironmentID else { return true }
+        return pullRequestEnvironments.contains { $0.id == selectedPullRequestEnvironmentID }
+    }
+
     private func openThread(_ id: String) {
+        selectedPullRequestEnvironmentID = nil
         selectedThreadID = id
         preferredCompactColumn = .detail
+    }
+
+    private func openPullRequests(_ environmentID: String) {
+        selectedThreadID = nil
+        selectedPullRequestEnvironmentID = environmentID
+        preferredCompactColumn = .detail
+    }
+
+    private func closePullRequests() {
+        selectedPullRequestEnvironmentID = nil
+        preferredCompactColumn = .sidebar
     }
 
     private func closeSelectedThread() {
@@ -559,25 +988,123 @@ public struct WorkspaceView: View {
 
     @MainActor
     private func openProjectCreation() {
-        showingNewTask = false
+        dismissNewTaskPresentation()
         showingAddProject = true
     }
 
     private func openNewTaskOrProjectCreation() {
-        openNewTaskOrProjectCreation(initialProjectID: selectedProjectID)
+        openNewTaskOrProjectCreation(initialProjectID: nil, initialWorkspace: nil)
     }
 
-    private func openNewTaskOrProjectCreation(initialProjectID: String?) {
+    private func openNewTaskOrProjectCreation(
+        initialProjectID: String?,
+        initialWorkspace: FeatureComposerWorkspaceDraft? = nil
+    ) {
         if creationProjects.isEmpty {
             showingAddProject = true
         } else {
-            newTaskInitialProjectID = initialProjectID
-            showingNewTask = true
+            presentNewTask(
+                .newTask(
+                    initialProjectID: initialProjectID,
+                    initialWorkspace: initialWorkspace
+                )
+            )
         }
     }
 
+    private func openNewTaskOnBranch(_ thread: FeatureThread) {
+        guard creationProjects.contains(where: { $0.id == thread.projectID }),
+              let workspace = thread.newTaskWorkspaceSeed else { return }
+        openNewTaskOrProjectCreation(
+            initialProjectID: thread.projectID,
+            initialWorkspace: workspace
+        )
+    }
+
+    private func workspacePath(for thread: FeatureThread) -> String? {
+        if let worktreePath = thread.worktreePath?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !worktreePath.isEmpty {
+            return worktreePath
+        }
+        return model.snapshot.projects.first { $0.id == thread.projectID }?.path
+    }
+
+    private func handleCommandPaletteAction(_ action: FeatureCommandPaletteAction) {
+        Task { @MainActor in
+            await Task.yield()
+            switch action {
+            case let .newTask(projectID):
+                openNewTaskOrProjectCreation(initialProjectID: projectID)
+            case .addProject:
+                showingAddProject = true
+            case .settings:
+                showingSettings = true
+            case let .openThread(id):
+                openThread(id)
+            case let .openProject(id):
+                selectedProjectID = id
+                closeSelectedThread()
+            case .chooseNewTaskProject:
+                break
+            }
+        }
+    }
+
+    private func updateCommandPaletteDrag(_ distance: CGFloat) {
+        guard !showingCommandPalette else { return }
+        if distance > 0 {
+            commandPaletteIsMounted = true
+        }
+        commandPaletteDragDistance = distance
+    }
+
+    private func settleCommandPaletteDrag(shouldPresent: Bool) {
+        if shouldPresent {
+            isSearchFocused = false
+            commandPaletteIsMounted = true
+            commandPaletteIsInteractive = false
+            withAnimation(commandPaletteSettleAnimation) {
+                showingCommandPalette = true
+                commandPaletteDragDistance = 0
+            } completion: {
+                guard showingCommandPalette, commandPaletteDragDistance == 0 else { return }
+                commandPaletteIsInteractive = true
+            }
+        } else {
+            commandPaletteIsInteractive = false
+            withAnimation(commandPaletteSettleAnimation) {
+                showingCommandPalette = false
+                commandPaletteDragDistance = 0
+            } completion: {
+                unmountCommandPaletteIfClosed()
+            }
+        }
+    }
+
+    private var commandPaletteSettleAnimation: Animation {
+        accessibilityReduceMotion
+            ? .easeOut(duration: 0.16)
+            : .spring(duration: 0.42, bounce: 0.08)
+    }
+
+    private func dismissCommandPalette() {
+        commandPaletteIsInteractive = false
+        withAnimation(commandPaletteSettleAnimation) {
+            showingCommandPalette = false
+            commandPaletteDragDistance = 0
+        } completion: {
+            unmountCommandPaletteIfClosed()
+        }
+    }
+
+    private func unmountCommandPaletteIfClosed() {
+        guard !showingCommandPalette, commandPaletteDragDistance == 0 else { return }
+        commandPaletteIsMounted = false
+    }
+
     private func consumeNavigationRequest() {
-        guard let navigationRequest else { return }
+        guard let navigationRequest,
+              consumedNavigationRequestID != navigationRequest.id else { return }
         switch navigationRequest.destination {
         case let .thread(id):
             guard model.snapshot.threads.contains(where: { $0.id == id }) else { return }
@@ -587,26 +1114,188 @@ public struct WorkspaceView: View {
             guard model.snapshot.projects.contains(where: { $0.id == id }) else { return }
             dismissTransientPresentations()
             selectedProjectID = id
+            selectedPullRequestEnvironmentID = nil
             closeSelectedThread()
         case let .newTask(projectID):
             if let projectID,
                model.snapshot.projects.contains(where: { $0.id == projectID }) {
                 selectedProjectID = projectID
             }
-            dismissTransientPresentations()
-            Task { @MainActor in
-                await Task.yield()
-                openNewTaskOrProjectCreation(initialProjectID: projectID)
+            if creationProjects.isEmpty {
+                guard !showingAddProject else { break }
+                dismissTransientPresentations()
+                let presentationEpoch = newTaskPresentationEpoch
+                Task { @MainActor in
+                    await Task.yield()
+                    guard presentationEpoch == newTaskPresentationEpoch else { return }
+                    showingAddProject = true
+                }
+            } else {
+                requestNewTaskPresentation(.newTask(initialProjectID: projectID))
             }
+        case let .sharedNewTask(shareID):
+            requestNewTaskPresentation(.sharedNewTask(shareID: shareID))
         }
+        consumedNavigationRequestID = navigationRequest.id
         onNavigationRequestConsumed(navigationRequest.id)
     }
 
     private func dismissTransientPresentations() {
-        showingNewTask = false
+        newTaskPresentationEpoch += 1
+        releaseIncomingSharePresentation(from: newTaskPresentation.cancelPending())
+        releaseIncomingSharePresentation(from: deferredNewTaskPresentation)
+        deferredNewTaskPresentation = nil
+        if showingNewTask {
+            dismissNewTaskPresentation()
+        } else {
+            releaseIncomingSharePresentation(from: newTaskPresentation.cancelCurrent())
+        }
         showingAddProject = false
         showingSettings = false
         renamingThread = nil
+    }
+
+    private func requestNewTaskPresentation(_ request: FeatureNewTaskPresentationRequest) {
+        let waitingOnSheet = showingAddProject || showingSettings
+        let waitingOnAlert = renamingThread != nil
+        let shouldWaitForOtherPresentation = waitingOnSheet || waitingOnAlert
+        if !shouldWaitForOtherPresentation {
+            releaseIncomingSharePresentation(from: deferredNewTaskPresentation)
+            deferredNewTaskPresentation = nil
+        }
+
+        if showingNewTask {
+            let result = newTaskPresentation.request(request)
+            releaseIncomingSharePresentation(from: result.displaced)
+            dismissNewTaskPresentation()
+        } else if shouldWaitForOtherPresentation {
+            releaseIncomingSharePresentation(from: deferredNewTaskPresentation)
+            deferredNewTaskPresentation = request
+            showingAddProject = false
+            showingSettings = false
+            renamingThread = nil
+            if waitingOnAlert && !waitingOnSheet {
+                Task { @MainActor in
+                    await Task.yield()
+                    resumeDeferredNewTaskPresentation()
+                }
+            }
+        } else if isDismissingNewTask {
+            let result = newTaskPresentation.request(request)
+            releaseIncomingSharePresentation(from: result.displaced)
+        } else if newTaskPresentation.current != nil {
+            let displaced = newTaskPresentation.replaceInactiveCurrent(with: request)
+            releaseIncomingSharePresentations(from: displaced)
+            newTaskPresentationEpoch += 1
+            showingNewTask = true
+        } else {
+            presentNewTask(request)
+        }
+    }
+
+    private func presentNewTask(_ request: FeatureNewTaskPresentationRequest) {
+        if !showingNewTask, newTaskPresentation.current != nil {
+            let displaced = newTaskPresentation.replaceInactiveCurrent(with: request)
+            releaseIncomingSharePresentations(from: displaced)
+            newTaskPresentationEpoch += 1
+            showingNewTask = true
+            return
+        }
+        let result = newTaskPresentation.request(request)
+        releaseIncomingSharePresentation(from: result.displaced)
+        if result.shouldPresent {
+            newTaskPresentationEpoch += 1
+            showingNewTask = true
+        } else {
+            dismissNewTaskPresentation()
+        }
+    }
+
+    private func resumeDeferredNewTaskPresentation() {
+        guard !showingNewTask, !isDismissingNewTask,
+              !showingAddProject, !showingSettings, renamingThread == nil,
+              let request = deferredNewTaskPresentation else { return }
+        deferredNewTaskPresentation = nil
+        presentNewTask(request)
+    }
+
+    private func releaseIncomingSharePresentation(
+        from request: FeatureNewTaskPresentationRequest?
+    ) {
+        if let shareID = request?.incomingShareID {
+            releaseIncomingSharePresentation(shareID)
+        }
+    }
+
+    private func releaseIncomingSharePresentations(
+        from replacement: FeatureNewTaskPresentationReplacement
+    ) {
+        releaseIncomingSharePresentation(from: replacement.current)
+        releaseIncomingSharePresentation(from: replacement.pending)
+    }
+
+    private func dismissNewTaskPresentation() {
+        guard showingNewTask else { return }
+        let presentationID = newTaskPresentation.presentationID
+        isDismissingNewTask = true
+        dismissingNewTaskPresentationID = presentationID
+        showingNewTask = false
+        guard appearedNewTaskPresentationID != presentationID else { return }
+        Task { @MainActor in
+            await Task.yield()
+            guard isDismissingNewTask,
+                  dismissingNewTaskPresentationID == presentationID,
+                  appearedNewTaskPresentationID != presentationID else { return }
+            completeNewTaskDismissal(presentationID: presentationID)
+        }
+    }
+
+    private func completeNewTaskDismissal(presentationID: UUID) {
+        guard completedNewTaskDismissalID != presentationID else { return }
+        guard presentationID == newTaskPresentation.presentationID else {
+            completedNewTaskDismissalID = presentationID
+            if appearedNewTaskPresentationID == presentationID {
+                appearedNewTaskPresentationID = nil
+            }
+            if dismissingNewTaskPresentationID == presentationID {
+                dismissingNewTaskPresentationID = nil
+                isDismissingNewTask = false
+            }
+            continueAfterNewTaskDismissal()
+            return
+        }
+        completedNewTaskDismissalID = presentationID
+        isDismissingNewTask = false
+        if appearedNewTaskPresentationID == presentationID {
+            appearedNewTaskPresentationID = nil
+        }
+        if dismissingNewTaskPresentationID == presentationID {
+            dismissingNewTaskPresentationID = nil
+        }
+        let dismissed = newTaskPresentation.didDismiss()
+        releaseIncomingSharePresentation(from: dismissed)
+        continueAfterNewTaskDismissal()
+    }
+
+    private func continueAfterNewTaskDismissal() {
+        guard newTaskPresentation.current != nil else {
+            resumeDeferredNewTaskPresentation()
+            return
+        }
+        if showingAddProject || showingSettings || renamingThread != nil {
+            let promoted = newTaskPresentation.cancelCurrent()
+            releaseIncomingSharePresentation(from: deferredNewTaskPresentation)
+            deferredNewTaskPresentation = promoted
+            return
+        }
+
+        newTaskPresentationEpoch += 1
+        let presentationEpoch = newTaskPresentationEpoch
+        Task { @MainActor in
+            await Task.yield()
+            guard presentationEpoch == newTaskPresentationEpoch else { return }
+            showingNewTask = true
+        }
     }
 
     private func projectMenuTitle(_ project: FeatureProject) -> String {
@@ -627,6 +1316,7 @@ private extension FeatureDraftAttachment {
 }
 
 struct HomePresentation {
+    let allThreads: [FeatureThread]
     let pinned: [FeatureThread]
     let active: [FeatureThread]
     let snoozed: [FeatureThread]
@@ -636,6 +1326,7 @@ struct HomePresentation {
     let rowContexts: [String: HomeThreadRowContext]
 
     init(snapshot: FeatureSnapshot, query: String, projectID: String?, now: Date) {
+        allThreads = snapshot.threads
         let index = DailyUXSidebarIndex(
             snapshot: snapshot,
             query: "",
@@ -780,9 +1471,13 @@ struct HomeThreadRowContext: Equatable {
             let explicitProvider = thread.providerName?
                 .trimmingCharacters(in: .whitespacesAndNewlines)
             let configuredProvider = thread.providerID.flatMap { providerID in
-                environmentID.flatMap {
+                let environmentProvider = environmentID.flatMap {
                     snapshot.providersByEnvironment?[$0]?.first(where: { $0.id == providerID })
                 }
+                return environmentProvider
+                    ?? (snapshot.providersByEnvironment == nil
+                        ? snapshot.providers.first(where: { $0.id == providerID })
+                        : nil)
             }
             let providerName = (explicitProvider?.isEmpty == false ? explicitProvider : nil)
                 ?? configuredProvider?.name
@@ -809,6 +1504,28 @@ struct HomeThreadRowContext: Equatable {
     }
 }
 
+enum HomeThreadPullRequest {
+    static func related(
+        to thread: FeatureThread,
+        in status: FeatureSourceControlStatus
+    ) -> FeaturePullRequest? {
+        guard let threadBranch = normalizedBranch(thread.branch),
+              let statusBranch = normalizedBranch(status.branch),
+              threadBranch == statusBranch else {
+            return nil
+        }
+        return status.pullRequest
+    }
+
+    private static func normalizedBranch(_ branch: String?) -> String? {
+        guard let branch = branch?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !branch.isEmpty else {
+            return nil
+        }
+        return branch
+    }
+}
+
 struct FeatureThreadRow: View {
     enum Style: Equatable {
         case rich
@@ -822,6 +1539,8 @@ struct FeatureThreadRow: View {
     let style: Style
     let now: Date
     let allowsMultilineTitle: Bool
+    let pullRequest: FeaturePullRequest?
+    let showDoneDuration: Bool
 
     init(
         thread: FeatureThread,
@@ -830,7 +1549,9 @@ struct FeatureThreadRow: View {
         isSelected: Bool = false,
         style: Style = .rich,
         now: Date = .now,
-        allowsMultilineTitle: Bool = false
+        allowsMultilineTitle: Bool = false,
+        pullRequest: FeaturePullRequest? = nil,
+        showDoneDuration: Bool = false
     ) {
         self.thread = thread
         self.context = context
@@ -839,6 +1560,8 @@ struct FeatureThreadRow: View {
         self.style = style
         self.now = now
         self.allowsMultilineTitle = allowsMultilineTitle
+        self.pullRequest = pullRequest
+        self.showDoneDuration = showDoneDuration
     }
 
     var body: some View {
@@ -893,6 +1616,7 @@ struct FeatureThreadRow: View {
                         .foregroundStyle(T3Colors.syntaxProperty)
                 }
                 Spacer(minLength: 8)
+                pullRequestLink
                 if let environmentLabel {
                     HStack(spacing: 4) {
                         Image(systemName: environmentIcon)
@@ -934,13 +1658,14 @@ struct FeatureThreadRow: View {
                 .foregroundStyle(T3Colors.textSecondary)
                 .lineLimit(allowsMultilineTitle ? 2 : 1)
             Spacer(minLength: 8)
+            pullRequestLink
             if thread.pinnedAt != nil {
                 Image(systemName: "pin.fill")
                     .font(.system(size: 9, weight: .semibold))
                     .foregroundStyle(T3Colors.textSecondary)
             }
             providerIcon(size: 15)
-            Text(SidebarRelativeAge.compact(since: thread.updatedAt, now: now))
+            Text(slimTrailingLabel(at: now))
                 .font(T3Typography.homeMetadata.monospacedDigit())
                 .foregroundStyle(T3Colors.textTertiary)
         }
@@ -954,14 +1679,64 @@ struct FeatureThreadRow: View {
     }
 
     @ViewBuilder
+    private var pullRequestLink: some View {
+        if let pullRequest,
+           let url = pullRequest.safeExternalURL {
+            Link(destination: url) {
+                HStack(spacing: 3) {
+                    Text(pullRequest.shortLabel)
+                        .monospacedDigit()
+                        .lineLimit(1)
+                        .fixedSize(horizontal: true, vertical: false)
+                    Image(systemName: "arrow.up.right")
+                        .font(.system(size: 8, weight: .bold))
+                }
+                .font(T3Typography.homeMetadata.weight(.semibold))
+                .foregroundStyle(pullRequestColor(pullRequest))
+                .padding(.horizontal, 7)
+                .padding(.vertical, 5)
+                .background(T3Colors.subtle, in: Capsule())
+                .frame(
+                    minWidth: T3Metrics.minimumTapTarget,
+                    minHeight: T3Metrics.minimumTapTarget
+                )
+                .contentShape(Rectangle())
+                .padding(.vertical, -10)
+            }
+            .buttonStyle(.plain)
+            .layoutPriority(1)
+            .accessibilityLabel("Pull request \(pullRequest.number), \(pullRequest.state)")
+            .accessibilityHint("Opens pull request in the browser")
+            .accessibilityIdentifier("thread-\(thread.id)-pull-request")
+        }
+    }
+
+    private func pullRequestColor(_ pullRequest: FeaturePullRequest) -> Color {
+        switch pullRequest.state.lowercased() {
+        case "merged": T3Colors.syntaxKeyword
+        case "closed": T3Colors.textTertiary
+        case "open": T3Colors.success
+        case "draft": T3Colors.textSecondary
+        default: T3Colors.textTertiary
+        }
+    }
+
+    @ViewBuilder
     private func status(at now: Date) -> some View {
+        let label = thread.homeStatusLabel
+            ?? SidebarRelativeAge.compact(since: thread.updatedAt, now: now)
         HStack(spacing: 5) {
             if let icon = statusIcon {
                 Image(systemName: icon)
                     .font(.system(size: 11, weight: .semibold))
             }
-            Text(thread.homeRowStatusLabel(at: now))
+            Text(label)
             if let duration = thread.homeWorkingDuration(at: now) {
+                Text(duration)
+                    .font(.system(.footnote, design: .monospaced, weight: .semibold))
+                    .monospacedDigit()
+            }
+            if showDoneDuration, let duration = thread.homeDoneDuration(at: now) {
                 Text(duration)
                     .font(.system(.footnote, design: .monospaced, weight: .semibold))
                     .monospacedDigit()
@@ -974,8 +1749,9 @@ struct FeatureThreadRow: View {
     private var statusIcon: String? {
         switch thread.homeStatus {
         case .working: "circle.dotted"
+        case .done: "checkmark.circle"
         case .failed: "exclamationmark.circle"
-        case .approval, .input, .monitoring, .done, .ready: nil
+        case .approval, .input, .monitoring, .ready: nil
         }
     }
 
@@ -986,7 +1762,8 @@ struct FeatureThreadRow: View {
         case .approval: T3Colors.warning
         case .input: T3Colors.statusInput
         case .failed: T3Colors.danger
-        case .done, .ready: T3Colors.textTertiary
+        case .done: T3Colors.success
+        case .ready: T3Colors.textTertiary
         }
     }
 
@@ -1058,6 +1835,9 @@ struct FeatureThreadRow: View {
         if let duration = thread.homeWorkingDuration(at: now) {
             values.append("for \(duration)")
         }
+        if showDoneDuration, let duration = thread.homeDoneAccessibilityDuration(at: now) {
+            values.append("done for \(duration)")
+        }
         values.append("Branch \(branchLabel)")
         if let environmentLabel {
             values.append("on \(environmentLabel)")
@@ -1066,6 +1846,13 @@ struct FeatureThreadRow: View {
             values.append("last known state")
         }
         return values.joined(separator: ". ")
+    }
+
+    private func slimTrailingLabel(at now: Date) -> String {
+        if showDoneDuration, let duration = thread.homeDoneDuration(at: now) {
+            return "Done \(duration)"
+        }
+        return SidebarRelativeAge.compact(since: thread.updatedAt, now: now)
     }
 
 }

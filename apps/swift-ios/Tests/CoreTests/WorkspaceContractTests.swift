@@ -3,6 +3,84 @@ import XCTest
 
 @MainActor
 final class WorkspaceContractTests: XCTestCase {
+    func testNewTaskReplacementWaitsForDismissalAndGetsFreshIdentity() {
+        let first = FeatureNewTaskPresentationRequest.newTask(initialProjectID: "project-1")
+        let replacement = FeatureNewTaskPresentationRequest.sharedNewTask(shareID: "share-2")
+        var coordinator = FeatureNewTaskPresentationCoordinator()
+
+        XCTAssertTrue(coordinator.request(first).shouldPresent)
+        let firstPresentationID = coordinator.presentationID
+        XCTAssertEqual(coordinator.current, first)
+
+        XCTAssertFalse(coordinator.request(replacement).shouldPresent)
+        XCTAssertEqual(coordinator.current, first)
+        XCTAssertEqual(coordinator.pending, replacement)
+        XCTAssertEqual(coordinator.presentationID, firstPresentationID)
+
+        XCTAssertEqual(coordinator.didDismiss(), first)
+        XCTAssertEqual(coordinator.current, replacement)
+        XCTAssertNil(coordinator.pending)
+        XCTAssertNotEqual(coordinator.presentationID, firstPresentationID)
+        XCTAssertEqual(coordinator.current?.incomingShareID, "share-2")
+    }
+
+    func testNewTaskReplacementReleasesOnlyTheDismissedPresentation() {
+        let first = FeatureNewTaskPresentationRequest.sharedNewTask(shareID: "share-1")
+        let replacement = FeatureNewTaskPresentationRequest.sharedNewTask(shareID: "share-2")
+        var coordinator = FeatureNewTaskPresentationCoordinator()
+
+        XCTAssertTrue(coordinator.request(first).shouldPresent)
+        XCTAssertFalse(coordinator.request(replacement).shouldPresent)
+        XCTAssertEqual(coordinator.didDismiss()?.incomingShareID, "share-1")
+        XCTAssertEqual(coordinator.current?.incomingShareID, "share-2")
+        XCTAssertEqual(coordinator.didDismiss()?.incomingShareID, "share-2")
+        XCTAssertNil(coordinator.current)
+    }
+
+    func testNewTaskReplacementReturnsOverwrittenAndCancelledShares() {
+        let active = FeatureNewTaskPresentationRequest.newTask(initialProjectID: "project-1")
+        let firstShare = FeatureNewTaskPresentationRequest.sharedNewTask(shareID: "share-1")
+        let secondShare = FeatureNewTaskPresentationRequest.sharedNewTask(shareID: "share-2")
+        var coordinator = FeatureNewTaskPresentationCoordinator()
+
+        XCTAssertTrue(coordinator.request(active).shouldPresent)
+        XCTAssertNil(coordinator.request(firstShare).displaced)
+        XCTAssertEqual(coordinator.request(secondShare).displaced, firstShare)
+        XCTAssertEqual(coordinator.cancelPending(), secondShare)
+        XCTAssertNil(coordinator.pending)
+    }
+
+    func testNewTaskInactivePresentationCanBeReplacedAndCancelled() {
+        let first = FeatureNewTaskPresentationRequest.sharedNewTask(shareID: "share-1")
+        let replacement = FeatureNewTaskPresentationRequest.newTask(initialProjectID: "project-2")
+        var coordinator = FeatureNewTaskPresentationCoordinator()
+
+        XCTAssertTrue(coordinator.request(first).shouldPresent)
+        let firstPresentationID = coordinator.presentationID
+        let displaced = coordinator.replaceInactiveCurrent(with: replacement)
+        XCTAssertEqual(displaced.current, first)
+        XCTAssertNil(displaced.pending)
+        XCTAssertEqual(coordinator.current, replacement)
+        XCTAssertNotEqual(coordinator.presentationID, firstPresentationID)
+        XCTAssertEqual(coordinator.cancelCurrent(), replacement)
+        XCTAssertNil(coordinator.current)
+    }
+
+    func testReplacingInactiveNewTaskAlsoDisplacesPendingShare() {
+        let active = FeatureNewTaskPresentationRequest.newTask(initialProjectID: "project-1")
+        let pending = FeatureNewTaskPresentationRequest.sharedNewTask(shareID: "share-1")
+        let replacement = FeatureNewTaskPresentationRequest.newTask(initialProjectID: "project-2")
+        var coordinator = FeatureNewTaskPresentationCoordinator()
+
+        XCTAssertTrue(coordinator.request(active).shouldPresent)
+        XCTAssertFalse(coordinator.request(pending).shouldPresent)
+        let displaced = coordinator.replaceInactiveCurrent(with: replacement)
+        XCTAssertEqual(displaced.current, active)
+        XCTAssertEqual(displaced.pending, pending)
+        XCTAssertEqual(coordinator.current, replacement)
+        XCTAssertNil(coordinator.pending)
+    }
+
     func testVCSStatusSnapshotDecodesTaggedEffectRPCShape() throws {
         let data = Data(
             """

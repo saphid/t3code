@@ -1,8 +1,246 @@
+import Foundation
+import SwiftUI
 import Testing
+import UIKit
+import UniformTypeIdentifiers
 @testable import T3Code
 
 @Suite("Composer power features")
 struct FeatureComposerPowerTests {
+    @MainActor
+    @Test
+    func composerTextInputGrowsBeyondThreeLinesWithoutANumericCap() {
+        let threeLineHeight = composerTextInputHeight(lineCount: 3)
+        let thirtyLineHeight = composerTextInputHeight(lineCount: 30)
+
+        #expect(thirtyLineHeight > threeLineHeight + 400)
+    }
+
+    @MainActor
+    @Test
+    func composerTextInputYieldsToTheAvailableViewportForVeryTallDrafts() {
+        let viewportHeight: CGFloat = 500
+
+        #expect(composerTextInputHeight(lineCount: 100, maximumHeight: viewportHeight) <= viewportHeight)
+    }
+
+    @MainActor
+    private func composerTextInputHeight(
+        lineCount: Int,
+        maximumHeight: CGFloat = .greatestFiniteMagnitude
+    ) -> CGFloat {
+        let text = Array(repeating: "A full visible prompt line", count: lineCount)
+            .joined(separator: "\n")
+        let controller = UIHostingController(
+            rootView: ComposerTextInputHarness(text: text)
+                .frame(width: 320)
+        )
+
+        return controller.sizeThatFits(
+            in: CGSize(width: 320, height: maximumHeight)
+        ).height
+    }
+
+    @Test
+    func softwareKeyboardDetectionRequiresALocalDockedKeyboardSizedFrame() {
+        let screen = CGRect(x: 0, y: 0, width: 368, height: 800)
+
+        #expect(
+            FeatureComposerTextLayout.softwareKeyboardOccupiesScreen(
+                keyboardFrame: CGRect(x: 0, y: 494, width: 368, height: 306),
+                screenBounds: screen,
+                isLocal: true
+            )
+        )
+        #expect(
+            !FeatureComposerTextLayout.softwareKeyboardOccupiesScreen(
+                keyboardFrame: CGRect(x: 0, y: 800, width: 368, height: 306),
+                screenBounds: screen,
+                isLocal: true
+            )
+        )
+        #expect(
+            !FeatureComposerTextLayout.softwareKeyboardOccupiesScreen(
+                keyboardFrame: CGRect(x: 84, y: 400, width: 200, height: 200),
+                screenBounds: screen,
+                isLocal: true
+            )
+        )
+        #expect(
+            !FeatureComposerTextLayout.softwareKeyboardOccupiesScreen(
+                keyboardFrame: CGRect(x: 0, y: 745, width: 368, height: 55),
+                screenBounds: screen,
+                isLocal: true
+            )
+        )
+        #expect(
+            !FeatureComposerTextLayout.softwareKeyboardOccupiesScreen(
+                keyboardFrame: CGRect(x: 0, y: 494, width: 368, height: 306),
+                screenBounds: screen,
+                isLocal: false
+            )
+        )
+    }
+
+    @Test
+    func newThreadKeyboardStateClearsAcrossScenePresentationTransitions() {
+        let screen = CGRect(x: 0, y: 0, width: 368, height: 800)
+        let keyboard = CGRect(x: 0, y: 494, width: 368, height: 306)
+
+        #expect(
+            !FeatureComposerTextLayout.softwareKeyboardOccupiesScreen(
+                keyboardFrame: nil,
+                screenBounds: screen,
+                isLocal: true
+            )
+        )
+        #expect(
+            !FeatureComposerTextLayout.softwareKeyboardOccupiesScreen(
+                keyboardFrame: keyboard,
+                screenBounds: nil,
+                isLocal: true
+            )
+        )
+        #expect(
+            !FeatureComposerTextLayout.softwareKeyboardOccupiesScreen(
+                keyboardFrame: keyboard,
+                screenBounds: screen,
+                isLocal: true,
+                sceneIsActive: false
+            )
+        )
+        #expect(
+            FeatureComposerTextLayout.bottomClearance(
+                dynamicTypeSize: .accessibility5,
+                softwareKeyboardIsVisible: true
+            ) == 52
+        )
+        #expect(
+            FeatureComposerTextLayout.bottomClearance(
+                dynamicTypeSize: .accessibility5,
+                softwareKeyboardIsVisible: false
+            ) == 0
+        )
+        #expect(
+            FeatureComposerTextLayout.bottomClearance(
+                dynamicTypeSize: .large,
+                softwareKeyboardIsVisible: true
+            ) == 0
+        )
+    }
+
+    @Test
+    func commandMenuCompactsWhileTheSoftwareKeyboardIsVisible() {
+        #expect(
+            FeatureComposerTextLayout.commandMenuMaximumHeight(
+                softwareKeyboardIsVisible: false
+            ) == 188
+        )
+        #expect(
+            FeatureComposerTextLayout.commandMenuMaximumHeight(
+                softwareKeyboardIsVisible: true
+            ) == 94
+        )
+        #expect(
+            FeatureComposerTextLayout.commandMenuSpacing(
+                softwareKeyboardIsVisible: true
+            ) == 12
+        )
+        #expect(
+            FeatureComposerTextLayout.containerBottomPadding(
+                softwareKeyboardIsVisible: true
+            ) == 4
+        )
+    }
+
+    @Test(
+        "Command menu can fill the space above the composer",
+        .bug("https://github.com/saphid/t3code-personal/issues/57")
+    )
+    func commandMenuUsesItsAvailableVerticalSpace() {
+        let maximumHeight = FeatureComposerTextLayout.commandMenuMaximumHeight(
+            composerMinY: 720,
+            topBoundary: 59
+        )
+
+        #expect(maximumHeight == 625)
+        #expect(
+            FeatureComposerTextLayout.commandMenuVerticalOffset(menuHeight: maximumHeight)
+                == -649
+        )
+        #expect(
+            FeatureComposerTextLayout.commandMenuHeight(
+                itemCount: 20,
+                usesExpandedRows: true,
+                dynamicTypeSize: .large,
+                maximumHeight: maximumHeight
+            ) == maximumHeight
+        )
+    }
+
+    @Test(
+        "Skill rows reserve room for stacked names and descriptions",
+        .bug("https://github.com/saphid/t3code-personal/issues/57")
+    )
+    func skillMenuRowsUseTheReadableHeightEstimate() {
+        let standardHeight = FeatureComposerTextLayout.commandMenuHeight(
+            itemCount: 2,
+            usesExpandedRows: true,
+            dynamicTypeSize: .large,
+            maximumHeight: 1_000
+        )
+        let accessibilityHeight = FeatureComposerTextLayout.commandMenuHeight(
+            itemCount: 2,
+            usesExpandedRows: true,
+            dynamicTypeSize: .accessibility3,
+            maximumHeight: 1_000
+        )
+
+        #expect(standardHeight >= 132)
+        #expect(accessibilityHeight > standardHeight)
+    }
+
+    @Test(
+        "Command menu geometry has safe fallbacks and clamps",
+        .bug("https://github.com/saphid/t3code-personal/issues/57")
+    )
+    func commandMenuGeometryHandlesBoundaryValues() {
+        #expect(
+            FeatureComposerTextLayout.commandMenuMaximumHeight(
+                composerMinY: 0,
+                topBoundary: 0
+            ) == 188
+        )
+        #expect(
+            FeatureComposerTextLayout.commandMenuMaximumHeight(
+                composerMinY: 20,
+                topBoundary: 20
+            ) == 0
+        )
+        #expect(
+            FeatureComposerTextLayout.commandMenuHeight(
+                itemCount: 0,
+                usesExpandedRows: false,
+                dynamicTypeSize: .large,
+                maximumHeight: 60
+            ) >= 48
+        )
+    }
+
+    @Test(
+        "Only skill items use the expanded stacked presentation",
+        .bug("https://github.com/saphid/t3code-personal/issues/57")
+    )
+    func skillItemsChooseTheExpandedPresentation() {
+        #expect(FeatureComposerMenuItem.skill(.init(name: "test")).usesExpandedPresentation)
+        #expect(FeatureComposerMenuItem.modelCommand.usesExpandedPresentation == false)
+        #expect(
+            FeatureComposerMenuItem.path(
+                .init(path: "Sources/App.swift", kind: .file)
+            ).usesExpandedPresentation == false
+        )
+    }
+
     @Test
     func detectsCommandsModelsSkillsAndPathsAtTheCursor() {
         #expect(
@@ -38,6 +276,85 @@ struct FeatureComposerPowerTests {
             with: "[App](Sources/App) "
         )
         #expect(result == "Review [App](Sources/App)  please")
+    }
+
+    @Test
+    func replacementCursorLandsAfterInsertedTextInUTF16() {
+        let original = "🧪 Use $dep please"
+        let range = 6..<10
+        let replacement = "$dependency "
+
+        #expect(
+            FeatureComposerTextSelectionPolicy.cursorLocation(
+                afterReplacing: range,
+                in: original,
+                with: replacement
+            ) == "🧪 Use $dependency ".utf16.count
+        )
+    }
+
+    @Test func restoredComposerTextPlacesCaretAtUTF16End() {
+        #expect(FeatureComposerTextSelectionPolicy.cursorLocationAfterBindingUpdate(
+            previousText: "", newText: "🧪 restored draft", selectedLocation: 0
+        ) == "🧪 restored draft".utf16.count)
+    }
+
+    @Test
+    func mixedPasteKeepsOnlyTextFromNonImageItems() {
+        let items = [
+            FeatureComposerPasteItem(
+                typeIdentifiers: [UTType.png.identifier, UTType.plainText.identifier],
+                stringsByType: [UTType.plainText.identifier: "image metadata"]
+            ),
+            FeatureComposerPasteItem(
+                typeIdentifiers: [UTType.plainText.identifier],
+                stringsByType: [UTType.plainText.identifier: "first"]
+            ),
+            FeatureComposerPasteItem(
+                typeIdentifiers: [
+                    UTType.html.identifier,
+                    UTType.utf8PlainText.identifier,
+                ],
+                stringsByType: [
+                    UTType.html.identifier: "<b>second</b>",
+                    UTType.utf8PlainText.identifier: "second",
+                ]
+            ),
+        ]
+
+        #expect(FeatureComposerPasteTextPolicy.text(from: items) == "first\nsecond")
+        #expect(
+            FeatureComposerPasteTextPolicy.text(
+                from: [
+                    FeatureComposerPasteItem(
+                        typeIdentifiers: [UTType.jpeg.identifier],
+                        stringsByType: [:]
+                    ),
+                ]
+            ) == nil
+        )
+    }
+
+    @Test
+    func mixedPasteReadsPlainTextLazilyFromUIPasteboard() {
+        let pasteboard = UIPasteboard.withUniqueName()
+        defer { UIPasteboard.remove(withName: pasteboard.name) }
+        pasteboard.items = [
+            [
+                UTType.png.identifier: Data([0x89]),
+                UTType.plainText.identifier: "image metadata",
+            ],
+            [UTType.utf8PlainText.identifier: Data("first".utf8)],
+            [
+                UTType.html.identifier: Data("<b>second</b>".utf8),
+                UTType.utf8PlainText.identifier: "second",
+            ],
+        ]
+
+        #expect(
+            FeatureComposerPasteTextPolicy.text(from: pasteboard)
+                == "first\nsecond"
+        )
     }
 
     @Test
@@ -194,6 +511,22 @@ struct FeatureComposerPowerTests {
         )
         #expect(
             !FeatureComposerSubmissionPolicy.allowsSend(for: .returnKey)
+        )
+    }
+}
+
+private struct ComposerTextInputHarness: View {
+    @State var text: String
+    @FocusState private var focused: Bool
+
+    var body: some View {
+        FeatureComposerTextInput(
+            text: $text,
+            focused: $focused,
+            placeholder: "Ask anything…",
+            acceptsImages: false,
+            selectionRequest: nil,
+            onPasteImages: { _ in }
         )
     }
 }

@@ -10,6 +10,8 @@ public struct ThreadDetailView: View {
     let thread: FeatureThread
     let submitMessage: (FeatureMessageSubmission) async -> Bool
     let onNavigateBack: () -> Void
+    let onCommandPaletteDragChanged: (CGFloat) -> Void
+    let onCommandPaletteDragEnded: (Bool) -> Void
     private let draftStore: FeatureComposerDraftStore
 
     @State private var draft = ""
@@ -21,6 +23,8 @@ public struct ThreadDetailView: View {
     @State private var didRestoreDraft = false
     @State private var draftSaveTask: Task<Void, Never>?
     @State private var toolSurface: FeatureThreadToolSurface?
+    @State private var linkedFile: FeatureWorkspaceFileLink?
+    @State private var commandMenuTopBoundary: CGFloat = 0
     @FocusState private var composerFocused: Bool
 
     public init(
@@ -28,19 +32,26 @@ public struct ThreadDetailView: View {
         thread: FeatureThread,
         submitMessage: @escaping (FeatureMessageSubmission) async -> Bool,
         onNavigateBack: @escaping () -> Void = {},
+        onCommandPaletteDragChanged: @escaping (CGFloat) -> Void = { _ in },
+        onCommandPaletteDragEnded: @escaping (Bool) -> Void = { _ in },
         draftStore: FeatureComposerDraftStore = .shared
     ) {
         self.model = model
         self.thread = thread
         self.submitMessage = submitMessage
         self.onNavigateBack = onNavigateBack
+        self.onCommandPaletteDragChanged = onCommandPaletteDragChanged
+        self.onCommandPaletteDragEnded = onCommandPaletteDragEnded
         self.draftStore = draftStore
     }
 
     public var body: some View {
         Group {
-            if isLoading {
-                FeatureThreadOpeningView(isRefreshing: detail != nil)
+            if FeatureThreadPresentation.showsOpeningState(
+                isLoading: isLoading,
+                hasDetail: detail != nil
+            ) {
+                FeatureThreadOpeningView()
             } else if let detail {
                 timeline(detail)
             } else {
@@ -82,7 +93,11 @@ public struct ThreadDetailView: View {
             NavigationStack {
                 switch surface {
                 case .files:
-                    FeatureFilesView(client: model.client, threadID: thread.id)
+                    FeatureFilesView(
+                        client: model.client,
+                        threadID: thread.id,
+                        workspaceRoot: workspaceRoot
+                    )
                 case .review:
                     FeatureReviewView(client: model.client, threadID: thread.id)
                 case .sourceControl:
@@ -98,6 +113,17 @@ public struct ThreadDetailView: View {
                     }
                 }
             }
+            .presentationDetents([.large])
+            .presentationDragIndicator(.visible)
+        }
+        .sheet(item: $linkedFile) { link in
+            FeatureLinkedFileSheet(
+                client: model.client,
+                threadID: thread.id,
+                workspaceRoot: workspaceRoot,
+                entry: link.entry,
+                onDone: { linkedFile = nil }
+            )
             .presentationDetents([.large])
             .presentationDragIndicator(.visible)
         }
@@ -121,6 +147,11 @@ public struct ThreadDetailView: View {
 
     private var currentThread: FeatureThread {
         detail?.thread ?? thread
+    }
+
+    private var workspaceRoot: String? {
+        currentThread.worktreePath
+            ?? model.snapshot.projects.first { $0.id == currentThread.projectID }?.path
     }
 
     private var currentSelection: FeatureSelection? {
@@ -167,8 +198,9 @@ public struct ThreadDetailView: View {
                 // duration; idle threads render a static status instead of
                 // waking every second forever.
                 Group {
-                    if currentThread.homeStatus == .working {
-                        TimelineView(.periodic(from: .now, by: 1)) { context in
+                    if currentThread.homeStatus == .working,
+                       let startedAt = currentThread.workingStartedAt {
+                        TimelineView(.periodic(from: startedAt, by: 1)) { context in
                             headerStatus(at: context.date)
                         }
                     } else {
@@ -186,37 +218,55 @@ public struct ThreadDetailView: View {
         .accessibilityElement(children: .combine)
         .accessibilityAddTraits(.isHeader)
         .accessibilityAddTraits(
-            currentThread.hasLiveWorkingDuration ? .updatesFrequently : []
+            currentThread.homeStatus == .working && currentThread.workingStartedAt != nil
+                ? .updatesFrequently
+                : []
         )
+        .background {
+            FeatureCommandPaletteGestureInstaller(
+                capturesFullWidth: horizontalSizeClass == .compact,
+                onChanged: handleCommandPaletteDragChanged,
+                onEnded: onCommandPaletteDragEnded
+            )
+        }
+    }
+
+    private func handleCommandPaletteDragChanged(_ distance: CGFloat) {
+        if distance > 0 {
+            composerFocused = false
+        }
+        onCommandPaletteDragChanged(distance)
     }
 
     @ViewBuilder
     private func headerStatus(at now: Date) -> some View {
-        let duration = currentThread.homeWorkingDuration(at: now)
-        if let label = duration ?? currentThread.detailHeaderStatusLabel {
-            HStack(spacing: 5) {
-                if let icon = currentThread.detailHeaderStatusIcon {
-                    Image(systemName: icon)
-                }
-                headerStatusText(label, isDuration: duration != nil)
+        HStack(spacing: 5) {
+            if let icon = headerStatusIcon {
+                Image(systemName: icon)
             }
-            .font(T3Typography.status)
-            .foregroundStyle(headerStatusColor)
-            .lineLimit(1)
-            .accessibilityElement(children: .combine)
-            .accessibilityLabel(currentThread.homeStatusAccessibilityLabel(at: now))
+            if let duration = currentThread.homeWorkingDuration(at: now) {
+                Text(duration)
+                    .monospaced()
+                    .monospacedDigit()
+            } else {
+                Text(currentThread.homeStatusLabel ?? "Ready")
+            }
         }
+        .font(T3Typography.status)
+        .foregroundStyle(headerStatusColor)
+        .lineLimit(1)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(headerStatusAccessibilityLabel(at: now))
     }
 
-    @ViewBuilder
-    private func headerStatusText(_ label: String, isDuration: Bool) -> some View {
-        if isDuration {
-            Text(label)
-                .monospaced()
-                .monospacedDigit()
-        } else {
-            Text(label)
+    private func headerStatusAccessibilityLabel(at now: Date) -> String {
+        if currentThread.homeStatus == .working {
+            guard let startedAt = currentThread.workingStartedAt else {
+                return "Agent is working"
+            }
+            return "Agent is working for \(HomeWorkingDuration.accessibility(since: startedAt, now: now))"
         }
+        return currentThread.homeStatusLabel ?? "Ready"
     }
 
     private var threadActionsMenu: some View {
@@ -291,6 +341,15 @@ public struct ThreadDetailView: View {
         return "workspace"
     }
 
+    private var headerStatusIcon: String? {
+        switch currentThread.homeStatus {
+        case .working: "circle.dotted"
+        case .done: "checkmark.circle"
+        case .failed: "exclamationmark.circle"
+        case .approval, .input, .monitoring, .ready: nil
+        }
+    }
+
     private var headerStatusColor: Color {
         switch currentThread.homeStatus {
         case .working: T3Colors.statusRunning
@@ -318,6 +377,11 @@ public struct ThreadDetailView: View {
             } else {
                 FeatureTranscriptCollectionView(
                     threadID: thread.id,
+                    imageContext: MarkdownImageContext(
+                        client: model.client,
+                        threadID: thread.id,
+                        workspaceRoot: workspaceRoot
+                    ),
                     messages: detail.messages,
                     renderUpdate: model.detailRenderUpdates[thread.id],
                     dynamicTypeSize: dynamicTypeSize,
@@ -325,11 +389,15 @@ public struct ThreadDetailView: View {
                     activeSubagentCount: detail.activeSubagentCount,
                     backgroundWorkIsActive: detail.backgroundWorkIsActive,
                     isMonitoring: detail.thread.state == .monitoring,
+                    workingStartedAt: detail.thread.homeStatus == .working
+                        ? detail.thread.workingStartedAt
+                        : nil,
                     canLoadEarlier: detail.page?.hasMore == true,
                     isLoadingEarlier: detail.page?.isLoading == true,
                     onLoadEarlier: {
                         Task { await model.loadEarlierTurns(for: thread.id) }
                     },
+                    onOpenURL: openURL,
                     onDismissKeyboard: dismissKeyboard
                 )
             }
@@ -341,6 +409,7 @@ public struct ThreadDetailView: View {
                 attachments: $attachments,
                 providers: threadProviders,
                 threadSelection: currentSelection,
+                attachmentContextID: thread.id,
                 materializesDefaultSelection: false,
                 isSending: isSending,
                 isWorking: detail.thread.state == .working || detail.thread.state == .queued,
@@ -352,6 +421,7 @@ public struct ThreadDetailView: View {
                 pendingApprovals: detail.approvals,
                 pendingUserInputs: detail.userInputs,
                 isResolvingRequest: model.isPerformingAction,
+                commandMenuTopBoundary: commandMenuTopBoundary,
                 powerFeatures: composerPowerFeatures,
                 onApprovalDecision: { id, decision in
                     Task { await model.resolveApproval(id, decision: decision) }
@@ -362,6 +432,27 @@ public struct ThreadDetailView: View {
             )
             .simultaneousGesture(composerKeyboardDismissGesture)
         }
+        .safeAreaInset(edge: .top, spacing: 0) {
+            Color.clear
+                .frame(height: 0)
+                .onGeometryChange(for: CGFloat.self) { geometry in
+                    geometry.frame(
+                        in: .named(FeatureComposerTextLayout.commandMenuCoordinateSpace)
+                    ).maxY
+                } action: { topBoundary in
+                    commandMenuTopBoundary = topBoundary
+                }
+        }
+        .coordinateSpace(.named(FeatureComposerTextLayout.commandMenuCoordinateSpace))
+    }
+
+    private func openURL(_ url: URL) -> Bool {
+        guard let link = FeatureWorkspaceFileLink(
+            url: url,
+            workspaceRoot: workspaceRoot
+        ) else { return false }
+        linkedFile = link
+        return true
     }
 
     private var composerKeyboardDismissGesture: some Gesture {
@@ -539,14 +630,56 @@ public struct ThreadDetailView: View {
 
 }
 
-private struct FeatureThreadOpeningView: View {
-    let isRefreshing: Bool
+private struct FeatureLinkedFileSheet: View {
+    let client: any FeatureClient
+    let threadID: String
+    let workspaceRoot: String?
+    let entry: FeatureFileEntry
+    let onDone: () -> Void
 
+    @State private var showsContainingDirectory = false
+
+    var body: some View {
+        NavigationStack {
+            Group {
+                if showsContainingDirectory {
+                    FeatureFilesView(
+                        client: client,
+                        threadID: threadID,
+                        workspaceRoot: workspaceRoot,
+                        initialPath: entry.containingDirectoryPath
+                    )
+                } else {
+                    FeatureFilePreviewView(
+                        client: client,
+                        threadID: threadID,
+                        workspaceRoot: workspaceRoot,
+                        entry: entry,
+                        onShowInFiles: { showsContainingDirectory = true }
+                    )
+                }
+            }
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Done", action: onDone)
+                }
+            }
+        }
+    }
+}
+
+enum FeatureThreadPresentation {
+    static func showsOpeningState(isLoading: Bool, hasDetail: Bool) -> Bool {
+        isLoading && !hasDetail
+    }
+}
+
+private struct FeatureThreadOpeningView: View {
     var body: some View {
         VStack(spacing: 12) {
             ProgressView()
                 .controlSize(.regular)
-            Text(isRefreshing ? "Refreshing thread…" : "Loading thread…")
+            Text("Loading thread…")
                 .font(T3Typography.supporting)
                 .foregroundStyle(T3Colors.textSecondary)
         }
@@ -630,6 +763,7 @@ private struct FeatureTranscriptCollectionView: UIViewRepresentable {
     }
 
     let threadID: String
+    let imageContext: MarkdownImageContext
     let messages: [FeatureMessage]
     let renderUpdate: FeatureDetailRenderUpdate?
     let dynamicTypeSize: DynamicTypeSize
@@ -637,9 +771,11 @@ private struct FeatureTranscriptCollectionView: UIViewRepresentable {
     let activeSubagentCount: Int
     let backgroundWorkIsActive: Bool
     let isMonitoring: Bool
+    let workingStartedAt: Date?
     let canLoadEarlier: Bool
     let isLoadingEarlier: Bool
     let onLoadEarlier: () -> Void
+    let onOpenURL: (URL) -> Bool
     let onDismissKeyboard: () -> Void
 
     func makeCoordinator() -> Coordinator {
@@ -653,7 +789,6 @@ private struct FeatureTranscriptCollectionView: UIViewRepresentable {
         )
         collectionView.backgroundColor = T3Colors.uiBackground
         collectionView.alwaysBounceVertical = true
-        collectionView.keyboardDismissMode = .onDrag
         collectionView.delaysContentTouches = false
         collectionView.contentInsetAdjustmentBehavior = .never
         collectionView.isPrefetchingEnabled = true
@@ -665,6 +800,7 @@ private struct FeatureTranscriptCollectionView: UIViewRepresentable {
     func updateUIView(_ collectionView: UICollectionView, context: Context) {
         context.coordinator.update(
             threadID: threadID,
+            imageContext: imageContext,
             messages: messages,
             renderUpdate: renderUpdate,
             dynamicTypeSize: dynamicTypeSize,
@@ -672,9 +808,11 @@ private struct FeatureTranscriptCollectionView: UIViewRepresentable {
             activeSubagentCount: activeSubagentCount,
             backgroundWorkIsActive: backgroundWorkIsActive,
             isMonitoring: isMonitoring,
+            workingStartedAt: workingStartedAt,
             canLoadEarlier: canLoadEarlier,
             isLoadingEarlier: isLoadingEarlier,
             onLoadEarlier: onLoadEarlier,
+            onOpenURL: onOpenURL,
             onDismissKeyboard: onDismissKeyboard,
             in: collectionView
         )
@@ -706,7 +844,9 @@ private struct FeatureTranscriptCollectionView: UIViewRepresentable {
     }
 
     @MainActor
-    final class Coordinator: NSObject, UICollectionViewDataSourcePrefetching, UICollectionViewDelegate {
+    final class Coordinator: NSObject, UICollectionViewDataSourcePrefetching,
+        UICollectionViewDelegate, UIGestureRecognizerDelegate
+    {
         private struct MarkdownPrefetch {
             let revision: MarkdownContentRevision
             let task: Task<Void, Never>
@@ -716,23 +856,36 @@ private struct FeatureTranscriptCollectionView: UIViewRepresentable {
         private var messagesByID: [String: FeatureMessage] = [:]
         private var orderedIDs: [String] = []
         private var currentThreadID: String?
+        private var currentImageContext: MarkdownImageContext?
         private var currentDetailRevision: UInt64?
         private var currentDynamicTypeSize: DynamicTypeSize?
         private var currentIsWorking = false
         private var currentActiveSubagentCount = 0
         private var currentBackgroundWorkIsActive = false
         private var currentIsMonitoring = false
+        private var currentWorkingStartedAt: Date?
         private var currentCanLoadEarlier = false
         private var currentIsLoadingEarlier = false
         private var markdownPrefetches: [String: MarkdownPrefetch] = [:]
         private var onLoadEarlier: (() -> Void)?
+        private var onOpenURL: ((URL) -> Bool)?
         private var onDismissKeyboard: (() -> Void)?
+        private let timestampReveal = FeatureTimestampRevealState()
+        private var verticalDragStartOffset: CGFloat?
+        private lazy var timestampPanGesture = UIPanGestureRecognizer(
+            target: self,
+            action: #selector(handleTimestampPan(_:))
+        )
 
         deinit {
             markdownPrefetches.values.forEach { $0.task.cancel() }
         }
 
         func connect(to collectionView: UICollectionView) {
+            timestampPanGesture.cancelsTouchesInView = false
+            timestampPanGesture.delegate = self
+            collectionView.addGestureRecognizer(timestampPanGesture)
+
             let registration = UICollectionView.CellRegistration<UICollectionViewCell, String> {
                 [weak self] cell, _, messageID in
                 if messageID == FeatureTranscriptCollectionView.loadEarlierID {
@@ -752,7 +905,8 @@ private struct FeatureTranscriptCollectionView: UIViewRepresentable {
                         FeatureThreadWorkingIndicator(
                             activeSubagentCount: self?.currentActiveSubagentCount ?? 0,
                             backgroundWorkIsActive: self?.currentBackgroundWorkIsActive == true,
-                            isMonitoring: self?.currentIsMonitoring == true
+                            isMonitoring: self?.currentIsMonitoring == true,
+                            startedAt: self?.currentWorkingStartedAt
                         )
                     }
                     .margins(.all, 0)
@@ -766,7 +920,14 @@ private struct FeatureTranscriptCollectionView: UIViewRepresentable {
                 }
 
                 cell.contentConfiguration = UIHostingConfiguration {
-                    FeatureMessageView(message: message)
+                    FeatureTimestampRevealMessageView(
+                        message: message,
+                        reveal: self?.timestampReveal ?? FeatureTimestampRevealState(),
+                        onOpenURL: { [weak self] url in
+                            self?.onOpenURL?(url) == true
+                        },
+                        imageContext: self?.currentImageContext
+                    )
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
                 .margins(.all, 0)
@@ -787,8 +948,66 @@ private struct FeatureTranscriptCollectionView: UIViewRepresentable {
             collectionView.delegate = self
         }
 
+        @objc private func handleTimestampPan(_ gesture: UIPanGestureRecognizer) {
+            switch gesture.state {
+            case .changed:
+                timestampReveal.width = TranscriptTimestampRevealGeometry.width(
+                    translationX: gesture.translation(in: gesture.view).x
+                )
+            case .ended, .cancelled, .failed:
+                guard timestampReveal.width > 0 else { return }
+                let duration = UIAccessibility.isReduceMotionEnabled ? 0 : 0.22
+                withAnimation(.easeOut(duration: duration)) {
+                    timestampReveal.width = 0
+                }
+            default:
+                break
+            }
+        }
+
+        func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+            guard gestureRecognizer === timestampPanGesture,
+                  let collectionView = gestureRecognizer.view as? UICollectionView,
+                  let pan = gestureRecognizer as? UIPanGestureRecognizer else {
+                return true
+            }
+            let velocity = pan.velocity(in: collectionView)
+            return TranscriptTimestampRevealGeometry.shouldBegin(
+                velocityX: velocity.x,
+                velocityY: velocity.y
+            ) && !isNestedHorizontalScroller(
+                at: pan.location(in: collectionView),
+                in: collectionView
+            )
+        }
+
+        func gestureRecognizer(
+            _ gestureRecognizer: UIGestureRecognizer,
+            shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer
+        ) -> Bool {
+            gestureRecognizer === timestampPanGesture
+                || otherGestureRecognizer === timestampPanGesture
+        }
+
+        private func isNestedHorizontalScroller(
+            at point: CGPoint,
+            in collectionView: UICollectionView
+        ) -> Bool {
+            var candidate = collectionView.hitTest(point, with: nil)
+            while let view = candidate, view !== collectionView {
+                if let scrollView = view as? UIScrollView,
+                   scrollView.alwaysBounceHorizontal
+                    || scrollView.contentSize.width > scrollView.bounds.width + 1 {
+                    return true
+                }
+                candidate = view.superview
+            }
+            return false
+        }
+
         func update(
             threadID: String,
+            imageContext: MarkdownImageContext,
             messages: [FeatureMessage],
             renderUpdate: FeatureDetailRenderUpdate?,
             dynamicTypeSize: DynamicTypeSize,
@@ -796,27 +1015,32 @@ private struct FeatureTranscriptCollectionView: UIViewRepresentable {
             activeSubagentCount: Int,
             backgroundWorkIsActive: Bool,
             isMonitoring: Bool,
+            workingStartedAt: Date?,
             canLoadEarlier: Bool,
             isLoadingEarlier: Bool,
             onLoadEarlier: @escaping () -> Void,
+            onOpenURL: @escaping (URL) -> Bool,
             onDismissKeyboard: @escaping () -> Void,
             in collectionView: UICollectionView
         ) {
             guard let dataSource else { return }
             self.onLoadEarlier = onLoadEarlier
+            self.onOpenURL = onOpenURL
             self.onDismissKeyboard = onDismissKeyboard
 
             let threadChanged = currentThreadID != threadID
+            let imageContextChanged = currentImageContext?.id != imageContext.id
             let typeSizeChanged = currentDynamicTypeSize != dynamicTypeSize
             let revisionChanged = currentDetailRevision != renderUpdate?.revision
             let workingChanged = currentIsWorking != isWorking
             let workingDetailChanged = currentActiveSubagentCount != activeSubagentCount
                 || currentBackgroundWorkIsActive != backgroundWorkIsActive
                 || currentIsMonitoring != isMonitoring
+            let workingStartChanged = isWorking && currentWorkingStartedAt != workingStartedAt
             let loadEarlierChanged = currentCanLoadEarlier != canLoadEarlier
                 || currentIsLoadingEarlier != isLoadingEarlier
-            guard threadChanged || typeSizeChanged || revisionChanged || workingChanged
-                || workingDetailChanged || loadEarlierChanged else { return }
+            guard threadChanged || imageContextChanged || typeSizeChanged || revisionChanged || workingChanged
+                || workingDetailChanged || workingStartChanged || loadEarlierChanged else { return }
 
             let incremental = !threadChanged
                 ? incrementalState(messages: messages, renderUpdate: renderUpdate)
@@ -824,20 +1048,22 @@ private struct FeatureTranscriptCollectionView: UIViewRepresentable {
             let state = incremental ?? fullState(messages: messages)
             let newIDs = state.ids
             let idsChanged = state.idsChanged
-            let changedIDs = typeSizeChanged
+            let changedIDs = typeSizeChanged || imageContextChanged
                 ? newIDs
                 : state.changedIDs
 
+            currentImageContext = imageContext
             currentDetailRevision = renderUpdate?.revision
             currentDynamicTypeSize = dynamicTypeSize
             currentIsWorking = isWorking
             currentActiveSubagentCount = activeSubagentCount
             currentBackgroundWorkIsActive = backgroundWorkIsActive
             currentIsMonitoring = isMonitoring
+            currentWorkingStartedAt = workingStartedAt
             currentCanLoadEarlier = canLoadEarlier
             currentIsLoadingEarlier = isLoadingEarlier
-            guard threadChanged || idsChanged || !changedIDs.isEmpty || workingChanged
-                || workingDetailChanged || loadEarlierChanged else { return }
+            guard threadChanged || imageContextChanged || idsChanged || !changedIDs.isEmpty || workingChanged
+                || workingDetailChanged || workingStartChanged || loadEarlierChanged else { return }
 
             if threadChanged {
                 cancelAllMarkdownPrefetches()
@@ -916,6 +1142,10 @@ private struct FeatureTranscriptCollectionView: UIViewRepresentable {
                 reconfiguredIDs.append(FeatureTranscriptCollectionView.loadEarlierID)
             }
             if workingDetailChanged,
+               !workingChanged,
+               snapshot.indexOfItem(FeatureTranscriptCollectionView.workingIndicatorID) != nil {
+                reconfiguredIDs.append(FeatureTranscriptCollectionView.workingIndicatorID)
+            } else if workingStartChanged, !workingChanged,
                snapshot.indexOfItem(FeatureTranscriptCollectionView.workingIndicatorID) != nil {
                 reconfiguredIDs.append(FeatureTranscriptCollectionView.workingIndicatorID)
             }
@@ -1150,11 +1380,21 @@ private struct FeatureTranscriptCollectionView: UIViewRepresentable {
         }
 
         func scrollViewWillBeginDragging(_ scrollView: UIScrollView) {
+            verticalDragStartOffset = scrollView.contentOffset.y
+        }
+
+        func scrollViewDidScroll(_ scrollView: UIScrollView) {
+            guard let startOffset = verticalDragStartOffset,
+                  abs(scrollView.contentOffset.y - startOffset) > 0.5 else {
+                return
+            }
+            verticalDragStartOffset = nil
             (scrollView as? BottomAnchoredTranscriptCollectionView)?.maintainsBottomAnchor = false
             onDismissKeyboard?()
         }
 
         func scrollViewDidEndDragging(_ scrollView: UIScrollView, willDecelerate decelerate: Bool) {
+            verticalDragStartOffset = nil
             guard !decelerate else { return }
             updateBottomAnchor(for: scrollView)
         }
@@ -1168,6 +1408,57 @@ private struct FeatureTranscriptCollectionView: UIViewRepresentable {
                 return
             }
             collectionView.maintainsBottomAnchor = isNearBottom(collectionView)
+        }
+    }
+}
+
+enum TranscriptTimestampRevealGeometry {
+    static let maximumWidth: CGFloat = 76
+
+    static func shouldBegin(velocityX: CGFloat, velocityY: CGFloat) -> Bool {
+        velocityX < 0 && abs(velocityX) > abs(velocityY)
+    }
+
+    static func width(translationX: CGFloat) -> CGFloat {
+        min(maximumWidth, max(0, -translationX))
+    }
+}
+
+@MainActor
+private final class FeatureTimestampRevealState: ObservableObject {
+    @Published var width: CGFloat = 0
+}
+
+private struct FeatureTimestampRevealMessageView: View {
+    let message: FeatureMessage
+    @ObservedObject var reveal: FeatureTimestampRevealState
+    let onOpenURL: (URL) -> Bool
+    let imageContext: MarkdownImageContext?
+
+    var body: some View {
+        ZStack(alignment: .trailing) {
+            if message.createdAt != .distantPast {
+                Text(message.createdAt, format: .dateTime.hour().minute())
+                    .font(T3Typography.supporting.monospacedDigit())
+                    .foregroundStyle(T3Colors.textTertiary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
+                    .dynamicTypeSize(.small ... .accessibility1)
+                    .frame(
+                        width: TranscriptTimestampRevealGeometry.maximumWidth,
+                        alignment: .trailing
+                    )
+                    .offset(x: TranscriptTimestampRevealGeometry.maximumWidth - reveal.width)
+                    .opacity(reveal.width > 0 ? 1 : 0)
+                    .accessibilityHidden(true)
+            }
+
+            FeatureMessageView(
+                message: message,
+                onOpenURL: onOpenURL,
+                imageContext: imageContext
+            )
+                .offset(x: -reveal.width)
         }
     }
 }
@@ -1200,6 +1491,7 @@ private struct FeatureThreadWorkingIndicator: View {
     let activeSubagentCount: Int
     let backgroundWorkIsActive: Bool
     let isMonitoring: Bool
+    let startedAt: Date?
 
     private var title: String {
         if isMonitoring {
@@ -1219,6 +1511,24 @@ private struct FeatureThreadWorkingIndicator: View {
     }
 
     var body: some View {
+        // The per-second timeline only exists while a start date is known;
+        // without one the row stays static instead of waking every second.
+        if let startedAt {
+            TimelineView(.periodic(from: startedAt, by: 1)) { context in
+                content(
+                    duration: HomeWorkingDuration.compact(since: startedAt, now: context.date),
+                    accessibilityDuration: HomeWorkingDuration.accessibility(
+                        since: startedAt,
+                        now: context.date
+                    )
+                )
+            }
+        } else {
+            content(duration: nil, accessibilityDuration: nil)
+        }
+    }
+
+    private func content(duration: String?, accessibilityDuration: String?) -> some View {
         HStack(alignment: .top, spacing: 10) {
             Image(systemName: "circle.dotted")
                 .font(.system(size: 17, weight: .semibold))
@@ -1226,9 +1536,18 @@ private struct FeatureThreadWorkingIndicator: View {
                 .frame(width: 22, height: 22)
 
             VStack(alignment: .leading, spacing: 2) {
-                Text(title)
-                    .font(T3Typography.supportingStrong)
-                    .foregroundStyle(T3Colors.statusRunning)
+                if let duration {
+                    (
+                        Text("\(title) for ")
+                            + Text(duration).monospacedDigit()
+                    )
+                        .font(T3Typography.supportingStrong)
+                        .foregroundStyle(T3Colors.statusRunning)
+                } else {
+                    Text(title)
+                        .font(T3Typography.supportingStrong)
+                        .foregroundStyle(T3Colors.statusRunning)
+                }
                 if let detail {
                     Text(detail)
                         .font(T3Typography.supporting)
@@ -1239,7 +1558,15 @@ private struct FeatureThreadWorkingIndicator: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.vertical, 4)
         .accessibilityElement(children: .combine)
-        .accessibilityLabel(detail.map { "\(title). \($0)." } ?? "\(title).")
+        .accessibilityLabel(
+            accessibilityDuration.map { value in
+                detail.map { "\(title) for \(value). \($0)." } ?? "\(title) for \(value)."
+            }
+                ?? (detail.map { "\(title). \($0)." } ?? "\(title).")
+        )
+        .accessibilityAddTraits(
+            accessibilityDuration == nil ? [] : .updatesFrequently
+        )
     }
 }
 
@@ -1550,7 +1877,7 @@ private final class BottomAnchoredTranscriptCollectionView: UICollectionView {
     }
 }
 
-private struct FeatureRemoteAttachmentThumbnail: View {
+struct FeatureRemoteAttachmentThumbnail: View {
     private struct Request: Hashable {
         let url: URL
         let maximumPixelSize: Int
@@ -1734,6 +2061,8 @@ private enum FeatureAttachmentThumbnailError: Error {
 
 struct FeatureMessageView: View {
     let message: FeatureMessage
+    let onOpenURL: (URL) -> Bool
+    var imageContext: MarkdownImageContext?
 
     var body: some View {
         switch message.role {
@@ -1745,7 +2074,9 @@ struct FeatureMessageView: View {
                     if !message.text.isEmpty {
                         MarkdownMessageView(
                             message.text,
-                            isStreaming: message.state == .streaming
+                            isStreaming: message.state == .streaming,
+                            onOpenURL: onOpenURL,
+                            imageContext: imageContext
                         )
                     }
                 }
@@ -1765,6 +2096,7 @@ struct FeatureMessageView: View {
             .accessibilityLabel("You")
             .accessibilityValue(accessibilityValue)
             .accessibilityIdentifier("message-\(message.id)")
+            .modifier(FeatureMessageTimestampAccessibilityModifier(message: message))
         case .assistant:
             VStack(alignment: .leading, spacing: 10) {
                 if message.state == .streaming {
@@ -1779,13 +2111,16 @@ struct FeatureMessageView: View {
                 if !message.text.isEmpty {
                     MarkdownMessageView(
                         message.text,
-                        isStreaming: message.state == .streaming
+                        isStreaming: message.state == .streaming,
+                        onOpenURL: onOpenURL,
+                        imageContext: imageContext
                     )
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .accessibilityIdentifier("message-\(message.id)")
+            .modifier(FeatureMessageTimestampAccessibilityModifier(message: message))
         case .tool:
             DisclosureGroup {
                 Text(message.text)
@@ -1802,12 +2137,14 @@ struct FeatureMessageView: View {
             .padding(.vertical, 6)
             .frame(minHeight: T3Metrics.minimumTapTarget)
             .accessibilityIdentifier("message-\(message.id)")
+            .modifier(FeatureMessageTimestampAccessibilityModifier(message: message))
         case .system:
             Text(message.text)
                 .font(T3Typography.supporting)
                 .foregroundStyle(T3Colors.textSecondary)
                 .frame(maxWidth: .infinity, alignment: .center)
                 .accessibilityIdentifier("message-\(message.id)")
+                .modifier(FeatureMessageTimestampAccessibilityModifier(message: message))
         }
     }
 
@@ -1819,6 +2156,31 @@ struct FeatureMessageView: View {
         return [message.text, attachmentSummary]
             .filter { !$0.isEmpty }
             .joined(separator: ", ")
+    }
+}
+
+private struct FeatureMessageTimestampAccessibilityModifier: ViewModifier {
+    let message: FeatureMessage
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if message.createdAt == .distantPast {
+            content
+        } else {
+            content.accessibilityCustomContent(
+                Text(accessibilityLabel),
+                Text(message.createdAt.formatted(date: .omitted, time: .shortened)),
+                importance: .default
+            )
+        }
+    }
+
+    private var accessibilityLabel: String {
+        switch message.role {
+        case .user: "Sent"
+        case .assistant: "Received"
+        case .tool, .system: "Timestamp"
+        }
     }
 }
 

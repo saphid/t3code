@@ -99,22 +99,28 @@ public struct EnvironmentDescriptor: Codable, Equatable, Sendable {
     public struct Capabilities: Codable, Equatable, Sendable {
         public let repositoryIdentity: Bool
         public let connectionProbe: Bool?
+        /// Absent on servers from before the PR workspace shipped. Clients
+        /// must treat absence as unsupported and never probe the PR methods.
+        public let pullRequests: Bool?
         public let threadSettlement: Bool?
         public let threadSnooze: Bool?
         public let threadPinning: Bool?
         public let threadTitleRegeneration: Bool?
         public let serverSelfUpdate: String?
         public let serverSelfUpdateProgress: Bool?
+        public let themeConversion: Bool?
 
         private enum CodingKeys: String, CodingKey {
             case repositoryIdentity
             case connectionProbe
+            case pullRequests
             case threadSettlement
             case threadSnooze
             case threadPinning
             case threadTitleRegeneration
             case serverSelfUpdate
             case serverSelfUpdateProgress
+            case themeConversion
         }
 
         public init(from decoder: any Decoder) throws {
@@ -122,6 +128,7 @@ public struct EnvironmentDescriptor: Codable, Equatable, Sendable {
             repositoryIdentity =
                 try container.decodeIfPresent(Bool.self, forKey: .repositoryIdentity) ?? false
             connectionProbe = try container.decodeIfPresent(Bool.self, forKey: .connectionProbe)
+            pullRequests = try container.decodeIfPresent(Bool.self, forKey: .pullRequests)
             threadSettlement = try container.decodeIfPresent(Bool.self, forKey: .threadSettlement)
             threadSnooze = try container.decodeIfPresent(Bool.self, forKey: .threadSnooze)
             threadPinning = try container.decodeIfPresent(Bool.self, forKey: .threadPinning)
@@ -134,6 +141,7 @@ public struct EnvironmentDescriptor: Codable, Equatable, Sendable {
                 Bool.self,
                 forKey: .serverSelfUpdateProgress
             )
+            themeConversion = try container.decodeIfPresent(Bool.self, forKey: .themeConversion)
         }
     }
 
@@ -383,6 +391,11 @@ public enum OrchestrationBackgroundLiveness: String, Codable, Equatable, Sendabl
     case monitoring
 }
 
+public struct ThreadTitleRegeneration: Codable, Equatable, Sendable {
+    public let requestId: String
+    public let startedAt: String
+}
+
 public struct OrchestrationThreadShell: Codable, Identifiable, Equatable, Sendable {
     public let id: String
     public let projectId: String
@@ -401,6 +414,7 @@ public struct OrchestrationThreadShell: Codable, Identifiable, Equatable, Sendab
     public let snoozedUntil: String?
     public let snoozedAt: String?
     public let pinnedAt: String?
+    public var titleRegeneration: ThreadTitleRegeneration? = nil
     public let session: OrchestrationSession?
     public let latestUserMessageAt: String?
     public let hasPendingApprovals: Bool
@@ -474,6 +488,7 @@ public struct OrchestrationThread: Codable, Identifiable, Equatable, Sendable {
     public let snoozedUntil: String?
     public let snoozedAt: String?
     public let pinnedAt: String?
+    public var titleRegeneration: ThreadTitleRegeneration? = nil
     public let deletedAt: String?
     @ForwardCompatibleArray public var messages: [OrchestrationMessage]
     @ForwardCompatibleArray public var activities: [OrchestrationActivity]

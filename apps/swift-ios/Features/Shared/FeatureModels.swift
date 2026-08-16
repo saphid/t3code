@@ -35,8 +35,13 @@ public struct FeatureEnvironment: Identifiable, Sendable, Equatable, Hashable, C
     public let id: String
     public var name: String
     public var endpoint: String
+    public var serverVersion: String?
     /// Internal stream-leader compatibility. Product routing must use the
     /// project or thread environment instead.
+    public var supportsPullRequests: Bool
+    /// `nil` remains meaningful while the environment descriptor is still loading.
+    public var pullRequestCapability: Bool?
+    public var pullRequestCapabilityKnown: Bool
     public var isActive: Bool
     public var isEnabled: Bool
     public var source: Source
@@ -49,6 +54,10 @@ public struct FeatureEnvironment: Identifiable, Sendable, Equatable, Hashable, C
         id: String,
         name: String,
         endpoint: String,
+        serverVersion: String? = nil,
+        supportsPullRequests: Bool = false,
+        pullRequestCapability: Bool? = nil,
+        pullRequestCapabilityKnown: Bool = false,
         isActive: Bool = false,
         isEnabled: Bool = true,
         source: Source = .direct,
@@ -58,6 +67,10 @@ public struct FeatureEnvironment: Identifiable, Sendable, Equatable, Hashable, C
         self.id = id
         self.name = name
         self.endpoint = endpoint
+        self.serverVersion = serverVersion
+        self.pullRequestCapability = pullRequestCapability
+        self.pullRequestCapabilityKnown = pullRequestCapabilityKnown
+        self.supportsPullRequests = pullRequestCapability == true || supportsPullRequests
         self.isActive = isActive
         self.isEnabled = isEnabled
         self.source = source
@@ -69,6 +82,10 @@ public struct FeatureEnvironment: Identifiable, Sendable, Equatable, Hashable, C
         case id
         case name
         case endpoint
+        case serverVersion
+        case supportsPullRequests
+        case pullRequestCapability
+        case pullRequestCapabilityKnown
         case isActive
         case isEnabled
         case source
@@ -81,6 +98,20 @@ public struct FeatureEnvironment: Identifiable, Sendable, Equatable, Hashable, C
         id = try container.decode(String.self, forKey: .id)
         name = try container.decode(String.self, forKey: .name)
         endpoint = try container.decode(String.self, forKey: .endpoint)
+        serverVersion = try container.decodeIfPresent(String.self, forKey: .serverVersion)
+        let decodedSupportsPullRequests = try container.decodeIfPresent(
+            Bool.self,
+            forKey: .supportsPullRequests
+        ) ?? false
+        pullRequestCapability = try container.decodeIfPresent(
+            Bool.self,
+            forKey: .pullRequestCapability
+        )
+        supportsPullRequests = pullRequestCapability == true || decodedSupportsPullRequests
+        pullRequestCapabilityKnown = try container.decodeIfPresent(
+            Bool.self,
+            forKey: .pullRequestCapabilityKnown
+        ) ?? false
         isActive = try container.decodeIfPresent(Bool.self, forKey: .isActive) ?? false
         isEnabled = try container.decodeIfPresent(Bool.self, forKey: .isEnabled) ?? true
         source = try container.decodeIfPresent(Source.self, forKey: .source) ?? .direct
@@ -217,6 +248,7 @@ public struct FeatureThread: Identifiable, Sendable, Equatable, Hashable, Codabl
     public var supportsSnooze: Bool?
     public var supportsPinning: Bool?
     public var supportsTitleRegeneration: Bool?
+    public var isRegeneratingTitle: Bool?
     public var attentionAt: Date?
     public var workingStartedAt: Date?
     public var latestTurnCompletedAt: Date?
@@ -252,6 +284,7 @@ public struct FeatureThread: Identifiable, Sendable, Equatable, Hashable, Codabl
         supportsSnooze: Bool? = nil,
         supportsPinning: Bool? = nil,
         supportsTitleRegeneration: Bool? = nil,
+        isRegeneratingTitle: Bool? = nil,
         attentionAt: Date? = nil,
         workingStartedAt: Date? = nil,
         latestTurnCompletedAt: Date? = nil,
@@ -286,6 +319,7 @@ public struct FeatureThread: Identifiable, Sendable, Equatable, Hashable, Codabl
         self.supportsSnooze = supportsSnooze
         self.supportsPinning = supportsPinning
         self.supportsTitleRegeneration = supportsTitleRegeneration
+        self.isRegeneratingTitle = isRegeneratingTitle
         self.attentionAt = attentionAt
         self.workingStartedAt = workingStartedAt
         self.latestTurnCompletedAt = latestTurnCompletedAt
@@ -801,6 +835,7 @@ public struct FeatureSettings: Sendable, Equatable, Codable {
     public var hapticsEnabled: Bool
     public var notificationsEnabled: Bool
     public var liveActivitiesEnabled: Bool
+    public var showThreadDoneDuration: Bool
     public var defaultSelection: FeatureSelection?
 
     public init(
@@ -808,12 +843,14 @@ public struct FeatureSettings: Sendable, Equatable, Codable {
         hapticsEnabled: Bool = true,
         notificationsEnabled: Bool = true,
         liveActivitiesEnabled: Bool = true,
+        showThreadDoneDuration: Bool = false,
         defaultSelection: FeatureSelection? = nil
     ) {
         self.appearance = appearance
         self.hapticsEnabled = hapticsEnabled
         self.notificationsEnabled = notificationsEnabled
         self.liveActivitiesEnabled = liveActivitiesEnabled
+        self.showThreadDoneDuration = showThreadDoneDuration
         self.defaultSelection = defaultSelection
     }
 
@@ -822,6 +859,7 @@ public struct FeatureSettings: Sendable, Equatable, Codable {
         case hapticsEnabled
         case notificationsEnabled
         case liveActivitiesEnabled
+        case showThreadDoneDuration
         case defaultSelection
     }
 
@@ -843,6 +881,10 @@ public struct FeatureSettings: Sendable, Equatable, Codable {
             Bool.self,
             forKey: .liveActivitiesEnabled
         ) ?? true
+        showThreadDoneDuration = try container.decodeIfPresent(
+            Bool.self,
+            forKey: .showThreadDoneDuration
+        ) ?? false
         defaultSelection = try container.decodeIfPresent(
             FeatureSelection.self,
             forKey: .defaultSelection
@@ -855,6 +897,7 @@ public struct FeatureSettings: Sendable, Equatable, Codable {
         try container.encode(hapticsEnabled, forKey: .hapticsEnabled)
         try container.encode(notificationsEnabled, forKey: .notificationsEnabled)
         try container.encode(liveActivitiesEnabled, forKey: .liveActivitiesEnabled)
+        try container.encode(showThreadDoneDuration, forKey: .showThreadDoneDuration)
         try container.encodeIfPresent(defaultSelection, forKey: .defaultSelection)
     }
 }
@@ -966,5 +1009,6 @@ public enum FeatureEvent: Sendable {
     case threadRemoved(id: String)
     case detail(FeatureThreadDetail)
     case detailDelta(FeatureThreadDetail, FeatureDetailDelta)
+    case hostStorage(HostStorageSnapshot?)
     case failure(String)
 }

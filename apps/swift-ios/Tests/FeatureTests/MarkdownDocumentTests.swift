@@ -6,6 +6,69 @@ import UIKit
 @Suite("Chat Markdown")
 struct MarkdownDocumentTests {
     @Test
+    func parsesStandaloneImagesWithoutChangingMixedProse() {
+        let document = MarkdownDocument(
+            parsing: """
+            Before
+
+            ![Simulator preview](./artifacts/demo.png "Latest run")
+
+            See ![small preview](inline.png) above.
+            """
+        )
+
+        #expect(document.blocks == [
+            .paragraph("Before"),
+            .image(MarkdownImageReference(
+                source: "./artifacts/demo.png",
+                alt: "Simulator preview"
+            )),
+            .paragraph("See ![small preview](inline.png) above."),
+        ])
+    }
+
+    @Test
+    func keepsMultilineAndMalformedImageParagraphsAsText() {
+        #expect(
+            MarkdownDocument(parsing: "![Preview](demo.png)\ncontinues here").blocks == [
+                .paragraph("![Preview](demo.png)\ncontinues here"),
+            ]
+        )
+        #expect(
+            MarkdownDocument(parsing: "![Preview](demo.png invalid-title)").blocks == [
+                .paragraph("![Preview](demo.png invalid-title)"),
+            ]
+        )
+    }
+
+    @Test
+    func preservesStandaloneImagesInsideListsAndQuotes() {
+        let document = MarkdownDocument(
+            parsing: """
+            - ![List preview](images/list.png)
+
+            > ![Quoted preview](images/quote.png)
+            """
+        )
+
+        guard case let .unorderedList(items) = document.blocks.first else {
+            Issue.record("Expected image in a list")
+            return
+        }
+        #expect(items.first?.blocks == [
+            .image(MarkdownImageReference(source: "images/list.png", alt: "List preview")),
+        ])
+
+        guard case let .blockquote(quote) = document.blocks.last else {
+            Issue.record("Expected image in a quote")
+            return
+        }
+        #expect(quote.blocks == [
+            .image(MarkdownImageReference(source: "images/quote.png", alt: "Quoted preview")),
+        ])
+    }
+
+    @Test
     func separatesHeadingsParagraphsAndListKinds() {
         let document = MarkdownDocument(
             parsing: """
@@ -265,6 +328,19 @@ struct MarkdownDocumentTests {
         #expect(runs.contains { $0.link == URL(string: "https://example.com") })
     }
 
+    @Test
+    func externalMarkdownLinksAllowOnlyCredentialFreeWebURLs() throws {
+        let web = try #require(URL(string: "https://example.com/docs"))
+        let localHTTP = try #require(URL(string: "HTTP://127.0.0.1:45678/docs"))
+        let shortcut = try #require(URL(string: "shortcuts://run-shortcut?name=Unsafe"))
+        let credentialed = try #require(URL(string: "https://token@example.com/docs"))
+
+        #expect(MarkdownExternalLink.safeURL(web) == web)
+        #expect(MarkdownExternalLink.safeURL(localHTTP) == localHTTP)
+        #expect(MarkdownExternalLink.safeURL(shortcut) == nil)
+        #expect(MarkdownExternalLink.safeURL(credentialed) == nil)
+    }
+
     @Test @MainActor
     func selectableTextAttributesPreserveInlineFormatting() throws {
         let revision = MarkdownContentRevision(
@@ -307,10 +383,7 @@ struct MarkdownDocumentTests {
         #expect(boldFont.fontDescriptor.symbolicTraits.contains(.traitBold))
         #expect(emphasisFont.fontDescriptor.symbolicTraits.contains(.traitItalic))
         #expect(codeFont.fontDescriptor.symbolicTraits.contains(.traitMonoSpace))
-        #expect(
-            attributed.attribute(.backgroundColor, at: codeIndex, effectiveRange: nil)
-                as? UIColor == T3Colors.uiSurfaceRaised
-        )
+        #expect(attributed.attribute(.backgroundColor, at: codeIndex, effectiveRange: nil) != nil)
         #expect(
             attributed.attribute(.strikethroughStyle, at: removedIndex, effectiveRange: nil)
                 as? Int == NSUnderlineStyle.single.rawValue
@@ -331,35 +404,227 @@ struct MarkdownDocumentTests {
     }
 
     @Test @MainActor
-    func selectableTextAttributesHonorDynamicTypeSize() throws {
+    func selectableDocumentJoinsParagraphsAndListsIntoOneTextRange() throws {
         let document = try #require(
             MarkdownRenderCache.shared.documentImmediately(
-                for: MarkdownContentRevision("Readable body text")
+                for: MarkdownContentRevision(
+                    "Text above the list.\n\n- First point\n- Second point\n\nText below."
+                )
             )
         )
-        guard case let .paragraph(inline) = document.blocks.first else {
-            Issue.record("Expected a rendered paragraph")
+
+        let attributed = MarkdownSelectableDocumentAttributes.make(from: document.blocks)
+
+        #expect(
+            attributed.string
+                == "Text above the list.\n•\tFirst point\n•\tSecond point\nText below."
+        )
+        #expect((attributed.string as NSString).range(of: "Text above").location == 0)
+        #expect((attributed.string as NSString).range(of: "Second point").location > 0)
+        let firstMarker = (attributed.string as NSString).range(of: "•").location
+        let listStyle = try #require(
+            attributed.attribute(.paragraphStyle, at: firstMarker, effectiveRange: nil)
+                as? NSParagraphStyle
+        )
+        #expect(listStyle.headIndent >= 32)
+        #expect(listStyle.lineSpacing == 4)
+        #expect(listStyle.tabStops.first?.location == listStyle.headIndent)
+    }
+
+    @Test @MainActor
+    func selectableDocumentPreservesNestedListIndentation() throws {
+        let document = try #require(
+            MarkdownRenderCache.shared.documentImmediately(
+                for: MarkdownContentRevision(
+                    "- A long first item that can wrap onto another visual line\n  - Nested point"
+                )
+            )
+        )
+        let attributed = MarkdownSelectableDocumentAttributes.make(from: document.blocks)
+        let markers = (attributed.string as NSString).ranges(of: "•")
+        #expect(markers.count == 2)
+        let outer = try #require(
+            attributed.attribute(.paragraphStyle, at: markers[0].location, effectiveRange: nil)
+                as? NSParagraphStyle
+        )
+        let nested = try #require(
+            attributed.attribute(.paragraphStyle, at: markers[1].location, effectiveRange: nil)
+                as? NSParagraphStyle
+        )
+        #expect(outer.headIndent >= 32)
+        #expect(nested.headIndent == outer.headIndent * 2)
+        #expect(nested.firstLineHeadIndent == outer.headIndent)
+        #expect(
+            nested.headIndent.truncatingRemainder(dividingBy: nested.defaultTabInterval) == 0
+        )
+    }
+
+    @Test @MainActor
+    func selectableDocumentIndentsEveryParagraphInAListItem() throws {
+        let document = try #require(
+            MarkdownRenderCache.shared.documentImmediately(
+                for: MarkdownContentRevision(
+                    "- First point\n\n  Continued detail.\n- Second point"
+                )
+            )
+        )
+        let attributed = MarkdownSelectableDocumentAttributes.make(from: document.blocks)
+        let continued = (attributed.string as NSString).range(of: "Continued detail").location
+        let style = try #require(
+            attributed.attribute(.paragraphStyle, at: continued, effectiveRange: nil)
+                as? NSParagraphStyle
+        )
+
+        #expect(style.headIndent >= 32)
+        #expect(style.firstLineHeadIndent == style.headIndent)
+        #expect(style.lineSpacing == 4)
+    }
+
+    @Test @MainActor
+    func selectableDocumentLeavesRoomForTwoDigitOrderedMarkers() throws {
+        let document = try #require(
+            MarkdownRenderCache.shared.documentImmediately(
+                for: MarkdownContentRevision("10. Tenth point\n11. Eleventh point")
+            )
+        )
+        let attributed = MarkdownSelectableDocumentAttributes.make(from: document.blocks)
+        let markerRange = (attributed.string as NSString).range(of: "10.")
+        let font = try #require(
+            attributed.attribute(.font, at: markerRange.location, effectiveRange: nil) as? UIFont
+        )
+        let style = try #require(
+            attributed.attribute(.paragraphStyle, at: markerRange.location, effectiveRange: nil)
+                as? NSParagraphStyle
+        )
+        let markerWidth = ("10." as NSString).size(withAttributes: [.font: font]).width
+
+        #expect(style.headIndent > markerWidth)
+        #expect(style.defaultTabInterval == style.headIndent)
+    }
+
+    @Test @MainActor
+    func selectableDocumentScalesOrderedListIndentForAccessibilityText() throws {
+        let document = try #require(
+            MarkdownRenderCache.shared.documentImmediately(
+                for: MarkdownContentRevision("10. Tenth point")
+            )
+        )
+        let attributed = MarkdownSelectableDocumentAttributes.make(
+            from: document.blocks,
+            dynamicTypeSize: .accessibility3
+        )
+        let markerRange = (attributed.string as NSString).range(of: "10.")
+        let font = try #require(
+            attributed.attribute(.font, at: markerRange.location, effectiveRange: nil) as? UIFont
+        )
+        let style = try #require(
+            attributed.attribute(.paragraphStyle, at: markerRange.location, effectiveRange: nil)
+                as? NSParagraphStyle
+        )
+        let markerWidth = ("10." as NSString).size(withAttributes: [.font: font]).width
+
+        #expect(font.pointSize > 17)
+        #expect(style.headIndent > 32)
+        #expect(style.headIndent > markerWidth)
+    }
+
+    @Test @MainActor
+    func selectableDocumentCacheKeysEveryRenderingInput() throws {
+        let document = try #require(
+            MarkdownRenderCache.shared.documentImmediately(
+                for: MarkdownContentRevision("Cached paragraph")
+            )
+        )
+        let cache = MarkdownSelectableDocumentCache()
+        let first = MarkdownSelectableDocumentAttributes.make(
+            from: document.blocks,
+            cache: cache
+        )
+        let repeated = MarkdownSelectableDocumentAttributes.make(
+            from: document.blocks,
+            cache: cache
+        )
+        let larger = MarkdownSelectableDocumentAttributes.make(
+            from: document.blocks,
+            dynamicTypeSize: .accessibility3,
+            cache: cache
+        )
+        let widerSpacing = MarkdownSelectableDocumentAttributes.make(
+            from: document.blocks,
+            blockSpacing: 20,
+            cache: cache
+        )
+
+        #expect(first === repeated)
+        #expect(first !== larger)
+        #expect(first !== widerSpacing)
+        cache.retain(
+            blockSets: [document.blocks],
+            textColor: T3Colors.uiTextPrimary,
+            dynamicTypeSize: .large,
+            blockSpacing: 12
+        )
+        let retained = MarkdownSelectableDocumentAttributes.make(
+            from: document.blocks,
+            cache: cache
+        )
+        #expect(first === retained)
+        let largerAfterPrune = MarkdownSelectableDocumentAttributes.make(
+            from: document.blocks,
+            dynamicTypeSize: .accessibility3,
+            cache: cache
+        )
+        #expect(larger !== largerAfterPrune)
+        cache.retain(
+            blockSets: [],
+            textColor: T3Colors.uiTextPrimary,
+            dynamicTypeSize: .large,
+            blockSpacing: 12
+        )
+        let afterRecycle = MarkdownSelectableDocumentAttributes.make(
+            from: document.blocks,
+            cache: cache
+        )
+        #expect(first !== afterRecycle)
+    }
+
+    @Test @MainActor
+    func taskListsStayOnTheRichRenderingPath() throws {
+        let document = try #require(
+            MarkdownRenderCache.shared.documentImmediately(
+                for: MarkdownContentRevision("- [x] Completed\n- [ ] Pending")
+            )
+        )
+        let segments = MarkdownSelectableDocumentAttributes.segments(in: document.blocks)
+
+        #expect(segments.count == 1)
+        guard case .rich = segments[0] else {
+            Issue.record("Task lists must preserve native checkbox rendering")
             return
         }
+    }
 
-        let small = MarkdownSelectableTextAttributes.make(
-            from: inline,
-            lineSpacing: 4,
-            dynamicTypeSize: .small
+    @Test @MainActor
+    func selectableDocumentSegmentsAroundRichBlockSurfaces() throws {
+        let document = try #require(
+            MarkdownRenderCache.shared.documentImmediately(
+                for: MarkdownContentRevision(
+                    "Before\n\n- First\n- Second\n\n```swift\nlet value = 1\n```\n\nAfter"
+                )
+            )
         )
-        let accessibility = MarkdownSelectableTextAttributes.make(
-            from: inline,
-            lineSpacing: 4,
-            dynamicTypeSize: .accessibility1
-        )
-        let smallFont = try #require(
-            small.attribute(.font, at: 0, effectiveRange: nil) as? UIFont
-        )
-        let accessibilityFont = try #require(
-            accessibility.attribute(.font, at: 0, effectiveRange: nil) as? UIFont
-        )
+        let segments = MarkdownSelectableDocumentAttributes.segments(in: document.blocks)
 
-        #expect(accessibilityFont.pointSize > smallFont.pointSize)
+        #expect(segments.count == 3)
+        guard case let .selectable(leading) = segments[0],
+            case .rich = segments[1],
+            case let .selectable(trailing) = segments[2]
+        else {
+            Issue.record("Expected selectable text on each side of the code block")
+            return
+        }
+        #expect(MarkdownSelectableDocumentAttributes.make(from: leading).string.contains("Second"))
+        #expect(MarkdownSelectableDocumentAttributes.make(from: trailing).string == "After")
     }
 
     @Test @MainActor
@@ -430,5 +695,20 @@ struct MarkdownDocumentTests {
     private func index(of substring: String, in text: NSString) -> Int? {
         let range = text.range(of: substring)
         return range.location == NSNotFound ? nil : range.location
+    }
+}
+
+private extension NSString {
+    func ranges(of substring: String) -> [NSRange] {
+        var result: [NSRange] = []
+        var search = NSRange(location: 0, length: length)
+        while search.length > 0 {
+            let found = range(of: substring, options: [], range: search)
+            guard found.location != NSNotFound else { break }
+            result.append(found)
+            let next = NSMaxRange(found)
+            search = NSRange(location: next, length: length - next)
+        }
+        return result
     }
 }

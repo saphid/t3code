@@ -2,10 +2,15 @@ import SwiftUI
 
 public struct SettingsView: View {
     @SwiftUI.Environment(\.dismiss) private var dismiss
+    @SwiftUI.Environment(\.openURL) private var openURL
     @Bindable private var model: FeatureRootModel
     @State private var settings: FeatureSettings
     @State private var isSaving = false
     @State private var saveErrorMessage: String?
+
+#if DEBUG
+    private static let devBuildMetadata = DebugBuildMetadata(info: Bundle.main.infoDictionary)
+#endif
 
     public init(model: FeatureRootModel) {
         self.model = model
@@ -25,6 +30,30 @@ public struct SettingsView: View {
                         connectionSection
                         generalSection
                         preferencesSection
+                        if let testingPresentation {
+                            SettingsSection(title: testingPresentation.sectionTitle) {
+                                NavigationLink {
+                                    BuildTestingView(
+                                        model: model,
+                                        manifest: buildTestingManifest,
+                                        presentation: testingPresentation,
+                                        onOpenThread: openThread
+                                    )
+                                } label: {
+                                    SettingsNavigationRow(
+                                        title: testingPresentation.rowTitle,
+                                        value: buildTestingManifest.flatMap {
+                                            $0.channel == testingPresentation.channel
+                                                ? "\($0.entries.count)"
+                                                : nil
+                                        },
+                                        systemImage: "checklist",
+                                        trailingSystemImage: "chevron.right"
+                                    )
+                                }
+                                .buttonStyle(.plain)
+                            }
+                        }
                         aboutSection
                     }
                     .padding(.vertical, 18)
@@ -62,6 +91,18 @@ public struct SettingsView: View {
             }
         }
         .presentationDragIndicator(.visible)
+    }
+
+    private func openThread(_ thread: FeatureThread) {
+        guard let url = PlatformRoute.thread(
+            environmentID: thread.environmentID,
+            threadID: thread.wireID ?? thread.id
+        ).url else { return }
+        dismiss()
+        Task { @MainActor in
+            await Task.yield()
+            openURL(url)
+        }
     }
 
     private var settingsHeader: some View {
@@ -123,22 +164,20 @@ public struct SettingsView: View {
     private var preferencesSection: some View {
         SettingsSection(title: "Preferences") {
             VStack(spacing: 0) {
-                HStack(spacing: 12) {
-                    SettingsRowIcon(systemName: "circle.lefthalf.filled")
-                    Text("Theme")
-                        .font(T3Typography.threadBody)
-                    Spacer(minLength: 12)
-                    Picker("Theme", selection: $settings.appearance) {
-                        Text("System").tag(FeatureAppearance.system)
-                        Text("Light").tag(FeatureAppearance.light)
-                        Text("Dark").tag(FeatureAppearance.dark)
-                    }
-                    .labelsHidden()
-                    .pickerStyle(.menu)
-                    .tint(T3Colors.textSecondary)
+                NavigationLink {
+                    ThemeSettingsView(
+                        appearance: $settings.appearance,
+                        converter: model.client as? any ThemeConversionCapable
+                    )
+                } label: {
+                    SettingsNavigationRow(
+                        title: "Themes",
+                        systemImage: "circle.lefthalf.filled",
+                        trailingSystemImage: "chevron.right"
+                    )
                 }
-                .padding(.horizontal, 20)
-                .frame(minHeight: 52)
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("settings-themes")
 
                 settingsDivider
                 SettingsToggleRow(
@@ -158,6 +197,12 @@ public struct SettingsView: View {
                     systemImage: "waveform.path.ecg.rectangle",
                     isOn: $settings.liveActivitiesEnabled
                 )
+                settingsDivider
+                SettingsToggleRow(
+                    title: "Show time since completion",
+                    systemImage: "clock.badge.checkmark",
+                    isOn: $settings.showThreadDoneDuration
+                )
             }
         }
     }
@@ -167,7 +212,44 @@ public struct SettingsView: View {
             VStack(spacing: 0) {
                 SettingsValueRow(title: "App", value: appDisplayName)
                 settingsDivider
+                SettingsValueRow(title: "Version", value: appVersionLabel)
+                settingsDivider
+                SettingsValueRow(
+                    title: "Environment version",
+                    value: activeEnvironmentVersion
+                )
+                settingsDivider
+                NavigationLink {
+                    BuildChangelogView(
+                        changelog: buildChangelog,
+                        versionLabel: appVersionLabel,
+                        onOpenSourceThread: { dismiss() }
+                    )
+                } label: {
+                    SettingsNavigationRow(
+                        title: "Build changelog",
+                        systemImage: "clock.arrow.circlepath",
+                        trailingSystemImage: "chevron.right"
+                    )
+                }
+                .buttonStyle(.plain)
+                settingsDivider
                 SettingsValueRow(title: "Platform", value: "Native SwiftUI")
+#if DEBUG
+                if Self.devBuildMetadata.commit != "unknown" {
+                    settingsDivider
+                    developmentBuildRow
+                }
+#endif
+                settingsDivider
+                Link(destination: URL(string: "https://github.com/pingdotgg/t3code/releases")!) {
+                    SettingsNavigationRow(
+                        title: "Release changelog",
+                        systemImage: "list.bullet.rectangle",
+                        trailingSystemImage: "arrow.up.right"
+                    )
+                }
+                .buttonStyle(.plain)
                 settingsDivider
                 Link(destination: URL(string: "https://github.com/pingdotgg/t3code")!) {
                     SettingsNavigationRow(
@@ -181,6 +263,23 @@ public struct SettingsView: View {
         }
     }
 
+#if DEBUG
+    @ViewBuilder
+    private var developmentBuildRow: some View {
+        if let url = Self.devBuildMetadata.commitURL {
+            Link(destination: url) {
+                DevelopmentBuildRow(
+                    metadata: Self.devBuildMetadata,
+                    opensCommit: true
+                )
+            }
+            .buttonStyle(.plain)
+        } else {
+            DevelopmentBuildRow(metadata: Self.devBuildMetadata, opensCommit: false)
+        }
+    }
+#endif
+
     private var settingsDivider: some View {
         Divider()
             .overlay(T3Colors.separator)
@@ -191,6 +290,50 @@ public struct SettingsView: View {
     private var appDisplayName: String {
         Bundle.main.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String
             ?? "T3 Code SwiftUI"
+    }
+
+    private var appVersionLabel: String {
+        SettingsAboutMetadata.appVersionLabel(info: Bundle.main.infoDictionary)
+    }
+
+    private var activeEnvironmentVersion: String {
+        SettingsAboutMetadata.environmentVersionLabel(
+            connectionState: model.snapshot.connection.state,
+            serverVersion: model.snapshot.environments.first(where: \.isActive)?.serverVersion
+        )
+    }
+
+    private var buildChangelog: BuildChangelog? {
+        #if DEBUG
+        if AppFlowFixtureLaunch.isEnabled,
+           AppFlowFixtureLaunch.scenario == .buildSourceThread
+        {
+            return .appFlowSourceThreadFixture
+        }
+        #endif
+        return BuildChangelog.load(info: Bundle.main.infoDictionary)
+    }
+
+    private var buildTestingManifest: BuildTestingManifest? {
+        #if DEBUG
+        if AppFlowFixtureLaunch.isEnabled,
+           AppFlowFixtureLaunch.scenario == .streamApproval
+        {
+            return .appFlowApprovalFixture
+        }
+        #endif
+        return BuildTestingManifest.current
+    }
+
+    private var testingPresentation: BuildTestingPresentation? {
+        #if DEBUG
+        if AppFlowFixtureLaunch.isEnabled,
+           AppFlowFixtureLaunch.scenario == .streamApproval
+        {
+            return BuildTestingPresentation(channel: .dev)
+        }
+        #endif
+        return BuildTestingPresentation(channel: PersonalBuildChannel.current)
     }
 
     private var canSave: Bool {
@@ -210,6 +353,90 @@ public struct SettingsView: View {
             }
         }
     }
+}
+
+#if DEBUG
+private struct DevelopmentBuildRow: View {
+    let metadata: DebugBuildMetadata
+    let opensCommit: Bool
+
+    var body: some View {
+        HStack(spacing: 12) {
+            SettingsRowIcon(systemName: "hammer")
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Development build")
+                    .font(T3Typography.threadBody)
+                    .foregroundStyle(T3Colors.textPrimary)
+                Text(metadata.identityLabel)
+                    .font(T3Typography.supporting.monospaced())
+                    .foregroundStyle(T3Colors.textSecondary)
+                if let distance = metadata.distanceLabel {
+                    Text(distance)
+                        .font(T3Typography.supporting.monospaced())
+                        .foregroundStyle(T3Colors.textTertiary)
+                }
+            }
+            Spacer(minLength: 8)
+            if opensCommit {
+                Image(systemName: "arrow.up.right")
+                    .font(T3Typography.supportingStrong)
+                    .foregroundStyle(T3Colors.textTertiary)
+                    .accessibilityHidden(true)
+            }
+        }
+        .padding(.horizontal, 20)
+        .padding(.vertical, 10)
+        .frame(minHeight: 52)
+        .contentShape(Rectangle())
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(
+            opensCommit
+                ? "\(metadata.accessibilityLabel). Opens the commit on GitHub."
+                : metadata.accessibilityLabel
+        )
+        .accessibilityIdentifier("settings-development-build-row")
+    }
+}
+#endif
+
+enum SettingsAboutMetadata {
+    static func environmentVersionLabel(
+        connectionState: FeatureConnection.State,
+        serverVersion: String?
+    ) -> String {
+        guard connectionState == .connected else { return "Not connected" }
+        return serverVersion ?? "Unknown"
+    }
+
+    static func appVersionLabel(info: [String: Any]?) -> String {
+        let version = nonemptyValue("CFBundleShortVersionString", info: info) ?? "?"
+        let build = nonemptyValue("CFBundleVersion", info: info) ?? "?"
+        return "\(version) (\(build))"
+    }
+
+    static func buildChangelogURL(info: [String: Any]?) -> URL? {
+        guard let repositoryURL = nonemptyValue("T3GitRepoURL", info: info),
+              repositoryURL.hasPrefix("https://github.com/"),
+              var commit = nonemptyValue("T3GitCommit", info: info),
+              commit != "unknown"
+        else { return nil }
+        if commit.hasSuffix("-dirty") {
+            commit = String(commit.dropLast("-dirty".count))
+        }
+        return URL(string: "\(repositoryURL)/commits/\(commit)")
+    }
+    private static func nonemptyValue(_ key: String, info: [String: Any]?) -> String? {
+        guard let value = info?[key] as? String,
+              !value.isEmpty,
+              !value.hasPrefix("$(")
+        else { return nil }
+        return value
+    }
+}
+private struct EnvironmentStatusPresentation {
+    let title: String
+    let symbol: String
+    let color: Color
 }
 
 private struct SettingsSection<Content: View>: View {

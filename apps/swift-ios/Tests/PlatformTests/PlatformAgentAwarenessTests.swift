@@ -24,6 +24,7 @@ struct PlatformAgentAwarenessTests {
             #"{"appearance":"system","hapticsEnabled":false,"notificationsEnabled":false}"#.utf8
         )
         let decoded = try JSONDecoder.t3.decode(FeatureSettings.self, from: legacy)
+        #expect(decoded.showThreadDoneDuration == false)
 
         #expect(decoded.appearance == .system)
         #expect(!decoded.hapticsEnabled)
@@ -37,6 +38,14 @@ struct PlatformAgentAwarenessTests {
             from: JSONEncoder.t3.encode(disabled)
         )
         #expect(!roundTrip.liveActivitiesEnabled)
+
+        var durationEnabled = decoded
+        durationEnabled.showThreadDoneDuration = true
+        let durationRoundTrip = try JSONDecoder.t3.decode(
+            FeatureSettings.self,
+            from: JSONEncoder.t3.encode(durationEnabled)
+        )
+        #expect(durationRoundTrip.showThreadDoneDuration)
     }
 
     @Test

@@ -4600,6 +4600,24 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
+  it.effect("routes websocket host storage through its lightweight subscription", () =>
+    Effect.gen(function* () {
+      yield* buildAppUnderTest();
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const snapshot = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[WS_METHODS.subscribeHostStorage]({}).pipe(Stream.runHead),
+        ),
+      );
+
+      assertTrue(Option.isSome(snapshot));
+      assert(snapshot.value.totalBytes > 0);
+      assert(snapshot.value.availableBytes >= 0);
+      assert(snapshot.value.availableBytes <= snapshot.value.totalBytes);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
   it.effect("routes websocket rpc subscribeServerConfig emits provider status updates", () =>
     Effect.gen(function* () {
       const nextProviders = [

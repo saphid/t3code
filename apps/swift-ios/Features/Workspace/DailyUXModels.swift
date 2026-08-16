@@ -112,55 +112,34 @@ enum DailyUXCreationContext {
         )
     }
 
-    static func recentProjects(in snapshot: FeatureSnapshot) -> [DailyUXRecentProject] {
-        let groups = projectGroups(in: snapshot)
-        let availableProjectByID = projects(in: snapshot).reduce(
-            into: [String: FeatureProject]()
-        ) { $0[$1.id] = $1 }
-        let groupByProjectID = groups.reduce(into: [String: DailyUXProjectGroup]()) {
-            result, group in
-            for projectID in group.memberProjectIDs {
-                result[projectID] = group
-            }
-        }
-        var seenGroupIDs = Set<String>()
-
-        return snapshot.threads
-            .sorted(by: recentUseOrder)
-            .compactMap { thread in
-                guard let group = groupByProjectID[thread.projectID],
-                      let sourceProject = availableProjectByID[thread.projectID],
-                      let project = DailyUXProjectGrouping.physicalRepresentative(
-                          for: sourceProject,
-                          in: group
-                      ),
-                      seenGroupIDs.insert(group.id).inserted else {
-                    return nil
-                }
-                return DailyUXRecentProject(group: group, project: project)
-            }
-    }
-
     static func initialProject(
         in snapshot: FeatureSnapshot,
         requestedProjectID: String?
     ) -> FeatureProject? {
-        let availableProjects = projects(in: snapshot)
+        let groups = projectGroups(in: snapshot)
+
         if let requestedProjectID,
-           let requestedProject = availableProjects.first(where: { $0.id == requestedProjectID }),
-           let group = DailyUXProjectGrouping.group(
+           let requestedGroup = DailyUXProjectGrouping.group(
                containing: requestedProjectID,
-               in: projectGroups(in: snapshot)
-           ),
-           let representative = DailyUXProjectGrouping.physicalRepresentative(
-               for: requestedProject,
-               in: group
+               in: groups
            ) {
-            return representative
+            let requestedEnvironmentID = snapshot.projects
+                .first(where: { $0.id == requestedProjectID })?
+                .environmentID
+            return requestedGroup.preferredProject(environmentID: requestedEnvironmentID)
         }
 
-        return recentProjects(in: snapshot).first?.project
-            ?? projectGroups(in: snapshot).first?.projects.first
+        for thread in snapshot.threads.sorted(by: recentUseOrder) {
+            guard let group = DailyUXProjectGrouping.group(
+                containing: thread.projectID,
+                in: groups
+            ) else { continue }
+            let environmentID = thread.environmentID
+                ?? snapshot.projects.first(where: { $0.id == thread.projectID })?.environmentID
+            return group.preferredProject(environmentID: environmentID)
+        }
+
+        return groups.first?.projects.first
     }
 
     static func logicalProjectID(
@@ -186,28 +165,6 @@ enum DailyUXCreationContext {
         let rhsDate = rhs.lastActivityAt ?? rhs.updatedAt
         if lhsDate != rhsDate { return lhsDate > rhsDate }
         return lhs.id < rhs.id
-    }
-
-    static func shouldAdoptAutomaticProject(
-        currentProjectID: String,
-        nextRecentProjectID: String?,
-        isAwaitingRecentActivity: Bool,
-        projectSelectionIsExplicit: Bool,
-        modelSelectionIsExplicit: Bool,
-        workspaceSelectionIsExplicit: Bool,
-        hasDraftContent: Bool,
-        draftRestoreIsComplete: Bool
-    ) -> Bool {
-        guard isAwaitingRecentActivity,
-              let nextRecentProjectID,
-              nextRecentProjectID != currentProjectID else {
-            return false
-        }
-        return !projectSelectionIsExplicit
-            && !modelSelectionIsExplicit
-            && !workspaceSelectionIsExplicit
-            && !hasDraftContent
-            && draftRestoreIsComplete
     }
 
     static func providers(
@@ -265,11 +222,6 @@ enum DailyUXCreationContext {
         return snapshot.preferencesByEnvironment?[environmentID]
             ?? FeatureEnvironmentPreferences()
     }
-}
-
-struct DailyUXRecentProject: Equatable {
-    let group: DailyUXProjectGroup
-    let project: FeatureProject
 }
 
 struct DailyUXProjectGroup: Identifiable, Equatable {
@@ -347,17 +299,6 @@ enum DailyUXProjectGrouping {
     ) -> FeatureProject? {
         groups.first { $0.id == groupID }?
             .preferredProject(environmentID: preferredEnvironmentID)
-    }
-
-    static func physicalRepresentative(
-        for project: FeatureProject,
-        in group: DailyUXProjectGroup
-    ) -> FeatureProject? {
-        let path = normalizedPath(project.path)
-        return group.projects.first {
-            $0.environmentID == project.environmentID
-                && normalizedPath($0.path) == path
-        }
     }
 
     private static func physicalKey(_ project: FeatureProject) -> String {
@@ -683,6 +624,64 @@ enum HomeWorkingDuration {
     }
 }
 
+enum HomeThreadRefreshCadence {
+    static func isFreshCompletion(_ thread: FeatureThread, now: Date) -> Bool {
+        guard thread.homeStatus == .done,
+              let completedAt = thread.latestTurnCompletedAt else {
+            return false
+        }
+        return (0..<60).contains(now.timeIntervalSince(completedAt))
+    }
+
+    static func needsSecondPrecisionRefresh(_ thread: FeatureThread, now: Date) -> Bool {
+        guard thread.homeStatus == .done,
+              let completedAt = thread.latestTurnCompletedAt else {
+            return false
+        }
+        // Keep repainting through the first minute boundary. The extra minute
+        // tolerates a delayed/coalesced timer tick without leaving "59s" stale.
+        return (0..<120).contains(now.timeIntervalSince(completedAt))
+    }
+
+    static func interval(
+        threads: some Sequence<FeatureThread>,
+        showDoneDuration: Bool,
+        now: Date
+    ) -> TimeInterval {
+        let needsFastRefresh = threads.contains { thread in
+            if thread.homeStatus == .working {
+                return true
+            }
+            return showDoneDuration && isFreshCompletion(thread, now: now)
+        }
+        return needsFastRefresh ? 1 : 60
+    }
+}
+
+enum HomeDoneDuration {
+    static func compact(since date: Date, now: Date) -> String {
+        let seconds = max(0, Int(now.timeIntervalSince(date)))
+        guard seconds >= 86_400 else {
+            return HomeWorkingDuration.compact(since: date, now: now)
+        }
+        let hours = seconds / 3_600
+        return "\(hours / 24)d \(hours % 24)h"
+    }
+
+    static func accessibility(since date: Date, now: Date) -> String {
+        let seconds = max(0, Int(now.timeIntervalSince(date)))
+        guard seconds >= 86_400 else {
+            return HomeWorkingDuration.accessibility(since: date, now: now)
+        }
+        let hours = seconds / 3_600
+        let days = hours / 24
+        let remainingHours = hours % 24
+        let dayLabel = "\(days) day\(days == 1 ? "" : "s")"
+        guard remainingHours > 0 else { return dayLabel }
+        return "\(dayLabel), \(remainingHours) hour\(remainingHours == 1 ? "" : "s")"
+    }
+}
+
 extension FeatureThread {
     var homeStatus: HomeThreadStatus {
         switch state {
@@ -715,54 +714,19 @@ extension FeatureThread {
         }
     }
 
-    var detailHeaderStatusLabel: String? {
-        switch homeStatus {
-        case .done:
-            nil
-        case .ready:
-            "Ready"
-        case .approval, .input, .working, .monitoring, .failed:
-            homeStatusLabel
-        }
-    }
-
-    var detailHeaderStatusIcon: String? {
-        switch homeStatus {
-        case .working:
-            "circle.dotted"
-        case .failed:
-            "exclamationmark.circle"
-        case .done, .approval, .input, .monitoring, .ready:
-            nil
-        }
-    }
-
-    func homeRowStatusLabel(at now: Date) -> String {
-        switch homeStatus {
-        case .done, .ready:
-            SidebarRelativeAge.compact(since: updatedAt, now: now)
-        case .approval, .input, .working, .monitoring, .failed:
-            homeStatusLabel ?? SidebarRelativeAge.compact(since: updatedAt, now: now)
-        }
-    }
-
     func homeWorkingDuration(at now: Date) -> String? {
         guard homeStatus == .working, let workingStartedAt else { return nil }
         return HomeWorkingDuration.compact(since: workingStartedAt, now: now)
     }
 
-    var hasLiveWorkingDuration: Bool {
-        homeStatus == .working && workingStartedAt != nil
+    func homeDoneDuration(at now: Date) -> String? {
+        guard homeStatus == .done, let latestTurnCompletedAt else { return nil }
+        return HomeDoneDuration.compact(since: latestTurnCompletedAt, now: now)
     }
 
-    func homeStatusAccessibilityLabel(at now: Date) -> String {
-        guard homeStatus == .working else {
-            return homeStatusLabel ?? "Ready"
-        }
-        guard let workingStartedAt else {
-            return "Agent is working"
-        }
-        return "Agent is working for \(HomeWorkingDuration.accessibility(since: workingStartedAt, now: now))"
+    func homeDoneAccessibilityDuration(at now: Date) -> String? {
+        guard homeStatus == .done, let latestTurnCompletedAt else { return nil }
+        return HomeDoneDuration.accessibility(since: latestTurnCompletedAt, now: now)
     }
 
     func homeEnvironmentLabel(in snapshot: FeatureSnapshot) -> String? {
@@ -792,10 +756,14 @@ extension FeatureThread {
             .first(where: { $0.id == projectID })?
             .environmentID
         let resolvedEnvironmentID = environmentID ?? projectEnvironmentID
-        let providers = resolvedEnvironmentID.flatMap {
+        let environmentProviders = resolvedEnvironmentID.flatMap {
             snapshot.providersByEnvironment?[$0]
-        } ?? []
-        return providers.first(where: { $0.id == providerID })?.name ?? providerID
+        }
+        let configuredProvider = environmentProviders?.first(where: { $0.id == providerID })
+            ?? (snapshot.providersByEnvironment == nil
+                ? snapshot.providers.first(where: { $0.id == providerID })
+                : nil)
+        return configuredProvider?.name ?? providerID
     }
 
     var needsAttention: Bool {
@@ -1013,17 +981,24 @@ enum DailyUXModelOptions {
 
     /// The compact composer gives reasoning its own non-compressible label so
     /// a long model name cannot hide the setting users change most often.
-    static func reasoningSummary(
-        for model: FeatureModel,
-        selections: [FeatureModelOptionSelection]
-    ) -> String? {
-        guard let descriptor = model.options.first(where: { descriptor in
+    static func reasoningDescriptor(
+        for model: FeatureModel
+    ) -> FeatureModelOptionDescriptor? {
+        model.options.first(where: { descriptor in
             let searchable = "\(descriptor.id) \(descriptor.label)".lowercased()
             return searchable.contains("reason")
                 || searchable.contains("effort")
                 || searchable.contains("thinking")
                 || searchable.contains("thought")
-        }), let value = value(for: descriptor, in: selections) else {
+        })
+    }
+
+    static func reasoningSummary(
+        for model: FeatureModel,
+        selections: [FeatureModelOptionSelection]
+    ) -> String? {
+        guard let descriptor = reasoningDescriptor(for: model),
+              let value = value(for: descriptor, in: selections) else {
             return nil
         }
 

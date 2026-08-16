@@ -1,17 +1,37 @@
 import Foundation
 
 enum PlatformRoute: Codable, Hashable, Identifiable, Sendable {
-    #if DEBUG
-    static let nativeScheme = "t3code-swiftui-dev"
-    #else
-    static let nativeScheme = "t3code-swiftui"
-    #endif
+    static var nativeScheme: String {
+        guard let value = Bundle.main.object(forInfoDictionaryKey: "T3CodeURLScheme") as? String,
+              !value.isEmpty,
+              !value.hasPrefix("$(")
+        else {
+            let channel = (Bundle.main.object(forInfoDictionaryKey: "T3BuildChannel") as? String)?
+                .lowercased()
+            return switch channel {
+            case "dev": "t3code-swiftui-personal-dev"
+            case "test": "t3code-swiftui-personal"
+            case "debug": "t3code-swiftui-dev"
+            default: "t3code-swiftui"
+            }
+        }
+        return value
+    }
+
+    static var supportedNativeSchemes: Set<String> {
+        [
+            "t3", "t3code", "t3code-swiftui", "t3code-swiftui-dev",
+            "t3code-swiftui-personal-dev", "t3code-swiftui-personal",
+            nativeScheme.lowercased(),
+        ]
+    }
 
     case connection(endpoint: String, token: String?)
     case environment(id: String)
     case project(environmentID: String?, projectID: String)
     case thread(environmentID: String?, threadID: String)
     case newTask(environmentID: String?, projectID: String?)
+    case incomingShare(id: String)
 
     var id: String {
         switch self {
@@ -25,6 +45,8 @@ enum PlatformRoute: Codable, Hashable, Identifiable, Sendable {
             "thread:\(environmentID ?? ""):\(threadID)"
         case let .newTask(environmentID, projectID):
             "new-task:\(environmentID ?? ""):\(projectID ?? "")"
+        case let .incomingShare(id):
+            "incoming-share:\(id)"
         }
     }
 
@@ -60,6 +82,9 @@ enum PlatformRoute: Codable, Hashable, Identifiable, Sendable {
                 environmentID.map { URLQueryItem(name: "environment", value: $0) },
                 projectID.map { URLQueryItem(name: "project", value: $0) },
             ].compactMap { $0 }
+        case let .incomingShare(id):
+            components.host = "share"
+            components.queryItems = [URLQueryItem(name: "id", value: id)]
         }
         return components.url
     }
@@ -97,7 +122,7 @@ enum PlatformDeepLinkParser {
         }
 
         let query = queryValues(components.queryItems ?? [])
-        if ["t3", "t3code", "t3code-swiftui", "t3code-swiftui-dev"].contains(scheme) {
+        if PlatformRoute.supportedNativeSchemes.contains(scheme) {
             let segments = customSchemeSegments(components)
             if isConnectionRoute(segments: segments, query: query) {
                 return try connectionRoute(url)
@@ -139,6 +164,35 @@ enum PlatformDeepLinkParser {
         return try parse(url)
     }
 
+    /// Resolves links tapped inside the app. In addition to normal deep links,
+    /// chat can contain a thread URL copied from the web or Electron client.
+    /// A loopback URL points back at the machine that rendered the message, not
+    /// at the phone, so translate its route locally instead of opening Safari.
+    static func parseInAppLink(_ url: URL) throws -> PlatformRoute {
+        if let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
+           let scheme = components.scheme?.lowercased() {
+            if ["t3code", "t3code-dev"].contains(scheme),
+               components.host?.lowercased() == "app" {
+                return try webThreadRoute(components)
+            }
+
+            if ["http", "https"].contains(scheme),
+               let host = components.host?.lowercased(),
+               isLoopbackHost(host) {
+                return try webThreadRoute(components)
+            }
+        }
+
+        return try parse(url)
+    }
+
+    static func parseInAppLink(_ value: String) throws -> PlatformRoute {
+        guard let url = URL(string: value.trimmingCharacters(in: .whitespacesAndNewlines)) else {
+            throw PlatformDeepLinkError.unsupportedURL
+        }
+        return try parseInAppLink(url)
+    }
+
     private static func navigationRoute(
         segments: [String],
         query: [String: String]
@@ -174,6 +228,15 @@ enum PlatformDeepLinkParser {
                 environmentID: try queryEnvironment.map(validatedIdentifier),
                 projectID: try queryProject.map(validatedIdentifier)
             )
+        case "share", "incoming-share":
+            guard let rawID = tail.first ?? query["id"] else {
+                throw PlatformDeepLinkError.missingIdentifier
+            }
+            let id = try validatedIdentifier(rawID)
+            guard UUID(uuidString: id) != nil else {
+                throw PlatformDeepLinkError.invalidIdentifier
+            }
+            return .incomingShare(id: id.lowercased())
         default:
             if let queryThread {
                 return .thread(
@@ -212,6 +275,27 @@ enum PlatformDeepLinkParser {
             throw PlatformDeepLinkError.missingIdentifier
         }
         return (try queryEnvironment.map(validatedIdentifier), try validatedIdentifier(destination))
+    }
+
+    private static func webThreadRoute(_ components: URLComponents) throws -> PlatformRoute {
+        let segments = pathSegments(components.percentEncodedPath)
+        guard segments.count >= 2 else {
+            throw PlatformDeepLinkError.unsupportedURL
+        }
+        return .thread(
+            environmentID: try validatedIdentifier(segments[0]),
+            threadID: try validatedIdentifier(segments[1])
+        )
+    }
+
+    private static func isLoopbackHost(_ host: String) -> Bool {
+        if host == "localhost" || host == "::1" || host == "[::1]" {
+            return true
+        }
+        let octets = host.split(separator: ".", omittingEmptySubsequences: false)
+        return octets.count == 4
+            && octets.first == "127"
+            && octets.allSatisfy { UInt8($0) != nil }
     }
 
     private static func connectionRoute(_ url: URL) throws -> PlatformRoute {

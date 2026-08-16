@@ -5,14 +5,29 @@ import UIKit
 public struct FeatureFilesView: View {
     let client: any FeatureClient
     let threadID: String
+    let workspaceRoot: String?
+    let initialPath: String?
 
-    public init(client: any FeatureClient, threadID: String) {
+    public init(
+        client: any FeatureClient,
+        threadID: String,
+        workspaceRoot: String? = nil,
+        initialPath: String? = nil
+    ) {
         self.client = client
         self.threadID = threadID
+        self.workspaceRoot = workspaceRoot
+        self.initialPath = initialPath
     }
 
     public var body: some View {
-        FeatureFileDirectoryView(client: client, threadID: threadID, path: nil, title: "Files")
+        FeatureFileDirectoryView(
+            client: client,
+            threadID: threadID,
+            workspaceRoot: workspaceRoot,
+            path: initialPath,
+            title: initialPath?.featureLastPathComponent ?? "Files"
+        )
             .background(T3Colors.background)
     }
 }
@@ -20,6 +35,7 @@ public struct FeatureFilesView: View {
 private struct FeatureFileDirectoryView: View {
     let client: any FeatureClient
     let threadID: String
+    let workspaceRoot: String?
     let path: String?
     let title: String
 
@@ -28,13 +44,20 @@ private struct FeatureFileDirectoryView: View {
     @State private var includesHidden = false
     @State private var isLoading = true
     @State private var errorMessage: String?
+    @State private var hasLoaded = false
+    @State private var loadRequests = FeatureLatestRequest()
+    @State private var loadedPath = FeatureLoadedPath()
+
+    private var errorPresentation: FeatureToolErrorPresentation {
+        .resolve(errorMessage: errorMessage, retainsContent: hasLoaded)
+    }
 
     var body: some View {
         Group {
             if isLoading, entries.isEmpty {
                 ProgressView("Loading files…")
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else if let errorMessage, entries.isEmpty {
+            } else if let errorMessage = errorPresentation.unavailableMessage {
                 ContentUnavailableView(
                     "Files unavailable",
                     systemImage: "folder.badge.questionmark",
@@ -72,13 +95,32 @@ private struct FeatureFileDirectoryView: View {
                     } label: {
                         Label("Reload", systemImage: "arrow.clockwise")
                     }
+                    .disabled(isLoading)
                 } label: {
                     Image(systemName: "ellipsis")
                 }
                 .accessibilityLabel("File browser options")
             }
         }
-        .task(id: path) { await load() }
+        .task(id: path) {
+            if loadedPath.begin(path) {
+                entries = []
+                hasLoaded = false
+                errorMessage = nil
+            }
+            await load()
+        }
+        .safeAreaInset(edge: .top, spacing: 0) {
+            if let errorMessage = errorPresentation.inlineMessage {
+                FeatureToolErrorNotice(
+                    message: errorMessage,
+                    isRetrying: isLoading,
+                    retryTitle: "Reload files"
+                ) {
+                    await load()
+                }
+            }
+        }
     }
 
     @ViewBuilder
@@ -87,11 +129,17 @@ private struct FeatureFileDirectoryView: View {
             FeatureFileDirectoryView(
                 client: client,
                 threadID: threadID,
+                workspaceRoot: workspaceRoot,
                 path: entry.path,
                 title: entry.name
             )
         } else {
-            FeatureFilePreviewView(client: client, threadID: threadID, entry: entry)
+            FeatureFilePreviewView(
+                client: client,
+                threadID: threadID,
+                workspaceRoot: workspaceRoot,
+                entry: entry
+            )
         }
     }
 
@@ -100,13 +148,26 @@ private struct FeatureFileDirectoryView: View {
     }
 
     private func load() async {
+        let request = loadRequests.begin()
         isLoading = true
-        defer { isLoading = false }
+        defer {
+            if loadRequests.isCurrent(request) {
+                isLoading = false
+            }
+        }
         do {
-            entries = try await client.listFiles(threadID: threadID, path: path)
+            let loadedEntries = try await client.listFiles(threadID: threadID, path: path)
+            guard loadRequests.isCurrent(request) else { return }
+            entries = loadedEntries
+            hasLoaded = true
             errorMessage = nil
         } catch {
-            errorMessage = error.localizedDescription
+            guard loadRequests.isCurrent(request) else { return }
+            guard let message = FeatureToolErrorPresentation.message(
+                for: error,
+                taskIsCancelled: Task.isCancelled
+            ) else { return }
+            errorMessage = message
         }
     }
 }
@@ -149,10 +210,12 @@ private struct FeatureFileRow: View {
     }
 }
 
-private struct FeatureFilePreviewView: View {
+struct FeatureFilePreviewView: View {
     let client: any FeatureClient
     let threadID: String
+    let workspaceRoot: String?
     let entry: FeatureFileEntry
+    var onShowInFiles: (() -> Void)? = nil
 
     @State private var content: FeatureFileContent?
     @State private var sourceLines: [FeatureSourceLine] = []
@@ -160,6 +223,8 @@ private struct FeatureFilePreviewView: View {
     @State private var assetURL: URL?
     @State private var errorMessage: String?
     @State private var isLoading = true
+    @State private var linkedFile: FeatureWorkspaceFileLink?
+    @State private var showsInfo = false
 
     private var previewKind: FeatureFilePreviewKind {
         FeatureFilePreviewKind.infer(path: entry.path, language: content?.language)
@@ -189,6 +254,7 @@ private struct FeatureFilePreviewView: View {
                         ScrollView {
                             MarkdownMessageView(
                                 content.text,
+                                onOpenURL: openURL,
                                 copyActionTitle: "Copy file contents"
                             )
                                 .frame(maxWidth: T3Metrics.readingWidth, alignment: .leading)
@@ -214,7 +280,33 @@ private struct FeatureFilePreviewView: View {
         .background(T3Colors.background)
         .navigationTitle(entry.name)
         .navigationBarTitleDisplayMode(.inline)
+        .navigationDestination(item: $linkedFile) { link in
+            FeatureFilePreviewView(
+                client: client,
+                threadID: threadID,
+                workspaceRoot: workspaceRoot,
+                entry: link.entry
+            )
+        }
+        .accessibilityIdentifier("workspace-file-preview")
         .toolbar {
+            if let onShowInFiles {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button(action: onShowInFiles) {
+                        Label("Files", systemImage: "chevron.backward")
+                    }
+                    .accessibilityIdentifier("workspace-file-show-in-files")
+                }
+            }
+            ToolbarItem(placement: .topBarTrailing) {
+                Button {
+                    showsInfo = true
+                } label: {
+                    Image(systemName: "info.circle")
+                }
+                .accessibilityLabel("File info")
+                .accessibilityIdentifier("workspace-file-info")
+            }
             if let assetURL {
                 ToolbarItem(placement: .topBarTrailing) {
                     ShareLink(item: assetURL) {
@@ -231,7 +323,29 @@ private struct FeatureFilePreviewView: View {
                 }
             }
         }
+        .sheet(isPresented: $showsInfo) {
+            NavigationStack {
+                FeatureFileInfoView(entry: entry, content: content)
+                    .toolbar {
+                        ToolbarItem(placement: .confirmationAction) {
+                            Button("Done") { showsInfo = false }
+                        }
+                    }
+            }
+            .presentationDetents([.medium])
+            .presentationDragIndicator(.visible)
+        }
         .task { await load() }
+    }
+
+    private func openURL(_ url: URL) -> Bool {
+        guard let link = FeatureWorkspaceFileLink(
+            url: url,
+            workspaceRoot: workspaceRoot,
+            relativeTo: entry.path
+        ) else { return false }
+        linkedFile = link
+        return true
     }
 
     private func load() async {
@@ -301,6 +415,48 @@ private struct FeatureFilePreviewView: View {
         } catch {
             guard !Task.isCancelled else { return }
             errorMessage = error.localizedDescription
+        }
+    }
+}
+
+private struct FeatureFileInfoView: View {
+    let entry: FeatureFileEntry
+    let content: FeatureFileContent?
+
+    var body: some View {
+        List {
+            LabeledContent("Name", value: entry.name)
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Path")
+                    .foregroundStyle(T3Colors.textSecondary)
+                Text(entry.path)
+                    .font(T3Typography.code)
+                    .textSelection(.enabled)
+            }
+            LabeledContent("Kind", value: kindLabel)
+            if let byteCount = content?.totalBytes ?? entry.sizeBytes {
+                LabeledContent(
+                    "Size",
+                    value: ByteCountFormatter.string(fromByteCount: Int64(byteCount), countStyle: .file)
+                )
+            }
+            if let language = content?.language, !language.isEmpty {
+                LabeledContent("Language", value: language)
+            }
+            if content?.isTruncated == true {
+                LabeledContent("Preview", value: "Partial")
+            }
+        }
+        .navigationTitle("File Info")
+        .navigationBarTitleDisplayMode(.inline)
+        .accessibilityIdentifier("workspace-file-info-view")
+    }
+
+    private var kindLabel: String {
+        switch entry.kind {
+        case .file: "File"
+        case .directory: "Folder"
+        case .symbolicLink: "Symbolic Link"
         }
     }
 }

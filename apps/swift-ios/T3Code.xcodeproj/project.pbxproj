@@ -9,6 +9,7 @@
 /* Begin PBXBuildFile section */
 		B10000000000000000000001 /* ClerkKit in Frameworks */ = {isa = PBXBuildFile; productRef = B30000000000000000000001 /* ClerkKit */; };
 		B10000000000000000000002 /* ClerkKitUI in Frameworks */ = {isa = PBXBuildFile; productRef = B30000000000000000000002 /* ClerkKitUI */; };
+		E10000000000000000000001 /* SnapshotTesting in Frameworks */ = {isa = PBXBuildFile; productRef = E30000000000000000000001 /* SnapshotTesting */; };
 		D10000000000000000000001 /* GhosttyKit.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = D40000000000000000000001 /* GhosttyKit.xcframework */; };
 		C10000000000000000000001 /* AgentActivityAttributes.swift in Sources */ = {isa = PBXBuildFile; fileRef = C40000000000000000000001 /* AgentActivityAttributes.swift */; };
 		C10000000000000000000002 /* SharedContainer.swift in Sources */ = {isa = PBXBuildFile; fileRef = C40000000000000000000002 /* SharedContainer.swift */; };
@@ -88,6 +89,11 @@
 			path = Tests;
 			sourceTree = "<group>";
 		};
+		A10000000000000000000007 /* UITests */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = UITests;
+			sourceTree = "<group>";
+		};
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -102,6 +108,14 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 		A20000000000000000000002 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				E10000000000000000000001 /* SnapshotTesting in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		A20000000000000000000003 /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -126,6 +140,13 @@
 
 /* Begin PBXContainerItemProxy section */
 		AC0000000000000000000001 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = A90000000000000000000001 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = A50000000000000000000001;
+			remoteInfo = T3Code;
+		};
+		AC0000000000000000000002 /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
 			containerPortal = A90000000000000000000001 /* Project object */;
 			proxyType = 1;
@@ -158,6 +179,7 @@
 				A10000000000000000000004 /* DesignSystem */,
 				A10000000000000000000005 /* Resources */,
 				A10000000000000000000006 /* Tests */,
+				A10000000000000000000007 /* UITests */,
 				C30000000000000000000001 /* Extensions */,
 				D40000000000000000000001 /* GhosttyKit.xcframework */,
 				A30000000000000000000002 /* Products */,
@@ -169,6 +191,7 @@
 			children = (
 				A40000000000000000000001 /* T3 Code.app */,
 				A40000000000000000000002 /* T3CodeTests.xctest */,
+				A40000000000000000000003 /* T3CodeUITests.xctest */,
 				C4000000000000000000000F /* T3CodeWidgets.appex */,
 				C40000000000000000000010 /* T3CodeShare.appex */,
 			);
@@ -281,10 +304,34 @@
 			);
 			name = T3CodeTests;
 			packageProductDependencies = (
+				E30000000000000000000001 /* SnapshotTesting */,
 			);
 			productName = T3CodeTests;
 			productReference = A40000000000000000000002 /* T3CodeTests.xctest */;
 			productType = "com.apple.product-type.bundle.unit-test";
+		};
+		A50000000000000000000003 /* T3CodeUITests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = A60000000000000000000004 /* Build configuration list for PBXNativeTarget "T3CodeUITests" */;
+			buildPhases = (
+				A70000000000000000000003 /* Sources */,
+				A20000000000000000000003 /* Frameworks */,
+				A80000000000000000000003 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				AD0000000000000000000002 /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				A10000000000000000000007 /* UITests */,
+			);
+			name = T3CodeUITests;
+			packageProductDependencies = (
+			);
+			productName = T3CodeUITests;
+			productReference = A40000000000000000000003 /* T3CodeUITests.xctest */;
+			productType = "com.apple.product-type.bundle.ui-testing";
 		};
 		C50000000000000000000003 /* T3CodeWidgets */ = {
 			isa = PBXNativeTarget;
@@ -355,6 +402,10 @@
 						CreatedOnToolsVersion = 16.0;
 						TestTargetID = A50000000000000000000001;
 					};
+					A50000000000000000000003 = {
+						CreatedOnToolsVersion = 16.0;
+						TestTargetID = A50000000000000000000001;
+					};
 					C50000000000000000000003 = {
 						CreatedOnToolsVersion = 16.0;
 						SystemCapabilities = {
@@ -387,12 +438,14 @@
 			productRefGroup = A30000000000000000000002 /* Products */;
 			packageReferences = (
 				B20000000000000000000001 /* XCRemoteSwiftPackageReference "clerk-ios" */,
+				E20000000000000000000001 /* XCRemoteSwiftPackageReference "swift-snapshot-testing" */,
 			);
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
 				A50000000000000000000001 /* T3Code */,
 				A50000000000000000000002 /* T3CodeTests */,
+				A50000000000000000000003 /* T3CodeUITests */,
 				C50000000000000000000003 /* T3CodeWidgets */,
 				C50000000000000000000004 /* T3CodeShare */,
 			);
@@ -408,6 +461,13 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 		A80000000000000000000002 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		A80000000000000000000003 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -450,6 +510,13 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		A70000000000000000000003 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		C70000000000000000000003 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -481,6 +548,11 @@
 			isa = PBXTargetDependency;
 			target = A50000000000000000000001 /* T3Code */;
 			targetProxy = AC0000000000000000000001 /* PBXContainerItemProxy */;
+		};
+		AD0000000000000000000002 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = A50000000000000000000001 /* T3Code */;
+			targetProxy = AC0000000000000000000002 /* PBXContainerItemProxy */;
 		};
 		CD0000000000000000000002 /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
@@ -527,6 +599,7 @@
 				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
 				CLANG_WARN_UNREACHABLE_CODE = YES;
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COMPILATION_CACHE_ENABLE_CACHING = YES;
 				COPY_PHASE_STRIP = NO;
 				DEBUG_INFORMATION_FORMAT = dwarf;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
@@ -662,6 +735,7 @@
 				SWIFT_VERSION = 5.0;
 				T3CODE_APP_GROUP_IDENTIFIER = group.com.t3tools.t3code.swiftui.dev;
 				T3CODE_URL_SCHEME = t3code-swiftui-dev;
+				T3_BUILD_CHANNEL = debug;
 				TARGETED_DEVICE_FAMILY = "1,2";
 			};
 			name = Debug;
@@ -758,6 +832,16 @@
 			};
 			name = Release;
 		};
+		AB0000000000000000000007 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = { CODE_SIGN_STYLE = Automatic; GENERATE_INFOPLIST_FILE = YES; IPHONEOS_DEPLOYMENT_TARGET = 17.0; PRODUCT_BUNDLE_IDENTIFIER = com.t3tools.t3code.swiftui.uitests; PRODUCT_NAME = "$(TARGET_NAME)"; SDKROOT = iphoneos; SUPPORTED_PLATFORMS = "iphoneos iphonesimulator"; SWIFT_VERSION = 5.0; TARGETED_DEVICE_FAMILY = "1,2"; TEST_TARGET_NAME = T3Code; };
+			name = Debug;
+		};
+		AB0000000000000000000008 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = { CODE_SIGN_STYLE = Automatic; GENERATE_INFOPLIST_FILE = YES; IPHONEOS_DEPLOYMENT_TARGET = 17.0; PRODUCT_BUNDLE_IDENTIFIER = com.t3tools.t3code.swiftui.uitests; PRODUCT_NAME = "$(TARGET_NAME)"; SDKROOT = iphoneos; SUPPORTED_PLATFORMS = "iphoneos iphonesimulator"; SWIFT_VERSION = 5.0; TARGETED_DEVICE_FAMILY = "1,2"; TEST_TARGET_NAME = T3Code; };
+			name = Release;
+		};
 		CB0000000000000000000007 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -784,6 +868,8 @@
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 5.0;
 				T3CODE_APP_GROUP_IDENTIFIER = group.com.t3tools.t3code.swiftui.dev;
+				T3CODE_URL_SCHEME = t3code-swiftui-dev;
+				T3_BUILD_CHANNEL = debug;
 				T3CODE_WIDGET_DISPLAY_NAME = "T3 Swift Dev Widgets";
 				TARGETED_DEVICE_FAMILY = "1,2";
 			};
@@ -816,6 +902,8 @@
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 5.0;
 				T3CODE_APP_GROUP_IDENTIFIER = group.com.t3tools.t3code.swiftui;
+				T3CODE_URL_SCHEME = t3code-swiftui;
+				T3_BUILD_CHANNEL = release;
 				T3CODE_WIDGET_DISPLAY_NAME = "T3 Code Widgets";
 				TARGETED_DEVICE_FAMILY = "1,2";
 				VALIDATE_PRODUCT = YES;
@@ -848,6 +936,8 @@
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 5.0;
 				T3CODE_APP_GROUP_IDENTIFIER = group.com.t3tools.t3code.swiftui.dev;
+				T3CODE_URL_SCHEME = t3code-swiftui-dev;
+				T3_BUILD_CHANNEL = debug;
 				T3CODE_SHARE_DISPLAY_NAME = "T3 Swift Dev";
 				TARGETED_DEVICE_FAMILY = "1,2";
 			};
@@ -880,11 +970,260 @@
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 5.0;
 				T3CODE_APP_GROUP_IDENTIFIER = group.com.t3tools.t3code.swiftui;
+				T3CODE_URL_SCHEME = t3code-swiftui;
+				T3_BUILD_CHANNEL = release;
 				T3CODE_SHARE_DISPLAY_NAME = "T3 Code (SwiftUI)";
 				TARGETED_DEVICE_FAMILY = "1,2";
 				VALIDATE_PRODUCT = YES;
 			};
 			name = Release;
+		};
+		DB0000000000000000000001 /* Dev */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COMPILATION_CACHE_ENABLE_CACHING = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = ("DEBUG=1", "$(inherited)", );
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG T3_PERSONAL_BUILD $(inherited)";
+				SWIFT_STRICT_CONCURRENCY = complete;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+			};
+			name = Dev;
+		};
+		DB0000000000000000000002 /* Test */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COMPILATION_CACHE_ENABLE_CACHING = YES;
+				COPY_PHASE_STRIP = YES;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_DEBUG_DYLIB = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = s;
+				GCC_PREPROCESSOR_DEFINITIONS = ("DEBUG=1", "$(inherited)", );
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG T3_PERSONAL_BUILD $(inherited)";
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_STRICT_CONCURRENCY = complete;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+			};
+			name = Test;
+		};
+		DB0000000000000000000003 /* Dev */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				APS_ENVIRONMENT = development;
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIconPersonalDev;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = Extensions/Shared/T3CodeDev.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = Resources/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = "SwiftUI Dev";
+				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.developer-tools";
+				INFOPLIST_KEY_NSCameraUsageDescription = "Scan pairing QR codes and attach photos to T3 Code tasks.";
+				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "Allow T3 Code to connect to T3 Code servers on your local network or tailnet.";
+				INFOPLIST_KEY_NSSupportsLiveActivities = YES;
+				INFOPLIST_KEY_NSSupportsLiveActivitiesFrequentUpdates = YES;
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UIStatusBarStyle = UIStatusBarStyleLightContent;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations = UIInterfaceOrientationPortrait;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = ("$(inherited)", "@executable_path/Frameworks", );
+				MARKETING_VERSION = 0.1.0;
+				OTHER_LDFLAGS = ("$(inherited)", "-lc++", "-lz", "-framework", IOSurface, "-framework", Metal, "-framework", MetalKit, "-framework", QuartzCore, );
+				PRODUCT_BUNDLE_IDENTIFIER = com.saphid.t3code.swiftui.dev;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				T3CODE_APP_GROUP_IDENTIFIER = group.com.saphid.t3code.swiftui.dev;
+				T3CODE_URL_SCHEME = t3code-swiftui-personal-dev;
+				T3_BUILD_CHANNEL = dev;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Dev;
+		};
+		DB0000000000000000000004 /* Test */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				APS_ENVIRONMENT = development;
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIconTest;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = Extensions/Shared/T3CodeDev.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = Resources/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = "SwiftUI Test";
+				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.developer-tools";
+				INFOPLIST_KEY_NSCameraUsageDescription = "Scan pairing QR codes and attach photos to T3 Code tasks.";
+				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "Allow T3 Code to connect to T3 Code servers on your local network or tailnet.";
+				INFOPLIST_KEY_NSSupportsLiveActivities = YES;
+				INFOPLIST_KEY_NSSupportsLiveActivitiesFrequentUpdates = YES;
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UIStatusBarStyle = UIStatusBarStyleLightContent;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations = UIInterfaceOrientationPortrait;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = ("$(inherited)", "@executable_path/Frameworks", );
+				MARKETING_VERSION = 0.1.0;
+				OTHER_LDFLAGS = ("$(inherited)", "-lc++", "-lz", "-framework", IOSurface, "-framework", Metal, "-framework", MetalKit, "-framework", QuartzCore, );
+				PRODUCT_BUNDLE_IDENTIFIER = com.alxs.t3code.typed-swiftui.dev;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) T3_PERSONAL_CONNECT";
+				SWIFT_VERSION = 5.0;
+				T3CODE_APP_GROUP_IDENTIFIER = group.com.alxs.t3code.typed-swiftui.dev;
+				T3CODE_URL_SCHEME = t3code-swiftui-personal;
+				T3_BUILD_CHANNEL = test;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Test;
+		};
+		DB0000000000000000000005 /* Dev */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = { BUNDLE_LOADER = "$(TEST_HOST)"; CODE_SIGN_STYLE = Automatic; GENERATE_INFOPLIST_FILE = YES; IPHONEOS_DEPLOYMENT_TARGET = 17.0; PRODUCT_BUNDLE_IDENTIFIER = com.saphid.t3code.swiftui.dev.tests; PRODUCT_NAME = "$(TARGET_NAME)"; SDKROOT = iphoneos; SUPPORTED_PLATFORMS = "iphoneos iphonesimulator"; SWIFT_VERSION = 5.0; TARGETED_DEVICE_FAMILY = "1,2"; TEST_HOST = "$(BUILT_PRODUCTS_DIR)/T3Code.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/T3Code"; };
+			name = Dev;
+		};
+		DB0000000000000000000006 /* Test */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = { BUNDLE_LOADER = "$(TEST_HOST)"; CODE_SIGN_STYLE = Automatic; GENERATE_INFOPLIST_FILE = YES; IPHONEOS_DEPLOYMENT_TARGET = 17.0; PRODUCT_BUNDLE_IDENTIFIER = com.alxs.t3code.typed-swiftui.dev.tests; PRODUCT_NAME = "$(TARGET_NAME)"; SDKROOT = iphoneos; SUPPORTED_PLATFORMS = "iphoneos iphonesimulator"; SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) T3_PERSONAL_CONNECT"; SWIFT_VERSION = 5.0; TARGETED_DEVICE_FAMILY = "1,2"; TEST_HOST = "$(BUILT_PRODUCTS_DIR)/T3Code.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/T3Code"; };
+			name = Test;
+		};
+		DB0000000000000000000007 /* Dev */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = { APPLICATION_EXTENSION_API_ONLY = YES; CODE_SIGN_ENTITLEMENTS = Extensions/Shared/T3CodeDev.entitlements; CODE_SIGN_STYLE = Automatic; CURRENT_PROJECT_VERSION = 1; GENERATE_INFOPLIST_FILE = YES; INFOPLIST_FILE = Extensions/Widgets/Info.plist; INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO; IPHONEOS_DEPLOYMENT_TARGET = 17.0; LD_RUNPATH_SEARCH_PATHS = ("$(inherited)", "@executable_path/Frameworks", "@executable_path/../../Frameworks", ); MARKETING_VERSION = 0.1.0; PRODUCT_BUNDLE_IDENTIFIER = com.saphid.t3code.swiftui.dev.widgets; PRODUCT_NAME = "$(TARGET_NAME)"; SDKROOT = iphoneos; SKIP_INSTALL = YES; SUPPORTED_PLATFORMS = "iphoneos iphonesimulator"; SUPPORTS_MACCATALYST = NO; SWIFT_EMIT_LOC_STRINGS = YES; SWIFT_VERSION = 5.0; T3CODE_APP_GROUP_IDENTIFIER = group.com.saphid.t3code.swiftui.dev; T3CODE_URL_SCHEME = t3code-swiftui-personal-dev; T3_BUILD_CHANNEL = dev; T3CODE_WIDGET_DISPLAY_NAME = "SwiftUI Dev Widgets"; TARGETED_DEVICE_FAMILY = "1,2"; };
+			name = Dev;
+		};
+		DB0000000000000000000008 /* Test */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = { APPLICATION_EXTENSION_API_ONLY = YES; CODE_SIGN_ENTITLEMENTS = Extensions/Shared/T3CodeDev.entitlements; CODE_SIGN_STYLE = Automatic; CURRENT_PROJECT_VERSION = 1; GENERATE_INFOPLIST_FILE = YES; INFOPLIST_FILE = Extensions/Widgets/Info.plist; INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO; IPHONEOS_DEPLOYMENT_TARGET = 17.0; LD_RUNPATH_SEARCH_PATHS = ("$(inherited)", "@executable_path/Frameworks", "@executable_path/../../Frameworks", ); MARKETING_VERSION = 0.1.0; PRODUCT_BUNDLE_IDENTIFIER = com.alxs.t3code.typed-swiftui.dev.widgets; PRODUCT_NAME = "$(TARGET_NAME)"; SDKROOT = iphoneos; SKIP_INSTALL = YES; SUPPORTED_PLATFORMS = "iphoneos iphonesimulator"; SUPPORTS_MACCATALYST = NO; SWIFT_EMIT_LOC_STRINGS = YES; SWIFT_VERSION = 5.0; T3CODE_APP_GROUP_IDENTIFIER = group.com.alxs.t3code.typed-swiftui.dev; T3CODE_URL_SCHEME = t3code-swiftui-personal; T3_BUILD_CHANNEL = test; T3CODE_WIDGET_DISPLAY_NAME = "SwiftUI Test Widgets"; TARGETED_DEVICE_FAMILY = "1,2"; };
+			name = Test;
+		};
+		DB0000000000000000000009 /* Dev */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = { APPLICATION_EXTENSION_API_ONLY = YES; CODE_SIGN_ENTITLEMENTS = Extensions/Shared/T3CodeDev.entitlements; CODE_SIGN_STYLE = Automatic; CURRENT_PROJECT_VERSION = 1; GENERATE_INFOPLIST_FILE = YES; INFOPLIST_FILE = Extensions/Share/Info.plist; INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO; IPHONEOS_DEPLOYMENT_TARGET = 17.0; LD_RUNPATH_SEARCH_PATHS = ("$(inherited)", "@executable_path/Frameworks", "@executable_path/../../Frameworks", ); MARKETING_VERSION = 0.1.0; PRODUCT_BUNDLE_IDENTIFIER = com.saphid.t3code.swiftui.dev.sharing; PRODUCT_NAME = "$(TARGET_NAME)"; SDKROOT = iphoneos; SKIP_INSTALL = YES; SUPPORTED_PLATFORMS = "iphoneos iphonesimulator"; SUPPORTS_MACCATALYST = NO; SWIFT_EMIT_LOC_STRINGS = YES; SWIFT_VERSION = 5.0; T3CODE_APP_GROUP_IDENTIFIER = group.com.saphid.t3code.swiftui.dev; T3CODE_SHARE_DISPLAY_NAME = "SwiftUI Dev"; T3CODE_URL_SCHEME = t3code-swiftui-personal-dev; T3_BUILD_CHANNEL = dev; TARGETED_DEVICE_FAMILY = "1,2"; };
+			name = Dev;
+		};
+		DB000000000000000000000A /* Test */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = { APPLICATION_EXTENSION_API_ONLY = YES; CODE_SIGN_ENTITLEMENTS = Extensions/Shared/T3CodeDev.entitlements; CODE_SIGN_STYLE = Automatic; CURRENT_PROJECT_VERSION = 1; GENERATE_INFOPLIST_FILE = YES; INFOPLIST_FILE = Extensions/Share/Info.plist; INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO; IPHONEOS_DEPLOYMENT_TARGET = 17.0; LD_RUNPATH_SEARCH_PATHS = ("$(inherited)", "@executable_path/Frameworks", "@executable_path/../../Frameworks", ); MARKETING_VERSION = 0.1.0; PRODUCT_BUNDLE_IDENTIFIER = com.alxs.t3code.typed-swiftui.dev.sharing; PRODUCT_NAME = "$(TARGET_NAME)"; SDKROOT = iphoneos; SKIP_INSTALL = YES; SUPPORTED_PLATFORMS = "iphoneos iphonesimulator"; SUPPORTS_MACCATALYST = NO; SWIFT_EMIT_LOC_STRINGS = YES; SWIFT_VERSION = 5.0; T3CODE_APP_GROUP_IDENTIFIER = group.com.alxs.t3code.typed-swiftui.dev; T3CODE_SHARE_DISPLAY_NAME = "SwiftUI Test"; T3CODE_URL_SCHEME = t3code-swiftui-personal; T3_BUILD_CHANNEL = test; TARGETED_DEVICE_FAMILY = "1,2"; };
+			name = Test;
+		};
+		DB000000000000000000000B /* Dev */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = { CODE_SIGN_STYLE = Automatic; GENERATE_INFOPLIST_FILE = YES; IPHONEOS_DEPLOYMENT_TARGET = 17.0; PRODUCT_BUNDLE_IDENTIFIER = com.saphid.t3code.swiftui.dev.uitests; PRODUCT_NAME = "$(TARGET_NAME)"; SDKROOT = iphoneos; SUPPORTED_PLATFORMS = "iphoneos iphonesimulator"; SWIFT_VERSION = 5.0; TARGETED_DEVICE_FAMILY = "1,2"; TEST_TARGET_NAME = T3Code; };
+			name = Dev;
+		};
+		DB000000000000000000000C /* Test */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = { CODE_SIGN_STYLE = Automatic; GENERATE_INFOPLIST_FILE = YES; IPHONEOS_DEPLOYMENT_TARGET = 17.0; PRODUCT_BUNDLE_IDENTIFIER = com.alxs.t3code.typed-swiftui.dev.uitests; PRODUCT_NAME = "$(TARGET_NAME)"; SDKROOT = iphoneos; SUPPORTED_PLATFORMS = "iphoneos iphonesimulator"; SWIFT_VERSION = 5.0; TARGETED_DEVICE_FAMILY = "1,2"; TEST_TARGET_NAME = T3Code; };
+			name = Test;
 		};
 /* End XCBuildConfiguration section */
 
@@ -893,6 +1232,8 @@
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				AB0000000000000000000001 /* Debug */,
+				DB0000000000000000000001 /* Dev */,
+				DB0000000000000000000002 /* Test */,
 				AB0000000000000000000002 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
@@ -902,6 +1243,8 @@
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				AB0000000000000000000003 /* Debug */,
+				DB0000000000000000000003 /* Dev */,
+				DB0000000000000000000004 /* Test */,
 				AB0000000000000000000004 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
@@ -911,7 +1254,20 @@
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				AB0000000000000000000005 /* Debug */,
+				DB0000000000000000000005 /* Dev */,
+				DB0000000000000000000006 /* Test */,
 				AB0000000000000000000006 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		A60000000000000000000004 /* Build configuration list for PBXNativeTarget "T3CodeUITests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				AB0000000000000000000007 /* Debug */,
+				DB000000000000000000000B /* Dev */,
+				DB000000000000000000000C /* Test */,
+				AB0000000000000000000008 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
@@ -920,6 +1276,8 @@
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				CB0000000000000000000007 /* Debug */,
+				DB0000000000000000000007 /* Dev */,
+				DB0000000000000000000008 /* Test */,
 				CB0000000000000000000008 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
@@ -929,6 +1287,8 @@
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				CB0000000000000000000009 /* Debug */,
+				DB0000000000000000000009 /* Dev */,
+				DB000000000000000000000A /* Test */,
 				CB000000000000000000000A /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
@@ -945,6 +1305,14 @@
 				version = 1.2.0;
 			};
 		};
+		E20000000000000000000001 /* XCRemoteSwiftPackageReference "swift-snapshot-testing" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/pointfreeco/swift-snapshot-testing";
+			requirement = {
+				kind = exactVersion;
+				version = 1.19.2;
+			};
+		};
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
@@ -957,6 +1325,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = B20000000000000000000001 /* XCRemoteSwiftPackageReference "clerk-ios" */;
 			productName = ClerkKitUI;
+		};
+		E30000000000000000000001 /* SnapshotTesting */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = E20000000000000000000001 /* XCRemoteSwiftPackageReference "swift-snapshot-testing" */;
+			productName = SnapshotTesting;
 		};
 /* End XCSwiftPackageProductDependency section */
 
@@ -973,6 +1346,13 @@
 			explicitFileType = wrapper.cfbundle;
 			includeInIndex = 0;
 			path = T3CodeTests.xctest;
+			sourceTree = BUILT_PRODUCTS_DIR;
+		};
+		A40000000000000000000003 /* T3CodeUITests.xctest */ = {
+			isa = PBXFileReference;
+			explicitFileType = wrapper.cfbundle;
+			includeInIndex = 0;
+			path = T3CodeUITests.xctest;
 			sourceTree = BUILT_PRODUCTS_DIR;
 		};
 		C40000000000000000000001 /* AgentActivityAttributes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentActivityAttributes.swift; sourceTree = "<group>"; };

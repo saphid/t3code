@@ -2,7 +2,9 @@ import SwiftUI
 
 struct PlatformRootView: View {
     @SwiftUI.Environment(\.scenePhase) private var scenePhase
+    @SwiftUI.Environment(T3ThemeRuntime.self) private var themeRuntime
     @Bindable private var model: FeatureRootModel
+    private let draftStore: FeatureComposerDraftStore
 
     @State private var navigationRequest: FeatureWorkspaceNavigationRequest?
     @State private var pendingRoute: PlatformRoute?
@@ -11,10 +13,15 @@ struct PlatformRootView: View {
     @State private var incomingShareCoordinator = PlatformIncomingShareCoordinator()
     @State private var incomingShareNeedsProject = false
     @State private var importedShareProjectID: String?
+    @State private var stagedIncomingShareID: String?
     @State private var recentThreadsPersistenceTask: Task<Void, Never>?
 
-    init(model: FeatureRootModel) {
+    init(
+        model: FeatureRootModel,
+        draftStore: FeatureComposerDraftStore = .shared
+    ) {
         self.model = model
+        self.draftStore = draftStore
     }
 
     var body: some View {
@@ -24,11 +31,29 @@ struct PlatformRootView: View {
             onNavigationRequestConsumed: { requestID in
                 guard navigationRequest?.id == requestID else { return }
                 navigationRequest = nil
-            }
+            },
+            acknowledgeIncomingShare: { shareID in
+                await acknowledgeStagedIncomingShare(id: shareID)
+            },
+            releaseIncomingSharePresentation: { shareID in
+                if stagedIncomingShareID?.caseInsensitiveCompare(shareID) == .orderedSame {
+                    stagedIncomingShareID = nil
+                }
+            },
+            draftStore: draftStore
         )
         .onOpenURL { url in
             handle(url: url, letOnboardingConfirmConnection: true)
         }
+        .environment(\.openURL, OpenURLAction { url in
+            do {
+                let route = try PlatformDeepLinkParser.parseInAppLink(url)
+                handle(route)
+                return .handled
+            } catch {
+                return .systemAction(url)
+            }
+        })
         .onContinueUserActivity(NSUserActivityTypeBrowsingWeb) { activity in
             guard let url = activity.webpageURL else { return }
             handle(url: url, letOnboardingConfirmConnection: false)
@@ -68,6 +93,13 @@ struct PlatformRootView: View {
             synchronizeAgentAwareness()
             synchronizeCloudDelivery()
         }
+        .onChange(of: model.snapshot.settings.appearance, initial: true) { _, appearance in
+            T3ThemeRuntime.shared.setAppearance(appearance)
+            T3SharedAppearanceStore.shared.update(appearance.sharedAppearance)
+        }
+        .onChange(of: themeRuntime.revision, initial: true) { _, _ in
+            T3SharedThemeStore.shared.update(themeRuntime.sharedProjection)
+        }
         .onChange(of: model.snapshot.projects.map(\.id)) { _, _ in
             refreshIncomingShares()
         }
@@ -106,6 +138,9 @@ struct PlatformRootView: View {
         Binding(
             get: {
                 guard !incomingShareProjects.isEmpty else { return nil }
+                guard incomingShareCoordinator.pendingEnvelope?.destination == nil else {
+                    return nil
+                }
                 return incomingShareCoordinator.pendingEnvelope
             },
             set: { value in
@@ -190,13 +225,70 @@ struct PlatformRootView: View {
         )
     }
 
-    private func refreshIncomingShares() {
+    private func refreshIncomingShares(preferredID: String? = nil) {
         guard !model.isLoading else { return }
         let hasProjects = !incomingShareProjects.isEmpty
         Task { @MainActor in
-            if await incomingShareCoordinator.refresh(hasProjects: hasProjects) {
+            if await incomingShareCoordinator.refresh(
+                preferredID: preferredID,
+                hasProjects: hasProjects
+            ) {
                 incomingShareNeedsProject = true
             }
+            await routePendingIncomingShareIfNeeded()
+        }
+    }
+
+    @MainActor
+    private func routePendingIncomingShareIfNeeded() async {
+        guard let envelope = incomingShareCoordinator.pendingEnvelope,
+              let destination = envelope.destination,
+              stagedIncomingShareID != envelope.id else { return }
+        do {
+            switch destination.kind {
+            case .newThread:
+                guard let shareID = try await incomingShareCoordinator.stagePendingForNewThread()
+                else { return }
+                stagedIncomingShareID = shareID
+                navigationRequest = FeatureWorkspaceNavigationRequest(
+                    destination: .sharedNewTask(shareID: shareID)
+                )
+            case .existingThread:
+                guard let threadID = destination.threadID,
+                      await enableEnvironmentIfNeeded(destination.environmentID),
+                      let thread = PlatformRouteResolver.thread(
+                          in: model.snapshot,
+                          environmentID: destination.environmentID,
+                          id: threadID
+                      ) else {
+                    if model.errorMessage == nil {
+                        model.errorMessage = "That thread is no longer available. Choose another destination by sharing again."
+                    }
+                    return
+                }
+                try await incomingShareCoordinator.importPending(into: thread)
+                navigationRequest = FeatureWorkspaceNavigationRequest(
+                    destination: .thread(id: thread.id)
+                )
+            }
+            PlatformHapticEngine.shared.emit(
+                .success,
+                enabled: model.snapshot.settings.hapticsEnabled
+            )
+        } catch {
+            model.errorMessage = error.localizedDescription
+        }
+    }
+
+    @MainActor
+    private func acknowledgeStagedIncomingShare(id: String) async {
+        do {
+            try await incomingShareCoordinator.acknowledgeStagedNewThread(id: id)
+            if stagedIncomingShareID?.caseInsensitiveCompare(id) == .orderedSame {
+                stagedIncomingShareID = nil
+            }
+        } catch {
+            model.errorMessage = error.localizedDescription
         }
     }
 
@@ -293,6 +385,8 @@ struct PlatformRootView: View {
             PlatformHapticEngine.shared.selection(
                 enabled: model.snapshot.settings.hapticsEnabled
             )
+        case let .incomingShare(id):
+            refreshIncomingShares(preferredID: id)
         }
     }
 
@@ -343,5 +437,15 @@ struct PlatformRootView: View {
             snapshot: model.snapshot,
             liveActivitiesEnabled: model.snapshot.settings.liveActivitiesEnabled
         )
+    }
+}
+
+private extension FeatureAppearance {
+    var sharedAppearance: T3SharedAppearance {
+        switch self {
+        case .system: .system
+        case .light: .light
+        case .dark: .dark
+        }
     }
 }

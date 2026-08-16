@@ -1,12 +1,23 @@
 import SwiftUI
+import UIKit
+import UniformTypeIdentifiers
 
 struct FeatureComposerView: View {
+    @SwiftUI.Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @State private var isManuallyExpanded = false
     @State private var isAttachmentFlowActive = false
+    @State private var dockedSoftwareKeyboardOccupiesScreen = false
+    @State private var composerWindow: UIWindow?
     @State private var attachmentPreparation = FeatureAttachmentPreparationState()
+    @State private var attachmentLifecycle: FeatureAttachmentLifecycle
+    @State private var attachmentTasks: FeatureAttachmentTaskStore
+    @State private var pasteQueue: FeatureComposerPasteQueue
     @State private var pathEntries: [FeatureComposerPathEntry] = []
     @State private var isPathSearchLoading = false
     @State private var pathSearchError: String?
+    @State private var commandMenuComposerMinY: CGFloat = 0
+    @State private var attachmentErrorMessage: String?
+    @State private var textSelectionRequest: FeatureComposerTextSelectionRequest?
     @Binding private var text: String
     @Binding private var selection: FeatureSelection?
     @Binding private var attachments: [FeatureDraftAttachment]
@@ -16,9 +27,11 @@ struct FeatureComposerView: View {
     private let materializesDefaultSelection: Bool
     private let isSending: Bool
     private let isWorking: Bool
+    private let attachmentContextID: String
     private let focused: FocusState<Bool>.Binding
     private let contextUsage: Double?
     private let forceExpanded: Bool
+    private let commandMenuTopBoundary: CGFloat
     private let pendingApprovals: [FeatureApproval]
     private let pendingUserInputs: [FeatureUserInput]
     private let isResolvingRequest: Bool
@@ -34,6 +47,7 @@ struct FeatureComposerView: View {
         attachments: Binding<[FeatureDraftAttachment]>,
         providers: [FeatureProvider],
         threadSelection: FeatureSelection?,
+        attachmentContextID: String,
         materializesDefaultSelection: Bool = true,
         isSending: Bool,
         isWorking: Bool,
@@ -45,6 +59,7 @@ struct FeatureComposerView: View {
         pendingApprovals: [FeatureApproval] = [],
         pendingUserInputs: [FeatureUserInput] = [],
         isResolvingRequest: Bool = false,
+        commandMenuTopBoundary: CGFloat = 0,
         powerFeatures: FeatureComposerPowerFeatures = .disabled,
         onApprovalDecision: ((String, FeatureApprovalDecision) -> Void)? = nil,
         onUserInputSubmit: ((String, [String: FeatureInputAnswer]) -> Void)? = nil
@@ -52,8 +67,17 @@ struct FeatureComposerView: View {
         _text = text
         _selection = selection
         _attachments = attachments
+        let attachmentLifecycle = FeatureAttachmentLifecycle(contextID: attachmentContextID)
+        _attachmentLifecycle = State(initialValue: attachmentLifecycle)
+        _attachmentTasks = State(
+            initialValue: FeatureAttachmentTaskStore(lifecycle: attachmentLifecycle)
+        )
+        _pasteQueue = State(
+            initialValue: FeatureComposerPasteQueue(lifecycle: attachmentLifecycle)
+        )
         self.providers = providers
         self.threadSelection = threadSelection
+        self.attachmentContextID = attachmentContextID
         self.materializesDefaultSelection = materializesDefaultSelection
         self.isSending = isSending
         self.isWorking = isWorking
@@ -62,6 +86,7 @@ struct FeatureComposerView: View {
         self.onStop = onStop
         self.contextUsage = contextUsage
         self.forceExpanded = forceExpanded
+        self.commandMenuTopBoundary = commandMenuTopBoundary
         self.pendingApprovals = pendingApprovals
         self.pendingUserInputs = pendingUserInputs
         self.isResolvingRequest = isResolvingRequest
@@ -72,6 +97,13 @@ struct FeatureComposerView: View {
 
     var body: some View {
         composerSurface
+            .onGeometryChange(for: CGFloat.self) { geometry in
+                geometry.frame(
+                    in: .named(FeatureComposerTextLayout.commandMenuCoordinateSpace)
+                ).minY
+            } action: { minY in
+                commandMenuComposerMinY = minY
+            }
             .overlay(alignment: .top) {
                 if showsCommandMenu, let trigger = composerTrigger {
                     FeatureComposerCommandPopover(
@@ -80,18 +112,37 @@ struct FeatureComposerView: View {
                         isLoading: isPathSearchLoading,
                         errorMessage: pathSearchError,
                         pathSearchAvailable: powerFeatures.searchPaths != nil,
+                        maximumHeight: commandMenuMaximumHeight,
+                        dynamicTypeSize: dynamicTypeSize,
                         onSelect: selectCommandItem
                     )
-                    .alignmentGuide(.top) { dimensions in
-                        // Keep the menu clear of the text entry surface so the
-                        // active `$`/`@`/`/` token remains readable while typing.
-                        dimensions[.bottom] + 24
+                    .visualEffect { content, geometry in
+                        // Move the rendered menu by its measured height. The
+                        // old alignment-guide approach stopped repositioning
+                        // once the popover adopted an explicit dynamic height.
+                        content.offset(
+                            y: FeatureComposerTextLayout.commandMenuVerticalOffset(
+                                menuHeight: geometry.size.height
+                            )
+                        )
                     }
                 }
             }
             .padding(.horizontal, 12)
             .padding(.top, 12)
-            .padding(.bottom, 10)
+            .padding(
+                .bottom,
+                FeatureComposerTextLayout.containerBottomPadding(
+                    softwareKeyboardIsVisible: dockedSoftwareKeyboardOccupiesScreen
+                )
+            )
+            .padding(
+                .bottom,
+                FeatureComposerTextLayout.bottomClearance(
+                    dynamicTypeSize: dynamicTypeSize,
+                    softwareKeyboardIsVisible: dockedSoftwareKeyboardOccupiesScreen
+                )
+            )
             .background {
                 LinearGradient(
                     colors: [
@@ -103,6 +154,13 @@ struct FeatureComposerView: View {
                     endPoint: .bottom
                 )
                 .ignoresSafeArea()
+            }
+            .background {
+                FeatureComposerWindowReader { window in
+                    composerWindow = window
+                    updateSoftwareKeyboardState(in: window)
+                }
+                .frame(width: 0, height: 0)
             }
             .onChange(of: focused.wrappedValue) {
                 if FeatureComposerCollapsePolicy.shouldCollapse(
@@ -117,6 +175,43 @@ struct FeatureComposerView: View {
             }
             .task(id: pathSearchRequest) {
                 await updatePathSearch()
+            }
+            .onChange(of: attachmentContextID) {
+                rotateAttachmentLifecycle(to: attachmentContextID)
+            }
+            .alert(
+                "Couldn’t paste image",
+                isPresented: Binding(
+                    get: { attachmentErrorMessage != nil },
+                    set: { if !$0 { attachmentErrorMessage = nil } }
+                )
+            ) {
+                Button("OK") { attachmentErrorMessage = nil }
+            } message: {
+                Text(attachmentErrorMessage ?? "")
+            }
+            .onReceive(
+                NotificationCenter.default.publisher(
+                    for: UIResponder.keyboardWillChangeFrameNotification
+                )
+            ) { notification in
+                updateSoftwareKeyboardState(from: notification, in: composerWindow)
+            }
+            // New Thread autofocus can begin the keyboard transition before this
+            // sheet's composer has subscribed to the "will change" event.
+            .onReceive(
+                NotificationCenter.default.publisher(
+                    for: UIResponder.keyboardDidShowNotification
+                )
+            ) { notification in
+                updateSoftwareKeyboardState(from: notification, in: composerWindow)
+            }
+            .onReceive(
+                NotificationCenter.default.publisher(
+                    for: UIResponder.keyboardDidHideNotification
+                )
+            ) { _ in
+                dockedSoftwareKeyboardOccupiesScreen = false
             }
     }
 
@@ -194,20 +289,34 @@ struct FeatureComposerView: View {
                     .padding(.horizontal, 13)
             }
 
-            TextField(
-                isWorking ? "Message to queue…" : "Ask anything…",
-                text: $text,
-                axis: .vertical
-            )
-                .font(T3Typography.composer)
-                .lineLimit(1...7)
-                .focused(focused)
-                // Return is always editing input. Sending is deliberately button-only.
-                .submitLabel(.return)
+            let placeholder = isWorking ? "Message to queue…" : "Ask anything…"
+            ZStack(alignment: .topLeading) {
+                FeatureComposerTextInput(
+                    text: $text,
+                    focused: focused,
+                    placeholder: placeholder,
+                    acceptsImages: canPasteImages,
+                    selectionRequest: textSelectionRequest,
+                    onPasteImages: loadPastedImages
+                )
                 .padding(.horizontal, 16)
-                .padding(.top, 14)
-                .padding(.bottom, 7)
-                .frame(minHeight: 62, alignment: .top)
+                .padding(.top, usesAccessibilityKeyboardMetrics ? 6 : 14)
+
+                if text.isEmpty {
+                    Text(placeholder)
+                        .font(T3Typography.composer)
+                        .foregroundStyle(T3Colors.textTertiary)
+                        .padding(.horizontal, 16)
+                        .padding(.top, usesAccessibilityKeyboardMetrics ? 6 : 14)
+                        .allowsHitTesting(false)
+                        .accessibilityHidden(true)
+                }
+            }
+            .padding(.bottom, usesAccessibilityKeyboardMetrics ? 2 : 7)
+            .frame(
+                minHeight: usesAccessibilityKeyboardMetrics ? 44 : 62,
+                alignment: .top
+            )
 
             if !attachments.isEmpty, !imagesAllowed {
                 Label("Choose a model that accepts images", systemImage: "exclamationmark.circle")
@@ -229,6 +338,74 @@ struct FeatureComposerView: View {
             }
 
             composerFooter
+                .fixedSize(horizontal: false, vertical: true)
+                .layoutPriority(1)
+        }
+    }
+
+    private var canPasteImages: Bool {
+        imagesAllowed
+            && FeatureImageAttachmentPolicy.remainingCapacity(
+                attachmentCount: attachments.count,
+                pendingItemCount: attachmentPreparation.pendingItemCount
+            ) > 0
+    }
+
+    private func loadPastedImages(_ providers: [NSItemProvider]) {
+        guard imagesAllowed,
+              let lifecycleToken = attachmentLifecycle.token(for: attachmentContextID) else {
+            return
+        }
+        let imageProviders = providers.filter {
+            $0.hasItemConformingToTypeIdentifier(UTType.image.identifier)
+        }
+        guard !imageProviders.isEmpty else { return }
+
+        guard let operation = attachmentPreparation.reserve(
+            itemCount: imageProviders.count,
+            attachments: attachments
+        ) else {
+            attachmentErrorMessage = "You can attach up to eight images."
+            return
+        }
+        let reservedProviders = Array(imageProviders.prefix(operation.count))
+        if operation.count < imageProviders.count {
+            attachmentErrorMessage =
+                "Some images were not attached because the eight-image limit was reached."
+        }
+
+        guard pasteQueue.enqueue(token: lifecycleToken, { @MainActor in
+            defer { self.attachmentPreparation.finish(operation) }
+            var prepared: [FeatureDraftAttachment] = []
+            for provider in reservedProviders {
+                do {
+                    let data = try await FeatureImagePasteLoader.data(from: provider)
+                    try Task.checkCancellation()
+                    let attachment = try await FeatureImageAttachmentIngestion.prepare(
+                        data: data
+                    )
+                    try Task.checkCancellation()
+                    prepared.append(attachment)
+                } catch is CancellationError {
+                    return
+                } catch {
+                    guard !Task.isCancelled else { return }
+                    self.attachmentErrorMessage = error.localizedDescription
+                }
+            }
+            guard !Task.isCancelled else { return }
+            let accepted = FeatureImageAttachmentPolicy.attachmentsToAppend(
+                prepared,
+                to: self.attachments
+            )
+            if accepted.count < prepared.count {
+                self.attachmentErrorMessage =
+                    "Some images were not attached because the eight-image limit was reached."
+            }
+            self.attachments.append(contentsOf: accepted)
+        }) != nil else {
+            attachmentPreparation.finish(operation)
+            return
         }
     }
 
@@ -238,6 +415,9 @@ struct FeatureComposerView: View {
                 attachments: $attachments,
                 preparationState: $attachmentPreparation,
                 isFlowActive: $isAttachmentFlowActive,
+                taskStore: attachmentTasks,
+                lifecycle: attachmentLifecycle,
+                attachmentContextID: attachmentContextID,
                 isEnabled: imagesAllowed
             )
 
@@ -251,6 +431,25 @@ struct FeatureComposerView: View {
             .frame(maxWidth: 220, alignment: .leading)
             .layoutPriority(2)
 
+            if let reasoningContext {
+                Menu {
+                    reasoningChoices(for: reasoningContext)
+                } label: {
+                    HStack(spacing: 3) {
+                        Text(reasoningContext.summary)
+                            .lineLimit(1)
+                        Image(systemName: "chevron.up.chevron.down")
+                            .font(.system(size: 8, weight: .bold))
+                    }
+                    .font(T3Typography.supportingStrong)
+                    .foregroundStyle(T3Colors.textSecondary)
+                    .fixedSize(horizontal: true, vertical: false)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Choose reasoning level")
+                .accessibilityValue(reasoningContext.summary)
+            }
+
             Spacer(minLength: 0)
 
             if let contextUsage {
@@ -262,7 +461,7 @@ struct FeatureComposerView: View {
         }
         .padding(.horizontal, 7)
         .padding(.top, 2)
-        .padding(.bottom, 8)
+        .padding(.bottom, usesAccessibilityKeyboardMetrics ? 2 : 8)
     }
 
     private var submitButton: some View {
@@ -333,6 +532,64 @@ struct FeatureComposerView: View {
         )
     }
 
+    @ViewBuilder
+    private func reasoningChoices(
+        for context: FeatureComposerReasoningSelection.Context
+    ) -> some View {
+        switch context.descriptor.kind {
+        case .select:
+            ForEach(context.descriptor.choices) { choice in
+                Button {
+                    updateReasoning(.string(choice.id))
+                } label: {
+                    if context.value == .string(choice.id) {
+                        Label(choice.label, systemImage: "checkmark")
+                    } else {
+                        Text(choice.label)
+                    }
+                }
+            }
+        case .boolean:
+            Button {
+                updateReasoning(.boolean(true))
+            } label: {
+                if context.value == .boolean(true) {
+                    Label("On", systemImage: "checkmark")
+                } else {
+                    Text("On")
+                }
+            }
+            Button {
+                updateReasoning(.boolean(false))
+            } label: {
+                if context.value == .boolean(false) {
+                    Label("Off", systemImage: "checkmark")
+                } else {
+                    Text("Off")
+                }
+            }
+        }
+    }
+
+    private var reasoningContext: FeatureComposerReasoningSelection.Context? {
+        FeatureComposerReasoningSelection.context(
+            explicit: selection,
+            inherited: threadSelection,
+            providers: providers,
+            materializesDefaultSelection: materializesDefaultSelection
+        )
+    }
+
+    private func updateReasoning(_ value: FeatureModelOptionValue) {
+        selection = FeatureComposerReasoningSelection.updating(
+            explicit: selection,
+            inherited: threadSelection,
+            providers: providers,
+            materializesDefaultSelection: materializesDefaultSelection,
+            value: value
+        )
+    }
+
     /// Trigger detection walks the whole draft with character indices and is
     /// read from several computed properties per body evaluation, so one parse
     /// per keystroke is memoized instead of four.
@@ -363,11 +620,19 @@ struct FeatureComposerView: View {
         )
     }
 
+    private var commandMenuMaximumHeight: CGFloat {
+        FeatureComposerTextLayout.commandMenuMaximumHeight(
+            composerMinY: commandMenuComposerMinY,
+            topBoundary: commandMenuTopBoundary
+        )
+    }
+
     private var showsCommandMenu: Bool {
         isExpanded
             && pendingApprovals.isEmpty
             && pendingUserInputs.isEmpty
             && composerTrigger != nil
+            && commandMenuMaximumHeight >= FeatureComposerTextLayout.minimumCommandMenuHeight
     }
 
     private var pathSearchRequest: FeatureComposerPathSearchRequest? {
@@ -427,10 +692,18 @@ struct FeatureComposerView: View {
         case let .path(entry):
             replacement = FeatureComposerFileLinkSerializer.markdownLink(for: entry.path) + " "
         }
+        let cursorLocation = FeatureComposerTextSelectionPolicy.cursorLocation(
+            afterReplacing: trigger.range,
+            in: text,
+            with: replacement
+        )
         text = FeatureComposerTriggerParser.replacing(
             trigger.range,
             in: text,
             with: replacement
+        )
+        textSelectionRequest = FeatureComposerTextSelectionRequest(
+            location: cursorLocation
         )
         pathEntries = []
         pathSearchError = nil
@@ -445,8 +718,270 @@ struct FeatureComposerView: View {
             onStop()
         } else if FeatureComposerSubmissionPolicy.allowsSend(for: .explicitButton),
                   canSend {
+            rotateAttachmentLifecycle(to: attachmentContextID)
             onSend()
         }
+    }
+
+    private func rotateAttachmentLifecycle(to contextID: String) {
+        attachmentLifecycle.transition(to: contextID)
+        pasteQueue.cancelAll()
+        attachmentTasks.cancelAll()
+        attachmentPreparation.cancelAll()
+    }
+
+    private func updateSoftwareKeyboardState(in window: UIWindow?) {
+        dockedSoftwareKeyboardOccupiesScreen =
+            FeatureComposerTextLayout.softwareKeyboardOccupiesScreen(
+                keyboardFrame: window?.keyboardLayoutGuide.layoutFrame,
+                screenBounds: window?.bounds,
+                isLocal: true,
+                sceneIsActive: window?.windowScene?.activationState == .foregroundActive
+            )
+    }
+
+    private func updateSoftwareKeyboardState(
+        from notification: Notification,
+        in window: UIWindow?
+    ) {
+        let frame = notification.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect
+        let keyboardFrame: CGRect? = window.flatMap { window in
+            guard let frame else { return nil }
+            return window.convert(frame, from: window.screen.coordinateSpace)
+        }
+        dockedSoftwareKeyboardOccupiesScreen =
+            FeatureComposerTextLayout.softwareKeyboardOccupiesScreen(
+                keyboardFrame: keyboardFrame,
+                screenBounds: window?.bounds,
+                isLocal: notification.userInfo?[UIResponder.keyboardIsLocalUserInfoKey]
+                    as? Bool ?? true,
+                sceneIsActive: window?.windowScene?.activationState == .foregroundActive
+            )
+    }
+
+    private var usesAccessibilityKeyboardMetrics: Bool {
+        dynamicTypeSize.isAccessibilitySize
+            && dockedSoftwareKeyboardOccupiesScreen
+    }
+}
+
+private struct FeatureComposerWindowReader: UIViewRepresentable {
+    let onWindowChange: @MainActor (UIWindow?) -> Void
+
+    func makeUIView(context: Context) -> WindowReportingView {
+        WindowReportingView(onWindowChange: onWindowChange)
+    }
+
+    func updateUIView(_ view: WindowReportingView, context: Context) {
+        view.onWindowChange = onWindowChange
+        view.reportWindowIfNeeded()
+    }
+
+    static func dismantleUIView(_ view: WindowReportingView, coordinator: Void) {
+        view.onWindowChange = nil
+    }
+
+    @MainActor
+    final class WindowReportingView: UIView {
+        var onWindowChange: (@MainActor (UIWindow?) -> Void)?
+        private weak var reportedWindow: UIWindow?
+
+        init(onWindowChange: @escaping @MainActor (UIWindow?) -> Void) {
+            self.onWindowChange = onWindowChange
+            super.init(frame: .zero)
+            isUserInteractionEnabled = false
+        }
+
+        @available(*, unavailable)
+        required init?(coder: NSCoder) {
+            fatalError("init(coder:) has not been implemented")
+        }
+
+        override func didMoveToWindow() {
+            super.didMoveToWindow()
+            reportWindowIfNeeded()
+        }
+
+        func reportWindowIfNeeded() {
+            guard reportedWindow !== window else { return }
+            reportedWindow = window
+            let nextWindow = window
+            Task { @MainActor [weak self] in
+                self?.onWindowChange?(nextWindow)
+            }
+        }
+    }
+}
+
+enum FeatureComposerTextLayout {
+    // Excludes the hardware-keyboard assistant bar while admitting a docked software keyboard.
+    private static let minimumSoftwareKeyboardHeight: CGFloat = 100
+    private static let accessibilityKeyboardBottomClearance: CGFloat = 52
+    private static let commandMenuTopPadding: CGFloat = 12
+    private static let commandMenuFallbackHeight: CGFloat = 188
+    static let commandMenuCoordinateSpace = "feature-composer-command-menu"
+    static let commandMenuGap: CGFloat = 24
+    static let minimumCommandMenuHeight: CGFloat = T3Metrics.minimumTapTarget
+
+    static func commandMenuMaximumHeight(
+        composerMinY: CGFloat,
+        topBoundary: CGFloat
+    ) -> CGFloat {
+        guard composerMinY > 0 else { return commandMenuFallbackHeight }
+        return max(0, composerMinY - topBoundary - commandMenuTopPadding - commandMenuGap)
+    }
+
+    static func commandMenuVerticalOffset(menuHeight: CGFloat) -> CGFloat {
+        -(max(0, menuHeight) + commandMenuGap)
+    }
+
+    static func commandMenuHeight(
+        itemCount: Int,
+        usesExpandedRows: Bool,
+        dynamicTypeSize: DynamicTypeSize,
+        maximumHeight: CGFloat
+    ) -> CGFloat {
+        let traits = UITraitCollection(
+            preferredContentSizeCategory: UIContentSizeCategory(dynamicTypeSize)
+        )
+        guard itemCount > 0 else {
+            let supportingHeight = UIFont.preferredFont(
+                forTextStyle: .footnote,
+                compatibleWith: traits
+            ).lineHeight
+            return min(max(48, 2 * supportingHeight + 24), maximumHeight)
+        }
+        let estimatedRowHeight: CGFloat
+        if usesExpandedRows {
+            let controlHeight = UIFont.preferredFont(
+                forTextStyle: .callout,
+                compatibleWith: traits
+            ).lineHeight
+            let supportingHeight = UIFont.preferredFont(
+                forTextStyle: .footnote,
+                compatibleWith: traits
+            ).lineHeight
+            estimatedRowHeight = max(66, controlHeight + supportingHeight + 23)
+        } else {
+            let controlHeight = UIFont.preferredFont(
+                forTextStyle: .callout,
+                compatibleWith: traits
+            ).lineHeight
+            estimatedRowHeight = max(47, controlHeight)
+        }
+        return min(CGFloat(itemCount) * estimatedRowHeight, maximumHeight)
+    }
+
+    // Retained for the installed keyboard-clearance feature's regression
+    // contract. The overlay now uses the measured safe-area height above, so
+    // this fixed menu cap is no longer part of rendering.
+    static func commandMenuMaximumHeight(
+        softwareKeyboardIsVisible: Bool
+    ) -> CGFloat {
+        softwareKeyboardIsVisible ? 94 : 188
+    }
+
+    static func commandMenuSpacing(
+        softwareKeyboardIsVisible: Bool
+    ) -> CGFloat {
+        softwareKeyboardIsVisible ? 12 : 24
+    }
+
+    static func containerBottomPadding(
+        softwareKeyboardIsVisible: Bool
+    ) -> CGFloat {
+        softwareKeyboardIsVisible ? 4 : 10
+    }
+
+    static func bottomClearance(
+        dynamicTypeSize: DynamicTypeSize,
+        softwareKeyboardIsVisible: Bool
+    ) -> CGFloat {
+        guard dynamicTypeSize.isAccessibilitySize,
+              softwareKeyboardIsVisible else { return 0 }
+        // Reserve one 44pt footer row plus 8pt breathing room above keyboard clipping.
+        return accessibilityKeyboardBottomClearance
+    }
+
+    static func softwareKeyboardOccupiesScreen(
+        keyboardFrame: CGRect?,
+        screenBounds: CGRect?,
+        isLocal: Bool,
+        sceneIsActive: Bool = true
+    ) -> Bool {
+        guard sceneIsActive,
+              let keyboardFrame,
+              let screenBounds,
+              isLocal,
+              abs(keyboardFrame.maxY - screenBounds.maxY) < 1 else { return false }
+        return screenBounds.intersection(keyboardFrame).height
+            >= minimumSoftwareKeyboardHeight
+    }
+}
+
+enum FeatureComposerReasoningSelection {
+    struct Context: Equatable {
+        let selection: FeatureSelection
+        let descriptor: FeatureModelOptionDescriptor
+        let value: FeatureModelOptionValue
+        let summary: String
+    }
+
+    static func context(
+        explicit: FeatureSelection?,
+        inherited: FeatureSelection?,
+        providers: [FeatureProvider],
+        materializesDefaultSelection: Bool
+    ) -> Context? {
+        let normalizedProviders = ProviderModelCatalogNormalizer.normalized(providers)
+        let resolved = materializesDefaultSelection
+            ? ProviderModelSelectionResolver.materialized(explicit, in: normalizedProviders)
+            : ThreadComposerModelSelectionPolicy.resolvedSelection(
+                explicit: explicit,
+                inherited: inherited,
+                providers: normalizedProviders
+            )
+        guard let resolved,
+              let provider = normalizedProviders.first(where: { $0.id == resolved.providerID }),
+              let model = provider.models.first(where: { $0.id == resolved.modelID }),
+              let descriptor = DailyUXModelOptions.reasoningDescriptor(for: model),
+              let value = DailyUXModelOptions.value(for: descriptor, in: resolved.options),
+              let summary = DailyUXModelOptions.reasoningSummary(
+                for: model,
+                selections: resolved.options
+              ) else {
+            return nil
+        }
+        return Context(
+            selection: resolved,
+            descriptor: descriptor,
+            value: value,
+            summary: summary
+        )
+    }
+
+    static func updating(
+        explicit: FeatureSelection?,
+        inherited: FeatureSelection?,
+        providers: [FeatureProvider],
+        materializesDefaultSelection: Bool,
+        value: FeatureModelOptionValue
+    ) -> FeatureSelection? {
+        guard let context = context(
+            explicit: explicit,
+            inherited: inherited,
+            providers: providers,
+            materializesDefaultSelection: materializesDefaultSelection
+        ) else {
+            return explicit
+        }
+        var updated = context.selection
+        updated.options = DailyUXModelOptions.updating(
+            updated.options,
+            id: context.descriptor.id,
+            value: value
+        )
+        return updated
     }
 }
 
@@ -463,6 +998,300 @@ enum FeatureComposerCollapsePolicy {
             && attachmentsAreEmpty
             && !isAttachmentFlowActive
             && !isPreparingAttachments
+    }
+}
+
+@MainActor
+final class FeatureComposerPasteQueue {
+    private var tail: Task<Void, Never>?
+    private var tasks: [UUID: Task<Void, Never>] = [:]
+    private let lifecycle: FeatureAttachmentLifecycle
+
+    init(lifecycle: FeatureAttachmentLifecycle) {
+        self.lifecycle = lifecycle
+    }
+
+    @discardableResult
+    func enqueue(
+        token: FeatureAttachmentLifecycle.Token,
+        _ work: @escaping @MainActor () async -> Void
+    ) -> Task<Void, Never>? {
+        guard lifecycle.isCurrent(token) else { return nil }
+        let id = UUID()
+        let previous = tail
+        let task = Task { @MainActor [weak self] in
+            await previous?.value
+            guard let self,
+                  self.lifecycle.isCurrent(token),
+                  !Task.isCancelled else {
+                self?.tasks.removeValue(forKey: id)
+                return
+            }
+            await work()
+            self.tasks.removeValue(forKey: id)
+        }
+        tasks[id] = task
+        tail = task
+        return task
+    }
+
+    func cancelAll() {
+        for task in tasks.values {
+            task.cancel()
+        }
+        tasks.removeAll()
+        tail = nil
+    }
+
+    func waitForAll() async {
+        await tail?.value
+    }
+}
+
+final class FeatureComposerUITextView: UITextView {
+    var acceptsImages = false
+    var onPasteImages: (([NSItemProvider]) -> Void)?
+
+    override func canPerformAction(_ action: Selector, withSender sender: Any?) -> Bool {
+        if action == #selector(paste(_:)), acceptsImages, UIPasteboard.general.hasImages {
+            return true
+        }
+        return super.canPerformAction(action, withSender: sender)
+    }
+
+    override func paste(_ sender: Any?) {
+        guard acceptsImages else {
+            super.paste(sender)
+            return
+        }
+        let imageProviders = UIPasteboard.general.itemProviders.filter {
+            $0.hasItemConformingToTypeIdentifier(UTType.image.identifier)
+        }
+        guard !imageProviders.isEmpty else {
+            super.paste(sender)
+            return
+        }
+        if let pastedText = FeatureComposerPasteTextPolicy.text(
+            from: UIPasteboard.general
+        ) {
+            insertText(pastedText)
+        }
+        onPasteImages?(imageProviders)
+    }
+}
+
+struct FeatureComposerTextSelectionRequest: Equatable {
+    let id = UUID()
+    let location: Int
+}
+
+enum FeatureComposerTextSelectionPolicy {
+    static func cursorLocation(
+        afterReplacing range: Range<Int>,
+        in text: String,
+        with replacement: String
+    ) -> Int {
+        let lower = min(max(range.lowerBound, 0), text.count)
+        let lowerIndex = text.index(text.startIndex, offsetBy: lower)
+        return text[..<lowerIndex].utf16.count + replacement.utf16.count
+    }
+
+    static func cursorLocationAfterBindingUpdate(previousText: String, newText: String, selectedLocation: Int) -> Int {
+        previousText.isEmpty ? newText.utf16.count : min(selectedLocation, newText.utf16.count)
+    }
+}
+
+struct FeatureComposerPasteItem {
+    let typeIdentifiers: [String]
+    let stringsByType: [String: String]
+}
+
+enum FeatureComposerPasteTextPolicy {
+    static func text(from pasteboard: UIPasteboard) -> String? {
+        let items = (0..<pasteboard.numberOfItems).map { itemIndex in
+            let itemSet = IndexSet(integer: itemIndex)
+            let typeIdentifiers = pasteboard.types(forItemSet: itemSet)?
+                .first ?? []
+            var stringsByType: [String: String] = [:]
+            let containsImage = typeIdentifiers.contains {
+                UTType($0)?.conforms(to: .image) == true
+            }
+            if !containsImage {
+                for typeIdentifier in preferredPlainTextTypes(in: typeIdentifiers) {
+                    let value = pasteboard.values(
+                        forPasteboardType: typeIdentifier,
+                        inItemSet: itemSet
+                    )?.first as? String
+                    if let value {
+                        stringsByType[typeIdentifier] = value
+                    }
+                }
+            }
+            return FeatureComposerPasteItem(
+                typeIdentifiers: typeIdentifiers,
+                stringsByType: stringsByType
+            )
+        }
+        return text(from: items)
+    }
+
+    static func text(from items: [FeatureComposerPasteItem]) -> String? {
+        let strings = items.compactMap { item -> String? in
+            let containsImage = item.typeIdentifiers.contains {
+                UTType($0)?.conforms(to: .image) == true
+            }
+            guard !containsImage else { return nil }
+
+            for typeIdentifier in preferredPlainTextTypes(
+                in: item.typeIdentifiers
+            ) {
+                if let text = item.stringsByType[typeIdentifier], !text.isEmpty {
+                    return text
+                }
+            }
+            return nil
+        }
+        guard !strings.isEmpty else { return nil }
+        return strings.joined(separator: "\n")
+    }
+
+    private static func preferredPlainTextTypes(
+        in typeIdentifiers: [String]
+    ) -> [String] {
+        typeIdentifiers
+            .filter { UTType($0)?.conforms(to: .plainText) == true }
+            .sorted { lhs, rhs in
+                (plainTextPriority(lhs), lhs) < (plainTextPriority(rhs), rhs)
+            }
+    }
+
+    private static func plainTextPriority(_ typeIdentifier: String) -> Int {
+        if typeIdentifier == UTType.utf8PlainText.identifier { return 0 }
+        if typeIdentifier == UTType.plainText.identifier { return 1 }
+        return 2
+    }
+}
+
+struct FeatureComposerTextInput: UIViewRepresentable {
+    @Binding var text: String
+    let focused: FocusState<Bool>.Binding
+    let placeholder: String
+    let acceptsImages: Bool
+    let selectionRequest: FeatureComposerTextSelectionRequest?
+    let onPasteImages: ([NSItemProvider]) -> Void
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(self)
+    }
+
+    func makeUIView(context: Context) -> FeatureComposerUITextView {
+        let textView = FeatureComposerUITextView()
+        context.coordinator.lastAppliedSelectionRequestID = selectionRequest?.id
+        textView.delegate = context.coordinator
+        textView.acceptsImages = acceptsImages
+        textView.onPasteImages = onPasteImages
+        textView.backgroundColor = .clear
+        textView.textColor = UIColor(T3Colors.textPrimary)
+        textView.tintColor = UIColor(T3Colors.accent)
+        textView.font = UIFont.preferredFont(forTextStyle: .body)
+        textView.adjustsFontForContentSizeCategory = true
+        textView.textContainerInset = .zero
+        textView.textContainer.lineFragmentPadding = 0
+        // Return always edits the draft; sending is deliberately button-only.
+        textView.isScrollEnabled = true
+        textView.accessibilityIdentifier = "message-composer"
+        updateAccessibility(textView)
+        return textView
+    }
+
+    func updateUIView(_ textView: FeatureComposerUITextView, context: Context) {
+        context.coordinator.parent = self
+        textView.acceptsImages = acceptsImages
+        textView.onPasteImages = onPasteImages
+
+        let shouldApplySelection = selectionRequest.map {
+            context.coordinator.lastAppliedSelectionRequestID != $0.id
+        } ?? false
+        if textView.text != text {
+            let previousText = textView.text ?? ""
+            let selectedRange = textView.selectedRange
+            textView.text = text
+            if !shouldApplySelection {
+                let location = FeatureComposerTextSelectionPolicy.cursorLocationAfterBindingUpdate(
+                    previousText: previousText, newText: text, selectedLocation: selectedRange.location
+                )
+                let length = previousText.isEmpty ? 0 : min(selectedRange.length, text.utf16.count - location)
+                textView.selectedRange = NSRange(location: location, length: length)
+            }
+        }
+        if shouldApplySelection, let selectionRequest {
+            let location = min(selectionRequest.location, textView.text.utf16.count)
+            textView.selectedRange = NSRange(location: location, length: 0)
+            context.coordinator.lastAppliedSelectionRequestID = selectionRequest.id
+        }
+        updateAccessibility(textView)
+        textView.isScrollEnabled = true
+
+        if context.coordinator.lastAppliedFocus != focused.wrappedValue {
+            context.coordinator.lastAppliedFocus = focused.wrappedValue
+            if focused.wrappedValue, !textView.isFirstResponder {
+                textView.becomeFirstResponder()
+            } else if !focused.wrappedValue, textView.isFirstResponder {
+                textView.resignFirstResponder()
+            }
+        }
+    }
+
+    func sizeThatFits(
+        _ proposal: ProposedViewSize,
+        uiView: FeatureComposerUITextView,
+        context: Context
+    ) -> CGSize? {
+        guard let width = proposal.width, width.isFinite else { return nil }
+        let fittingSize = uiView.sizeThatFits(
+            CGSize(width: width, height: .greatestFiniteMagnitude)
+        )
+        let availableHeight = proposal.height.flatMap { height in
+            height.isFinite ? height : nil
+        } ?? fittingSize.height
+        return CGSize(width: width, height: min(fittingSize.height, availableHeight))
+    }
+
+    private func updateAccessibility(_ textView: FeatureComposerUITextView) {
+        textView.accessibilityLabel = "Message agent"
+        textView.accessibilityHint = acceptsImages
+            ? "Enter a message or paste images to attach them."
+            : "Enter a message."
+        textView.accessibilityValue = text.isEmpty ? placeholder : nil
+    }
+
+    final class Coordinator: NSObject, UITextViewDelegate {
+        var parent: FeatureComposerTextInput
+        var lastAppliedFocus: Bool?
+        var lastAppliedSelectionRequestID: UUID?
+
+        init(_ parent: FeatureComposerTextInput) {
+            self.parent = parent
+        }
+
+        func textViewDidChange(_ textView: UITextView) {
+            textView.isScrollEnabled = false
+            guard parent.text != textView.text else { return }
+            parent.text = textView.text
+        }
+
+        func textViewDidBeginEditing(_ textView: UITextView) {
+            if !parent.focused.wrappedValue {
+                parent.focused.wrappedValue = true
+            }
+        }
+
+        func textViewDidEndEditing(_ textView: UITextView) {
+            if parent.focused.wrappedValue {
+                parent.focused.wrappedValue = false
+            }
+        }
+
     }
 }
 

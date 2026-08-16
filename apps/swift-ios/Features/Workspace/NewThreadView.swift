@@ -8,10 +8,10 @@ public struct NewThreadView: View {
     let onCreateProject: @MainActor () -> Void
     private let draftStore: FeatureComposerDraftStore
     private let initialProjectID: String?
+    private let initialWorkspace: FeatureComposerWorkspaceDraft?
+    private let acknowledgeIncomingShare: (String) async -> Void
 
     @State private var projectID = ""
-    @State private var projectSelectionIsExplicit = false
-    @State private var isAwaitingRecentProject = false
     @State private var prompt = ""
     @State private var selection: FeatureSelection?
     @State private var selectionIsExplicit = false
@@ -19,6 +19,7 @@ public struct NewThreadView: View {
     @State private var attachments: [FeatureDraftAttachment] = []
     @State private var workspaceMode: FeatureWorkspaceMode = .local
     @State private var workspaceSelectionIsExplicit = false
+    @State private var workspaceSelectionIsSeeded = false
     @State private var branches: [FeatureWorkspaceBranch] = []
     @State private var selectedBranch: FeatureWorkspaceBranch?
     @State private var startFromOrigin = true
@@ -31,7 +32,10 @@ public struct NewThreadView: View {
     @State private var draftRestoreContext: NewTaskDraftRestoreContext?
     @State private var draftSaveTask: Task<Void, Never>?
     @State private var immediateDraftSaveTasks: [String: Task<Void, Never>] = [:]
+    @State private var safeTopBoundary: CGFloat = 0
+    @State private var topBarBottomBoundary: CGFloat = 0
     @State private var submittedSuccessfully = false
+    @State private var pendingIncomingShareID: String?
     @FocusState private var promptFocused: Bool
 
     public init(
@@ -40,6 +44,9 @@ public struct NewThreadView: View {
         onCreated: @escaping (FeatureThread) -> Void,
         onCreateProject: @escaping @MainActor () -> Void = {},
         initialProjectID: String? = nil,
+        initialWorkspace: FeatureComposerWorkspaceDraft? = nil,
+        incomingShareID: String? = nil,
+        acknowledgeIncomingShare: @escaping (String) async -> Void = { _ in },
         draftStore: FeatureComposerDraftStore = .shared
     ) {
         self.model = model
@@ -47,7 +54,10 @@ public struct NewThreadView: View {
         self.onCreated = onCreated
         self.onCreateProject = onCreateProject
         self.initialProjectID = initialProjectID
+        self.initialWorkspace = initialWorkspace
+        self.acknowledgeIncomingShare = acknowledgeIncomingShare
         self.draftStore = draftStore
+        _pendingIncomingShareID = State(initialValue: incomingShareID)
     }
 
     public var body: some View {
@@ -56,6 +66,13 @@ public struct NewThreadView: View {
 
             VStack(spacing: 0) {
                 topBar
+                    .onGeometryChange(for: CGFloat.self) { geometry in
+                        geometry.frame(
+                            in: .named(FeatureComposerTextLayout.commandMenuCoordinateSpace)
+                        ).maxY
+                    } action: { bottomBoundary in
+                        topBarBottomBoundary = bottomBoundary
+                    }
                 if creationProjects.isEmpty {
                     noProjects
                         .padding(.top, 82)
@@ -63,7 +80,7 @@ public struct NewThreadView: View {
                     hero
                         .padding(.top, 82)
                 }
-                Spacer(minLength: 140)
+                Spacer(minLength: 0)
             }
         }
         .safeAreaInset(edge: .bottom, spacing: 0) {
@@ -77,46 +94,48 @@ public struct NewThreadView: View {
                         attachments: $attachments,
                         providers: creationProviders,
                         threadSelection: nil,
+                        attachmentContextID: projectID,
                         isSending: isSubmitting,
                         isWorking: false,
                         focused: $promptFocused,
                         onSend: startTask,
                         onStop: {},
                         forceExpanded: true,
+                        commandMenuTopBoundary: max(safeTopBoundary, topBarBottomBoundary),
                         powerFeatures: composerPowerFeatures
                     )
                 }
                 .background(T3Colors.background)
             }
         }
+        .safeAreaInset(edge: .top, spacing: 0) {
+            Color.clear
+                .frame(height: 0)
+                .onGeometryChange(for: CGFloat.self) { geometry in
+                    geometry.frame(
+                        in: .named(FeatureComposerTextLayout.commandMenuCoordinateSpace)
+                    ).maxY
+                } action: { topBoundary in
+                    safeTopBoundary = topBoundary
+                }
+        }
+        .coordinateSpace(.named(FeatureComposerTextLayout.commandMenuCoordinateSpace))
         .onAppear {
-            if projectID.isEmpty {
-                let recentProject = DailyUXCreationContext.recentProjects(
-                    in: model.snapshot
-                ).first?.project
+            if pendingIncomingShareID != nil {
+                if !creationProjects.isEmpty {
+                    activePicker = .project
+                }
+            } else if projectID.isEmpty {
                 let initialID = DailyUXCreationContext.initialProject(
                     in: model.snapshot,
                     requestedProjectID: initialProjectID
                 )?.id ?? ""
-                isAwaitingRecentProject = initialProjectID == nil && recentProject == nil
                 selectInitialProject(initialID)
             }
         }
         .onChange(of: projectID) { prepareProjectIfNeeded(projectID) }
         .onChange(of: creationProjectIDs) { _, ids in
             guard !ids.contains(projectID) else { return }
-            if projectID.isEmpty {
-                let recentProject = DailyUXCreationContext.recentProjects(
-                    in: model.snapshot
-                ).first?.project
-                let initialID = DailyUXCreationContext.initialProject(
-                    in: model.snapshot,
-                    requestedProjectID: initialProjectID
-                )?.id ?? ""
-                isAwaitingRecentProject = initialProjectID == nil && recentProject == nil
-                selectInitialProject(initialID)
-                return
-            }
             persistCurrentDraftImmediately()
             let previousProject = model.snapshot.projects.first { $0.id == projectID }
             let previousGroupID = previousProject.map {
@@ -127,9 +146,6 @@ public struct NewThreadView: View {
                 ?? creationProjectGroups.first?.projects.first
             selectInitialProject(replacement?.id ?? "")
         }
-        .onChange(of: model.homePresentationRevision) { _, _ in
-            refreshAutomaticProjectIfNeeded()
-        }
         .onChange(of: prompt) { scheduleDraftSave() }
         .onChange(of: selection) { scheduleDraftSave() }
         .onChange(of: attachments) { scheduleDraftSave() }
@@ -137,6 +153,7 @@ public struct NewThreadView: View {
         .onChange(of: selectedBranch) { scheduleDraftSave() }
         .onChange(of: startFromOrigin) { scheduleDraftSave() }
         .task(id: projectID) { await restoreDraftAndLoadBranches() }
+        .task(id: pendingIncomingShareID) { await restoreIncomingShareDraft() }
         .onDisappear {
             guard !submittedSuccessfully else { return }
             persistCurrentDraftImmediately()
@@ -146,8 +163,14 @@ public struct NewThreadView: View {
             case .project:
                 NewTaskProjectPicker(
                     groups: creationProjectGroups,
+                    recentProjectIDs: NewTaskRecentProjectStore.shared.recentIDs(),
                     selectionID: selectedProjectGroup?.id,
                     onSelect: { group in
+                        if let project = group.preferredProject(
+                            environmentID: selectedProject?.environmentID
+                        ) {
+                            NewTaskRecentProjectStore.shared.record(project.id)
+                        }
                         if selectProjectGroup(group) {
                             activePicker = nil
                         }
@@ -161,6 +184,7 @@ public struct NewThreadView: View {
                     loadFailed: branchLoadFailed,
                     onSelect: { branch in
                         workspaceSelectionIsExplicit = true
+                        workspaceSelectionIsSeeded = false
                         selectedBranch = branch
                         activePicker = nil
                     },
@@ -188,6 +212,7 @@ public struct NewThreadView: View {
         }
         .padding(.horizontal, 16)
         .frame(height: 48)
+        .background(T3Colors.background)
     }
 
     private var hero: some View {
@@ -349,6 +374,7 @@ public struct NewThreadView: View {
 
                 Button {
                     workspaceSelectionIsExplicit = true
+                    workspaceSelectionIsSeeded = false
                     startFromOrigin.toggle()
                 } label: {
                     Label(
@@ -521,6 +547,7 @@ public struct NewThreadView: View {
         }
         promptFocused = false
         isSubmitting = true
+        NewTaskRecentProjectStore.shared.record(project.id)
         let pendingDraftSaveTask = draftSaveTask
         pendingDraftSaveTask?.cancel()
         draftSaveTask = nil
@@ -574,10 +601,8 @@ public struct NewThreadView: View {
 
     @discardableResult
     private func selectProject(_ id: String) -> Bool {
-        guard creationProjects.contains(where: { $0.id == id }) else { return false }
-        projectSelectionIsExplicit = true
-        isAwaitingRecentProject = false
         guard id != projectID else { return true }
+        guard creationProjects.contains(where: { $0.id == id }) else { return false }
         persistCurrentDraftImmediately()
         projectID = id
         prepareProjectIfNeeded(id)
@@ -591,7 +616,6 @@ public struct NewThreadView: View {
             preferredEnvironmentID: selectedProject?.environmentID,
             in: creationProjectGroups
         ) else { return false }
-        projectSelectionIsExplicit = true
         guard group.id != selectedProjectGroup?.id else { return true }
         return selectProject(target.id)
     }
@@ -608,37 +632,6 @@ public struct NewThreadView: View {
         prepareProjectIfNeeded(id)
     }
 
-    private func refreshAutomaticProjectIfNeeded() {
-        guard isAwaitingRecentProject else { return }
-        let nextProjectID = DailyUXCreationContext.recentProjects(
-            in: model.snapshot
-        ).first?.project.id
-        guard let nextProjectID else { return }
-        if nextProjectID == projectID {
-            isAwaitingRecentProject = false
-            return
-        }
-        let draftRestoreIsComplete = restoredDraftProjectID == projectID
-        guard DailyUXCreationContext.shouldAdoptAutomaticProject(
-            currentProjectID: projectID,
-            nextRecentProjectID: nextProjectID,
-            isAwaitingRecentActivity: isAwaitingRecentProject,
-            projectSelectionIsExplicit: projectSelectionIsExplicit,
-            modelSelectionIsExplicit: selectionIsExplicit,
-            workspaceSelectionIsExplicit: workspaceSelectionIsExplicit,
-            hasDraftContent: !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                || !attachments.isEmpty,
-            draftRestoreIsComplete: draftRestoreIsComplete
-        ) else {
-            if draftRestoreIsComplete {
-                isAwaitingRecentProject = false
-            }
-            return
-        }
-        isAwaitingRecentProject = false
-        selectInitialProject(nextProjectID)
-    }
-
     private func prepareProjectIfNeeded(_ id: String) {
         guard draftRestoreContext?.projectID != id else { return }
 
@@ -653,6 +646,7 @@ public struct NewThreadView: View {
         attachments = []
         selectionIsExplicit = false
         workspaceSelectionIsExplicit = false
+        workspaceSelectionIsSeeded = false
         branches = []
         selectedBranch = nil
         branchLoadFailed = false
@@ -689,10 +683,23 @@ public struct NewThreadView: View {
             projectID: id,
             baseline: FeatureComposerDraft()
         )
+        if id == initialProjectID, let initialWorkspace {
+            workspaceMode = initialWorkspace.mode
+            selectedBranch = initialWorkspace.branch.map {
+                FeatureWorkspaceBranch(
+                    name: $0,
+                    worktreePath: initialWorkspace.worktreePath
+                )
+            }
+            startFromOrigin = initialWorkspace.startFromOrigin
+            workspaceSelectionIsExplicit = true
+            workspaceSelectionIsSeeded = true
+        }
     }
 
     private func setWorkspaceMode(_ mode: FeatureWorkspaceMode) {
         workspaceSelectionIsExplicit = true
+        workspaceSelectionIsSeeded = false
         workspaceMode = mode
         selectedBranch = switch mode {
         case .local: NewTaskWorkspaceDefaults.localBranch(in: branches)
@@ -714,16 +721,12 @@ public struct NewThreadView: View {
             )
             guard !Task.isCancelled, projectID == requestedProjectID else { return }
             branches = loaded.sorted(by: Self.branchSort)
-
-            if let selectedBranch,
-               let updated = branches.first(where: { $0.name == selectedBranch.name }) {
-                self.selectedBranch = updated
-            } else {
-                self.selectedBranch = switch workspaceMode {
-                case .local: NewTaskWorkspaceDefaults.localBranch(in: branches)
-                case .worktree: NewTaskWorkspaceDefaults.worktreeBase(in: branches)
-                }
-            }
+            selectedBranch = NewTaskWorkspaceDefaults.refreshedSelection(
+                selectedBranch,
+                in: branches,
+                mode: workspaceMode,
+                preserveMissingSelection: workspaceSelectionIsSeeded
+            )
         } catch is CancellationError {
             return
         } catch {
@@ -751,7 +754,16 @@ public struct NewThreadView: View {
               draftRestoreContext?.projectID == requestedProjectID else {
             return
         }
-        let saved = try? await draftStore.draft(for: key)
+        let routedShareID = pendingIncomingShareID
+        let saved: FeatureComposerDraft?
+        if let routedShareID {
+            saved = try? await draftStore.routeIncomingShare(
+                shareID: routedShareID,
+                to: key
+            )
+        } else {
+            saved = try? await draftStore.draft(for: key)
+        }
         guard !Task.isCancelled,
               projectID == requestedProjectID,
               draftRestoreContext?.projectID == requestedProjectID else {
@@ -793,12 +805,27 @@ public struct NewThreadView: View {
         workspaceSelectionIsExplicit = liveWorkspaceSelectionIsExplicit
             || saved?.workspace != nil
         restoredDraftProjectID = requestedProjectID
+        if let routedShareID, saved != nil {
+            pendingIncomingShareID = nil
+            await acknowledgeIncomingShare(routedShareID)
+        }
         if liveDraft != context.baseline {
             scheduleDraftSave()
         }
-        refreshAutomaticProjectIfNeeded()
-        guard projectID == requestedProjectID else { return }
         await loadBranches()
+    }
+
+    @MainActor
+    private func restoreIncomingShareDraft() async {
+        guard let shareID = pendingIncomingShareID,
+              projectID.isEmpty else { return }
+        let key = FeatureComposerDraftStore.incomingShareKey(shareID: shareID)
+        guard let saved = try? await draftStore.draft(for: key) else { return }
+        prompt = saved.text
+        attachments = saved.attachments
+        if !creationProjects.isEmpty {
+            activePicker = .project
+        }
     }
 
     private var currentDraftKey: String? {
@@ -838,6 +865,13 @@ public struct NewThreadView: View {
         )
     }
 
+    private var draftForPersistence: FeatureComposerDraft {
+        SeededWorkspaceDraftPersistence.prepare(
+            composerDraft,
+            workspaceSelectionIsSeeded: workspaceSelectionIsSeeded
+        )
+    }
+
     private func scheduleDraftSave() {
         guard restoredDraftProjectID == projectID,
               !isSubmitting,
@@ -848,7 +882,7 @@ public struct NewThreadView: View {
         let pendingDraftSaveTask = draftSaveTask
         pendingDraftSaveTask?.cancel()
         draftSaveTask = nil
-        let snapshot = composerDraft
+        let snapshot = draftForPersistence
         draftSaveTask = Task {
             await NewTaskDraftWriteFence.wait(pendingDraftSaveTask)
             do {
@@ -871,7 +905,7 @@ public struct NewThreadView: View {
         let pendingDraftSaveTask = draftSaveTask
         pendingDraftSaveTask?.cancel()
         draftSaveTask = nil
-        let snapshot = composerDraft
+        let snapshot = draftForPersistence
         let restoreContext = draftRestoreContext
         let draftProjectID = projectID
         let needsRestoreMerge = restoredDraftProjectID != draftProjectID
@@ -903,6 +937,23 @@ public struct NewThreadView: View {
         let rhsRank = rhs.isCurrent ? 0 : rhs.isDefault ? 1 : rhs.isRemote ? 3 : 2
         if lhsRank != rhsRank { return lhsRank < rhsRank }
         return lhs.name.localizedCaseInsensitiveCompare(rhs.name) == .orderedAscending
+    }
+}
+
+enum SeededWorkspaceDraftPersistence {
+    static func prepare(
+        _ draft: FeatureComposerDraft,
+        workspaceSelectionIsSeeded: Bool
+    ) -> FeatureComposerDraft {
+        guard workspaceSelectionIsSeeded,
+              draft.text.isEmpty,
+              draft.attachments.isEmpty,
+              draft.selection == nil else {
+            return draft
+        }
+        var prepared = draft
+        prepared.workspace = nil
+        return prepared
     }
 }
 
@@ -956,11 +1007,80 @@ private enum NewTaskPicker: String, Identifiable {
     var id: String { rawValue }
 }
 
+final class NewTaskRecentProjectStore: @unchecked Sendable {
+    static let shared = NewTaskRecentProjectStore()
+
+    private let defaults: UserDefaults
+    private let key: String
+    private let capacity: Int
+    private let lock = NSLock()
+
+    init(
+        defaults: UserDefaults = .standard,
+        key: String = "swift-ios.recent-projects.v1",
+        capacity: Int = 8
+    ) {
+        self.defaults = defaults
+        self.key = key
+        self.capacity = capacity
+    }
+
+    func record(_ projectID: String) {
+        lock.withLock {
+            var ids = defaults.stringArray(forKey: key) ?? []
+            ids.removeAll { $0 == projectID }
+            ids.insert(projectID, at: 0)
+            defaults.set(Array(ids.prefix(capacity)), forKey: key)
+        }
+    }
+
+    func recentIDs() -> [String] {
+        lock.withLock {
+            defaults.stringArray(forKey: key) ?? []
+        }
+    }
+}
+
+enum NewTaskProjectListSections {
+    static let recentLimit = 3
+
+    static func split(
+        groups: [DailyUXProjectGroup],
+        recentProjectIDs: [String],
+        limit: Int = recentLimit
+    ) -> (recent: [DailyUXProjectGroup], remaining: [DailyUXProjectGroup]) {
+        var seenGroupIDs = Set<String>()
+        let recent = recentProjectIDs
+            .compactMap { projectID in
+                groups.first { $0.memberProjectIDs.contains(projectID) }
+            }
+            .filter { seenGroupIDs.insert($0.id).inserted }
+            .prefix(limit)
+        let recentGroupIDs = Set(recent.map(\.id))
+        let remaining = groups
+            .filter { !recentGroupIDs.contains($0.id) }
+            .sorted {
+                let order = $0.name.localizedCaseInsensitiveCompare($1.name)
+                if order != .orderedSame { return order == .orderedAscending }
+                return $0.id < $1.id
+            }
+        return (Array(recent), remaining)
+    }
+}
+
 private struct NewTaskProjectPicker: View {
     @SwiftUI.Environment(\.dismiss) private var dismiss
     let groups: [DailyUXProjectGroup]
+    let recentProjectIDs: [String]
     let selectionID: String?
     let onSelect: (DailyUXProjectGroup) -> Void
+
+    private var sections: (recent: [DailyUXProjectGroup], remaining: [DailyUXProjectGroup]) {
+        NewTaskProjectListSections.split(
+            groups: groups,
+            recentProjectIDs: recentProjectIDs
+        )
+    }
 
     var body: some View {
         NavigationStack {
@@ -972,30 +1092,24 @@ private struct NewTaskProjectPicker: View {
                         description: Text("Reconnect an environment or add a project to continue.")
                     )
                 } else {
-                    List(groups) { group in
-                        Button {
-                            onSelect(group)
-                        } label: {
-                            HStack(spacing: 12) {
-                                Text(group.name)
-                                    .foregroundStyle(T3Colors.textPrimary)
-
-                                Spacer(minLength: 10)
-
-                                if group.id == selectionID {
-                                    Image(systemName: "checkmark")
-                                        .font(.system(size: 13, weight: .semibold))
-                                        .foregroundStyle(T3Colors.accent)
+                    List {
+                        let sections = sections
+                        if sections.recent.isEmpty {
+                            ForEach(sections.remaining, content: row)
+                        } else {
+                            Section {
+                                ForEach(sections.recent, content: row)
+                            } header: {
+                                sectionHeader("Recent")
+                            }
+                            if !sections.remaining.isEmpty {
+                                Section {
+                                    ForEach(sections.remaining, content: row)
+                                } header: {
+                                    sectionHeader("Other projects")
                                 }
                             }
-                            .frame(minHeight: 34)
-                            .contentShape(Rectangle())
                         }
-                        .buttonStyle(.plain)
-                        .accessibilityAddTraits(
-                            group.id == selectionID ? .isSelected : []
-                        )
-                        .listRowBackground(T3Colors.background)
                     }
                     .listStyle(.plain)
                     .scrollContentBackground(.hidden)
@@ -1012,6 +1126,39 @@ private struct NewTaskProjectPicker: View {
         }
         .presentationDetents([.medium, .large])
         .presentationBackground(T3Colors.background)
+    }
+
+    private func sectionHeader(_ title: String) -> some View {
+        Text(title)
+            .font(T3Typography.supporting)
+            .foregroundStyle(T3Colors.textTertiary)
+            .textCase(nil)
+    }
+
+    private func row(_ group: DailyUXProjectGroup) -> some View {
+        Button {
+            onSelect(group)
+        } label: {
+            HStack(spacing: 12) {
+                Text(group.name)
+                    .foregroundStyle(T3Colors.textPrimary)
+
+                Spacer(minLength: 10)
+
+                if group.id == selectionID {
+                    Image(systemName: "checkmark")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(T3Colors.accent)
+                }
+            }
+            .frame(minHeight: 34)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityAddTraits(
+            group.id == selectionID ? .isSelected : []
+        )
+        .listRowBackground(T3Colors.background)
     }
 }
 
