@@ -1890,6 +1890,30 @@
       "name": "Refresh the selected Thread when completion arrives",
       "order": 20,
       "problem": "The Home list and selected Thread header can advance to Done while the open timeline is still missing the final assistant response.",
+      "proof": {
+        "buildId": "test75-thread-completion-20260816",
+        "buildReceipt": {
+          "path": "/private/tmp/t3-test-replacement.HIdxXb/.t3/swiftui-private-ci-artifacts/receipts/test75-thread-completion-20260816/test-train.json",
+          "sha256": "55eff1ffd6af44a5345cdc156255d98fb9357e7d9b9936c758de270c31514f50"
+        },
+        "featureCommit": "39644806030940d5990a665a0b2e111eaab34068",
+        "packets": [
+          {
+            "acceptancePointIds": [
+              "done-includes-final-response",
+              "completion-refresh-bypasses-live-stream",
+              "forced-refresh-survives-coalescing"
+            ],
+            "id": "selected-thread-completion-reconciliation-flow",
+            "receiptPath": "/Users/saphid/.t3/artifacts/swiftui-stream/evidence/test75-thread-completion-20260816/selected-thread-completion-reconciliation/selected-thread-completion-live-receipt.json",
+            "receiptSha256": "028eab8c5f1cb02bac360223bd1b570ab68dc97e6f3bfa13a0d23fea691ad163",
+            "validationPath": "/Users/saphid/.t3/artifacts/swiftui-stream/evidence/test75-thread-completion-20260816/selected-thread-completion-reconciliation/packet-validation.json",
+            "validationSha256": "2b7825efd1763ced733a661e8b148108f4a7a2cce63d51390dff59ac0344cde1"
+          }
+        ],
+        "schemaVersion": 2,
+        "sourceCommit": "b9b9aa4f0fd6f07493dea416a56584fab5f71b3b"
+      },
       "reproductionSteps": [
         "Open a working Thread and keep the detail view visible.",
         "Allow the turn to complete while its detail subscription remains open.",
@@ -1907,7 +1931,7 @@
       "state": "in-test",
       "summary": "Keeps the visible Thread timeline consistent with its Done status without requiring the user to reopen it.",
       "successLooksLike": "Done status and the final assistant response arrive as one coherent visible state, with no duplicate messages or manual refresh.",
-      "testBuild": 75,
+      "testBuild": 74,
       "validationSummary": "The source candidate passed its deterministic red/green regression, all 19 NativeMultiEnvironmentTests, and a real-turn integrated iPhone 17 Pro Simulator check while the Thread view remained open.",
       "visualChange": false,
       "whatToCheck": "Leave an active Thread open until it reports Done. Confirm the last assistant response appears automatically, then background and foreground the app and repeat."
