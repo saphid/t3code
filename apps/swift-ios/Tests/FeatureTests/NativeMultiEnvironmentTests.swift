@@ -186,6 +186,77 @@ final class NativeMultiEnvironmentTests: XCTestCase {
         await fixture.client.disconnect()
     }
 
+    func testDoneShellRefreshesSelectedThreadWhileDetailStreamRemainsOpen() async throws {
+        let fixture = try await makeFixture(
+            fallbackPollingInitialDelay: .milliseconds(40),
+            fallbackPollingInterval: .milliseconds(40)
+        )
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+
+        let snapshot = try await fixture.client.initialSnapshot()
+        let thread = try XCTUnwrap(
+            snapshot.threads.first(where: { $0.wireID == "thread-one" })
+        )
+        _ = try await fixture.client.loadThread(id: thread.id)
+
+        let events = fixture.client.events()
+        let finalMessageArrived = expectation(description: "final assistant message arrived")
+        let observer = Task {
+            for await event in events {
+                let detail: FeatureThreadDetail?
+                switch event {
+                case let .detail(value), let .detailDelta(value, _):
+                    detail = value
+                default:
+                    detail = nil
+                }
+                if detail?.messages.contains(where: { $0.id == "final-message" }) == true {
+                    finalMessageArrived.fulfill()
+                    return
+                }
+            }
+        }
+
+        await fixture.transport.setDetailMessages([
+            OrchestrationMessage(
+                id: "final-message",
+                role: "assistant",
+                text: "The completed response",
+                attachments: nil,
+                turnId: "completed-turn",
+                streaming: false,
+                createdAt: "2026-07-31T12:01:00.000Z",
+                updatedAt: "2026-07-31T12:01:00.000Z"
+            ),
+        ], host: "one.example")
+        let completedShell = multiEnvironmentShell(
+            projectID: "project-one",
+            threadID: "thread-one",
+            title: "Local work",
+            latestTurn: OrchestrationLatestTurn(
+                turnId: "completed-turn",
+                state: "completed",
+                requestedAt: "2026-07-31T12:00:00.000Z",
+                startedAt: "2026-07-31T12:00:01.000Z",
+                completedAt: "2026-07-31T12:01:00.000Z",
+                assistantMessageId: "final-message"
+            )
+        )
+        await fixture.transport.setShell(
+            OrchestrationShellSnapshot(
+                snapshotSequence: completedShell.snapshotSequence + 1,
+                projects: completedShell.projects,
+                threads: completedShell.threads,
+                updatedAt: completedShell.updatedAt
+            ),
+            host: "one.example"
+        )
+
+        await fulfillment(of: [finalMessageArrived], timeout: 1)
+        observer.cancel()
+        await fixture.client.disconnect()
+    }
+
     func testBackgroundLivenessKeepsASettledThreadWorking() async throws {
         let fixture = try await makeFixture()
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
@@ -1199,7 +1270,8 @@ private func multiEnvironmentShell(
     providerID: String = "codex",
     modelID: String = "gpt-5.6-sol",
     repositoryIdentity: RepositoryIdentity? = nil,
-    backgroundLiveness: OrchestrationBackgroundLiveness? = nil
+    backgroundLiveness: OrchestrationBackgroundLiveness? = nil,
+    latestTurn: OrchestrationLatestTurn? = nil
 ) -> OrchestrationShellSnapshot {
     let timestamp = "2026-07-31T12:00:00.000Z"
     let model = ModelSelection(instanceId: providerID, model: modelID)
@@ -1228,7 +1300,7 @@ private func multiEnvironmentShell(
                 interactionMode: .default,
                 branch: "feat/multi-device",
                 worktreePath: nil,
-                latestTurn: nil,
+                latestTurn: latestTurn,
                 createdAt: timestamp,
                 updatedAt: timestamp,
                 archivedAt: nil,
