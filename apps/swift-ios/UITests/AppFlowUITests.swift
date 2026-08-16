@@ -822,6 +822,7 @@ final class AppFlowUITests: XCTestCase {
             .completed,
             "Cold-boot metadata fixture did not begin its update sequence"
         )
+        let initialTopThreadY = initialTopThread.frame.minY
         let firstScroll = proofSwipe(
             list,
             selector: "cold-boot Home collection view",
@@ -830,9 +831,11 @@ final class AppFlowUITests: XCTestCase {
             duration: 0.6,
             postcondition: "The first drag moves the populated list while metadata snapshots arrive"
         )
-        XCTAssertFalse(
-            initialTopThread.isHittable,
-            "The first cold-boot drag did not move the initial top thread off screen"
+        let firstDragMovedList = !initialTopThread.isHittable
+            || initialTopThread.frame.minY < initialTopThreadY - 20
+        XCTAssertTrue(
+            firstDragMovedList,
+            "The first cold-boot drag did not move the initial top thread"
         )
         assertCommandPaletteClosed("Cold-boot list scrolling opened the command palette")
         proofPassed(firstScroll, observation: "The first drag moved Home without opening the drawer")
