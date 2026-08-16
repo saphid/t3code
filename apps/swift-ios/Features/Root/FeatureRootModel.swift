@@ -379,10 +379,14 @@ public final class FeatureRootModel {
             return cached
         }
         let environment = currentEnvironmentIdentity
+        let revisionBeforeLoad = detailRevisions[id]
         do {
             let detail = try await client.loadThread(id: id)
             guard currentEnvironmentIdentity == environment else {
                 return details[id]
+            }
+            if detailRevisions[id] != revisionBeforeLoad, let liveDetail = details[id] {
+                return liveDetail
             }
             store(detail)
             upsert(detail.thread)
