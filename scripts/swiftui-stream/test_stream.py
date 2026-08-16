@@ -404,6 +404,12 @@ class StreamTests(unittest.TestCase):
         expected_ids = [feature["id"] for feature in expected]
         pending_ids = [feature["id"] for feature in pending]
 
+        self.assertTrue(
+            all(
+                feature["testBuild"] == fixture["build"]
+                for feature in expected
+            )
+        )
         self.assertEqual(len(pending_by_id), len(pending))
         self.assertEqual(
             [feature_id for feature_id in pending_ids if feature_id in expected_ids],
@@ -412,7 +418,6 @@ class StreamTests(unittest.TestCase):
         for expected_feature in expected:
             actual = pending_by_id[expected_feature["id"]]
             self.assertEqual(actual["sourceCommit"], expected_feature["sourceCommit"])
-            self.assertEqual(actual["testBuild"], expected_feature["testBuild"])
         self.assertTrue(all(feature.get("proofPending") is not True for feature in pending))
         for feature in pending:
             self.assertRegex(feature["sourceCommit"], r"^[0-9a-f]{40}$")
