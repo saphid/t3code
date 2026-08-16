@@ -1855,6 +1855,62 @@
       "validationSummary": "The frozen integrated commit passed 416 native tests across 43 suites and four Candidate journeys. The final optimized Test configuration separately passed 33 FeatureRootModel tests and the focused cold-boot Home journey; the built app contained no debug dylib and accepted its first recorded Home drag.",
       "visualChange": false,
       "whatToCheck": "Cold-launch SwiftUI Test and immediately scroll Home or tap Settings. The first input should respond without the previous several-second dead period."
+    },
+    {
+      "acceptancePoints": [
+        {
+          "id": "done-includes-final-response",
+          "text": "When the list or header reports Done, the selected timeline renders the final assistant response without reopening."
+        },
+        {
+          "id": "completion-refresh-bypasses-live-stream",
+          "text": "A terminal shell update reconciles detail even while the detail subscription remains open."
+        },
+        {
+          "id": "forced-refresh-survives-coalescing",
+          "text": "A forced completion refresh remains forced when it is queued behind another in-flight detail refresh."
+        }
+      ],
+      "aliases": [
+        "stale done thread",
+        "missing final response",
+        "thread completion refresh"
+      ],
+      "behavior": "A terminal shell update forces a coalesced selected-Thread detail reconciliation even when the completion-scoped detail stream task has not closed.",
+      "candidateCommit": "39644806030940d5990a665a0b2e111eaab34068",
+      "delivery": "direct",
+      "dependsOn": [
+        "initial-thread-live-updates"
+      ],
+      "featureReceipt": "~/.t3/swiftui-stream/feature-receipts/selected-thread-completion-reconciliation/39644806030940d5990a665a0b2e111eaab34068/receipt.json",
+      "id": "selected-thread-completion-reconciliation",
+      "integratedCommit": "890915fb565aef0d3da607cb0212f33ba4f85c66",
+      "interactionChange": false,
+      "knownLimitations": "The forced reconciliation is limited to full/fallback shell snapshots and terminal latest-turn transitions; ordinary streaming deltas do not add HTTP refreshes.",
+      "name": "Refresh the selected Thread when completion arrives",
+      "order": 20,
+      "problem": "The Home list and selected Thread header can advance to Done while the open timeline is still missing the final assistant response.",
+      "reproductionSteps": [
+        "Open a working Thread and keep the detail view visible.",
+        "Allow the turn to complete while its detail subscription remains open.",
+        "Observe the Home list or Thread header advance to Done.",
+        "Confirm the final assistant response appears without leaving and reopening the Thread."
+      ],
+      "reviewGroup": "Core reliability",
+      "reviewPriority": 1,
+      "sourceBranch": "fix/swiftui-thread-completion-refresh-20260816",
+      "sourceCommit": "39644806030940d5990a665a0b2e111eaab34068",
+      "sourceIssue": "https://github.com/saphid/t3code-personal/issues/101",
+      "sourceReceipt": "~/.t3/swiftui-stream/feature-receipts/selected-thread-completion-reconciliation/39644806030940d5990a665a0b2e111eaab34068/receipt.json",
+      "sourceThread": "622e0aa3-7d1f-4263-9b54-9dbd5a33b9b1",
+      "startingBaseline": "f97091eb6a7c39db075b97a1448c76378a9e79d1",
+      "state": "in-test",
+      "summary": "Keeps the visible Thread timeline consistent with its Done status without requiring the user to reopen it.",
+      "successLooksLike": "Done status and the final assistant response arrive as one coherent visible state, with no duplicate messages or manual refresh.",
+      "testBuild": 75,
+      "validationSummary": "The source candidate passed its deterministic red/green regression, all 19 NativeMultiEnvironmentTests, and a real-turn integrated iPhone 17 Pro Simulator check while the Thread view remained open.",
+      "visualChange": false,
+      "whatToCheck": "Leave an active Thread open until it reports Done. Confirm the last assistant response appears automatically, then background and foreground the app and repeat."
     }
   ],
   "legacyManifest": "scripts/t3-swift-approved/manifest.json",
