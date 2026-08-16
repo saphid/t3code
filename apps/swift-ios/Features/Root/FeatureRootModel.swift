@@ -48,6 +48,7 @@ public final class FeatureRootModel {
     private var detailRecency: [String] = []
     private var detailLoadGeneration: UInt64 = 0
     private var detailLoadRevisions: [String: UInt64] = [:]
+    private var detailMetadataRevisions: [String: UInt64] = [:]
     private var outboxDrainTask: Task<Void, Never>?
     private var outboxRetryAttempt = 0
     private var outboxGeneration: UInt64 = 0
@@ -383,6 +384,7 @@ public final class FeatureRootModel {
         let environment = currentEnvironmentIdentity
         let loadGenerationBeforeLoad = detailLoadGeneration
         let loadRevisionBeforeLoad = detailLoadRevisions[id]
+        let metadataRevisionBeforeLoad = detailMetadataRevisions[id]
         let threadBeforeLoad = snapshot.threads.first { $0.id == id }
         do {
             var detail = try await client.loadThread(id: id)
@@ -393,8 +395,12 @@ public final class FeatureRootModel {
                 || detailLoadRevisions[id] != loadRevisionBeforeLoad {
                 return details[id]
             }
-            if let currentThread = snapshot.threads.first(where: { $0.id == id }),
-               currentThread != threadBeforeLoad {
+            let currentThread = snapshot.threads.first { $0.id == id }
+            if detailMetadataRevisions[id] != metadataRevisionBeforeLoad {
+                if let currentThread = details[id]?.thread ?? currentThread {
+                    detail.thread = currentThread
+                }
+            } else if let currentThread, currentThread != threadBeforeLoad {
                 detail.thread = currentThread
             }
             store(detail)
@@ -653,10 +659,12 @@ public final class FeatureRootModel {
             upsert(value)
             mutateDetail(
                 id: value.id,
-                change: .delta(FeatureDetailDelta(changedMessages: []))
+                change: .delta(FeatureDetailDelta(changedMessages: [])),
+                invalidatesInFlightLoad: false
             ) {
                 $0.thread = value
             }
+            bumpDetailMetadataRevision(id: value.id)
         case let .threadRemoved(id):
             removeThread(id: id)
             removeDetail(id: id)
@@ -715,6 +723,26 @@ public final class FeatureRootModel {
             }
         }
 
+        let previousThreads = snapshot.threads.reduce(into: [String: FeatureThread]()) {
+            $0[$1.id] = $1
+        }
+        let nextThreads = value.threads.reduce(into: [String: FeatureThread]()) {
+            $0[$1.id] = $1
+        }
+        for id in previousThreads.keys where nextThreads[id] == nil {
+            removeDetail(id: id)
+        }
+        for thread in value.threads where previousThreads[thread.id] != thread {
+            mutateDetail(
+                id: thread.id,
+                change: .delta(FeatureDetailDelta(changedMessages: [])),
+                invalidatesInFlightLoad: false
+            ) {
+                $0.thread = thread
+            }
+            bumpDetailMetadataRevision(id: thread.id)
+        }
+
         if snapshot.connection != value.connection
             || snapshot.environments != value.environments
             || snapshot.projects != value.projects
@@ -738,19 +766,25 @@ public final class FeatureRootModel {
         id: String,
         _ mutation: (inout FeatureThread) -> Void
     ) {
+        var metadataChanged = false
         if let index = snapshot.threads.firstIndex(where: { $0.id == id }) {
             let previous = snapshot.threads[index]
             mutation(&snapshot.threads[index])
             if snapshot.threads[index] != previous {
+                metadataChanged = true
                 threadCollectionRevision &+= 1
                 homePresentationRevision &+= 1
             }
         }
-        mutateDetail(
+        let detailChanged = mutateDetail(
             id: id,
-            change: .delta(FeatureDetailDelta(changedMessages: []))
+            change: .delta(FeatureDetailDelta(changedMessages: [])),
+            invalidatesInFlightLoad: false
         ) {
             mutation(&$0.thread)
+        }
+        if metadataChanged || detailChanged {
+            bumpDetailMetadataRevision(id: id)
         }
     }
 
@@ -793,18 +827,24 @@ public final class FeatureRootModel {
         bumpDetailRevision(id: id, change: .delta(pendingDelta))
     }
 
+    @discardableResult
     private func mutateDetail(
         id: String,
         change: FeatureDetailRenderChange = .full,
+        invalidatesInFlightLoad: Bool = true,
         _ mutation: (inout FeatureThreadDetail) -> Void
-    ) {
-        guard var detail = details[id] else { return }
+    ) -> Bool {
+        guard var detail = details[id] else { return false }
         let previous = detail
         mutation(&detail)
-        guard detail != previous else { return }
+        guard detail != previous else { return false }
         details[id] = detail
         markDetailRecentlyUsed(id)
+        if invalidatesInFlightLoad {
+            bumpDetailLoadRevision(id: id)
+        }
         bumpDetailRevision(id: id, change: change)
+        return true
     }
 
     private func removeDetail(id: String) {
@@ -818,16 +858,23 @@ public final class FeatureRootModel {
     private func clearDetails() {
         detailLoadGeneration &+= 1
         detailLoadRevisions.removeAll()
-        guard !details.isEmpty else { return }
+        detailMetadataRevisions.removeAll()
+        let hadDetails = !details.isEmpty
         details.removeAll()
         detailRecency.removeAll()
-        detailRevision &+= 1
+        if hadDetails {
+            detailRevision &+= 1
+        }
         detailRevisions.removeAll()
         detailRenderUpdates.removeAll()
     }
 
     private func bumpDetailLoadRevision(id: String) {
         detailLoadRevisions[id] = (detailLoadRevisions[id] ?? 0) &+ 1
+    }
+
+    private func bumpDetailMetadataRevision(id: String) {
+        detailMetadataRevisions[id] = (detailMetadataRevisions[id] ?? 0) &+ 1
     }
 
     private func markDetailRecentlyUsed(_ id: String) {
