@@ -391,13 +391,28 @@ class StreamTests(unittest.TestCase):
 
     def test_current_catalog_is_review_ready_with_exact_proof(self):
         value = stream.load_json(ROOT / "stream.json")
+        fixture = stream.load_json(
+            ROOT / "fixtures" / "review-catalog-build-74.json"
+        )
         pending = [
             feature
             for feature in value["features"]
             if feature.get("state") in stream.APPROVAL_STATES
         ]
+        pending_by_id = {feature["id"]: feature for feature in pending}
+        expected = fixture["features"]
+        expected_ids = [feature["id"] for feature in expected]
+        pending_ids = [feature["id"] for feature in pending]
 
-        self.assertEqual(len(pending), 17)
+        self.assertEqual(len(pending_by_id), len(pending))
+        self.assertEqual(
+            [feature_id for feature_id in pending_ids if feature_id in expected_ids],
+            expected_ids,
+        )
+        for expected_feature in expected:
+            actual = pending_by_id[expected_feature["id"]]
+            self.assertEqual(actual["sourceCommit"], expected_feature["sourceCommit"])
+            self.assertEqual(actual["testBuild"], expected_feature["testBuild"])
         self.assertTrue(all(feature.get("proofPending") is not True for feature in pending))
         for feature in pending:
             self.assertRegex(feature["sourceCommit"], r"^[0-9a-f]{40}$")
