@@ -661,7 +661,7 @@
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 5.0;
 				T3CODE_APP_GROUP_IDENTIFIER = group.com.alxs.t3code.typed-swiftui.dev;
-				T3CODE_URL_SCHEME = t3code-swiftui-personal;
+				T3CODE_URL_SCHEME = t3code-swiftui;
 				TARGETED_DEVICE_FAMILY = "1,2";
 			};
 			name = Debug;
