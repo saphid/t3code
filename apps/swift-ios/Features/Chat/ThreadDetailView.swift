@@ -726,6 +726,7 @@ private struct FeatureTranscriptCollectionView: UIViewRepresentable {
         private var dataSource: UICollectionViewDiffableDataSource<Section, String>?
         private var messagesByID: [String: FeatureMessage] = [:]
         private var orderedIDs: [String] = []
+        private var timestampLabelsByID: [String: String] = [:]
         private var currentThreadID: String?
         private var currentDetailRevision: UInt64?
         private var currentDynamicTypeSize: DynamicTypeSize?
@@ -779,7 +780,10 @@ private struct FeatureTranscriptCollectionView: UIViewRepresentable {
                 }
 
                 cell.contentConfiguration = UIHostingConfiguration {
-                    FeatureMessageView(message: message)
+                    FeatureMessageView(
+                        message: message,
+                        timestamp: self?.timestampLabelsByID[messageID]
+                    )
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .environment(\.t3CodeSizeSteps, self?.currentCodeSizeSteps ?? 0)
                 }
@@ -886,6 +890,15 @@ private struct FeatureTranscriptCollectionView: UIViewRepresentable {
                 messagesByID = replacementMessagesByID
             }
             orderedIDs = newIDs
+            // A separator depends on the message above it, so prepends and
+            // reorders can retire one the reader is already looking at.
+            let previousTimestampLabels = timestampLabelsByID
+            timestampLabelsByID = FeatureMessageTimestamps.separatorLabels(
+                for: newIDs.compactMap { messagesByID[$0] }
+            )
+            let timestampChangedIDs = threadChanged
+                ? []
+                : newIDs.filter { previousTimestampLabels[$0] != timestampLabelsByID[$0] }
             (collectionView as? BottomAnchoredTranscriptCollectionView)?.maintainsBottomAnchor =
                 isInitialLoad || wasNearBottom
 
@@ -930,6 +943,12 @@ private struct FeatureTranscriptCollectionView: UIViewRepresentable {
             }
             let appendedIDSet = Set(state.appendedIDs)
             var reconfiguredIDs = changedIDs.filter { !appendedIDSet.contains($0) }
+            let contentReconfiguredIDs = Set(reconfiguredIDs)
+            reconfiguredIDs.append(
+                contentsOf: timestampChangedIDs.filter {
+                    !appendedIDSet.contains($0) && !contentReconfiguredIDs.contains($0)
+                }
+            )
             if loadEarlierChanged,
                snapshot.indexOfItem(FeatureTranscriptCollectionView.loadEarlierID) != nil {
                 reconfiguredIDs.append(FeatureTranscriptCollectionView.loadEarlierID)
@@ -1782,8 +1801,23 @@ private enum FeatureAttachmentThumbnailError: Error {
 
 struct FeatureMessageView: View {
     let message: FeatureMessage
+    var timestamp: String?
 
     var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            if let timestamp {
+                Text(timestamp)
+                    .font(T3Typography.supporting)
+                    .foregroundStyle(T3Colors.textSecondary)
+                    .frame(maxWidth: .infinity, alignment: .center)
+                    .accessibilityIdentifier("message-timestamp-\(message.id)")
+            }
+            content
+        }
+    }
+
+    @ViewBuilder
+    private var content: some View {
         switch message.role {
         case .user:
             HStack {
