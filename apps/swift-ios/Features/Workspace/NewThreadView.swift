@@ -146,6 +146,7 @@ public struct NewThreadView: View {
             case .project:
                 NewTaskProjectPicker(
                     groups: creationProjectGroups,
+                    recentGroupIDs: recentProjectGroupIDs,
                     selectionID: selectedProjectGroup?.id,
                     onSelect: { group in
                         if selectProjectGroup(group) {
@@ -295,6 +296,10 @@ public struct NewThreadView: View {
 
     private var creationProjectGroups: [DailyUXProjectGroup] {
         DailyUXCreationContext.projectGroups(in: model.snapshot)
+    }
+
+    private var recentProjectGroupIDs: [String] {
+        DailyUXCreationContext.recentProjects(in: model.snapshot).map(\.group.id)
     }
 
     private var selectedProjectGroup: DailyUXProjectGroup? {
@@ -959,6 +964,7 @@ private enum NewTaskPicker: String, Identifiable {
 private struct NewTaskProjectPicker: View {
     @SwiftUI.Environment(\.dismiss) private var dismiss
     let groups: [DailyUXProjectGroup]
+    let recentGroupIDs: [String]
     let selectionID: String?
     let onSelect: (DailyUXProjectGroup) -> Void
 
@@ -972,30 +978,30 @@ private struct NewTaskProjectPicker: View {
                         description: Text("Reconnect an environment or add a project to continue.")
                     )
                 } else {
-                    List(groups) { group in
-                        Button {
-                            onSelect(group)
-                        } label: {
-                            HStack(spacing: 12) {
-                                Text(group.name)
-                                    .foregroundStyle(T3Colors.textPrimary)
-
-                                Spacer(minLength: 10)
-
-                                if group.id == selectionID {
-                                    Image(systemName: "checkmark")
-                                        .font(.system(size: 13, weight: .semibold))
-                                        .foregroundStyle(T3Colors.accent)
+                    let sections = DailyUXProjectPickerSections(
+                        groups: groups,
+                        recentGroupIDs: recentGroupIDs
+                    )
+                    List {
+                        if sections.recents.isEmpty {
+                            ForEach(sections.others) { group in
+                                projectRow(group)
+                            }
+                        } else {
+                            Section("Recent") {
+                                ForEach(sections.recents) { group in
+                                    projectRow(group)
                                 }
                             }
-                            .frame(minHeight: 34)
-                            .contentShape(Rectangle())
+
+                            if !sections.others.isEmpty {
+                                Section("Other projects") {
+                                    ForEach(sections.others) { group in
+                                        projectRow(group)
+                                    }
+                                }
+                            }
                         }
-                        .buttonStyle(.plain)
-                        .accessibilityAddTraits(
-                            group.id == selectionID ? .isSelected : []
-                        )
-                        .listRowBackground(T3Colors.background)
                     }
                     .listStyle(.plain)
                     .scrollContentBackground(.hidden)
@@ -1012,6 +1018,32 @@ private struct NewTaskProjectPicker: View {
         }
         .presentationDetents([.medium, .large])
         .presentationBackground(T3Colors.background)
+    }
+
+    private func projectRow(_ group: DailyUXProjectGroup) -> some View {
+        Button {
+            onSelect(group)
+        } label: {
+            HStack(spacing: 12) {
+                Text(group.name)
+                    .foregroundStyle(T3Colors.textPrimary)
+
+                Spacer(minLength: 10)
+
+                if group.id == selectionID {
+                    Image(systemName: "checkmark")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(T3Colors.accent)
+                }
+            }
+            .frame(minHeight: 34)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityAddTraits(
+            group.id == selectionID ? .isSelected : []
+        )
+        .listRowBackground(T3Colors.background)
     }
 }
 
