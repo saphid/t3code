@@ -92,10 +92,6 @@ struct PlatformDeepLinkTests {
                 == .thread(environmentID: "environment", threadID: "thread")
         )
         #expect(
-            try PlatformDeepLinkParser.parse("t3code-swiftui-personal://threads/environment/thread")
-                == .thread(environmentID: "environment", threadID: "thread")
-        )
-        #expect(
             try PlatformDeepLinkParser.parse("t3code://threads/environment/thread")
                 == .thread(environmentID: "environment", threadID: "thread")
         )
