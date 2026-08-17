@@ -1055,7 +1055,7 @@ private struct NewTaskProjectPicker: View {
                 if group.id == selectionID {
                     Image(systemName: "checkmark")
                         .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(T3Colors.accent)
+                    .foregroundStyle(T3Colors.accent)
                 }
             }
             .frame(minHeight: 46)
