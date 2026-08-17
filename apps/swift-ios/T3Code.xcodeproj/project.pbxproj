@@ -661,7 +661,7 @@
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 5.0;
 				T3CODE_APP_GROUP_IDENTIFIER = group.com.saphid.t3code.swiftui.dev;
-				T3CODE_URL_SCHEME = t3code-swiftui-personal-dev;
+				T3CODE_URL_SCHEME = t3code-swiftui-dev;
 				TARGETED_DEVICE_FAMILY = "1,2";
 			};
 			name = Debug;
