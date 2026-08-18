@@ -7,6 +7,19 @@ enum PlatformRoute: Codable, Hashable, Identifiable, Sendable {
     static let nativeScheme = "t3code-swiftui"
     #endif
 
+    /// Widgets and share sheets link with the scheme their own build channel
+    /// configured, so this build accepts that scheme alongside the shared ones.
+    static var supportedNativeSchemes: Set<String> {
+        [
+            "t3",
+            "t3code",
+            "t3code-swiftui",
+            "t3code-swiftui-dev",
+            nativeScheme.lowercased(),
+            T3SharedContainer.urlScheme.lowercased(),
+        ]
+    }
+
     case connection(endpoint: String, token: String?)
     case environment(id: String)
     case project(environmentID: String?, projectID: String)
@@ -97,7 +110,7 @@ enum PlatformDeepLinkParser {
         }
 
         let query = queryValues(components.queryItems ?? [])
-        if ["t3", "t3code", "t3code-swiftui", "t3code-swiftui-dev"].contains(scheme) {
+        if PlatformRoute.supportedNativeSchemes.contains(scheme) {
             let segments = customSchemeSegments(components)
             if isConnectionRoute(segments: segments, query: query) {
                 return try connectionRoute(url)

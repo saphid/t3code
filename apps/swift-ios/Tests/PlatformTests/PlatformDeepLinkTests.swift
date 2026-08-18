@@ -102,6 +102,18 @@ struct PlatformDeepLinkTests {
     }
 
     @Test
+    func acceptsWidgetFallbackLinksFromThisBuildChannel() throws {
+        #expect(PlatformRoute.supportedNativeSchemes.contains(T3SharedContainer.urlScheme.lowercased()))
+        #expect(
+            try PlatformDeepLinkParser.parse(T3SharedContainer.newTaskURL)
+                == .newTask(environmentID: nil, projectID: nil)
+        )
+        #expect(throws: PlatformDeepLinkError.unsupportedURL) {
+            try PlatformDeepLinkParser.parse("t3code-swiftui-someone-else://new-task")
+        }
+    }
+
+    @Test
     func clerkCallbackUsesCurrentAppIdentity() {
         #expect(T3ConnectAuthCallback.scheme == PlatformRoute.nativeScheme)
         #expect(
