@@ -105,6 +105,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
     private var detailPublishTask: Task<Void, Never>?
     private var passiveDetailPollingTask: Task<Void, Never>?
     private var detailRefreshPending = false
+    private var detailRefreshPendingForce = false
     private var detailRefreshGeneration = 0
     private var detailStreamGeneration = 0
     private var pendingDetailRenderMutations = NativeDetailRenderMutations()
@@ -2887,7 +2888,11 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         latestShell = shell
         await emitSnapshot(shell)
         if refreshActiveThread, let threadID = activeThreadID {
-            scheduleDetailRefresh(threadID: threadID, client: client)
+            // A whole-shell snapshot is how connect, reconnect, foreground, and
+            // refresh-required recover. It can already carry a Done turn whose
+            // final events the selected stream never delivered, so reconcile
+            // the transcript even while that stream task is still alive.
+            scheduleDetailRefresh(threadID: threadID, client: client, force: true)
         }
     }
 
@@ -2912,7 +2917,9 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
               let threadID = activeThreadID else {
             return
         }
-        scheduleDetailRefresh(threadID: threadID, client: client)
+        // The HTTP fallback is the only liveness left while the socket is
+        // reconnecting, so it must be able to reconcile a completed turn.
+        scheduleDetailRefresh(threadID: threadID, client: client, force: true)
     }
 
     private func consume(delta: ShellStreamItem, client: T3Client) async {
@@ -2946,6 +2953,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         var projects = current.projects
         var threads = current.threads
         var changedThreadID: String?
+        var turnReachedTerminalState = false
         var shouldRefreshArchived = false
 
         switch delta {
@@ -2967,8 +2975,16 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
                 }
             }
             if let index = threads.firstIndex(where: { $0.id == thread.id }) {
+                turnReachedTerminalState = Self.turnReachedTerminalState(
+                    previous: threads[index],
+                    next: thread
+                )
                 threads[index] = thread
             } else {
+                turnReachedTerminalState = Self.turnReachedTerminalState(
+                    previous: nil,
+                    next: thread
+                )
                 threads.append(thread)
             }
         case let .threadRemoved(_, threadID):
@@ -3010,7 +3026,29 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
             scheduleArchivedRefresh(client: client, environment: environment)
         }
         if let changedThreadID, activeThreadID == changedThreadID {
-            scheduleDetailRefresh(threadID: changedThreadID, client: client)
+            scheduleDetailRefresh(
+                threadID: changedThreadID,
+                client: client,
+                force: turnReachedTerminalState
+            )
+        }
+    }
+
+    /// Home rows and the thread header advance the moment the shell reports a
+    /// settled turn. That metadata can land before the completion-scoped detail
+    /// subscription delivers — or closes after — its final events, which would
+    /// otherwise leave the open transcript ending before the assistant's reply.
+    /// Treat the terminal transition as the signal to reconcile the transcript.
+    private static func turnReachedTerminalState(
+        previous: OrchestrationThreadShell?,
+        next: OrchestrationThreadShell
+    ) -> Bool {
+        guard previous?.latestTurn != next.latestTurn else { return false }
+        switch next.latestTurn?.state {
+        case "completed", "error", "interrupted":
+            return true
+        default:
+            return false
         }
     }
 
@@ -3043,9 +3081,13 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         guard force || detailStreamTask == nil else { return }
         guard detailRefreshTask == nil else {
             detailRefreshPending = true
+            // Coalescing must not downgrade a reconciliation into a request the
+            // trailing refresh would reject for still having a live stream.
+            detailRefreshPendingForce = detailRefreshPendingForce || force
             return
         }
         detailRefreshPending = false
+        detailRefreshPendingForce = false
         detailRefreshGeneration &+= 1
         let generation = detailRefreshGeneration
         let sessionGeneration = environmentGeneration
@@ -3261,9 +3303,15 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         guard detailRefreshGeneration == generation else { return }
         detailRefreshTask = nil
         let needsTrailingRefresh = detailRefreshPending
+        let trailingRefreshMustBypassStream = detailRefreshPendingForce
         detailRefreshPending = false
+        detailRefreshPendingForce = false
         if needsTrailingRefresh, let threadID = activeThreadID {
-            scheduleDetailRefresh(threadID: threadID, client: client)
+            scheduleDetailRefresh(
+                threadID: threadID,
+                client: client,
+                force: trailingRefreshMustBypassStream
+            )
         }
     }
 
@@ -3272,6 +3320,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         detailRefreshTask?.cancel()
         detailRefreshTask = nil
         detailRefreshPending = false
+        detailRefreshPendingForce = false
     }
 
     private func resetDetailStream() {
