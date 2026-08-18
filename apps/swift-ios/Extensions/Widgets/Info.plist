@@ -9,5 +9,7 @@
 		<key>NSExtensionPointIdentifier</key>
 		<string>com.apple.widgetkit-extension</string>
 	</dict>
+	<key>T3CodeURLScheme</key>
+	<string>$(T3CODE_URL_SCHEME)</string>
 </dict>
 </plist>
