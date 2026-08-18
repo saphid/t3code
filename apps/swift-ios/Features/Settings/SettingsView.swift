@@ -181,7 +181,10 @@ public struct SettingsView: View {
                 settingsDivider
                 if let changelog = whatsNewChangelog {
                     NavigationLink {
-                        WhatsNewView(changelog: changelog, buildLabel: buildLabel)
+                        WhatsNewView(
+                            presentation: changelog.presentation(info: Bundle.main.infoDictionary),
+                            runningBuildLabel: buildLabel
+                        )
                     } label: {
                         SettingsNavigationRow(
                             title: "What's New",
