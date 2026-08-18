@@ -36,6 +36,8 @@
     </dict>
     <key>T3BuildChangelog</key>
     <string>$(T3_BUILD_CHANGELOG)</string>
+    <key>T3BuildChannel</key>
+    <string>$(T3_BUILD_CHANNEL)</string>
     <key>T3CodeURLScheme</key>
     <string>$(T3CODE_URL_SCHEME)</string>
     <key>T3ConnectClerkJWTTemplate</key>
