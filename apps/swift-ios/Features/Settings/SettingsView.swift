@@ -179,6 +179,18 @@ public struct SettingsView: View {
             VStack(spacing: 0) {
                 SettingsValueRow(title: "App", value: appDisplayName)
                 settingsDivider
+                if let changelog = whatsNewChangelog {
+                    NavigationLink {
+                        WhatsNewView(changelog: changelog, buildLabel: buildLabel)
+                    } label: {
+                        SettingsNavigationRow(
+                            title: "What's New",
+                            systemImage: "sparkles"
+                        )
+                    }
+                    .buttonStyle(.plain)
+                    settingsDivider
+                }
                 SettingsValueRow(title: "Platform", value: "Native SwiftUI")
                 settingsDivider
                 SettingsValueRow(title: "Version", value: appVersionLabel)
@@ -224,6 +236,14 @@ public struct SettingsView: View {
               commit.isEmpty == false,
               commit.hasPrefix("$(") == false else { return nil }
         return String(commit.prefix(8))
+    }
+
+    private var whatsNewChangelog: WhatsNewChangelog? {
+        WhatsNewChangelog.load(info: Bundle.main.infoDictionary)
+    }
+
+    private var buildLabel: String? {
+        WhatsNewChangelog.buildLabel(info: Bundle.main.infoDictionary)
     }
 
     private var canSave: Bool {
