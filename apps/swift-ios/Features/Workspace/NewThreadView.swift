@@ -149,8 +149,11 @@ public struct NewThreadView: View {
             case .project:
                 NewTaskProjectPicker(
                     groups: creationProjectGroups,
-                    environments: model.snapshot.environments,
                     recentGroupIDs: recentProjectGroupIDs,
+                    hostLabels: DailyUXProjectHostLabels(
+                        environments: model.snapshot.environments
+                    ),
+                    preferredEnvironmentID: selectedProject?.environmentID,
                     selectionID: selectedProjectGroup?.id,
                     onSelect: { group in
                         if selectProjectGroup(group) {
@@ -969,10 +972,13 @@ private enum NewTaskPicker: String, Identifiable {
 private struct NewTaskProjectPicker: View {
     @SwiftUI.Environment(\.dismiss) private var dismiss
     let groups: [DailyUXProjectGroup]
-    let environments: [FeatureEnvironment]
     let recentGroupIDs: [String]
+    let hostLabels: DailyUXProjectHostLabels
+    let preferredEnvironmentID: String?
     let selectionID: String?
     let onSelect: (DailyUXProjectGroup) -> Void
+
+    @State private var query = ""
 
     var body: some View {
         NavigationStack {
@@ -984,38 +990,17 @@ private struct NewTaskProjectPicker: View {
                         description: Text("Reconnect an environment or add a project to continue.")
                     )
                 } else {
-                    let sections = DailyUXProjectPickerSections(
-                        groups: groups,
-                        recentGroupIDs: recentGroupIDs
-                    )
-                    List {
-                        if sections.recents.isEmpty {
-                            ForEach(sections.others) { group in
-                                projectRow(group)
-                            }
-                        } else {
-                            Section("Recent") {
-                                ForEach(sections.recents) { group in
-                                    projectRow(group)
-                                }
-                            }
-
-                            if !sections.others.isEmpty {
-                                Section("Other projects") {
-                                    ForEach(sections.others) { group in
-                                        projectRow(group)
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    .listStyle(.plain)
-                    .scrollContentBackground(.hidden)
+                    projectList
                 }
             }
             .background(T3Colors.background)
             .navigationTitle("Project")
             .navigationBarTitleDisplayMode(.inline)
+            .searchable(
+                text: $query,
+                placement: .navigationBarDrawer(displayMode: .always),
+                prompt: "Filter projects"
+            )
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { dismiss() }
@@ -1026,27 +1011,61 @@ private struct NewTaskProjectPicker: View {
         .presentationBackground(T3Colors.background)
     }
 
+    private var projectList: some View {
+        let sections = DailyUXProjectPickerSections(
+            groups: groups,
+            recentGroupIDs: recentGroupIDs,
+            filter: query,
+            hostLabels: hostLabels
+        )
+        return List {
+            if sections.recents.isEmpty {
+                ForEach(sections.others) { group in
+                    projectRow(group)
+                }
+            } else {
+                Section("Recent") {
+                    ForEach(sections.recents) { group in
+                        projectRow(group)
+                    }
+                }
+
+                if !sections.others.isEmpty {
+                    Section("Other projects") {
+                        ForEach(sections.others) { group in
+                            projectRow(group)
+                        }
+                    }
+                }
+            }
+
+            if sections.isEmpty {
+                ContentUnavailableView.search(text: query)
+                    .listRowBackground(Color.clear)
+            }
+        }
+        .listStyle(.plain)
+        .scrollContentBackground(.hidden)
+    }
+
     private func projectRow(_ group: DailyUXProjectGroup) -> some View {
-        Button {
+        let hostLabel = hostLabels.label(
+            for: group,
+            preferredEnvironmentID: preferredEnvironmentID
+        )
+        return Button {
             onSelect(group)
         } label: {
-            HStack(alignment: .top, spacing: 12) {
-                VStack(alignment: .leading, spacing: 3) {
+            HStack(spacing: 12) {
+                VStack(alignment: .leading, spacing: 2) {
                     Text(group.name)
                         .foregroundStyle(T3Colors.textPrimary)
 
-                    ForEach(group.projects.prefix(2)) { project in
-                        Text(projectLocation(project))
+                    if let hostLabel {
+                        Label(hostLabel, systemImage: "server.rack")
                             .font(T3Typography.supporting)
-                            .foregroundStyle(T3Colors.textTertiary)
-                            .lineLimit(1)
-                            .truncationMode(.middle)
-                    }
-
-                    if group.projects.count > 2 {
-                        Text("+\(group.projects.count - 2) more locations")
-                            .font(T3Typography.supporting)
-                            .foregroundStyle(T3Colors.textTertiary)
+                            .foregroundStyle(T3Colors.textSecondary)
+                            .accessibilityLabel("Opens on \(hostLabel)")
                     }
                 }
 
@@ -1066,12 +1085,6 @@ private struct NewTaskProjectPicker: View {
             group.id == selectionID ? .isSelected : []
         )
         .listRowBackground(T3Colors.background)
-    }
-
-    private func projectLocation(_ project: FeatureProject) -> String {
-        let environment = environments.first { $0.id == project.environmentID }?.name
-            ?? project.environmentID
-        return "\(environment) · \(project.path)"
     }
 }
 
