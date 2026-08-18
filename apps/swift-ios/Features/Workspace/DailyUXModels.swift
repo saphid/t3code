@@ -272,21 +272,81 @@ struct DailyUXRecentProject: Equatable {
     let project: FeatureProject
 }
 
+/// A logical project group can exist on more than one environment, so the
+/// picker names the host each row would actually open on instead of leaving the
+/// destination implicit. The label leads with the environment the composer is
+/// already using when the group exists there — the same choice
+/// `preferredProject(environmentID:)` makes on selection — and counts the
+/// remaining hosts so a shared repository still reads as shared.
+struct DailyUXProjectHostLabels: Equatable {
+    private let namesByEnvironmentID: [String: String]
+
+    init(environments: [FeatureEnvironment]) {
+        namesByEnvironmentID = environments.reduce(into: [String: String]()) { names, environment in
+            guard let name = DailyUXProjectHostLabels.displayName(environment) else { return }
+            names[environment.id] = names[environment.id] ?? name
+        }
+    }
+
+    /// Every host the group has a project on, in the group's own project order.
+    func hostNames(for group: DailyUXProjectGroup) -> [String] {
+        var seenNames = Set<String>()
+        return group.projects
+            .compactMap { namesByEnvironmentID[$0.environmentID] }
+            .filter { seenNames.insert($0).inserted }
+    }
+
+    func label(
+        for group: DailyUXProjectGroup,
+        preferredEnvironmentID: String?
+    ) -> String? {
+        let names = hostNames(for: group)
+        let opensOn = group.preferredProject(environmentID: preferredEnvironmentID)
+            .flatMap { namesByEnvironmentID[$0.environmentID] }
+        guard let host = opensOn ?? names.first else { return nil }
+        let elsewhere = names.filter { $0 != host }.count
+        return elsewhere > 0 ? "\(host) +\(elsewhere)" : host
+    }
+
+    /// An environment saved without a name still routes somewhere, so fall back
+    /// to the endpoint's host rather than showing an unlabelled row.
+    private static func displayName(_ environment: FeatureEnvironment) -> String? {
+        let name = environment.name.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !name.isEmpty { return name }
+        guard let host = URLComponents(string: environment.endpoint)?.host,
+              !host.isEmpty else {
+            return nil
+        }
+        return host
+    }
+}
+
 /// The project picker leads with the projects the account actually worked in
 /// most recently and keeps every remaining project below in the usual
 /// alphabetical order. A group appears in exactly one section so the list never
 /// repeats itself on the small project counts this picker normally shows.
+/// Filtering narrows the groups before they are partitioned, so a filtered list
+/// keeps the same recent-first shape and an empty filter changes nothing.
 struct DailyUXProjectPickerSections: Equatable {
     static let recentLimit = 3
 
     let recents: [DailyUXProjectGroup]
     let others: [DailyUXProjectGroup]
 
+    var isEmpty: Bool { recents.isEmpty && others.isEmpty }
+
     init(
         groups: [DailyUXProjectGroup],
         recentGroupIDs: [String],
+        filter: String = "",
+        hostLabels: DailyUXProjectHostLabels = DailyUXProjectHostLabels(environments: []),
         limit: Int = DailyUXProjectPickerSections.recentLimit
     ) {
+        let groups = DailyUXProjectPickerSections.matching(
+            groups,
+            filter: filter,
+            hostLabels: hostLabels
+        )
         let groupsByID = groups.reduce(into: [String: DailyUXProjectGroup]()) {
             $0[$1.id] = $0[$1.id] ?? $1
         }
@@ -302,6 +362,23 @@ struct DailyUXProjectPickerSections: Equatable {
 
         recents = ranked
         others = groups.filter { !seenGroupIDs.contains($0.id) }
+    }
+
+    /// Matching follows the model picker's convention: one trimmed query,
+    /// case-insensitive, against every string a person could reasonably be
+    /// typing — the group name, the physical project names behind it, and the
+    /// hosts it opens on.
+    private static func matching(
+        _ groups: [DailyUXProjectGroup],
+        filter: String,
+        hostLabels: DailyUXProjectHostLabels
+    ) -> [DailyUXProjectGroup] {
+        let query = filter.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else { return groups }
+        return groups.filter { group in
+            ([group.name] + group.projects.map(\.name) + hostLabels.hostNames(for: group))
+                .contains { $0.localizedCaseInsensitiveContains(query) }
+        }
     }
 }
 

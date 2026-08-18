@@ -147,6 +147,10 @@ public struct NewThreadView: View {
                 NewTaskProjectPicker(
                     groups: creationProjectGroups,
                     recentGroupIDs: recentProjectGroupIDs,
+                    hostLabels: DailyUXProjectHostLabels(
+                        environments: model.snapshot.environments
+                    ),
+                    preferredEnvironmentID: selectedProject?.environmentID,
                     selectionID: selectedProjectGroup?.id,
                     onSelect: { group in
                         if selectProjectGroup(group) {
@@ -965,8 +969,12 @@ private struct NewTaskProjectPicker: View {
     @SwiftUI.Environment(\.dismiss) private var dismiss
     let groups: [DailyUXProjectGroup]
     let recentGroupIDs: [String]
+    let hostLabels: DailyUXProjectHostLabels
+    let preferredEnvironmentID: String?
     let selectionID: String?
     let onSelect: (DailyUXProjectGroup) -> Void
+
+    @State private var query = ""
 
     var body: some View {
         NavigationStack {
@@ -978,38 +986,17 @@ private struct NewTaskProjectPicker: View {
                         description: Text("Reconnect an environment or add a project to continue.")
                     )
                 } else {
-                    let sections = DailyUXProjectPickerSections(
-                        groups: groups,
-                        recentGroupIDs: recentGroupIDs
-                    )
-                    List {
-                        if sections.recents.isEmpty {
-                            ForEach(sections.others) { group in
-                                projectRow(group)
-                            }
-                        } else {
-                            Section("Recent") {
-                                ForEach(sections.recents) { group in
-                                    projectRow(group)
-                                }
-                            }
-
-                            if !sections.others.isEmpty {
-                                Section("Other projects") {
-                                    ForEach(sections.others) { group in
-                                        projectRow(group)
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    .listStyle(.plain)
-                    .scrollContentBackground(.hidden)
+                    projectList
                 }
             }
             .background(T3Colors.background)
             .navigationTitle("Project")
             .navigationBarTitleDisplayMode(.inline)
+            .searchable(
+                text: $query,
+                placement: .navigationBarDrawer(displayMode: .always),
+                prompt: "Filter projects"
+            )
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { dismiss() }
@@ -1020,13 +1007,63 @@ private struct NewTaskProjectPicker: View {
         .presentationBackground(T3Colors.background)
     }
 
+    private var projectList: some View {
+        let sections = DailyUXProjectPickerSections(
+            groups: groups,
+            recentGroupIDs: recentGroupIDs,
+            filter: query,
+            hostLabels: hostLabels
+        )
+        return List {
+            if sections.recents.isEmpty {
+                ForEach(sections.others) { group in
+                    projectRow(group)
+                }
+            } else {
+                Section("Recent") {
+                    ForEach(sections.recents) { group in
+                        projectRow(group)
+                    }
+                }
+
+                if !sections.others.isEmpty {
+                    Section("Other projects") {
+                        ForEach(sections.others) { group in
+                            projectRow(group)
+                        }
+                    }
+                }
+            }
+
+            if sections.isEmpty {
+                ContentUnavailableView.search(text: query)
+                    .listRowBackground(Color.clear)
+            }
+        }
+        .listStyle(.plain)
+        .scrollContentBackground(.hidden)
+    }
+
     private func projectRow(_ group: DailyUXProjectGroup) -> some View {
-        Button {
+        let hostLabel = hostLabels.label(
+            for: group,
+            preferredEnvironmentID: preferredEnvironmentID
+        )
+        return Button {
             onSelect(group)
         } label: {
             HStack(spacing: 12) {
-                Text(group.name)
-                    .foregroundStyle(T3Colors.textPrimary)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(group.name)
+                        .foregroundStyle(T3Colors.textPrimary)
+
+                    if let hostLabel {
+                        Label(hostLabel, systemImage: "server.rack")
+                            .font(T3Typography.supporting)
+                            .foregroundStyle(T3Colors.textSecondary)
+                            .accessibilityLabel("Opens on \(hostLabel)")
+                    }
+                }
 
                 Spacer(minLength: 10)
 
