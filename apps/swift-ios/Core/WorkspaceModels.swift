@@ -514,6 +514,15 @@ public struct ReviewDiffFileContents: Codable, Equatable, Sendable {
     public let newContents: String
 }
 
+/// Diff between two turn checkpoints. Unlike the working-tree preview this stays
+/// accurate after the agent commits, because checkpoints snapshot the whole tree.
+public struct ThreadTurnDiff: Codable, Equatable, Sendable {
+    public let threadId: String
+    public let fromTurnCount: Int
+    public let toTurnCount: Int
+    public let diff: String
+}
+
 // MARK: - Terminal
 
 public enum TerminalSessionStatus: String, Codable, Sendable {

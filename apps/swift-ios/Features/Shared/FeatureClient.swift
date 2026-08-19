@@ -160,6 +160,9 @@ public protocol FeatureClient: AnyObject {
     ) async throws -> [FeatureFileEntry]
     func readFile(threadID: String, path: String) async throws -> FeatureFileContent
     func loadReview(threadID: String) async throws -> FeatureReview
+    /// `scope: nil` lets the client pick — the latest turn when it has changes,
+    /// otherwise the working tree. A non-nil scope pins the answer to that scope.
+    func loadReview(threadID: String, scope: FeatureReviewScope?) async throws -> FeatureReview
     func loadReviewFileContents(
         threadID: String,
         file: FeatureReviewFile
@@ -443,6 +446,11 @@ public extension FeatureClient {
 
     func loadReview(threadID: String) async throws -> FeatureReview {
         throw FeatureCapabilityUnavailable("Review")
+    }
+
+    /// Clients without checkpoint access only ever serve the working tree.
+    func loadReview(threadID: String, scope _: FeatureReviewScope?) async throws -> FeatureReview {
+        try await loadReview(threadID: threadID)
     }
 
     func sourceControlStatus(threadID: String) async throws -> FeatureSourceControlStatus {

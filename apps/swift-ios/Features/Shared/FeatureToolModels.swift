@@ -769,19 +769,44 @@ enum FeatureFullDiffHydrator {
     }
 }
 
+/// What a review is showing. The working tree goes blind the moment an agent
+/// commits, so the latest turn is the scope that survives an agent's own commits.
+public enum FeatureReviewScope: String, Sendable, Codable, CaseIterable {
+    case latestTurn
+    case workingTree
+
+    public var label: String {
+        switch self {
+        case .latestTurn: "Latest turn"
+        case .workingTree: "Working tree"
+        }
+    }
+}
+
 public struct FeatureReview: Sendable, Equatable, Codable {
     public var title: String
+    /// Plain-language statement of exactly what is being reviewed.
+    public var detail: String?
+    public var scope: FeatureReviewScope
+    /// Scopes the thread can actually serve, in display order.
+    public var availableScopes: [FeatureReviewScope]
     public var baseReference: String?
     public var files: [FeatureReviewFile]
     public var isTruncated: Bool
 
     public init(
         title: String = "Working tree",
+        detail: String? = nil,
+        scope: FeatureReviewScope = .workingTree,
+        availableScopes: [FeatureReviewScope] = [.workingTree],
         baseReference: String? = nil,
         files: [FeatureReviewFile] = [],
         isTruncated: Bool = false
     ) {
         self.title = title
+        self.detail = detail
+        self.scope = scope
+        self.availableScopes = availableScopes
         self.baseReference = baseReference
         self.files = files
         self.isTruncated = isTruncated

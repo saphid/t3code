@@ -125,10 +125,31 @@ final class WorkspaceContractTests: XCTestCase {
         XCTAssertFalse(file.truncated)
     }
 
+    func testTurnDiffResultDecodesServerShape() throws {
+        let data = Data(
+            """
+            {
+              "threadId": "thread-1",
+              "fromTurnCount": 6,
+              "toTurnCount": 7,
+              "diff": "diff --git a/App.swift b/App.swift\\n"
+            }
+            """.utf8
+        )
+
+        let turnDiff = try JSONDecoder.t3.decode(ThreadTurnDiff.self, from: data)
+
+        XCTAssertEqual(turnDiff.threadId, "thread-1")
+        XCTAssertEqual(turnDiff.fromTurnCount, 6)
+        XCTAssertEqual(turnDiff.toTurnCount, 7)
+        XCTAssertTrue(turnDiff.diff.hasPrefix("diff --git "))
+    }
+
     func testWorkspaceRPCMethodNamesMatchContractConstants() {
         XCTAssertEqual(RPCMethod.projectsListEntries.rawValue, "projects.listEntries")
         XCTAssertEqual(RPCMethod.vcsRefreshStatus.rawValue, "vcs.refreshStatus")
         XCTAssertEqual(RPCMethod.reviewDiffPreview.rawValue, "review.getDiffPreview")
+        XCTAssertEqual(RPCMethod.orchestrationTurnDiff.rawValue, "orchestration.getTurnDiff")
         XCTAssertEqual(
             RPCMethod.getArchivedShellSnapshot.rawValue,
             "orchestration.getArchivedShellSnapshot"

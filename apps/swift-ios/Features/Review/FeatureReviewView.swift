@@ -9,6 +9,9 @@ public struct FeatureReviewView: View {
     @State private var review: FeatureReview?
     @State private var isLoading = true
     @State private var errorMessage: String?
+    /// `nil` keeps the client's own choice (latest turn when it has changes).
+    /// A value here means the reader pinned a scope from the picker.
+    @State private var pinnedScope: FeatureReviewScope?
 
     public init(client: any FeatureClient, threadID: String) {
         self.client = client
@@ -53,10 +56,28 @@ public struct FeatureReviewView: View {
     private func reviewList(_ review: FeatureReview) -> some View {
         List {
             Section {
+                if review.availableScopes.count > 1 {
+                    Picker("Reviewing", selection: scopeBinding(review)) {
+                        ForEach(review.availableScopes, id: \.self) { scope in
+                            Text(scope.label).tag(scope)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                    .listRowBackground(Color.clear)
+                    .listRowInsets(EdgeInsets(top: 4, leading: 0, bottom: 4, trailing: 0))
+                    .disabled(isLoading)
+                }
+
                 HStack {
                     VStack(alignment: .leading, spacing: 3) {
                         Text(review.title)
                             .font(T3Typography.navigationTitle)
+                        if let detail = review.detail {
+                            Text(detail)
+                                .font(T3Typography.supporting)
+                                .foregroundStyle(T3Colors.textSecondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
                         if let base = review.baseReference {
                             Text(base)
                                 .font(T3Typography.tool)
@@ -80,7 +101,7 @@ public struct FeatureReviewView: View {
                     ContentUnavailableView(
                         "No changes",
                         systemImage: "checkmark.circle",
-                        description: Text("The working tree is clean.")
+                        description: Text(emptyDescription(review.scope))
                     )
                     .listRowBackground(Color.clear)
                 }
@@ -98,11 +119,29 @@ public struct FeatureReviewView: View {
         .refreshable { await load() }
     }
 
+    private func scopeBinding(_ review: FeatureReview) -> Binding<FeatureReviewScope> {
+        Binding(
+            get: { pinnedScope ?? review.scope },
+            set: { scope in
+                guard scope != (pinnedScope ?? review.scope) else { return }
+                pinnedScope = scope
+                Task { await load() }
+            }
+        )
+    }
+
+    private func emptyDescription(_ scope: FeatureReviewScope) -> String {
+        switch scope {
+        case .latestTurn: "The agent's latest turn changed no files."
+        case .workingTree: "The working tree is clean."
+        }
+    }
+
     private func load() async {
         isLoading = true
         defer { isLoading = false }
         do {
-            review = try await client.loadReview(threadID: threadID)
+            review = try await client.loadReview(threadID: threadID, scope: pinnedScope)
             errorMessage = nil
         } catch {
             errorMessage = error.localizedDescription
