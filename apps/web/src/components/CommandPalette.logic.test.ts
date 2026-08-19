@@ -365,6 +365,33 @@ describe("buildThreadActionItems", () => {
     expect(item?.description).toBe("T3 Code · #feat/search");
   });
 
+  it("keeps a ranked natural-language content match without a literal phrase match", () => {
+    const [item] = buildThreadActionItems({
+      threads: [makeThread({ title: "Programmatic access" })],
+      projectTitleById: new Map([[PROJECT_ID, "Onboarding"]]),
+      sortOrder: "updated_at",
+      icon: null,
+      getContentMatch: () => ({
+        source: "assistant",
+        snippet: "GitHub organization membership is ready with repository access.",
+        query: "show me where i got access to github",
+        score: 2,
+        matchedTerms: ["access", "github"],
+      }),
+      runThread: async (_thread) => undefined,
+    });
+
+    const groups = filterCommandPaletteGroups({
+      activeGroups: [],
+      query: "show me where i got access to github",
+      isInSubmenu: false,
+      projectSearchItems: [],
+      threadSearchItems: item ? [item] : [],
+    });
+
+    expect(groups[0]?.items.map((result) => result.value)).toEqual([item?.value]);
+  });
+
   it("prefers renderDescription when provided", () => {
     const [item] = buildThreadActionItems({
       threads: [makeThread({ branch: "feat/search", worktreePath: "/tmp/wt" })],
