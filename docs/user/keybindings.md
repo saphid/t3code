@@ -60,9 +60,11 @@ already pinned. Its default shortcut is `mod+shift+p`, and it does not run while
 focus. See [Organizing threads](./thread-sidebar.md) for how pinned threads are ordered.
 
 The command palette searches active thread titles, projects, branches, user messages, and final
-agent responses across connected environments. Message matches show one labeled excerpt while
-keeping the thread's project, branch, and machine context visible. Message search begins after two
-characters and uses SQLite's ASCII case-insensitive matching.
+agent responses across connected environments. You can enter either literal text or a description
+such as “show me where I got GitHub access”; conversational filler is removed and results are ranked
+by meaningful term coverage. Message matches show one labeled excerpt with the matching terms
+highlighted while keeping the thread's project, branch, and machine context visible. Message search
+begins after two characters and uses SQLite's ASCII case-insensitive matching.
 
 The full command list and the current defaults are shown in **Settings** → **Keybindings**, which
 always matches the build you are running. Use that rather than a copied list.
