@@ -1903,6 +1903,16 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
             0,
             '2026-05-01T00:00:16.000Z',
             '2026-05-01T00:00:16.000Z'
+          ),
+          (
+            'message-github-access',
+            'thread-active',
+            NULL,
+            'user',
+            'GitHub organization membership is ready with repository access.',
+            0,
+            '2026-05-01T00:00:17.000Z',
+            '2026-05-01T00:00:17.000Z'
           )
       `;
 
@@ -1943,6 +1953,12 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
 
       const assistant = yield* snapshotQuery.searchThreads({ query: "FINAL NEEDLE" });
       assert.equal(assistant.matches[0]?.source, "assistant");
+
+      const naturalLanguage = yield* snapshotQuery.searchThreads({
+        query: "show me the thread where I got access to GitHub",
+      });
+      assert.deepStrictEqual(naturalLanguage.matches[0]?.matchedTerms, ["access", "github"]);
+      assert.match(naturalLanguage.matches[0]?.snippet ?? "", /GitHub.*access/i);
 
       const deduped = yield* snapshotQuery.searchThreads({ query: "needle" });
       assert.deepStrictEqual(
