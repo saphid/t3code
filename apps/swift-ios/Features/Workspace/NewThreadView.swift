@@ -979,6 +979,9 @@ private struct NewTaskProjectPicker: View {
     let onSelect: (DailyUXProjectGroup) -> Void
 
     @State private var query = ""
+    /// Selector state lives with the sheet: reopening the picker starts from
+    /// every environment again rather than resurrecting a stale narrowing.
+    @State private var environmentID: String?
 
     var body: some View {
         NavigationStack {
@@ -990,7 +993,13 @@ private struct NewTaskProjectPicker: View {
                         description: Text("Reconnect an environment or add a project to continue.")
                     )
                 } else {
-                    projectList
+                    VStack(spacing: 0) {
+                        if environmentOptions.count > 1 {
+                            environmentSelector
+                        }
+
+                        projectList
+                    }
                 }
             }
             .background(T3Colors.background)
@@ -1011,12 +1020,50 @@ private struct NewTaskProjectPicker: View {
         .presentationBackground(T3Colors.background)
     }
 
+    private var environmentOptions: [DailyUXProjectHostOption] {
+        hostLabels.environmentOptions(in: groups)
+    }
+
+    private var selectedEnvironmentName: String {
+        environmentID.flatMap(hostLabels.name(forEnvironmentID:)) ?? "All environments"
+    }
+
+    private var environmentSelector: some View {
+        Menu {
+            Picker("Environment", selection: $environmentID) {
+                Text("All environments").tag(String?.none)
+                ForEach(environmentOptions) { option in
+                    Text(option.name).tag(String?.some(option.id))
+                }
+            }
+        } label: {
+            HStack(spacing: 8) {
+                Image(systemName: "server.rack")
+                    .font(.system(size: 13, weight: .semibold))
+                Text(selectedEnvironmentName)
+                    .font(T3Typography.control)
+                Spacer(minLength: 8)
+                Image(systemName: "chevron.up.chevron.down")
+                    .font(.system(size: 11, weight: .semibold))
+            }
+            .foregroundStyle(T3Colors.textPrimary)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 10)
+            .frame(maxWidth: .infinity)
+            .contentShape(Rectangle())
+        }
+        .accessibilityLabel("Environment, \(selectedEnvironmentName)")
+        .padding(.horizontal, 16)
+        .padding(.vertical, 8)
+        .background(T3Colors.background)
+    }
+
     private var projectList: some View {
         let sections = DailyUXProjectPickerSections(
             groups: groups,
             recentGroupIDs: recentGroupIDs,
             filter: query,
-            hostLabels: hostLabels
+            environmentID: environmentID
         )
         return List {
             if sections.recents.isEmpty {
@@ -1049,9 +1096,12 @@ private struct NewTaskProjectPicker: View {
     }
 
     private func projectRow(_ group: DailyUXProjectGroup) -> some View {
+        // A narrowed list is showing the group *because* of the selected host,
+        // so the row leads with that one rather than the composer's current
+        // environment.
         let hostLabel = hostLabels.label(
             for: group,
-            preferredEnvironmentID: preferredEnvironmentID
+            preferredEnvironmentID: environmentID ?? preferredEnvironmentID
         )
         return Button {
             onSelect(group)

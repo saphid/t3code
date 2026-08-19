@@ -992,7 +992,7 @@ struct DailyUXNewTaskTests {
     }
 
     @Test
-    func projectPickerFilterNarrowsByProjectNameAndByHost() {
+    func projectPickerFilterNarrowsByProjectNameAndNeverByHost() {
         let studio = rankedEnvironment("studio", name: "Studio")
         let nightly = rankedEnvironment("nightly", name: "Nightly")
         let alpha = rankedProject("alpha", name: "Alpha", environmentID: studio.id)
@@ -1004,33 +1004,131 @@ struct DailyUXNewTaskTests {
             threads: []
         )
         let groups = DailyUXCreationContext.projectGroups(in: value)
-        let hostLabels = DailyUXProjectHostLabels(environments: value.environments)
 
         func names(filter: String) -> [String] {
-            let sections = DailyUXProjectPickerSections(
+            DailyUXProjectPickerSections(
                 groups: groups,
                 recentGroupIDs: [],
-                filter: filter,
-                hostLabels: hostLabels
-            )
-            return sections.others.map(\.name)
+                filter: filter
+            ).others.map(\.name)
         }
 
         #expect(names(filter: "") == ["Alpha", "Beta", "Gamma"])
         #expect(names(filter: "  ") == ["Alpha", "Beta", "Gamma"])
         #expect(names(filter: "be") == ["Beta"])
         #expect(names(filter: "BETA") == ["Beta"])
-        #expect(names(filter: "nightly") == ["Beta"])
-        #expect(names(filter: " studio ") == ["Alpha", "Gamma"])
         #expect(names(filter: "zzz") == [])
+
+        // The negative case the environment selector replaced: a host name typed
+        // into the text field must not select that host's projects.
+        #expect(names(filter: "nightly") == [])
+        #expect(names(filter: "Studio") == [])
         #expect(
             DailyUXProjectPickerSections(
                 groups: groups,
                 recentGroupIDs: [],
-                filter: "zzz",
-                hostLabels: hostLabels
+                filter: "nightly"
             ).isEmpty
         )
+    }
+
+    @Test
+    func projectPickerEnvironmentSelectorNarrowsToOneHostAndKeepsSections() {
+        let studio = rankedEnvironment("studio", name: "Studio")
+        let nightly = rankedEnvironment("nightly", name: "Nightly")
+        let alpha = rankedProject("alpha", name: "Alpha", environmentID: studio.id)
+        let beta = rankedProject("beta", name: "Beta", environmentID: nightly.id)
+        let gamma = rankedProject("gamma", name: "Gamma", environmentID: nightly.id)
+        let value = rankedSnapshot(
+            environments: [studio, nightly],
+            projects: [gamma, alpha, beta],
+            threads: [
+                rankedThread("gamma-thread", projectID: gamma.id, activity: 30),
+                rankedThread("alpha-thread", projectID: alpha.id, activity: 20),
+            ]
+        )
+        let groups = DailyUXCreationContext.projectGroups(in: value)
+        let recentGroupIDs = DailyUXCreationContext.recentProjects(in: value).map(\.group.id)
+
+        func sections(environmentID: String?) -> DailyUXProjectPickerSections {
+            DailyUXProjectPickerSections(
+                groups: groups,
+                recentGroupIDs: recentGroupIDs,
+                environmentID: environmentID
+            )
+        }
+
+        let all = sections(environmentID: nil)
+        #expect(all.recents.map(\.name) == ["Gamma", "Alpha"])
+        #expect(all.others.map(\.name) == ["Beta"])
+
+        let onNightly = sections(environmentID: nightly.id)
+        #expect(onNightly.recents.map(\.name) == ["Gamma"])
+        #expect(onNightly.others.map(\.name) == ["Beta"])
+
+        let onStudio = sections(environmentID: studio.id)
+        #expect(onStudio.recents.map(\.name) == ["Alpha"])
+        #expect(onStudio.others.isEmpty)
+
+        // A neutral selection is the same list as before the selector existed.
+        #expect(
+            all == DailyUXProjectPickerSections(groups: groups, recentGroupIDs: recentGroupIDs)
+        )
+        #expect(sections(environmentID: "gone").isEmpty)
+    }
+
+    @Test
+    func projectPickerEnvironmentSelectorComposesWithTheTextFilter() {
+        let studio = rankedEnvironment("studio", name: "Studio")
+        let nightly = rankedEnvironment("nightly", name: "Nightly")
+        let studioAtlas = rankedProject("studio-atlas", name: "Atlas", environmentID: studio.id)
+        let nightlyAtlas = rankedProject("nightly-atlas", name: "Atlas", environmentID: nightly.id)
+        let nightlyBeta = rankedProject("nightly-beta", name: "Beta", environmentID: nightly.id)
+        let value = rankedSnapshot(
+            environments: [studio, nightly],
+            projects: [studioAtlas, nightlyAtlas, nightlyBeta],
+            threads: []
+        )
+        let groups = DailyUXCreationContext.projectGroups(in: value)
+
+        func names(filter: String, environmentID: String?) -> [String] {
+            DailyUXProjectPickerSections(
+                groups: groups,
+                recentGroupIDs: [],
+                filter: filter,
+                environmentID: environmentID
+            ).others.map(\.name)
+        }
+
+        #expect(names(filter: "", environmentID: nil) == ["Atlas", "Atlas", "Beta"])
+        #expect(names(filter: "atlas", environmentID: nil) == ["Atlas", "Atlas"])
+        #expect(names(filter: "", environmentID: nightly.id) == ["Atlas", "Beta"])
+        #expect(names(filter: "atlas", environmentID: nightly.id) == ["Atlas"])
+        #expect(names(filter: "beta", environmentID: studio.id) == [])
+    }
+
+    @Test
+    func projectPickerEnvironmentSelectorListsOnlyHostsThatOwnVisibleProjects() {
+        let studio = rankedEnvironment("studio", name: "Studio")
+        let nightly = rankedEnvironment("nightly", name: "Nightly")
+        let idle = rankedEnvironment("idle", name: "Idle Box")
+        let alpha = rankedProject("alpha", name: "Alpha", environmentID: nightly.id)
+        let beta = rankedProject("beta", name: "Beta", environmentID: studio.id)
+        let value = rankedSnapshot(
+            environments: [studio, nightly, idle],
+            projects: [alpha, beta],
+            threads: []
+        )
+        let groups = DailyUXCreationContext.projectGroups(in: value)
+        let hostLabels = DailyUXProjectHostLabels(environments: value.environments)
+
+        let options = hostLabels.environmentOptions(in: groups)
+
+        #expect(options.map(\.name) == ["Nightly", "Studio"])
+        #expect(options.map(\.id) == [nightly.id, studio.id])
+        #expect(hostLabels.environmentOptions(in: []).isEmpty)
+        #expect(hostLabels.name(forEnvironmentID: studio.id) == "Studio")
+        #expect(hostLabels.name(forEnvironmentID: "gone") == nil)
     }
 
     @Test
