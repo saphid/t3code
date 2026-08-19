@@ -182,6 +182,83 @@ struct WhatsNewChangelogTests {
     }
 
     @Test
+    func picksTheDarkVariantOnlyInDarkModeAndOnlyWhenRecorded() {
+        let json = """
+            {"builds":[{"build":"90","entries":[{"title":"Appearance","images":[
+              {"name":"shot.png","darkName":"  shot-dark.png  ","caption":"Both variants."},
+              {"name":"single.png"},
+              {"name":"blank-dark.png","darkName":"   "}
+            ]}]}]}
+            """
+
+        let images = WhatsNewChangelog.decode(embedded(json))?
+            .builds.first?.entries.first?.images
+
+        #expect(images?.count == 3)
+        // Recorded dark variant, whitespace trimmed.
+        #expect(images?.first?.darkName == "shot-dark.png")
+        #expect(images?.first?.name(inDarkMode: true) == "shot-dark.png")
+        #expect(images?.first?.name(inDarkMode: false) == "shot.png")
+        // No dark variant recorded: the one screenshot serves both appearances.
+        #expect(images?[1].darkName == nil)
+        #expect(images?[1].name(inDarkMode: true) == "single.png")
+        #expect(images?[1].name(inDarkMode: false) == "single.png")
+        // A blank dark name counts as unrecorded rather than as a file name.
+        #expect(images?[2].darkName == nil)
+        #expect(images?[2].name(inDarkMode: true) == "blank-dark.png")
+    }
+
+    @Test
+    func fallsBackToTheLightFileWhenTheDarkOneIsNamedButNotShipped() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("whats-new-appearance-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(
+            at: directory,
+            withIntermediateDirectories: true
+        )
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let light = try #require(UIImage(systemName: "sun.max")?.pngData())
+        let dark = try #require(UIImage(systemName: "moon.stars")?.pngData())
+        try light.write(to: directory.appendingPathComponent("shot.png"))
+        try dark.write(to: directory.appendingPathComponent("shot-dark.png"))
+        try light.write(to: directory.appendingPathComponent("single.png"))
+
+        let bothVariants = WhatsNewChangelog.Image(
+            name: "shot.png",
+            darkName: "shot-dark.png",
+            caption: nil
+        )
+        let lightOnly = WhatsNewChangelog.Image(name: "single.png", darkName: nil, caption: nil)
+        let darkMissing = WhatsNewChangelog.Image(
+            name: "single.png",
+            darkName: "single-dark.png",
+            caption: nil
+        )
+        let nothingShipped = WhatsNewChangelog.Image(
+            name: "absent.png",
+            darkName: "absent-dark.png",
+            caption: nil
+        )
+
+        let darkBytes = WhatsNewImageStore
+            .image(for: bothVariants, isDark: true, in: directory)?.pngData()
+        let lightBytes = WhatsNewImageStore
+            .image(for: bothVariants, isDark: false, in: directory)?.pngData()
+        #expect(darkBytes != nil)
+        #expect(lightBytes != nil)
+        #expect(darkBytes != lightBytes)
+
+        // One recorded screenshot serves both appearances.
+        #expect(WhatsNewImageStore.image(for: lightOnly, isDark: true, in: directory) != nil)
+        // A dark variant that was named but never shipped falls back to the light file.
+        #expect(WhatsNewImageStore.image(for: darkMissing, isDark: true, in: directory) != nil)
+        // Neither variant shipped: still no image, still no broken page.
+        #expect(WhatsNewImageStore.image(for: nothingShipped, isDark: true, in: directory) == nil)
+        #expect(WhatsNewImageStore.image(for: nothingShipped, isDark: false, in: directory) == nil)
+    }
+
+    @Test
     func capsTheNumberOfImagesAnEntryCanBuild() {
         let names = (1...10).map { #"{"name":"shot-\#($0).png"}"# }.joined(separator: ",")
         let json = #"{"builds":[{"build":"90","entries":[{"title":"Gallery","images":[\#(names)]}]}]}"#

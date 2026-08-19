@@ -52,4 +52,27 @@ enum WhatsNewImageStore {
     static func image(named name: String, in bundle: Bundle = .main) -> UIImage? {
         image(named: name, in: bundle.bundleURL)
     }
+
+    /// The variant matching the current appearance, falling back to the light
+    /// one whenever the dark variant is absent from the payload *or* missing
+    /// from the bundle — a build that shipped a single screenshot still shows
+    /// it in dark mode rather than showing nothing.
+    static func image(
+        for image: WhatsNewChangelog.Image,
+        isDark: Bool,
+        in directory: URL
+    ) -> UIImage? {
+        let resolved = image.name(inDarkMode: isDark)
+        if let loaded = self.image(named: resolved, in: directory) { return loaded }
+        guard resolved != image.name else { return nil }
+        return self.image(named: image.name, in: directory)
+    }
+
+    static func image(
+        for image: WhatsNewChangelog.Image,
+        isDark: Bool,
+        in bundle: Bundle = .main
+    ) -> UIImage? {
+        self.image(for: image, isDark: isDark, in: bundle.bundleURL)
+    }
 }

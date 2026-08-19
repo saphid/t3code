@@ -21,9 +21,19 @@ import UIKit
 /// point hides rather than showing a placeholder.
 struct WhatsNewChangelog: Equatable, Sendable {
     /// A screenshot a build shipped in its bundle, referenced by file name.
+    ///
+    /// A build may ship one file per appearance. `darkName` is optional, so an
+    /// entry that only ever recorded one screenshot keeps showing it in both
+    /// appearances rather than showing nothing in one of them.
     struct Image: Codable, Equatable, Sendable {
         let name: String
+        let darkName: String?
         let caption: String?
+
+        func name(inDarkMode isDark: Bool) -> String {
+            guard isDark, let darkName else { return name }
+            return darkName
+        }
     }
 
     struct Entry: Codable, Equatable, Sendable {
@@ -205,7 +215,11 @@ extension WhatsNewChangelog.Entry {
 extension WhatsNewChangelog.Image {
     var normalized: WhatsNewChangelog.Image? {
         guard let name = name.trimmedOrNil else { return nil }
-        return WhatsNewChangelog.Image(name: name, caption: caption?.trimmedOrNil)
+        return WhatsNewChangelog.Image(
+            name: name,
+            darkName: darkName?.trimmedOrNil,
+            caption: caption?.trimmedOrNil
+        )
     }
 }
 

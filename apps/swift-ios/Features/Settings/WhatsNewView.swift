@@ -171,6 +171,7 @@ struct WhatsNewDetailView: View {
         }
     }
 
+    @SwiftUI.Environment(\.colorScheme) private var colorScheme
     @State private var loadedImages: [LoadedImage] = []
 
     var body: some View {
@@ -244,15 +245,22 @@ struct WhatsNewDetailView: View {
         .background(T3Colors.background)
         .navigationTitle(entry.title)
         .navigationBarTitleDisplayMode(.inline)
-        .task { loadImages() }
+        // Keyed on the appearance so switching between light and dark reloads
+        // the screenshots that match it.
+        .task(id: colorScheme) { loadImages() }
     }
 
     /// Screenshots that cannot be resolved are simply skipped — a missing or
     /// malformed file leaves the page exactly as it would have been without it.
     private func loadImages() {
-        guard loadedImages.isEmpty, let images = entry.images else { return }
+        guard let images = entry.images else {
+            loadedImages = []
+            return
+        }
+        let isDark = colorScheme == .dark
         loadedImages = images.enumerated().compactMap { index, image in
-            guard let loaded = WhatsNewImageStore.image(named: image.name) else { return nil }
+            guard let loaded = WhatsNewImageStore.image(for: image, isDark: isDark)
+            else { return nil }
             return LoadedImage(id: index, image: loaded, caption: image.caption)
         }
     }
