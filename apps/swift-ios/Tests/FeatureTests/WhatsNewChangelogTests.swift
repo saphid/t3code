@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+import UIKit
 @testable import T3Code
 
 @Suite("What's New changelog")
@@ -154,6 +155,89 @@ struct WhatsNewChangelogTests {
         #expect(entry?.detail == nil)
         #expect(entry?.hasDetail == false)
         #expect(entry?.symbolName == "sparkles")
+    }
+
+    @Test
+    func readsOptionalImagesAndMakesImageOnlyEntriesOpenable() {
+        let json = """
+            {"builds":[{"version":"0.1.0","build":"90","entries":[
+              {"title":"With pictures","images":[
+                {"name":"  whatsnew-90-history.png  ","caption":"  The history screen.  "},
+                {"name":"whatsnew-90-detail.png"},
+                {"name":"   "}
+              ]},
+              {"title":"Pictures only","images":[{"name":"whatsnew-90-only.png"}]}
+            ]}]}
+            """
+
+        let entries = WhatsNewChangelog.decode(embedded(json))?.builds.first?.entries
+
+        #expect(entries?.first?.images?.count == 2)
+        #expect(entries?.first?.images?.first?.name == "whatsnew-90-history.png")
+        #expect(entries?.first?.images?.first?.caption == "The history screen.")
+        #expect(entries?.first?.images?.last?.caption == nil)
+        // An entry that ships only screenshots still has something to show.
+        #expect(entries?.last?.detail == nil)
+        #expect(entries?.last?.hasDetail == true)
+    }
+
+    @Test
+    func capsTheNumberOfImagesAnEntryCanBuild() {
+        let names = (1...10).map { #"{"name":"shot-\#($0).png"}"# }.joined(separator: ",")
+        let json = #"{"builds":[{"build":"90","entries":[{"title":"Gallery","images":[\#(names)]}]}]}"#
+
+        let entry = WhatsNewChangelog.decode(embedded(json))?.builds.first?.entries.first
+
+        #expect(entry?.images?.count == WhatsNewChangelog.Entry.maximumImages)
+        #expect(entry?.images?.first?.name == "shot-1.png")
+    }
+
+    @Test
+    func rendersPayloadsWithoutImagesExactlyAsBefore() {
+        let entry = WhatsNewChangelog.load(info: payload(history))?
+            .presentation(info: runningBundle)
+            .current?
+            .entries
+            .first
+
+        #expect(entry?.images == nil)
+        #expect(entry?.hasDetail == false)
+        #expect(entry?.title == "What's New history")
+        #expect(entry?.summary == "Every build's entries ride along.")
+    }
+
+    @Test
+    func resolvesOnlyUsableImageFilesFromTheBundleDirectory() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("whats-new-images-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(
+            at: directory,
+            withIntermediateDirectories: true
+        )
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let png = try #require(UIImage(systemName: "sparkles")?.pngData())
+        try png.write(to: directory.appendingPathComponent("good.png"))
+        try Data("not an image".utf8).write(to: directory.appendingPathComponent("bogus.png"))
+        try Data(count: WhatsNewImageStore.maximumImageBytes + 1)
+            .write(to: directory.appendingPathComponent("huge.png"))
+        try Data().write(to: directory.appendingPathComponent("empty.png"))
+
+        // Usable file resolves and decodes.
+        #expect(WhatsNewImageStore.imageURL(named: "good.png", in: directory) != nil)
+        #expect(WhatsNewImageStore.image(named: "good.png", in: directory) != nil)
+        // Everything a sloppy or hostile payload can name resolves to nothing.
+        #expect(WhatsNewImageStore.imageURL(named: "huge.png", in: directory) == nil)
+        #expect(WhatsNewImageStore.imageURL(named: "empty.png", in: directory) == nil)
+        #expect(WhatsNewImageStore.imageURL(named: "missing.png", in: directory) == nil)
+        #expect(WhatsNewImageStore.imageURL(named: "", in: directory) == nil)
+        #expect(WhatsNewImageStore.imageURL(named: "   ", in: directory) == nil)
+        #expect(WhatsNewImageStore.imageURL(named: "..", in: directory) == nil)
+        #expect(WhatsNewImageStore.imageURL(named: "../good.png", in: directory) == nil)
+        #expect(WhatsNewImageStore.imageURL(named: "nested/good.png", in: directory) == nil)
+        #expect(WhatsNewImageStore.imageURL(named: "good\u{0}.png", in: directory) == nil)
+        // A file that exists but is not an image renders as no image at all.
+        #expect(WhatsNewImageStore.image(named: "bogus.png", in: directory) == nil)
     }
 
     @Test

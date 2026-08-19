@@ -154,10 +154,24 @@ struct WhatsNewView: View {
     }
 }
 
-/// The long-form copy a publisher recorded for one entry.
+/// The long-form copy a publisher recorded for one entry, plus any screenshots
+/// that build shipped for it.
 struct WhatsNewDetailView: View {
     let entry: WhatsNewChangelog.Entry
     let buildLabel: String?
+
+    private struct LoadedImage: Identifiable {
+        let id: Int
+        let image: UIImage
+        let caption: String?
+
+        var aspectRatio: CGFloat {
+            guard image.size.width > 0, image.size.height > 0 else { return 1 }
+            return image.size.width / image.size.height
+        }
+    }
+
+    @State private var loadedImages: [LoadedImage] = []
 
     var body: some View {
         ScrollView {
@@ -183,15 +197,43 @@ struct WhatsNewDetailView: View {
                 }
                 .accessibilityElement(children: .combine)
 
-                if let detail = entry.detail {
+                if entry.detail != nil || !loadedImages.isEmpty {
                     Divider()
                         .overlay(T3Colors.separator)
+                }
 
+                if let detail = entry.detail {
                     Text(detail)
                         .font(T3Typography.threadBody)
                         .foregroundStyle(T3Colors.textPrimary)
                         .lineSpacing(3)
                         .fixedSize(horizontal: false, vertical: true)
+                }
+
+                ForEach(loadedImages) { loaded in
+                    VStack(alignment: .leading, spacing: 8) {
+                        Image(uiImage: loaded.image)
+                            .resizable()
+                            // Height follows the image's own ratio, so the
+                            // rounded border always hugs the screenshot no
+                            // matter what the scroll view proposes.
+                            .aspectRatio(loaded.aspectRatio, contentMode: .fit)
+                            .frame(maxWidth: .infinity)
+                            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                            .overlay {
+                                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                                    .strokeBorder(T3Colors.border)
+                            }
+                            .accessibilityLabel(loaded.caption ?? "Screenshot of \(entry.title)")
+
+                        if let caption = loaded.caption {
+                            Text(caption)
+                                .font(T3Typography.supporting)
+                                .foregroundStyle(T3Colors.textSecondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                    .padding(.top, 2)
                 }
             }
             .padding(.horizontal, 20)
@@ -202,6 +244,17 @@ struct WhatsNewDetailView: View {
         .background(T3Colors.background)
         .navigationTitle(entry.title)
         .navigationBarTitleDisplayMode(.inline)
+        .task { loadImages() }
+    }
+
+    /// Screenshots that cannot be resolved are simply skipped — a missing or
+    /// malformed file leaves the page exactly as it would have been without it.
+    private func loadImages() {
+        guard loadedImages.isEmpty, let images = entry.images else { return }
+        loadedImages = images.enumerated().compactMap { index, image in
+            guard let loaded = WhatsNewImageStore.image(named: image.name) else { return nil }
+            return LoadedImage(id: index, image: loaded, caption: image.caption)
+        }
     }
 }
 

@@ -20,6 +20,12 @@ import UIKit
 /// A build that injects nothing simply has no changelog, and the Settings entry
 /// point hides rather than showing a placeholder.
 struct WhatsNewChangelog: Equatable, Sendable {
+    /// A screenshot a build shipped in its bundle, referenced by file name.
+    struct Image: Codable, Equatable, Sendable {
+        let name: String
+        let caption: String?
+    }
+
     struct Entry: Codable, Equatable, Sendable {
         let title: String
         let summary: String?
@@ -30,8 +36,11 @@ struct WhatsNewChangelog: Equatable, Sendable {
         /// does not have it, so a typo degrades to the default rather than to
         /// an empty tile.
         let symbol: String?
+        /// Screenshots shipped in the app bundle for this entry, shown on the
+        /// detail page. Absent for entries that ship none.
+        let images: [Image]?
 
-        var hasDetail: Bool { detail != nil }
+        var hasDetail: Bool { detail != nil || !(images ?? []).isEmpty }
 
         var symbolName: String {
             guard let symbol, UIImage(systemName: symbol) != nil else { return "sparkles" }
@@ -178,12 +187,25 @@ extension WhatsNewChangelog.Entry {
     /// sloppy payload degrades to fewer rows instead of empty ones.
     var normalized: WhatsNewChangelog.Entry? {
         guard let title = title.trimmedOrNil else { return nil }
+        let images = (images ?? []).compactMap(\.normalized).prefix(Self.maximumImages)
         return WhatsNewChangelog.Entry(
             title: title,
             summary: summary?.trimmedOrNil,
             detail: detail?.trimmedOrNil,
-            symbol: symbol?.trimmedOrNil
+            symbol: symbol?.trimmedOrNil,
+            images: images.isEmpty ? nil : Array(images)
         )
+    }
+
+    /// A changelog entry is a release note, not a gallery; anything past this
+    /// is dropped so a runaway payload cannot build an unbounded screen.
+    static let maximumImages = 6
+}
+
+extension WhatsNewChangelog.Image {
+    var normalized: WhatsNewChangelog.Image? {
+        guard let name = name.trimmedOrNil else { return nil }
+        return WhatsNewChangelog.Image(name: name, caption: caption?.trimmedOrNil)
     }
 }
 
