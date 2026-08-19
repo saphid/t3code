@@ -183,7 +183,8 @@ public struct SettingsView: View {
                     NavigationLink {
                         WhatsNewView(
                             presentation: changelog.presentation(info: Bundle.main.infoDictionary),
-                            runningBuildLabel: buildLabel
+                            runningBuildLabel: buildLabel,
+                            appName: appDisplayName
                         )
                     } label: {
                         SettingsNavigationRow(
