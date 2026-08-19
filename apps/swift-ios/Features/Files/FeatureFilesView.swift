@@ -306,17 +306,42 @@ private struct FeatureFilePreviewView: View {
 }
 
 private struct FeatureSourceTextView: View {
+    @SwiftUI.Environment(\.dynamicTypeSize) private var dynamicTypeSize
+
     let lines: [FeatureSourceLine]
+
+    /// The gutter travels with the code rather than staying pinned to the leading edge. A
+    /// pinned gutter would spend a fixed slice of an already narrow phone viewport on line
+    /// numbers forever — the very crowding this surface is being fixed for — and it would need
+    /// a second, height-synchronised scroll view. Scrolling it away hands the whole width back
+    /// to the code once the reader commits to a long line, matches how the code and diff views
+    /// behave on phone-sized Git hosts, and keeps one continuous selection surface.
+    private static let gutterWidth: CGFloat = 44
+    private static let gutterSpacing: CGFloat = 10
+    private static let trailingInset: CGFloat = 14
+
+    @State private var widestLineWidth: CGFloat = 0
+
+    private struct MeasurementKey: Equatable {
+        let lineCount: Int
+        let dynamicTypeSize: DynamicTypeSize
+    }
 
     var body: some View {
         GeometryReader { proxy in
+            let contentWidth = FeatureCodeLayout.contentWidth(
+                widestLineWidth: widestLineWidth,
+                leadingInset: Self.gutterWidth + Self.gutterSpacing,
+                trailingInset: Self.trailingInset,
+                viewportWidth: proxy.size.width
+            )
             ScrollView([.horizontal, .vertical]) {
                 LazyVStack(alignment: .leading, spacing: 0) {
                     ForEach(lines) { line in
-                        HStack(alignment: .top, spacing: 10) {
+                        HStack(alignment: .top, spacing: Self.gutterSpacing) {
                             Text("\(line.number)")
                                 .foregroundStyle(.tertiary)
-                                .frame(width: 44, alignment: .trailing)
+                                .frame(width: Self.gutterWidth, alignment: .trailing)
                                 .accessibilityHidden(true)
                             FeatureHighlightedSourceLine(line: line)
                         }
@@ -324,20 +349,45 @@ private struct FeatureSourceTextView: View {
                         .t3CodeTextSize()
                         .fixedSize(horizontal: true, vertical: false)
                         .frame(
-                            minWidth: proxy.size.width,
+                            minWidth: contentWidth,
+                            maxWidth: contentWidth,
                             minHeight: 22,
                             alignment: .leading
                         )
                     }
                 }
-                .frame(minWidth: proxy.size.width, alignment: .leading)
+                .frame(width: contentWidth, alignment: .leading)
                 .padding(.vertical, 10)
-                .padding(.trailing, 14)
                 .textSelection(.enabled)
             }
         }
         .background(T3Colors.background)
         .accessibilityLabel("Source file")
+        .task(id: MeasurementKey(lineCount: lines.count, dynamicTypeSize: dynamicTypeSize)) {
+            widestLineWidth = FeatureCodeTextMetrics.widestLineWidth(
+                lines: lines,
+                dynamicTypeSize: dynamicTypeSize
+            )
+        }
+    }
+}
+
+/// Resolves the rendered width of the longest line so the code surface can be given a definite
+/// scrollable width. The font has to match `T3Typography.code`, which is why it is taken from
+/// the same descriptor the selectable markdown renderer uses for inline code.
+private enum FeatureCodeTextMetrics {
+    @MainActor
+    static func widestLineWidth(
+        lines: [FeatureSourceLine],
+        dynamicTypeSize: DynamicTypeSize
+    ) -> CGFloat {
+        let attributes: [NSAttributedString.Key: Any] = [
+            .font: MarkdownInlineStyle.code.uiFont(dynamicTypeSize: dynamicTypeSize),
+        ]
+        return FeatureCodeLayout.measurementCandidates(for: lines).reduce(into: 0) { widest, index in
+            let width = (lines[index].text as NSString).size(withAttributes: attributes).width
+            widest = max(widest, width.rounded(.up))
+        }
     }
 }
 
