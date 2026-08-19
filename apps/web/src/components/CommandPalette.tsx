@@ -136,6 +136,7 @@ import {
   getCommandPaletteInputPlaceholder,
   getCommandPaletteMode,
   ITEM_ICON_CLASS,
+  normalizeSearchText,
   RECENT_THREAD_LIMIT,
   reduceCommandPaletteUiState,
   type SearchOverlayMode,
@@ -1214,7 +1215,9 @@ function OpenCommandPaletteDialog(props: {
             ? {
                 source: match.source,
                 snippet: match.snippet,
-                query: threadSearchQuery,
+                query: normalizeSearchText(threadSearchQuery),
+                ...(match.score === undefined ? {} : { score: match.score }),
+                ...(match.matchedTerms === undefined ? {} : { matchedTerms: match.matchedTerms }),
               }
             : undefined;
         },
