@@ -21,7 +21,9 @@ public struct ThreadDetailView: View {
     @State private var didRestoreDraft = false
     @State private var draftSaveTask: Task<Void, Never>?
     @State private var toolSurface: FeatureThreadToolSurface?
-    @FocusState private var composerFocused: Bool
+    // Not `@FocusState`: the composer's text entry is UIKit-backed, so SwiftUI
+    // focus resolution cannot hold it. See `FeatureComposerTextInput`.
+    @State private var composerFocused = false
 
     public init(
         model: FeatureRootModel,

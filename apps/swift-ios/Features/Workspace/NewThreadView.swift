@@ -32,7 +32,8 @@ public struct NewThreadView: View {
     @State private var draftSaveTask: Task<Void, Never>?
     @State private var immediateDraftSaveTasks: [String: Task<Void, Never>] = [:]
     @State private var submittedSuccessfully = false
-    @FocusState private var promptFocused: Bool
+    // See `composerFocused` in ThreadDetailView: the composer is UIKit-backed.
+    @State private var promptFocused = false
 
     public init(
         model: FeatureRootModel,

@@ -1,9 +1,11 @@
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct FeatureComposerView: View {
     @State private var isManuallyExpanded = false
     @State private var isAttachmentFlowActive = false
     @State private var attachmentPreparation = FeatureAttachmentPreparationState()
+    @State private var pasteMessage: String?
     @State private var pathEntries: [FeatureComposerPathEntry] = []
     @State private var isPathSearchLoading = false
     @State private var pathSearchError: String?
@@ -16,7 +18,10 @@ struct FeatureComposerView: View {
     private let materializesDefaultSelection: Bool
     private let isSending: Bool
     private let isWorking: Bool
-    private let focused: FocusState<Bool>.Binding
+    /// The composer's text entry is a `UITextView`, which SwiftUI's focus system
+    /// cannot resolve, so callers pass ordinary editing state rather than
+    /// `@FocusState`. See `FeatureComposerTextInput`.
+    private let focused: Binding<Bool>
     private let contextUsage: Double?
     private let forceExpanded: Bool
     private let pendingApprovals: [FeatureApproval]
@@ -38,7 +43,7 @@ struct FeatureComposerView: View {
         materializesDefaultSelection: Bool = true,
         isSending: Bool,
         isWorking: Bool,
-        focused: FocusState<Bool>.Binding,
+        focused: Binding<Bool>,
         onSend: @escaping () -> Void,
         onStop: @escaping () -> Void,
         contextUsage: Double? = nil,
@@ -121,6 +126,17 @@ struct FeatureComposerView: View {
             .task(id: pathSearchRequest) {
                 await updatePathSearch()
             }
+            .alert(
+                "Couldn’t paste image",
+                isPresented: Binding(
+                    get: { pasteMessage != nil },
+                    set: { if !$0 { pasteMessage = nil } }
+                )
+            ) {
+                Button("OK") { pasteMessage = nil }
+            } message: {
+                Text(pasteMessage ?? "")
+            }
     }
 
     private var composerSurface: some View {
@@ -197,20 +213,30 @@ struct FeatureComposerView: View {
                     .padding(.horizontal, 13)
             }
 
-            TextField(
-                isWorking ? "Message to queue…" : "Ask anything…",
-                text: $text,
-                axis: .vertical
-            )
-                .font(T3Typography.composer)
-                .lineLimit(1...7)
-                .focused(focused)
-                // Return is always editing input. Sending is deliberately button-only.
-                .submitLabel(.return)
-                .padding(.horizontal, 16)
-                .padding(.top, 14)
-                .padding(.bottom, 7)
-                .frame(minHeight: 62, alignment: .top)
+            ZStack(alignment: .topLeading) {
+                // Return is always editing input. Sending is deliberately button-only,
+                // which a text view gives for free.
+                FeatureComposerTextInput(
+                    text: $text,
+                    isEditing: focused,
+                    placeholder: composerPlaceholder,
+                    acceptsImages: imagesAllowed,
+                    maximumLineCount: 7,
+                    onPasteImages: attachPastedImages
+                )
+
+                if text.isEmpty {
+                    Text(composerPlaceholder)
+                        .font(T3Typography.composer)
+                        .foregroundStyle(T3Colors.textTertiary)
+                        .allowsHitTesting(false)
+                        .accessibilityHidden(true)
+                }
+            }
+            .padding(.horizontal, 16)
+            .padding(.top, 14)
+            .padding(.bottom, 7)
+            .frame(minHeight: 62, alignment: .top)
 
             if !attachments.isEmpty, !imagesAllowed {
                 Label("Choose a model that accepts images", systemImage: "exclamationmark.circle")
@@ -232,6 +258,45 @@ struct FeatureComposerView: View {
             }
 
             composerFooter
+        }
+    }
+
+    private var composerPlaceholder: String {
+        isWorking ? "Message to queue…" : "Ask anything…"
+    }
+
+    /// Pasted images take the same route as the picker: materialize the
+    /// provider, run it through `FeatureImageProcessor`, append a draft
+    /// attachment. The preparation state is shared too, so the composer stays
+    /// expanded, reports "Preparing…", and blocks send until the bytes land.
+    private func attachPastedImages(_ providers: [NSItemProvider]) {
+        guard imagesAllowed else { return }
+        let plan = FeatureComposerPastePlan.make(
+            providerCount: providers.count,
+            attachedCount: attachments.count,
+            pendingCount: attachmentPreparation.pendingItemCount
+        )
+        pasteMessage = plan.message
+        guard plan.acceptedCount > 0 else { return }
+
+        let accepted = providers.prefix(plan.acceptedCount).map(FeatureImageProviderItem.init)
+        let firstOrdinal = attachments.count + attachmentPreparation.pendingItemCount + 1
+        let operation = attachmentPreparation.begin(itemCount: accepted.count)
+
+        Task { @MainActor in
+            defer { attachmentPreparation.finish(operation) }
+            for (offset, item) in accepted.enumerated() {
+                do {
+                    attachments.append(
+                        try await FeatureImageAttachmentLoader.attachment(
+                            from: item,
+                            ordinal: firstOrdinal + offset
+                        )
+                    )
+                } catch {
+                    pasteMessage = error.localizedDescription
+                }
+            }
         }
     }
 

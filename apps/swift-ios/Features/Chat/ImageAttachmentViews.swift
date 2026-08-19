@@ -35,6 +35,10 @@ struct FeatureAttachmentPreparationState: Equatable {
     }
 }
 
+enum FeatureImageAttachmentLimit {
+    static let maximumCount = 8
+}
+
 struct FeatureImageAttachmentPicker: View {
     private enum Source {
         case photoLibrary
@@ -50,7 +54,7 @@ struct FeatureImageAttachmentPicker: View {
 
     @State private var isAttachmentSourcePresented = false
     @State private var isPhotoLibraryPresented = false
-    @State private var pendingPhotoLibraryItems: [FeaturePhotoLibraryItem] = []
+    @State private var pendingPhotoLibraryItems: [FeatureImageProviderItem] = []
     @State private var isCameraPresented = false
     @State private var isFileImporterPresented = false
     @State private var sourcePresentationTask: Task<Void, Never>?
@@ -60,7 +64,7 @@ struct FeatureImageAttachmentPicker: View {
         attachments: Binding<[FeatureDraftAttachment]>,
         preparationState: Binding<FeatureAttachmentPreparationState>,
         isFlowActive: Binding<Bool>,
-        maximumCount: Int = 8,
+        maximumCount: Int = FeatureImageAttachmentLimit.maximumCount,
         isEnabled: Bool = true
     ) {
         _attachments = attachments
@@ -208,10 +212,11 @@ struct FeatureImageAttachmentPicker: View {
 
             for (offset, item) in selected.enumerated() {
                 do {
-                    let data = try await item.loadData()
-                    try await appendImage(
-                        data,
-                        ordinal: firstOrdinal + offset
+                    attachments.append(
+                        try await FeatureImageAttachmentLoader.attachment(
+                            from: item,
+                            ordinal: firstOrdinal + offset
+                        )
                     )
                 } catch {
                     errorMessage = error.localizedDescription
@@ -277,16 +282,18 @@ struct FeatureImageAttachmentPicker: View {
         }
     }
 
-    private func appendImage(_ data: Data, ordinal: Int? = nil) async throws {
-        let ordinal = ordinal ?? attachments.count + 1
-        let attachment = try await Task.detached(priority: .userInitiated) {
-            try FeatureImageProcessor.attachment(from: data, ordinal: ordinal)
-        }.value
-        attachments.append(attachment)
+    private func appendImage(_ data: Data) async throws {
+        attachments.append(
+            try await FeatureImageAttachmentLoader.attachment(
+                from: data,
+                ordinal: attachments.count + 1
+            )
+        )
     }
 }
 
-private struct FeaturePhotoLibraryItem: @unchecked Sendable {
+/// One image awaiting materialization, from Photos or from the pasteboard.
+struct FeatureImageProviderItem: @unchecked Sendable {
     let provider: NSItemProvider
 
     func loadData() async throws -> Data {
@@ -310,9 +317,27 @@ private struct FeaturePhotoLibraryItem: @unchecked Sendable {
     }
 }
 
+/// The single place a raw image source becomes a draft attachment. The picker,
+/// the camera, Files, and composer paste all land here so every attachment is
+/// downscaled, re-encoded, and thumbnailed identically.
+enum FeatureImageAttachmentLoader {
+    static func attachment(
+        from item: FeatureImageProviderItem,
+        ordinal: Int
+    ) async throws -> FeatureDraftAttachment {
+        try await attachment(from: item.loadData(), ordinal: ordinal)
+    }
+
+    static func attachment(from data: Data, ordinal: Int) async throws -> FeatureDraftAttachment {
+        try await Task.detached(priority: .userInitiated) {
+            try FeatureImageProcessor.attachment(from: data, ordinal: ordinal)
+        }.value
+    }
+}
+
 private struct FeaturePhotoLibraryPicker: UIViewControllerRepresentable {
     let maximumCount: Int
-    let onFinish: @MainActor ([FeaturePhotoLibraryItem]) -> Void
+    let onFinish: @MainActor ([FeatureImageProviderItem]) -> Void
 
     func makeCoordinator() -> Coordinator {
         Coordinator(onFinish: onFinish)
@@ -333,10 +358,10 @@ private struct FeaturePhotoLibraryPicker: UIViewControllerRepresentable {
     func updateUIViewController(_ picker: PHPickerViewController, context: Context) {}
 
     final class Coordinator: NSObject, PHPickerViewControllerDelegate {
-        private let onFinish: @MainActor ([FeaturePhotoLibraryItem]) -> Void
+        private let onFinish: @MainActor ([FeatureImageProviderItem]) -> Void
         private var didFinish = false
 
-        init(onFinish: @escaping @MainActor ([FeaturePhotoLibraryItem]) -> Void) {
+        init(onFinish: @escaping @MainActor ([FeatureImageProviderItem]) -> Void) {
             self.onFinish = onFinish
         }
 
@@ -344,7 +369,7 @@ private struct FeaturePhotoLibraryPicker: UIViewControllerRepresentable {
             guard !didFinish else { return }
             didFinish = true
 
-            let items = results.map { FeaturePhotoLibraryItem(provider: $0.itemProvider) }
+            let items = results.map { FeatureImageProviderItem(provider: $0.itemProvider) }
             Task { @MainActor in
                 onFinish(items)
             }
