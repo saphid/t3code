@@ -142,7 +142,8 @@ const EventReplayStatsRowSchema = Schema.Struct({
   payloadBytes: Schema.Number,
 });
 const ProjectionThreadSearchRequest = Schema.Struct({
-  pattern: Schema.String,
+  patternsJson: Schema.String,
+  minimumTermMatches: Schema.Int,
   limit: Schema.Int,
 });
 const ProjectionThreadSearchRow = Schema.Struct({
@@ -151,7 +152,11 @@ const ProjectionThreadSearchRow = Schema.Struct({
   source: OrchestrationThreadSearchSource,
   matchText: Schema.String,
   messageCreatedAt: Schema.NullOr(IsoDateTime),
+  score: Schema.Int,
 });
+const encodeThreadSearchPatterns = Schema.encodeSync(
+  Schema.fromJsonString(Schema.Array(Schema.String)),
+);
 const WorkspaceRootLookupInput = Schema.Struct({
   workspaceRoot: Schema.String,
 });
@@ -242,18 +247,81 @@ function escapeLikePattern(value: string): string {
   return value.replaceAll("!", "!!").replaceAll("%", "!%").replaceAll("_", "!_");
 }
 
+const THREAD_SEARCH_STOP_WORDS = new Set([
+  "a",
+  "about",
+  "all",
+  "an",
+  "and",
+  "are",
+  "as",
+  "at",
+  "be",
+  "by",
+  "did",
+  "do",
+  "does",
+  "for",
+  "from",
+  "get",
+  "give",
+  "got",
+  "had",
+  "has",
+  "have",
+  "how",
+  "i",
+  "in",
+  "is",
+  "it",
+  "me",
+  "my",
+  "of",
+  "on",
+  "or",
+  "show",
+  "something",
+  "that",
+  "the",
+  "then",
+  "there",
+  "these",
+  "this",
+  "thread",
+  "threads",
+  "to",
+  "was",
+  "we",
+  "were",
+  "where",
+  "which",
+  "who",
+  "with",
+  "you",
+]);
+
+function threadSearchTerms(query: string): ReadonlyArray<string> {
+  const words = foldAsciiCase(query).match(/[\p{L}\p{N}][\p{L}\p{N}.+#-]*/gu) ?? [];
+  const meaningful = words.filter((word) => word.length > 1 && !THREAD_SEARCH_STOP_WORDS.has(word));
+  const distinct = [...new Set(meaningful)].slice(0, 8);
+  return distinct.length >= 2 ? distinct : [query.trim()];
+}
+
 function foldAsciiCase(value: string): string {
   return value.replace(/[A-Z]/g, (character) => character.toLowerCase());
 }
 
-function buildSearchSnippet(text: string, query: string): string {
+function buildSearchSnippet(text: string, terms: ReadonlyArray<string>): string {
   const normalizedText = text.replace(/\s+/g, " ").trim();
   if (normalizedText.length <= 240) {
     return normalizedText;
   }
 
-  const normalizedQuery = foldAsciiCase(query.replace(/\s+/g, " ").trim());
-  const matchIndex = foldAsciiCase(normalizedText).indexOf(normalizedQuery);
+  const foldedText = foldAsciiCase(normalizedText);
+  const matchIndex = terms.reduce((earliest, term) => {
+    const index = foldedText.indexOf(foldAsciiCase(term));
+    return index === -1 ? earliest : Math.min(earliest, index);
+  }, normalizedText.length);
   const bodyLength = 236;
   const idealStart = Math.max(0, matchIndex - 72);
   const start = Math.min(idealStart, normalizedText.length - bodyLength);
@@ -845,9 +913,9 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
   const searchActiveThreadRows = SqlSchema.findAll({
     Request: ProjectionThreadSearchRequest,
     Result: ProjectionThreadSearchRow,
-    execute: ({ pattern, limit }) =>
+    execute: ({ patternsJson, minimumTermMatches, limit }) =>
       sql`
-        WITH ranked AS (
+        WITH candidates AS (
           SELECT
             threads.thread_id AS thread_id,
             threads.project_id AS project_id,
@@ -857,21 +925,17 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
             END AS source,
             messages.text AS match_text,
             messages.created_at AS message_created_at,
+            messages.message_id AS message_id,
             CASE messages.role
               WHEN 'user' THEN 0
               ELSE 1
             END AS match_rank,
             threads.updated_at AS thread_updated_at,
-            ROW_NUMBER() OVER (
-              PARTITION BY threads.thread_id
-              ORDER BY
-                CASE messages.role
-                  WHEN 'user' THEN 0
-                  ELSE 1
-                END ASC,
-                messages.created_at DESC,
-                messages.message_id ASC
-            ) AS thread_match_rank
+            (
+              SELECT COUNT(*)
+              FROM json_each(${patternsJson}) AS patterns
+              WHERE messages.text LIKE patterns.value ESCAPE '!'
+            ) AS term_match_count
           FROM projection_thread_messages AS messages
           INNER JOIN projection_threads AS threads
             ON threads.thread_id = messages.thread_id
@@ -892,17 +956,31 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
                 )
               )
             )
-            AND messages.text LIKE ${pattern} ESCAPE '!'
+        ), ranked AS (
+          SELECT
+            *,
+            ROW_NUMBER() OVER (
+              PARTITION BY thread_id
+              ORDER BY
+                term_match_count DESC,
+                match_rank ASC,
+                message_created_at DESC,
+                message_id ASC
+            ) AS thread_match_rank
+          FROM candidates
+          WHERE term_match_count >= ${minimumTermMatches}
         )
         SELECT
           thread_id AS "threadId",
           project_id AS "projectId",
           source,
           match_text AS "matchText",
-          message_created_at AS "messageCreatedAt"
+          message_created_at AS "messageCreatedAt",
+          term_match_count AS score
         FROM ranked
         WHERE thread_match_rank = 1
         ORDER BY
+          score DESC,
           match_rank ASC,
           thread_updated_at DESC,
           thread_id ASC
@@ -2499,9 +2577,13 @@ pending_approval_requests AS (
   const searchThreads: ProjectionSnapshotQueryShape["searchThreads"] = Effect.fn(
     "ProjectionSnapshotQuery.searchThreads",
   )(function* (input) {
-    const escapedQuery = escapeLikePattern(input.query);
+    const terms = threadSearchTerms(input.query);
+    const patternsJson = encodeThreadSearchPatterns(
+      terms.map((term) => `%${escapeLikePattern(term)}%`),
+    );
     const rows = yield* searchActiveThreadRows({
-      pattern: `%${escapedQuery}%`,
+      patternsJson,
+      minimumTermMatches: terms.length <= 3 ? terms.length : Math.ceil(terms.length * 0.6),
       limit: input.limit ?? 50,
     }).pipe(
       Effect.mapError(
@@ -2512,13 +2594,20 @@ pending_approval_requests AS (
       ),
     );
     return {
-      matches: rows.map((row) => ({
-        threadId: row.threadId,
-        projectId: row.projectId,
-        source: row.source,
-        snippet: buildSearchSnippet(row.matchText, input.query),
-        messageCreatedAt: row.messageCreatedAt,
-      })),
+      matches: rows.map((row) => {
+        const matchedTerms = terms.filter((term) =>
+          foldAsciiCase(row.matchText).includes(foldAsciiCase(term)),
+        );
+        return {
+          threadId: row.threadId,
+          projectId: row.projectId,
+          source: row.source,
+          snippet: buildSearchSnippet(row.matchText, matchedTerms),
+          messageCreatedAt: row.messageCreatedAt,
+          score: row.score,
+          matchedTerms,
+        };
+      }),
     };
   });
 
