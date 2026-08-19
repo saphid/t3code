@@ -136,6 +136,64 @@ overrides are `T3_SWIFT_DERIVED_DATA_PATH`, `T3_SWIFT_VERSION`, and
 `T3_SWIFT_VERIFY_BUNDLE_IDENTIFIERS_ONLY=1` to verify the configuration's host
 and extension bundle identifiers without a device build.
 
+## Build a dev branch on your own machine
+
+Teammates can run any pushed dev branch on their own Mac and iPhone without
+access to the release signing identity.
+
+1. Clone the fork and check out the branch:
+
+   ```sh
+   git clone https://github.com/saphid/t3code.git
+   cd t3code
+   git checkout <dev-branch>
+   ```
+
+2. Open `apps/swift-ios/T3Code.xcodeproj`, select the `T3Code` scheme, and run
+   an iOS Simulator. Simulator builds need no signing setup.
+
+### Run on your iPhone
+
+1. Add your Apple ID under Xcode → Settings → Accounts. A free personal team
+   works; a paid Developer Program membership is not required.
+2. Enable Developer Mode on the iPhone (Settings → Privacy & Security →
+   Developer Mode), connect it, and trust the Mac.
+3. Select the device as the run destination. Under Signing & Capabilities, set
+   your own Team for the `T3Code`, `T3CodeWidgets`, and `T3CodeShare` targets
+   in the Debug configuration.
+4. Run. The Debug identity installs beside TestFlight with separate data and
+   credentials, so it never disturbs a released install. Dev branches may use
+   a personal identity such as `com.alxs.t3code.typed-swiftui.dev` shown as
+   "SwiftUI Test".
+
+Notes:
+
+- Host and share extension use empty entitlements (`T3CodePersonal`) on dev
+  branches, so personal-team signing works. If provisioning fails on the
+  widget target's App Group, remove `T3CodeWidgets` from the scheme or empty
+  `Extensions/Widgets/T3CodeWidgets.entitlements`; the app itself does not
+  depend on the widget.
+- Do not use `Scripts/install-device.sh` on personal-identity branches: its
+  bundle-identifier check expects `com.t3tools.t3code.swiftui.dev` and aborts.
+  Use Xcode's Run action instead.
+- Personal-team builds expire after 7 days and count toward the 3-app limit;
+  rebuild from Xcode to renew.
+
+### Pair with a backend
+
+The app is a client and needs a T3 server to talk to. The quickest local
+backend is:
+
+```sh
+npx t3@latest
+```
+
+Node.js 22.16+, 23.11+, or 24.10+ is required. Keep the phone and the machine
+on the same network (or tailnet), then finish onboarding with the pairing URL
+or QR code. Direct pairing needs no extra configuration; T3 Connect stays
+disabled unless you supply the Clerk and relay build settings described in
+[Build configuration](#build-configuration).
+
 ## Release checklist
 
 1. Set a unique `MARKETING_VERSION` and a higher `CURRENT_PROJECT_VERSION`.
