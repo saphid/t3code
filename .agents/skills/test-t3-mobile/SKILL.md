@@ -7,6 +7,8 @@ description: "Launch and test either T3 Code mobile client against disposable lo
 
 Run one focused, end-to-end mobile verification pass against disposable T3 state. Use the sibling [`test-t3-app`](../test-t3-app/SKILL.md) skill as the detailed reference for pairing-token semantics and SQLite fixtures.
 
+Load and follow the installed `$ios-build-hygiene` skill for every direct Xcode build/test and after every XcodeBuildMCP build or test. If it is not installed, run direct builds with an isolated temporary DerivedData and reclaim it yourself afterward.
+
 ## Choose the mobile client first
 
 T3 Code has two independent mobile implementations:
@@ -191,6 +193,7 @@ Exercise only the affected flow on one representative device unless the change s
 4. Remove any `adb reverse` rule created for this test with `adb -s <emulator-serial> reverse --remove tcp:<metro-port>`.
 5. Stop only the serve-sim, Metro, backend, emulator, and log processes started by this test.
 6. Remove only base directories and temporary Git repositories deliberately created for this test. Preserve them when they contain useful reproduction evidence.
+7. Pass the `$ios-build-hygiene` completion gate (or its manual isolated-DerivedData equivalent) for any iOS build or test you ran.
 
 Keep local verification focused. Do not turn this workflow into a full repository test run.
 

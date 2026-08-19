@@ -7,6 +7,8 @@ description: Build, launch, inspect, and drive iOS apps with the repository-conf
 
 Use the repository-configured `xcodebuildmcp` tools instead of requiring a globally installed Codex plugin. Prefer MCP tools over raw `xcodebuild`, `xcrun`, or `simctl` when the client exposes them.
 
+Load and follow the installed `$ios-build-hygiene` skill for direct Xcode commands and for post-XcodeBuildMCP cleanup. If it is not installed, run direct builds with an isolated temporary DerivedData and reclaim it yourself afterward.
+
 T3 Code has two separate iOS clients. Identify the affected one before setting session defaults:
 
 - React Native mobile: `apps/mobile/ios/T3CodeDev.xcworkspace`, scheme `T3CodeDev`
@@ -64,7 +66,7 @@ Use `gesture` or scoped swipe actions when needed. If a gesture is unreliable, r
 
 ## Clean up
 
-Stop only log captures, debugger sessions, apps, or simulators started for the current test. Leave pre-existing simulators and unrelated sessions alone.
+Stop only log captures, debugger sessions, apps, or simulators started for the current test. Leave pre-existing simulators and unrelated sessions alone. Native verification is incomplete until `$ios-build-hygiene`'s completion gate passes.
 
 ## Upstream
 
