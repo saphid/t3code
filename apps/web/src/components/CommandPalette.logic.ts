@@ -82,6 +82,8 @@ export interface CommandPaletteThreadContentMatch {
   readonly source: "user" | "assistant";
   readonly snippet: string;
   readonly query: string;
+  readonly score?: number;
+  readonly matchedTerms?: ReadonlyArray<string>;
 }
 
 export interface CommandPaletteItem {
@@ -287,6 +289,10 @@ function rankCommandPaletteItemMatch(
     }
   }
 
+  if (item.threadContentMatch?.query === normalizedQuery) {
+    return 500 + (item.threadContentMatch.score ?? 0);
+  }
+
   return 0;
 }
 
@@ -336,7 +342,8 @@ export function filterCommandPaletteGroups(input: {
   return searchableGroups.flatMap((group) => {
     const items = Arr.filterMap(group.items, (item, index) => {
       const haystack = normalizeSearchText(item.searchTerms.join(" "));
-      if (!haystack.includes(normalizedQuery)) {
+      const hasRankedContentMatch = item.threadContentMatch?.query === normalizedQuery;
+      if (!haystack.includes(normalizedQuery) && !hasRankedContentMatch) {
         return Result.failVoid;
       }
 
