@@ -1834,10 +1834,50 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
     }
 
     func loadReview(threadID: String) async throws -> FeatureReview {
+        try await loadReview(threadID: threadID, scope: nil)
+    }
+
+    func loadReview(threadID: String, scope: FeatureReviewScope?) async throws -> FeatureReview {
         let route = try threadRoute(for: threadID)
+        let checkpoint = latestReadyCheckpoint(for: route)
+        let availableScopes: [FeatureReviewScope] = checkpoint == nil
+            ? [.workingTree]
+            : [.latestTurn, .workingTree]
+
+        if scope != .workingTree, let checkpoint {
+            do {
+                let turnDiff = try await route.client.turnDiff(
+                    threadID: route.wireID,
+                    fromTurnCount: max(0, checkpoint.checkpointTurnCount - 1),
+                    toTurnCount: checkpoint.checkpointTurnCount
+                )
+                let review = NativeWorkspaceMapper.review(
+                    turnDiff,
+                    checkpoint: checkpoint,
+                    availableScopes: availableScopes
+                )
+                // An empty latest turn is not worth showing unless it was asked for
+                // by name; auto mode falls through to the working tree instead.
+                if scope == .latestTurn || !review.files.isEmpty {
+                    return review
+                }
+            } catch {
+                if scope == .latestTurn { throw error }
+            }
+        }
+
         let context = try workspaceContext(route: route)
         let preview = try await route.client.reviewDiffPreview(cwd: context.cwd)
-        return NativeWorkspaceMapper.review(preview)
+        return NativeWorkspaceMapper.review(preview, availableScopes: availableScopes)
+    }
+
+    /// The newest checkpoint the server can actually diff. Checkpoints ride the
+    /// open thread's subscription, so this is only populated for the active thread.
+    private func latestReadyCheckpoint(for route: NativeThreadRoute) -> CheckpointSummary? {
+        guard let thread = activeRawThread, thread.id == route.wireID else { return nil }
+        return thread.checkpoints
+            .filter { $0.status == "ready" && $0.checkpointTurnCount > 0 }
+            .max { $0.checkpointTurnCount < $1.checkpointTurnCount }
     }
 
     func loadReviewFileContents(

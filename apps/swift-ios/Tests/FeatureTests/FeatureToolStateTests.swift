@@ -122,10 +122,70 @@ struct FeatureToolStateTests {
         let addition = review.files[0].lines.first { $0.kind == .addition }
 
         #expect(review.baseReference == "main")
+        #expect(review.scope == .workingTree)
+        #expect(review.availableScopes == [.workingTree])
         #expect(review.files[0].sourceKind == "working-tree")
         #expect(review.files[0].sourceBaseReference == "main")
         #expect(deletion?.spans?.filter { $0.kind == .changed }.map(\.text) == ["blue"])
         #expect(addition?.spans?.filter { $0.kind == .changed }.map(\.text) == ["green"])
+    }
+
+    @Test
+    func workspaceTurnReviewParsesCommittedChangesAndSkipsFileHydration() {
+        let checkpoint = CheckpointSummary(
+            turnId: "turn-7",
+            checkpointTurnCount: 7,
+            checkpointRef: "refs/t3/checkpoints/thread-1/7",
+            status: "ready",
+            files: [],
+            assistantMessageId: "message-1",
+            completedAt: "2026-08-19T00:00:00Z"
+        )
+        let turnDiff = ThreadTurnDiff(
+            threadId: "thread-1",
+            fromTurnCount: 6,
+            toTurnCount: 7,
+            diff: """
+            diff --git a/App.swift b/App.swift
+            --- a/App.swift
+            +++ b/App.swift
+            @@ -1,1 +1,1 @@
+            -let color = blue
+            +let color = green
+            """
+        )
+
+        let review = NativeWorkspaceMapper.review(turnDiff, checkpoint: checkpoint)
+
+        #expect(review.scope == .latestTurn)
+        #expect(review.availableScopes == [.latestTurn, .workingTree])
+        #expect(review.title == "Latest turn")
+        #expect(review.detail?.contains("turn 7") == true)
+        #expect(review.files.map(\.path) == ["App.swift"])
+        #expect(review.files[0].additions == 1)
+        #expect(review.files[0].deletions == 1)
+        // No hydration source kind: `review.getDiffFileContents` cannot serve turns.
+        #expect(review.files[0].sourceKind == nil)
+    }
+
+    @Test
+    func workspaceTurnReviewReportsNoFilesForAnEmptyTurnDiff() {
+        let checkpoint = CheckpointSummary(
+            turnId: "turn-1",
+            checkpointTurnCount: 1,
+            checkpointRef: "refs/t3/checkpoints/thread-1/1",
+            status: "ready",
+            files: [],
+            assistantMessageId: nil,
+            completedAt: "2026-08-19T00:00:00Z"
+        )
+        let review = NativeWorkspaceMapper.review(
+            ThreadTurnDiff(threadId: "thread-1", fromTurnCount: 0, toTurnCount: 1, diff: ""),
+            checkpoint: checkpoint
+        )
+
+        #expect(review.files.isEmpty)
+        #expect(review.additions == 0)
     }
 
     @Test

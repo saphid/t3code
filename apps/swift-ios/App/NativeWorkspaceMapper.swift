@@ -57,12 +57,49 @@ enum NativeWorkspaceMapper {
         }
     }
 
-    static func review(_ preview: ReviewDiffPreview) -> FeatureReview {
+    static func review(
+        _ preview: ReviewDiffPreview,
+        availableScopes: [FeatureReviewScope] = [.workingTree]
+    ) -> FeatureReview {
         FeatureReview(
-            title: "Working tree",
+            title: FeatureReviewScope.workingTree.label,
+            detail: "Uncommitted changes in the workspace right now.",
+            scope: .workingTree,
+            availableScopes: availableScopes,
             baseReference: preview.sources.compactMap(\.baseRef).first,
-            files: preview.sources.flatMap(parseDiff),
+            files: preview.sources.flatMap { parseDiff($0, hydrationKind: $0.kind) },
             isTruncated: preview.sources.contains(where: \.truncated)
+        )
+    }
+
+    /// Turn diffs come from checkpoint refs, so they keep showing the agent's work
+    /// after it commits. They carry no hydration source kind — `review.getDiffFileContents`
+    /// only understands the working-tree/branch-range sources — so the diff view
+    /// renders the patch hunks as delivered.
+    static func review(
+        _ turnDiff: ThreadTurnDiff,
+        checkpoint: CheckpointSummary,
+        availableScopes: [FeatureReviewScope] = [.latestTurn, .workingTree]
+    ) -> FeatureReview {
+        let source = ReviewDiffSource(
+            id: "turn-\(checkpoint.checkpointTurnCount)",
+            kind: "turn",
+            title: "Turn \(checkpoint.checkpointTurnCount)",
+            baseRef: nil,
+            headRef: checkpoint.checkpointRef,
+            diff: turnDiff.diff,
+            diffHash: checkpoint.checkpointRef,
+            truncated: false
+        )
+        return FeatureReview(
+            title: FeatureReviewScope.latestTurn.label,
+            detail: "Everything the agent changed in turn \(checkpoint.checkpointTurnCount), "
+                + "including changes it already committed.",
+            scope: .latestTurn,
+            availableScopes: availableScopes,
+            baseReference: nil,
+            files: parseDiff(source, hydrationKind: nil),
+            isTruncated: false
         )
     }
 
@@ -144,7 +181,10 @@ enum NativeWorkspaceMapper {
             .joined(separator: "/")
     }
 
-    private static func parseDiff(_ source: ReviewDiffSource) -> [FeatureReviewFile] {
+    private static func parseDiff(
+        _ source: ReviewDiffSource,
+        hydrationKind: String?
+    ) -> [FeatureReviewFile] {
         let rawLines = source.diff.split(
             separator: "\n",
             omittingEmptySubsequences: false
@@ -169,7 +209,7 @@ enum NativeWorkspaceMapper {
                     additions: additions,
                     deletions: deletions,
                     lines: annotateChangedSpans(lines),
-                    sourceKind: source.kind,
+                    sourceKind: hydrationKind,
                     sourceBaseReference: source.baseRef,
                     sourceHeadReference: source.headRef
                 )
@@ -284,7 +324,7 @@ enum NativeWorkspaceMapper {
                     additions: additions,
                     deletions: deletions,
                     lines: annotateChangedSpans(lines),
-                    sourceKind: source.kind,
+                    sourceKind: hydrationKind,
                     sourceBaseReference: source.baseRef,
                     sourceHeadReference: source.headRef
                 ),

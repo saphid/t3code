@@ -733,6 +733,27 @@ public actor T3Client {
         )
     }
 
+    /// Turn-scoped diff sourced from the thread's checkpoint refs. `fromTurnCount`
+    /// must name an existing checkpoint (or 0, the thread's synthetic origin).
+    public func turnDiff(
+        threadID: String,
+        fromTurnCount: Int,
+        toTurnCount: Int,
+        ignoreWhitespace: Bool = false
+    ) async throws -> ThreadTurnDiff {
+        let payload: [String: JSONValue] = [
+            "threadId": .string(threadID),
+            "fromTurnCount": .integer(Int64(fromTurnCount)),
+            "toTurnCount": .integer(Int64(toTurnCount)),
+            "ignoreWhitespace": .bool(ignoreWhitespace),
+        ]
+        return try await rpc.request(
+            RPCMethod.orchestrationTurnDiff.rawValue,
+            payload: .object(payload),
+            as: ThreadTurnDiff.self
+        )
+    }
+
     public func reviewDiffFileContents(
         cwd: String,
         sourceKind: String,
@@ -1244,6 +1265,7 @@ public enum RPCMethod: String, Sendable {
     case serverGetConfig = "server.getConfig"
     case serverGetUsageSummary = "server.getUsageSummary"
     case dispatchCommand = "orchestration.dispatchCommand"
+    case orchestrationTurnDiff = "orchestration.getTurnDiff"
     case getArchivedShellSnapshot = "orchestration.getArchivedShellSnapshot"
     case subscribeShell = "orchestration.subscribeShell"
     case subscribeThread = "orchestration.subscribeThread"
