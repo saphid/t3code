@@ -1,4 +1,5 @@
 import Foundation
+import UIKit
 
 /// The changelog a build carries: what shipped in the running build, and what
 /// shipped in the builds before it.
@@ -22,6 +23,20 @@ struct WhatsNewChangelog: Equatable, Sendable {
     struct Entry: Codable, Equatable, Sendable {
         let title: String
         let summary: String?
+        /// Long-form copy shown when the entry is opened. An entry without it
+        /// stays inert — no chevron, nothing to tap.
+        let detail: String?
+        /// SF Symbol recorded by the publisher; ignored when the running OS
+        /// does not have it, so a typo degrades to the default rather than to
+        /// an empty tile.
+        let symbol: String?
+
+        var hasDetail: Bool { detail != nil }
+
+        var symbolName: String {
+            guard let symbol, UIImage(systemName: symbol) != nil else { return "sparkles" }
+            return symbol
+        }
     }
 
     struct Build: Codable, Equatable, Sendable {
@@ -163,7 +178,12 @@ extension WhatsNewChangelog.Entry {
     /// sloppy payload degrades to fewer rows instead of empty ones.
     var normalized: WhatsNewChangelog.Entry? {
         guard let title = title.trimmedOrNil else { return nil }
-        return WhatsNewChangelog.Entry(title: title, summary: summary?.trimmedOrNil)
+        return WhatsNewChangelog.Entry(
+            title: title,
+            summary: summary?.trimmedOrNil,
+            detail: detail?.trimmedOrNil,
+            symbol: symbol?.trimmedOrNil
+        )
     }
 }
 

@@ -1,43 +1,44 @@
 import SwiftUI
 
 /// What shipped in this build, followed by the builds before it.
+///
+/// The layout follows the shape people expect from a release-notes screen: a
+/// hero title, one grouped card per build, and a row per entry carrying an
+/// accent icon tile, a title, and a one-line summary. Entries that recorded
+/// long-form copy open it; the rest stay inert.
 struct WhatsNewView: View {
     let presentation: WhatsNewPresentation
     let runningBuildLabel: String?
-
-    /// The screen is one flat list of rows rather than a section-per-build
-    /// nesting: nesting a per-build `ForEach` inside the outer one left the
-    /// earlier builds' cards unrendered in the scroll view.
-    private enum Row: Identifiable {
-        case sectionTitle(id: String, title: String, detail: String?)
-        case buildLabel(id: String, text: String)
-        case entry(id: String, entry: WhatsNewChangelog.Entry)
-
-        var id: String {
-            switch self {
-            case let .sectionTitle(id, _, _), let .buildLabel(id, _), let .entry(id, _): id
-            }
-        }
-    }
+    let appName: String
 
     var body: some View {
         ScrollView {
-            LazyVStack(alignment: .leading, spacing: 16) {
-                ForEach(rows) { row in
-                    switch row {
-                    case let .sectionTitle(_, title, detail):
-                        sectionTitle(title, detail: detail)
-                    case let .buildLabel(_, text):
-                        Text(text)
-                            .font(T3Typography.supportingStrong)
-                            .foregroundStyle(T3Colors.textSecondary)
-                    case let .entry(_, entry):
-                        entryCard(entry)
+            VStack(alignment: .leading, spacing: 28) {
+                hero
+
+                if let current = presentation.current {
+                    buildSection(
+                        eyebrow: "In this build",
+                        label: current.label ?? runningBuildLabel,
+                        build: current
+                    )
+                }
+
+                if !presentation.earlier.isEmpty {
+                    VStack(alignment: .leading, spacing: 20) {
+                        Text("Earlier builds")
+                            .font(T3Typography.threadHeading3)
+                            .foregroundStyle(T3Colors.textPrimary)
+
+                        ForEach(Array(presentation.earlier.enumerated()), id: \.offset) { _, build in
+                            buildSection(eyebrow: nil, label: build.label, build: build)
+                        }
                     }
                 }
             }
             .padding(.horizontal, 20)
-            .padding(.vertical, 18)
+            .padding(.top, 8)
+            .padding(.bottom, 32)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .background(T3Colors.background)
@@ -45,74 +46,178 @@ struct WhatsNewView: View {
         .navigationBarTitleDisplayMode(.inline)
     }
 
-    private var rows: [Row] {
-        var rows: [Row] = []
-
-        if let current = presentation.current {
-            rows.append(
-                .sectionTitle(
-                    id: "current-title",
-                    title: "In this build",
-                    detail: current.label ?? runningBuildLabel
-                )
-            )
-            rows.append(
-                contentsOf: current.entries.enumerated().map { index, entry in
-                    .entry(id: "current-entry-\(index)", entry: entry)
-                }
-            )
-        }
-
-        guard !presentation.earlier.isEmpty else { return rows }
-
-        rows.append(
-            .sectionTitle(
-                id: "earlier-title",
-                title: "Earlier builds",
-                detail: presentation.current == nil ? runningBuildLabel : nil
-            )
-        )
-        for (buildIndex, build) in presentation.earlier.enumerated() {
-            if let label = build.label {
-                rows.append(.buildLabel(id: "earlier-\(buildIndex)-label", text: label))
-            }
-            rows.append(
-                contentsOf: build.entries.enumerated().map { index, entry in
-                    .entry(id: "earlier-\(buildIndex)-entry-\(index)", entry: entry)
-                }
-            )
-        }
-        return rows
-    }
-
-    private func sectionTitle(_ title: String, detail: String?) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(title)
-                .font(T3Typography.homeTitle)
-                .foregroundStyle(T3Colors.textPrimary)
-            if let detail {
-                Text(detail)
-                    .font(T3Typography.supporting)
-                    .foregroundStyle(T3Colors.textSecondary)
-            }
-        }
-        .accessibilityElement(children: .combine)
-    }
-
-    private func entryCard(_ entry: WhatsNewChangelog.Entry) -> some View {
+    private var hero: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text(entry.title)
-                .font(T3Typography.threadBody)
+            Text("What's New")
+                .font(T3Typography.threadHeading1)
                 .foregroundStyle(T3Colors.textPrimary)
-            if let summary = entry.summary {
-                Text(summary)
-                    .font(T3Typography.supporting)
-                    .foregroundStyle(T3Colors.textSecondary)
+            Text(heroSubtitle)
+                .font(T3Typography.supporting)
+                .foregroundStyle(T3Colors.textSecondary)
+        }
+        .accessibilityElement(children: .combine)
+    }
+
+    private var heroSubtitle: String {
+        guard let label = presentation.current?.label ?? runningBuildLabel else {
+            return "Everything recorded for \(appName)."
+        }
+        return "\(appName) \(label)"
+    }
+
+    @ViewBuilder
+    private func buildSection(
+        eyebrow: String?,
+        label: String?,
+        build: WhatsNewChangelog.Build
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            if eyebrow != nil || label != nil {
+                HStack(spacing: 8) {
+                    if let eyebrow {
+                        Text(eyebrow.uppercased())
+                            .font(T3Typography.eyebrow)
+                            .foregroundStyle(T3Colors.accent)
+                    }
+                    if let label {
+                        Text(label)
+                            .font(T3Typography.supportingStrong)
+                            .foregroundStyle(T3Colors.textSecondary)
+                    }
+                }
+                .accessibilityElement(children: .combine)
+            }
+
+            VStack(spacing: 0) {
+                ForEach(Array(build.entries.enumerated()), id: \.offset) { index, entry in
+                    if index > 0 {
+                        Divider()
+                            .overlay(T3Colors.separator)
+                            .padding(.leading, 66)
+                    }
+                    entryRow(entry, buildLabel: label)
+                }
+            }
+            .background(T3Colors.surface, in: RoundedRectangle(cornerRadius: 18))
+        }
+    }
+
+    @ViewBuilder
+    private func entryRow(_ entry: WhatsNewChangelog.Entry, buildLabel: String?) -> some View {
+        if entry.hasDetail {
+            NavigationLink {
+                WhatsNewDetailView(entry: entry, buildLabel: buildLabel)
+            } label: {
+                entryLabel(entry, showsChevron: true)
+            }
+            .buttonStyle(.plain)
+        } else {
+            entryLabel(entry, showsChevron: false)
+        }
+    }
+
+    private func entryLabel(
+        _ entry: WhatsNewChangelog.Entry,
+        showsChevron: Bool
+    ) -> some View {
+        HStack(alignment: .top, spacing: 14) {
+            WhatsNewSymbolTile(systemName: entry.symbolName, size: 38)
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text(entry.title)
+                    .font(T3Typography.threadHeading4)
+                    .foregroundStyle(T3Colors.textPrimary)
+                    .fixedSize(horizontal: false, vertical: true)
+                if let summary = entry.summary {
+                    Text(summary)
+                        .font(T3Typography.supporting)
+                        .foregroundStyle(T3Colors.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+
+            Spacer(minLength: 8)
+
+            if showsChevron {
+                Image(systemName: "chevron.right")
+                    .font(T3Typography.supportingStrong)
+                    .foregroundStyle(T3Colors.textTertiary)
+                    .padding(.top, 2)
+                    .accessibilityHidden(true)
             }
         }
-        .padding(14)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 14)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(T3Colors.surface, in: RoundedRectangle(cornerRadius: 16))
+        .contentShape(Rectangle())
         .accessibilityElement(children: .combine)
+    }
+}
+
+/// The long-form copy a publisher recorded for one entry.
+struct WhatsNewDetailView: View {
+    let entry: WhatsNewChangelog.Entry
+    let buildLabel: String?
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 18) {
+                WhatsNewSymbolTile(systemName: entry.symbolName, size: 56)
+
+                VStack(alignment: .leading, spacing: 6) {
+                    if let buildLabel {
+                        Text(buildLabel.uppercased())
+                            .font(T3Typography.eyebrow)
+                            .foregroundStyle(T3Colors.accent)
+                    }
+                    Text(entry.title)
+                        .font(T3Typography.threadHeading1)
+                        .foregroundStyle(T3Colors.textPrimary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    if let summary = entry.summary {
+                        Text(summary)
+                            .font(T3Typography.threadBody)
+                            .foregroundStyle(T3Colors.textSecondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                .accessibilityElement(children: .combine)
+
+                if let detail = entry.detail {
+                    Divider()
+                        .overlay(T3Colors.separator)
+
+                    Text(detail)
+                        .font(T3Typography.threadBody)
+                        .foregroundStyle(T3Colors.textPrimary)
+                        .lineSpacing(3)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .padding(.horizontal, 20)
+            .padding(.top, 8)
+            .padding(.bottom, 32)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .background(T3Colors.background)
+        .navigationTitle(entry.title)
+        .navigationBarTitleDisplayMode(.inline)
+    }
+}
+
+private struct WhatsNewSymbolTile: View {
+    let systemName: String
+    let size: CGFloat
+
+    var body: some View {
+        RoundedRectangle(cornerRadius: size * 0.28, style: .continuous)
+            .fill(T3Colors.accent.opacity(0.14))
+            .frame(width: size, height: size)
+            .overlay {
+                Image(systemName: systemName)
+                    .font(.system(size: size * 0.45, weight: .semibold))
+                    .foregroundStyle(T3Colors.accent)
+            }
+            .accessibilityHidden(true)
     }
 }

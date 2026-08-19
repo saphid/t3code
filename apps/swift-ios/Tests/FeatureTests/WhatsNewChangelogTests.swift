@@ -104,6 +104,59 @@ struct WhatsNewChangelogTests {
     }
 
     @Test
+    func readsOptionalDetailAndSymbolWhenAPublisherRecordsThem() {
+        let json = """
+            {"builds":[{"version":"0.1.0","build":"90","entries":[
+              {
+                "title":"What's New history",
+                "summary":"Every build's entries ride along.",
+                "detail":"  Each publisher appends its build to the history it inherited.  ",
+                "symbol":"clock.arrow.circlepath"
+              }
+            ]}]}
+            """
+
+        let entry = WhatsNewChangelog.decode(embedded(json))?.builds.first?.entries.first
+
+        #expect(entry?.hasDetail == true)
+        #expect(entry?.detail == "Each publisher appends its build to the history it inherited.")
+        #expect(entry?.symbolName == "clock.arrow.circlepath")
+    }
+
+    @Test
+    func leavesEntriesInertWhenTheyRecordNoDetailAndFallsBackToTheDefaultSymbol() {
+        let json = """
+            {"builds":[{"version":"0.1.0","build":"90","entries":[
+              {"title":"No detail recorded"},
+              {"title":"Blank detail","detail":"   ","symbol":"   "},
+              {"title":"Unknown symbol","symbol":"not.a.real.sf.symbol.name"}
+            ]}]}
+            """
+
+        let entries = WhatsNewChangelog.decode(embedded(json))?.builds.first?.entries
+
+        #expect(entries?.count == 3)
+        #expect(entries?.allSatisfy { !$0.hasDetail } == true)
+        #expect(entries?.allSatisfy { $0.detail == nil } == true)
+        #expect(entries?.map(\.symbolName) == ["sparkles", "sparkles", "sparkles"])
+    }
+
+    @Test
+    func rendersPayloadsWrittenBeforeDetailAndSymbolExistedExactlyAsBefore() {
+        let entry = WhatsNewChangelog.load(info: payload(history))?
+            .presentation(info: runningBundle)
+            .current?
+            .entries
+            .first
+
+        #expect(entry?.title == "What's New history")
+        #expect(entry?.summary == "Every build's entries ride along.")
+        #expect(entry?.detail == nil)
+        #expect(entry?.hasDetail == false)
+        #expect(entry?.symbolName == "sparkles")
+    }
+
+    @Test
     func treatsAnythingABuildMightLeaveBehindAsNoChangelog() {
         let payloads: [String] = [
             "$(T3_BUILD_CHANGELOG)",
