@@ -439,12 +439,18 @@ public struct WorkspaceView: View {
         }
         .buttonStyle(.plain)
         .accessibilityLabel("New task")
-        .accessibilityHint(
-            creationProjects.isEmpty
-                ? "Create a project to start a task"
-                : "Compose a message and start a thread"
-        )
+        .accessibilityHint(newTaskAccessibilityHint)
         .accessibilityIdentifier("sidebar-new-task-button")
+    }
+
+    private var newTaskAccessibilityHint: String {
+        if DailyUXCreationContext.projects(in: model.snapshot).isEmpty == false {
+            return "Compose a message and start a thread"
+        }
+        if unreachableEnvironments.isEmpty == false {
+            return "See why projects are unavailable"
+        }
+        return "Create a project to start a task"
     }
 
     private var projectFilter: some View {
@@ -509,14 +515,8 @@ public struct WorkspaceView: View {
         model.snapshot.projects.first { $0.id == selectedProjectID }
     }
 
-    private var creationProjects: [FeatureProject] {
-        DailyUXCreationContext.projects(in: model.snapshot)
-    }
-
     private var unreachableEnvironments: [FeatureEnvironment] {
-        model.snapshot.environments.filter {
-            $0.isEnabled && $0.connectionState == .disconnected
-        }
+        NewTaskEnvironmentAvailability.unreachableEnvironments(in: model.snapshot)
     }
 
     private var reconnectingEnvironments: [FeatureEnvironment] {
@@ -571,7 +571,7 @@ public struct WorkspaceView: View {
     }
 
     private func openNewTaskOrProjectCreation(initialProjectID: String?) {
-        if creationProjects.isEmpty {
+        if NewTaskEnvironmentAvailability.shouldPresentNewThread(in: model.snapshot) == false {
             showingAddProject = true
         } else {
             newTaskInitialProjectID = initialProjectID
