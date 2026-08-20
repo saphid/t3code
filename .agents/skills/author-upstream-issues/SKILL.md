@@ -11,7 +11,8 @@ Use this skill to draft the upstream artifact a planned PR will reference. Upstr
 
 - Broken behavior, regression, crash, or reliability problem → **bug issue** via `.github/ISSUE_TEMPLATE/bug_report.yml`.
 - Anything additive or opinion-shaped (new capability, UX improvement, perf idea without a measured regression) → **Ideas discussion**.
-- Non-trivial changes get a discussion first even when a bug technically exists; upstream asks for discussion before bigger work.
+- Feature-scale or directional work gets a discussion first; Alex is vouched upstream, so small low-risk changes can go straight to a PR with the motivation in its body.
+- Verify the venue before drafting for it: `gh api graphql -f query='query{repository(owner:"pingdotgg",name:"t3code"){hasDiscussionsEnabled}}'` — discussions are disabled as of 2026-08 and blank issues are off. When the venue is missing, stage the proposal locally and let the planned PR's Why section carry it.
 
 ## Scope to one PR
 
