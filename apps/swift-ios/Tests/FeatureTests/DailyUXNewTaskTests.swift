@@ -153,6 +153,108 @@ struct DailyUXNewTaskTests {
         )
     }
 
+    @Test("New task availability names only enabled unreachable environments")
+    func newTaskAvailabilityNamesOnlyEnabledUnreachableEnvironments() {
+        let snapshot = FeatureSnapshot(
+            environments: [
+                FeatureEnvironment(
+                    id: "asleep",
+                    name: "Studio Mac",
+                    endpoint: "http://asleep",
+                    connectionState: .disconnected
+                ),
+                FeatureEnvironment(
+                    id: "disabled",
+                    name: "Disabled Mac",
+                    endpoint: "http://disabled",
+                    isEnabled: false,
+                    connectionState: .disconnected
+                ),
+                FeatureEnvironment(
+                    id: "reconnecting",
+                    name: "Reconnecting Mac",
+                    endpoint: "http://reconnecting",
+                    connectionState: .reconnecting
+                ),
+                FeatureEnvironment(
+                    id: "connecting",
+                    name: "Connecting Mac",
+                    endpoint: "http://connecting",
+                    connectionState: .connecting
+                ),
+                FeatureEnvironment(
+                    id: "connected",
+                    name: "Connected Mac",
+                    endpoint: "http://connected",
+                    connectionState: .connected
+                ),
+                FeatureEnvironment(
+                    id: "unknown",
+                    name: "Unprobed Mac",
+                    endpoint: "http://unknown"
+                ),
+                FeatureEnvironment(
+                    id: "away",
+                    name: "Away Mac",
+                    endpoint: "http://away",
+                    connectionState: .disconnected
+                ),
+                FeatureEnvironment(
+                    id: "same-a",
+                    name: "Same Mac",
+                    endpoint: "http://same-a",
+                    connectionState: .disconnected
+                ),
+                FeatureEnvironment(
+                    id: "same-z",
+                    name: "Same Mac",
+                    endpoint: "http://same-z",
+                    connectionState: .disconnected
+                ),
+            ]
+        )
+
+        let unreachable = NewTaskEnvironmentAvailability.unreachableEnvironments(in: snapshot)
+        #expect(
+            unreachable.map(\.name) == [
+                "Away Mac", "Reconnecting Mac", "Same Mac", "Same Mac", "Studio Mac",
+            ]
+        )
+        #expect(
+            unreachable.map(\.id) == ["away", "reconnecting", "same-a", "same-z", "asleep"]
+        )
+        #expect(NewTaskEnvironmentAvailability.shouldPresentNewThread(in: snapshot))
+        #expect(NewTaskEnvironmentAvailability.shouldPresentNewThread(in: FeatureSnapshot()) == false)
+        #expect(
+            NewTaskEnvironmentAvailability.shouldPresentNewThread(
+                in: FeatureSnapshot(
+                    environments: [
+                        FeatureEnvironment(
+                            id: "disabled",
+                            name: "Disabled Mac",
+                            endpoint: "http://disabled",
+                            isEnabled: false,
+                            connectionState: .disconnected
+                        ),
+                        FeatureEnvironment(
+                            id: "connecting",
+                            name: "Connecting Mac",
+                            endpoint: "http://connecting",
+                            connectionState: .connecting
+                        ),
+                    ]
+                )
+            ) == false
+        )
+        #expect(
+            NewTaskEnvironmentAvailability.shouldPresentNewThread(
+                in: FeatureSnapshot(
+                    projects: [rankedProject("available", name: "Available")]
+                )
+            )
+        )
+    }
+
     @Test
     func recentProjectRankingDeduplicatesARepositoryAcrossEnvironments() {
         let local = rankedProject(

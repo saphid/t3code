@@ -154,6 +154,7 @@ public struct NewThreadView: View {
                         environments: model.snapshot.environments
                     ),
                     preferredEnvironmentID: selectedProject?.environmentID,
+                    unreachableEnvironments: unreachableEnvironments,
                     selectionID: selectedProjectGroup?.id,
                     onSelect: { group in
                         if selectProjectGroup(group) {
@@ -276,24 +277,53 @@ public struct NewThreadView: View {
             Image(systemName: "folder.badge.plus")
                 .font(.system(size: 28, weight: .regular))
                 .foregroundStyle(T3Colors.textSecondary)
-            Text("Create a project first")
+            Text(unreachableEnvironments.isEmpty ? "Create a project first" : "No projects available")
                 .font(T3Typography.threadHeading1.weight(.regular))
                 .foregroundStyle(T3Colors.textPrimary)
-            Text("Tasks need a workspace on one of your connected environments.")
+            Text(
+                unreachableEnvironments.isEmpty
+                    ? "Tasks need a workspace on one of your connected environments."
+                    : canCreateProject
+                        ? "Create a project here, or reconnect another environment."
+                        : "Reconnect an environment to load its projects."
+            )
                 .font(T3Typography.threadBody)
                 .foregroundStyle(T3Colors.textSecondary)
                 .multilineTextAlignment(.center)
-            Button("Create project") {
-                dismiss()
-                Task { @MainActor in
-                    await Task.yield()
-                    onCreateProject()
+            if !unreachableEnvironments.isEmpty {
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 8) {
+                        ForEach(unreachableEnvironments) { environment in
+                            NewTaskUnreachableEnvironmentRow(name: environment.name)
+                        }
+                    }
                 }
+                .frame(maxHeight: min(CGFloat(unreachableEnvironments.count) * 44, 132))
+                .font(T3Typography.supporting)
+                .foregroundStyle(T3Colors.danger)
+                .padding(.top, 2)
             }
-            .buttonStyle(.borderedProminent)
-            .tint(T3Colors.primaryAction)
-            .foregroundStyle(T3Colors.primaryActionForeground)
-            .padding(.top, 6)
+            if unreachableEnvironments.isEmpty || canCreateProject {
+                Button("Create project") {
+                    dismiss()
+                    Task { @MainActor in
+                        await Task.yield()
+                        onCreateProject()
+                    }
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(T3Colors.primaryAction)
+                .foregroundStyle(T3Colors.primaryActionForeground)
+                .padding(.top, 6)
+            } else {
+                Button("Try again") {
+                    Task { await model.reload() }
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(T3Colors.primaryAction)
+                .foregroundStyle(T3Colors.primaryActionForeground)
+                .padding(.top, 6)
+            }
         }
         .padding(.horizontal, 28)
         .frame(maxWidth: .infinity)
@@ -422,6 +452,16 @@ public struct NewThreadView: View {
     private var creationEnvironments: [FeatureEnvironment] {
         let environmentIDs = Set(selectedProjectGroup?.projects.map(\.environmentID) ?? [])
         return model.snapshot.environments.filter { environmentIDs.contains($0.id) }
+    }
+
+    private var unreachableEnvironments: [FeatureEnvironment] {
+        NewTaskEnvironmentAvailability.unreachableEnvironments(in: model.snapshot)
+    }
+
+    private var canCreateProject: Bool {
+        model.snapshot.environments.contains {
+            $0.isEnabled && $0.connectionState == .connected
+        }
     }
 
     private var environmentName: String {
@@ -969,12 +1009,33 @@ private enum NewTaskPicker: String, Identifiable {
     var id: String { rawValue }
 }
 
+enum NewTaskEnvironmentAvailability {
+    static func shouldPresentNewThread(in snapshot: FeatureSnapshot) -> Bool {
+        DailyUXCreationContext.projects(in: snapshot).isEmpty == false
+            || unreachableEnvironments(in: snapshot).isEmpty == false
+    }
+
+    static func unreachableEnvironments(in snapshot: FeatureSnapshot) -> [FeatureEnvironment] {
+        snapshot.environments
+            .filter {
+                $0.isEnabled
+                    && ($0.connectionState == .disconnected
+                        || $0.connectionState == .reconnecting)
+            }
+            .sorted {
+                let nameOrder = $0.name.localizedCaseInsensitiveCompare($1.name)
+                return nameOrder == .orderedSame ? $0.id < $1.id : nameOrder == .orderedAscending
+            }
+    }
+}
+
 private struct NewTaskProjectPicker: View {
     @SwiftUI.Environment(\.dismiss) private var dismiss
     let groups: [DailyUXProjectGroup]
     let recentGroupIDs: [String]
     let hostLabels: DailyUXProjectHostLabels
     let preferredEnvironmentID: String?
+    let unreachableEnvironments: [FeatureEnvironment]
     let selectionID: String?
     let onSelect: (DailyUXProjectGroup) -> Void
 
@@ -994,6 +1055,13 @@ private struct NewTaskProjectPicker: View {
                     )
                 } else {
                     projectList
+                }
+            }
+            .safeAreaInset(edge: .bottom, spacing: 0) {
+                if !unreachableEnvironments.isEmpty {
+                    NewTaskUnreachableEnvironmentsNotice(
+                        environments: unreachableEnvironments
+                    )
                 }
             }
             .background(T3Colors.background)
@@ -1214,6 +1282,51 @@ private struct PickerCard: ViewModifier {
                 RoundedRectangle(cornerRadius: 14, style: .continuous)
                     .strokeBorder(T3Colors.border, lineWidth: 0.5)
             }
+    }
+}
+
+private struct NewTaskUnreachableEnvironmentsNotice: View {
+    let environments: [FeatureEnvironment]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 6) {
+                    ForEach(environments) { environment in
+                        NewTaskUnreachableEnvironmentRow(name: environment.name)
+                    }
+                }
+            }
+            .frame(maxHeight: min(CGFloat(environments.count) * 44, 132))
+
+            Text(availabilityMessage)
+                .foregroundStyle(T3Colors.textTertiary)
+        }
+        .font(T3Typography.supporting)
+        .foregroundStyle(T3Colors.danger)
+        .padding(.horizontal, 18)
+        .padding(.vertical, 12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(T3Colors.surface)
+        .overlay(alignment: .top) {
+            Rectangle()
+                .fill(T3Colors.border)
+                .frame(height: 1)
+        }
+    }
+
+    private var availabilityMessage: String {
+        environments.count == 1
+            ? "Some projects may be unavailable until this environment reconnects."
+            : "Some projects may be unavailable until these environments reconnect."
+    }
+}
+
+private struct NewTaskUnreachableEnvironmentRow: View {
+    let name: String
+
+    var body: some View {
+        Label("\(name) is unreachable", systemImage: "network.slash")
     }
 }
 
