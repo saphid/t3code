@@ -34,10 +34,7 @@
     "T3_PERF_CHROME_ARGS": "--no-sandbox --disable-dev-shm-usage"
   },
   "onCreateCommand": "bash .devcontainer/on-create.sh",
-  // Runs on prebuild refreshes too, so codespaces start with deps installed
-  // and the Vite dep cache warm. ensure:electron repairs exec bits after
-  // install, same as CI.
-  "updateContentCommand": "vp i && vp run --filter @t3tools/desktop ensure:electron && node apps/web/scripts/warm-dep-cache.ts",
+  "updateContentCommand": "bash .devcontainer/update-content.sh",
   "forwardPorts": [5733, 13773],
   "portsAttributes": {
     "5733": {

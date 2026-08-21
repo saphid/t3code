@@ -6,10 +6,9 @@
 
 ## What works in the container
 
-- The full dev stack: `vp run dev`, then open the pairing URL it prints through the forwarded web port (5733). The bare origin is useless without the pairing token.
-- Everything the Linux CI jobs run: `vp check`, `vpr typecheck`, `vp run test`, `vp run build:desktop`, and the resource-monitor cargo build and tests.
-- The server perf benches in `apps/server/integration/` (`cd apps/server && vp test run integration/<name>.integration.test.ts`). They are in-process and receipt-driven, so container numbers are stable enough to compare within the same machine class.
-- The perf harness (`packages/perf-analyzer`) on the web surface, headless. Container setup installs its pinned Playwright Chromium when the package is present, and `T3_PERF_CHROME_ARGS` is preset with the flags Chromium needs inside containers. Without a GPU the harness reports `gpuBackend: "none"` and `gpuProcessCpuMs` becomes the rendering-cost signal; on Linux hosts with DRM or NVIDIA GPUs the `drm-fdinfo` and `nvidia-smi` backends work as-is.
+- The full dev stack: `vp run dev`, then open the pairing URL it prints through the forwarded web port (5733). The bare origin is useless without the pairing token. In VS Code the forwarded port is a true localhost, so the printed URL works as-is; in browser Codespaces the forwarded origin differs, and if the server rejects it, pass the forwarded origin via `T3CODE_DEV_ALLOWED_ORIGINS`.
+- Everything the Linux CI jobs run: `vp check`, `vp run typecheck`, `vp run test`, `vp run build:desktop`, and the resource-monitor cargo build and tests. (`vpr` is not on PATH here; the curl installer only shims `vp`. Use `vp run <script>` or `node_modules/.bin/vpr` after install.)
+- The perf harness (`packages/perf-analyzer`, once it is in your checkout) on the web surface, headless. Container setup installs its pinned Playwright Chromium whenever the package is present, and `T3_PERF_CHROME_ARGS` is preset with the flags Chromium needs inside containers. Without a GPU the harness reports `gpuBackend: "none"` and `gpuProcessCpuMs` becomes the rendering-cost signal; on Linux hosts with DRM or NVIDIA GPUs the `drm-fdinfo` and `nvidia-smi` backends work as-is. The same goes for the server perf benches next to `apps/server/integration/perfBench.integration.ts`: in-process and receipt-driven, so container numbers are stable enough to compare within the same machine class.
 
 ## State and safety
 
@@ -17,7 +16,7 @@
 
 ## Observability
 
-The server already exports OTLP metrics and traces when told where to send them (off by default). With docker-in-docker available in the container, the ready-made collector stack from the perf harness is one command away:
+The server already exports OTLP metrics and traces when told where to send them (off by default). With docker-in-docker available in the container, and once `packages/perf-analyzer` is in your checkout, its ready-made collector stack is one command away:
 
 ```bash
 docker compose -f packages/perf-analyzer/observability/docker-compose.yml up -d

@@ -1,19 +1,18 @@
 #!/usr/bin/env bash
-# One-time container setup, baked into prebuilds. Per-checkout work (vp i,
-# electron repair, dep-cache warmup) lives in updateContentCommand instead.
+# One-time container setup, baked into prebuilds. Content-dependent work
+# (dependency install, Chromium) lives in update-content.sh.
 set -euo pipefail
 
 # The Vite+ CLI is the repo task runner (vp i, vp run dev, vp test run).
-# VP_NODE_MANAGER=no skips its interactive node-manager prompt; Node comes
-# from the devcontainer feature. Symlink the shims so non-login lifecycle
-# shells and CI-style invocations find them without sourcing a profile.
-VP_NODE_MANAGER=no bash -c "$(curl -fsSL https://vite.plus)"
-sudo ln -sf "$HOME/.vite-plus/bin/"* /usr/local/bin/
+# Download to a file first: a curl failure inside $( ) would yield an empty
+# script and a false success. VP_NODE_MANAGER=no skips the installer's node
+# shims; Node comes from the devcontainer feature.
+installer=$(mktemp)
+curl -fsSL https://vite.plus -o "$installer"
+VP_NODE_MANAGER=no bash "$installer"
+rm -f "$installer"
 
-# The perf harness (packages/perf-analyzer) pins playwright-core and drives a
-# matching Chromium. Install it plus system deps only when the package exists,
-# so the image stays lean on checkouts that predate it.
-if [ -f packages/perf-analyzer/package.json ]; then
-  playwright_version=$(node -p "require('./packages/perf-analyzer/package.json').dependencies['playwright-core']")
-  npx -y "playwright@${playwright_version}" install --with-deps chromium
-fi
+# Non-login lifecycle shells never source the profile the installer edits,
+# so expose vp on the default PATH. test -x keeps a layout change loud.
+test -x "$HOME/.vite-plus/bin/vp"
+sudo ln -sf "$HOME/.vite-plus/bin/vp" /usr/local/bin/vp
