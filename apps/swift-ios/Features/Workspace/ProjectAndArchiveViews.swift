@@ -62,9 +62,7 @@ public struct AddProjectView: View {
                 if let environment = selectedEnvironment {
                     ScrollView {
                         LazyVStack(alignment: .leading, spacing: 22) {
-                            if environments.count > 1 {
-                                environmentPicker(environment)
-                            }
+                            environmentPicker(environment)
                             modePicker
                             if let errorMessage {
                                 errorBanner(errorMessage)
@@ -134,9 +132,7 @@ public struct AddProjectView: View {
     }
 
     private var environments: [FeatureEnvironment] {
-        model.snapshot.environments
-            .filter(\.isEnabled)
-            .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+        ProjectCreationEnvironmentSelection.options(in: model.snapshot)
     }
 
     private var selectedEnvironment: FeatureEnvironment? {
@@ -571,17 +567,14 @@ public struct AddProjectView: View {
     }
 
     private func canCreateProject(in environment: FeatureEnvironment) -> Bool {
-        environment.isEnabled && environment.connectionState != .disconnected
+        ProjectCreationEnvironmentSelection.isSelectable(environment)
     }
 
     private func selectEnvironmentIfNeeded() {
-        if let selectedEnvironmentID,
-           environments.contains(where: {
-               $0.id == selectedEnvironmentID && canCreateProject(in: $0)
-           }) {
-            return
-        }
-        selectedEnvironmentID = environments.first(where: canCreateProject)?.id
+        selectedEnvironmentID = ProjectCreationEnvironmentSelection.selectedID(
+            current: selectedEnvironmentID,
+            options: environments
+        )
     }
 
     private func resetEnvironmentState() {
@@ -935,6 +928,32 @@ public struct AddProjectView: View {
     private func projectErrorMessage(_ error: Error) -> String {
         let message = error.localizedDescription.trimmingCharacters(in: .whitespacesAndNewlines)
         return message.isEmpty ? "The server could not complete that request." : message
+    }
+}
+
+enum ProjectCreationEnvironmentSelection {
+    static func options(in snapshot: FeatureSnapshot) -> [FeatureEnvironment] {
+        snapshot.environments
+            .filter(\.isEnabled)
+            .sorted {
+                let nameOrder = $0.name.localizedCaseInsensitiveCompare($1.name)
+                return nameOrder == .orderedSame ? $0.id < $1.id : nameOrder == .orderedAscending
+            }
+    }
+
+    static func isSelectable(_ environment: FeatureEnvironment) -> Bool {
+        NewTaskEnvironmentAvailability.canSelect(environment)
+    }
+
+    static func selectedID(
+        current: String?,
+        options: [FeatureEnvironment]
+    ) -> String? {
+        if let current,
+           options.contains(where: { $0.id == current && isSelectable($0) }) {
+            return current
+        }
+        return options.first(where: isSelectable)?.id
     }
 }
 

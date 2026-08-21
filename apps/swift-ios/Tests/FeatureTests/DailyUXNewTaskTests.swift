@@ -255,6 +255,129 @@ struct DailyUXNewTaskTests {
         )
     }
 
+    @Test(
+        "Host menu keeps a visible single choice and expands to every reachable host",
+        .bug("https://github.com/saphid/t3code-personal/issues/133")
+    )
+    func hostMenuKeepsSingleAndMultipleReachableChoices() throws {
+        let studioProject = rankedProject(
+            "studio-project",
+            name: "T3 Code",
+            environmentID: "studio",
+            repositoryKey: "github.com/pingdotgg/t3code"
+        )
+        let travelProject = rankedProject(
+            "travel-project",
+            name: "T3 Code",
+            environmentID: "travel",
+            repositoryKey: "github.com/pingdotgg/t3code"
+        )
+        let studio = FeatureEnvironment(
+            id: "studio",
+            name: "Studio Mac",
+            endpoint: "http://studio",
+            connectionState: .connected
+        )
+        let travel = FeatureEnvironment(
+            id: "travel",
+            name: "Travel Mac",
+            endpoint: "http://travel",
+            connectionState: .connected
+        )
+
+        let singleSnapshot = rankedSnapshot(
+            environments: [studio],
+            projects: [studioProject],
+            threads: []
+        )
+        let singleGroup = try #require(
+            DailyUXCreationContext.projectGroups(in: singleSnapshot).first
+        )
+        let single = NewTaskHostMenu(
+            group: singleGroup,
+            selectedProject: studioProject,
+            snapshot: singleSnapshot
+        )
+
+        #expect(single.environments.map(\.id) == ["studio"])
+        #expect(single.selectedEnvironmentID == "studio")
+        #expect(single.isAvailable)
+
+        let multipleSnapshot = rankedSnapshot(
+            environments: [studio, travel],
+            projects: [studioProject, travelProject],
+            threads: []
+        )
+        let multipleGroup = try #require(
+            DailyUXCreationContext.projectGroups(in: multipleSnapshot).first
+        )
+        let multiple = NewTaskHostMenu(
+            group: multipleGroup,
+            selectedProject: travelProject,
+            snapshot: multipleSnapshot
+        )
+
+        #expect(multiple.environments.map(\.id) == ["studio", "travel"])
+        #expect(multiple.selectedEnvironmentID == "travel")
+        #expect(multiple.isAvailable)
+    }
+
+    @Test(
+        "Host menu never offers disabled or unreachable environments",
+        .bug("https://github.com/saphid/t3code-personal/issues/133")
+    )
+    func hostMenuExcludesDisabledAndUnreachableChoices() throws {
+        let environments = [
+            FeatureEnvironment(
+                id: "connected",
+                name: "Connected Mac",
+                endpoint: "http://connected",
+                connectionState: .connected
+            ),
+            FeatureEnvironment(
+                id: "disabled",
+                name: "Disabled Mac",
+                endpoint: "http://disabled",
+                isEnabled: false,
+                connectionState: .connected
+            ),
+            FeatureEnvironment(
+                id: "disconnected",
+                name: "Disconnected Mac",
+                endpoint: "http://disconnected",
+                connectionState: .disconnected
+            ),
+            FeatureEnvironment(
+                id: "reconnecting",
+                name: "Reconnecting Mac",
+                endpoint: "http://reconnecting",
+                connectionState: .reconnecting
+            ),
+        ]
+        let projects = environments.map {
+            rankedProject(
+                "\($0.id)-project",
+                name: "T3 Code",
+                environmentID: $0.id,
+                repositoryKey: "github.com/pingdotgg/t3code"
+            )
+        }
+        let snapshot = rankedSnapshot(
+            environments: environments,
+            projects: projects,
+            threads: []
+        )
+        let group = try #require(DailyUXCreationContext.projectGroups(in: snapshot).first)
+        let menu = NewTaskHostMenu(
+            group: group,
+            selectedProject: projects[0],
+            snapshot: snapshot
+        )
+
+        #expect(menu.environments.map(\.id) == ["connected"])
+        #expect(menu.selectedEnvironmentID == "connected")
+    }
+
     @Test
     func recentProjectRankingDeduplicatesARepositoryAcrossEnvironments() {
         let local = rankedProject(

@@ -235,11 +235,11 @@ public struct NewThreadView: View {
         .frame(maxWidth: .infinity)
         .overlay(alignment: .bottom) {
             Menu {
-                ForEach(creationEnvironments) { environment in
+                ForEach(creationHostMenu.environments) { environment in
                     Button {
                         selectEnvironment(environment.id)
                     } label: {
-                        if environment.id == selectedProject?.environmentID {
+                        if environment.id == creationHostMenu.selectedEnvironmentID {
                             Label(environment.name, systemImage: "checkmark")
                         } else {
                             Text(environment.name)
@@ -251,17 +251,15 @@ public struct NewThreadView: View {
                     Image(systemName: "server.rack")
                         .font(.system(size: 11, weight: .medium))
                     Text("on \(environmentName)")
-                    if creationEnvironments.count > 1 {
-                        Image(systemName: "chevron.down")
-                            .font(.system(size: 8, weight: .bold))
-                    }
+                    Image(systemName: "chevron.down")
+                        .font(.system(size: 8, weight: .bold))
                 }
                 .font(T3Typography.supporting)
                 .foregroundStyle(T3Colors.textTertiary)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .disabled(isSubmitting || creationEnvironments.count < 2)
+            .disabled(isSubmitting || creationHostMenu.isAvailable == false)
             .accessibilityLabel("Computer")
             .accessibilityValue(environmentName)
             .offset(y: 31)
@@ -446,9 +444,12 @@ public struct NewThreadView: View {
         creationProjectGroups.flatMap(\.projects).map(\.id)
     }
 
-    private var creationEnvironments: [FeatureEnvironment] {
-        let environmentIDs = Set(selectedProjectGroup?.projects.map(\.environmentID) ?? [])
-        return model.snapshot.environments.filter { environmentIDs.contains($0.id) }
+    private var creationHostMenu: NewTaskHostMenu {
+        NewTaskHostMenu(
+            group: selectedProjectGroup,
+            selectedProject: selectedProject,
+            snapshot: model.snapshot
+        )
     }
 
     private var unreachableEnvironments: [FeatureEnvironment] {
@@ -1023,6 +1024,37 @@ enum NewTaskEnvironmentAvailability {
                 let nameOrder = $0.name.localizedCaseInsensitiveCompare($1.name)
                 return nameOrder == .orderedSame ? $0.id < $1.id : nameOrder == .orderedAscending
             }
+    }
+
+    static func canSelect(_ environment: FeatureEnvironment) -> Bool {
+        environment.isEnabled
+            && environment.connectionState != .disconnected
+            && environment.connectionState != .reconnecting
+    }
+}
+
+struct NewTaskHostMenu {
+    let environments: [FeatureEnvironment]
+    let selectedEnvironmentID: String?
+
+    var isAvailable: Bool { environments.isEmpty == false }
+
+    init(
+        group: DailyUXProjectGroup?,
+        selectedProject: FeatureProject?,
+        snapshot: FeatureSnapshot
+    ) {
+        let environmentIDs = Set(group?.projects.map(\.environmentID) ?? [])
+        environments = snapshot.environments.filter {
+            environmentIDs.contains($0.id)
+                && NewTaskEnvironmentAvailability.canSelect($0)
+        }
+        if let selectedID = selectedProject?.environmentID,
+           environments.contains(where: { $0.id == selectedID }) {
+            selectedEnvironmentID = selectedID
+        } else {
+            selectedEnvironmentID = nil
+        }
     }
 }
 

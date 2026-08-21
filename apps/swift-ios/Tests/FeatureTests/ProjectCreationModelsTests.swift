@@ -4,6 +4,78 @@ import Testing
 
 @Suite("Native project creation")
 struct ProjectCreationModelsTests {
+    @Test(
+        "Environment menu remains available with one host",
+        .bug("https://github.com/saphid/t3code-personal/issues/133")
+    )
+    func environmentMenuKeepsOneHostAndCurrentSelection() {
+        let studio = FeatureEnvironment(
+            id: "studio",
+            name: "Studio Mac",
+            endpoint: "http://studio",
+            connectionState: .connected
+        )
+        let options = ProjectCreationEnvironmentSelection.options(
+            in: FeatureSnapshot(environments: [studio])
+        )
+
+        #expect(options.map(\.id) == ["studio"])
+        #expect(
+            ProjectCreationEnvironmentSelection.selectedID(
+                current: "studio",
+                options: options
+            ) == "studio"
+        )
+    }
+
+    @Test(
+        "Environment menu lists enabled hosts without selecting unreachable ones",
+        .bug("https://github.com/saphid/t3code-personal/issues/133")
+    )
+    func environmentMenuPreservesAvailabilityRules() {
+        let connected = FeatureEnvironment(
+            id: "connected",
+            name: "Connected Mac",
+            endpoint: "http://connected",
+            connectionState: .connected
+        )
+        let disconnected = FeatureEnvironment(
+            id: "disconnected",
+            name: "Disconnected Mac",
+            endpoint: "http://disconnected",
+            connectionState: .disconnected
+        )
+        let reconnecting = FeatureEnvironment(
+            id: "reconnecting",
+            name: "Reconnecting Mac",
+            endpoint: "http://reconnecting",
+            connectionState: .reconnecting
+        )
+        let disabled = FeatureEnvironment(
+            id: "disabled",
+            name: "Disabled Mac",
+            endpoint: "http://disabled",
+            isEnabled: false,
+            connectionState: .connected
+        )
+        let options = ProjectCreationEnvironmentSelection.options(
+            in: FeatureSnapshot(
+                environments: [reconnecting, disabled, disconnected, connected]
+            )
+        )
+
+        #expect(options.map(\.id) == ["connected", "disconnected", "reconnecting"])
+        #expect(ProjectCreationEnvironmentSelection.isSelectable(connected))
+        #expect(ProjectCreationEnvironmentSelection.isSelectable(disconnected) == false)
+        #expect(ProjectCreationEnvironmentSelection.isSelectable(reconnecting) == false)
+        #expect(
+            ProjectCreationEnvironmentSelection.selectedID(
+                current: "disconnected",
+                options: options
+            ) == "connected"
+        )
+    }
+
     @Test
     func repositoryNamesCoverHttpsSshAndProviderPaths() {
         #expect(
