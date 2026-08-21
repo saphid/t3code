@@ -153,10 +153,7 @@ public struct WorkspaceView: View {
             AddProjectView(model: model)
         }
         .sheet(isPresented: $showingSettings) {
-            SettingsView(model: model) { threadID in
-                showingSettings = false
-                openThread(threadID)
-            }
+            SettingsView(model: model)
         }
         .alert(
             "Rename thread",
