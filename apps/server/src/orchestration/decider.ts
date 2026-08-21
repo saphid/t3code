@@ -1,5 +1,6 @@
 import {
   EventId,
+  OrchestrationThreadBusyError,
   type OrchestrationCommand,
   type OrchestrationEvent,
   type OrchestrationReadModel,
@@ -62,7 +63,12 @@ function isStaleRequestFailureDetail(payload: Record<string, unknown> | null): b
 // capped stream and stays consistent with this view.)
 function hasOpenBlockingRequest(thread: {
   readonly activities: ReadonlyArray<{ readonly kind: string; readonly payload: unknown }>;
+  readonly pendingApprovalCount?: number | undefined;
+  readonly pendingUserInputCount?: number | undefined;
 }): boolean {
+  if ((thread.pendingApprovalCount ?? 0) > 0 || (thread.pendingUserInputCount ?? 0) > 0) {
+    return true;
+  }
   const openRequestIds = new Set<string>();
   for (const activity of thread.activities) {
     const payload =
@@ -107,6 +113,7 @@ function hasOpenBlockingRequest(thread: {
 function threadHasQueuedTurnStart(
   thread: {
     readonly messages: ReadonlyArray<{ readonly role: string; readonly createdAt: string }>;
+    readonly latestUserMessageAt?: string | null | undefined;
     readonly latestTurn: {
       readonly requestedAt: string;
       readonly startedAt: string | null;
@@ -116,10 +123,16 @@ function threadHasQueuedTurnStart(
   },
   occurredAt: string,
 ): boolean {
+  const persistedLatestUserMessageAtMs =
+    thread.latestUserMessageAt == null
+      ? Number.NEGATIVE_INFINITY
+      : Date.parse(thread.latestUserMessageAt);
   const latestUserMessageAtMs = thread.messages.reduce(
     (latest, message) =>
       message.role === "user" ? Math.max(latest, Date.parse(message.createdAt)) : latest,
-    Number.NEGATIVE_INFINITY,
+    Number.isFinite(persistedLatestUserMessageAtMs)
+      ? persistedLatestUserMessageAtMs
+      : Number.NEGATIVE_INFINITY,
   );
   const latestTurnAtMs =
     thread.latestTurn === null
@@ -178,6 +191,25 @@ type DecideOrchestrationCommandResult =
   | PlannedOrchestrationEvent
   | ReadonlyArray<PlannedOrchestrationEvent>;
 
+function guardedTurnBusyReason(
+  thread: OrchestrationReadModel["threads"][number],
+  occurredAt: string,
+): OrchestrationThreadBusyError["reason"] | null {
+  if (thread.session?.status === "starting" || thread.session?.status === "running") {
+    return "active-session";
+  }
+  if (thread.latestTurn?.state === "running") {
+    return "active-turn";
+  }
+  if (hasOpenBlockingRequest(thread)) {
+    return "pending-request";
+  }
+  if (threadHasQueuedTurnStart(thread, occurredAt)) {
+    return "queued-turn-start";
+  }
+  return null;
+}
+
 const decideCommandSequence = Effect.fn("decideCommandSequence")(function* ({
   commands,
   readModel,
@@ -186,7 +218,7 @@ const decideCommandSequence = Effect.fn("decideCommandSequence")(function* ({
   readonly readModel: OrchestrationReadModel;
 }): Effect.fn.Return<
   ReadonlyArray<PlannedOrchestrationEvent>,
-  OrchestrationCommandInvariantError | PlatformError.PlatformError,
+  OrchestrationCommandInvariantError | OrchestrationThreadBusyError | PlatformError.PlatformError,
   Crypto.Crypto
 > {
   let nextReadModel = readModel;
@@ -220,7 +252,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
   readonly readModel: OrchestrationReadModel;
 }): Effect.fn.Return<
   DecideOrchestrationCommandResult,
-  OrchestrationCommandInvariantError | PlatformError.PlatformError,
+  OrchestrationCommandInvariantError | OrchestrationThreadBusyError | PlatformError.PlatformError,
   Crypto.Crypto
 > {
   switch (command.type) {
@@ -917,6 +949,15 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         command,
         threadId: command.threadId,
       });
+      if (command.onlyIfIdle === true) {
+        const busyReason = guardedTurnBusyReason(targetThread, yield* nowIso);
+        if (busyReason !== null) {
+          return yield* new OrchestrationThreadBusyError({
+            threadId: command.threadId,
+            reason: busyReason,
+          });
+        }
+      }
       const sourceProposedPlan = command.sourceProposedPlan;
       const sourceThread = sourceProposedPlan
         ? yield* requireThread({

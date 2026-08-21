@@ -5,13 +5,16 @@ import {
   ProjectId,
   ProviderInstanceId,
   ThreadId,
+  TurnId,
   type OrchestrationReadModel,
   type OrchestrationSession,
   type OrchestrationThread,
 } from "@t3tools/contracts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as TestClock from "effect/testing/TestClock";
 
 import { decideOrchestrationCommand } from "./decider.ts";
 
@@ -394,6 +397,233 @@ it.layer(NodeServices.layer)("settled thread decider", (it) => {
         "thread.unsettled",
         "thread.session-set",
       ]);
+    }),
+  );
+
+  it.effect("rejects a guarded turn start while the thread has a live session", () =>
+    Effect.gen(function* () {
+      const error = yield* decideOrchestrationCommand({
+        command: {
+          type: "thread.turn.start",
+          commandId: CommandId.make("cmd-guarded-turn-start"),
+          threadId: ThreadId.make("thread-1"),
+          message: {
+            messageId: MessageId.make("message-guarded"),
+            role: "user",
+            text: "Continue",
+            attachments: [],
+          },
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          onlyIfIdle: true,
+          createdAt: NOW,
+        },
+        readModel: makeReadModel(null, null, makeSession("running")),
+      }).pipe(Effect.flip);
+
+      expect(error._tag).toBe("OrchestrationThreadBusyError");
+      if (error._tag === "OrchestrationThreadBusyError") {
+        expect(error.threadId).toBe(ThreadId.make("thread-1"));
+        expect(error.reason).toBe("active-session");
+      }
+    }),
+  );
+
+  it.effect("reports why a guarded turn start found non-session work in flight", () =>
+    Effect.gen(function* () {
+      const decideGuarded = (readModel: OrchestrationReadModel, suffix: string) =>
+        decideOrchestrationCommand({
+          command: {
+            type: "thread.turn.start",
+            commandId: CommandId.make(`cmd-guarded-${suffix}`),
+            threadId: ThreadId.make("thread-1"),
+            message: {
+              messageId: MessageId.make(`message-guarded-${suffix}`),
+              role: "user",
+              text: "Continue",
+              attachments: [],
+            },
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            onlyIfIdle: true,
+            createdAt: NOW,
+          },
+          readModel,
+        }).pipe(Effect.flip);
+
+      const activeTurnBase = makeReadModel(null);
+      const activeTurn = yield* decideGuarded(
+        {
+          ...activeTurnBase,
+          threads: activeTurnBase.threads.map((thread) => ({
+            ...thread,
+            latestTurn: {
+              turnId: TurnId.make("turn-running"),
+              state: "running" as const,
+              requestedAt: NOW,
+              startedAt: NOW,
+              completedAt: null,
+              assistantMessageId: null,
+            },
+          })),
+        },
+        "active-turn",
+      );
+      expect(activeTurn._tag).toBe("OrchestrationThreadBusyError");
+      if (activeTurn._tag === "OrchestrationThreadBusyError") {
+        expect(activeTurn.reason).toBe("active-turn");
+      }
+
+      const pendingRequest = yield* decideGuarded(
+        makeReadModel(null, null, null, [
+          {
+            id: EventId.make("activity-pending-approval"),
+            tone: "approval",
+            kind: "approval.requested",
+            summary: "Approval requested",
+            payload: { requestId: "request-1" },
+            turnId: null,
+            createdAt: NOW,
+          },
+        ]),
+        "pending-request",
+      );
+      expect(pendingRequest._tag).toBe("OrchestrationThreadBusyError");
+      if (pendingRequest._tag === "OrchestrationThreadBusyError") {
+        expect(pendingRequest.reason).toBe("pending-request");
+      }
+
+      const queuedTurn = yield* decideGuarded(
+        makeReadModel(
+          null,
+          null,
+          null,
+          [],
+          [
+            {
+              id: MessageId.make("message-already-queued"),
+              role: "user",
+              text: "Earlier wake",
+              turnId: null,
+              streaming: false,
+              createdAt: "1970-01-01T00:00:00.000Z",
+              updatedAt: "1970-01-01T00:00:00.000Z",
+            },
+          ],
+        ),
+        "queued-turn",
+      );
+      expect(queuedTurn._tag).toBe("OrchestrationThreadBusyError");
+      if (queuedTurn._tag === "OrchestrationThreadBusyError") {
+        expect(queuedTurn.reason).toBe("queued-turn-start");
+      }
+    }),
+  );
+
+  it.effect("lets an identical guarded retry proceed after the queued-start grace expires", () =>
+    Effect.gen(function* () {
+      const epoch = "1970-01-01T00:00:00.000Z";
+      const readModel = makeReadModel(
+        null,
+        null,
+        null,
+        [],
+        [
+          {
+            id: MessageId.make("message-orphaned-start"),
+            role: "user",
+            text: "Earlier wake",
+            turnId: null,
+            streaming: false,
+            createdAt: epoch,
+            updatedAt: epoch,
+          },
+        ],
+      );
+      const command = {
+        type: "thread.turn.start" as const,
+        commandId: CommandId.make("cmd-retry-after-grace"),
+        threadId: ThreadId.make("thread-1"),
+        message: {
+          messageId: MessageId.make("message-retry-after-grace"),
+          role: "user" as const,
+          text: "Retry wake",
+          attachments: [],
+        },
+        runtimeMode: "full-access" as const,
+        interactionMode: "default" as const,
+        onlyIfIdle: true,
+        createdAt: epoch,
+      };
+
+      const busy = yield* decideOrchestrationCommand({ command, readModel }).pipe(Effect.flip);
+      expect(busy._tag).toBe("OrchestrationThreadBusyError");
+
+      yield* TestClock.adjust("121 seconds");
+      const retried = yield* decideOrchestrationCommand({ command, readModel });
+      const events = Array.isArray(retried) ? retried : [retried];
+      expect(events.map((event) => event.type)).toEqual([
+        "thread.message-sent",
+        "thread.turn-start-requested",
+      ]);
+    }),
+  );
+
+  it.effect("uses persisted guard summaries when restart snapshots omit thread bodies", () =>
+    Effect.gen(function* () {
+      const command = {
+        type: "thread.turn.start" as const,
+        commandId: CommandId.make("cmd-restart-guard"),
+        threadId: ThreadId.make("thread-1"),
+        message: {
+          messageId: MessageId.make("message-restart-guard"),
+          role: "user" as const,
+          text: "Wake",
+          attachments: [],
+        },
+        runtimeMode: "full-access" as const,
+        interactionMode: "default" as const,
+        onlyIfIdle: true,
+        createdAt: "1970-01-01T00:00:00.000Z",
+      };
+      const withSummary = (
+        summary: Pick<
+          OrchestrationThread,
+          "latestUserMessageAt" | "pendingApprovalCount" | "pendingUserInputCount"
+        >,
+      ): OrchestrationReadModel => {
+        const base = makeReadModel(null);
+        return {
+          ...base,
+          threads: base.threads.map((thread) => ({ ...thread, ...summary })),
+        };
+      };
+
+      const pending = yield* decideOrchestrationCommand({
+        command,
+        readModel: withSummary({
+          latestUserMessageAt: null,
+          pendingApprovalCount: 1,
+          pendingUserInputCount: 0,
+        }),
+      }).pipe(Effect.flip);
+      expect(pending._tag).toBe("OrchestrationThreadBusyError");
+      if (pending._tag === "OrchestrationThreadBusyError") {
+        expect(pending.reason).toBe("pending-request");
+      }
+
+      const queued = yield* decideOrchestrationCommand({
+        command,
+        readModel: withSummary({
+          latestUserMessageAt: DateTime.formatIso(yield* DateTime.now),
+          pendingApprovalCount: 0,
+          pendingUserInputCount: 0,
+        }),
+      }).pipe(Effect.flip);
+      expect(queued._tag).toBe("OrchestrationThreadBusyError");
+      if (queued._tag === "OrchestrationThreadBusyError") {
+        expect(queued.reason).toBe("queued-turn-start");
+      }
     }),
   );
 

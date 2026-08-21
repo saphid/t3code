@@ -22,6 +22,7 @@ import {
   type GitActionProgressEvent,
   type GitManagerServiceError,
   OrchestrationDispatchCommandError,
+  OrchestrationThreadBusyError,
   type OrchestrationEvent,
   type OrchestrationShellStreamEvent,
   type OrchestrationShellStreamItem,
@@ -123,6 +124,7 @@ import * as SessionStore from "./auth/SessionStore.ts";
 import { failEnvironmentAuthInvalid, failEnvironmentInternal } from "./auth/http.ts";
 import * as RelayClient from "@t3tools/shared/relayClient";
 const isOrchestrationDispatchCommandError = Schema.is(OrchestrationDispatchCommandError);
+const isOrchestrationThreadBusyError = Schema.is(OrchestrationThreadBusyError);
 
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
 const EDITOR_DISCOVERY_TIMEOUT = Duration.seconds(5);
@@ -475,6 +477,10 @@ const makeWsRpcLayer = (
               message: cause instanceof Error ? cause.message : fallbackMessage,
               cause,
             });
+      const toDispatchCommandFailure = (cause: unknown, fallbackMessage: string) =>
+        isOrchestrationThreadBusyError(cause)
+          ? cause
+          : toDispatchCommandError(cause, fallbackMessage);
       const randomUUID = crypto.randomUUIDv4.pipe(
         Effect.mapError((cause) =>
           toDispatchCommandError(cause, "Failed to generate orchestration command identifier."),
@@ -530,13 +536,7 @@ const makeWsRpcLayer = (
 
       const toBootstrapDispatchCommandCauseError = (cause: Cause.Cause<unknown>) => {
         const error = Cause.squash(cause);
-        return isOrchestrationDispatchCommandError(error)
-          ? error
-          : new OrchestrationDispatchCommandError({
-              message:
-                error instanceof Error ? error.message : "Failed to bootstrap thread turn start.",
-              cause,
-            });
+        return toDispatchCommandFailure(error, "Failed to bootstrap thread turn start.");
       };
 
       const toShellStreamEvent = (
@@ -752,7 +752,10 @@ const makeWsRpcLayer = (
 
       const dispatchBootstrapTurnStart = (
         command: Extract<OrchestrationCommand, { type: "thread.turn.start" }>,
-      ): Effect.Effect<{ readonly sequence: number }, OrchestrationDispatchCommandError> =>
+      ): Effect.Effect<
+        { readonly sequence: number },
+        OrchestrationDispatchCommandError | OrchestrationThreadBusyError
+      > =>
         Effect.gen(function* () {
           const bootstrap = command.bootstrap;
           const { bootstrap: _bootstrap, ...finalTurnStartCommand } = command;
@@ -967,7 +970,10 @@ const makeWsRpcLayer = (
 
       const dispatchNormalizedCommand = (
         normalizedCommand: OrchestrationCommand,
-      ): Effect.Effect<{ readonly sequence: number }, OrchestrationDispatchCommandError> => {
+      ): Effect.Effect<
+        { readonly sequence: number },
+        OrchestrationDispatchCommandError | OrchestrationThreadBusyError
+      > => {
         const dispatchEffect =
           normalizedCommand.type === "thread.turn.start" && normalizedCommand.bootstrap
             ? dispatchBootstrapTurnStart(normalizedCommand)
@@ -975,7 +981,7 @@ const makeWsRpcLayer = (
                 .dispatch(normalizedCommand)
                 .pipe(
                   Effect.mapError((cause) =>
-                    toDispatchCommandError(cause, "Failed to dispatch orchestration command"),
+                    toDispatchCommandFailure(cause, "Failed to dispatch orchestration command"),
                   ),
                 );
 
@@ -983,7 +989,7 @@ const makeWsRpcLayer = (
           .enqueueCommand(dispatchEffect)
           .pipe(
             Effect.mapError((cause) =>
-              toDispatchCommandError(cause, "Failed to dispatch orchestration command"),
+              toDispatchCommandFailure(cause, "Failed to dispatch orchestration command"),
             ),
           );
       };
@@ -1117,7 +1123,7 @@ const makeWsRpcLayer = (
               return result;
             }).pipe(
               Effect.mapError((cause) =>
-                isOrchestrationDispatchCommandError(cause)
+                isOrchestrationDispatchCommandError(cause) || isOrchestrationThreadBusyError(cause)
                   ? cause
                   : new OrchestrationDispatchCommandError({
                       message: "Failed to dispatch orchestration command",

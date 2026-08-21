@@ -7,6 +7,7 @@ import {
   type OrchestrationEvent,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import { it as effectIt } from "@effect/vitest";
 import { describe, expect, it } from "vite-plus/test";
 
 import { createEmptyReadModel, projectEvent } from "./projector.ts";
@@ -86,6 +87,13 @@ describe("orchestration projector", () => {
         branch: null,
         worktreePath: null,
         latestTurn: null,
+        latestUserMessageAt: null,
+        pendingApprovalCount: 0,
+        pendingUserInputCount: 0,
+        pendingApprovalRequestIds: [],
+        resolvedApprovalRequestIds: [],
+        pendingUserInputRequestIds: [],
+        userInputRequestStates: [],
         createdAt: now,
         updatedAt: now,
         archivedAt: null,
@@ -956,4 +964,139 @@ describe("orchestration projector", () => {
     expect(thread?.checkpoints[0]?.turnId).toBe("turn-100");
     expect(thread?.checkpoints.at(-1)?.turnId).toBe("turn-599");
   });
+
+  effectIt.effect("keeps request summaries idempotent by request id", () =>
+    Effect.gen(function* () {
+      const now = "2026-01-01T00:00:00.000Z";
+      let state = yield* projectEvent(
+        createEmptyReadModel(now),
+        makeEvent({
+          sequence: 1,
+          type: "thread.created",
+          aggregateKind: "thread",
+          aggregateId: "thread-request-state",
+          occurredAt: now,
+          commandId: "cmd-thread-request-state",
+          payload: {
+            threadId: "thread-request-state",
+            projectId: "project-1",
+            title: "Requests",
+            modelSelection: {
+              provider: ProviderDriverKind.make("codex"),
+              model: "gpt-5-codex",
+            },
+            runtimeMode: "full-access",
+            branch: null,
+            worktreePath: null,
+            createdAt: now,
+            updatedAt: now,
+          },
+        }),
+      );
+      const append = (
+        sequence: number,
+        kind: string,
+        requestId: string,
+        options?: { readonly activityId?: string; readonly createdAt?: string },
+      ) =>
+        Effect.gen(function* () {
+          const createdAt =
+            options?.createdAt ?? `2026-01-01T00:00:${String(sequence).padStart(2, "0")}.000Z`;
+          state = yield* projectEvent(
+            state,
+            makeEvent({
+              sequence,
+              type: "thread.activity-appended",
+              aggregateKind: "thread",
+              aggregateId: "thread-request-state",
+              occurredAt: createdAt,
+              commandId: `cmd-request-${sequence}`,
+              payload: {
+                threadId: "thread-request-state",
+                activity: {
+                  id: options?.activityId ?? `activity-request-${sequence}`,
+                  tone: "approval",
+                  kind,
+                  summary: kind,
+                  payload: { requestId },
+                  turnId: null,
+                  createdAt,
+                },
+              },
+            }),
+          );
+          return state.threads[0];
+        });
+
+      let thread = yield* append(2, "approval.requested", "approval-1");
+      thread = yield* append(3, "approval.requested", "approval-1");
+      expect(thread?.pendingApprovalRequestIds).toEqual(["approval-1"]);
+      expect(thread?.pendingApprovalCount).toBe(1);
+
+      thread = yield* append(4, "approval.resolved", "approval-1");
+      thread = yield* append(5, "approval.resolved", "approval-1");
+      state = {
+        ...state,
+        threads: state.threads.map((entry) => ({ ...entry, activities: [] })),
+      };
+      thread = yield* append(6, "approval.requested", "approval-1");
+      expect(thread?.pendingApprovalRequestIds).toEqual([]);
+      expect(thread?.resolvedApprovalRequestIds).toEqual(["approval-1"]);
+      expect(thread?.pendingApprovalCount).toBe(0);
+
+      thread = yield* append(7, "user-input.requested", "input-1");
+      state = {
+        ...state,
+        threads: state.threads.map((entry) => ({ ...entry, activities: [] })),
+      };
+      thread = yield* append(8, "user-input.requested", "input-1");
+      expect(thread?.pendingUserInputRequestIds).toEqual(["input-1"]);
+      expect(thread?.pendingUserInputCount).toBe(1);
+
+      thread = yield* append(9, "user-input.resolved", "input-1");
+      thread = yield* append(10, "user-input.resolved", "input-1");
+      expect(thread?.pendingUserInputRequestIds).toEqual([]);
+      expect(thread?.pendingUserInputCount).toBe(0);
+
+      // The persisted user-input projection is an ordered open set, so a later
+      // request for a resolved id reopens it (approval ids remain tombstoned).
+      thread = yield* append(11, "user-input.requested", "input-1");
+      expect(thread?.pendingUserInputRequestIds).toEqual(["input-1"]);
+      expect(thread?.pendingUserInputCount).toBe(1);
+
+      thread = yield* append(12, "user-input.resolved", "input-out-of-order", {
+        activityId: "activity-out-of-order-resolved",
+        createdAt: "2026-01-01T00:02:00.000Z",
+      });
+      state = {
+        ...state,
+        threads: state.threads.map((entry) => ({ ...entry, activities: [] })),
+      };
+      thread = yield* append(13, "user-input.requested", "input-out-of-order", {
+        activityId: "activity-out-of-order-requested",
+        createdAt: "2026-01-01T00:01:00.000Z",
+      });
+      expect(thread?.pendingUserInputRequestIds).not.toContain("input-out-of-order");
+
+      thread = yield* append(14, "user-input.resolved", "input-tie", {
+        activityId: "activity-tie-b",
+        createdAt: "2026-01-01T00:03:00.000Z",
+      });
+      thread = yield* append(15, "user-input.requested", "input-tie", {
+        activityId: "activity-tie-a",
+        createdAt: "2026-01-01T00:03:00.000Z",
+      });
+      expect(thread?.pendingUserInputRequestIds).not.toContain("input-tie");
+
+      thread = yield* append(16, "user-input.resolved", "input-mixed-case", {
+        activityId: "a-resolution",
+        createdAt: "2026-01-01T00:04:00.000Z",
+      });
+      thread = yield* append(17, "user-input.requested", "input-mixed-case", {
+        activityId: "Z-request",
+        createdAt: "2026-01-01T00:04:00.000Z",
+      });
+      expect(thread?.pendingUserInputRequestIds).not.toContain("input-mixed-case");
+    }),
+  );
 });

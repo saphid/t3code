@@ -355,6 +355,13 @@ export const OrchestrationLatestTurn = Schema.Struct({
 });
 export type OrchestrationLatestTurn = typeof OrchestrationLatestTurn.Type;
 
+const OrchestrationUserInputRequestState = Schema.Struct({
+  requestId: ApprovalRequestId,
+  activityId: EventId,
+  state: Schema.Literals(["requested", "resolved"]),
+  createdAt: IsoDateTime,
+});
+
 export const ThreadTitleRegeneration = Schema.Struct({
   requestId: CommandId,
   startedAt: IsoDateTime,
@@ -373,6 +380,15 @@ export const OrchestrationThread = Schema.Struct({
   branch: Schema.NullOr(TrimmedNonEmptyString),
   worktreePath: Schema.NullOr(TrimmedNonEmptyString),
   latestTurn: Schema.NullOr(OrchestrationLatestTurn),
+  // Lightweight persisted summaries keep serialized command guards correct
+  // after restart without hydrating every message and activity body.
+  latestUserMessageAt: Schema.optional(Schema.NullOr(IsoDateTime)),
+  pendingApprovalCount: Schema.optional(NonNegativeInt),
+  pendingUserInputCount: Schema.optional(NonNegativeInt),
+  pendingApprovalRequestIds: Schema.optional(Schema.Array(ApprovalRequestId)),
+  resolvedApprovalRequestIds: Schema.optional(Schema.Array(ApprovalRequestId)),
+  pendingUserInputRequestIds: Schema.optional(Schema.Array(ApprovalRequestId)),
+  userInputRequestStates: Schema.optional(Schema.Array(OrchestrationUserInputRequestState)),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
   archivedAt: Schema.NullOr(IsoDateTime).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
@@ -824,10 +840,20 @@ export const ThreadTurnStartCommand = Schema.Struct({
   interactionMode: ProviderInteractionMode.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_PROVIDER_INTERACTION_MODE)),
   ),
+  // Unattended callers can ask the serialized decider to start only if no
+  // turn or human-blocking request is already in flight. Omitted keeps the
+  // interactive client's existing steering behavior.
+  onlyIfIdle: Schema.optional(Schema.Boolean),
   bootstrap: Schema.optional(ThreadTurnStartBootstrap),
   sourceProposedPlan: Schema.optional(SourceProposedPlanReference),
   createdAt: IsoDateTime,
-});
+}).check(
+  Schema.makeFilter(
+    (input) =>
+      !(input.onlyIfIdle === true && input.bootstrap !== undefined) ||
+      "onlyIfIdle cannot be combined with bootstrap",
+  ),
+);
 
 const ClientThreadTurnStartCommand = Schema.Struct({
   type: Schema.Literal("thread.turn.start"),
@@ -843,10 +869,17 @@ const ClientThreadTurnStartCommand = Schema.Struct({
   titleSeed: Schema.optional(TrimmedNonEmptyString),
   runtimeMode: RuntimeMode,
   interactionMode: ProviderInteractionMode,
+  onlyIfIdle: Schema.optional(Schema.Boolean),
   bootstrap: Schema.optional(ThreadTurnStartBootstrap),
   sourceProposedPlan: Schema.optional(SourceProposedPlanReference),
   createdAt: IsoDateTime,
-});
+}).check(
+  Schema.makeFilter(
+    (input) =>
+      !(input.onlyIfIdle === true && input.bootstrap !== undefined) ||
+      "onlyIfIdle cannot be combined with bootstrap",
+  ),
+);
 
 const ThreadTurnInterruptCommand = Schema.Struct({
   type: Schema.Literal("thread.turn.interrupt"),
@@ -1553,6 +1586,32 @@ export const DispatchResult = Schema.Struct({
   sequence: NonNegativeInt,
 });
 export type DispatchResult = typeof DispatchResult.Type;
+
+export const OrchestrationThreadBusyReason = Schema.Literals([
+  "active-session",
+  "active-turn",
+  "pending-request",
+  "queued-turn-start",
+]);
+export type OrchestrationThreadBusyReason = typeof OrchestrationThreadBusyReason.Type;
+
+/**
+ * A conditional turn start observed work already in flight at the serialized
+ * command boundary. This is a retryable conflict, not a rejected command: the
+ * same command id may be retried after the thread becomes idle.
+ */
+export class OrchestrationThreadBusyError extends Schema.TaggedErrorClass<OrchestrationThreadBusyError>()(
+  "OrchestrationThreadBusyError",
+  {
+    threadId: ThreadId,
+    reason: OrchestrationThreadBusyReason,
+  },
+  { httpApiStatus: 409 },
+) {
+  override get message(): string {
+    return `Thread '${this.threadId}' is busy (${this.reason}).`;
+  }
+}
 
 export const OrchestrationGetTurnDiffInput = TurnCountRange.mapFields(
   Struct.assign({

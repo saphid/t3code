@@ -43,6 +43,7 @@ import {
   type ProjectionRepositoryError,
 } from "../../persistence/Errors.ts";
 import { ProjectionCheckpoint } from "../../persistence/Services/ProjectionCheckpoints.ts";
+import { ProjectionPendingApproval } from "../../persistence/Services/ProjectionPendingApprovals.ts";
 import { ThreadBackgroundLivenessService } from "../ThreadBackgroundLiveness.ts";
 import { ThreadPlanProgressService } from "../ThreadPlanProgress.ts";
 import { ProjectionProject } from "../../persistence/Services/ProjectionProjects.ts";
@@ -65,6 +66,7 @@ import {
   type ProjectionThreadCheckpointContext,
   type ProjectionSnapshotQueryShape,
 } from "../Services/ProjectionSnapshotQuery.ts";
+import { applyPendingRequestActivity, type PendingRequestState } from "../pendingRequestState.ts";
 
 const decodeReadModel = Schema.decodeUnknownEffect(OrchestrationReadModel);
 const decodeShellSnapshot = Schema.decodeUnknownEffect(OrchestrationShellSnapshot);
@@ -93,6 +95,13 @@ const ProjectionThreadActivityDbRowSchema = ProjectionThreadActivity.mapFields(
     sequence: Schema.NullOr(NonNegativeInt),
   }),
 );
+const ProjectionPendingRequestActivityDbRowSchema = Schema.Struct({
+  activityId: ProjectionThreadActivity.fields.activityId,
+  threadId: ProjectionThreadActivity.fields.threadId,
+  kind: ProjectionThreadActivity.fields.kind,
+  payload: Schema.fromJsonString(Schema.Unknown),
+  createdAt: ProjectionThreadActivity.fields.createdAt,
+});
 const ProjectionThreadSessionDbRowSchema = ProjectionThreadSession;
 const ProjectionCheckpointDbRowSchema = ProjectionCheckpoint.mapFields(
   Struct.assign({
@@ -576,6 +585,48 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           sequence ASC,
           created_at ASC,
           activity_id ASC
+      `,
+  });
+
+  const listPendingApprovalRows = SqlSchema.findAll({
+    Request: Schema.Void,
+    Result: ProjectionPendingApproval,
+    execute: () =>
+      sql`
+        SELECT
+          request_id AS "requestId",
+          thread_id AS "threadId",
+          turn_id AS "turnId",
+          status,
+          decision,
+          created_at AS "createdAt",
+          resolved_at AS "resolvedAt"
+        FROM projection_pending_approvals
+        ORDER BY thread_id ASC, created_at ASC, request_id ASC
+      `,
+  });
+
+  const listUserInputRequestActivityRows = SqlSchema.findAll({
+    Request: Schema.Void,
+    Result: ProjectionPendingRequestActivityDbRowSchema,
+    execute: () =>
+      sql`
+        SELECT
+          activity_id AS "activityId",
+          thread_id AS "threadId",
+          kind,
+          payload_json AS "payload",
+          created_at AS "createdAt"
+        FROM projection_thread_activities
+        WHERE kind IN (
+          'user-input.requested',
+          'user-input.resolved',
+          'provider.user-input.respond.failed'
+        )
+        ORDER BY
+          thread_id COLLATE BINARY ASC,
+          created_at COLLATE BINARY ASC,
+          activity_id COLLATE BINARY ASC
       `,
   });
 
@@ -1652,6 +1703,22 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
               ),
             ),
           ),
+          listPendingApprovalRows(undefined).pipe(
+            Effect.mapError(
+              toPersistenceSqlOrDecodeError(
+                "ProjectionSnapshotQuery.getCommandReadModel:listPendingApprovals:query",
+                "ProjectionSnapshotQuery.getCommandReadModel:listPendingApprovals:decodeRows",
+              ),
+            ),
+          ),
+          listUserInputRequestActivityRows(undefined).pipe(
+            Effect.mapError(
+              toPersistenceSqlOrDecodeError(
+                "ProjectionSnapshotQuery.getCommandReadModel:listUserInputRequests:query",
+                "ProjectionSnapshotQuery.getCommandReadModel:listUserInputRequests:decodeRows",
+              ),
+            ),
+          ),
           listProjectionStateRows(undefined).pipe(
             Effect.mapError(
               toPersistenceSqlOrDecodeError(
@@ -1664,7 +1731,16 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
       )
       .pipe(
         Effect.flatMap(
-          ([projectRows, threadRows, proposedPlanRows, sessionRows, latestTurnRows, stateRows]) =>
+          ([
+            projectRows,
+            threadRows,
+            proposedPlanRows,
+            sessionRows,
+            latestTurnRows,
+            pendingApprovalRows,
+            userInputRequestRows,
+            stateRows,
+          ]) =>
             Effect.sync(() => {
               let updatedAt: string | null = null;
               const projects: OrchestrationProject[] = [];
@@ -1741,6 +1817,36 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
               }
               const proposedPlansByThread = new Map<string, Array<OrchestrationProposedPlan>>();
               const sessionByThread = new Map<string, OrchestrationSession>();
+              const requestStateByThread = new Map<string, PendingRequestState>();
+              const emptyRequestState = (): PendingRequestState => ({
+                pendingApprovalRequestIds: [],
+                resolvedApprovalRequestIds: [],
+                pendingUserInputRequestIds: [],
+                userInputRequestStates: [],
+              });
+
+              for (const approval of pendingApprovalRows) {
+                const state = requestStateByThread.get(approval.threadId) ?? emptyRequestState();
+                requestStateByThread.set(approval.threadId, {
+                  ...state,
+                  pendingApprovalRequestIds:
+                    approval.status === "pending"
+                      ? [...state.pendingApprovalRequestIds, approval.requestId]
+                      : state.pendingApprovalRequestIds,
+                  resolvedApprovalRequestIds:
+                    approval.status === "resolved"
+                      ? [...state.resolvedApprovalRequestIds, approval.requestId]
+                      : state.resolvedApprovalRequestIds,
+                });
+              }
+
+              for (const activity of userInputRequestRows) {
+                const state = requestStateByThread.get(activity.threadId) ?? emptyRequestState();
+                requestStateByThread.set(
+                  activity.threadId,
+                  applyPendingRequestActivity(state, activity),
+                );
+              }
 
               for (let index = 0; index < sessionRows.length; index += 1) {
                 const row = sessionRows[index];
@@ -1765,6 +1871,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
                 if (!row) {
                   continue;
                 }
+                const requestState = requestStateByThread.get(row.threadId) ?? emptyRequestState();
                 threads.push({
                   id: row.threadId,
                   projectId: row.projectId,
@@ -1775,6 +1882,13 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
                   branch: row.branch,
                   worktreePath: row.worktreePath,
                   latestTurn: latestTurnByThread.get(row.threadId) ?? null,
+                  latestUserMessageAt: row.latestUserMessageAt,
+                  pendingApprovalCount: row.pendingApprovalCount,
+                  pendingUserInputCount: row.pendingUserInputCount,
+                  pendingApprovalRequestIds: requestState.pendingApprovalRequestIds,
+                  resolvedApprovalRequestIds: requestState.resolvedApprovalRequestIds,
+                  pendingUserInputRequestIds: requestState.pendingUserInputRequestIds,
+                  userInputRequestStates: requestState.userInputRequestStates,
                   createdAt: row.createdAt,
                   updatedAt: row.updatedAt,
                   archivedAt: row.archivedAt,

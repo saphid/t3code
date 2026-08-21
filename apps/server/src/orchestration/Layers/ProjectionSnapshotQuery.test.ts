@@ -1,4 +1,5 @@
 import {
+  ApprovalRequestId,
   CheckpointRef,
   EventId,
   MessageId,
@@ -1299,6 +1300,8 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
       yield* sql`DELETE FROM projection_projects`;
       yield* sql`DELETE FROM projection_threads`;
       yield* sql`DELETE FROM projection_turns`;
+      yield* sql`DELETE FROM projection_pending_approvals`;
+      yield* sql`DELETE FROM projection_thread_activities`;
       yield* sql`DELETE FROM projection_state`;
 
       yield* sql`
@@ -1355,8 +1358,8 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           NULL,
           'turn-running',
           '2026-04-03T00:00:04.000Z',
-          0,
-          0,
+          1,
+          2,
           0,
           '2026-04-03T00:00:02.000Z',
           '2026-04-03T00:00:03.000Z',
@@ -1418,6 +1421,53 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
       `;
 
       yield* sql`
+        INSERT INTO projection_pending_approvals (
+          request_id, thread_id, turn_id, status, decision, created_at, resolved_at
+        )
+        VALUES
+          (
+            'approval-pending', 'thread-1', 'turn-running', 'pending', NULL,
+            '2026-04-03T00:00:31.000Z', NULL
+          ),
+          (
+            'approval-resolved', 'thread-1', 'turn-completed', 'resolved', 'accept',
+            '2026-04-03T00:00:07.000Z', '2026-04-03T00:00:08.000Z'
+          )
+      `;
+
+      yield* sql`
+        INSERT INTO projection_thread_activities (
+          activity_id, thread_id, turn_id, tone, kind, summary, payload_json, created_at
+        )
+        VALUES
+          (
+            'input-1-request', 'thread-1', 'turn-running', 'approval',
+            'user-input.requested', 'Input requested', '{"requestId":"input-1"}',
+            '2026-04-03T00:00:32.000Z'
+          ),
+          (
+            'input-1-request-duplicate', 'thread-1', 'turn-running', 'approval',
+            'user-input.requested', 'Input requested', '{"requestId":"input-1"}',
+            '2026-04-03T00:00:33.000Z'
+          ),
+          (
+            'input-2-request', 'thread-1', 'turn-running', 'approval',
+            'user-input.requested', 'Input requested', '{"requestId":"input-2"}',
+            '2026-04-03T00:00:34.000Z'
+          ),
+          (
+            'a-resolution', 'thread-1', 'turn-running', 'approval',
+            'user-input.resolved', 'Input resolved', '{"requestId":"input-mixed-case"}',
+            '2026-04-03T00:00:35.000Z'
+          ),
+          (
+            'Z-request', 'thread-1', 'turn-running', 'approval',
+            'user-input.requested', 'Input requested', '{"requestId":"input-mixed-case"}',
+            '2026-04-03T00:00:35.000Z'
+          )
+      `;
+
+      yield* sql`
         INSERT INTO projection_state (projector, last_applied_sequence, updated_at)
         VALUES
           (${ORCHESTRATION_PROJECTOR_NAMES.projects}, 3, '2026-04-03T00:00:40.000Z'),
@@ -1432,6 +1482,39 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
       const commandReadModel = yield* snapshotQuery.getCommandReadModel();
       assert.equal(commandReadModel.threads[0]?.latestTurn?.turnId, asTurnId("turn-running"));
       assert.equal(commandReadModel.threads[0]?.latestTurn?.state, "running");
+      assert.equal(commandReadModel.threads[0]?.latestUserMessageAt, "2026-04-03T00:00:04.000Z");
+      assert.equal(commandReadModel.threads[0]?.pendingApprovalCount, 1);
+      assert.equal(commandReadModel.threads[0]?.pendingUserInputCount, 2);
+      assert.deepEqual(commandReadModel.threads[0]?.pendingApprovalRequestIds, [
+        ApprovalRequestId.make("approval-pending"),
+      ]);
+      assert.deepEqual(commandReadModel.threads[0]?.resolvedApprovalRequestIds, [
+        ApprovalRequestId.make("approval-resolved"),
+      ]);
+      assert.deepEqual(commandReadModel.threads[0]?.pendingUserInputRequestIds, [
+        ApprovalRequestId.make("input-1"),
+        ApprovalRequestId.make("input-2"),
+      ]);
+      assert.deepEqual(commandReadModel.threads[0]?.userInputRequestStates, [
+        {
+          requestId: ApprovalRequestId.make("input-1"),
+          activityId: asEventId("input-1-request-duplicate"),
+          state: "requested",
+          createdAt: "2026-04-03T00:00:33.000Z",
+        },
+        {
+          requestId: ApprovalRequestId.make("input-2"),
+          activityId: asEventId("input-2-request"),
+          state: "requested",
+          createdAt: "2026-04-03T00:00:34.000Z",
+        },
+        {
+          requestId: ApprovalRequestId.make("input-mixed-case"),
+          activityId: asEventId("a-resolution"),
+          state: "resolved",
+          createdAt: "2026-04-03T00:00:35.000Z",
+        },
+      ]);
 
       const shellSnapshot = yield* snapshotQuery.getShellSnapshot();
       assert.equal(shellSnapshot.threads[0]?.latestTurn?.turnId, asTurnId("turn-running"));

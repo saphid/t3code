@@ -1,7 +1,9 @@
 import {
+  ApprovalRequestId,
   CheckpointRef,
   CommandId,
   DEFAULT_PROVIDER_INTERACTION_MODE,
+  EventId,
   MessageId,
   ProjectId,
   ThreadId,
@@ -147,6 +149,13 @@ describe("OrchestrationEngine", () => {
           branch: null,
           worktreePath: null,
           latestTurn: null,
+          latestUserMessageAt: null,
+          pendingApprovalCount: 1,
+          pendingUserInputCount: 0,
+          pendingApprovalRequestIds: [ApprovalRequestId.make("request-before-restart")],
+          resolvedApprovalRequestIds: [],
+          pendingUserInputRequestIds: [],
+          userInputRequestStates: [],
           createdAt: "2026-03-03T00:00:02.000Z",
           updatedAt: "2026-03-03T00:00:03.000Z",
           archivedAt: null,
@@ -237,6 +246,45 @@ describe("OrchestrationEngine", () => {
 
     expect(result.sequence).toBe(8);
     expect(await runtime.runPromise(engine.latestSequence)).toBe(8);
+
+    const guardedCommand = {
+      type: "thread.turn.start" as const,
+      commandId: CommandId.make("cmd-bootstrap-guarded-retry"),
+      threadId: ThreadId.make("thread-bootstrap"),
+      message: {
+        messageId: asMessageId("msg-bootstrap-guarded-retry"),
+        role: "user" as const,
+        text: "Wake",
+        attachments: [],
+      },
+      interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+      runtimeMode: "full-access" as const,
+      onlyIfIdle: true,
+      createdAt: "2026-03-03T00:00:05.000Z",
+    };
+    const busy = await runtime.runPromise(engine.dispatch(guardedCommand).pipe(Effect.flip));
+    expect(busy._tag).toBe("OrchestrationThreadBusyError");
+
+    await runtime.runPromise(
+      engine.dispatch({
+        type: "thread.activity.append",
+        commandId: CommandId.make("cmd-bootstrap-resolve-approval"),
+        threadId: ThreadId.make("thread-bootstrap"),
+        activity: {
+          id: EventId.make("activity-bootstrap-resolve-approval"),
+          tone: "approval",
+          kind: "approval.resolved",
+          summary: "Approval resolved",
+          payload: { requestId: "request-before-restart" },
+          turnId: null,
+          createdAt: "2026-03-03T00:00:06.000Z",
+        },
+        createdAt: "2026-03-03T00:00:06.000Z",
+      }),
+    );
+    const retried = await runtime.runPromise(engine.dispatch(guardedCommand));
+    expect(retried.sequence).toBe(11);
+    expect(await runtime.runPromise(engine.latestSequence)).toBe(11);
     expect(fullSnapshotReadCount).toBe(0);
 
     await runtime.dispose();
@@ -299,6 +347,107 @@ describe("OrchestrationEngine", () => {
     const readModelA = await system.readModel();
     const readModelB = await system.readModel();
     expect(readModelB).toEqual(readModelA);
+    await system.dispose();
+  });
+
+  it("allows the same guarded turn-start command to retry after the thread becomes idle", async () => {
+    const system = await createOrchestrationSystem();
+    const { engine } = system;
+    const createdAt = now();
+    const threadId = ThreadId.make("thread-guarded-retry");
+
+    await system.run(
+      engine.dispatch({
+        type: "project.create",
+        commandId: CommandId.make("cmd-project-guarded-retry-create"),
+        projectId: asProjectId("project-guarded-retry"),
+        title: "Guarded retry",
+        workspaceRoot: "/tmp/project-guarded-retry",
+        defaultModelSelection: null,
+        createdAt,
+      }),
+    );
+    await system.run(
+      engine.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make("cmd-thread-guarded-retry-create"),
+        threadId,
+        projectId: asProjectId("project-guarded-retry"),
+        title: "Coordinator",
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("codex"),
+          model: "gpt-5-codex",
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        branch: null,
+        worktreePath: null,
+        createdAt,
+      }),
+    );
+    await system.run(
+      engine.dispatch({
+        type: "thread.session.set",
+        commandId: CommandId.make("cmd-thread-guarded-retry-running"),
+        threadId,
+        session: {
+          threadId,
+          status: "running",
+          providerName: "Codex",
+          providerInstanceId: ProviderInstanceId.make("codex"),
+          runtimeMode: "approval-required",
+          activeTurnId: null,
+          lastError: null,
+          updatedAt: createdAt,
+        },
+        createdAt,
+      }),
+    );
+
+    const commandId = CommandId.make("cmd-guarded-retry");
+    const dispatchGuardedTurnStart = () =>
+      engine.dispatch({
+        type: "thread.turn.start",
+        commandId,
+        threadId,
+        message: {
+          messageId: asMessageId("msg-guarded-retry"),
+          role: "user",
+          text: "Check the workers",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        onlyIfIdle: true,
+        createdAt,
+      });
+
+    const busy = await system.run(dispatchGuardedTurnStart().pipe(Effect.flip));
+    expect(busy._tag).toBe("OrchestrationThreadBusyError");
+
+    await system.run(
+      engine.dispatch({
+        type: "thread.session.set",
+        commandId: CommandId.make("cmd-thread-guarded-retry-ready"),
+        threadId,
+        session: {
+          threadId,
+          status: "ready",
+          providerName: "Codex",
+          providerInstanceId: ProviderInstanceId.make("codex"),
+          runtimeMode: "approval-required",
+          activeTurnId: null,
+          lastError: null,
+          updatedAt: createdAt,
+        },
+        createdAt,
+      }),
+    );
+
+    await system.run(dispatchGuardedTurnStart());
+    const thread = (await system.readModel()).threads.find((entry) => entry.id === threadId);
+    expect(thread?.messages.map((message) => message.id)).toEqual(["msg-guarded-retry"]);
+
     await system.dispose();
   });
 

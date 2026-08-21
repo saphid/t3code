@@ -1,5 +1,6 @@
 import * as SchemaIssue from "effect/SchemaIssue";
 import * as Schema from "effect/Schema";
+import type { OrchestrationThreadBusyError } from "@t3tools/contracts";
 
 import type { ProjectionRepositoryError } from "../persistence/Errors.ts";
 
@@ -82,6 +83,7 @@ export class OrchestrationListenerCallbackError extends Schema.TaggedErrorClass<
 export type OrchestrationDispatchError =
   | ProjectionRepositoryError
   | OrchestrationCommandInvariantError
+  | OrchestrationThreadBusyError
   | OrchestrationCommandPreviouslyRejectedError
   | OrchestrationProjectorDecodeError
   | OrchestrationListenerCallbackError;

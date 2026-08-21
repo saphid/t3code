@@ -31,6 +31,7 @@ import {
   DispatchResult,
   OrchestrationReadModel,
   OrchestrationShellSnapshot,
+  OrchestrationThreadBusyError,
   OrchestrationThreadDetailSnapshot,
 } from "./orchestration.ts";
 import {
@@ -298,6 +299,7 @@ const EnvironmentOrchestrationThreadSnapshotErrors = [
 const EnvironmentOrchestrationDispatchErrors = [
   EnvironmentRequestInvalidError,
   EnvironmentScopeRequiredError,
+  OrchestrationThreadBusyError,
   EnvironmentInternalError,
 ] as const;
 

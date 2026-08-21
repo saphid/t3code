@@ -251,6 +251,49 @@ it.effect("preserves explicit provider and runtime mode in thread.turn.start", (
   }),
 );
 
+it.effect("preserves the optional idle guard in thread.turn.start", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeThreadTurnStartCommand({
+      type: "thread.turn.start",
+      commandId: "cmd-turn-idle-guard",
+      threadId: "thread-1",
+      message: {
+        messageId: "msg-idle-guard",
+        role: "user",
+        text: "continue",
+        attachments: [],
+      },
+      onlyIfIdle: true,
+      createdAt: "2026-01-01T00:00:00.000Z",
+    });
+
+    assert.strictEqual(parsed.onlyIfIdle, true);
+  }),
+);
+
+it.effect("rejects combining the idle guard with turn bootstrap", () =>
+  Effect.gen(function* () {
+    const result = yield* Effect.result(
+      decodeThreadTurnStartCommand({
+        type: "thread.turn.start",
+        commandId: "cmd-turn-guarded-bootstrap",
+        threadId: "thread-1",
+        message: {
+          messageId: "msg-guarded-bootstrap",
+          role: "user",
+          text: "continue",
+          attachments: [],
+        },
+        onlyIfIdle: true,
+        bootstrap: { runSetupScript: true },
+        createdAt: "2026-01-01T00:00:00.000Z",
+      }),
+    );
+
+    assert.strictEqual(result._tag, "Failure");
+  }),
+);
+
 it.effect("accepts bootstrap metadata in thread.turn.start", () =>
   Effect.gen(function* () {
     const parsed = yield* decodeThreadTurnStartCommand({

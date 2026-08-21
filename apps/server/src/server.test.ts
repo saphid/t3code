@@ -17,6 +17,7 @@ import {
   MessageId,
   ExternalLauncherCommandNotFoundError,
   OrchestrationThreadDetailSnapshot,
+  OrchestrationThreadBusyError,
   type OrchestrationThreadStreamItem,
   type OrchestrationThreadShell,
   TerminalNotRunningError,
@@ -108,7 +109,10 @@ import * as GitManager from "./git/GitManager.ts";
 import * as Keybindings from "./keybindings.ts";
 import * as ExternalLauncher from "./process/externalLauncher.ts";
 import * as OrchestrationEngine from "./orchestration/Services/OrchestrationEngine.ts";
-import { OrchestrationListenerCallbackError } from "./orchestration/Errors.ts";
+import {
+  OrchestrationCommandInvariantError,
+  OrchestrationListenerCallbackError,
+} from "./orchestration/Errors.ts";
 import * as ProjectionSnapshotQuery from "./orchestration/Services/ProjectionSnapshotQuery.ts";
 import { SqlitePersistenceMemory } from "./persistence/Layers/Sqlite.ts";
 import { PersistenceSqlError } from "./persistence/Errors.ts";
@@ -5026,6 +5030,137 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
 
       assert.isAtLeast(response.sequence, 0);
       assert.equal(stat.type, "Directory");
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("preserves thread-busy errors across websocket command dispatch", () =>
+    Effect.gen(function* () {
+      const threadId = ThreadId.make("thread-ws-busy");
+      yield* buildAppUnderTest({
+        layers: {
+          orchestrationEngine: {
+            dispatch: () =>
+              Effect.fail(
+                new OrchestrationThreadBusyError({
+                  threadId,
+                  reason: "active-session",
+                }),
+              ),
+          },
+        },
+      });
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const result = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[ORCHESTRATION_WS_METHODS.dispatchCommand]({
+            type: "thread.turn.start",
+            commandId: CommandId.make("cmd-ws-busy"),
+            threadId,
+            message: {
+              messageId: MessageId.make("msg-ws-busy"),
+              role: "user",
+              text: "Check workers",
+              attachments: [],
+            },
+            interactionMode: "default",
+            runtimeMode: "full-access",
+            onlyIfIdle: true,
+            createdAt: "2026-01-01T00:00:00.000Z",
+          }),
+        ).pipe(Effect.result),
+      );
+
+      if (result._tag !== "Failure") assert.fail("Expected a thread-busy failure");
+      assert.equal(result.failure._tag, "OrchestrationThreadBusyError");
+      if (result.failure._tag === "OrchestrationThreadBusyError") {
+        assert.equal(result.failure.threadId, threadId);
+        assert.equal(result.failure.reason, "active-session");
+      }
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("keeps ordinary websocket dispatch failures generic", () =>
+    Effect.gen(function* () {
+      yield* buildAppUnderTest({
+        layers: {
+          orchestrationEngine: {
+            dispatch: (command) =>
+              Effect.fail(
+                new OrchestrationCommandInvariantError({
+                  commandType: command.type,
+                  detail: "simulated invariant failure",
+                }),
+              ),
+          },
+        },
+      });
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const result = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[ORCHESTRATION_WS_METHODS.dispatchCommand]({
+            type: "thread.archive",
+            commandId: CommandId.make("cmd-ws-generic-failure"),
+            threadId: ThreadId.make("thread-ws-generic-failure"),
+          }),
+        ).pipe(Effect.result),
+      );
+
+      if (result._tag !== "Failure") assert.fail("Expected a generic dispatch failure");
+      assert.equal(result.failure._tag, "OrchestrationDispatchCommandError");
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("returns HTTP 409 when guarded command dispatch finds a busy thread", () =>
+    Effect.gen(function* () {
+      const threadId = ThreadId.make("thread-http-busy");
+      yield* buildAppUnderTest({
+        layers: {
+          orchestrationEngine: {
+            dispatch: () =>
+              Effect.fail(
+                new OrchestrationThreadBusyError({
+                  threadId,
+                  reason: "pending-request",
+                }),
+              ),
+          },
+        },
+      });
+
+      const response = yield* fetchEffect(yield* getHttpServerUrl("/api/orchestration/dispatch"), {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          cookie: yield* getAuthenticatedSessionCookieHeader(),
+        },
+        body: jsonRequestBody({
+          type: "thread.turn.start",
+          commandId: "cmd-http-busy",
+          threadId,
+          message: {
+            messageId: "msg-http-busy",
+            role: "user",
+            text: "Check workers",
+            attachments: [],
+          },
+          interactionMode: "default",
+          runtimeMode: "full-access",
+          onlyIfIdle: true,
+          createdAt: "2026-01-01T00:00:00.000Z",
+        }),
+      });
+      const body = yield* responseJsonEffect<{
+        readonly _tag: string;
+        readonly threadId: string;
+        readonly reason: string;
+      }>(response);
+
+      assert.equal(response.status, 409);
+      assert.equal(body._tag, "OrchestrationThreadBusyError");
+      assert.equal(body.threadId, threadId);
+      assert.equal(body.reason, "pending-request");
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 

@@ -2075,6 +2075,54 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
         },
       });
 
+      yield* appendAndProject({
+        type: "thread.activity-appended",
+        eventId: EventId.make("evt-mixed-case-user-input-resolution"),
+        aggregateKind: "thread",
+        aggregateId: ThreadId.make("thread-stale-user-input"),
+        occurredAt: "2026-02-26T12:35:04.000Z",
+        commandId: CommandId.make("cmd-mixed-case-user-input-resolution"),
+        causationEventId: null,
+        correlationId: CorrelationId.make("cmd-mixed-case-user-input-resolution"),
+        metadata: {},
+        payload: {
+          threadId: ThreadId.make("thread-stale-user-input"),
+          activity: {
+            id: EventId.make("a-resolution"),
+            tone: "info",
+            kind: "user-input.resolved",
+            summary: "User input resolved",
+            payload: { requestId: "user-input-mixed-case" },
+            turnId: null,
+            createdAt: "2026-02-26T12:35:04.000Z",
+          },
+        },
+      });
+
+      yield* appendAndProject({
+        type: "thread.activity-appended",
+        eventId: EventId.make("evt-mixed-case-user-input-request"),
+        aggregateKind: "thread",
+        aggregateId: ThreadId.make("thread-stale-user-input"),
+        occurredAt: "2026-02-26T12:35:05.000Z",
+        commandId: CommandId.make("cmd-mixed-case-user-input-request"),
+        causationEventId: null,
+        correlationId: CorrelationId.make("cmd-mixed-case-user-input-request"),
+        metadata: {},
+        payload: {
+          threadId: ThreadId.make("thread-stale-user-input"),
+          activity: {
+            id: EventId.make("Z-request"),
+            tone: "info",
+            kind: "user-input.requested",
+            summary: "User input requested",
+            payload: { requestId: "user-input-mixed-case" },
+            turnId: null,
+            createdAt: "2026-02-26T12:35:04.000Z",
+          },
+        },
+      });
+
       const threadRows = yield* sql<{
         readonly pendingUserInputCount: number;
       }>`

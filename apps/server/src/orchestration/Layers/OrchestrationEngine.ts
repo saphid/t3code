@@ -4,7 +4,7 @@ import type {
   ProjectId,
   ThreadId,
 } from "@t3tools/contracts";
-import { OrchestrationCommand } from "@t3tools/contracts";
+import { OrchestrationCommand, OrchestrationThreadBusyError } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Crypto from "effect/Crypto";
@@ -49,6 +49,7 @@ const isOrchestrationCommandPreviouslyRejectedError = Schema.is(
   OrchestrationCommandPreviouslyRejectedError,
 );
 const isOrchestrationCommandInvariantError = Schema.is(OrchestrationCommandInvariantError);
+const isOrchestrationThreadBusyError = Schema.is(OrchestrationThreadBusyError);
 
 interface CommandEnvelope {
   command: OrchestrationCommand;
@@ -156,7 +157,7 @@ const makeOrchestrationEngine = Effect.gen(function* () {
         }).pipe(
           Effect.provideService(Crypto.Crypto, crypto),
           Effect.mapError((cause) =>
-            isOrchestrationCommandInvariantError(cause)
+            isOrchestrationCommandInvariantError(cause) || isOrchestrationThreadBusyError(cause)
               ? cause
               : new OrchestrationCommandInvariantError({
                   commandType: envelope.command.type,
@@ -276,6 +277,9 @@ const makeOrchestrationEngine = Effect.gen(function* () {
               ),
             );
 
+            // Conditional busy conflicts are deliberately not receipted: an
+            // unattended caller may retry the same command id once the thread
+            // becomes idle. Durable invariant failures stay rejected.
             if (isOrchestrationCommandInvariantError(error)) {
               yield* commandReceiptRepository
                 .upsert({

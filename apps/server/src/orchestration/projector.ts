@@ -34,6 +34,7 @@ import {
   ThreadSessionSetPayload,
   ThreadTurnDiffCompletedPayload,
 } from "./Schemas.ts";
+import { applyPendingRequestActivity, derivePendingRequestState } from "./pendingRequestState.ts";
 
 type ThreadPatch = Partial<Omit<OrchestrationThread, "id" | "projectId">>;
 const MAX_THREAD_MESSAGES = 2_000;
@@ -298,6 +299,13 @@ export function projectEvent(
             branch: payload.branch,
             worktreePath: payload.worktreePath,
             latestTurn: null,
+            latestUserMessageAt: null,
+            pendingApprovalCount: 0,
+            pendingUserInputCount: 0,
+            pendingApprovalRequestIds: [],
+            resolvedApprovalRequestIds: [],
+            pendingUserInputRequestIds: [],
+            userInputRequestStates: [],
             createdAt: payload.createdAt,
             updatedAt: payload.updatedAt,
             archivedAt: null,
@@ -539,11 +547,19 @@ export function projectEvent(
             )
           : [...thread.messages, message];
         const cappedMessages = messages.slice(-MAX_THREAD_MESSAGES);
+        const latestUserMessageAt =
+          message.role === "user" &&
+          (thread.latestUserMessageAt === null ||
+            thread.latestUserMessageAt === undefined ||
+            message.createdAt > thread.latestUserMessageAt)
+            ? message.createdAt
+            : thread.latestUserMessageAt;
 
         return {
           ...nextBase,
           threads: updateThread(nextBase.threads, payload.threadId, {
             messages: cappedMessages,
+            latestUserMessageAt,
             updatedAt: event.occurredAt,
           }),
         };
@@ -789,11 +805,29 @@ export function projectEvent(
           ]
             .toSorted(compareThreadActivities)
             .slice(-500);
+          const pendingRequestState = applyPendingRequestActivity(
+            thread.pendingApprovalRequestIds !== undefined &&
+              thread.resolvedApprovalRequestIds !== undefined &&
+              thread.pendingUserInputRequestIds !== undefined &&
+              thread.userInputRequestStates !== undefined
+              ? {
+                  pendingApprovalRequestIds: thread.pendingApprovalRequestIds,
+                  resolvedApprovalRequestIds: thread.resolvedApprovalRequestIds,
+                  pendingUserInputRequestIds: thread.pendingUserInputRequestIds,
+                  userInputRequestStates: thread.userInputRequestStates,
+                }
+              : derivePendingRequestState(thread.activities),
+            payload.activity,
+            event.metadata.requestId,
+          );
 
           return {
             ...nextBase,
             threads: updateThread(nextBase.threads, payload.threadId, {
               activities,
+              ...pendingRequestState,
+              pendingApprovalCount: pendingRequestState.pendingApprovalRequestIds.length,
+              pendingUserInputCount: pendingRequestState.pendingUserInputRequestIds.length,
               updatedAt: event.occurredAt,
             }),
           };
