@@ -1,0 +1,9 @@
+light built=4cb9af09c6eaf3fdd38f0ae287eb34dcbfd728b6f63866b420e7b1ac81d42bfc installed=4cb9af09c6eaf3fdd38f0ae287eb34dcbfd728b6f63866b420e7b1ac81d42bfc
+/Users/saphid/.t3/evidence/issue113/exact-head-60c3e1c/pr7378-inline-workspace-images-light-60c3e1c.png mtime=2026-08-21T18:08:28Z
+a75b07935cb9cebc58e103f3e8b5246c208cb510e6df26348649d0a0b6554419  /Users/saphid/.t3/evidence/issue113/exact-head-60c3e1c/pr7378-inline-workspace-images-light-60c3e1c.png
+dark built=4cb9af09c6eaf3fdd38f0ae287eb34dcbfd728b6f63866b420e7b1ac81d42bfc installed=4cb9af09c6eaf3fdd38f0ae287eb34dcbfd728b6f63866b420e7b1ac81d42bfc
+/Users/saphid/.t3/evidence/issue113/exact-head-60c3e1c/pr7378-inline-workspace-images-dark-60c3e1c.png mtime=2026-08-21T18:08:31Z
+97dc8985dd268bfac8f73a8e92aaeb399523bf46ab2cdf6110c57b91db150480  /Users/saphid/.t3/evidence/issue113/exact-head-60c3e1c/pr7378-inline-workspace-images-dark-60c3e1c.png
+light-recapture built=4cb9af09c6eaf3fdd38f0ae287eb34dcbfd728b6f63866b420e7b1ac81d42bfc installed=4cb9af09c6eaf3fdd38f0ae287eb34dcbfd728b6f63866b420e7b1ac81d42bfc
+/Users/saphid/.t3/evidence/issue113/exact-head-60c3e1c/pr7378-inline-workspace-images-light-60c3e1c.png mtime=2026-08-21T18:09:14Z
+02c612a1837a5a9d9025e2258a3725fa98a1cb16e4bc7e513b332227ea83fb22  /Users/saphid/.t3/evidence/issue113/exact-head-60c3e1c/pr7378-inline-workspace-images-light-60c3e1c.png
