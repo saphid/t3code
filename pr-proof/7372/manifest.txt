@@ -1,0 +1,18 @@
+PR: pingdotgg/t3code#7372
+PR head: 23a60e0739e459f2f3ad260624408c60f8840ec3
+Base: c2276320f06a0d007aea611feec41965b6b485ce
+Branch: feat/issue112-message-timestamps
+Worktree: /Users/saphid/Projects/T3 Code/.worktrees/message-timestamps-112
+Simulator: B0B16E05-D2DE-4243-B27B-6837D50FDFE6
+Bundle ID: com.t3tools.t3code.swiftui.dev
+Built and installed T3Code.debug.dylib SHA-256: 1c8cf565de9c25a1ad19509852ad6d779366d6d0b43497d36ae19c4fbbc30e63
+Light screenshot: message-timestamps-23a60e073-light.png
+Light SHA-256: ff415189110537a7e58ecb02593ba01aa8e4e14893acf962e893d9dc452c553f
+Dark screenshot: message-timestamps-23a60e073-dark.png
+Dark SHA-256: 40e5826d12179cf72fd985eb5faa5eb54455d78504c3f2bb2497026b43e1f203
+Dimensions: 1206x2622 PNG each
+Focused tests: 62 passed, 0 failed, 0 skipped, exit 0
+Focused result: focused-tests-current-base.xcresult
+Proof build result: proof-build.xcresult, BUILD SUCCEEDED, exit 0
+Cross-provider review: skipped because the user prohibited Claude/Anthropic models, processes, and reviewers.
+Video: not required; the feature is static presentation with no interaction or motion behavior.
