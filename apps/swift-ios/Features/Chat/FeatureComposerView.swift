@@ -279,7 +279,7 @@ struct FeatureComposerView: View {
     private var composerFooter: some View {
         HStack(spacing: 2) {
             if FeatureComposerKeyboardDismissPolicy.showsDismissControl(
-                isFocused: focused.wrappedValue,
+                isFocused: focused,
                 canDismiss: onDismissKeyboard != nil
             ) {
                 dismissKeyboardButton
@@ -328,7 +328,7 @@ struct FeatureComposerView: View {
     private var dismissKeyboardButton: some View {
         Button {
             onDismissKeyboard?()
-            focused.wrappedValue = false
+            focused = false
         } label: {
             Image(systemName: "keyboard.chevron.compact.down")
                 .font(.system(size: 15, weight: .medium))
