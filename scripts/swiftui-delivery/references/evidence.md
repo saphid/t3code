@@ -6,9 +6,24 @@ Every user-visible work item records exact-base before evidence and exact-head
 after evidence. Each phase needs at least one screenshot and one video. A visual
 appearance change also needs light and dark screenshots in both phases.
 
-Every capture records an ID, phase, kind, exact commit, installed binary hash,
-Booted assertion, device, appearance, UTC timestamp, expected behavior,
-observed behavior, artifact path, and artifact SHA-256.
+Schema-3 proof names one `laneId`. Each capture records an ID, phase, kind,
+exact commit, installed binary hash, Booted assertion, leased simulator
+UDID/runtime/device type, lane ID, lease hash, token-free lease-binding artifact,
+driver and AXe versions, interaction point dimensions, capture pixel
+dimensions, input method and software-keyboard visibility, appearance, UTC
+timestamp, expected behavior, observed behavior, artifact path, and SHA-256.
+Schema 2 remains readable for retained evidence created before parallel lanes.
+
+The lease-binding artifact must have been generated while that lease was
+active. Its exact bytes bind the proof lane, UDID, and active lease hash without
+publishing the secret release token. The validator checks all four identities.
+
+Element references are driver-process-local and never cross an invocation.
+Use an atomic AXe selector action through `simulator-lane`, or keep observation
+and action in one persistent driver process. A screenshot's optimized pixel
+size is not an interaction coordinate system; record both dimensions rather than
+silently transforming points. HID typing counts as hardware input. When the
+software keyboard is evidence, tap its visible keys and keep it visible.
 
 Retained app bytes are content-addressed and may be shared when two builds are
 byte-identical. Commit, configuration, platform, product, and executable path

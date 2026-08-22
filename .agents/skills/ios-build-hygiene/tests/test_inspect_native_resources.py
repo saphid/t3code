@@ -73,6 +73,29 @@ class NativeResourceInventoryTests(unittest.TestCase):
         self.assertEqual(worker["classification"], "owned-active")
         self.assertEqual(worker["ownerEvidence"], "direct-hygiene-lock")
 
+    def test_keyed_build_slot_owns_only_its_tree_and_worker(self):
+        root = "/private/tmp/t3-xcodebuild.fixture"
+        derived = root + "/DerivedData"
+        snapshot = self.snapshot(
+            buildSlots=[{
+                "path": "/fixture/slot-1.lock", "present": True,
+                "allocatorPid": 100, "kind": "direct", "state": "active",
+                "runRoot": root, "runRootExists": True,
+            }],
+            processes=[{
+                "pid": 101, "ppid": 1, "elapsedSeconds": 10,
+                "command": "/usr/bin/xcodebuild -derivedDataPath " + derived,
+            }],
+            derivedData=[{
+                "path": derived, "exists": True,
+                "productLane": "simulator-verification", "openHandlePids": [101],
+            }],
+        )
+        self.assertEqual(snapshot["buildSlots"][0]["classification"], "owned-active")
+        self.assertEqual(snapshot["processes"][0]["ownerEvidence"], "build-capacity-slot")
+        self.assertEqual(snapshot["derivedData"][0]["ownerEvidence"], "build-capacity-slot")
+        self.assertEqual(snapshot["summary"]["activeBuildSlotCount"], 1)
+
     def test_xcodebuild_metadata_query_is_labeled_as_inspection(self):
         snapshot = self.snapshot(
             processes=[

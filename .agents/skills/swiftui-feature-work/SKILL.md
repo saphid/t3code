@@ -8,13 +8,18 @@ description: Build, test, review, and prove one native T3 Code SwiftUI work item
 Finish one exact issue at the `proof-ready` gate. Read
 `../../../scripts/swiftui-delivery/contract.json`,
 `../../../scripts/swiftui-delivery/references/process.md`, and
-`../../../scripts/swiftui-delivery/references/evidence.md` relative to this skill. Use the
+`../../../scripts/swiftui-delivery/references/evidence.md` relative to this
+skill. For simulator allocation, concurrent UI driving, build reuse, and
+recovery, also read
+`../../../scripts/swiftui-delivery/references/simulator-lanes.md`. Use the
 repo-owned scripts exposed in this skill's `scripts/` directory.
 
 ## Bind and reproduce
 
 Verify the issue, `laneId`, launch receipt, base, branch, worktree, T3
 environment, project, and thread. Refuse a shared or mismatched worktree.
+Acquire the lane's exact simulator through `scripts/simulator-lane`; bind its
+receipt hash and use the explicit-UDID runner for concurrent lane work.
 
 Before code changes, build and run the exact base. Preserve the `.app` so the
 same build can be reused later:
@@ -62,23 +67,15 @@ as a review.
 
 ## Prove the exact head
 
-Build the exact head and preserve it. On the canonical proof simulator, capture
-an after screenshot and annotated video that show the intended result. For
-visual changes, capture light and dark screenshots before and after. Each
-capture records commit, installed binary hash, device, Booted assertion,
-appearance, timestamp, expected behavior, observed behavior, artifact path,
-and SHA-256.
+Build the exact head and preserve it. On the lane's leased proof simulator,
+capture an after screenshot and annotated video that show the intended result.
+For visual changes, capture light and dark screenshots before and after. Create
+the schema-3 lease binding and satisfy the single capture contract in
+`references/evidence.md`; do not restate or weaken that contract here.
 
-User-visible work always needs before and after image and video evidence. Only
-non-user-visible work may omit media, and `evidenceException.reason` must
-specifically explain why images and video cannot add proof.
-
-Validate `proof.json`, then ask a separate agent pass to visually inspect every
-capture. `inspection.json` must contain one `captureReviews` row per artifact,
-including what was expected, what was observed, what side effects were checked,
-and a passing verdict. The overall receipt also explains intent fidelity and
-unintended-side-effect coverage. For a no-media exception, the reviewer must
-explicitly accept the reason.
+Validate `proof.json`, then ask a separate agent pass to perform the complete
+visual inspection required by `references/evidence.md`. Completion means both
+validators below pass; this skill does not carry a second copy of the policy.
 
 ```sh
 scripts/swiftui-delivery validate-proof proof.json

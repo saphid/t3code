@@ -6,7 +6,9 @@ description: Coordinate and babysit native T3 Code SwiftUI issue work across sha
 # Orchestrate and babysit SwiftUI delivery
 
 Read `../../../scripts/swiftui-delivery/contract.json` and
-`../../../scripts/swiftui-delivery/references/process.md` relative to this skill. GitHub
+`../../../scripts/swiftui-delivery/references/process.md` relative to this skill.
+Read `../../../scripts/swiftui-delivery/references/simulator-lanes.md` when
+allocating, reusing, recovering, or releasing simulator capacity. GitHub
 issues hold canonical work-item state. Local files are working copies and
 content-addressed receipts. Use `scripts/swiftui-delivery` for every gate.
 
@@ -28,6 +30,9 @@ For a dependency-ready queued work item, resolve the current base and create a
 unique branch, worktree, T3 project/thread, and launch receipt. Bind the exact
 issue, lane, base, branch, worktree, environment, project, and thread. Write
 `active` only after validating and reading back the receipt and issue update.
+Acquire one explicit simulator lease for the lane; other lanes may allocate
+other UDIDs concurrently, while issues sharing this lane use its ordered
+runtime context.
 Dispatch `$swiftui-feature-work` for that exact work item.
 
 ```sh

@@ -1,0 +1,4 @@
+#!/bin/bash
+set -u
+script_dir=$(cd "$(dirname "$0")" && pwd -P) || exit 1
+exec "$script_dir/../../../../scripts/swiftui-delivery/scripts/simulator-lane" "$@"

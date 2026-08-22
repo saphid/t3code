@@ -5,6 +5,8 @@
   "productRepository": "resolved from the current T3 Code checkout",
   "workItemFence": "swiftui-work-item-v2",
   "canonicalTool": "scripts/swiftui-delivery/scripts/swiftui-delivery",
+  "simulatorLaneTool": "scripts/swiftui-delivery/scripts/simulator-lane",
+  "xcodeBuildMcpVersion": "2.7.0",
   "stateRoot": "~/.local/state/t3/swiftui-delivery",
   "buildStore": "~/.local/share/t3/swiftui-delivery/builds",
   "phonePublicationLease": "~/.local/state/t3/swiftui-delivery/phone-publication.lock",
@@ -44,10 +46,8 @@
     "open-pr": ["candidate"]
   },
   "evidencePolicy": {
-    "userVisible": "Exact-base before image and annotated video plus exact-head after image and annotated video.",
-    "appearance": "A visual appearance change also needs light and dark screenshots in both phases.",
-    "exception": "Only non-user-visible work may omit media, with a specific reason reviewed by the evidence reviewer.",
-    "publication": "No Test or phone generation plan is valid until every capture has an agent review and the proof and inspection hashes match the work item."
+    "specification": "references/evidence.md",
+    "completion": "validate-proof and validate-inspection both pass; generation-plan validation reopens the exact bound artifacts"
   },
   "repoOwnedSpecialists": [
     ".agents/skills/ios-build-hygiene/SKILL.md",

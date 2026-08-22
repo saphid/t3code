@@ -1,4 +1,4 @@
 #!/bin/bash
 set -u
 script_dir=$(cd "$(dirname "$0")" && pwd -P) || exit 1
-exec "$script_dir/new-build-lane.sh" --kind mcp
+exec python3 "$script_dir/../simulator_lane.py" "$@"

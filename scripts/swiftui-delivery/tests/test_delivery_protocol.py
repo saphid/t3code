@@ -128,6 +128,47 @@ class DeliveryProtocolTests(unittest.TestCase):
         inspection_descriptor = write(inspection_path, inspection)
         return proof, proof_path, proof_descriptor, inspection, inspection_path, inspection_descriptor
 
+    def upgrade_proof_to_schema3(self, proof):
+        proof["schemaVersion"] = 3
+        proof["laneId"] = "native-ui"
+        for capture in proof["captures"]:
+            lease_hash = "c" * 64
+            binding_path = Path(capture["artifact"]["path"]).with_suffix(".lease.json")
+            binding = {
+                "schemaVersion": 1,
+                "kind": "swiftui-simulator-lease-binding",
+                "laneId": "native-ui",
+                "simulator": {"udid": "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE"},
+                "leaseSha256": lease_hash,
+            }
+            binding_descriptor = write(binding_path, binding)
+            capture["simulator"] = {
+                "udid": "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE",
+                "runtime": "iOS 26.0",
+                "deviceType": "iPhone 17 Pro",
+                "laneId": "native-ui",
+                "leaseSha256": lease_hash,
+                "leaseBinding": binding_descriptor,
+            }
+            capture["driver"] = {
+                "name": "XcodeBuildMCP",
+                "version": "2.7.0",
+                "axeVersion": "1.8.0",
+                "routing": "explicit-udid-per-command",
+            }
+            capture["coordinateSpace"] = {
+                "interactionWidth": 402,
+                "interactionHeight": 874,
+                "capturePixelWidth": 1206,
+                "capturePixelHeight": 2622,
+            }
+            capture["input"] = {
+                "method": "touch",
+                "softwareKeyboardVisible": False,
+                "notes": "Visible touch interaction; no keyboard was needed.",
+            }
+        return proof
+
     def test_many_issues_can_share_one_lane(self):
         first = self.work_item()
         second = self.work_item("saphid/t3code-personal#2", "native-ui")
@@ -165,6 +206,27 @@ class DeliveryProtocolTests(unittest.TestCase):
             proof["captures"][0]["installedBinarySha256"] = "0" * 64
             errors = delivery.validate_proof(proof, True)
             self.assertTrue(any("installed binary must match" in error for error in errors))
+
+    def test_schema3_proof_binds_parallel_runtime_context(self):
+        with tempfile.TemporaryDirectory() as directory:
+            proof, _, _, _, _, _ = self.make_evidence(directory)
+            self.upgrade_proof_to_schema3(proof)
+            self.assertEqual(delivery.validate_proof(proof, True), [])
+
+    def test_schema3_rejects_missing_coordinate_and_input_context(self):
+        with tempfile.TemporaryDirectory() as directory:
+            proof, _, _, _, _, _ = self.make_evidence(directory)
+            self.upgrade_proof_to_schema3(proof)
+            proof["captures"][0].pop("coordinateSpace")
+            proof["captures"][0].pop("input")
+            errors = delivery.validate_proof(proof, True)
+            self.assertTrue(any("coordinateSpace" in error for error in errors))
+            self.assertTrue(any("input" in error for error in errors))
+
+    def test_schema2_evidence_remains_valid(self):
+        with tempfile.TemporaryDirectory() as directory:
+            proof, _, _, _, _, _ = self.make_evidence(directory)
+            self.assertEqual(delivery.validate_proof(proof, True), [])
 
     def test_video_requires_raw_file_edit_receipt_and_annotation(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -391,6 +453,24 @@ class DeliveryProtocolTests(unittest.TestCase):
             self.assertEqual(transitioned["binding"]["baseCommit"], "a" * 40)
             self.assertEqual(transitioned["binding"]["launchReceiptSha256"],
                              hashlib.sha256(receipt_path.read_bytes()).hexdigest())
+
+    def test_proof_ready_transition_rejects_schema3_from_another_lane(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            proof, proof_path, _, inspection, inspection_path, _ = self.make_evidence(root)
+            self.upgrade_proof_to_schema3(proof)
+            proof["laneId"] = "another-lane"
+            write(proof_path, proof)
+            inspection["proofSha256"] = delivery.sha256(proof_path)
+            write(inspection_path, inspection)
+            item = self.work_item()
+            item["stage"] = "active"
+            item["binding"]["launchReceiptSha256"] = "a" * 64
+            _, errors = delivery.transition(
+                item, "proof-ready", proof_path=proof_path,
+                inspection_path=inspection_path
+            )
+            self.assertIn("proof laneId must match work item", errors)
 
     def test_phone_acceptance_requires_bound_receipt(self):
         item = self.work_item()

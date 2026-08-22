@@ -5,8 +5,14 @@ description: Run direct iOS Xcode builds and tests with isolated temporary Deriv
 
 # iOS build hygiene
 
-Serialize native verification through the bundled helpers. Treat cleanup as
-part of the result on success, failure, cancellation, and timeout.
+Use two isolated native build slots by default. This is the measured safe value
+for the current host, not a machine-wide invariant; set
+`T3_IOS_BUILD_CAPACITY=1..8` only from recorded host measurements. Each slot owns private DerivedData, cloned
+SourcePackages, and package cache paths; unrelated simulator runtime work does
+not consume a build slot. Treat cleanup as part of the result on success,
+failure, cancellation, and timeout. Read
+`../../../scripts/swiftui-delivery/references/simulator-lanes.md` when several
+delivery lanes are active.
 
 ## Read-only Xcode inspection
 
@@ -24,10 +30,10 @@ leave an entire shell pipeline alive. Run them through the bounded helper:
   -showBuildSettings
 ```
 
-The helper acquires the same native hygiene lane as build/test wrappers, accepts
-exactly one inspection operation, refuses build, test, archive, clean, and
+The helper bounds one metadata query, accepts exactly one inspection operation,
+refuses build, test, archive, clean, and
 explicit DerivedData actions, preserves the real exit status, and emits elapsed
-time. Exit `75` means another native owner has the lane; it starts no Xcode
+time. Exit `75` means the bounded inspection owner is busy; it starts no Xcode
 process. Exit `124` means the deadline expired; the helper terminates the exact
 process group, escalates after a short grace period, and records the timeout in
 the optional atomic JSON receipt. Pipe or filter its stdout only after the
@@ -45,11 +51,12 @@ Run from the target repository:
   test -only-testing:<focused-test>
 ```
 
-The wrapper holds the shared hygiene lock, supplies a unique temporary
-`-derivedDataPath`, forwards termination signals, preserves `xcodebuild`'s exit
-status, deletes only its private temporary tree, and requests an idle clone
-sweep through CoreSimulator. Put evidence that must survive cleanup in an
-explicit `-resultBundlePath`; relative paths resolve from the repository.
+The wrapper acquires one of the configured build slots; supplies unique temporary
+DerivedData, cloned SourcePackages, and package cache paths; forwards
+termination signals; preserves `xcodebuild`'s exit status; deletes only its
+private tree; and requests an idle clone sweep through CoreSimulator. Put
+evidence that must survive cleanup in an explicit `-resultBundlePath`; relative
+paths resolve from the repository.
 
 ## XcodeBuildMCP
 
@@ -61,7 +68,9 @@ derived_data=$(.agents/skills/ios-build-hygiene/scripts/new-mcp-derived-data.sh)
 ```
 
 Pass that exact absolute value as `derivedDataPath` in
-`session_set_defaults`. Reuse it during one verification loop. After the last
+`session_set_defaults`. Its parent also contains `SourcePackages` and
+`PackageCache`; pass both paths through XcodeBuildMCP `extraArgs`. Reuse all
+three during one verification loop. After the last
 MCP build/test and after preserving required logs or result bundles, run:
 
 ```bash
@@ -71,21 +80,28 @@ MCP build/test and after preserving required logs or result bundles, run:
 
 Do not sweep XcodeBuildMCP's shared default workspace cache. An MCP loop is
 complete only after its isolated path is removed or cleanup is explicitly
-deferred to the final finishing test. The sweep releases the lease only after
-all requested cleanup completes.
+deferred to the final finishing test. The sweep releases the private build slot
+as soon as that exact tree is safely removed. Optional global XCTest clone
+cleanup is a separate result and may remain deferred without holding a finished
+build slot.
 
-If an MCP process crashes while its isolated path still exists, direct builds
-correctly remain deferred. Inspect the lock and path, then run the same explicit
+If an MCP process crashes while its isolated path still exists, its one build
+slot remains occupied while the other remains usable. Inspect the lease and
+path, then run the same explicit
 `sweep-idle-xcode.sh --derived-data "$derived_data" --clones` command after
-confirming native work is idle. There is no age-based or force cleanup.
+confirming that exact tree is idle. There is no age-based or force cleanup.
+An allocator that dies before publishing a run root is reclaimed only when its
+recorded PID is dead; a completely empty partial lock receives a 60-second
+grace. Active run roots are never age-reclaimed.
 
 ## Sweep result
 
 - Exit `0`: requested cleanup completed or the exact generated path was
   already absent.
 - Exit `64`: invocation or deletion target was refused; fix the command.
-- Exit `75`: another native build/test, active clone, open handle, or failed
-  safety check deferred cleanup. The final finishing test owns the retry.
+- Exit `75`: all configured build slots are occupied, or an active clone, exact-tree open
+  handle, or failed safety check deferred cleanup. The final finishing test
+  owns the retry.
 
 Before reporting verification complete, record the real build/test exit status
 and durable evidence location, then record cleanup as `complete` or `deferred`.
@@ -99,8 +115,8 @@ Before changing ownership or cleanup policy, inspect the current native state:
 ```
 
 The command emits a versioned JSON snapshot to stdout and writes no state. It
-reads the existing hygiene lock, relevant process metadata, known DerivedData
-roots, Simulator list output, open handles, and disk
+reads keyed build slots, the bounded-inspection legacy lock, relevant process
+metadata, known DerivedData roots, Simulator list output, open handles, and disk
 headroom. It never grants a lease, marks cleanup eligibility, signals a
 process, changes a Simulator, or removes a path. Unknown or contradictory
 ownership is always `protected-unknown`; age alone never makes a resource safe

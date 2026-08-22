@@ -148,6 +148,22 @@ def collect_lock(lock_path):
     }
 
 
+def collect_build_slots(capacity_root):
+    slots = []
+    for path in sorted(capacity_root.glob("slot-*.lock")):
+        run_root = read_text(path / "run-root")
+        slots.append({
+            "path": str(path),
+            "present": path.is_dir(),
+            "allocatorPid": read_integer(path / "allocator-pid"),
+            "kind": read_text(path / "kind"),
+            "state": read_text(path / "state"),
+            "runRoot": run_root,
+            "runRootExists": bool(run_root and Path(run_root).is_dir()),
+        })
+    return slots
+
+
 def collect_simulators(errors):
     output = run_command(
         ["xcrun", "simctl", "list", "devices", "-j"],
@@ -177,10 +193,12 @@ def collect_simulators(errors):
     return result
 
 
-def known_derived_data_paths(lock, additional_paths):
+def known_derived_data_paths(lock, build_slots, additional_paths):
     patterns = [
         "/private/tmp/t3-xcodebuildmcp.*/DerivedData",
         "/private/var/folders/*/*/T/t3-xcodebuildmcp.*/DerivedData",
+        "/private/tmp/t3-xcodebuild.*/DerivedData",
+        "/private/var/folders/*/*/T/t3-xcodebuild.*/DerivedData",
         str(Path.home() / ".t3/worktrees/*/.derivedData"),
         str(Path.home() / "Library/Developer/XcodeBuildMCP/workspaces/*/DerivedData"),
     ]
@@ -189,6 +207,9 @@ def known_derived_data_paths(lock, additional_paths):
         paths.update(glob.glob(pattern))
     if lock.get("mcpDerivedDataPath"):
         paths.add(lock["mcpDerivedDataPath"])
+    for slot in build_slots:
+        if slot.get("runRoot"):
+            paths.add(str(Path(slot["runRoot"]) / "DerivedData"))
     paths.update(additional_paths)
     return sorted(paths)
 
@@ -239,9 +260,9 @@ def product_lane(path):
     return "unknown"
 
 
-def collect_derived_data(lock, additional_paths, errors):
+def collect_derived_data(lock, build_slots, additional_paths, errors):
     result = []
-    for path in known_derived_data_paths(lock, additional_paths):
+    for path in known_derived_data_paths(lock, build_slots, additional_paths):
         result.append(
             {
                 "path": path,
@@ -274,13 +295,17 @@ def collect_live(additional_paths):
     lock = collect_lock(
         Path.home() / ".local/state/t3/swiftui-delivery/ios-build-hygiene.lock"
     )
+    build_slots = collect_build_slots(
+        Path.home() / ".local/state/t3/swiftui-delivery/ios-build-capacity"
+    )
     return {
         "observedAt": utc_now(),
         "hostname": socket.gethostname(),
         "lock": lock,
+        "buildSlots": build_slots,
         "processes": collect_processes(errors),
         "simulators": collect_simulators(errors),
-        "derivedData": collect_derived_data(lock, additional_paths, errors),
+        "derivedData": collect_derived_data(lock, build_slots, additional_paths, errors),
         "disk": collect_disk(errors),
         "errors": errors,
     }
@@ -292,6 +317,7 @@ def collect_fixture(path):
     payload.setdefault("observedAt", "2000-01-01T00:00:00Z")
     payload.setdefault("hostname", "fixture-host")
     payload.setdefault("lock", {"present": False, "path": "fixture-lock"})
+    payload.setdefault("buildSlots", [])
     payload.setdefault("processes", [])
     payload.setdefault("simulators", [])
     payload.setdefault("derivedData", [])
@@ -325,6 +351,12 @@ def classify_snapshot(raw, mode):
     lock_present = bool(lock.get("present"))
     owner_pid = lock.get("ownerPid")
     mcp_path = lock.get("mcpDerivedDataPath")
+    raw_slots = raw.get("buildSlots", [])
+    active_slot_roots = [
+        normalize_path(item.get("runRoot")) for item in raw_slots
+        if item.get("present") and item.get("runRoot")
+        and item.get("runRootExists", Path(item.get("runRoot")).is_dir())
+    ]
     mcp_exists = any(
         normalize_path(item.get("path")) == normalize_path(mcp_path)
         and item.get("exists", False)
@@ -363,7 +395,11 @@ def classify_snapshot(raw, mode):
         if kind == "serve-sim":
             serve_sim_udids.update(value.upper() for value in UUID_RE.findall(command))
         if resource_class == "native-worker":
-            if owner_pid and has_ancestor(item.get("pid"), owner_pid, process_map):
+            slot_root = next((root for root in active_slot_roots if root in command), None)
+            if slot_root:
+                classification = "owned-active"
+                owner_evidence = "build-capacity-slot"
+            elif owner_pid and has_ancestor(item.get("pid"), owner_pid, process_map):
                 classification = "owned-active"
                 owner_evidence = "direct-hygiene-lock"
             elif mcp_path and mcp_path in command:
@@ -419,11 +455,38 @@ def classify_snapshot(raw, mode):
             }
         )
 
+    build_slots = []
+    for item in raw_slots:
+        run_root = item.get("runRoot")
+        run_root_exists = bool(run_root and item.get(
+            "runRootExists", Path(run_root).is_dir()
+        ))
+        if item.get("present") and run_root_exists and item.get("state") == "active":
+            classification = "owned-active"
+        else:
+            classification = "protected-unknown"
+            errors.append({"source": "build-slot", "error": "incomplete-owner-state"})
+        build_slots.append({
+            "resourceId": stable_id("build-slot", item.get("path") or "unknown"),
+            "path": item.get("path"),
+            "kind": item.get("kind"),
+            "state": item.get("state"),
+            "runRoot": run_root,
+            "allocatorPid": item.get("allocatorPid"),
+            "classification": classification,
+            "cleanupEligible": False,
+        })
+
     derived_data = []
     normalized_mcp_path = normalize_path(mcp_path)
     for item in raw.get("derivedData", []):
         path = item.get("path")
-        if normalize_path(path) == normalized_mcp_path and lock_classification == "owned-active":
+        slot_root = next((root for root in active_slot_roots
+                          if normalize_path(path or "").startswith(root + os.sep)), None)
+        if slot_root:
+            classification = "owned-active"
+            owner_evidence = "build-capacity-slot"
+        elif normalize_path(path) == normalized_mcp_path and lock_classification == "owned-active":
             classification = "owned-active"
             owner_evidence = "mcp-hygiene-lock"
         else:
@@ -447,7 +510,7 @@ def classify_snapshot(raw, mode):
     ]
     protected_unknown = sum(
         item.get("classification") == "protected-unknown"
-        for item in processes + simulators + derived_data
+        for item in processes + simulators + build_slots + derived_data
     )
     snapshot = {
         "schemaVersion": SCHEMA_VERSION,
@@ -471,6 +534,7 @@ def classify_snapshot(raw, mode):
             "classification": lock_classification,
             "cleanupEligible": False,
         },
+        "buildSlots": sorted(build_slots, key=lambda item: item.get("path") or ""),
         "processes": sorted(processes, key=lambda item: item.get("pid") or 0),
         "simulators": sorted(simulators, key=lambda item: item.get("udid") or ""),
         "derivedData": sorted(derived_data, key=lambda item: item.get("path") or ""),
@@ -480,6 +544,9 @@ def classify_snapshot(raw, mode):
             "nativeWorkerCount": len(native_workers),
             "protectedUnknownCount": protected_unknown,
             "derivedDataCount": len(derived_data),
+            "activeBuildSlotCount": sum(
+                item.get("classification") == "owned-active" for item in build_slots
+            ),
             "bootedSimulatorCount": sum(
                 item.get("state") == "Booted" for item in simulators
             ),

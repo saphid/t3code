@@ -2,7 +2,7 @@
 enabled = true
 required = false
 command = "npx"
-args = ["--yes", "xcodebuildmcp@2.6.2", "mcp"]
+args = ["--yes", "xcodebuildmcp@2.7.0", "mcp"]
 startup_timeout_sec = 20.0
 
 [mcp_servers.xcodebuildmcp.env]

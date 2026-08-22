@@ -24,6 +24,7 @@ LANE_RE = re.compile(r"^[a-z0-9]+(?:[._-][a-z0-9]+)*$")
 COMMIT_RE = re.compile(r"^[0-9a-f]{40}$")
 SHA_RE = re.compile(r"^[0-9a-f]{64}$")
 UTC_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z$")
+UDID_RE = re.compile(r"^[0-9A-F]{8}(?:-[0-9A-F]{4}){3}-[0-9A-F]{12}$")
 
 
 def load_build_store_module():
@@ -281,7 +282,72 @@ def validate_build_receipt(descriptor, prefix, expected_commit, check_files):
     return receipt, errors
 
 
-def validate_capture(capture, prefix, phase, commit, check_files):
+def positive_dimension(value):
+    return isinstance(value, (int, float)) and not isinstance(value, bool) and value > 0
+
+
+def validate_runtime_capture(capture, prefix, expected_lane, check_files):
+    errors = []
+    simulator = capture.get("simulator")
+    add(errors, isinstance(simulator, dict), "%s.simulator must be an object" % prefix)
+    if isinstance(simulator, dict):
+        add(errors, matches(UDID_RE, simulator.get("udid")),
+            "%s.simulator.udid must be an exact uppercase UDID" % prefix)
+        add(errors, nonempty(simulator.get("runtime")),
+            "%s.simulator.runtime is required" % prefix)
+        add(errors, nonempty(simulator.get("deviceType")),
+            "%s.simulator.deviceType is required" % prefix)
+        add(errors, nonempty(simulator.get("laneId")),
+            "%s.simulator.laneId is required" % prefix)
+        add(errors, simulator.get("laneId") == expected_lane,
+            "%s.simulator.laneId must match proof laneId" % prefix)
+        add(errors, matches(SHA_RE, simulator.get("leaseSha256")),
+            "%s.simulator.leaseSha256 is required" % prefix)
+        binding = simulator.get("leaseBinding")
+        errors.extend(artifact_errors(binding, "%s.simulator.leaseBinding" % prefix, check_files))
+        if check_files and isinstance(binding, dict) and nonempty(binding.get("path")):
+            path = Path(binding["path"]).expanduser()
+            if path.is_file():
+                try:
+                    value = load(path)
+                    add(errors, value.get("schemaVersion") == 1 and
+                        value.get("kind") == "swiftui-simulator-lease-binding",
+                        "%s.simulator.leaseBinding has the wrong schema" % prefix)
+                    add(errors, value.get("laneId") == expected_lane,
+                        "%s.simulator.leaseBinding lane does not match" % prefix)
+                    add(errors, value.get("leaseSha256") == simulator.get("leaseSha256"),
+                        "%s.simulator.leaseBinding hash does not match" % prefix)
+                    add(errors, value.get("simulator", {}).get("udid") == simulator.get("udid"),
+                        "%s.simulator.leaseBinding UDID does not match" % prefix)
+                except (OSError, ValueError, json.JSONDecodeError) as exc:
+                    errors.append("%s.simulator.leaseBinding cannot be read: %s" % (prefix, exc))
+    driver = capture.get("driver")
+    add(errors, isinstance(driver, dict), "%s.driver must be an object" % prefix)
+    if isinstance(driver, dict):
+        for field in ("name", "version", "axeVersion", "routing"):
+            add(errors, nonempty(driver.get(field)),
+                "%s.driver.%s is required" % (prefix, field))
+    coordinate_space = capture.get("coordinateSpace")
+    add(errors, isinstance(coordinate_space, dict),
+        "%s.coordinateSpace must be an object" % prefix)
+    if isinstance(coordinate_space, dict):
+        for field in ("interactionWidth", "interactionHeight",
+                      "capturePixelWidth", "capturePixelHeight"):
+            add(errors, positive_dimension(coordinate_space.get(field)),
+                "%s.coordinateSpace.%s must be positive" % (prefix, field))
+    input_state = capture.get("input")
+    add(errors, isinstance(input_state, dict), "%s.input must be an object" % prefix)
+    if isinstance(input_state, dict):
+        add(errors, input_state.get("method") in (
+            "touch", "software-keyboard", "hardware-hid", "mixed", "not-applicable"),
+            "%s.input.method is invalid" % prefix)
+        add(errors, isinstance(input_state.get("softwareKeyboardVisible"), bool),
+            "%s.input.softwareKeyboardVisible must be boolean" % prefix)
+        add(errors, nonempty(input_state.get("notes")), "%s.input.notes is required" % prefix)
+    return errors
+
+
+def validate_capture(capture, prefix, phase, commit, proof_schema, expected_lane, check_files):
     errors = []
     add(errors, isinstance(capture, dict), "%s must be an object" % prefix)
     if not isinstance(capture, dict):
@@ -301,6 +367,8 @@ def validate_capture(capture, prefix, phase, commit, check_files):
         "%s.capturedAt must be UTC ending in Z" % prefix)
     add(errors, nonempty(capture.get("expected")), "%s.expected is required" % prefix)
     add(errors, nonempty(capture.get("observed")), "%s.observed is required" % prefix)
+    if proof_schema == 3:
+        errors.extend(validate_runtime_capture(capture, prefix, expected_lane, check_files))
     errors.extend(artifact_errors(capture.get("artifact"), "%s.artifact" % prefix, check_files))
     if kind == "video":
         errors.extend(artifact_errors(capture.get("rawArtifact"), "%s.rawArtifact" % prefix, check_files))
@@ -322,8 +390,12 @@ def validate_proof(value, check_files=True):
     add(errors, isinstance(value, dict), "proof must be an object")
     if not isinstance(value, dict):
         return errors
-    add(errors, value.get("schemaVersion") == 2, "proof schemaVersion must be 2")
+    proof_schema = value.get("schemaVersion")
+    add(errors, proof_schema in (2, 3), "proof schemaVersion must be 2 or 3")
     add(errors, value.get("kind") == "swiftui-proof", "proof kind must be swiftui-proof")
+    expected_lane = value.get("laneId")
+    if proof_schema == 3:
+        add(errors, matches(LANE_RE, expected_lane), "proof laneId is required for schema 3")
     add(errors, matches(ISSUE_RE, value.get("issue")), "proof issue is invalid")
     base, head = value.get("baseCommit"), value.get("headCommit")
     add(errors, matches(COMMIT_RE, base), "baseCommit is invalid")
@@ -345,7 +417,9 @@ def validate_proof(value, check_files=True):
         phase = capture.get("phase") if isinstance(capture, dict) else None
         commit = base if phase == "before" else head if phase == "after" else None
         add(errors, phase in ("before", "after"), "%s.phase is invalid" % prefix)
-        errors.extend(validate_capture(capture, prefix, phase, commit, check_files))
+        errors.extend(validate_capture(
+            capture, prefix, phase, commit, proof_schema, expected_lane, check_files
+        ))
         expected_binary = base_receipt.get("binarySha256") if phase == "before" and isinstance(base_receipt, dict) \
             else head_receipt.get("binarySha256") if phase == "after" and isinstance(head_receipt, dict) else None
         add(errors, capture.get("installedBinarySha256") == expected_binary
@@ -565,6 +639,9 @@ def validate_generation_plan(value):
         if isinstance(proof, dict):
             add(errors, proof.get("issue") == issue, "%s proof issue mismatch" % prefix)
             add(errors, proof.get("headCommit") == entry.get("headCommit"), "%s proof head mismatch" % prefix)
+            if proof.get("schemaVersion") == 3 and isinstance(work_item, dict):
+                add(errors, proof.get("laneId") == work_item.get("laneId"),
+                    "%s proof lane mismatch" % prefix)
     for issue, item in catalog_by_issue.items():
         for dependency in item.get("dependencies", []):
             if not isinstance(dependency, dict):
@@ -763,6 +840,9 @@ def transition(item, destination, proof_path=None, inspection_path=None,
             errors.extend(validate_proof(proof, True))
             errors.extend(validate_inspection(inspection, proof, proof_path, True))
             add(errors, proof.get("issue") == item.get("issue"), "proof issue must match work item")
+            if proof.get("schemaVersion") == 3:
+                add(errors, proof.get("laneId") == item.get("laneId"),
+                    "proof laneId must match work item")
             if not errors:
                 result["binding"].update({
                     "baseCommit": proof["baseCommit"], "headCommit": proof["headCommit"],

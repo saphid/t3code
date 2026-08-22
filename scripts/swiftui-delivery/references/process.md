@@ -68,11 +68,18 @@ declared `~/.local` roots. Product checkout paths, device IDs, simulator IDs,
 branches, commits, T3 environment IDs, thread IDs, ports, and signing values
 are resolved live and recorded only in receipts.
 
+Parallel Simulator work follows [`simulator-lanes.md`](simulator-lanes.md): one
+exact UDID and ordered driver context per lane, with different lanes running
+concurrently. Builds use a measured capacity limit (two on the current host)
+with private DerivedData and SwiftPM state; preserved app bytes can be installed
+into several compatible simulators.
+
 Phone publication is serialized by the atomic
 `~/.local/state/t3/swiftui-delivery/phone-publication.lock`. The owner receives
 a secret release token; another operation can inspect but cannot replace or
 force-release the lease. An unreadable or abandoned lease fails closed for
-human review. Xcode hygiene uses a separate lock under the same state root.
+human review. Xcode build capacity uses keyed slots under the same state
+root; simulator runtime ownership is keyed by UDID.
 
 There is no background label auditor, custom dispatch daemon, or second
 deployment runtime. The orchestrator follows GitHub work items and durable

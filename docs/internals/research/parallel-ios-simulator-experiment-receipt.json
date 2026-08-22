@@ -1,0 +1,133 @@
+{
+  "schemaVersion": 1,
+  "kind": "parallel-ios-simulator-research-receipt",
+  "issue": "https://github.com/saphid/t3code-personal/issues/136",
+  "sourceHeadAtStart": "5008cd1a745a043481cf5d5ca43a4da543253e41",
+  "generatedAt": "2026-08-22T22:00:20Z",
+  "host": {
+    "commands": ["sysctl -n hw.ncpu hw.logicalcpu hw.memsize", "memory_pressure -Q", "df -k /private/tmp", "ps -axo pid,rss,command"],
+    "logicalCpuCount": 18,
+    "physicalMemoryBytes": 51539607552,
+    "freeMemoryPercent": 62,
+    "freeDiskKiB": 27334644,
+    "bootSecondSimulator": {
+      "command": "xcrun simctl boot <lane-b-udid> && xcrun simctl bootstatus <lane-b-udid> -b",
+      "exitStatus": 0,
+      "elapsedSeconds": 5.956,
+      "simulatorProcessRssDeltaKiB": 10493104
+    }
+  },
+  "versions": {"xcodebuildmcp": "2.7.0", "axe": "1.8.0", "serveSim": "0.1.45"},
+  "simulators": ["4401D856-DE6C-4769-A649-468778C929F6", "B0B16E05-D2DE-4243-B27B-6837D50FDFE6"],
+  "artifactAggregate": {
+    "verificationCommand": "find \"$artifact_root\" -type f -print0 | sort -z | xargs -0 shasum -a 256 | shasum -a 256",
+    "algorithm": "sort artifact paths bytewise, emit one SHA-256 line per path in that order, concatenate those path-ordered lines, then SHA-256 the concatenation",
+    "stateRoot": "~/.local/state/t3/swiftui-delivery/research/136"
+  },
+  "commandTranscript": {
+    "path": "docs/internals/research/parallel-ios-simulator-command-transcript.md",
+    "sha256": "477827a60ebc41081c13c14ceb4e3ac921ef8e9120115db931f8caf4e6f2902f"
+  },
+  "experiments": [
+    {
+      "name": "xcodebuildmcp-2.7-snapshot-stress",
+      "command": "four batches of 10 concurrent `npx --yes xcodebuildmcp@2.7.0 ui-automation snapshot-ui` calls, five per explicit UDID",
+      "exitStatus": 0,
+      "elapsedSeconds": 28,
+      "successes": 40,
+      "failures": 0,
+      "artifactRoot": "~/.local/state/t3/swiftui-delivery/research/136/xcb-2.7-stress",
+      "artifactFileCount": 80,
+      "artifactAggregateSha256": "51262a8169264acad507a6d0f9aafb024dfe2c849cb8329961110b89c3ff1a8b"
+    },
+    {
+      "name": "atomic-axe-full-flow-initial",
+      "command": "per lane, 20 concurrent iterations of `simctl install`, `simctl launch`, `simulator-lane axe -- swipe`, and `simulator-lane axe -- screenshot`",
+      "overallShellExitStatus": 0,
+      "laneAFailedSteps": 16,
+      "laneBFailedSteps": 16,
+      "failure": "AXe locator resolved the XcodeBuildMCP package symlink one directory too far; the loop recorded failures but intentionally did not fail its parent shell",
+      "observedFrom": "2026-08-22T21:50:39Z",
+      "observedThrough": "2026-08-22T21:51:59Z",
+      "artifactRoot": "~/.local/state/t3/swiftui-delivery/research/136/direct-flow-20",
+      "artifactFileCount": 28,
+      "artifactAggregateSha256": "dfcac834995757f352314c0e2a245f8477e24dd7946f24623409572cbb010699"
+    },
+    {
+      "name": "atomic-axe-full-flow-clean",
+      "command": "per lane, 20 concurrent iterations of `simctl install`, `simctl launch`, `simulator-lane axe -- swipe`, and `simulator-lane axe -- screenshot`",
+      "exitStatus": 0,
+      "elapsedSeconds": 75,
+      "laneACompletedFlows": 20,
+      "laneBCompletedFlows": 20,
+      "failedSteps": 0,
+      "observedFrom": "2026-08-22T21:52:23Z",
+      "observedThrough": "2026-08-22T21:53:34Z",
+      "artifactRoot": "~/.local/state/t3/swiftui-delivery/research/136/direct-flow-20-clean",
+      "artifactFileCount": 42,
+      "artifactAggregateSha256": "440a44707622afab7d1790c0653b913100d8a542312a809c7256bb522c8d50b0"
+    },
+    {
+      "name": "serialized-fallback",
+      "command": "five full install/launch/swipe/screenshot iterations on lane A, followed by five on lane B",
+      "exitStatus": 0,
+      "elapsedSeconds": 30,
+      "completedFlows": 10,
+      "failedSteps": 0,
+      "observedFrom": "2026-08-22T21:54:50Z",
+      "observedThrough": "2026-08-22T21:55:17Z",
+      "artifactRoot": "~/.local/state/t3/swiftui-delivery/research/136/serialized-fallback-10",
+      "artifactFileCount": 10,
+      "artifactAggregateSha256": "008c9c1b66de7cf4333014c6d6fd609f7b7a5e78e0a23edc81b5f1c9764b51ac"
+    },
+    {
+      "name": "persistent-driver-candidate",
+      "command": "start two `npx --yes xcodebuildmcp@2.7.0 mcp` processes; initialize each over JSON-RPC; set and show a different exact simulatorId; terminate each captured session with SIGINT",
+      "laneAStartupRssBytes": 204914688,
+      "laneBStartupRssBytes": 205127680,
+      "laneAMatchingPeerCount": 22,
+      "laneBMatchingPeerCount": 24,
+      "reportedAnomalies": ["peer-age-high", "peer-count-high"],
+      "defaultsVerified": true,
+      "terminationExitStatus": 1,
+      "terminationExitStatusReason": "expected CLI status after captured SIGINT"
+    },
+    {
+      "name": "parallel-clean-builds",
+      "command": "two simultaneous xcodebuild invocations with distinct DerivedData, clonedSourcePackagesDirPath, and packageCachePath roots",
+      "laneAExitStatus": 0,
+      "laneBExitStatus": 0,
+      "overlappingElapsedSeconds": 65,
+      "laneALog": {"path": "~/.local/state/t3/swiftui-delivery/research/136/parallel-builds/build-a.log", "sha256": "4d424d440114b8b44ebd5c4acd07bfab4e24ce3b1805fe37560444e633c2f1da"},
+      "laneBLog": {"path": "~/.local/state/t3/swiftui-delivery/research/136/parallel-builds/build-b.log", "sha256": "9fe1a44269e6e889f42acf8f8c623c2b30fbd8ccfecc0142e3c224bb4a232066"}
+    },
+    {
+      "name": "concurrent-video",
+      "command": "two simultaneous AXe 1.8.0 record-video commands routed by exact UDID",
+      "laneAExitStatus": 0,
+      "laneBExitStatus": 0,
+      "laneADurationSeconds": 3.553,
+      "laneBDurationSeconds": 3.542,
+      "artifactRoot": "~/.local/state/t3/swiftui-delivery/research/136/xcb-2.7-video",
+      "artifactFileCount": 6,
+      "artifactAggregateSha256": "d3d00925c4c671859d52d8741a32ae8d011d0d986cd40d573d54c712ffafc144"
+    },
+    {
+      "name": "abandoned-lease-recovery-cli-smoke",
+      "command": "acquire a Shutdown simulator, inspect its lease hash, recover with that exact hash and a reason, then inspect inactive state",
+      "exitStatus": 0,
+      "activeAfterRecovery": false,
+      "observedFrom": "2026-08-22T22:07:44Z",
+      "observedThrough": "2026-08-22T22:07:45Z",
+      "artifactRoot": "~/.local/state/t3/swiftui-delivery/research/136/recovery-smoke",
+      "artifactFileCount": 2,
+      "artifactAggregateSha256": "cc7b2f148469169f326ffd782f7d42ddded7427adfcfb375bf130cf794cb5fee"
+    }
+  ],
+  "finalState": {
+    "laneASimulatorState": "Booted",
+    "laneBSimulatorState": "Shutdown",
+    "activeResearchSimulatorLeases": 0,
+    "capturedPersistentDriverProcessesStillRunning": 0
+  }
+}
