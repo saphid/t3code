@@ -108,4 +108,44 @@ struct FeatureVoiceVocabularyTests {
                 == firstLetterGate
         )
     }
+
+    @Test("An exact same-surface match blocks fuzzy rewrites of correct text")
+    func correctionExactBlocksFuzzy() {
+        let corrected = FeatureVoiceVocabulary.applyCorrections(
+            to: "prune the worktree today",
+            vocabulary: ["wordtree", "worktree"]
+        )
+
+        #expect(corrected == "prune the worktree today")
+    }
+
+    @Test("A shorter exact match is never absorbed into a longer fuzzy one")
+    func correctionExactBeatsLongerFuzzy() {
+        let corrected = FeatureVoiceVocabulary.applyCorrections(
+            to: "voice dictation is useful",
+            vocabulary: ["VoiceDictation"]
+        )
+
+        #expect(corrected == "VoiceDictation is useful")
+    }
+
+    @Test("Plain lowercase words are never fuzzy-rewritten")
+    func correctionPlainWordFuzzyGate() {
+        let corrected = FeatureVoiceVocabulary.applyCorrections(
+            to: "please provide the summary",
+            vocabulary: ["provider"]
+        )
+
+        #expect(corrected == "please provide the summary")
+    }
+
+    @Test("No fragment of a numeric-leading UUID survives extraction")
+    func uuidFragmentsFiltered() {
+        let terms = FeatureVoiceVocabulary.extract(from: [
+            .init(text: "trace 63052183-77da-4946-8df8-79daa38d20f8 twice"),
+            .init(text: "trace 63052183-77da-4946-8df8-79daa38d20f8 twice"),
+        ])
+
+        #expect(!terms.contains { $0.lowercased().contains("da-4946") || $0.lowercased().contains("8df8") })
+    }
 }

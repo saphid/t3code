@@ -100,6 +100,10 @@ enum FeatureVoiceVocabulary {
         if token.count < minTermLength || token.count > maxTermLength { return true }
         if token.wholeMatch(of: hexLikeRegex) != nil { return true }
         if token.wholeMatch(of: uuidSegmentRegex) != nil { return true }
+        // Numeric-leading UUIDs tokenize from their first letter, leaving
+        // fragments like "da-4946-8df8"; strip separators before hex-testing.
+        let stripped = token.filter { !"-_./".contains($0) }
+        if stripped.count >= 7, stripped.allSatisfy(\.isHexDigit) { return true }
         return genericTechTerms.contains(token.lowercased())
     }
 
@@ -206,14 +210,27 @@ enum FeatureVoiceVocabulary {
 
     /// Rewrites near-miss recognitions back to vocabulary terms: "word tree"
     /// becomes "worktree", "PNP" becomes "pnpm", exact matches adopt the
-    /// term's casing. Conservative on purpose: one to three transcript words
-    /// must match within a small edit distance after separator stripping and
-    /// share the term's first letter; replaced ranges never overlap.
+    /// term's casing.
+    ///
+    /// Ranking at each position: an exact canonical match always wins
+    /// (longest span first; a same-surface exact match consumes its span so
+    /// a fuzzy term can never rewrite already-correct text). Only when no
+    /// exact match exists does the fuzzy pass run, smallest edit distance
+    /// first with shorter spans preferred, so a two-word exact is never
+    /// absorbed into a three-word fuzzy. Fuzzy on a single word requires an
+    /// uppercase letter or digit in the surface ("PNP" qualifies) so ordinary
+    /// dictated words ("provide") are never rewritten to similar vocabulary
+    /// ("provider"). Replaced ranges never overlap.
     static func applyCorrections(to text: String, vocabulary: [String]) -> String {
         guard !text.isEmpty, !vocabulary.isEmpty else { return text }
 
-        let terms = vocabulary
-            .map { (term: $0, canonical: canonicalize($0)) }
+        struct Term {
+            let term: String
+            let canonical: String
+            let canonicalChars: [Character]
+        }
+        let terms: [Term] = vocabulary
+            .map { Term(term: $0, canonical: canonicalize($0), canonicalChars: Array(canonicalize($0))) }
             .filter { $0.canonical.count >= 3 }
         guard !terms.isEmpty else { return text }
 
@@ -234,37 +251,58 @@ enum FeatureVoiceVocabulary {
 
         var index = 0
         while index < words.count {
-            var best: Replacement?
+            var exact: Replacement?
+            var exactIsSameSurface = false
             for span in stride(from: 3, through: 1, by: -1) {
                 guard index + span <= words.count else { continue }
                 let run = words[index..<(index + span)]
                 guard let first = run.first, let last = run.last else { continue }
                 let candidate = canonicalize(run.map(\.text).joined())
-                let candidateChars = Array(candidate)
-                for (term, canonical) in terms {
-                    if candidate == canonical {
-                        let surface = String(text[first.range.lowerBound..<last.range.upperBound])
-                        if surface != term, best == nil {
-                            best = Replacement(
-                                range: first.range.lowerBound..<last.range.upperBound,
-                                term: term,
-                                span: span
-                            )
-                        }
-                        continue
-                    }
-                    guard candidate.first == canonical.first else { continue }
-                    guard abs(candidate.count - canonical.count) <= 2 else { continue }
-                    if levenshtein(candidateChars, Array(canonical)) <= distanceBudget(for: canonical),
-                       best == nil {
-                        best = Replacement(
-                            range: first.range.lowerBound..<last.range.upperBound,
-                            term: term,
-                            span: span
-                        )
-                    }
+                for term in terms where candidate == term.canonical {
+                    let surface = String(text[first.range.lowerBound..<last.range.upperBound])
+                    exact = Replacement(
+                        range: first.range.lowerBound..<last.range.upperBound,
+                        term: term.term,
+                        span: span
+                    )
+                    exactIsSameSurface = surface == term.term
+                    break
                 }
-                if best != nil { break }
+                if exact != nil { break }
+            }
+            if let exact {
+                if !exactIsSameSurface { replacements.append(exact) }
+                index += exact.span
+                continue
+            }
+
+            var best: Replacement?
+            var bestDistance = Int.max
+            for span in 1...3 {
+                guard index + span <= words.count else { continue }
+                let run = words[index..<(index + span)]
+                guard let first = run.first, let last = run.last else { continue }
+                let fuzzyAllowed = span >= 2
+                    || run.contains { word in
+                        word.text.contains { $0.isUppercase || $0.isNumber }
+                    }
+                guard fuzzyAllowed else { continue }
+                let candidate = canonicalize(run.map(\.text).joined())
+                let candidateChars = Array(candidate)
+                for term in terms {
+                    guard candidate.first == term.canonical.first else { continue }
+                    guard abs(candidate.count - term.canonical.count) <= 2 else { continue }
+                    let budget = distanceBudget(for: term.canonical)
+                    guard budget > 0 else { continue }
+                    let distance = levenshtein(candidateChars, term.canonicalChars)
+                    guard distance > 0, distance <= budget, distance < bestDistance else { continue }
+                    bestDistance = distance
+                    best = Replacement(
+                        range: first.range.lowerBound..<last.range.upperBound,
+                        term: term.term,
+                        span: span
+                    )
+                }
             }
             if let best {
                 replacements.append(best)

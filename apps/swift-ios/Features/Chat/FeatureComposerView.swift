@@ -2,6 +2,7 @@ import SwiftUI
 import UIKit
 
 struct FeatureComposerView: View {
+    @Environment(\.scenePhase) private var scenePhase
     @State private var isManuallyExpanded = false
     @State private var dictation = FeatureVoiceDictationModel()
     @State private var isAttachmentFlowActive = false
@@ -186,6 +187,13 @@ struct FeatureComposerView: View {
         .onDisappear {
             // Navigating away mid-recording must release the microphone.
             dictation.cancel()
+        }
+        .onChange(of: scenePhase) {
+            // Backgrounding stops capture anyway; finalize what was said so
+            // the model cannot come back believing the mic is still live.
+            if scenePhase != .active, dictation.phase != .idle {
+                dictation.stop()
+            }
         }
     }
 
@@ -473,6 +481,9 @@ struct FeatureComposerView: View {
 
     private var canSend: Bool {
         guard composerTrigger?.kind != .model else { return false }
+        // Sending mid-dictation would drop the volatile words and leak late
+        // finalized segments into the next draft.
+        guard dictation.phase == .idle else { return false }
         return FeatureComposerSubmissionEligibility.canSend(
             text: text,
             attachmentCount: attachments.count,

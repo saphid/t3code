@@ -410,8 +410,13 @@ public struct ThreadDetailView: View {
         ]
         if let detail {
             for message in detail.messages.suffix(40) {
+                // Tool output can be megabytes; extraction runs on the main
+                // actor at record start, so bound each source.
                 sources.append(
-                    .init(text: message.text, weight: message.role == .user ? 3 : 1)
+                    .init(
+                        text: String(message.text.prefix(4000)),
+                        weight: message.role == .user ? 3 : 1
+                    )
                 )
             }
         }

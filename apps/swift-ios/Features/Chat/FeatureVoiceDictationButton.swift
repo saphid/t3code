@@ -34,12 +34,13 @@ struct FeatureVoiceDictationButton: View {
                 .controlSize(.small)
                 .tint(T3Colors.textSecondary)
         case .recording:
+            // Static on purpose: the repo bans continuously repainting
+            // animations, and this can stay up for the full five minutes.
             Image(systemName: "stop.fill")
                 .font(.system(size: 13, weight: .bold))
                 .foregroundStyle(.white)
                 .frame(width: 28, height: 28)
                 .background(T3Colors.danger, in: Circle())
-                .symbolEffect(.pulse, isActive: true)
         }
     }
 
