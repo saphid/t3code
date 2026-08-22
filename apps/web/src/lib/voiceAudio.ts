@@ -59,6 +59,34 @@ export function encodeWavPcm16(
 }
 
 /**
+ * Resamples mono PCM float samples by linear interpolation. Browsers may
+ * ignore a requested AudioContext sample rate and capture at their native
+ * rate (typically 48 kHz), so recordings are brought down to the rate the
+ * transcriber expects before WAV encoding. Output length is
+ * `round(samples.length * toRate / fromRate)`.
+ */
+export function resamplePcmMono(
+  samples: Float32Array,
+  fromRate: number,
+  toRate: number,
+): Float32Array {
+  if (fromRate === toRate || samples.length === 0) return samples;
+
+  const outputLength = Math.round((samples.length * toRate) / fromRate);
+  const output = new Float32Array(outputLength);
+  const ratio = fromRate / toRate;
+  const lastIndex = samples.length - 1;
+  for (let index = 0; index < outputLength; index += 1) {
+    const position = index * ratio;
+    const lower = Math.min(lastIndex, Math.floor(position));
+    const upper = Math.min(lastIndex, lower + 1);
+    const fraction = position - lower;
+    output[index] = samples[lower]! + (samples[upper]! - samples[lower]!) * fraction;
+  }
+  return output;
+}
+
+/**
  * Chunk size for base64 encoding. `String.fromCharCode(...chunk)` puts every
  * byte on the call stack, so the chunk must stay far below engine argument
  * limits; 32 KiB is the customary safe figure.

@@ -55,8 +55,8 @@ const STATUS_TIMEOUT = "30 seconds";
 const INSTALL_TIMEOUT = "5 minutes";
 const TRANSCRIBE_TIMEOUT = "3 minutes";
 
-/** Longest stderr fragment allowed into a client-visible error detail. */
-const MAX_DETAIL_LENGTH = 160;
+/** Longest stderr fragment allowed into the server-side warning log. */
+const MAX_LOGGED_STDERR_LENGTH = 160;
 
 const SidecarStatusOutput = Schema.Struct({
   supported: Schema.Boolean,
@@ -141,12 +141,24 @@ function audioExtensionForMimeType(mimeType: string): string {
   return "wav";
 }
 
-function shortDetail(stderr: string, fallback: string): string {
-  const trimmed = stderr.trim().split("\n")[0]?.trim() ?? "";
-  if (trimmed.length === 0) return fallback;
-  return trimmed.length > MAX_DETAIL_LENGTH
-    ? `${trimmed.slice(0, MAX_DETAIL_LENGTH - 1)}…`
-    : trimmed;
+/**
+ * Logs a sidecar failure server-side with a bounded stderr excerpt. The raw
+ * stderr never reaches the client; callers hand the client a fixed string.
+ */
+function logSidecarFailure(
+  command: string,
+  output: { readonly code: number | null; readonly stderr: string },
+) {
+  const firstLine = output.stderr.trim().split("\n")[0]?.trim() ?? "";
+  const bounded =
+    firstLine.length === 0
+      ? "(no stderr)"
+      : firstLine.length > MAX_LOGGED_STDERR_LENGTH
+        ? `${firstLine.slice(0, MAX_LOGGED_STDERR_LENGTH - 1)}…`
+        : firstLine;
+  return Effect.logWarning(
+    `voice sidecar '${command}' exited with code ${output.code}: ${bounded}`,
+  );
 }
 
 interface LearnedVocabularyCache {
@@ -191,7 +203,7 @@ export const make = Effect.gen(function* () {
     for (const candidate of binaryCandidates) {
       const exists = yield* fileSystem
         .exists(candidate)
-        .pipe(Effect.catchCause(() => Effect.succeed(false)));
+        .pipe(Effect.catchTag("PlatformError", () => Effect.succeed(false)));
       if (exists) return candidate;
     }
     return null;
@@ -208,19 +220,29 @@ export const make = Effect.gen(function* () {
 
     // A status probe that cannot run is an unsupported environment, not an
     // error page: older macOS exits nonzero here and that answer is "no".
+    // Only expected process failures map to "no"; defects and interruption
+    // must propagate.
     const output = yield* processRunner
       .run({
         command: binary,
         args: ["status", "--locale", locale],
         timeout: STATUS_TIMEOUT,
       })
-      .pipe(Effect.catchCause(() => Effect.succeed(null)));
+      .pipe(
+        Effect.catchTags({
+          ProcessSpawnError: () => Effect.succeed(null),
+          ProcessStdinError: () => Effect.succeed(null),
+          ProcessOutputLimitError: () => Effect.succeed(null),
+          ProcessReadError: () => Effect.succeed(null),
+          ProcessTimeoutError: () => Effect.succeed(null),
+        }),
+      );
     if (output === null || output.code !== 0) {
       return { supported: false, installed: false, locale };
     }
 
     const parsed = yield* decodeSidecarStatus(output.stdout).pipe(
-      Effect.catchCause(() => Effect.succeed(null)),
+      Effect.catchTag("SchemaError", () => Effect.succeed(null)),
     );
     if (parsed === null) {
       return { supported: false, installed: false, locale };
@@ -266,8 +288,9 @@ export const make = Effect.gen(function* () {
         ),
       );
     if (output.code !== 0) {
+      yield* logSidecarFailure("install", output);
       return yield* new VoiceTranscriptionFailedError({
-        detail: shortDetail(output.stderr, "Installing dictation assets failed."),
+        detail: "Installing dictation assets failed.",
       });
     }
 
@@ -296,7 +319,11 @@ export const make = Effect.gen(function* () {
         ];
       }).pipe(
         // Missing history must degrade the vocabulary, never the dictation.
-        Effect.catchCause(() => Effect.succeed<VoiceVocabularySource[]>([])),
+        // Only repository failures are absorbed; interruption propagates.
+        Effect.catchTags({
+          PersistenceSqlError: () => Effect.succeed<VoiceVocabularySource[]>([]),
+          PersistenceDecodeError: () => Effect.succeed<VoiceVocabularySource[]>([]),
+        }),
       );
 
       const terms = extractVoiceVocabulary(sources);
@@ -335,7 +362,8 @@ export const make = Effect.gen(function* () {
       const vocabPath = path.join(tempDir, "vocab.json");
       yield* fileSystem.writeFile(audioPath, new Uint8Array(audioBytes));
       const vocabularyJson = yield* encodeVocabularyFile(vocabulary).pipe(
-        Effect.catchCause(
+        Effect.catchTag(
+          "SchemaError",
           (cause) =>
             new VoiceTranscriptionFailedError({
               detail: "The vocabulary list could not be serialized.",
@@ -364,13 +392,15 @@ export const make = Effect.gen(function* () {
           ),
         );
       if (output.code !== 0) {
+        yield* logSidecarFailure("transcribe", output);
         return yield* new VoiceTranscriptionFailedError({
-          detail: shortDetail(output.stderr, "The transcriber exited with an error."),
+          detail: "The transcriber exited with an error.",
         });
       }
 
       const parsed = yield* decodeSidecarTranscription(output.stdout).pipe(
-        Effect.catchCause(
+        Effect.catchTag(
+          "SchemaError",
           (cause) =>
             new VoiceTranscriptionFailedError({
               detail: "The transcriber returned an unreadable result.",

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { encodeBytesToBase64, encodeWavPcm16 } from "./voiceAudio";
+import { encodeBytesToBase64, encodeWavPcm16, resamplePcmMono } from "./voiceAudio";
 
 const ascii = (bytes: Uint8Array, start: number, length: number): string =>
   String.fromCharCode(...bytes.subarray(start, start + length));
@@ -51,6 +51,36 @@ describe("encodeWavPcm16", () => {
     const wav = encodeWavPcm16([], 16_000);
     expect(wav.byteLength).toBe(44);
     expect(readUint32(wav, 40)).toBe(0);
+  });
+});
+
+describe("resamplePcmMono", () => {
+  it("returns the input untouched when the rates match", () => {
+    const samples = new Float32Array([0.1, -0.2, 0.3]);
+    expect(resamplePcmMono(samples, 16_000, 16_000)).toBe(samples);
+  });
+
+  it("halves the sample count from 32 kHz to 16 kHz", () => {
+    const samples = new Float32Array(3_200);
+    const resampled = resamplePcmMono(samples, 32_000, 16_000);
+    expect(resampled.length).toBe(1_600);
+  });
+
+  it("sizes output as round(length * toRate / fromRate)", () => {
+    const samples = new Float32Array(48_007);
+    const resampled = resamplePcmMono(samples, 48_000, 16_000);
+    expect(resampled.length).toBe(Math.round((48_007 * 16_000) / 48_000));
+  });
+
+  it("interpolates linearly between neighboring samples", () => {
+    // Downsampling a ramp by 2 lands each output halfway along the input.
+    const ramp = new Float32Array([0, 1, 2, 3, 4, 5]);
+    const resampled = resamplePcmMono(ramp, 32_000, 16_000);
+    expect(Array.from(resampled)).toEqual([0, 2, 4]);
+  });
+
+  it("returns an empty output for an empty input", () => {
+    expect(resamplePcmMono(new Float32Array(0), 48_000, 16_000).length).toBe(0);
   });
 });
 

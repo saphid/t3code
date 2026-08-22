@@ -227,12 +227,38 @@ func runTranscribe(options: [String: String]) async throws {
                 inputBuilder.yield(AnalyzerInput(buffer: outBuffer))
             }
         }
+
+        // Rate conversion holds tail frames internally; without an explicit
+        // end-of-stream drain the final phoneme can be clipped.
+        var drained = false
+        while !drained {
+            guard let tail = AVAudioPCMBuffer(pcmFormat: analyzerFormat, frameCapacity: 8192) else {
+                break
+            }
+            var drainError: NSError?
+            let drainStatus = converter.convert(to: tail, error: &drainError) { _, outStatus in
+                outStatus.pointee = .endOfStream
+                return nil
+            }
+            if drainError != nil || drainStatus == .error { break }
+            if tail.frameLength > 0 {
+                inputBuilder.yield(AnalyzerInput(buffer: tail))
+            }
+            drained = drainStatus == .endOfStream || tail.frameLength == 0
+        }
     }
 
-    try await analyzer.start(inputSequence: inputSequence)
-    try await feeder.value
-    try await analyzer.finalizeAndFinishThroughEndOfInput()
-    let pieces = try await collector.value
+    let pieces: [String]
+    do {
+        try await analyzer.start(inputSequence: inputSequence)
+        try await feeder.value
+        try await analyzer.finalizeAndFinishThroughEndOfInput()
+        pieces = try await collector.value
+    } catch {
+        collector.cancel()
+        await analyzer.cancelAndFinishNow()
+        throw error
+    }
 
     let text = pieces
         .joined(separator: " ")

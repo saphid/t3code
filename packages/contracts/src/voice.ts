@@ -23,10 +23,22 @@ import { NonNegativeInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
 export const VOICE_SESSION_TERMS_MAX_ITEMS = 100;
 
 /**
+ * Vocabulary terms are short words or identifiers; anything longer is not
+ * something a recognizer can use as a contextual phrase.
+ */
+export const VOICE_SESSION_TERM_MAX_LENGTH = 64;
+
+/**
  * Decoded audio cap: about six minutes of 16 kHz 16-bit mono WAV. Enforced
  * against the base64 length before any decoding happens.
  */
 export const VOICE_AUDIO_MAX_BYTES = 12 * 1024 * 1024;
+
+/**
+ * Schema-level bound on the base64 payload: ceil(12 MB * 4 / 3) plus padding
+ * headroom. The service re-checks the decoded size as defense in depth.
+ */
+export const VOICE_AUDIO_BASE64_MAX_LENGTH = 16_800_000;
 
 /**
  * BCP47-ish primary language plus optional region, e.g. `en`, `en_AU`,
@@ -48,9 +60,15 @@ export const VoiceDictationStatus = Schema.Struct({
 });
 export type VoiceDictationStatus = typeof VoiceDictationStatus.Type;
 
+/** A single contextual-vocabulary term: trimmed, short, and non-empty. */
+export const VoiceSessionTerm = TrimmedNonEmptyString.check(
+  Schema.isMaxLength(VOICE_SESSION_TERM_MAX_LENGTH),
+);
+export type VoiceSessionTerm = typeof VoiceSessionTerm.Type;
+
 export const VoiceTranscribeInput = Schema.Struct({
   /** Base64-encoded audio; wav, aiff, or m4a containers are accepted. */
-  audioBase64: TrimmedNonEmptyString,
+  audioBase64: TrimmedNonEmptyString.check(Schema.isMaxLength(VOICE_AUDIO_BASE64_MAX_LENGTH)),
   mimeType: TrimmedNonEmptyString,
   localeHint: Schema.optional(VoiceLocaleHint),
   /**
@@ -58,7 +76,7 @@ export const VoiceTranscribeInput = Schema.Struct({
    * title, visible messages). Listed first when the server merges lists, so
    * what the user is looking at outranks learned history.
    */
-  sessionTerms: Schema.Array(Schema.String).check(
+  sessionTerms: Schema.Array(VoiceSessionTerm).check(
     Schema.isMaxLength(VOICE_SESSION_TERMS_MAX_ITEMS),
   ),
 });

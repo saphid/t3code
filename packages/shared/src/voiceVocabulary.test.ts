@@ -45,6 +45,22 @@ describe("extractVoiceVocabulary", () => {
     expect(terms).not.toContain("apps/web/src/components/chat/ChatComposer.tsx");
   });
 
+  it("drops surviving fragments of numeric-leading uuids", () => {
+    // The tokenizer starts at the first letter, so a numeric-leading UUID
+    // yields tokens like "da-4946-8df8-79daa38d20f8" that dodge the plain
+    // hex checks; none of its fragments may become vocabulary.
+    const uuid = "63052183-77da-4946-8df8-79daa38d20f8";
+    const terms = extractVoiceVocabulary([
+      { text: `session ${uuid} failed` },
+      { text: `session ${uuid} failed` },
+    ]);
+
+    for (const term of terms) {
+      expect(uuid).not.toContain(term.toLowerCase());
+    }
+    expect(terms).not.toContain("da-4946-8df8-79daa38d20f8");
+  });
+
   it("filters hashes, uuids, and generic tech terms", () => {
     const terms = extractVoiceVocabulary([
       {
@@ -89,10 +105,9 @@ describe("extractVoiceVocabulary", () => {
 
 describe("applyVoiceVocabularyCorrections", () => {
   it("rewrites split compounds back to the vocabulary term", () => {
-    const corrected = applyVoiceVocabularyCorrections(
-      "Add the word tree to the workspace",
-      ["worktree"],
-    );
+    const corrected = applyVoiceVocabularyCorrections("Add the word tree to the workspace", [
+      "worktree",
+    ]);
 
     expect(corrected).toBe("Add the worktree to the workspace");
   });
@@ -104,12 +119,30 @@ describe("applyVoiceVocabularyCorrections", () => {
   });
 
   it("adopts the vocabulary casing on exact matches", () => {
-    const corrected = applyVoiceVocabularyCorrections(
-      "ask fable about the chat composer",
-      ["Fable", "ChatComposer"],
-    );
+    const corrected = applyVoiceVocabularyCorrections("ask fable about the chat composer", [
+      "Fable",
+      "ChatComposer",
+    ]);
 
     expect(corrected).toBe("ask Fable about the ChatComposer");
+  });
+
+  it("keeps an exact same-surface match even when a fuzzy term also matches", () => {
+    const text = "add the worktree now";
+    expect(applyVoiceVocabularyCorrections(text, ["worktree", "wordtree"])).toBe(text);
+  });
+
+  it("prefers a shorter exact match over a longer fuzzy one", () => {
+    const corrected = applyVoiceVocabularyCorrections("voice dictation is useful", [
+      "VoiceDictation",
+    ]);
+
+    expect(corrected).toBe("VoiceDictation is useful");
+  });
+
+  it("never fuzzy-rewrites an ordinary lowercase word", () => {
+    const text = "please provide the details";
+    expect(applyVoiceVocabularyCorrections(text, ["provider"])).toBe(text);
   });
 
   it("leaves unrelated words alone", () => {

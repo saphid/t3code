@@ -43,6 +43,7 @@ export const ComposerVoiceDictation = memo(function ComposerVoiceDictation({
   environmentId,
   disabled,
   getSessionTerms,
+  getInsertTarget,
   onText,
   onError,
 }: {
@@ -50,6 +51,8 @@ export const ComposerVoiceDictation = memo(function ComposerVoiceDictation({
   readonly disabled: boolean;
   /** Reads current-session vocabulary at stop time (draft, title, visible messages). */
   readonly getSessionTerms: () => ReadonlyArray<string>;
+  /** Identity of the draft the transcript lands in; stale results are dropped. */
+  readonly getInsertTarget: () => string | null;
   readonly onText: (text: string) => void;
   /** Publishes the latest dictation error (or clears it with null). */
   readonly onError: (message: string | null) => void;
@@ -66,6 +69,18 @@ export const ComposerVoiceDictation = memo(function ComposerVoiceDictation({
   });
   const [isInstalling, setIsInstalling] = useState(false);
   const installingRef = useRef(false);
+  /** Bails stale install continuations after unmount or an environment change. */
+  const mountedRef = useRef(true);
+  const installGenerationRef = useRef(0);
+  const environmentIdRef = useRef(environmentId);
+  environmentIdRef.current = environmentId;
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
 
   const transcribe = useCallback(
     async ({ audioBase64, mimeType }: { audioBase64: string; mimeType: string }) => {
@@ -86,7 +101,7 @@ export const ComposerVoiceDictation = memo(function ComposerVoiceDictation({
     [environmentId, getSessionTerms, transcribeCommand],
   );
 
-  const voice = useVoiceDictation({ transcribe, onText });
+  const voice = useVoiceDictation({ transcribe, onText, getInsertTarget });
   const { start, error } = voice;
 
   // The hook owns the error text; mirror it up so the composer can show it in
@@ -105,13 +120,31 @@ export const ComposerVoiceDictation = memo(function ComposerVoiceDictation({
       if (installingRef.current) return;
       installingRef.current = true;
       setIsInstalling(true);
+      const generation = (installGenerationRef.current += 1);
+      const targetEnvironmentId = environmentId;
       void (async () => {
-        const result = await installCommand({ environmentId, input: {} });
+        const result = await installCommand({
+          environmentId: targetEnvironmentId,
+          input: {},
+        });
         installingRef.current = false;
-        setIsInstalling(false);
         appAtomRegistry.refresh(
-          serverEnvironment.voiceDictationStatus({ environmentId, input: {} }),
+          serverEnvironment.voiceDictationStatus({
+            environmentId: targetEnvironmentId,
+            input: {},
+          }),
         );
+        if (mountedRef.current) setIsInstalling(false);
+        // The continuation reports errors and can open the mic; a stale one
+        // (unmounted button, newer attempt, or a different environment
+        // connected meanwhile) must do neither.
+        if (
+          !mountedRef.current ||
+          installGenerationRef.current !== generation ||
+          environmentIdRef.current !== targetEnvironmentId
+        ) {
+          return;
+        }
         if (result._tag === "Failure") {
           if (!isAtomCommandInterrupted(result)) {
             onError(failureMessage(squashAtomCommandFailure(result)));

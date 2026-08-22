@@ -3,6 +3,8 @@ import * as Schema from "effect/Schema";
 
 import { ClientSettingsSchema } from "./settings.ts";
 import {
+  VOICE_AUDIO_BASE64_MAX_LENGTH,
+  VOICE_SESSION_TERM_MAX_LENGTH,
   VOICE_SESSION_TERMS_MAX_ITEMS,
   VoiceDictationStatus,
   VoiceLocaleHint,
@@ -61,6 +63,30 @@ describe("VoiceTranscribeInput", () => {
         sessionTerms: atLimit,
       }).sessionTerms,
     ).toHaveLength(VOICE_SESSION_TERMS_MAX_ITEMS);
+  });
+
+  it("rejects audio whose base64 length exceeds the schema cap", () => {
+    const oversized = "A".repeat(VOICE_AUDIO_BASE64_MAX_LENGTH + 1);
+    expect(() =>
+      decodeTranscribeInput({ audioBase64: oversized, mimeType: "audio/wav", sessionTerms: [] }),
+    ).toThrow();
+
+    const atLimit = "A".repeat(VOICE_AUDIO_BASE64_MAX_LENGTH);
+    expect(
+      decodeTranscribeInput({ audioBase64: atLimit, mimeType: "audio/wav", sessionTerms: [] })
+        .audioBase64,
+    ).toHaveLength(VOICE_AUDIO_BASE64_MAX_LENGTH);
+  });
+
+  it("rejects session terms that are empty or too long, and trims padding", () => {
+    const decode = (sessionTerms: ReadonlyArray<string>) =>
+      decodeTranscribeInput({ audioBase64: "UklGRg==", mimeType: "audio/wav", sessionTerms });
+
+    expect(() => decode([""])).toThrow();
+    expect(() => decode(["   "])).toThrow();
+    expect(() => decode(["x".repeat(VOICE_SESSION_TERM_MAX_LENGTH + 1)])).toThrow();
+    expect(decode([" worktree "]).sessionTerms).toEqual(["worktree"]);
+    expect(decode(["x".repeat(VOICE_SESSION_TERM_MAX_LENGTH)]).sessionTerms).toHaveLength(1);
   });
 
   it("accepts an optional locale hint", () => {

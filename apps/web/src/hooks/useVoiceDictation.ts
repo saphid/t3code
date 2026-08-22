@@ -11,18 +11,23 @@
  * - `stop`/`cancel`/unmount during `getUserMedia` aborts cleanly and stops
  *   the tracks the browser eventually hands back,
  * - tracks are stopped and the AudioContext closed on every exit path,
- * - recording auto-stops after five minutes.
+ * - recording auto-stops after five minutes, or sooner when the capture rate
+ *   would blow the server's byte cap first,
+ * - a transcript is dropped when the insert target changed while it was in
+ *   flight, so text never lands in a different thread's draft.
  *
  * @module hooks/useVoiceDictation
  */
+import { VOICE_AUDIO_MAX_BYTES } from "@t3tools/contracts";
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import { encodeBytesToBase64, encodeWavPcm16 } from "../lib/voiceAudio";
+import { encodeBytesToBase64, encodeWavPcm16, resamplePcmMono } from "../lib/voiceAudio";
 
 export const VOICE_DICTATION_MIME_TYPE = "audio/wav";
 const MAX_RECORDING_MS = 5 * 60 * 1_000;
 const TARGET_SAMPLE_RATE = 16_000;
 const PROCESSOR_BUFFER_SIZE = 4_096;
+const PCM16_BYTES_PER_SAMPLE = 2;
 
 export type VoiceDictationPhase = "idle" | "recording" | "transcribing";
 
@@ -37,6 +42,13 @@ export interface UseVoiceDictationOptions {
   readonly transcribe: (audio: VoiceDictationAudio) => Promise<string>;
   /** Receives the final text; only called with non-empty transcriptions. */
   readonly onText: (text: string) => void;
+  /**
+   * Identity of the draft the transcript will be inserted into (the
+   * composer's thread target key). Captured when recording starts; when the
+   * transcript arrives and the current value no longer matches, the result
+   * is dropped instead of landing in another thread's draft.
+   */
+  readonly getInsertTarget?: () => string | null;
 }
 
 export function isVoiceCaptureSupported(): boolean {
@@ -47,7 +59,11 @@ export function isVoiceCaptureSupported(): boolean {
   );
 }
 
-export function useVoiceDictation({ transcribe, onText }: UseVoiceDictationOptions) {
+export function useVoiceDictation({
+  transcribe,
+  onText,
+  getInsertTarget,
+}: UseVoiceDictationOptions) {
   const [status, setStatus] = useState<VoiceDictationPhase>("idle");
   const [elapsedMs, setElapsedMs] = useState(0);
   const [error, setError] = useState<string | null>(null);
@@ -66,10 +82,14 @@ export function useVoiceDictation({ transcribe, onText }: UseVoiceDictationOptio
   const timeoutRef = useRef<number | null>(null);
   /** Invalidates in-flight transcriptions when a newer session starts. */
   const sessionRef = useRef(0);
+  /** Insert target captured when the current recording started. */
+  const insertTargetRef = useRef<string | null>(null);
   const transcribeRef = useRef(transcribe);
   const onTextRef = useRef(onText);
+  const getInsertTargetRef = useRef(getInsertTarget);
   transcribeRef.current = transcribe;
   onTextRef.current = onText;
+  getInsertTargetRef.current = getInsertTarget;
 
   const cleanupCapture = useCallback(() => {
     if (intervalRef.current !== null) window.clearInterval(intervalRef.current);
@@ -114,6 +134,7 @@ export function useVoiceDictation({ transcribe, onText }: UseVoiceDictationOptio
     const sampleRate = sampleRateRef.current;
     const durationMs = Date.now() - startedAtRef.current;
     const session = sessionRef.current;
+    const capturedTarget = insertTargetRef.current;
     chunksRef.current = [];
     cleanupCapture();
 
@@ -125,11 +146,32 @@ export function useVoiceDictation({ transcribe, onText }: UseVoiceDictationOptio
     }
 
     setStatus("transcribing");
-    const audioBase64 = encodeBytesToBase64(encodeWavPcm16(chunks, sampleRate));
+    // The browser may have ignored the requested 16 kHz and captured at its
+    // native rate; bring the samples down to the transcriber's rate so the
+    // payload stays inside the server's byte cap.
+    let sampleCount = 0;
+    for (const chunk of chunks) sampleCount += chunk.length;
+    const samples = new Float32Array(sampleCount);
+    let writeOffset = 0;
+    for (const chunk of chunks) {
+      samples.set(chunk, writeOffset);
+      writeOffset += chunk.length;
+    }
+    const resampled = resamplePcmMono(samples, sampleRate, TARGET_SAMPLE_RATE);
+    const audioBase64 = encodeBytesToBase64(encodeWavPcm16([resampled], TARGET_SAMPLE_RATE));
     void transcribeRef
       .current({ audioBase64, mimeType: VOICE_DICTATION_MIME_TYPE, durationMs })
       .then((text) => {
         if (!mountedRef.current || sessionRef.current !== session) return;
+        const currentTarget = getInsertTargetRef.current?.() ?? null;
+        if (currentTarget !== capturedTarget) {
+          // The composer moved to another thread while the transcript was in
+          // flight; inserting now would edit the wrong draft.
+          console.debug("voice dictation: dropped transcript for a stale insert target");
+          setStatus("idle");
+          setElapsedMs(0);
+          return;
+        }
         const trimmed = text.trim();
         if (trimmed.length > 0) onTextRef.current(trimmed);
         setStatus("idle");
@@ -191,7 +233,13 @@ export function useVoiceDictation({ transcribe, onText }: UseVoiceDictationOptio
       }
       sampleRateRef.current = audioContext.sampleRate;
 
-      const maxSamples = Math.ceil((MAX_RECORDING_MS / 1_000) * audioContext.sampleRate);
+      // Second guard behind the resampler: even at the browser's native rate
+      // (often 48 kHz despite the 16 kHz request) the raw capture must never
+      // outgrow the server's decoded byte cap.
+      const captureBytesPerSecond = audioContext.sampleRate * PCM16_BYTES_PER_SAMPLE;
+      const byteCapMs = Math.floor((VOICE_AUDIO_MAX_BYTES / captureBytesPerSecond) * 1_000);
+      const maxRecordingMs = Math.min(MAX_RECORDING_MS, byteCapMs);
+      const maxSamples = Math.ceil((maxRecordingMs / 1_000) * audioContext.sampleRate);
       let collectedSamples = 0;
       chunksRef.current = [];
 
@@ -218,6 +266,7 @@ export function useVoiceDictation({ transcribe, onText }: UseVoiceDictationOptio
       silentOutput.connect(audioContext.destination);
 
       recordingRef.current = true;
+      insertTargetRef.current = getInsertTargetRef.current?.() ?? null;
       startedAtRef.current = Date.now();
       setElapsedMs(0);
       setStatus("recording");
@@ -226,7 +275,7 @@ export function useVoiceDictation({ transcribe, onText }: UseVoiceDictationOptio
       }, 250);
       timeoutRef.current = window.setTimeout(() => {
         finishRecording();
-      }, MAX_RECORDING_MS);
+      }, maxRecordingMs);
     } catch (cause) {
       cleanupCapture();
       chunksRef.current = [];

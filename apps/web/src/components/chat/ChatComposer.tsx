@@ -19,6 +19,7 @@ import {
   PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
 } from "@t3tools/contracts";
 import type { EnvironmentConnectionPresentation } from "@t3tools/client-runtime/connection";
+import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { serializeComposerFileLink } from "@t3tools/shared/composerTrigger";
 import { createModelSelection, normalizeModelSlug } from "@t3tools/shared/model";
 import { extractVoiceVocabulary } from "@t3tools/shared/voiceVocabulary";
@@ -121,6 +122,14 @@ import { isVoiceCaptureSupported } from "~/hooks/useVoiceDictation";
 
 // Capture support is a property of the browser, not of any render.
 const voiceCaptureSupported = isVoiceCaptureSupported();
+
+/**
+ * Stable identity of the draft a dictation transcript would be inserted
+ * into; used to drop transcripts that finish after navigating elsewhere.
+ */
+function voiceInsertTargetKey(target: ScopedThreadRef | DraftId): string {
+  return typeof target === "string" ? target : scopedThreadKey(target);
+}
 
 type ComposerCommandMenuPosition = {
   bottom: number;
@@ -1319,6 +1328,16 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const [voiceDictationError, setVoiceDictationError] = useState<string | null>(null);
   const activeThreadRef = useRef(activeThread);
   activeThreadRef.current = activeThread;
+  const composerDraftTargetRef = useRef(composerDraftTarget);
+  composerDraftTargetRef.current = composerDraftTarget;
+
+  // A transcription started in one thread must never land in another
+  // thread's draft: the hook captures this key when recording starts and
+  // drops the transcript if it no longer matches on arrival.
+  const getVoiceInsertTarget = useCallback(
+    () => voiceInsertTargetKey(composerDraftTargetRef.current),
+    [],
+  );
 
   // Read at stop time through refs so recording never re-renders the button
   // with a new callback identity on every keystroke.
@@ -3260,6 +3279,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     environmentId={environmentId}
                     disabled={isConnecting || projectSelectionRequired}
                     getSessionTerms={getVoiceSessionTerms}
+                    getInsertTarget={getVoiceInsertTarget}
                     onText={insertDictatedText}
                     onError={setVoiceDictationError}
                   />

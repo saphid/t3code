@@ -26,18 +26,18 @@ any voice PR (bot reviews only). Full detail per PR below; the short version:
 
 ### The graveyard, briefly
 
-| PR | Approach | Status | Lesson |
-| --- | --- | --- | --- |
-| 5213 | Cloud BYOK batch (OpenAI/Groq), server proxy, web+desktop | Open, stale | The internally-blessed shape: opt-in beta, server-proxied, typed Effect errors, size caps |
-| 6625 | 5213 + Expo mobile, secure-store keys, Codex-style actions | Open, active | Best current dictation base; mobile uploads go direct to provider, not proxied |
-| 3630/3631 | whisper.cpp + Kokoro, fully local, orb UI | Self-closed | Only local prior art; died under contribution-policy pressure and bot findings |
-| 6206 | OpenAI Realtime "voice supervisor" (conversational agent control) | Draft | Scope creep: voice control of the orchestrator is a different feature than dictation |
-| 3997 | OpenAI Realtime persistent voice panel | Draft | Contains fork-identity changes; unmergeable |
-| 4174, 5647 | Reuse Codex Desktop's private transcription endpoint via ChatGPT OAuth | Both closed | Private endpoints are a dead end; died twice |
-| 4866 | Deepgram streaming websocket fix | Closed | Deepgram streaming exists only in a fork; accidental mega-diff |
-| 4979 | Unix-socket bridge to external VoiceBud app | Closed | Third-party-app bridges are a poor upstream fit |
-| 2356 | Kokoro TTS playback (no STT) | Closed | Wrong-repo accident |
-| 5321 | macOS mic entitlement | Open | Prerequisite for all of the above |
+| PR         | Approach                                                               | Status       | Lesson                                                                                    |
+| ---------- | ---------------------------------------------------------------------- | ------------ | ----------------------------------------------------------------------------------------- |
+| 5213       | Cloud BYOK batch (OpenAI/Groq), server proxy, web+desktop              | Open, stale  | The internally-blessed shape: opt-in beta, server-proxied, typed Effect errors, size caps |
+| 6625       | 5213 + Expo mobile, secure-store keys, Codex-style actions             | Open, active | Best current dictation base; mobile uploads go direct to provider, not proxied            |
+| 3630/3631  | whisper.cpp + Kokoro, fully local, orb UI                              | Self-closed  | Only local prior art; died under contribution-policy pressure and bot findings            |
+| 6206       | OpenAI Realtime "voice supervisor" (conversational agent control)      | Draft        | Scope creep: voice control of the orchestrator is a different feature than dictation      |
+| 3997       | OpenAI Realtime persistent voice panel                                 | Draft        | Contains fork-identity changes; unmergeable                                               |
+| 4174, 5647 | Reuse Codex Desktop's private transcription endpoint via ChatGPT OAuth | Both closed  | Private endpoints are a dead end; died twice                                              |
+| 4866       | Deepgram streaming websocket fix                                       | Closed       | Deepgram streaming exists only in a fork; accidental mega-diff                            |
+| 4979       | Unix-socket bridge to external VoiceBud app                            | Closed       | Third-party-app bridges are a poor upstream fit                                           |
+| 2356       | Kokoro TTS playback (no STT)                                           | Closed       | Wrong-repo accident                                                                       |
+| 5321       | macOS mic entitlement                                                  | Open         | Prerequisite for all of the above                                                         |
 
 Recurring bot-review findings that any new attempt must design around:
 
@@ -104,13 +104,13 @@ mobile mirrors in `mobilePreferences`; SwiftUI app in its own store.
 
 ### Per-platform local default
 
-| Platform | Default engine | Why |
-| --- | --- | --- |
-| iPhone (SwiftUI app + Expo module) | Apple `SpeechAnalyzer`/`SpeechTranscriber` on iOS 26+ | Zero download (system assets), streaming volatile partials, plain Swift; gate with `#available(iOS 26, *)` |
-| iPhone (iOS 17-25 fallback) | FluidAudio Parakeet v3 CoreML (~0.5 GB) or on-device `SFSpeechRecognizer` as the no-download floor | Parakeet for quality; SFSpeech for zero-setup |
-| Mac desktop (Electron) | Parakeet-tdt-0.6b-v3 via a small FluidAudio Swift sidecar binary spawned by the Electron main process | ~110-190x realtime on M-series, streaming + VAD + end-of-utterance; same model family Superwhisper and MacWhisper converged on |
-| Headless Linux server | whisper.cpp (quantized large-v3-turbo) CLI/server | Portable, no GPU assumption; Groq as the remote default when no local capacity |
-| Plain browser (no desktop host) | Web Speech API with `processLocally: true` where available (Chrome 139+), else cloud fallback with an explicit "audio leaves this device" notice | Honest privacy labeling; transformers.js WebGPU Whisper only as an experimental toggle |
+| Platform                           | Default engine                                                                                                                                   | Why                                                                                                                            |
+| ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------ |
+| iPhone (SwiftUI app + Expo module) | Apple `SpeechAnalyzer`/`SpeechTranscriber` on iOS 26+                                                                                            | Zero download (system assets), streaming volatile partials, plain Swift; gate with `#available(iOS 26, *)`                     |
+| iPhone (iOS 17-25 fallback)        | FluidAudio Parakeet v3 CoreML (~0.5 GB) or on-device `SFSpeechRecognizer` as the no-download floor                                               | Parakeet for quality; SFSpeech for zero-setup                                                                                  |
+| Mac desktop (Electron)             | Parakeet-tdt-0.6b-v3 via a small FluidAudio Swift sidecar binary spawned by the Electron main process                                            | ~110-190x realtime on M-series, streaming + VAD + end-of-utterance; same model family Superwhisper and MacWhisper converged on |
+| Headless Linux server              | whisper.cpp (quantized large-v3-turbo) CLI/server                                                                                                | Portable, no GPU assumption; Groq as the remote default when no local capacity                                                 |
+| Plain browser (no desktop host)    | Web Speech API with `processLocally: true` where available (Chrome 139+), else cloud fallback with an explicit "audio leaves this device" notice | Honest privacy labeling; transformers.js WebGPU Whisper only as an experimental toggle                                         |
 
 Cloud fallback is one OpenAI-compatible client (`/v1/audio/transcriptions`,
 configurable base URL from a server-side allowlist, never client-supplied):
@@ -161,3 +161,18 @@ where audio goes (on-device vs named cloud provider).
 - Electron cannot use FluidAudio directly (it is Swift); the sidecar process
   is the clean seam, and it doubles as the thing a future menu-bar
   quick-dictation feature can reuse.
+
+## 5. Building the sidecar
+
+In development the transcriber binary is one command away:
+
+```sh
+pnpm --dir apps/server run build:voice-transcriber
+```
+
+which runs `swift build -c release --package-path native/voice-transcriber`.
+The server probes the SwiftPM release output path automatically (or honors
+`T3_VOICE_TRANSCRIBER_PATH`). Packaging the sidecar into the desktop artifact
+is still an open task: the build script does not yet compile or bundle the
+binary, so shipped desktop builds report dictation as unsupported until that
+is done.

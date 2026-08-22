@@ -75,9 +75,9 @@ const GENERIC_TECH_TERMS = new Set([
 // considering plain lowercase tokens. Only unusual plain words (repeated at
 // least twice) become vocabulary, so this does not need to be exhaustive.
 const COMMON_ENGLISH_WORDS = new Set(
-  (
-    "about above actually after again against almost along already also although always among another answer anything around asked away back because become been before began behind being below better between both bring called came cannot change check children close come could country course days did different does doing done down during each early enough even ever every everything example fact family far feel few find first follow found four from get give goes going good got great group hand hard has have head hear help her here high him his home house how however idea important into its just keep kind knew know large last later learn leave left let life light like line little live long look made make many may mean men might more most move much must name near need never new next night not now number of off often old once one only open other our out over own part people place point put question quite rather read really right room said same saw say school second see seem seen set she should show side since small some something sometimes soon start state still story such sure take tell than that the their them then there these they thing think this those though thought three through time today together told too took toward turn under until upon use used very want was water way well went were what when where which while white who whole why will with within without word work world would year yes yet you young your"
-  ).split(" "),
+  "about above actually after again against almost along already also although always among another answer anything around asked away back because become been before began behind being below better between both bring called came cannot change check children close come could country course days did different does doing done down during each early enough even ever every everything example fact family far feel few find first follow found four from get give goes going good got great group hand hard has have head hear help her here high him his home house how however idea important into its just keep kind knew know large last later learn leave left let life light like line little live long look made make many may mean men might more most move much must name near need never new next night not now number of off often old once one only open other our out over own part people place point put question quite rather read really right room said same saw say school second see seem seen set she should show side since small some something sometimes soon start state still story such sure take tell than that the their them then there these they thing think this those though thought three through time today together told too took toward turn under until upon use used very want was water way well went were what when where which while white who whole why will with within without word work world would year yes yet you young your".split(
+    " ",
+  ),
 );
 
 const TOKEN_REGEX = /[A-Za-z][A-Za-z0-9]*(?:[-_./+][A-Za-z0-9]+)*/g;
@@ -105,17 +105,19 @@ function isIdentifierLike(token: string): boolean {
   );
 }
 
+const TOKEN_SEPARATORS_REGEX = /[-_./+]/g;
+
 function isNoise(token: string): boolean {
   if (token.length < MIN_TERM_LENGTH || token.length > MAX_TERM_LENGTH) return true;
   if (HEX_LIKE_REGEX.test(token) || UUID_SEGMENT_REGEX.test(token)) return true;
+  // UUID and hash fragments survive the plain hex checks when the tokenizer
+  // starts mid-value (e.g. "da-4946-8df8-79daa38d20f8" from a numeric-leading
+  // UUID); stripping separators exposes them.
+  if (HEX_LIKE_REGEX.test(token.replace(TOKEN_SEPARATORS_REGEX, ""))) return true;
   return GENERIC_TECH_TERMS.has(token.toLowerCase());
 }
 
-function recordTerm(
-  terms: Map<string, TermStats>,
-  token: string,
-  score: number,
-): void {
+function recordTerm(terms: Map<string, TermStats>, token: string, score: number): void {
   const key = token.toLowerCase();
   const stats = terms.get(key) ?? { score: 0, count: 0, casings: new Map() };
   stats.score += score;
@@ -235,6 +237,9 @@ function correctionDistanceBudget(canonical: string): number {
   return canonical.length >= 10 ? 2 : canonical.length >= 4 ? 1 : 0;
 }
 
+/** Fuzzy single-word repair only applies to acronym- or identifier-shaped words. */
+const SINGLE_WORD_FUZZY_ELIGIBLE_REGEX = /[A-Z0-9]/;
+
 /**
  * Rewrites near-miss recognitions back to vocabulary terms: "word tree" with
  * "worktree" in the vocabulary becomes "worktree", "PNP" becomes "pnpm",
@@ -242,8 +247,12 @@ function correctionDistanceBudget(canonical: string): number {
  *
  * Deliberately conservative: a run of one to three transcript words must
  * match a term within a small edit distance after stripping separators, and
- * must share the term's first letter. Longer replacements are preferred,
- * and replaced ranges never overlap.
+ * must share the term's first letter. All candidate spans at a position are
+ * evaluated before anything is chosen: an exact canonical match (longest
+ * span first) always beats a fuzzy one, an exact match whose surface already
+ * equals the term consumes the span untouched, and fuzzy repair of a single
+ * word requires an uppercase letter or digit in that word so ordinary
+ * lowercase prose is never rewritten. Replaced ranges never overlap.
  */
 export function applyVoiceVocabularyCorrections(
   text: string,
@@ -270,29 +279,71 @@ export function applyVoiceVocabularyCorrections(
   const replacements: Replacement[] = [];
 
   for (let index = 0; index < words.length; index += 1) {
-    let best: Replacement | null = null;
-    for (let span = 3; span >= 1; span -= 1) {
-      const last = words[index + span - 1];
+    // Evaluate every (span, term) candidate at this position first, then
+    // rank: an exact canonical match (longest span wins) always beats fuzzy,
+    // so a span-3 fuzzy can never absorb words beside a span-2 exact match.
+    let bestExact: (Replacement & { readonly sameSurface: boolean }) | null = null;
+    let bestFuzzy: { readonly replacement: Replacement; readonly distance: number } | null = null;
+
+    for (let span = 1; span <= 3; span += 1) {
       const first = words[index];
-      if (!last || !first) continue;
-      const candidate = canonicalize(words.slice(index, index + span).map(({ word }) => word).join(""));
+      const last = words[index + span - 1];
+      if (!first || !last) break;
+      const candidate = canonicalize(
+        words
+          .slice(index, index + span)
+          .map(({ word }) => word)
+          .join(""),
+      );
       for (const { term, canonical } of terms) {
         if (candidate === canonical) {
-          const surface = text.slice(first.start, last.end);
-          if (surface !== term) best ??= { start: first.start, end: last.end, term, span };
+          if (bestExact === null || span > bestExact.span) {
+            const surface = text.slice(first.start, last.end);
+            bestExact = {
+              start: first.start,
+              end: last.end,
+              term,
+              span,
+              sameSurface: surface === term,
+            };
+          }
           continue;
         }
         if (candidate[0] !== canonical[0]) continue;
         if (Math.abs(candidate.length - canonical.length) > 2) continue;
-        if (levenshtein(candidate, canonical) <= correctionDistanceBudget(canonical)) {
-          best ??= { start: first.start, end: last.end, term, span };
+        // A lone lowercase word is legitimate dictation ("provide" must not
+        // become "provider"); fuzzy repair of a single word needs the shape
+        // of a misread identifier or acronym. Split compounds (span >= 2)
+        // stay eligible: that is the "word tree" -> "worktree" case.
+        if (span === 1 && !SINGLE_WORD_FUZZY_ELIGIBLE_REGEX.test(first.word)) continue;
+        const distance = levenshtein(candidate, canonical);
+        if (distance > correctionDistanceBudget(canonical)) continue;
+        // Spans ascend, so a strict-inequality update keeps the shorter span
+        // on distance ties.
+        if (bestFuzzy === null || distance < bestFuzzy.distance) {
+          bestFuzzy = {
+            replacement: { start: first.start, end: last.end, term, span },
+            distance,
+          };
         }
       }
-      if (best) break;
     }
-    if (best) {
-      replacements.push(best);
-      index += best.span - 1;
+
+    if (bestExact !== null) {
+      // An exact match that already reads as the term consumes its span with
+      // no replacement, so a fuzzy term can never rewrite correct text.
+      if (!bestExact.sameSurface) {
+        replacements.push({
+          start: bestExact.start,
+          end: bestExact.end,
+          term: bestExact.term,
+          span: bestExact.span,
+        });
+      }
+      index += bestExact.span - 1;
+    } else if (bestFuzzy !== null) {
+      replacements.push(bestFuzzy.replacement);
+      index += bestFuzzy.replacement.span - 1;
     }
   }
 

@@ -184,14 +184,18 @@ it.effect("merges session terms ahead of learned history and applies corrections
   }),
 );
 
-it.effect("maps a nonzero sidecar exit to a bounded failure", () =>
+it.effect("maps a nonzero sidecar exit to a fixed detail that never carries stderr", () =>
   Effect.gen(function* () {
     const voice = yield* VoiceDictationService.VoiceDictationService;
     const error = yield* voice
       .transcribe({ audioBase64: SMALL_AUDIO_BASE64, mimeType: "audio/wav", sessionTerms: [] })
       .pipe(Effect.flip);
     assert.strictEqual(error._tag, "VoiceTranscriptionFailedError");
-    assert.include((error as { detail: string }).detail, "assets are not installed");
+    assert.strictEqual(
+      (error as { detail: string }).detail,
+      "The transcriber exited with an error.",
+    );
+    assert.notInclude((error as { detail: string }).detail, "assets are not installed");
   }).pipe(
     Effect.provide(
       testLayer({
