@@ -34,9 +34,10 @@
     "T3_PERF_CHROME_ARGS": "--no-sandbox --disable-dev-shm-usage"
   },
   "mounts": [
-    // pnpm's content-addressable store survives container rebuilds. Mounted at
-    // pnpm's default Linux store path so no store-dir config is needed.
-    "source=t3code-pnpm-store,target=/home/vscode/.local/share/pnpm/store,type=volume",
+    // vp keeps the pnpm content-addressable store and metadata cache under
+    // ~/.cache/pnpm (verified: the v11 store dir lives there); mounting a
+    // volume there lets installs survive container rebuilds.
+    "source=t3code-pnpm-store,target=/home/vscode/.cache/pnpm,type=volume",
     // Root node_modules holds the whole pnpm virtual store (.pnpm), so one
     // volume keeps the heavy tree off the slow macOS/Windows bind mount.
     // Scoped by devcontainerId so parallel checkouts do not share it.

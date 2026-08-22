@@ -29,7 +29,7 @@
   },
   "mounts": [
     // Same caching volumes as the default container (the pnpm store is shared).
-    "source=t3code-pnpm-store,target=/home/vscode/.local/share/pnpm/store,type=volume",
+    "source=t3code-pnpm-store,target=/home/vscode/.cache/pnpm,type=volume",
     "source=t3code-node-modules-${devcontainerId},target=${containerWorkspaceFolder}/node_modules,type=volume",
     // Agent config and shell history survive rebuilds, scoped per container
     // so parallel sandboxes do not bleed into each other.

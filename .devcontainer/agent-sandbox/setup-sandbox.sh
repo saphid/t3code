@@ -9,10 +9,11 @@ sudo apt-get update
 sudo apt-get install -y --no-install-recommends iptables ipset dnsutils jq
 sudo install -m 0755 .devcontainer/agent-sandbox/init-firewall.sh /usr/local/bin/init-firewall.sh
 
-# Best-effort: a rename or registry hiccup should not brick container
-# creation, the server can install providers on demand later.
+# Best-effort with one retry: a rename or registry hiccup should not brick
+# container creation, the server can install providers on demand later.
 for pkg in @openai/codex opencode-ai; do
-  npm install -g "$pkg" || echo "WARN: could not preinstall $pkg" >&2
+  npm install -g "$pkg" || npm install -g "$pkg" ||
+    echo "WARN: could not preinstall $pkg" >&2
 done
 
 # Volumes arrive root-owned.

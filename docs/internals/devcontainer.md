@@ -37,6 +37,12 @@ vp run dev
 
 Grafana lands on the forwarded port 3000 with the dashboards already provisioned. The perf harness feeds the same collector with `--otlp http://localhost:4318`, and `otlpBackfill.ts` imports on-disk result directories after the fact. If the compose stack is more than you need, the no-stack path still works: results land as self-contained JSON, markdown, and `report.html` under the harness's results directories.
 
+### Bring your own backend
+
+The bundled stack is a default, not a dependency. Everything exports plain push-based OTLP, so pointing at your own collector or self-hosted stack is just endpoints: put `T3CODE_OTLP_METRICS_URL` and `T3CODE_OTLP_TRACES_URL` in the gitignored `.env.local` (the dev runner merges it into the server's env) and pass `--otlp <url>` or `T3_PERF_OTLP_URL` to the perf harness. In Codespaces, user secrets arrive as environment variables and work the same way.
+
+Two things do not work directly today, by server limitation rather than container limitation. Hosted backends that require auth headers (Grafana Cloud, Honeycomb, Axiom) cannot be targeted straight from the server, which sends URL-only OTLP; route through the bundled collector and give it an authenticated upstream exporter instead (a perf-analyzer change, and OTel Collector configs take `${env:...}` substitution for the credentials). And an external Grafana cannot scrape the bundled Prometheus, which the compose file does not publish outside its network; publishing 9090 is likewise a perf-analyzer change. A `T3CODE_OTLP_HEADERS` option in the server config would remove the first limitation properly and is a good candidate for a small upstream proposal.
+
 ## Out of scope
 
 - Windowed Electron development is host-only. Building and verifying the desktop bundle works fine in the container (CI does exactly that, headless); launching the app needs a display.
