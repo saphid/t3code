@@ -2,7 +2,9 @@ import SwiftUI
 import UIKit
 
 struct FeatureComposerView: View {
-    @Environment(\.scenePhase) private var scenePhase
+    // Fully qualified: the app's own Core/Models.swift `Environment` type
+    // shadows the SwiftUI property wrapper in this scope.
+    @SwiftUI.Environment(\.scenePhase) private var scenePhase
     @State private var isManuallyExpanded = false
     @State private var dictation = FeatureVoiceDictationModel()
     @State private var isAttachmentFlowActive = false
