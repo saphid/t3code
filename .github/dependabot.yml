@@ -1,0 +1,8 @@
+# Keeps .devcontainer feature versions current. Scoped to devcontainers only;
+# package and action updates are managed by the maintainers' own process.
+version: 2
+updates:
+  - package-ecosystem: "devcontainers"
+    directory: "/"
+    schedule:
+      interval: "weekly"

@@ -16,3 +16,16 @@ rm -f "$installer"
 # so expose vp on the default PATH. test -x keeps a layout change loud.
 test -x "$HOME/.vite-plus/bin/vp"
 sudo ln -sf "$HOME/.vite-plus/bin/vp" /usr/local/bin/vp
+
+# First-run terminal notice, rendered by the devcontainers base image.
+sudo mkdir -p /usr/local/etc/vscode-dev-containers
+sudo tee /usr/local/etc/vscode-dev-containers/first-run-notice.txt >/dev/null <<'EOF'
+T3 Code devcontainer
+
+  vp run dev            start server + web, then open the pairing URL it
+                        prints (the bare forwarded port will not authenticate)
+  cp .env.example .env  optional: enable T3 Connect cloud features
+                        (public identifiers, not secrets)
+
+Details: docs/internals/devcontainer.md
+EOF

@@ -3,6 +3,15 @@
 # with deps installed and caches warm. Everything here is idempotent.
 set -euo pipefail
 
+# Volume mounts (pnpm store, node_modules) and the directories docker creates
+# for them arrive root-owned; hand them to the dev user before installing.
+for dir in "$HOME/.local" "$HOME/.local/share" "$HOME/.local/share/pnpm" \
+  "$HOME/.local/share/pnpm/store" node_modules; do
+  if [ -d "$dir" ] && [ "$(stat -c %U "$dir")" != "$(id -un)" ]; then
+    sudo chown "$(id -un):$(id -gn)" "$dir"
+  fi
+done
+
 vp i
 # Repairs electron's path.txt and exec bits after install, same as CI.
 vp run --filter @t3tools/desktop ensure:electron

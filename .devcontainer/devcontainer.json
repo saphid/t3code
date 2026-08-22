@@ -33,6 +33,17 @@
     // Chromium inside containers needs these; only the perf harness reads it.
     "T3_PERF_CHROME_ARGS": "--no-sandbox --disable-dev-shm-usage"
   },
+  "mounts": [
+    // pnpm's content-addressable store survives container rebuilds. Mounted at
+    // pnpm's default Linux store path so no store-dir config is needed.
+    "source=t3code-pnpm-store,target=/home/vscode/.local/share/pnpm/store,type=volume",
+    // Root node_modules holds the whole pnpm virtual store (.pnpm), so one
+    // volume keeps the heavy tree off the slow macOS/Windows bind mount.
+    // Scoped by devcontainerId so parallel checkouts do not share it.
+    // Codespaces note: prebuild snapshots exclude volumes; drop these mounts
+    // if prebuilt codespaces become the primary workflow.
+    "source=t3code-node-modules-${devcontainerId},target=${containerWorkspaceFolder}/node_modules,type=volume"
+  ],
   "onCreateCommand": "bash .devcontainer/on-create.sh",
   "updateContentCommand": "bash .devcontainer/update-content.sh",
   "forwardPorts": [5733, 13773],
@@ -55,6 +66,9 @@
     }
   },
   "customizations": {
+    "codespaces": {
+      "openFiles": ["docs/internals/devcontainer.md"]
+    },
     "vscode": {
       "extensions": ["oxc.oxc-vscode", "rust-lang.rust-analyzer"],
       "settings": {

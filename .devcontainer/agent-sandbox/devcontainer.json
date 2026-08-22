@@ -1,0 +1,75 @@
+// Opt-in variant for running coding agents inside the container: preinstalled
+// agent CLIs plus a default-deny egress firewall (allowlisted domains only).
+// The firewall is a guardrail against accidental egress, not a hard boundary:
+// the vscode user keeps sudo, so a hostile agent could disable it. See
+// docs/internals/devcontainer.md for what is and is not guaranteed.
+// No docker-in-docker here: dockerd manages its own iptables chains and would
+// fight the firewall. Use the default container for the observability stack.
+{
+  "name": "T3 Code (agent sandbox)",
+  "image": "mcr.microsoft.com/devcontainers/base:ubuntu-24.04",
+  "features": {
+    "ghcr.io/devcontainers/features/node:2": {
+      "version": "24"
+    },
+    "ghcr.io/devcontainers/features/rust:1": {},
+    "ghcr.io/devcontainers/features/github-cli:1": {},
+    "ghcr.io/anthropics/devcontainer-features/claude-code:1.0": {}
+  },
+  "hostRequirements": {
+    "cpus": 4,
+    "memory": "8gb",
+    "storage": "32gb",
+    "gpu": "optional"
+  },
+  "runArgs": ["--cap-add=NET_ADMIN", "--cap-add=NET_RAW"],
+  "containerEnv": {
+    "T3CODE_HOME": "${containerWorkspaceFolder}/.t3",
+    "T3_PERF_CHROME_ARGS": "--no-sandbox --disable-dev-shm-usage"
+  },
+  "mounts": [
+    // Same caching volumes as the default container (the pnpm store is shared).
+    "source=t3code-pnpm-store,target=/home/vscode/.local/share/pnpm/store,type=volume",
+    "source=t3code-node-modules-${devcontainerId},target=${containerWorkspaceFolder}/node_modules,type=volume",
+    // Agent config and shell history survive rebuilds, scoped per container
+    // so parallel sandboxes do not bleed into each other.
+    "source=t3code-agent-claude-${devcontainerId},target=/home/vscode/.claude,type=volume",
+    "source=t3code-shell-history-${devcontainerId},target=/commandhistory,type=volume"
+  ],
+  "onCreateCommand": "bash .devcontainer/on-create.sh && bash .devcontainer/agent-sandbox/setup-sandbox.sh",
+  "updateContentCommand": "bash .devcontainer/update-content.sh",
+  // Lock down egress on every start, after installs are done (lifecycle order
+  // guarantees onCreate/updateContent ran first). waitFor keeps shells from
+  // attaching before the firewall is verified.
+  "postStartCommand": "sudo /usr/local/bin/init-firewall.sh",
+  "waitFor": "postStartCommand",
+  "forwardPorts": [5733, 13773],
+  "portsAttributes": {
+    "5733": {
+      "label": "t3 web (open via the pairing URL, not the bare origin)",
+      "onAutoForward": "notify"
+    },
+    "13773": {
+      "label": "t3 server",
+      "onAutoForward": "silent"
+    }
+  },
+  "customizations": {
+    "codespaces": {
+      "openFiles": ["docs/internals/devcontainer.md"]
+    },
+    "vscode": {
+      "extensions": ["oxc.oxc-vscode", "rust-lang.rust-analyzer"],
+      "settings": {
+        "files.watcherExclude": {
+          "**/.repos/**": true,
+          "**/.t3/**": true
+        },
+        "search.exclude": {
+          "**/.repos": true
+        }
+      }
+    }
+  },
+  "remoteUser": "vscode"
+}
