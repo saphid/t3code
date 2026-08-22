@@ -1,0 +1,59 @@
+# Standalone Grafana/OTel stack for the perf harness, sized for a persistent
+# LAN deployment: services restart with the box and Prometheus/Grafana keep
+# their history in named volumes. Point the harness at it with
+# --otlp http://<host>:4318 and browse Grafana at http://<host>:3000
+# (anonymous admin, LAN-only tool).
+services:
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.111.0
+    restart: unless-stopped
+    command: ["--config=/etc/otelcol/config.yaml"]
+    volumes:
+      - ./otel-collector.yaml:/etc/otelcol/config.yaml:ro
+    ports:
+      - "4318:4318" # OTLP/HTTP receiver
+
+  prometheus:
+    image: prom/prometheus:v2.55.1
+    restart: unless-stopped
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=90d
+      # The collector pushes via remote write (preserves run timestamps).
+      - --web.enable-remote-write-receiver
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    # No host port: Grafana reaches Prometheus on the compose network, and
+    # benchmark hosts often already run something on 9090. Uncomment to expose.
+    # ports:
+    #   - "9090:9090"
+
+  loki:
+    image: grafana/loki:3.1.1
+    restart: unless-stopped
+    volumes:
+      - loki-data:/loki
+    ports:
+      # Host 3105 because benchmark boxes often already run another Loki on
+      # 3100. Inside the compose network it stays loki:3100.
+      - "3105:3100"
+
+  grafana:
+    image: grafana/grafana:11.3.0
+    restart: unless-stopped
+    environment:
+      - GF_AUTH_ANONYMOUS_ENABLED=true
+      - GF_AUTH_ANONYMOUS_ORG_ROLE=Admin
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+    ports:
+      - "3000:3000"
+
+volumes:
+  prometheus-data:
+  grafana-data:
+  loki-data:
