@@ -714,6 +714,27 @@ export function createServerEnvironmentAtoms<R, E>(
       tag: WS_METHODS.serverGetUsageSummary,
       staleTimeMs: 60_000,
     }),
+    // Whether the environment can dictate changes only when assets install or
+    // the server moves machines; a minute of staleness is invisible.
+    voiceDictationStatus: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:server:voice-dictation-status",
+      tag: WS_METHODS.voiceGetStatus,
+      staleTimeMs: 60_000,
+    }),
+    installVoiceDictation: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:voice-dictation-install",
+      tag: WS_METHODS.voiceInstall,
+      // The sidecar download is minutes long; a second click must join the
+      // in-flight install instead of racing a duplicate.
+      concurrency: {
+        mode: "singleFlight",
+        key: ({ environmentId }) => environmentId,
+      },
+    }),
+    transcribeVoice: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:voice-transcribe",
+      tag: WS_METHODS.voiceTranscribe,
+    }),
     configProjection,
     welcome: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
       label: "environment-data:server:welcome",
