@@ -3,6 +3,7 @@ import UIKit
 
 struct FeatureComposerView: View {
     @State private var isManuallyExpanded = false
+    @State private var dictation = FeatureVoiceDictationModel()
     @State private var isAttachmentFlowActive = false
     @State private var attachmentPreparation = FeatureAttachmentPreparationState()
     @State private var pathEntries: [FeatureComposerPathEntry] = []
@@ -182,6 +183,19 @@ struct FeatureComposerView: View {
                 onDropImages: attachDroppedImages
             )
         )
+        .onDisappear {
+            // Navigating away mid-recording must release the microphone.
+            dictation.cancel()
+        }
+    }
+
+    private var dictationButton: some View {
+        FeatureVoiceDictationButton(
+            model: dictation,
+            text: $text,
+            vocabularyProvider: powerFeatures.voiceVocabulary,
+            onBegin: { isManuallyExpanded = true }
+        )
     }
 
     private var collapsedComposer: some View {
@@ -203,6 +217,10 @@ struct FeatureComposerView: View {
             .frame(minHeight: T3Metrics.minimumTapTarget)
             .accessibilityLabel("Message agent")
             .accessibilityHint("Opens the message editor")
+
+            if FeatureVoiceDictationModel.isSupported {
+                dictationButton
+            }
 
             submitButton
                 .padding(.trailing, 7)
@@ -262,6 +280,27 @@ struct FeatureComposerView: View {
                     .padding(.bottom, 4)
             }
 
+            if !dictation.volatileText.isEmpty {
+                Text(dictation.volatileText)
+                    .font(T3Typography.supporting)
+                    .italic()
+                    .foregroundStyle(T3Colors.textSecondary)
+                    .lineLimit(2)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 15)
+                    .padding(.bottom, 4)
+                    .accessibilityLabel("Dictation preview")
+            }
+
+            if let dictationError = dictation.errorMessage {
+                Label(dictationError, systemImage: "exclamationmark.circle")
+                    .font(T3Typography.supporting)
+                    .foregroundStyle(T3Colors.warning)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 15)
+                    .padding(.bottom, 4)
+            }
+
             if attachmentPreparation.isPreparing {
                 Label(attachmentPreparation.statusLabel, systemImage: "hourglass")
                     .font(T3Typography.supporting)
@@ -305,6 +344,10 @@ struct FeatureComposerView: View {
 
             if let contextUsage {
                 FeatureContextMeter(usage: contextUsage)
+            }
+
+            if FeatureVoiceDictationModel.isSupported {
+                dictationButton
             }
 
             submitButton
