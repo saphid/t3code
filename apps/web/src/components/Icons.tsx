@@ -211,6 +211,20 @@ export const GrokIcon: Icon = ({ className, ...props }) => (
   </svg>
 );
 
+export const PiIcon: Icon = ({ className, ...props }) => (
+  <svg
+    {...props}
+    viewBox="0 0 24 24"
+    fill="none"
+    className={cn("fill-[#0F0F0F] dark:fill-[#F5F5F5]", className)}
+  >
+    {/* Blocky π glyph: top bar plus two legs */}
+    <path d="M3 4.5C3 3.67157 3.67157 3 4.5 3H19.5C20.3284 3 21 3.67157 21 4.5V6C21 6.82843 20.3284 7.5 19.5 7.5H4.5C3.67157 7.5 3 6.82843 3 6V4.5Z" />
+    <path d="M5.25 9C6.07843 9 6.75 9.67157 6.75 10.5V18C6.75 18.8284 6.07843 19.5 5.25 19.5C4.42157 19.5 3.75 18.8284 3.75 18V10.5C3.75 9.67157 4.42157 9 5.25 9Z" />
+    <path d="M17.25 9C18.0784 9 18.75 9.67157 18.75 10.5V18C18.75 18.8284 18.0784 19.5 17.25 19.5C16.4216 19.5 15.75 18.8284 15.75 18V10.5C15.75 9.67157 16.4216 9 17.25 9Z" />
+  </svg>
+);
+
 export const TraeIcon: Icon = (props) => (
   <svg {...props} viewBox="0 0 24 24" fill="currentColor">
     {/* Back rectangle: left strip + bottom strip drawn separately — empty bottom-left corner is the gap between them */}
