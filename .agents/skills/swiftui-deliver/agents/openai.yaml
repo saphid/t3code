@@ -1,0 +1,4 @@
+interface:
+  display_name: "Deliver SwiftUI Generation"
+  short_description: "Execute one authorized SwiftUI generation plan."
+  default_prompt: "Use $swiftui-deliver to execute this validated and authorized SwiftUI generation plan."

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Share Video Evidence"
+  short_description: "Share playable video proof safely across T3 clients"
+  default_prompt: "Use $share-video-evidence to hand back this proof video as a playable, privately scoped artifact."

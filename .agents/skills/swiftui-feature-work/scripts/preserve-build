@@ -1,0 +1,5 @@
+#!/bin/sh
+set -eu
+SKILL_DIR=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd -P)
+REPO_ROOT=$(CDPATH= cd -- "$SKILL_DIR/../../.." && pwd -P)
+exec python3 "$REPO_ROOT/scripts/swiftui-delivery/artifact_store.py" "$@"

@@ -1,0 +1,7 @@
+# Runtime evidence belongs in the configured external runs root, not source control.
+/runs/
+
+# Historical host cutover inventory is not part of the durable source package.
+/migration-inventory.json
+__pycache__/
+*.py[cod]

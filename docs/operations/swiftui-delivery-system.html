@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#0b0d12">
+  <title>SwiftUI delivery — clean system</title>
+  <style>
+    :root{color-scheme:dark;--bg:#0b0d12;--panel:#12151d;--raised:#191d27;--line:#2a3040;--muted:#9aa4b5;--text:#f5f7fb;--cyan:#61d7ff;--mint:#72f1b8;--amber:#ffc857;--red:#ff7185;--violet:#a98bff}
+    *{box-sizing:border-box}html{scroll-behavior:smooth}body{margin:0;background:radial-gradient(circle at 90% 0,#17243a 0,transparent 32rem),var(--bg);color:var(--text);font:16px/1.55 -apple-system,BlinkMacSystemFont,"SF Pro Text",system-ui,sans-serif}
+    a{color:var(--cyan);text-underline-offset:3px}.wrap{width:min(1120px,calc(100% - 32px));margin:auto}.hero{padding:72px 0 36px}.eyebrow{color:var(--cyan);font-size:.78rem;font-weight:750;letter-spacing:.13em;text-transform:uppercase}.hero h1{font-size:clamp(2.35rem,9vw,5.8rem);line-height:.93;letter-spacing:-.065em;margin:.32em 0 .28em;max-width:900px}.lede{font-size:clamp(1.05rem,2.3vw,1.35rem);color:#c6cedb;max-width:780px}.verdict{display:inline-flex;align-items:center;gap:9px;background:#10271f;border:1px solid #285843;border-radius:999px;padding:8px 13px;color:var(--mint);font-weight:680}.dot{width:8px;height:8px;border-radius:50%;background:currentColor;box-shadow:0 0 16px currentColor}
+    nav{position:sticky;top:0;z-index:5;background:#0b0d12e8;backdrop-filter:blur(16px);border-block:1px solid #ffffff12;overflow:auto}.navrow{display:flex;gap:5px;padding:9px 0;white-space:nowrap}.navrow a{color:#c9d0db;text-decoration:none;padding:7px 10px;border-radius:9px;font-size:.87rem}.navrow a:hover{background:var(--raised);color:white}
+    section{padding:58px 0;border-bottom:1px solid #ffffff0d}.kicker{color:var(--violet);font-size:.78rem;font-weight:750;letter-spacing:.12em;text-transform:uppercase}h2{font-size:clamp(1.8rem,5vw,3.2rem);line-height:1.05;letter-spacing:-.045em;margin:.25em 0 .55em}h3{font-size:1.12rem;margin:0 0 .4em}.intro{color:#bac3d2;max-width:760px}.grid{display:grid;grid-template-columns:repeat(12,1fr);gap:14px;margin-top:26px}.card{grid-column:span 4;background:linear-gradient(145deg,#161a24,#11141b);border:1px solid var(--line);border-radius:18px;padding:19px;box-shadow:0 18px 50px #0003}.card.wide{grid-column:span 6}.card.full{grid-column:1/-1}.card p{color:#aeb7c6;margin:.35em 0 0}.tag{display:inline-block;color:var(--cyan);background:#61d7ff12;border:1px solid #61d7ff38;border-radius:999px;padding:3px 8px;font-size:.75rem;font-weight:700}.no{color:var(--red)}.yes{color:var(--mint)}
+    .flow{display:flex;align-items:stretch;gap:8px;overflow:auto;padding:8px 2px 14px;margin-top:24px;scroll-snap-type:x proximity}.node{flex:0 0 174px;scroll-snap-align:start;background:var(--raised);border:1px solid var(--line);border-radius:16px;padding:14px;min-height:118px}.node strong{display:block;font-size:.95rem}.node small{display:block;color:var(--muted);margin-top:7px}.node.gate{border-color:#2b7659;background:#11241d}.node.stop{border-color:#76404a;background:#241317}.arrow{align-self:center;color:#697487;font-size:1.35rem;flex:none}.flow.vertical{display:grid;grid-template-columns:minmax(0,1fr);max-width:760px}.flow.vertical .node{width:auto;min-height:0}.flow.vertical .arrow{text-align:center;transform:rotate(90deg)}
+    .boundary{display:grid;grid-template-columns:1fr auto 1fr;gap:16px;align-items:stretch;margin-top:26px}.zone{border-radius:20px;padding:22px;border:1px solid var(--line);background:var(--panel)}.zone.inside{border-color:#34775d}.zone.outside{border-color:#643b44}.divider{width:1px;background:linear-gradient(transparent,var(--line),transparent)}ul.clean{padding-left:1.2em}ul.clean li{margin:.48em 0;color:#bdc5d3}
+    .table-wrap{overflow:auto;border:1px solid var(--line);border-radius:16px;margin-top:22px}table{width:100%;border-collapse:collapse;min-width:720px}th,td{text-align:left;padding:13px 15px;border-bottom:1px solid var(--line);vertical-align:top}th{color:#8d98a9;font-size:.72rem;text-transform:uppercase;letter-spacing:.08em;background:#141821}td{color:#c8cfda}tr:last-child td{border:0}
+    details{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:0 16px;margin:9px 0}summary{cursor:pointer;padding:15px 0;font-weight:700}details p,details li{color:#b6bfcd}.priority{font:700 .72rem/1 -apple-system,system-ui;padding:5px 8px;border-radius:999px}.p0{background:#ff71851c;color:#ff8fa0}.p1{background:#ffc8571c;color:#ffd376}.p2{background:#61d7ff18;color:#7ee0ff}
+    .route{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-top:24px}.route .node{width:auto;min-width:0}.route .node:not(:last-child)::after{content:"→";float:right;color:#647084}.code{background:#080a0e;border:1px solid var(--line);border-radius:15px;padding:15px;overflow:auto;color:#d5dbea;font:13px/1.55 ui-monospace,SFMono-Regular,Menlo,monospace}.footer{padding:50px 0 80px;color:#8f99a9}.tiny{font-size:.82rem;color:#8f99a9}.button{display:inline-block;text-decoration:none;background:var(--cyan);color:#071018;font-weight:800;border-radius:12px;padding:10px 14px;margin:5px 5px 5px 0}
+    @media(max-width:760px){.wrap{width:min(100% - 22px,1120px)}.hero{padding-top:48px}.card,.card.wide{grid-column:1/-1}.boundary{grid-template-columns:1fr}.divider{height:1px;width:auto}.route{grid-template-columns:1fr 1fr}.hero h1{letter-spacing:-.055em}section{padding:44px 0}.node{flex-basis:156px}.flow-hint{display:block}}
+    @media(min-width:761px){.flow-hint{display:none}}
+  </style>
+</head>
+<body>
+  <header class="hero wrap">
+    <span class="verdict"><span class="dot"></span>One repo, one process</span>
+    <h1>SwiftUI delivery without the shadow system.</h1>
+    <p class="lede">A project-owned path from one issue to reproducible proof, reviewed evidence, a phone build, acceptance, and delivery—without global skill mirrors or unrelated control planes.</p>
+  </header>
+  <nav><div class="wrap navrow"><a href="#boundary">Boundary</a><a href="#skills">Skills</a><a href="#lifecycle">Lifecycle</a><a href="#evidence">Evidence</a><a href="#models">Review routing</a><a href="#cleanup">Cleanup</a><a href="#gaps">Gaps</a><a href="#links">Files</a></div></nav>
+
+  <main>
+    <section id="boundary"><div class="wrap">
+      <div class="kicker">Architecture boundary</div><h2>The repository owns the system.</h2>
+      <p class="intro">The Agent Operating Standard is host-level session governance: it can influence how this agent is routed or reviewed, but SwiftUI delivery does not import, inspect, or wait for it. Repository files remain complete on their own.</p>
+      <div class="boundary">
+        <div class="zone inside"><h3 class="yes">Inside this T3 Code checkout</h3><ul class="clean"><li>Six project-local skills in <code>.agents/skills</code></li><li>Contract, validators, build store, evidence tools, tests</li><li>Issue state and exact content-addressed receipts</li><li>Operations docs and this explainer</li></ul></div>
+        <div class="divider"></div>
+        <div class="zone outside"><h3 class="no">Explicitly outside</h3><ul class="clean"><li>Personal Workspace and Portfolio ownership</li><li>OpenCode or Gemini dispatch/discovery</li><li>Global copies or symlinks for the four role skills</li><li>Background dispatchers, label auditors, deployment daemons</li></ul></div>
+      </div>
+      <div class="flow" aria-label="Source boundary flow">
+        <div class="node"><strong>Fresh checkout</strong><small>Receives project policy and project skills together.</small></div><div class="arrow">→</div>
+        <div class="node"><strong>Project skill</strong><small>Reads the contract by a repo-relative path.</small></div><div class="arrow">→</div>
+        <div class="node"><strong>Project script</strong><small>Validates state and produces receipts.</small></div><div class="arrow">→</div>
+        <div class="node gate"><strong>No hidden lookup</strong><small>No other repository is needed.</small></div>
+      </div><span class="tiny flow-hint">Swipe the diagrams horizontally →</span>
+    </div></section>
+
+    <section id="skills"><div class="wrap">
+      <div class="kicker">Small skill set</div><h2>Four roles. Two narrow helpers.</h2>
+      <div class="grid">
+        <article class="card"><span class="tag">Capture</span><h3><a href="../../.agents/skills/file-swiftui-lane-issue/SKILL.md">file-swiftui-lane-issue</a></h3><p>Deduplicate and define one issue, with exactly one lane membership and observable acceptance.</p></article>
+        <article class="card"><span class="tag">Coordinate</span><h3><a href="../../.agents/skills/swiftui-orchestrate/SKILL.md">swiftui-orchestrate</a></h3><p>Select ready issues, isolate work, reconcile receipts, babysit checkpoints, prepare—not execute—delivery plans.</p></article>
+        <article class="card"><span class="tag">Build + prove</span><h3><a href="../../.agents/skills/swiftui-feature-work/SKILL.md">swiftui-feature-work</a></h3><p>Reproduce, implement, test, preserve the build, capture before/after evidence, and reach proof-ready.</p></article>
+        <article class="card"><span class="tag">Deliver</span><h3><a href="../../.agents/skills/swiftui-deliver/SKILL.md">swiftui-deliver</a></h3><p>Execute one exact authorized Test, Dev, or PR plan after all evidence gates pass.</p></article>
+        <article class="card wide"><span class="tag">Helper</span><h3><a href="../../.agents/skills/ios-build-hygiene/SKILL.md">ios-build-hygiene</a></h3><p>Bounds Xcode inspection, isolates DerivedData, preserves exit status, and safely reclaims only owned build debris.</p></article>
+        <article class="card wide"><span class="tag">Helper</span><h3><a href="../../.agents/skills/share-video-evidence/SKILL.md">share-video-evidence</a></h3><p>Makes an MP4 playable from the recipient's T3 client through a private, verified handoff.</p></article>
+      </div>
+    </div></section>
+
+    <section id="lifecycle"><div class="wrap">
+      <div class="kicker">Issue state</div><h2>A lane groups issues; it is not owned by one.</h2>
+      <p class="intro">Each issue has one work item. Each work item names one lane. Many work items may name the same lane. Proof and waiting reasons attach to the work item, so unrelated work never creates a global “conflict.”</p>
+      <div class="flow" aria-label="Issue lifecycle">
+        <div class="node"><strong>Queued</strong><small>Issue, lane, acceptance, rank, dependencies.</small></div><div class="arrow">→</div>
+        <div class="node"><strong>Active</strong><small>Exact branch, worktree, thread, environment, base.</small></div><div class="arrow">→</div>
+        <div class="node"><strong>Reproduced</strong><small>Retained base build + image + annotated video.</small></div><div class="arrow">→</div>
+        <div class="node"><strong>Proved</strong><small>Tests + retained head build + after evidence.</small></div><div class="arrow">→</div>
+        <div class="node gate"><strong>Proof-ready</strong><small>Every capture visually reviewed for intent and side effects.</small></div><div class="arrow">→</div>
+        <div class="node"><strong>Phone-test</strong><small>Only an authorized validated generation can install.</small></div><div class="arrow">→</div>
+        <div class="node"><strong>Accepted</strong><small>Human verdict bound to exact phone generation.</small></div><div class="arrow">→</div>
+        <div class="node"><strong>PR / landed</strong><small>Separate authority and receipts.</small></div>
+      </div>
+      <p class="tiny">Any head change returns that work item to active and invalidates later proof. It does not block an unrelated issue.</p>
+    </div></section>
+
+    <section id="evidence"><div class="wrap">
+      <div class="kicker">Proof before phone</div><h2>The validator is the hard gate.</h2>
+      <div class="flow" aria-label="Evidence gate">
+        <div class="node"><strong>Before</strong><small>Raw video, edited video, screenshot, exact-base build receipt.</small></div><div class="arrow">+</div>
+        <div class="node"><strong>After</strong><small>Raw video, edited video, screenshot, exact-head build receipt.</small></div><div class="arrow">+</div>
+        <div class="node"><strong>Inspection</strong><small>One review row per capture, including unintended side effects.</small></div><div class="arrow">→</div>
+        <div class="node gate"><strong>Validate generation</strong><small>Reopens hashes, dependencies, prior installed carry, and authority.</small></div><div class="arrow">→</div>
+        <div class="node stop"><strong>Only now</strong><small>Queue, build, lease, install, or deploy to phone.</small></div>
+      </div>
+      <div class="grid">
+        <article class="card wide"><h3>Preferred: RocketSim</h3><p>Free, simple iOS-native capture and post editing with modern touches, trails, pinch/rotate indicators, trimming, bezels, and backgrounds. The project tool adopts its export and creates the hash receipt. Installation remains a human step because the App Store CLI reached the administrator-password boundary.</p><p><a href="https://www.rocketsim.app/docs/features/capturing/recordings/">Recording docs</a> · <a href="https://www.rocketsim.app/docs/features/capturing/post-editor/">Post editor</a> · <a href="https://www.rocketsim.app/pricing/">Pricing</a></p></article>
+        <article class="card wide"><h3>Fallback: repo renderer</h3><p>Deterministic SF Rounded callout cards plus tap, long-press, swipe, pinch, rotate, and highlight overlays. FFmpeg trims and composites; ImageMagick draws; a receipt records the exact command.</p><p><a href="../../scripts/swiftui-delivery/annotate_video.py">annotate_video.py</a> · <a href="../../scripts/swiftui-delivery/references/evidence.md">evidence spec</a></p></article>
+      </div>
+    </div></section>
+
+    <section id="models"><div class="wrap">
+      <div class="kicker">Independent review only</div><h2>Provider routing is not system architecture.</h2>
+      <p class="intro">The implementation session does the work. After focused checks, one fresh read-only reviewer is attempted in Alex's explicitly requested order for this cutover. The actual launcher, model, exit status, and findings are recorded.</p>
+      <div class="route">
+        <div class="node gate"><strong>1. Fable 5 high</strong><small>Use when live Fable headroom is usable.</small></div>
+        <div class="node"><strong>2. Kimi 256k</strong><small>Only if directly callable and Fable is unavailable.</small></div>
+        <div class="node"><strong>3. Ox Alpha Free</strong><small>Only if directly callable and prior choices fail.</small></div>
+        <div class="node"><strong>4. Fresh Sol high</strong><small>Final fallback, never falsely reported as independent when reused.</small></div>
+      </div>
+    </div></section>
+
+    <section id="cleanup"><div class="wrap">
+      <div class="kicker">Machine cleanup</div><h2>Archive first. Delete later, separately.</h2>
+      <div class="flow" aria-label="Archive process">
+        <div class="node"><strong>Inventory</strong><small>Original path, Git branch, dirty/untracked state, disk size.</small></div><div class="arrow">→</div>
+        <div class="node"><strong>Lean ZIP</strong><small>Preserve source + Git state; exclude reproducible caches and build output.</small></div><div class="arrow">→</div>
+        <div class="node gate"><strong>Verify</strong><small><code>unzip -t</code>, size, SHA-256, manifest.</small></div><div class="arrow">→</div>
+        <div class="node"><strong>Review window</strong><small>Original directories remain untouched now.</small></div><div class="arrow">→</div>
+        <div class="node stop"><strong>Separate approval</strong><small>Only then remove superseded originals.</small></div>
+      </div>
+      <p class="intro">The checkouts are large relative to free disk, so archival is batched. This avoids a half-created archive consuming the remaining space and provides a reviewable inventory before any deletion.</p>
+    </div></section>
+
+    <section id="gaps"><div class="wrap">
+      <div class="kicker">Honest remaining work</div><h2>What still needs proving.</h2>
+      <details open><summary><span class="priority p0">P0</span> Disposable end-to-end pilot</summary><p>Run one real issue from capture through simulator proof, validate a Test generation plan, and stop before physical-phone installation. This exposes ergonomic gaps schemas cannot.</p></details>
+      <details><summary><span class="priority p1">P1</span> Installed-phone attestation</summary><p>The protocol validates the previous Test receipt and exact carry set. It does not yet independently ask the phone whether those exact bytes are currently installed.</p></details>
+      <details><summary><span class="priority p1">P1</span> RocketSim visual acceptance</summary><p>Record one tap, swipe, and pinch example; visually review type, touch size, trails, trimming, bezels, backgrounds, and captions on both desktop and phone.</p></details>
+      <details><summary><span class="priority p2">P2</span> Build retention policy</summary><p>Keep content-addressed builds now. Measure real disk growth, then choose explicit retention limits. Avoid speculative automatic deletion.</p></details>
+      <details><summary><span class="priority p2">P2</span> Archive removal decision</summary><p>Verified archives do not authorize deleting originals. Review the manifest and allow a recovery window before a separately approved removal pass.</p></details>
+    </div></section>
+
+    <section id="links"><div class="wrap">
+      <div class="kicker">Review the source</div><h2>Everything important is linked.</h2>
+      <div class="table-wrap"><table><thead><tr><th>Artifact</th><th>Purpose</th></tr></thead><tbody>
+        <tr><td><a href="../../scripts/swiftui-delivery/contract.json">contract.json</a></td><td>Domain terms, stages, transitions, evidence policy, state boundaries.</td></tr>
+        <tr><td><a href="../../scripts/swiftui-delivery/swiftui_delivery.py">swiftui_delivery.py</a></td><td>Work-item, proof, inspection, catalog, generation, and receipt validators.</td></tr>
+        <tr><td><a href="../../scripts/swiftui-delivery/artifact_store.py">artifact_store.py</a></td><td>Content-addressed retained `.app` storage and verification.</td></tr>
+        <tr><td><a href="../../scripts/swiftui-delivery/annotate_video.py">annotate_video.py</a></td><td>Modern fallback renderer and external-editor receipt adoption.</td></tr>
+        <tr><td><a href="../../scripts/swiftui-delivery/phone_lease.py">phone_lease.py</a></td><td>Atomic exclusive phone-publication lease with owner-token release and no force mode.</td></tr>
+        <tr><td><a href="../../scripts/swiftui-delivery/references/process.md">process.md</a></td><td>Checkpoint and invalidation semantics.</td></tr>
+        <tr><td><a href="../../scripts/swiftui-delivery/references/evidence.md">evidence.md</a></td><td>Image, video, annotation, and visual-inspection requirements.</td></tr>
+        <tr><td><a href="../../scripts/swiftui-delivery/package-manifest.json">package-manifest.json</a></td><td>Owned source and forbidden retired runtime paths.</td></tr>
+        <tr><td><a href="swiftui-delivery-clean-cutover.md">clean cutover</a></td><td>Decision record, exclusions, archive policy, checks, and remaining gaps.</td></tr>
+        <tr><td><a href="swiftui-local-archive-manifest.md">archive manifest</a></td><td>Original paths, dirty state, verified ZIP sizes, checksums, exclusions, and deletion boundary.</td></tr>
+      </tbody></table></div>
+      <h3 style="margin-top:28px">Focused verification</h3><pre class="code">python3 -m unittest discover -s scripts/swiftui-delivery/tests -p 'test_*.py'
+python3 -m unittest discover -s .agents/skills/ios-build-hygiene/tests -p 'test_*.py'
+scripts/swiftui-delivery/scripts/audit-package
+python3 scripts/swiftui-delivery/audit_environment.py</pre>
+      <a class="button" href="../../scripts/swiftui-delivery/references/video-edit-plan.example.json">Video plan example</a><a class="button" href="../../scripts/swiftui-delivery/references/environment-inventory.md">Environment inventory</a>
+    </div></section>
+  </main>
+  <footer class="footer wrap"><p>Revision v4 · 2026-08-22 · project-owned SwiftUI delivery cutover</p><p class="tiny">Designed as a standalone, responsive document with no external scripts, fonts, or tracking.</p></footer>
+</body>
+</html>

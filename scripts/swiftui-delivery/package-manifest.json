@@ -1,0 +1,77 @@
+{
+  "schemaVersion": 2,
+  "ownerRepository": "pingdotgg/t3code",
+  "sourceRoots": [
+    "scripts/swiftui-delivery",
+    ".agents/skills/file-swiftui-lane-issue",
+    ".agents/skills/swiftui-orchestrate",
+    ".agents/skills/swiftui-feature-work",
+    ".agents/skills/swiftui-deliver",
+    ".agents/skills/ios-build-hygiene",
+    ".agents/skills/share-video-evidence"
+  ],
+  "requiredFiles": [
+    "scripts/swiftui-delivery/contract.json",
+    "scripts/swiftui-delivery/swiftui_delivery.py",
+    "scripts/swiftui-delivery/artifact_store.py",
+    "scripts/swiftui-delivery/annotate_video.py",
+    "scripts/swiftui-delivery/phone_lease.py",
+    "scripts/swiftui-delivery/audit_package.py",
+    "scripts/swiftui-delivery/audit_environment.py",
+    "scripts/swiftui-delivery/scripts/swiftui-delivery",
+    "scripts/swiftui-delivery/scripts/preserve-build",
+    "scripts/swiftui-delivery/scripts/annotate-video",
+    "scripts/swiftui-delivery/scripts/phone-lease",
+    "scripts/swiftui-delivery/scripts/audit-package",
+    "scripts/swiftui-delivery/references/process.md",
+    "scripts/swiftui-delivery/references/evidence.md",
+    "scripts/swiftui-delivery/references/environment-inventory.md",
+    "scripts/swiftui-delivery/references/video-edit-plan.example.json",
+    "scripts/swiftui-delivery/tests/test_delivery_protocol.py",
+    "scripts/swiftui-delivery/tests/test_artifact_store.py",
+    "scripts/swiftui-delivery/tests/test_video_plan.py",
+    "scripts/swiftui-delivery/tests/test_phone_lease.py",
+    "scripts/swiftui-delivery/tests/test_package_audit.py",
+    "scripts/swiftui-delivery/.gitignore",
+    ".agents/skills/file-swiftui-lane-issue/SKILL.md",
+    ".agents/skills/file-swiftui-lane-issue/scripts/swiftui-delivery",
+    ".agents/skills/swiftui-orchestrate/SKILL.md",
+    ".agents/skills/swiftui-orchestrate/scripts/swiftui-delivery",
+    ".agents/skills/swiftui-feature-work/SKILL.md",
+    ".agents/skills/swiftui-feature-work/scripts/swiftui-delivery",
+    ".agents/skills/swiftui-feature-work/scripts/preserve-build",
+    ".agents/skills/swiftui-feature-work/scripts/annotate-video",
+    ".agents/skills/swiftui-deliver/SKILL.md",
+    ".agents/skills/swiftui-deliver/scripts/swiftui-delivery",
+    ".agents/skills/swiftui-deliver/scripts/phone-lease",
+    ".agents/skills/ios-build-hygiene/SKILL.md",
+    ".agents/skills/ios-build-hygiene/.gitignore",
+    ".agents/skills/share-video-evidence/SKILL.md",
+    "docs/operations/swiftui-delivery-clean-cutover.md",
+    "docs/operations/swiftui-delivery-system.html",
+    "docs/operations/swiftui-local-archive-manifest.md"
+  ],
+  "auditedDocuments": [
+    "docs/operations/swiftui-delivery-clean-cutover.md",
+    "docs/operations/swiftui-delivery-system.html",
+    "docs/operations/swiftui-local-archive-manifest.md"
+  ],
+  "absolutePathAllowlist": [
+    "docs/operations/swiftui-local-archive-manifest.md"
+  ],
+  "forbiddenPackagePaths": [
+    "scripts/swiftui-delivery/orchestration_supervisor.py",
+    "scripts/swiftui-delivery/dispatch_worker.py",
+    "scripts/swiftui-delivery/dispatch_adapter.py",
+    "scripts/swiftui-delivery/dispatch_rpc.mjs",
+    "scripts/swiftui-delivery/board_audit_adapter.py",
+    "scripts/swiftui-delivery/deployment"
+  ],
+  "externalStateInterfaces": [
+    "~/.local/state/t3/swiftui-delivery",
+    "~/.local/share/t3/swiftui-delivery/builds",
+    "GitHub issues for the current T3 Code repository",
+    "T3 environments resolved at execution time"
+  ],
+  "installation": "Project skills live in .agents/skills in this checkout. Do not mirror or symlink them into global harness roots."
+}

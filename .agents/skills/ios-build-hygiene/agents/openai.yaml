@@ -1,0 +1,4 @@
+interface:
+  display_name: "iOS Build Hygiene"
+  short_description: "Run isolated Xcode tests and clean generated state"
+  default_prompt: "Use $ios-build-hygiene to run this iOS build or test without leaking DerivedData or XCTest clones."

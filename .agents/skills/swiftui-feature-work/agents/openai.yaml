@@ -1,0 +1,4 @@
+interface:
+  display_name: "Build and Prove SwiftUI Feature"
+  short_description: "Build, test, review, and prove one native SwiftUI issue."
+  default_prompt: "Use $swiftui-feature-work to implement and prove the explicitly identified native SwiftUI issue."

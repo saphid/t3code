@@ -1,0 +1,63 @@
+{
+  "schemaVersion": 2,
+  "package": "swiftui-delivery",
+  "repository": "pingdotgg/t3code",
+  "productRepository": "resolved from the current T3 Code checkout",
+  "workItemFence": "swiftui-work-item-v2",
+  "canonicalTool": "scripts/swiftui-delivery/scripts/swiftui-delivery",
+  "stateRoot": "~/.local/state/t3/swiftui-delivery",
+  "buildStore": "~/.local/share/t3/swiftui-delivery/builds",
+  "phonePublicationLease": "~/.local/state/t3/swiftui-delivery/phone-publication.lock",
+  "humanActors": ["Alex", "Saphid"],
+  "laneSemantics": {
+    "lane": "A named work stream that may contain multiple issues.",
+    "workItem": "The delivery state and proof for exactly one issue.",
+    "membership": "Every work item names exactly one laneId; an issue cannot appear in two work items."
+  },
+  "stages": [
+    "queued",
+    "active",
+    "proof-ready",
+    "phone-test",
+    "accepted",
+    "pr-open",
+    "landed",
+    "cancelled",
+    "superseded"
+  ],
+  "transitions": {
+    "queued": ["active", "cancelled", "superseded"],
+    "active": ["proof-ready", "cancelled", "superseded"],
+    "proof-ready": ["phone-test", "active", "cancelled", "superseded"],
+    "phone-test": ["accepted", "active", "cancelled", "superseded"],
+    "accepted": ["pr-open", "active", "cancelled", "superseded"],
+    "pr-open": ["landed", "active", "cancelled", "superseded"],
+    "landed": [],
+    "cancelled": [],
+    "superseded": []
+  },
+  "dependencyKinds": ["stacked-on", "ordered-after", "collision"],
+  "generationModes": ["publish-test", "publish-dev", "open-pr"],
+  "generationRoles": {
+    "publish-test": ["candidate", "installed-carry"],
+    "publish-dev": ["accepted"],
+    "open-pr": ["candidate"]
+  },
+  "evidencePolicy": {
+    "userVisible": "Exact-base before image and annotated video plus exact-head after image and annotated video.",
+    "appearance": "A visual appearance change also needs light and dark screenshots in both phases.",
+    "exception": "Only non-user-visible work may omit media, with a specific reason reviewed by the evidence reviewer.",
+    "publication": "No Test or phone generation plan is valid until every capture has an agent review and the proof and inspection hashes match the work item."
+  },
+  "repoOwnedSpecialists": [
+    ".agents/skills/ios-build-hygiene/SKILL.md",
+    ".agents/skills/share-video-evidence/SKILL.md"
+  ],
+  "protectedExternalSpecialists": [
+    "swiftui-pro",
+    "swift-testing-pro",
+    "swift-concurrency-pro",
+    "t3code-land-contribution",
+    "babysit-pr"
+  ]
+}

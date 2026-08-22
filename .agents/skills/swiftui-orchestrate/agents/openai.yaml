@@ -1,0 +1,4 @@
+interface:
+  display_name: "Orchestrate SwiftUI Delivery"
+  short_description: "Coordinate the native SwiftUI delivery board."
+  default_prompt: "Use $swiftui-orchestrate to reconcile and advance the native SwiftUI delivery board."

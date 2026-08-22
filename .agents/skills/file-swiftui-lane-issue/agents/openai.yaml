@@ -1,0 +1,4 @@
+interface:
+  display_name: "Capture SwiftUI Lane"
+  short_description: "Capture one native SwiftUI work item in a GitHub issue."
+  default_prompt: "Use $file-swiftui-lane-issue to capture this native SwiftUI feature or fix as a durable delivery work item."
