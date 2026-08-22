@@ -1,6 +1,17 @@
 import SwiftUI
 import UIKit
 
+private struct FeatureCommandDrawerPresentingKey: EnvironmentKey {
+    static let defaultValue = false
+}
+
+extension EnvironmentValues {
+    var commandDrawerIsPresenting: Bool {
+        get { self[FeatureCommandDrawerPresentingKey.self] }
+        set { self[FeatureCommandDrawerPresentingKey.self] = newValue }
+    }
+}
+
 /// Hosts the workspace inside a physical top drawer.
 ///
 /// The drawer hangs above the top edge; pulling it down moves the drawer, the
@@ -34,6 +45,7 @@ struct FeatureCommandDrawerContainer<Content: View>: View {
         // finger. Translating the page as well read as the whole screen being
         // shoved downwards, which is not what a drawer does.
         content
+            .environment(\.commandDrawerIsPresenting, state.isVisible)
             .overlay {
                 scrim(progress: progress)
             }
@@ -44,6 +56,7 @@ struct FeatureCommandDrawerContainer<Content: View>: View {
                 FeatureCommandDrawerGestureView(
                     reveal: state.reveal,
                     isOpen: state.isOpen,
+                    isKeyboardVisible: keyboardHeight > 0,
                     onBegan: { state.beginDrag() },
                     onChanged: { translation in
                         state.updateDrag(translation: translation, openHeight: openHeight)
@@ -321,7 +334,7 @@ struct FeatureCommandDrawerContainer<Content: View>: View {
             .fill(T3Colors.textTertiary.opacity(0.45))
             .frame(width: 38, height: 5)
             .frame(maxWidth: .infinity)
-            .frame(height: 22)
+            .frame(height: FeatureCommandDrawerGesture.handleGrabHeight)
             .contentShape(Rectangle())
             .accessibilityHidden(true)
     }
@@ -347,6 +360,7 @@ struct FeatureCommandDrawerContainer<Content: View>: View {
 private struct FeatureCommandDrawerGestureView: UIViewRepresentable {
     let reveal: CGFloat
     let isOpen: Bool
+    let isKeyboardVisible: Bool
     let onBegan: () -> Void
     let onChanged: (CGFloat) -> Void
     let onEnded: (CGFloat) -> Void
@@ -370,6 +384,7 @@ private struct FeatureCommandDrawerGestureView: UIViewRepresentable {
         view.update(
             reveal: reveal,
             isOpen: isOpen,
+            isKeyboardVisible: isKeyboardVisible,
             onBegan: onBegan,
             onChanged: onChanged,
             onEnded: onEnded,
@@ -380,6 +395,7 @@ private struct FeatureCommandDrawerGestureView: UIViewRepresentable {
     final class InstallerView: UIView {
         private var reveal: CGFloat = 0
         private var isOpen = false
+        private var isKeyboardVisible = false
         private var onBegan: (() -> Void)?
         private var onChanged: ((CGFloat) -> Void)?
         private var onEnded: ((CGFloat) -> Void)?
@@ -413,6 +429,7 @@ private struct FeatureCommandDrawerGestureView: UIViewRepresentable {
         func update(
             reveal: CGFloat,
             isOpen: Bool,
+            isKeyboardVisible: Bool,
             onBegan: @escaping () -> Void,
             onChanged: @escaping (CGFloat) -> Void,
             onEnded: @escaping (CGFloat) -> Void,
@@ -420,6 +437,7 @@ private struct FeatureCommandDrawerGestureView: UIViewRepresentable {
         ) {
             self.reveal = reveal
             self.isOpen = isOpen
+            self.isKeyboardVisible = isKeyboardVisible
             self.onBegan = onBegan
             self.onChanged = onChanged
             self.onEnded = onEnded
@@ -444,7 +462,7 @@ private struct FeatureCommandDrawerGestureView: UIViewRepresentable {
             guard gestureHost !== host else { return }
 
             uninstallGesture()
-            let panGesture = UIPanGestureRecognizer(
+            let panGesture = CommandDrawerPanGestureRecognizer(
                 target: self,
                 action: #selector(handlePan(_:))
             )
@@ -457,6 +475,22 @@ private struct FeatureCommandDrawerGestureView: UIViewRepresentable {
             gestureHost = host
             self.panGesture = panGesture
             self.gestureDelegate = gestureDelegate
+        }
+
+        // SwiftUI's result list owns a descendant scroll recognizer. When both
+        // pans accept a handle drag, keep UIKit's prevention decision local to
+        // that contest instead of installing a failure dependency in SwiftUI's
+        // gesture graph (which can create an AttributeGraph cycle).
+        private final class CommandDrawerPanGestureRecognizer: UIPanGestureRecognizer {
+            override func canPrevent(_ preventedGestureRecognizer: UIGestureRecognizer) -> Bool {
+                if preventedGestureRecognizer.view is UIScrollView { return true }
+                return super.canPrevent(preventedGestureRecognizer)
+            }
+
+            override func canBePrevented(by preventingGestureRecognizer: UIGestureRecognizer) -> Bool {
+                if preventingGestureRecognizer.view is UIScrollView { return false }
+                return super.canBePrevented(by: preventingGestureRecognizer)
+            }
         }
 
         @objc private func handlePan(_ gesture: UIPanGestureRecognizer) {
@@ -490,7 +524,8 @@ private struct FeatureCommandDrawerGestureView: UIViewRepresentable {
                   FeatureCommandDrawerGesture.canBeginTouch(
                       atY: location.y,
                       reveal: reveal,
-                      topInset: window.safeAreaInsets.top
+                      topInset: window.safeAreaInsets.top,
+                      isKeyboardVisible: isKeyboardVisible
                   ) else {
                 return false
             }

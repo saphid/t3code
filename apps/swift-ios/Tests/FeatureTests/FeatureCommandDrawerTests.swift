@@ -638,6 +638,61 @@ struct FeatureCommandDrawerTests {
         )
     }
 
+    // MARK: - Keyboard dismissal handoff (issue #135)
+
+    @Test(.bug("https://github.com/saphid/t3code-personal/issues/135"))
+    func aKeyboardConstrainedDrawerUsesOnlyItsReachableHandleBand() {
+        let reveal: CGFloat = 476
+        let topInset: CGFloat = 59
+        let edge = topInset + reveal
+
+        let band = FeatureCommandDrawerGesture.grabBand(
+            reveal: reveal,
+            topInset: topInset,
+            isKeyboardVisible: true
+        )
+
+        #expect(band == (edge - FeatureCommandDrawerGesture.handleGrabHeight)...edge)
+        #expect(
+            FeatureCommandDrawerGesture.canBeginTouch(
+                atY: edge - FeatureCommandDrawerGesture.handleGrabHeight,
+                reveal: reveal,
+                topInset: topInset,
+                isKeyboardVisible: true
+            )
+        )
+        #expect(
+            FeatureCommandDrawerGesture.canBeginTouch(
+                atY: edge + 1,
+                reveal: reveal,
+                topInset: topInset,
+                isKeyboardVisible: true
+            ) == false
+        )
+    }
+
+    @Test(.bug("https://github.com/saphid/t3code-personal/issues/135"))
+    func closingTheDrawerRestoresOnlyTheFocusItDisplaced() {
+        #expect(
+            FeatureCommandDrawerFocus.reclaimsKeyboard(
+                isDrawerPresenting: false,
+                heldKeyboardBeforeDrawer: true
+            )
+        )
+        #expect(
+            FeatureCommandDrawerFocus.reclaimsKeyboard(
+                isDrawerPresenting: false,
+                heldKeyboardBeforeDrawer: false
+            ) == false
+        )
+        #expect(
+            FeatureCommandDrawerFocus.reclaimsKeyboard(
+                isDrawerPresenting: true,
+                heldKeyboardBeforeDrawer: true
+            ) == false
+        )
+    }
+
     @Test
     func theGestureClaimsOnlyClearlyVerticalMotionInTheRightDirection() {
         // Downward pull opens.

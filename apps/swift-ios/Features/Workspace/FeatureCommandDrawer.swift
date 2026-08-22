@@ -161,7 +161,9 @@ enum FeatureCommandDrawerGeometry {
 enum FeatureCommandDrawerGesture {
     /// Band below the top inset that can start the pull, sized to the top bar.
     static let topGrabHeight: CGFloat = 56
-    /// Band above the open drawer's edge, covering its handle.
+    /// Band above the open drawer's edge, covering its handle. The view lays
+    /// out the handle strip at this same height so the result list cannot claim
+    /// a gesture that the recognizer says belongs to the handle.
     static let handleGrabHeight: CGFloat = 56
     /// Band below the open drawer's edge, covering the nearest scrim.
     static let scrimGrabHeight: CGFloat = 64
@@ -170,20 +172,32 @@ enum FeatureCommandDrawerGesture {
 
     /// Bands are expressed in window coordinates: the closed drawer's edge sits
     /// at the top safe-area boundary, so `reveal` is measured from there.
-    static func grabBand(reveal: CGFloat, topInset: CGFloat) -> ClosedRange<CGFloat> {
+    static func grabBand(
+        reveal: CGFloat,
+        topInset: CGFloat,
+        isKeyboardVisible: Bool = false
+    ) -> ClosedRange<CGFloat> {
         guard reveal > 0 else {
             return topInset...(topInset + topGrabHeight)
         }
         let edge = topInset + reveal
-        return (edge - handleGrabHeight)...(edge + scrimGrabHeight)
+        // A docked keyboard owns every point below the drawer edge, so only
+        // the handle above it is a reachable target in this app's window.
+        let belowEdge = isKeyboardVisible ? 0 : scrimGrabHeight
+        return (edge - handleGrabHeight)...(edge + belowEdge)
     }
 
     static func canBeginTouch(
         atY y: CGFloat,
         reveal: CGFloat,
-        topInset: CGFloat
+        topInset: CGFloat,
+        isKeyboardVisible: Bool = false
     ) -> Bool {
-        grabBand(reveal: reveal, topInset: topInset).contains(y)
+        grabBand(
+            reveal: reveal,
+            topInset: topInset,
+            isKeyboardVisible: isKeyboardVisible
+        ).contains(y)
     }
 
     /// Mirrors the detail surface's back-swipe policy: prefer real travel once
@@ -301,6 +315,15 @@ enum FeatureCommandDrawerFocus {
         isFocused: Bool
     ) -> Bool {
         state.isOpen && !isFocused
+    }
+
+    /// Restore only focus that the drawer displaced. Opening the drawer over a
+    /// page with no active editor must still dismiss its keyboard on close.
+    static func reclaimsKeyboard(
+        isDrawerPresenting: Bool,
+        heldKeyboardBeforeDrawer: Bool
+    ) -> Bool {
+        !isDrawerPresenting && heldKeyboardBeforeDrawer
     }
 }
 

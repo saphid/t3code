@@ -2,7 +2,10 @@ import SwiftUI
 import UIKit
 
 struct FeatureComposerView: View {
+    @SwiftUI.Environment(\.commandDrawerIsPresenting) private var commandDrawerIsPresenting
+
     @State private var isManuallyExpanded = false
+    @State private var heldKeyboardBeforeCommandDrawer = false
     @State private var isAttachmentFlowActive = false
     @State private var isModelPickerPresented = false
     @State private var restoresFocusAfterModelPickerDismissal = false
@@ -117,6 +120,18 @@ struct FeatureComposerView: View {
                 )
                 .ignoresSafeArea()
             }
+            .onChange(of: commandDrawerIsPresenting) { _, isPresenting in
+                if isPresenting {
+                    heldKeyboardBeforeCommandDrawer = focused
+                    return
+                }
+                guard FeatureCommandDrawerFocus.reclaimsKeyboard(
+                    isDrawerPresenting: isPresenting,
+                    heldKeyboardBeforeDrawer: heldKeyboardBeforeCommandDrawer
+                ) else { return }
+                heldKeyboardBeforeCommandDrawer = false
+                expandAndFocus()
+            }
             .onChange(of: focused) {
                 if FeatureComposerCollapsePolicy.shouldCollapse(
                     isFocused: focused,
@@ -142,6 +157,14 @@ struct FeatureComposerView: View {
             } message: {
                 Text(imageIntakeErrorMessage ?? "")
             }
+    }
+
+    private func expandAndFocus() {
+        isManuallyExpanded = true
+        Task { @MainActor in
+            await Task.yield()
+            focused = true
+        }
     }
 
     private var composerSurface: some View {
@@ -189,11 +212,7 @@ struct FeatureComposerView: View {
     private var collapsedComposer: some View {
         HStack(spacing: 4) {
             Button {
-                isManuallyExpanded = true
-                Task { @MainActor in
-                    await Task.yield()
-                    focused = true
-                }
+                expandAndFocus()
             } label: {
                 Text(composerPlaceholder)
                     .font(T3Typography.composer)
