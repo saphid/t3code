@@ -14,10 +14,13 @@ Done (server side, on the Grafana box `lxso2`):
 - Admin password rotated off the default. It lives in the work Mac's keychain
   (`security find-generic-password -s grafana-192.168.1.221 -a admin -w`).
   Move it into 1Password if others need it.
-- Anonymous access (previously org role Admin) disabled and sign-up off in
+- Anonymous access (previously org role Admin) disabled. Self-service sign-up
+  is enabled in
   `~/t3-perf/observability/docker-compose.yml`; Grafana upgraded 11.3.0 ->
-  13.2.0 and pinned. Pre-change backups (compose + data volume tarball) are in
-  `~/backups/` on the box, stamp `20260823-0433`.
+  13.2.0 and pinned. New accounts are automatically assigned Viewer. The
+  pre-self-service compose backup is
+  `docker-compose.yml.pre-self-signup-20260823`; earlier compose and data
+  backups are in `~/backups/` on the box, stamp `20260823-0433`.
 - Cloudflare tunnel `grafana-share` created (id
   `062b931a-1366-491c-bbea-46ca5cd7d775`, account
   `9803821a7c6a638a2e69b8ffe8286cb5`). `cloudflared` runs on the box as a
@@ -29,9 +32,9 @@ Done (server side, on the Grafana box `lxso2`):
 - Zero Trust Free is active (50 included seats; usage above the free limits is
   authorized against the account's saved payment method). Cloudflare assigned
   team domain `wandering-violet-a685.cloudflareaccess.com`.
-- One-time PIN login is enabled. The Access app `Grafana` allows only
-  `saphid@gmail.com` and redirects unauthenticated requests to the Access login
-  wall.
+- One-time PIN login is enabled. The Access app `Grafana` accepts anyone who
+  proves control of an email address and redirects unauthenticated requests to
+  the Access login wall.
 - Scoped user token `t3play-agent-tools-v2` has DNS Edit on all zones and Edit
   on Access organizations/identity/groups, Access apps/policies, and
   Cloudflare Tunnel. The token is in macOS Keychain under service
@@ -66,8 +69,12 @@ That credential can support DNS, Access, and Tunnel tools. It intentionally
 cannot manage Workers, R2, billing, registrar settings, or unrelated products;
 create a separately scoped credential if a future tool needs those powers.
 
-For this Grafana app, use the paired operator instead of editing either system
-by hand:
+The shareable self-service link is `https://stats.t3play.dev`. A visitor enters
+their email at Cloudflare, completes the emailed One-time PIN, then uses
+Grafana's **Sign up** link to create a Viewer account.
+
+Use the paired operator to inspect users, pre-create an account invitation, or
+block a person:
 
 ```sh
 scripts/grafana-share-users.py list
@@ -75,23 +82,22 @@ scripts/grafana-share-users.py add person@example.com --name "Person Name"
 scripts/grafana-share-users.py remove person@example.com
 ```
 
-`add` preserves the current Cloudflare allowlist and creates a Viewer invite in
-Grafana. Grafana email delivery is not assumed: the command prints a one-time
-invitation URL for the administrator to send to the person. They first pass
-Cloudflare's emailed One-time PIN and then use that URL to choose their Grafana
-password. The Grafana organization-scoped service token is stored in macOS
+In self-service mode, `add` removes the address from the Access blocklist and
+creates a Viewer invite. Grafana email delivery is not assumed, so it prints a
+one-time invitation URL. `remove` deletes the Grafana user or pending invite
+and adds the address to the Access blocklist, preventing immediate re-signup.
+The Grafana organization-scoped service token is stored in macOS
 Keychain service `grafana-share-inviter`, account `stats.t3play.dev`. The server
 administrator password remains separately stored under service
 `grafana-192.168.1.221`, account `admin` and is not used by this operator.
 
 ## Day-2 operations
 
-- **Add a teammate**: Zero Trust dashboard -> Access -> Applications ->
-  Grafana -> policy `Team` -> add their email, or re-run the finisher with
-  `ALLOW_EMAILS=a@x.com,b@y.com`. Give them a Grafana account too
-  (Viewer role) - Access gates the door, Grafana still authenticates.
-- **Remove access**: delete the email from the policy; their session dies at
-  the next 24h expiry, or revoke immediately from the app's Sessions view.
+- **Add a teammate**: send `https://stats.t3play.dev`; no administrator action
+  is required.
+- **Remove access**: run `scripts/grafana-share-users.py remove EMAIL`. Their
+  current Access session may remain valid until expiry; revoke it immediately
+  from the app's Sessions view when needed.
 - **Rollback sharing entirely**: delete the DNS record and Access app, then
   `sudo cloudflared service uninstall` on the box. Grafana keeps working on
   the LAN.

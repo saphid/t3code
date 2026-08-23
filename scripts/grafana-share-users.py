@@ -105,6 +105,18 @@ def policy_emails(policy):
     )
 
 
+def policy_excluded_emails(policy):
+    return sorted(
+        rule["email"]["email"].lower()
+        for rule in policy.get("exclude", [])
+        if rule.get("email", {}).get("email")
+    )
+
+
+def policy_is_self_service(policy):
+    return any("everyone" in rule for rule in policy.get("include", []))
+
+
 def update_policy(token, app, policy, emails):
     body = {
         "name": policy["name"],
@@ -112,6 +124,23 @@ def update_policy(token, app, policy, emails):
         "precedence": policy["precedence"],
         "include": [{"email": {"email": email}} for email in sorted(emails)],
         "exclude": policy.get("exclude", []),
+        "require": policy.get("require", []),
+    }
+    return cf_result(
+        "PUT",
+        f"/accounts/{CF_ACCOUNT_ID}/access/apps/{app['id']}/policies/{policy['id']}",
+        token,
+        body,
+    )
+
+
+def update_self_service_exclusions(token, app, policy, emails):
+    body = {
+        "name": policy["name"],
+        "decision": policy["decision"],
+        "precedence": policy["precedence"],
+        "include": policy["include"],
+        "exclude": [{"email": {"email": email}} for email in sorted(emails)],
         "require": policy.get("require", []),
     }
     return cf_result(
@@ -166,9 +195,17 @@ def add(email, name, role, cf_token, grafana_token):
         invite = created_invite
 
     emails = set(policy_emails(policy))
-    if email not in emails:
+    excluded = set(policy_excluded_emails(policy))
+    if (policy_is_self_service(policy) and email in excluded) or (
+        not policy_is_self_service(policy) and email not in emails
+    ):
         try:
-            update_policy(cf_token, app, policy, emails | {email})
+            if policy_is_self_service(policy):
+                update_self_service_exclusions(
+                    cf_token, app, policy, excluded - {email}
+                )
+            else:
+                update_policy(cf_token, app, policy, emails | {email})
         except SystemExit:
             if created_invite:
                 request(
@@ -191,9 +228,13 @@ def remove(email, cf_token, grafana_token):
     if email in PROTECTED_EMAILS:
         fail(f"refusing to remove protected owner account: {email}")
     app, policy = cloudflare_policy(cf_token)
-    emails = set(policy_emails(policy))
-    if email in emails:
-        update_policy(cf_token, app, policy, emails - {email})
+    if policy_is_self_service(policy):
+        excluded = set(policy_excluded_emails(policy))
+        update_self_service_exclusions(cf_token, app, policy, excluded | {email})
+    else:
+        emails = set(policy_emails(policy))
+        if email in emails:
+            update_policy(cf_token, app, policy, emails - {email})
 
     users, invites = grafana_state(grafana_token)
     for invite in invites:
@@ -216,8 +257,13 @@ def list_users(cf_token, grafana_token):
     _, policy = cloudflare_policy(cf_token)
     users, invites = grafana_state(grafana_token)
     print("Cloudflare Access:")
-    for email in policy_emails(policy):
-        print(f"  {email}")
+    if policy_is_self_service(policy):
+        print("  any email verified by One-time PIN")
+        for email in policy_excluded_emails(policy):
+            print(f"  blocked: {email}")
+    else:
+        for email in policy_emails(policy):
+            print(f"  {email}")
     print("Grafana users:")
     for user in sorted(users, key=lambda item: item.get("email", "")):
         print(f"  {user.get('email') or user.get('login')} ({user.get('role')})")
