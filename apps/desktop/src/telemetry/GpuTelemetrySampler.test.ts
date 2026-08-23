@@ -27,6 +27,7 @@ describe("GpuTelemetrySampler", () => {
       { IORegistryEntryID: 13, IOUserClientCreator: "no pid here", AppUsage: [] },
       { IORegistryEntryID: 14, IOUserClientCreator: "pid 900, other" },
     ]);
+    assert.isTrue(snapshot.sawClient);
     assert.isTrue(snapshot.sawAppUsage);
     assert.equal(snapshot.entries.size, 2);
     assert.equal(snapshot.entries.get(12)?.pid, 500);
@@ -37,6 +38,14 @@ describe("GpuTelemetrySampler", () => {
     const snapshot = parseAgxEntries([
       { IORegistryEntryID: 11, IOUserClientCreator: "pid 500, helper" },
     ]);
+    assert.isTrue(snapshot.sawClient);
+    assert.isFalse(snapshot.sawAppUsage);
+    assert.equal(snapshot.entries.size, 0);
+  });
+
+  it("distinguishes a host without AGX clients from a changed registry layout", () => {
+    const snapshot = parseAgxEntries([]);
+    assert.isFalse(snapshot.sawClient);
     assert.isFalse(snapshot.sawAppUsage);
     assert.equal(snapshot.entries.size, 0);
   });

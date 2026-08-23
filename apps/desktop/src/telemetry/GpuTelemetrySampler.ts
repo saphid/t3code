@@ -66,16 +66,21 @@ export interface AgxEntry {
 
 export interface AgxSnapshot {
   readonly entries: ReadonlyMap<number, AgxEntry>;
+  readonly sawClient: boolean;
   readonly sawAppUsage: boolean;
 }
 
 /** Parses the JSON form of `ioreg -c AGXDeviceUserClient -d 1 -r -a`. */
 export function parseAgxEntries(raw: unknown): AgxSnapshot {
-  if (!Array.isArray(raw)) return { entries: new Map(), sawAppUsage: false };
+  if (!Array.isArray(raw)) {
+    return { entries: new Map(), sawClient: false, sawAppUsage: false };
+  }
   const entries = new Map<number, AgxEntry>();
+  let sawClient = false;
   let sawAppUsage = false;
   for (const item of raw) {
     if (typeof item !== "object" || item === null) continue;
+    sawClient = true;
     const record = item as Record<string, unknown>;
     const creator = record["IOUserClientCreator"];
     const entryId = record["IORegistryEntryID"];
@@ -92,7 +97,7 @@ export function parseAgxEntries(raw: unknown): AgxSnapshot {
     }
     entries.set(entryId, { entryId, pid: Number(pidMatch[1]), gpuTimeNs });
   }
-  return { entries, sawAppUsage };
+  return { entries, sawClient, sawAppUsage };
 }
 
 /**
@@ -232,7 +237,13 @@ export const make = Effect.fn("desktop.gpuTelemetrySampler.make")(function* () {
         try: () => readAgxSnapshot(),
         catch: (cause) => new GpuReadFailed({ cause }),
       });
-      if (snapshot.entries.size > 0 && !snapshot.sawAppUsage) {
+      if (!snapshot.sawClient) {
+        yield* Ref.set(failures, 0);
+        yield* Ref.set(darwinBaseline, Option.none());
+        return Option.none<GpuSample>();
+      }
+      if (!snapshot.sawAppUsage) {
+        yield* Ref.set(darwinBaseline, Option.none());
         return yield* recordFailure(
           "AGXDeviceUserClient entries carry no AppUsage; the macOS GPU registry layout changed",
         );

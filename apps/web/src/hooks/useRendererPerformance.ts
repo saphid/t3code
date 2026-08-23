@@ -90,8 +90,6 @@ export function useRendererPerformance(intervalMs = 1_000): RendererPerformanceS
           }
         })
       : null;
-    observer?.observe({ type: "longtask", buffered: true });
-
     const onFrame = () => {
       frameCount += 1;
       rafId = requestAnimationFrame(onFrame);
@@ -115,10 +113,14 @@ export function useRendererPerformance(intervalMs = 1_000): RendererPerformanceS
       if (timer !== null) return;
       lastTickAt = performance.now();
       frameCount = 0;
+      longTasks = [];
+      observer?.observe({ type: "longtask" });
       rafId = requestAnimationFrame(onFrame);
       timer = setInterval(tick, intervalMs);
     };
     const stop = () => {
+      observer?.disconnect();
+      longTasks = [];
       if (rafId !== null) cancelAnimationFrame(rafId);
       rafId = null;
       if (timer !== null) clearInterval(timer);
@@ -136,7 +138,6 @@ export function useRendererPerformance(intervalMs = 1_000): RendererPerformanceS
 
     return () => {
       stop();
-      observer?.disconnect();
       document.removeEventListener("visibilitychange", onVisibilityChange);
     };
   }, [intervalMs]);

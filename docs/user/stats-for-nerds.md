@@ -4,9 +4,10 @@ The Stats for Nerds page shows what T3 Code is costing your machine right now. O
 command palette ("Stats for nerds"), from Settings → General → Stats for nerds, or at
 `/settings/stats`.
 
-**Application** lists live CPU, memory, and GPU usage for every process T3 Code runs: the desktop
-shell, the server, and the agents and terminals it spawns. The busiest processes appear first; the
-full process tree, I/O rates, and history live on the Diagnostics page.
+**Application** lists live CPU and memory for every process T3 Code runs: the desktop shell, the
+server, and the agents and terminals it spawns. The desktop shell also reports per-process GPU usage
+when the host supports it. The busiest processes appear first; the full process tree, I/O rates, and
+history live on the Diagnostics page.
 
 GPU attribution needs the desktop app and is available on macOS (Apple Silicon) and Linux. In a
 browser, or when connected to a remote environment without a desktop shell, the GPU column stays
