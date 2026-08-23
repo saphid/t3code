@@ -42,29 +42,12 @@ struct FeatureVoiceDictationButton: View {
                 .controlSize(.small)
                 .tint(T3Colors.textSecondary)
         case .recording:
-            // Red mic plus equalizer bars that bounce with the live
-            // microphone level. Springy on purpose so speech visibly makes
-            // them jump; they only repaint while audio buffers arrive.
-            HStack(spacing: 3) {
-                Image(systemName: "mic.fill")
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundStyle(T3Colors.danger)
-                HStack(spacing: 2) {
-                    ForEach(0..<3, id: \.self) { index in
-                        Capsule()
-                            .fill(T3Colors.danger)
-                            .frame(width: 2.5, height: barHeight(index))
-                    }
-                }
-                .frame(height: 26)
-            }
-            .animation(.spring(duration: 0.2, bounce: 0.6), value: model.audioLevel)
+            // Just the colour change; the composer-wide voice glow carries
+            // the "listening" animation.
+            Image(systemName: "mic.fill")
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundStyle(T3Colors.danger)
         }
-    }
-
-    private func barHeight(_ index: Int) -> CGFloat {
-        let multipliers: [CGFloat] = [16, 22, 12]
-        return 4 + multipliers[index] * CGFloat(model.audioLevel)
     }
 
     private var accessibilityLabel: String {

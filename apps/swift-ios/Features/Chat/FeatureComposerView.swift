@@ -183,6 +183,12 @@ struct FeatureComposerView: View {
                 .stroke(T3Colors.inputBorder, lineWidth: 1)
         }
         .clipShape(composerShape)
+        .overlay {
+            // Added after clipShape so the blur can bloom past the border.
+            if dictation.isRecording {
+                FeatureComposerVoiceGlow(shape: composerShape, level: dictation.audioLevel)
+            }
+        }
         .modifier(
             FeatureComposerImageDrop(
                 isEnabled: imagesAllowed,
@@ -492,9 +498,6 @@ struct FeatureComposerView: View {
 
     private var canSend: Bool {
         guard composerTrigger?.kind != .model else { return false }
-        // Sending mid-dictation would drop the volatile words and leak late
-        // finalized segments into the next draft.
-        guard dictation.phase == .idle else { return false }
         return FeatureComposerSubmissionEligibility.canSend(
             text: text,
             attachmentCount: attachments.count,
@@ -639,6 +642,13 @@ struct FeatureComposerView: View {
             onStop()
         } else if FeatureComposerSubmissionPolicy.allowsSend(for: .explicitButton),
                   canSend {
+            // Sending mid-dictation is allowed: the live hypothesis is
+            // already in the draft, so cancel (its callbacks are gated on
+            // the torn-down engine, so no late segment can reach the next
+            // draft) and send what is visible.
+            if dictation.phase != .idle {
+                dictation.cancel()
+            }
             onSend()
         }
     }
@@ -711,6 +721,26 @@ enum FeatureComposerCollapsePolicy {
             && attachmentsAreEmpty
             && !isAttachmentFlowActive
             && !isPreparingAttachments
+    }
+}
+
+/// Soft glow hugging the whole composer (input, mic, and send) that pulses
+/// brighter and dimmer with the live microphone level while dictating. It
+/// animates only when level values arrive, never on a timer.
+private struct FeatureComposerVoiceGlow: View {
+    let shape: RoundedRectangle
+    let level: Double
+
+    var body: some View {
+        let intensity = 0.35 + level * 0.65
+        shape
+            .stroke(T3Colors.accent.opacity(intensity * 0.85), lineWidth: 1.5 + level * 3)
+            .blur(radius: 3 + level * 9)
+            .overlay {
+                shape.stroke(T3Colors.accent.opacity(intensity * 0.45), lineWidth: 1)
+            }
+            .allowsHitTesting(false)
+            .animation(.spring(duration: 0.22, bounce: 0.4), value: level)
     }
 }
 
