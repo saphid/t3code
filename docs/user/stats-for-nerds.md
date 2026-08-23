@@ -2,7 +2,8 @@
 
 The Stats for Nerds page shows what T3 Code is costing your machine right now. Open it from the
 command palette ("Stats for nerds"), from Settings → General → Stats for nerds, or at
-`/settings/stats`.
+`/settings/stats`. In the desktop app, the Settings and command-palette actions open Stats for
+Nerds in a separate reusable window so you can keep it visible while working in the main window.
 
 **Application** lists live CPU and memory for every process T3 Code runs: the desktop shell, the
 server, and the agents and terminals it spawns. The desktop shell also reports per-process GPU usage

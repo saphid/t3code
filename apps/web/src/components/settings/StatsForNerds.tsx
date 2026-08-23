@@ -1,4 +1,4 @@
-import { AlertTriangleIcon } from "lucide-react";
+import { AlertTriangleIcon, PanelTopOpenIcon } from "lucide-react";
 import { Link } from "@tanstack/react-router";
 import { useAtomValue } from "@effect/atom-react";
 import { useMemo, type ReactNode } from "react";
@@ -42,6 +42,7 @@ function SectionError({ message }: { message: string }) {
 }
 
 export function StatsForNerdsPanel() {
+  const openStatsWindow = window.desktopBridge?.openStatsWindow;
   const observability = useAtomValue(primaryServerObservabilityAtom);
   const primaryEnvironment = usePrimaryEnvironment();
   const environmentId = primaryEnvironment?.environmentId ?? null;
@@ -76,14 +77,27 @@ export function StatsForNerdsPanel() {
       <SettingsSection
         title="Application"
         headerAction={
-          <Button
-            render={<Link to="/settings/diagnostics" />}
-            size="xs"
-            variant="ghost-muted"
-            className="text-[11px]"
-          >
-            Full diagnostics
-          </Button>
+          <div className="flex items-center gap-1">
+            {openStatsWindow ? (
+              <Button
+                size="xs"
+                variant="ghost-muted"
+                className="text-[11px]"
+                onClick={() => void openStatsWindow()}
+              >
+                <PanelTopOpenIcon className="size-3" />
+                Open window
+              </Button>
+            ) : null}
+            <Button
+              render={<Link to="/settings/diagnostics" />}
+              size="xs"
+              variant="ghost-muted"
+              className="text-[11px]"
+            >
+              Full diagnostics
+            </Button>
+          </div>
         }
       >
         <StatsGrid>

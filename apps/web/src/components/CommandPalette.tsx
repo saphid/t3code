@@ -1631,6 +1631,10 @@ function OpenCommandPaletteDialog(props: {
     title: "Stats for nerds",
     icon: <ActivityIcon className={ITEM_ICON_CLASS} />,
     run: async () => {
+      if (window.desktopBridge?.openStatsWindow) {
+        await window.desktopBridge.openStatsWindow();
+        return;
+      }
       await navigate({ to: "/settings/stats" });
     },
   });
