@@ -38,6 +38,11 @@ Done (server side, on the Grafana box `lxso2`):
   addresses. A more-specific `stats.t3play.dev/join` Access app accepts anyone
   who proves control of an email address, after which the invite Worker checks
   the expiring link and enrolls that verified address.
+- Main Org's home dashboard is `T3 perf / Overview` (`t3perf-overview`). Its
+  top orientation panel explains what the suite measures, how to use the
+  filters, and why each focused dashboard exists. The provisioned source is
+  `~/t3-perf/observability/grafana/dashboards/overview.json` on `lxso2`; the
+  pre-home-page backup is `overview.json.pre-home-20260823` beside it.
 - Scoped user token `t3play-agent-tools-v2` has DNS Edit on all zones and Edit
   on Access organizations/identity/groups, Access apps/policies, and
   Cloudflare Tunnel. The token is in macOS Keychain under service
@@ -121,6 +126,10 @@ administrator password remains separately stored under service
 
 - **Add teammates**: rotate an expiring link with
   `scripts/grafana-share-invite.py --hours HOURS` and share the printed URL.
+- **Change the home dashboard**: edit the provisioned JSON on `lxso2`, restart
+  Grafana, and set Main Org's `homeDashboardUID` through
+  `PATCH /api/org/preferences`. Keep the orientation copy concise and preserve
+  links to all focused dashboards.
 - **Remove access**: run `scripts/grafana-share-users.py remove EMAIL`. Their
   current Access session may remain valid until expiry; revoke it immediately
   from the app's Sessions view when needed.
