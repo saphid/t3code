@@ -1,5 +1,5 @@
 {
-  "$schema": "../../node_modules/wrangler/config-schema.json",
+  "$schema": "./node_modules/wrangler/config-schema.json",
   "name": "grafana-invite-gate",
   "main": "src/index.js",
   "compatibility_date": "2026-08-23",
