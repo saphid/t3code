@@ -18,6 +18,8 @@ export interface RunnerOptions {
   readonly build?: string | undefined;
   /** Ambient network profile applied to web runs. */
   readonly network?: NetworkProfileName | undefined;
+  /** Unique fleet execution id, shared by every combo and exported as a label. */
+  readonly runId?: string | undefined;
 }
 
 export interface ScenarioResult {
@@ -30,6 +32,8 @@ export interface ScenarioResult {
   readonly build?: string;
   /** Ambient network profile the runs used; absent means good/direct. */
   readonly network?: string;
+  /** Unique fleet execution id. */
+  readonly runId?: string;
   readonly runs: ReadonlyArray<WindowMetrics>;
   readonly summary: {
     readonly wallMs: SampleSummary;
@@ -142,6 +146,7 @@ export async function runScenario(
     ...(options.network !== undefined && options.network !== "good"
       ? { network: options.network }
       : {}),
+    ...(options.runId !== undefined ? { runId: options.runId } : {}),
     runs,
     summary: summarizeRuns(runs),
   };

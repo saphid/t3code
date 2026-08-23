@@ -28,7 +28,7 @@ reported exactly.
 ## How it measures
 
 - **Isolation.** Every run creates a throwaway home directory in the OS temp
-  dir, boots the *built* server (`apps/server/dist/bin.mjs`) or desktop app
+  dir, boots the _built_ server (`apps/server/dist/bin.mjs`) or desktop app
   (`apps/desktop/dist-electron/main.cjs`) against it, and deletes it
   afterwards. The developer's `~/.t3` is never read or written.
 - **Fixtures.** `src/seed.ts` writes deterministic projection rows (the
@@ -39,7 +39,7 @@ reported exactly.
   the repo's Electron (desktop). CDP `Performance.getMetrics` diffs give
   script/layout/task time, JS heap, DOM node and layout counts per scenario.
 - **GPU, per process, no sudo.** On Apple Silicon, `ioreg -c
-  AGXDeviceUserClient` exposes accumulated GPU nanoseconds per Metal command
+AGXDeviceUserClient` exposes accumulated GPU nanoseconds per Metal command
   queue, keyed by owning pid. All of a Chromium app's GPU work funnels through
   its one `--type=gpu-process` helper, so delta-sampling that pid measures
   this app's GPU time exactly, regardless of what else the machine is doing
@@ -228,6 +228,15 @@ corrupt files with a warning, and exports the concatenated results once;
 `T3_PERF_OTLP_URL` works as the `--otlp` fallback here too. Each file's
 stamp becomes its datapoints' timestamps (history lands at its real run
 times) and, for results written before builds were recorded, the `build` id.
+
+## Distributed fleet
+
+For the centrally leased nightly fleet, use `src/fleetScheduler.ts` on lxso2
+and `scripts/install-fleet-worker.sh` on each explicitly enrolled worker. The
+scheduler refreshes the live npm registry every three hours, assigns by publish
+timestamp newest first, and recovers expired leases without duplicating a
+nightly. See [the fleet runbook](../../docs/operations/perf-fleet.md) for the
+installer, health checks, update, rollback, uninstall, and safety boundaries.
 
 ## Known limits (v1)
 

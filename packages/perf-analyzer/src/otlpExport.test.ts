@@ -108,16 +108,23 @@ describe("buildOtlpPayload", () => {
     expect(attrValue(point!, "build")).toBe("2025-08-21 08:00");
     expect(attrValue(point!, "network")).toBe("good");
     expect(attrValue(point!, "host")).toBe("bench-host");
+    expect(attrValue(point!, "run")).toBe("standalone");
     expect(attrValue(point!, "gpu_backend")).toBe("agx");
   });
 
   it("carries explicit label, build, and network through", () => {
     const point = metricsOf([
-      makeResult({ label: "0.0.33", build: "0.0.33-nightly.20250820", network: "flaky" }),
+      makeResult({
+        label: "0.0.33",
+        build: "0.0.33-nightly.20250820",
+        network: "flaky",
+        runId: "run-123",
+      }),
     ])[0]?.gauge.dataPoints[0];
     expect(attrValue(point!, "label")).toBe("0.0.33");
     expect(attrValue(point!, "build")).toBe("0.0.33-nightly.20250820");
     expect(attrValue(point!, "network")).toBe("flaky");
+    expect(attrValue(point!, "run")).toBe("run-123");
   });
 
   it("derives gpu_process_cpu_ms_per_s only when the runs measured it", () => {

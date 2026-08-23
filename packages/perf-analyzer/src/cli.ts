@@ -36,6 +36,7 @@ Options:
   --build <id>         Identify the build under test; dashboards plot builds on
                        the x-axis (default: the run's UTC timestamp to the
                        minute, since nightlies publish every few hours)
+  --run-id <id>        Unique fleet execution id exported on every datapoint
   --network <profile>  good (direct), okay (80ms/2MBps), flaky (150ms jitter,
                        1MBps, connection reset every 10s); web surface only
   --otlp <url>         OTLP/HTTP collector base URL; POSTs gauge metrics to
@@ -62,6 +63,7 @@ async function main(): Promise<number> {
       heavy: { type: "boolean", default: false },
       label: { type: "string" },
       build: { type: "string" },
+      "run-id": { type: "string" },
       network: { type: "string" },
       otlp: { type: "string" },
       out: { type: "string" },
@@ -130,8 +132,16 @@ async function main(): Promise<number> {
   // The stamp is the ISO timestamp with : and . dashed. Minute resolution,
   // not date: nightlies publish every few hours, so same-day runs are
   // distinct builds.
-  const build = values.build ?? `${stamp.slice(0, 10)} ${stamp.slice(11, 13)}:${stamp.slice(14, 16)}`;
-  const baseOptions = { runs, headless: values.headless, outDir, label: values.label, build };
+  const build =
+    values.build ?? `${stamp.slice(0, 10)} ${stamp.slice(11, 13)}:${stamp.slice(14, 16)}`;
+  const baseOptions = {
+    runs,
+    headless: values.headless,
+    outDir,
+    label: values.label,
+    build,
+    runId: values["run-id"],
+  };
   const results: Array<ScenarioResult> = [];
   const failures: Array<FailedCombo> = [];
   for (const network of networks) {
@@ -155,7 +165,7 @@ async function main(): Promise<number> {
               scenario: scenario.name,
               surface,
               size,
-              error: error instanceof Error ? error.message.split("\n")[0] ?? "" : String(error),
+              error: error instanceof Error ? (error.message.split("\n")[0] ?? "") : String(error),
             });
           }
           // Rewrite after every combo so a crash loses at most one scenario.

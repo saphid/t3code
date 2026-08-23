@@ -104,6 +104,7 @@ function resultAttributes(
     attribute("build", result.build ?? fallbackBuild),
     attribute("network", result.network ?? "good"),
     attribute("host", meta.host),
+    attribute("run", result.runId ?? "standalone"),
     attribute("gpu_backend", result.runs[0]?.gpuBackend ?? "none"),
   ];
 }

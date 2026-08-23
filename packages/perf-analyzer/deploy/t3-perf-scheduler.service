@@ -1,0 +1,20 @@
+[Unit]
+Description=T3 nightly performance fleet scheduler
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=saphid
+WorkingDirectory=/home/saphid/t3-perf-fleet/harness
+ExecStart=/usr/local/bin/node src/fleetScheduler.ts --db /home/saphid/t3-perf-fleet/control/fleet.sqlite --results /home/saphid/t3-perf-fleet/results --token-file /home/saphid/t3-perf-fleet/control/token --listen 0.0.0.0 --port 9433 --refresh-ms 10800000 --lease-ms 21600000 --since-days 14 --legacy-ledger /home/saphid/t3-perf-fleet/control/lxso2-orchestrator-state.json --legacy-ledger /home/saphid/t3-perf-fleet/control/aus-m5p-as-orchestrator-state.json --hold-versions /home/saphid/t3-perf-fleet/control/legacy-holds.tsv
+Restart=on-failure
+RestartSec=10
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/home/saphid/t3-perf-fleet/control /home/saphid/t3-perf-fleet/results
+
+[Install]
+WantedBy=multi-user.target
