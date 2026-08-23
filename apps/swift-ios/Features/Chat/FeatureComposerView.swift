@@ -5,6 +5,8 @@ struct FeatureComposerView: View {
     // Fully qualified: the app's own Core/Models.swift `Environment` type
     // shadows the SwiftUI property wrapper in this scope.
     @SwiftUI.Environment(\.scenePhase) private var scenePhase
+    @AppStorage(FeatureVoiceDictationSettings.enabledKey)
+    private var voiceDictationEnabled = true
     @State private var isManuallyExpanded = false
     @State private var dictation = FeatureVoiceDictationModel()
     @State private var isAttachmentFlowActive = false
@@ -228,7 +230,7 @@ struct FeatureComposerView: View {
             .accessibilityLabel("Message agent")
             .accessibilityHint("Opens the message editor")
 
-            if FeatureVoiceDictationModel.isSupported {
+            if FeatureVoiceDictationModel.isSupported, voiceDictationEnabled {
                 dictationButton
             }
 
@@ -290,18 +292,6 @@ struct FeatureComposerView: View {
                     .padding(.bottom, 4)
             }
 
-            if !dictation.volatileText.isEmpty {
-                Text(dictation.volatileText)
-                    .font(T3Typography.supporting)
-                    .italic()
-                    .foregroundStyle(T3Colors.textSecondary)
-                    .lineLimit(2)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, 15)
-                    .padding(.bottom, 4)
-                    .accessibilityLabel("Dictation preview")
-            }
-
             if let dictationError = dictation.errorMessage {
                 Label(dictationError, systemImage: "exclamationmark.circle")
                     .font(T3Typography.supporting)
@@ -356,7 +346,7 @@ struct FeatureComposerView: View {
                 FeatureContextMeter(usage: contextUsage)
             }
 
-            if FeatureVoiceDictationModel.isSupported {
+            if FeatureVoiceDictationModel.isSupported, voiceDictationEnabled {
                 dictationButton
             }
 

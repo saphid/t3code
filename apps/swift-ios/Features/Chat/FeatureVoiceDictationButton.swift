@@ -1,13 +1,21 @@
 import SwiftUI
 
 /// Composer microphone button: tap to dictate, tap again to stop and keep
-/// the transcript, with the recognizer's finalized segments appended to the
-/// draft as they arrive.
+/// the transcript. While recording, the icon turns red and a soft ring
+/// breathes with the live microphone level; the recognizer's hypothesis
+/// types directly into the draft and refines in place until finalized.
 struct FeatureVoiceDictationButton: View {
     let model: FeatureVoiceDictationModel
     @Binding var text: String
     let vocabularyProvider: (() -> [String])?
     var onBegin: (() -> Void)?
+
+    /// Draft content at recording start plus finalized segments; the
+    /// volatile hypothesis renders after it and is replaced continually.
+    @State private var committedText = ""
+    /// What dictation last wrote into the draft; a mismatch means the user
+    /// edited mid-recording and the committed base must rebase onto it.
+    @State private var lastWrittenText: String?
 
     var body: some View {
         Button(action: toggle) {
@@ -34,13 +42,23 @@ struct FeatureVoiceDictationButton: View {
                 .controlSize(.small)
                 .tint(T3Colors.textSecondary)
         case .recording:
-            // Static on purpose: the repo bans continuously repainting
-            // animations, and this can stay up for the full five minutes.
-            Image(systemName: "stop.fill")
-                .font(.system(size: 13, weight: .bold))
-                .foregroundStyle(.white)
-                .frame(width: 28, height: 28)
-                .background(T3Colors.danger, in: Circle())
+            // The ring scales and fades with the live microphone level, so
+            // it only repaints while audio buffers arrive.
+            ZStack {
+                Circle()
+                    .fill(T3Colors.danger.opacity(0.14 + model.audioLevel * 0.3))
+                    .frame(width: 30, height: 30)
+                    .scaleEffect(1 + model.audioLevel * 0.55)
+                Circle()
+                    .stroke(T3Colors.danger.opacity(0.35), lineWidth: 1)
+                    .frame(width: 30, height: 30)
+                    .scaleEffect(1 + model.audioLevel * 0.85)
+                    .opacity(1 - model.audioLevel * 0.5)
+                Image(systemName: "mic.fill")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(T3Colors.danger)
+            }
+            .animation(.spring(duration: 0.18), value: model.audioLevel)
         }
     }
 
@@ -62,25 +80,54 @@ struct FeatureVoiceDictationButton: View {
             model.cancel()
         case .idle:
             onBegin?()
+            committedText = text
+            lastWrittenText = nil
             let vocabulary = FeatureVoiceVocabulary.merge([
                 vocabularyProvider?() ?? [],
                 FeatureVoiceVocabulary.staticTerms,
             ])
-            model.start(vocabulary: vocabulary) { segment in
-                appendSegment(segment)
-            }
+            model.start(
+                vocabulary: vocabulary,
+                onVolatile: { hypothesis in
+                    renderVolatile(hypothesis)
+                },
+                onText: { segment in
+                    commitSegment(segment)
+                }
+            )
         }
     }
 
-    private func appendSegment(_ segment: String) {
+    private func renderVolatile(_ hypothesis: String) {
+        rebaseIfUserEdited()
+        let trimmed = hypothesis.trimmingCharacters(in: .whitespacesAndNewlines)
+        text = trimmed.isEmpty ? committedText : joined(committedText, trimmed)
+        lastWrittenText = text
+    }
+
+    private func commitSegment(_ segment: String) {
+        rebaseIfUserEdited()
         let trimmed = segment.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return }
-        if text.isEmpty {
-            text = trimmed
-        } else if let last = text.last, last.isWhitespace || last.isNewline {
-            text += trimmed
-        } else {
-            text += " " + trimmed
+        if !trimmed.isEmpty {
+            committedText = joined(committedText, trimmed)
         }
+        text = committedText
+        lastWrittenText = text
+    }
+
+    /// The user can still type while recording; adopt their edit as the new
+    /// base instead of overwriting it.
+    private func rebaseIfUserEdited() {
+        if let lastWrittenText, text != lastWrittenText {
+            committedText = text
+        }
+    }
+
+    private func joined(_ base: String, _ addition: String) -> String {
+        if base.isEmpty { return addition }
+        if let last = base.last, last.isWhitespace || last.isNewline {
+            return base + addition
+        }
+        return base + " " + addition
     }
 }

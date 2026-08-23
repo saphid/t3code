@@ -24,9 +24,10 @@ final class FeatureVoiceDictationModel {
     }
 
     private(set) var phase: Phase = .idle
-    /// In-progress hypothesis for the current utterance; replaced continually
-    /// until the recognizer finalizes it.
-    private(set) var volatileText = ""
+    /// Smoothed microphone level (0 to 1) while recording; drives the
+    /// listening indicator. Updates only while audio buffers arrive, so the
+    /// animation never repaints without cause.
+    private(set) var audioLevel: Double = 0
     private(set) var errorMessage: String?
 
     private var engineBox: AnyObject?
@@ -46,13 +47,19 @@ final class FeatureVoiceDictationModel {
     var isRecording: Bool { phase == .recording }
     var isBusy: Bool { phase == .preparing || phase == .downloadingModel || phase == .stopping }
 
-    /// Starts recording and streams finalized transcript segments to
-    /// `onText`. Vocabulary is applied both as recognizer context and as a
-    /// post-recognition correction pass.
-    func start(vocabulary: [String], onText: @escaping (String) -> Void) {
+    /// Starts recording. `onVolatile` streams the in-progress hypothesis for
+    /// the current utterance (replaced continually, corrected best-effort);
+    /// `onText` delivers finalized, vocabulary-corrected segments. Vocabulary
+    /// is applied both as recognizer context and as a post-recognition
+    /// correction pass.
+    func start(
+        vocabulary: [String],
+        onVolatile: @escaping (String) -> Void,
+        onText: @escaping (String) -> Void
+    ) {
         guard phase == .idle, startTask == nil else { return }
         errorMessage = nil
-        volatileText = ""
+        audioLevel = 0
 
         guard #available(iOS 26.0, *) else {
             errorMessage = "Voice dictation needs iOS 26 or later."
@@ -80,16 +87,24 @@ final class FeatureVoiceDictationModel {
                     vocabulary: vocabulary,
                     onVolatile: { [weak self, weak engine] text in
                         guard let engine, self?.engineBox === engine else { return }
-                        self?.volatileText = text
+                        onVolatile(
+                            FeatureVoiceVocabulary.applyCorrections(
+                                to: text,
+                                vocabulary: vocabulary
+                            )
+                        )
                     },
                     onFinal: { [weak self, weak engine] text in
                         guard let engine, self?.engineBox === engine else { return }
-                        self?.volatileText = ""
                         let corrected = FeatureVoiceVocabulary.applyCorrections(
                             to: text,
                             vocabulary: vocabulary
                         )
                         onText(corrected)
+                    },
+                    onLevel: { [weak self, weak engine] level in
+                        guard let self, let engine, engineBox === engine else { return }
+                        audioLevel = audioLevel * 0.55 + level * 0.45
                     },
                     onDownloading: { [weak self, weak engine] in
                         guard let engine, self?.engineBox === engine else { return }
@@ -134,11 +149,11 @@ final class FeatureVoiceDictationModel {
         stopObservingInterruptions()
         autoStopTask?.cancel()
         autoStopTask = nil
+        audioLevel = 0
         Task { @MainActor in
             await engine.finishAndFlush()
             guard engineBox === engine else { return }
             engineBox = nil
-            volatileText = ""
             phase = .idle
         }
     }
@@ -152,7 +167,7 @@ final class FeatureVoiceDictationModel {
         autoStopTask?.cancel()
         autoStopTask = nil
         stopObservingInterruptions()
-        volatileText = ""
+        audioLevel = 0
         let box = engineBox
         engineBox = nil
         guard #available(iOS 26.0, *), let engine = box as? FeatureVoiceDictationEngine else {
@@ -233,6 +248,7 @@ final class FeatureVoiceDictationEngine {
         vocabulary: [String],
         onVolatile: @escaping @MainActor (String) -> Void,
         onFinal: @escaping @MainActor (String) -> Void,
+        onLevel: @escaping @MainActor (Double) -> Void,
         onDownloading: @escaping @MainActor () -> Void
     ) async throws {
         do {
@@ -240,6 +256,7 @@ final class FeatureVoiceDictationEngine {
                 vocabulary: vocabulary,
                 onVolatile: onVolatile,
                 onFinal: onFinal,
+                onLevel: onLevel,
                 onDownloading: onDownloading
             )
         } catch {
@@ -254,30 +271,89 @@ final class FeatureVoiceDictationEngine {
         vocabulary: [String],
         onVolatile: @escaping @MainActor (String) -> Void,
         onFinal: @escaping @MainActor (String) -> Void,
+        onLevel: @escaping @MainActor (Double) -> Void,
         onDownloading: @escaping @MainActor () -> Void
     ) async throws {
-        var resolvedLocale = await DictationTranscriber.supportedLocale(equivalentTo: Locale.current)
-        if resolvedLocale == nil {
-            resolvedLocale = await DictationTranscriber.supportedLocale(
-                equivalentTo: Locale(identifier: "en_US")
+        // Two on-device Apple models: DictationTranscriber accepts the
+        // contextual vocabulary; SpeechTranscriber transcribes better but
+        // ignores it (learned terms then apply only as post-corrections).
+        let module: any SpeechModule
+        let supportsContextualVocabulary: Bool
+        if FeatureVoiceDictationSettings.engine == .general {
+            var resolvedLocale = await SpeechTranscriber.supportedLocale(equivalentTo: Locale.current)
+            if resolvedLocale == nil {
+                resolvedLocale = await SpeechTranscriber.supportedLocale(
+                    equivalentTo: Locale(identifier: "en_US")
+                )
+            }
+            guard let locale = resolvedLocale else {
+                throw FeatureVoiceDictationError(
+                    message: "On-device transcription does not support this language yet."
+                )
+            }
+            let transcriber = SpeechTranscriber(
+                locale: locale,
+                transcriptionOptions: [],
+                reportingOptions: [.volatileResults],
+                attributeOptions: []
             )
-        }
-        guard let locale = resolvedLocale else {
-            throw FeatureVoiceDictationError(
-                message: "On-device dictation does not support this language yet."
+            resultsTask = Task { @MainActor in
+                do {
+                    for try await result in transcriber.results {
+                        let text = String(result.text.characters)
+                        if result.isFinal {
+                            onFinal(text)
+                        } else {
+                            onVolatile(text)
+                        }
+                    }
+                } catch {
+                    // Cancellation and post-teardown stream errors are
+                    // expected; start() surfaces real startup failures.
+                }
+            }
+            module = transcriber
+            supportsContextualVocabulary = false
+        } else {
+            var resolvedLocale = await DictationTranscriber.supportedLocale(equivalentTo: Locale.current)
+            if resolvedLocale == nil {
+                resolvedLocale = await DictationTranscriber.supportedLocale(
+                    equivalentTo: Locale(identifier: "en_US")
+                )
+            }
+            guard let locale = resolvedLocale else {
+                throw FeatureVoiceDictationError(
+                    message: "On-device dictation does not support this language yet."
+                )
+            }
+            let transcriber = DictationTranscriber(
+                locale: locale,
+                contentHints: [],
+                transcriptionOptions: [],
+                reportingOptions: [.volatileResults],
+                attributeOptions: []
             )
+            resultsTask = Task { @MainActor in
+                do {
+                    for try await result in transcriber.results {
+                        let text = String(result.text.characters)
+                        if result.isFinal {
+                            onFinal(text)
+                        } else {
+                            onVolatile(text)
+                        }
+                    }
+                } catch {
+                    // Cancellation and post-teardown stream errors are
+                    // expected; start() surfaces real startup failures.
+                }
+            }
+            module = transcriber
+            supportsContextualVocabulary = true
         }
         try Task.checkCancellation()
 
-        let transcriber = DictationTranscriber(
-            locale: locale,
-            contentHints: [],
-            transcriptionOptions: [],
-            reportingOptions: [.volatileResults],
-            attributeOptions: []
-        )
-
-        let assetStatus = await AssetInventory.status(forModules: [transcriber])
+        let assetStatus = await AssetInventory.status(forModules: [module])
         try Task.checkCancellation()
         switch assetStatus {
         case .installed:
@@ -289,16 +365,16 @@ final class FeatureVoiceDictationEngine {
         default:
             onDownloading()
             if let request = try await AssetInventory.assetInstallationRequest(
-                supporting: [transcriber]
+                supporting: [module]
             ) {
                 try await request.downloadAndInstall()
             }
             try Task.checkCancellation()
         }
 
-        let analyzer = SpeechAnalyzer(modules: [transcriber])
+        let analyzer = SpeechAnalyzer(modules: [module])
         self.analyzer = analyzer
-        if !vocabulary.isEmpty {
+        if supportsContextualVocabulary, !vocabulary.isEmpty {
             let context = AnalysisContext()
             context.contextualStrings = [.general: Array(vocabulary.prefix(100))]
             try await analyzer.setContext(context)
@@ -306,27 +382,11 @@ final class FeatureVoiceDictationEngine {
         }
 
         guard let analyzerFormat = await SpeechAnalyzer.bestAvailableAudioFormat(
-            compatibleWith: [transcriber]
+            compatibleWith: [module]
         ) else {
             throw FeatureVoiceDictationError(message: "No compatible audio format for dictation.")
         }
         try Task.checkCancellation()
-
-        resultsTask = Task { @MainActor in
-            do {
-                for try await result in transcriber.results {
-                    let text = String(result.text.characters)
-                    if result.isFinal {
-                        onFinal(text)
-                    } else {
-                        onVolatile(text)
-                    }
-                }
-            } catch {
-                // Cancellation and post-teardown stream errors are expected;
-                // start() surfaces real startup failures.
-            }
-        }
 
         let session = AVAudioSession.sharedInstance()
         try session.setCategory(.record, mode: .measurement, options: [.duckOthers])
@@ -347,6 +407,18 @@ final class FeatureVoiceDictationEngine {
 
         let ratio = analyzerFormat.sampleRate / inputFormat.sampleRate
         inputNode.installTap(onBus: 0, bufferSize: 4096, format: inputFormat) { buffer, _ in
+            // Per-buffer RMS drives the listening indicator; roughly 12
+            // updates per second at typical hardware buffer sizes.
+            if let channel = buffer.floatChannelData?[0], buffer.frameLength > 0 {
+                var sum: Float = 0
+                for frame in 0..<Int(buffer.frameLength) {
+                    let sample = channel[frame]
+                    sum += sample * sample
+                }
+                let rms = Double((sum / Float(buffer.frameLength)).squareRoot())
+                let level = min(1.0, rms * 8)
+                Task { @MainActor in onLevel(level) }
+            }
             let capacity = AVAudioFrameCount((Double(buffer.frameLength) * ratio).rounded(.up) + 64)
             guard let converted = AVAudioPCMBuffer(
                 pcmFormat: analyzerFormat,
