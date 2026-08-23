@@ -555,6 +555,9 @@ export function mergeProcesses(input: MergeProcessesInput): MergeProcessesResult
           : 0,
       ioSemantics: process.ioSemantics,
       ...(electronMetric ? { idleWakeupsPerSecond: electronMetric.idleWakeupsPerSecond } : {}),
+      ...(electronMetric?.gpuPercent === undefined
+        ? {}
+        : { gpuPercent: electronMetric.gpuPercent }),
       runTimeMs: process.runTimeMs,
       firstSeenAt,
       lastSeenAt: DateTime.makeUnsafe(sampledAtMs),
