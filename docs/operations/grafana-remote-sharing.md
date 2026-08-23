@@ -32,9 +32,10 @@ Done (server side, on the Grafana box `lxso2`):
 - Zero Trust Free is active (50 included seats; usage above the free limits is
   authorized against the account's saved payment method). Cloudflare assigned
   team domain `wandering-violet-a685.cloudflareaccess.com`.
-- One-time PIN login is enabled. The Access app `Grafana` accepts anyone who
-  proves control of an email address and redirects unauthenticated requests to
-  the Access login wall.
+- One-time PIN login is enabled. The Access app `Grafana` allows enrolled email
+  addresses. A more-specific `stats.t3play.dev/join` Access app accepts anyone
+  who proves control of an email address, after which the invite Worker checks
+  the expiring link and enrolls that verified address.
 - Scoped user token `t3play-agent-tools-v2` has DNS Edit on all zones and Edit
   on Access organizations/identity/groups, Access apps/policies, and
   Cloudflare Tunnel. The token is in macOS Keychain under service
@@ -69,9 +70,28 @@ That credential can support DNS, Access, and Tunnel tools. It intentionally
 cannot manage Workers, R2, billing, registrar settings, or unrelated products;
 create a separately scoped credential if a future tool needs those powers.
 
-The shareable self-service link is `https://stats.t3play.dev`. A visitor enters
-their email at Cloudflare, completes the emailed One-time PIN, then uses
-Grafana's **Sign up** link to create a Viewer account.
+Create a shareable link (seven days by default) from the repository root:
+
+```sh
+scripts/grafana-share-invite.py --hours 168
+```
+
+The command rotates the previous link and prints the new URL and UTC expiry.
+The URL has the form `https://stats.t3play.dev/join?invite=...`. A visitor
+enters their email at Cloudflare, completes the emailed One-time PIN, and is
+then added to the main Grafana Access allowlist. They use Grafana's **Sign up**
+link to create a Viewer account. The bare stats URL does not enroll new people.
+
+The Worker source and Wrangler configuration live in
+`ops/grafana-invite-worker`. Its Cloudflare API token, invite token, and expiry
+are Worker secrets. Deploy code changes with:
+
+```sh
+cd ops/grafana-invite-worker
+npm install
+npm run check
+npx wrangler deploy
+```
 
 Use the paired operator to inspect users, pre-create an account invitation, or
 block a person:
@@ -82,10 +102,11 @@ scripts/grafana-share-users.py add person@example.com --name "Person Name"
 scripts/grafana-share-users.py remove person@example.com
 ```
 
-In self-service mode, `add` removes the address from the Access blocklist and
-creates a Viewer invite. Grafana email delivery is not assumed, so it prints a
-one-time invitation URL. `remove` deletes the Grafana user or pending invite
-and adds the address to the Access blocklist, preventing immediate re-signup.
+`add` puts the address on the Access allowlist and creates a Viewer invite.
+Grafana email delivery is not assumed, so it prints a one-time invitation URL.
+`remove` deletes the Grafana user or pending invite and removes the address
+from Access. A removed person cannot re-enroll after the shared link expires;
+rotate the link immediately if they must be excluded before then.
 The Grafana organization-scoped service token is stored in macOS
 Keychain service `grafana-share-inviter`, account `stats.t3play.dev`. The server
 administrator password remains separately stored under service
@@ -93,8 +114,8 @@ administrator password remains separately stored under service
 
 ## Day-2 operations
 
-- **Add a teammate**: send `https://stats.t3play.dev`; no administrator action
-  is required.
+- **Add teammates**: rotate an expiring link with
+  `scripts/grafana-share-invite.py --hours HOURS` and share the printed URL.
 - **Remove access**: run `scripts/grafana-share-users.py remove EMAIL`. Their
   current Access session may remain valid until expiry; revoke it immediately
   from the app's Sessions view when needed.

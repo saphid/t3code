@@ -97,6 +97,14 @@ def cloudflare_policy(token):
     return app, policy
 
 
+def cloudflare_policies(token, app):
+    return cf_result(
+        "GET",
+        f"/accounts/{CF_ACCOUNT_ID}/access/apps/{app['id']}/policies?per_page=1000",
+        token,
+    )
+
+
 def policy_emails(policy):
     return sorted(
         rule["email"]["email"].lower()
@@ -235,6 +243,20 @@ def remove(email, cf_token, grafana_token):
         emails = set(policy_emails(policy))
         if email in emails:
             update_policy(cf_token, app, policy, emails - {email})
+    for enrolled_policy in cloudflare_policies(cf_token, app):
+        enrolled_emails = set(policy_emails(enrolled_policy))
+        if enrolled_policy["id"] == policy["id"] or email not in enrolled_emails:
+            continue
+        if enrolled_emails == {email}:
+            cf_result(
+                "DELETE",
+                f"/accounts/{CF_ACCOUNT_ID}/access/apps/{app['id']}/policies/{enrolled_policy['id']}",
+                cf_token,
+            )
+        else:
+            update_policy(
+                cf_token, app, enrolled_policy, enrolled_emails - {email}
+            )
 
     users, invites = grafana_state(grafana_token)
     for invite in invites:
@@ -254,7 +276,7 @@ def remove(email, cf_token, grafana_token):
 
 
 def list_users(cf_token, grafana_token):
-    _, policy = cloudflare_policy(cf_token)
+    app, policy = cloudflare_policy(cf_token)
     users, invites = grafana_state(grafana_token)
     print("Cloudflare Access:")
     if policy_is_self_service(policy):
@@ -262,7 +284,12 @@ def list_users(cf_token, grafana_token):
         for email in policy_excluded_emails(policy):
             print(f"  blocked: {email}")
     else:
-        for email in policy_emails(policy):
+        emails = {
+            email
+            for enrolled_policy in cloudflare_policies(cf_token, app)
+            for email in policy_emails(enrolled_policy)
+        }
+        for email in sorted(emails):
             print(f"  {email}")
     print("Grafana users:")
     for user in sorted(users, key=lambda item: item.get("email", "")):
