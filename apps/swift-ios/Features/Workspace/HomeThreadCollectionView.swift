@@ -651,6 +651,17 @@ struct HomeThreadCollectionView: UIViewRepresentable {
                 )
             }
 
+            if let payload = ThreadMetadataCopyModel.payload(
+                for: thread,
+                context: context.metadataCopyContext
+            ) {
+                titleActions.append(
+                    UIAction(title: "Copy metadata", image: UIImage(systemName: "doc.on.doc")) { _ in
+                        ThreadMetadataClipboard.copy(payload)
+                    }
+                )
+            }
+
             var statusActions: [UIMenuElement] = []
             if !isArchived {
                 if thread.canTogglePin {

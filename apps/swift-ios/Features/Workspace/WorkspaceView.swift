@@ -856,6 +856,7 @@ struct HomeShelfHeader: View {
 
 struct HomeThreadRowContext: Equatable {
     let projectName: String
+    let metadataProjectName: String?
     let projectEnvironmentID: String?
     let projectWorkspaceRoot: String?
     let environmentLabel: String?
@@ -866,6 +867,7 @@ struct HomeThreadRowContext: Equatable {
 
     static let fallback = HomeThreadRowContext(
         projectName: "Project",
+        metadataProjectName: nil,
         projectEnvironmentID: nil,
         projectWorkspaceRoot: nil,
         environmentLabel: nil,
@@ -874,6 +876,14 @@ struct HomeThreadRowContext: Equatable {
         providerName: "Agent",
         connectionState: nil
     )
+
+    var metadataCopyContext: ThreadMetadataCopyContext {
+        ThreadMetadataCopyContext(
+            projectName: metadataProjectName,
+            environmentName: environmentLabel,
+            environmentID: projectEnvironmentID
+        )
+    }
 
     var providerLooksTerminal: Bool {
         let normalized = [providerDriver, providerID, providerName]
@@ -900,6 +910,7 @@ struct HomeThreadRowContext: Equatable {
         }
         return snapshot.threads.reduce(into: [String: HomeThreadRowContext]()) { result, thread in
             let project = projectByID[thread.projectID]
+            let projectName = projectGroupNameByID[thread.projectID] ?? project?.name
             let environmentID = thread.environmentID ?? project?.environmentID
             let environment = environmentID.flatMap { environmentByID[$0] }
             let environmentLabel = (environment?.name ?? thread.environmentName)?
@@ -923,7 +934,8 @@ struct HomeThreadRowContext: Equatable {
                 : environment?.connectionState
 
             result[thread.id] = HomeThreadRowContext(
-                projectName: projectGroupNameByID[thread.projectID] ?? project?.name ?? "Project",
+                projectName: projectName ?? "Project",
+                metadataProjectName: projectName,
                 projectEnvironmentID: project?.environmentID,
                 projectWorkspaceRoot: project?.path,
                 environmentLabel: environmentLabel?.isEmpty == false ? environmentLabel : nil,
