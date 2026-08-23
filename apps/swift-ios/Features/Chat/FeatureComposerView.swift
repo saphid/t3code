@@ -183,8 +183,9 @@ struct FeatureComposerView: View {
                 .stroke(T3Colors.inputBorder, lineWidth: 1)
         }
         .clipShape(composerShape)
-        .overlay {
-            // Added after clipShape so the blur can bloom past the border.
+        .background {
+            // Behind the box, not on it: the opaque composer covers the
+            // centre, so the blurred fill blooms outward as a halo.
             if dictation.isRecording {
                 FeatureComposerVoiceGlow(shape: composerShape, level: dictation.audioLevel)
             }
@@ -724,23 +725,23 @@ enum FeatureComposerCollapsePolicy {
     }
 }
 
-/// Soft glow hugging the whole composer (input, mic, and send) that pulses
-/// brighter and dimmer with the live microphone level while dictating. It
-/// animates only when level values arrive, never on a timer.
+/// Halo rising from behind the whole composer (input, mic, and send) that
+/// pulses brighter and dimmer with the live microphone level while
+/// dictating. Rendered as a blurred fill underneath the opaque composer so
+/// the light appears to emanate from behind the box rather than along its
+/// border. It animates only when level values arrive, never on a timer.
 private struct FeatureComposerVoiceGlow: View {
     let shape: RoundedRectangle
     let level: Double
 
     var body: some View {
-        let intensity = 0.35 + level * 0.65
+        let intensity = 0.3 + level * 0.7
         shape
-            .stroke(T3Colors.accent.opacity(intensity * 0.85), lineWidth: 1.5 + level * 3)
-            .blur(radius: 3 + level * 9)
-            .overlay {
-                shape.stroke(T3Colors.accent.opacity(intensity * 0.45), lineWidth: 1)
-            }
+            .fill(T3Colors.accent.opacity(intensity * 0.75))
+            .blur(radius: 18 + level * 30)
+            .scaleEffect(1.02 + level * 0.06)
             .allowsHitTesting(false)
-            .animation(.spring(duration: 0.22, bounce: 0.4), value: level)
+            .animation(.spring(duration: 0.25, bounce: 0.35), value: level)
     }
 }
 
