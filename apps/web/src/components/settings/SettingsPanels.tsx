@@ -2459,6 +2459,15 @@ export function GeneralSettingsPanel() {
             </Button>
           }
         />
+        <SettingsRow
+          {...searchableSetting("stats-for-nerds")}
+          description="Live CPU, memory, and GPU usage per process, plus this window's rendering cost."
+          control={
+            <Button render={<Link to="/settings/stats" />} size="xs" variant="outline">
+              View stats
+            </Button>
+          }
+        />
       </SettingsSection>
 
       <LegacyFeaturesSection />
