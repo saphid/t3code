@@ -840,6 +840,10 @@ private struct FeatureTranscriptCollectionView: UIViewRepresentable {
         )
     }
 
+    static func dismantleUIView(_ collectionView: UICollectionView, coordinator: Coordinator) {
+        coordinator.disconnect(from: collectionView)
+    }
+
     private static func makeLayout() -> UICollectionViewLayout {
         UICollectionViewCompositionalLayout { _, environment in
             let width = environment.container.effectiveContentSize.width
@@ -866,7 +870,9 @@ private struct FeatureTranscriptCollectionView: UIViewRepresentable {
     }
 
     @MainActor
-    final class Coordinator: NSObject, UICollectionViewDataSourcePrefetching, UICollectionViewDelegate {
+    final class Coordinator: NSObject, UICollectionViewDataSourcePrefetching,
+        UICollectionViewDelegate, UIGestureRecognizerDelegate
+    {
         private struct MarkdownPrefetch {
             let revision: MarkdownContentRevision
             let task: Task<Void, Never>
@@ -888,12 +894,26 @@ private struct FeatureTranscriptCollectionView: UIViewRepresentable {
         private var markdownPrefetches: [String: MarkdownPrefetch] = [:]
         private var onLoadEarlier: (() -> Void)?
         private var onDismissKeyboard: (() -> Void)?
+        private let timestampReveal = FeatureTimestampRevealState()
+        private weak var collectionView: UICollectionView?
+        private var timestampMessageID: String?
+        private lazy var timestampPanGesture = UIPanGestureRecognizer(
+            target: self,
+            action: #selector(handleTimestampPan(_:))
+        )
 
         deinit {
             markdownPrefetches.values.forEach { $0.task.cancel() }
         }
 
         func connect(to collectionView: UICollectionView) {
+            self.collectionView = collectionView
+            timestampPanGesture.cancelsTouchesInView = false
+            timestampPanGesture.maximumNumberOfTouches = 1
+            timestampPanGesture.delegate = self
+            collectionView.addGestureRecognizer(timestampPanGesture)
+            collectionView.panGestureRecognizer.require(toFail: timestampPanGesture)
+
             let registration = UICollectionView.CellRegistration<UICollectionViewCell, String> {
                 [weak self] cell, _, messageID in
                 if messageID == FeatureTranscriptCollectionView.loadEarlierID {
@@ -921,13 +941,17 @@ private struct FeatureTranscriptCollectionView: UIViewRepresentable {
                     cell.accessibilityIdentifier = "thread-working-indicator"
                     return
                 }
-                guard let message = self?.messagesByID[messageID] else {
+                guard let self, let message = messagesByID[messageID] else {
                     cell.contentConfiguration = nil
                     return
                 }
 
                 cell.contentConfiguration = UIHostingConfiguration {
-                    FeatureMessageView(message: message, imageContext: self?.currentImageContext)
+                    FeatureTimestampRevealMessageView(
+                        message: message,
+                        imageContext: self.currentImageContext,
+                        reveal: self.timestampReveal
+                    )
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
                 .margins(.all, 0)
@@ -946,6 +970,59 @@ private struct FeatureTranscriptCollectionView: UIViewRepresentable {
             }
             collectionView.prefetchDataSource = self
             collectionView.delegate = self
+        }
+
+        func disconnect(from collectionView: UICollectionView) {
+            timestampReveal.reset()
+            timestampMessageID = nil
+            timestampPanGesture.delegate = nil
+            collectionView.removeGestureRecognizer(timestampPanGesture)
+            collectionView.prefetchDataSource = nil
+            collectionView.delegate = nil
+            self.collectionView = nil
+        }
+
+        @objc private func handleTimestampPan(_ gesture: UIPanGestureRecognizer) {
+            switch gesture.state {
+            case .began:
+                guard let timestampMessageID else { return }
+                timestampReveal.begin(messageID: timestampMessageID)
+            case .changed:
+                timestampReveal.update(translationX: gesture.translation(in: gesture.view).x)
+            case .ended, .cancelled, .failed:
+                timestampReveal.finish(reduceMotion: UIAccessibility.isReduceMotionEnabled)
+                timestampMessageID = nil
+            default:
+                break
+            }
+        }
+
+        func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+            guard gestureRecognizer === timestampPanGesture,
+                  let collectionView = gestureRecognizer.view as? UICollectionView,
+                  let pan = gestureRecognizer as? UIPanGestureRecognizer else {
+                return true
+            }
+            timestampMessageID = nil
+            let velocity = pan.velocity(in: collectionView)
+            guard TranscriptTimestampRevealGeometry.shouldBegin(
+                velocityX: velocity.x,
+                velocityY: velocity.y
+            ) else { return false }
+
+            let location = pan.location(in: collectionView)
+            guard !TranscriptTimestampGestureOwnership.descendantOwnsHorizontalInteraction(
+                from: collectionView.hitTest(location, with: nil),
+                host: collectionView
+            ),
+                  let indexPath = collectionView.indexPathForItem(at: location),
+                  let messageID = dataSource?.itemIdentifier(for: indexPath),
+                  let message = messagesByID[messageID],
+                  FeatureMessageTimestampMetadata.isEligible(message) else {
+                return false
+            }
+            timestampMessageID = messageID
+            return true
         }
 
         func update(
@@ -970,6 +1047,10 @@ private struct FeatureTranscriptCollectionView: UIViewRepresentable {
 
             let threadChanged = currentThreadID != threadID
             let imageContextChanged = currentImageContext != imageContext
+            if threadChanged {
+                timestampReveal.reset()
+                timestampMessageID = nil
+            }
             let typeSizeChanged = currentDynamicTypeSize != dynamicTypeSize
             let revisionChanged = currentDetailRevision != renderUpdate?.revision
             let workingChanged = currentIsWorking != isWorking
@@ -1031,6 +1112,7 @@ private struct FeatureTranscriptCollectionView: UIViewRepresentable {
                 messagesByID = replacementMessagesByID
             }
             orderedIDs = newIDs
+            timestampReveal.resetIfMessageIsMissingOrIneligible(in: messagesByID)
             (collectionView as? BottomAnchoredTranscriptCollectionView)?.maintainsBottomAnchor =
                 isInitialLoad || wasNearBottom
 
@@ -1332,6 +1414,172 @@ private struct FeatureTranscriptCollectionView: UIViewRepresentable {
                 return
             }
             collectionView.maintainsBottomAnchor = isNearBottom(collectionView)
+        }
+    }
+}
+
+enum TranscriptTimestampRevealGeometry {
+    static let maximumWidth: CGFloat = 76
+    private static let horizontalDominance: CGFloat = 1.25
+
+    static func shouldBegin(velocityX: CGFloat, velocityY: CGFloat) -> Bool {
+        velocityX < 0 && abs(velocityX) > abs(velocityY) * horizontalDominance
+    }
+
+    static func width(translationX: CGFloat) -> CGFloat {
+        min(maximumWidth, max(0, -translationX))
+    }
+}
+
+enum TranscriptTimestampGestureOwnership {
+    @MainActor
+    static func descendantOwnsHorizontalInteraction(
+        from touchedView: UIView?,
+        host: UIView
+    ) -> Bool {
+        var candidate = touchedView
+        while let view = candidate, view !== host {
+            if let scrollView = view as? UIScrollView,
+               !(scrollView is UITextView),
+               (scrollView.alwaysBounceHorizontal
+                || scrollView.contentSize.width > scrollView.bounds.width + 1) {
+                return true
+            }
+            candidate = view.superview
+        }
+        return false
+    }
+}
+
+struct TranscriptTimestampRevealModel: Equatable {
+    private(set) var messageID: String?
+    private(set) var width: CGFloat = 0
+
+    mutating func begin(messageID: String) {
+        self.messageID = messageID
+        width = 0
+    }
+
+    mutating func update(translationX: CGFloat) {
+        guard messageID != nil else { return }
+        width = TranscriptTimestampRevealGeometry.width(translationX: translationX)
+    }
+
+    mutating func finish() {
+        messageID = nil
+        width = 0
+    }
+
+    func width(for messageID: String) -> CGFloat {
+        self.messageID == messageID ? width : 0
+    }
+}
+
+enum FeatureMessageTimestampMetadata {
+    static func isEligible(_ message: FeatureMessage) -> Bool {
+        isEligible(
+            role: message.role,
+            state: message.state,
+            createdAt: message.createdAt
+        )
+    }
+
+    static func isEligible(
+        role: FeatureMessageRole,
+        state: FeatureMessageState,
+        createdAt: Date
+    ) -> Bool {
+        guard state == .complete, createdAt != .distantPast else { return false }
+        return role == .user || role == .assistant
+    }
+
+    static func accessibilityLabel(for role: FeatureMessageRole) -> String? {
+        switch role {
+        case .user: "Sent"
+        case .assistant: "Received"
+        case .tool, .system: nil
+        }
+    }
+}
+
+@MainActor
+private final class FeatureTimestampRevealState: ObservableObject {
+    @Published private var model = TranscriptTimestampRevealModel()
+
+    func width(for messageID: String) -> CGFloat {
+        model.width(for: messageID)
+    }
+
+    func begin(messageID: String) {
+        updateWithoutAnimation { $0.begin(messageID: messageID) }
+    }
+
+    func update(translationX: CGFloat) {
+        updateWithoutAnimation { $0.update(translationX: translationX) }
+    }
+
+    func finish(reduceMotion: Bool) {
+        var finished = model
+        finished.finish()
+        withAnimation(reduceMotion ? nil : .easeOut(duration: 0.2)) {
+            model = finished
+        }
+    }
+
+    func reset() {
+        updateWithoutAnimation { $0.finish() }
+    }
+
+    func resetIfMessageIsMissingOrIneligible(in messagesByID: [String: FeatureMessage]) {
+        guard let messageID = model.messageID else { return }
+        guard let message = messagesByID[messageID],
+              FeatureMessageTimestampMetadata.isEligible(message) else {
+            reset()
+            return
+        }
+    }
+
+    private func updateWithoutAnimation(
+        _ update: (inout TranscriptTimestampRevealModel) -> Void
+    ) {
+        var next = model
+        update(&next)
+        var transaction = Transaction()
+        transaction.disablesAnimations = true
+        withTransaction(transaction) {
+            model = next
+        }
+    }
+}
+
+private struct FeatureTimestampRevealMessageView: View {
+    let message: FeatureMessage
+    let imageContext: MarkdownImageContext?
+    @ObservedObject var reveal: FeatureTimestampRevealState
+
+    var body: some View {
+        if FeatureMessageTimestampMetadata.isEligible(message) {
+            let revealWidth = reveal.width(for: message.id)
+            ZStack(alignment: .trailing) {
+                Text(message.createdAt, format: .dateTime.hour().minute())
+                    .font(T3Typography.supporting.monospacedDigit())
+                    .foregroundStyle(T3Colors.textTertiary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
+                    .dynamicTypeSize(.small ... .accessibility1)
+                    .frame(
+                        width: TranscriptTimestampRevealGeometry.maximumWidth,
+                        alignment: .trailing
+                    )
+                    .offset(x: TranscriptTimestampRevealGeometry.maximumWidth - revealWidth)
+                    .opacity(revealWidth > 0 ? 1 : 0)
+                    .accessibilityHidden(true)
+
+                FeatureMessageView(message: message, imageContext: imageContext)
+                    .offset(x: -revealWidth)
+            }
+        } else {
+            FeatureMessageView(message: message, imageContext: imageContext)
         }
     }
 }
@@ -1927,6 +2175,7 @@ struct FeatureMessageView: View {
             .accessibilityLabel("You")
             .accessibilityValue(accessibilityValue)
             .accessibilityIdentifier("message-\(message.id)")
+            .modifier(FeatureMessageTimestampAccessibilityModifier(message: message))
         case .assistant:
             VStack(alignment: .leading, spacing: 10) {
                 if message.state == .streaming {
@@ -1949,6 +2198,7 @@ struct FeatureMessageView: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .accessibilityIdentifier("message-\(message.id)")
+            .modifier(FeatureMessageTimestampAccessibilityModifier(message: message))
         case .tool:
             DisclosureGroup {
                 Text(message.text)
@@ -1982,6 +2232,24 @@ struct FeatureMessageView: View {
         return [message.text, attachmentSummary]
             .filter { !$0.isEmpty }
             .joined(separator: ", ")
+    }
+}
+
+private struct FeatureMessageTimestampAccessibilityModifier: ViewModifier {
+    let message: FeatureMessage
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if FeatureMessageTimestampMetadata.isEligible(message),
+           let label = FeatureMessageTimestampMetadata.accessibilityLabel(for: message.role) {
+            content.accessibilityCustomContent(
+                Text(label),
+                Text(message.createdAt.formatted(date: .omitted, time: .shortened)),
+                importance: .high
+            )
+        } else {
+            content
+        }
     }
 }
 

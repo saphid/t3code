@@ -3,8 +3,124 @@ import Testing
 import UIKit
 @testable import T3Code
 
-@Suite("Transcript viewport anchoring")
+@Suite("Transcript viewport and timestamp gestures")
 struct TranscriptViewportGeometryTests {
+    @Test
+    func timestampRevealTracksOnlyTheTouchedMessageAndResetsOnRelease() {
+        var reveal = TranscriptTimestampRevealModel()
+
+        reveal.update(translationX: -32)
+        #expect(reveal == TranscriptTimestampRevealModel())
+
+        reveal.begin(messageID: "assistant-1")
+        reveal.update(translationX: -32)
+        #expect(reveal.width(for: "assistant-1") == 32)
+        #expect(reveal.width(for: "assistant-2") == 0)
+
+        reveal.finish()
+        #expect(reveal == TranscriptTimestampRevealModel())
+    }
+
+    @Test
+    func timestampRevealClampsAndClaimsOnlyDeliberateLeftwardHorizontalPans() {
+        #expect(TranscriptTimestampRevealGeometry.width(translationX: 24) == 0)
+        #expect(
+            TranscriptTimestampRevealGeometry.width(translationX: -200)
+                == TranscriptTimestampRevealGeometry.maximumWidth
+        )
+        #expect(
+            TranscriptTimestampRevealGeometry.shouldBegin(velocityX: -24, velocityY: 4)
+        )
+        #expect(
+            !TranscriptTimestampRevealGeometry.shouldBegin(velocityX: -4, velocityY: 24)
+        )
+        #expect(
+            !TranscriptTimestampRevealGeometry.shouldBegin(velocityX: 24, velocityY: 4)
+        )
+        #expect(
+            !TranscriptTimestampRevealGeometry.shouldBegin(velocityX: -10, velocityY: 9)
+        )
+    }
+
+    @Test
+    func timestampEligibilityRequiresCompletedUserOrAssistantWithRealDate() {
+        let timestamp = Date(timeIntervalSince1970: 1_780_000_000)
+
+        #expect(
+            FeatureMessageTimestampMetadata.isEligible(
+                role: .user,
+                state: .complete,
+                createdAt: timestamp
+            )
+        )
+        #expect(
+            FeatureMessageTimestampMetadata.isEligible(
+                role: .assistant,
+                state: .complete,
+                createdAt: timestamp
+            )
+        )
+        for state in [FeatureMessageState.queued, .streaming, .failed] {
+            #expect(
+                !FeatureMessageTimestampMetadata.isEligible(
+                    role: .assistant,
+                    state: state,
+                    createdAt: timestamp
+                )
+            )
+        }
+        for role in [FeatureMessageRole.tool, .system] {
+            #expect(
+                !FeatureMessageTimestampMetadata.isEligible(
+                    role: role,
+                    state: .complete,
+                    createdAt: timestamp
+                )
+            )
+        }
+        #expect(
+            !FeatureMessageTimestampMetadata.isEligible(
+                role: .user,
+                state: .complete,
+                createdAt: .distantPast
+            )
+        )
+    }
+
+    @Test
+    func timestampAccessibilityLabelsOnlyEligibleConversationRoles() {
+        #expect(FeatureMessageTimestampMetadata.accessibilityLabel(for: .user) == "Sent")
+        #expect(FeatureMessageTimestampMetadata.accessibilityLabel(for: .assistant) == "Received")
+        #expect(FeatureMessageTimestampMetadata.accessibilityLabel(for: .tool) == nil)
+        #expect(FeatureMessageTimestampMetadata.accessibilityLabel(for: .system) == nil)
+    }
+
+    @Test
+    @MainActor
+    func selectableMarkdownDoesNotStealTimestampSwipeButHorizontalContentDoes() {
+        let host = UIView(frame: CGRect(x: 0, y: 0, width: 240, height: 240))
+        let textView = UITextView(frame: CGRect(x: 0, y: 0, width: 120, height: 120))
+        textView.contentSize = CGSize(width: 480, height: 120)
+        host.addSubview(textView)
+
+        #expect(
+            !TranscriptTimestampGestureOwnership.descendantOwnsHorizontalInteraction(
+                from: textView,
+                host: host
+            )
+        )
+
+        let codeScroller = UIScrollView(frame: CGRect(x: 0, y: 120, width: 120, height: 120))
+        codeScroller.contentSize = CGSize(width: 480, height: 120)
+        host.addSubview(codeScroller)
+        #expect(
+            TranscriptTimestampGestureOwnership.descendantOwnsHorizontalInteraction(
+                from: codeScroller,
+                host: host
+            )
+        )
+    }
+
     @Test
     func firstLoadedTranscriptAnchorsToLatestMessage() {
         let empty = TranscriptViewportGeometry(
