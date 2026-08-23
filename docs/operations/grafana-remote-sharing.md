@@ -14,13 +14,15 @@ Done (server side, on the Grafana box `lxso2`):
 - Admin password rotated off the default. It lives in the work Mac's keychain
   (`security find-generic-password -s grafana-192.168.1.221 -a admin -w`).
   Move it into 1Password if others need it.
-- Anonymous access (previously org role Admin) disabled. Self-service sign-up
-  is enabled in
+- Anonymous access (previously org role Admin) and password self-sign-up are
+  disabled in
   `~/t3-perf/observability/docker-compose.yml`; Grafana upgraded 11.3.0 ->
-  13.2.0 and pinned. New accounts are automatically assigned Viewer. The
-  pre-self-service compose backup is
-  `docker-compose.yml.pre-self-signup-20260823`; earlier compose and data
-  backups are in `~/backups/` on the box, stamp `20260823-0433`.
+  13.2.0 and pinned. Grafana validates Cloudflare's signed Access JWT against
+  the team JWKS, issuer, and main-app audience, then automatically provisions
+  the verified email as Viewer. The local admin/password login remains as the
+  recovery path. The pre-JWT compose backup is
+  `docker-compose.yml.pre-cloudflare-jwt-20260823`; earlier compose and data
+  backups are in `~/backups/` on the box.
 - Cloudflare tunnel `grafana-share` created (id
   `062b931a-1366-491c-bbea-46ca5cd7d775`, account
   `9803821a7c6a638a2e69b8ffe8286cb5`). `cloudflared` runs on the box as a
@@ -79,8 +81,10 @@ scripts/grafana-share-invite.py --hours 168
 The command rotates the previous link and prints the new URL and UTC expiry.
 The URL has the form `https://stats.t3play.dev/join?invite=...`. A visitor
 enters their email at Cloudflare, completes the emailed One-time PIN, and is
-then added to the main Grafana Access allowlist. They use Grafana's **Sign up**
-link to create a Viewer account. The bare stats URL does not enroll new people.
+then added to the main Grafana Access allowlist. On redirect, Grafana consumes
+the signed Cloudflare identity and creates their Viewer account automatically;
+there is no second password or login. The bare stats URL does not enroll new
+people.
 
 The Worker source and Wrangler configuration live in
 `ops/grafana-invite-worker`. Its Cloudflare API token, invite token, and expiry
@@ -102,8 +106,9 @@ scripts/grafana-share-users.py add person@example.com --name "Person Name"
 scripts/grafana-share-users.py remove person@example.com
 ```
 
-`add` puts the address on the Access allowlist and creates a Viewer invite.
-Grafana email delivery is not assumed, so it prints a one-time invitation URL.
+`add` puts the address on the Access allowlist and can still pre-create a Viewer
+invite for compatibility, but normal users should use the expiring enrollment
+link and Cloudflare JWT provisioning.
 `remove` deletes the Grafana user or pending invite and removes the address
 from Access. A removed person cannot re-enroll after the shared link expires;
 rotate the link immediately if they must be excluded before then.
