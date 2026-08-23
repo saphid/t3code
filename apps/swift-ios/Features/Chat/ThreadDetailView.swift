@@ -398,8 +398,35 @@ public struct ThreadDetailView: View {
                         kind: entry.kind == .directory ? .directory : .file
                     )
                 }
-            }
+            },
+            voiceVocabulary: { dictationVocabulary() }
         )
+    }
+
+    /// Dictation keywords learned from the current session: the draft, the
+    /// thread's recent messages (user turns weighted highest), and nearby
+    /// titles. Resolved when recording starts so it tracks live content.
+    private func dictationVocabulary() -> [String] {
+        var sources: [FeatureVoiceVocabulary.Source] = [
+            .init(text: draft, weight: 5),
+            .init(text: currentThread.title, weight: 4),
+        ]
+        if let detail {
+            for message in detail.messages.suffix(40) {
+                // Tool output can be megabytes; extraction runs on the main
+                // actor at record start, so bound each source.
+                sources.append(
+                    .init(
+                        text: String(message.text.prefix(4000)),
+                        weight: message.role == .user ? 3 : 1
+                    )
+                )
+            }
+        }
+        if let project = model.snapshot.projects.first(where: { $0.id == currentThread.projectID }) {
+            sources.append(.init(text: project.name, weight: 2))
+        }
+        return FeatureVoiceVocabulary.extract(from: sources)
     }
 
     private var threadProviders: [FeatureProvider] {

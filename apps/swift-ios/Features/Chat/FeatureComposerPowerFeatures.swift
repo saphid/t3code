@@ -5,22 +5,28 @@ import Foundation
 /// know how a particular environment fetches provider or workspace data.
 struct FeatureComposerPowerFeatures {
     typealias PathSearch = (_ query: String) async throws -> [FeatureComposerPathEntry]
+    typealias VoiceVocabulary = () -> [String]
 
     var slashCommands: [FeatureProviderSlashCommand]
     var skills: [FeatureProviderSkill]
     var pathSearchScopeID: String
     var searchPaths: PathSearch?
+    /// Session-derived dictation vocabulary, resolved when recording starts
+    /// so it reflects the latest thread content.
+    var voiceVocabulary: VoiceVocabulary?
 
     init(
         slashCommands: [FeatureProviderSlashCommand] = [],
         skills: [FeatureProviderSkill] = [],
         pathSearchScopeID: String = "",
-        searchPaths: PathSearch? = nil
+        searchPaths: PathSearch? = nil,
+        voiceVocabulary: VoiceVocabulary? = nil
     ) {
         self.slashCommands = slashCommands
         self.skills = skills
         self.pathSearchScopeID = pathSearchScopeID
         self.searchPaths = searchPaths
+        self.voiceVocabulary = voiceVocabulary
     }
 
     static let disabled = FeatureComposerPowerFeatures()
