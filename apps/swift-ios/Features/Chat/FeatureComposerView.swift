@@ -2,7 +2,15 @@ import SwiftUI
 import UIKit
 
 struct FeatureComposerView: View {
+    // Fully qualified: the app's own Core/Models.swift `Environment` type
+    // shadows the SwiftUI property wrapper in this scope.
+    @SwiftUI.Environment(\.scenePhase) private var scenePhase
+    @AppStorage(FeatureVoiceDictationSettings.enabledKey)
+    private var voiceDictationEnabled = true
+    @AppStorage(FeatureVoiceDictationSettings.keyboardKey)
+    private var voiceDictationKeyboardEnabled = false
     @State private var isManuallyExpanded = false
+    @State private var dictation = FeatureVoiceDictationModel()
     @State private var isAttachmentFlowActive = false
     @State private var attachmentPreparation = FeatureAttachmentPreparationState()
     @State private var pathEntries: [FeatureComposerPathEntry] = []
@@ -175,12 +183,56 @@ struct FeatureComposerView: View {
                 .stroke(T3Colors.inputBorder, lineWidth: 1)
         }
         .clipShape(composerShape)
+        .background {
+            // Behind the box, not on it: the opaque composer covers the
+            // centre, so the blurred fill blooms outward as a halo.
+            if dictation.isRecording {
+                FeatureComposerVoiceGlow(shape: composerShape, level: dictation.audioLevel)
+            }
+        }
         .modifier(
             FeatureComposerImageDrop(
                 isEnabled: imagesAllowed,
                 shape: composerShape,
                 onDropImages: attachDroppedImages
             )
+        )
+        .onDisappear {
+            // Navigating away mid-recording must release the microphone.
+            dictation.cancel()
+        }
+        .onChange(of: scenePhase) {
+            // Backgrounding stops capture anyway; finalize what was said so
+            // the model cannot come back believing the mic is still live.
+            if scenePhase != .active, dictation.phase != .idle {
+                dictation.stop()
+            }
+        }
+        .onChange(of: text) {
+            // Dictation appends at the end while the editor keeps the caret
+            // at its old position on external updates; ride the new text.
+            if dictation.phase == .recording || dictation.phase == .stopping {
+                textSelectionRequest = FeatureComposerTextSelectionRequest(
+                    location: text.utf16.count
+                )
+            }
+        }
+    }
+
+    private var dictationButton: some View {
+        FeatureVoiceDictationButton(
+            model: dictation,
+            text: $text,
+            vocabularyProvider: powerFeatures.voiceVocabulary,
+            onBegin: {
+                isManuallyExpanded = true
+                // The transcript types itself, so by default drop the
+                // keyboard and let the thread stay visible while talking.
+                if !voiceDictationKeyboardEnabled, focused {
+                    focused = false
+                    onDismissKeyboard?()
+                }
+            }
         )
     }
 
@@ -203,6 +255,10 @@ struct FeatureComposerView: View {
             .frame(minHeight: T3Metrics.minimumTapTarget)
             .accessibilityLabel("Message agent")
             .accessibilityHint("Opens the message editor")
+
+            if FeatureVoiceDictationModel.isSupported, voiceDictationEnabled {
+                dictationButton
+            }
 
             submitButton
                 .padding(.trailing, 7)
@@ -262,6 +318,15 @@ struct FeatureComposerView: View {
                     .padding(.bottom, 4)
             }
 
+            if let dictationError = dictation.errorMessage {
+                Label(dictationError, systemImage: "exclamationmark.circle")
+                    .font(T3Typography.supporting)
+                    .foregroundStyle(T3Colors.warning)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 15)
+                    .padding(.bottom, 4)
+            }
+
             if attachmentPreparation.isPreparing {
                 Label(attachmentPreparation.statusLabel, systemImage: "hourglass")
                     .font(T3Typography.supporting)
@@ -305,6 +370,10 @@ struct FeatureComposerView: View {
 
             if let contextUsage {
                 FeatureContextMeter(usage: contextUsage)
+            }
+
+            if FeatureVoiceDictationModel.isSupported, voiceDictationEnabled {
+                dictationButton
             }
 
             submitButton
@@ -574,6 +643,13 @@ struct FeatureComposerView: View {
             onStop()
         } else if FeatureComposerSubmissionPolicy.allowsSend(for: .explicitButton),
                   canSend {
+            // Sending mid-dictation is allowed: the live hypothesis is
+            // already in the draft, so cancel (its callbacks are gated on
+            // the torn-down engine, so no late segment can reach the next
+            // draft) and send what is visible.
+            if dictation.phase != .idle {
+                dictation.cancel()
+            }
             onSend()
         }
     }
@@ -646,6 +722,26 @@ enum FeatureComposerCollapsePolicy {
             && attachmentsAreEmpty
             && !isAttachmentFlowActive
             && !isPreparingAttachments
+    }
+}
+
+/// Halo rising from behind the whole composer (input, mic, and send) that
+/// pulses brighter and dimmer with the live microphone level while
+/// dictating. Rendered as a blurred fill underneath the opaque composer so
+/// the light appears to emanate from behind the box rather than along its
+/// border. It animates only when level values arrive, never on a timer.
+private struct FeatureComposerVoiceGlow: View {
+    let shape: RoundedRectangle
+    let level: Double
+
+    var body: some View {
+        let intensity = 0.3 + level * 0.7
+        shape
+            .fill(T3Colors.accent.opacity(intensity * 0.75))
+            .blur(radius: 18 + level * 30)
+            .scaleEffect(1.02 + level * 0.06)
+            .allowsHitTesting(false)
+            .animation(.spring(duration: 0.25, bounce: 0.35), value: level)
     }
 }
 
