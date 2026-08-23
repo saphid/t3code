@@ -66,6 +66,24 @@ That credential can support DNS, Access, and Tunnel tools. It intentionally
 cannot manage Workers, R2, billing, registrar settings, or unrelated products;
 create a separately scoped credential if a future tool needs those powers.
 
+For this Grafana app, use the paired operator instead of editing either system
+by hand:
+
+```sh
+scripts/grafana-share-users.py list
+scripts/grafana-share-users.py add person@example.com --name "Person Name"
+scripts/grafana-share-users.py remove person@example.com
+```
+
+`add` preserves the current Cloudflare allowlist and creates a Viewer invite in
+Grafana. Grafana email delivery is not assumed: the command prints a one-time
+invitation URL for the administrator to send to the person. They first pass
+Cloudflare's emailed One-time PIN and then use that URL to choose their Grafana
+password. The Grafana organization-scoped service token is stored in macOS
+Keychain service `grafana-share-inviter`, account `stats.t3play.dev`. The server
+administrator password remains separately stored under service
+`grafana-192.168.1.221`, account `admin` and is not used by this operator.
+
 ## Day-2 operations
 
 - **Add a teammate**: Zero Trust dashboard -> Access -> Applications ->
