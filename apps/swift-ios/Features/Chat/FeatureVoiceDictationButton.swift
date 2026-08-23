@@ -42,24 +42,29 @@ struct FeatureVoiceDictationButton: View {
                 .controlSize(.small)
                 .tint(T3Colors.textSecondary)
         case .recording:
-            // The ring scales and fades with the live microphone level, so
-            // it only repaints while audio buffers arrive.
-            ZStack {
-                Circle()
-                    .fill(T3Colors.danger.opacity(0.14 + model.audioLevel * 0.3))
-                    .frame(width: 30, height: 30)
-                    .scaleEffect(1 + model.audioLevel * 0.55)
-                Circle()
-                    .stroke(T3Colors.danger.opacity(0.35), lineWidth: 1)
-                    .frame(width: 30, height: 30)
-                    .scaleEffect(1 + model.audioLevel * 0.85)
-                    .opacity(1 - model.audioLevel * 0.5)
+            // Red mic plus equalizer bars that bounce with the live
+            // microphone level. Springy on purpose so speech visibly makes
+            // them jump; they only repaint while audio buffers arrive.
+            HStack(spacing: 3) {
                 Image(systemName: "mic.fill")
                     .font(.system(size: 15, weight: .semibold))
                     .foregroundStyle(T3Colors.danger)
+                HStack(spacing: 2) {
+                    ForEach(0..<3, id: \.self) { index in
+                        Capsule()
+                            .fill(T3Colors.danger)
+                            .frame(width: 2.5, height: barHeight(index))
+                    }
+                }
+                .frame(height: 26)
             }
-            .animation(.spring(duration: 0.18), value: model.audioLevel)
+            .animation(.spring(duration: 0.2, bounce: 0.6), value: model.audioLevel)
         }
+    }
+
+    private func barHeight(_ index: Int) -> CGFloat {
+        let multipliers: [CGFloat] = [16, 22, 12]
+        return 4 + multipliers[index] * CGFloat(model.audioLevel)
     }
 
     private var accessibilityLabel: String {

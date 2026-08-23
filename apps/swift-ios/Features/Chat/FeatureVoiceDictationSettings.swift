@@ -25,6 +25,9 @@ enum FeatureVoiceEngine: String, CaseIterable, Identifiable {
 enum FeatureVoiceDictationSettings {
     static let enabledKey = "voiceDictationEnabled"
     static let engineKey = "voiceDictationEngine"
+    /// Whether the keyboard stays up while dictating. Off by default: the
+    /// transcript types itself, so the keyboard mostly covers the thread.
+    static let keyboardKey = "voiceDictationKeyboardEnabled"
 
     static var isEnabled: Bool {
         UserDefaults.standard.object(forKey: enabledKey) as? Bool ?? true

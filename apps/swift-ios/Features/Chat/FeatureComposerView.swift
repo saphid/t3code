@@ -7,6 +7,8 @@ struct FeatureComposerView: View {
     @SwiftUI.Environment(\.scenePhase) private var scenePhase
     @AppStorage(FeatureVoiceDictationSettings.enabledKey)
     private var voiceDictationEnabled = true
+    @AppStorage(FeatureVoiceDictationSettings.keyboardKey)
+    private var voiceDictationKeyboardEnabled = false
     @State private var isManuallyExpanded = false
     @State private var dictation = FeatureVoiceDictationModel()
     @State private var isAttachmentFlowActive = false
@@ -199,6 +201,15 @@ struct FeatureComposerView: View {
                 dictation.stop()
             }
         }
+        .onChange(of: text) {
+            // Dictation appends at the end while the editor keeps the caret
+            // at its old position on external updates; ride the new text.
+            if dictation.phase == .recording || dictation.phase == .stopping {
+                textSelectionRequest = FeatureComposerTextSelectionRequest(
+                    location: text.utf16.count
+                )
+            }
+        }
     }
 
     private var dictationButton: some View {
@@ -206,7 +217,15 @@ struct FeatureComposerView: View {
             model: dictation,
             text: $text,
             vocabularyProvider: powerFeatures.voiceVocabulary,
-            onBegin: { isManuallyExpanded = true }
+            onBegin: {
+                isManuallyExpanded = true
+                // The transcript types itself, so by default drop the
+                // keyboard and let the thread stay visible while talking.
+                if !voiceDictationKeyboardEnabled, focused {
+                    focused = false
+                    onDismissKeyboard?()
+                }
+            }
         )
     }
 

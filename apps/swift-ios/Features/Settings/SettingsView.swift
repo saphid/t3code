@@ -12,6 +12,8 @@ public struct SettingsView: View {
     private var voiceDictationEnabled = true
     @AppStorage(FeatureVoiceDictationSettings.engineKey)
     private var voiceEngineRawValue = FeatureVoiceEngine.dictation.rawValue
+    @AppStorage(FeatureVoiceDictationSettings.keyboardKey)
+    private var voiceDictationKeyboardEnabled = false
 
     public init(model: FeatureRootModel) {
         self.model = model
@@ -190,6 +192,12 @@ public struct SettingsView: View {
                     title: "Dictation button",
                     systemImage: "mic",
                     isOn: $voiceDictationEnabled
+                )
+                settingsDivider
+                SettingsToggleRow(
+                    title: "Keyboard while dictating",
+                    systemImage: "keyboard",
+                    isOn: $voiceDictationKeyboardEnabled
                 )
                 settingsDivider
                 HStack(spacing: 12) {
