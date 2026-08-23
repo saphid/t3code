@@ -46,7 +46,35 @@ observed stage against `satisfiedAt`. An unrelated issue outside the closure
 does not enter the catalog and cannot create a global hold.
 8. **accepted**: Alex explicitly accepts phone behavior.
 9. **pr-open / landed**: a separate grant authorizes PR/push work; babysitting
-   verifies current-head checks and review feedback.
+   verifies current-head checks and review feedback. The ordinary
+   `accepted -> pr-open -> landed` path and all of its receipts remain the
+   required path for this work item's own contribution.
+
+An active item may also move directly to the existing **landed** stage when
+its exact acceptance behavior landed independently upstream. This is a narrow
+reconciliation path, not an alternate delivery path. It requires a
+`swiftui-external-landing-receipt` with provenance mode
+`external-upstream-landing`. The receipt binds the issue and lane, the active
+item's exact base and launch-receipt hash, a merged pull request URL and merge
+commit, and a successful `git merge-base --is-ancestor` attestation against an
+identified live base. Its acceptance mapping must repeat every work-item
+acceptance statement exactly once, point each statement to an observed current
+source location, and exactly cover a nonempty set of hashes that still match
+the repository source bytes when the transition is validated. The source hash
+set names the same live-base commit as the ancestry attestation.
+
+The receipt also records every prohibited side effect named by
+`contract.json` as false. In particular, reconciliation does not claim proof,
+phone acceptance, a generation, or a PR created for this work item. Those
+binding fields stay empty. The resulting landed binding reuses
+`landedReceiptSha256` and adds only
+`landingProvenance: external-upstream`; catalog validation uses that
+discriminator to require the external shape instead of the ordinary complete
+delivery chain. Since the result is the existing landed stage, dependency
+checks such as `satisfiedAt: landed` continue to use the normal stage ordering.
+The transition CLI accepts this receipt only through
+`--external-landing-receipt`; the ordinary `--landed-receipt` and open-PR
+generation receipt inputs cannot substitute for it.
 
 Launch, proof, inspection, phone generation, human acceptance, PR generation,
 and landed receipts have separate binding fields. Later checkpoints never

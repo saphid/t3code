@@ -14,10 +14,11 @@ import json
 import re
 import sys
 from copy import deepcopy
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 
 ROOT = Path(__file__).resolve().parent
+REPO_ROOT = ROOT.parents[1]
 CONTRACT = json.loads((ROOT / "contract.json").read_text())
 ISSUE_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+#[1-9][0-9]*$")
 LANE_RE = re.compile(r"^[a-z0-9]+(?:[._-][a-z0-9]+)*$")
@@ -25,6 +26,8 @@ COMMIT_RE = re.compile(r"^[0-9a-f]{40}$")
 SHA_RE = re.compile(r"^[0-9a-f]{64}$")
 UTC_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z$")
 UDID_RE = re.compile(r"^[0-9A-F]{8}(?:-[0-9A-F]{4}){3}-[0-9A-F]{12}$")
+PULL_REQUEST_RE = re.compile(
+    r"^https://github\.com/%s/pull/[1-9][0-9]*$" % re.escape(CONTRACT["repository"]))
 
 
 def load_build_store_module():
@@ -120,6 +123,13 @@ def validate_work_item(value):
     binding = value.get("binding")
     add(errors, isinstance(binding, dict), "binding must be an object")
     if isinstance(binding, dict):
+        external_provenance = CONTRACT["externalLanding"]["bindingProvenance"]
+        landing_provenance = binding.get("landingProvenance")
+        add(errors, landing_provenance in (None, external_provenance),
+            "binding.landingProvenance is invalid")
+        add(errors, landing_provenance is None or stage == "landed",
+            "binding.landingProvenance is only valid at landed")
+        externally_landed = stage == "landed" and landing_provenance == external_provenance
         for name in ("baseCommit", "headCommit"):
             item = binding.get(name)
             if item is not None:
@@ -137,22 +147,32 @@ def validate_work_item(value):
         if stage in ("active", "proof-ready", "phone-test", "accepted", "pr-open", "landed"):
             add(errors, binding.get("launchReceiptSha256") is not None,
                 "binding.launchReceiptSha256 is required at %s" % stage)
-        if stage in ("proof-ready", "phone-test", "accepted", "pr-open", "landed"):
+        if stage in ("proof-ready", "phone-test", "accepted", "pr-open") or \
+                stage == "landed" and not externally_landed:
             for name in ("baseCommit", "headCommit", "proofSha256", "inspectionSha256"):
                 add(errors, binding.get(name) is not None,
                     "binding.%s is required at %s" % (name, stage))
-        if stage in ("phone-test", "accepted", "pr-open", "landed"):
+        if stage in ("phone-test", "accepted", "pr-open") or \
+                stage == "landed" and not externally_landed:
             add(errors, binding.get("phoneGenerationReceiptSha256") is not None,
                 "binding.phoneGenerationReceiptSha256 is required at %s" % stage)
-        if stage in ("accepted", "pr-open", "landed"):
+        if stage in ("accepted", "pr-open") or stage == "landed" and not externally_landed:
             add(errors, binding.get("acceptanceReceiptSha256") is not None,
                 "binding.acceptanceReceiptSha256 is required at %s" % stage)
-        if stage in ("pr-open", "landed"):
+        if stage == "pr-open" or stage == "landed" and not externally_landed:
             add(errors, binding.get("prGenerationReceiptSha256") is not None,
                 "binding.prGenerationReceiptSha256 is required at %s" % stage)
         if stage == "landed":
             add(errors, binding.get("landedReceiptSha256") is not None,
                 "binding.landedReceiptSha256 is required at landed")
+        if externally_landed:
+            add(errors, binding.get("baseCommit") is not None,
+                "binding.baseCommit is required at externally landed")
+            for name in ("headCommit", "proofSha256", "inspectionSha256",
+                         "phoneGenerationReceiptSha256", "acceptanceReceiptSha256",
+                         "prGenerationReceiptSha256"):
+                add(errors, binding.get(name) is None,
+                    "binding.%s must be absent at externally landed" % name)
     return errors
 
 
@@ -789,6 +809,135 @@ def validate_acceptance_receipt(value, item):
     return errors
 
 
+def source_path_from_reference(value):
+    if not nonempty(value):
+        return None
+    path = PurePosixPath(value.split(":", 1)[0])
+    if path.is_absolute() or not path.parts or ".." in path.parts:
+        return None
+    return str(path)
+
+
+def validate_external_landing_receipt(value, item, source_root=None):
+    errors = []
+    add(errors, isinstance(value, dict), "external landing receipt must be an object")
+    if not isinstance(value, dict):
+        return errors
+    policy = CONTRACT["externalLanding"]
+    binding = item.get("binding", {}) if isinstance(item, dict) else {}
+    add(errors, value.get("schemaVersion") == 1,
+        "external landing receipt schemaVersion must be 1")
+    add(errors, value.get("kind") == policy["receiptKind"],
+        "external landing receipt kind is invalid")
+    add(errors, value.get("provenanceMode") == policy["provenanceMode"],
+        "external landing receipt provenanceMode is invalid")
+    add(errors, value.get("issue") == item.get("issue"),
+        "external landing receipt issue must match work item")
+    add(errors, value.get("laneId") == item.get("laneId"),
+        "external landing receipt laneId must match work item")
+    add(errors, value.get("baseCommit") == binding.get("baseCommit") and
+        matches(COMMIT_RE, value.get("baseCommit")),
+        "external landing receipt baseCommit must match work item")
+    add(errors, value.get("launchReceiptSha256") == binding.get("launchReceiptSha256") and
+        matches(SHA_RE, value.get("launchReceiptSha256")),
+        "external landing receipt launch receipt must match work item")
+    add(errors, matches(PULL_REQUEST_RE, value.get("pullRequestUrl")),
+        "external landing receipt pullRequestUrl must name a repository pull request")
+    add(errors, value.get("pullRequestState") == "MERGED",
+        "external landing receipt pullRequestState must be MERGED")
+    add(errors, matches(UTC_RE, value.get("mergedAt")),
+        "external landing receipt mergedAt must be UTC ending in Z")
+    merge_commit = value.get("mergeCommit")
+    add(errors, matches(COMMIT_RE, merge_commit),
+        "external landing receipt mergeCommit is invalid")
+
+    attestation = value.get("ancestorAttestation")
+    add(errors, isinstance(attestation, dict),
+        "external landing receipt ancestorAttestation must be an object")
+    if isinstance(attestation, dict):
+        add(errors, attestation.get("mergeCommit") == merge_commit,
+            "ancestor attestation mergeCommit must match external landing")
+        add(errors, matches(COMMIT_RE, attestation.get("liveBaseCommit")),
+            "ancestor attestation liveBaseCommit is invalid")
+        add(errors, attestation.get("method") == "git-merge-base-is-ancestor",
+            "ancestor attestation method is invalid")
+        add(errors, attestation.get("exitStatus") == 0,
+            "ancestor attestation exitStatus must be zero")
+        add(errors, attestation.get("isAncestor") is True,
+            "merge commit must be attested as an ancestor of live base")
+        add(errors, matches(UTC_RE, attestation.get("attestedAt")),
+            "ancestor attestation attestedAt must be UTC ending in Z")
+
+    mapping = value.get("acceptanceMapping")
+    expected_acceptance = item.get("acceptance", []) if isinstance(item, dict) else []
+    add(errors, isinstance(mapping, list) and bool(mapping),
+        "external landing receipt acceptanceMapping must be nonempty")
+    if isinstance(mapping, list):
+        actual_acceptance = [entry.get("acceptance") if isinstance(entry, dict) else None
+                             for entry in mapping]
+        add(errors, actual_acceptance == expected_acceptance,
+            "external landing receipt must map every acceptance statement exactly once in order")
+        referenced_paths = []
+        for index, entry in enumerate(mapping):
+            prefix = "external landing acceptanceMapping[%d]" % index
+            add(errors, isinstance(entry, dict), "%s must be an object" % prefix)
+            if not isinstance(entry, dict):
+                continue
+            source_path = source_path_from_reference(entry.get("source"))
+            add(errors, source_path is not None, "%s.source is invalid" % prefix)
+            add(errors, nonempty(entry.get("observation")),
+                "%s.observation is required" % prefix)
+            if source_path is not None:
+                referenced_paths.append(source_path)
+    else:
+        referenced_paths = []
+
+    source_hashes = value.get("currentSourceHashes")
+    live_base_commit = attestation.get("liveBaseCommit") \
+        if isinstance(attestation, dict) else None
+    add(errors, value.get("currentSourceCommit") == live_base_commit and
+        matches(COMMIT_RE, value.get("currentSourceCommit")),
+        "external landing currentSourceCommit must match the attested live base")
+    add(errors, isinstance(source_hashes, dict) and bool(source_hashes),
+        "external landing receipt currentSourceHashes must be nonempty")
+    if isinstance(source_hashes, dict):
+        valid_paths = []
+        resolved_root = Path(source_root or REPO_ROOT).resolve()
+        for path_value, expected_hash in source_hashes.items():
+            source_path = source_path_from_reference(path_value)
+            add(errors, source_path == path_value,
+                "current source hash path must be repository-relative: %s" % path_value)
+            add(errors, matches(SHA_RE, expected_hash),
+                "current source hash must be a lowercase SHA-256: %s" % path_value)
+            if source_path == path_value:
+                valid_paths.append(source_path)
+                candidate = (resolved_root / source_path).resolve()
+                inside_root = candidate == resolved_root or resolved_root in candidate.parents
+                add(errors, inside_root,
+                    "current source path escapes repository root: %s" % source_path)
+                add(errors, inside_root and candidate.is_file(),
+                    "current source path does not exist: %s" % source_path)
+                if inside_root and candidate.is_file() and matches(SHA_RE, expected_hash):
+                    add(errors, sha256(candidate) == expected_hash,
+                        "current source hash does not match file bytes: %s" % source_path)
+        add(errors, set(valid_paths) == set(referenced_paths),
+            "currentSourceHashes must exactly cover acceptance mapping sources")
+
+    side_effects = value.get("sideEffects")
+    prohibited = policy["prohibitedSideEffects"]
+    add(errors, isinstance(side_effects, dict),
+        "external landing receipt sideEffects must be an object")
+    if isinstance(side_effects, dict):
+        add(errors, set(side_effects) == set(prohibited),
+            "external landing receipt sideEffects must name every prohibited side effect exactly")
+        for name in prohibited:
+            add(errors, side_effects.get(name) is False,
+                "external landing receipt sideEffects.%s must be false" % name)
+    add(errors, matches(UTC_RE, value.get("reconciledAt")),
+        "external landing receipt reconciledAt must be UTC ending in Z")
+    return errors
+
+
 def validate_landed_receipt(value, item, pr_receipt, pr_receipt_path):
     errors = []
     add(errors, isinstance(value, dict), "landed receipt must be an object")
@@ -817,7 +966,8 @@ def validate_landed_receipt(value, item, pr_receipt, pr_receipt_path):
 def transition(item, destination, proof_path=None, inspection_path=None,
                plan_path=None, receipt_path=None, verdict=None,
                launch_receipt_path=None, acceptance_receipt_path=None,
-               landed_receipt_path=None):
+               landed_receipt_path=None, external_landing_receipt_path=None,
+               source_root=None):
     errors = validate_work_item(item)
     current = item.get("stage") if isinstance(item, dict) else None
     add(errors, destination in CONTRACT["transitions"].get(current, []),
@@ -847,6 +997,27 @@ def transition(item, destination, proof_path=None, inspection_path=None,
                 result["binding"].update({
                     "baseCommit": proof["baseCommit"], "headCommit": proof["headCommit"],
                     "proofSha256": sha256(proof_path), "inspectionSha256": sha256(inspection_path)})
+    if current == "active" and destination == "landed":
+        add(errors, external_landing_receipt_path is not None,
+            "active -> landed requires an external landing receipt")
+        add(errors, all(value is None for value in (
+            proof_path, inspection_path, plan_path, receipt_path, verdict,
+            acceptance_receipt_path, landed_receipt_path)),
+            "external landing cannot use proof, phone acceptance, generation, or ordinary landed inputs")
+        for name in ("headCommit", "proofSha256", "inspectionSha256",
+                     "phoneGenerationReceiptSha256", "acceptanceReceiptSha256",
+                     "prGenerationReceiptSha256", "landedReceiptSha256"):
+            add(errors, item.get("binding", {}).get(name) is None,
+                "external landing requires binding.%s to be absent" % name)
+        if external_landing_receipt_path:
+            external_landing = load(external_landing_receipt_path)
+            errors.extend(validate_external_landing_receipt(
+                external_landing, item, source_root))
+            if not errors:
+                result["binding"]["landingProvenance"] = \
+                    CONTRACT["externalLanding"]["bindingProvenance"]
+                result["binding"]["landedReceiptSha256"] = \
+                    sha256(external_landing_receipt_path)
     if current == "proof-ready" and destination == "phone-test":
         add(errors, plan_path is not None and receipt_path is not None,
             "phone-test requires generation plan and receipt")
@@ -933,6 +1104,7 @@ def main(argv=None):
     move.add_argument("--launch-receipt")
     move.add_argument("--acceptance-receipt")
     move.add_argument("--landed-receipt")
+    move.add_argument("--external-landing-receipt")
     args = parser.parse_args(argv)
     try:
         if args.command == "validate-work-item":
@@ -957,7 +1129,7 @@ def main(argv=None):
             value, errors = transition(load(args.path), args.to, args.proof, args.inspection,
                                        args.generation_plan, args.generation_receipt, args.verdict,
                                        args.launch_receipt, args.acceptance_receipt,
-                                       args.landed_receipt)
+                                       args.landed_receipt, args.external_landing_receipt)
             return print_result(errors, value)
     except (OSError, ValueError, json.JSONDecodeError) as exc:
         return print_result([str(exc)])

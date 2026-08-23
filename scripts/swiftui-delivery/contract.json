@@ -29,7 +29,7 @@
   ],
   "transitions": {
     "queued": ["active", "cancelled", "superseded"],
-    "active": ["proof-ready", "cancelled", "superseded"],
+    "active": ["proof-ready", "landed", "cancelled", "superseded"],
     "proof-ready": ["phone-test", "active", "cancelled", "superseded"],
     "phone-test": ["accepted", "active", "cancelled", "superseded"],
     "accepted": ["pr-open", "active", "cancelled", "superseded"],
@@ -44,6 +44,29 @@
     "publish-test": ["candidate", "installed-carry"],
     "publish-dev": ["accepted"],
     "open-pr": ["candidate"]
+  },
+  "externalLanding": {
+    "transitionFrom": "active",
+    "receiptKind": "swiftui-external-landing-receipt",
+    "provenanceMode": "external-upstream-landing",
+    "bindingProvenance": "external-upstream",
+    "prohibitedSideEffects": [
+      "productSourceChanged",
+      "canonicalStateChanged",
+      "githubIssueChanged",
+      "pullRequestChanged",
+      "labelChanged",
+      "buildStarted",
+      "simulatorDriven",
+      "publicationChanged",
+      "deploymentChanged",
+      "serviceChanged",
+      "physicalPhoneChanged",
+      "proofFabricated",
+      "phoneAcceptanceRecorded",
+      "generationReceiptCreated",
+      "workItemPullRequestCreated"
+    ]
   },
   "evidencePolicy": {
     "specification": "references/evidence.md",

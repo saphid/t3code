@@ -47,6 +47,57 @@ class DeliveryProtocolTests(unittest.TestCase):
                         "landedReceiptSha256": None},
         }
 
+    def active_work_item(self, issue="saphid/t3code-personal#1", lane="native-ui"):
+        item = self.work_item(issue, lane)
+        item["stage"] = "active"
+        item["binding"]["baseCommit"] = "a" * 40
+        item["binding"]["launchReceiptSha256"] = "b" * 64
+        return item
+
+    def external_landing_receipt(self, directory, item):
+        directory = Path(directory)
+        source_path = directory / "Sources" / "Feature.swift"
+        source_path.parent.mkdir(exist_ok=True)
+        source_path.write_text("struct ExternallyLandedFeature {}\n")
+        source_hash = hashlib.sha256(source_path.read_bytes()).hexdigest()
+        relative_source = "Sources/Feature.swift"
+        receipt = {
+            "schemaVersion": 1,
+            "kind": "swiftui-external-landing-receipt",
+            "provenanceMode": "external-upstream-landing",
+            "issue": item["issue"],
+            "laneId": item["laneId"],
+            "baseCommit": item["binding"]["baseCommit"],
+            "launchReceiptSha256": item["binding"]["launchReceiptSha256"],
+            "pullRequestUrl": "https://github.com/pingdotgg/t3code/pull/7895",
+            "pullRequestState": "MERGED",
+            "mergedAt": "2026-08-22T12:05:28Z",
+            "mergeCommit": "c" * 40,
+            "ancestorAttestation": {
+                "mergeCommit": "c" * 40,
+                "liveBaseCommit": "d" * 40,
+                "method": "git-merge-base-is-ancestor",
+                "exitStatus": 0,
+                "isAncestor": True,
+                "attestedAt": "2026-08-23T13:42:36Z",
+            },
+            "acceptanceMapping": [{
+                "acceptance": acceptance,
+                "source": relative_source + ":1",
+                "observation": "The current source contains the accepted behavior.",
+            } for acceptance in item["acceptance"]],
+            "currentSourceCommit": "d" * 40,
+            "currentSourceHashes": {relative_source: source_hash},
+            "sideEffects": {
+                name: False
+                for name in delivery.CONTRACT["externalLanding"]["prohibitedSideEffects"]
+            },
+            "reconciledAt": "2026-08-23T13:45:00Z",
+        }
+        receipt_path = directory / "external-landing.json"
+        write(receipt_path, receipt)
+        return receipt, receipt_path
+
     def make_evidence(self, directory, user_visible=True):
         directory = Path(directory)
         base, head = "a" * 40, "b" * 40
@@ -552,6 +603,152 @@ class DeliveryProtocolTests(unittest.TestCase):
                     item, "phone-test", plan_path=plan_path, receipt_path=receipt_path)
             self.assertEqual(errors, [])
             self.assertEqual(transitioned["stage"], "phone-test")
+
+    def test_active_item_can_reconcile_an_exact_external_landing(self):
+        with tempfile.TemporaryDirectory() as directory:
+            item = self.active_work_item()
+            _, missing_errors = delivery.transition(item, "landed", source_root=directory)
+            self.assertIn(
+                "active -> landed requires an external landing receipt", missing_errors)
+            _, receipt_path = self.external_landing_receipt(directory, item)
+            transitioned, errors = delivery.transition(
+                item, "landed", external_landing_receipt_path=receipt_path,
+                source_root=directory)
+            self.assertEqual(errors, [])
+            self.assertEqual(transitioned["stage"], "landed")
+            self.assertEqual(
+                transitioned["binding"]["landingProvenance"], "external-upstream")
+            self.assertEqual(
+                transitioned["binding"]["landedReceiptSha256"],
+                delivery.sha256(receipt_path))
+            self.assertIsNone(transitioned["binding"]["phoneGenerationReceiptSha256"])
+            self.assertIsNone(transitioned["binding"]["acceptanceReceiptSha256"])
+            self.assertIsNone(transitioned["binding"]["prGenerationReceiptSha256"])
+            self.assertEqual(delivery.validate_work_item(transitioned), [])
+
+    def test_external_landing_receipt_rejects_incomplete_or_false_provenance(self):
+        with tempfile.TemporaryDirectory() as directory:
+            item = self.active_work_item()
+            receipt, _ = self.external_landing_receipt(directory, item)
+            mutations = {
+                "issue": lambda value: value.update(issue="saphid/t3code-personal#2"),
+                "lane": lambda value: value.update(laneId="another-lane"),
+                "base": lambda value: value.update(baseCommit="e" * 40),
+                "launch": lambda value: value.update(launchReceiptSha256="e" * 64),
+                "mode": lambda value: value.update(provenanceMode="work-item-pr"),
+                "pull request": lambda value: value.update(
+                    pullRequestUrl="https://github.com/other/repository/pull/7895"),
+                "merged state": lambda value: value.update(pullRequestState="OPEN"),
+                "merge commit": lambda value: value.update(mergeCommit="not-a-commit"),
+                "ancestry": lambda value: value["ancestorAttestation"].update(
+                    isAncestor=False),
+                "acceptance coverage": lambda value: value.update(acceptanceMapping=[]),
+                "source commit": lambda value: value.update(currentSourceCommit="e" * 40),
+                "source hash": lambda value: value["currentSourceHashes"].update(
+                    {"Sources/Feature.swift": "0" * 64}),
+                "side effect": lambda value: value["sideEffects"].update(
+                    productSourceChanged=True),
+            }
+            for name, mutate in mutations.items():
+                with self.subTest(name=name):
+                    changed = json.loads(json.dumps(receipt))
+                    mutate(changed)
+                    self.assertTrue(delivery.validate_external_landing_receipt(
+                        changed, item, directory))
+
+    def test_external_landed_catalog_binding_cannot_impersonate_ordinary_receipts(self):
+        with tempfile.TemporaryDirectory() as directory:
+            item = self.active_work_item()
+            _, receipt_path = self.external_landing_receipt(directory, item)
+            transitioned, errors = delivery.transition(
+                item, "landed", external_landing_receipt_path=receipt_path,
+                source_root=directory)
+            self.assertEqual(errors, [])
+            transitioned["binding"]["acceptanceReceiptSha256"] = "e" * 64
+            errors = delivery.validate_catalog([transitioned])
+            self.assertTrue(any("must be absent at externally landed" in error
+                                for error in errors))
+            item["binding"]["proofSha256"] = "f" * 64
+            _, errors = delivery.transition(
+                item, "landed", external_landing_receipt_path=receipt_path,
+                source_root=directory)
+            self.assertTrue(any("requires binding.proofSha256 to be absent" in error
+                                for error in errors))
+
+    def test_externally_landed_item_satisfies_landed_dependency_normally(self):
+        with tempfile.TemporaryDirectory() as directory:
+            proof, _, proof_d, _, _, inspection_d = self.make_evidence(directory)
+            dependency = self.active_work_item(
+                "saphid/t3code-personal#2", "external-feature")
+            _, receipt_path = self.external_landing_receipt(directory, dependency)
+            dependency, errors = delivery.transition(
+                dependency, "landed", external_landing_receipt_path=receipt_path,
+                source_root=directory)
+            self.assertEqual(errors, [])
+
+            candidate = self.work_item()
+            candidate["stage"] = "proof-ready"
+            candidate["dependencies"] = [{
+                "issue": dependency["issue"], "kind": "ordered-after",
+                "satisfiedAt": "landed",
+            }]
+            candidate["binding"].update({
+                "baseCommit": proof["baseCommit"], "headCommit": proof["headCommit"],
+                "launchReceiptSha256": "e" * 64,
+                "proofSha256": proof_d["sha256"],
+                "inspectionSha256": inspection_d["sha256"],
+            })
+            candidate_d = write(Path(directory) / "candidate.json", candidate)
+            catalog_d = write(Path(directory) / "catalog.json", [candidate, dependency])
+            plan = {
+                "schemaVersion": 2, "kind": "swiftui-generation-plan",
+                "mode": "publish-test",
+                "authority": {"actor": "Alex", "source": "T3 thread message",
+                              "scopeSha256": "f" * 64,
+                              "grantedAt": "2026-08-23T14:00:00Z"},
+                "catalog": catalog_d,
+                "emptyCarryReason":
+                    "This isolated protocol fixture has no prior installed Test generation.",
+                "entries": [{
+                    "issue": candidate["issue"],
+                    "headCommit": candidate["binding"]["headCommit"],
+                    "role": "candidate", "workItem": candidate_d,
+                    "proof": proof_d, "inspection": inspection_d,
+                }],
+            }
+            self.assertEqual(delivery.validate_generation_plan(plan), [])
+
+    def test_ordinary_landed_transition_remains_unchanged(self):
+        with tempfile.TemporaryDirectory() as directory:
+            item = self.work_item()
+            item["stage"] = "pr-open"
+            item["binding"] = {
+                "baseCommit": "a" * 40, "headCommit": "b" * 40,
+                "launchReceiptSha256": "c" * 64, "proofSha256": "d" * 64,
+                "inspectionSha256": "e" * 64,
+                "phoneGenerationReceiptSha256": "f" * 64,
+                "acceptanceReceiptSha256": "1" * 64,
+                "prGenerationReceiptSha256": None,
+                "landedReceiptSha256": None,
+            }
+            pr_receipt_path = Path(directory) / "pr-generation.json"
+            write(pr_receipt_path, {
+                "schemaVersion": 2, "kind": "swiftui-generation-receipt",
+                "mode": "open-pr", "pullRequestUrl": "https://example.test/pr/1",
+            })
+            item["binding"]["prGenerationReceiptSha256"] = delivery.sha256(pr_receipt_path)
+            landed_path = Path(directory) / "landed.json"
+            write(landed_path, {
+                "schemaVersion": 2, "kind": "swiftui-landed-receipt",
+                "issue": item["issue"], "pullRequestUrl": "https://example.test/pr/1",
+                "mergeCommit": "9" * 40, "landedAt": "2026-08-22T06:07:08Z",
+            })
+            transitioned, errors = delivery.transition(
+                item, "landed", receipt_path=pr_receipt_path,
+                landed_receipt_path=landed_path)
+            self.assertEqual(errors, [])
+            self.assertEqual(transitioned["stage"], "landed")
+            self.assertNotIn("landingProvenance", transitioned["binding"])
 
     def test_landed_transition_must_close_the_generated_pull_request(self):
         with tempfile.TemporaryDirectory() as directory:
