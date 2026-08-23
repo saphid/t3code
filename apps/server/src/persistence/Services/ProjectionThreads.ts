@@ -68,6 +68,11 @@ export const ListProjectionThreadsByProjectInput = Schema.Struct({
 });
 export type ListProjectionThreadsByProjectInput = typeof ListProjectionThreadsByProjectInput.Type;
 
+export const ListRecentThreadTitlesInput = Schema.Struct({
+  limit: Schema.Int,
+});
+export type ListRecentThreadTitlesInput = typeof ListRecentThreadTitlesInput.Type;
+
 /**
  * ProjectionThreadRepositoryShape - Service API for projected thread records.
  */
@@ -101,6 +106,16 @@ export interface ProjectionThreadRepositoryShape {
   readonly deleteById: (
     input: DeleteProjectionThreadInput,
   ) => Effect.Effect<void, ProjectionRepositoryError>;
+
+  /**
+   * List titles of the most recently updated live threads.
+   *
+   * Narrow read for dictation-vocabulary learning: only the title column
+   * travels, newest first, bounded by `limit`.
+   */
+  readonly listRecentTitles: (
+    input: ListRecentThreadTitlesInput,
+  ) => Effect.Effect<ReadonlyArray<string>, ProjectionRepositoryError>;
 }
 
 /**

@@ -1051,6 +1051,8 @@ ${associatedDomains}
     <true/>
     <key>com.apple.security.cs.disable-library-validation</key>
     <true/>
+    <key>com.apple.security.device.audio-input</key>
+    <true/>
   </dict>
 </plist>
 `;
@@ -2069,6 +2071,13 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
       target: target === "dmg" ? [target, "zip"] : [target],
       icon: "icon.icns",
       category: "public.app-category.developer-tools",
+      // Voice dictation records from the renderer; macOS requires the usage
+      // string, and signed builds need the audio-input entitlement on every
+      // helper process (entitlementsInherit), not just the app binary.
+      extendInfo: {
+        NSMicrophoneUsageDescription:
+          "T3 Code uses the microphone to dictate messages to your agents. Audio is transcribed on this device.",
+      },
       protocols: [
         {
           name: "T3 Code",
@@ -2078,6 +2087,7 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
       ...(macPasskeySigning
         ? {
             entitlements: macPasskeySigning.entitlementsPath,
+            entitlementsInherit: macPasskeySigning.entitlementsPath,
             provisioningProfile: macPasskeySigning.provisioningProfilePath,
           }
         : {}),

@@ -226,6 +226,10 @@
     "./usageFormat": {
       "types": "./src/usageFormat.ts",
       "import": "./src/usageFormat.ts"
+    },
+    "./voiceVocabulary": {
+      "types": "./src/voiceVocabulary.ts",
+      "import": "./src/voiceVocabulary.ts"
     }
   },
   "scripts": {

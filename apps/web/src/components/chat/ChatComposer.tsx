@@ -19,8 +19,10 @@ import {
   PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
 } from "@t3tools/contracts";
 import type { EnvironmentConnectionPresentation } from "@t3tools/client-runtime/connection";
+import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { serializeComposerFileLink } from "@t3tools/shared/composerTrigger";
 import { createModelSelection, normalizeModelSlug } from "@t3tools/shared/model";
+import { extractVoiceVocabulary } from "@t3tools/shared/voiceVocabulary";
 import {
   memo,
   type ReactNode,
@@ -115,6 +117,19 @@ import {
   submitComposerDraft,
 } from "./composerSubmission";
 import { ComposerPromptLengthValidation } from "./ComposerPromptLengthValidation";
+import { ComposerVoiceDictation } from "./ComposerVoiceDictation";
+import { isVoiceCaptureSupported } from "~/hooks/useVoiceDictation";
+
+// Capture support is a property of the browser, not of any render.
+const voiceCaptureSupported = isVoiceCaptureSupported();
+
+/**
+ * Stable identity of the draft a dictation transcript would be inserted
+ * into; used to drop transcripts that finish after navigating elsewhere.
+ */
+function voiceInsertTargetKey(target: ScopedThreadRef | DraftId): string {
+  return typeof target === "string" ? target : scopedThreadKey(target);
+}
 
 type ComposerCommandMenuPosition = {
   bottom: number;
@@ -1305,6 +1320,53 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       removeComposerDraftTerminalContext,
       setPrompt,
     ],
+  );
+
+  // ------------------------------------------------------------------
+  // Voice dictation (beta)
+  // ------------------------------------------------------------------
+  const [voiceDictationError, setVoiceDictationError] = useState<string | null>(null);
+  const activeThreadRef = useRef(activeThread);
+  activeThreadRef.current = activeThread;
+  const composerDraftTargetRef = useRef(composerDraftTarget);
+  composerDraftTargetRef.current = composerDraftTarget;
+
+  // A transcription started in one thread must never land in another
+  // thread's draft: the hook captures this key when recording starts and
+  // drops the transcript if it no longer matches on arrival.
+  const getVoiceInsertTarget = useCallback(
+    () => voiceInsertTargetKey(composerDraftTargetRef.current),
+    [],
+  );
+
+  // Read at stop time through refs so recording never re-renders the button
+  // with a new callback identity on every keystroke.
+  const getVoiceSessionTerms = useCallback(() => {
+    const thread = activeThreadRef.current;
+    const recentMessages = thread?.messages.slice(-20) ?? [];
+    return extractVoiceVocabulary([
+      // What the user is mid-sentence about outweighs everything else.
+      { text: promptRef.current, weight: 3 },
+      { text: thread?.title ?? "", weight: 2 },
+      ...recentMessages.map((message) => ({ text: message.text, weight: 1 })),
+    ]);
+  }, [promptRef]);
+
+  const insertDictatedText = useCallback(
+    (text: string) => {
+      const base = promptRef.current;
+      const next =
+        base.length === 0 ? text : /\s$/.test(base) ? `${base}${text}` : `${base} ${text}`;
+      promptRef.current = next;
+      setPrompt(next);
+      const cursor = clampCollapsedComposerCursor(next, next.length);
+      setComposerCursor(cursor);
+      setComposerTrigger(null);
+      window.requestAnimationFrame(() => {
+        composerEditorRef.current?.focusAt(cursor);
+      });
+    },
+    [promptRef, setPrompt],
   );
 
   // ------------------------------------------------------------------
@@ -3113,7 +3175,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           </div>
 
           <ComposerPromptLengthValidation
-            message={providerInputSubmissionError ?? composerSubmissionError}
+            message={providerInputSubmissionError ?? composerSubmissionError ?? voiceDictationError}
           />
 
           {/* Bottom toolbar */}
@@ -3212,6 +3274,16 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                 }
                 className="flex shrink-0 flex-nowrap items-center justify-end gap-2"
               >
+                {settings.voiceDictationEnabled && voiceCaptureSupported ? (
+                  <ComposerVoiceDictation
+                    environmentId={environmentId}
+                    disabled={isConnecting || projectSelectionRequired}
+                    getSessionTerms={getVoiceSessionTerms}
+                    getInsertTarget={getVoiceInsertTarget}
+                    onText={insertDictatedText}
+                    onError={setVoiceDictationError}
+                  />
+                ) : null}
                 <ComposerFooterPrimaryActions
                   compact={isComposerPrimaryActionsCompact}
                   activeContextWindow={activeContextWindow}

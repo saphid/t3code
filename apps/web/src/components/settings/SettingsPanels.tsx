@@ -2375,6 +2375,22 @@ export function GeneralSettingsPanel() {
         />
       </SettingsSection>
 
+      <SettingsSection title="Beta features">
+        <SettingsRow
+          {...searchableSetting("voice-dictation")}
+          description="Adds a mic button to the composer that dictates into your draft. Transcription runs on the connected environment's own hardware (macOS 26 or newer); audio never leaves your machines."
+          control={
+            <Switch
+              checked={settings.voiceDictationEnabled}
+              onCheckedChange={(checked) =>
+                updateSettings({ voiceDictationEnabled: Boolean(checked) })
+              }
+              aria-label="Voice dictation (beta)"
+            />
+          }
+        />
+      </SettingsSection>
+
       <LegacyFeaturesSection />
     </SettingsPageContainer>
   );
