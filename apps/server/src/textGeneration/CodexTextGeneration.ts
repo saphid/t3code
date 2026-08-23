@@ -27,6 +27,7 @@ import {
   buildPrContentPrompt,
   buildThreadTitlePrompt,
 } from "./TextGenerationPrompts.ts";
+import { buildThreadSummaryPrompt } from "../threadSummary/ThreadSummaryPrompt.ts";
 import {
   normalizeCliError,
   sanitizeCommitSubject,
@@ -101,7 +102,8 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
       | "generateCommitMessage"
       | "generatePrContent"
       | "generateBranchName"
-      | "generateThreadTitle",
+      | "generateThreadTitle"
+      | "generateThreadSummary",
     value: unknown,
   ): Effect.Effect<string, TextGenerationError> =>
     encodeJsonString(value).pipe(
@@ -120,7 +122,8 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
       | "generateCommitMessage"
       | "generatePrContent"
       | "generateBranchName"
-      | "generateThreadTitle",
+      | "generateThreadTitle"
+      | "generateThreadSummary",
     attachments: TextGeneration.BranchNameGenerationInput["attachments"],
   ): Effect.fn.Return<MaterializedImageAttachments, TextGenerationError> {
     if (!attachments || attachments.length === 0) {
@@ -162,7 +165,8 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
       | "generateCommitMessage"
       | "generatePrContent"
       | "generateBranchName"
-      | "generateThreadTitle";
+      | "generateThreadTitle"
+      | "generateThreadSummary";
     cwd: string;
     prompt: string;
     outputSchemaJson: S;
@@ -405,10 +409,32 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
       } satisfies TextGeneration.ThreadTitleGenerationResult;
     });
 
+  const generateThreadSummary: NonNullable<
+    TextGeneration.TextGeneration["Service"]["generateThreadSummary"]
+  > = Effect.fn("CodexTextGeneration.generateThreadSummary")(function* (input) {
+    const { prompt, outputSchema } = buildThreadSummaryPrompt(input.transcript);
+    const generated = yield* runCodexJson({
+      operation: "generateThreadSummary",
+      cwd: input.cwd,
+      prompt,
+      outputSchemaJson: outputSchema,
+      modelSelection: input.modelSelection,
+    });
+    const summary = generated.summary.trim();
+    if (summary.length === 0) {
+      return yield* new TextGenerationError({
+        operation: "generateThreadSummary",
+        detail: "Codex returned an empty thread summary.",
+      });
+    }
+    return { summary };
+  });
+
   return {
     generateCommitMessage,
     generatePrContent,
     generateBranchName,
     generateThreadTitle,
+    generateThreadSummary,
   } satisfies TextGeneration.TextGeneration["Service"];
 });

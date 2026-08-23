@@ -59,6 +59,8 @@ import { ProviderRuntimeIngestionLive } from "./orchestration/Layers/ProviderRun
 import { ProviderCommandReactorLive } from "./orchestration/Layers/ProviderCommandReactor.ts";
 import { CheckpointReactorLive } from "./orchestration/Layers/CheckpointReactor.ts";
 import { ThreadDeletionReactorLive } from "./orchestration/Layers/ThreadDeletionReactor.ts";
+import { ThreadSummaryReactorLive } from "./orchestration/Layers/ThreadSummaryReactor.ts";
+import { ThreadSummaryReactor } from "./orchestration/Services/ThreadSummaryReactor.ts";
 import * as AgentAwarenessRelay from "./relay/AgentAwarenessRelay.ts";
 import { hasCloudPublicConfig } from "./cloud/publicConfig.ts";
 import { ProviderRegistryLive } from "./provider/Layers/ProviderRegistry.ts";
@@ -108,6 +110,7 @@ import * as ResourceAttribution from "./resourceTelemetry/ResourceAttribution.ts
 import * as ResourceMonitorBinary from "./resourceTelemetry/ResourceMonitorBinary.ts";
 import * as ResourceTelemetry from "./resourceTelemetry/ResourceTelemetry.ts";
 import * as UsageService from "./usage/UsageService.ts";
+import * as ThreadSummary from "./threadSummary/ThreadSummaryService.ts";
 import { OrchestrationLayerLive } from "./orchestration/runtimeLayer.ts";
 import {
   clearPersistedServerRuntimeState,
@@ -164,6 +167,10 @@ const BackgroundLayerLive = BackgroundPolicy.layer.pipe(
   Layer.provide(HostPowerMonitorLayerLive),
   Layer.provideMerge(ServerSettingsLayerLive),
 );
+
+const ThreadSummaryReactorRuntimeLive = Layer.effectDiscard(
+  Effect.flatMap(ThreadSummaryReactor, (reactor) => reactor.start()),
+).pipe(Layer.provideMerge(ThreadSummaryReactorLive));
 
 const UsageLayerLive = UsageService.layer.pipe(Layer.provide(ServerSettingsLayerLive));
 
@@ -245,6 +252,7 @@ const ReactorLayerLive = Layer.empty.pipe(
   Layer.provideMerge(ProviderCommandReactorLive),
   Layer.provideMerge(CheckpointReactorLive),
   Layer.provideMerge(ThreadDeletionReactorLive),
+  Layer.provideMerge(ThreadSummaryReactorRuntimeLive),
   Layer.provideMerge(AgentAwarenessRelay.layer.pipe(Layer.provide(ServerSecretStore.layer))),
   Layer.provideMerge(RuntimeReceiptBusLive),
 );
@@ -368,7 +376,11 @@ const ProviderRuntimeLayerLive = ProviderSessionReaperLive.pipe(
   Layer.provideMerge(OrchestrationLayerLive),
 );
 
-const RuntimeCoreDependenciesLive = ReactorLayerLive.pipe(
+const ReactorAndThreadSummaryLayerLive = ReactorLayerLive.pipe(
+  Layer.provideMerge(ThreadSummary.layer),
+);
+
+const RuntimeCoreDependenciesLive = ReactorAndThreadSummaryLayerLive.pipe(
   // Core Services
   Layer.provideMerge(ServerSettingsLayerLive),
   Layer.provideMerge(CheckpointingLayerLive),

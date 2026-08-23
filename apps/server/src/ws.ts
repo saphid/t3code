@@ -108,6 +108,7 @@ import * as ProcessResourceMonitor from "./diagnostics/ProcessResourceMonitor.ts
 import * as ResourceTelemetry from "./resourceTelemetry/ResourceTelemetry.ts";
 import * as UsageService from "./usage/UsageService.ts";
 import * as TraceDiagnostics from "./diagnostics/TraceDiagnostics.ts";
+import * as ThreadSummary from "./threadSummary/ThreadSummaryService.ts";
 import * as PullRequestService from "./pullRequest/PullRequestService.ts";
 import * as SourceControlDiscovery from "./sourceControl/SourceControlDiscovery.ts";
 import * as SourceControlRepositoryService from "./sourceControl/SourceControlRepositoryService.ts";
@@ -418,6 +419,7 @@ const makeWsRpcLayer = (
       const processResourceMonitor = yield* ProcessResourceMonitor.ProcessResourceMonitor;
       const resourceTelemetry = yield* ResourceTelemetry.ResourceTelemetry;
       const usage = yield* UsageService.UsageService;
+      const threadSummary = yield* ThreadSummary.ThreadSummaryService;
       const relayClient = yield* RelayClient.RelayClient;
       const authorizationError = (requiredScope: AuthEnvironmentScope) =>
         new EnvironmentAuthorizationError({
@@ -1574,6 +1576,12 @@ const makeWsRpcLayer = (
           observeRpcEffect(WS_METHODS.serverGetUsageSummary, usage.readSummary(input), {
             "rpc.aggregate": "server",
           }),
+        [WS_METHODS.threadSummaryGetTimeline]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.threadSummaryGetTimeline,
+            threadSummary.getTimeline(input.threadId),
+            { "rpc.aggregate": "thread-summary" },
+          ),
         [WS_METHODS.serverRetryResourceTelemetry]: (_input) =>
           observeRpcEffect(WS_METHODS.serverRetryResourceTelemetry, resourceTelemetry.retry, {
             "rpc.aggregate": "server",

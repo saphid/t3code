@@ -101,6 +101,14 @@ public actor T3Client {
         )
     }
 
+    public func threadSummaryTimeline(threadID: String) async throws -> ThreadSummaryTimeline {
+        try await rpc.request(
+            RPCMethod.threadSummaryGetTimeline.rawValue,
+            payload: .object(["threadId": .string(threadID)]),
+            as: ThreadSummaryTimeline.self
+        )
+    }
+
     public func pullRequests(_ input: PullRequestListInput) async throws -> PullRequestListResult {
         try await rpc.request(
             RPCMethod.pullRequestsList.rawValue,
@@ -1424,6 +1432,7 @@ public enum RPCMethod: String, Sendable {
     case serverProbe = "server.probe"
     case serverGetConfig = "server.getConfig"
     case serverGetUsageSummary = "server.getUsageSummary"
+    case threadSummaryGetTimeline = "threadSummary.getTimeline"
     case pullRequestsList = "pullRequests.list"
     case pullRequestsDetail = "pullRequests.detail"
     case pullRequestsActivity = "pullRequests.activity"

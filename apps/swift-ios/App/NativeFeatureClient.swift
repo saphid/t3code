@@ -1491,6 +1491,11 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         try? await refresh(client: route.client)
     }
 
+    func threadSummaryTimeline(id: String) async throws -> FeatureThreadSummaryTimeline {
+        let route = try threadRoute(for: id)
+        return try await route.client.threadSummaryTimeline(threadID: route.wireID)
+    }
+
     func setThreadArchived(id: String, archived: Bool) async throws {
         let route = try threadRoute(for: id)
         let cached = cachedThread(id: route.uiID)
@@ -4068,6 +4073,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
             supportsSnooze: environment.descriptor?.capabilities.threadSnooze,
             supportsPinning: environment.descriptor?.capabilities.threadPinning,
             supportsTitleRegeneration: environment.descriptor?.capabilities.threadTitleRegeneration,
+            supportsSummaryTimeline: environment.descriptor?.capabilities.threadSummaryTimeline,
             attentionAt: failureDate(
                 latestTurn: thread.latestTurn,
                 session: thread.session
@@ -4137,6 +4143,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
             supportsSnooze: environment.descriptor?.capabilities.threadSnooze,
             supportsPinning: environment.descriptor?.capabilities.threadPinning,
             supportsTitleRegeneration: environment.descriptor?.capabilities.threadTitleRegeneration,
+            supportsSummaryTimeline: environment.descriptor?.capabilities.threadSummaryTimeline,
             attentionAt: failureDate(
                 latestTurn: thread.latestTurn,
                 session: thread.session

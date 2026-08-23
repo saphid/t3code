@@ -22,3 +22,10 @@ pill** fallback because their colors are not controlled by T3 Code.
 To generate a fresh title from the conversation, open a thread's context menu and choose
 **Regenerate title**. While T3 Code is generating it, the action reads **Regenerating…** and cannot
 be selected again. The option is hidden when the connected environment needs a server update.
+
+## Summary timeline on native iOS
+
+In the SwiftUI iOS app, swipe a thread row to the right to open its summary timeline. The first
+entry summarizes the completed turns already in the thread. Later entries are added after each
+group of eight completed turns and show the turn and date range they cover. Summaries stay in the
+timeline and are never inserted into the conversation.

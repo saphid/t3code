@@ -39,6 +39,7 @@ public struct WorkspaceView: View {
     @State private var showingAddProject = false
     @State private var showingSettings = false
     @State private var renamingThread: FeatureThread?
+    @State private var summaryTimelineThread: FeatureThread?
     @State private var renameTitle = ""
     @State private var sidebarBoundaryNow = Date.now
     @State private var preferredCompactColumn = NavigationSplitViewColumn.sidebar
@@ -142,6 +143,18 @@ public struct WorkspaceView: View {
         .sheet(isPresented: $showingSettings) {
             SettingsView(model: model)
         }
+        .sheet(item: $summaryTimelineThread) { thread in
+            NavigationStack {
+                FeatureThreadSummaryView(client: model.client, thread: thread)
+                    .toolbar {
+                        ToolbarItem(placement: .cancellationAction) {
+                            Button("Done") { summaryTimelineThread = nil }
+                        }
+                    }
+                }
+            .presentationDetents([.large])
+            .presentationDragIndicator(.visible)
+        }
         .alert(
             "Rename thread",
             isPresented: Binding(
@@ -232,6 +245,7 @@ public struct WorkspaceView: View {
                 isArchiveExpanded: isArchiveExpanded,
                 settledLimit: settledLimit,
                 onOpen: openThread,
+                onOpenSummaryTimeline: { summaryTimelineThread = $0 },
                 onToggleSnoozed: { isSnoozedExpanded.toggle() },
                 onToggleSettled: { isSettledExpanded.toggle() },
                 onToggleArchive: { isArchiveExpanded.toggle() },

@@ -9,6 +9,32 @@ struct HomeThreadSwipeActionTests {
     private let now = Date(timeIntervalSince1970: 20_000)
 
     @Test
+    func leadingTimelineSwipeIsStrictlyCapabilityGated() {
+        var thread = thread(id: "summary")
+        #expect(!HomeThreadLeadingSwipeAction.isAvailable(for: thread))
+
+        thread.supportsSummaryTimeline = true
+        #expect(HomeThreadLeadingSwipeAction.isAvailable(for: thread))
+
+        thread.supportsSummaryTimeline = false
+        #expect(!HomeThreadLeadingSwipeAction.isAvailable(for: thread))
+    }
+
+    @Test
+    func leadingTimelineFullSwipePresentsTheTimelineWithoutOpeningTheThread() {
+        var openedTimeline: FeatureThread?
+        var thread = thread(id: "summary")
+        thread.supportsSummaryTimeline = true
+
+        HomeThreadLeadingSwipeAction.perform(
+            for: thread,
+            onOpenSummaryTimeline: { openedTimeline = $0 }
+        )
+
+        #expect(openedTimeline?.id == "summary")
+    }
+
+    @Test
     func settlementOwnsTheEdgeSlotSoAFullSwipeSettles() {
         let active = thread(id: "active")
         let actions = HomeThreadSwipeAction.trailingActions(
