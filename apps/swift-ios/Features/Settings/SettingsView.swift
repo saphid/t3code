@@ -11,6 +11,14 @@ public struct SettingsView: View {
     @State private var showingT3Connect = false
     @State private var removalTarget: FeatureEnvironment?
     @State private var saveErrorMessage: String?
+    // Device-local: dictation runs on this device's speech models, so the
+    // preference does not sync through FeatureSettings.
+    @AppStorage(FeatureVoiceDictationSettings.enabledKey)
+    private var voiceDictationEnabled = true
+    @AppStorage(FeatureVoiceDictationSettings.engineKey)
+    private var voiceEngineRawValue = FeatureVoiceEngine.dictation.rawValue
+    @AppStorage(FeatureVoiceDictationSettings.keyboardKey)
+    private var voiceDictationKeyboardEnabled = false
 
     public init(model: FeatureRootModel) {
         self.model = model
@@ -31,6 +39,9 @@ public struct SettingsView: View {
                         t3ConnectSection
                         agentSection
                         preferencesSection
+                        if FeatureVoiceDictationModel.isSupported {
+                            voiceDictationSection
+                        }
                         aboutSection
                     }
                     .padding(.vertical, 18)
@@ -313,6 +324,50 @@ public struct SettingsView: View {
                     systemImage: "waveform.path.ecg.rectangle",
                     isOn: $settings.liveActivitiesEnabled
                 )
+            }
+        }
+    }
+
+    private var voiceDictationSection: some View {
+        SettingsSection(title: "Voice Dictation") {
+            VStack(spacing: 0) {
+                SettingsToggleRow(
+                    title: "Dictation button",
+                    systemImage: "mic",
+                    isOn: $voiceDictationEnabled
+                )
+                settingsDivider
+                SettingsToggleRow(
+                    title: "Keyboard while dictating",
+                    systemImage: "keyboard",
+                    isOn: $voiceDictationKeyboardEnabled
+                )
+                settingsDivider
+                HStack(spacing: 12) {
+                    SettingsRowIcon(systemName: "waveform")
+                    Text("Model")
+                        .font(T3Typography.threadBody)
+                    Spacer(minLength: 12)
+                    Picker("Model", selection: $voiceEngineRawValue) {
+                        ForEach(FeatureVoiceEngine.allCases) { engine in
+                            Text(engine.label).tag(engine.rawValue)
+                        }
+                    }
+                    .labelsHidden()
+                    .pickerStyle(.menu)
+                    .tint(T3Colors.textSecondary)
+                }
+                .padding(.horizontal, 20)
+                .frame(minHeight: 52)
+                settingsDivider
+                Text(
+                    "Speech is transcribed entirely on this device by Apple's speech models. The Dictation model learns terms from your sessions; the General model transcribes prose better but only applies your terms as after-the-fact corrections."
+                )
+                .font(T3Typography.supporting)
+                .foregroundStyle(T3Colors.textTertiary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 20)
+                .padding(.vertical, 12)
             }
         }
     }
