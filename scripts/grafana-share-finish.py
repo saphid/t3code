@@ -26,6 +26,7 @@ falls back to the local wrangler OAuth session when one exists.
 
 import json
 import os
+import subprocess
 import sys
 import time
 import urllib.error
@@ -38,6 +39,8 @@ TUNNEL_ID = os.environ.get("TUNNEL_ID", "062b931a-1366-491c-bbea-46ca5cd7d775")
 TEAM_NAME = os.environ.get("TEAM_NAME", "saphid")
 ALLOW_EMAILS = [e.strip() for e in os.environ.get("ALLOW_EMAILS", "saphid@gmail.com").split(",") if e.strip()]
 ORIGIN_SERVICE = os.environ.get("ORIGIN_SERVICE", "http://localhost:3000")
+KEYCHAIN_SERVICE = os.environ.get("CLOUDFLARE_KEYCHAIN_SERVICE", "cloudflare-t3play-agent-tools")
+KEYCHAIN_ACCOUNT = os.environ.get("CLOUDFLARE_KEYCHAIN_ACCOUNT", "saphid")
 
 
 def fail(msg):
@@ -54,8 +57,33 @@ def load_token():
                 if line.startswith("CLOUDFLARE_API_TOKEN="):
                     token = line.split("=", 1)[1].strip()
     if not token:
-        fail("set CLOUDFLARE_API_TOKEN or create ~/.cloudflare-grafana-share.env")
+        try:
+            token = subprocess.check_output(
+                [
+                    "security",
+                    "find-generic-password",
+                    "-s",
+                    KEYCHAIN_SERVICE,
+                    "-a",
+                    KEYCHAIN_ACCOUNT,
+                    "-w",
+                ],
+                text=True,
+                stderr=subprocess.DEVNULL,
+            ).strip()
+        except (FileNotFoundError, subprocess.CalledProcessError):
+            pass
+    if not token:
+        fail(
+            "set CLOUDFLARE_API_TOKEN, create ~/.cloudflare-grafana-share.env, "
+            f"or add the token to Keychain service {KEYCHAIN_SERVICE}"
+        )
     return token
+
+
+class NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
 
 
 def wrangler_oauth_token():
@@ -205,13 +233,20 @@ def main():
         print("  ✓ configured (via wrangler OAuth fallback)")
 
     print(f"== 6/6 verify https://{hostname} redirects to the Access login")
+    opener = urllib.request.build_opener(NoRedirect)
     for attempt in range(12):
         try:
-            req = urllib.request.Request(f"https://{hostname}/", method="GET")
-            with urllib.request.urlopen(req) as r:
-                landed = r.geturl()
+            # Cloudflare's bot checks reject urllib's default Python user agent
+            # before Access can issue its login redirect.
+            req = urllib.request.Request(
+                f"https://{hostname}/",
+                method="GET",
+                headers={"User-Agent": "Mozilla/5.0"},
+            )
+            with opener.open(req) as r:
+                landed = r.headers.get("Location", "")
         except urllib.error.HTTPError as e:
-            landed = e.geturl() or ""
+            landed = e.headers.get("Location", "")
         except urllib.error.URLError:
             landed = ""
         if "cloudflareaccess.com" in landed:
