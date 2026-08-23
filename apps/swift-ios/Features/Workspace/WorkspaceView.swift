@@ -299,6 +299,7 @@ public struct WorkspaceView: View {
                     renameTitle = thread.title
                     renamingThread = thread
                 },
+                regeneratingTitleThreadIDs: model.regeneratingTitleThreadIDs,
                 onRegenerateTitle: { thread in
                     Task { await model.regenerateThreadTitle(thread.id) }
                 },

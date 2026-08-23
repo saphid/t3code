@@ -1,6 +1,23 @@
 import SwiftUI
 import UIKit
 
+enum ThreadTitleRegenerationMenuState: Equatable {
+    case hidden
+    case available
+    case regenerating
+
+    static func resolve(
+        thread: FeatureThread,
+        isArchived: Bool,
+        regeneratingThreadIDs: Set<String>
+    ) -> Self {
+        guard !isArchived, thread.supportsTitleRegeneration == true else { return .hidden }
+        return regeneratingThreadIDs.contains(thread.id) || thread.isRegeneratingTitle == true
+            ? .regenerating
+            : .available
+    }
+}
+
 /// A recycled, diffable Home surface. SwiftUI still owns the surrounding shell,
 /// while UIKit keeps row creation and updates proportional to visible threads.
 struct HomeThreadCollectionView: UIViewRepresentable {
@@ -21,6 +38,7 @@ struct HomeThreadCollectionView: UIViewRepresentable {
     let onToggleArchive: () -> Void
     let onShowMoreSettled: () -> Void
     let onRename: (FeatureThread) -> Void
+    let regeneratingTitleThreadIDs: Set<String>
     let onRegenerateTitle: (FeatureThread) -> Void
     let onArchive: (FeatureThread, Bool) -> Void
     let onSettle: (FeatureThread, Bool, @escaping (Bool) -> Void) -> Void
@@ -469,6 +487,13 @@ struct HomeThreadCollectionView: UIViewRepresentable {
             } else if thread.isEffectivelySettled(at: .now) {
                 values.append("Settled")
             }
+            if ThreadTitleRegenerationMenuState.resolve(
+                thread: thread,
+                isArchived: thread.isArchived,
+                regeneratingThreadIDs: parent.regeneratingTitleThreadIDs
+            ) == .regenerating {
+                values.append("Regenerating title")
+            }
             values.append("Provider \(context.providerName)")
             if let environment = context.environmentLabel {
                 values.append("on \(environment)")
@@ -502,7 +527,11 @@ struct HomeThreadCollectionView: UIViewRepresentable {
                 coordinator.parent.onRename(thread)
             }]
 
-            if thread.supportsTitleRegeneration == true {
+            if ThreadTitleRegenerationMenuState.resolve(
+                thread: thread,
+                isArchived: isArchived,
+                regeneratingThreadIDs: parent.regeneratingTitleThreadIDs
+            ) == .available {
                 actions.append(accessibilityAction("Regenerate title", systemImage: "sparkles") { coordinator in
                     coordinator.parent.onRegenerateTitle(thread)
                 })
@@ -619,7 +648,14 @@ struct HomeThreadCollectionView: UIViewRepresentable {
             }
 
             var titleActions: [UIMenuElement] = [rename]
-            if thread.supportsTitleRegeneration == true {
+            switch ThreadTitleRegenerationMenuState.resolve(
+                thread: thread,
+                isArchived: isArchived,
+                regeneratingThreadIDs: parent.regeneratingTitleThreadIDs
+            ) {
+            case .hidden:
+                break
+            case .available:
                 titleActions.append(
                     UIAction(
                         title: "Regenerate title",
@@ -628,6 +664,13 @@ struct HomeThreadCollectionView: UIViewRepresentable {
                         self?.parent.onRegenerateTitle(thread)
                     }
                 )
+            case .regenerating:
+                let action = UIAction(
+                    title: "Regenerating…",
+                    image: UIImage(systemName: "sparkles")
+                ) { _ in }
+                action.attributes = .disabled
+                titleActions.append(action)
             }
             let copyActions = ThreadCopyModel.actions(
                 for: thread,

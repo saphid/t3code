@@ -218,6 +218,7 @@ public struct FeatureThread: Identifiable, Sendable, Equatable, Hashable, Codabl
     public var supportsPinning: Bool?
     public var supportsTitleRegeneration: Bool?
     public var supportsSummaryTimeline: Bool?
+    public var isRegeneratingTitle: Bool?
     public var attentionAt: Date?
     public var workingStartedAt: Date?
     public var latestTurnCompletedAt: Date?
@@ -254,6 +255,7 @@ public struct FeatureThread: Identifiable, Sendable, Equatable, Hashable, Codabl
         supportsPinning: Bool? = nil,
         supportsTitleRegeneration: Bool? = nil,
         supportsSummaryTimeline: Bool? = nil,
+        isRegeneratingTitle: Bool? = nil,
         attentionAt: Date? = nil,
         workingStartedAt: Date? = nil,
         latestTurnCompletedAt: Date? = nil,
@@ -289,6 +291,7 @@ public struct FeatureThread: Identifiable, Sendable, Equatable, Hashable, Codabl
         self.supportsPinning = supportsPinning
         self.supportsTitleRegeneration = supportsTitleRegeneration
         self.supportsSummaryTimeline = supportsSummaryTimeline
+        self.isRegeneratingTitle = isRegeneratingTitle
         self.attentionAt = attentionAt
         self.workingStartedAt = workingStartedAt
         self.latestTurnCompletedAt = latestTurnCompletedAt

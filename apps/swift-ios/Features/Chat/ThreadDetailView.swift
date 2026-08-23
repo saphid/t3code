@@ -258,12 +258,19 @@ public struct ThreadDetailView: View {
     private var threadActionsMenu: some View {
         Menu {
             Section("Thread") {
-                if currentThread.supportsTitleRegeneration == true {
+                if !currentThread.isArchived,
+                   currentThread.supportsTitleRegeneration == true {
+                    let isRegenerating = model.regeneratingTitleThreadIDs.contains(thread.id)
+                        || currentThread.isRegeneratingTitle == true
                     Button {
                         Task { await model.regenerateThreadTitle(thread.id) }
                     } label: {
-                        Label("Regenerate title", systemImage: "sparkles")
+                        Label(
+                            isRegenerating ? "Regenerating…" : "Regenerate title",
+                            systemImage: "sparkles"
+                        )
                     }
+                    .disabled(isRegenerating)
                 }
                 if currentThread.canTogglePin, !currentThread.isArchived {
                     Button {
