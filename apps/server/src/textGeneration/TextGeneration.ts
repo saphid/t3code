@@ -73,6 +73,16 @@ export interface ThreadTitleGenerationResult {
   title: string;
 }
 
+export interface ThreadSummaryGenerationInput {
+  cwd: string;
+  transcript: string;
+  modelSelection: ModelSelection;
+}
+
+export interface ThreadSummaryGenerationResult {
+  summary: string;
+}
+
 export interface TextGenerationService {
   generateCommitMessage(
     input: CommitMessageGenerationInput,
@@ -113,6 +123,11 @@ export class TextGeneration extends Context.Service<
     readonly generateThreadTitle: (
       input: ThreadTitleGenerationInput,
     ) => Effect.Effect<ThreadTitleGenerationResult, TextGenerationError>;
+
+    /** Codex-only private timeline generation. Other drivers intentionally omit it. */
+    readonly generateThreadSummary?: (
+      input: ThreadSummaryGenerationInput,
+    ) => Effect.Effect<ThreadSummaryGenerationResult, TextGenerationError>;
   }
 >()("t3/textGeneration/TextGeneration") {}
 
@@ -123,7 +138,8 @@ type TextGenerationOp =
   | "generateCommitMessage"
   | "generatePrContent"
   | "generateBranchName"
-  | "generateThreadTitle";
+  | "generateThreadTitle"
+  | "generateThreadSummary";
 
 const resolveInstance = (
   registry: ProviderInstanceRegistry.ProviderInstanceRegistry["Service"],
@@ -162,6 +178,20 @@ export const makeTextGenerationFromRegistry = (
     generateThreadTitle: (input) =>
       resolveInstance(registry, "generateThreadTitle", input.modelSelection.instanceId).pipe(
         Effect.flatMap((textGeneration) => textGeneration.generateThreadTitle(input)),
+      ),
+    generateThreadSummary: (input) =>
+      resolveInstance(registry, "generateThreadSummary", input.modelSelection.instanceId).pipe(
+        Effect.flatMap((textGeneration) =>
+          textGeneration.generateThreadSummary
+            ? textGeneration.generateThreadSummary(input)
+            : Effect.fail(
+                new TextGenerationError({
+                  operation: "generateThreadSummary",
+                  detail:
+                    "The selected provider is not Codex and cannot generate thread summaries.",
+                }),
+              ),
+        ),
       ),
   });
 

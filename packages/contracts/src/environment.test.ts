@@ -39,4 +39,14 @@ describe("ExecutionEnvironmentDescriptor", () => {
       }).capabilities.attachmentUploads,
     ).toBe(true);
   });
+
+  it("requires the server to advertise the private summary timeline", () => {
+    expect(decodeDescriptor(descriptor).capabilities.threadSummaryTimeline).toBeUndefined();
+    expect(
+      decodeDescriptor({
+        ...descriptor,
+        capabilities: { ...descriptor.capabilities, threadSummaryTimeline: true },
+      }).capabilities.threadSummaryTimeline,
+    ).toBe(true);
+  });
 });

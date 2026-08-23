@@ -217,6 +217,7 @@ public struct FeatureThread: Identifiable, Sendable, Equatable, Hashable, Codabl
     public var supportsSnooze: Bool?
     public var supportsPinning: Bool?
     public var supportsTitleRegeneration: Bool?
+    public var supportsSummaryTimeline: Bool?
     public var attentionAt: Date?
     public var workingStartedAt: Date?
     public var latestTurnCompletedAt: Date?
@@ -252,6 +253,7 @@ public struct FeatureThread: Identifiable, Sendable, Equatable, Hashable, Codabl
         supportsSnooze: Bool? = nil,
         supportsPinning: Bool? = nil,
         supportsTitleRegeneration: Bool? = nil,
+        supportsSummaryTimeline: Bool? = nil,
         attentionAt: Date? = nil,
         workingStartedAt: Date? = nil,
         latestTurnCompletedAt: Date? = nil,
@@ -286,6 +288,7 @@ public struct FeatureThread: Identifiable, Sendable, Equatable, Hashable, Codabl
         self.supportsSnooze = supportsSnooze
         self.supportsPinning = supportsPinning
         self.supportsTitleRegeneration = supportsTitleRegeneration
+        self.supportsSummaryTimeline = supportsSummaryTimeline
         self.attentionAt = attentionAt
         self.workingStartedAt = workingStartedAt
         self.latestTurnCompletedAt = latestTurnCompletedAt
@@ -317,7 +320,14 @@ public struct FeatureThread: Identifiable, Sendable, Equatable, Hashable, Codabl
             return true
         }
     }
+
+    public var canOpenSummaryTimeline: Bool {
+        supportsSummaryTimeline == true
+    }
 }
+
+public typealias FeatureThreadSummaryTimeline = ThreadSummaryTimeline
+public typealias FeatureThreadSummaryTimelineEntry = ThreadSummaryTimelineEntry
 
 public enum FeatureMessageRole: String, Sendable, Codable {
     case user

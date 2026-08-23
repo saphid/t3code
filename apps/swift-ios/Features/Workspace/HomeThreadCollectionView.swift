@@ -15,6 +15,7 @@ struct HomeThreadCollectionView: UIViewRepresentable {
     let isArchiveExpanded: Bool
     let settledLimit: Int
     let onOpen: (String) -> Void
+    let onOpenSummaryTimeline: (FeatureThread) -> Void
     let onToggleSnoozed: () -> Void
     let onToggleSettled: () -> Void
     let onToggleArchive: () -> Void
@@ -39,6 +40,9 @@ struct HomeThreadCollectionView: UIViewRepresentable {
         configuration.footerMode = .none
         configuration.trailingSwipeActionsConfigurationProvider = { [weak coordinator = context.coordinator] indexPath in
             coordinator?.trailingSwipeActions(at: indexPath)
+        }
+        configuration.leadingSwipeActionsConfigurationProvider = { [weak coordinator = context.coordinator] indexPath in
+            coordinator?.leadingSwipeActions(at: indexPath)
         }
 
         let collectionView = UICollectionView(
@@ -254,6 +258,28 @@ struct HomeThreadCollectionView: UIViewRepresentable {
             // thread; rows with nothing to settle keep the full swipe disabled.
             configuration.performsFirstActionWithFullSwipe =
                 HomeThreadSwipeAction.performsFullSwipe(with: actions)
+            return configuration
+        }
+
+        func leadingSwipeActions(at indexPath: IndexPath) -> UISwipeActionsConfiguration? {
+            guard case let .thread(thread, _, _, _, _) = item(at: indexPath),
+                  HomeThreadLeadingSwipeAction.isAvailable(for: thread) else {
+                return nil
+            }
+            let action = UIContextualAction(style: .normal, title: "Timeline") {
+                [weak self] _, _, finish in
+                if let self {
+                    HomeThreadLeadingSwipeAction.perform(
+                        for: thread,
+                        onOpenSummaryTimeline: self.parent.onOpenSummaryTimeline
+                    )
+                }
+                finish(true)
+            }
+            action.image = UIImage(systemName: "text.line.first.and.arrowtriangle.forward")
+            action.backgroundColor = T3Colors.uiAccent
+            let configuration = UISwipeActionsConfiguration(actions: [action])
+            configuration.performsFirstActionWithFullSwipe = true
             return configuration
         }
 
@@ -840,6 +866,19 @@ struct HomeThreadCollectionView: UIViewRepresentable {
             }
         }
         return items
+    }
+}
+
+enum HomeThreadLeadingSwipeAction {
+    static func isAvailable(for thread: FeatureThread) -> Bool {
+        thread.canOpenSummaryTimeline
+    }
+
+    static func perform(
+        for thread: FeatureThread,
+        onOpenSummaryTimeline: (FeatureThread) -> Void
+    ) {
+        onOpenSummaryTimeline(thread)
     }
 }
 
