@@ -1,9 +1,7 @@
 {
   "uid": "t3perf-releases",
   "title": "T3 perf / Release comparison",
-  "tags": [
-    "t3perf"
-  ],
+  "tags": ["t3perf"],
   "timezone": "browser",
   "schemaVersion": 39,
   "refresh": "1m",
@@ -28,12 +26,8 @@
         "sort": 1,
         "current": {
           "selected": true,
-          "text": [
-            "All"
-          ],
-          "value": [
-            "$__all"
-          ]
+          "text": ["All"],
+          "value": ["$__all"]
         }
       },
       {
@@ -51,12 +45,8 @@
         "sort": 1,
         "current": {
           "selected": true,
-          "text": [
-            "All"
-          ],
-          "value": [
-            "$__all"
-          ]
+          "text": ["All"],
+          "value": ["$__all"]
         }
       },
       {
@@ -74,12 +64,8 @@
         "sort": 1,
         "current": {
           "selected": true,
-          "text": [
-            "All"
-          ],
-          "value": [
-            "$__all"
-          ]
+          "text": ["All"],
+          "value": ["$__all"]
         }
       },
       {
@@ -97,12 +83,27 @@
         "sort": 1,
         "current": {
           "selected": true,
-          "text": [
-            "All"
-          ],
-          "value": [
-            "$__all"
-          ]
+          "text": ["All"],
+          "value": ["$__all"]
+        }
+      },
+      {
+        "name": "host",
+        "label": "host",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "query": "label_values(t3perf_wall_ms, host)",
+        "refresh": 2,
+        "includeAll": true,
+        "multi": true,
+        "sort": 1,
+        "current": {
+          "selected": true,
+          "text": ["All"],
+          "value": ["$__all"]
         }
       }
     ]
@@ -132,9 +133,7 @@
       "options": {
         "reduceOptions": {
           "values": false,
-          "calcs": [
-            "lastNotNull"
-          ],
+          "calcs": ["lastNotNull"],
           "fields": ""
         },
         "orientation": "horizontal",
@@ -145,8 +144,8 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "max by (scenario, label) (last_over_time(t3perf_wall_ms{stat=\"median\", label=~\"$label\", network=~\"$network\", size=~\"$size\", surface=~\"$surface\"}[30d]))",
-          "legendFormat": "{{scenario}} / {{label}}",
+          "expr": "max by (host, scenario, label, surface, size, network) (last_over_time(t3perf_wall_ms{time_basis=\"release\", host=~\"$host\", stat=\"median\", label=~\"$label\", network=~\"$network\", size=~\"$size\", surface=~\"$surface\"}[30d]))",
+          "legendFormat": "{{label}} / {{host}} / {{scenario}} / {{surface}} / {{size}} / {{network}}",
           "instant": true
         }
       ]
@@ -184,9 +183,10 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "100 * max by (scenario, label) (last_over_time(t3perf_wall_ms{stat=\"median\", label=~\"$label\", network=~\"$network\", size=~\"$size\", surface=~\"$surface\"}[30d])) / on (scenario) group_left () min by (scenario) (max by (scenario, label) (last_over_time(t3perf_wall_ms{stat=\"median\", label=~\"$label\", network=~\"$network\", size=~\"$size\", surface=~\"$surface\"}[30d]))) - 100",
+          "expr": "100 * max by (host, scenario, label, surface, size, network) (last_over_time(t3perf_wall_ms{time_basis=\"release\", host=~\"$host\", stat=\"median\", label=~\"$label\", network=~\"$network\", size=~\"$size\", surface=~\"$surface\"}[30d])) / on (host, scenario, surface, size, network) group_left () min by (host, scenario, surface, size, network) (max by (host, scenario, label, surface, size, network) (last_over_time(t3perf_wall_ms{time_basis=\"release\", host=~\"$host\", stat=\"median\", label=~\"$label\", network=~\"$network\", size=~\"$size\", surface=~\"$surface\"}[30d]))) - 100",
           "format": "table",
-          "instant": true
+          "instant": true,
+          "legendFormat": "{{label}} / {{host}} / {{scenario}} / {{surface}} / {{size}} / {{network}}"
         }
       ],
       "transformations": [
@@ -204,5 +204,6 @@
         }
       ]
     }
-  ]
+  ],
+  "version": 1
 }

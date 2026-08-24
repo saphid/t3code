@@ -1,0 +1,6 @@
+services:
+  grafana:
+    environment:
+      GF_SERVER_ROOT_URL: https://stats.t3play.dev
+      GF_SERVER_DOMAIN: stats.t3play.dev
+      GF_SERVER_ENFORCE_DOMAIN: "true"

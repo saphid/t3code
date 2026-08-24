@@ -28,7 +28,7 @@ reported exactly.
 ## How it measures
 
 - **Isolation.** Every run creates a throwaway home directory in the OS temp
-  dir, boots the *built* server (`apps/server/dist/bin.mjs`) or desktop app
+  dir, boots the _built_ server (`apps/server/dist/bin.mjs`) or desktop app
   (`apps/desktop/dist-electron/main.cjs`) against it, and deletes it
   afterwards. The developer's `~/.t3` is never read or written.
 - **Fixtures.** `src/seed.ts` writes deterministic projection rows (the
@@ -39,7 +39,7 @@ reported exactly.
   the repo's Electron (desktop). CDP `Performance.getMetrics` diffs give
   script/layout/task time, JS heap, DOM node and layout counts per scenario.
 - **GPU, per process, no sudo.** On Apple Silicon, `ioreg -c
-  AGXDeviceUserClient` exposes accumulated GPU nanoseconds per Metal command
+AGXDeviceUserClient` exposes accumulated GPU nanoseconds per Metal command
   queue, keyed by owning pid. All of a Chromium app's GPU work funnels through
   its one `--type=gpu-process` helper, so delta-sampling that pid measures
   this app's GPU time exactly, regardless of what else the machine is doing
@@ -153,8 +153,10 @@ the raw runs, with a `stat` attribute distinguishing `median` and `p75`:
 - `t3perf.runs` (run count, no `stat` attribute)
 
 Every datapoint carries `scenario`, `surface`, `size`, `label` (default
-`repo`), `build`, `network` (default `good`), `host`, and `gpu_backend`
-attributes, so Grafana can group and compare releases. `build` identifies the
+`repo`), `build`, `network` (default `good`), `host`, `time_basis`, `run`, and
+`gpu_backend` attributes, so Grafana can group and compare releases. The test
+host is always an independent `host` attribute; it is never embedded in the
+label, build, or scenario. `build` identifies the
 build under test and comes from `--build` (default: the run's UTC timestamp
 to the minute, since nightlies publish every few hours; the Docker entrypoint
 defaults it to the resolved npm version instead). Prometheus stores the names
@@ -169,22 +171,23 @@ results exported with `--otlp` show up there without any local setup:
 cd packages/perf-analyzer/observability
 docker compose up -d
 # run the harness with --otlp http://localhost:4318, then open
-# http://localhost:3000 (anonymous admin)
+# http://localhost:3000 (login required)
 ```
 
 Prometheus and Grafana keep their history in named volumes, and all
 services restart with the box. The collector pushes to Prometheus via remote
-write (with an out-of-order window) rather than being scraped, so datapoints
-keep their run timestamps and backfilled history lands where it happened.
+write (with an out-of-order window) rather than being scraped. Fleet and
+release-backfill datapoints use the npm publication timestamp and carry
+`time_basis="release"`; standalone local runs use their run timestamp and
+carry `time_basis="run"`.
 Seven dashboards are provisioned: Overview, Build trends, GPU outliers,
 Batch status, Release comparison, Network conditions, and Resources; the
 metric boards are filterable by `$label`, `$network`, `$size`, `$surface`,
-and `$host` (default All). The Overview
-plots builds on the x-axis (every `build` seen in the selected time range),
-not time, so builds sit side by side regardless of gaps between them. Build
-trends answers "faster or slower build over build": one line per test per
-metric, each point a build, normalized to that test's best build in range
-(0% = fastest, drifting up = regressing). GPU outliers ranks every feature
+and `$host` (default All). Overview and Build trends default to seven days.
+Build trends answers "faster or slower release over release": one line per
+independent host/scenario/surface/size/network test, each point at the
+release's npm publication time, normalized to that same test's best release
+in range (0% = fastest, drifting up = regressing). GPU outliers ranks every feature
 by GPU cost, worst first, thresholded at the report heuristics' 50 GPU-ms/s,
 because an almost-entirely-text app has no business being red there.
 
@@ -228,6 +231,15 @@ corrupt files with a warning, and exports the concatenated results once;
 `T3_PERF_OTLP_URL` works as the `--otlp` fallback here too. Each file's
 stamp becomes its datapoints' timestamps (history lands at its real run
 times) and, for results written before builds were recorded, the `build` id.
+
+## Distributed fleet
+
+For the centrally leased nightly fleet, use `src/fleetScheduler.ts` on lxso2
+and `scripts/install-fleet-worker.sh` on each explicitly enrolled worker. The
+scheduler refreshes the live npm registry every three hours, assigns by publish
+timestamp newest first, and recovers expired leases without duplicating a
+nightly. See [the fleet runbook](../../docs/operations/perf-fleet.md) for the
+installer, health checks, update, rollback, uninstall, and safety boundaries.
 
 ## Known limits (v1)
 

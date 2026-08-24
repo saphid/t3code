@@ -1,9 +1,7 @@
 {
   "uid": "t3perf-network",
   "title": "T3 perf / Network conditions",
-  "tags": [
-    "t3perf"
-  ],
+  "tags": ["t3perf"],
   "timezone": "browser",
   "schemaVersion": 39,
   "refresh": "1m",
@@ -28,12 +26,8 @@
         "sort": 1,
         "current": {
           "selected": true,
-          "text": [
-            "All"
-          ],
-          "value": [
-            "$__all"
-          ]
+          "text": ["All"],
+          "value": ["$__all"]
         }
       },
       {
@@ -51,12 +45,8 @@
         "sort": 1,
         "current": {
           "selected": true,
-          "text": [
-            "All"
-          ],
-          "value": [
-            "$__all"
-          ]
+          "text": ["All"],
+          "value": ["$__all"]
         }
       },
       {
@@ -74,12 +64,8 @@
         "sort": 1,
         "current": {
           "selected": true,
-          "text": [
-            "All"
-          ],
-          "value": [
-            "$__all"
-          ]
+          "text": ["All"],
+          "value": ["$__all"]
         }
       },
       {
@@ -97,12 +83,27 @@
         "sort": 1,
         "current": {
           "selected": true,
-          "text": [
-            "All"
-          ],
-          "value": [
-            "$__all"
-          ]
+          "text": ["All"],
+          "value": ["$__all"]
+        }
+      },
+      {
+        "name": "host",
+        "label": "host",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "query": "label_values(t3perf_wall_ms, host)",
+        "refresh": 2,
+        "includeAll": true,
+        "multi": true,
+        "sort": 1,
+        "current": {
+          "selected": true,
+          "text": ["All"],
+          "value": ["$__all"]
         }
       }
     ]
@@ -132,9 +133,7 @@
       "options": {
         "reduceOptions": {
           "values": false,
-          "calcs": [
-            "lastNotNull"
-          ],
+          "calcs": ["lastNotNull"],
           "fields": ""
         },
         "orientation": "horizontal",
@@ -145,8 +144,8 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "max by (scenario, size, network) (last_over_time(t3perf_wall_ms{stat=\"median\", label=~\"$label\", network=~\"$network\", size=~\"$size\", surface=~\"$surface\"}[30d]))",
-          "legendFormat": "{{scenario}}/{{size}} on {{network}}",
+          "expr": "max by (host, scenario, size, network, surface) (last_over_time(t3perf_wall_ms{time_basis=\"release\", host=~\"$host\", stat=\"median\", label=~\"$label\", network=~\"$network\", size=~\"$size\", surface=~\"$surface\"}[30d]))",
+          "legendFormat": "{{host}} / {{scenario}} / {{surface}} / {{size}} / {{network}}",
           "instant": true
         }
       ]
@@ -194,10 +193,11 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "max by (scenario, network) (last_over_time(t3perf_gpu_process_cpu_ms_per_s{stat=\"median\", label=~\"$label\", network=~\"$network\", size=~\"$size\", surface=~\"$surface\"}[1d]))",
-          "legendFormat": "{{scenario}} on {{network}}"
+          "expr": "max by (host, scenario, network, surface, size) (last_over_time(t3perf_gpu_process_cpu_ms_per_s{time_basis=\"release\", host=~\"$host\", stat=\"median\", label=~\"$label\", network=~\"$network\", size=~\"$size\", surface=~\"$surface\"}[1d]))",
+          "legendFormat": "{{host}} / {{scenario}} / {{surface}} / {{size}} / {{network}}"
         }
       ]
     }
-  ]
+  ],
+  "version": 1
 }

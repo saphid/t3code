@@ -5,7 +5,7 @@
 # node:24 is required: the harness runs TypeScript directly via native type
 # stripping and uses node:sqlite. The full (non-slim) image also ships git,
 # which the fixture seeder shells out to.
-FROM node:24-bookworm
+FROM node:24-bookworm@sha256:934240a162082fd8b8a2f90cd5114446443f1eba1c5378f6687167ca405e6584
 
 # Chromium pinned to the playwright release matching the harness's
 # playwright-core; --with-deps installs the system libraries headless

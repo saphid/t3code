@@ -1,14 +1,13 @@
 {
   "uid": "t3perf-batch",
   "title": "T3 perf / Batch status",
-  "tags": [
-    "t3perf"
-  ],
+  "version": 3,
+  "tags": ["t3perf"],
   "timezone": "browser",
   "schemaVersion": 39,
   "refresh": "30s",
   "time": {
-    "from": "now-24h",
+    "from": "now-7d",
     "to": "now"
   },
   "templating": {
@@ -21,19 +20,15 @@
           "type": "prometheus",
           "uid": "prometheus"
         },
-        "query": "label_values(t3perf_batch_heartbeat_unix_seconds, host)",
+        "query": "label_values(t3perf_wall_ms, host)",
         "refresh": 2,
         "includeAll": true,
         "multi": true,
         "sort": 1,
         "current": {
           "selected": true,
-          "text": [
-            "All"
-          ],
-          "value": [
-            "$__all"
-          ]
+          "text": ["All"],
+          "value": ["$__all"]
         }
       }
     ]
@@ -42,7 +37,8 @@
     {
       "id": 1,
       "type": "stat",
-      "title": "Versions done",
+      "title": "Fleet releases completed",
+      "description": "The scheduler has completed 90 releases. Worker values show the lxso1/lxso3 share; Imported/legacy covers releases completed before fleet attribution was recorded.",
       "gridPos": {
         "h": 5,
         "w": 5,
@@ -63,9 +59,7 @@
       "options": {
         "reduceOptions": {
           "values": false,
-          "calcs": [
-            "lastNotNull"
-          ],
+          "calcs": ["lastNotNull"],
           "fields": ""
         },
         "orientation": "auto",
@@ -76,8 +70,20 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "max by (host) (last_over_time(t3perf_batch_versions_done{host=~\"$host\"}[30m]))",
+          "expr": "max(last_over_time(t3perf_fleet_jobs{state=\"completed\"}[10m]))",
+          "legendFormat": "Fleet total",
+          "instant": true
+        },
+        {
+          "refId": "B",
+          "expr": "max by (host) (last_over_time(t3perf_fleet_worker_completed{host=~\"$host\"}[10m]))",
           "legendFormat": "{{host}}",
+          "instant": true
+        },
+        {
+          "refId": "C",
+          "expr": "max(last_over_time(t3perf_fleet_jobs{state=\"completed\"}[10m])) - sum(max by (host) (last_over_time(t3perf_fleet_worker_completed[10m])))",
+          "legendFormat": "Imported/legacy",
           "instant": true
         }
       ]
@@ -85,7 +91,8 @@
     {
       "id": 2,
       "type": "stat",
-      "title": "Versions failed (no results)",
+      "title": "Fleet releases failed",
+      "description": "Scheduler jobs that ended without usable results. Zero is healthy.",
       "gridPos": {
         "h": 5,
         "w": 5,
@@ -119,9 +126,7 @@
       "options": {
         "reduceOptions": {
           "values": false,
-          "calcs": [
-            "lastNotNull"
-          ],
+          "calcs": ["lastNotNull"],
           "fields": ""
         },
         "orientation": "auto",
@@ -132,8 +137,8 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "max by (host) (last_over_time(t3perf_batch_versions_failed{host=~\"$host\"}[30m]))",
-          "legendFormat": "{{host}}",
+          "expr": "max(last_over_time(t3perf_fleet_jobs{state=\"failed\"}[10m]))",
+          "legendFormat": "Failed",
           "instant": true
         }
       ]
@@ -141,7 +146,8 @@
     {
       "id": 3,
       "type": "stat",
-      "title": "Queue size",
+      "title": "Fleet queue depth",
+      "description": "Discovered releases waiting for a worker. Newly discovered releases are inserted at the front of the newest-first queue.",
       "gridPos": {
         "h": 5,
         "w": 4,
@@ -162,9 +168,7 @@
       "options": {
         "reduceOptions": {
           "values": false,
-          "calcs": [
-            "lastNotNull"
-          ],
+          "calcs": ["lastNotNull"],
           "fields": ""
         },
         "orientation": "auto",
@@ -175,8 +179,8 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "max by (host) (last_over_time(t3perf_batch_versions_total{host=~\"$host\"}[30m]))",
-          "legendFormat": "{{host}}",
+          "expr": "max(last_over_time(t3perf_fleet_jobs{state=\"queued\"}[10m]))",
+          "legendFormat": "Queued",
           "instant": true
         }
       ]
@@ -184,7 +188,8 @@
     {
       "id": 4,
       "type": "stat",
-      "title": "Heartbeat age",
+      "title": "Fleet worker heartbeat age",
+      "description": "Seconds since lxso1/lxso3 last checked in with the scheduler.",
       "gridPos": {
         "h": 5,
         "w": 5,
@@ -222,9 +227,7 @@
       "options": {
         "reduceOptions": {
           "values": false,
-          "calcs": [
-            "lastNotNull"
-          ],
+          "calcs": ["lastNotNull"],
           "fields": ""
         },
         "orientation": "auto",
@@ -235,7 +238,7 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "time() - max by (host) (last_over_time(t3perf_batch_heartbeat_unix_seconds{host=~\"$host\"}[6h]))",
+          "expr": "time() - max by (host) (last_over_time(t3perf_fleet_worker_heartbeat_unixtime{host=~\"$host\"}[10m]))",
           "legendFormat": "{{host}}",
           "instant": true
         }
@@ -244,7 +247,8 @@
     {
       "id": 5,
       "type": "stat",
-      "title": "Combos done (current version)",
+      "title": "Fleet workers",
+      "description": "Current worker state. Zero means idle and available; one means a release is running.",
       "gridPos": {
         "h": 5,
         "w": 5,
@@ -258,16 +262,29 @@
       "fieldConfig": {
         "defaults": {
           "unit": "short",
-          "decimals": 0
+          "decimals": 0,
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": {
+                  "text": "idle",
+                  "color": "green"
+                },
+                "1": {
+                  "text": "busy",
+                  "color": "blue"
+                }
+              }
+            }
+          ]
         },
         "overrides": []
       },
       "options": {
         "reduceOptions": {
           "values": false,
-          "calcs": [
-            "lastNotNull"
-          ],
+          "calcs": ["lastNotNull"],
           "fields": ""
         },
         "orientation": "auto",
@@ -278,8 +295,8 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "max by (host, version) (last_over_time(t3perf_batch_combos_done{host=~\"$host\"}[3m]))",
-          "legendFormat": "{{host}}",
+          "expr": "max by (host, version) (last_over_time(t3perf_fleet_worker_busy{host=~\"$host\"}[10m]))",
+          "legendFormat": "{{host}} / {{version}}",
           "instant": true
         }
       ]
@@ -288,7 +305,7 @@
       "id": 6,
       "type": "table",
       "title": "Current work",
-      "description": "What each machine is doing right now. Phase 1 = install, 2 = run, 3 = export.",
+      "description": "What each fleet worker is doing right now, including the assigned release when busy.",
       "gridPos": {
         "h": 7,
         "w": 8,
@@ -309,13 +326,7 @@
                   "text": "idle"
                 },
                 "1": {
-                  "text": "installing"
-                },
-                "2": {
-                  "text": "running suite"
-                },
-                "3": {
-                  "text": "exporting"
+                  "text": "busy"
                 }
               }
             }
@@ -329,7 +340,7 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "max by (host, version) (last_over_time(t3perf_batch_current_phase{host=~\"$host\"}[3m]))",
+          "expr": "max by (host, version) (last_over_time(t3perf_fleet_worker_busy{host=~\"$host\"}[10m]))",
           "format": "table",
           "instant": true
         }
@@ -342,7 +353,7 @@
               "Time": true
             },
             "renameByName": {
-              "Value": "phase"
+              "Value": "state"
             }
           }
         }
@@ -351,8 +362,8 @@
     {
       "id": 7,
       "type": "timeseries",
-      "title": "Version duration",
-      "description": "One point per completed version. A rising trend means later builds run the suite slower.",
+      "title": "Legacy orchestrator: version duration",
+      "description": "Historical duration emitted by the two pre-fleet orchestrators. Use Build trends for the complete cross-host release comparison.",
       "gridPos": {
         "h": 7,
         "w": 8,
@@ -400,7 +411,7 @@
     {
       "id": 10,
       "type": "timeseries",
-      "title": "Failed combos per completed version",
+      "title": "Legacy orchestrator: failed combos per completed version",
       "description": "Scenario/size combos the suite could not run for that version. Old nightlies legitimately fail scenarios whose UI did not exist yet, so a steady baseline is expected on historical builds; a jump on a recent build is a real signal. The version itself still counts as done and its passing combos are exported.",
       "gridPos": {
         "h": 7,
@@ -449,7 +460,7 @@
     {
       "id": 8,
       "type": "logs",
-      "title": "Orchestrator log",
+      "title": "Legacy orchestrator log",
       "gridPos": {
         "h": 12,
         "w": 12,
@@ -480,7 +491,7 @@
     {
       "id": 9,
       "type": "logs",
-      "title": "Harness output (per test run)",
+      "title": "Legacy harness output (per test run)",
       "gridPos": {
         "h": 12,
         "w": 12,

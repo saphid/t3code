@@ -1,0 +1,8 @@
+[Unit]
+Description=Normalize work Mac T3 perf samples to npm release time
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/home/saphid/t3-perf-fleet/harness/scripts/remap-aus-release-axis.sh

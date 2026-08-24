@@ -31,7 +31,8 @@ Usage: node packages/perf-analyzer/src/batchOrchestrator.ts \\
   --versions <tsv> --releases <dir> --results <dir> \\
   --otlp <url> [--loki <url>] [--suite full] [--surface web]
 
-The versions file is "<version>\\t<publish ISO>" per line, oldest first.
+The versions file is "<version>\\t<publish ISO>" per line. Runs are always
+scheduled newest first, regardless of file order.
 Each version: npm-install into <releases>/<version> if missing, run the
 suite with the harness in this package, then export the results via
 otlpBackfill stamped at the publish time.
@@ -258,7 +259,11 @@ async function readVersions(path: string): Promise<Array<VersionEntry>> {
     .filter((line) => line !== "")
     .map((line) => {
       const [version, publishedIso] = line.split("\t");
-      if (version === undefined || publishedIso === undefined || Number.isNaN(Date.parse(publishedIso))) {
+      if (
+        version === undefined ||
+        publishedIso === undefined ||
+        Number.isNaN(Date.parse(publishedIso))
+      ) {
         throw new Error(`Bad versions line: ${line}`);
       }
       return { version, publishedIso };
@@ -380,7 +385,9 @@ async function main(): Promise<number> {
   process.on("SIGTERM", stop);
   process.on("SIGINT", stop);
 
-  say(`batch start: ${queue.length} version(s), suite=${values.suite}, surface=${values.surface}, host=${host}`);
+  say(
+    `batch start: ${queue.length} version(s), suite=${values.suite}, surface=${values.surface}, host=${host}`,
+  );
 
   for (const { version, publishedIso } of queue) {
     const prior = ledger[version];
@@ -460,15 +467,7 @@ async function main(): Promise<number> {
     await metrics.flush();
     const exportCode = await spawnLogged(
       process.execPath,
-      [
-        "src/otlpBackfill.ts",
-        "--in",
-        outDir,
-        "--otlp",
-        values.otlp,
-        "--time",
-        publishedIso,
-      ],
+      ["src/otlpBackfill.ts", "--in", outDir, "--otlp", values.otlp, "--time", publishedIso],
       { cwd: packageDir, env: process.env },
       (line, stream) => {
         localLog.write(`[export ${version}] ${line}\n`);

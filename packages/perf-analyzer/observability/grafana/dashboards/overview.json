@@ -1,14 +1,13 @@
 {
   "uid": "t3perf-overview",
   "title": "T3 perf / Overview",
-  "tags": [
-    "t3perf"
-  ],
+  "description": "The front door to T3 performance results: compare builds here, then use the focused dashboards to explain regressions, resource cost, network sensitivity, release health, GPU outliers, and batch execution.",
+  "tags": ["t3perf"],
   "timezone": "browser",
   "schemaVersion": 39,
   "refresh": "1m",
   "time": {
-    "from": "now-30d",
+    "from": "now-7d",
     "to": "now"
   },
   "templating": {
@@ -28,12 +27,8 @@
         "sort": 1,
         "current": {
           "selected": true,
-          "text": [
-            "All"
-          ],
-          "value": [
-            "$__all"
-          ]
+          "text": ["All"],
+          "value": ["$__all"]
         }
       },
       {
@@ -51,12 +46,8 @@
         "sort": 1,
         "current": {
           "selected": true,
-          "text": [
-            "All"
-          ],
-          "value": [
-            "$__all"
-          ]
+          "text": ["All"],
+          "value": ["$__all"]
         }
       },
       {
@@ -74,12 +65,8 @@
         "sort": 1,
         "current": {
           "selected": true,
-          "text": [
-            "All"
-          ],
-          "value": [
-            "$__all"
-          ]
+          "text": ["All"],
+          "value": ["$__all"]
         }
       },
       {
@@ -97,12 +84,8 @@
         "sort": 1,
         "current": {
           "selected": true,
-          "text": [
-            "All"
-          ],
-          "value": [
-            "$__all"
-          ]
+          "text": ["All"],
+          "value": ["$__all"]
         }
       },
       {
@@ -120,27 +103,49 @@
         "sort": 1,
         "current": {
           "selected": true,
-          "text": [
-            "All"
-          ],
-          "value": [
-            "$__all"
-          ]
+          "text": ["All"],
+          "value": ["$__all"]
         }
       }
     ]
   },
+  "links": [
+    {
+      "type": "link",
+      "title": "Open Build Trends \u2014 recommended starting point",
+      "url": "/d/t3perf-build-trends/t3-perf-build-trends?from=now-7d&to=now",
+      "includeVars": true,
+      "keepTime": false,
+      "targetBlank": false
+    }
+  ],
   "panels": [
+    {
+      "id": 100,
+      "type": "text",
+      "title": "Welcome to the T3 performance lab",
+      "description": "A short map of the dashboard suite and the question each view is meant to answer.",
+      "gridPos": {
+        "h": 9,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "options": {
+        "mode": "markdown",
+        "content": "This site tracks whether T3 stays fast as the product changes. **Start below** for build-to-build wall time, GPU cost, tail latency, and sample coverage. Use the filters at the top to isolate a test label, network profile, workload size, client surface, or benchmark host. Lower is better for every timing and resource chart.\n\n| Dashboard | What it answers \u2014 and why it exists |\n|---|---|\n| [Overview](/d/t3perf-overview/t3-perf-overview) | **Did performance move?** The fastest way to spot a build regression or improvement and check that enough runs support the comparison. |\n| [Build trends](/d/t3perf-build-trends/t3-perf-build-trends) | **How far is each build from the best observed build?** Normalizes several metrics into percentages so broad regressions stand out. |\n| [Release comparison](/d/t3perf-releases/t3-perf-release-comparison) | **Are shipped versions getting faster or slower?** Keeps release decisions separate from noisy nightly build detail. |\n| [GPU outliers](/d/t3perf-gpu-outliers/t3-perf-gpu-outliers) | **Which feature or build is unusually expensive on the GPU?** Useful for finding rendering work that averages can hide. |\n| [Resources](/d/t3perf-resources/t3-perf-resources) | **What is the run costing besides elapsed time?** Breaks out heap, layout, GPU time, and GPU-process CPU. |\n| [Network conditions](/d/t3perf-network/t3-perf-network-conditions) | **Does latency or bandwidth change the result?** Separates product cost from network sensitivity. |\n| [Batch status](/d/t3perf-batch/t3-perf-batch-status) | **Is the benchmark machinery healthy right now?** Shows queue progress, failures, heartbeat age, current work, and logs; it is operational rather than analytical. |"
+      }
+    },
     {
       "id": 1,
       "type": "barchart",
       "title": "Wall time by build (median)",
-      "description": "One bar group per build in the selected time range; nightly runs default their build id to the run timestamp (minute resolution, since nightlies publish every few hours).",
+      "description": "One bar group per release at its npm publication time. Host, scenario, surface, size, and network remain separate so unlike tests are never merged.",
       "gridPos": {
         "h": 10,
         "w": 12,
         "x": 0,
-        "y": 0
+        "y": 9
       },
       "datasource": {
         "type": "prometheus",
@@ -179,9 +184,10 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "label_join(max by (build, scenario, surface) (last_over_time(t3perf_wall_ms{stat=\"median\", build!=\"\", label=~\"$label\", network=~\"$network\", size=~\"$size\", surface=~\"$surface\", host=~\"$host\"}[$__range])), \"series\", \" / \", \"scenario\", \"surface\")",
+          "expr": "label_join(max by (build, host, scenario, surface, size, network) (last_over_time(t3perf_wall_ms{time_basis=\"release\", stat=\"median\", build!=\"\", label=~\"$label\", network=~\"$network\", size=~\"$size\", surface=~\"$surface\", host=~\"$host\"}[$__range])), \"series\", \" / \", \"host\", \"scenario\", \"surface\")",
           "format": "table",
-          "instant": true
+          "instant": true,
+          "legendFormat": "{{build}} / {{host}} / {{scenario}} / {{surface}} / {{size}} / {{network}}"
         }
       ],
       "transformations": [
@@ -212,12 +218,12 @@
       "id": 2,
       "type": "barchart",
       "title": "GPU process CPU by build (median)",
-      "description": "One bar group per build in the selected time range; nightly runs default their build id to the run timestamp (minute resolution, since nightlies publish every few hours).",
+      "description": "One bar group per release at its npm publication time. Host, scenario, surface, size, and network remain separate so unlike tests are never merged.",
       "gridPos": {
         "h": 10,
         "w": 12,
         "x": 12,
-        "y": 0
+        "y": 9
       },
       "datasource": {
         "type": "prometheus",
@@ -256,9 +262,10 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "label_join(max by (build, scenario, surface) (last_over_time(t3perf_gpu_process_cpu_ms_per_s{stat=\"median\", build!=\"\", label=~\"$label\", network=~\"$network\", size=~\"$size\", surface=~\"$surface\", host=~\"$host\"}[$__range])), \"series\", \" / \", \"scenario\", \"surface\")",
+          "expr": "label_join(max by (build, host, scenario, surface, size, network) (last_over_time(t3perf_gpu_process_cpu_ms_per_s{time_basis=\"release\", stat=\"median\", build!=\"\", label=~\"$label\", network=~\"$network\", size=~\"$size\", surface=~\"$surface\", host=~\"$host\"}[$__range])), \"series\", \" / \", \"host\", \"scenario\", \"surface\")",
           "format": "table",
-          "instant": true
+          "instant": true,
+          "legendFormat": "{{build}} / {{host}} / {{scenario}} / {{surface}} / {{size}} / {{network}}"
         }
       ],
       "transformations": [
@@ -289,12 +296,12 @@
       "id": 3,
       "type": "barchart",
       "title": "Wall time by build (p75)",
-      "description": "One bar group per build in the selected time range; nightly runs default their build id to the run timestamp (minute resolution, since nightlies publish every few hours).",
+      "description": "One bar group per release at its npm publication time. Host, scenario, surface, size, and network remain separate so unlike tests are never merged.",
       "gridPos": {
         "h": 10,
         "w": 12,
         "x": 0,
-        "y": 10
+        "y": 19
       },
       "datasource": {
         "type": "prometheus",
@@ -333,9 +340,10 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "label_join(max by (build, scenario, surface) (last_over_time(t3perf_wall_ms{stat=\"p75\", build!=\"\", label=~\"$label\", network=~\"$network\", size=~\"$size\", surface=~\"$surface\", host=~\"$host\"}[$__range])), \"series\", \" / \", \"scenario\", \"surface\")",
+          "expr": "label_join(max by (build, host, scenario, surface, size, network) (last_over_time(t3perf_wall_ms{time_basis=\"release\", stat=\"p75\", build!=\"\", label=~\"$label\", network=~\"$network\", size=~\"$size\", surface=~\"$surface\", host=~\"$host\"}[$__range])), \"series\", \" / \", \"host\", \"scenario\", \"surface\")",
           "format": "table",
-          "instant": true
+          "instant": true,
+          "legendFormat": "{{build}} / {{host}} / {{scenario}} / {{surface}} / {{size}} / {{network}}"
         }
       ],
       "transformations": [
@@ -366,12 +374,12 @@
       "id": 4,
       "type": "barchart",
       "title": "Runs per result by build",
-      "description": "One bar group per build in the selected time range; nightly runs default their build id to the run timestamp (minute resolution, since nightlies publish every few hours).",
+      "description": "One bar group per release at its npm publication time. Host, scenario, surface, size, and network remain separate so unlike tests are never merged.",
       "gridPos": {
         "h": 10,
         "w": 12,
         "x": 12,
-        "y": 10
+        "y": 19
       },
       "datasource": {
         "type": "prometheus",
@@ -410,9 +418,10 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "label_join(max by (build, scenario, surface) (last_over_time(t3perf_runs{build!=\"\", label=~\"$label\", network=~\"$network\", size=~\"$size\", surface=~\"$surface\", host=~\"$host\"}[$__range])), \"series\", \" / \", \"scenario\", \"surface\")",
+          "expr": "label_join(max by (build, host, scenario, surface, size, network) (last_over_time(t3perf_runs{time_basis=\"release\", build!=\"\", label=~\"$label\", network=~\"$network\", size=~\"$size\", surface=~\"$surface\", host=~\"$host\"}[$__range])), \"series\", \" / \", \"host\", \"scenario\", \"surface\")",
           "format": "table",
-          "instant": true
+          "instant": true,
+          "legendFormat": "{{build}} / {{host}} / {{scenario}} / {{surface}} / {{size}} / {{network}}"
         }
       ],
       "transformations": [
@@ -439,5 +448,6 @@
         }
       ]
     }
-  ]
+  ],
+  "version": 1
 }

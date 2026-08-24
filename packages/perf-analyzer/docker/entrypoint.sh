@@ -29,6 +29,9 @@ export T3_PERF_CHROME="${chrome_bins[0]}"
 export T3_PERF_CHROME_ARGS="${T3_PERF_CHROME_ARGS:---no-sandbox --disable-dev-shm-usage}"
 
 args=(--surface web --headless --size "${SIZES:-small}" --runs "${RUNS:-5}" --label "${LABEL:-${resolved}}" --build "${BUILD:-${resolved}}" --out /results)
+if [ -n "${RUN_ID:-}" ]; then
+  args+=(--run-id "${RUN_ID}")
+fi
 if [ -n "${SCENARIOS:-}" ]; then
   args+=(--scenario "${SCENARIOS}")
 fi

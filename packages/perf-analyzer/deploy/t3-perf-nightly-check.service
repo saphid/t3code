@@ -1,0 +1,8 @@
+[Unit]
+Description=Discover new T3 Code nightly releases for performance testing
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 %h/t3-perf-fleet/harness/scripts/check-nightly-releases.py

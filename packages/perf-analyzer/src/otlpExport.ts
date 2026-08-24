@@ -19,6 +19,8 @@ export interface OtlpMeta {
   readonly host: string;
 }
 
+export type OtlpTimeBasis = "run" | "release";
+
 interface OtlpKeyValue {
   readonly key: string;
   readonly value: { readonly stringValue: string };
@@ -88,6 +90,7 @@ function resultAttributes(
   result: ScenarioResult,
   meta: OtlpMeta,
   timeUnixNano: string,
+  timeBasis: OtlpTimeBasis,
 ): ReadonlyArray<OtlpKeyValue> {
   // Results written before the build field existed fall back to the result's
   // timestamp (minute resolution, matching the CLI default), which equals the
@@ -104,6 +107,8 @@ function resultAttributes(
     attribute("build", result.build ?? fallbackBuild),
     attribute("network", result.network ?? "good"),
     attribute("host", meta.host),
+    attribute("time_basis", timeBasis),
+    attribute("run", result.runId ?? "standalone"),
     attribute("gpu_backend", result.runs[0]?.gpuBackend ?? "none"),
   ];
 }
@@ -114,6 +119,10 @@ export function buildOtlpPayload(
   // Per-result timestamps (parallel to results). The backfill passes each
   // file's run time so history lands where it happened; live exports omit it.
   timestamps?: ReadonlyArray<string | undefined>,
+  // Per-result test hosts. Backfills must use the host that ran each test,
+  // rather than the host performing the backfill.
+  hosts?: ReadonlyArray<string | undefined>,
+  timeBasis: OtlpTimeBasis = "run",
 ): OtlpPayload {
   const dataPointsByMetric = new Map<string, { unit: string; dataPoints: Array<OtlpDataPoint> }>();
   const push = (name: string, unit: string, point: OtlpDataPoint) => {
@@ -124,7 +133,8 @@ export function buildOtlpPayload(
 
   for (const [index, result] of results.entries()) {
     const timeUnixNano = timestamps?.[index] ?? meta.timeUnixNano;
-    const base = resultAttributes(result, meta, timeUnixNano);
+    const host = hosts?.[index] ?? meta.host;
+    const base = resultAttributes(result, { ...meta, host }, timeUnixNano, timeBasis);
     for (const spec of SAMPLED_METRICS) {
       const samples = result.runs
         .map(spec.sample)
@@ -190,11 +200,15 @@ export async function exportOtlp(
   results: ReadonlyArray<ScenarioResult>,
   endpointBaseUrl: string,
   timestamps?: ReadonlyArray<string | undefined>,
+  hosts?: ReadonlyArray<string | undefined>,
+  timeBasis: OtlpTimeBasis = "run",
 ): Promise<OtlpExportResult> {
   const payload = buildOtlpPayload(
     results,
     { timeUnixNano: nowUnixNano(), host: NodeOS.hostname() },
     timestamps,
+    hosts,
+    timeBasis,
   );
   const metricCount = payload.resourceMetrics[0]?.scopeMetrics[0]?.metrics.length ?? 0;
   const url = `${endpointBaseUrl.replace(/\/+$/, "")}/v1/metrics`;

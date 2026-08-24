@@ -4,5 +4,7 @@ providers:
   - name: t3perf
     folder: ""
     type: file
+    updateIntervalSeconds: 30
+    allowUiUpdates: true
     options:
       path: /var/lib/grafana/dashboards

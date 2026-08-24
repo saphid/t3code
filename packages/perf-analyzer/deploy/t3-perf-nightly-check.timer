@@ -1,0 +1,11 @@
+[Unit]
+Description=Check for T3 Code nightlies every three hours after expected publication
+
+[Timer]
+OnCalendar=*-*-* 00/3:45:00 UTC
+Persistent=true
+AccuracySec=1m
+Unit=t3-perf-nightly-check.service
+
+[Install]
+WantedBy=timers.target

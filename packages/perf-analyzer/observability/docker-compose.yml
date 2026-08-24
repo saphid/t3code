@@ -2,7 +2,7 @@
 # LAN deployment: services restart with the box and Prometheus/Grafana keep
 # their history in named volumes. Point the harness at it with
 # --otlp http://<host>:4318 and browse Grafana at http://<host>:3000
-# (anonymous admin, LAN-only tool).
+# (login required; shared remotely via Cloudflare Tunnel).
 services:
   otel-collector:
     image: otel/opentelemetry-collector-contrib:0.111.0
@@ -41,11 +41,22 @@ services:
       - "3105:3100"
 
   grafana:
-    image: grafana/grafana:11.3.0
+    image: grafana/grafana:13.2.0
     restart: unless-stopped
     environment:
-      - GF_AUTH_ANONYMOUS_ENABLED=true
-      - GF_AUTH_ANONYMOUS_ORG_ROLE=Admin
+      - GF_AUTH_ANONYMOUS_ENABLED=false
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_USERS_AUTO_ASSIGN_ORG=true
+      # Cloudflare Access controls who may enter; authenticated invitees can
+      # create and edit shared dashboards without receiving org-admin rights.
+      - GF_USERS_AUTO_ASSIGN_ORG_ROLE=Editor
+      - GF_AUTH_JWT_ENABLED=true
+      - GF_AUTH_JWT_HEADER_NAME=Cf-Access-Jwt-Assertion
+      - GF_AUTH_JWT_USERNAME_CLAIM=email
+      - GF_AUTH_JWT_EMAIL_CLAIM=email
+      - GF_AUTH_JWT_AUTO_SIGN_UP=true
+      - GF_AUTH_JWT_JWK_SET_URL=https://wandering-violet-a685.cloudflareaccess.com/cdn-cgi/access/certs
+      - 'GF_AUTH_JWT_EXPECT_CLAIMS={"iss":"https://wandering-violet-a685.cloudflareaccess.com","aud":["888909cb6dd19ec7b0230afa5f30b02cdd55ebc3effe835b5e10ea16369ce218"]}'
     volumes:
       - grafana-data:/var/lib/grafana
       - ./grafana/provisioning:/etc/grafana/provisioning:ro

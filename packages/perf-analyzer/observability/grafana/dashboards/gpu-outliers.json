@@ -1,9 +1,7 @@
 {
   "uid": "t3perf-gpu-outliers",
   "title": "T3 perf / GPU outliers",
-  "tags": [
-    "t3perf"
-  ],
+  "tags": ["t3perf"],
   "timezone": "browser",
   "schemaVersion": 39,
   "refresh": "1m",
@@ -28,12 +26,8 @@
         "sort": 1,
         "current": {
           "selected": true,
-          "text": [
-            "All"
-          ],
-          "value": [
-            "$__all"
-          ]
+          "text": ["All"],
+          "value": ["$__all"]
         }
       },
       {
@@ -51,12 +45,8 @@
         "sort": 1,
         "current": {
           "selected": true,
-          "text": [
-            "All"
-          ],
-          "value": [
-            "$__all"
-          ]
+          "text": ["All"],
+          "value": ["$__all"]
         }
       },
       {
@@ -74,12 +64,8 @@
         "sort": 1,
         "current": {
           "selected": true,
-          "text": [
-            "All"
-          ],
-          "value": [
-            "$__all"
-          ]
+          "text": ["All"],
+          "value": ["$__all"]
         }
       },
       {
@@ -97,12 +83,8 @@
         "sort": 1,
         "current": {
           "selected": true,
-          "text": [
-            "All"
-          ],
-          "value": [
-            "$__all"
-          ]
+          "text": ["All"],
+          "value": ["$__all"]
         }
       },
       {
@@ -120,12 +102,8 @@
         "sort": 1,
         "current": {
           "selected": true,
-          "text": [
-            "All"
-          ],
-          "value": [
-            "$__all"
-          ]
+          "text": ["All"],
+          "value": ["$__all"]
         }
       }
     ]
@@ -174,9 +152,7 @@
       "options": {
         "reduceOptions": {
           "values": false,
-          "calcs": [
-            "lastNotNull"
-          ],
+          "calcs": ["lastNotNull"],
           "fields": ""
         },
         "orientation": "horizontal",
@@ -187,8 +163,8 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "sort_desc(max by (scenario, surface) (last_over_time(t3perf_gpu_ms_per_s{stat=\"median\", build!=\"\", label=~\"$label\", network=~\"$network\", size=~\"$size\", surface=~\"$surface\", host=~\"$host\"}[$__range])))",
-          "legendFormat": "{{scenario}} ({{surface}})",
+          "expr": "sort_desc(max by (host, scenario, surface, size, network) (last_over_time(t3perf_gpu_ms_per_s{time_basis=\"release\", stat=\"median\", build!=\"\", label=~\"$label\", network=~\"$network\", size=~\"$size\", surface=~\"$surface\", host=~\"$host\"}[$__range])))",
+          "legendFormat": "{{host}} / {{scenario}} / {{surface}} / {{size}} / {{network}}",
           "instant": true
         }
       ]
@@ -236,9 +212,7 @@
       "options": {
         "reduceOptions": {
           "values": false,
-          "calcs": [
-            "lastNotNull"
-          ],
+          "calcs": ["lastNotNull"],
           "fields": ""
         },
         "orientation": "horizontal",
@@ -249,8 +223,8 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "sort_desc(max by (scenario, surface) (last_over_time(t3perf_gpu_process_cpu_ms_per_s{stat=\"median\", build!=\"\", label=~\"$label\", network=~\"$network\", size=~\"$size\", surface=~\"$surface\", host=~\"$host\"}[$__range])))",
-          "legendFormat": "{{scenario}} ({{surface}})",
+          "expr": "sort_desc(max by (host, scenario, surface, size, network) (last_over_time(t3perf_gpu_process_cpu_ms_per_s{time_basis=\"release\", stat=\"median\", build!=\"\", label=~\"$label\", network=~\"$network\", size=~\"$size\", surface=~\"$surface\", host=~\"$host\"}[$__range])))",
+          "legendFormat": "{{host}} / {{scenario}} / {{surface}} / {{size}} / {{network}}",
           "instant": true
         }
       ]
@@ -320,10 +294,11 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "max by (scenario, surface) (last_over_time(t3perf_gpu_ms_per_s{stat=\"median\", build!=\"\", label=~\"$label\", network=~\"$network\", size=~\"$size\", surface=~\"$surface\", host=~\"$host\"}[$__interval]))",
-          "legendFormat": "{{scenario}} / {{surface}}"
+          "expr": "max by (host, scenario, surface, size, network) (last_over_time(t3perf_gpu_ms_per_s{time_basis=\"release\", stat=\"median\", build!=\"\", label=~\"$label\", network=~\"$network\", size=~\"$size\", surface=~\"$surface\", host=~\"$host\"}[$__interval]))",
+          "legendFormat": "{{host}} / {{scenario}} / {{surface}} / {{size}} / {{network}}"
         }
       ]
     }
-  ]
+  ],
+  "version": 1
 }

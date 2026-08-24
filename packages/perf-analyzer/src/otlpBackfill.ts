@@ -43,9 +43,7 @@ async function readDirResults(dir: string): Promise<{
   results: Array<ScenarioResult>;
   timestamps: Array<string | undefined>;
 }> {
-  const names = (await NodeFSP.readdir(dir))
-    .filter((name) => /^perf-.*\.json$/.test(name))
-    .sort();
+  const names = (await NodeFSP.readdir(dir)).filter((name) => /^perf-.*\.json$/.test(name)).sort();
   const results: Array<ScenarioResult> = [];
   const timestamps: Array<string | undefined> = [];
   let files = 0;
@@ -136,6 +134,8 @@ async function main(): Promise<number> {
     all,
     otlpUrl,
     forcedUnixNano === undefined ? allTimestamps : all.map(() => forcedUnixNano),
+    undefined,
+    forcedUnixNano === undefined ? "run" : "release",
   );
   if (!exported.ok) {
     console.log(`OTLP: export failed (${exported.error ?? `HTTP ${exported.status}`}).`);

@@ -4,7 +4,8 @@
   "type": "module",
   "scripts": {
     "typecheck": "tsgo --noEmit",
-    "test": "vp test run"
+    "test": "vp test run",
+    "test:remap": "python3 -m unittest scripts/test_prometheus_release_remap.py"
   },
   "dependencies": {
     "playwright-core": "1.60.0"
