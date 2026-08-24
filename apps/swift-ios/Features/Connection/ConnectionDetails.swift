@@ -35,19 +35,22 @@ enum ConnectionDetailsParser {
     private static let endpointNames = ["host", "endpoint", "server", "url"]
     private static let wrappedPairingURLNames = ["pairingUrl", "pairing_url"]
 
-    static func parse(_ input: String) throws -> ConnectionDetails {
+    static func parse(
+        _ input: String,
+        schemePolicy: NativeURLSchemePolicy = .current
+    ) throws -> ConnectionDetails {
         let trimmed = input.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { throw ConnectionDetailsError.empty }
 
-        let extracted = trimmed.lowercased().hasPrefix("t3code:")
+        let rawScheme = trimmed.split(separator: ":", maxSplits: 1).first.map(String.init)
+        let extracted = rawScheme.map(schemePolicy.supports) == true
             ? trimmed
-            : (firstURL(in: trimmed) ?? trimmed)
+            : (firstURL(in: trimmed, schemePolicy: schemePolicy) ?? trimmed)
         let candidate = trimmingTrailingProsePunctuation(extracted)
-        let loweredCandidate = candidate.lowercased()
+        let candidateScheme = candidate.split(separator: ":", maxSplits: 1).first.map(String.init)
         if candidate.contains("://")
-            || loweredCandidate.hasPrefix("t3code:")
-            || loweredCandidate.hasPrefix("t3:") {
-            return try parseURL(candidate)
+            || candidateScheme.map(schemePolicy.supports) == true {
+            return try parseURL(candidate, schemePolicy: schemePolicy)
         }
 
         let pieces = candidate
@@ -106,7 +109,10 @@ enum ConnectionDetailsParser {
         return normalized
     }
 
-    private static func parseURL(_ input: String) throws -> ConnectionDetails {
+    private static func parseURL(
+        _ input: String,
+        schemePolicy: NativeURLSchemePolicy
+    ) throws -> ConnectionDetails {
         guard let components = URLComponents(string: input),
               let scheme = components.scheme?.lowercased()
         else {
@@ -118,9 +124,9 @@ enum ConnectionDetailsParser {
         let allItems = queryItems + fragmentItems
         let token = firstValue(named: tokenNames, in: allItems)
 
-        if ["t3", "t3code", "t3code-swiftui", "t3code-swiftui-dev"].contains(scheme) {
+        if schemePolicy.supports(scheme) {
             if let wrappedPairingURL = firstValue(named: wrappedPairingURLNames, in: allItems) {
-                var wrapped = try parse(wrappedPairingURL)
+                var wrapped = try parse(wrappedPairingURL, schemePolicy: schemePolicy)
                 if wrapped.pairingCode == nil {
                     wrapped.pairingCode = normalizedCode(token)
                 }
@@ -157,9 +163,15 @@ enum ConnectionDetailsParser {
         return value.isEmpty ? nil : value
     }
 
-    private static func firstURL(in input: String) -> String? {
+    private static func firstURL(
+        in input: String,
+        schemePolicy: NativeURLSchemePolicy
+    ) -> String? {
+        let nativeSchemes = schemePolicy.proseSchemes
+            .map(NSRegularExpression.escapedPattern(for:))
+            .joined(separator: "|")
         guard let expression = try? NSRegularExpression(
-            pattern: #"(?i)(?:(?:https?|wss?|t3)://|t3code(?:-swiftui(?:-dev)?)?:(?://)?)[^\s<>"']+"#
+            pattern: "(?i)(?:(?:https?|wss?)://|(?:\(nativeSchemes)):(?://)?)[^\\s<>\"']+"
         ) else {
             return nil
         }

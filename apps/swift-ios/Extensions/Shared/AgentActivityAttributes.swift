@@ -46,14 +46,10 @@ struct T3RelayAgentActivityAggregateRow: Codable, Hashable, Identifiable, Sendab
 
     /// Generate the native query route rather than trusting a web-shaped path.
     var nativeDeepLinkURL: URL? {
-        var components = URLComponents()
-        components.scheme = T3SharedContainer.urlScheme
-        components.host = "threads"
-        components.queryItems = [
+        T3SharedContainer.configuration.routeURL(host: "threads", queryItems: [
             URLQueryItem(name: "environment", value: environmentId),
             URLQueryItem(name: "thread", value: threadId),
-        ]
-        return components.url
+        ])
     }
 }
 

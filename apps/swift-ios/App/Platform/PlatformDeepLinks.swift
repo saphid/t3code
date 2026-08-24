@@ -1,11 +1,84 @@
 import Foundation
 
+struct NativeURLSchemePolicy: Sendable {
+    private static let standardSchemes: Set<String> = [
+        "t3",
+        "t3code",
+        "t3code-swiftui",
+        "t3code-swiftui-dev",
+    ]
+
+    static let current: NativeURLSchemePolicy = {
+        guard let policy = NativeURLSchemePolicy(infoDictionary: Bundle.main.infoDictionary) else {
+            preconditionFailure("The registered T3 URL scheme is missing or inconsistent")
+        }
+        return policy
+    }()
+
+    let registeredScheme: String
+    private let supportedSchemes: Set<String>
+
+    init?(infoDictionary: [String: Any]?) {
+        guard let registeredScheme = Self.exactValue(
+            named: "T3URLScheme",
+            in: infoDictionary
+        ), Self.isNativeScheme(registeredScheme), registeredScheme == registeredScheme.lowercased()
+        else {
+            return nil
+        }
+
+        let declaredSchemes = Self.declaredSchemes(in: infoDictionary)
+        guard declaredSchemes.filter({ $0 == registeredScheme }).count == 1 else {
+            return nil
+        }
+
+        self.registeredScheme = registeredScheme
+        supportedSchemes = Self.standardSchemes.union([registeredScheme])
+    }
+
+    func supports(_ scheme: String) -> Bool {
+        supportedSchemes.contains(scheme.lowercased())
+    }
+
+    var proseSchemes: [String] {
+        supportedSchemes.sorted { $0.count > $1.count }
+    }
+
+    private static func declaredSchemes(in infoDictionary: [String: Any]?) -> [String] {
+        guard let urlTypes = infoDictionary?["CFBundleURLTypes"] as? [[String: Any]] else {
+            return []
+        }
+
+        return urlTypes
+            .compactMap { $0["CFBundleURLSchemes"] as? [String] }
+            .flatMap { $0 }
+    }
+
+    private static func exactValue(named name: String, in infoDictionary: [String: Any]?) -> String? {
+        guard let value = infoDictionary?[name] as? String,
+              !value.isEmpty,
+              value == value.trimmingCharacters(in: .whitespacesAndNewlines),
+              !value.contains("$(")
+        else {
+            return nil
+        }
+        return value
+    }
+
+    private static func isNativeScheme(_ scheme: String) -> Bool {
+        guard scheme == "t3" || scheme.hasPrefix("t3code") else { return false }
+        guard let expression = try? NSRegularExpression(pattern: #"^[a-z][a-z0-9+.-]*$"#) else {
+            return false
+        }
+        return expression.firstMatch(
+            in: scheme,
+            range: NSRange(scheme.startIndex..., in: scheme)
+        ) != nil
+    }
+}
+
 enum PlatformRoute: Codable, Hashable, Identifiable, Sendable {
-    #if DEBUG
-    static let nativeScheme = "t3code-swiftui-dev"
-    #else
-    static let nativeScheme = "t3code-swiftui"
-    #endif
+    static var nativeScheme: String { NativeURLSchemePolicy.current.registeredScheme }
 
     case connection(endpoint: String, token: String?)
     case environment(id: String)
@@ -29,8 +102,12 @@ enum PlatformRoute: Codable, Hashable, Identifiable, Sendable {
     }
 
     var url: URL? {
+        url(using: .current)
+    }
+
+    func url(using schemePolicy: NativeURLSchemePolicy) -> URL? {
         var components = URLComponents()
-        components.scheme = Self.nativeScheme
+        components.scheme = schemePolicy.registeredScheme
 
         switch self {
         case let .connection(endpoint, token):
@@ -89,7 +166,10 @@ enum PlatformDeepLinkParser {
         "www.t3.codes",
     ]
 
-    static func parse(_ url: URL) throws -> PlatformRoute {
+    static func parse(
+        _ url: URL,
+        schemePolicy: NativeURLSchemePolicy = .current
+    ) throws -> PlatformRoute {
         guard let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
               let scheme = components.scheme?.lowercased()
         else {
@@ -97,10 +177,10 @@ enum PlatformDeepLinkParser {
         }
 
         let query = queryValues(components.queryItems ?? [])
-        if ["t3", "t3code", "t3code-swiftui", "t3code-swiftui-dev"].contains(scheme) {
+        if schemePolicy.supports(scheme) {
             let segments = customSchemeSegments(components)
             if isConnectionRoute(segments: segments, query: query) {
-                return try connectionRoute(url)
+                return try connectionRoute(url, schemePolicy: schemePolicy)
             }
             return try navigationRoute(segments: segments, query: query)
         }
@@ -115,7 +195,7 @@ enum PlatformDeepLinkParser {
 
         let segments = pathSegments(components.percentEncodedPath)
         if isConnectionRoute(segments: segments, query: query) {
-            return try connectionRoute(url)
+            return try connectionRoute(url, schemePolicy: schemePolicy)
         }
 
         if let explicit = try? navigationRoute(segments: segments, query: query) {
@@ -132,11 +212,14 @@ enum PlatformDeepLinkParser {
         throw PlatformDeepLinkError.unsupportedURL
     }
 
-    static func parse(_ value: String) throws -> PlatformRoute {
+    static func parse(
+        _ value: String,
+        schemePolicy: NativeURLSchemePolicy = .current
+    ) throws -> PlatformRoute {
         guard let url = URL(string: value.trimmingCharacters(in: .whitespacesAndNewlines)) else {
             throw PlatformDeepLinkError.unsupportedURL
         }
-        return try parse(url)
+        return try parse(url, schemePolicy: schemePolicy)
     }
 
     private static func navigationRoute(
@@ -214,9 +297,15 @@ enum PlatformDeepLinkParser {
         return (try queryEnvironment.map(validatedIdentifier), try validatedIdentifier(destination))
     }
 
-    private static func connectionRoute(_ url: URL) throws -> PlatformRoute {
+    private static func connectionRoute(
+        _ url: URL,
+        schemePolicy: NativeURLSchemePolicy
+    ) throws -> PlatformRoute {
         do {
-            let details = try ConnectionDetailsParser.parse(url.absoluteString)
+            let details = try ConnectionDetailsParser.parse(
+                url.absoluteString,
+                schemePolicy: schemePolicy
+            )
             return .connection(endpoint: details.endpoint, token: details.pairingCode)
         } catch {
             throw PlatformDeepLinkError.unsupportedURL

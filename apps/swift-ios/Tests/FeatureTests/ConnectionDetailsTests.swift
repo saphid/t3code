@@ -36,6 +36,65 @@ struct ConnectionDetailsTests {
         #expect(details.pairingCode == "pairing-token")
     }
 
+    @Test(arguments: [
+        "t3code-swiftui-personal-dev",
+        "t3code-swiftui-personal",
+    ])
+    func extractsRegisteredPersonalPairingURLFromSurroundingText(_ scheme: String) throws {
+        let policy = try #require(NativeURLSchemePolicy(infoDictionary: [
+            "T3URLScheme": scheme,
+            "CFBundleURLTypes": [[
+                "CFBundleURLSchemes": [scheme],
+            ]],
+        ]))
+        let details = try ConnectionDetailsParser.parse(
+            "Pairing URL: \(scheme)://pair?pairingUrl=https%3A%2F%2Fremote.example.com%2Fpair%23token%3Dpairing-token.",
+            schemePolicy: policy
+        )
+
+        #expect(details.endpoint == "https://remote.example.com")
+        #expect(details.pairingCode == "pairing-token")
+    }
+
+    @Test
+    func rejectsUnregisteredAndMalformedNativePairingSchemes() throws {
+        let policy = try #require(NativeURLSchemePolicy(infoDictionary: [
+            "T3URLScheme": "t3code-swiftui-personal-dev",
+            "CFBundleURLTypes": [[
+                "CFBundleURLSchemes": ["t3code-swiftui-personal-dev"],
+            ]],
+        ]))
+
+        #expect(throws: ConnectionDetailsError.unsupportedScheme) {
+            try ConnectionDetailsParser.parse(
+                "t3code-swiftui-unrelated://pair?endpoint=https%3A%2F%2Fremote.example.com",
+                schemePolicy: policy
+            )
+        }
+        #expect(throws: ConnectionDetailsError.invalidAddress) {
+            try ConnectionDetailsParser.parse(
+                "t3code_swiftui://pair?endpoint=https%3A%2F%2Fremote.example.com",
+                schemePolicy: policy
+            )
+        }
+    }
+
+    @Test
+    func proseExtractionUsesTheExactRegisteredSchemeGrammar() throws {
+        let scheme = "t3code-swiftui+personal.dev"
+        let policy = try #require(NativeURLSchemePolicy(infoDictionary: [
+            "T3URLScheme": scheme,
+            "CFBundleURLTypes": [["CFBundleURLSchemes": [scheme]]],
+        ]))
+        let details = try ConnectionDetailsParser.parse(
+            "Open \(scheme)://pair?endpoint=https%3A%2F%2Fremote.example.com&token=PAIR.",
+            schemePolicy: policy
+        )
+
+        #expect(details.endpoint == "https://remote.example.com")
+        #expect(details.pairingCode == "PAIR")
+    }
+
     @Test
     func extractsPairingURLFromSurroundingText() throws {
         let details = try ConnectionDetailsParser.parse(

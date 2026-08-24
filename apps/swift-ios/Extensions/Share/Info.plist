@@ -4,6 +4,12 @@
 <dict>
 	<key>CFBundleDisplayName</key>
 	<string>$(T3CODE_SHARE_DISPLAY_NAME)</string>
+	<key>T3AppGroupIdentifier</key>
+	<string>$(T3CODE_APP_GROUP_IDENTIFIER)</string>
+	<key>T3URLScheme</key>
+	<string>$(T3CODE_URL_SCHEME)</string>
+	<key>T3BuildChannel</key>
+	<string>$(T3_BUILD_CHANNEL)</string>
 	<key>NSExtension</key>
 	<dict>
 		<key>NSExtensionAttributes</key>

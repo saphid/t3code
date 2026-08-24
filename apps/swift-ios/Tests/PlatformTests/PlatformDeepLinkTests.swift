@@ -81,6 +81,55 @@ struct PlatformDeepLinkTests {
         }
     }
 
+    @Test(arguments: [
+        "t3code-swiftui-personal-dev",
+        "t3code-swiftui-personal",
+    ])
+    func registeredPersonalSchemeGeneratesAndParsesRoutes(_ scheme: String) throws {
+        let policy = try #require(Self.schemePolicy(scheme))
+        let route = PlatformRoute.connection(
+            endpoint: "https://remote.example.com",
+            token: "PAIR"
+        )
+
+        let url = try #require(route.url(using: policy))
+
+        #expect(url.scheme == scheme)
+        #expect(try PlatformDeepLinkParser.parse(url, schemePolicy: policy) == route)
+    }
+
+    @Test(arguments: [
+        "t3code-swiftui-personal-dev",
+        "t3code-swiftui-personal",
+    ])
+    func parsesPairingLinksForRegisteredPersonalSchemes(_ scheme: String) throws {
+        let policy = try #require(Self.schemePolicy(scheme))
+        let route = try PlatformDeepLinkParser.parse(
+            "\(scheme)://pair?pairingUrl=https%3A%2F%2Fremote.example.com%2Fpair%23token%3DPAIR",
+            schemePolicy: policy
+        )
+
+        #expect(route == .connection(endpoint: "https://remote.example.com", token: "PAIR"))
+    }
+
+    @Test
+    func rejectsUnregisteredAndMalformedNativeSchemes() throws {
+        let policy = try #require(Self.schemePolicy("t3code-swiftui-personal-dev"))
+
+        #expect(throws: PlatformDeepLinkError.unsupportedURL) {
+            try PlatformDeepLinkParser.parse(
+                "t3code-swiftui-unrelated://threads/environment/thread",
+                schemePolicy: policy
+            )
+        }
+        #expect(throws: PlatformDeepLinkError.unsupportedURL) {
+            try PlatformDeepLinkParser.parse(
+                "t3code_swiftui://threads/environment/thread",
+                schemePolicy: policy
+            )
+        }
+    }
+
     @Test
     func acceptsLinksFromBothSwiftUIIdentitiesAndLegacyRoutes() throws {
         #expect(
@@ -243,6 +292,49 @@ struct PlatformDeepLinkTests {
             projects: [project],
             threads: [thread]
         )
+    }
+
+    private static func schemePolicy(_ scheme: String) -> NativeURLSchemePolicy? {
+        NativeURLSchemePolicy(infoDictionary: [
+            "T3URLScheme": scheme,
+            "CFBundleURLTypes": [[
+                "CFBundleURLSchemes": [scheme],
+            ]],
+        ])
+    }
+
+    @Test
+    func registeredSchemeMustMatchExactlyOneDeclaredURLType() throws {
+        let scheme = "t3code-swiftui-personal+dev.1"
+        let valid = try #require(NativeURLSchemePolicy(infoDictionary: [
+            "T3URLScheme": scheme,
+            "CFBundleURLTypes": [
+                ["CFBundleURLSchemes": ["unrelated"]],
+                ["CFBundleURLSchemes": [scheme]],
+            ],
+        ]))
+        #expect(valid.registeredScheme == scheme)
+
+        for dictionary: [String: Any] in [
+            [
+                "T3URLScheme": scheme,
+                "CFBundleURLTypes": [["CFBundleURLSchemes": ["different"]]],
+            ],
+            [
+                "T3URLScheme": scheme,
+                "CFBundleURLTypes": [["CFBundleURLSchemes": [scheme, scheme]]],
+            ],
+            [
+                "T3URLScheme": " \(scheme)",
+                "CFBundleURLTypes": [["CFBundleURLSchemes": [" \(scheme)"]]],
+            ],
+            [
+                "T3URLScheme": "$(T3CODE_URL_SCHEME)",
+                "CFBundleURLTypes": [["CFBundleURLSchemes": ["$(T3CODE_URL_SCHEME)"]]],
+            ],
+        ] {
+            #expect(NativeURLSchemePolicy(infoDictionary: dictionary) == nil)
+        }
     }
 
     @Test
