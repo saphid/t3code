@@ -8,6 +8,7 @@ public struct SettingsView: View {
     @State private var appearanceSaveTask: Task<Bool, Never>?
     @State private var saveErrorMessage: String?
     @State private var showingDiscardConfirmation = false
+    private let buildIdentity = AppBuildIdentity.current
 
     public init(model: FeatureRootModel) {
         self.model = model
@@ -181,16 +182,41 @@ public struct SettingsView: View {
     }
 
     private var aboutSection: some View {
-        SettingsSection(title: "About", footer: "Version \(appVersionLabel)") {
-            Link(destination: URL(string: "https://github.com/pingdotgg/t3code")!) {
-                SettingsNavigationRow(
-                    title: "Source code",
-                    systemImage: "chevron.left.forwardslash.chevron.right",
-                    trailingSystemImage: "arrow.up.right"
-                )
+        SettingsSection(
+            title: "Build identity",
+            footer: "Use these values when reporting a problem."
+        ) {
+            VStack(spacing: 0) {
+                SettingsValueRow(title: "Channel", value: buildIdentity.channel)
+                    .accessibilityLabel("Build channel")
+                    .accessibilityValue(buildIdentity.channel)
+                    .accessibilityIdentifier("build-channel")
+                settingsDivider
+                SettingsValueRow(title: "Version", value: buildIdentity.marketingVersion)
+                    .accessibilityLabel("Marketing version")
+                    .accessibilityValue(buildIdentity.marketingVersion)
+                    .accessibilityIdentifier("build-version")
+                settingsDivider
+                SettingsValueRow(title: "Build", value: buildIdentity.buildNumber)
+                    .accessibilityLabel("Build number")
+                    .accessibilityValue(buildIdentity.buildNumber)
+                    .accessibilityIdentifier("build-number")
+                settingsDivider
+                SettingsValueRow(title: "Revision", value: buildIdentity.sourceRevision)
+                    .accessibilityLabel("Source revision")
+                    .accessibilityValue(buildIdentity.sourceRevision)
+                    .accessibilityIdentifier("build-revision")
+                settingsDivider
+                Link(destination: URL(string: "https://github.com/pingdotgg/t3code")!) {
+                    SettingsNavigationRow(
+                        title: "Source code",
+                        systemImage: "chevron.left.forwardslash.chevron.right",
+                        trailingSystemImage: "arrow.up.right"
+                    )
+                }
+                .buttonStyle(.plain)
+                .accessibilityHint("Opens GitHub in your browser")
             }
-            .buttonStyle(.plain)
-            .accessibilityHint("Opens GitHub in your browser")
         }
     }
 
@@ -261,14 +287,6 @@ public struct SettingsView: View {
 
         let connectedCount = connectedEnvironments.count
         return "\(environmentSummary.text), \(connectedCount) of \(environmentCount) online"
-    }
-
-    private var appVersionLabel: String {
-        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
-            ?? "?"
-        let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String
-            ?? "?"
-        return "\(version) (\(build))"
     }
 
     private var hasUnsavedChanges: Bool {
@@ -417,6 +435,28 @@ private struct SettingsNavigationRow: View {
         .frame(minHeight: subtitle == nil ? 56 : 68)
         .contentShape(Rectangle())
         .accessibilityElement(children: .combine)
+    }
+}
+
+private struct SettingsValueRow: View {
+    let title: String
+    let value: String
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Text(title)
+                .font(T3Typography.threadBody)
+                .foregroundStyle(T3Colors.textPrimary)
+            Spacer(minLength: 12)
+            Text(value)
+                .font(T3Typography.supportingStrong.monospaced())
+                .foregroundStyle(T3Colors.textSecondary)
+                .lineLimit(1)
+                .textSelection(.enabled)
+        }
+        .padding(.horizontal, 20)
+        .frame(minHeight: 56)
+        .accessibilityElement(children: .ignore)
     }
 }
 
