@@ -167,6 +167,34 @@ describe("showBrowserLinkContextMenu", () => {
     expect(openBrowserMock).not.toHaveBeenCalled();
   });
 
+  it("reclaims focus from the guest before copying", async () => {
+    // The guest webview holds focus after an in-page right-click, and
+    // Chromium refuses clipboard writes from an unfocused document.
+    let focused = false;
+    const focus = vi.fn(() => {
+      focused = true;
+    });
+    vi.stubGlobal("document", { hasFocus: () => focused });
+    vi.stubGlobal("window", { focus });
+
+    try {
+      await showBrowserLinkContextMenu({
+        url: "https://example.com/",
+        threadRef,
+        openPreview: vi.fn(async () => AsyncResult.success(snapshot)),
+        localApi: localApiMock("copy-link").api,
+      });
+    } finally {
+      vi.unstubAllGlobals();
+    }
+
+    expect(focus).toHaveBeenCalledOnce();
+    expect(writeTextToClipboardMock).toHaveBeenCalledExactlyOnceWith(
+      "https://example.com/",
+      "link",
+    );
+  });
+
   it("does nothing when the menu is dismissed", async () => {
     const openPreview = vi.fn(async () => AsyncResult.success(snapshot));
     const { api, openExternal } = localApiMock(null);

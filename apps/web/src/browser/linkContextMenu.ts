@@ -34,6 +34,30 @@ export class BrowserLinkContextMenuError extends Schema.TaggedErrorClass<Browser
 }
 
 /**
+ * The guest webview keeps input focus when the user right-clicks inside the
+ * page, and Chromium refuses clipboard writes from an unfocused embedder
+ * document. Reclaim focus and wait for it to land (bounded, in case the
+ * window manager never delivers it) before writing.
+ */
+async function reclaimDocumentFocus(): Promise<void> {
+  if (typeof document === "undefined" || typeof window === "undefined") return;
+  if (document.hasFocus()) return;
+  window.focus();
+  if (document.hasFocus()) return;
+  await new Promise<void>((resolve) => {
+    let settled = false;
+    const done = () => {
+      if (settled) return;
+      settled = true;
+      window.removeEventListener("focus", done);
+      resolve();
+    };
+    window.addEventListener("focus", done, { once: true });
+    setTimeout(done, 250);
+  });
+}
+
+/**
  * Guard for right-click targets inside the hosted browser webview. Only
  * http(s) links get a context menu; anything else (javascript:, blob:,
  * malformed hrefs, non-link right-clicks) keeps today's no-menu behavior.
@@ -101,7 +125,10 @@ export async function showBrowserLinkContextMenu<E>(
       useRightPanelStore.getState().openBrowser(input.threadRef, result.value.tabId);
     },
     openExternal: (href) => input.localApi.shell.openExternal(href),
-    copyLink: (href) => writeTextToClipboard(href, "link"),
+    copyLink: async (href) => {
+      await reclaimDocumentFocus();
+      await writeTextToClipboard(href, "link");
+    },
     reportFailure,
   });
 }
