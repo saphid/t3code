@@ -50,7 +50,6 @@ export function resolveBrowserLinkUrl(rawUrl: unknown): string | null {
 
 interface BrowserLinkContextMenuInput<E> {
   readonly url: string;
-  readonly position: { readonly x: number; readonly y: number };
   readonly threadRef: ScopedThreadRef;
   readonly openPreview: OpenPreviewMutation<E>;
   readonly localApi: LocalApi;
@@ -63,6 +62,11 @@ interface BrowserLinkContextMenuInput<E> {
  * the configured browser defaults) and focuses it. Failures are reported to
  * the console and otherwise swallowed: a broken menu must never take the
  * page down with it.
+ *
+ * No position is forwarded: the guest event's coordinates are not reliably
+ * in main-renderer client space once the viewport is offset or scaled, and a
+ * native menu with no position anchors at the cursor, which for a real
+ * right-click is exactly the clicked link.
  */
 export async function showBrowserLinkContextMenu<E>(
   input: BrowserLinkContextMenuInput<E>,
@@ -78,9 +82,9 @@ export async function showBrowserLinkContextMenu<E>(
 
   await showExternalLinkContextMenu({
     href: input.url,
-    position: input.position,
+    position: { x: 0, y: 0 },
     canOpenInPreview: true,
-    showContextMenu: (items, position) => input.localApi.contextMenu.show(items, position),
+    showContextMenu: (items) => input.localApi.contextMenu.show(items),
     openInPreview: async (href) => {
       const result = await openPreviewSession({
         openPreview: input.openPreview,

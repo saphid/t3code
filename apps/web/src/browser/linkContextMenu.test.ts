@@ -40,8 +40,6 @@ const threadRef = {
   threadId: "thread-1" as ScopedThreadRef["threadId"],
 };
 
-const position = { x: 120, y: 240 };
-
 const snapshot: PreviewSessionSnapshot = {
   threadId: threadRef.threadId,
   tabId: "tab-2",
@@ -84,25 +82,23 @@ describe("resolveBrowserLinkUrl", () => {
 });
 
 describe("showBrowserLinkContextMenu", () => {
-  it("shows the app-wide link menu items at the click position", async () => {
+  it("shows the app-wide link menu items, cursor-anchored", async () => {
     const { api, show } = localApiMock(null);
 
     await showBrowserLinkContextMenu({
       url: "https://example.com/",
-      position,
       threadRef,
       openPreview: vi.fn(async () => AsyncResult.success(snapshot)),
       localApi: api,
     });
 
-    expect(show).toHaveBeenCalledExactlyOnceWith(
-      [
-        { id: "open-in-preview", label: "Open in integrated browser" },
-        { id: "open-external", label: "Open in system browser" },
-        { id: "copy-link", label: "Copy Link" },
-      ],
-      position,
-    );
+    // No position: the menu anchors at the cursor, which for a real
+    // right-click is the clicked link.
+    expect(show).toHaveBeenCalledExactlyOnceWith([
+      { id: "open-in-preview", label: "Open in integrated browser" },
+      { id: "open-external", label: "Open in system browser" },
+      { id: "copy-link", label: "Copy Link" },
+    ]);
   });
 
   it("opens the link in a new tab, records the visit, and focuses it", async () => {
@@ -111,7 +107,6 @@ describe("showBrowserLinkContextMenu", () => {
 
     await showBrowserLinkContextMenu({
       url: "http://localhost:3000/next",
-      position,
       threadRef,
       openPreview,
       localApi: api,
@@ -142,7 +137,6 @@ describe("showBrowserLinkContextMenu", () => {
 
     await showBrowserLinkContextMenu({
       url: "https://example.com/docs",
-      position,
       threadRef,
       openPreview,
       localApi: api,
@@ -159,7 +153,6 @@ describe("showBrowserLinkContextMenu", () => {
 
     await showBrowserLinkContextMenu({
       url: "https://example.com/a?b=c",
-      position,
       threadRef,
       openPreview,
       localApi: api,
@@ -181,7 +174,6 @@ describe("showBrowserLinkContextMenu", () => {
 
     await showBrowserLinkContextMenu({
       url: "https://example.com/",
-      position,
       threadRef,
       openPreview,
       localApi: api,
@@ -200,7 +192,6 @@ describe("showBrowserLinkContextMenu", () => {
 
     await showBrowserLinkContextMenu({
       url: "http://localhost:3000/path?token=secret",
-      position,
       threadRef,
       openPreview,
       localApi: {
@@ -234,7 +225,6 @@ describe("showBrowserLinkContextMenu", () => {
 
     await showBrowserLinkContextMenu({
       url: "http://127.0.0.1:5173/",
-      position,
       threadRef,
       openPreview: async () => AsyncResult.failure(cause),
       localApi: api,
@@ -258,7 +248,6 @@ describe("showBrowserLinkContextMenu", () => {
 
     await showBrowserLinkContextMenu({
       url: "http://localhost:5173/",
-      position,
       threadRef,
       openPreview: async () => AsyncResult.failure(Cause.interrupt()),
       localApi: api,
@@ -275,7 +264,6 @@ describe("showBrowserLinkContextMenu", () => {
 
     await showBrowserLinkContextMenu({
       url: "https://example.com/",
-      position,
       threadRef,
       openPreview: vi.fn(async () => AsyncResult.success(snapshot)),
       localApi: api,
