@@ -134,7 +134,17 @@ export async function showBrowserLinkContextMenu<E>(
       try {
         await writeTextToClipboard(href, "link");
       } finally {
-        if (focusedElement && typeof focusedElement.focus === "function") {
+        // Restore only while focus is still unclaimed: if the user focused
+        // something else during the write, that choice wins.
+        const current = typeof document === "undefined" ? null : document.activeElement;
+        const focusUnclaimed =
+          current === null || current === document.body || current === focusedElement;
+        if (
+          focusedElement &&
+          typeof focusedElement.focus === "function" &&
+          focusedElement.isConnected !== false &&
+          focusUnclaimed
+        ) {
           focusedElement.focus();
         }
       }

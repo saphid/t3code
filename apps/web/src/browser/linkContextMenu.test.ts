@@ -201,6 +201,39 @@ describe("showBrowserLinkContextMenu", () => {
     expect(guestFocus).toHaveBeenCalledOnce();
   });
 
+  it("does not steal focus back when the user refocused during the copy", async () => {
+    const guestFocus = vi.fn();
+    const guest = { focus: guestFocus, isConnected: true };
+    const composer = { focus: vi.fn(), isConnected: true };
+    let active: unknown = guest;
+    vi.stubGlobal("document", {
+      hasFocus: () => true,
+      get activeElement() {
+        return active;
+      },
+      body: {},
+    });
+    vi.stubGlobal("window", { focus: vi.fn() });
+    writeTextToClipboardMock.mockImplementationOnce(async () => {
+      // The user clicks into another control mid-write.
+      active = composer;
+      return true;
+    });
+
+    try {
+      await showBrowserLinkContextMenu({
+        url: "https://example.com/",
+        threadRef,
+        openPreview: vi.fn(async () => AsyncResult.success(snapshot)),
+        localApi: localApiMock("copy-link").api,
+      });
+    } finally {
+      vi.unstubAllGlobals();
+    }
+
+    expect(guestFocus).not.toHaveBeenCalled();
+  });
+
   it("does nothing when the menu is dismissed", async () => {
     const openPreview = vi.fn(async () => AsyncResult.success(snapshot));
     const { api, openExternal } = localApiMock(null);
