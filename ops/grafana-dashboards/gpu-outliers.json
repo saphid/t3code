@@ -261,7 +261,7 @@
         {
           "refId": "A",
           "expr": "sort_desc(max by (device_type, gpu_backend, scenario, surface, size, network) (avg by (device_type, gpu_backend, scenario, surface, size, network, build) (last_over_time(t3perf_gpu_ms_per_s{time_basis=\"release\", scenario=~\"$scenario\", stat=\"median\", build!=\"\", label=~\"$label\", network=~\"$network\", size=~\"$size\", surface=~\"$surface\", device_type=~\"$device_type\", gpu_backend=~\"$gpu_backend\", host=~\"$host\", gpu_backend!=\"none\"}[$__range]))))",
-          "legendFormat": "{{device_type}} / {{gpu_backend}} / {{scenario}} / {{surface}} / {{size}} / {{network}}",
+          "legendFormat": "{{device_type}} · {{gpu_backend}} · {{scenario}}",
           "instant": true
         }
       ]
@@ -327,7 +327,7 @@
         {
           "refId": "A",
           "expr": "sort_desc(max by (device_type, gpu_backend, scenario, surface, size, network) (avg by (device_type, gpu_backend, scenario, surface, size, network, build) (last_over_time(t3perf_gpu_process_cpu_ms_per_s{time_basis=\"release\", scenario=~\"$scenario\", stat=\"median\", build!=\"\", label=~\"$label\", network=~\"$network\", size=~\"$size\", surface=~\"$surface\", device_type=~\"$device_type\", gpu_backend=~\"$gpu_backend\", host=~\"$host\"}[$__range]))))",
-          "legendFormat": "{{device_type}} / {{gpu_backend}} / {{scenario}} / {{surface}} / {{size}} / {{network}}",
+          "legendFormat": "{{device_type}} · {{gpu_backend}} · {{scenario}}",
           "instant": true
         }
       ]
@@ -402,7 +402,7 @@
         {
           "refId": "A",
           "expr": "avg by (device_type, gpu_backend, scenario, surface, size, network) (last_over_time(t3perf_gpu_ms_per_s{time_basis=\"release\", scenario=~\"$scenario\", stat=\"median\", build!=\"\", label=~\"$label\", network=~\"$network\", size=~\"$size\", surface=~\"$surface\", device_type=~\"$device_type\", gpu_backend=~\"$gpu_backend\", host=~\"$host\", gpu_backend!=\"none\"}[$__interval]))",
-          "legendFormat": "{{device_type}} / {{gpu_backend}} / {{scenario}} / {{surface}} / {{size}} / {{network}}"
+          "legendFormat": "{{device_type}} · {{gpu_backend}} · {{scenario}}"
         }
       ]
     }
