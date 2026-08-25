@@ -10,8 +10,8 @@ import sys
 
 
 WORKER_DIR = "ops/grafana-invite-worker"
-KEYCHAIN_SERVICE = "cloudflare-t3play-agent-tools"
-KEYCHAIN_ACCOUNT = "saphid"
+KEYCHAIN_SERVICE = "grafana-invite-cloudflare-token"
+KEYCHAIN_ACCOUNT = "stats.t3play.dev"
 
 
 def keychain():
@@ -30,7 +30,11 @@ def keychain():
             stderr=subprocess.DEVNULL,
         ).strip()
     except (FileNotFoundError, subprocess.CalledProcessError):
-        print("error: scoped Cloudflare token is missing from Keychain", file=sys.stderr)
+        print(
+            "error: Keychain item grafana-invite-cloudflare-token / "
+            "stats.t3play.dev is missing",
+            file=sys.stderr,
+        )
         raise SystemExit(1)
 
 

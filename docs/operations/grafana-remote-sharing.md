@@ -19,7 +19,8 @@ Done (server side, on the Grafana box `lxso2`):
   `~/t3-perf/observability/docker-compose.yml`; Grafana upgraded 11.3.0 ->
   13.2.0 and pinned. Grafana validates Cloudflare's signed Access JWT against
   the team JWKS, issuer, and main-app audience, then automatically provisions
-  the verified email as Viewer. The local admin/password login remains as the
+  the verified email as Editor, so teammates can create and maintain their own
+  dashboards. The local admin/password login remains as the
   recovery path. The pre-JWT compose backup is
   `docker-compose.yml.pre-cloudflare-jwt-20260823`; earlier compose and data
   backups are in `~/backups/` on the box.
@@ -35,14 +36,22 @@ Done (server side, on the Grafana box `lxso2`):
   authorized against the account's saved payment method). Cloudflare assigned
   team domain `wandering-violet-a685.cloudflareaccess.com`.
 - One-time PIN login is enabled. The Access app `Grafana` allows enrolled email
-  addresses. A more-specific `stats.t3play.dev/join` Access app accepts anyone
-  who proves control of an email address, after which the invite Worker checks
-  the expiring link and enrolls that verified address.
+  addresses. The more-specific `stats.t3play.dev/join` path bypasses Access so
+  the invite Worker can validate the expiring token and collect the claimed
+  address without sending a first PIN. The main app then verifies ownership of
+  that address with the only PIN in the flow.
 - Main Org's home dashboard is `T3 perf / Overview` (`t3perf-overview`). Its
   top orientation panel explains what the suite measures, how to use the
   filters, and why each focused dashboard exists. The provisioned source is
   `~/t3-perf/observability/grafana/dashboards/overview.json` on `lxso2`; the
   pre-home-page backup is `overview.json.pre-home-20260823` beside it.
+- The repository snapshots the complete provisioned dashboard set in
+  `ops/grafana-dashboards/`. Treat those files as the durable source of truth:
+  validate them, copy them to
+  `~/t3-perf/observability/grafana/dashboards/` on `lxso2`, and retain a dated
+  backup there before each rollout. File-provisioned dashboards stay
+  maintainer-owned; Editors create separate dashboards in Grafana rather than
+  editing the provisioned originals.
 - Scoped user token `t3play-agent-tools-v2` has DNS Edit on all zones and Edit
   on Access organizations/identity/groups, Access apps/policies, and
   Cloudflare Tunnel. The token is in macOS Keychain under service
@@ -85,15 +94,24 @@ scripts/grafana-share-invite.py --hours 168
 
 The command rotates the previous link and prints the new URL and UTC expiry.
 The URL has the form `https://stats.t3play.dev/join?invite=...`. A visitor
-enters their email at Cloudflare, completes the emailed One-time PIN, and is
-then added to the main Grafana Access allowlist. On redirect, Grafana consumes
-the signed Cloudflare identity and creates their Viewer account automatically;
-there is no second password or login. The bare stats URL does not enroll new
-people.
+enters their email in the token-gated Worker form. The Worker enrolls the
+claimed address and shows a continuation page so Cloudflare has time to apply
+the policy. The visitor then continues to the main app and completes one
+emailed One-time PIN. Grafana consumes the signed Cloudflare identity and
+creates their Editor account automatically; there is no Grafana password or
+second Cloudflare login. The bare stats URL does not enroll new people. A link
+can add at most 25 new addresses and enrollment survives link expiry, so rotate
+the link and remove unwanted accounts if it leaks.
 
 The Worker source and Wrangler configuration live in
 `ops/grafana-invite-worker`. Its Cloudflare API token, invite token, and expiry
-are Worker secrets. Deploy code changes with:
+are Worker secrets. `CF_API_TOKEN` must be a dedicated token limited to Access
+application and policy editing for this account; do not reuse the broader
+operator token described above. Store it in macOS Keychain service
+`grafana-invite-cloudflare-token`, account `stats.t3play.dev`; that is the exact
+entry read by `scripts/grafana-share-invite.py`. Cloudflare request logs can retain the invite
+query string for their retention period, so rotating a link invalidates its
+value but does not erase the historical request URL. Deploy code changes with:
 
 ```sh
 cd ops/grafana-invite-worker
@@ -111,7 +129,7 @@ scripts/grafana-share-users.py add person@example.com --name "Person Name"
 scripts/grafana-share-users.py remove person@example.com
 ```
 
-`add` puts the address on the Access allowlist and can still pre-create a Viewer
+`add` puts the address on the Access allowlist and can still pre-create an Editor
 invite for compatibility, but normal users should use the expiring enrollment
 link and Cloudflare JWT provisioning.
 `remove` deletes the Grafana user or pending invite and removes the address
@@ -126,8 +144,9 @@ administrator password remains separately stored under service
 
 - **Add teammates**: rotate an expiring link with
   `scripts/grafana-share-invite.py --hours HOURS` and share the printed URL.
-- **Change the home dashboard**: edit the provisioned JSON on `lxso2`, restart
-  Grafana, and set Main Org's `homeDashboardUID` through
+- **Change the home dashboard**: edit and validate the repository copy in
+  `ops/grafana-dashboards/`, back up and deploy the complete set to `lxso2`,
+  restart Grafana, and set Main Org's `homeDashboardUID` through
   `PATCH /api/org/preferences`. Keep the orientation copy concise and preserve
   links to all focused dashboards.
 - **Remove access**: run `scripts/grafana-share-users.py remove EMAIL`. Their
