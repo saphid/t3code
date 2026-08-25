@@ -2,6 +2,7 @@ import type { LocalApi, ScopedThreadRef } from "@t3tools/contracts";
 import { isAtomCommandInterrupted } from "@t3tools/client-runtime/state/runtime";
 import * as Schema from "effect/Schema";
 
+import { recordVisitForThread } from "~/browserHistoryStore";
 import { openPreviewSession } from "~/components/preview/openPreviewSession";
 import { writeTextToClipboard } from "~/hooks/useCopyToClipboard";
 import { useRightPanelStore } from "~/rightPanelStore";
@@ -105,6 +106,7 @@ export async function showBrowserLinkContextMenu<E>(
       }
       return;
     }
+    recordVisitForThread(input.threadRef, input.url);
     useRightPanelStore.getState().openBrowser(input.threadRef, result.value.tabId);
     return;
   }

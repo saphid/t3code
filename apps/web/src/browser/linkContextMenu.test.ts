@@ -11,9 +11,14 @@ import {
   showBrowserLinkContextMenu,
 } from "./linkContextMenu";
 
-const { openBrowserMock, writeTextToClipboardMock } = vi.hoisted(() => ({
+const { openBrowserMock, recordVisitForThreadMock, writeTextToClipboardMock } = vi.hoisted(() => ({
   openBrowserMock: vi.fn(),
+  recordVisitForThreadMock: vi.fn(),
   writeTextToClipboardMock: vi.fn(async () => true),
+}));
+
+vi.mock("~/browserHistoryStore", () => ({
+  recordVisitForThread: recordVisitForThreadMock,
 }));
 
 vi.mock("~/previewStateStore", () => ({
@@ -97,6 +102,10 @@ describe("showBrowserLinkContextMenu", () => {
       }),
     });
     expect(openBrowserMock).toHaveBeenCalledExactlyOnceWith(threadRef, "tab-2");
+    expect(recordVisitForThreadMock).toHaveBeenCalledExactlyOnceWith(
+      threadRef,
+      "http://localhost:3000/next",
+    );
     expect(writeTextToClipboardMock).not.toHaveBeenCalled();
   });
 
