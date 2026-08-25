@@ -88,7 +88,13 @@ describe("showBrowserLinkContextMenu", () => {
 
     expect(openPreview).toHaveBeenCalledExactlyOnceWith({
       environmentId: "local",
-      input: { threadId: "thread-1", url: "http://localhost:3000/next" },
+      input: expect.objectContaining({
+        threadId: "thread-1",
+        url: "http://localhost:3000/next",
+        // The configured browser default, so menu-opened tabs match tabs
+        // opened from the + button.
+        viewport: expect.anything(),
+      }),
     });
     expect(openBrowserMock).toHaveBeenCalledExactlyOnceWith(threadRef, "tab-2");
     expect(writeTextToClipboardMock).not.toHaveBeenCalled();

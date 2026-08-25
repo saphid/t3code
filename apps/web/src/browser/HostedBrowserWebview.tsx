@@ -158,7 +158,9 @@ export function HostedBrowserWebview(props: {
   // guest page's own behavior.
   useEffect(() => {
     const webview = webviewRef.current;
-    if (!webview) return;
+    // The <webview> only renders once config resolves, so config must gate
+    // (and re-run) this effect or a first-launch webview gets no listener.
+    if (!webview || !config) return;
     const handleContextMenu = (event: Event) => {
       const params = (event as Event & { params?: { linkURL?: unknown } }).params;
       const url = resolveBrowserLinkUrl(params?.linkURL);
@@ -169,7 +171,7 @@ export function HostedBrowserWebview(props: {
     };
     webview.addEventListener("context-menu", handleContextMenu);
     return () => webview.removeEventListener("context-menu", handleContextMenu);
-  }, [openPreview, threadRef, webviewGeneration]);
+  }, [config, openPreview, threadRef, webviewGeneration]);
 
   const active = presentation.visible && presentation.rect !== null;
   const lastRect = presentation.rect;

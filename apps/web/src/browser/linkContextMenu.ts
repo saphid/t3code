@@ -2,9 +2,11 @@ import type { LocalApi, ScopedThreadRef } from "@t3tools/contracts";
 import { isAtomCommandInterrupted } from "@t3tools/client-runtime/state/runtime";
 import * as Schema from "effect/Schema";
 
+import { openPreviewSession } from "~/components/preview/openPreviewSession";
 import { writeTextToClipboard } from "~/hooks/useCopyToClipboard";
+import { useRightPanelStore } from "~/rightPanelStore";
 
-import { openUrlInPreview, type OpenPreviewMutation } from "./openFileInPreview";
+import type { OpenPreviewMutation } from "./openFileInPreview";
 
 const browserLinkErrorContext = {
   environmentId: Schema.String,
@@ -90,14 +92,20 @@ export async function showBrowserLinkContextMenu<E>(
   }
 
   if (choice === "open-link-in-new-tab") {
-    const result = await openUrlInPreview({
+    // openPreviewSession (not openUrlInPreview) so the tab picks up the
+    // configured browser defaults, like any other user-opened tab.
+    const result = await openPreviewSession({
+      openPreview: input.openPreview,
       threadRef: input.threadRef,
       url: input.url,
-      openPreview: input.openPreview,
     });
-    if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
-      console.error(new BrowserLinkOpenInNewTabError({ ...errorContext, cause: result.cause }));
+    if (result._tag === "Failure") {
+      if (!isAtomCommandInterrupted(result)) {
+        console.error(new BrowserLinkOpenInNewTabError({ ...errorContext, cause: result.cause }));
+      }
+      return;
     }
+    useRightPanelStore.getState().openBrowser(input.threadRef, result.value.tabId);
     return;
   }
 
