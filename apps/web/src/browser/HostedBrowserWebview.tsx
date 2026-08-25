@@ -162,12 +162,16 @@ export function HostedBrowserWebview(props: {
     // (and re-run) this effect or a first-launch webview gets no listener.
     if (!webview || !config) return;
     const handleContextMenu = (event: Event) => {
-      const params = (event as Event & { params?: { linkURL?: unknown } }).params;
+      const params = (event as Event & { params?: { linkURL?: unknown; x?: number; y?: number } })
+        .params;
       const url = resolveBrowserLinkUrl(params?.linkURL);
       if (!url) return;
       const localApi = readLocalApi();
       if (!localApi) return;
-      void showBrowserLinkContextMenu({ url, threadRef, openPreview, localApi });
+      // Electron translates the guest click into embedder coordinates, the
+      // same space every other context menu caller passes.
+      const position = { x: params?.x ?? 0, y: params?.y ?? 0 };
+      void showBrowserLinkContextMenu({ url, position, threadRef, openPreview, localApi });
     };
     webview.addEventListener("context-menu", handleContextMenu);
     return () => webview.removeEventListener("context-menu", handleContextMenu);

@@ -3,43 +3,33 @@ import { isAtomCommandInterrupted } from "@t3tools/client-runtime/state/runtime"
 import * as Schema from "effect/Schema";
 
 import { recordVisitForThread } from "~/browserHistoryStore";
+import {
+  showExternalLinkContextMenu,
+  type ExternalLinkContextMenuFailureOperation,
+} from "~/components/chat/externalLinkContextMenu";
 import { openPreviewSession } from "~/components/preview/openPreviewSession";
 import { writeTextToClipboard } from "~/hooks/useCopyToClipboard";
 import { useRightPanelStore } from "~/rightPanelStore";
 
 import type { OpenPreviewMutation } from "./openFileInPreview";
 
-const browserLinkErrorContext = {
-  environmentId: Schema.String,
-  threadId: Schema.String,
-  targetOrigin: Schema.String,
-  cause: Schema.Defect(),
-};
-
-export class BrowserLinkContextMenuShowError extends Schema.TaggedErrorClass<BrowserLinkContextMenuShowError>()(
-  "BrowserLinkContextMenuShowError",
-  browserLinkErrorContext,
+export class BrowserLinkContextMenuError extends Schema.TaggedErrorClass<BrowserLinkContextMenuError>()(
+  "BrowserLinkContextMenuError",
+  {
+    operation: Schema.Literals([
+      "show-link-context-menu",
+      "open-link-in-preview",
+      "open-link-external",
+      "copy-link",
+    ]),
+    environmentId: Schema.String,
+    threadId: Schema.String,
+    targetOrigin: Schema.String,
+    cause: Schema.Defect(),
+  },
 ) {
   override get message(): string {
-    return `Failed to show the context menu for browser link ${this.targetOrigin}.`;
-  }
-}
-
-export class BrowserLinkOpenInNewTabError extends Schema.TaggedErrorClass<BrowserLinkOpenInNewTabError>()(
-  "BrowserLinkOpenInNewTabError",
-  browserLinkErrorContext,
-) {
-  override get message(): string {
-    return `Failed to open browser link ${this.targetOrigin} in a new tab for thread ${this.threadId}.`;
-  }
-}
-
-export class BrowserLinkCopyError extends Schema.TaggedErrorClass<BrowserLinkCopyError>()(
-  "BrowserLinkCopyError",
-  browserLinkErrorContext,
-) {
-  override get message(): string {
-    return `Failed to copy the browser link ${this.targetOrigin} to the clipboard.`;
+    return `Browser link menu operation ${JSON.stringify(this.operation)} failed for ${this.targetOrigin}.`;
   }
 }
 
@@ -60,17 +50,19 @@ export function resolveBrowserLinkUrl(rawUrl: unknown): string | null {
 
 interface BrowserLinkContextMenuInput<E> {
   readonly url: string;
+  readonly position: { readonly x: number; readonly y: number };
   readonly threadRef: ScopedThreadRef;
   readonly openPreview: OpenPreviewMutation<E>;
   readonly localApi: LocalApi;
 }
 
 /**
- * Show the native link menu for a right-clicked link in the hosted browser
- * webview. No position is passed so the menu pops at the cursor, which
- * sidesteps guest-to-window coordinate mapping across viewport scale and
- * zoom. Failures are reported to the console and otherwise swallowed: a
- * broken menu must never take the page down with it.
+ * Show the app's standard link context menu for a right-clicked link in the
+ * hosted browser webview — the same items a link gets everywhere else. "Open
+ * in integrated browser" opens the link in a new tab of this browser (with
+ * the configured browser defaults) and focuses it. Failures are reported to
+ * the console and otherwise swallowed: a broken menu must never take the
+ * page down with it.
  */
 export async function showBrowserLinkContextMenu<E>(
   input: BrowserLinkContextMenuInput<E>,
@@ -80,42 +72,32 @@ export async function showBrowserLinkContextMenu<E>(
     threadId: input.threadRef.threadId,
     targetOrigin: new URL(input.url).origin,
   };
+  const reportFailure = (operation: ExternalLinkContextMenuFailureOperation, cause: unknown) => {
+    console.error(new BrowserLinkContextMenuError({ ...errorContext, operation, cause }));
+  };
 
-  let choice: "open-link-in-new-tab" | "copy-link-address" | null;
-  try {
-    choice = await input.localApi.contextMenu.show([
-      { id: "open-link-in-new-tab", label: "Open Link in New Tab" },
-      { id: "copy-link-address", label: "Copy Link Address" },
-    ]);
-  } catch (cause) {
-    console.error(new BrowserLinkContextMenuShowError({ ...errorContext, cause }));
-    return;
-  }
-
-  if (choice === "open-link-in-new-tab") {
-    // openPreviewSession (not openUrlInPreview) so the tab picks up the
-    // configured browser defaults, like any other user-opened tab.
-    const result = await openPreviewSession({
-      openPreview: input.openPreview,
-      threadRef: input.threadRef,
-      url: input.url,
-    });
-    if (result._tag === "Failure") {
-      if (!isAtomCommandInterrupted(result)) {
-        console.error(new BrowserLinkOpenInNewTabError({ ...errorContext, cause: result.cause }));
+  await showExternalLinkContextMenu({
+    href: input.url,
+    position: input.position,
+    canOpenInPreview: true,
+    showContextMenu: (items, position) => input.localApi.contextMenu.show(items, position),
+    openInPreview: async (href) => {
+      const result = await openPreviewSession({
+        openPreview: input.openPreview,
+        threadRef: input.threadRef,
+        url: href,
+      });
+      if (result._tag === "Failure") {
+        if (!isAtomCommandInterrupted(result)) {
+          reportFailure("open-link-in-preview", result.cause);
+        }
+        return;
       }
-      return;
-    }
-    recordVisitForThread(input.threadRef, input.url);
-    useRightPanelStore.getState().openBrowser(input.threadRef, result.value.tabId);
-    return;
-  }
-
-  if (choice === "copy-link-address") {
-    try {
-      await writeTextToClipboard(input.url, "link address");
-    } catch (cause) {
-      console.error(new BrowserLinkCopyError({ ...errorContext, cause }));
-    }
-  }
+      recordVisitForThread(input.threadRef, href);
+      useRightPanelStore.getState().openBrowser(input.threadRef, result.value.tabId);
+    },
+    openExternal: (href) => input.localApi.shell.openExternal(href),
+    copyLink: (href) => writeTextToClipboard(href, "link"),
+    reportFailure,
+  });
 }

@@ -4,9 +4,7 @@ import { AsyncResult } from "effect/unstable/reactivity";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 import {
-  BrowserLinkContextMenuShowError,
-  BrowserLinkCopyError,
-  BrowserLinkOpenInNewTabError,
+  BrowserLinkContextMenuError,
   resolveBrowserLinkUrl,
   showBrowserLinkContextMenu,
 } from "./linkContextMenu";
@@ -42,6 +40,8 @@ const threadRef = {
   threadId: "thread-1" as ScopedThreadRef["threadId"],
 };
 
+const position = { x: 120, y: 240 };
+
 const snapshot: PreviewSessionSnapshot = {
   threadId: threadRef.threadId,
   tabId: "tab-2",
@@ -51,12 +51,15 @@ const snapshot: PreviewSessionSnapshot = {
   updatedAt: "2026-08-25T00:00:00.000Z",
 };
 
-const localApiShowing = (choice: string | null) =>
-  ({
-    contextMenu: {
-      show: vi.fn(async () => choice),
-    },
-  }) as unknown as LocalApi;
+const localApiMock = (choice: string | null) => {
+  const show = vi.fn(async () => choice);
+  const openExternal = vi.fn(async () => undefined);
+  return {
+    api: { contextMenu: { show }, shell: { openExternal } } as unknown as LocalApi,
+    show,
+    openExternal,
+  };
+};
 
 afterEach(() => {
   vi.clearAllMocks();
@@ -81,14 +84,37 @@ describe("resolveBrowserLinkUrl", () => {
 });
 
 describe("showBrowserLinkContextMenu", () => {
-  it("opens the link in a new tab and focuses it when chosen", async () => {
+  it("shows the app-wide link menu items at the click position", async () => {
+    const { api, show } = localApiMock(null);
+
+    await showBrowserLinkContextMenu({
+      url: "https://example.com/",
+      position,
+      threadRef,
+      openPreview: vi.fn(async () => AsyncResult.success(snapshot)),
+      localApi: api,
+    });
+
+    expect(show).toHaveBeenCalledExactlyOnceWith(
+      [
+        { id: "open-in-preview", label: "Open in integrated browser" },
+        { id: "open-external", label: "Open in system browser" },
+        { id: "copy-link", label: "Copy Link" },
+      ],
+      position,
+    );
+  });
+
+  it("opens the link in a new tab, records the visit, and focuses it", async () => {
     const openPreview = vi.fn(async () => AsyncResult.success(snapshot));
+    const { api, openExternal } = localApiMock("open-in-preview");
 
     await showBrowserLinkContextMenu({
       url: "http://localhost:3000/next",
+      position,
       threadRef,
       openPreview,
-      localApi: localApiShowing("open-link-in-new-tab"),
+      localApi: api,
     });
 
     expect(openPreview).toHaveBeenCalledExactlyOnceWith({
@@ -101,44 +127,68 @@ describe("showBrowserLinkContextMenu", () => {
         viewport: expect.anything(),
       }),
     });
-    expect(openBrowserMock).toHaveBeenCalledExactlyOnceWith(threadRef, "tab-2");
     expect(recordVisitForThreadMock).toHaveBeenCalledExactlyOnceWith(
       threadRef,
       "http://localhost:3000/next",
     );
+    expect(openBrowserMock).toHaveBeenCalledExactlyOnceWith(threadRef, "tab-2");
+    expect(openExternal).not.toHaveBeenCalled();
     expect(writeTextToClipboardMock).not.toHaveBeenCalled();
   });
 
-  it("copies the link address when chosen and never opens a tab", async () => {
+  it("opens the link in the system browser when chosen", async () => {
     const openPreview = vi.fn(async () => AsyncResult.success(snapshot));
+    const { api, openExternal } = localApiMock("open-external");
+
+    await showBrowserLinkContextMenu({
+      url: "https://example.com/docs",
+      position,
+      threadRef,
+      openPreview,
+      localApi: api,
+    });
+
+    expect(openExternal).toHaveBeenCalledExactlyOnceWith("https://example.com/docs");
+    expect(openPreview).not.toHaveBeenCalled();
+    expect(writeTextToClipboardMock).not.toHaveBeenCalled();
+  });
+
+  it("copies the link when chosen and never opens a tab", async () => {
+    const openPreview = vi.fn(async () => AsyncResult.success(snapshot));
+    const { api, openExternal } = localApiMock("copy-link");
 
     await showBrowserLinkContextMenu({
       url: "https://example.com/a?b=c",
+      position,
       threadRef,
       openPreview,
-      localApi: localApiShowing("copy-link-address"),
+      localApi: api,
     });
 
     expect(writeTextToClipboardMock).toHaveBeenCalledExactlyOnceWith(
       "https://example.com/a?b=c",
-      "link address",
+      "link",
     );
     expect(openPreview).not.toHaveBeenCalled();
+    expect(openExternal).not.toHaveBeenCalled();
     expect(openBrowserMock).not.toHaveBeenCalled();
   });
 
   it("does nothing when the menu is dismissed", async () => {
     const openPreview = vi.fn(async () => AsyncResult.success(snapshot));
+    const { api, openExternal } = localApiMock(null);
     const reportError = vi.spyOn(console, "error").mockImplementation(() => undefined);
 
     await showBrowserLinkContextMenu({
       url: "https://example.com/",
+      position,
       threadRef,
       openPreview,
-      localApi: localApiShowing(null),
+      localApi: api,
     });
 
     expect(openPreview).not.toHaveBeenCalled();
+    expect(openExternal).not.toHaveBeenCalled();
     expect(writeTextToClipboardMock).not.toHaveBeenCalled();
     expect(reportError).not.toHaveBeenCalled();
   });
@@ -150,6 +200,7 @@ describe("showBrowserLinkContextMenu", () => {
 
     await showBrowserLinkContextMenu({
       url: "http://localhost:3000/path?token=secret",
+      position,
       threadRef,
       openPreview,
       localApi: {
@@ -158,14 +209,16 @@ describe("showBrowserLinkContextMenu", () => {
             throw cause;
           }),
         },
+        shell: { openExternal: vi.fn() },
       } as unknown as LocalApi,
     });
 
     expect(openPreview).not.toHaveBeenCalled();
     expect(reportError).toHaveBeenCalledOnce();
     const error = reportError.mock.calls[0]?.[0];
-    expect(error).toBeInstanceOf(BrowserLinkContextMenuShowError);
+    expect(error).toBeInstanceOf(BrowserLinkContextMenuError);
     expect(error).toMatchObject({
+      operation: "show-link-context-menu",
       environmentId: "local",
       threadId: "thread-1",
       targetOrigin: "http://localhost:3000",
@@ -177,20 +230,23 @@ describe("showBrowserLinkContextMenu", () => {
   it("preserves the complete open failure cause without throwing", async () => {
     const cause = Cause.combine(Cause.fail(new Error("preview unavailable")), Cause.die("defect"));
     const reportError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const { api } = localApiMock("open-in-preview");
 
     await showBrowserLinkContextMenu({
       url: "http://127.0.0.1:5173/",
+      position,
       threadRef,
       openPreview: async () => AsyncResult.failure(cause),
-      localApi: localApiShowing("open-link-in-new-tab"),
+      localApi: api,
     });
 
+    expect(recordVisitForThreadMock).not.toHaveBeenCalled();
+    expect(openBrowserMock).not.toHaveBeenCalled();
     expect(reportError).toHaveBeenCalledOnce();
     const error = reportError.mock.calls[0]?.[0];
-    expect(error).toBeInstanceOf(BrowserLinkOpenInNewTabError);
+    expect(error).toBeInstanceOf(BrowserLinkContextMenuError);
     expect(error).toMatchObject({
-      environmentId: "local",
-      threadId: "thread-1",
+      operation: "open-link-in-preview",
       targetOrigin: "http://127.0.0.1:5173",
       cause,
     });
@@ -198,12 +254,14 @@ describe("showBrowserLinkContextMenu", () => {
 
   it("does not report when opening the new tab is interrupted", async () => {
     const reportError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const { api } = localApiMock("open-in-preview");
 
     await showBrowserLinkContextMenu({
       url: "http://localhost:5173/",
+      position,
       threadRef,
       openPreview: async () => AsyncResult.failure(Cause.interrupt()),
-      localApi: localApiShowing("open-link-in-new-tab"),
+      localApi: api,
     });
 
     expect(reportError).not.toHaveBeenCalled();
@@ -213,17 +271,23 @@ describe("showBrowserLinkContextMenu", () => {
     const cause = new Error("clipboard denied");
     writeTextToClipboardMock.mockRejectedValueOnce(cause);
     const reportError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const { api } = localApiMock("copy-link");
 
     await showBrowserLinkContextMenu({
       url: "https://example.com/",
+      position,
       threadRef,
       openPreview: vi.fn(async () => AsyncResult.success(snapshot)),
-      localApi: localApiShowing("copy-link-address"),
+      localApi: api,
     });
 
     expect(reportError).toHaveBeenCalledOnce();
     const error = reportError.mock.calls[0]?.[0];
-    expect(error).toBeInstanceOf(BrowserLinkCopyError);
-    expect(error).toMatchObject({ targetOrigin: "https://example.com", cause });
+    expect(error).toBeInstanceOf(BrowserLinkContextMenuError);
+    expect(error).toMatchObject({
+      operation: "copy-link",
+      targetOrigin: "https://example.com",
+      cause,
+    });
   });
 });
