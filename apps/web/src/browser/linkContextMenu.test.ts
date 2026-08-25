@@ -174,7 +174,11 @@ describe("showBrowserLinkContextMenu", () => {
     const focus = vi.fn(() => {
       focused = true;
     });
-    vi.stubGlobal("document", { hasFocus: () => focused });
+    const guestFocus = vi.fn();
+    vi.stubGlobal("document", {
+      hasFocus: () => focused,
+      activeElement: { focus: guestFocus },
+    });
     vi.stubGlobal("window", { focus });
 
     try {
@@ -193,6 +197,8 @@ describe("showBrowserLinkContextMenu", () => {
       "https://example.com/",
       "link",
     );
+    // Focus goes back to whatever held it (the webview) after the write.
+    expect(guestFocus).toHaveBeenCalledOnce();
   });
 
   it("does nothing when the menu is dismissed", async () => {

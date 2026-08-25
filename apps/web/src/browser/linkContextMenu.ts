@@ -126,8 +126,18 @@ export async function showBrowserLinkContextMenu<E>(
     },
     openExternal: (href) => input.localApi.shell.openExternal(href),
     copyLink: async (href) => {
+      // Reclaiming focus steals it from the page; hand it back afterwards
+      // so typing keeps reaching the hosted page.
+      const focusedElement =
+        typeof document === "undefined" ? null : (document.activeElement as HTMLElement | null);
       await reclaimDocumentFocus();
-      await writeTextToClipboard(href, "link");
+      try {
+        await writeTextToClipboard(href, "link");
+      } finally {
+        if (focusedElement && typeof focusedElement.focus === "function") {
+          focusedElement.focus();
+        }
+      }
     },
     reportFailure,
   });
