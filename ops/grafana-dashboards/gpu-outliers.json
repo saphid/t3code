@@ -21,7 +21,7 @@
           "type": "prometheus",
           "uid": "prometheus"
         },
-        "query": "label_values(t3perf_wall_ms, scenario)",
+        "query": "label_values(t3perf_wall_ms{time_basis=\"release\", device_type=~\"$device_type\"}, scenario)",
         "refresh": 2,
         "includeAll": true,
         "multi": true,
@@ -29,10 +29,10 @@
         "current": {
           "selected": true,
           "text": [
-            "command-palette-open"
+            "scroll-giant-thread"
           ],
           "value": [
-            "command-palette-open"
+            "scroll-giant-thread"
           ]
         }
       },
@@ -44,7 +44,7 @@
           "type": "prometheus",
           "uid": "prometheus"
         },
-        "query": "label_values(t3perf_wall_ms, label)",
+        "query": "label_values(t3perf_wall_ms{time_basis=\"release\", device_type=~\"$device_type\"}, label)",
         "refresh": 2,
         "includeAll": true,
         "multi": true,
@@ -67,7 +67,7 @@
           "type": "prometheus",
           "uid": "prometheus"
         },
-        "query": "label_values(t3perf_wall_ms, network)",
+        "query": "label_values(t3perf_wall_ms{time_basis=\"release\", device_type=~\"$device_type\"}, network)",
         "refresh": 2,
         "includeAll": true,
         "multi": true,
@@ -90,7 +90,7 @@
           "type": "prometheus",
           "uid": "prometheus"
         },
-        "query": "label_values(t3perf_wall_ms, size)",
+        "query": "label_values(t3perf_wall_ms{time_basis=\"release\", device_type=~\"$device_type\"}, size)",
         "refresh": 2,
         "includeAll": true,
         "multi": true,
@@ -113,7 +113,7 @@
           "type": "prometheus",
           "uid": "prometheus"
         },
-        "query": "label_values(t3perf_wall_ms, surface)",
+        "query": "label_values(t3perf_wall_ms{time_basis=\"release\", device_type=~\"$device_type\"}, surface)",
         "refresh": 2,
         "includeAll": true,
         "multi": true,
@@ -129,14 +129,60 @@
         }
       },
       {
-        "name": "host",
-        "label": "host",
+        "name": "device_type",
+        "label": "device type",
         "type": "query",
         "datasource": {
           "type": "prometheus",
           "uid": "prometheus"
         },
-        "query": "label_values(t3perf_wall_ms, host)",
+        "query": "label_values(t3perf_wall_ms{time_basis=\"release\", device_type!=\"\"}, device_type)",
+        "refresh": 2,
+        "includeAll": true,
+        "multi": true,
+        "sort": 1,
+        "current": {
+          "selected": true,
+          "text": [
+            "All"
+          ],
+          "value": [
+            "$__all"
+          ]
+        }
+      },
+      {
+        "name": "gpu_backend",
+        "label": "GPU measurement",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "query": "label_values(t3perf_wall_ms{time_basis=\"release\", device_type=~\"$device_type\"}, gpu_backend)",
+        "refresh": 2,
+        "includeAll": true,
+        "multi": true,
+        "sort": 1,
+        "current": {
+          "selected": true,
+          "text": [
+            "All"
+          ],
+          "value": [
+            "$__all"
+          ]
+        }
+      },
+      {
+        "name": "host",
+        "label": "worker host (drill-down)",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "query": "label_values(t3perf_wall_ms{time_basis=\"release\", device_type=~\"$device_type\", gpu_backend=~\"$gpu_backend\"}, host)",
         "refresh": 2,
         "includeAll": true,
         "multi": true,
@@ -157,8 +203,8 @@
     {
       "id": 1,
       "type": "bargauge",
-      "title": "GPU busy per feature (worst first, median)",
-      "description": "Real GPU busy time per wall second (Apple Silicon AGX sampling), worst feature at the top. The app is almost entirely text: green (<10 ms/s) is expected, orange deserves a look, red (>50 ms/s) is report-an-outlier territory per the report heuristics.",
+      "title": "Worst GPU cost seen in range",
+      "description": "Worst median GPU busy time seen in the selected releases, ranked high to low. This is a triage ranking, not a statistical anomaly detector. It excludes gpu_backend=none because zero there means unavailable attribution. Yellow begins at 10 ms/s, orange at the 50 ms/s investigation marker, and red above the harness poor band of 100 ms/s.",
       "gridPos": {
         "h": 14,
         "w": 12,
@@ -182,12 +228,16 @@
                 "value": null
               },
               {
-                "color": "orange",
+                "color": "yellow",
                 "value": 10
               },
               {
-                "color": "red",
+                "color": "orange",
                 "value": 50
+              },
+              {
+                "color": "red",
+                "value": 100
               }
             ]
           }
@@ -210,8 +260,8 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "sort_desc(max by (host, scenario, surface, size, network) (last_over_time(t3perf_gpu_ms_per_s{time_basis=\"release\", scenario=~\"$scenario\", stat=\"median\", build!=\"\", label=~\"$label\", network=~\"$network\", size=~\"$size\", surface=~\"$surface\", host=~\"$host\"}[$__range])))",
-          "legendFormat": "{{host}} / {{scenario}} / {{surface}} / {{size}} / {{network}}",
+          "expr": "sort_desc(max by (device_type, gpu_backend, scenario, surface, size, network) (avg by (device_type, gpu_backend, scenario, surface, size, network, build) (last_over_time(t3perf_gpu_ms_per_s{time_basis=\"release\", scenario=~\"$scenario\", stat=\"median\", build!=\"\", label=~\"$label\", network=~\"$network\", size=~\"$size\", surface=~\"$surface\", device_type=~\"$device_type\", gpu_backend=~\"$gpu_backend\", host=~\"$host\", gpu_backend!=\"none\"}[$__range]))))",
+          "legendFormat": "{{device_type}} / {{gpu_backend}} / {{scenario}} / {{surface}} / {{size}} / {{network}}",
           "instant": true
         }
       ]
@@ -219,8 +269,8 @@
     {
       "id": 2,
       "type": "bargauge",
-      "title": "GPU process CPU per feature (worst first, median)",
-      "description": "CPU of the Chromium GPU helper process per wall second, worst feature at the top. This is the rendering-cost signal on hosts without real GPU sampling (containers software-render, so values run higher there); use it to rank features against each other, not against the AGX thresholds.",
+      "title": "Worst GPU-helper CPU cost seen in range",
+      "description": "Worst median CPU time used by Chromium’s GPU helper per wall second. This is the honest rendering-cost signal for software-rendered Linux workers. Compare like device type and backend. Yellow begins at 10 ms/s, orange at 50 ms/s, and red above 100 ms/s.",
       "gridPos": {
         "h": 14,
         "w": 12,
@@ -244,12 +294,16 @@
                 "value": null
               },
               {
+                "color": "yellow",
+                "value": 10
+              },
+              {
                 "color": "orange",
-                "value": 200
+                "value": 50
               },
               {
                 "color": "red",
-                "value": 600
+                "value": 100
               }
             ]
           }
@@ -272,8 +326,8 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "sort_desc(max by (host, scenario, surface, size, network) (last_over_time(t3perf_gpu_process_cpu_ms_per_s{time_basis=\"release\", scenario=~\"$scenario\", stat=\"median\", build!=\"\", label=~\"$label\", network=~\"$network\", size=~\"$size\", surface=~\"$surface\", host=~\"$host\"}[$__range])))",
-          "legendFormat": "{{host}} / {{scenario}} / {{surface}} / {{size}} / {{network}}",
+          "expr": "sort_desc(max by (device_type, gpu_backend, scenario, surface, size, network) (avg by (device_type, gpu_backend, scenario, surface, size, network, build) (last_over_time(t3perf_gpu_process_cpu_ms_per_s{time_basis=\"release\", scenario=~\"$scenario\", stat=\"median\", build!=\"\", label=~\"$label\", network=~\"$network\", size=~\"$size\", surface=~\"$surface\", device_type=~\"$device_type\", gpu_backend=~\"$gpu_backend\", host=~\"$host\"}[$__range]))))",
+          "legendFormat": "{{device_type}} / {{gpu_backend}} / {{scenario}} / {{surface}} / {{size}} / {{network}}",
           "instant": true
         }
       ]
@@ -282,7 +336,7 @@
       "id": 3,
       "type": "timeseries",
       "title": "GPU busy by build",
-      "description": "Raw GPU busy time per feature across builds (one point per build). A line stepping up shows which build introduced an outlier. The dashed line marks the 50 ms/s report threshold.",
+      "description": "GPU busy time at each build’s release time. A sustained step across adjacent builds is stronger evidence than one isolated point. Thresholds mark attention at 10 ms/s, investigate at 50 ms/s, and the harness poor band above 100 ms/s.",
       "gridPos": {
         "h": 10,
         "w": 24,
@@ -306,12 +360,16 @@
                 "value": null
               },
               {
-                "color": "orange",
+                "color": "yellow",
                 "value": 10
               },
               {
-                "color": "red",
+                "color": "orange",
                 "value": 50
+              },
+              {
+                "color": "red",
+                "value": 100
               }
             ]
           },
@@ -343,11 +401,38 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "max by (host, scenario, surface, size, network) (last_over_time(t3perf_gpu_ms_per_s{time_basis=\"release\", scenario=~\"$scenario\", stat=\"median\", build!=\"\", label=~\"$label\", network=~\"$network\", size=~\"$size\", surface=~\"$surface\", host=~\"$host\"}[$__interval]))",
-          "legendFormat": "{{host}} / {{scenario}} / {{surface}} / {{size}} / {{network}}"
+          "expr": "avg by (device_type, gpu_backend, scenario, surface, size, network) (last_over_time(t3perf_gpu_ms_per_s{time_basis=\"release\", scenario=~\"$scenario\", stat=\"median\", build!=\"\", label=~\"$label\", network=~\"$network\", size=~\"$size\", surface=~\"$surface\", device_type=~\"$device_type\", gpu_backend=~\"$gpu_backend\", host=~\"$host\", gpu_backend!=\"none\"}[$__interval]))",
+          "legendFormat": "{{device_type}} / {{gpu_backend}} / {{scenario}} / {{surface}} / {{size}} / {{network}}"
         }
       ]
     }
   ],
-  "version": 1
+  "version": 1,
+  "description": "Worst GPU and GPU-process CPU cost seen across selected releases. Hardware is grouped by device type; measurement backend remains explicit so unlike signals are never averaged together.",
+  "links": [
+    {
+      "asDropdown": false,
+      "icon": "external link",
+      "includeVars": false,
+      "keepTime": false,
+      "tags": [],
+      "targetBlank": true,
+      "title": "How this GPU test works",
+      "tooltip": "Method, limits, thresholds, and source citations",
+      "type": "link",
+      "url": "https://saphid.github.io/gpu-outliers/"
+    },
+    {
+      "asDropdown": false,
+      "icon": "dashboard",
+      "includeVars": false,
+      "keepTime": true,
+      "tags": [],
+      "targetBlank": false,
+      "title": "Inspect individual workers",
+      "tooltip": "Open Batch status with per-host health and queue activity",
+      "type": "link",
+      "url": "/d/t3perf-batch?${host:queryparam}"
+    }
+  ]
 }

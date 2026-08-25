@@ -130,14 +130,14 @@
         }
       },
       {
-        "name": "host",
-        "label": "host",
+        "name": "device_type",
+        "label": "device type",
         "type": "query",
         "datasource": {
           "type": "prometheus",
           "uid": "prometheus"
         },
-        "query": "label_values(t3perf_wall_ms, host)",
+        "query": "label_values(t3perf_wall_ms{time_basis=\"release\", device_type!=\"\"}, device_type)",
         "refresh": 2,
         "includeAll": true,
         "multi": true,
@@ -178,14 +178,14 @@
       },
       "options": {
         "mode": "markdown",
-        "content": "This site tracks whether T3 stays fast as the product changes. **Start below** for build-to-build wall time, GPU cost, tail latency, and sample coverage. Use the filters at the top to isolate a test scenario, network profile, workload size, client surface, or benchmark host. Lower is better for every timing and resource chart.\n\n| Dashboard | What it answers — and why it exists |\n|---|---|\n| [Overview](/d/t3perf-overview/t3-perf-overview) | **Did performance move?** The fastest way to spot a build regression or improvement and check that enough runs support the comparison. |\n| [Build trends](/d/t3perf-build-trends/t3-perf-build-trends) | **How far is each build from the best observed build?** Normalizes several metrics into percentages so broad regressions stand out. |\n| [Release comparison](/d/t3perf-releases/t3-perf-release-comparison) | **Are shipped versions getting faster or slower?** Keeps release decisions separate from noisy nightly build detail. |\n| [GPU outliers](/d/t3perf-gpu-outliers/t3-perf-gpu-outliers) | **Which feature or build is unusually expensive on the GPU?** Useful for finding rendering work that averages can hide. |\n| [Resources](/d/t3perf-resources/t3-perf-resources) | **What is the run costing besides elapsed time?** Breaks out heap, layout, GPU time, and GPU-process CPU. |\n| [Network conditions](/d/t3perf-network/t3-perf-network-conditions) | **Does latency or bandwidth change the result?** Separates product cost from network sensitivity. |\n| [Batch status](/d/t3perf-batch/t3-perf-batch-status) | **Is the benchmark machinery healthy right now?** Shows queue progress, failures, heartbeat age, current work, and logs; it is operational rather than analytical. |"
+        "content": "This site tracks whether T3 stays fast as the product changes. **Start below** for build-to-build wall time, GPU cost, tail latency, and sample coverage. Use the filters at the top to isolate a test scenario, network profile, workload size, client surface, or device type. The three lxso workers are one **Linux i7-8700 worker** type; the other type is **MacBook Pro**. Individual hosts remain visible on Batch status and as a drill-down where needed. Lower is better for every timing and resource chart.\n\n| Dashboard | What it answers — and why it exists |\n|---|---|\n| [Overview](/d/t3perf-overview/t3-perf-overview) | **Did performance move?** The fastest way to spot a build regression or improvement and check that enough runs support the comparison. |\n| [Build trends](/d/t3perf-build-trends/t3-perf-build-trends) | **How far is each build from the best observed build?** Normalizes several metrics into percentages so broad regressions stand out. |\n| [Release comparison](/d/t3perf-releases/t3-perf-release-comparison) | **Are shipped versions getting faster or slower?** Keeps release decisions separate from noisy nightly build detail. |\n| [GPU outliers](/d/t3perf-gpu-outliers/t3-perf-gpu-outliers) | **Where was the worst GPU cost in the selected releases?** A triage ranking with an explicit measurement-backend filter; use the build line and linked method note before calling a regression. |\n| [Resources](/d/t3perf-resources/t3-perf-resources) | **What is the run costing besides elapsed time?** Breaks out heap, layout, GPU time, and GPU-process CPU. |\n| [Network conditions](/d/t3perf-network/t3-perf-network-conditions) | **Does latency or bandwidth change the result?** Separates product cost from network sensitivity. |\n| [Batch status](/d/t3perf-batch/t3-perf-batch-status) | **Is the benchmark machinery healthy right now?** Shows queue progress, failures, heartbeat age, current work, and logs; it is operational rather than analytical. |"
       }
     },
     {
       "id": 1,
       "type": "timeseries",
       "title": "Wall time by build (median)",
-      "description": "Release-time trend for the selected like-for-like test. Each point is placed at npm publication time; host stays a separate series.",
+      "description": "Release-time trend for the selected like-for-like test. Hosts are averaged within each device type; use Batch status for individual worker health.",
       "gridPos": {
         "h": 10,
         "w": 12,
@@ -228,10 +228,10 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "max by (host, scenario, surface, size, network) (last_over_time(t3perf_wall_ms{time_basis=\"release\", scenario=~\"$scenario\", stat=\"median\", build!=\"\", label=~\"$label\", network=~\"$network\", size=~\"$size\", surface=~\"$surface\", host=~\"$host\"}[$__interval]))",
+          "expr": "avg by (device_type, scenario, surface, size, network) (last_over_time(t3perf_wall_ms{time_basis=\"release\", scenario=~\"$scenario\", stat=\"median\", build!=\"\", label=~\"$label\", network=~\"$network\", size=~\"$size\", surface=~\"$surface\", device_type=~\"$device_type\"}[$__interval]))",
           "format": "time_series",
           "instant": false,
-          "legendFormat": "{{host}} / {{scenario}} / {{surface}} / {{size}} / {{network}}"
+          "legendFormat": "{{device_type}} / {{scenario}} / {{surface}} / {{size}} / {{network}}"
         }
       ],
       "transformations": []
@@ -240,7 +240,7 @@
       "id": 2,
       "type": "timeseries",
       "title": "GPU process CPU by build (median)",
-      "description": "Release-time trend for the selected like-for-like test. Each point is placed at npm publication time; host stays a separate series.",
+      "description": "Release-time trend for the selected like-for-like test. Hosts are averaged within each device type; use Batch status for individual worker health.",
       "gridPos": {
         "h": 10,
         "w": 12,
@@ -283,10 +283,10 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "max by (host, scenario, surface, size, network) (last_over_time(t3perf_gpu_process_cpu_ms_per_s{time_basis=\"release\", scenario=~\"$scenario\", stat=\"median\", build!=\"\", label=~\"$label\", network=~\"$network\", size=~\"$size\", surface=~\"$surface\", host=~\"$host\"}[$__interval]))",
+          "expr": "avg by (device_type, scenario, surface, size, network) (last_over_time(t3perf_gpu_process_cpu_ms_per_s{time_basis=\"release\", scenario=~\"$scenario\", stat=\"median\", build!=\"\", label=~\"$label\", network=~\"$network\", size=~\"$size\", surface=~\"$surface\", device_type=~\"$device_type\"}[$__interval]))",
           "format": "time_series",
           "instant": false,
-          "legendFormat": "{{host}} / {{scenario}} / {{surface}} / {{size}} / {{network}}"
+          "legendFormat": "{{device_type}} / {{scenario}} / {{surface}} / {{size}} / {{network}}"
         }
       ],
       "transformations": []
@@ -295,7 +295,7 @@
       "id": 3,
       "type": "timeseries",
       "title": "Wall time by build (p75)",
-      "description": "Release-time trend for the selected like-for-like test. Each point is placed at npm publication time; host stays a separate series.",
+      "description": "Release-time trend for the selected like-for-like test. Hosts are averaged within each device type; use Batch status for individual worker health.",
       "gridPos": {
         "h": 10,
         "w": 12,
@@ -338,10 +338,10 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "max by (host, scenario, surface, size, network) (last_over_time(t3perf_wall_ms{time_basis=\"release\", scenario=~\"$scenario\", stat=\"p75\", build!=\"\", label=~\"$label\", network=~\"$network\", size=~\"$size\", surface=~\"$surface\", host=~\"$host\"}[$__interval]))",
+          "expr": "avg by (device_type, scenario, surface, size, network) (last_over_time(t3perf_wall_ms{time_basis=\"release\", scenario=~\"$scenario\", stat=\"p75\", build!=\"\", label=~\"$label\", network=~\"$network\", size=~\"$size\", surface=~\"$surface\", device_type=~\"$device_type\"}[$__interval]))",
           "format": "time_series",
           "instant": false,
-          "legendFormat": "{{host}} / {{scenario}} / {{surface}} / {{size}} / {{network}}"
+          "legendFormat": "{{device_type}} / {{scenario}} / {{surface}} / {{size}} / {{network}}"
         }
       ],
       "transformations": []
@@ -350,7 +350,7 @@
       "id": 4,
       "type": "timeseries",
       "title": "Runs per result by build",
-      "description": "Release-time sample coverage for the selected like-for-like test. Host, scenario, surface, size, and network remain separate so unlike tests are never merged.",
+      "description": "Release-time sample coverage for the selected like-for-like test. Hosts are averaged within each device type; scenario, surface, size, and network stay separate so unlike tests are never merged.",
       "gridPos": {
         "h": 10,
         "w": 12,
@@ -393,10 +393,10 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "max by (host, scenario, surface, size, network) (last_over_time(t3perf_runs{time_basis=\"release\", scenario=~\"$scenario\", build!=\"\", label=~\"$label\", network=~\"$network\", size=~\"$size\", surface=~\"$surface\", host=~\"$host\"}[$__interval]))",
+          "expr": "avg by (device_type, scenario, surface, size, network) (last_over_time(t3perf_runs{time_basis=\"release\", scenario=~\"$scenario\", build!=\"\", label=~\"$label\", network=~\"$network\", size=~\"$size\", surface=~\"$surface\", device_type=~\"$device_type\"}[$__interval]))",
           "format": "time_series",
           "instant": false,
-          "legendFormat": "{{host}} / {{scenario}} / {{surface}} / {{size}} / {{network}}"
+          "legendFormat": "{{device_type}} / {{scenario}} / {{surface}} / {{size}} / {{network}}"
         }
       ],
       "transformations": []

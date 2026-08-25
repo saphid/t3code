@@ -52,6 +52,14 @@ Done (server side, on the Grafana box `lxso2`):
   backup there before each rollout. File-provisioned dashboards stay
   maintainer-owned; Editors create separate dashboards in Grafana rather than
   editing the provisioned originals.
+- Analytical dashboards use a separate `device_type` label: `lxso1`, `lxso2`,
+  and `lxso3` are grouped as `Linux i7-8700 worker`; `AUS-M5P-AS` is grouped as
+  `MacBook Pro`. The original `host` label remains available for worker
+  drill-down and Batch status. GPU panels additionally retain `gpu_backend`,
+  because AGX, DRM, NVIDIA estimates, and unavailable attribution are not
+  interchangeable measurements. Future labels are applied by
+  `ops/observability/otel-collector.yaml`; exact-timestamp history can be
+  replayed idempotently with `ops/backfill-device-types.py`.
 - Scoped user token `t3play-agent-tools-v2` has DNS Edit on all zones and Edit
   on Access organizations/identity/groups, Access apps/policies, and
   Cloudflare Tunnel. The token is in macOS Keychain under service
@@ -149,6 +157,12 @@ administrator password remains separately stored under service
   restart Grafana, and set Main Org's `homeDashboardUID` through
   `PATCH /api/org/preferences`. Keep the orientation copy concise and preserve
   links to all focused dashboards.
+- **Backfill or remap device types**: take a `promtool tsdb dump` first, retain
+  its SHA-256, run `ops/backfill-device-types.py --dry-run`, then replay through
+  the local OTLP receiver. Verify the mapped series in Prometheus, not only the
+  collector's HTTP response. The 2026-08-25 migration backup is
+  `~/t3-perf/backups/device-type-20260825T025820Z/` on `lxso2`; it contains
+  98,094 exact-timestamp samples and the pre-change collector/dashboard files.
 - **Remove access**: run `scripts/grafana-share-users.py remove EMAIL`. Their
   current Access session may remain valid until expiry; revoke it immediately
   from the app's Sessions view when needed.

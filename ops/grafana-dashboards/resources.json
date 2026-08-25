@@ -129,14 +129,14 @@
         }
       },
       {
-        "name": "host",
-        "label": "host",
+        "name": "device_type",
+        "label": "device type",
         "type": "query",
         "datasource": {
           "type": "prometheus",
           "uid": "prometheus"
         },
-        "query": "label_values(t3perf_wall_ms, host)",
+        "query": "label_values(t3perf_wall_ms{time_basis=\"release\", device_type!=\"\"}, device_type)",
         "refresh": 2,
         "includeAll": true,
         "multi": true,
@@ -197,8 +197,8 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "max by (host, scenario, size, surface, network) (last_over_time(t3perf_js_heap_bytes{time_basis=\"release\", host=~\"$host\", scenario=~\"$scenario\", stat=\"median\", label=~\"$label\", network=~\"$network\", size=~\"$size\", surface=~\"$surface\"}[$__interval]))",
-          "legendFormat": "{{host}} / {{scenario}} / {{surface}} / {{size}} / {{network}}"
+          "expr": "avg by (device_type, scenario, size, surface, network) (last_over_time(t3perf_js_heap_bytes{time_basis=\"release\", device_type=~\"$device_type\", scenario=~\"$scenario\", stat=\"median\", label=~\"$label\", network=~\"$network\", size=~\"$size\", surface=~\"$surface\"}[$__interval]))",
+          "legendFormat": "{{device_type}} / {{scenario}} / {{surface}} / {{size}} / {{network}}"
         }
       ]
     },
@@ -245,8 +245,8 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "max by (host, scenario, size, surface, network) (last_over_time(t3perf_layout_count{time_basis=\"release\", host=~\"$host\", scenario=~\"$scenario\", stat=\"median\", label=~\"$label\", network=~\"$network\", size=~\"$size\", surface=~\"$surface\"}[$__interval]))",
-          "legendFormat": "{{host}} / {{scenario}} / {{surface}} / {{size}} / {{network}}"
+          "expr": "avg by (device_type, scenario, size, surface, network) (last_over_time(t3perf_layout_count{time_basis=\"release\", device_type=~\"$device_type\", scenario=~\"$scenario\", stat=\"median\", label=~\"$label\", network=~\"$network\", size=~\"$size\", surface=~\"$surface\"}[$__interval]))",
+          "legendFormat": "{{device_type}} / {{scenario}} / {{surface}} / {{size}} / {{network}}"
         }
       ]
     },
@@ -293,8 +293,8 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "max by (host, scenario, size, surface, network) (last_over_time(t3perf_gpu_ms_per_s{time_basis=\"release\", host=~\"$host\", scenario=~\"$scenario\", stat=\"median\", label=~\"$label\", network=~\"$network\", size=~\"$size\", surface=~\"$surface\"}[$__interval]))",
-          "legendFormat": "{{host}} / {{scenario}} / {{surface}} / {{size}} / {{network}}"
+          "expr": "avg by (device_type, scenario, size, surface, network) (last_over_time(t3perf_gpu_ms_per_s{time_basis=\"release\", device_type=~\"$device_type\", scenario=~\"$scenario\", stat=\"median\", label=~\"$label\", network=~\"$network\", size=~\"$size\", surface=~\"$surface\"}[$__interval]))",
+          "legendFormat": "{{device_type}} / {{scenario}} / {{surface}} / {{size}} / {{network}}"
         }
       ]
     },
@@ -341,8 +341,8 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "max by (host, scenario, size, surface, network) (last_over_time(t3perf_gpu_process_cpu_ms_per_s{time_basis=\"release\", host=~\"$host\", scenario=~\"$scenario\", stat=\"median\", label=~\"$label\", network=~\"$network\", size=~\"$size\", surface=~\"$surface\"}[$__interval]))",
-          "legendFormat": "{{host}} / {{scenario}} / {{surface}} / {{size}} / {{network}}"
+          "expr": "avg by (device_type, scenario, size, surface, network) (last_over_time(t3perf_gpu_process_cpu_ms_per_s{time_basis=\"release\", device_type=~\"$device_type\", scenario=~\"$scenario\", stat=\"median\", label=~\"$label\", network=~\"$network\", size=~\"$size\", surface=~\"$surface\"}[$__interval]))",
+          "legendFormat": "{{device_type}} / {{scenario}} / {{surface}} / {{size}} / {{network}}"
         }
       ]
     }

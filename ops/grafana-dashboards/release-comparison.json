@@ -129,14 +129,14 @@
         }
       },
       {
-        "name": "host",
-        "label": "host",
+        "name": "device_type",
+        "label": "device type",
         "type": "query",
         "datasource": {
           "type": "prometheus",
           "uid": "prometheus"
         },
-        "query": "label_values(t3perf_wall_ms, host)",
+        "query": "label_values(t3perf_wall_ms{time_basis=\"release\", device_type!=\"\"}, device_type)",
         "refresh": 2,
         "includeAll": true,
         "multi": true,
@@ -191,8 +191,8 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "max by (build, host, scenario, surface, size, network) (last_over_time(t3perf_wall_ms{time_basis=\"release\", host=~\"$host\", scenario=~\"$scenario\", stat=\"median\", label=~\"$label\", network=~\"$network\", size=~\"$size\", surface=~\"$surface\"}[$__range]))",
-          "legendFormat": "{{build}} / {{host}} / {{scenario}} / {{surface}} / {{size}} / {{network}}",
+          "expr": "max by (build, device_type, scenario, surface, size, network) (last_over_time(t3perf_wall_ms{time_basis=\"release\", device_type=~\"$device_type\", scenario=~\"$scenario\", stat=\"median\", label=~\"$label\", network=~\"$network\", size=~\"$size\", surface=~\"$surface\"}[$__range]))",
+          "legendFormat": "{{build}} / {{device_type}} / {{scenario}} / {{surface}} / {{size}} / {{network}}",
           "instant": true
         }
       ]
@@ -230,10 +230,10 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "100 * max by (build, host, scenario, surface, size, network) (last_over_time(t3perf_wall_ms{time_basis=\"release\", host=~\"$host\", scenario=~\"$scenario\", stat=\"median\", label=~\"$label\", network=~\"$network\", size=~\"$size\", surface=~\"$surface\"}[$__range])) / on (host, scenario, surface, size, network) group_left () min by (host, scenario, surface, size, network) (max by (build, host, scenario, surface, size, network) (last_over_time(t3perf_wall_ms{time_basis=\"release\", host=~\"$host\", scenario=~\"$scenario\", stat=\"median\", label=~\"$label\", network=~\"$network\", size=~\"$size\", surface=~\"$surface\"}[$__range]))) - 100",
+          "expr": "100 * max by (build, device_type, scenario, surface, size, network) (last_over_time(t3perf_wall_ms{time_basis=\"release\", device_type=~\"$device_type\", scenario=~\"$scenario\", stat=\"median\", label=~\"$label\", network=~\"$network\", size=~\"$size\", surface=~\"$surface\"}[$__range])) / on (device_type, scenario, surface, size, network) group_left () min by (device_type, scenario, surface, size, network) (max by (build, device_type, scenario, surface, size, network) (last_over_time(t3perf_wall_ms{time_basis=\"release\", device_type=~\"$device_type\", scenario=~\"$scenario\", stat=\"median\", label=~\"$label\", network=~\"$network\", size=~\"$size\", surface=~\"$surface\"}[$__range]))) - 100",
           "format": "table",
           "instant": true,
-          "legendFormat": "{{build}} / {{host}} / {{scenario}} / {{surface}} / {{size}} / {{network}}"
+          "legendFormat": "{{build}} / {{device_type}} / {{scenario}} / {{surface}} / {{size}} / {{network}}"
         }
       ],
       "transformations": [

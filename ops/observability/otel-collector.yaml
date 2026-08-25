@@ -1,0 +1,26 @@
+receivers:
+  otlp:
+    protocols:
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  transform/device_type:
+    metric_statements:
+      - context: datapoint
+        statements:
+          - set(attributes["device_type"], attributes["host"]) where attributes["host"] != nil
+          - set(attributes["device_type"], "Linux i7-8700 worker") where attributes["host"] != nil and IsMatch(attributes["host"], "^lxso[123]$")
+          - set(attributes["device_type"], "MacBook Pro") where attributes["host"] == "AUS-M5P-AS"
+
+exporters:
+  prometheusremotewrite:
+    endpoint: http://prometheus:9090/api/v1/write
+    add_metric_suffixes: false
+
+service:
+  pipelines:
+    metrics:
+      receivers: [otlp]
+      processors: [transform/device_type]
+      exporters: [prometheusremotewrite]
