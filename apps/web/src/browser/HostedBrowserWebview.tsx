@@ -7,6 +7,9 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { previewBridge } from "~/components/preview/previewBridge";
 import { usePreviewBridge } from "~/components/preview/usePreviewBridge";
 import { cn } from "~/lib/utils";
+import { readLocalApi } from "~/localApi";
+import { previewEnvironment } from "~/state/preview";
+import { useAtomCommand } from "~/state/use-atom-command";
 
 import { resolveBrowserSurfacePanelRect, useBrowserSurfaceStore } from "./browserSurfaceStore";
 import {
@@ -18,6 +21,7 @@ import { BrowserDeviceToolbar } from "./BrowserDeviceToolbar";
 import { BrowserViewportResizeHandles } from "./BrowserViewportResizeHandles";
 import { acquireDesktopTab, type AcquiredDesktopTab } from "./desktopTabLifetime";
 import { resolveHostedBrowserWebviewWrapperStyle } from "./hostedBrowserWebviewStyle";
+import { resolveBrowserLinkUrl, showBrowserLinkContextMenu } from "./linkContextMenu";
 import { usePreviewWebviewConfig } from "./previewWebviewConfigState";
 import { useBrowserViewportResize } from "./useBrowserViewportResize";
 import {
@@ -71,6 +75,9 @@ export function HostedBrowserWebview(props: {
     }),
   );
   usePreviewBridge({ threadRef, tabId, runtimeTabId });
+  const openPreview = useAtomCommand(previewEnvironment.open, {
+    reportFailure: false,
+  });
 
   useEffect(() => {
     crashRecoveryRef.current = INITIAL_WEBVIEW_CRASH_RECOVERY_STATE;
@@ -145,6 +152,24 @@ export function HostedBrowserWebview(props: {
       webview.removeEventListener("render-process-gone", recoverGuest);
     };
   }, [config, initialSrc, runtimeTabId, webviewGeneration]);
+
+  // Electron re-emits the guest's context-menu event on the <webview>
+  // element. Only link targets get a menu; everything else keeps the
+  // guest page's own behavior.
+  useEffect(() => {
+    const webview = webviewRef.current;
+    if (!webview) return;
+    const handleContextMenu = (event: Event) => {
+      const params = (event as Event & { params?: { linkURL?: unknown } }).params;
+      const url = resolveBrowserLinkUrl(params?.linkURL);
+      if (!url) return;
+      const localApi = readLocalApi();
+      if (!localApi) return;
+      void showBrowserLinkContextMenu({ url, threadRef, openPreview, localApi });
+    };
+    webview.addEventListener("context-menu", handleContextMenu);
+    return () => webview.removeEventListener("context-menu", handleContextMenu);
+  }, [openPreview, threadRef, webviewGeneration]);
 
   const active = presentation.visible && presentation.rect !== null;
   const lastRect = presentation.rect;
