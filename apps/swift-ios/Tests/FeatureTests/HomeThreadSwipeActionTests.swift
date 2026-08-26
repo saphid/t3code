@@ -36,6 +36,32 @@ struct HomeThreadSwipeActionTests {
     }
 
     @Test
+    func visibleTimelineAffordanceIsStrictlyCapabilityGated() {
+        var thread = thread(id: "summary")
+        #expect(!HomeThreadTimelineAffordance.isVisible(for: thread))
+
+        thread.supportsSummaryTimeline = true
+        #expect(HomeThreadTimelineAffordance.isVisible(for: thread))
+
+        thread.supportsSummaryTimeline = false
+        #expect(!HomeThreadTimelineAffordance.isVisible(for: thread))
+    }
+
+    @Test
+    func visibleTimelineAffordancePresentsTheExistingTimelineWithoutOpeningTheThread() {
+        var openedTimeline: FeatureThread?
+        var thread = thread(id: "summary")
+        thread.supportsSummaryTimeline = true
+
+        HomeThreadTimelineAffordance.perform(
+            for: thread,
+            onOpenSummaryTimeline: { openedTimeline = $0 }
+        )
+
+        #expect(openedTimeline?.id == "summary")
+    }
+
+    @Test
     func settlementOwnsTheEdgeSlotSoAFullSwipeSettles() {
         let active = thread(id: "active")
         let actions = HomeThreadSwipeAction.trailingActions(

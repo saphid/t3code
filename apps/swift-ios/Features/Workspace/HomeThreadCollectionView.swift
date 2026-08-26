@@ -377,6 +377,7 @@ struct HomeThreadCollectionView: UIViewRepresentable {
                     projectFaviconClient: parent.projectFaviconClient,
                     isSelected: identifier.threadID == selectedThreadID,
                     now: now,
+                    onOpenSummaryTimeline: parent.onOpenSummaryTimeline,
                     onPullRequestChange: { [weak self, weak cell] pullRequest in
                         guard let self,
                               let cell,
@@ -526,6 +527,20 @@ struct HomeThreadCollectionView: UIViewRepresentable {
             var actions = [accessibilityAction("Rename", systemImage: "pencil") { coordinator in
                 coordinator.parent.onRename(thread)
             }]
+
+            if HomeThreadTimelineAffordance.isVisible(for: thread) {
+                actions.append(
+                    accessibilityAction(
+                        "Timeline",
+                        systemImage: "text.line.first.and.arrowtriangle.forward"
+                    ) { coordinator in
+                        HomeThreadTimelineAffordance.perform(
+                            for: thread,
+                            onOpenSummaryTimeline: coordinator.parent.onOpenSummaryTimeline
+                        )
+                    }
+                )
+            }
 
             if ThreadTitleRegenerationMenuState.resolve(
                 thread: thread,
@@ -925,6 +940,22 @@ struct HomeThreadCollectionView: UIViewRepresentable {
 
 enum HomeThreadLeadingSwipeAction {
     static func isAvailable(for thread: FeatureThread) -> Bool {
+        HomeThreadTimelineAffordance.isVisible(for: thread)
+    }
+
+    static func perform(
+        for thread: FeatureThread,
+        onOpenSummaryTimeline: (FeatureThread) -> Void
+    ) {
+        HomeThreadTimelineAffordance.perform(
+            for: thread,
+            onOpenSummaryTimeline: onOpenSummaryTimeline
+        )
+    }
+}
+
+enum HomeThreadTimelineAffordance {
+    static func isVisible(for thread: FeatureThread) -> Bool {
         thread.canOpenSummaryTimeline
     }
 
@@ -1116,22 +1147,47 @@ private struct HomeCollectionCellContent: View {
     let projectFaviconClient: any FeatureClient
     let isSelected: Bool
     let now: Date
+    let onOpenSummaryTimeline: (FeatureThread) -> Void
     let onPullRequestChange: (HomeThreadPullRequestPresentation?) -> Void
 
     @ViewBuilder
     var body: some View {
         switch item {
         case let .thread(thread, context, style, _, allowsMultilineTitle):
-            FeatureThreadRow(
-                thread: thread,
-                context: context,
-                projectFaviconClient: projectFaviconClient,
-                onPullRequestChange: onPullRequestChange,
-                isSelected: isSelected,
-                style: style,
-                now: now,
-                allowsMultilineTitle: allowsMultilineTitle
-            )
+            HStack(spacing: 0) {
+                FeatureThreadRow(
+                    thread: thread,
+                    context: context,
+                    projectFaviconClient: projectFaviconClient,
+                    onPullRequestChange: onPullRequestChange,
+                    isSelected: isSelected,
+                    style: style,
+                    now: now,
+                    allowsMultilineTitle: allowsMultilineTitle
+                )
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+                if HomeThreadTimelineAffordance.isVisible(for: thread) {
+                    Button {
+                        HomeThreadTimelineAffordance.perform(
+                            for: thread,
+                            onOpenSummaryTimeline: onOpenSummaryTimeline
+                        )
+                    } label: {
+                        Label(
+                            "Timeline",
+                            systemImage: "text.line.first.and.arrowtriangle.forward"
+                        )
+                    }
+                    .font(.caption)
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .tint(T3Colors.accent)
+                    .frame(minHeight: T3Metrics.minimumTapTarget)
+                    .padding(.trailing, 8)
+                    .accessibilityIdentifier("thread-\(thread.id)-summary-timeline")
+                }
+            }
         case let .shelfHeader(shelf, count, isExpanded):
             HomeShelfHeader(
                 title: shelf.title,
