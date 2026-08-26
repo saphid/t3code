@@ -8,11 +8,11 @@ import * as NodeSqliteClient from "../NodeSqliteClient.ts";
 
 const layer = it.layer(Layer.mergeAll(NodeSqliteClient.layerMemory()));
 
-layer("041_ThreadSummaryTimeline", (it) => {
+layer("042_ThreadSummaryTimeline", (it) => {
   it.effect("creates a sidecar table outside the visible conversation projections", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
-      yield* runMigrations({ toMigrationInclusive: 41 });
+      yield* runMigrations({ toMigrationInclusive: 42 });
 
       const tables = yield* sql<{ readonly name: string }>`
         SELECT name FROM sqlite_master WHERE type = 'table'

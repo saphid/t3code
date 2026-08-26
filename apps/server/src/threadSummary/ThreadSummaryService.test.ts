@@ -64,7 +64,7 @@ function makeRegistry(
 
 const prepareFixture = Effect.fn("prepareThreadSummaryFixture")(function* () {
   const sql = yield* SqlClient.SqlClient;
-  yield* runMigrations({ toMigrationInclusive: 41 });
+  yield* runMigrations({ toMigrationInclusive: 42 });
   yield* sql`DELETE FROM thread_summary_timeline_entries`;
   yield* sql`DELETE FROM projection_turns`;
   yield* sql`DELETE FROM projection_thread_messages`;
