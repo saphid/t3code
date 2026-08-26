@@ -26,7 +26,7 @@ interface ManifestInput {
   readonly suiteRevision: string;
   readonly fixtureRevision: string;
   readonly harnessGitSha: string;
-  readonly imageDigest: string;
+  readonly contractFingerprint: string;
   readonly browserEngine: string;
   readonly browserVersion: string;
   readonly surface: Surface;
@@ -62,7 +62,7 @@ const ENVELOPE_KEYS = [
   "controlPolicy",
   "fixtureRevision",
   "harnessGitSha",
-  "imageDigest",
+  "contractFingerprint",
   "manifestHash",
   "manifestId",
   "manifestSchemaVersion",
@@ -82,7 +82,7 @@ const PROVENANCE_KEYS = [
   "contract_id",
   "fixture_revision",
   "harness_git_sha",
-  "image_digest",
+  "contract_fingerprint",
   "manifest_hash",
   "renderer_backend",
   "scheduler_git_sha",
@@ -160,8 +160,8 @@ function validate(input: unknown): ManifestInput {
   if (!/^[0-9a-f]{40}$|^[0-9a-f]{64}$/.test(String(document["schedulerGitSha"]))) {
     throw new Error("schedulerGitSha must be a Git content hash");
   }
-  if (!/^sha256:[0-9a-f]{64}$/.test(String(document["imageDigest"]))) {
-    throw new Error("imageDigest must be a sha256 digest");
+  if (!/^sha256:[0-9a-f]{64}$/.test(String(document["contractFingerprint"]))) {
+    throw new Error("contractFingerprint must be a sha256 fingerprint");
   }
   if (document["surface"] !== "web") throw new Error("manifest-v1 image only supports web");
   if (document["tier"] !== "required" && document["tier"] !== "optional") {
@@ -217,7 +217,7 @@ function validate(input: unknown): ManifestInput {
     ["contract_id", "contractId"],
     ["fixture_revision", "fixtureRevision"],
     ["harness_git_sha", "harnessGitSha"],
-    ["image_digest", "imageDigest"],
+    ["contract_fingerprint", "contractFingerprint"],
     ["browser_engine", "browserEngine"],
     ["browser_version", "browserVersion"],
     ["surface", "surface"],

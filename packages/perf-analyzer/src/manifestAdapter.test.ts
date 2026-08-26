@@ -12,7 +12,7 @@ const provenance = {
   contract_id: "contract-v2",
   fixture_revision: "fixtures-v1",
   harness_git_sha: "a".repeat(40),
-  image_digest: `sha256:${"b".repeat(64)}`,
+  contract_fingerprint: `sha256:${"b".repeat(64)}`,
   browser_engine: "chromium",
   browser_version: "1.60.0",
   surface: "web",
@@ -48,7 +48,7 @@ function manifest(cells: ReadonlyArray<ManifestCell>) {
     suiteRevision: provenance.suite_revision,
     fixtureRevision: provenance.fixture_revision,
     harnessGitSha: provenance.harness_git_sha,
-    imageDigest: provenance.image_digest,
+    contractFingerprint: provenance.contract_fingerprint,
     browserEngine: provenance.browser_engine,
     browserVersion: provenance.browser_version,
     surface: provenance.surface,
@@ -211,6 +211,74 @@ describe("manifest-v1 adapter", () => {
     const result = JSON.parse(await NodeFSP.readFile(NodePath.join(output, "result.json"), "utf8"));
     expect(exitCode).toBe(1);
     expect(result.cells[0]).toEqual({ cell: input.cells[0], status: "failed", samples: [] });
+  });
+
+  it("rejects the retired image-digest wire shape and malformed contract fingerprints", async () => {
+    const output = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "manifest-v1-identity-"));
+    const input = manifest([
+      { scenario_id: "startup", surface: "web", size: "small", network_profile: "good" },
+    ]);
+    const legacy: Record<string, unknown> = { ...input, imageDigest: input.contractFingerprint };
+    delete legacy["contractFingerprint"];
+    legacy["expectedProvenance"] = {
+      ...input.expectedProvenance,
+      image_digest: input.expectedProvenance.contract_fingerprint,
+    };
+    delete (legacy["expectedProvenance"] as Record<string, unknown>)["contract_fingerprint"];
+    const legacyEnvelope = Object.fromEntries(
+      Object.entries(legacy).filter(
+        ([key]) => key !== "manifestHash" && key !== "expectedProvenance",
+      ),
+    );
+    legacy["manifestHash"] = canonicalHash(legacyEnvelope);
+    let ran = false;
+    const dependencies = {
+      now: () => "2026-08-25T00:00:00.000Z",
+      runCell: () => {
+        ran = true;
+        return Promise.resolve([]);
+      },
+    };
+    await expect(runManifest(legacy, output, dependencies)).rejects.toThrow(
+      "manifest has unsupported fields",
+    );
+
+    const legacyProvenance: Record<string, unknown> = {
+      ...input,
+      expectedProvenance: {
+        ...input.expectedProvenance,
+        image_digest: input.expectedProvenance.contract_fingerprint,
+      },
+    };
+    delete (legacyProvenance["expectedProvenance"] as Record<string, unknown>)[
+      "contract_fingerprint"
+    ];
+    await expect(runManifest(legacyProvenance, output, dependencies)).rejects.toThrow(
+      "expectedProvenance has unsupported fields",
+    );
+
+    const malformed = {
+      ...input,
+      contractFingerprint: `sha256:${"z".repeat(64)}`,
+      expectedProvenance: {
+        ...input.expectedProvenance,
+        contract_fingerprint: `sha256:${"z".repeat(64)}`,
+      },
+    };
+    const malformedEnvelope = Object.fromEntries(
+      Object.entries(malformed).filter(
+        ([key]) => key !== "manifestHash" && key !== "expectedProvenance",
+      ),
+    );
+    malformed.manifestHash = canonicalHash(malformedEnvelope);
+    malformed.expectedProvenance = {
+      ...malformed.expectedProvenance,
+      manifest_hash: malformed.manifestHash,
+    };
+    await expect(runManifest(malformed, output, dependencies)).rejects.toThrow(
+      "sha256 fingerprint",
+    );
+    expect(ran).toBe(false);
   });
 
   it("rejects a scheduler SHA that no longer matches expected provenance", async () => {
