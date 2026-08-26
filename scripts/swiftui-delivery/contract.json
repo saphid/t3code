@@ -174,5 +174,17 @@
       "config": "~/.t3/swiftui-stream/watcher-config.json",
       "behavior": "Deterministic, no LLM. Every 60s: verify pointer artifact (sha256, codesign, Info.plist identity), compare installed CFBundleVersion via devicectl, install when the phone is reachable and older, never downgrade, launch, write a device receipt; notify once per build when the phone is locked or absent."
     }
+  },
+  "uatThreads": {
+    "trigger": "Every device receipt reporting a newly installed build (status installed*)",
+    "name": "UAT <build number> (e.g. 'UAT 77')",
+    "project": "T3 Code SwiftUI (c75be3a7-138b-4602-bcfb-d3c3c7955c05)",
+    "content": [
+      "which build installed and its channel (Test or Dev)",
+      "every included feature/fix: what it is, WHY we need it (from the owning issue's problem statement), and HOW Alex should test it (from the acceptance points, as concrete phone steps)",
+      "carried items listed separately from new candidates",
+      "an explicit request for accept/reject verdicts per item"
+    ],
+    "owner": "swiftui-orchestrate coordinator duty; verdicts recorded as acceptance receipts"
   }
 }

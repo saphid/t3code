@@ -53,6 +53,9 @@ reopens it, rejects missing or duplicate issues and cycles, requires each plan
 work item to match its catalog entry exactly, and checks every dependency's
 observed stage against `satisfiedAt`. An unrelated issue outside the closure
 does not enter the catalog and cannot create a global hold.
+   On every new install the coordinator opens a `UAT <build>` thread per
+   contract `uatThreads` so Alex always has a guided test script for what
+   just landed on the phone.
 8. **accepted**: Alex explicitly accepts phone behavior. Acceptance is
    the ONLY human gate in the phone lane; installation is automatic.
    Stage vocabulary for reports: proof-ready means simulator-proven and

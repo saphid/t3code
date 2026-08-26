@@ -99,6 +99,27 @@ it; never cancel or overwrite a published build. Items advance
 (`~/.t3/swiftui-stream/device-receipts/test.json`), never on pointer flip. Alex's verdicts are only
 ever required at `phone-test -> accepted`.
 
+## UAT thread duty
+
+Whenever the device receipt (`~/.t3/swiftui-stream/device-receipts/*.json`)
+reports a NEWLY installed build, immediately create a T3 thread in the
+T3 Code SwiftUI project named `UAT <build number>` (contract `uatThreads`).
+Its opening message tells Alex: which build and channel installed; each new
+candidate with what it is, why we need it (owning issue's problem
+statement), and exactly how to test it on the phone (acceptance points as
+concrete steps); carried items listed separately; and a per-item request
+for accept/reject verdicts. Record returned verdicts as acceptance
+receipts bound to that generation.
+
+## Conflicted-PR duty
+
+Our PR branches are ours to modify freely; other people's changes are
+inviolable. For conflicted saphid PRs, dispatch one Sol worker per PR
+following `../../../scripts/swiftui-delivery/references/conflict-resolution.md`
+- proceed without asking whenever the resolution only changes our branch
+and preserves upstream behavior; stop and report anything that would alter
+another contributor's change.
+
 ## Backlog and WIP duty
 
 Enforce `flowPolicy` from the contract at every pass. Keep active
