@@ -71,7 +71,7 @@ elif [ "$TEST_RC" -eq 0 ]; then
   ok tests "$RAN tests, all passed"
   rm -f "$TEST_LOG"
 else
-  finding tests "$RAN tests ran, suite failed (rc=$TEST_RC); see $TEST_LOG"
+  broken tests "$RAN tests ran, suite FAILED (rc=$TEST_RC); see $TEST_LOG"
 fi
 
 # 6. State roots exist and are writable (setup creates them).

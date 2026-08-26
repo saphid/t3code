@@ -1,8 +1,9 @@
 # Upstream handoff: vouched contributor requirements
 
-The authoritative source is `CONTRIBUTING_VOUCHED.md` at the product
-repository root (until it lands upstream, the copy on branch
-`t3code/create-vouched-contributing-guide`, commit `8391dc069`). This file
+The authoritative source is `CONTRIBUTING_VOUCHED.md`, vendored beside this
+file (references/CONTRIBUTING_VOUCHED.md, captured from branch
+`t3code/create-vouched-contributing-guide`; prefer the product repository
+root copy once it lands upstream). This file
 maps its requirements onto pipeline stages; where the guide and this summary
 disagree, the guide wins.
 

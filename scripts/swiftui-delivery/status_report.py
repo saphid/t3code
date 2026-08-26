@@ -47,11 +47,14 @@ def fetch_issues(repository, limit=1000, gh_runner=None):
 
 
 def extract_work_item(body):
-    match = FENCE.search(body or "")
-    if not match:
+    matches = FENCE.findall(body or "")
+    if not matches:
         return None, None
+    if len(matches) > 1:
+        return None, "%d swiftui-work-item-v2 blocks; exactly one is allowed" \
+            % len(matches)
     try:
-        return json.loads(match.group(1)), None
+        return json.loads(matches[0]), None
     except ValueError as error:
         return None, "invalid work-item JSON: %s" % error
 
@@ -64,10 +67,19 @@ def lane_labels(issue):
 def build_report(issues, contract):
     flow = contract.get("flowPolicy", {})
     limits = flow.get("wipLimits", {})
+    repository = contract.get("workItemRepository")
     rows, drift = [], []
     for issue in issues:
         item, error = extract_work_item(issue.get("body"))
         labels = lane_labels(issue)
+        if item is not None and repository:
+            expected = "%s#%d" % (repository, issue["number"])
+            if item.get("issue") != expected:
+                drift.append({
+                    "issue": issue["number"], "title": issue["title"],
+                    "problem": "block identity %r does not match %s"
+                               % (item.get("issue"), expected),
+                })
         if item is None:
             if labels or error:
                 drift.append({

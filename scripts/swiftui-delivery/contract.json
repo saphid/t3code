@@ -158,5 +158,8 @@
   },
   "workItemRepository": "saphid/t3code-personal",
   "upstreamHandoffReference": "scripts/swiftui-delivery/references/upstream-handoff.md",
-  "upstreamContributingGuide": "CONTRIBUTING_VOUCHED.md"
+  "upstreamContributingGuide": "CONTRIBUTING_VOUCHED.md",
+  "phoneAcceptanceActors": [
+    "Alex"
+  ]
 }

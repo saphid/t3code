@@ -9,7 +9,7 @@ import status_report
 def issue(number, title, stage=None, lane="lane-a", labels=(), body=None,
           hold=None):
     if body is None and stage is not None:
-        block = {"schemaVersion": 2, "issue": "x#%d" % number,
+        block = {"schemaVersion": 2, "issue": "example/repo#%d" % number,
                  "laneId": lane, "stage": stage}
         if hold:
             block["hold"] = {"reason": hold}
@@ -101,14 +101,25 @@ class BuildReport(unittest.TestCase):
 
 
 class StrictLabelAndReadiness(unittest.TestCase):
-    def test_first_of_multiple_fences_wins(self):
+    def test_multiple_fences_are_an_error(self):
         first = json.dumps({"laneId": "a", "stage": "queued"})
         second = json.dumps({"laneId": "b", "stage": "active"})
         body = ("```swiftui-work-item-v2\n%s\n```\nmore\n"
                 "```swiftui-work-item-v2\n%s\n```" % (first, second))
         item, error = status_report.extract_work_item(body)
-        self.assertIsNone(error)
-        self.assertEqual(item["laneId"], "a")
+        self.assertIsNone(item)
+        self.assertIn("exactly one is allowed", error)
+
+    def test_block_identity_must_match_containing_issue(self):
+        block = {"schemaVersion": 2, "issue": "example/repo#999",
+                 "laneId": "a", "stage": "queued"}
+        bad = {"number": 16, "title": "identity mismatch",
+               "labels": [{"name": "lane:queued"}],
+               "body": "```swiftui-work-item-v2\n%s\n```"
+                       % json.dumps(block)}
+        report = status_report.build_report([bad], CONTRACT)
+        self.assertTrue(any("does not match example/repo#16" in d["problem"]
+                            for d in report["drift"]))
 
     def test_missing_label_on_nonterminal_stage_is_drift(self):
         report = status_report.build_report(

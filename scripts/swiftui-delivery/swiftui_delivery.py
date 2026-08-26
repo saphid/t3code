@@ -806,8 +806,11 @@ def validate_acceptance_receipt(value, item):
     add(errors, value.get("schemaVersion") == 2, "acceptance receipt schemaVersion must be 2")
     add(errors, value.get("kind") == "swiftui-acceptance-receipt", "acceptance receipt kind is invalid")
     add(errors, value.get("issue") == item.get("issue"), "acceptance receipt issue must match work item")
-    add(errors, value.get("actor") in CONTRACT["humanActors"],
-        "acceptance receipt actor must be an authorized human")
+    add(errors,
+        value.get("actor") in CONTRACT.get(
+            "phoneAcceptanceActors", CONTRACT["humanActors"]),
+        "acceptance receipt actor must be an authorized phone-acceptance "
+        "actor")
     add(errors, value.get("verdict") == "accept", "acceptance receipt verdict must be accept")
     add(errors, value.get("phoneGenerationReceiptSha256") ==
         item.get("binding", {}).get("phoneGenerationReceiptSha256"),
