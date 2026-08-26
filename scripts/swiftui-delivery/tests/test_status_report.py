@@ -99,5 +99,58 @@ class BuildReport(unittest.TestCase):
                 "example/repo", gh_runner=lambda cmd: Fail())
 
 
+
+class StrictLabelAndReadiness(unittest.TestCase):
+    def test_first_of_multiple_fences_wins(self):
+        first = json.dumps({"laneId": "a", "stage": "queued"})
+        second = json.dumps({"laneId": "b", "stage": "active"})
+        body = ("```swiftui-work-item-v2\n%s\n```\nmore\n"
+                "```swiftui-work-item-v2\n%s\n```" % (first, second))
+        item, error = status_report.extract_work_item(body)
+        self.assertIsNone(error)
+        self.assertEqual(item["laneId"], "a")
+
+    def test_missing_label_on_nonterminal_stage_is_drift(self):
+        report = status_report.build_report(
+            [issue(11, "no label", "active")], CONTRACT)
+        self.assertEqual(len(report["drift"]), 1)
+        self.assertIn("no lane:* label", report["drift"][0]["problem"])
+
+    def test_missing_label_on_terminal_stage_is_not_drift(self):
+        report = status_report.build_report(
+            [issue(12, "landed quietly", "landed")], CONTRACT)
+        self.assertEqual(report["drift"], [])
+
+    def test_duplicate_labels_are_drift(self):
+        report = status_report.build_report(
+            [issue(13, "two labels", "queued",
+                   labels=["lane:queued", "lane:active"])], CONTRACT)
+        self.assertEqual(len(report["drift"]), 1)
+        self.assertIn("multiple lane labels", report["drift"][0]["problem"])
+
+    def test_held_queued_items_do_not_count_as_ready(self):
+        issues = [
+            issue(14, "held q", "queued", hold="blocked on decision",
+                  labels=["lane:queued"]),
+            issue(15, "free q", "queued", labels=["lane:queued"]),
+        ]
+        report = status_report.build_report(issues, CONTRACT)
+        self.assertEqual(report["queuedReady"], 1)
+        self.assertTrue(report["backlogNeedsReplenish"])
+
+    def test_issue_cap_fails_loudly(self):
+        class Full:
+            returncode = 0
+            stderr = ""
+            stdout = json.dumps([
+                {"number": i, "title": "t", "body": "", "labels": []}
+                for i in range(3)])
+
+        with self.assertRaises(RuntimeError) as ctx:
+            status_report.fetch_issues(
+                "example/repo", limit=3, gh_runner=lambda cmd: Full())
+        self.assertIn("cap", str(ctx.exception))
+
+
 if __name__ == "__main__":
     unittest.main()

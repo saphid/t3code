@@ -151,6 +151,12 @@ class SetupMutationBoundary(SkeletonHarness):
                 "setup created a path outside its mutation boundary: %s" % path)
         for leaf in allowed_leaves:
             self.assertIn(leaf, after, "setup did not create %s" % leaf)
+        pointer = (self.home / ".local/state/t3/swiftui-delivery"
+                   / "canonical-checkout")
+        self.assertTrue(pointer.is_file(), "canonical-checkout not written")
+        self.assertEqual(
+            pathlib.Path(pointer.read_text().strip()).resolve(),
+            self.repo.resolve())
 
 
 if __name__ == "__main__":

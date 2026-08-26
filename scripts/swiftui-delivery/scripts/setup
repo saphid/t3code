@@ -91,7 +91,15 @@ fi
 state=$(python3 -c "
 import json,os
 print(os.path.expanduser(json.load(open('$CONTRACT'))['stateRoot']))" 2>/dev/null)
-if [ -n "$state" ] && printf '%s\n' "$REPO_ROOT" > "$state/canonical-checkout" 2>/dev/null; then
+ptr_ok=1
+if [ -n "$state" ] && [ -d "$state" ]; then
+  # Atomic replace via same-dir rename; never follow an existing symlink.
+  ptr_tmp=$(mktemp "$state/.canonical-checkout.XXXXXX" 2>/dev/null) \
+    && printf '%s\n' "$REPO_ROOT" > "$ptr_tmp" 2>/dev/null \
+    && mv -f "$ptr_tmp" "$state/canonical-checkout" 2>/dev/null \
+    && ptr_ok=0
+fi
+if [ "$ptr_ok" -eq 0 ]; then
   check checkoutPointer ok "$state/canonical-checkout -> $REPO_ROOT"
 else
   check checkoutPointer fail "cannot write canonical-checkout pointer under '$state'"

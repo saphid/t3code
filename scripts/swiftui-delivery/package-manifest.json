@@ -59,7 +59,13 @@
     "docs/internals/research/parallel-ios-simulator-command-transcript.md",
     "docs/operations/swiftui-delivery-clean-cutover.md",
     "docs/operations/swiftui-delivery-system.html",
-    "docs/operations/swiftui-local-archive-manifest.md"
+    "docs/operations/swiftui-local-archive-manifest.md",
+    "scripts/swiftui-delivery/status_report.py",
+    "scripts/swiftui-delivery/scripts/status",
+    "scripts/swiftui-delivery/scripts/setup",
+    "scripts/swiftui-delivery/scripts/doctor",
+    "scripts/swiftui-delivery/tests/test_status_report.py",
+    "scripts/swiftui-delivery/tests/test_setup_doctor.py"
   ],
   "auditedDocuments": [
     "docs/operations/swiftui-delivery-clean-cutover.md",

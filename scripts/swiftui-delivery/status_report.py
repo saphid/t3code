@@ -27,7 +27,7 @@ def load_contract(path=None):
     return json.loads(contract_path.read_text())
 
 
-def fetch_issues(repository, limit=200, gh_runner=None):
+def fetch_issues(repository, limit=1000, gh_runner=None):
     run = gh_runner or (lambda cmd: subprocess.run(
         cmd, capture_output=True, text=True, timeout=120))
     result = run([
@@ -38,7 +38,12 @@ def fetch_issues(repository, limit=200, gh_runner=None):
         raise RuntimeError(
             "gh issue list failed (%d): %s" % (
                 result.returncode, result.stderr.strip()[:300]))
-    return json.loads(result.stdout)
+    issues = json.loads(result.stdout)
+    if len(issues) >= limit:
+        raise RuntimeError(
+            "issue list hit the %d cap; raise --limit so the report stays "
+            "complete" % limit)
+    return issues
 
 
 def extract_work_item(body):
@@ -81,12 +86,22 @@ def build_report(issues, contract):
             "hold": (item.get("hold") or {}).get("reason"),
         }
         rows.append(row)
-        label_stage = labels[0][len("lane:"):] if labels else None
-        if label_stage and label_stage != stage:
+        terminal = stage in ("landed", "cancelled", "superseded")
+        if len(labels) > 1:
             drift.append({
                 "issue": issue["number"], "title": issue["title"],
-                "problem": "label lane:%s disagrees with block stage %s"
-                           % (label_stage, stage),
+                "problem": "multiple lane labels: %s" % ", ".join(labels),
+            })
+        elif not labels and not terminal:
+            drift.append({
+                "issue": issue["number"], "title": issue["title"],
+                "problem": "block stage %s but no lane:* label" % stage,
+            })
+        elif labels and labels[0] != "lane:%s" % stage:
+            drift.append({
+                "issue": issue["number"], "title": issue["title"],
+                "problem": "label %s disagrees with block stage %s"
+                           % (labels[0], stage),
             })
     rows.sort(key=lambda r: (
         STAGE_ORDER.index(r["stage"]) if r["stage"] in STAGE_ORDER else 99,
@@ -103,17 +118,27 @@ def build_report(issues, contract):
             "occupied": counts.get("phone-test", 0),
             "limit": limits.get("phoneVerification"),
         },
+        "simulatorProof": {
+            "occupied": None,
+            "limit": limits.get("simulatorProof"),
+            "note": "not derivable from issue state; see simulator-lane "
+                    "lease receipts",
+        },
     }
     backlog_floor = flow.get("backlog", {}).get("minQueuedReady")
+    queued_unheld = sum(1 for r in rows
+                        if r["stage"] == "queued" and not r["hold"])
     return {
         "workItems": rows,
         "stageCounts": counts,
         "stations": stations,
-        "queuedReady": counts.get("queued", 0),
+        "queuedReady": queued_unheld,
+        "readinessBasis":
+            "unheld queued items; dependency closure not evaluated here",
         "backlogFloor": backlog_floor,
         "backlogNeedsReplenish": (
             backlog_floor is not None
-            and counts.get("queued", 0) < backlog_floor),
+            and queued_unheld < backlog_floor),
         "drift": drift,
     }
 
@@ -136,6 +161,10 @@ def render_text(report, repository):
     out.append("Stations (occupied/limit):")
     for name, s in report["stations"].items():
         limit = s["limit"] if s["limit"] is not None else "?"
+        if s["occupied"] is None:
+            out.append("  %-22s ?/%s (%s)" % (name, limit,
+                                              s.get("note", "unavailable")))
+            continue
         flag = ""
         if s["limit"] is not None and s["occupied"] > s["limit"]:
             flag = "  OVER LIMIT"
