@@ -12,13 +12,43 @@ struct TranscriptViewportGeometryTests {
         reveal.update(translationX: -32)
         #expect(reveal == TranscriptTimestampRevealModel())
 
-        reveal.begin(messageID: "assistant-1")
+        reveal.begin(messageID: "assistant-1", anchorY: 140)
         reveal.update(translationX: -32)
         #expect(reveal.width(for: "assistant-1") == 32)
         #expect(reveal.width(for: "assistant-2") == 0)
+        #expect(reveal.anchorY(for: "assistant-1") == 140)
+        #expect(reveal.anchorY(for: "assistant-2") == nil)
 
         reveal.finish()
         #expect(reveal == TranscriptTimestampRevealModel())
+    }
+
+    @Test
+    func timestampAnchorStaysAtTheTouchedVisiblePointInATallMessage() {
+        #expect(
+            TranscriptTimestampRevealGeometry.anchorCenterY(
+                requestedY: 1_240,
+                rowHeight: 4_000
+            ) == 1_240
+        )
+        #expect(
+            TranscriptTimestampRevealGeometry.anchorCenterY(
+                requestedY: -20,
+                rowHeight: 4_000
+            ) == TranscriptTimestampRevealGeometry.minimumAnchorInset
+        )
+        #expect(
+            TranscriptTimestampRevealGeometry.anchorCenterY(
+                requestedY: 4_020,
+                rowHeight: 4_000
+            ) == 4_000 - TranscriptTimestampRevealGeometry.minimumAnchorInset
+        )
+        #expect(
+            TranscriptTimestampRevealGeometry.anchorCenterY(
+                requestedY: 12,
+                rowHeight: 24
+            ) == 12
+        )
     }
 
     @Test
