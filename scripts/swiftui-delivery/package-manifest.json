@@ -68,7 +68,10 @@
     "scripts/swiftui-delivery/tests/test_setup_doctor.py",
     "scripts/swiftui-delivery/references/upstream-handoff.md",
     ".agents/skills/ios-build-hygiene/scripts/clean-simulator-sessions.sh",
-    "scripts/swiftui-delivery/references/CONTRIBUTING_VOUCHED.md"
+    "scripts/swiftui-delivery/references/CONTRIBUTING_VOUCHED.md",
+    "scripts/swiftui-delivery/front-doors/swiftui-orchestrate.SKILL.md",
+    "scripts/swiftui-delivery/front-doors/file-swiftui-lane-issue.SKILL.md",
+    "scripts/swiftui-delivery/front-doors/swiftui-status.SKILL.md"
   ],
   "auditedDocuments": [
     "docs/operations/swiftui-delivery-clean-cutover.md",

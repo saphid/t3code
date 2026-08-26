@@ -120,6 +120,17 @@ class DoctorGuards(SkeletonHarness):
         self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
         self.assertIn("auditor exited 3", result.stdout)
 
+    def test_failing_suite_is_broken(self):
+        self.make_state_dirs()
+        (self.pkg / "tests" / "test_fail.py").write_text(
+            "import unittest\n"
+            "class T(unittest.TestCase):\n"
+            "    def test_fail(self):\n"
+            "        self.assertTrue(False)\n")
+        result = self.run_tool("doctor")
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+        self.assertIn("suite FAILED", result.stdout)
+
     def test_healthy_skeleton_is_clean(self):
         self.make_state_dirs()
         (self.pkg / "tests" / "test_ok.py").write_text(

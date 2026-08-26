@@ -68,7 +68,9 @@ commit. These checkpoints are append-only fields, so Test evidence is not
 overwritten by later PR evidence.
 
 For an authorized PR, invoke `$babysit-pr` only with a separate watcher/push
-grant. A PR's existence grants no branch mutation. On partial failure preserve
+grant. Any pushed change to the PR head — including babysitter fixes —
+returns the work item to `active`: renewed proof, inspection, and (for
+behavior changes) phone acceptance are required before `landed`. A PR's existence grants no branch mutation. On partial failure preserve
 the last verified build and receipt, release only the lease this run owns, and
 report the exact failed checkpoint.
 
@@ -82,5 +84,6 @@ the existing risk-tiered evidence rules; the nine-part description kept current
 with the head, branch hygiene including maintainer edits, and the
 evidence-per-finding review-response protocol. The guide's final handoff
 checklist must pass and be recorded in the open-pr generation receipt as
-`vouchedHandoffChecklist: pass` with stated gaps. Authoritative source:
-`CONTRIBUTING_VOUCHED.md` at the product repository root.
+`vouchedHandoffChecklist: pass` with stated gaps. Authoritative source: the vendored
+`../../../scripts/swiftui-delivery/references/CONTRIBUTING_VOUCHED.md`
+(prefer the product repository root copy once it lands upstream).

@@ -569,6 +569,21 @@ class DeliveryProtocolTests(unittest.TestCase):
         _, errors = delivery.transition(item, "accepted", verdict="accept")
         self.assertIn("phone-test -> accepted requires explicit accept verdict and receipt", errors)
 
+    def test_phone_acceptance_actor_policy(self):
+        item = self.work_item()
+        item["binding"] = {"phoneGenerationReceiptSha256": "f" * 64}
+        receipt = {
+            "schemaVersion": 2, "kind": "swiftui-acceptance-receipt",
+            "issue": item["issue"], "actor": "Alex", "verdict": "accept",
+            "phoneGenerationReceiptSha256": "f" * 64,
+            "acceptedAt": "2026-08-26T05:06:07Z",
+        }
+        base = delivery.validate_acceptance_receipt(dict(receipt), item)
+        self.assertFalse(any("acceptance receipt actor" in e for e in base))
+        receipt["actor"] = "Saphid"
+        errors = delivery.validate_acceptance_receipt(receipt, item)
+        self.assertTrue(any("acceptance receipt actor" in e for e in errors))
+
     def test_pr_open_transition_requires_open_pr_plan(self):
         item = self.work_item()
         item["stage"] = "accepted"

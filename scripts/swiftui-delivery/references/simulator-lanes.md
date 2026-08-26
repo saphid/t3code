@@ -121,4 +121,7 @@ After releasing a lane's lease, run
 `.agents/skills/ios-build-hygiene/scripts/clean-simulator-sessions.sh clean`
 to shut down the freed simulator and any stray booted devices. The script is
 lease-aware: it never touches a UDID that still holds a lease directory, so
-running it is always safe while other lanes are active.
+running it is safe while other lanes HOLD leases. Do not run `clean`
+concurrently with lease acquisition or release — the protection check and
+the shutdown are not one atomic operation, so serialize cleanup against
+lane setup (coordinator runs it between dispatch passes, not during one).
