@@ -47,7 +47,9 @@ def notify(config: dict[str, Any], channel: str, message: str, key: str) -> None
     channel_deliveries = list(delivered.get(channel, []))
     if digest in channel_deliveries:
         return
-    command = config.get("discordCommand", "/Users/saphid/bin/hermes-discord")
+    command = config.get("discordCommand")
+    if not command:
+        return
     host = config.get("discordHost", "lxso1")
     discord_channel = config.get("discordChannel", "agent-ops")
     environment = dict(os.environ)
