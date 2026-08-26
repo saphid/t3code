@@ -739,6 +739,14 @@ def validate_generation_receipt(value, plan, plan_path):
             "installedArtifactSha256 must be a lowercase SHA-256")
     if plan.get("mode") == "open-pr":
         add(errors, nonempty(value.get("pullRequestUrl")), "pullRequestUrl is required for open-pr")
+        add(errors, value.get("vouchedHandoffChecklist") == "pass",
+            "vouchedHandoffChecklist must be 'pass' for open-pr "
+            "(see references/upstream-handoff.md); record stated gaps in "
+            "vouchedHandoffGaps")
+        gaps = value.get("vouchedHandoffGaps", [])
+        add(errors, isinstance(gaps, list)
+            and all(isinstance(g, str) and g.strip() for g in gaps),
+            "vouchedHandoffGaps must be a list of nonempty strings")
         add(errors, matches(COMMIT_RE, value.get("resultingHeadCommit")),
             "resultingHeadCommit is required for open-pr")
     return errors

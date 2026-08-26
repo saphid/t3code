@@ -480,6 +480,39 @@ class DeliveryProtocolTests(unittest.TestCase):
             errors = delivery.validate_generation_receipt(receipt, plan, plan_path)
             self.assertIn("generation receipt entries must match plan issue/head order", errors)
 
+    def test_open_pr_receipt_requires_vouched_handoff_checklist(self):
+        with tempfile.TemporaryDirectory() as directory:
+            plan_path = Path(directory) / "generation-plan.json"
+            plan = {
+                "schemaVersion": 2, "kind": "swiftui-generation-plan",
+                "mode": "open-pr",
+                "entries": [
+                    {"issue": "saphid/t3code-personal#1", "headCommit": "a" * 40},
+                ],
+            }
+            write(plan_path, plan)
+            receipt = {
+                "schemaVersion": 2, "kind": "swiftui-generation-receipt",
+                "mode": "open-pr", "planSha256": delivery.sha256(plan_path),
+                "completedAt": "2026-08-26T05:06:07Z",
+                "resolvedDestination": "upstream",
+                "installedArtifactSha256": "c" * 64,
+                "pullRequestUrl": "https://github.com/pingdotgg/t3code/pull/1",
+                "resultingHeadCommit": "a" * 40,
+                "entries": [
+                    {"issue": "saphid/t3code-personal#1", "headCommit": "a" * 40},
+                ],
+            }
+            errors = delivery.validate_generation_receipt(receipt, plan, plan_path)
+            self.assertTrue(any("vouchedHandoffChecklist" in e for e in errors))
+            receipt["vouchedHandoffChecklist"] = "pass"
+            receipt["vouchedHandoffGaps"] = ["watchOS surface not exercised"]
+            errors = delivery.validate_generation_receipt(receipt, plan, plan_path)
+            self.assertFalse(any("vouchedHandoff" in e for e in errors))
+            receipt["vouchedHandoffGaps"] = [""]
+            errors = delivery.validate_generation_receipt(receipt, plan, plan_path)
+            self.assertTrue(any("vouchedHandoffGaps" in e for e in errors))
+
     def test_active_transition_requires_launch_receipt(self):
         _, errors = delivery.transition(self.work_item(), "active")
         self.assertIn("active requires a launch receipt", errors)

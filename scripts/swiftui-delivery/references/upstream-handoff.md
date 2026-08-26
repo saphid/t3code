@@ -77,10 +77,14 @@ details. Confirm co-authorship before crediting.
 
 Branch hygiene before requesting review:
 
-- Rebase onto the current target; rerun affected checks after conflict
-  resolution; remove temporary plans, research notes, debug output, and
-  accidental generated changes; explain stacked-PR dependencies; enable
-  maintainer edits on the fork PR.
+- Rebase or otherwise resolve conflicts against the current target; rerun
+  affected checks after conflict resolution; remove temporary plans,
+  research notes, debug output, and accidental generated changes; explain
+  stacked-PR dependencies; enable maintainer edits on the fork PR (if that
+  is impossible, be ready to cherry-pick a requested maintainer commit);
+  keep the title and description describing the current head. Use the PR
+  template and remove stale generated recaps. Capture the running product,
+  never a mockup or a manually recreated state.
 
 Review response:
 
@@ -96,6 +100,19 @@ Review response:
 
 `accepted -> pr-open` additionally requires the guide's final handoff
 checklist to pass, recorded in the open-pr generation receipt as
-`vouchedHandoffChecklist: pass` with any stated gaps. The twelve items are
-in the guide; the test is the guide's own: a human can tell whether the PR
-is ready without repeating the investigation.
+`vouchedHandoffChecklist: "pass"` with any stated gaps in
+`vouchedHandoffGaps` (enforced by `validate-generation-receipt`). The
+twelve items, restated so this package stands alone:
+
+1. one clear problem, no unrelated work; 2. description explains observed
+problem, cause, change, and non-goals; 3. existing ownership boundaries and
+shared components reused; 4. affected clients/providers/platforms/
+contracts/connection modes named; 5. focused tests cover behavior and
+failure paths where automated coverage adds value, otherwise direct proof
+recorded; 6. targeted lint/format/type/build checks pass where applicable;
+7. runtime, platform, and performance claims have direct evidence; 8. UI
+changes have real before/after images, video when needed; 9. missing proof
+and known limitations stated plainly; 10. branch current, mergeable, free
+of temporary or unrelated files; 11. description and review replies match
+the current head; 12. a human can tell whether the PR is ready without
+repeating the investigation.

@@ -76,8 +76,9 @@ report the exact failed checkpoint.
 
 Before requesting human review on any upstream PR, apply
 `../../../scripts/swiftui-delivery/references/upstream-handoff.md` in full:
-separate-heading full-size before/after evidence (never side-by-side
-tables), affected-state coverage, the nine-part description kept current
+for user-visible changes, separate-heading full-size before/after evidence
+(never side-by-side tables) and affected-state coverage — non-UI work keeps
+the existing risk-tiered evidence rules; the nine-part description kept current
 with the head, branch hygiene including maintainer edits, and the
 evidence-per-finding review-response protocol. The guide's final handoff
 checklist must pass and be recorded in the open-pr generation receipt as

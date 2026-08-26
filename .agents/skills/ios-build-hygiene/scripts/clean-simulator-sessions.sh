@@ -14,7 +14,7 @@
 #   - its UDID is listed in $SIMULATOR_CLEAN_PROTECT (comma-separated).
 # Exit 0 on success (including nothing to do), 1 on any failed action.
 set -u
-LEASE_ROOT="$HOME/.local/state/t3/swiftui-delivery/simulator-leases"
+LEASE_ROOT="${T3_SWIFTUI_SIMULATOR_LEASE_ROOT:-$HOME/.local/state/t3/swiftui-delivery/simulator-leases}"
 MODE="status"
 DRY=0
 KEEP_APP=0
@@ -67,6 +67,11 @@ if [ -n "$BOOTED" ]; then
     elif [ "$DRY" -eq 1 ]; then
       echo "WOULD SHUTDOWN  $udid  $name"
     else
+      if is_protected "$udid"; then
+        echo "LEASED    $udid  $name (lease appeared; skipped)"
+        KEPT=$((KEPT+1))
+        continue
+      fi
       xcrun simctl shutdown "$udid" > /dev/null 2>&1
       rc=$?
       if [ "$rc" -eq 0 ]; then
@@ -85,26 +90,65 @@ else
 fi
 
 if [ "$MODE" = "clean" ] && [ "$DRY" -eq 0 ]; then
-  xcrun simctl delete unavailable > /dev/null 2>&1
+  ALL_JSON=$(xcrun simctl list devices -j 2>/dev/null)
   rc=$?
-  [ "$rc" -eq 0 ] && echo "deleted unavailable device records" \
-    || { echo "delete unavailable failed ($rc)" >&2; FAILS=$((FAILS+1)); }
+  if [ "$rc" -ne 0 ]; then
+    echo "device inventory failed ($rc); skipping unavailable cleanup" >&2
+    FAILS=$((FAILS+1))
+  else
+    UNAVAILABLE=$(printf '%s' "$ALL_JSON" | python3 -c '
+import json, sys
+data = json.load(sys.stdin)
+for devices in data.get("devices", {}).values():
+    for d in devices:
+        if d.get("isAvailable") is False:
+            print(d["udid"])
+')
+    DELETED=0
+    for udid in $UNAVAILABLE; do
+      if is_protected "$udid"; then
+        echo "LEASED    $udid  (unavailable but protected; kept)"
+        continue
+      fi
+      xcrun simctl delete "$udid" > /dev/null 2>&1
+      rc=$?
+      if [ "$rc" -eq 0 ]; then DELETED=$((DELETED+1));
+      else echo "FAILED delete ($rc)  $udid" >&2; FAILS=$((FAILS+1)); fi
+    done
+    [ "$DELETED" -gt 0 ] && echo "deleted $DELETED unavailable device record(s)"
+  fi
 fi
 
 SIM_RUNNING=0
 pgrep -x Simulator > /dev/null 2>&1 && SIM_RUNNING=1
-STILL_BOOTED=$(xcrun simctl list devices booted 2>/dev/null | grep -c Booted)
+RECOUNT_JSON=$(xcrun simctl list devices booted -j 2>/dev/null)
+rc=$?
+if [ "$rc" -eq 0 ]; then
+  STILL_BOOTED=$(printf '%s' "$RECOUNT_JSON" | python3 -c '
+import json, sys
+data = json.load(sys.stdin)
+print(sum(1 for ds in data.get("devices", {}).values()
+          for d in ds if d.get("state") == "Booted"))')
+else
+  # Fail closed: unknown inventory must never look like "nothing booted".
+  STILL_BOOTED="unknown"
+fi
 if [ "$MODE" = "clean" ] && [ "$KEEP_APP" -eq 0 ] && [ "$SIM_RUNNING" -eq 1 ] \
-   && [ "${STILL_BOOTED:-0}" -eq 0 ]; then
+   && [ "$STILL_BOOTED" = "0" ]; then
   if [ "$DRY" -eq 1 ]; then
     echo "WOULD QUIT Simulator.app (nothing booted)"
   else
-    osascript -e 'tell application "Simulator" to quit' > /dev/null 2>&1 \
-      || killall Simulator > /dev/null 2>&1
-    echo "quit Simulator.app"
+    osascript -e 'tell application "Simulator" to quit' > /dev/null 2>&1
+    rc=$?
+    if [ "$rc" -eq 0 ]; then
+      echo "quit Simulator.app"
+    else
+      echo "FAILED to quit Simulator.app ($rc)" >&2
+      FAILS=$((FAILS+1))
+    fi
   fi
 elif [ "$SIM_RUNNING" -eq 1 ]; then
-  echo "Simulator.app running (${STILL_BOOTED:-0} still booted)"
+  echo "Simulator.app running ($STILL_BOOTED still booted)"
 fi
 
 echo "----"
