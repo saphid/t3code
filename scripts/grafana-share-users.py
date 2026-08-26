@@ -51,13 +51,21 @@ def keychain(service, account):
 
 
 def request(method, url, token, body=None):
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json",
+    }
+    if url.startswith(GRAFANA_API):
+        headers.update(
+            {
+                "Host": urllib.parse.urlparse(GRAFANA_PUBLIC).netloc,
+                "X-Forwarded-Proto": "https",
+            }
+        )
     req = urllib.request.Request(
         url,
         method=method,
-        headers={
-            "Authorization": f"Bearer {token}",
-            "Content-Type": "application/json",
-        },
+        headers=headers,
         data=json.dumps(body).encode() if body is not None else None,
     )
     try:
