@@ -22,7 +22,7 @@ enum PlatformBetaFeedbackNotification {
             identifier: categoryIdentifier,
             actions: [action],
             intentIdentifiers: [],
-            options: []
+            options: [.customDismissAction]
         )
     }
 }
@@ -246,16 +246,29 @@ final class PlatformNotificationService: NSObject, UNUserNotificationCenterDeleg
         let content = response.notification.request.content
         if content.categoryIdentifier == PlatformBetaFeedbackNotification.categoryIdentifier,
            let draftID = PlatformBetaFeedbackNotificationPayload.draftID(from: content.userInfo) {
+            if response.actionIdentifier == UNNotificationDismissActionIdentifier {
+                Task {
+                    await PlatformBetaFeedbackStore.shared.remove(id: draftID)
+                    completionHandler()
+                }
+                return
+            }
             let text = (response as? UNTextInputNotificationResponse)?.userText ?? ""
-            DispatchQueue.main.async {
-                NotificationCenter.default.post(
-                    name: .platformBetaFeedbackResponse,
-                    object: nil,
-                    userInfo: [
-                        PlatformBetaFeedbackNotificationPayload.draftIDKey: draftID,
-                        "text": text,
-                    ]
+            Task {
+                try? await PlatformBetaFeedbackStore.shared.saveResponse(
+                    draftID: draftID,
+                    text: text
                 )
+                await MainActor.run {
+                    NotificationCenter.default.post(
+                        name: .platformBetaFeedbackResponse,
+                        object: nil,
+                        userInfo: [
+                            PlatformBetaFeedbackNotificationPayload.draftIDKey: draftID,
+                            "text": text,
+                        ]
+                    )
+                }
                 completionHandler()
             }
             return

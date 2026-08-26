@@ -168,6 +168,25 @@ struct PlatformBetaFeedbackFlowTests {
         #expect(removed == nil)
     }
 
+    @Test
+    func pendingNotificationResponseSurvivesUntilTheRootConsumesIt() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("PlatformBetaFeedbackResponseTests-\(UUID().uuidString)")
+        let store = PlatformBetaFeedbackStore(directory: directory)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        try await store.saveResponse(draftID: "cold-launch", text: "The list froze.")
+        let pending = try await store.takeNextResponse()
+
+        #expect(
+            pending == PlatformBetaFeedbackStore.PendingResponse(
+                draftID: "cold-launch",
+                text: "The list froze."
+            )
+        )
+        #expect(try await store.takeNextResponse() == nil)
+    }
+
     private var diagnostics: PlatformBetaFeedbackDiagnostics {
         PlatformBetaFeedbackDiagnostics(
             build: AppBuildIdentity(infoDictionary: [

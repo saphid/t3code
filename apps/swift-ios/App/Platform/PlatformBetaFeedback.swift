@@ -223,6 +223,11 @@ actor PlatformBetaFeedbackStore {
         let createdAt: Date
     }
 
+    struct PendingResponse: Codable, Equatable, Sendable {
+        let draftID: String
+        let text: String
+    }
+
     private let directory: URL
 
     init(directory: URL? = nil) {
@@ -260,6 +265,46 @@ actor PlatformBetaFeedbackStore {
     func remove(id: String) {
         try? FileManager.default.removeItem(at: recordURL(for: id))
         try? FileManager.default.removeItem(at: screenshotURL(for: id))
+        try? FileManager.default.removeItem(at: responseURL(for: id))
+    }
+
+    func saveResponse(draftID: String, text: String) throws {
+        try FileManager.default.createDirectory(
+            at: directory,
+            withIntermediateDirectories: true
+        )
+        let response = PendingResponse(draftID: draftID, text: text)
+        try JSONEncoder().encode(response).write(
+            to: responseURL(for: draftID),
+            options: .atomic
+        )
+    }
+
+    func takeResponse(draftID: String) throws -> PendingResponse? {
+        let url = responseURL(for: draftID)
+        guard FileManager.default.fileExists(atPath: url.path) else { return nil }
+        let response = try JSONDecoder().decode(
+            PendingResponse.self,
+            from: Data(contentsOf: url)
+        )
+        try? FileManager.default.removeItem(at: url)
+        return response
+    }
+
+    func takeNextResponse() throws -> PendingResponse? {
+        guard let url = try FileManager.default.contentsOfDirectory(
+            at: directory,
+            includingPropertiesForKeys: nil,
+            options: [.skipsHiddenFiles]
+        ).filter({ $0.lastPathComponent.hasSuffix(".response.json") }).sorted(by: {
+            $0.lastPathComponent < $1.lastPathComponent
+        }).first else { return nil }
+        let response = try JSONDecoder().decode(
+            PendingResponse.self,
+            from: Data(contentsOf: url)
+        )
+        try? FileManager.default.removeItem(at: url)
+        return response
     }
 
     private func recordURL(for id: String) -> URL {
@@ -268,6 +313,10 @@ actor PlatformBetaFeedbackStore {
 
     private func screenshotURL(for id: String) -> URL {
         directory.appendingPathComponent("\(id).jpg")
+    }
+
+    private func responseURL(for id: String) -> URL {
+        directory.appendingPathComponent("\(id).response.json")
     }
 
     private func removeExpiredDrafts(now: Date) {
