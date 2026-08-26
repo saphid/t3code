@@ -1,0 +1,4 @@
+#!/bin/bash
+# Board status: every work item and where it sits in the process.
+SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd -P)
+exec python3 "$(dirname "$SCRIPT_DIR")/status_report.py" "$@"

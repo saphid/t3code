@@ -155,5 +155,6 @@
       "revalidateImplementedAfterDays": 7,
       "note": "A buffered item pays re-materialization onto the current carry when it advances. Keep items small and file-disjoint so that tax stays low."
     }
-  }
+  },
+  "workItemRepository": "saphid/t3code-personal"
 }

@@ -29,6 +29,7 @@ TOOL_NAMES = (
     "audit-package",
     "setup",
     "doctor",
+    "status",
 )
 
 

@@ -86,6 +86,17 @@ else
   check phoneLeasePath fail "cannot prepare phone lease parent for '$lease'"
 fi
 
+# 5b. Record this checkout as the canonical one so front-door skills in any
+#     harness can find the pipeline without a hard-coded path.
+state=$(python3 -c "
+import json,os
+print(os.path.expanduser(json.load(open('$CONTRACT'))['stateRoot']))" 2>/dev/null)
+if [ -n "$state" ] && printf '%s\n' "$REPO_ROOT" > "$state/canonical-checkout" 2>/dev/null; then
+  check checkoutPointer ok "$state/canonical-checkout -> $REPO_ROOT"
+else
+  check checkoutPointer fail "cannot write canonical-checkout pointer under '$state'"
+fi
+
 # 6. T3 server CLI, resolved dynamically (documented paths go stale).
 T3_CLI=""
 for app in "/Applications/T3 Code (Nightly).app" "/Applications/T3 Code.app"; do
