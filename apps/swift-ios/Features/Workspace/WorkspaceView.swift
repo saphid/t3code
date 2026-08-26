@@ -878,9 +878,10 @@ struct HomeThreadRowContext: Equatable {
         connectionState: nil
     )
 
-    var metadataCopyContext: ThreadMetadataCopyContext {
-        ThreadMetadataCopyContext(
+    var copyContext: ThreadCopyContext {
+        ThreadCopyContext(
             projectName: metadataProjectName,
+            projectWorkspaceRoot: projectWorkspaceRoot,
             environmentName: environmentLabel,
             environmentID: projectEnvironmentID
         )

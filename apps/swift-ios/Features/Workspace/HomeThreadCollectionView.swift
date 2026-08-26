@@ -689,7 +689,7 @@ struct HomeThreadCollectionView: UIViewRepresentable {
             }
             let copyActions = ThreadCopyModel.actions(
                 for: thread,
-                projectWorkspaceRoot: context.projectWorkspaceRoot
+                context: context.copyContext
             )
             if !copyActions.isEmpty {
                 titleActions.append(
@@ -706,17 +706,6 @@ struct HomeThreadCollectionView: UIViewRepresentable {
                             }
                         }
                     )
-                )
-            }
-
-            if let payload = ThreadMetadataCopyModel.payload(
-                for: thread,
-                context: context.metadataCopyContext
-            ) {
-                titleActions.append(
-                    UIAction(title: "Copy metadata", image: UIImage(systemName: "doc.on.doc")) { _ in
-                        ThreadMetadataClipboard.copy(payload)
-                    }
                 )
             }
 
