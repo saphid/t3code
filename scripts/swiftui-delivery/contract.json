@@ -140,7 +140,7 @@
     "unboundedBuffers": [
       "queued",
       "implemented awaiting simulator lane",
-      "proof-ready awaiting phone verdict",
+      "proof-ready awaiting Test generation",
       "accepted awaiting PR authority"
     ],
     "backlog": {

@@ -41,8 +41,11 @@ no force option.
 
 ## Execute exactly one mode
 
-- `publish-test`: build and install exactly the candidate plus required
-  installed-carry set. No unreviewed head enters the generation.
+- `publish-test`: build and PUBLISH exactly the required generation set:
+  every proof-ready and published-pending item not explicitly replaced,
+  plus the prior installed carry. No unreviewed head enters the
+  generation. Installation is the deterministic watcher's job, never this
+  skill's.
 - `publish-dev`: require accepted or landed entries and a fresh resolved base.
 - `open-pr`: re-resolve the maintainer base. If it moved, return the item to
   `active`, rebuild, and re-prove it. Otherwise rebuild the exact proved head,
@@ -50,7 +53,8 @@ no force option.
   evidence plus live media links. Use the protected
   `$t3code-land-contribution` skill for upstream policy.
 
-Verify archive identity, injected commit, signing, installed artifact hash,
+Verify archive identity, injected commit, signing, the PUBLISHED artifact
+zip hash (recorded as installedArtifactSha256 on publish-test receipts),
 and destination. Write a `swiftui-generation-receipt` bound to the exact plan
 bytes and validate it:
 
@@ -59,8 +63,10 @@ scripts/swiftui-delivery validate-generation-receipt generation-receipt.json \
   --plan generation-plan.json
 ```
 
-Only after a successful Test install may the coordinator plan
-`proof-ready -> phone-test` with both files. Phone behavior still requires
+Items stay `proof-ready` at publication. The coordinator advances
+`proof-ready -> phone-test` only after the watcher's device receipt
+(`~/.t3/swiftui-stream/device-receipts/test.json`) reports an installed
+status matching this generation's build number and artifact. Phone behavior still requires
 Alex's explicit accept verdict and a receipt bound to that phone generation
 before `accepted`. Opening a PR similarly requires the exact `open-pr` plan and
 receipt; landing requires a separate landed receipt with the PR and merge

@@ -89,9 +89,14 @@ Test generation receipt. If any proof-ready item is missing, IMMEDIATELY
 prepare and validate a combined `publish-test` plan (disjointness + full
 carry set) and dispatch `$swiftui-deliver` to build and publish it. Do not
 wait for Alex or ask permission - Test publication runs under the standing
-authorization in contract `testPublication`. If a further item becomes
+authorization in contract `testPublication`. Every generation's
+entry set is COMPLETE: prior installed carry plus every proof-ready and
+published-pending item not explicitly replaced - a newer generation never
+silently drops an earlier improvement. If a further item becomes
 proof-ready while a build is in flight, queue the next generation behind
-it; never cancel or overwrite a published build. Alex's verdicts are only
+it; never cancel or overwrite a published build. Items advance
+`proof-ready -> phone-test` only on the watcher's matching device receipt
+(`~/.t3/swiftui-stream/device-receipts/test.json`), never on pointer flip. Alex's verdicts are only
 ever required at `phone-test -> accepted`.
 
 ## Backlog and WIP duty
@@ -105,7 +110,7 @@ work into open slots FIRST; then, if `queued` has fallen below
 upstream contribution queue and the React Native mobile app parity gap — via
 `file-swiftui-lane-issue`. Replenishment is coordinator housekeeping and
 never delays dispatch of ready work. Unbounded buffers (`queued`,
-implemented awaiting simulator, proof-ready awaiting phone, accepted
+implemented awaiting simulator, proof-ready awaiting Test generation, accepted
 awaiting PR authority) are healthy, not a stall; re-validate implemented
 items older than `flowPolicy.bufferStaleness.revalidateImplementedAfterDays`
 days against the current carry before they enter a simulator lane. Run

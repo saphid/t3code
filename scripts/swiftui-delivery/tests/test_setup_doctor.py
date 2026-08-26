@@ -78,6 +78,17 @@ class SkeletonHarness(unittest.TestCase):
         self.bin = self.tmp / "bin"
         self.bin.mkdir()
         _write_executable(self.bin / "gh", "#!/bin/bash\nexit 0\n")
+        _write_executable(self.bin / "launchctl", "#!/bin/bash\nexit 0\n")
+        # Skeleton watcher parity: deployed copy == vendored copy.
+        watcher_dir = self.pkg / "watcher"
+        watcher_dir.mkdir()
+        (watcher_dir / "phone-watch.py").write_text("stub-watcher\n")
+        deployed = (self.home / ".local/libexec/t3-swiftui-stream")
+        deployed.mkdir(parents=True)
+        (deployed / "phone-watch.py").write_text("stub-watcher\n")
+        stream = self.home / ".t3/swiftui-stream"
+        stream.mkdir(parents=True)
+        (stream / "watcher-config.json").write_text("{}\n")
 
     def run_tool(self, tool, *args):
         env = dict(os.environ)

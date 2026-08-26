@@ -93,11 +93,20 @@ else
   finding gh "gh unauthenticated; board reads and writes will fail"
 fi
 
-# 8. Deterministic phone watcher loaded (continuous Test publication).
-if launchctl print "gui/$(id -u)/com.saphid.t3-swiftui-phone-watch" > /dev/null 2>&1; then
-  ok phoneWatcher "com.saphid.t3-swiftui-phone-watch loaded"
+# 8. Deterministic phone watcher: loaded, deployed copy matches vendored
+#    source, config present. Continuous Test publication depends on it, so
+#    absence or drift is BROKEN, not a finding.
+DEPLOYED_WATCHER="$HOME/.local/libexec/t3-swiftui-stream/phone-watch.py"
+if ! launchctl print "gui/$(id -u)/com.saphid.t3-swiftui-phone-watch" > /dev/null 2>&1; then
+  broken phoneWatcher "watcher not loaded; launchctl enable + bootstrap gui/\$(id -u) ~/Library/LaunchAgents/com.saphid.t3-swiftui-phone-watch.plist"
+elif [ ! -f "$DEPLOYED_WATCHER" ]; then
+  broken phoneWatcher "deployed watcher script missing at $DEPLOYED_WATCHER"
+elif ! cmp -s "$DEPLOYED_WATCHER" "$PKG_DIR/watcher/phone-watch.py"; then
+  broken phoneWatcher "deployed watcher differs from vendored source; redeploy watcher/phone-watch.py"
+elif [ ! -f "$HOME/.t3/swiftui-stream/watcher-config.json" ]; then
+  broken phoneWatcher "watcher-config.json missing (deviceId/teamIdentifier)"
 else
-  finding phoneWatcher "watcher not loaded; run: launchctl bootstrap gui/\$(id -u) ~/Library/LaunchAgents/com.saphid.t3-swiftui-phone-watch.plist"
+  ok phoneWatcher "loaded, deployed copy matches vendored source, config present"
 fi
 
 # 9. flowPolicy present so orchestrate can enforce WIP limits.

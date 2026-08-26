@@ -75,7 +75,11 @@ def notify(config: dict[str, Any], channel: str, message: str, key: str) -> None
     atomic_json(state_path, state)
 
 
-def installed_build(device: str, bundle: str) -> int | None:
+def installed_build(device: str, bundle: str) -> tuple[str, int | None]:
+    """Return (status, version): 'installed', 'not-installed', 'query-failed'.
+
+    Only 'not-installed' or an older 'installed' version may authorize an
+    install; every query or parse failure fails CLOSED (no install)."""
     with tempfile.TemporaryDirectory(prefix="swiftui-device-info-") as directory:
         output = Path(directory) / "apps.json"
         result = run(
@@ -84,29 +88,65 @@ def installed_build(device: str, bundle: str) -> int | None:
             "--json-output", str(output), "--quiet",
         )
         if result.returncode or not output.exists():
-            return None
-        value = load(output)
+            return ("query-failed", None)
+        try:
+            value = load(output)
+        except (OSError, ValueError):
+            return ("query-failed", None)
     apps = value.get("result", {}).get("apps", [])
     for app in apps:
         if app.get("bundleIdentifier") == bundle:
             try:
-                return int(app.get("bundleVersion"))
+                return ("installed", int(app.get("bundleVersion")))
             except (TypeError, ValueError):
-                return None
-    return None
+                return ("query-failed", None)
+    return ("not-installed", None)
 
 
-def valid_pointer(pointer: dict[str, Any]) -> bool:
+ALLOWED_BUILD_ROOTS = (
+    Path.home() / ".t3/artifacts/swiftui-stream",
+    Path.home() / ".local/share/t3/swiftui-delivery/builds",
+)
+
+
+def _under_allowed_root(path: Path) -> bool:
+    try:
+        resolved = path.resolve()
+    except OSError:
+        return False
+    return any(str(resolved).startswith(str(root.resolve()) + "/")
+               for root in ALLOWED_BUILD_ROOTS if root.exists())
+
+
+def valid_pointer(pointer: dict[str, Any], channel_name: str,
+                  config: dict[str, Any]) -> bool:
     required = (
         "channel", "build", "sequence", "commit", "bundleId", "appPath",
         "zipPath", "sha256", "deviceId",
     )
     if pointer.get("schemaVersion") != 1 or any(key not in pointer for key in required):
         return False
+    if not all(isinstance(pointer[k], str) for k in
+               ("channel", "commit", "bundleId", "appPath", "zipPath",
+                "sha256", "deviceId")):
+        return False
+    if pointer["channel"] != channel_name:
+        return False
     path = Path(pointer["appPath"])
     archive = Path(pointer["zipPath"])
     if not path.is_dir() or not archive.is_file():
         return False
+    # Both artifacts must live in one generation directory under an
+    # allowed immutable build root.
+    if not (_under_allowed_root(path) and _under_allowed_root(archive)
+            and path.parent == archive.parent):
+        return False
+    expected_team = config.get("teamIdentifier")
+    if expected_team:
+        detail = run("codesign", "-dvv", str(path))
+        if ("TeamIdentifier=%s" % expected_team) not in (
+                detail.stderr + detail.stdout):
+            return False
     digest = hashlib.sha256()
     try:
         with archive.open("rb") as file:
@@ -136,16 +176,30 @@ def app_metadata_matches(path: Path, pointer: dict[str, Any]) -> bool:
 
 
 def extract_verified_app(pointer: dict[str, Any], directory: Path) -> Path | None:
+    # Copy the archive privately, re-hash the copy, and extract THOSE bytes:
+    # closes the hash-to-extraction race on the shared path.
+    private = directory / "archive.zip"
     try:
-        with zipfile.ZipFile(pointer["zipPath"]) as archive:
-            if any(
-                Path(name).is_absolute() or ".." in Path(name).parts
-                for name in archive.namelist()
-            ):
-                return None
+        with open(pointer["zipPath"], "rb") as src, private.open("wb") as dst:
+            digest = hashlib.sha256()
+            for chunk in iter(lambda: src.read(1024 * 1024), b""):
+                digest.update(chunk)
+                dst.write(chunk)
+    except OSError:
+        return None
+    if digest.hexdigest() != pointer["sha256"]:
+        return None
+    try:
+        with zipfile.ZipFile(private) as archive:
+            for info in archive.infolist():
+                name = Path(info.filename)
+                mode = (info.external_attr >> 16) & 0o170000
+                if (name.is_absolute() or ".." in name.parts
+                        or mode not in (0, 0o100000, 0o040000)):
+                    return None
     except (OSError, zipfile.BadZipFile):
         return None
-    extracted = run("ditto", "-x", "-k", pointer["zipPath"], str(directory))
+    extracted = run("ditto", "-x", "-k", str(private), str(directory))
     if extracted.returncode:
         return None
     app = directory / "T3Code.app"
@@ -195,17 +249,23 @@ def process_channel(path: Path, config: dict[str, Any]) -> None:
     # The caller holds the one global device lease. Read only the current
     # atomic pointer so an older queued invocation can never install stale work.
     pointer = load(path)
-    if not valid_pointer(pointer):
+    if not valid_pointer(pointer, path.stem, config):
         return
-    device = config.get("deviceId") or pointer["deviceId"]
+    configured = config.get("deviceId")
+    if configured and configured != pointer["deviceId"]:
+        return
+    device = configured or pointer["deviceId"]
     channel = pointer["channel"]
     receipt_path = RECEIPTS / f"{channel}.json"
     previous = load(receipt_path) if receipt_path.exists() else {}
-    current = installed_build(device, pointer["bundleId"])
+    status, current = installed_build(device, pointer["bundleId"])
 
-    if current is not None and current > int(pointer["build"]):
+    if status == "query-failed":
         return
-    needs_install = current is None or current < int(pointer["build"])
+    if status == "installed" and current > int(pointer["build"]):
+        return
+    needs_install = status == "not-installed" or (
+        status == "installed" and current < int(pointer["build"]))
     needs_launch = (
         needs_install
         or previous.get("launchPending", False)
