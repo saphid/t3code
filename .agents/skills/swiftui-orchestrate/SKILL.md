@@ -103,8 +103,11 @@ ever required at `phone-test -> accepted`.
 
 Whenever the device receipt (`~/.t3/swiftui-stream/device-receipts/*.json`)
 reports a NEWLY installed build, immediately create a T3 thread in the
-T3 Code SwiftUI project named `UAT <build number>` (contract `uatThreads`).
-Its opening message tells Alex: which build and channel installed; each new
+T3 Code SwiftUI project named `UAT <build number> (<Test|Dev>)` (contract
+`uatThreads`) and PIN it (typed client RPC only - probe the contract first;
+never write projections directly; report a ledger gap if unpinnable).
+Its opening message tells Alex FIRST which app to open on the phone -
+'SwiftUI Test' or 'SwiftUI Dev' by installed display name; then each new
 candidate with what it is, why we need it (owning issue's problem
 statement), and exactly how to test it on the phone (acceptance points as
 concrete steps); carried items listed separately; and a per-item request

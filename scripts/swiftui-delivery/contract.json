@@ -177,14 +177,15 @@
   },
   "uatThreads": {
     "trigger": "Every device receipt reporting a newly installed build (status installed*)",
-    "name": "UAT <build number> (e.g. 'UAT 77')",
+    "name": "UAT <build number> (<Test|Dev>) - e.g. 'UAT 78 (Test)'",
     "project": "T3 Code SwiftUI (c75be3a7-138b-4602-bcfb-d3c3c7955c05)",
     "content": [
-      "which build installed and its channel (Test or Dev)",
+      "FIRST LINE: which app to open on the phone - 'SwiftUI Test' or 'SwiftUI Dev' (the installed display name) - plus the build number and channel",
       "every included feature/fix: what it is, WHY we need it (from the owning issue's problem statement), and HOW Alex should test it (from the acceptance points, as concrete phone steps)",
       "carried items listed separately from new candidates",
       "an explicit request for accept/reject verdicts per item"
     ],
-    "owner": "swiftui-orchestrate coordinator duty; verdicts recorded as acceptance receipts"
+    "owner": "swiftui-orchestrate coordinator duty; verdicts recorded as acceptance receipts",
+    "pinned": "Pin the thread on creation so it stays at the top of the project. Use the typed client RPC for pinning (probe the websocket RPC contract first per established practice); NEVER write state.sqlite directly. If no typed surface supports pinning, report the gap on the ledger instead."
   }
 }
