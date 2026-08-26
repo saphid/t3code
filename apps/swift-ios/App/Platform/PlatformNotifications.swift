@@ -6,6 +6,27 @@ extension Notification.Name {
     static let platformDeviceTokenChanged = Notification.Name("T3PlatformDeviceTokenChanged")
 }
 
+enum PlatformBetaFeedbackNotification {
+    static let categoryIdentifier = "t3.beta-feedback"
+    static let responseActionIdentifier = "t3.beta-feedback.respond"
+
+    static var category: UNNotificationCategory {
+        let action = UNTextInputNotificationAction(
+            identifier: responseActionIdentifier,
+            title: "Describe the problem",
+            options: [.foreground],
+            textInputButtonTitle: "Review",
+            textInputPlaceholder: "What went wrong?"
+        )
+        return UNNotificationCategory(
+            identifier: categoryIdentifier,
+            actions: [action],
+            intentIdentifiers: [],
+            options: []
+        )
+    }
+}
+
 enum PlatformNotificationPayload {
     private static let routeKeys = ["t3_route", "route", "url", "deep_link", "deeplink"]
 
@@ -106,6 +127,7 @@ final class PlatformNotificationService: NSObject, UNUserNotificationCenterDeleg
 
     func installDelegate() {
         center.delegate = self
+        center.setNotificationCategories([PlatformBetaFeedbackNotification.category])
     }
 
     @discardableResult
@@ -182,6 +204,32 @@ final class PlatformNotificationService: NSObject, UNUserNotificationCenterDeleg
         try? await center.add(request)
     }
 
+    func scheduleBetaFeedback(draftID: String) async -> Bool {
+        guard enabled else { return false }
+        let settings = await center.notificationSettings()
+        guard [.authorized, .provisional, .ephemeral].contains(settings.authorizationStatus) else {
+            return false
+        }
+
+        let content = UNMutableNotificationContent()
+        content.title = "Quick beta feedback"
+        content.body = "Describe what went wrong without leaving T3 Code."
+        content.sound = .default
+        content.categoryIdentifier = PlatformBetaFeedbackNotification.categoryIdentifier
+        content.userInfo = [PlatformBetaFeedbackNotificationPayload.draftIDKey: draftID]
+        let request = UNNotificationRequest(
+            identifier: "beta-feedback:\(draftID)",
+            content: content,
+            trigger: nil
+        )
+        do {
+            try await center.add(request)
+            return true
+        } catch {
+            return false
+        }
+    }
+
     func didRegisterForRemoteNotifications(deviceToken: Data) {
         tokenSink.registered(token: deviceToken.map { String(format: "%02x", $0) }.joined())
     }
@@ -195,6 +243,23 @@ final class PlatformNotificationService: NSObject, UNUserNotificationCenterDeleg
         didReceive response: UNNotificationResponse,
         withCompletionHandler completionHandler: @escaping @Sendable () -> Void
     ) {
+        let content = response.notification.request.content
+        if content.categoryIdentifier == PlatformBetaFeedbackNotification.categoryIdentifier,
+           let draftID = PlatformBetaFeedbackNotificationPayload.draftID(from: content.userInfo) {
+            let text = (response as? UNTextInputNotificationResponse)?.userText ?? ""
+            DispatchQueue.main.async {
+                NotificationCenter.default.post(
+                    name: .platformBetaFeedbackResponse,
+                    object: nil,
+                    userInfo: [
+                        PlatformBetaFeedbackNotificationPayload.draftIDKey: draftID,
+                        "text": text,
+                    ]
+                )
+                completionHandler()
+            }
+            return
+        }
         let route = PlatformNotificationPayload.route(
             from: response.notification.request.content.userInfo
         )
@@ -214,7 +279,13 @@ final class PlatformNotificationService: NSObject, UNUserNotificationCenterDeleg
         _ center: UNUserNotificationCenter,
         willPresent notification: UNNotification
     ) async -> UNNotificationPresentationOptions {
-        await MainActor.run { enabled ? [.banner, .sound] : [] }
+        await MainActor.run {
+            if notification.request.content.categoryIdentifier
+                == PlatformBetaFeedbackNotification.categoryIdentifier {
+                return [.banner, .sound]
+            }
+            return enabled ? [.banner, .sound] : []
+        }
     }
 
     private func notificationTitle(for kind: PlatformFeedbackKind) -> String {
