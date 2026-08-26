@@ -81,3 +81,21 @@ scripts/swiftui-delivery validate-generation-plan generation-plan.json
 This command reads and validates every referenced media manifest and every
 capture review. Only then hand the exact plan to `$swiftui-deliver`. No phone
 queue, build, or install begins in this skill.
+
+## Backlog and WIP duty
+
+Enforce `flowPolicy` from the contract at every pass. Keep active
+implementation lanes at their WIP limit while any approved worker provider
+has usable token capacity; a simulator, signing, or phone blocker never
+idles implementation, test, or review lanes. Dispatch already-ready queued
+work into open slots FIRST; then, if `queued` has fallen below
+`flowPolicy.backlog.minQueuedReady`, replenish the backlog — from the
+upstream contribution queue and the React Native mobile app parity gap — via
+`file-swiftui-lane-issue`. Replenishment is coordinator housekeeping and
+never delays dispatch of ready work. Unbounded buffers (`queued`,
+implemented awaiting simulator, proof-ready awaiting phone, accepted
+awaiting PR authority) are healthy, not a stall; re-validate implemented
+items older than `flowPolicy.bufferStaleness.revalidateImplementedAfterDays`
+days against the current carry before they enter a simulator lane. Run
+`scripts/doctor` at bootstrap; exit 2 stops dispatch until the package is
+repaired.

@@ -112,3 +112,36 @@ root; simulator runtime ownership is keyed by UDID.
 There is no background label auditor, custom dispatch daemon, or second
 deployment runtime. The orchestrator follows GitHub work items and durable
 receipts using the tools already provided by T3 Code and the product repo.
+
+## Flow control: WIP-limited stations, unbounded buffers
+
+The pipeline is a pull system. Stations that consume scarce capacity carry
+WIP limits from `contract.json` `flowPolicy.wipLimits`; the buffers between
+them are deliberately unbounded:
+
+- **Stations (limited):** active implementation lanes (worker threads),
+  simulator proof lanes (one per leased UDID), phone verification (one — it
+  is Alex).
+- **Buffers (unbounded):** `queued`; implemented-and-unit-tested work waiting
+  for a simulator lane; proof-ready work waiting for a phone verdict;
+  accepted work waiting for PR authority.
+
+Rules:
+
+1. A blocker at one station never idles another. A phone or signing blocker
+   affects publication only; implementation, focused tests, and review lanes
+   keep pulling from the backlog.
+2. While any approved worker provider has usable token capacity, the
+   coordinator keeps implementation lanes at their WIP limit: dispatch
+   already-ready queued work into open slots first, then replenish. When
+   `queued` drops below `flowPolicy.backlog.minQueuedReady`, file new lanes
+   from the upstream contribution queue and the React Native mobile app
+   parity gap — as housekeeping that never delays dispatch of ready work.
+3. Buffered work ages. An implemented item older than
+   `flowPolicy.bufferStaleness.revalidateImplementedAfterDays` days is
+   re-validated against the current carry before it may enter a simulator
+   lane; the re-materialization cost is the price of a deep buffer, kept low
+   by small, file-disjoint items.
+4. Setup and self-checks are `scripts/setup` (environment readiness, run on
+   any new machine) and `scripts/doctor` (package integrity, zero-test guard,
+   state roots, board reachability). A doctor exit of 2 stops dispatch.

@@ -10,7 +10,10 @@
   "stateRoot": "~/.local/state/t3/swiftui-delivery",
   "buildStore": "~/.local/share/t3/swiftui-delivery/builds",
   "phonePublicationLease": "~/.local/state/t3/swiftui-delivery/phone-publication.lock",
-  "humanActors": ["Alex", "Saphid"],
+  "humanActors": [
+    "Alex",
+    "Saphid"
+  ],
   "laneSemantics": {
     "lane": "A named work stream that may contain multiple issues.",
     "workItem": "The delivery state and proof for exactly one issue.",
@@ -28,22 +31,66 @@
     "superseded"
   ],
   "transitions": {
-    "queued": ["active", "cancelled", "superseded"],
-    "active": ["proof-ready", "landed", "cancelled", "superseded"],
-    "proof-ready": ["phone-test", "active", "cancelled", "superseded"],
-    "phone-test": ["accepted", "active", "cancelled", "superseded"],
-    "accepted": ["pr-open", "active", "cancelled", "superseded"],
-    "pr-open": ["landed", "active", "cancelled", "superseded"],
+    "queued": [
+      "active",
+      "cancelled",
+      "superseded"
+    ],
+    "active": [
+      "proof-ready",
+      "landed",
+      "cancelled",
+      "superseded"
+    ],
+    "proof-ready": [
+      "phone-test",
+      "active",
+      "cancelled",
+      "superseded"
+    ],
+    "phone-test": [
+      "accepted",
+      "active",
+      "cancelled",
+      "superseded"
+    ],
+    "accepted": [
+      "pr-open",
+      "active",
+      "cancelled",
+      "superseded"
+    ],
+    "pr-open": [
+      "landed",
+      "active",
+      "cancelled",
+      "superseded"
+    ],
     "landed": [],
     "cancelled": [],
     "superseded": []
   },
-  "dependencyKinds": ["stacked-on", "ordered-after", "collision"],
-  "generationModes": ["publish-test", "publish-dev", "open-pr"],
+  "dependencyKinds": [
+    "stacked-on",
+    "ordered-after",
+    "collision"
+  ],
+  "generationModes": [
+    "publish-test",
+    "publish-dev",
+    "open-pr"
+  ],
   "generationRoles": {
-    "publish-test": ["candidate", "installed-carry"],
-    "publish-dev": ["accepted"],
-    "open-pr": ["candidate"]
+    "publish-test": [
+      "candidate",
+      "installed-carry"
+    ],
+    "publish-dev": [
+      "accepted"
+    ],
+    "open-pr": [
+      "candidate"
+    ]
   },
   "externalLanding": {
     "transitionFrom": "active",
@@ -82,5 +129,31 @@
     "swift-concurrency-pro",
     "t3code-land-contribution",
     "babysit-pr"
-  ]
+  ],
+  "flowPolicy": {
+    "model": "Stations have WIP limits; buffers between stations are unbounded.",
+    "wipLimits": {
+      "activeImplementation": 4,
+      "simulatorProof": 3,
+      "phoneVerification": 1
+    },
+    "unboundedBuffers": [
+      "queued",
+      "implemented awaiting simulator lane",
+      "proof-ready awaiting phone verdict",
+      "accepted awaiting PR authority"
+    ],
+    "backlog": {
+      "minQueuedReady": 6,
+      "sources": [
+        "upstream contribution queue issues",
+        "React Native mobile app parity gap"
+      ],
+      "rule": "While any approved worker provider has usable token capacity, keep implementation lanes at their WIP limit: dispatch already-ready queued work into open slots first, then replenish the backlog. A simulator, signing, or phone blocker never idles implementation, test, or review lanes."
+    },
+    "bufferStaleness": {
+      "revalidateImplementedAfterDays": 7,
+      "note": "A buffered item pays re-materialization onto the current carry when it advances. Keep items small and file-disjoint so that tax stays low."
+    }
+  }
 }

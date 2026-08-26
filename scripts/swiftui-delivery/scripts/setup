@@ -1,0 +1,151 @@
+#!/bin/bash
+# Environment setup and readiness check for the SwiftUI delivery pipeline.
+# Idempotent. Mutations: creates state directories; installs JS deps only
+# with --bootstrap. Everything else is read-only probing with remedies.
+# Exit 0 = ready, 1 = one or more checks failed.
+set -u
+SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd -P)
+PKG_DIR=$(dirname "$SCRIPT_DIR")
+REPO_ROOT=$(cd "$PKG_DIR/../.." && pwd -P)
+CONTRACT="$PKG_DIR/contract.json"
+JSON_OUT=0
+BOOTSTRAP=0
+for a in "$@"; do
+  case "$a" in
+    --json) JSON_OUT=1 ;;
+    --bootstrap) BOOTSTRAP=1 ;;
+    -h|--help)
+      echo "usage: setup [--json] [--bootstrap]"
+      echo "  --json       machine-readable readiness receipt on stdout"
+      echo "  --bootstrap  also run CI=true dependency install in the repo"
+      exit 0 ;;
+  esac
+done
+
+FAILS=0
+RESULTS=()
+check() { # name status detail
+  RESULTS+=("$1|$2|$3")
+  [ "$2" = "fail" ] && FAILS=$((FAILS+1))
+}
+
+# 1. Contract parses and names this package.
+if python3 -c "import json;json.load(open('$CONTRACT'))" 2>/dev/null; then
+  check contract ok "parsed $CONTRACT"
+else
+  check contract fail "contract.json missing or invalid at $CONTRACT"
+fi
+
+# 2. python3 present and >= 3.9 (some fleet paths are 3.9).
+PYV=$(python3 -c 'import sys;print("%d.%d"%sys.version_info[:2])' 2>/dev/null)
+case "$PYV" in
+  3.[0-8]|"") check python3 fail "need python3 >= 3.9, found '${PYV:-none}'" ;;
+  *) check python3 ok "python3 $PYV" ;;
+esac
+
+# 3. gh installed and authenticated (issue state lives on GitHub).
+if command -v gh >/dev/null 2>&1; then
+  if gh auth status >/dev/null 2>&1; then
+    check gh ok "authenticated"
+  else
+    check gh fail "gh present but not authenticated; run: gh auth login"
+  fi
+else
+  check gh fail "gh not installed; brew install gh"
+fi
+
+# 4. Xcode toolchain.
+if xcodebuild -version >/dev/null 2>&1; then
+  check xcodebuild ok "$(xcodebuild -version 2>/dev/null | head -1)"
+else
+  check xcodebuild fail "xcodebuild unavailable; install Xcode and accept the license"
+fi
+if xcrun simctl list devices >/dev/null 2>&1; then
+  check simctl ok "simulator control available"
+else
+  check simctl fail "xcrun simctl failed; check Xcode command line tools"
+fi
+
+# 5. State directories from the contract (created here, idempotent).
+for key in stateRoot buildStore; do
+  dir=$(python3 -c "
+import json,os
+print(os.path.expanduser(json.load(open('$CONTRACT'))['$key']))" 2>/dev/null)
+  if [ -n "$dir" ] && mkdir -p "$dir" 2>/dev/null && [ -w "$dir" ]; then
+    check "$key" ok "$dir"
+  else
+    check "$key" fail "cannot create or write $key dir '$dir'"
+  fi
+done
+lease=$(python3 -c "
+import json,os
+print(os.path.expanduser(json.load(open('$CONTRACT'))['phonePublicationLease']))" 2>/dev/null)
+if [ -n "$lease" ] && mkdir -p "$(dirname "$lease")" 2>/dev/null; then
+  check phoneLeasePath ok "$(dirname "$lease")"
+else
+  check phoneLeasePath fail "cannot prepare phone lease parent for '$lease'"
+fi
+
+# 6. T3 server CLI, resolved dynamically (documented paths go stale).
+T3_CLI=""
+for app in "/Applications/T3 Code (Nightly).app" "/Applications/T3 Code.app"; do
+  unpacked="$app/Contents/Resources/app.asar.unpacked/apps/server/dist/bin.mjs"
+  asar="$app/Contents/Resources/app.asar"
+  if [ -e "$unpacked" ]; then
+    T3_CLI="$unpacked"; break
+  fi
+  # Non-installing probe: asar archives store entry paths as plain strings,
+  # so a content grep proves the CLI is bundled without downloading tooling.
+  if [ -f "$asar" ] && grep -q -s "apps/server/dist/bin.mjs" "$asar"; then
+    T3_CLI="$asar/apps/server/dist/bin.mjs"; break
+  fi
+done
+if [ -n "$T3_CLI" ]; then
+  check t3cli ok "$T3_CLI"
+else
+  check t3cli fail "T3 server CLI not found under /Applications; install T3 Code (Nightly)"
+fi
+
+# 7. Signing: provisioning profiles present (Xcode 16+ location).
+PROF_DIR="$HOME/Library/Developer/Xcode/UserData/Provisioning Profiles"
+NPROF=$(ls "$PROF_DIR" 2>/dev/null | wc -l | tr -d ' ')
+if [ "${NPROF:-0}" -gt 0 ]; then
+  check provisioning ok "$NPROF profiles in $PROF_DIR"
+else
+  check provisioning fail "no provisioning profiles in '$PROF_DIR'; device builds will fail signing"
+fi
+
+# 8. Optional JS dependency bootstrap (the implicit step the retro flagged).
+if [ "$BOOTSTRAP" -eq 1 ]; then
+  if [ -f "$REPO_ROOT/package.json" ]; then
+    BOOT_LOG=$(mktemp /tmp/swiftui-delivery-setup-bootstrap.XXXXXX)
+    if (cd "$REPO_ROOT" && CI=true vp i > "$BOOT_LOG" 2>&1); then
+      check bootstrap ok "CI=true vp i succeeded"
+      rm -f "$BOOT_LOG"
+    else
+      check bootstrap fail "vp i failed; see $BOOT_LOG"
+    fi
+  else
+    check bootstrap fail "no package.json at $REPO_ROOT"
+  fi
+fi
+
+if [ "$JSON_OUT" -eq 1 ]; then
+  python3 - "$FAILS" "${RESULTS[@]}" << 'PYEOF'
+import json, sys
+fails = int(sys.argv[1])
+checks = []
+for row in sys.argv[2:]:
+    name, status, detail = row.split("|", 2)
+    checks.append({"name": name, "status": status, "detail": detail})
+print(json.dumps({"ok": fails == 0, "failures": fails, "checks": checks}, indent=2))
+PYEOF
+else
+  for row in "${RESULTS[@]}"; do
+    IFS='|' read -r name status detail <<< "$row"
+    printf '%-14s %-4s %s\n' "$name" "$status" "$detail"
+  done
+  echo "----"
+  [ "$FAILS" -eq 0 ] && echo "READY" || echo "NOT READY ($FAILS failure(s))"
+fi
+exit $([ "$FAILS" -eq 0 ] && echo 0 || echo 1)
