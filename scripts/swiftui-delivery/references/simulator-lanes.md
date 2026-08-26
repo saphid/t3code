@@ -114,3 +114,11 @@ scripts/simulator-lane recover --simulator "$SIMULATOR_UDID" \
 Booted or process-associated leases fail closed for human coordination.
 Restore only lifecycle state that the lane itself changed; stable proof
 simulators and preserved builds follow their retention policy.
+
+## Session cleanup
+
+After releasing a lane's lease, run
+`.agents/skills/ios-build-hygiene/scripts/clean-simulator-sessions.sh clean`
+to shut down the freed simulator and any stray booted devices. The script is
+lease-aware: it never touches a UDID that still holds a lease directory, so
+running it is always safe while other lanes are active.
