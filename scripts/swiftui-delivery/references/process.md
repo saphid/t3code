@@ -46,7 +46,12 @@ observed stage against `satisfiedAt`. An unrelated issue outside the closure
 does not enter the catalog and cannot create a global hold.
 8. **accepted**: Alex explicitly accepts phone behavior.
 9. **pr-open / landed**: a separate grant authorizes PR/push work; babysitting
-   verifies current-head checks and review feedback. The ordinary
+   verifies current-head checks and review feedback. `accepted -> pr-open`
+   additionally requires the vouched contributor handoff standard
+   ([upstream-handoff.md](upstream-handoff.md), sourced from the product
+   repo's `CONTRIBUTING_VOUCHED.md`): evidence format, nine-part current
+   description, branch hygiene with maintainer edits, and the final handoff
+   checklist recorded in the generation receipt. The ordinary
    `accepted -> pr-open -> landed` path and all of its receipts remain the
    required path for this work item's own contribution.
 

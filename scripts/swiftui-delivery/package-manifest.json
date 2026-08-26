@@ -65,7 +65,8 @@
     "scripts/swiftui-delivery/scripts/setup",
     "scripts/swiftui-delivery/scripts/doctor",
     "scripts/swiftui-delivery/tests/test_status_report.py",
-    "scripts/swiftui-delivery/tests/test_setup_doctor.py"
+    "scripts/swiftui-delivery/tests/test_setup_doctor.py",
+    "scripts/swiftui-delivery/references/upstream-handoff.md"
   ],
   "auditedDocuments": [
     "docs/operations/swiftui-delivery-clean-cutover.md",

@@ -71,3 +71,15 @@ For an authorized PR, invoke `$babysit-pr` only with a separate watcher/push
 grant. A PR's existence grants no branch mutation. On partial failure preserve
 the last verified build and receipt, release only the lease this run owns, and
 report the exact failed checkpoint.
+
+## Vouched contributor handoff (open-pr mode)
+
+Before requesting human review on any upstream PR, apply
+`../../../scripts/swiftui-delivery/references/upstream-handoff.md` in full:
+separate-heading full-size before/after evidence (never side-by-side
+tables), affected-state coverage, the nine-part description kept current
+with the head, branch hygiene including maintainer edits, and the
+evidence-per-finding review-response protocol. The guide's final handoff
+checklist must pass and be recorded in the open-pr generation receipt as
+`vouchedHandoffChecklist: pass` with stated gaps. Authoritative source:
+`CONTRIBUTING_VOUCHED.md` at the product repository root.

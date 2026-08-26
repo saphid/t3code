@@ -64,3 +64,13 @@ no live reads or writes and never invents an issue number.
 Complete when the issue has testable acceptance statements, one lane
 membership, valid dependencies, one canonical block, one matching stage label,
 and a successful read-back.
+
+## Vouched contributor intake fields
+
+Per `../../../scripts/swiftui-delivery/references/upstream-handoff.md`, the
+issue body must state the problem in user terms (triggering action, current
+behavior, expected behavior) and carry an affected-surface map: which entry
+points, clients, providers, contract/server/projection layers, and
+connection modes the change touches, the reverse action, and any unsupported
+paths. Most items touch only a few surfaces — name them rather than listing
+everything.

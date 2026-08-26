@@ -86,3 +86,16 @@ Do not queue, build, or install a phone generation. Hand the validated proof
 and inspection to `$swiftui-orchestrate`, which binds their exact hashes to the
 work item. Use `$share-video-evidence` to make the final recording playable in
 T3 after the proof gate passes.
+
+## Vouched contributor build rules
+
+Apply the implementation and proof sections of
+`../../../scripts/swiftui-delivery/references/upstream-handoff.md`: find the
+cause before choosing a patch; fix state at its owner, never with a display
+patch; reuse the convention that already owns the behavior; keep provider
+and platform differences at adapter boundaries; represent states in types,
+not strings or timing; treat performance as correctness (websocket volume,
+render-triggered effects, long-thread scaling); keep the smallest coherent
+diff; never let a passing test depend on a sleep; ask before launching
+browsers or dev servers; and record what was NOT exercised as plainly as
+what was.
