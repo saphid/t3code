@@ -10,6 +10,8 @@ import type { FixtureSize } from "./seed.ts";
 
 export interface RunnerOptions {
   readonly runs: number;
+  /** Explicit discarded repetitions. Omitted preserves the legacy policy. */
+  readonly warmupRuns?: number | undefined;
   readonly headless: boolean;
   readonly outDir: string;
   /** Names what is being measured (e.g. a release version) in results files. */
@@ -20,6 +22,19 @@ export interface RunnerOptions {
   readonly network?: NetworkProfileName | undefined;
   /** Unique fleet execution id, shared by every combo and exported as a label. */
   readonly runId?: string | undefined;
+}
+
+/** Ordered execution policy; false is discarded and true is retained. */
+export function scenarioRunPlan(
+  freshEnvironment: boolean,
+  measuredRuns: number,
+  explicitWarmupRuns?: number,
+): ReadonlyArray<boolean> {
+  const warmupRuns = explicitWarmupRuns ?? (freshEnvironment ? 0 : 1);
+  return [
+    ...Array.from({ length: warmupRuns }, () => false),
+    ...Array.from({ length: measuredRuns }, () => true),
+  ];
 }
 
 export interface ScenarioResult {
@@ -124,14 +139,23 @@ export async function runScenario(
         streamingProvider: scenario.streamingProvider,
         secondServer: scenario.secondServer,
       });
-      // Warm-up run, discarded: first paint of the app dominates otherwise.
-      await scenario.run({ env, page: env.page, size });
     }
-    for (let i = 0; i < options.runs; i++) {
+    let measuredIndex = 0;
+    for (const retain of scenarioRunPlan(
+      scenario.freshEnv === true,
+      options.runs,
+      options.warmupRuns,
+    )) {
+      if (!retain && env !== null) {
+        await scenario.run({ env, page: env.page, size });
+        continue;
+      }
       const metrics = await runOnce(scenario, surface, size, options, env);
+      if (!retain) continue;
       runs.push(metrics);
+      measuredIndex += 1;
       log(
-        `  run ${i + 1}/${options.runs}: wall ${Math.round(metrics.wallMs)}ms, gpu ${metrics.appGpuMs.toFixed(1)}ms`,
+        `  run ${measuredIndex}/${options.runs}: wall ${Math.round(metrics.wallMs)}ms, gpu ${metrics.appGpuMs.toFixed(1)}ms`,
       );
     }
   } finally {

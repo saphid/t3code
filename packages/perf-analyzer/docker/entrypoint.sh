@@ -11,7 +11,8 @@
 #   BUILD       build id for the per-build dashboard axis (default: the
 #               resolved t3 version, so nightlies chart as themselves)
 #
-# Any docker-run arguments are appended to the CLI verbatim (e.g. --heavy).
+# `--manifest PATH` selects the isolated manifest-v1 adapter. Every other
+# argument remains on the legacy CLI path unchanged.
 set -euo pipefail
 
 version="${T3_VERSION:-nightly}"
@@ -27,6 +28,11 @@ export T3_PERF_CHROME="${chrome_bins[0]}"
 # Chromium's sandbox cannot start in an unprivileged container, and the
 # default 64MB /dev/shm is too small for a renderer.
 export T3_PERF_CHROME_ARGS="${T3_PERF_CHROME_ARGS:---no-sandbox --disable-dev-shm-usage}"
+
+if [ "${1:-}" = "--manifest" ]; then
+  [ "$#" -eq 2 ] || { echo "manifest mode requires exactly --manifest PATH" >&2; exit 2; }
+  exec node /harness/src/manifestAdapter.ts --manifest "$2" --out /results
+fi
 
 args=(--surface web --headless --size "${SIZES:-small}" --runs "${RUNS:-5}" --label "${LABEL:-${resolved}}" --build "${BUILD:-${resolved}}" --out /results)
 if [ -n "${RUN_ID:-}" ]; then

@@ -48,6 +48,7 @@ interface JsonBody {
   readonly runId?: unknown;
   readonly result?: unknown;
   readonly error?: unknown;
+  readonly reason?: unknown;
 }
 
 function stringField(body: JsonBody, key: keyof JsonBody): string {
@@ -115,7 +116,96 @@ function initialize(db: DatabaseSync): void {
       discovered_count INTEGER NOT NULL,
       error TEXT
     ) STRICT;
+    CREATE TABLE IF NOT EXISTS claim_gate (
+      singleton INTEGER PRIMARY KEY CHECK(singleton = 1),
+      state TEXT NOT NULL CHECK(state IN ('open','closed')),
+      reason TEXT NOT NULL,
+      changed_at TEXT NOT NULL
+    ) STRICT;
+    CREATE TABLE IF NOT EXISTS claim_gate_transitions (
+      transition_id TEXT PRIMARY KEY,
+      from_state TEXT NOT NULL CHECK(from_state IN ('open','closed')),
+      to_state TEXT NOT NULL CHECK(to_state IN ('open','closed')),
+      actor TEXT NOT NULL,
+      reason TEXT NOT NULL,
+      changed_at TEXT NOT NULL
+    ) STRICT;
   `);
+  db.prepare(`
+    INSERT INTO claim_gate(singleton,state,reason,changed_at)
+    VALUES (1,'open','scheduler initialized',?) ON CONFLICT(singleton) DO NOTHING
+  `).run(new Date().toISOString());
+}
+
+interface ClaimGateRow {
+  readonly state: "open" | "closed";
+  readonly reason: string;
+  readonly changedAt: string;
+}
+
+function claimGate(db: DatabaseSync): ClaimGateRow {
+  const row = db
+    .prepare("SELECT state,reason,changed_at AS changedAt FROM claim_gate WHERE singleton=1")
+    .get();
+  if (row === undefined) throw new Error("claim gate is not initialized");
+  return row as unknown as ClaimGateRow;
+}
+
+function activeLeaseCount(db: DatabaseSync): number {
+  const row = db.prepare("SELECT count(*) AS count FROM jobs WHERE state='leased'").get() as
+    | { count: number }
+    | undefined;
+  return row?.count ?? 0;
+}
+
+function requeueExpiredLeases(db: DatabaseSync, now: string): void {
+  db.prepare(`
+    UPDATE jobs SET state='queued',worker_id=NULL,lease_id=NULL,lease_expires_at=NULL,
+      run_id=NULL,updated_at=?
+    WHERE state='leased' AND lease_expires_at <= ?
+  `).run(now, now);
+  db.prepare(`
+    UPDATE workers SET status='idle',current_version=NULL,last_seen_at=?
+    WHERE status='busy' AND NOT EXISTS (
+      SELECT 1 FROM jobs WHERE jobs.worker_id=workers.worker_id AND jobs.state='leased'
+    )
+  `).run(now);
+}
+
+function transitionClaimGate(
+  db: DatabaseSync,
+  to: "open" | "closed",
+  actor: string,
+  reason: string,
+  now: string,
+): {
+  transitionId: string;
+  from: "open" | "closed";
+  to: "open" | "closed";
+  actor: string;
+  reason: string;
+  changedAt: string;
+} {
+  const transitionId = NodeCrypto.randomUUID();
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    const current = claimGate(db);
+    if (current.state === to) throw new Error(`claim gate is already ${to}`);
+    db.prepare("UPDATE claim_gate SET state=?,reason=?,changed_at=? WHERE singleton=1").run(
+      to,
+      reason,
+      now,
+    );
+    db.prepare(`
+      INSERT INTO claim_gate_transitions(transition_id,from_state,to_state,actor,reason,changed_at)
+      VALUES (?,?,?,?,?,?)
+    `).run(transitionId, current.state, to, actor, reason, now);
+    db.exec("COMMIT");
+    return { transitionId, from: current.state, to, actor, reason, changedAt: now };
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
 }
 
 function importLegacyLedger(db: DatabaseSync, path: string): void {
@@ -286,13 +376,27 @@ async function main(): Promise<number> {
         return;
       }
       if (request.method === "GET" && request.url === "/v1/state") {
+        const now = new Date().toISOString();
+        db.exec("BEGIN IMMEDIATE");
+        try {
+          requeueExpiredLeases(db, now);
+          db.exec("COMMIT");
+        } catch (error) {
+          db.exec("ROLLBACK");
+          throw error;
+        }
         const jobs = db
           .prepare("SELECT * FROM jobs ORDER BY published_at DESC")
           .all() as unknown as Array<JobRow>;
         const workers = db
           .prepare("SELECT * FROM workers ORDER BY worker_id")
           .all() as unknown as Array<WorkerRow>;
-        send(response, 200, { jobs, workers });
+        send(response, 200, {
+          jobs,
+          workers,
+          claimGate: claimGate(db),
+          activeLeaseCount: activeLeaseCount(db),
+        });
         return;
       }
       if (request.method !== "POST") {
@@ -313,14 +417,33 @@ async function main(): Promise<number> {
         ON CONFLICT(worker_id) DO UPDATE SET contract=excluded.contract,last_seen_at=excluded.last_seen_at
       `).run(workerId, contract, now);
 
+      if (request.url === "/v1/claims/close" || request.url === "/v1/claims/open") {
+        const reason = stringField(body, "reason").trim();
+        if (reason === "" || reason.length > 4000)
+          throw new Error("reason must be 1 to 4000 characters");
+        const to = request.url.endsWith("/open") ? "open" : "closed";
+        const transition = transitionClaimGate(db, to, workerId, reason, now);
+        send(response, 200, {
+          transition,
+          claimGate: claimGate(db),
+          activeLeaseCount: activeLeaseCount(db),
+        });
+        return;
+      }
+
       if (request.url === "/v1/claim") {
         db.exec("BEGIN IMMEDIATE");
         try {
-          db.prepare(`
-            UPDATE jobs SET state='queued',worker_id=NULL,lease_id=NULL,lease_expires_at=NULL,
-              run_id=NULL,updated_at=?
-            WHERE state='leased' AND lease_expires_at <= ?
-          `).run(now, now);
+          requeueExpiredLeases(db, now);
+          const gate = claimGate(db);
+          if (gate.state === "closed") {
+            db.prepare(
+              "UPDATE workers SET status='idle',current_version=NULL,last_seen_at=? WHERE worker_id=?",
+            ).run(now, workerId);
+            db.exec("COMMIT");
+            send(response, 200, { lease: null, scheduler: "draining", claimGate: gate });
+            return;
+          }
           const job = db
             .prepare(
               "SELECT version,published_at FROM jobs WHERE state='queued' AND attempts < 4 ORDER BY published_at DESC LIMIT 1",
