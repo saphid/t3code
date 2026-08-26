@@ -767,11 +767,13 @@ struct HomeThreadSwipeActionTests {
             isArchiveExpanded: false,
             settledLimit: 12,
             onOpen: { _ in },
+            onOpenSummaryTimeline: { _ in },
             onToggleSnoozed: {},
             onToggleSettled: {},
             onToggleArchive: {},
             onShowMoreSettled: {},
             onRename: { _ in },
+            regeneratingTitleThreadIDs: [],
             onRegenerateTitle: { _ in },
             onArchive: { _, _ in },
             onSettle: { thread, settled, completion in
