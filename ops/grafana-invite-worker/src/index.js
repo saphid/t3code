@@ -2,6 +2,7 @@ const encoder = new TextEncoder();
 const MAX_INVITE_ENROLLMENTS = 25;
 const MAX_FORM_BYTES = 4096;
 const POLICY_PAGE_SIZE = 100;
+const CLOUDFLARE_POLICY_PREFIX = "Cloudflare";
 
 const securityHeaders = {
   "Cache-Control": "no-store",
@@ -103,29 +104,97 @@ async function enroll(email, env) {
   };
   const policies = await readPolicies(policiesUrl, headers);
   const alreadyEnrolled = policies.some((policy) => policy.decision === "allow" &&
-    policy.include.some(
+    policy.include?.some(
       (rule) => rule.email?.email?.toLowerCase() === email,
     ),
   );
   if (alreadyEnrolled) return false;
 
-  const enrollmentPolicies = policies.filter((policy) =>
-    policy.decision === "allow" && policy.name !== "Team",
-  );
-  if (enrollmentPolicies.length >= MAX_INVITE_ENROLLMENTS) {
+  const enrollmentEmails = new Set(policies
+    .filter((policy) => policyRequiresLoginMethod(policy, env.OTP_IDP_ID))
+    .flatMap((policy) => policy.include ?? [])
+    .flatMap((rule) => rule.email?.email ? [rule.email.email.toLowerCase()] : []));
+  if (enrollmentEmails.size >= MAX_INVITE_ENROLLMENTS) {
     throw new Error("Invitation enrollment limit reached");
   }
 
-  const emailHash = await crypto.subtle.digest("SHA-256", encoder.encode(email));
-  const suffix = [...new Uint8Array(emailHash)]
-    .slice(0, 6)
-    .map((byte) => byte.toString(16).padStart(2, "0"))
-    .join("");
+  const suffix = await emailPolicySuffix(email);
   const body = {
     name: `Invite ${suffix}`,
     decision: "allow",
     precedence: Math.max(0, ...policies.map((policy) => policy.precedence ?? 0)) + 1,
     include: [{ email: { email } }],
+    require: [{ login_method: { id: env.OTP_IDP_ID } }],
+  };
+  await cloudflareResult(
+    await fetch(policiesUrl, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(body),
+    }),
+  );
+  return true;
+}
+
+async function emailPolicySuffix(email) {
+  const emailHash = await crypto.subtle.digest("SHA-256", encoder.encode(email));
+  const suffix = [...new Uint8Array(emailHash)]
+    .slice(0, 6)
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("");
+  return suffix;
+}
+
+function policyIncludesEmail(policy, email) {
+  return policy.decision === "allow" && policy.include?.some(
+    (rule) => rule.email?.email?.toLowerCase() === email,
+  );
+}
+
+function policyRequiresLoginMethod(policy, identityProviderId) {
+  return policy.require?.some(
+    (rule) => rule.login_method?.id === identityProviderId,
+  );
+}
+
+async function enableCloudflareLogin(email, env) {
+  const policiesUrl =
+    `https://api.cloudflare.com/client/v4/accounts/${env.CF_ACCOUNT_ID}` +
+    `/access/apps/${env.GRAFANA_APP_ID}/policies`;
+  const headers = {
+    Authorization: `Bearer ${env.CF_API_TOKEN}`,
+    "Content-Type": "application/json",
+  };
+  const policies = await readPolicies(policiesUrl, headers);
+  const pinEnrollment = policies.some((policy) =>
+    policyIncludesEmail(policy, email) &&
+    policyRequiresLoginMethod(policy, env.OTP_IDP_ID),
+  );
+  if (!pinEnrollment) {
+    throw new Error("No completed PIN enrollment exists for this email");
+  }
+
+  const alreadyEnabled = policies.some((policy) =>
+    policyIncludesEmail(policy, email) &&
+    policyRequiresLoginMethod(policy, env.CLOUDFLARE_IDP_ID),
+  );
+  if (alreadyEnabled) return false;
+
+  const cloudflareEmails = new Set(policies
+    .filter((policy) => policyRequiresLoginMethod(policy, env.CLOUDFLARE_IDP_ID))
+    .flatMap((policy) => policy.include ?? [])
+    .flatMap((rule) => rule.email?.email ? [rule.email.email.toLowerCase()] : []));
+  if (cloudflareEmails.size >= MAX_INVITE_ENROLLMENTS) {
+    throw new Error("Cloudflare account enrollment limit reached");
+  }
+  const suffix = await emailPolicySuffix(email);
+  const body = {
+    name: `${CLOUDFLARE_POLICY_PREFIX} ${suffix}`,
+    decision: "allow",
+    precedence: Math.max(0, ...policies.map((policy) => policy.precedence ?? 0)) + 1,
+    include: [{ email: { email } }],
+    exclude: [],
+    require: [{ login_method: { id: env.CLOUDFLARE_IDP_ID } }],
   };
   await cloudflareResult(
     await fetch(policiesUrl, {
@@ -145,8 +214,30 @@ function invitationForm(invite) {
 <button type="submit">Accept invitation</button></form>`);
 }
 
-export async function handleRequest(request, env) {
+export async function handleRequest(request, env, ctx) {
   const url = new URL(request.url);
+  if (url.pathname === "/enroll" && request.method === "GET") {
+    if (!ctx?.access) return jsonResponse("Cloudflare Access authentication required", 403);
+    try {
+      const identity = await ctx.access.getIdentity();
+      const email = String(identity?.email ?? "").trim().toLowerCase();
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.length > 254) {
+        return jsonResponse("Authenticated identity has no valid email", 403);
+      }
+      const added = await enableCloudflareLogin(email, env);
+      console.log(JSON.stringify({ event: "grafana_cloudflare_login_enabled", added }));
+      return htmlResponse(`<h1>Cloudflare account login is ready</h1>
+<p>Your verified email is enrolled. You can use Grafana now; on a future sign-in, choose your Cloudflare account instead of requesting another PIN.</p>
+<a class="button" href="https://stats.t3play.dev/">Open Grafana</a>`);
+    } catch (error) {
+      console.error(JSON.stringify({
+        event: "grafana_cloudflare_login_enable_failed",
+        error: error instanceof Error ? error.message : "unknown error",
+      }));
+      return htmlResponse("<h1>Cloudflare login could not be enabled</h1><p>Ask the administrator to retry.</p>", 403);
+    }
+  }
+
   if (url.pathname !== "/join" || !["GET", "POST"].includes(request.method)) {
     return jsonResponse("Not found", 404);
   }
@@ -186,8 +277,8 @@ export async function handleRequest(request, env) {
   }
 
   return htmlResponse(`<h1>Your invitation is ready</h1>
-<p>Cloudflare may take a few seconds to apply it. Continue once, then enter the single verification code sent to your email.</p>
-<a class="button" href="https://stats.t3play.dev/login">Continue to Grafana</a>`);
+<p>Cloudflare may take a few seconds to apply it. Continue once and enter the single verification code sent to your email. That verified login will also enable your Cloudflare account for future visits.</p>
+<a class="button" href="https://stats.t3play.dev/enroll">Verify email and continue</a>`);
 }
 
 export default { fetch: handleRequest };

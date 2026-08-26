@@ -35,11 +35,13 @@ Done (server side, on the Grafana box `lxso2`):
 - Zero Trust Free is active (50 included seats; usage above the free limits is
   authorized against the account's saved payment method). Cloudflare assigned
   team domain `wandering-violet-a685.cloudflareaccess.com`.
-- One-time PIN login is enabled. The Access app `Grafana` allows enrolled email
-  addresses. The more-specific `stats.t3play.dev/join` path bypasses Access so
-  the invite Worker can validate the expiring token and collect the claimed
-  address without sending a first PIN. The main app then verifies ownership of
-  that address with the only PIN in the flow.
+- One-time PIN and Cloudflare-account login are enabled. New addresses must
+  start at `stats.t3play.dev/join`: the token-gated Worker creates an OTP-only
+  policy, then `/enroll` uses the Access-authenticated identity to add that
+  exact address to the Cloudflare-login policy. A random Cloudflare account
+  cannot self-enroll, and an invited person needs only the first emailed PIN;
+  later visits can use their Cloudflare account. The more-specific `/join`
+  Access app is the only bypass path.
 - Main Org's home dashboard is `T3 perf / Overview` (`t3perf-overview`). Its
   top orientation panel explains what the suite measures, how to use the
   filters, and why each focused dashboard exists. The provisioned source is
@@ -102,14 +104,15 @@ scripts/grafana-share-invite.py --hours 168
 
 The command rotates the previous link and prints the new URL and UTC expiry.
 The URL has the form `https://stats.t3play.dev/join?invite=...`. A visitor
-enters their email in the token-gated Worker form. The Worker enrolls the
-claimed address and shows a continuation page so Cloudflare has time to apply
-the policy. The visitor then continues to the main app and completes one
-emailed One-time PIN. Grafana consumes the signed Cloudflare identity and
-creates their Editor account automatically; there is no Grafana password or
-second Cloudflare login. The bare stats URL does not enroll new people. A link
-can add at most 25 new addresses and enrollment survives link expiry, so rotate
-the link and remove unwanted accounts if it leaks.
+enters their email in the token-gated Worker form. The Worker creates an Access
+policy that requires One-time PIN, then sends the visitor to the protected
+`/enroll` path. After that one PIN verifies the address, the Worker reads the
+signed Access identity and enables Cloudflare-account login for the same exact
+email. Grafana creates an Editor account automatically; it has no separate
+password. On future visits the person may choose Cloudflare or One-time PIN.
+The bare stats URL does not enroll new people. A link can add at most 25 new
+addresses and enrollment survives link expiry, so rotate the link and remove
+unwanted accounts if it leaks.
 
 The Worker source and Wrangler configuration live in
 `ops/grafana-invite-worker`. Its Cloudflare API token, invite token, and expiry
@@ -166,6 +169,9 @@ administrator password remains separately stored under service
 - **Remove access**: run `scripts/grafana-share-users.py remove EMAIL`. Their
   current Access session may remain valid until expiry; revoke it immediately
   from the app's Sessions view when needed.
+- **Login recovery**: if Cloudflare-account login fails, the enrolled address
+  can still use One-time PIN. Do not remove the OTP policy after promotion: it
+  is both the recovery method and the proof that the address was invited.
 - **Rollback sharing entirely**: delete the DNS record and Access app, then
   `sudo cloudflared service uninstall` on the box. Grafana keeps working on
   the LAN.
