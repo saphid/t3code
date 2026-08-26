@@ -88,7 +88,8 @@ class SkeletonHarness(unittest.TestCase):
         (deployed / "phone-watch.py").write_text("stub-watcher\n")
         stream = self.home / ".t3/swiftui-stream"
         stream.mkdir(parents=True)
-        (stream / "watcher-config.json").write_text("{}\n")
+        (stream / "watcher-config.json").write_text(
+            '{"deviceId": "STUB-DEVICE", "teamIdentifier": "STUBTEAM01"}\n')
 
     def run_tool(self, tool, *args):
         env = dict(os.environ)
@@ -141,6 +142,33 @@ class DoctorGuards(SkeletonHarness):
         result = self.run_tool("doctor")
         self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
         self.assertIn("suite FAILED", result.stdout)
+
+    def test_drifted_watcher_is_broken(self):
+        self.make_state_dirs()
+        (self.pkg / "tests" / "test_ok.py").write_text(
+            "import unittest\n"
+            "class T(unittest.TestCase):\n"
+            "    def test_pass(self):\n"
+            "        self.assertTrue(True)\n")
+        deployed = (self.home / ".local/libexec/t3-swiftui-stream"
+                    / "phone-watch.py")
+        deployed.write_text("different-bytes\n")
+        result = self.run_tool("doctor")
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+        self.assertIn("differs from vendored", result.stdout)
+
+    def test_invalid_watcher_config_is_broken(self):
+        self.make_state_dirs()
+        (self.pkg / "tests" / "test_ok.py").write_text(
+            "import unittest\n"
+            "class T(unittest.TestCase):\n"
+            "    def test_pass(self):\n"
+            "        self.assertTrue(True)\n")
+        (self.home / ".t3/swiftui-stream/watcher-config.json").write_text(
+            "{}\n")
+        result = self.run_tool("doctor")
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+        self.assertIn("nonempty deviceId and teamIdentifier", result.stdout)
 
     def test_healthy_skeleton_is_clean(self):
         self.make_state_dirs()

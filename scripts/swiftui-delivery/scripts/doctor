@@ -105,8 +105,15 @@ elif ! cmp -s "$DEPLOYED_WATCHER" "$PKG_DIR/watcher/phone-watch.py"; then
   broken phoneWatcher "deployed watcher differs from vendored source; redeploy watcher/phone-watch.py"
 elif [ ! -f "$HOME/.t3/swiftui-stream/watcher-config.json" ]; then
   broken phoneWatcher "watcher-config.json missing (deviceId/teamIdentifier)"
+elif ! python3 -c "
+import json, sys
+d = json.load(open('$HOME/.t3/swiftui-stream/watcher-config.json'))
+ok = all(isinstance(d.get(k), str) and d.get(k)
+         for k in ('deviceId', 'teamIdentifier'))
+sys.exit(0 if ok else 1)" 2>/dev/null; then
+  broken phoneWatcher "watcher-config.json must set nonempty deviceId and teamIdentifier"
 else
-  ok phoneWatcher "loaded, deployed copy matches vendored source, config present"
+  ok phoneWatcher "loaded, source parity, config valid (device + team pinned)"
 fi
 
 # 9. flowPolicy present so orchestrate can enforce WIP limits.

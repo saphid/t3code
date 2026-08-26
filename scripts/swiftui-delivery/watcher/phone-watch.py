@@ -93,14 +93,16 @@ def installed_build(device: str, bundle: str) -> tuple[str, int | None]:
             value = load(output)
         except (OSError, ValueError):
             return ("query-failed", None)
-    apps = value.get("result", {}).get("apps", [])
-    for app in apps:
-        if app.get("bundleIdentifier") == bundle:
-            try:
+    try:
+        apps = value.get("result", {}).get("apps", [])
+        for app in apps:
+            if app.get("bundleIdentifier") == bundle:
                 return ("installed", int(app.get("bundleVersion")))
-            except (TypeError, ValueError):
-                return ("query-failed", None)
-    return ("not-installed", None)
+        return ("not-installed", None)
+    except (AttributeError, TypeError, ValueError):
+        # Any unexpected JSON shape is a failed query, never an install
+        # authorization.
+        return ("query-failed", None)
 
 
 ALLOWED_BUILD_ROOTS = (
@@ -124,11 +126,17 @@ def valid_pointer(pointer: dict[str, Any], channel_name: str,
         "channel", "build", "sequence", "commit", "bundleId", "appPath",
         "zipPath", "sha256", "deviceId",
     )
-    if pointer.get("schemaVersion") != 1 or any(key not in pointer for key in required):
+    schema = pointer.get("schemaVersion")
+    if isinstance(schema, bool) or schema != 1:
+        return False
+    if any(key not in pointer for key in required):
         return False
     if not all(isinstance(pointer[k], str) for k in
                ("channel", "commit", "bundleId", "appPath", "zipPath",
                 "sha256", "deviceId")):
+        return False
+    if not all(isinstance(pointer[k], int) and not isinstance(pointer[k], bool)
+               for k in ("build", "sequence")):
         return False
     if pointer["channel"] != channel_name:
         return False
@@ -142,7 +150,9 @@ def valid_pointer(pointer: dict[str, Any], channel_name: str,
             and path.parent == archive.parent):
         return False
     expected_team = config.get("teamIdentifier")
-    if expected_team:
+    if not isinstance(expected_team, str) or not expected_team:
+        return False  # The team pin is mandatory; unpinned configs install nothing.
+    if True:
         detail = run("codesign", "-dvv", str(path))
         if ("TeamIdentifier=%s" % expected_team) not in (
                 detail.stderr + detail.stdout):
