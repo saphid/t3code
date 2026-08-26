@@ -1053,6 +1053,10 @@ private struct FeatureTranscriptCollectionView: UIViewRepresentable {
             self.onDismissKeyboard = onDismissKeyboard
 
             let threadChanged = currentThreadID != threadID
+            if threadChanged {
+                timestampReveal.reset()
+                timestampMessageID = nil
+            }
             let imageContextChanged = currentImageContext != imageContext
             if threadChanged {
                 timestampReveal.reset()
