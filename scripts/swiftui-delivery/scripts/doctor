@@ -93,7 +93,14 @@ else
   finding gh "gh unauthenticated; board reads and writes will fail"
 fi
 
-# 8. flowPolicy present so orchestrate can enforce WIP limits.
+# 8. Deterministic phone watcher loaded (continuous Test publication).
+if launchctl print "gui/$(id -u)/com.saphid.t3-swiftui-phone-watch" > /dev/null 2>&1; then
+  ok phoneWatcher "com.saphid.t3-swiftui-phone-watch loaded"
+else
+  finding phoneWatcher "watcher not loaded; run: launchctl bootstrap gui/\$(id -u) ~/Library/LaunchAgents/com.saphid.t3-swiftui-phone-watch.plist"
+fi
+
+# 9. flowPolicy present so orchestrate can enforce WIP limits.
 if python3 -c "
 import json,sys
 sys.exit(0 if 'flowPolicy' in json.load(open('$CONTRACT')) else 1)" 2>/dev/null; then

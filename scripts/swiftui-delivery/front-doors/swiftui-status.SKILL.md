@@ -18,9 +18,10 @@ description: Show the exact state of the T3 SwiftUI delivery pipeline - every OP
    station occupancy against `flowPolicy` WIP limits; buffer depths; backlog
    floor state; and DRIFT rows (label/block disagreement or legacy issues
    without a work-item block).
-3. Report to Alex, ordered by what needs him: phone-test items first (his
-   acceptance verdicts), then proof-ready items (awaiting a phone slot),
-   then holds, then station/backlog health, then
+3. Report to Alex, ordered by what needs him: phone-test items first
+   (installed ON his phone, awaiting his acceptance verdict), then
+   proof-ready items (simulator-proven, awaiting the next automatic Test
+   generation - NOT on the phone), then holds, then station/backlog health, then
    drift worth fixing. Do not mutate anything from this skill.
 4. Optionally run `scripts/swiftui-delivery/scripts/doctor` for package
    health when something looks wrong.

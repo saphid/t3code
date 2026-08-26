@@ -161,5 +161,18 @@
   "upstreamContributingGuide": "CONTRIBUTING_VOUCHED.md",
   "phoneAcceptanceActors": [
     "Alex"
-  ]
+  ],
+  "testPublication": {
+    "mode": "continuous",
+    "standingAuthorization": "Alex, 2026-08-26: Test builds for the phone are generated, published, and pushed automatically. As soon as proof-ready work exists that is not in the latest published Test generation, build a new combined Test generation and publish it. No human or agent approval is required for Test generation, publication, or phone installation. Phone ACCEPTANCE verdicts remain Alex's alone.",
+    "immutableBuilds": "Every generation gets its own build directory under buildStore; previous builds are never overwritten or deleted by publication. The ready pointer is replaced atomically only after the new artifact is complete and hash-verified, so the phone always installs the newest complete build even if a newer one is mid-generation.",
+    "readyPointerRoot": "~/.t3/swiftui-stream/ready",
+    "watcher": {
+      "label": "com.saphid.t3-swiftui-phone-watch",
+      "script": "~/.local/libexec/t3-swiftui-stream/phone-watch.py",
+      "vendoredSource": "scripts/swiftui-delivery/watcher/phone-watch.py",
+      "config": "~/.t3/swiftui-stream/watcher-config.json",
+      "behavior": "Deterministic, no LLM. Every 60s: verify pointer artifact (sha256, codesign, Info.plist identity), compare installed CFBundleVersion via devicectl, install when the phone is reachable and older, never downgrade, launch, write a device receipt; notify once per build when the phone is locked or absent."
+    }
+  }
 }

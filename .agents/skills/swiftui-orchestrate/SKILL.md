@@ -82,6 +82,18 @@ This command reads and validates every referenced media manifest and every
 capture review. Only then hand the exact plan to `$swiftui-deliver`. No phone
 queue, build, or install begins in this skill.
 
+## Continuous Test publication duty
+
+At every pass, compare the proof-ready set against the latest published
+Test generation receipt. If any proof-ready item is missing, IMMEDIATELY
+prepare and validate a combined `publish-test` plan (disjointness + full
+carry set) and dispatch `$swiftui-deliver` to build and publish it. Do not
+wait for Alex or ask permission - Test publication runs under the standing
+authorization in contract `testPublication`. If a further item becomes
+proof-ready while a build is in flight, queue the next generation behind
+it; never cancel or overwrite a published build. Alex's verdicts are only
+ever required at `phone-test -> accepted`.
+
 ## Backlog and WIP duty
 
 Enforce `flowPolicy` from the contract at every pass. Keep active

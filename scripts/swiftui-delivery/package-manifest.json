@@ -71,7 +71,9 @@
     "scripts/swiftui-delivery/references/CONTRIBUTING_VOUCHED.md",
     "scripts/swiftui-delivery/front-doors/swiftui-orchestrate.SKILL.md",
     "scripts/swiftui-delivery/front-doors/file-swiftui-lane-issue.SKILL.md",
-    "scripts/swiftui-delivery/front-doors/swiftui-status.SKILL.md"
+    "scripts/swiftui-delivery/front-doors/swiftui-status.SKILL.md",
+    "scripts/swiftui-delivery/watcher/phone-watch.py",
+    "scripts/swiftui-delivery/watcher/com.saphid.t3-swiftui-phone-watch.plist"
   ],
   "auditedDocuments": [
     "docs/operations/swiftui-delivery-clean-cutover.md",

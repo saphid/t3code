@@ -31,8 +31,17 @@ copied or edited here.
 6. **proof-ready**: a visual agent review covers every capture and explicitly
    checks intended behavior and unintended side effects. The work item binds
    exact proof and inspection hashes.
-7. **phone-test**: only an explicitly authorized, fully validated generation
-   plan may be built and installed. A Test plan contains at least one newly
+7. **phone-test**: Test publication is CONTINUOUS under Alex's standing
+   authorization (contract `testPublication`, 2026-08-26): whenever the
+   proof-ready set is not fully contained in the latest published Test
+   generation, the coordinator immediately prepares and validates a new
+   combined generation plan and dispatches the build - no per-batch human
+   or agent approval. Each generation is built into its own immutable
+   build directory (previous builds are never overwritten); after the
+   artifact is complete and hash-verified, the ready pointer is replaced
+   atomically and the deterministic phone watcher installs it as soon as
+   the phone is reachable, never downgrading. Plan validation remains
+   fully mechanical: A Test plan contains at least one newly
    proved `candidate`. It also carries forward every issue in the prior
    installed Test-generation receipt as `installed-carry`, except issues that
    the new candidate replaces. If no prior receipt exists, the plan records a
@@ -44,7 +53,11 @@ reopens it, rejects missing or duplicate issues and cycles, requires each plan
 work item to match its catalog entry exactly, and checks every dependency's
 observed stage against `satisfiedAt`. An unrelated issue outside the closure
 does not enter the catalog and cannot create a global hold.
-8. **accepted**: Alex explicitly accepts phone behavior.
+8. **accepted**: Alex explicitly accepts phone behavior. Acceptance is
+   the ONLY human gate in the phone lane; installation is automatic.
+   Stage vocabulary for reports: proof-ready means simulator-proven and
+   awaiting the next Test generation - NOT on the phone; phone-test means
+   installed on the phone awaiting Alex's verdict.
 9. **pr-open / landed**: a separate grant authorizes PR/push work; babysitting
    verifies current-head checks and review feedback. `accepted -> pr-open`
    additionally requires the vouched contributor handoff standard

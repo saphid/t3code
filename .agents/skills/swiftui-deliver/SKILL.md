@@ -87,3 +87,20 @@ checklist must pass and be recorded in the open-pr generation receipt as
 `vouchedHandoffChecklist: pass` with stated gaps. Authoritative source: the vendored
 `../../../scripts/swiftui-delivery/references/CONTRIBUTING_VOUCHED.md`
 (prefer the product repository root copy once it lands upstream).
+
+
+## Continuous Test publication (standing authorization)
+
+`publish-test` requires NO per-batch human or agent approval - it runs
+under contract `testPublication.standingAuthorization` (Alex, 2026-08-26).
+Build each generation into its own new directory under the contract
+`buildStore`; never modify or delete a previous generation's directory.
+After the archive is complete: zip it, record its sha256, and only then
+atomically replace `~/.t3/swiftui-stream/ready/test.json` (schemaVersion 1
+pointer: channel, build, sequence, commit, bundleId, appPath, zipPath,
+sha256, deviceId) via a same-directory temp-file rename. The deterministic
+LaunchAgent `com.saphid.t3-swiftui-phone-watch` installs the pointer target
+whenever the phone is reachable and never downgrades, so an in-flight newer
+generation never blocks the phone from getting the newest COMPLETE build.
+Phone installation is not this skill's job and needs no lease beyond the
+build itself.
