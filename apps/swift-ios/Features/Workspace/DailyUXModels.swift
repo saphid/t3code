@@ -661,11 +661,14 @@ struct DailyUXSidebarIndex {
         snapshot: FeatureSnapshot,
         query: String,
         projectID: String? = nil,
+        environmentID: String? = nil,
         now: Date = .now
     ) {
+        let ownership = HomeEnvironmentFilter.Ownership(projects: snapshot.projects)
         let visible = snapshot.threads.filter { thread in
             guard !thread.isArchived else { return false }
-            return projectID == nil || thread.projectID == projectID
+            guard projectID == nil || thread.projectID == projectID else { return false }
+            return ownership.includes(thread, in: environmentID)
         }
         let available = visible.filter { !$0.isEffectivelySnoozed(at: now) }
 

@@ -28,6 +28,7 @@ public struct WorkspaceView: View {
 
     @State private var selectedThreadID: String?
     @State private var selectedProjectID: String?
+    @State private var selectedEnvironmentID: String?
     @State private var searchText = ""
     @State private var isSearching = false
     @AppStorage("t3.swiftui.home.snoozedExpanded") private var isSnoozedExpanded = false
@@ -225,6 +226,12 @@ public struct WorkspaceView: View {
         .onChange(of: selectedProjectIsAvailable) { _, isAvailable in
             if !isAvailable { selectedProjectID = nil }
         }
+        .onChange(of: model.snapshot.environments.map(\.id), initial: true) {
+            reconcileEnvironmentSelection()
+        }
+        .onChange(of: HomeEnvironmentFilter.projectIdentities(model.snapshot.projects)) {
+            reconcileEnvironmentSelection()
+        }
         .onChange(of: navigationRequest?.id, initial: true) { _, _ in
             consumeNavigationRequest()
         }
@@ -273,6 +280,7 @@ public struct WorkspaceView: View {
             revision: model.homePresentationRevision,
             query: searchText,
             projectID: selectedProjectID,
+            environmentID: selectedEnvironmentID,
             now: sidebarBoundaryNow
         )
 
@@ -537,6 +545,56 @@ public struct WorkspaceView: View {
         HStack(spacing: 0) {
             Menu {
                 Button {
+                    selectEnvironment(nil)
+                } label: {
+                    if selectedEnvironmentID == nil {
+                        Label("All environments", systemImage: "checkmark")
+                    } else {
+                        Text("All environments")
+                    }
+                }
+                ForEach(model.snapshot.environments) { environment in
+                    Button {
+                        selectEnvironment(environment.id)
+                    } label: {
+                        let title = environmentLabels[environment.id] ?? environment.name
+                        if selectedEnvironmentID == environment.id {
+                            Label(title, systemImage: "checkmark")
+                        } else {
+                            Text(title)
+                        }
+                    }
+                }
+            } label: {
+                HStack(spacing: 7) {
+                    Image(systemName: "network")
+                        .font(.system(size: 13, weight: .medium))
+                    Text(selectedEnvironmentLabel)
+                        .lineLimit(1)
+                    Image(systemName: "chevron.down")
+                        .font(.system(size: 8, weight: .bold))
+                }
+                .font(T3Typography.homeMetadata.weight(.semibold))
+                .foregroundStyle(T3Colors.textSecondary)
+                .frame(
+                    maxWidth: .infinity,
+                    minHeight: T3Metrics.minimumTapTarget,
+                    alignment: .leading
+                )
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Environment filter")
+            .accessibilityValue(selectedEnvironmentLabel)
+            .accessibilityIdentifier("sidebar-environment-filter")
+
+            Divider()
+                .frame(height: 20)
+                .overlay(T3Colors.border)
+                .padding(.horizontal, 8)
+
+            Menu {
+                Button {
                     selectedProjectID = nil
                 } label: {
                     if selectedProjectID == nil {
@@ -545,9 +603,9 @@ public struct WorkspaceView: View {
                         Text("All projects")
                     }
                 }
-                ForEach(model.snapshot.projects) { project in
+                ForEach(availableProjects) { project in
                     Button {
-                        selectedProjectID = project.id
+                        selectProject(project.id, targetEnvironmentID: project.environmentID)
                     } label: {
                         let title = projectMenuTitle(project)
                         if selectedProjectID == project.id {
@@ -565,10 +623,14 @@ public struct WorkspaceView: View {
                         .lineLimit(1)
                     Image(systemName: "chevron.down")
                         .font(.system(size: 8, weight: .bold))
-            }
-            .font(T3Typography.homeMetadata.weight(.semibold))
+                }
+                .font(T3Typography.homeMetadata.weight(.semibold))
                 .foregroundStyle(T3Colors.textSecondary)
-            .frame(maxWidth: .infinity, minHeight: 40, alignment: .leading)
+                .frame(
+                    maxWidth: .infinity,
+                    minHeight: T3Metrics.minimumTapTarget,
+                    alignment: .leading
+                )
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
@@ -592,7 +654,29 @@ public struct WorkspaceView: View {
     }
 
     private var selectedProject: FeatureProject? {
-        model.snapshot.projects.first { $0.id == selectedProjectID }
+        HomeEnvironmentFilter.project(
+            id: selectedProjectID,
+            environmentID: selectedEnvironmentID,
+            projects: model.snapshot.projects
+        )
+    }
+
+    private var selectedEnvironment: FeatureEnvironment? {
+        model.snapshot.environments.first { $0.id == selectedEnvironmentID }
+    }
+
+    private var environmentLabels: [String: String] {
+        HomeEnvironmentFilter.labels(for: model.snapshot.environments)
+    }
+
+    private var selectedEnvironmentLabel: String {
+        guard let selectedEnvironment else { return "All environments" }
+        return environmentLabels[selectedEnvironment.id] ?? selectedEnvironment.name
+    }
+
+    private var availableProjects: [FeatureProject] {
+        guard let selectedEnvironmentID else { return model.snapshot.projects }
+        return model.snapshot.projects.filter { $0.environmentID == selectedEnvironmentID }
     }
 
     private var creationProjects: [FeatureProject] {
@@ -633,7 +717,47 @@ public struct WorkspaceView: View {
 
     private var selectedProjectIsAvailable: Bool {
         guard let selectedProjectID else { return true }
-        return model.snapshot.projects.contains { $0.id == selectedProjectID }
+        return availableProjects.contains { $0.id == selectedProjectID }
+    }
+
+    private func selectEnvironment(_ id: String?) {
+        applySelection(
+            HomeEnvironmentFilter.Selection(
+                environmentID: selectedEnvironmentID,
+                projectID: selectedProjectID
+            ).selectingEnvironment(id, projects: model.snapshot.projects)
+        )
+        settledLimit = 12
+    }
+
+    private func selectProject(_ id: String, targetEnvironmentID: String? = nil) {
+        applySelection(
+            HomeEnvironmentFilter.Selection(
+                environmentID: selectedEnvironmentID,
+                projectID: selectedProjectID
+            ).selectingProject(
+                id,
+                targetEnvironmentID: targetEnvironmentID,
+                projects: model.snapshot.projects
+            )
+        )
+    }
+
+    private func reconcileEnvironmentSelection() {
+        applySelection(
+            HomeEnvironmentFilter.Selection(
+                environmentID: selectedEnvironmentID,
+                projectID: selectedProjectID
+            ).reconciled(
+                environments: model.snapshot.environments,
+                projects: model.snapshot.projects
+            )
+        )
+    }
+
+    private func applySelection(_ selection: HomeEnvironmentFilter.Selection) {
+        selectedEnvironmentID = selection.environmentID
+        selectedProjectID = selection.projectID
     }
 
     private func openThread(_ id: String) {
@@ -662,7 +786,7 @@ public struct WorkspaceView: View {
         case let .thread(id, _, _):
             openThread(id)
         case let .project(id, _):
-            selectedProjectID = id
+            selectProject(id)
             closeSelectedThread()
         case .action(.allProjects):
             selectedProjectID = nil
@@ -705,12 +829,12 @@ public struct WorkspaceView: View {
         case let .project(id):
             guard model.snapshot.projects.contains(where: { $0.id == id }) else { return }
             dismissTransientPresentations()
-            selectedProjectID = id
+            selectProject(id)
             closeSelectedThread()
         case let .newTask(projectID):
             if let projectID,
                model.snapshot.projects.contains(where: { $0.id == projectID }) {
-                selectedProjectID = projectID
+                selectProject(projectID)
             }
             dismissTransientPresentations()
             Task { @MainActor in
@@ -756,16 +880,26 @@ struct HomePresentation {
     let searchResults: [FeatureThread]
     let rowContexts: [String: HomeThreadRowContext]
 
-    init(snapshot: FeatureSnapshot, query: String, projectID: String?, now: Date) {
+    init(
+        snapshot: FeatureSnapshot,
+        query: String,
+        projectID: String?,
+        environmentID: String? = nil,
+        now: Date
+    ) {
+        let ownership = HomeEnvironmentFilter.Ownership(projects: snapshot.projects)
         let index = DailyUXSidebarIndex(
             snapshot: snapshot,
             query: "",
             projectID: projectID,
+            environmentID: environmentID,
             now: now
         )
         let archived = snapshot.threads
             .filter { thread in
-                thread.isArchived && (projectID == nil || thread.projectID == projectID)
+                thread.isArchived
+                    && (projectID == nil || thread.projectID == projectID)
+                    && ownership.includes(thread, in: environmentID)
             }
             .sorted {
                 if $0.updatedAt != $1.updatedAt { return $0.updatedAt > $1.updatedAt }
@@ -795,6 +929,7 @@ private final class HomePresentationCache {
         let revision: UInt64
         let query: String
         let projectID: String?
+        let environmentID: String?
         let now: Date
     }
 
@@ -806,12 +941,14 @@ private final class HomePresentationCache {
         revision: UInt64,
         query: String,
         projectID: String?,
+        environmentID: String?,
         now: Date
     ) -> HomePresentation {
         let key = Key(
             revision: revision,
             query: query,
             projectID: projectID,
+            environmentID: environmentID,
             now: now
         )
         if cachedKey == key, let cachedPresentation {
@@ -822,6 +959,7 @@ private final class HomePresentationCache {
             snapshot: snapshot,
             query: query,
             projectID: projectID,
+            environmentID: environmentID,
             now: now
         )
         cachedKey = key

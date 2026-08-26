@@ -306,6 +306,81 @@ struct DailyUXSidebarTests {
     }
 
     @Test
+    func environmentFilterScopesThreadsAndAllEnvironmentsRestoresThem() {
+        let localProject = FeatureProject(
+            id: "local-project",
+            environmentID: "local",
+            name: "Mobile",
+            path: "/work/mobile"
+        )
+        let remoteProject = FeatureProject(
+            id: "remote-project",
+            environmentID: "remote",
+            name: "Server",
+            path: "/work/server"
+        )
+        let local = FeatureThread(
+            id: "local-thread",
+            projectID: localProject.id,
+            environmentID: "local",
+            title: "Local task",
+            createdAt: now.addingTimeInterval(-10),
+            updatedAt: now.addingTimeInterval(-5)
+        )
+        let remote = FeatureThread(
+            id: "remote-thread",
+            projectID: remoteProject.id,
+            environmentID: "remote",
+            title: "Remote task",
+            createdAt: now.addingTimeInterval(-20),
+            updatedAt: now.addingTimeInterval(-5)
+        )
+        let snapshot = FeatureSnapshot(
+            projects: [localProject, remoteProject],
+            threads: [local, remote]
+        )
+
+        let filtered = DailyUXSidebarIndex(
+            snapshot: snapshot,
+            query: "",
+            environmentID: "remote",
+            now: now
+        )
+        let restored = DailyUXSidebarIndex(snapshot: snapshot, query: "", now: now)
+
+        #expect(filtered.active.map(\.id) == ["remote-thread"])
+        #expect(restored.active.map(\.id) == ["local-thread", "remote-thread"])
+    }
+
+    @Test
+    func environmentFilterFallsBackToTheOwningProjectForLegacyThreads() {
+        let project = FeatureProject(
+            id: "remote-project",
+            environmentID: "remote",
+            name: "Server",
+            path: "/work/server"
+        )
+        let legacy = FeatureThread(
+            id: "legacy-thread",
+            projectID: project.id,
+            environmentID: nil,
+            title: "Legacy task",
+            createdAt: now.addingTimeInterval(-10),
+            updatedAt: now.addingTimeInterval(-5)
+        )
+        let snapshot = FeatureSnapshot(projects: [project], threads: [legacy])
+
+        let filtered = DailyUXSidebarIndex(
+            snapshot: snapshot,
+            query: "",
+            environmentID: "remote",
+            now: now
+        )
+
+        #expect(filtered.active.map(\.id) == ["legacy-thread"])
+    }
+
+    @Test
     func searchHandlesScopedClonesAndLegacyDuplicateProjectIDs() {
         let localProjectID = FeatureScopedID.project(
             environmentID: "local",
