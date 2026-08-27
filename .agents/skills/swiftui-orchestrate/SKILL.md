@@ -82,6 +82,16 @@ This command reads and validates every referenced media manifest and every
 capture review. Only then hand the exact plan to `$swiftui-deliver`. No phone
 queue, build, or install begins in this skill.
 
+## Station saturation duty (first at every pass)
+
+Verify worker LIVENESS before anything else: every active work item must
+have a running worker turn - an existing thread with no running turn is a
+stalled lane; wake it with thread.turn.start or redispatch. Fill every
+implementation slot from queued work. Process work (compliance sweeps, PR
+programs, UAT administration) never preempts keeping feature lanes hot,
+and a single new proof-ready item triggers the next Test generation
+immediately - never batch-wait, never wait for verdicts.
+
 ## Continuous Test publication duty
 
 At every pass, compare the proof-ready set against the latest published
