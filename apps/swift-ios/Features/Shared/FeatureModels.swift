@@ -831,8 +831,30 @@ public enum FeatureAppearance: String, CaseIterable, Sendable, Codable {
     case dark
 }
 
+public struct FeatureTextSizeAdjustment: Sendable, Equatable, Hashable, Codable {
+    public static let range = -2...3
+    public static let standard = FeatureTextSizeAdjustment(steps: 0)
+
+    public let steps: Int
+
+    public init(steps: Int) {
+        self.steps = min(Self.range.upperBound, max(Self.range.lowerBound, steps))
+    }
+
+    public init(from decoder: any Decoder) throws {
+        try self.init(steps: decoder.singleValueContainer().decode(Int.self))
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var container = encoder.singleValueContainer()
+        try container.encode(steps)
+    }
+}
+
 public struct FeatureSettings: Sendable, Equatable, Codable {
     public var appearance: FeatureAppearance
+    public var textSize: FeatureTextSizeAdjustment
+    public var codeSize: FeatureTextSizeAdjustment
     public var hapticsEnabled: Bool
     public var notificationsEnabled: Bool
     public var liveActivitiesEnabled: Bool
@@ -840,12 +862,16 @@ public struct FeatureSettings: Sendable, Equatable, Codable {
 
     public init(
         appearance: FeatureAppearance = .system,
+        textSize: FeatureTextSizeAdjustment = .standard,
+        codeSize: FeatureTextSizeAdjustment = .standard,
         hapticsEnabled: Bool = true,
         notificationsEnabled: Bool = true,
         liveActivitiesEnabled: Bool = true,
         defaultSelection: FeatureSelection? = nil
     ) {
         self.appearance = appearance
+        self.textSize = textSize
+        self.codeSize = codeSize
         self.hapticsEnabled = hapticsEnabled
         self.notificationsEnabled = notificationsEnabled
         self.liveActivitiesEnabled = liveActivitiesEnabled
@@ -854,6 +880,8 @@ public struct FeatureSettings: Sendable, Equatable, Codable {
 
     private enum CodingKeys: String, CodingKey {
         case appearance
+        case textSize
+        case codeSize
         case hapticsEnabled
         case notificationsEnabled
         case liveActivitiesEnabled
@@ -866,6 +894,14 @@ public struct FeatureSettings: Sendable, Equatable, Codable {
             FeatureAppearance.self,
             forKey: .appearance
         ) ?? .system
+        textSize = try container.decodeIfPresent(
+            FeatureTextSizeAdjustment.self,
+            forKey: .textSize
+        ) ?? .standard
+        codeSize = try container.decodeIfPresent(
+            FeatureTextSizeAdjustment.self,
+            forKey: .codeSize
+        ) ?? .standard
         hapticsEnabled = try container.decodeIfPresent(
             Bool.self,
             forKey: .hapticsEnabled
@@ -887,6 +923,8 @@ public struct FeatureSettings: Sendable, Equatable, Codable {
     public func encode(to encoder: any Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
         try container.encode(appearance, forKey: .appearance)
+        try container.encode(textSize, forKey: .textSize)
+        try container.encode(codeSize, forKey: .codeSize)
         try container.encode(hapticsEnabled, forKey: .hapticsEnabled)
         try container.encode(notificationsEnabled, forKey: .notificationsEnabled)
         try container.encode(liveActivitiesEnabled, forKey: .liveActivitiesEnabled)
