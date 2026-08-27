@@ -69,7 +69,84 @@ function manifest(cells: ReadonlyArray<ManifestCell>) {
   };
 }
 
+function desktopManifest(cells: ReadonlyArray<ManifestCell>) {
+  const input = manifest(cells);
+  const envelope = {
+    ...input,
+    manifestId: "core-desktop-v1",
+    suiteRevision: "core-desktop-v1",
+    browserEngine: "electron",
+    browserVersion: "packaged-nightly",
+    surface: "desktop",
+    rendererBackend: "chromium_swiftshader",
+  };
+  const expectedProvenance = {
+    ...input.expectedProvenance,
+    browser_engine: envelope.browserEngine,
+    browser_version: envelope.browserVersion,
+    surface: envelope.surface,
+    suite_revision: envelope.suiteRevision,
+  };
+  const manifestEnvelope = Object.fromEntries(
+    Object.entries(envelope).filter(
+      ([key]) => key !== "manifestHash" && key !== "expectedProvenance",
+    ),
+  );
+  const manifestHash = canonicalHash(manifestEnvelope);
+  return {
+    ...envelope,
+    manifestHash,
+    expectedProvenance: { ...expectedProvenance, manifest_hash: manifestHash },
+  };
+}
+
 describe("manifest-v1 adapter", () => {
+  it("runs a packaged Electron cell as a distinct desktop surface", async () => {
+    const output = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "manifest-desktop-"));
+    const cells = [
+      {
+        scenario_id: "preview-pip-frames",
+        surface: "desktop",
+        size: "small",
+        network_profile: "good",
+      },
+    ] as const;
+    const input = desktopManifest(cells);
+    const seen: Array<ManifestCell> = [];
+    const exitCode = await runManifest(input, output, {
+      now: () => "2026-08-27T00:00:00.000Z",
+      runCell: (cell) => {
+        seen.push(cell);
+        return Promise.resolve([
+          { wallMs: 1 },
+          { wallMs: 2 },
+          { wallMs: 3 },
+          { wallMs: 4 },
+          { wallMs: 5 },
+        ]);
+      },
+    });
+
+    expect(exitCode).toBe(0);
+    expect(seen).toEqual(cells);
+    const result = JSON.parse(await NodeFSP.readFile(NodePath.join(output, "result.json"), "utf8"));
+    expect(result.provenance).toEqual(input.expectedProvenance);
+    expect(result.cells[0].cell.surface).toBe("desktop");
+  });
+
+  it("rejects network shaping for Electron cells", async () => {
+    const output = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "manifest-desktop-net-"));
+    const input = desktopManifest([
+      {
+        scenario_id: "startup",
+        surface: "desktop",
+        size: "small",
+        network_profile: "flaky",
+      },
+    ]);
+    await expect(runManifest(input, output)).rejects.toThrow("unsupported cell");
+  });
+
   it("runs cells in order, preserves their identity, and atomically publishes progress and results", async () => {
     const output = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "manifest-v1-"));
     await NodeFSP.writeFile(NodePath.join(output, "progress.json"), "stale progress");

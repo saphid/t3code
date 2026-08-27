@@ -163,7 +163,15 @@ function validate(input: unknown): ManifestInput {
   if (!/^sha256:[0-9a-f]{64}$/.test(String(document["contractFingerprint"]))) {
     throw new Error("contractFingerprint must be a sha256 fingerprint");
   }
-  if (document["surface"] !== "web") throw new Error("manifest-v1 image only supports web");
+  if (document["surface"] !== "web" && document["surface"] !== "desktop") {
+    throw new Error("manifest image supports only web and desktop");
+  }
+  if (
+    (document["surface"] === "web" && document["browserEngine"] !== "chromium") ||
+    (document["surface"] === "desktop" && document["browserEngine"] !== "electron")
+  ) {
+    throw new Error("manifest browser engine does not match its surface");
+  }
   if (document["tier"] !== "required" && document["tier"] !== "optional") {
     throw new Error("unsupported manifest tier");
   }
@@ -319,7 +327,13 @@ function defaultDependencies(): AdapterDependencies {
         },
         (line) => console.log(line),
       );
-      return result.runs;
+      const artifactSha512 = process.env["T3_PERF_DESKTOP_SHA512"];
+      return result.runs.map((sample) => ({
+        ...sample,
+        ...(cell.surface === "desktop" && artifactSha512 !== undefined
+          ? { desktopArtifactSha512: artifactSha512 }
+          : {}),
+      }));
     },
   };
 }

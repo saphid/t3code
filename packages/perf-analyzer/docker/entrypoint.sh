@@ -1,6 +1,6 @@
 #!/bin/bash
 # Container entrypoint: npm-installs the requested t3 release, then execs the
-# perf CLI headless on the web surface (the only surface a container has).
+# perf CLI against either the web build or the packaged Linux Electron app.
 #
 # Env knobs:
 #   T3_VERSION  npm version or dist-tag of the t3 package (default: nightly)
@@ -11,7 +11,7 @@
 #   BUILD       build id for the per-build dashboard axis (default: the
 #               resolved t3 version, so nightlies chart as themselves)
 #
-# `--manifest PATH` selects the isolated manifest-v1 adapter. Every other
+# `--manifest PATH` selects the isolated manifest-v2 adapter. Every other
 # argument remains on the legacy CLI path unchanged.
 set -euo pipefail
 
@@ -31,6 +31,17 @@ export T3_PERF_CHROME_ARGS="${T3_PERF_CHROME_ARGS:---no-sandbox --disable-dev-sh
 
 if [ "${1:-}" = "--manifest" ]; then
   [ "$#" -eq 2 ] || { echo "manifest mode requires exactly --manifest PATH" >&2; exit 2; }
+  surface="$(node -e 'const m=require(process.argv[1]); process.stdout.write(String(m.surface))' "$2")"
+  if [ "$surface" = "desktop" ]; then
+    desktop_path="/tmp/T3-Code-${resolved}-x86_64.AppImage"
+    export T3_PERF_DESKTOP_SHA512
+    T3_PERF_DESKTOP_SHA512="$(node /harness/src/desktopArtifact.ts --version "$resolved" --out "$desktop_path")"
+    export T3_PERF_DESKTOP_BIN="$desktop_path"
+    export APPIMAGE_EXTRACT_AND_RUN=1
+    exec xvfb-run -a -s "-screen 0 1440x900x24 -nolisten tcp" \
+      node /harness/src/manifestAdapter.ts --manifest "$2" --out /results
+  fi
+  [ "$surface" = "web" ] || { echo "unsupported manifest surface: $surface" >&2; exit 78; }
   exec node /harness/src/manifestAdapter.ts --manifest "$2" --out /results
 fi
 

@@ -7,13 +7,16 @@
 # which the fixture seeder shells out to.
 FROM node:24-bookworm@sha256:934240a162082fd8b8a2f90cd5114446443f1eba1c5378f6687167ca405e6584
 
-LABEL codes.t3.perf.harness-contract="manifest-v1"
+LABEL codes.t3.perf.harness-contract="manifest-v2"
 
 # Chromium pinned to the playwright release matching the harness's
 # playwright-core; --with-deps installs the system libraries headless
 # Chromium needs on Debian.
 ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 RUN npx -y playwright@1.60.0 install --with-deps chromium && rm -rf /root/.npm
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends dumb-init libgtk-3-0 xauth \
+  && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /harness
 # The repo package.json uses workspace "catalog:" versions that plain npm
@@ -27,4 +30,4 @@ RUN chmod +x /entrypoint.sh
 
 # Result JSON + markdown land here; mount a host directory.
 VOLUME /results
-ENTRYPOINT ["/entrypoint.sh"]
+ENTRYPOINT ["/usr/bin/dumb-init", "--", "/entrypoint.sh"]

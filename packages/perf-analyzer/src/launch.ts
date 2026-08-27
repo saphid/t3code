@@ -16,8 +16,13 @@ const packageDir = NodePath.resolve(NodePath.dirname(NodeURL.fileURLToPath(impor
 const repoRoot = NodePath.resolve(packageDir, "..", "..");
 // T3_PERF_SERVER_BIN points the web surface at any t3 server entry (e.g. an
 // npm-installed release's dist/bin.mjs) instead of this repo's build.
-const serverBin = process.env["T3_PERF_SERVER_BIN"] ?? NodePath.join(repoRoot, "apps/server/dist/bin.mjs");
+const serverBin =
+  process.env["T3_PERF_SERVER_BIN"] ?? NodePath.join(repoRoot, "apps/server/dist/bin.mjs");
 const desktopDir = NodePath.join(repoRoot, "apps/desktop");
+// T3_PERF_DESKTOP_BIN points desktop runs at the packaged Linux AppImage for
+// the exact release under test. Without it, local development keeps using the
+// repository build through the desktop launcher.
+const packagedDesktopBin = process.env["T3_PERF_DESKTOP_BIN"];
 // T3_PERF_CHROME points at a Chromium binary on machines without installed
 // Chrome (Linux servers); default is the local Chrome channel.
 const chromeExecutable = process.env["T3_PERF_CHROME"];
@@ -126,7 +131,14 @@ async function spawnServer(input: {
   /** Extra origins (the relay's) the server should accept. */
   readonly allowedOrigins?: ReadonlyArray<string>;
 }): Promise<SpawnedServer> {
-  const args = [serverBin, "--base-dir", input.homeDir, "--port", String(input.port), "--no-browser"];
+  const args = [
+    serverBin,
+    "--base-dir",
+    input.homeDir,
+    "--port",
+    String(input.port),
+    "--no-browser",
+  ];
   const child = NodeChildProcess.spawn(process.execPath, args, {
     cwd: repoRoot,
     env: {
@@ -141,7 +153,11 @@ async function spawnServer(input: {
   let output = "";
   const pairingUrl = await new Promise<string>((resolve, reject) => {
     const timer = setTimeout(() => {
-      reject(new Error(`Server did not print a pairing URL within 60s. Output so far:\n${output.slice(-4000)}`));
+      reject(
+        new Error(
+          `Server did not print a pairing URL within 60s. Output so far:\n${output.slice(-4000)}`,
+        ),
+      );
     }, 60_000);
     timer.unref();
     const scan = (chunk: Buffer) => {
@@ -156,7 +172,11 @@ async function spawnServer(input: {
     child.stderr?.on("data", scan);
     child.once("exit", (code) => {
       clearTimeout(timer);
-      reject(new Error(`Server exited with code ${code} before printing a pairing URL:\n${output.slice(-4000)}`));
+      reject(
+        new Error(
+          `Server exited with code ${code} before printing a pairing URL:\n${output.slice(-4000)}`,
+        ),
+      );
     });
   });
   return { child, pairingUrl, port: input.port };
@@ -269,10 +289,7 @@ export async function launchEnv(options: LaunchOptions): Promise<LaunchedEnv> {
         port: serverPort,
         ...(shaper !== null
           ? {
-              allowedOrigins: [
-                `http://127.0.0.1:${clientPort}`,
-                `http://localhost:${clientPort}`,
-              ],
+              allowedOrigins: [`http://127.0.0.1:${clientPort}`, `http://localhost:${clientPort}`],
             }
           : {}),
       });
@@ -305,10 +322,7 @@ export async function launchEnv(options: LaunchOptions): Promise<LaunchedEnv> {
         const second = await spawnServer({
           homeDir: secondHomeDir,
           port: await findFreePort(),
-          allowedOrigins: [
-            `http://127.0.0.1:${clientPort}`,
-            `http://localhost:${clientPort}`,
-          ],
+          allowedOrigins: [`http://127.0.0.1:${clientPort}`, `http://localhost:${clientPort}`],
         });
         cleanups.push(async () => {
           second.child.kill("SIGTERM");
@@ -398,93 +412,103 @@ async function launchDesktop(
   cleanups: Array<() => Promise<void>>,
   close: () => Promise<void>,
 ): Promise<LaunchedEnv> {
-    // The terminal scenario opens a real PTY, and desktop points HOME at the
-    // throwaway dir; an empty .zshrc keeps a zsh with no startup files from
-    // running zsh-newuser-install into the measured terminal.
-    await NodeFSP.writeFile(NodePath.join(homeDir, ".zshrc"), "");
-    // The repo's launcher prepares the app bundle the way the desktop's own
-    // scripts do - a raw Electron binary launch fails scheme registration.
-    const { resolveElectronLaunchCommand } = (await import(
-      NodePath.join(desktopDir, "scripts/electron-launcher.mjs")
-    )) as { resolveElectronLaunchCommand: (args: Array<string>) => { electronPath: string; args: Array<string> } };
-    // --use-mock-keychain: with HOME pointed at the throwaway dir the login
-    // keychain is invisible, and without this switch macOS shows a blocking
-    // "Keychain Not Found" dialog (whose default button would edit the
-    // developer's real keychain search list). Test secrets need no encryption.
-    const command = resolveElectronLaunchCommand([
-      "--use-mock-keychain",
-      NodePath.join(desktopDir, "dist-electron/main.cjs"),
-    ]);
-    // Agents driving this harness often run inside a T3 desktop-spawned
-    // server, which exports ELECTRON_RUN_AS_NODE=1; inheriting it turns the
-    // Electron launch into a plain Node process with no Electron APIs.
-    const electronEnv = { ...(process.env as Record<string, string>) };
-    delete electronEnv["ELECTRON_RUN_AS_NODE"];
-    const electronApp = await _electron.launch({
-      executablePath: command.electronPath,
-      args: command.args,
-      cwd: desktopDir,
-      env: {
-        ...electronEnv,
-        VITE_DEV_SERVER_URL: "",
-        // T3CODE_HOME moves the database but NOT Electron's userData
-        // (cookies, IndexedDB), which otherwise lands on the developer's live
-        // T3 Code profile and collides with it. An isolated HOME moves both.
-        HOME: homeDir,
-        XDG_CONFIG_HOME: NodePath.join(homeDir, ".config"),
-        XDG_DATA_HOME: NodePath.join(homeDir, ".local/share"),
-        T3CODE_HOME: homeDir,
-        T3CODE_NO_BROWSER: "1",
-      },
-    });
-    cleanups.push(async () => {
-      // close() can wedge (observed hanging a whole suite); give it 15s, then
-      // kill the Electron root pid we captured at spawn.
-      const rootPid = electronApp.process().pid;
-      await Promise.race([
-        electronApp.close().catch(() => undefined),
-        new Promise<void>((resolve) => {
-          const timer = setTimeout(() => {
-            if (typeof rootPid === "number") {
-              try {
-                process.kill(rootPid, "SIGKILL");
-              } catch {
-                // Already gone.
-              }
-            }
-            resolve();
-          }, 15_000);
-          timer.unref();
-        }),
-      ]);
-      // The desktop's bundled server can outlive the Electron shell; reap it
-      // via the pid it recorded inside our throwaway home.
-      try {
-        const runtime = JSON.parse(
-          await NodeFSP.readFile(NodePath.join(homeDir, "userdata", "server-runtime.json"), "utf8"),
-        ) as { pid?: number };
-        if (typeof runtime.pid === "number" && runtime.pid > 1) {
-          const { stdout } = await NodeUtil.promisify(NodeChildProcess.execFile)("/bin/ps", [
-            "-p",
-            String(runtime.pid),
-            "-o",
-            "command=",
+  // The terminal scenario opens a real PTY, and desktop points HOME at the
+  // throwaway dir; an empty .zshrc keeps a zsh with no startup files from
+  // running zsh-newuser-install into the measured terminal.
+  await NodeFSP.writeFile(NodePath.join(homeDir, ".zshrc"), "");
+  // The repo's launcher prepares the app bundle the way the desktop's own
+  // scripts do - a raw Electron binary launch fails scheme registration.
+  const command =
+    packagedDesktopBin === undefined
+      ? await (async () => {
+          const { resolveElectronLaunchCommand } = (await import(
+            NodePath.join(desktopDir, "scripts/electron-launcher.mjs")
+          )) as {
+            resolveElectronLaunchCommand: (args: Array<string>) => {
+              electronPath: string;
+              args: Array<string>;
+            };
+          };
+          return resolveElectronLaunchCommand([
+            "--use-mock-keychain",
+            NodePath.join(desktopDir, "dist-electron/main.cjs"),
           ]);
-          if (stdout.includes("bin.mjs --bootstrap-fd")) process.kill(runtime.pid, "SIGTERM");
-        }
-      } catch {
-        // Already gone, or never started.
+        })()
+      : { electronPath: packagedDesktopBin, args: ["--no-sandbox"] };
+  // --use-mock-keychain: with HOME pointed at the throwaway dir the login
+  // keychain is invisible, and without this switch macOS shows a blocking
+  // "Keychain Not Found" dialog (whose default button would edit the
+  // developer's real keychain search list). Test secrets need no encryption.
+  // Agents driving this harness often run inside a T3 desktop-spawned
+  // server, which exports ELECTRON_RUN_AS_NODE=1; inheriting it turns the
+  // Electron launch into a plain Node process with no Electron APIs.
+  const electronEnv = { ...(process.env as Record<string, string>) };
+  delete electronEnv["ELECTRON_RUN_AS_NODE"];
+  const electronApp = await _electron.launch({
+    executablePath: command.electronPath,
+    args: command.args,
+    cwd: packagedDesktopBin === undefined ? desktopDir : NodePath.dirname(packagedDesktopBin),
+    env: {
+      ...electronEnv,
+      VITE_DEV_SERVER_URL: "",
+      // T3CODE_HOME moves the database but NOT Electron's userData
+      // (cookies, IndexedDB), which otherwise lands on the developer's live
+      // T3 Code profile and collides with it. An isolated HOME moves both.
+      HOME: homeDir,
+      XDG_CONFIG_HOME: NodePath.join(homeDir, ".config"),
+      XDG_DATA_HOME: NodePath.join(homeDir, ".local/share"),
+      T3CODE_HOME: homeDir,
+      T3CODE_NO_BROWSER: "1",
+    },
+  });
+  cleanups.push(async () => {
+    // close() can wedge (observed hanging a whole suite); give it 15s, then
+    // kill the Electron root pid we captured at spawn.
+    const rootPid = electronApp.process().pid;
+    await Promise.race([
+      electronApp.close().catch(() => undefined),
+      new Promise<void>((resolve) => {
+        const timer = setTimeout(() => {
+          if (typeof rootPid === "number") {
+            try {
+              process.kill(rootPid, "SIGKILL");
+            } catch {
+              // Already gone.
+            }
+          }
+          resolve();
+        }, 15_000);
+        timer.unref();
+      }),
+    ]);
+    // The desktop's bundled server can outlive the Electron shell; reap it
+    // via the pid it recorded inside our throwaway home.
+    try {
+      const runtime = JSON.parse(
+        await NodeFSP.readFile(NodePath.join(homeDir, "userdata", "server-runtime.json"), "utf8"),
+      ) as { pid?: number };
+      if (typeof runtime.pid === "number" && runtime.pid > 1) {
+        const { stdout } = await NodeUtil.promisify(NodeChildProcess.execFile)("/bin/ps", [
+          "-p",
+          String(runtime.pid),
+          "-o",
+          "command=",
+        ]);
+        if (stdout.includes("bin.mjs --bootstrap-fd")) process.kill(runtime.pid, "SIGTERM");
       }
-    });
-    const page = await electronApp.firstWindow();
-    const metrics = await electronApp.evaluate(({ app }) => app.getAppMetrics());
-    const gpu = metrics.find((entry) => entry.type === "GPU");
-    if (gpu === undefined) throw new Error("Electron reported no GPU process in getAppMetrics().");
-    return {
-      surface: "desktop",
-      page,
-      seed: { ...seed, homeDir },
-      gpuHelperPid: gpu.pid,
+    } catch {
+      // Already gone, or never started.
+    }
+  });
+  const page = await electronApp.firstWindow();
+  const metrics = await electronApp.evaluate(({ app }) => app.getAppMetrics());
+  const gpu = metrics.find((entry) => entry.type === "GPU");
+  if (gpu === undefined) throw new Error("Electron reported no GPU process in getAppMetrics().");
+  return {
+    surface: "desktop",
+    page,
+    seed: { ...seed, homeDir },
+    gpuHelperPid: gpu.pid,
     rootPid: electronApp.process().pid ?? -1,
     serverPid: null,
     secondServer: null,
