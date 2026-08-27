@@ -75,7 +75,8 @@
     "scripts/swiftui-delivery/watcher/phone-watch.py",
     "scripts/swiftui-delivery/watcher/com.saphid.t3-swiftui-phone-watch.plist",
     "scripts/swiftui-delivery/references/conflict-resolution.md",
-    "scripts/swiftui-delivery/MAP.md"
+    "scripts/swiftui-delivery/MAP.md",
+    "scripts/swiftui-delivery/scripts/bundle"
   ],
   "auditedDocuments": [
     "docs/operations/swiftui-delivery-clean-cutover.md",

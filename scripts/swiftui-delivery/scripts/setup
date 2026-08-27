@@ -10,23 +10,29 @@ REPO_ROOT=$(cd "$PKG_DIR/../.." && pwd -P)
 CONTRACT="$PKG_DIR/contract.json"
 JSON_OUT=0
 BOOTSTRAP=0
+INSTALL=0
 for a in "$@"; do
   case "$a" in
     --json) JSON_OUT=1 ;;
     --bootstrap) BOOTSTRAP=1 ;;
+    --install) INSTALL=1 ;;
     -h|--help)
-      echo "usage: setup [--json] [--bootstrap]"
+      echo "usage: setup [--json] [--bootstrap] [--install]"
       echo "  --json       machine-readable readiness receipt on stdout"
       echo "  --bootstrap  also run CI=true dependency install in the repo"
+      echo "  --install    deploy front-door skills, watcher, and LaunchAgent"
       exit 0 ;;
   esac
 done
 
 FAILS=0
 RESULTS=()
-check() { # name status detail
+check() { # name status detail; always returns 0
   RESULTS+=("$1|$2|$3")
-  [ "$2" = "fail" ] && FAILS=$((FAILS+1))
+  if [ "$2" = "fail" ]; then
+    FAILS=$((FAILS+1))
+  fi
+  return 0
 }
 
 # 1. Contract parses and names this package.
@@ -146,6 +152,38 @@ if [ "$BOOTSTRAP" -eq 1 ]; then
     fi
   else
     check bootstrap fail "no package.json at $REPO_ROOT"
+  fi
+fi
+
+# 9. Optional deployment: front doors + watcher from vendored sources.
+if [ "$INSTALL" -eq 1 ]; then
+  FD_OK=1
+  for fd in swiftui-orchestrate file-swiftui-lane-issue swiftui-status; do
+    mkdir -p "$HOME/.codex/skills/$fd" \
+      && cp "$PKG_DIR/front-doors/$fd.SKILL.md" "$HOME/.codex/skills/$fd/SKILL.md" \
+      && mkdir -p "$HOME/.claude/skills" \
+      && ln -sfn "$HOME/.codex/skills/$fd" "$HOME/.claude/skills/$fd" || FD_OK=0
+  done
+  [ "$FD_OK" -eq 1 ] && check frontDoors ok "3 skills deployed to ~/.codex + ~/.claude" \
+    || check frontDoors fail "front-door deployment failed"
+  W_OK=1
+  mkdir -p "$HOME/.local/libexec/t3-swiftui-stream" "$HOME/Library/LaunchAgents" \
+    && cp "$PKG_DIR/watcher/phone-watch.py" "$HOME/.local/libexec/t3-swiftui-stream/phone-watch.py" \
+    && cp "$PKG_DIR/watcher/com.saphid.t3-swiftui-phone-watch.plist" "$HOME/Library/LaunchAgents/" || W_OK=0
+  if [ "$W_OK" -eq 1 ]; then
+    launchctl enable "gui/$(id -u)/com.saphid.t3-swiftui-phone-watch" 2>/dev/null
+    launchctl bootstrap "gui/$(id -u)" "$HOME/Library/LaunchAgents/com.saphid.t3-swiftui-phone-watch.plist" 2>/dev/null \
+      || launchctl kickstart "gui/$(id -u)/com.saphid.t3-swiftui-phone-watch" 2>/dev/null
+    if launchctl print "gui/$(id -u)/com.saphid.t3-swiftui-phone-watch" > /dev/null 2>&1; then
+      check watcherInstall ok "deployed and loaded"
+    else
+      check watcherInstall fail "deployed but not loaded; check launchctl"
+    fi
+  else
+    check watcherInstall fail "could not deploy watcher files"
+  fi
+  if [ ! -f "$HOME/.t3/swiftui-stream/watcher-config.json" ]; then
+    check watcherConfig fail "create ~/.t3/swiftui-stream/watcher-config.json with deviceId and teamIdentifier"
   fi
 fi
 
