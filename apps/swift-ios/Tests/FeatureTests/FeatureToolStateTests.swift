@@ -3,6 +3,146 @@ import Testing
 
 @Suite("Thread tool state")
 struct FeatureToolStateTests {
+    private static func vcsLocal(
+        isRepo: Bool = true,
+        hasPrimaryRemote: Bool = true,
+        refName: String? = "feature/cached",
+        files: [String] = []
+    ) -> VCSLocalStatus {
+        VCSLocalStatus(
+            isRepo: isRepo,
+            sourceControlProvider: nil,
+            hasPrimaryRemote: hasPrimaryRemote,
+            isDefaultRef: false,
+            refName: refName,
+            hasWorkingTreeChanges: !files.isEmpty,
+            workingTree: VCSWorkingTree(
+                files: files.map {
+                    VCSWorkingTreeFile(path: $0, insertions: 1, deletions: 0)
+                },
+                insertions: files.count,
+                deletions: 0
+            )
+        )
+    }
+
+    private static func vcsRemote(
+        aheadCount: Int,
+        behindCount: Int = 0
+    ) -> VCSRemoteStatus {
+        VCSRemoteStatus(
+            hasUpstream: true,
+            aheadCount: aheadCount,
+            behindCount: behindCount,
+            aheadOfDefaultCount: nil,
+            pr: nil
+        )
+    }
+
+    @Test("Cached local status is available before remote status")
+    func cachedLocalStatusArrivesFirst() throws {
+        var accumulator = NativeSourceControlStatusAccumulator()
+
+        let local = try #require(accumulator.consume(
+            .snapshot(
+                local: Self.vcsLocal(files: ["App/NativeFeatureClient.swift"]),
+                remote: nil
+            )
+        ))
+
+        #expect(local.branch == "feature/cached")
+        #expect(local.files.map(\.path) == ["App/NativeFeatureClient.swift"])
+        #expect(!local.isRemoteKnown)
+        #expect(!local.availableActions.contains(.createPullRequest))
+        #expect(local.availableActions.contains(.commit))
+        #expect(!accumulator.isComplete)
+    }
+
+    @Test("Remote status combines with the latest local status")
+    func remoteStatusUsesLatestLocalState() throws {
+        var accumulator = NativeSourceControlStatusAccumulator()
+        _ = accumulator.consume(
+            .snapshot(local: Self.vcsLocal(refName: "feature/old"), remote: nil)
+        )
+        _ = accumulator.consume(
+            .localUpdated(Self.vcsLocal(refName: "feature/new", files: ["new.swift"]))
+        )
+
+        let combined = try #require(accumulator.consume(
+            .remoteUpdated(Self.vcsRemote(aheadCount: 2, behindCount: 1))
+        ))
+
+        #expect(combined.branch == "feature/new")
+        #expect(combined.files.map(\.path) == ["new.swift"])
+        #expect(combined.aheadCount == 2)
+        #expect(combined.behindCount == 1)
+        #expect(combined.isRemoteKnown)
+        #expect(accumulator.isComplete)
+    }
+
+    @Test("Remote-before-local ordering retains the remote status")
+    func remoteBeforeLocalIsRetained() throws {
+        var accumulator = NativeSourceControlStatusAccumulator()
+
+        #expect(accumulator.consume(.remoteUpdated(Self.vcsRemote(aheadCount: 9))) == nil)
+        let combined = try #require(accumulator.consume(
+            .localUpdated(Self.vcsLocal(refName: "feature/local"))
+        ))
+
+        #expect(combined.branch == "feature/local")
+        #expect(combined.aheadCount == 9)
+        #expect(combined.isRemoteKnown)
+    }
+
+    @Test(
+        "Terminal local states do not wait for remote status",
+        arguments: [
+            Self.vcsLocal(isRepo: false, hasPrimaryRemote: false, refName: nil),
+            Self.vcsLocal(hasPrimaryRemote: false, refName: "local-only"),
+        ]
+    )
+    func terminalLocalStatesAreExplicit(local: VCSLocalStatus) throws {
+        var accumulator = NativeSourceControlStatusAccumulator()
+
+        let status = try #require(accumulator.consume(.snapshot(local: local, remote: nil)))
+
+        #expect(status.isRepository == local.isRepo)
+        #expect(status.isRemoteKnown)
+        #expect(accumulator.isComplete)
+    }
+
+    @Test("Branch changes discard remote status from the previous branch")
+    func branchChangeReturnsRemoteStatusToPending() throws {
+        var accumulator = NativeSourceControlStatusAccumulator()
+        _ = accumulator.consume(
+            .snapshot(
+                local: Self.vcsLocal(refName: "feature/one"),
+                remote: Self.vcsRemote(aheadCount: 4)
+            )
+        )
+
+        let changed = try #require(accumulator.consume(
+            .localUpdated(Self.vcsLocal(refName: "feature/two"))
+        ))
+
+        #expect(changed.branch == "feature/two")
+        #expect(changed.aheadCount == 0)
+        #expect(!changed.isRemoteKnown)
+        #expect(!accumulator.isComplete)
+    }
+
+    @Test("An absent remote result resolves pending status")
+    func nilRemotePayloadResolvesTheRemoteHalf() throws {
+        var accumulator = NativeSourceControlStatusAccumulator()
+        _ = accumulator.consume(.snapshot(local: Self.vcsLocal(), remote: nil))
+
+        let resolved = try #require(accumulator.consume(.remoteUpdated(nil)))
+
+        #expect(resolved.isRemoteKnown)
+        #expect(resolved.aheadCount == 0)
+        #expect(accumulator.isComplete)
+    }
+
     @Test
     func fileFilteringKeepsDirectoriesFirstAndHonorsHiddenFiles() {
         let entries = [

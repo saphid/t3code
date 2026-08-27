@@ -6,8 +6,10 @@ public struct FeatureSourceControlView: View {
 
     @State private var status: FeatureSourceControlStatus?
     @State private var isLoading = true
+    @State private var isRemoteLoading = true
     @State private var isRunningAction = false
     @State private var errorMessage: String?
+    @State private var streamErrorMessage: String?
     @State private var commitMessage = ""
     @State private var pendingCommitAction: FeatureSourceControlAction?
 
@@ -29,6 +31,7 @@ public struct FeatureSourceControlView: View {
                     systemImage: "arrow.triangle.branch",
                     description: Text(
                         errorMessage
+                            ?? streamErrorMessage
                             ?? (status?.isRepository == false
                                 ? "This workspace is not a Git repository."
                                 : "Repository status could not be loaded.")
@@ -68,23 +71,42 @@ public struct FeatureSourceControlView: View {
         } message: {
             Text(errorMessage ?? "The source control action could not be completed.")
         }
-        .task { await load() }
+        .task { await observeStatus() }
     }
 
     private func statusList(_ status: FeatureSourceControlStatus) -> some View {
         List {
+            if let streamErrorMessage {
+                Section {
+                    Label(streamErrorMessage, systemImage: "exclamationmark.triangle")
+                        .font(T3Typography.supporting)
+                        .foregroundStyle(.orange)
+                }
+            }
+
             Section("Repository") {
                 LabeledContent("Branch", value: status.branch ?? "Detached HEAD")
                 if let upstream = status.upstream {
                     LabeledContent("Upstream", value: upstream)
                 }
-                HStack {
-                    Label("\(status.aheadCount) ahead", systemImage: "arrow.up")
-                    Spacer()
-                    Label("\(status.behindCount) behind", systemImage: "arrow.down")
+                if status.isRemoteKnown {
+                    HStack {
+                        Label("\(status.aheadCount) ahead", systemImage: "arrow.up")
+                        Spacer()
+                        Label("\(status.behindCount) behind", systemImage: "arrow.down")
+                    }
+                    .font(T3Typography.supporting)
+                    .foregroundStyle(T3Colors.textSecondary)
+                } else {
+                    Label(
+                        isRemoteLoading ? "Checking remote…" : "Remote status unavailable",
+                        systemImage: isRemoteLoading
+                            ? "arrow.triangle.2.circlepath"
+                            : "exclamationmark.triangle"
+                    )
+                    .font(T3Typography.supporting)
+                    .foregroundStyle(T3Colors.textSecondary)
                 }
-                .font(T3Typography.supporting)
-                .foregroundStyle(T3Colors.textSecondary)
                 if let pullRequest = status.pullRequest {
                     if let url = pullRequest.url {
                         Link(destination: url) {
@@ -163,9 +185,33 @@ public struct FeatureSourceControlView: View {
         defer { isLoading = false }
         do {
             status = try await client.sourceControlStatus(threadID: threadID)
+            isRemoteLoading = false
+            streamErrorMessage = nil
             errorMessage = nil
         } catch {
             errorMessage = error.localizedDescription
+        }
+    }
+
+    private func observeStatus() async {
+        var receivedStatus = false
+        for await nextStatus in client.sourceControlStatusEvents(threadID: threadID) {
+            if !receivedStatus {
+                isLoading = false
+                receivedStatus = true
+            }
+            status = nextStatus
+            isRemoteLoading = !nextStatus.isRemoteKnown
+            streamErrorMessage = nil
+        }
+
+        guard !Task.isCancelled else { return }
+        if !receivedStatus {
+            isLoading = false
+        }
+        isRemoteLoading = false
+        if status?.isRemoteKnown != true {
+            streamErrorMessage = "Remote status stopped updating. Reload to try again."
         }
     }
 
@@ -178,6 +224,8 @@ public struct FeatureSourceControlView: View {
                 action: action,
                 message: message?.trimmingCharacters(in: .whitespacesAndNewlines)
             )
+            isRemoteLoading = false
+            streamErrorMessage = nil
             errorMessage = nil
         } catch {
             errorMessage = error.localizedDescription

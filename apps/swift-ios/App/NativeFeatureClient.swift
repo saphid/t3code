@@ -2142,8 +2142,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         monitorID: UUID
     ) async {
         let events = await client.vcsStatusEvents(cwd: key.workingDirectory)
-        var local: VCSLocalStatus?
-        var remote: VCSRemoteStatus?
+        var accumulator = NativeSourceControlStatusAccumulator()
 
         do {
             for try await event in events {
@@ -2152,24 +2151,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
                     break
                 }
 
-                switch event {
-                case let .snapshot(nextLocal, nextRemote):
-                    local = nextLocal
-                    remote = nextRemote
-                case let .localUpdated(nextLocal):
-                    if local?.refName != nextLocal.refName {
-                        remote = nil
-                    }
-                    local = nextLocal
-                case let .remoteUpdated(nextRemote):
-                    remote = nextRemote
-                }
-
-                guard let local else { continue }
-                let status = NativeWorkspaceMapper.sourceControl(
-                    local: local,
-                    remote: remote
-                )
+                guard let status = accumulator.consume(event) else { continue }
                 guard let monitor = sourceControlMonitors[key],
                       monitor.id == monitorID,
                       monitor.latestStatus != status else {

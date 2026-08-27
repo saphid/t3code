@@ -79,7 +79,8 @@ enum NativeWorkspaceMapper {
 
     static func sourceControl(
         local: VCSLocalStatus,
-        remote: VCSRemoteStatus?
+        remote: VCSRemoteStatus?,
+        isRemoteKnown: Bool = true
     ) -> FeatureSourceControlStatus {
         sourceControl(
             isRepository: local.isRepo,
@@ -87,7 +88,8 @@ enum NativeWorkspaceMapper {
             files: local.workingTree.files,
             aheadCount: remote?.aheadCount ?? 0,
             behindCount: remote?.behindCount ?? 0,
-            pullRequest: remote?.pr
+            pullRequest: remote?.pr,
+            isRemoteKnown: isRemoteKnown
         )
     }
 
@@ -97,13 +99,15 @@ enum NativeWorkspaceMapper {
         files: [VCSWorkingTreeFile],
         aheadCount: Int,
         behindCount: Int,
-        pullRequest: VCSChangeRequest?
+        pullRequest: VCSChangeRequest?,
+        isRemoteKnown: Bool = true
     ) -> FeatureSourceControlStatus {
         FeatureSourceControlStatus(
             isRepository: isRepository,
             branch: branch,
             aheadCount: aheadCount,
             behindCount: behindCount,
+            isRemoteKnown: isRemoteKnown,
             files: files.map {
                 FeatureSourceControlFile(
                     path: $0.path,
@@ -373,4 +377,38 @@ enum NativeWorkspaceMapper {
                 ?? ""
         )
     }
+}
+
+struct NativeSourceControlStatusAccumulator {
+    private var local: VCSLocalStatus?
+    private var remote: VCSRemoteStatus?
+    private var hasRemoteResult = false
+    private(set) var isComplete = false
+
+    mutating func consume(_ event: VCSStatusEvent) -> FeatureSourceControlStatus? {
+        switch event {
+        case let .snapshot(nextLocal, nextRemote):
+            local = nextLocal
+            remote = nextRemote
+            hasRemoteResult = nextRemote != nil
+        case let .localUpdated(nextLocal):
+            if local?.refName != nextLocal.refName {
+                remote = nil
+                hasRemoteResult = false
+            }
+            local = nextLocal
+        case let .remoteUpdated(nextRemote):
+            remote = nextRemote
+            hasRemoteResult = true
+        }
+
+        guard let local else { return nil }
+        isComplete = hasRemoteResult || !local.isRepo || !local.hasPrimaryRemote
+        return NativeWorkspaceMapper.sourceControl(
+            local: local,
+            remote: remote,
+            isRemoteKnown: isComplete
+        )
+    }
+
 }
