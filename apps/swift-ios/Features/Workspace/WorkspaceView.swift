@@ -307,6 +307,7 @@ public struct WorkspaceView: View {
                     renameTitle = thread.title
                     renamingThread = thread
                 },
+                regeneratingTitleThreadIDs: model.regeneratingTitleThreadIDs,
                 onRegenerateTitle: { thread in
                     Task { await model.regenerateThreadTitle(thread.id) }
                 },
@@ -1129,6 +1130,7 @@ struct FeatureThreadRow: View {
     private let projectFaviconClient: (any FeatureClient)?
     private let onPullRequestChange: (HomeThreadPullRequestPresentation?) -> Void
     let isSelected: Bool
+    let isRegeneratingTitle: Bool
     let style: Style
     let now: Date
     let allowsMultilineTitle: Bool
@@ -1140,6 +1142,7 @@ struct FeatureThreadRow: View {
         projectFaviconClient: (any FeatureClient)? = nil,
         onPullRequestChange: @escaping (HomeThreadPullRequestPresentation?) -> Void = { _ in },
         isSelected: Bool = false,
+        isRegeneratingTitle: Bool = false,
         style: Style = .rich,
         now: Date = .now,
         allowsMultilineTitle: Bool = false
@@ -1149,6 +1152,7 @@ struct FeatureThreadRow: View {
         self.projectFaviconClient = projectFaviconClient
         self.onPullRequestChange = onPullRequestChange
         self.isSelected = isSelected
+        self.isRegeneratingTitle = isRegeneratingTitle
         self.style = style
         self.now = now
         self.allowsMultilineTitle = allowsMultilineTitle
@@ -1191,12 +1195,15 @@ struct FeatureThreadRow: View {
             .font(T3Typography.homeMetadata.weight(.medium))
             .frame(minHeight: 20)
 
-            Text(thread.title)
-                .font(T3Typography.homeTitle)
-                .tracking(-0.14)
-                .foregroundStyle(T3Colors.textPrimary)
-                .lineLimit(allowsMultilineTitle ? 2 : 1)
-                .padding(.top, 4)
+            HStack(spacing: 7) {
+                Text(thread.title)
+                    .font(T3Typography.homeTitle)
+                    .tracking(-0.14)
+                    .foregroundStyle(T3Colors.textPrimary)
+                    .lineLimit(allowsMultilineTitle ? 2 : 1)
+                titleRegenerationProgress
+            }
+            .padding(.top, 4)
 
             HStack(spacing: 6) {
                 Image(systemName: "arrow.triangle.branch")
@@ -1252,6 +1259,7 @@ struct FeatureThreadRow: View {
                 .font(T3Typography.homeTitle)
                 .foregroundStyle(T3Colors.textSecondary)
                 .lineLimit(allowsMultilineTitle ? 2 : 1)
+            titleRegenerationProgress
             Spacer(minLength: 8)
             if let pullRequest {
                 pullRequestIndicator(pullRequest)
@@ -1298,6 +1306,17 @@ struct FeatureThreadRow: View {
         case .working: "circle.dotted"
         case .failed: "exclamationmark.circle"
         case .approval, .input, .monitoring, .done, .ready: nil
+        }
+    }
+
+    @ViewBuilder
+    private var titleRegenerationProgress: some View {
+        if isRegeneratingTitle {
+            ProgressView()
+                .controlSize(.small)
+                .tint(T3Colors.accent)
+                .accessibilityHidden(true)
+                .accessibilityIdentifier("thread-title-regeneration-progress-\(thread.id)")
         }
     }
 
@@ -1437,6 +1456,9 @@ struct FeatureThreadRow: View {
         }
         if let environmentLabel {
             values.append("on \(environmentLabel)")
+        }
+        if isRegeneratingTitle {
+            values.append("Regenerating title")
         }
         if isConnectionStale {
             values.append("last known state")

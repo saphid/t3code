@@ -399,6 +399,11 @@ public enum OrchestrationBackgroundLiveness: String, Codable, Equatable, Sendabl
     case monitoring
 }
 
+public struct ThreadTitleRegeneration: Codable, Equatable, Sendable {
+    public let requestId: String
+    public let startedAt: String
+}
+
 public struct OrchestrationThreadShell: Codable, Identifiable, Equatable, Sendable {
     public let id: String
     public let projectId: String
@@ -417,6 +422,7 @@ public struct OrchestrationThreadShell: Codable, Identifiable, Equatable, Sendab
     public let snoozedUntil: String?
     public let snoozedAt: String?
     public let pinnedAt: String?
+    public var titleRegeneration: ThreadTitleRegeneration? = nil
     public let session: OrchestrationSession?
     public let latestUserMessageAt: String?
     public let hasPendingApprovals: Bool
@@ -490,6 +496,7 @@ public struct OrchestrationThread: Codable, Identifiable, Equatable, Sendable {
     public let snoozedUntil: String?
     public let snoozedAt: String?
     public let pinnedAt: String?
+    public var titleRegeneration: ThreadTitleRegeneration? = nil
     public let deletedAt: String?
     @ForwardCompatibleArray public var messages: [OrchestrationMessage]
     @ForwardCompatibleArray public var activities: [OrchestrationActivity]
