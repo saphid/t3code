@@ -86,6 +86,7 @@ public struct WorkspaceView: View {
     @State private var homePresentationCache = HomePresentationCache()
     @State private var commandDrawer = FeatureCommandDrawerState()
     @State private var commandDrawerQuery = ""
+    @State private var heldHomeSearchBeforeCommandDrawer = false
     @FocusState private var isSearchFocused: Bool
 
     public init(
@@ -303,6 +304,12 @@ public struct WorkspaceView: View {
                 homeBar
                 if isSearching {
                     searchBar
+                        .modifier(
+                            FeatureHomeSearchCommandDrawerFocusRestorer(
+                                focused: $isSearchFocused,
+                                heldBeforeDrawer: $heldHomeSearchBeforeCommandDrawer
+                            )
+                        )
                         .transition(.opacity.combined(with: .move(edge: .top)))
                 }
                 threadList
@@ -1054,6 +1061,32 @@ public struct WorkspaceView: View {
             return groupName
         }
         return "\(groupName) · \(environment.name)"
+    }
+}
+
+private struct FeatureHomeSearchCommandDrawerFocusRestorer: ViewModifier {
+    @SwiftUI.Environment(\.commandDrawerIsPresenting) private var drawerIsPresenting
+    @SwiftUI.Environment(\.commandDrawerAllowsFocusRestoration)
+    private var allowsFocusRestoration
+
+    let focused: FocusState<Bool>.Binding
+    @Binding var heldBeforeDrawer: Bool
+
+    func body(content: Content) -> some View {
+        content.onChange(of: drawerIsPresenting) { _, isPresenting in
+            if isPresenting {
+                heldBeforeDrawer = focused.wrappedValue
+                return
+            }
+            let shouldRestore = FeatureCommandDrawerFocus.reclaimsKeyboard(
+                isDrawerPresenting: isPresenting,
+                heldKeyboardBeforeDrawer: heldBeforeDrawer,
+                allowsRestoration: allowsFocusRestoration
+            )
+            heldBeforeDrawer = false
+            guard shouldRestore else { return }
+            focused.wrappedValue = true
+        }
     }
 }
 

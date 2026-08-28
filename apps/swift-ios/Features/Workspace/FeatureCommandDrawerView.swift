@@ -5,10 +5,19 @@ private struct FeatureCommandDrawerPresentingKey: EnvironmentKey {
     static let defaultValue = false
 }
 
+private struct FeatureCommandDrawerAllowsFocusRestorationKey: EnvironmentKey {
+    static let defaultValue = true
+}
+
 extension EnvironmentValues {
     var commandDrawerIsPresenting: Bool {
         get { self[FeatureCommandDrawerPresentingKey.self] }
         set { self[FeatureCommandDrawerPresentingKey.self] = newValue }
+    }
+
+    var commandDrawerAllowsFocusRestoration: Bool {
+        get { self[FeatureCommandDrawerAllowsFocusRestorationKey.self] }
+        set { self[FeatureCommandDrawerAllowsFocusRestorationKey.self] = newValue }
     }
 }
 
@@ -29,6 +38,9 @@ struct FeatureCommandDrawerContainer<Content: View>: View {
 
     @FocusState private var isQueryFocused: Bool
 
+    @State private var responderOwnership = FeatureCommandDrawerResponderOwnership()
+    @State private var allowsFocusRestoration = true
+
     /// Measured in the drawer layer, which is the only place that needs
     /// geometry. The workspace itself stays in its normal layout path: wrapping
     /// a `NavigationSplitView` in a `GeometryReader` changes how it resolves its
@@ -46,6 +58,7 @@ struct FeatureCommandDrawerContainer<Content: View>: View {
         // shoved downwards, which is not what a drawer does.
         content
             .environment(\.commandDrawerIsPresenting, state.isVisible)
+            .environment(\.commandDrawerAllowsFocusRestoration, allowsFocusRestoration)
             .overlay {
                 scrim(progress: progress)
             }
@@ -57,7 +70,13 @@ struct FeatureCommandDrawerContainer<Content: View>: View {
                     reveal: state.reveal,
                     isOpen: state.isOpen,
                     isKeyboardVisible: keyboardHeight > 0,
-                    onBegan: { state.beginDrag() },
+                    onBegan: { responder in
+                        if !state.isVisible {
+                            allowsFocusRestoration = true
+                        }
+                        responderOwnership.begin(from: responder)
+                        state.beginDrag()
+                    },
                     onChanged: { translation in
                         state.updateDrag(translation: translation, openHeight: openHeight)
                     },
@@ -65,7 +84,11 @@ struct FeatureCommandDrawerContainer<Content: View>: View {
                         settle(velocity: velocity, openHeight: openHeight)
                     },
                     onCancelled: {
+                        let returnsToOpen = state.isOpen
                         withAnimation(settleAnimation) { state.cancelDrag(openHeight: openHeight) }
+                        if returnsToOpen {
+                            responderOwnership.cancel(returningToOpen: true)
+                        }
                     }
                 )
             }
@@ -77,6 +100,7 @@ struct FeatureCommandDrawerContainer<Content: View>: View {
                 if !isVisible {
                     query = ""
                     resignKeyboard()
+                    responderOwnership.close()
                 }
             }
             // …but the request above is made while the field is still above the
@@ -188,7 +212,11 @@ struct FeatureCommandDrawerContainer<Content: View>: View {
         isQueryFocused = true
     }
 
-    private func close() {
+    private func close(restoringPrior: Bool = true) {
+        if !restoringPrior {
+            allowsFocusRestoration = false
+            responderOwnership.close(restoringPrior: false)
+        }
         withAnimation(settleAnimation) {
             state.close()
         }
@@ -299,7 +327,7 @@ struct FeatureCommandDrawerContainer<Content: View>: View {
 
     private func row(_ item: FeatureCommandDrawerItem) -> some View {
         Button {
-            close()
+            close(restoringPrior: false)
             onSelect(item)
         } label: {
             HStack(spacing: 11) {
@@ -361,7 +389,7 @@ private struct FeatureCommandDrawerGestureView: UIViewRepresentable {
     let reveal: CGFloat
     let isOpen: Bool
     let isKeyboardVisible: Bool
-    let onBegan: () -> Void
+    let onBegan: (UIResponder?) -> Void
     let onChanged: (CGFloat) -> Void
     let onEnded: (CGFloat) -> Void
     let onCancelled: () -> Void
@@ -396,7 +424,7 @@ private struct FeatureCommandDrawerGestureView: UIViewRepresentable {
         private var reveal: CGFloat = 0
         private var isOpen = false
         private var isKeyboardVisible = false
-        private var onBegan: (() -> Void)?
+        private var onBegan: ((UIResponder?) -> Void)?
         private var onChanged: ((CGFloat) -> Void)?
         private var onEnded: ((CGFloat) -> Void)?
         private var onCancelled: (() -> Void)?
@@ -430,7 +458,7 @@ private struct FeatureCommandDrawerGestureView: UIViewRepresentable {
             reveal: CGFloat,
             isOpen: Bool,
             isKeyboardVisible: Bool,
-            onBegan: @escaping () -> Void,
+            onBegan: @escaping (UIResponder?) -> Void,
             onChanged: @escaping (CGFloat) -> Void,
             onEnded: @escaping (CGFloat) -> Void,
             onCancelled: @escaping () -> Void
@@ -496,7 +524,7 @@ private struct FeatureCommandDrawerGestureView: UIViewRepresentable {
         @objc private func handlePan(_ gesture: UIPanGestureRecognizer) {
             switch gesture.state {
             case .began:
-                onBegan?()
+                onBegan?(FeatureCommandDrawerResponderLookup.firstResponder(in: window))
                 onChanged?(gesture.translation(in: gesture.view).y)
             case .changed:
                 onChanged?(gesture.translation(in: gesture.view).y)

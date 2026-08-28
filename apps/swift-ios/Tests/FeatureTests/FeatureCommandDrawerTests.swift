@@ -1,6 +1,7 @@
 import CoreGraphics
 import Foundation
 import Testing
+import UIKit
 @testable import T3Code
 
 @Suite("Command palette top drawer")
@@ -298,6 +299,178 @@ struct FeatureCommandDrawerTests {
         let opened = state.endDrag(velocity: 0, openHeight: 442)
         #expect(opened == false)
         #expect(FeatureCommandDrawerFocus.searchIsFocused(for: state) == false)
+    }
+
+    // MARK: - Responder restoration (issue #154)
+
+    @Test(.bug("https://github.com/saphid/t3code-personal/issues/154")) @MainActor
+    func anAbandonedPullRestoresTheExactPriorResponder() {
+        let composer = TestResponder()
+        let ownership = FeatureCommandDrawerResponderOwnership()
+
+        ownership.begin(from: composer)
+        #expect(ownership.ownsFocusTransfer)
+        #expect(ownership.settle(open: false))
+        #expect(composer.restoreCount == 1)
+        #expect(ownership.ownsFocusTransfer == false)
+    }
+
+    @Test(.bug("https://github.com/saphid/t3code-personal/issues/154")) @MainActor
+    func aCompletedOpenKeepsOwnershipUntilTheDrawerCloses() {
+        let composer = TestResponder()
+        let drawerSearch = TestResponder()
+        let ownership = FeatureCommandDrawerResponderOwnership()
+
+        ownership.begin(from: composer)
+        #expect(ownership.settle(open: true) == false)
+        #expect(ownership.ownsFocusTransfer)
+
+        // A close gesture begins while drawer search is first responder. It
+        // must not replace the responder captured before the opening pull.
+        ownership.begin(from: drawerSearch)
+        #expect(ownership.close())
+        #expect(composer.restoreCount == 1)
+        #expect(drawerSearch.restoreCount == 0)
+    }
+
+    @Test(.bug("https://github.com/saphid/t3code-personal/issues/154")) @MainActor
+    func closingDoesNotRestoreAResponderThatLeftTheWindow() {
+        let composer = TestResponder(canRestore: false)
+        let ownership = FeatureCommandDrawerResponderOwnership()
+
+        ownership.begin(from: composer)
+        #expect(ownership.settle(open: true) == false)
+        #expect(ownership.close() == false)
+        #expect(composer.restoreCount == 0)
+        #expect(ownership.ownsFocusTransfer == false)
+    }
+
+    @Test(.bug("https://github.com/saphid/t3code-personal/issues/154")) @MainActor
+    func selectionCanCloseWithoutRestoringTheOldDestination() {
+        let composer = TestResponder()
+        let ownership = FeatureCommandDrawerResponderOwnership()
+
+        ownership.begin(from: composer)
+        #expect(ownership.settle(open: true) == false)
+        #expect(ownership.close(restoringPrior: false) == false)
+        #expect(composer.restoreCount == 0)
+    }
+
+    @Test(.bug("https://github.com/saphid/t3code-personal/issues/154")) @MainActor
+    func aPullWithNoPriorResponderDoesNotFabricateFocus() {
+        let ownership = FeatureCommandDrawerResponderOwnership()
+
+        ownership.begin(from: nil)
+        #expect(ownership.settle(open: false) == false)
+        #expect(ownership.ownsFocusTransfer == false)
+    }
+
+    @Test(.bug("https://github.com/saphid/t3code-personal/issues/154")) @MainActor
+    func cancellingAnOpeningPullRestoresButCancellingAClosingPushRetainsOwnership() {
+        let composer = TestResponder()
+        let ownership = FeatureCommandDrawerResponderOwnership()
+
+        ownership.begin(from: composer)
+        #expect(ownership.cancel(returningToOpen: false))
+        #expect(composer.restoreCount == 1)
+
+        ownership.begin(from: composer)
+        #expect(ownership.settle(open: true) == false)
+        #expect(ownership.cancel(returningToOpen: true) == false)
+        #expect(ownership.ownsFocusTransfer)
+        #expect(ownership.close())
+        #expect(composer.restoreCount == 2)
+    }
+
+    @Test(.bug("https://github.com/saphid/t3code-personal/issues/154")) @MainActor
+    func aDeallocatedPriorResponderIsNotRetainedOrRestored() {
+        let ownership = FeatureCommandDrawerResponderOwnership()
+        var composer: TestResponder? = TestResponder()
+
+        ownership.begin(from: composer)
+        composer = nil
+
+        #expect(ownership.close() == false)
+        #expect(ownership.ownsFocusTransfer == false)
+    }
+
+    @Test(.bug("https://github.com/saphid/t3code-personal/issues/154")) @MainActor
+    func UIKitEligibilityRejectsHiddenDisabledAndDetachedResponderPaths() {
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        let root = UIViewController()
+        let container = UIView(frame: window.bounds)
+        let field = UITextField(frame: CGRect(x: 20, y: 80, width: 200, height: 44))
+        root.view = container
+        container.addSubview(field)
+        window.rootViewController = root
+        window.isHidden = false
+        defer { window.isHidden = true }
+
+        #expect(field.canRestoreCommandDrawerFocus)
+
+        container.isHidden = true
+        #expect(field.canRestoreCommandDrawerFocus == false)
+        container.isHidden = false
+
+        container.isUserInteractionEnabled = false
+        #expect(field.canRestoreCommandDrawerFocus == false)
+        container.isUserInteractionEnabled = true
+
+        window.isHidden = true
+        #expect(field.canRestoreCommandDrawerFocus == false)
+        window.isHidden = false
+
+        field.removeFromSuperview()
+        #expect(field.canRestoreCommandDrawerFocus == false)
+    }
+
+    @Test(.bug("https://github.com/saphid/t3code-personal/issues/154")) @MainActor
+    func UIKitEligibilityAlsoChecksAControllerRespondersView() {
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        let controller = TestViewController()
+        window.rootViewController = controller
+        window.isHidden = false
+        defer { window.isHidden = true }
+
+        #expect(controller.canRestoreCommandDrawerFocus)
+
+        controller.view.isHidden = true
+        #expect(controller.canRestoreCommandDrawerFocus == false)
+        controller.view.isHidden = false
+
+        window.rootViewController = nil
+        #expect(controller.canRestoreCommandDrawerFocus == false)
+    }
+
+    @Test(.bug("https://github.com/saphid/t3code-personal/issues/154")) @MainActor
+    func responderLookupFindsOnlyTheRequestedWindowsNestedFirstResponder() {
+        guard let window = UIApplication.shared.connectedScenes
+            .compactMap({ $0 as? UIWindowScene })
+            .flatMap(\.windows)
+            .first(where: \.isKeyWindow) else {
+            Issue.record("The feature test host has no key window")
+            return
+        }
+        let priorResponder = FeatureCommandDrawerResponderLookup.firstResponder(in: window)
+        let container = UIView(frame: window.bounds)
+        let field = UITextField(frame: CGRect(x: 20, y: 80, width: 200, height: 44))
+        container.addSubview(field)
+        window.addSubview(container)
+        defer {
+            field.resignFirstResponder()
+            container.removeFromSuperview()
+            _ = priorResponder?.becomeFirstResponder()
+        }
+
+        #expect(field.becomeFirstResponder())
+        #expect(FeatureCommandDrawerResponderLookup.firstResponder(in: window) === field)
+
+        let otherWindow = UIWindow(frame: window.bounds)
+        otherWindow.rootViewController = UIViewController()
+        #expect(FeatureCommandDrawerResponderLookup.firstResponder(in: otherWindow) == nil)
+
+        field.resignFirstResponder()
+        #expect(FeatureCommandDrawerResponderLookup.firstResponder(in: window) == nil)
     }
 
     @Test
@@ -691,6 +864,13 @@ struct FeatureCommandDrawerTests {
                 heldKeyboardBeforeDrawer: true
             ) == false
         )
+        #expect(
+            FeatureCommandDrawerFocus.reclaimsKeyboard(
+                isDrawerPresenting: false,
+                heldKeyboardBeforeDrawer: true,
+                allowsRestoration: false
+            ) == false
+        )
     }
 
     @Test
@@ -976,5 +1156,26 @@ struct FeatureCommandDrawerTests {
             isArchived: isArchived,
             lastActivityAt: Date(timeIntervalSince1970: activity)
         )
+    }
+
+    @MainActor
+    private final class TestResponder: FeatureCommandDrawerRestorableResponder {
+        var canRestoreCommandDrawerFocus: Bool
+        private(set) var restoreCount = 0
+
+        init(canRestore: Bool = true) {
+            canRestoreCommandDrawerFocus = canRestore
+        }
+
+        func restoreCommandDrawerFocus() -> Bool {
+            guard canRestoreCommandDrawerFocus else { return false }
+            restoreCount += 1
+            return true
+        }
+    }
+
+    @MainActor
+    private final class TestViewController: UIViewController {
+        override var canBecomeFirstResponder: Bool { true }
     }
 }

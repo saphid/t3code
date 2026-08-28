@@ -321,9 +321,10 @@ enum FeatureCommandDrawerFocus {
     /// page with no active editor must still dismiss its keyboard on close.
     static func reclaimsKeyboard(
         isDrawerPresenting: Bool,
-        heldKeyboardBeforeDrawer: Bool
+        heldKeyboardBeforeDrawer: Bool,
+        allowsRestoration: Bool = true
     ) -> Bool {
-        !isDrawerPresenting && heldKeyboardBeforeDrawer
+        !isDrawerPresenting && heldKeyboardBeforeDrawer && allowsRestoration
     }
 }
 
