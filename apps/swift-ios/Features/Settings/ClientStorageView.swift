@@ -253,15 +253,24 @@ public struct ClientStorageView: View {
         Task { await storageModel.clear(scope) }
     }
 
-    static func formatBytes(_ bytes: Int) -> String {
+    static func formatBytes(
+        _ bytes: Int,
+        locale: Locale = .autoupdatingCurrent
+    ) -> String {
         if bytes < 1_024 { return "\(bytes) B" }
         let kilobytes = Double(bytes) / 1_024
         if bytes < 1_048_576 {
             let digits = bytes < 10_240 ? 1 : 0
-            return "\(kilobytes.formatted(.number.precision(.fractionLength(digits)))) KB"
+            let value = kilobytes.formatted(
+                .number.precision(.fractionLength(digits)).locale(locale)
+            )
+            return "\(value) KB"
         }
         let megabytes = Double(bytes) / 1_048_576
         let digits = bytes < 10_485_760 ? 1 : 0
-        return "\(megabytes.formatted(.number.precision(.fractionLength(digits)))) MB"
+        let value = megabytes.formatted(
+            .number.precision(.fractionLength(digits)).locale(locale)
+        )
+        return "\(value) MB"
     }
 }

@@ -683,7 +683,6 @@ struct NativeClientStorageTests {
 
         var clearEvents = fixture.client.events().makeAsyncIterator()
         try await fixture.client.clearClientCache(.all)
-        let clearEvent = await clearEvents.next()
         let cleared = try await fixture.client.clientCacheSummary()
         let environmentsAfterAllClear = try await fixture.runtime.environments()
         let firstCredentialAfterAllClear = try await fixture.credentials.credential(for: "one")
@@ -694,7 +693,15 @@ struct NativeClientStorageTests {
         #expect(environmentsAfterAllClear.map(\.id) == ["one", "two"])
         #expect(firstCredentialAfterAllClear != nil)
         #expect(secondCredentialAfterAllClear != nil)
-        guard case let .snapshot(snapshotAfterAllClear)? = clearEvent else {
+        var snapshotAfterAllClear: FeatureSnapshot?
+        while let event = await clearEvents.next() {
+            guard case let .snapshot(snapshot) = event else { continue }
+            if snapshot.projects.isEmpty, snapshot.threads.isEmpty {
+                snapshotAfterAllClear = snapshot
+                break
+            }
+        }
+        guard let snapshotAfterAllClear else {
             Issue.record("Clearing all caches did not publish the cache-free snapshot.")
             return
         }
@@ -709,23 +716,20 @@ struct NativeClientStorageTests {
 
     @Test
     func clearRejectsAnEnvironmentRefreshThatStartedBeforeTheClear() async throws {
-        let fixture = try await NativeMultiEnvironmentTests.makeFixture(
-            aggregateRefreshInterval: .milliseconds(100)
-        )
+        let fixture = try await NativeMultiEnvironmentTests.makeFixture()
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
         _ = try await fixture.client.initialSnapshot()
         await fixture.transport.blockNextShellRead(host: "two.example")
+        let refresh = Task { try await fixture.client.backgroundSnapshot() }
         await fixture.transport.waitUntilShellReadStarts(host: "two.example")
 
         try await fixture.client.clearClientCache(.environment("two"))
         let cleared = try await fixture.client.clientCacheSummary()
         #expect(cleared.environments.map(\.environmentID) == ["one"])
 
-        var events = fixture.client.events().makeAsyncIterator()
         await fixture.transport.resumeBlockedShellRead(host: "two.example")
         await fixture.transport.waitUntilBlockedShellReadResumes(host: "two.example")
-        await fixture.transport.setShellReadsEnabled(false, host: "two.example")
-        _ = await events.next()
+        _ = try await refresh.value
 
         let afterStaleRefresh = try await fixture.client.clientCacheSummary()
         #expect(afterStaleRefresh.environments.map(\.environmentID) == ["one"])

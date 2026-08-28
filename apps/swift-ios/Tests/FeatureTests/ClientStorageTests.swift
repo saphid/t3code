@@ -1,3 +1,4 @@
+import Foundation
 import Testing
 @testable import T3Code
 
@@ -73,10 +74,11 @@ struct ClientStorageTests {
 
     @Test
     func byteSizesStayReadableAtUnitBoundaries() {
-        #expect(ClientStorageView.formatBytes(512) == "512 B")
-        #expect(ClientStorageView.formatBytes(1_536) == "1.5 KB")
-        #expect(ClientStorageView.formatBytes(20_480) == "20 KB")
-        #expect(ClientStorageView.formatBytes(1_572_864) == "1.5 MB")
+        let locale = Locale(identifier: "en_US_POSIX")
+        #expect(ClientStorageView.formatBytes(512, locale: locale) == "512 B")
+        #expect(ClientStorageView.formatBytes(1_536, locale: locale) == "1.5 KB")
+        #expect(ClientStorageView.formatBytes(20_480, locale: locale) == "20 KB")
+        #expect(ClientStorageView.formatBytes(1_572_864, locale: locale) == "1.5 MB")
     }
 
     @Test
