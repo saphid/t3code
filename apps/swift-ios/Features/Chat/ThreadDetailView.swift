@@ -1105,10 +1105,6 @@ private struct FeatureTranscriptCollectionView: UIViewRepresentable {
                     .isTimestampRevealActive = false
             }
             let imageContextChanged = currentImageContext != imageContext
-            if threadChanged {
-                timestampReveal.reset()
-                timestampMessageID = nil
-            }
             let typeSizeChanged = currentDynamicTypeSize != dynamicTypeSize
             let revisionChanged = currentDetailRevision != renderUpdate?.revision
             let workingChanged = currentIsWorking != isWorking
