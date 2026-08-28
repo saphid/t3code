@@ -6,7 +6,7 @@ import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 const testState = vi.hoisted(() => ({
   useUsage: vi.fn(),
   metric: "cost" as "cost" | "tokens",
-  breakdown: "time" as "model" | "time",
+  breakdown: "time" as "model" | "project" | "time",
 }));
 
 vi.mock("react", async (importOriginal) => {
@@ -103,6 +103,23 @@ const modelTotals = Object.freeze([
   },
 ]);
 
+const projectTotals = Object.freeze([
+  {
+    project: "Expensive Project",
+    costUsd: 9,
+    totalTokens: 200,
+    records: 2,
+    costShare: 9 / 16,
+  },
+  {
+    project: null,
+    costUsd: 7,
+    totalTokens: 900,
+    records: 1,
+    costShare: 7 / 16,
+  },
+]);
+
 beforeEach(() => {
   testState.metric = "cost";
   testState.breakdown = "time";
@@ -110,6 +127,7 @@ beforeEach(() => {
     merged: {
       ...mergeUsage([], USAGE_CONTRACT_VERSION),
       models: modelTotals,
+      projects: projectTotals,
       hourly: [
         {
           day: "2026-08-10",
@@ -152,6 +170,29 @@ describe("UsagePage hourly breakdown", () => {
     const body = markup.match(/<tbody>(.*?)<\/tbody>/)?.[1] ?? "";
 
     expect(body).toMatch(/\$11\.00.*\$13\.00/);
+  });
+});
+
+describe("UsagePage project breakdown", () => {
+  it("ranks projects by cost and labels unattributed work", () => {
+    testState.breakdown = "project";
+
+    const markup = renderToStaticMarkup(<UsagePage />);
+    const body = markup.match(/<tbody>(.*?)<\/tbody>/)?.[1] ?? "";
+
+    expect(body).toMatch(/Expensive Project.*Outside projects/);
+    expect(body).toContain("$9.00");
+    expect(body).toContain("$7.00");
+  });
+
+  it("ranks projects by tokens when the token metric is selected", () => {
+    testState.metric = "tokens";
+    testState.breakdown = "project";
+
+    const markup = renderToStaticMarkup(<UsagePage />);
+    const body = markup.match(/<tbody>(.*?)<\/tbody>/)?.[1] ?? "";
+
+    expect(body).toMatch(/Outside projects.*Expensive Project/);
   });
 });
 

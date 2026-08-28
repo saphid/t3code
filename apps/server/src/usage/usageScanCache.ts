@@ -23,7 +23,9 @@ import type { UsageRecord } from "./usageTranscripts.ts";
 
 // v2: Codex fork-copy suppression changed what a file parses to, so v1
 // entries would keep serving double-counted records forever.
-export const USAGE_SCAN_CACHE_VERSION = 2 as const;
+// v3: records carry the session's cwd for project attribution; v2 entries
+// would pin every cached file to "no project" forever.
+export const USAGE_SCAN_CACHE_VERSION = 3 as const;
 
 export interface CachedFile {
   readonly size: number;
@@ -50,6 +52,7 @@ type SerializedRecord = readonly [
   reasoningTokens: number,
   dedupeKey: string | null,
   reportedCostUsd: number | null,
+  cwdIndex: number,
 ];
 
 interface SerializedFile {
@@ -63,15 +66,18 @@ interface SerializedCache {
   readonly version: number;
   readonly models: readonly string[];
   readonly sessions: readonly string[];
+  readonly cwds: readonly string[];
   readonly files: Readonly<Record<string, SerializedFile>>;
 }
 
-/** Serialises the cache, interning the repeated model and session strings. */
+/** Serialises the cache, interning the repeated model, session and cwd strings. */
 export function encodeScanCache(cache: ScanCache): SerializedCache {
   const models: string[] = [];
   const sessions: string[] = [];
+  const cwds: string[] = [];
   const modelIndex = new Map<string, number>();
   const sessionIndex = new Map<string, number>();
+  const cwdIndex = new Map<string, number>();
 
   const intern = (table: string[], index: Map<string, number>, value: string): number => {
     const existing = index.get(value);
@@ -99,11 +105,12 @@ export function encodeScanCache(cache: ScanCache): SerializedCache {
         record.totals.reasoningTokens,
         record.dedupeKey,
         record.reportedCostUsd,
+        intern(cwds, cwdIndex, record.cwd),
       ]),
     };
   }
 
-  return { version: USAGE_SCAN_CACHE_VERSION, models, sessions, files };
+  return { version: USAGE_SCAN_CACHE_VERSION, models, sessions, cwds, files };
 }
 
 function isRecordArray(value: unknown): value is readonly unknown[] {
@@ -122,7 +129,9 @@ export function decodeScanCache(document: unknown): ScanCache {
 
   const root = document as Partial<SerializedCache>;
   if (root.version !== USAGE_SCAN_CACHE_VERSION) return cache;
-  if (!isRecordArray(root.models) || !isRecordArray(root.sessions)) return cache;
+  if (!isRecordArray(root.models) || !isRecordArray(root.sessions) || !isRecordArray(root.cwds)) {
+    return cache;
+  }
   if (typeof root.files !== "object" || root.files === null) return cache;
 
   // The intern tables must be all strings: a numeric entry would pass the
@@ -130,8 +139,10 @@ export function decodeScanCache(document: unknown): ScanCache {
   // at lookupRate. A corrupt table rejects the whole cache.
   if (!root.models.every((value) => typeof value === "string")) return cache;
   if (!root.sessions.every((value) => typeof value === "string")) return cache;
+  if (!root.cwds.every((value) => typeof value === "string")) return cache;
   const models = root.models as readonly string[];
   const sessions = root.sessions as readonly string[];
+  const cwds = root.cwds as readonly string[];
 
   for (const [path, raw] of Object.entries(root.files)) {
     if (typeof raw !== "object" || raw === null) continue;
@@ -147,7 +158,7 @@ export function decodeScanCache(document: unknown): ScanCache {
     // file would never be re-parsed, silently losing the dropped rows' usage.
     let corrupt = false;
     for (const row of entry.r) {
-      if (!isRecordArray(row) || row.length < 10) {
+      if (!isRecordArray(row) || row.length < 11) {
         corrupt = true;
         break;
       }
@@ -162,6 +173,7 @@ export function decodeScanCache(document: unknown): ScanCache {
         reasoning,
         dedupeKey,
         reportedCostUsd,
+        cwdIndex,
       ] = row as SerializedRecord;
 
       const model = typeof modelIndex === "number" ? models[modelIndex] : undefined;
@@ -184,6 +196,7 @@ export function decodeScanCache(document: unknown): ScanCache {
         timestampMs,
         model,
         sessionId: (typeof sessionIndex === "number" ? sessions[sessionIndex] : undefined) ?? "",
+        cwd: (typeof cwdIndex === "number" ? cwds[cwdIndex] : undefined) ?? "",
         totals: {
           uncachedInputTokens: uncached,
           cachedInputTokens: cached,
