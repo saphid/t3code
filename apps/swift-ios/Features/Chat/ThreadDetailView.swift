@@ -983,7 +983,7 @@ private struct FeatureTranscriptCollectionView: UIViewRepresentable {
                         reveal: self.timestampReveal
                     )
                         .frame(maxWidth: .infinity, alignment: .leading)
-                        .environment(\.t3CodeSizeSteps, self?.currentCodeSizeSteps ?? 0)
+                        .environment(\.t3CodeSizeSteps, self.currentCodeSizeSteps)
                 }
                 .margins(.all, 0)
                 cell.backgroundConfiguration = UIBackgroundConfiguration.clear()
