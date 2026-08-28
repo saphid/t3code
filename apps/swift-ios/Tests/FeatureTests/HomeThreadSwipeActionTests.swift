@@ -740,7 +740,7 @@ struct HomeThreadSwipeActionTests {
             coordinator.cancelPendingSwipeActions()
         }
 
-        let cell = try #require(collectionView.cellForItem(at: IndexPath(item: 0, section: 0)))
+        let cell = try #require(collectionView.cellForItem(at: IndexPath(item: 1, section: 0)))
 
         #expect(cell.clipsToBounds)
         #expect(cell.contentView.clipsToBounds)
@@ -794,6 +794,56 @@ struct HomeThreadSwipeActionTests {
         #expect(completedCell.accessibilityCustomActions?.contains { $0.name == "Regenerate title" } == true)
     }
 
+    @Test(.bug("https://github.com/saphid/t3code-personal/issues/148"))
+    func groupCollapseReconfiguresAccessibilityOnVisibleReusedCells() throws {
+        let client = SwipeSettlementClientStub()
+        let alpha = FeatureProject(
+            id: "alpha",
+            environmentID: "environment",
+            name: "Alpha",
+            path: "/alpha"
+        )
+        let beta = FeatureProject(
+            id: "beta",
+            environmentID: "environment",
+            name: "Beta",
+            path: "/beta"
+        )
+        let value = FeatureSnapshot(
+            projects: [alpha, beta],
+            threads: [
+                FeatureThread(id: "alpha-thread", projectID: alpha.id, title: "Alpha task"),
+                FeatureThread(id: "beta-thread", projectID: beta.id, title: "Beta task"),
+            ]
+        )
+        let initial = threadList(client: client, snapshot: value)
+        let alphaGroupID = try #require(
+            initial.presentation.projectGroups.first { $0.title == alpha.name }?.id
+        )
+        let coordinator = initial.makeCoordinator()
+        let collectionView = testCollectionView()
+        coordinator.configure(collectionView)
+        collectionView.layoutIfNeeded()
+        defer {
+            coordinator.invalidateTimer()
+            coordinator.cancelPendingSwipeActions()
+        }
+
+        coordinator.update(
+            parent: threadList(
+                client: client,
+                snapshot: value,
+                collapsedProjectGroupIDs: [alphaGroupID]
+            ),
+            collectionView: collectionView
+        )
+        collectionView.layoutIfNeeded()
+        let labels = collectionView.visibleCells.compactMap(\.accessibilityLabel)
+
+        #expect(!labels.contains("Alpha task"))
+        #expect(labels.contains("Beta task"))
+    }
+
     private func presentation(for model: FeatureRootModel) -> HomePresentation {
         HomePresentation(
             snapshot: model.snapshot,
@@ -822,6 +872,7 @@ struct HomeThreadSwipeActionTests {
         snapshot: FeatureSnapshot,
         query: String = "",
         regeneratingTitleThreadIDs: Set<String> = [],
+        collapsedProjectGroupIDs: Set<String> = [],
         settlementResult: Bool = true,
         onSettle: @escaping (FeatureThread, Bool) -> Void = { _, _ in }
     ) -> HomeThreadCollectionView {
@@ -841,6 +892,7 @@ struct HomeThreadSwipeActionTests {
             isSettledExpanded: false,
             isArchiveExpanded: false,
             settledLimit: 12,
+            collapsedProjectGroupIDs: collapsedProjectGroupIDs,
             onOpen: { _ in },
             onOpenSummaryTimeline: { _ in },
             onToggleSnoozed: {},

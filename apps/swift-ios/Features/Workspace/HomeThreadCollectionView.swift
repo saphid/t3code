@@ -30,6 +30,8 @@ struct HomeThreadCollectionView: UIViewRepresentable {
     let isSettledExpanded: Bool
     let isArchiveExpanded: Bool
     let settledLimit: Int
+    var collapsedProjectGroupIDs: Set<String> = []
+    var onToggleProjectGroup: (String) -> Void = { _ in }
     let onOpen: (String) -> Void
     let onOpenSummaryTimeline: (FeatureThread) -> Void
     let onToggleSnoozed: () -> Void
@@ -165,6 +167,7 @@ struct HomeThreadCollectionView: UIViewRepresentable {
             guard let dataSource else { return }
             let currentIdentifiers = dataSource.snapshot().itemIdentifiers
             let newIdentifiers = items.map(\.id)
+            let changed = newIdentifiers.filter { previousItems[$0] != itemsByID[$0] }
             let resolvedSwipeIDs = pendingSwipeCompletions.keys.filter { threadID in
                 guard let pending = pendingSwipeCompletions[threadID] else { return false }
                 guard case let .thread(thread, _, _, _, _) = itemsByID[.thread(threadID)] else {
@@ -180,7 +183,6 @@ struct HomeThreadCollectionView: UIViewRepresentable {
             }
 
             if currentIdentifiers == newIdentifiers {
-                let changed = newIdentifiers.filter { previousItems[$0] != itemsByID[$0] }
                 let selectionChanged = [previousSelection, selectedThreadID]
                     .compactMap { $0.map(HomeCollectionItem.ID.thread) }
                     .filter { newIdentifiers.contains($0) }
@@ -201,6 +203,13 @@ struct HomeThreadCollectionView: UIViewRepresentable {
                     finishSwipes()
                 }
             } else {
+                let projectGroupExpansionChanged = changed.contains { identifier in
+                    guard case let .projectHeader(_, _, _, wasExpanded) = previousItems[identifier],
+                          case let .projectHeader(_, _, _, isExpanded) = itemsByID[identifier] else {
+                        return false
+                    }
+                    return wasExpanded != isExpanded
+                }
                 var snapshot = NSDiffableDataSourceSnapshot<Section, HomeCollectionItem.ID>()
                 snapshot.appendSections([.main])
                 snapshot.appendItems(newIdentifiers, toSection: .main)
@@ -210,11 +219,31 @@ struct HomeThreadCollectionView: UIViewRepresentable {
                 dataSource.apply(
                     snapshot,
                     animatingDifferences: shouldAnimate,
-                    completion: finishSwipes
+                    completion: { [weak self, weak collectionView] in
+                        // A collapsed group can make UIKit reuse a visible cell without
+                        // invoking the registration again. Refresh only for that user action,
+                        // not for routine structural updates such as thread reordering.
+                        if projectGroupExpansionChanged, let self, let collectionView {
+                            self.reconfigureVisibleCells(in: collectionView)
+                        }
+                        finishSwipes()
+                    }
                 )
             }
 
             synchronizeSelection(in: collectionView)
+        }
+
+        private func reconfigureVisibleCells(in collectionView: UICollectionView) {
+            guard let dataSource else { return }
+            for indexPath in collectionView.indexPathsForVisibleItems {
+                guard let identifier = dataSource.itemIdentifier(for: indexPath),
+                      let cell = collectionView.cellForItem(at: indexPath)
+                          as? HomeCollectionCell else {
+                    continue
+                }
+                configure(cell, identifier: identifier, now: .now)
+            }
         }
 
         func invalidateTimer() {
@@ -241,6 +270,9 @@ struct HomeThreadCollectionView: UIViewRepresentable {
             case let .shelfHeader(shelf, _, _):
                 collectionView.deselectItem(at: indexPath, animated: false)
                 toggle(shelf)
+            case let .projectHeader(groupID, _, _, _):
+                collectionView.deselectItem(at: indexPath, animated: false)
+                parent.onToggleProjectGroup(groupID)
             case .showMoreSettled:
                 collectionView.deselectItem(at: indexPath, animated: false)
                 parent.onShowMoreSettled()
@@ -390,6 +422,7 @@ struct HomeThreadCollectionView: UIViewRepresentable {
                     } ?? false,
                     now: now,
                     onOpenSummaryTimeline: parent.onOpenSummaryTimeline,
+                    onToggleProjectGroup: parent.onToggleProjectGroup,
                     onPullRequestChange: { [weak self, weak cell] pullRequest in
                         guard let self,
                               let cell,
@@ -417,6 +450,7 @@ struct HomeThreadCollectionView: UIViewRepresentable {
 
         private func configureAccessibility(_ cell: HomeCollectionCell, item: HomeCollectionItem) {
             cell.accessibilityCustomActions = nil
+            cell.accessibilityIdentifier = nil
             switch item {
             case let .thread(thread, context, _, isArchived, _):
                 cell.isAccessibilityElement = true
@@ -449,6 +483,18 @@ struct HomeThreadCollectionView: UIViewRepresentable {
                 cell.accessibilityValue = isExpanded ? "Expanded" : "Collapsed"
                 cell.accessibilityHint = isExpanded ? "Collapses the task list" : "Expands the task list"
                 cell.onAccessibilityActivate = { [weak self] in self?.toggle(shelf) }
+            case let .projectHeader(groupID, title, count, isExpanded):
+                cell.isAccessibilityElement = true
+                cell.accessibilityTraits = .button
+                cell.accessibilityIdentifier = "home-project-group:\(groupID)"
+                cell.accessibilityLabel = "\(title), \(count) \(count == 1 ? "task" : "tasks")"
+                cell.accessibilityValue = isExpanded ? "Expanded" : "Collapsed"
+                cell.accessibilityHint = isExpanded
+                    ? "Collapses this project group"
+                    : "Expands this project group"
+                cell.onAccessibilityActivate = { [weak self] in
+                    self?.parent.onToggleProjectGroup(groupID)
+                }
             case let .showMoreSettled(remaining):
                 cell.isAccessibilityElement = true
                 cell.accessibilityTraits = .button
@@ -894,31 +940,11 @@ struct HomeThreadCollectionView: UIViewRepresentable {
             }
         }
 
-        var items = presentation.pinned.map {
-            HomeCollectionItem.thread(
-                $0,
-                presentation.rowContexts[$0.id] ?? .fallback,
-                .rich,
-                false,
-                forceRichRows
-            )
-        }
-        if !presentation.pinned.isEmpty, !presentation.active.isEmpty {
-            items.append(.pinnedDivider)
-        }
-        if presentation.active.isEmpty, presentation.pinned.isEmpty {
-            items.append(.empty(.active))
-        } else {
-            items.append(contentsOf: presentation.active.map {
-                .thread(
-                    $0,
-                    presentation.rowContexts[$0.id] ?? .fallback,
-                    .rich,
-                    false,
-                    forceRichRows
-                )
-            })
-        }
+        var items = Self.projectGroupItems(
+            presentation: presentation,
+            collapsedProjectGroupIDs: collapsedProjectGroupIDs,
+            forceRichRows: forceRichRows
+        )
 
         if !presentation.snoozed.isEmpty {
             items.append(.shelfHeader(.snoozed, presentation.snoozed.count, isSnoozedExpanded))
@@ -968,6 +994,44 @@ struct HomeThreadCollectionView: UIViewRepresentable {
             }
         }
         return items
+    }
+
+    static func projectGroupItems(
+        presentation: HomePresentation,
+        collapsedProjectGroupIDs: Set<String>,
+        forceRichRows: Bool
+    ) -> [HomeCollectionItem] {
+        guard !presentation.projectGroups.isEmpty else { return [.empty(.active)] }
+
+        return presentation.projectGroups.flatMap { group -> [HomeCollectionItem] in
+            let isExpanded = !collapsedProjectGroupIDs.contains(group.id)
+            var items: [HomeCollectionItem] = [
+                .projectHeader(group.id, group.title, group.threads.count, isExpanded),
+            ]
+            guard isExpanded else { return items }
+            items.append(contentsOf: group.pinned.map {
+                .thread(
+                    $0,
+                    presentation.rowContexts[$0.id] ?? .fallback,
+                    .rich,
+                    false,
+                    forceRichRows
+                )
+            })
+            if !group.pinned.isEmpty, !group.active.isEmpty {
+                items.append(.pinnedDivider(group.id))
+            }
+            items.append(contentsOf: group.active.map {
+                .thread(
+                    $0,
+                    presentation.rowContexts[$0.id] ?? .fallback,
+                    .rich,
+                    false,
+                    forceRichRows
+                )
+            })
+            return items
+        }
     }
 }
 
@@ -1130,7 +1194,7 @@ private final class HomeCollectionCell: UICollectionViewListCell {
     }
 }
 
-private enum HomeShelf: String, Hashable {
+enum HomeShelf: String, Hashable {
     case active
     case snoozed
     case settled
@@ -1141,14 +1205,15 @@ private enum HomeShelf: String, Hashable {
     }
 }
 
-private enum HomeCollectionItem: Equatable {
+enum HomeCollectionItem: Equatable {
     enum ID: Hashable {
         case thread(String)
+        case projectHeader(String)
         case shelfHeader(HomeShelf)
         case empty(HomeShelf)
         case showMoreSettled
         case searchEmpty
-        case pinnedDivider
+        case pinnedDivider(String)
 
         var threadID: String? {
             guard case let .thread(id) = self else { return nil }
@@ -1157,20 +1222,22 @@ private enum HomeCollectionItem: Equatable {
     }
 
     case thread(FeatureThread, HomeThreadRowContext, FeatureThreadRow.Style, Bool, Bool)
+    case projectHeader(String, String, Int, Bool)
     case shelfHeader(HomeShelf, Int, Bool)
     case empty(HomeShelf)
     case showMoreSettled(Int)
     case searchEmpty(String)
-    case pinnedDivider
+    case pinnedDivider(String)
 
     var id: ID {
         switch self {
         case let .thread(thread, _, _, _, _): .thread(thread.id)
+        case let .projectHeader(groupID, _, _, _): .projectHeader(groupID)
         case let .shelfHeader(shelf, _, _): .shelfHeader(shelf)
         case let .empty(shelf): .empty(shelf)
         case .showMoreSettled: .showMoreSettled
         case .searchEmpty: .searchEmpty
-        case .pinnedDivider: .pinnedDivider
+        case let .pinnedDivider(groupID): .pinnedDivider(groupID)
         }
     }
 }
@@ -1182,6 +1249,7 @@ private struct HomeCollectionCellContent: View {
     let isRegeneratingTitle: Bool
     let now: Date
     let onOpenSummaryTimeline: (FeatureThread) -> Void
+    let onToggleProjectGroup: (String) -> Void
     let onPullRequestChange: (HomeThreadPullRequestPresentation?) -> Void
 
     @ViewBuilder
@@ -1230,6 +1298,18 @@ private struct HomeCollectionCellContent: View {
                 isExpanded: isExpanded,
                 accent: shelf == .snoozed ? T3Colors.accent : nil
             )
+        case let .projectHeader(groupID, title, count, isExpanded):
+            Button {
+                onToggleProjectGroup(groupID)
+            } label: {
+                HomeShelfHeader(
+                    title: title,
+                    count: count,
+                    isExpanded: isExpanded,
+                    accent: T3Colors.accent
+                )
+            }
+            .buttonStyle(.plain)
         case let .empty(shelf):
             Text(shelf == .active ? "No active tasks" : "None")
                 .font(T3Typography.homeMetadata)

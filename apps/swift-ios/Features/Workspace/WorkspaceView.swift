@@ -25,6 +25,7 @@ public struct WorkspaceView: View {
     private let onNavigationRequestConsumed: @MainActor (UUID) -> Void
     private let submitNewTask: (NewTaskRequest) async -> FeatureThread?
     private let submitMessage: (FeatureMessageSubmission) async -> Bool
+    private let projectGroupCollapseStore: HomeProjectGroupCollapseStore
 
     @State private var selectedThreadID: String?
     @State private var selectedProjectID: String?
@@ -40,6 +41,7 @@ public struct WorkspaceView: View {
         HomeSortOrder.default.rawValue
     @AppStorage(HomeSortPreferences.threadKey) private var threadSortRawValue =
         HomeSortOrder.default.rawValue
+    @State private var collapsedProjectGroupIDs: Set<String>
     @State private var settledLimit = 12
     @State private var showingNewTask = false
     @State private var newTaskInitialProjectID: String?
@@ -63,12 +65,14 @@ public struct WorkspaceView: View {
         submitNewTask: ((NewTaskRequest) async -> FeatureThread?)? = nil,
         submitMessage: ((FeatureMessageSubmission) async -> Bool)? = nil
     ) {
+        let projectGroupCollapseStore = HomeProjectGroupCollapseStore()
         self.init(
             model: model,
             navigationRequest: nil,
             onNavigationRequestConsumed: { _ in },
             submitNewTask: submitNewTask,
-            submitMessage: submitMessage
+            submitMessage: submitMessage,
+            projectGroupCollapseStore: projectGroupCollapseStore
         )
     }
 
@@ -77,11 +81,14 @@ public struct WorkspaceView: View {
         navigationRequest: FeatureWorkspaceNavigationRequest?,
         onNavigationRequestConsumed: @escaping @MainActor (UUID) -> Void,
         submitNewTask: ((NewTaskRequest) async -> FeatureThread?)? = nil,
-        submitMessage: ((FeatureMessageSubmission) async -> Bool)? = nil
+        submitMessage: ((FeatureMessageSubmission) async -> Bool)? = nil,
+        projectGroupCollapseStore: HomeProjectGroupCollapseStore = .init()
     ) {
         self.model = model
         self.navigationRequest = navigationRequest
         self.onNavigationRequestConsumed = onNavigationRequestConsumed
+        self.projectGroupCollapseStore = projectGroupCollapseStore
+        _collapsedProjectGroupIDs = State(initialValue: projectGroupCollapseStore.load())
         self.submitNewTask = submitNewTask ?? { request in
             do {
                 let thread = try await model.client.createThreadAndSend(
@@ -315,6 +322,10 @@ public struct WorkspaceView: View {
                 isSettledExpanded: isSettledExpanded,
                 isArchiveExpanded: isArchiveExpanded,
                 settledLimit: settledLimit,
+                collapsedProjectGroupIDs: collapsedProjectGroupIDs,
+                onToggleProjectGroup: { groupID in
+                    collapsedProjectGroupIDs = projectGroupCollapseStore.toggle(groupID)
+                },
                 onOpen: openThread,
                 onOpenSummaryTimeline: { summaryTimelineThread = $0 },
                 onToggleSnoozed: { isSnoozedExpanded.toggle() },
@@ -351,6 +362,22 @@ public struct WorkspaceView: View {
             )
         }
         .background(T3Colors.background)
+        .onAppear {
+            reconcileCollapsedProjectGroups(presentation: presentation)
+        }
+        .onChange(of: presentation.reconciliationInput) { _, _ in
+            reconcileCollapsedProjectGroups(presentation: presentation)
+        }
+    }
+
+    private func reconcileCollapsedProjectGroups(presentation: HomePresentation) {
+        let reconciled = projectGroupCollapseStore.reconcile(
+            validGroupIDs: presentation.validProjectGroupIDs,
+            catalogIsComplete: presentation.isProjectCatalogComplete
+        )
+        if reconciled != collapsedProjectGroupIDs {
+            collapsedProjectGroupIDs = reconciled
+        }
     }
 
     @ViewBuilder
@@ -974,6 +1001,16 @@ struct HomePresentation {
     let archived: [FeatureThread]
     let searchResults: [FeatureThread]
     let rowContexts: [String: HomeThreadRowContext]
+    let projectGroups: [HomeProjectThreadGroup]
+    let validProjectGroupIDs: Set<String>
+    let isProjectCatalogComplete: Bool
+
+    var reconciliationInput: ProjectGroupReconciliationInput {
+        ProjectGroupReconciliationInput(
+            validGroupIDs: validProjectGroupIDs,
+            catalogIsComplete: isProjectCatalogComplete
+        )
+    }
 
     init(
         snapshot: FeatureSnapshot,
@@ -1023,8 +1060,25 @@ struct HomePresentation {
                 snapshot: snapshot,
                 query: normalizedQuery
             )
-        rowContexts = HomeThreadRowContext.index(snapshot: snapshot)
+        let rowContexts = HomeThreadRowContext.index(snapshot: snapshot)
+        self.rowContexts = rowContexts
+        let logicalGroups = DailyUXCreationContext.projectGroups(in: snapshot)
+        projectGroups = HomeProjectThreadGroup.make(
+            pinned: pinned,
+            active: active,
+            logicalGroups: logicalGroups,
+            rowContexts: rowContexts
+        )
+        validProjectGroupIDs = Set(logicalGroups.map(\.id)).union(projectGroups.map(\.id))
+        isProjectCatalogComplete = snapshot.environments
+            .filter(\.isEnabled)
+            .allSatisfy { $0.connectionState == .connected }
     }
+}
+
+struct ProjectGroupReconciliationInput: Equatable {
+    let validGroupIDs: Set<String>
+    let catalogIsComplete: Bool
 }
 
 @MainActor
