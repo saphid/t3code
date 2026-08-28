@@ -221,12 +221,23 @@ struct HomeThreadCollectionView: UIViewRepresentable {
                     animatingDifferences: shouldAnimate,
                     completion: { [weak self, weak collectionView] in
                         // A collapsed group can make UIKit reuse a visible cell without
-                        // invoking the registration again. Refresh only for that user action,
-                        // not for routine structural updates such as thread reordering.
+                        // invoking the registration again. Reconfigure the post-apply visible
+                        // identifiers through the data source so reuse has already settled.
+                        // Refresh only for that user action, not for routine structural updates.
                         if projectGroupExpansionChanged, let self, let collectionView {
-                            self.reconfigureVisibleCells(in: collectionView)
+                            self.reconfigureVisibleCells(
+                                in: collectionView,
+                                completion: {
+                                    UIAccessibility.post(
+                                        notification: .layoutChanged,
+                                        argument: collectionView
+                                    )
+                                    finishSwipes()
+                                }
+                            )
+                        } else {
+                            finishSwipes()
                         }
-                        finishSwipes()
                     }
                 )
             }
@@ -234,16 +245,24 @@ struct HomeThreadCollectionView: UIViewRepresentable {
             synchronizeSelection(in: collectionView)
         }
 
-        private func reconfigureVisibleCells(in collectionView: UICollectionView) {
-            guard let dataSource else { return }
-            for indexPath in collectionView.indexPathsForVisibleItems {
-                guard let identifier = dataSource.itemIdentifier(for: indexPath),
-                      let cell = collectionView.cellForItem(at: indexPath)
-                          as? HomeCollectionCell else {
-                    continue
-                }
-                configure(cell, identifier: identifier, now: .now)
+        private func reconfigureVisibleCells(
+            in collectionView: UICollectionView,
+            completion: @escaping () -> Void
+        ) {
+            guard let dataSource else {
+                completion()
+                return
             }
+            let visibleIdentifiers = collectionView.indexPathsForVisibleItems.compactMap {
+                dataSource.itemIdentifier(for: $0)
+            }
+            guard !visibleIdentifiers.isEmpty else {
+                completion()
+                return
+            }
+            var snapshot = dataSource.snapshot()
+            snapshot.reconfigureItems(visibleIdentifiers)
+            dataSource.apply(snapshot, animatingDifferences: false, completion: completion)
         }
 
         func invalidateTimer() {

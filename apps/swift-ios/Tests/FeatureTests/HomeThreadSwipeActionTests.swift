@@ -809,12 +809,15 @@ struct HomeThreadSwipeActionTests {
             name: "Beta",
             path: "/beta"
         )
+        let alphaThreads = (1...8).map {
+            FeatureThread(id: "alpha-\($0)", projectID: alpha.id, title: "Alpha task \($0)")
+        }
+        let betaThreads = (1...6).map {
+            FeatureThread(id: "beta-\($0)", projectID: beta.id, title: "Beta task \($0)")
+        }
         let value = FeatureSnapshot(
             projects: [alpha, beta],
-            threads: [
-                FeatureThread(id: "alpha-thread", projectID: alpha.id, title: "Alpha task"),
-                FeatureThread(id: "beta-thread", projectID: beta.id, title: "Beta task"),
-            ]
+            threads: alphaThreads + betaThreads
         )
         let initial = threadList(client: client, snapshot: value)
         let alphaGroupID = try #require(
@@ -840,8 +843,8 @@ struct HomeThreadSwipeActionTests {
         collectionView.layoutIfNeeded()
         let labels = collectionView.visibleCells.compactMap(\.accessibilityLabel)
 
-        #expect(!labels.contains("Alpha task"))
-        #expect(labels.contains("Beta task"))
+        #expect(labels.allSatisfy { !$0.hasPrefix("Alpha task") })
+        #expect(labels.contains { $0.hasPrefix("Beta task") })
     }
 
     private func presentation(for model: FeatureRootModel) -> HomePresentation {
