@@ -1,7 +1,27 @@
 import Testing
 @testable import T3Code
 
+private enum ClientStorageTestError: Error {
+    case unavailable
+}
+
+@MainActor
+private final class ClientStorageStub: FeatureClientStorageManaging {
+    var summaryResults: [Result<FeatureClientCache.Summary, Error>]
+
+    init(summaryResults: [Result<FeatureClientCache.Summary, Error>]) {
+        self.summaryResults = summaryResults
+    }
+
+    func clientCacheSummary() async throws -> FeatureClientCache.Summary {
+        try summaryResults.removeFirst().get()
+    }
+
+    func clearClientCache(_ scope: FeatureClientCache.Scope) async throws {}
+}
+
 @Suite("Client storage")
+@MainActor
 struct ClientStorageTests {
     @Test
     func summaryAggregatesCountsAndPayloadSizesByEnvironment() throws {
@@ -56,5 +76,24 @@ struct ClientStorageTests {
             FeatureClientCache.environmentIDs(for: .all, among: cached)
                 == ["alpha", "beta"]
         )
+    }
+
+    @Test
+    func refreshFailureKeepsTheLastValidSummaryVisible() async {
+        let summary = FeatureClientCache.Summary(records: [
+            .init(environmentID: "alpha", kind: .threads, payloadBytes: 42),
+        ])
+        let storage = ClientStorageStub(summaryResults: [
+            .success(summary),
+            .failure(ClientStorageTestError.unavailable),
+        ])
+        let model = ClientStorageViewModel(storage: storage)
+
+        await model.load()
+        #expect(model.summary == summary)
+
+        await model.load()
+        #expect(model.summary == summary)
+        #expect(model.errorMessage == "Cached data could not be refreshed. Try again.")
     }
 }

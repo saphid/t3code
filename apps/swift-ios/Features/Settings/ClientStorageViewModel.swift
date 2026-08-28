@@ -20,6 +20,10 @@ final class ClientStorageViewModel {
         storage = client as? any FeatureClientStorageManaging
     }
 
+    init(storage: (any FeatureClientStorageManaging)?) {
+        self.storage = storage
+    }
+
     var summary: FeatureClientCache.Summary? {
         guard case let .loaded(summary) = state else { return nil }
         return summary
@@ -27,16 +31,25 @@ final class ClientStorageViewModel {
 
     func load() async {
         guard clearingScope == nil else { return }
-        state = .loading
+        let previousSummary = summary
+        if previousSummary == nil {
+            state = .loading
+        }
         errorMessage = nil
         guard let storage else {
-            state = .unavailable
+            if previousSummary == nil {
+                state = .unavailable
+            }
             return
         }
         do {
             state = .loaded(try await storage.clientCacheSummary())
         } catch {
-            state = .unavailable
+            if previousSummary == nil {
+                state = .unavailable
+            } else {
+                errorMessage = "Cached data could not be refreshed. Try again."
+            }
         }
     }
 
