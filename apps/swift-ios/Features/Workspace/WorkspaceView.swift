@@ -31,6 +31,8 @@ public struct WorkspaceView: View {
     @State private var selectedEnvironmentID: String?
     @State private var searchText = ""
     @State private var isSearching = false
+    @AppStorage(HomeEnvironmentFilter.isEnabledPreferenceKey)
+    private var isEnvironmentFilterEnabled = true
     @AppStorage("t3.swiftui.home.snoozedExpanded") private var isSnoozedExpanded = false
     @AppStorage("t3.swiftui.home.settledExpanded") private var isSettledExpanded = true
     @AppStorage("t3.swiftui.home.archiveExpanded") private var isArchiveExpanded = false
@@ -39,6 +41,7 @@ public struct WorkspaceView: View {
     @State private var newTaskInitialProjectID: String?
     @State private var showingAddProject = false
     @State private var showingEnvironments = false
+    @State private var showingEnvironmentFilter = false
     @State private var showingSettings = false
     @State private var renamingThread: FeatureThread?
     @State private var deletingThread: FeatureThread?
@@ -226,7 +229,13 @@ public struct WorkspaceView: View {
         .onChange(of: selectedProjectIsAvailable) { _, isAvailable in
             if !isAvailable { selectedProjectID = nil }
         }
-        .onChange(of: model.snapshot.environments.map(\.id), initial: true) {
+        .onChange(
+            of: HomeEnvironmentFilter.environmentIdentities(model.snapshot.environments),
+            initial: true
+        ) {
+            reconcileEnvironmentSelection()
+        }
+        .onChange(of: isEnvironmentFilterEnabled) {
             reconcileEnvironmentSelection()
         }
         .onChange(of: HomeEnvironmentFilter.projectIdentities(model.snapshot.projects)) {
@@ -543,55 +552,46 @@ public struct WorkspaceView: View {
 
     private var projectFilter: some View {
         HStack(spacing: 0) {
-            Menu {
+            if showsEnvironmentFilter {
                 Button {
-                    selectEnvironment(nil)
+                    showingEnvironmentFilter = true
                 } label: {
-                    if selectedEnvironmentID == nil {
-                        Label("All environments", systemImage: "checkmark")
-                    } else {
-                        Text("All environments")
+                    HStack(spacing: 7) {
+                        Image(systemName: "network")
+                            .font(.system(size: 13, weight: .medium))
+                        Text(selectedEnvironmentLabel)
+                            .lineLimit(1)
+                        Image(systemName: "chevron.down")
+                            .font(.system(size: 8, weight: .bold))
                     }
+                    .font(T3Typography.homeMetadata.weight(.semibold))
+                    .foregroundStyle(T3Colors.textSecondary)
+                    .frame(
+                        maxWidth: .infinity,
+                        minHeight: T3Metrics.minimumTapTarget,
+                        alignment: .leading
+                    )
+                    .contentShape(Rectangle())
                 }
-                ForEach(model.snapshot.environments) { environment in
-                    Button {
-                        selectEnvironment(environment.id)
-                    } label: {
-                        let title = environmentLabels[environment.id] ?? environment.name
-                        if selectedEnvironmentID == environment.id {
-                            Label(title, systemImage: "checkmark")
-                        } else {
-                            Text(title)
-                        }
-                    }
+                .buttonStyle(.plain)
+                .popover(isPresented: $showingEnvironmentFilter) {
+                    HomeEnvironmentFilterPopover(
+                        environments: enabledEnvironments,
+                        labels: environmentLabels,
+                        selectedEnvironmentID: selectedEnvironmentID,
+                        onSelect: selectEnvironment
+                    )
+                    .presentationCompactAdaptation(.popover)
                 }
-            } label: {
-                HStack(spacing: 7) {
-                    Image(systemName: "network")
-                        .font(.system(size: 13, weight: .medium))
-                    Text(selectedEnvironmentLabel)
-                        .lineLimit(1)
-                    Image(systemName: "chevron.down")
-                        .font(.system(size: 8, weight: .bold))
-                }
-                .font(T3Typography.homeMetadata.weight(.semibold))
-                .foregroundStyle(T3Colors.textSecondary)
-                .frame(
-                    maxWidth: .infinity,
-                    minHeight: T3Metrics.minimumTapTarget,
-                    alignment: .leading
-                )
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Environment filter")
-            .accessibilityValue(selectedEnvironmentLabel)
-            .accessibilityIdentifier("sidebar-environment-filter")
+                .accessibilityLabel("Environment filter")
+                .accessibilityValue(selectedEnvironmentLabel)
+                .accessibilityIdentifier("sidebar-environment-filter")
 
-            Divider()
-                .frame(height: 20)
-                .overlay(T3Colors.border)
-                .padding(.horizontal, 8)
+                Divider()
+                    .frame(height: 20)
+                    .overlay(T3Colors.border)
+                    .padding(.horizontal, 8)
+            }
 
             Menu {
                 Button {
@@ -662,11 +662,22 @@ public struct WorkspaceView: View {
     }
 
     private var selectedEnvironment: FeatureEnvironment? {
-        model.snapshot.environments.first { $0.id == selectedEnvironmentID }
+        enabledEnvironments.first { $0.id == selectedEnvironmentID }
+    }
+
+    private var enabledEnvironments: [FeatureEnvironment] {
+        HomeEnvironmentFilter.options(from: model.snapshot.environments)
+    }
+
+    private var showsEnvironmentFilter: Bool {
+        HomeEnvironmentFilter.shouldShow(
+            isEnabled: isEnvironmentFilterEnabled,
+            environments: model.snapshot.environments
+        )
     }
 
     private var environmentLabels: [String: String] {
-        HomeEnvironmentFilter.labels(for: model.snapshot.environments)
+        HomeEnvironmentFilter.labels(for: enabledEnvironments)
     }
 
     private var selectedEnvironmentLabel: String {
@@ -749,6 +760,7 @@ public struct WorkspaceView: View {
                 environmentID: selectedEnvironmentID,
                 projectID: selectedProjectID
             ).reconciled(
+                isFilterEnabled: isEnvironmentFilterEnabled,
                 environments: model.snapshot.environments,
                 projects: model.snapshot.projects
             )

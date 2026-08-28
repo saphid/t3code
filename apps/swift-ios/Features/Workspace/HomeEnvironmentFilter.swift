@@ -1,6 +1,35 @@
 import Foundation
 
 enum HomeEnvironmentFilter {
+    static let isEnabledPreferenceKey = "t3.swiftui.home.environmentFilterEnabled"
+
+    enum ConnectionStatus: Equatable {
+        case checking
+        case connecting
+        case connected
+        case unreachable
+        case disconnected
+
+        var accessibilityText: String {
+            switch self {
+            case .checking: "Checking connection"
+            case .connecting: "Connecting"
+            case .connected: "Connected"
+            case .unreachable: "Unreachable, reconnecting"
+            case .disconnected: "Disconnected"
+            }
+        }
+
+        func accessibilityValue(isSelected: Bool) -> String {
+            isSelected ? "\(accessibilityText), Selected" : accessibilityText
+        }
+    }
+
+    struct EnvironmentIdentity: Equatable {
+        let id: String
+        let isEnabled: Bool
+    }
+
     struct ProjectIdentity: Equatable {
         let id: String
         let environmentID: String
@@ -71,9 +100,22 @@ enum HomeEnvironmentFilter {
         }
 
         func reconciled(
+            isFilterEnabled: Bool,
             environments: [FeatureEnvironment],
             projects: [FeatureProject]
         ) -> Self {
+            let options = HomeEnvironmentFilter.options(from: environments)
+            guard isFilterEnabled, options.count > 1 else {
+                guard environmentID != nil else {
+                    let project = HomeEnvironmentFilter.project(
+                        id: projectID,
+                        environmentID: nil,
+                        projects: projects
+                    )
+                    return Self(environmentID: nil, projectID: project?.id)
+                }
+                return Self(environmentID: nil, projectID: nil)
+            }
             guard let environmentID else {
                 let project = HomeEnvironmentFilter.project(
                     id: projectID,
@@ -82,7 +124,7 @@ enum HomeEnvironmentFilter {
                 )
                 return Self(environmentID: nil, projectID: project?.id)
             }
-            guard environments.contains(where: { $0.id == environmentID }) else {
+            guard options.contains(where: { $0.id == environmentID }) else {
                 return Self(environmentID: nil, projectID: nil)
             }
             let project = HomeEnvironmentFilter.project(
@@ -113,6 +155,35 @@ enum HomeEnvironmentFilter {
 
     static func projectIdentities(_ projects: [FeatureProject]) -> [ProjectIdentity] {
         projects.map { ProjectIdentity(id: $0.id, environmentID: $0.environmentID) }
+    }
+
+    static func environmentIdentities(
+        _ environments: [FeatureEnvironment]
+    ) -> [EnvironmentIdentity] {
+        environments.map { EnvironmentIdentity(id: $0.id, isEnabled: $0.isEnabled) }
+    }
+
+    static func options(from environments: [FeatureEnvironment]) -> [FeatureEnvironment] {
+        environments.filter(\.isEnabled)
+    }
+
+    static func shouldShow(
+        isEnabled: Bool,
+        environments: [FeatureEnvironment]
+    ) -> Bool {
+        isEnabled && options(from: environments).count > 1
+    }
+
+    static func connectionStatus(
+        for environment: FeatureEnvironment
+    ) -> ConnectionStatus {
+        switch environment.connectionState {
+        case .connected: .connected
+        case .connecting: .connecting
+        case .reconnecting: .unreachable
+        case .disconnected: .disconnected
+        case nil: .checking
+        }
     }
 
     static func labels(for environments: [FeatureEnvironment]) -> [String: String] {

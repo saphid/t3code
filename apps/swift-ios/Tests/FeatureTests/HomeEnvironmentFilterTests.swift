@@ -97,7 +97,7 @@ struct HomeEnvironmentFilterTests {
     }
 
     @Test
-    func selectionSurvivesConnectionChangesAndClearsRemovedEnvironments() {
+    func selectionSurvivesConnectionChangesAndClearsUnavailableEnvironments() {
         let localProject = project(id: "local-project", environmentID: "local")
         let remoteProject = project(id: "remote-project", environmentID: "remote")
         let selected = HomeEnvironmentFilter.Selection(
@@ -109,21 +109,129 @@ struct HomeEnvironmentFilterTests {
 
         #expect(
             selected.reconciled(
-                environments: [connecting],
-                projects: [localProject]
+                isFilterEnabled: true,
+                environments: [connecting, environment(id: "remote", state: .connected)],
+                projects: [localProject, remoteProject]
             ) == selected
         )
         #expect(
             selected.reconciled(
-                environments: [disconnected],
-                projects: [localProject]
+                isFilterEnabled: true,
+                environments: [disconnected, environment(id: "remote", state: .connected)],
+                projects: [localProject, remoteProject]
             ) == selected
         )
         #expect(
             selected.reconciled(
+                isFilterEnabled: true,
                 environments: [environment(id: "remote", state: .connected)],
                 projects: [remoteProject]
             ) == .init(environmentID: nil, projectID: nil)
+        )
+
+        let disabledLocal = FeatureEnvironment(
+            id: "local",
+            name: "Local",
+            endpoint: "http://local",
+            isEnabled: false,
+            connectionState: .disconnected
+        )
+        #expect(
+            selected.reconciled(
+                isFilterEnabled: true,
+                environments: [disabledLocal, environment(id: "remote", state: .connected)],
+                projects: [localProject, remoteProject]
+            ) == .init(environmentID: nil, projectID: nil)
+        )
+    }
+
+    @Test
+    func preferenceAndEnabledCountControlVisibilityAndRestoreCombinedSelection() {
+        let localProject = project(id: "local-project", environmentID: "local")
+        let remoteProject = project(id: "remote-project", environmentID: "remote")
+        let selected = HomeEnvironmentFilter.Selection(
+            environmentID: "local",
+            projectID: localProject.id
+        )
+        let local = environment(id: "local", state: .connected)
+        let remote = environment(id: "remote", state: .connected)
+        let disabledRemote = FeatureEnvironment(
+            id: remote.id,
+            name: remote.name,
+            endpoint: remote.endpoint,
+            isEnabled: false,
+            connectionState: .disconnected
+        )
+
+        #expect(HomeEnvironmentFilter.shouldShow(isEnabled: true, environments: [local, remote]))
+        #expect(
+            HomeEnvironmentFilter.shouldShow(
+                isEnabled: false,
+                environments: [local, remote]
+            ) == false
+        )
+        #expect(
+            HomeEnvironmentFilter.shouldShow(
+                isEnabled: true,
+                environments: [local, disabledRemote]
+            ) == false
+        )
+        #expect(
+            selected.reconciled(
+                isFilterEnabled: false,
+                environments: [local, remote],
+                projects: [localProject, remoteProject]
+            ) == .init(environmentID: nil, projectID: nil)
+        )
+        #expect(
+            selected.reconciled(
+                isFilterEnabled: true,
+                environments: [local, disabledRemote],
+                projects: [localProject, remoteProject]
+            ) == .init(environmentID: nil, projectID: nil)
+        )
+    }
+
+    @Test
+    func optionsIncludeOnlyEnabledEnvironments() {
+        let enabled = environment(id: "enabled", state: .connected)
+        let disabled = FeatureEnvironment(
+            id: "disabled",
+            name: "Disabled",
+            endpoint: "http://disabled",
+            isEnabled: false,
+            connectionState: .disconnected
+        )
+
+        #expect(HomeEnvironmentFilter.options(from: [enabled, disabled]) == [enabled])
+    }
+
+    @Test(
+        arguments: [
+            (FeatureConnection.State?.none, HomeEnvironmentFilter.ConnectionStatus.checking),
+            (.some(.connecting), .connecting),
+            (.some(.connected), .connected),
+            (.some(.reconnecting), .unreachable),
+            (.some(.disconnected), .disconnected),
+        ]
+    )
+    func connectionStatusMapsLiveState(
+        state: FeatureConnection.State?,
+        expected: HomeEnvironmentFilter.ConnectionStatus
+    ) {
+        let environment = FeatureEnvironment(
+            id: "environment",
+            name: "Environment",
+            endpoint: "http://environment",
+            connectionState: state
+        )
+
+        #expect(HomeEnvironmentFilter.connectionStatus(for: environment) == expected)
+        #expect(HomeEnvironmentFilter.connectionStatus(for: environment).accessibilityText.isEmpty == false)
+        #expect(
+            HomeEnvironmentFilter.connectionStatus(for: environment)
+                .accessibilityValue(isSelected: true)
+                .hasSuffix(", Selected")
         )
     }
 
@@ -162,6 +270,7 @@ struct HomeEnvironmentFilterTests {
 
         #expect(
             remoteSelection.reconciled(
+                isFilterEnabled: true,
                 environments: [
                     environment(id: "local", state: .connected),
                     environment(id: "remote", state: .connected),
@@ -204,12 +313,14 @@ struct HomeEnvironmentFilterTests {
 
         #expect(
             allEnvironmentsSelection.reconciled(
+                isFilterEnabled: true,
                 environments: [],
                 projects: [localProject]
             ) == allEnvironmentsSelection
         )
         #expect(
             allEnvironmentsSelection.reconciled(
+                isFilterEnabled: true,
                 environments: [],
                 projects: [localProject, remoteProject]
             ) == .init(environmentID: nil, projectID: nil)
