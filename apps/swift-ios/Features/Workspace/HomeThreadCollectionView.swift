@@ -212,6 +212,10 @@ struct HomeThreadCollectionView: UIViewRepresentable {
                 var snapshot = NSDiffableDataSourceSnapshot<Section, HomeCollectionItem.ID>()
                 snapshot.appendSections([.main])
                 snapshot.appendItems(newIdentifiers, toSection: .main)
+                let survivingChanges = newIdentifiers.filter {
+                    currentIdentifiers.contains($0) && previousItems[$0] != itemsByID[$0]
+                }
+                snapshot.reconfigureItems(survivingChanges)
                 let shouldAnimate = !resolvedSwipeCompletions.isEmpty
                     && !currentIdentifiers.isEmpty
                     && collectionView.window != nil

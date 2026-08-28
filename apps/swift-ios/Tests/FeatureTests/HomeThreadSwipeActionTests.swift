@@ -847,6 +847,49 @@ struct HomeThreadSwipeActionTests {
         #expect(labels.contains { $0.hasPrefix("Beta task") })
     }
 
+    @Test
+    func survivingArchiveHeaderRefreshesWhenRestoreChangesTheCollectionShape() throws {
+        let client = SwipeSettlementClientStub()
+        var restored = thread(id: "restored")
+        restored.isArchived = true
+        restored.archivedAt = now.addingTimeInterval(-20)
+        var remaining = thread(id: "remaining")
+        remaining.isArchived = true
+        remaining.archivedAt = now.addingTimeInterval(-10)
+
+        let initial = threadList(
+            client: client,
+            snapshot: snapshot(threads: [restored, remaining])
+        )
+        let coordinator = initial.makeCoordinator()
+        let collectionView = testCollectionView()
+        coordinator.configure(collectionView)
+        collectionView.layoutIfNeeded()
+        defer {
+            coordinator.invalidateTimer()
+            coordinator.cancelPendingSwipeActions()
+        }
+
+        let initialHeader = try #require(
+            collectionView.cellForItem(at: IndexPath(item: 1, section: 0))
+        )
+        #expect(initialHeader.accessibilityLabel == "Archived, 2 tasks")
+
+        restored.isArchived = false
+        restored.archivedAt = nil
+        let updated = threadList(
+            client: client,
+            snapshot: snapshot(threads: [restored, remaining])
+        )
+        coordinator.update(parent: updated, collectionView: collectionView)
+        collectionView.layoutIfNeeded()
+
+        let updatedHeader = try #require(
+            collectionView.cellForItem(at: IndexPath(item: 1, section: 0))
+        )
+        #expect(updatedHeader.accessibilityLabel == "Archived, 1 task")
+    }
+
     private func presentation(for model: FeatureRootModel) -> HomePresentation {
         HomePresentation(
             snapshot: model.snapshot,
