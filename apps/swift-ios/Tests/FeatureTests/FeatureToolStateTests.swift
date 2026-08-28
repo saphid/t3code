@@ -230,7 +230,9 @@ struct FeatureToolStateTests {
             body: "  Handle the nil case.  "
         )
 
-        #expect(draft.prompt.contains("`Sources/App.swift` at new line 42"))
+        #expect(draft.prompt.contains("filePath=\"Sources/App.swift\""))
+        #expect(draft.prompt.contains("rangeLabel=\"new line 42\""))
+        #expect(draft.prompt.contains("@@ -0,0 +42,1 @@"))
         #expect(draft.prompt.contains("Handle the nil case."))
         #expect(!draft.prompt.contains("  Handle the nil case.  "))
     }

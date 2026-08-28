@@ -542,26 +542,277 @@ public struct FeatureReviewLineSelection: Sendable, Equatable, Hashable, Codable
     }
 }
 
+public struct FeatureReviewLineRangeSelection: Sendable, Equatable, Hashable {
+    public let anchorIndex: Int
+    public let activeIndex: Int
+    public let startIndex: Int
+    public let endIndex: Int
+    public let lines: [FeatureDiffLine]
+
+    public init?(
+        anchorIndex: Int,
+        activeIndex: Int,
+        in renderedLines: [FeatureDiffLine]
+    ) {
+        guard renderedLines.indices.contains(anchorIndex),
+              renderedLines.indices.contains(activeIndex) else { return nil }
+        let startIndex = min(anchorIndex, activeIndex)
+        let endIndex = max(anchorIndex, activeIndex)
+        let lines = Array(renderedLines[startIndex ... endIndex])
+        guard lines.allSatisfy(Self.isSelectable) else { return nil }
+
+        self.anchorIndex = anchorIndex
+        self.activeIndex = activeIndex
+        self.startIndex = startIndex
+        self.endIndex = endIndex
+        self.lines = lines
+    }
+
+    public func extending(
+        to index: Int,
+        in renderedLines: [FeatureDiffLine]
+    ) -> FeatureReviewLineRangeSelection? {
+        FeatureReviewLineRangeSelection(
+            anchorIndex: anchorIndex,
+            activeIndex: index,
+            in: renderedLines
+        ) ?? FeatureReviewLineRangeSelection(
+            anchorIndex: index,
+            activeIndex: index,
+            in: renderedLines
+        )
+    }
+
+    public func contains(_ index: Int) -> Bool {
+        startIndex ... endIndex ~= index
+    }
+
+    public var oldLineLabel: String? {
+        Self.lineLabel(side: "old", values: lines.compactMap(\.oldLine))
+    }
+
+    public var newLineLabel: String? {
+        Self.lineLabel(side: "new", values: lines.compactMap(\.newLine))
+    }
+
+    public var locationLabel: String {
+        [oldLineLabel, newLineLabel].compactMap { $0 }.joined(separator: " · ")
+    }
+
+    public var rangeLabel: String {
+        locationLabel.isEmpty ? (lines.count == 1 ? "line" : "\(lines.count) lines") : locationLabel
+    }
+
+    private static func isSelectable(_ line: FeatureDiffLine) -> Bool {
+        line.kind != .hunk && (line.oldLine != nil || line.newLine != nil)
+    }
+
+    private static func lineLabel(side: String, values: [Int]) -> String? {
+        guard let first = values.first, let last = values.last else { return nil }
+        return first == last
+            ? "\(side) line \(first)"
+            : "\(side) lines \(first)–\(last)"
+    }
+}
+
 public struct FeatureReviewCommentDraft: Sendable, Equatable, Hashable {
+    public var sectionID: String
+    public var sectionTitle: String
     public var filePath: String
-    public var line: FeatureReviewLineSelection?
+    public var range: FeatureReviewLineRangeSelection?
     public var body: String
 
-    public init(filePath: String, line: FeatureReviewLineSelection? = nil, body: String) {
+    public init(
+        sectionID: String,
+        sectionTitle: String,
+        filePath: String,
+        range: FeatureReviewLineRangeSelection?,
+        body: String
+    ) {
+        self.sectionID = sectionID
+        self.sectionTitle = sectionTitle
         self.filePath = filePath
-        self.line = line
+        self.range = range
         self.body = body
     }
 
+    public init(filePath: String, line: FeatureReviewLineSelection? = nil, body: String) {
+        let lines = line.map { selection in
+            [FeatureDiffLine(
+                id: "review-line-\(selection.side.rawValue)-\(selection.line)",
+                kind: selection.side == .new ? .addition : .deletion,
+                oldLine: selection.side == .old ? selection.line : nil,
+                newLine: selection.side == .new ? selection.line : nil,
+                text: ""
+            )]
+        } ?? []
+        self.init(
+            sectionID: "file:\(filePath)",
+            sectionTitle: "File comment",
+            filePath: filePath,
+            range: line == nil
+                ? nil
+                : FeatureReviewLineRangeSelection(anchorIndex: 0, activeIndex: 0, in: lines),
+            body: body
+        )
+    }
+
     public var prompt: String {
-        let location = line.map { " at \($0.side.rawValue) line \($0.line)" } ?? ""
-        return """
-        Address this review comment in `\(filePath)`\(location):
+        let selectedLines = range?.lines ?? []
+        let diff = Self.diff(for: selectedLines)
+        let fence = String(repeating: "`", count: max(3, Self.longestBacktickRun(in: diff) + 1))
+        return [
+            [
+                "<review_comment",
+                " sectionId=\"\(Self.escapeAttribute(sectionID))\"",
+                " sectionTitle=\"\(Self.escapeAttribute(sectionTitle))\"",
+                " filePath=\"\(Self.escapeAttribute(filePath))\"",
+                " startIndex=\"\(range?.startIndex ?? 0)\"",
+                " endIndex=\"\(range?.endIndex ?? 0)\"",
+                " rangeLabel=\"\(Self.escapeAttribute(range?.rangeLabel ?? "file"))\"",
+                ">",
+            ].joined(),
+            Self.neutralizeReviewCommentTags(
+                body.trimmingCharacters(in: .whitespacesAndNewlines)
+            ),
+            "\(fence)diff",
+            diff,
+            fence,
+            "</review_comment>",
+        ].joined(separator: "\n")
+    }
 
-        \(body.trimmingCharacters(in: .whitespacesAndNewlines))
+    public func appending(to threadDraft: String) -> String {
+        let separator = threadDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            || threadDraft.hasSuffix("\n") ? "" : "\n\n"
+        return "\(threadDraft)\(separator)\(prompt)"
+    }
 
-        Inspect the surrounding code, make the smallest correct change, and report what changed.
-        """
+    private static func diff(for lines: [FeatureDiffLine]) -> String {
+        let oldLines = lines.compactMap(\.oldLine)
+        let newLines = lines.compactMap(\.newLine)
+        let body = lines.map { line in
+            let marker = switch line.kind {
+            case .addition: "+"
+            case .deletion: "-"
+            case .context, .hunk: " "
+            }
+            return "\(marker)\(line.text)"
+        }.joined(separator: "\n")
+        return "@@ -\(oldLines.first ?? 0),\(oldLines.count) +\(newLines.first ?? 0),\(newLines.count) @@\n\(body.isEmpty ? " " : body)"
+    }
+
+    private static func escapeAttribute(_ value: String) -> String {
+        value
+            .replacingOccurrences(of: "&", with: "&amp;")
+            .replacingOccurrences(of: "\"", with: "&quot;")
+            .replacingOccurrences(of: "<", with: "&lt;")
+            .replacingOccurrences(of: ">", with: "&gt;")
+    }
+
+    private static func neutralizeReviewCommentTags(_ value: String) -> String {
+        value
+            .replacingOccurrences(
+                of: "<review_comment",
+                with: "&lt;review_comment",
+                options: .caseInsensitive
+            )
+            .replacingOccurrences(
+                of: "</review_comment",
+                with: "&lt;/review_comment",
+                options: .caseInsensitive
+            )
+    }
+
+    private static func longestBacktickRun(in value: String) -> Int {
+        var longest = 0
+        var current = 0
+        for character in value {
+            if character == "`" {
+                current += 1
+                longest = max(longest, current)
+            } else {
+                current = 0
+            }
+        }
+        return longest
+    }
+}
+
+public struct FeatureReviewCommentSession: Sendable, Equatable {
+    public var selection: FeatureReviewLineRangeSelection?
+    public var comment = ""
+    public var isCommenting = false
+    public var isSelectingRange = false
+
+    public init() {}
+
+    public mutating func startRange(at index: Int, in lines: [FeatureDiffLine]) {
+        selection = FeatureReviewLineRangeSelection(
+            anchorIndex: index,
+            activeIndex: index,
+            in: lines
+        )
+        isSelectingRange = selection != nil
+        isCommenting = false
+    }
+
+    public mutating func selectLine(at index: Int, in lines: [FeatureDiffLine]) {
+        if isSelectingRange, let selection {
+            self.selection = selection.extending(to: index, in: lines)
+        } else {
+            selection = FeatureReviewLineRangeSelection(
+                anchorIndex: index,
+                activeIndex: index,
+                in: lines
+            )
+            isCommenting = selection != nil
+        }
+    }
+
+    public mutating func openSelectedComment() {
+        guard selection != nil else { return }
+        isSelectingRange = false
+        isCommenting = true
+    }
+
+    public mutating func openFileComment() {
+        selection = nil
+        isSelectingRange = false
+        isCommenting = true
+    }
+
+    public mutating func clearSelection() {
+        selection = nil
+        isSelectingRange = false
+    }
+
+    public mutating func cancelComposer() {
+        reset()
+    }
+
+    public mutating func takeDraft(
+        sectionID: String,
+        sectionTitle: String,
+        filePath: String
+    ) -> FeatureReviewCommentDraft? {
+        guard !comment.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+        let draft = FeatureReviewCommentDraft(
+            sectionID: sectionID,
+            sectionTitle: sectionTitle,
+            filePath: filePath,
+            range: selection,
+            body: comment
+        )
+        reset()
+        return draft
+    }
+
+    private mutating func reset() {
+        selection = nil
+        comment = ""
+        isCommenting = false
+        isSelectingRange = false
     }
 }
 

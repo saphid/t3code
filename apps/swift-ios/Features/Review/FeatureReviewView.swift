@@ -1,18 +1,23 @@
 import SwiftUI
-import UIKit
 
 public struct FeatureReviewView: View {
     @SwiftUI.Environment(\.scenePhase) private var scenePhase
     let client: any FeatureClient
     let threadID: String
+    let appendCommentToDraft: (FeatureReviewCommentDraft) -> Void
 
     @State private var review: FeatureReview?
     @State private var isLoading = true
     @State private var errorMessage: String?
 
-    public init(client: any FeatureClient, threadID: String) {
+    public init(
+        client: any FeatureClient,
+        threadID: String,
+        appendCommentToDraft: @escaping (FeatureReviewCommentDraft) -> Void
+    ) {
         self.client = client
         self.threadID = threadID
+        self.appendCommentToDraft = appendCommentToDraft
     }
 
     public var body: some View {
@@ -86,7 +91,13 @@ public struct FeatureReviewView: View {
                 }
                 ForEach(review.files) { file in
                     NavigationLink {
-                        FeatureDiffView(client: client, threadID: threadID, file: file)
+                        FeatureDiffView(
+                            client: client,
+                            threadID: threadID,
+                            sectionTitle: review.title,
+                            file: file,
+                            appendCommentToDraft: appendCommentToDraft
+                        )
                     } label: {
                         FeatureReviewFileRow(file: file)
                     }
@@ -188,21 +199,27 @@ struct FeatureDiffStatsLabel: View {
 private struct FeatureDiffView: View {
     let client: any FeatureClient
     let threadID: String
+    let sectionTitle: String
     let file: FeatureReviewFile
+    let appendCommentToDraft: (FeatureReviewCommentDraft) -> Void
 
     @State private var renderedLines: [FeatureDiffLine]
     @State private var isHydrating = false
-    @State private var selectedLine: FeatureReviewLineSelection?
-    @State private var isCommenting = false
-    @State private var comment = ""
-    @State private var isSending = false
-    @State private var commentError: String?
+    @State private var commentSession = FeatureReviewCommentSession()
     @FocusState private var isCommentFocused: Bool
 
-    init(client: any FeatureClient, threadID: String, file: FeatureReviewFile) {
+    init(
+        client: any FeatureClient,
+        threadID: String,
+        sectionTitle: String,
+        file: FeatureReviewFile,
+        appendCommentToDraft: @escaping (FeatureReviewCommentDraft) -> Void
+    ) {
         self.client = client
         self.threadID = threadID
+        self.sectionTitle = sectionTitle
         self.file = file
+        self.appendCommentToDraft = appendCommentToDraft
         _renderedLines = State(initialValue: file.lines)
     }
 
@@ -221,16 +238,14 @@ private struct FeatureDiffView: View {
                 GeometryReader { proxy in
                     ScrollView([.horizontal, .vertical]) {
                         LazyVStack(alignment: .leading, spacing: 0) {
-                            ForEach(renderedLines) { line in
+                            ForEach(renderedLines.enumerated(), id: \.element.id) { index, line in
                                 FeatureDiffLineRow(
                                     line: line,
-                                    isSelected: selection(for: line) == selectedLine,
-                                    minimumWidth: proxy.size.width
-                                ) {
-                                    guard let selection = selection(for: line) else { return }
-                                    selectedLine = selection
-                                    openCommentComposer()
-                                }
+                                    isSelected: commentSession.selection?.contains(index) == true,
+                                    minimumWidth: proxy.size.width,
+                                    select: { selectLine(at: index) },
+                                    startRange: { startRange(at: index) }
+                                )
                             }
                         }
                         .frame(minWidth: proxy.size.width, alignment: .leading)
@@ -245,8 +260,8 @@ private struct FeatureDiffView: View {
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 Button {
-                    selectedLine = nil
-                    openCommentComposer()
+                    commentSession.openFileComment()
+                    focusComment()
                 } label: {
                     Image(systemName: "text.bubble")
                 }
@@ -254,8 +269,10 @@ private struct FeatureDiffView: View {
             }
         }
         .safeAreaInset(edge: .bottom, spacing: 0) {
-            if isCommenting {
+            if commentSession.isCommenting {
                 commentComposer
+            } else if commentSession.isSelectingRange {
+                rangeSelectionControls
             }
         }
         .task(id: file.id) { await hydrate() }
@@ -268,16 +285,19 @@ private struct FeatureDiffView: View {
                     Text("REVIEW COMMENT")
                         .font(T3Typography.eyebrow)
                         .foregroundStyle(T3Colors.textTertiary)
-                    Text(commentLocation)
+                    Text(commentSession.selection?.locationLabel ?? "File comment")
+                        .font(T3Typography.control)
+                        .accessibilityIdentifier("review-comment-range-label")
+                    Text(file.path)
                         .font(T3Typography.supporting)
                         .foregroundStyle(T3Colors.textSecondary)
                         .lineLimit(1)
+                        .truncationMode(.middle)
                 }
                 Spacer(minLength: 8)
                 Button {
-                    isCommenting = false
+                    commentSession.cancelComposer()
                     isCommentFocused = false
-                    commentError = nil
                 } label: {
                     Image(systemName: "xmark")
                         .frame(width: T3Metrics.minimumTapTarget, height: T3Metrics.minimumTapTarget)
@@ -289,7 +309,7 @@ private struct FeatureDiffView: View {
 
             TextField(
                 "What should change?",
-                text: $comment,
+                text: $commentSession.comment,
                 axis: .vertical
             )
             .font(T3Typography.composer)
@@ -304,46 +324,23 @@ private struct FeatureDiffView: View {
                     .stroke(T3Colors.border, lineWidth: 1)
             }
 
-            if let commentError {
-                Text(commentError)
-                    .font(T3Typography.supporting)
-                    .foregroundStyle(T3Colors.danger)
+            if let selection = commentSession.selection {
+                FeatureReviewSelectionPreview(lines: selection.lines)
             }
 
-            HStack(spacing: 10) {
-                Button {
-                    UIPasteboard.general.string = reviewDraft.prompt
-                } label: {
-                    Label("Copy prompt", systemImage: "doc.on.doc")
-                        .frame(maxWidth: .infinity, minHeight: 42)
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(T3Colors.textSecondary)
-                .background(T3Colors.surfaceRaised)
-                .clipShape(RoundedRectangle(cornerRadius: 9))
-                .disabled(trimmedComment.isEmpty)
-
-                Button {
-                    sendComment()
-                } label: {
-                    HStack(spacing: 7) {
-                        if isSending {
-                            ProgressView()
-                                .controlSize(.small)
-                        } else {
-                            Image(systemName: "arrow.up")
-                        }
-                        Text("Send to agent")
-                    }
+            Button {
+                appendComment()
+            } label: {
+                Label("Add to draft", systemImage: "arrow.down.to.line")
                     .frame(maxWidth: .infinity, minHeight: 42)
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(.white)
-                .background(T3Colors.accent)
-                .clipShape(RoundedRectangle(cornerRadius: 9))
-                .disabled(trimmedComment.isEmpty || isSending)
             }
+            .buttonStyle(.plain)
+            .foregroundStyle(.white)
+            .background(T3Colors.accent)
+            .clipShape(RoundedRectangle(cornerRadius: 9))
+            .disabled(trimmedComment.isEmpty)
             .font(T3Typography.control)
+            .accessibilityIdentifier("review-comment-add-to-draft")
         }
         .padding(.horizontal, 14)
         .padding(.top, 10)
@@ -357,31 +354,56 @@ private struct FeatureDiffView: View {
     }
 
     private var trimmedComment: String {
-        comment.trimmingCharacters(in: .whitespacesAndNewlines)
+        commentSession.comment.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    private var reviewDraft: FeatureReviewCommentDraft {
-        FeatureReviewCommentDraft(filePath: file.path, line: selectedLine, body: comment)
-    }
+    private var rangeSelectionControls: some View {
+        HStack(spacing: 12) {
+            Button("Clear") {
+                commentSession.clearSelection()
+            }
+            .foregroundStyle(T3Colors.textSecondary)
 
-    private var commentLocation: String {
-        guard let selectedLine else { return file.path }
-        return "\(file.path) · \(selectedLine.side.rawValue) line \(selectedLine.line)"
-    }
+            VStack(alignment: .leading, spacing: 2) {
+                Text(commentSession.selection?.rangeLabel ?? "Select a diff line")
+                    .font(T3Typography.control)
+                Text("Tap a line to move the range end")
+                    .font(T3Typography.supporting)
+                    .foregroundStyle(T3Colors.textSecondary)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
 
-    private func selection(for line: FeatureDiffLine) -> FeatureReviewLineSelection? {
-        if let newLine = line.newLine {
-            return FeatureReviewLineSelection(side: .new, line: newLine)
+            Button("Comment") {
+                commentSession.openSelectedComment()
+                focusComment()
+            }
+            .buttonStyle(.borderedProminent)
         }
-        if let oldLine = line.oldLine {
-            return FeatureReviewLineSelection(side: .old, line: oldLine)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+        .background(T3Colors.surface)
+        .overlay(alignment: .top) {
+            Rectangle().fill(T3Colors.separator).frame(height: 1)
         }
-        return nil
+        .accessibilityIdentifier("review-range-selection-controls")
     }
 
-    private func openCommentComposer() {
-        isCommenting = true
-        commentError = nil
+    private func selectLine(at index: Int) {
+        if renderedLines[index].kind == .hunk {
+            commentSession.clearSelection()
+            return
+        }
+        commentSession.selectLine(at: index, in: renderedLines)
+        if commentSession.isCommenting {
+            focusComment()
+        }
+    }
+
+    private func startRange(at index: Int) {
+        commentSession.startRange(at: index, in: renderedLines)
+    }
+
+    private func focusComment() {
         Task { @MainActor in
             await Task.yield()
             isCommentFocused = true
@@ -398,25 +420,17 @@ private struct FeatureDiffView: View {
             return
         }
         renderedLines = FeatureFullDiffHydrator.lines(for: file, contents: contents)
+        commentSession.cancelComposer()
     }
 
-    private func sendComment() {
-        guard !trimmedComment.isEmpty, !isSending else { return }
-        let prompt = reviewDraft.prompt
-        isSending = true
-        commentError = nil
-        Task {
-            do {
-                try await client.sendMessage(threadID: threadID, text: prompt, selection: nil)
-                comment = ""
-                selectedLine = nil
-                isCommenting = false
-                isCommentFocused = false
-            } catch {
-                commentError = error.localizedDescription
-            }
-            isSending = false
-        }
+    private func appendComment() {
+        guard let draft = commentSession.takeDraft(
+            sectionID: file.sourceKind ?? "review",
+            sectionTitle: sectionTitle,
+            filePath: file.path
+        ) else { return }
+        isCommentFocused = false
+        appendCommentToDraft(draft)
     }
 }
 
@@ -425,6 +439,7 @@ private struct FeatureDiffLineRow: View {
     let isSelected: Bool
     let minimumWidth: CGFloat
     let select: () -> Void
+    let startRange: () -> Void
 
     var body: some View {
         HStack(alignment: .top, spacing: 0) {
@@ -463,7 +478,9 @@ private struct FeatureDiffLineRow: View {
         }
         .contentShape(Rectangle())
         .onTapGesture(perform: select)
+        .onLongPressGesture(minimumDuration: 0.35, perform: startRange)
         .accessibilityAction(named: "Add review comment", select)
+        .accessibilityAction(named: "Select review range", startRange)
     }
 
     private func lineNumber(_ value: Int?) -> some View {
@@ -522,6 +539,48 @@ private struct FeatureDiffLineRow: View {
         case .deletion: Color.red.opacity(0.11)
         case .hunk: Color.blue.opacity(0.08)
         case .context: Color.clear
+        }
+    }
+}
+
+private struct FeatureReviewSelectionPreview: View {
+    let lines: [FeatureDiffLine]
+
+    var body: some View {
+        ScrollView([.horizontal, .vertical]) {
+            LazyVStack(alignment: .leading, spacing: 0) {
+                ForEach(lines) { line in
+                    HStack(spacing: 0) {
+                        Text(line.oldLine.map(String.init) ?? "")
+                            .frame(width: 36, alignment: .trailing)
+                        Text(line.newLine.map(String.init) ?? "")
+                            .frame(width: 36, alignment: .trailing)
+                        Text(marker(for: line))
+                            .frame(width: 18)
+                        Text(line.text.isEmpty ? " " : line.text)
+                            .padding(.trailing, 10)
+                    }
+                    .frame(minHeight: 22)
+                }
+            }
+            .font(T3Typography.code)
+            .t3CodeTextSize()
+        }
+        .frame(maxHeight: 110)
+        .background(T3Colors.input)
+        .clipShape(RoundedRectangle(cornerRadius: 10))
+        .overlay {
+            RoundedRectangle(cornerRadius: 10)
+                .stroke(T3Colors.border, lineWidth: 1)
+        }
+        .accessibilityIdentifier("review-comment-selection-preview")
+    }
+
+    private func marker(for line: FeatureDiffLine) -> String {
+        switch line.kind {
+        case .addition: "+"
+        case .deletion: "−"
+        case .context, .hunk: " "
         }
     }
 }

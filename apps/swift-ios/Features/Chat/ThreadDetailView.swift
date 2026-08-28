@@ -101,7 +101,11 @@ public struct ThreadDetailView: View {
                     case .files:
                         FeatureFilesView(client: model.client, threadID: thread.id)
                     case .review:
-                        FeatureReviewView(client: model.client, threadID: thread.id)
+                        FeatureReviewView(
+                            client: model.client,
+                            threadID: thread.id,
+                            appendCommentToDraft: appendReviewCommentToDraft
+                        )
                     case .sourceControl:
                         FeatureSourceControlView(client: model.client, threadID: thread.id)
                     case .terminal:
@@ -574,6 +578,12 @@ public struct ThreadDetailView: View {
                 persistDraftImmediately()
             }
         }
+    }
+
+    private func appendReviewCommentToDraft(_ comment: FeatureReviewCommentDraft) {
+        draft = comment.appending(to: draft)
+        toolSurface = nil
+        composerFocused = true
     }
 
     private func sendFeedback(
