@@ -1,4 +1,5 @@
 import Foundation
+import Testing
 import XCTest
 @testable import T3Code
 
@@ -77,7 +78,7 @@ final class NativeMultiEnvironmentTests: XCTestCase {
     }
 
     func testSnapshotMergesEnvironmentsAndRoutesThreadWorkToItsOwner() async throws {
-        let fixture = try await makeFixture()
+        let fixture = try await Self.makeFixture()
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
 
         let snapshot = try await fixture.client.initialSnapshot()
@@ -113,7 +114,7 @@ final class NativeMultiEnvironmentTests: XCTestCase {
     }
 
     func testBackgroundLivenessKeepsASettledThreadWorking() async throws {
-        let fixture = try await makeFixture()
+        let fixture = try await Self.makeFixture()
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
         await fixture.transport.setShell(
             multiEnvironmentShell(
@@ -151,7 +152,7 @@ final class NativeMultiEnvironmentTests: XCTestCase {
             owner: "t3",
             name: "example"
         )
-        let fixture = try await makeFixture(repositoryIdentity: identity)
+        let fixture = try await Self.makeFixture(repositoryIdentity: identity)
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
 
         let snapshot = try await fixture.client.initialSnapshot()
@@ -166,7 +167,7 @@ final class NativeMultiEnvironmentTests: XCTestCase {
     }
 
     func testFailedEnvironmentKeepsItsLastKnownRowsWithoutHidingHealthyDevices() async throws {
-        let fixture = try await makeFixture()
+        let fixture = try await Self.makeFixture()
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
 
         _ = try await fixture.client.initialSnapshot()
@@ -201,7 +202,7 @@ final class NativeMultiEnvironmentTests: XCTestCase {
     }
 
     func testOlderHTTPSnapshotCannotReplaceNewerEnvironmentState() async throws {
-        let fixture = try await makeFixture()
+        let fixture = try await Self.makeFixture()
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
         _ = try await fixture.client.initialSnapshot()
 
@@ -246,7 +247,7 @@ final class NativeMultiEnvironmentTests: XCTestCase {
     }
 
     func testThreadCreationCannotReplaceNewerEnvironmentStateWithAnOlderShell() async throws {
-        let fixture = try await makeFixture()
+        let fixture = try await Self.makeFixture()
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
         _ = try await fixture.client.initialSnapshot()
 
@@ -300,7 +301,7 @@ final class NativeMultiEnvironmentTests: XCTestCase {
 
     func testPullRequestPagesPreserveCursorsAndTargetOnlyTheRequestedEnvironment() async throws {
         let recorder = PullRequestPageRecorder()
-        let fixture = try await makeFixture(
+        let fixture = try await Self.makeFixture(
             pullRequestsAvailable: true,
             webSocketConnector: PullRequestPageWebSocketConnector(recorder: recorder),
             rpcConnectionWaitTimeout: .seconds(2)
@@ -334,7 +335,7 @@ final class NativeMultiEnvironmentTests: XCTestCase {
 
     func testBackgroundSnapshotDoesNotStartAggregateRefreshLoops() async throws {
         let loader = CountingAggregateEnvironmentLoader()
-        let fixture = try await makeFixture(
+        let fixture = try await Self.makeFixture(
             aggregateEnvironmentLoader: { runtime in
                 await loader.recordLoad()
                 return try await runtime.environments()
@@ -352,7 +353,7 @@ final class NativeMultiEnvironmentTests: XCTestCase {
 
     func testAggregateRefreshRetriesTransientEnvironmentLoadFailures() async throws {
         let loader = FailOnceAggregateEnvironmentLoader()
-        let fixture = try await makeFixture(
+        let fixture = try await Self.makeFixture(
             aggregateRefreshInterval: .milliseconds(5),
             aggregateEnvironmentLoader: { runtime in
                 try await loader.load(from: runtime)
@@ -370,7 +371,7 @@ final class NativeMultiEnvironmentTests: XCTestCase {
 
     func testSameClientSnapshotRestartsAggregateRefresh() async throws {
         let loader = BlockingFirstAggregateEnvironmentLoader()
-        let fixture = try await makeFixture(
+        let fixture = try await Self.makeFixture(
             aggregateRefreshInterval: .milliseconds(5),
             aggregateEnvironmentLoader: { runtime in
                 try await loader.load(from: runtime)
@@ -391,7 +392,7 @@ final class NativeMultiEnvironmentTests: XCTestCase {
     }
 
     func testDuplicateWireIDsRemainDistinctAndRouteByEnvironment() async throws {
-        let fixture = try await makeFixture(duplicateIDs: true)
+        let fixture = try await Self.makeFixture(duplicateIDs: true)
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
 
         let snapshot = try await fixture.client.initialSnapshot()
@@ -414,7 +415,7 @@ final class NativeMultiEnvironmentTests: XCTestCase {
     }
 
     func testPassiveCreateUsesOwningProjectDefaultAndFallbackRemainsRoutable() async throws {
-        let fixture = try await makeFixture()
+        let fixture = try await Self.makeFixture()
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
 
         let snapshot = try await fixture.client.initialSnapshot()
@@ -448,7 +449,7 @@ final class NativeMultiEnvironmentTests: XCTestCase {
     }
 
     func testPassiveCreateRecoversACommittedThreadAfterItsReplyIsLost() async throws {
-        let fixture = try await makeFixture()
+        let fixture = try await Self.makeFixture()
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
         let snapshot = try await fixture.client.initialSnapshot()
         let project = try XCTUnwrap(
@@ -473,7 +474,7 @@ final class NativeMultiEnvironmentTests: XCTestCase {
     }
 
     func testUnarchiveImmediatelyRestoresLiveThreadWhenRefreshIsUnavailable() async throws {
-        let fixture = try await makeFixture()
+        let fixture = try await Self.makeFixture()
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
         let initial = try await fixture.client.initialSnapshot()
         let thread = try XCTUnwrap(
@@ -508,7 +509,7 @@ final class NativeMultiEnvironmentTests: XCTestCase {
     }
 
     func testHTTPFallbackKeepsLiveConnectionReconnecting() async throws {
-        let fixture = try await makeFixture(
+        let fixture = try await Self.makeFixture(
             fallbackPollingInitialDelay: .milliseconds(40),
             fallbackPollingInterval: .seconds(2)
         )
@@ -554,7 +555,7 @@ final class NativeMultiEnvironmentTests: XCTestCase {
         await fixture.client.disconnect()
     }
 
-    private func makeFixture(
+    fileprivate static func makeFixture(
         duplicateIDs: Bool = false,
         repositoryIdentity: RepositoryIdentity? = nil,
         pullRequestsAvailable: Bool = false,
@@ -616,14 +617,15 @@ final class NativeMultiEnvironmentTests: XCTestCase {
                 ),
             ]
         )
+        let credentials = InMemoryCredentialStore(
+            credentials: [
+                "one": EnvironmentCredential(accessToken: "one-token"),
+                "two": EnvironmentCredential(accessToken: "two-token"),
+            ]
+        )
         let runtime = EnvironmentRuntime(
             environmentStore: store,
-            credentialStore: InMemoryCredentialStore(
-                credentials: [
-                    "one": EnvironmentCredential(accessToken: "one-token"),
-                    "two": EnvironmentCredential(accessToken: "two-token"),
-                ]
-            ),
+            credentialStore: credentials,
             httpTransport: transport,
             webSocketConnector: webSocketConnector,
             rpcConnectionWaitTimeout: rpcConnectionWaitTimeout
@@ -634,6 +636,8 @@ final class NativeMultiEnvironmentTests: XCTestCase {
         return MultiEnvironmentFixture(
             directory: directory,
             transport: transport,
+            runtime: runtime,
+            credentials: credentials,
             client: NativeFeatureClient(
                 runtime: runtime,
                 settingsStore: settings,
@@ -643,6 +647,64 @@ final class NativeMultiEnvironmentTests: XCTestCase {
                 aggregateEnvironmentLoader: aggregateEnvironmentLoader
             )
         )
+    }
+}
+
+@Suite("Native client storage boundaries")
+@MainActor
+struct NativeClientStorageTests {
+    @Test
+    func scopedAndAllClearsPreserveConnectionsCredentialsAndPreferences() async throws {
+        let fixture = try await NativeMultiEnvironmentTests.makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        var settings = FeatureSettings()
+        settings.appearance = .dark
+        try await fixture.client.saveSettings(settings)
+
+        let initial = try await fixture.client.initialSnapshot()
+        let populated = try await fixture.client.clientCacheSummary()
+        #expect(populated.environments.map(\.environmentID) == ["one", "two"])
+        #expect(populated.recordCount > 0)
+        #expect(populated.payloadBytes > 0)
+
+        try await fixture.client.clearClientCache(.environment("two"))
+        let scoped = try await fixture.client.clientCacheSummary()
+        let environmentsAfterScopedClear = try await fixture.runtime.environments()
+        let secondCredentialAfterScopedClear = try await fixture.credentials.credential(for: "two")
+        #expect(scoped.environments.map(\.environmentID) == ["one"])
+        #expect(environmentsAfterScopedClear.map(\.id) == ["one", "two"])
+        #expect(secondCredentialAfterScopedClear != nil)
+        #expect(initial.connection.state == .connected)
+
+        let reconnected = try await fixture.client.initialSnapshot()
+        let repopulated = try await fixture.client.clientCacheSummary()
+        #expect(reconnected.settings.appearance == .dark)
+        #expect(repopulated.environments.map(\.environmentID) == ["one", "two"])
+
+        var clearEvents = fixture.client.events().makeAsyncIterator()
+        try await fixture.client.clearClientCache(.all)
+        let clearEvent = await clearEvents.next()
+        let cleared = try await fixture.client.clientCacheSummary()
+        let environmentsAfterAllClear = try await fixture.runtime.environments()
+        let firstCredentialAfterAllClear = try await fixture.credentials.credential(for: "one")
+        let secondCredentialAfterAllClear = try await fixture.credentials.credential(for: "two")
+        #expect(cleared.recordCount == 0)
+        #expect(cleared.payloadBytes == 0)
+        #expect(cleared.environments.isEmpty)
+        #expect(environmentsAfterAllClear.map(\.id) == ["one", "two"])
+        #expect(firstCredentialAfterAllClear != nil)
+        #expect(secondCredentialAfterAllClear != nil)
+        guard case let .snapshot(snapshotAfterAllClear)? = clearEvent else {
+            Issue.record("Clearing all caches did not publish the cache-free snapshot.")
+            return
+        }
+        #expect(snapshotAfterAllClear.connection.state == .connected)
+        #expect(snapshotAfterAllClear.environments.map(\.id) == ["one", "two"])
+
+        let afterAllClear = try await fixture.client.initialSnapshot()
+        #expect(afterAllClear.settings.appearance == .dark)
+        #expect(afterAllClear.environments.map(\.id) == ["one", "two"])
+        await fixture.client.disconnect()
     }
 }
 
@@ -822,9 +884,11 @@ private actor RuntimeReplacementHTTPTransport: HTTPTransport {
     }
 }
 
-private struct MultiEnvironmentFixture {
+fileprivate struct MultiEnvironmentFixture {
     let directory: URL
     let transport: MultiEnvironmentHTTPTransport
+    let runtime: EnvironmentRuntime
+    let credentials: InMemoryCredentialStore
     let client: NativeFeatureClient
 }
 

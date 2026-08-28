@@ -25,7 +25,7 @@ private struct T3ConnectManagedCleanupError: LocalizedError {
 @MainActor
 final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
     FeatureProjectCreationClient, FeatureWorkspaceAssetResolving,
-    FeatureFeedbackSubmitting, T3ConnectCapable
+    FeatureFeedbackSubmitting, FeatureClientStorageManaging, T3ConnectCapable
 {
     private static let maximumRetainedThreadDetails = 6
     private static let t3ConnectLogger = Logger(
@@ -476,6 +476,149 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
 
     func disconnect() async {
         await clearActiveEnvironment()
+    }
+
+    func clientCacheSummary() async throws -> FeatureClientCache.Summary {
+        var records: [FeatureClientCache.Record] = []
+        let encoder = JSONEncoder.t3
+
+        for (environmentID, shell) in shellsByEnvironmentID {
+            records.append(
+                .init(
+                    environmentID: environmentID,
+                    kind: .threads,
+                    payloadBytes: try encoder.encode(shell).count
+                )
+            )
+        }
+        for (environmentID, config) in serverConfigsByEnvironmentID {
+            records.append(
+                .init(
+                    environmentID: environmentID,
+                    kind: .serverMetadata,
+                    payloadBytes: try encoder.encode(config).count
+                )
+            )
+        }
+        for (environmentID, threads) in archivedThreadsByEnvironmentID where !threads.isEmpty {
+            records.append(
+                .init(
+                    environmentID: environmentID,
+                    kind: .threads,
+                    payloadBytes: try encoder.encode(threads).count
+                )
+            )
+        }
+        for (threadID, detail) in latestDetails {
+            guard let environmentID = threadEnvironmentIDs[threadID]
+                ?? detail.thread.environmentID else { continue }
+            records.append(
+                .init(
+                    environmentID: environmentID,
+                    kind: .threads,
+                    payloadBytes: try encoder.encode(detail).count
+                )
+            )
+        }
+        for (key, monitor) in sourceControlMonitors {
+            guard let status = monitor.latestStatus else { continue }
+            records.append(
+                .init(
+                    environmentID: key.environmentID,
+                    kind: .branches,
+                    payloadBytes: try encoder.encode(status).count
+                )
+            )
+        }
+
+        return FeatureClientCache.Summary(records: records)
+    }
+
+    func clearClientCache(_ scope: FeatureClientCache.Scope) async throws {
+        let environmentIDs = FeatureClientCache.environmentIDs(
+            for: scope,
+            among: cachedEnvironmentIDs
+        )
+        guard !environmentIDs.isEmpty else { return }
+        let environments = try await runtime.environments()
+
+        let removedThreadIDs = Set(threadEnvironmentIDs.compactMap { threadID, environmentID in
+            environmentIDs.contains(environmentID) ? threadID : nil
+        }).union(latestDetails.compactMap { threadID, detail in
+            guard let environmentID = detail.thread.environmentID,
+                  environmentIDs.contains(environmentID) else { return nil }
+            return threadID
+        })
+
+        for environmentID in environmentIDs {
+            shellsByEnvironmentID[environmentID] = nil
+            serverConfigsByEnvironmentID[environmentID] = nil
+            providerCatalogCache[environmentID] = nil
+            archivedThreadsByEnvironmentID[environmentID] = nil
+            archivedShellThreadsByEnvironmentID[environmentID] = nil
+        }
+        latestDetails = latestDetails.filter { threadID, detail in
+            let environmentID = threadEnvironmentIDs[threadID] ?? detail.thread.environmentID
+            return environmentID.map { !environmentIDs.contains($0) } ?? true
+        }
+        detailRenderCaches = detailRenderCaches.filter { !removedThreadIDs.contains($0.key) }
+        detailCacheRecency.removeAll { removedThreadIDs.contains($0) }
+        attachmentURLs = attachmentURLs.filter {
+            !environmentIDs.contains($0.key.environmentID)
+        }
+
+        let removedMonitorKeys = sourceControlMonitors.keys.filter {
+            environmentIDs.contains($0.environmentID)
+        }
+        for key in removedMonitorKeys {
+            guard let monitor = sourceControlMonitors.removeValue(forKey: key) else { continue }
+            monitor.task?.cancel()
+            monitor.continuations.values.forEach { $0.finish() }
+        }
+
+        if let activeEnvironmentID = activeEnvironment?.id,
+           environmentIDs.contains(activeEnvironmentID) {
+            resetDetailRefresh()
+            resetDetailStream()
+            passiveDetailPollingTask?.cancel()
+            passiveDetailPollingTask = nil
+            activeThreadID = nil
+            activeThreadEnvironmentID = nil
+            activeRawThread = nil
+            activeThreadSequence = nil
+            activeThreadPage = nil
+            pendingOlderThreadPage = nil
+            latestShell = nil
+            latestServerConfig = nil
+        }
+
+        rebuildEntityIndexes(environments)
+        if let activeEnvironment {
+            let state = environmentConnectionStates[activeEnvironment.id]
+                ?? latestSnapshot?.connection.state
+                ?? .disconnected
+            let detail = environmentConnectionDetails[activeEnvironment.id]
+                ?? latestSnapshot?.connection.detail
+            publish(
+                makeSnapshot(
+                    environments: environments,
+                    activeEnvironment: activeEnvironment,
+                    connectionState: state,
+                    connectionDetail: detail
+                )
+            )
+        } else {
+            publish(disconnectedSnapshot(environments: environments))
+        }
+    }
+
+    private var cachedEnvironmentIDs: Set<String> {
+        Set(shellsByEnvironmentID.keys)
+            .union(serverConfigsByEnvironmentID.keys)
+            .union(archivedThreadsByEnvironmentID.keys)
+            .union(threadEnvironmentIDs.values)
+            .union(latestDetails.values.compactMap { $0.thread.environmentID })
+            .union(sourceControlMonitors.keys.map(\.environmentID))
     }
 
     func usageSummaries(_ input: UsageSummaryInput) async throws -> [FeatureEnvironmentUsage] {

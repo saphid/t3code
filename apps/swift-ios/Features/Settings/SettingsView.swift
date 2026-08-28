@@ -105,21 +105,35 @@ public struct SettingsView: View {
 
     private var connectionSection: some View {
         SettingsSection(title: "Connection") {
-            NavigationLink {
-                ConnectionsView(model: model)
-            } label: {
-                SettingsNavigationRow(
-                    title: "Environments",
-                    value: environmentCountLabel,
-                    subtitle: environmentSummary.text,
-                    systemImage: "server.rack",
-                    statusColor: environmentSummary.color
-                )
+            VStack(spacing: 0) {
+                NavigationLink {
+                    ConnectionsView(model: model)
+                } label: {
+                    SettingsNavigationRow(
+                        title: "Environments",
+                        value: environmentCountLabel,
+                        subtitle: environmentSummary.text,
+                        systemImage: "server.rack",
+                        statusColor: environmentSummary.color
+                    )
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Environments")
+                .accessibilityValue(environmentAccessibilityValue)
+                .accessibilityHint("Manage saved environments")
+                settingsDivider
+                NavigationLink {
+                    ClientStorageView(model: model)
+                } label: {
+                    SettingsNavigationRow(
+                        title: "Client Storage",
+                        systemImage: "internaldrive"
+                    )
+                }
+                .buttonStyle(.plain)
+                .accessibilityHint("Inspect and clear offline client caches")
+                .accessibilityIdentifier("settings-client-storage")
             }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Environments")
-            .accessibilityValue(environmentAccessibilityValue)
-            .accessibilityHint("Manage saved environments")
         }
     }
 
