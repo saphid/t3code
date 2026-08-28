@@ -7,7 +7,7 @@ public struct ClientStorageView: View {
 
         var title: String {
             switch self {
-            case let .environment(_, name, _): "Clear cache for \(name)?"
+            case let .environment(_, name, size): "Clear \(size) cache for \(name)?"
             case let .all(size): "Clear \(size) of client caches?"
             }
         }
@@ -94,7 +94,7 @@ public struct ClientStorageView: View {
                 ContentUnavailableView {
                     Label("Storage unavailable", systemImage: "exclamationmark.triangle")
                 } description: {
-                    Text("Restart the app and try again.")
+                    Text("Cached data could not be inspected.")
                 } actions: {
                     Button("Try Again") { Task { await storageModel.load() } }
                 }

@@ -8,16 +8,27 @@ private enum ClientStorageTestError: Error {
 @MainActor
 private final class ClientStorageStub: FeatureClientStorageManaging {
     var summaryResults: [Result<FeatureClientCache.Summary, Error>]
+    var clearResults: [Result<Void, Error>]
+    var onClear: (() async -> Void)?
+    private(set) var clearedScopes: [FeatureClientCache.Scope] = []
 
-    init(summaryResults: [Result<FeatureClientCache.Summary, Error>]) {
+    init(
+        summaryResults: [Result<FeatureClientCache.Summary, Error>],
+        clearResults: [Result<Void, Error>] = [.success(())]
+    ) {
         self.summaryResults = summaryResults
+        self.clearResults = clearResults
     }
 
     func clientCacheSummary() async throws -> FeatureClientCache.Summary {
         try summaryResults.removeFirst().get()
     }
 
-    func clearClientCache(_ scope: FeatureClientCache.Scope) async throws {}
+    func clearClientCache(_ scope: FeatureClientCache.Scope) async throws {
+        clearedScopes.append(scope)
+        await onClear?()
+        try clearResults.removeFirst().get()
+    }
 }
 
 @Suite("Client storage")
@@ -95,5 +106,79 @@ struct ClientStorageTests {
         await model.load()
         #expect(model.summary == summary)
         #expect(model.errorMessage == "Cached data could not be refreshed. Try again.")
+    }
+
+    @Test
+    func clearReportsProgressAndPublishesTheReloadedSummary() async {
+        let populated = FeatureClientCache.Summary(records: [
+            .init(environmentID: "alpha", kind: .threads, payloadBytes: 42),
+        ])
+        let empty = FeatureClientCache.Summary(records: [])
+        let started = AsyncStream<Void>.makeStream()
+        let resumed = AsyncStream<Void>.makeStream()
+        let storage = ClientStorageStub(summaryResults: [
+            .success(populated),
+            .success(empty),
+        ])
+        storage.onClear = {
+            started.continuation.yield()
+            var iterator = resumed.stream.makeAsyncIterator()
+            _ = await iterator.next()
+        }
+        let model = ClientStorageViewModel(storage: storage)
+        await model.load()
+
+        let clearTask = Task { await model.clear(.all) }
+        var startedIterator = started.stream.makeAsyncIterator()
+        _ = await startedIterator.next()
+        #expect(model.clearingScope == .all)
+        #expect(model.summary == populated)
+
+        resumed.continuation.yield()
+        await clearTask.value
+        #expect(model.clearingScope == nil)
+        #expect(model.summary == empty)
+        #expect(storage.clearedScopes == [.all])
+    }
+
+    @Test
+    func clearFailureRetainsTheLastValidSummaryAndReportsTheFailure() async {
+        let summary = FeatureClientCache.Summary(records: [
+            .init(environmentID: "alpha", kind: .threads, payloadBytes: 42),
+        ])
+        let storage = ClientStorageStub(
+            summaryResults: [.success(summary)],
+            clearResults: [.failure(ClientStorageTestError.unavailable)]
+        )
+        let model = ClientStorageViewModel(storage: storage)
+        await model.load()
+
+        await model.clear(.environment("alpha"))
+
+        #expect(model.summary == summary)
+        #expect(model.clearingScope == nil)
+        #expect(model.errorMessage == "Client cache could not be cleared. Try again.")
+    }
+
+    @Test
+    func successfulClearWithFailedReloadDoesNotShowTheOldSummary() async {
+        let summary = FeatureClientCache.Summary(records: [
+            .init(environmentID: "alpha", kind: .threads, payloadBytes: 42),
+        ])
+        let storage = ClientStorageStub(summaryResults: [
+            .success(summary),
+            .failure(ClientStorageTestError.unavailable),
+        ])
+        let model = ClientStorageViewModel(storage: storage)
+        await model.load()
+
+        await model.clear(.all)
+
+        #expect(model.state == .unavailable)
+        #expect(model.summary == nil)
+        #expect(
+            model.errorMessage
+                == "The cache was cleared, but remaining cached data could not be refreshed. Try again."
+        )
     }
 }

@@ -59,9 +59,16 @@ final class ClientStorageViewModel {
         errorMessage = nil
         do {
             try await storage.clearClientCache(scope)
+        } catch {
+            errorMessage = "Client cache could not be cleared. Try again."
+            clearingScope = nil
+            return
+        }
+        do {
             state = .loaded(try await storage.clientCacheSummary())
         } catch {
-            errorMessage = "Client storage is temporarily unavailable. Try again after restarting the app."
+            state = .unavailable
+            errorMessage = "The cache was cleared, but remaining cached data could not be refreshed. Try again."
         }
         clearingScope = nil
     }

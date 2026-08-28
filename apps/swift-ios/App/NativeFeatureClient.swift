@@ -113,6 +113,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
     private var detailStreamGeneration = 0
     private var pendingDetailRenderMutations = NativeDetailRenderMutations()
     private var environmentGeneration = 0
+    private var cacheInvalidationEpochs: [String: Int] = [:]
     private var lastShellEventAt: Date?
     private var activeRawThread: OrchestrationThread?
     private var activeThreadSequence: Int?
@@ -530,17 +531,31 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
                 )
             )
         }
+        for (key, snapshot) in terminalSnapshots {
+            guard let environmentID = threadEnvironmentIDs[key.threadID] else { continue }
+            records.append(
+                .init(
+                    environmentID: environmentID,
+                    kind: .threads,
+                    payloadBytes: try encoder.encode(snapshot).count
+                )
+            )
+        }
 
         return FeatureClientCache.Summary(records: records)
     }
 
     func clearClientCache(_ scope: FeatureClientCache.Scope) async throws {
+        let environments = try await runtime.environments()
         let environmentIDs = FeatureClientCache.environmentIDs(
             for: scope,
             among: cachedEnvironmentIDs
         )
         guard !environmentIDs.isEmpty else { return }
-        let environments = try await runtime.environments()
+
+        for environmentID in environmentIDs {
+            cacheInvalidationEpochs[environmentID, default: 0] &+= 1
+        }
 
         let removedThreadIDs = Set(threadEnvironmentIDs.compactMap { threadID, environmentID in
             environmentIDs.contains(environmentID) ? threadID : nil
@@ -563,8 +578,12 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         }
         detailRenderCaches = detailRenderCaches.filter { !removedThreadIDs.contains($0.key) }
         detailCacheRecency.removeAll { removedThreadIDs.contains($0) }
+        terminalSnapshots = terminalSnapshots.filter { !removedThreadIDs.contains($0.key.threadID) }
         attachmentURLs = attachmentURLs.filter {
             !environmentIDs.contains($0.key.environmentID)
+        }
+        for threadID in removedThreadIDs {
+            attachmentHydrationTasks.removeValue(forKey: threadID)?.task.cancel()
         }
 
         let removedMonitorKeys = sourceControlMonitors.keys.filter {
@@ -578,6 +597,11 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
 
         if let activeEnvironmentID = activeEnvironment?.id,
            environmentIDs.contains(activeEnvironmentID) {
+            archivedRefreshTask?.cancel()
+            archivedRefreshTask = nil
+            shellPublishTask?.cancel()
+            shellPublishTask = nil
+            threadHistoryEpoch &+= 1
             resetDetailRefresh()
             resetDetailStream()
             passiveDetailPollingTask?.cancel()
@@ -619,6 +643,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
             .union(threadEnvironmentIDs.values)
             .union(latestDetails.values.compactMap { $0.thread.environmentID })
             .union(sourceControlMonitors.keys.map(\.environmentID))
+            .union(terminalSnapshots.keys.compactMap { threadEnvironmentIDs[$0.threadID] })
     }
 
     func usageSummaries(_ input: UsageSummaryInput) async throws -> [FeatureEnvironmentUsage] {
@@ -985,6 +1010,14 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
     ) -> Bool {
         generation == environmentGeneration
             && environmentClients[environmentID] === client
+    }
+
+    private func cacheInvalidationEpoch(for environmentID: String) -> Int {
+        cacheInvalidationEpochs[environmentID, default: 0]
+    }
+
+    private func isCurrentCacheEpoch(_ epoch: Int, environmentID: String) -> Bool {
+        cacheInvalidationEpoch(for: environmentID) == epoch
     }
 
     func addProject(path: String) async throws {
@@ -3755,6 +3788,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         let environmentsWithCachedConfig = Set(serverConfigsByEnvironmentID.keys)
         let shellTimeoutInterval = environmentShellTimeoutInterval
         let runtime = runtime
+        let cacheEpochs = cacheInvalidationEpochs
         var clients: [(environment: Environment, client: T3Client)] = []
         clients.reserveCapacity(environments.count)
         for environment in environments {
@@ -3774,7 +3808,8 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
                             environment: pair.environment,
                             client: pair.client,
                             shell: nil,
-                            config: nil
+                            config: nil,
+                            cacheEpoch: cacheEpochs[pair.environment.id, default: 0]
                         )
                     }
 
@@ -3801,7 +3836,8 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
                         environment: pair.environment,
                         client: pair.client,
                         shell: shell,
-                        config: config
+                        config: config,
+                        cacheEpoch: cacheEpochs[pair.environment.id, default: 0]
                     )
                 }
             }
@@ -3844,6 +3880,10 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
 
         for load in loads {
             environmentClients[load.environment.id] = load.client
+            guard isCurrentCacheEpoch(
+                load.cacheEpoch,
+                environmentID: load.environment.id
+            ) else { continue }
             if let config = load.config {
                 setServerConfig(config, environmentID: load.environment.id)
                 if load.environment.id == activeEnvironment?.id {
@@ -3974,8 +4014,10 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
     private func refresh(client: T3Client, includeArchived: Bool = false) async throws {
         let environment = client.environment
         let generation = environmentGeneration
+        let cacheEpoch = cacheInvalidationEpoch(for: environment.id)
         let shell = try await client.shellSnapshot()
-        guard isKnownClient(client, environmentID: environment.id, generation: generation) else {
+        guard isKnownClient(client, environmentID: environment.id, generation: generation),
+              isCurrentCacheEpoch(cacheEpoch, environmentID: environment.id) else {
             throw CancellationError()
         }
         guard shell.snapshotSequence
@@ -3991,7 +4033,8 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         )
         if includeArchived,
            let archivedShell = try? await client.archivedShellSnapshot(),
-           isKnownClient(client, environmentID: environment.id, generation: generation) {
+           isKnownClient(client, environmentID: environment.id, generation: generation),
+           isCurrentCacheEpoch(cacheEpoch, environmentID: environment.id) {
             archivedThreadsByEnvironmentID[environment.id] = archivedShell.threads.map {
                 mapThread($0, environment: environment)
             }
@@ -4000,17 +4043,23 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
             )
             rebuildEntityIndexes((try? await runtime.environments()) ?? [environment])
         }
-        await emitSnapshot(shell, environment: environment)
+        await emitSnapshot(
+            shell,
+            environment: environment,
+            expectedCacheEpoch: cacheEpoch
+        )
     }
 
     private func scheduleArchivedRefresh(client: T3Client, environment: Environment) {
         archivedRefreshTask?.cancel()
         let generation = environmentGeneration
+        let cacheEpoch = cacheInvalidationEpoch(for: environment.id)
         archivedRefreshTask = Task { [weak self] in
             guard let self,
                   let archivedShell = try? await client.archivedShellSnapshot(),
                   !Task.isCancelled,
-                  self.isCurrentSession(client: client, generation: generation) else {
+                  self.isCurrentSession(client: client, generation: generation),
+                  self.isCurrentCacheEpoch(cacheEpoch, environmentID: environment.id) else {
                 return
             }
             self.archivedThreadsByEnvironmentID[environment.id] = archivedShell.threads.map {
@@ -4078,7 +4127,8 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         _ shell: OrchestrationShellSnapshot,
         environment sourceEnvironment: Environment? = nil,
         markSourceConnected: Bool = true,
-        expectedGeneration: Int? = nil
+        expectedGeneration: Int? = nil,
+        expectedCacheEpoch: Int? = nil
     ) async {
         guard let environment = activeEnvironment else { return }
         let sourceEnvironment = sourceEnvironment ?? environment
@@ -4087,6 +4137,8 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         let environments = (try? await runtime.environments()) ?? [environment]
         guard generation == environmentGeneration,
               expectedGeneration == nil || expectedGeneration == environmentGeneration,
+              expectedCacheEpoch == nil
+                || expectedCacheEpoch == cacheInvalidationEpoch(for: sourceEnvironment.id),
               activeEnvironment?.id == environment.id,
               shell.snapshotSequence
                   >= (shellsByEnvironmentID[sourceEnvironment.id]?.snapshotSequence ?? .min) else {
@@ -6543,6 +6595,7 @@ private struct EnvironmentShellLoad: Sendable {
     let client: T3Client
     let shell: OrchestrationShellSnapshot?
     let config: ServerConfigSnapshot?
+    let cacheEpoch: Int
 }
 
 private struct EntityWireOwner: Hashable {

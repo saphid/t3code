@@ -706,6 +706,30 @@ struct NativeClientStorageTests {
         #expect(afterAllClear.environments.map(\.id) == ["one", "two"])
         await fixture.client.disconnect()
     }
+
+    @Test
+    func clearRejectsAnEnvironmentRefreshThatStartedBeforeTheClear() async throws {
+        let fixture = try await NativeMultiEnvironmentTests.makeFixture(
+            aggregateRefreshInterval: .milliseconds(100)
+        )
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        _ = try await fixture.client.initialSnapshot()
+        await fixture.transport.blockNextShellRead(host: "two.example")
+        await fixture.transport.waitUntilShellReadStarts(host: "two.example")
+
+        try await fixture.client.clearClientCache(.environment("two"))
+        let cleared = try await fixture.client.clientCacheSummary()
+        #expect(cleared.environments.map(\.environmentID) == ["one"])
+
+        var events = fixture.client.events().makeAsyncIterator()
+        await fixture.transport.resumeBlockedShellRead(host: "two.example")
+        _ = await events.next()
+        await fixture.transport.setShellReadsEnabled(false, host: "two.example")
+
+        let afterStaleRefresh = try await fixture.client.clientCacheSummary()
+        #expect(afterStaleRefresh.environments.map(\.environmentID) == ["one"])
+        await fixture.client.disconnect()
+    }
 }
 
 private actor FailOnceAggregateEnvironmentLoader {
@@ -899,6 +923,10 @@ private actor MultiEnvironmentHTTPTransport: HTTPTransport {
     private var shellReadsEnabledHosts: Set<String>
     private var dispatched: [MultiEnvironmentDispatchRecord] = []
     private var hostsDroppingNextCreateReply = Set<String>()
+    private var blockedNextShellReadHosts = Set<String>()
+    private var blockedShellReadContinuations: [String: CheckedContinuation<Void, Never>] = [:]
+    private var startedBlockedShellReadHosts = Set<String>()
+    private var shellReadStartContinuations: [String: CheckedContinuation<Void, Never>] = [:]
 
     init(shells: [String: OrchestrationShellSnapshot]) {
         self.shells = shells
@@ -923,6 +951,21 @@ private actor MultiEnvironmentHTTPTransport: HTTPTransport {
         }
     }
 
+    func blockNextShellRead(host: String) {
+        blockedNextShellReadHosts.insert(host)
+    }
+
+    func waitUntilShellReadStarts(host: String) async {
+        if startedBlockedShellReadHosts.remove(host) != nil { return }
+        await withCheckedContinuation { continuation in
+            shellReadStartContinuations[host] = continuation
+        }
+    }
+
+    func resumeBlockedShellRead(host: String) {
+        blockedShellReadContinuations.removeValue(forKey: host)?.resume()
+    }
+
     func setShell(_ shell: OrchestrationShellSnapshot, host: String) {
         shellData[host] = try! JSONEncoder.t3.encode(shell)
     }
@@ -939,12 +982,23 @@ private actor MultiEnvironmentHTTPTransport: HTTPTransport {
         hostsDroppingNextCreateReply.insert(host)
     }
 
-    func data(for request: URLRequest) throws -> (Data, HTTPURLResponse) {
+    func data(for request: URLRequest) async throws -> (Data, HTTPURLResponse) {
         let host = request.url?.host ?? ""
         guard reachableHosts.contains(host) else {
             throw URLError(.cannotConnectToHost)
         }
         let path = request.url?.path ?? ""
+        if path == "/api/orchestration/shell",
+           blockedNextShellReadHosts.remove(host) != nil {
+            if let continuation = shellReadStartContinuations.removeValue(forKey: host) {
+                continuation.resume()
+            } else {
+                startedBlockedShellReadHosts.insert(host)
+            }
+            await withCheckedContinuation { continuation in
+                blockedShellReadContinuations[host] = continuation
+            }
+        }
         if path == "/api/orchestration/shell",
            shellReadsEnabledHosts.contains(host),
            let data = shellData[host] {
