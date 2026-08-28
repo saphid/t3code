@@ -2016,6 +2016,18 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         settingsStore.set(data, forKey: Self.settingsKey)
     }
 
+    func saveProjectGroupingPreferences(
+        environmentID: String,
+        mode: FeatureEnvironmentPreferences.ProjectGroupingMode,
+        overrides: [String: FeatureEnvironmentPreferences.ProjectGroupingMode]
+    ) async throws {
+        try NativeProjectGroupingPreferencesStore(defaults: settingsStore).save(
+            environmentID: environmentID,
+            mode: mode,
+            overrides: overrides
+        )
+    }
+
     var managesServerSessions: Bool {
         !t3ConnectDeviceManager.hasActiveAccount
     }
@@ -4238,6 +4250,9 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
                 config: serverConfigsByEnvironmentID[environment.id]
             )
         }
+        let storedProjectGroupingPreferences = NativeProjectGroupingPreferencesStore(
+            defaults: settingsStore
+        ).load()
         let preferencesByEnvironment = enabledEnvironments.reduce(
             into: [String: FeatureEnvironmentPreferences]()
         ) { preferences, environment in
@@ -4249,13 +4264,13 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
                 case .local: .local
                 case .worktree: .worktree
                 }
-            let groupingMode: FeatureEnvironmentPreferences.ProjectGroupingMode =
+            let serverGroupingMode: FeatureEnvironmentPreferences.ProjectGroupingMode =
                 switch serverSettings.sidebarProjectGroupingMode {
                 case .repositoryPath: .repositoryPath
                 case .separate: .separate
                 case .repository, nil: .repository
                 }
-            let groupingOverrides = serverSettings.sidebarProjectGroupingOverrides?
+            let serverGroupingOverrides = serverSettings.sidebarProjectGroupingOverrides?
                 .mapValues { mode -> FeatureEnvironmentPreferences.ProjectGroupingMode in
                     switch mode {
                     case .repository: return .repository
@@ -4263,11 +4278,12 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
                     case .separate: return .separate
                     }
                 } ?? [:]
+            let storedGrouping = storedProjectGroupingPreferences[environment.id]
             preferences[environment.id] = FeatureEnvironmentPreferences(
                 defaultWorkspaceMode: defaultWorkspaceMode,
                 newWorktreesStartFromOrigin: serverSettings.newWorktreesStartFromOrigin,
-                projectGroupingMode: groupingMode,
-                projectGroupingOverrides: groupingOverrides
+                projectGroupingMode: storedGrouping?.mode ?? serverGroupingMode,
+                projectGroupingOverrides: storedGrouping?.overrides ?? serverGroupingOverrides
             )
         }
         return FeatureSnapshot(

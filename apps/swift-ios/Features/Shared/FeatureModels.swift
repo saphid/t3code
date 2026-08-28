@@ -911,7 +911,7 @@ public struct FeatureSettings: Sendable, Equatable, Codable {
 }
 
 public struct FeatureEnvironmentPreferences: Sendable, Equatable, Codable {
-    public enum ProjectGroupingMode: String, Sendable, Equatable, Codable {
+    public enum ProjectGroupingMode: String, Sendable, Equatable, Hashable, Codable {
         case repository
         case repositoryPath = "repository_path"
         case separate

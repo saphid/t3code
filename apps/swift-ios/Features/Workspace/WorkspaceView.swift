@@ -303,7 +303,7 @@ public struct WorkspaceView: View {
         )
 
         return VStack(spacing: 0) {
-            projectFilter(projects: environmentScoped(presentation.projects))
+            projectFilter(projects: projectFilterScoped(presentation.projects))
             HomeThreadCollectionView(
                 presentation: presentation,
                 projectFaviconClient: model.client,
@@ -754,13 +754,19 @@ public struct WorkspaceView: View {
     }
 
     private var availableProjects: [FeatureProject] {
-        environmentScoped(model.snapshot.projects)
+        DailyUXCreationContext.projectFilterProjects(
+            in: model.snapshot,
+            environmentID: selectedEnvironmentID
+        )
     }
 
-    /// Applies the Home environment filter to an already-ordered project list.
-    private func environmentScoped(_ projects: [FeatureProject]) -> [FeatureProject] {
-        guard let selectedEnvironmentID else { return projects }
-        return projects.filter { $0.environmentID == selectedEnvironmentID }
+    /// Restricts an already-ordered project list to what the Home project
+    /// filter offers. Issue #145 owns the order, issue #147 owns the
+    /// grouping-aware membership, and issue #144's environment scope applies
+    /// inside it.
+    private func projectFilterScoped(_ projects: [FeatureProject]) -> [FeatureProject] {
+        let offered = Set(availableProjects.map(\.id))
+        return projects.filter { offered.contains($0.id) }
     }
 
     private var creationProjects: [FeatureProject] {
@@ -940,13 +946,16 @@ public struct WorkspaceView: View {
     }
 
     private func projectMenuTitle(_ project: FeatureProject) -> String {
+        let groupName = DailyUXCreationContext.projectGroups(in: model.snapshot)
+            .first(where: { $0.memberProjectIDs.contains(project.id) })?.name
+            ?? project.name
         guard model.snapshot.environments.count > 1,
               let environment = model.snapshot.environments.first(where: {
                   $0.id == project.environmentID
               }) else {
-            return project.name
+            return groupName
         }
-        return "\(project.name) · \(environment.name)"
+        return "\(groupName) · \(environment.name)"
     }
 }
 

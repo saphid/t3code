@@ -953,6 +953,42 @@ public final class FeatureRootModel {
         }
     }
 
+    @discardableResult
+    public func saveProjectGroupingPreferences(
+        environmentID: String,
+        mode: FeatureEnvironmentPreferences.ProjectGroupingMode,
+        overrides: [String: FeatureEnvironmentPreferences.ProjectGroupingMode]
+    ) async -> Bool {
+        let previousPreferences = snapshot.preferencesByEnvironment
+        var updated = previousPreferences?[environmentID]
+            ?? FeatureEnvironmentPreferences()
+        updated.projectGroupingMode = mode
+        updated.projectGroupingOverrides = overrides
+
+        var preferences = snapshot.preferencesByEnvironment ?? [:]
+        preferences[environmentID] = updated
+        snapshot.preferencesByEnvironment = preferences
+        homePresentationRevision &+= 1
+
+        do {
+            try await client.saveProjectGroupingPreferences(
+                environmentID: environmentID,
+                mode: mode,
+                overrides: overrides
+            )
+            return true
+        } catch {
+            if snapshot.preferencesByEnvironment?[environmentID] == updated {
+                snapshot.preferencesByEnvironment = previousPreferences
+                homePresentationRevision &+= 1
+            }
+            if !Self.isBenignCancellation(error) {
+                errorMessage = error.localizedDescription
+            }
+            return false
+        }
+    }
+
     /// Applies appearance optimistically so selecting a theme updates every
     /// surface immediately, then persists just that preference in the current
     /// settings snapshot. Other unsaved Settings edits remain drafts.

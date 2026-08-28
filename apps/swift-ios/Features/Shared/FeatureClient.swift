@@ -95,6 +95,11 @@ public protocol FeatureClient: AnyObject {
     func resolveUserInput(id: String, answers: [String: FeatureInputAnswer]) async throws
 
     func saveSettings(_ settings: FeatureSettings) async throws
+    func saveProjectGroupingPreferences(
+        environmentID: String,
+        mode: FeatureEnvironmentPreferences.ProjectGroupingMode,
+        overrides: [String: FeatureEnvironmentPreferences.ProjectGroupingMode]
+    ) async throws
 
     func usageSummaries(_ input: UsageSummaryInput) async throws -> [FeatureEnvironmentUsage]
     func pullRequestLists(_ input: PullRequestListInput) async throws
@@ -212,6 +217,14 @@ public extension FeatureClient {
 
     func threadSummaryTimeline(id _: String) async throws -> FeatureThreadSummaryTimeline {
         throw FeatureCapabilityUnavailable("Thread summary timeline")
+    }
+
+    func saveProjectGroupingPreferences(
+        environmentID _: String,
+        mode _: FeatureEnvironmentPreferences.ProjectGroupingMode,
+        overrides _: [String: FeatureEnvironmentPreferences.ProjectGroupingMode]
+    ) async throws {
+        throw FeatureCapabilityUnavailable("Project grouping preferences")
     }
 
     func loadEarlierThreadTurns(id _: String) async throws -> FeatureThreadDetail? {

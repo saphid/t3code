@@ -9,6 +9,90 @@ import UIKit
 @Suite("Feature root model")
 struct FeatureRootModelTests {
     @Test
+    func projectGroupingSavesAndUpdatesHomeWithoutChangingWorkspaceState() async {
+        let client = FeatureClientStub()
+        let project = FeatureProject(
+            id: "environment:project",
+            environmentID: "environment",
+            name: "T3 Code",
+            path: "/work/t3code"
+        )
+        let thread = FeatureThread(
+            id: "environment:thread",
+            projectID: project.id,
+            environmentID: "environment",
+            title: "Grouping"
+        )
+        client.snapshot = FeatureSnapshot(
+            projects: [project],
+            threads: [thread],
+            preferencesByEnvironment: [
+                "environment": FeatureEnvironmentPreferences(),
+            ]
+        )
+        let model = testRootModel(client: client)
+        await model.reload()
+        let previousRevision = model.homePresentationRevision
+        let overrideKey = DailyUXProjectGrouping.overrideKey(for: project)
+
+        let didSave = await model.saveProjectGroupingPreferences(
+            environmentID: "environment",
+            mode: .separate,
+            overrides: [overrideKey: .repository]
+        )
+
+        #expect(didSave)
+        #expect(client.savedProjectGroupingEnvironmentID == "environment")
+        #expect(client.savedProjectGroupingMode == .separate)
+        #expect(client.savedProjectGroupingOverrides == [overrideKey: .repository])
+        #expect(
+            model.snapshot.preferencesByEnvironment?["environment"]?.projectGroupingMode
+                == .separate
+        )
+        #expect(model.snapshot.projects == [project])
+        #expect(model.snapshot.threads == [thread])
+        #expect(model.homePresentationRevision == previousRevision + 1)
+    }
+
+    @Test
+    func failedProjectGroupingSaveRestoresInheritedPreferences() async {
+        let client = FeatureClientStub()
+        let inherited = FeatureEnvironmentPreferences(projectGroupingMode: .repository)
+        client.snapshot = FeatureSnapshot(
+            preferencesByEnvironment: ["environment": inherited]
+        )
+        client.projectGroupingSaveError = FeatureCapabilityUnavailable("Project grouping")
+        let model = testRootModel(client: client)
+        await model.reload()
+
+        let didSave = await model.saveProjectGroupingPreferences(
+            environmentID: "environment",
+            mode: .separate,
+            overrides: ["environment:/work/t3code": .separate]
+        )
+
+        #expect(!didSave)
+        #expect(model.snapshot.preferencesByEnvironment?["environment"] == inherited)
+    }
+
+    @Test
+    func failedProjectGroupingSaveDoesNotCreatePreferencesForAnUnknownEnvironment() async {
+        let client = FeatureClientStub()
+        client.projectGroupingSaveError = FeatureCapabilityUnavailable("Project grouping")
+        let model = testRootModel(client: client)
+        await model.reload()
+
+        let didSave = await model.saveProjectGroupingPreferences(
+            environmentID: "environment",
+            mode: .separate,
+            overrides: [:]
+        )
+
+        #expect(!didSave)
+        #expect(model.snapshot.preferencesByEnvironment == nil)
+    }
+
+    @Test
     func appearanceAppliesImmediatelyAndPersistsWithoutSavingTheDraft() async {
         let client = FeatureClientStub()
         let model = testRootModel(client: client)
@@ -2773,6 +2857,12 @@ private final class FeatureClientStub: FeatureClient, T3ConnectCapable {
     var resolvedInputID: String?
     var resolvedInputAnswers: [String: FeatureInputAnswer]?
     var savedSettings: [FeatureSettings] = []
+    var savedProjectGroupingEnvironmentID: String?
+    var savedProjectGroupingMode: FeatureEnvironmentPreferences.ProjectGroupingMode?
+    var savedProjectGroupingOverrides: [
+        String: FeatureEnvironmentPreferences.ProjectGroupingMode
+    ]?
+    var projectGroupingSaveError: (any Error)?
     var regeneratedTitleThreadIDs: [String] = []
     var titleRegenerationReceipt: FeatureTitleRegenerationDispatchReceipt = .completed(title: "Title")
     var titleRegenerationError: (any Error)?
@@ -2954,5 +3044,16 @@ private final class FeatureClientStub: FeatureClient, T3ConnectCapable {
     }
     func saveSettings(_ settings: FeatureSettings) async throws {
         savedSettings.append(settings)
+    }
+
+    func saveProjectGroupingPreferences(
+        environmentID: String,
+        mode: FeatureEnvironmentPreferences.ProjectGroupingMode,
+        overrides: [String: FeatureEnvironmentPreferences.ProjectGroupingMode]
+    ) async throws {
+        if let projectGroupingSaveError { throw projectGroupingSaveError }
+        savedProjectGroupingEnvironmentID = environmentID
+        savedProjectGroupingMode = mode
+        savedProjectGroupingOverrides = overrides
     }
 }

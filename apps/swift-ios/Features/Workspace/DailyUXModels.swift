@@ -253,6 +253,18 @@ enum DailyUXCreationContext {
         )
     }
 
+    static func projectFilterProjects(
+        in snapshot: FeatureSnapshot,
+        environmentID: String?
+    ) -> [FeatureProject] {
+        projectGroups(in: snapshot).compactMap { group in
+            if let environmentID {
+                return group.project(in: environmentID)
+            }
+            return group.projects.first
+        }
+    }
+
     static func recentProjects(in snapshot: FeatureSnapshot) -> [DailyUXRecentProject] {
         let groups = projectGroups(in: snapshot)
         let availableProjectByID = projects(in: snapshot).reduce(
@@ -462,6 +474,10 @@ struct DailyUXProjectGroup: Identifiable, Equatable {
 }
 
 enum DailyUXProjectGrouping {
+    static func overrideKey(for project: FeatureProject) -> String {
+        physicalKey(project)
+    }
+
     static func logicalProjectID(
         for project: FeatureProject,
         mode: FeatureEnvironmentPreferences.ProjectGroupingMode = .repository,
@@ -478,6 +494,7 @@ enum DailyUXProjectGrouping {
     ) -> [DailyUXProjectGroup] {
         var projectsByLogicalKey: [String: [FeatureProject]] = [:]
         var memberIDsByLogicalKey: [String: Set<String>] = [:]
+        var physicalNameByLogicalKey: [String: String] = [:]
         for physicalProjects in Dictionary(grouping: projects, by: physicalKey).values {
             guard let winner = physicalWinner(physicalProjects) else { continue }
             let identitySource = identitySource(projects: physicalProjects, winner: winner)
@@ -490,6 +507,9 @@ enum DailyUXProjectGrouping {
             let key = logicalKey(identitySource, mode: groupingMode)
             projectsByLogicalKey[key, default: []].append(winner)
             memberIDsByLogicalKey[key, default: []].formUnion(physicalProjects.map(\.id))
+            if groupingMode == .separate {
+                physicalNameByLogicalKey[key] = winner.name
+            }
         }
 
         return projectsByLogicalKey
@@ -497,7 +517,7 @@ enum DailyUXProjectGrouping {
                 let sorted = members.sorted(by: projectOrder)
                 return DailyUXProjectGroup(
                     id: key,
-                    name: groupName(projects: sorted),
+                    name: physicalNameByLogicalKey[key] ?? groupName(projects: sorted),
                     projects: sorted,
                     memberProjectIDs: memberIDsByLogicalKey[key] ?? []
                 )

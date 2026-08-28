@@ -135,6 +135,20 @@ public struct SettingsView: View {
                 }
                 .buttonStyle(.plain)
                 .accessibilityHint("Shows provider usage")
+                settingsDivider
+                NavigationLink {
+                    ProjectGroupingSettingsView(model: model)
+                } label: {
+                    SettingsNavigationRow(
+                        title: "Project grouping",
+                        value: ProjectGroupingSettingsPresentation.settingsSummary(
+                            in: model.snapshot
+                        ),
+                        systemImage: "square.stack.3d.up"
+                    )
+                }
+                .buttonStyle(.plain)
+                .accessibilityHint("Changes default and per-project grouping")
             }
         }
     }
