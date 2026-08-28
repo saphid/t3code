@@ -14,7 +14,10 @@ struct PlatformRootView: View {
     @State private var recentThreadsPersistenceTask: Task<Void, Never>?
     @State private var betaFeedbackDraft: PlatformBetaFeedbackDraft?
     @State private var betaFeedbackCleanupID: String?
+    @State private var pendingBetaFeedbackDraft = PlatformBetaFeedbackPendingDraftState()
+    #if DEBUG
     @State private var didRunBetaFeedbackDemo = false
+    #endif
 
     init(model: FeatureRootModel) {
         self.model = model
@@ -62,6 +65,12 @@ struct PlatformRootView: View {
             Task { @MainActor in
                 await presentBetaFeedbackResponse(draftID: draftID, fallbackText: text)
             }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .platformBetaFeedbackCancelled)) { note in
+            guard let draftID = PlatformBetaFeedbackNotificationPayload.draftID(
+                from: note.userInfo ?? [:]
+            ) else { return }
+            pendingBetaFeedbackDraft.clear(ifMatching: draftID)
         }
         .onReceive(NotificationCenter.default.publisher(for: .t3ConnectSessionChanged)) { note in
             guard let capability = model.client as? any T3ConnectCapable,
@@ -125,7 +134,13 @@ struct PlatformRootView: View {
         .sheet(item: $betaFeedbackDraft, onDismiss: finishDismissedBetaFeedback) { draft in
             PlatformBetaFeedbackSheet(
                 draft: draft,
+                projects: betaFeedbackProjects,
+                threads: betaFeedbackThreads,
                 onCancel: { finishBetaFeedback(draftID: draft.id) },
+                onSave: saveBetaFeedback,
+                onPersist: persistBetaFeedback,
+                onCreateTask: createBetaFeedbackFixingTask,
+                onFollowUp: followUpBetaFeedbackFixingTask,
                 onFinished: { finishBetaFeedback(draftID: draft.id) }
             )
         }
@@ -140,12 +155,15 @@ struct PlatformRootView: View {
             Text("Your share is saved. Connect an environment and create a project to finish importing it.")
         }
         .task {
-            if let pending = try? await PlatformBetaFeedbackStore.shared.takeNextResponse() {
-                await presentBetaFeedbackResponse(
-                    draftID: pending.draftID,
-                    fallbackText: pending.text,
-                    consumeStoredResponse: false
-                )
+            await PlatformBetaFeedbackStore.shared.pruneExpired()
+            if PlatformBetaFeedbackPolicy.isEnabled,
+               let responded = try? await PlatformBetaFeedbackStore.shared.loadNextRespondedDraft() {
+                betaFeedbackCleanupID = responded.id
+                betaFeedbackDraft = responded
+            } else if PlatformBetaFeedbackPolicy.isEnabled,
+                      let saved = try? await PlatformBetaFeedbackStore.shared.loadNextResumableDraft() {
+                betaFeedbackCleanupID = saved.id
+                betaFeedbackDraft = saved
             }
             #if DEBUG
             guard !didRunBetaFeedbackDemo,
@@ -174,6 +192,58 @@ struct PlatformRootView: View {
             return $0.name.localizedStandardCompare($1.name) == .orderedAscending
         }
     }
+
+    private var betaFeedbackProjects: [FeatureProject] {
+        let projects = DailyUXCreationContext.projects(in: model.snapshot).sorted {
+            $0.name.localizedStandardCompare($1.name) == .orderedAscending
+        }
+        #if DEBUG
+        if Self.shouldUseBetaFeedbackDemoDestinations(
+            arguments: ProcessInfo.processInfo.arguments,
+            hasProjects: projects.isEmpty == false
+        ) {
+            return [FeatureProject(
+                id: "beta-feedback-demo-project",
+                environmentID: "beta-feedback-demo-environment",
+                name: "Issue 143 evidence project",
+                path: "/beta-feedback-evidence"
+            )]
+        }
+        #endif
+        return projects
+    }
+
+    private var betaFeedbackThreads: [FeatureThread] {
+        let projectIDs = Set(betaFeedbackProjects.map(\.id))
+        let threads = model.snapshot.threads.filter {
+            $0.isArchived == false && projectIDs.contains($0.projectID)
+        }.sorted { $0.updatedAt > $1.updatedAt }
+        #if DEBUG
+        if threads.isEmpty,
+           let project = betaFeedbackProjects.first,
+           project.id == "beta-feedback-demo-project",
+           ProcessInfo.processInfo.arguments.contains("--t3-beta-feedback-demo-destinations") {
+            return [FeatureThread(
+                id: "beta-feedback-demo-thread",
+                projectID: project.id,
+                environmentID: project.environmentID,
+                title: "Issue 143 fixing thread",
+                createdAt: Date(timeIntervalSince1970: 0),
+                updatedAt: Date(timeIntervalSince1970: 0)
+            )]
+        }
+        #endif
+        return threads
+    }
+
+    #if DEBUG
+    static func shouldUseBetaFeedbackDemoDestinations(
+        arguments: [String],
+        hasProjects: Bool
+    ) -> Bool {
+        hasProjects == false && arguments.contains("--t3-beta-feedback-demo-destinations")
+    }
+    #endif
 
     private var presentedIncomingShare: Binding<T3IncomingShareEnvelope?> {
         Binding(
@@ -264,7 +334,7 @@ struct PlatformRootView: View {
     }
 
     private func beginBetaFeedbackFromScreenshot(forceInApp: Bool = false) {
-        guard PersonalBuildChannel.current != .upstream,
+        guard PlatformBetaFeedbackPolicy.isEnabled,
               betaFeedbackDraft == nil,
               let screenshot = PlatformBetaFeedbackScreenshotCapture.capture() else { return }
         let device = UIDevice.current
@@ -279,20 +349,43 @@ struct PlatformRootView: View {
             screenshotJPEG: screenshot,
             diagnostics: diagnostics
         )
+        if let supersededID = pendingBetaFeedbackDraft.replace(with: draft.id) {
+            PlatformNotificationService.shared.removeBetaFeedbackNotification(draftID: supersededID)
+            Task { await PlatformBetaFeedbackStore.shared.remove(id: supersededID) }
+        }
 
         Task { @MainActor in
             do {
                 try await PlatformBetaFeedbackStore.shared.save(draft)
             } catch {
+                guard pendingBetaFeedbackDraft.id == draft.id else {
+                    await PlatformBetaFeedbackStore.shared.remove(id: draft.id)
+                    return
+                }
                 draft.notificationWasUnavailable = true
                 betaFeedbackCleanupID = draft.id
                 betaFeedbackDraft = draft
                 return
             }
+            guard pendingBetaFeedbackDraft.id == draft.id else {
+                await PlatformBetaFeedbackStore.shared.remove(id: draft.id)
+                return
+            }
             let scheduled = forceInApp
                 ? false
                 : await PlatformNotificationService.shared.scheduleBetaFeedback(draftID: draft.id)
-            guard !scheduled else { return }
+            guard pendingBetaFeedbackDraft.id == draft.id else {
+                PlatformNotificationService.shared.removeBetaFeedbackNotification(draftID: draft.id)
+                await PlatformBetaFeedbackStore.shared.remove(id: draft.id)
+                return
+            }
+            let path = PlatformBetaFeedbackPolicy.presentationPath(
+                channel: .current,
+                distribution: .current,
+                testFlightEnabled: PlatformBetaFeedbackPolicy.testFlightEnabled,
+                notificationsAvailable: scheduled
+            )
+            guard path != .notificationReply else { return }
             draft.notificationWasUnavailable = true
             betaFeedbackCleanupID = draft.id
             betaFeedbackDraft = draft
@@ -301,17 +394,20 @@ struct PlatformRootView: View {
 
     private func presentBetaFeedbackResponse(
         draftID: String,
-        fallbackText: String,
-        consumeStoredResponse: Bool = true
+        fallbackText: String
     ) async {
-        let pending = consumeStoredResponse
-            ? try? await PlatformBetaFeedbackStore.shared.takeResponse(draftID: draftID)
-            : nil
-        let text = pending?.text ?? fallbackText
-        guard var draft = try? await PlatformBetaFeedbackStore.shared.load(
-            id: draftID,
-            description: text
-        ) else { return }
+        guard PlatformBetaFeedbackPolicy.isEnabled, betaFeedbackDraft == nil else { return }
+        let responded = try? await PlatformBetaFeedbackStore.shared.loadRespondedDraft(
+            draftID: draftID
+        )
+        var loaded = responded
+        if loaded == nil {
+            loaded = try? await PlatformBetaFeedbackStore.shared.load(
+                id: draftID,
+                description: fallbackText
+            )
+        }
+        guard var draft = loaded else { return }
         draft.notificationWasUnavailable = false
         betaFeedbackCleanupID = draft.id
         betaFeedbackDraft = draft
@@ -325,7 +421,50 @@ struct PlatformRootView: View {
     private func finishBetaFeedback(draftID: String) {
         betaFeedbackDraft = nil
         betaFeedbackCleanupID = nil
+        pendingBetaFeedbackDraft.clear(ifMatching: draftID)
+        PlatformNotificationService.shared.removeBetaFeedbackNotification(draftID: draftID)
         Task { await PlatformBetaFeedbackStore.shared.remove(id: draftID) }
+    }
+
+    private func saveBetaFeedback(_ draft: PlatformBetaFeedbackDraft) async throws {
+        try await PlatformBetaFeedbackStore.shared.saveForLater(draft)
+        pendingBetaFeedbackDraft.clear(ifMatching: draft.id)
+        betaFeedbackCleanupID = nil
+        betaFeedbackDraft = nil
+    }
+
+    private func persistBetaFeedback(_ draft: PlatformBetaFeedbackDraft) async throws {
+        try await PlatformBetaFeedbackStore.shared.saveForLater(draft)
+    }
+
+    private func createBetaFeedbackFixingTask(
+        projectID: String,
+        report: String,
+        screenshotJPEG: Data
+    ) async throws -> Bool {
+        let request = try PlatformBetaFeedbackT3Handoff.newTask(
+            projectID: projectID,
+            report: report,
+            screenshotJPEG: screenshotJPEG
+        )
+        guard let thread = await model.startTask(request) else { return false }
+        navigationRequest = FeatureWorkspaceNavigationRequest(destination: .thread(id: thread.id))
+        return true
+    }
+
+    private func followUpBetaFeedbackFixingTask(
+        threadID: String,
+        report: String,
+        screenshotJPEG: Data
+    ) async throws -> Bool {
+        let submission = try PlatformBetaFeedbackT3Handoff.followUp(
+            threadID: threadID,
+            report: report,
+            screenshotJPEG: screenshotJPEG
+        )
+        guard await model.sendMessage(submission) else { return false }
+        navigationRequest = FeatureWorkspaceNavigationRequest(destination: .thread(id: threadID))
+        return true
     }
 
     private func refreshIncomingShares() {

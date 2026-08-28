@@ -9,17 +9,75 @@ extension Notification.Name {
 }
 
 enum PlatformBetaFeedbackPolicy {
+    enum Distribution: Equatable, Sendable {
+        case development
+        case testFlight
+        case appStore
+
+        static var current: Self {
+            #if DEBUG || targetEnvironment(simulator)
+            .development
+            #else
+            if Bundle.main.appStoreReceiptURL?.lastPathComponent == "sandboxReceipt" {
+                .testFlight
+            } else {
+                .appStore
+            }
+            #endif
+        }
+    }
+
     enum PresentationPath: Equatable {
         case notificationReply
         case inAppFallback
         case disabled
     }
 
+    static var testFlightEnabled: Bool {
+        testFlightEnabled(from: Bundle.main.object(
+            forInfoDictionaryKey: "T3BetaFeedbackTestFlightEnabled"
+        ))
+    }
+
+    static func testFlightEnabled(from value: Any?) -> Bool {
+        if let enabled = value as? Bool { return enabled }
+        guard let raw = value as? String else { return false }
+        return ["1", "true", "yes"].contains(raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased())
+    }
+
+    static var isEnabled: Bool {
+        isEnabled(
+            channel: .current,
+            distribution: .current,
+            testFlightEnabled: testFlightEnabled
+        )
+    }
+
+    static func isEnabled(
+        channel: PersonalBuildChannel,
+        distribution: Distribution,
+        testFlightEnabled: Bool
+    ) -> Bool {
+        return switch channel {
+        case .dev, .test:
+            true
+        case .upstream:
+            distribution == .development
+                || (distribution == .testFlight && testFlightEnabled)
+        }
+    }
+
     static func presentationPath(
         channel: PersonalBuildChannel,
+        distribution: Distribution,
+        testFlightEnabled: Bool,
         notificationsAvailable: Bool
     ) -> PresentationPath {
-        guard channel != .upstream else { return .disabled }
+        guard isEnabled(
+            channel: channel,
+            distribution: distribution,
+            testFlightEnabled: testFlightEnabled
+        ) else { return .disabled }
         return notificationsAvailable ? .notificationReply : .inAppFallback
     }
 }
@@ -72,22 +130,41 @@ struct PlatformBetaFeedbackDiagnostics: Codable, Equatable, Sendable {
 struct PlatformBetaFeedbackDraft: Identifiable, Equatable, Sendable {
     let id: String
     let screenshotJPEG: Data
+    var annotatedScreenshotJPEG: Data?
+    var markup: PlatformBetaFeedbackMarkup
     let diagnostics: PlatformBetaFeedbackDiagnostics
     var originalDescription: String
+    var reportText: String
     var notificationWasUnavailable: Bool
+    var savedForLater: Bool
+    var usedOnDeviceModel: Bool
 
     init(
         id: String = UUID().uuidString,
         screenshotJPEG: Data,
+        annotatedScreenshotJPEG: Data? = nil,
+        markup: PlatformBetaFeedbackMarkup = PlatformBetaFeedbackMarkup(),
         diagnostics: PlatformBetaFeedbackDiagnostics,
         originalDescription: String = "",
-        notificationWasUnavailable: Bool = false
+        reportText: String = "",
+        notificationWasUnavailable: Bool = false,
+        savedForLater: Bool = false,
+        usedOnDeviceModel: Bool = false
     ) {
         self.id = id
         self.screenshotJPEG = screenshotJPEG
+        self.annotatedScreenshotJPEG = annotatedScreenshotJPEG
+        self.markup = markup
         self.diagnostics = diagnostics
         self.originalDescription = originalDescription
+        self.reportText = reportText
         self.notificationWasUnavailable = notificationWasUnavailable
+        self.savedForLater = savedForLater
+        self.usedOnDeviceModel = usedOnDeviceModel
+    }
+
+    var submissionScreenshotJPEG: Data {
+        annotatedScreenshotJPEG ?? screenshotJPEG
     }
 }
 
@@ -129,7 +206,7 @@ struct PlatformBetaFeedbackStructurer: Sendable {
     func report(
         for description: String,
         diagnostics: PlatformBetaFeedbackDiagnostics
-    ) async -> PlatformBetaFeedbackReport {
+    ) async throws -> PlatformBetaFeedbackReport {
         let original = description.trimmingCharacters(in: .whitespacesAndNewlines)
         guard await isAvailable() else {
             return .fallback(
@@ -162,6 +239,8 @@ struct PlatformBetaFeedbackStructurer: Sendable {
                 usedOnDeviceModel: true,
                 fallbackMessage: nil
             )
+        } catch is CancellationError {
+            throw CancellationError()
         } catch {
             return .fallback(
                 originalDescription: original,
@@ -209,8 +288,23 @@ enum PlatformBetaFeedbackNotificationPayload {
     static let draftIDKey = "t3_beta_feedback_draft_id"
 
     static func draftID(from userInfo: [AnyHashable: Any]) -> String? {
-        guard let id = userInfo[draftIDKey] as? String, !id.isEmpty else { return nil }
+        guard let id = userInfo[draftIDKey] as? String,
+              UUID(uuidString: id) != nil else { return nil }
         return id
+    }
+}
+
+struct PlatformBetaFeedbackPendingDraftState: Equatable {
+    private(set) var id: String?
+
+    mutating func replace(with newID: String) -> String? {
+        let supersededID = id
+        id = newID
+        return supersededID
+    }
+
+    mutating func clear(ifMatching draftID: String) {
+        if id == draftID { id = nil }
     }
 }
 
@@ -221,6 +315,13 @@ actor PlatformBetaFeedbackStore {
         let id: String
         let diagnostics: PlatformBetaFeedbackDiagnostics
         let createdAt: Date
+        let originalDescription: String?
+        let reportText: String?
+        let notificationWasUnavailable: Bool?
+        let hasAnnotatedScreenshot: Bool?
+        let markup: PlatformBetaFeedbackMarkup?
+        let savedForLater: Bool?
+        let usedOnDeviceModel: Bool?
     }
 
     struct PendingResponse: Codable, Equatable, Sendable {
@@ -228,83 +329,154 @@ actor PlatformBetaFeedbackStore {
         let text: String
     }
 
+    enum StoreError: Error {
+        case invalidDraftID
+    }
+
     private let directory: URL
 
     init(directory: URL? = nil) {
-        let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
-        self.directory = directory ?? caches
+        let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+        self.directory = directory ?? support
             .appendingPathComponent("T3BetaFeedback", isDirectory: true)
             .appendingPathComponent("v1", isDirectory: true)
     }
 
     func save(_ draft: PlatformBetaFeedbackDraft) throws {
-        try FileManager.default.createDirectory(
-            at: directory,
-            withIntermediateDirectories: true
-        )
-        removeExpiredDrafts(now: .now)
-        let record = Record(id: draft.id, diagnostics: draft.diagnostics, createdAt: .now)
-        try draft.screenshotJPEG.write(to: screenshotURL(for: draft.id), options: .atomic)
-        try JSONEncoder().encode(record).write(to: recordURL(for: draft.id), options: .atomic)
+        try persist(draft, savedForLater: false)
+    }
+
+    func saveForLater(_ draft: PlatformBetaFeedbackDraft) throws {
+        try persist(draft, savedForLater: true)
     }
 
     func load(id: String, description: String = "") throws -> PlatformBetaFeedbackDraft? {
+        try Self.validate(id: id)
         let recordURL = recordURL(for: id)
         let screenshotURL = screenshotURL(for: id)
         guard FileManager.default.fileExists(atPath: recordURL.path),
               FileManager.default.fileExists(atPath: screenshotURL.path) else { return nil }
         let record = try JSONDecoder().decode(Record.self, from: Data(contentsOf: recordURL))
+        let annotatedData: Data?
+        if record.hasAnnotatedScreenshot == true,
+           FileManager.default.fileExists(atPath: annotatedScreenshotURL(for: id).path) {
+            annotatedData = try Data(contentsOf: annotatedScreenshotURL(for: id))
+        } else {
+            annotatedData = nil
+        }
         return PlatformBetaFeedbackDraft(
             id: record.id,
             screenshotJPEG: try Data(contentsOf: screenshotURL),
+            annotatedScreenshotJPEG: annotatedData,
+            markup: record.markup ?? PlatformBetaFeedbackMarkup(),
             diagnostics: record.diagnostics,
-            originalDescription: description
+            originalDescription: description.isEmpty
+                ? record.originalDescription ?? ""
+                : description,
+            reportText: record.reportText ?? "",
+            notificationWasUnavailable: record.notificationWasUnavailable ?? false,
+            savedForLater: record.savedForLater ?? false,
+            usedOnDeviceModel: record.usedOnDeviceModel ?? false
         )
     }
 
+    func loadNextResumableDraft() throws -> PlatformBetaFeedbackDraft? {
+        let recordURLs = try FileManager.default.contentsOfDirectory(
+            at: directory,
+            includingPropertiesForKeys: nil,
+            options: [.skipsHiddenFiles]
+        ).filter {
+            $0.pathExtension == "json" && !$0.lastPathComponent.hasSuffix(".response.json")
+        }.sorted { $0.lastPathComponent < $1.lastPathComponent }
+
+        for url in recordURLs {
+            guard let record = try? JSONDecoder().decode(Record.self, from: Data(contentsOf: url)),
+                  record.savedForLater == true else {
+                continue
+            }
+            if let draft = try load(id: record.id) { return draft }
+        }
+        return nil
+    }
+
     func remove(id: String) {
+        guard Self.isValid(id: id) else { return }
         try? FileManager.default.removeItem(at: recordURL(for: id))
         try? FileManager.default.removeItem(at: screenshotURL(for: id))
+        try? FileManager.default.removeItem(at: annotatedScreenshotURL(for: id))
         try? FileManager.default.removeItem(at: responseURL(for: id))
     }
 
     func saveResponse(draftID: String, text: String) throws {
-        try FileManager.default.createDirectory(
-            at: directory,
-            withIntermediateDirectories: true
-        )
+        try Self.validate(id: draftID)
+        try prepareDirectory()
         let response = PendingResponse(draftID: draftID, text: text)
         try JSONEncoder().encode(response).write(
             to: responseURL(for: draftID),
-            options: .atomic
+            options: [.atomic, .completeFileProtectionUnlessOpen]
         )
     }
 
-    func takeResponse(draftID: String) throws -> PendingResponse? {
+    func loadRespondedDraft(draftID: String) throws -> PlatformBetaFeedbackDraft? {
+        try Self.validate(id: draftID)
         let url = responseURL(for: draftID)
         guard FileManager.default.fileExists(atPath: url.path) else { return nil }
         let response = try JSONDecoder().decode(
             PendingResponse.self,
             from: Data(contentsOf: url)
         )
+        guard response.draftID == draftID,
+              let draft = try load(id: draftID, description: response.text) else {
+            try? FileManager.default.removeItem(at: url)
+            return nil
+        }
+        try persist(draft, savedForLater: true)
         try? FileManager.default.removeItem(at: url)
-        return response
+        return draft
     }
 
-    func takeNextResponse() throws -> PendingResponse? {
-        guard let url = try FileManager.default.contentsOfDirectory(
+    func loadNextRespondedDraft() throws -> PlatformBetaFeedbackDraft? {
+        let urls = try FileManager.default.contentsOfDirectory(
             at: directory,
             includingPropertiesForKeys: nil,
             options: [.skipsHiddenFiles]
         ).filter({ $0.lastPathComponent.hasSuffix(".response.json") }).sorted(by: {
             $0.lastPathComponent < $1.lastPathComponent
-        }).first else { return nil }
-        let response = try JSONDecoder().decode(
-            PendingResponse.self,
-            from: Data(contentsOf: url)
-        )
-        try? FileManager.default.removeItem(at: url)
-        return response
+        })
+        for url in urls {
+            let data: Data
+            do {
+                data = try Data(contentsOf: url)
+            } catch {
+                continue
+            }
+            guard let response = try? JSONDecoder().decode(PendingResponse.self, from: data) else {
+                try? FileManager.default.removeItem(at: url)
+                continue
+            }
+            guard Self.isValid(id: response.draftID) else {
+                try? FileManager.default.removeItem(at: url)
+                continue
+            }
+            let loaded: PlatformBetaFeedbackDraft?
+            do {
+                loaded = try load(id: response.draftID, description: response.text)
+            } catch {
+                continue
+            }
+            guard let draft = loaded else {
+                try? FileManager.default.removeItem(at: url)
+                continue
+            }
+            try persist(draft, savedForLater: true)
+            try? FileManager.default.removeItem(at: url)
+            return draft
+        }
+        return nil
+    }
+
+    func pruneExpired() {
+        removeExpiredDrafts(now: .now)
     }
 
     private func recordURL(for id: String) -> URL {
@@ -315,8 +487,89 @@ actor PlatformBetaFeedbackStore {
         directory.appendingPathComponent("\(id).jpg")
     }
 
+    private func annotatedScreenshotURL(for id: String) -> URL {
+        directory.appendingPathComponent("\(id).annotated.jpg")
+    }
+
     private func responseURL(for id: String) -> URL {
         directory.appendingPathComponent("\(id).response.json")
+    }
+
+    private func persist(_ draft: PlatformBetaFeedbackDraft, savedForLater: Bool) throws {
+        try Self.validate(id: draft.id)
+        try prepareDirectory()
+        removeExpiredDrafts(now: .now)
+        let record = Record(
+            id: draft.id,
+            diagnostics: draft.diagnostics,
+            createdAt: .now,
+            originalDescription: draft.originalDescription,
+            reportText: draft.reportText,
+            notificationWasUnavailable: draft.notificationWasUnavailable,
+            hasAnnotatedScreenshot: draft.annotatedScreenshotJPEG != nil,
+            markup: draft.markup,
+            savedForLater: savedForLater,
+            usedOnDeviceModel: draft.usedOnDeviceModel
+        )
+        let options: Data.WritingOptions = [.atomic, .completeFileProtectionUnlessOpen]
+        let hadExistingRecord = FileManager.default.fileExists(atPath: recordURL(for: draft.id).path)
+        let previousScreenshot = hadExistingRecord
+            ? try? Data(contentsOf: screenshotURL(for: draft.id))
+            : nil
+        let previousAnnotatedScreenshot = hadExistingRecord
+            ? try? Data(contentsOf: annotatedScreenshotURL(for: draft.id))
+            : nil
+        let hadPreviousAnnotatedScreenshot = hadExistingRecord
+            && FileManager.default.fileExists(atPath: annotatedScreenshotURL(for: draft.id).path)
+        try draft.screenshotJPEG.write(to: screenshotURL(for: draft.id), options: options)
+        if let annotatedScreenshotJPEG = draft.annotatedScreenshotJPEG {
+            try annotatedScreenshotJPEG.write(
+                to: annotatedScreenshotURL(for: draft.id),
+                options: options
+            )
+        }
+        do {
+            try JSONEncoder().encode(record).write(to: recordURL(for: draft.id), options: options)
+            if draft.annotatedScreenshotJPEG == nil {
+                try? FileManager.default.removeItem(at: annotatedScreenshotURL(for: draft.id))
+            }
+        } catch {
+            if hadExistingRecord {
+                if let previousScreenshot {
+                    try? previousScreenshot.write(to: screenshotURL(for: draft.id), options: options)
+                }
+                if let previousAnnotatedScreenshot {
+                    try? previousAnnotatedScreenshot.write(
+                        to: annotatedScreenshotURL(for: draft.id),
+                        options: options
+                    )
+                } else if hadPreviousAnnotatedScreenshot == false {
+                    try? FileManager.default.removeItem(at: annotatedScreenshotURL(for: draft.id))
+                }
+            } else {
+                try? FileManager.default.removeItem(at: screenshotURL(for: draft.id))
+                try? FileManager.default.removeItem(at: annotatedScreenshotURL(for: draft.id))
+            }
+            throw error
+        }
+    }
+
+    private func prepareDirectory() throws {
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        var directory = directory
+        var values = URLResourceValues()
+        values.isExcludedFromBackup = true
+        try directory.setResourceValues(values)
+    }
+
+    private static func validate(id: String) throws {
+        guard isValid(id: id) else { throw StoreError.invalidDraftID }
+    }
+
+    private static func isValid(id: String) -> Bool {
+        id.isEmpty == false && id.unicodeScalars.allSatisfy {
+            CharacterSet.alphanumerics.contains($0) || $0 == "-" || $0 == "_"
+        }
     }
 
     private func removeExpiredDrafts(now: Date) {
@@ -325,14 +578,53 @@ actor PlatformBetaFeedbackStore {
             includingPropertiesForKeys: [.contentModificationDateKey],
             options: [.skipsHiddenFiles]
         ) else { return }
-        let cutoff = now.addingTimeInterval(-24 * 60 * 60)
-        for recordURL in urls where recordURL.pathExtension == "json" {
+        for recordURL in urls where recordURL.pathExtension == "json"
+            && !recordURL.lastPathComponent.hasSuffix(".response.json") {
+            let record = try? JSONDecoder().decode(
+                Record.self,
+                from: Data(contentsOf: recordURL)
+            )
+            let retention: TimeInterval = record?.savedForLater == false
+                ? 24 * 60 * 60
+                : 30 * 24 * 60 * 60
+            let cutoff = now.addingTimeInterval(-retention)
             let modified = try? recordURL.resourceValues(
                 forKeys: [.contentModificationDateKey]
             ).contentModificationDate
-            guard let modified, modified < cutoff else { continue }
             let id = recordURL.deletingPathExtension().lastPathComponent
+            let responseModified = try? responseURL(for: id).resourceValues(
+                forKeys: [.contentModificationDateKey]
+            ).contentModificationDate
+            let newestActivity = [modified, responseModified].compactMap(\.self).max()
+            guard let newestActivity, newestActivity < cutoff else { continue }
             remove(id: id)
+        }
+
+        guard let remaining = try? FileManager.default.contentsOfDirectory(
+            at: directory,
+            includingPropertiesForKeys: nil,
+            options: [.skipsHiddenFiles]
+        ) else { return }
+        let recordIDs = Set(remaining.compactMap { url -> String? in
+            guard url.pathExtension == "json",
+                  url.lastPathComponent.hasSuffix(".response.json") == false else { return nil }
+            return url.deletingPathExtension().lastPathComponent
+        })
+        for url in remaining {
+            let name = url.lastPathComponent
+            let ownerID: String?
+            if name.hasSuffix(".response.json") {
+                ownerID = String(name.dropLast(".response.json".count))
+            } else if name.hasSuffix(".annotated.jpg") {
+                ownerID = String(name.dropLast(".annotated.jpg".count))
+            } else if name.hasSuffix(".jpg") {
+                ownerID = String(name.dropLast(".jpg".count))
+            } else {
+                ownerID = nil
+            }
+            if let ownerID, recordIDs.contains(ownerID) == false {
+                try? FileManager.default.removeItem(at: url)
+            }
         }
     }
 }
@@ -355,192 +647,42 @@ enum PlatformBetaFeedbackScreenshotCapture {
     }
 }
 
-struct PlatformBetaFeedbackSharePayload: Equatable, Sendable {
+struct PlatformBetaFeedbackSharePayload: Identifiable, Equatable, Sendable {
+    let id: UUID
     let report: String
-    let screenshotJPEG: Data
+    let screenshotFileURL: URL
 
     var activityItems: [Any] {
-        var items: [Any] = [report]
-        if let image = UIImage(data: screenshotJPEG) {
-            items.append(image)
+        [report, screenshotFileURL]
+    }
+
+    static func prepare(report: String, screenshotJPEG: Data) throws -> Self {
+        guard UIImage(data: screenshotJPEG) != nil else {
+            throw PlatformBetaFeedbackShareError.invalidScreenshot
         }
-        return items
+        let id = UUID()
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("t3-beta-feedback-share", isDirectory: true)
+            .appendingPathComponent(id.uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(
+            at: directory,
+            withIntermediateDirectories: true,
+            attributes: [.protectionKey: FileProtectionType.completeUnlessOpen]
+        )
+        let fileURL = directory.appendingPathComponent("Annotated beta feedback.jpg")
+        try screenshotJPEG.write(to: fileURL, options: [.atomic, .completeFileProtectionUnlessOpen])
+        return Self(id: id, report: report, screenshotFileURL: fileURL)
+    }
+
+    func removeTemporaryFile() {
+        try? FileManager.default.removeItem(at: screenshotFileURL.deletingLastPathComponent())
     }
 }
 
-struct PlatformBetaFeedbackSheet: View {
-    let draft: PlatformBetaFeedbackDraft
-    let onCancel: () -> Void
-    let onFinished: () -> Void
+enum PlatformBetaFeedbackShareError: LocalizedError {
+    case invalidScreenshot
 
-    @State private var descriptionText: String
-    @State private var reportText = ""
-    @State private var fallbackMessage: String?
-    @State private var usedOnDeviceModel = false
-    @State private var isStructuring = false
-    @State private var showingShare = false
-    @State private var hasStartedInlineResponse = false
-
-    init(
-        draft: PlatformBetaFeedbackDraft,
-        onCancel: @escaping () -> Void,
-        onFinished: @escaping () -> Void
-    ) {
-        self.draft = draft
-        self.onCancel = onCancel
-        self.onFinished = onFinished
-        _descriptionText = State(initialValue: draft.originalDescription)
+    var errorDescription: String? {
+        "The annotated screenshot could not be prepared for sharing. The report is still saved here."
     }
-
-    var body: some View {
-        NavigationStack {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 18) {
-                    screenshot
-                    if reportText.isEmpty {
-                        descriptionEditor
-                    } else {
-                        reportEditor
-                    }
-                }
-                .padding()
-            }
-            .navigationTitle(reportText.isEmpty ? "Quick beta feedback" : "Review report")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel", role: .cancel, action: onCancel)
-                }
-                ToolbarItem(placement: .confirmationAction) {
-                    if reportText.isEmpty {
-                        Button("Review", action: structureReport)
-                            .disabled(descriptionText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isStructuring)
-                    } else {
-                        Button("Share report", action: { showingShare = true })
-                            .disabled(reportText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                    }
-                }
-            }
-            .sheet(isPresented: $showingShare) {
-                PlatformBetaFeedbackActivityView(
-                    payload: PlatformBetaFeedbackSharePayload(
-                        report: reportText,
-                        screenshotJPEG: draft.screenshotJPEG
-                    ),
-                    onComplete: onFinished
-                )
-            }
-            .task {
-                guard !hasStartedInlineResponse,
-                      !draft.originalDescription.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
-                hasStartedInlineResponse = true
-                await structureReportNow()
-            }
-        }
-    }
-
-    private var screenshot: some View {
-        Group {
-            if let image = UIImage(data: draft.screenshotJPEG) {
-                Image(uiImage: image)
-                    .resizable()
-                    .scaledToFit()
-                    .clipShape(RoundedRectangle(cornerRadius: 14))
-                    .overlay {
-                        RoundedRectangle(cornerRadius: 14)
-                            .stroke(.quaternary)
-                    }
-                    .accessibilityLabel("Captured app screenshot")
-            }
-        }
-    }
-
-    private var descriptionEditor: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("What went wrong?")
-                .font(.headline)
-            TextEditor(text: $descriptionText)
-                .frame(minHeight: 120)
-                .padding(8)
-                .background(.quaternary.opacity(0.25), in: RoundedRectangle(cornerRadius: 12))
-                .accessibilityIdentifier("betaFeedbackDescription")
-            if draft.notificationWasUnavailable {
-                Label(
-                    "Notifications are unavailable, so this report opened in the app instead.",
-                    systemImage: "bell.slash"
-                )
-                .font(.footnote)
-                .foregroundStyle(.secondary)
-            }
-            if isStructuring {
-                HStack(spacing: 8) {
-                    ProgressView()
-                    Text("Preparing an editable report on this device...")
-                }
-                .font(.footnote)
-                .foregroundStyle(.secondary)
-            }
-        }
-    }
-
-    private var reportEditor: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Label(
-                usedOnDeviceModel ? "Prepared on device" : "Original text preserved",
-                systemImage: usedOnDeviceModel ? "apple.intelligence" : "text.document"
-            )
-            .font(.headline)
-            if let fallbackMessage {
-                Text(fallbackMessage)
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-            }
-            Text("Edit anything before sharing. The screenshot and only the diagnostics shown below leave the app.")
-                .font(.footnote)
-                .foregroundStyle(.secondary)
-            TextEditor(text: $reportText)
-                .frame(minHeight: 280)
-                .padding(8)
-                .background(.quaternary.opacity(0.25), in: RoundedRectangle(cornerRadius: 12))
-                .accessibilityIdentifier("betaFeedbackReport")
-        }
-    }
-
-    private func structureReport() {
-        Task { await structureReportNow() }
-    }
-
-    @MainActor
-    private func structureReportNow() async {
-        guard !isStructuring else { return }
-        let text = descriptionText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty else { return }
-        isStructuring = true
-        let report = await PlatformBetaFeedbackStructurer.live.report(
-            for: text,
-            diagnostics: draft.diagnostics
-        )
-        reportText = report.text
-        fallbackMessage = report.fallbackMessage
-        usedOnDeviceModel = report.usedOnDeviceModel
-        isStructuring = false
-    }
-}
-
-private struct PlatformBetaFeedbackActivityView: UIViewControllerRepresentable {
-    let payload: PlatformBetaFeedbackSharePayload
-    let onComplete: () -> Void
-
-    func makeUIViewController(context: Context) -> UIActivityViewController {
-        let controller = UIActivityViewController(
-            activityItems: payload.activityItems,
-            applicationActivities: nil
-        )
-        controller.completionWithItemsHandler = { _, completed, _, _ in
-            if completed { onComplete() }
-        }
-        return controller
-    }
-
-    func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}
 }

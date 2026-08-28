@@ -4,6 +4,7 @@ import UIKit
 extension Notification.Name {
     static let platformRouteReceived = Notification.Name("T3PlatformRouteReceived")
     static let platformDeviceTokenChanged = Notification.Name("T3PlatformDeviceTokenChanged")
+    static let platformBetaFeedbackCancelled = Notification.Name("T3PlatformBetaFeedbackCancelled")
 }
 
 enum PlatformBetaFeedbackNotification {
@@ -127,7 +128,11 @@ final class PlatformNotificationService: NSObject, UNUserNotificationCenterDeleg
 
     func installDelegate() {
         center.delegate = self
-        center.setNotificationCategories([PlatformBetaFeedbackNotification.category])
+        center.setNotificationCategories(
+            PlatformBetaFeedbackPolicy.isEnabled
+                ? [PlatformBetaFeedbackNotification.category]
+                : []
+        )
     }
 
     @discardableResult
@@ -230,6 +235,12 @@ final class PlatformNotificationService: NSObject, UNUserNotificationCenterDeleg
         }
     }
 
+    func removeBetaFeedbackNotification(draftID: String) {
+        let identifier = "beta-feedback:\(draftID)"
+        center.removePendingNotificationRequests(withIdentifiers: [identifier])
+        center.removeDeliveredNotifications(withIdentifiers: [identifier])
+    }
+
     func didRegisterForRemoteNotifications(deviceToken: Data) {
         tokenSink.registered(token: deviceToken.map { String(format: "%02x", $0) }.joined())
     }
@@ -249,7 +260,14 @@ final class PlatformNotificationService: NSObject, UNUserNotificationCenterDeleg
             if response.actionIdentifier == UNNotificationDismissActionIdentifier {
                 Task {
                     await PlatformBetaFeedbackStore.shared.remove(id: draftID)
-                    completionHandler()
+                    await MainActor.run {
+                        NotificationCenter.default.post(
+                            name: .platformBetaFeedbackCancelled,
+                            object: nil,
+                            userInfo: [PlatformBetaFeedbackNotificationPayload.draftIDKey: draftID]
+                        )
+                        completionHandler()
+                    }
                 }
                 return
             }
@@ -295,7 +313,7 @@ final class PlatformNotificationService: NSObject, UNUserNotificationCenterDeleg
         await MainActor.run {
             if notification.request.content.categoryIdentifier
                 == PlatformBetaFeedbackNotification.categoryIdentifier {
-                return [.banner, .sound]
+                return enabled ? [.banner, .sound] : []
             }
             return enabled ? [.banner, .sound] : []
         }
