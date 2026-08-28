@@ -1854,6 +1854,7 @@ function LegacyFeaturesSection() {
 }
 
 export function GeneralSettingsPanel() {
+  const openStatsWindow = window.desktopBridge?.openStatsWindow;
   const settings = usePrimarySettings();
   const updateSettings = useUpdatePrimarySettings();
   const [backgroundActivityDialogOpen, setBackgroundActivityDialogOpen] = useState(false);
@@ -2488,6 +2489,21 @@ export function GeneralSettingsPanel() {
             <Button render={<Link to="/settings/diagnostics" />} size="xs" variant="outline">
               View diagnostics
             </Button>
+          }
+        />
+        <SettingsRow
+          {...searchableSetting("stats-for-nerds")}
+          description="Live CPU, memory, and GPU usage per process, plus this window's rendering cost."
+          control={
+            openStatsWindow ? (
+              <Button size="xs" variant="outline" onClick={() => void openStatsWindow()}>
+                Open window
+              </Button>
+            ) : (
+              <Button render={<Link to="/settings/stats" />} size="xs" variant="outline">
+                View stats
+              </Button>
+            )
           }
         />
       </SettingsSection>

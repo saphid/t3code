@@ -108,14 +108,16 @@ function processSummaryIdentityKey(process: ResourceTelemetryProcessSummary): st
   return `${process.identity.pid}:${process.identity.startTimeMs}`;
 }
 
-function formatProcessName(process: Pick<ResourceTelemetryProcess, "command" | "name">): string {
+export function formatProcessName(
+  process: Pick<ResourceTelemetryProcess, "command" | "name">,
+): string {
   if (process.name.trim()) return process.name;
   const firstToken = process.command.trim().split(/\s+/)[0] ?? process.command;
   const normalized = firstToken.replace(/^['"]|['"]$/g, "");
   return normalized.split(/[\\/]/).findLast((segment) => segment.length > 0) ?? normalized;
 }
 
-function categoryLabel(category: ResourceTelemetryProcessCategory): string {
+export function categoryLabel(category: ResourceTelemetryProcessCategory): string {
   switch (category) {
     case "server":
       return "Server";
@@ -570,6 +572,10 @@ function ProcessTable({
     () => visibleResourceTelemetryProcesses(processes, collapsed),
     [collapsed, processes],
   );
+  const hasGpu = useMemo(
+    () => processes.some((process) => process.gpuPercent !== undefined),
+    [processes],
+  );
   const toggle = useCallback((process: ResourceTelemetryProcess) => {
     const identityKey = processIdentityKey(process);
     setCollapsed((current) => {
@@ -592,14 +598,15 @@ function ProcessTable({
     >
       <table className="w-full min-w-[1320px] table-fixed text-left text-xs">
         <colgroup>
-          <col className="w-[20%]" />
+          <col className={hasGpu ? "w-[17%]" : "w-[20%]"} />
           <col className="w-[10%]" />
           <col className="w-[7%]" />
+          {hasGpu ? <col className="w-[6%]" /> : null}
           <col className="w-[8%]" />
+          <col className={hasGpu ? "w-[8%]" : "w-[9%]"} />
           <col className="w-[9%]" />
           <col className="w-[9%]" />
-          <col className="w-[9%]" />
-          <col className="w-[10%]" />
+          <col className={hasGpu ? "w-[8%]" : "w-[10%]"} />
           <col className="w-[8%]" />
           <col className="w-[6%]" />
           <col className="w-[4%]" />
@@ -609,6 +616,7 @@ function ProcessTable({
             <th className="px-4 py-2 font-semibold sm:pl-5">Process</th>
             <th className="px-3 py-2 font-semibold">Category</th>
             <th className="px-3 py-2 text-right font-semibold">CPU</th>
+            {hasGpu ? <th className="px-3 py-2 text-right font-semibold">GPU</th> : null}
             <th className="px-3 py-2 text-right font-semibold">CPU Time</th>
             <th className="px-3 py-2 text-right font-semibold">Memory</th>
             <th className="px-3 py-2 text-right font-semibold">Read/s</th>
@@ -622,7 +630,10 @@ function ProcessTable({
         <tbody className="divide-y divide-border/50">
           {visible.length === 0 ? (
             <tr>
-              <td colSpan={11} className="px-4 py-5 text-xs text-muted-foreground sm:px-5">
+              <td
+                colSpan={hasGpu ? 12 : 11}
+                className="px-4 py-5 text-xs text-muted-foreground sm:px-5"
+              >
                 Waiting for the native process monitor.
               </td>
             </tr>
@@ -642,6 +653,11 @@ function ProcessTable({
               <td className="px-3 py-2 text-right font-mono tabular-nums">
                 {process.cpuPercent.toFixed(1)}%
               </td>
+              {hasGpu ? (
+                <td className="px-3 py-2 text-right font-mono tabular-nums">
+                  {process.gpuPercent === undefined ? "–" : `${process.gpuPercent.toFixed(1)}%`}
+                </td>
+              ) : null}
               <td className="px-3 py-2 text-right font-mono tabular-nums">
                 {formatCpuTime(process.cpuTimeMs)}
               </td>

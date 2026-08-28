@@ -35,6 +35,7 @@ import {
 import { useNavigate, useParams } from "@tanstack/react-router";
 import * as Option from "effect/Option";
 import {
+  ActivityIcon,
   ArrowLeftIcon,
   CornerLeftUpIcon,
   FileSearchIcon,
@@ -1620,6 +1621,21 @@ function OpenCommandPaletteDialog(props: {
     icon: <SettingsIcon className={ITEM_ICON_CLASS} />,
     run: async () => {
       await navigate({ to: "/settings" });
+    },
+  });
+
+  actionItems.push({
+    kind: "action",
+    value: "action:stats-for-nerds",
+    searchTerms: ["stats", "nerds", "performance", "cpu", "memory", "gpu", "telemetry"],
+    title: "Stats for nerds",
+    icon: <ActivityIcon className={ITEM_ICON_CLASS} />,
+    run: async () => {
+      if (window.desktopBridge?.openStatsWindow) {
+        await window.desktopBridge.openStatsWindow();
+        return;
+      }
+      await navigate({ to: "/settings/stats" });
     },
   });
 
