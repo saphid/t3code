@@ -152,6 +152,7 @@ export function useUsage(
 }
 
 export interface UsageThreadRowWithEnvironment extends UsageThreadRow {
+  /** Environment that reported the row; thread deep links are environment-scoped. */
   readonly environmentId: EnvironmentId;
 }
 
