@@ -12,6 +12,10 @@ Use **Past 24h** for an hourly chart covering the exact rolling 24-hour period. 
 **30 days**, and **90 days** ranges use daily resolution. Cost and token toggles update both the
 headline and chart, and refreshing rescans every connected environment.
 
+The **Context re-chunking** total is what cache writes cost at the model's cache-write rate: the
+price of re-priming a session's context after its cache expired. It only applies to providers that
+bill cache writes (Anthropic does, OpenAI does not), so rows without cache writes show a dash.
+
 Usage is attributed to the project whose folder a session ran in, including sessions driven
 outside T3 Code. The breakdown's **Project** view ranks projects by spend, and the project picker
 narrows the whole page to one project; work that ran outside every project is grouped under

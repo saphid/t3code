@@ -146,3 +146,14 @@ export function cacheSavingsUsd(table: RateTable, model: string, totals: UsageTo
   if (rate === null) return 0;
   return totals.cachedInputTokens * (rate.inputCostPerToken - rate.cacheReadCostPerToken);
 }
+
+/**
+ * What this usage's cache writes cost at the model's cache-write rate: the
+ * price of re-priming context after cache expiry. Zero for providers that
+ * bill no cache writes (Codex reports no write tokens).
+ */
+export function cacheWriteUsd(table: RateTable, model: string, totals: UsageTokenTotals): number {
+  const rate = lookupRate(table, model);
+  if (rate === null) return 0;
+  return totals.cacheCreationTokens * rate.cacheCreationCostPerToken;
+}

@@ -416,6 +416,30 @@ describe("mergeUsage", () => {
     }
   });
 
+  it("sums cache-write cost overall and per model, tolerating summaries without it", () => {
+    const merged = mergeUsage(
+      [
+        environment(
+          "env-a",
+          summary(
+            [
+              bucket({ cacheWriteUsd: 3 }),
+              bucket({ cacheWriteUsd: 1, model: "claude-opus-5" }),
+              // A summary written before the field existed contributes nothing.
+              bucket({ model: "claude-opus-5" }),
+            ],
+            [{ provider: "claude", hostId: "mac", homePath: "/a/.claude" }],
+          ),
+        ),
+      ],
+      USAGE_CONTRACT_VERSION,
+    );
+
+    expect(merged.costQuality.cacheWriteUsd).toBe(4);
+    const opus = merged.models.find((model) => model.model === "claude-opus-5");
+    expect(opus?.cacheWriteUsd).toBe(1);
+  });
+
   it("filters every figure except the project list when a project is selected", () => {
     const environments = [
       environment(
