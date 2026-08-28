@@ -1,5 +1,6 @@
 import {
   USAGE_CONTRACT_VERSION,
+  USAGE_MERGE_COMPATIBLE_SINCE,
   type EnvironmentId,
   type UsageBucket,
   type UsageDay,
@@ -277,7 +278,7 @@ describe("mergeUsage", () => {
           summary(
             [bucket()],
             [{ provider: "claude", hostId: "linux", homePath: "/b" }],
-            USAGE_CONTRACT_VERSION - 3,
+            USAGE_MERGE_COMPATIBLE_SINCE - 1,
           ),
         ),
       ],
@@ -482,5 +483,58 @@ describe("mergeUsage", () => {
     expect(merged.availableThroughTime).toBe("2026-08-08T00:30:00.000Z");
     expect(merged.hourly.map((hour) => hour.hourStart)).toEqual(["2026-08-07T23:30:00.000Z"]);
     expect(merged.costUsd).toBe(3);
+  });
+
+  it("rolls buckets up by project, with unattributed buckets under null", () => {
+    const merged = mergeUsage(
+      [
+        environment(
+          "env-a",
+          summary(
+            [
+              bucket({ project: "App", costUsd: 6 }),
+              bucket({ project: "App", costUsd: 2, model: "claude-opus-5" }),
+              bucket({ costUsd: 2 }),
+            ],
+            [{ provider: "claude", hostId: "mac", homePath: "/a/.claude" }],
+          ),
+        ),
+      ],
+      USAGE_CONTRACT_VERSION,
+    );
+
+    expect(merged.projects.map((project) => [project.project, project.costUsd])).toEqual([
+      ["App", 8],
+      [null, 2],
+    ]);
+    expect(merged.projects[0]?.costShare).toBeCloseTo(0.8, 9);
+  });
+
+  it("filters every figure except the project list when a project is selected", () => {
+    const environments = [
+      environment(
+        "env-a",
+        summary(
+          [
+            bucket({ project: "App", costUsd: 6 }),
+            bucket({ costUsd: 2, provider: "codex", model: "gpt-5.6-sol" }),
+          ],
+          [
+            { provider: "claude", hostId: "mac", homePath: "/a/.claude" },
+            { provider: "codex", hostId: "mac", homePath: "/a/.codex" },
+          ],
+        ),
+      ),
+    ];
+
+    const filtered = mergeUsage(environments, USAGE_CONTRACT_VERSION, { projectFilter: "App" });
+    expect(filtered.costUsd).toBe(6);
+    expect(filtered.providers.map((provider) => provider.provider)).toEqual(["claude"]);
+    expect(filtered.sessions).toBe(0);
+    expect(filtered.projects.map((project) => project.project)).toEqual(["App", null]);
+
+    const outside = mergeUsage(environments, USAGE_CONTRACT_VERSION, { projectFilter: null });
+    expect(outside.costUsd).toBe(2);
+    expect(outside.providers.map((provider) => provider.provider)).toEqual(["codex"]);
   });
 });
