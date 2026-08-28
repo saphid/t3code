@@ -171,10 +171,16 @@ public struct ClientStorageView: View {
                 .foregroundStyle(T3Colors.textSecondary)
                 .frame(width: 22)
                 .accessibilityHidden(true)
-            Text(name)
-                .font(T3Typography.threadBody)
-                .foregroundStyle(T3Colors.textPrimary)
-                .lineLimit(1)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(name)
+                    .font(T3Typography.threadBody)
+                    .foregroundStyle(T3Colors.textPrimary)
+                    .lineLimit(1)
+                Text(cacheDetail(environment))
+                    .font(T3Typography.supporting)
+                    .foregroundStyle(T3Colors.textTertiary)
+                    .lineLimit(1)
+            }
             Spacer(minLength: 8)
             Button("Clear \(Self.formatBytes(environment.payloadBytes))", role: .destructive) {
                 confirmation = .environment(
@@ -197,6 +203,18 @@ public struct ClientStorageView: View {
         .padding(.horizontal, 20)
         .frame(minHeight: 56)
         .accessibilityElement(children: .contain)
+    }
+
+    private func cacheDetail(
+        _ environment: FeatureClientCache.EnvironmentSummary
+    ) -> String {
+        let kinds = FeatureClientCache.Kind.allCases.compactMap { kind in
+            environment.countsByKind[kind].map { _ in kind.displayName }
+        }
+        let records = environment.recordCount == 1
+            ? "1 record"
+            : "\(environment.recordCount) records"
+        return ([records] + kinds).joined(separator: " · ")
     }
 
     private func sectionTitle(_ title: String) -> some View {
@@ -232,9 +250,13 @@ public struct ClientStorageView: View {
         _ summary: FeatureClientCache.Summary
     ) -> [FeatureClientCache.EnvironmentSummary] {
         summary.environments.sorted {
-            environmentName(for: $0.environmentID).localizedStandardCompare(
+            let comparison = environmentName(for: $0.environmentID).localizedStandardCompare(
                 environmentName(for: $1.environmentID)
-            ) == .orderedAscending
+            )
+            if comparison == .orderedSame {
+                return $0.environmentID < $1.environmentID
+            }
+            return comparison == .orderedAscending
         }
     }
 

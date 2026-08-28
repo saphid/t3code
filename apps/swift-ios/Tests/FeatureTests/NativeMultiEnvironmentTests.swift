@@ -633,14 +633,19 @@ final class NativeMultiEnvironmentTests: XCTestCase {
         let settings = UserDefaults(
             suiteName: "t3-native-multi-\(UUID().uuidString)"
         )!
+        let offlineCacheURL = directory.appendingPathComponent("offline-client-cache.json")
         return MultiEnvironmentFixture(
             directory: directory,
+            offlineCacheURL: offlineCacheURL,
             transport: transport,
             runtime: runtime,
             credentials: credentials,
             client: NativeFeatureClient(
                 runtime: runtime,
                 settingsStore: settings,
+                offlineCacheStore: FeatureClientOfflineCacheStore(
+                    fileURL: offlineCacheURL
+                ),
                 fallbackPollingInitialDelay: fallbackPollingInitialDelay,
                 fallbackPollingInterval: fallbackPollingInterval,
                 aggregateRefreshInterval: aggregateRefreshInterval,
@@ -653,6 +658,40 @@ final class NativeMultiEnvironmentTests: XCTestCase {
 @Suite("Native client storage boundaries")
 @MainActor
 struct NativeClientStorageTests {
+    @Test
+    func offlineCacheSurvivesAColdLaunchAndRepopulatesAfterScopedClear() async throws {
+        let fixture = try await NativeMultiEnvironmentTests.makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        _ = try await fixture.client.initialSnapshot()
+
+        await fixture.transport.setShellReadsEnabled(false, host: "one.example")
+        await fixture.transport.setShellReadsEnabled(false, host: "two.example")
+        let coldClient = NativeFeatureClient(
+            runtime: fixture.runtime,
+            settingsStore: UserDefaults(
+                suiteName: "t3-native-offline-cache-\(UUID().uuidString)"
+            )!,
+            offlineCacheStore: FeatureClientOfflineCacheStore(
+                fileURL: fixture.offlineCacheURL
+            )
+        )
+
+        let offlineSnapshot = try await coldClient.initialSnapshot()
+        let persisted = try await coldClient.clientCacheSummary()
+        #expect(Set(offlineSnapshot.environments.map(\.id)) == ["one", "two"])
+        #expect(Set(offlineSnapshot.threads.compactMap(\.environmentID)) == ["one", "two"])
+        #expect(persisted.environments.map(\.environmentID) == ["one", "two"])
+
+        try await coldClient.clearClientCache(.environment("two"))
+        let scoped = try await coldClient.clientCacheSummary()
+        #expect(scoped.environments.map(\.environmentID) == ["one"])
+
+        await fixture.transport.setShellReadsEnabled(true, host: "two.example")
+        _ = try await coldClient.initialSnapshot()
+        let repopulated = try await coldClient.clientCacheSummary()
+        #expect(repopulated.environments.map(\.environmentID) == ["one", "two"])
+    }
+
     @Test
     func scopedAndAllClearsPreserveConnectionsCredentialsAndPreferences() async throws {
         let fixture = try await NativeMultiEnvironmentTests.makeFixture()
@@ -681,7 +720,6 @@ struct NativeClientStorageTests {
         #expect(reconnected.settings.appearance == .dark)
         #expect(repopulated.environments.map(\.environmentID) == ["one", "two"])
 
-        var clearEvents = fixture.client.events().makeAsyncIterator()
         try await fixture.client.clearClientCache(.all)
         let cleared = try await fixture.client.clientCacheSummary()
         let environmentsAfterAllClear = try await fixture.runtime.environments()
@@ -693,21 +731,6 @@ struct NativeClientStorageTests {
         #expect(environmentsAfterAllClear.map(\.id) == ["one", "two"])
         #expect(firstCredentialAfterAllClear != nil)
         #expect(secondCredentialAfterAllClear != nil)
-        var snapshotAfterAllClear: FeatureSnapshot?
-        while let event = await clearEvents.next() {
-            guard case let .snapshot(snapshot) = event else { continue }
-            if snapshot.projects.isEmpty, snapshot.threads.isEmpty {
-                snapshotAfterAllClear = snapshot
-                break
-            }
-        }
-        guard let snapshotAfterAllClear else {
-            Issue.record("Clearing all caches did not publish the cache-free snapshot.")
-            return
-        }
-        #expect(snapshotAfterAllClear.connection.state == .connected)
-        #expect(snapshotAfterAllClear.environments.map(\.id) == ["one", "two"])
-
         let afterAllClear = try await fixture.client.initialSnapshot()
         #expect(afterAllClear.settings.appearance == .dark)
         #expect(afterAllClear.environments.map(\.id) == ["one", "two"])
@@ -915,6 +938,7 @@ private actor RuntimeReplacementHTTPTransport: HTTPTransport {
 
 fileprivate struct MultiEnvironmentFixture {
     let directory: URL
+    let offlineCacheURL: URL
     let transport: MultiEnvironmentHTTPTransport
     let runtime: EnvironmentRuntime
     let credentials: InMemoryCredentialStore

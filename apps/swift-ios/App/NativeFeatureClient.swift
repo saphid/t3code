@@ -43,6 +43,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
     private let hasMatchingT3ConnectController: Bool
     private let settingsStore: UserDefaults
     private let projectFaviconStore: FeatureProjectFaviconStore
+    private let offlineCacheStore: FeatureClientOfflineCacheStore
     private let fallbackPollingInitialDelay: Duration
     private let fallbackPollingInterval: Duration
     private let aggregateRefreshInterval: Duration
@@ -114,6 +115,10 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
     private var pendingDetailRenderMutations = NativeDetailRenderMutations()
     private var environmentGeneration = 0
     private var cacheInvalidationEpochs: [String: Int] = [:]
+    private var didHydrateOfflineCache = false
+    private var offlineBranchStatusesByEnvironmentID: [
+        String: [String: FeatureSourceControlStatus]
+    ] = [:]
     private var lastShellEventAt: Date?
     private var activeRawThread: OrchestrationThread?
     private var activeThreadSequence: Int?
@@ -127,6 +132,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         t3ConnectDeviceManager: (any T3ConnectDeviceManaging)? = nil,
         settingsStore: UserDefaults = .standard,
         projectFaviconStore: FeatureProjectFaviconStore = FeatureProjectFaviconStore(),
+        offlineCacheStore: FeatureClientOfflineCacheStore = FeatureClientOfflineCacheStore(),
         fallbackPollingInitialDelay: Duration = .seconds(3),
         fallbackPollingInterval: Duration = .seconds(2),
         aggregateRefreshInterval: Duration = .seconds(20),
@@ -157,6 +163,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         )
         self.settingsStore = settingsStore
         self.projectFaviconStore = projectFaviconStore
+        self.offlineCacheStore = offlineCacheStore
         self.fallbackPollingInitialDelay = fallbackPollingInitialDelay
         self.fallbackPollingInterval = fallbackPollingInterval
         self.aggregateRefreshInterval = aggregateRefreshInterval
@@ -185,6 +192,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
 
     func initialSnapshot() async throws -> FeatureSnapshot {
         let savedEnvironments = try await runtime.environments()
+        await hydrateOfflineCacheIfNeeded(savedEnvironments: savedEnvironments)
         let environments = await refreshingLegacyPinReorderDescriptors(in: savedEnvironments)
         guard let activeEnvironment = await activeEnvironment(in: environments) else {
             await clearActiveEnvironment()
@@ -204,7 +212,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         guard isCurrentSession(client: activeClient, generation: generation) else {
             throw CancellationError()
         }
-        reconcileEnvironmentLoads(loads, savedEnvironments: environments)
+        await reconcileEnvironmentLoads(loads, savedEnvironments: environments)
         latestShell = shellsByEnvironmentID[environment.id]
         startPolling(activeClient)
         let activeIsReachable = loads.contains {
@@ -283,6 +291,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
 
     func backgroundSnapshot() async throws -> FeatureSnapshot {
         let environments = try await runtime.environments()
+        await hydrateOfflineCacheIfNeeded(savedEnvironments: environments)
         guard let activeClient = try await runtime.activeClient() else {
             return disconnectedSnapshot(environments: environments)
         }
@@ -293,7 +302,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
             throw CancellationError()
         }
 
-        reconcileEnvironmentLoads(loads, savedEnvironments: environments)
+        await reconcileEnvironmentLoads(loads, savedEnvironments: environments)
         let activeIsReachable = loads.contains {
             $0.environment.id == environment.id && $0.shell != nil
         }
@@ -480,87 +489,32 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
     }
 
     func clientCacheSummary() async throws -> FeatureClientCache.Summary {
-        let shells = shellsByEnvironmentID.map { ($0.key, $0.value) }
-        let configs = serverConfigsByEnvironmentID.map { ($0.key, $0.value) }
-        let archived = archivedThreadsByEnvironmentID.compactMap { environmentID, threads in
-            threads.isEmpty ? nil : (environmentID, threads)
-        }
-        let details = latestDetails.compactMap { threadID, detail in
-            let environmentID = threadEnvironmentIDs[threadID] ?? detail.thread.environmentID
-            return environmentID.map { ($0, detail) }
-        }
-        let branches = sourceControlMonitors.compactMap { key, monitor in
-            monitor.latestStatus.map { (key.environmentID, $0) }
-        }
-        let terminals = terminalSnapshots.compactMap { key, snapshot in
-            let environmentID = threadEnvironmentIDs[key.threadID]
-                ?? latestDetails[key.threadID]?.thread.environmentID
-            return environmentID.map { ($0, snapshot) }
-        }
-
-        return try await Task.detached(priority: .userInitiated) {
-            let encoder = JSONEncoder.t3
-            var records: [FeatureClientCache.Record] = []
-            records.reserveCapacity(
-                shells.count + configs.count + archived.count + details.count
-                    + branches.count + terminals.count
-            )
-            for (environmentID, shell) in shells {
-                records.append(.init(
-                    environmentID: environmentID,
-                    kind: .threads,
-                    payloadBytes: try encoder.encode(shell).count
-                ))
-            }
-            for (environmentID, config) in configs {
-                records.append(.init(
-                    environmentID: environmentID,
-                    kind: .serverMetadata,
-                    payloadBytes: try encoder.encode(config).count
-                ))
-            }
-            for (environmentID, threads) in archived {
-                records.append(.init(
-                    environmentID: environmentID,
-                    kind: .threads,
-                    payloadBytes: try encoder.encode(threads).count
-                ))
-            }
-            for (environmentID, detail) in details {
-                records.append(.init(
-                    environmentID: environmentID,
-                    kind: .threads,
-                    payloadBytes: try encoder.encode(detail).count
-                ))
-            }
-            for (environmentID, status) in branches {
-                records.append(.init(
-                    environmentID: environmentID,
-                    kind: .branches,
-                    payloadBytes: try encoder.encode(status).count
-                ))
-            }
-            for (environmentID, snapshot) in terminals {
-                records.append(.init(
-                    environmentID: environmentID,
-                    kind: .threads,
-                    payloadBytes: try encoder.encode(snapshot).count
-                ))
-            }
-            return FeatureClientCache.Summary(records: records)
-        }.value
+        try await offlineCacheStore.summary()
     }
 
     func clearClientCache(_ scope: FeatureClientCache.Scope) async throws {
         let environments = try await runtime.environments()
+        let persistedSummary = try await offlineCacheStore.summary()
+        let persistedEnvironmentIDs = Set(
+            persistedSummary.environments.map(\.environmentID)
+        )
         let environmentIDs = FeatureClientCache.environmentIDs(
             for: scope,
-            among: cachedEnvironmentIDs
+            among: persistedEnvironmentIDs.union(cachedEnvironmentIDs)
         )
         guard !environmentIDs.isEmpty else { return }
 
+        var nextGenerations: [String: Int] = [:]
         for environmentID in environmentIDs {
-            cacheInvalidationEpochs[environmentID, default: 0] &+= 1
+            nextGenerations[environmentID] = cacheInvalidationEpochs[environmentID, default: 0] + 1
+        }
+        try await offlineCacheStore.remove(
+            environmentIDs: environmentIDs,
+            generations: nextGenerations
+        )
+        for (environmentID, generation) in nextGenerations {
+            cacheInvalidationEpochs[environmentID] = generation
+            offlineBranchStatusesByEnvironmentID[environmentID] = nil
         }
 
         let removedThreadIDs = Set(threadEnvironmentIDs.compactMap { threadID, environmentID in
@@ -640,6 +594,56 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         } else {
             publish(disconnectedSnapshot(environments: environments))
         }
+    }
+
+    private func hydrateOfflineCacheIfNeeded(savedEnvironments: [Environment]) async {
+        guard !didHydrateOfflineCache else { return }
+        didHydrateOfflineCache = true
+        guard let entries = try? await offlineCacheStore.entries() else { return }
+        let savedIDs = Set(savedEnvironments.map(\.id))
+        for entry in entries where savedIDs.contains(entry.environmentID) {
+            if let shell = entry.shell {
+                shellsByEnvironmentID[entry.environmentID] = shell
+            }
+            if let serverConfig = entry.serverConfig {
+                setServerConfig(serverConfig, environmentID: entry.environmentID)
+            }
+            if !entry.archivedThreads.isEmpty {
+                archivedThreadsByEnvironmentID[entry.environmentID] = entry.archivedThreads
+            }
+            latestDetails.merge(entry.threadDetails) { current, _ in current }
+            if !entry.branchStatuses.isEmpty {
+                offlineBranchStatusesByEnvironmentID[entry.environmentID] = entry.branchStatuses
+            }
+        }
+        rebuildEntityIndexes(savedEnvironments)
+    }
+
+    private func persistOfflineCache(for environmentID: String) async {
+        let details = latestDetails.filter { threadID, detail in
+            (threadEnvironmentIDs[threadID] ?? detail.thread.environmentID) == environmentID
+        }
+        var branches = offlineBranchStatusesByEnvironmentID[environmentID] ?? [:]
+        for (key, monitor) in sourceControlMonitors where key.environmentID == environmentID {
+            if let status = monitor.latestStatus {
+                branches[key.workingDirectory] = status
+            }
+        }
+        let entry = FeatureClientOfflineCacheStore.Entry(
+            environmentID: environmentID,
+            shell: shellsByEnvironmentID[environmentID],
+            serverConfig: serverConfigsByEnvironmentID[environmentID],
+            archivedThreads: archivedThreadsByEnvironmentID[environmentID] ?? [],
+            threadDetails: details,
+            branchStatuses: branches
+        )
+        guard entry.shell != nil || entry.serverConfig != nil
+            || !entry.archivedThreads.isEmpty || !entry.threadDetails.isEmpty
+            || !entry.branchStatuses.isEmpty else { return }
+        try? await offlineCacheStore.save(
+            entry,
+            generation: cacheInvalidationEpoch(for: environmentID)
+        )
     }
 
     private var cachedEnvironmentIDs: Set<String> {
@@ -2431,9 +2435,14 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
     func sourceControlStatus(threadID: String) async throws -> FeatureSourceControlStatus {
         let route = try threadRoute(for: threadID)
         let context = try workspaceContext(route: route)
-        return NativeWorkspaceMapper.sourceControl(
+        let status = NativeWorkspaceMapper.sourceControl(
             try await route.client.refreshVCSStatus(cwd: context.cwd)
         )
+        offlineBranchStatusesByEnvironmentID[route.environmentID, default: [:]][
+            URL(fileURLWithPath: context.cwd).standardizedFileURL.path
+        ] = status
+        await persistOfflineCache(for: route.environmentID)
+        return status
     }
 
     func sourceControlStatusEvents(threadID: String) -> AsyncStream<FeatureSourceControlStatus> {
@@ -2458,6 +2467,9 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
             monitor = existing
         } else {
             monitor = NativeSourceControlMonitor()
+            monitor.latestStatus = offlineBranchStatusesByEnvironmentID[
+                key.environmentID
+            ]?[key.workingDirectory]
             sourceControlMonitors[key] = monitor
         }
 
@@ -2525,6 +2537,11 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
                     continue
                 }
                 monitor.latestStatus = status
+                self.offlineBranchStatusesByEnvironmentID[
+                    key.environmentID,
+                    default: [:]
+                ][key.workingDirectory] = status
+                await self.persistOfflineCache(for: key.environmentID)
                 monitor.continuations.values.forEach { $0.yield(status) }
             }
         } catch {
@@ -2571,9 +2588,15 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
             }
         }
 
-        return NativeWorkspaceMapper.sourceControl(
+        let status = NativeWorkspaceMapper.sourceControl(
             try await client.refreshVCSStatus(cwd: context.cwd)
         )
+        let workingDirectory = URL(fileURLWithPath: context.cwd).standardizedFileURL.path
+        offlineBranchStatusesByEnvironmentID[route.environmentID, default: [:]][
+            workingDirectory
+        ] = status
+        await persistOfflineCache(for: route.environmentID)
+        return status
     }
 
     func terminalSnapshot(
@@ -3351,7 +3374,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
                       ) else {
                     return
                 }
-                self.reconcileEnvironmentLoads(loads, savedEnvironments: environments)
+                await self.reconcileEnvironmentLoads(loads, savedEnvironments: environments)
                 let currentConnection = self.latestSnapshot?.connection
                     ?? FeatureConnection(
                         state: .disconnected,
@@ -3861,7 +3884,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
     private func reconcileEnvironmentLoads(
         _ loads: [EnvironmentShellLoad],
         savedEnvironments: [Environment]
-    ) {
+    ) async {
         let savedIDs = Set(savedEnvironments.map(\.id))
         environmentClients = environmentClients.filter { savedIDs.contains($0.key) }
         shellsByEnvironmentID = shellsByEnvironmentID.filter { savedIDs.contains($0.key) }
@@ -3910,6 +3933,13 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
             }
         }
         rebuildEntityIndexes(savedEnvironments)
+        for load in loads where load.shell != nil || load.config != nil {
+            guard isCurrentCacheEpoch(
+                load.cacheEpoch,
+                environmentID: load.environment.id
+            ) else { continue }
+            await persistOfflineCache(for: load.environment.id)
+        }
     }
 
     private func newestShell(
@@ -4180,6 +4210,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
             connectionState: connectionState,
             connectionDetail: connectionDetail
         )
+        await persistOfflineCache(for: sourceEnvironment.id)
         publish(snapshot)
     }
 
@@ -4314,6 +4345,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
             } else {
                 continuation.yield(.detail(detail))
             }
+            scheduleOfflineCachePersistence(for: threadID, detail: detail)
             return
         }
         let next = latestDetails[threadID].map { current in
@@ -4336,6 +4368,16 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
             }
         }
         continuation.yield(.detail(next))
+        scheduleOfflineCachePersistence(for: threadID, detail: next)
+    }
+
+    private func scheduleOfflineCachePersistence(
+        for threadID: String,
+        detail: FeatureThreadDetail
+    ) {
+        guard let environmentID = threadEnvironmentIDs[threadID]
+            ?? detail.thread.environmentID else { return }
+        Task { await persistOfflineCache(for: environmentID) }
     }
 
     private func makeDetailDelta(

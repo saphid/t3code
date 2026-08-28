@@ -1,10 +1,18 @@
 import Foundation
 
 public enum FeatureClientCache {
-    public enum Kind: String, Sendable, Equatable, Hashable {
+    public enum Kind: String, CaseIterable, Sendable, Equatable, Hashable {
         case threads
         case serverMetadata
         case branches
+
+        var displayName: String {
+            switch self {
+            case .threads: "threads"
+            case .serverMetadata: "server metadata"
+            case .branches: "branches"
+            }
+        }
     }
 
     public struct Record: Sendable, Equatable {
