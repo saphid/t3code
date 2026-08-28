@@ -4,6 +4,9 @@
 # with --bootstrap. Everything else is read-only probing with remedies.
 # Exit 0 = ready, 1 = one or more checks failed.
 set -u
+# Apple's framework Python 3.9 otherwise writes imported stdlib bytecode under
+# $HOME/Library/Caches, which would escape setup's non-bootstrap state boundary.
+export PYTHONDONTWRITEBYTECODE=1
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd -P)
 PKG_DIR=$(dirname "$SCRIPT_DIR")
 REPO_ROOT=$(cd "$PKG_DIR/../.." && pwd -P)

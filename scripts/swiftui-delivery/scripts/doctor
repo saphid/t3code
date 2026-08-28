@@ -6,6 +6,9 @@
 # cutover for four days).
 # Exit 0 = clean, 1 = findings, 2 = package broken.
 set -u
+# Keep direct doctor runs read-only even when Apple's framework Python redirects
+# imported bytecode caches outside the package.
+export PYTHONDONTWRITEBYTECODE=1
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd -P)
 PKG_DIR=$(dirname "$SCRIPT_DIR")
 REPO_ROOT=$(cd "$PKG_DIR/../.." && pwd -P)
