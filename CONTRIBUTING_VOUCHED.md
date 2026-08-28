@@ -102,15 +102,69 @@ gate, or partial scan is not a pass.
 
 Capture the running product, not a mockup or a manually recreated state.
 
-- Put full-size before and after images under separate headings. Narrow
-  side-by-side tables are hard to inspect on a phone.
-- Include light and dark appearances when the change can differ between them.
+- Publish dark mode evidence first. Put each full-size before and after image
+  under its own heading. Narrow side-by-side tables are hard to inspect on a
+  phone.
+- Put every light mode image and GIF inside one collapsed `<details>` block
+  with a plain `Light mode evidence` summary. Keep light media out of the
+  default expanded page so opening a PR at night does not fill the screen with
+  white images.
+- Add an animated comparison GIF for every real before/after pair. Alternate
+  the same sanitized frames shown as static evidence. Keep the static images
+  because reviewers need frames they can inspect without animation. A genuinely
+  new surface may be after-only when the PR says so.
+- Record every action sequence as an animated GIF. Add a linked video when
+  timing, smooth motion, pointer precision, text legibility, audio, or GIF size
+  makes the GIF incomplete evidence.
 - Include the relevant platform chrome and nearby layout when it could affect
   the result.
-- Add a short video for motion, scrolling, focus, timing, gestures, or other
-  interaction changes.
 - Show loading, empty, stale, error, disabled, retry, and reconnecting states
   when the change affects them.
+- Treat UI media as derived from the current PR head. After any later UI change,
+  recapture every affected static frame and regenerate each comparison GIF,
+  action GIF, and video that uses it. Replace the media before requesting
+  another review or reporting readiness.
+
+Use this PR-body shape:
+
+```md
+### Dark mode
+
+#### Before
+
+![Before, dark](...)
+
+#### After
+
+![After, dark](...)
+
+#### Before/after comparison
+
+![Before and after, dark](...gif)
+
+<details>
+<summary>Light mode evidence</summary>
+
+#### Before
+
+![Before, light](...)
+
+#### After
+
+![After, light](...)
+
+#### Before/after comparison
+
+![Before and after, light](...gif)
+
+</details>
+
+### Action sequence
+
+![Action sequence](...gif)
+
+Video: [full-fidelity recording](...mp4)
+```
 
 Upload review evidence to GitHub. Do not commit PR-only screenshots, videos, or
 research artifacts.
@@ -127,7 +181,9 @@ verify:
 5. Affected clients, providers, platforms, contracts, and connection modes.
 6. Exact validation commands and results.
 7. Known risks, limitations, and anything not tested.
-8. Before and after evidence for UI work, plus video when interaction changed.
+8. Static dark evidence, collapsed light evidence, before/after comparison
+   GIFs, and action GIFs for UI work, plus video when the GIF cannot preserve
+   the needed fidelity.
 9. The owning issue, discussion, or stacked PR when one exists.
 
 Keep this current as the branch changes. Remove stale claims and generated
@@ -162,7 +218,9 @@ resolve a thread because the line moved. Do not treat bot approval or green CI
 as human product approval.
 
 When the branch changes materially, update the description, rerun the affected
-proof, and ask for review on the current head.
+proof, and ask for review on the current head. A UI-affecting change also
+invalidates its affected screenshots and every GIF or video derived from them;
+refresh and verify those assets before asking again.
 
 ## Final handoff check
 
@@ -178,7 +236,13 @@ Before requesting human review, confirm:
       automated coverage adds value; otherwise the direct proof is recorded.
 - [ ] Targeted lint, format, type, and build checks pass where applicable.
 - [ ] Runtime, platform, and performance claims have direct evidence.
-- [ ] UI changes have real before and after images, with video when needed.
+- [ ] UI changes have full-size dark mode before and after images, while all
+      light mode images and GIFs sit inside a collapsed details block.
+- [ ] Every before/after pair has an animated comparison GIF, every action
+      sequence has an animated GIF, and video is linked when the GIF loses
+      needed fidelity.
+- [ ] Every affected screenshot, GIF, and video was regenerated after the
+      latest UI change and renders in the live PR body.
 - [ ] Missing proof and known limitations are stated plainly.
 - [ ] The branch is current, mergeable, and free of temporary or unrelated
       files.
