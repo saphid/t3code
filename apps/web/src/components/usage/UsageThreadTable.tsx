@@ -3,7 +3,8 @@ import type {
   UsageThreadBreakdownInput,
   UsageThreadDayCost,
 } from "@t3tools/contracts";
-import { ChevronDownIcon, ChevronRightIcon } from "lucide-react";
+import { useNavigate } from "@tanstack/react-router";
+import { ArrowUpRightIcon, ChevronDownIcon, ChevronRightIcon } from "lucide-react";
 import { useMemo, useState } from "react";
 
 import {
@@ -144,6 +145,8 @@ function ThreadRowGroup({
   readonly onToggle: () => void;
 }) {
   const Chevron = open ? ChevronDownIcon : ChevronRightIcon;
+  const navigate = useNavigate();
+  const threadId = row.threadId;
   return (
     <>
       <tr
@@ -163,6 +166,24 @@ function ThreadRowGroup({
                 {row.agents.length === 1 ? "1 subagent" : `${row.agents.length} subagents`}
               </span>
             ) : null}
+            {threadId === null ? null : (
+              <button
+                type="button"
+                aria-label="Open thread"
+                title="Open thread"
+                className="shrink-0 cursor-pointer rounded p-0.5 text-muted-foreground hover:bg-muted hover:text-foreground"
+                onClick={(event) => {
+                  // The row click toggles expansion; the link must not.
+                  event.stopPropagation();
+                  void navigate({
+                    to: "/$environmentId/$threadId",
+                    params: { environmentId: row.environmentId, threadId },
+                  });
+                }}
+              >
+                <ArrowUpRightIcon className="size-3.5" aria-hidden />
+              </button>
+            )}
           </span>
         </td>
         <td className="py-2 text-right text-foreground tabular-nums">{formatUsd(row.costUsd)}</td>
