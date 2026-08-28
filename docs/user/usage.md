@@ -19,6 +19,14 @@ The **Context re-chunking** total is what cache writes cost at the model's cache
 price of re-priming a session's context after its cache expired. It only applies to providers that
 bill cache writes (Anthropic does, OpenAI does not), so rows without cache writes show a dash.
 
+The breakdown's **Thread** view drills into where the spend went: sessions group into the T3 Code
+thread they belong to, with sessions that never ran through T3 Code listed under the first thing
+you asked in them. Expanding a row shows a daily cost chart split into cache writes, cache reads,
+and fresh input plus output, along with any Claude subagents the thread spawned and their share.
+The view names the 40 highest-cost rows and groups lower-cost rows under **Other threads** by
+provider and project. Those grouped rows stay in the totals, so the thread view still adds up to
+the selected project or full summary.
+
 Usage is attributed to the project whose folder a session ran in, including sessions driven
 outside T3 Code. The breakdown's **Project** view ranks projects by spend, and the project picker
 narrows the whole page to one project; work that ran outside every project is grouped under
