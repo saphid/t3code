@@ -298,6 +298,9 @@ public struct WorkspaceView: View {
             projectOrder: projectSortOrder,
             threadOrder: threadSortOrder
         )
+        let pinnedMovePositions = PinnedThreadReordering.positions(
+            in: PinnedThreadReordering.eligibleThreads(in: model.snapshot.threads)
+        )
 
         return VStack(spacing: 0) {
             projectFilter(projects: environmentScoped(presentation.projects))
@@ -337,6 +340,10 @@ public struct WorkspaceView: View {
                 },
                 onPin: { thread, pinned in
                     Task { await model.setPinned(thread.id, pinned: pinned) }
+                },
+                pinnedMovePositions: pinnedMovePositions,
+                onMovePinned: { thread, direction in
+                    Task { await model.movePinnedThread(thread.id, direction: direction) }
                 },
                 onDelete: { thread in
                     deletingThread = thread

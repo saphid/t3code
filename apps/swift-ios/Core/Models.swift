@@ -104,6 +104,7 @@ public struct EnvironmentDescriptor: Codable, Equatable, Sendable {
         public let threadSettlement: Bool?
         public let threadSnooze: Bool?
         public let threadPinning: Bool?
+        public let threadPinReorder: Bool?
         public let threadTitleRegeneration: Bool?
         public let threadSummaryTimeline: Bool?
         public let serverSelfUpdate: String?
@@ -117,6 +118,7 @@ public struct EnvironmentDescriptor: Codable, Equatable, Sendable {
             case threadSettlement
             case threadSnooze
             case threadPinning
+            case threadPinReorder
             case threadTitleRegeneration
             case threadSummaryTimeline
             case serverSelfUpdate
@@ -133,6 +135,7 @@ public struct EnvironmentDescriptor: Codable, Equatable, Sendable {
             threadSettlement = try container.decodeIfPresent(Bool.self, forKey: .threadSettlement)
             threadSnooze = try container.decodeIfPresent(Bool.self, forKey: .threadSnooze)
             threadPinning = try container.decodeIfPresent(Bool.self, forKey: .threadPinning)
+            threadPinReorder = try container.decodeIfPresent(Bool.self, forKey: .threadPinReorder)
             threadTitleRegeneration = try container.decodeIfPresent(
                 Bool.self,
                 forKey: .threadTitleRegeneration
@@ -422,6 +425,7 @@ public struct OrchestrationThreadShell: Codable, Identifiable, Equatable, Sendab
     public let snoozedUntil: String?
     public let snoozedAt: String?
     public let pinnedAt: String?
+    public var pinOrderKey: String? = nil
     public var titleRegeneration: ThreadTitleRegeneration? = nil
     public let session: OrchestrationSession?
     public let latestUserMessageAt: String?
@@ -496,6 +500,7 @@ public struct OrchestrationThread: Codable, Identifiable, Equatable, Sendable {
     public let snoozedUntil: String?
     public let snoozedAt: String?
     public let pinnedAt: String?
+    public var pinOrderKey: String? = nil
     public var titleRegeneration: ThreadTitleRegeneration? = nil
     public let deletedAt: String?
     @ForwardCompatibleArray public var messages: [OrchestrationMessage]

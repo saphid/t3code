@@ -591,6 +591,13 @@ public actor T3Client {
     }
 
     @discardableResult
+    public func reorderPin(threadID: String, orderKey: String) async throws -> DispatchResult {
+        try await dispatch(
+            OrchestrationCommands.reorderPin(threadID: threadID, orderKey: orderKey)
+        )
+    }
+
+    @discardableResult
     public func setRuntimeMode(
         threadID: String,
         mode: RuntimeMode
@@ -1350,6 +1357,21 @@ public actor EnvironmentRuntime {
         return try await api.descriptor(at: httpBaseURL)
     }
 
+    @discardableResult
+    public func refreshDescriptor(id: String) async throws -> Environment {
+        guard var environment = try await environmentStore.load().first(where: { $0.id == id }) else {
+            throw RPCError.remote("Environment \(id) is not saved.")
+        }
+        let descriptor = try await descriptor(at: environment.httpBaseURL)
+        guard descriptor.environmentId == environment.id else {
+            throw RPCError.remote("The server identity does not match this saved environment.")
+        }
+        environment.label = descriptor.label
+        environment.descriptor = descriptor
+        try await environmentStore.upsert(environment)
+        return environment
+    }
+
     /// Persists a fully validated managed environment. Both the environment
     /// metadata and the tagged DPoP credential must agree before either can
     /// replace an existing manual connection with the same server identity.
@@ -1870,6 +1892,19 @@ public enum OrchestrationCommands {
             threadID: threadID,
             commandID: commandID
         )
+    }
+
+    public static func reorderPin(
+        threadID: String,
+        orderKey: String,
+        commandID: String = UUID().uuidString
+    ) -> JSONValue {
+        .object([
+            "type": .string("thread.pin.reorder"),
+            "commandId": .string(commandID),
+            "threadId": .string(threadID),
+            "orderKey": .string(orderKey),
+        ])
     }
 
     public static func setRuntimeMode(

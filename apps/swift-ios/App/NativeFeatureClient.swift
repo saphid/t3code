@@ -183,13 +183,15 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
     }
 
     func initialSnapshot() async throws -> FeatureSnapshot {
-        let environments = try await runtime.environments()
-        guard let activeClient = try await runtime.activeClient() else {
+        let savedEnvironments = try await runtime.environments()
+        let environments = await refreshingLegacyPinReorderDescriptors(in: savedEnvironments)
+        guard let activeEnvironment = await activeEnvironment(in: environments) else {
             await clearActiveEnvironment()
             let snapshot = disconnectedSnapshot(environments: environments)
             latestSnapshot = snapshot
             return snapshot
         }
+        let activeClient = await runtime.client(for: activeEnvironment)
         // The runtime actor can change its active selection at any suspension
         // point. Derive both values from one client so the snapshot cannot pair
         // one environment with another environment's connection.
@@ -218,6 +220,64 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         )
         latestSnapshot = snapshot
         return snapshot
+    }
+
+    private func refreshingLegacyPinReorderDescriptors(
+        in environments: [Environment]
+    ) async -> [Environment] {
+        var refreshed = environments
+        let candidates = refreshed.indices.filter {
+            refreshed[$0].isEnabled
+                && refreshed[$0].descriptor?.capabilities.threadPinReorder == nil
+        }
+        let runtime = runtime
+        let timeout = environmentShellTimeoutInterval
+        await withTaskGroup(of: (Int, Environment?).self) { group in
+            for index in candidates {
+                let id = refreshed[index].id
+                group.addTask {
+                    (
+                        index,
+                        await Self.refreshDescriptor(
+                            id: id,
+                            runtime: runtime,
+                            timeout: timeout
+                        )
+                    )
+                }
+            }
+            for await (index, environment) in group {
+                if let environment {
+                    refreshed[index] = environment
+                }
+            }
+        }
+        return refreshed
+    }
+
+    nonisolated private static func refreshDescriptor(
+        id: String,
+        runtime: EnvironmentRuntime,
+        timeout: TimeInterval
+    ) async -> Environment? {
+        await withTaskGroup(of: Environment?.self) { group in
+            group.addTask { try? await runtime.refreshDescriptor(id: id) }
+            group.addTask {
+                try? await Task.sleep(for: .seconds(timeout))
+                return nil
+            }
+            let first = await group.next() ?? nil
+            group.cancelAll()
+            return first
+        }
+    }
+
+    private func activeEnvironment(in environments: [Environment]) async -> Environment? {
+        let enabled = environments.filter(\.isEnabled)
+        guard !enabled.isEmpty else { return nil }
+        let savedActiveEnvironment = try? await runtime.activeEnvironment()
+        let activeID = savedActiveEnvironment?.id
+        return enabled.first(where: { $0.id == activeID }) ?? enabled[0]
     }
 
     func backgroundSnapshot() async throws -> FeatureSnapshot {
@@ -1586,6 +1646,12 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         try? await refresh(client: route.client)
     }
 
+    func reorderPinnedThread(id: String, orderKey: String) async throws {
+        let route = try threadRoute(for: id)
+        _ = try await route.client.reorderPin(threadID: route.wireID, orderKey: orderKey)
+        try? await refresh(client: route.client)
+    }
+
     func setRuntimeMode(id: String, mode: FeatureRuntimeMode) async throws {
         let route = try threadRoute(for: id)
         _ = try await route.client.setRuntimeMode(
@@ -2662,6 +2728,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
             snoozedUntil: thread.snoozedUntil,
             snoozedAt: thread.snoozedAt,
             pinnedAt: thread.pinnedAt,
+            pinOrderKey: thread.pinOrderKey,
             titleRegeneration: thread.titleRegeneration,
             session: thread.session,
             latestUserMessageAt: thread.latestUserMessageAt,
@@ -4286,9 +4353,11 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
             snoozedUntil: thread.snoozedUntil.map(parseDate),
             snoozedAt: thread.snoozedAt.map(parseDate),
             pinnedAt: thread.pinnedAt.map(parseDate),
+            pinOrderKey: thread.pinOrderKey,
             supportsSettlement: environment.descriptor?.capabilities.threadSettlement,
             supportsSnooze: environment.descriptor?.capabilities.threadSnooze,
             supportsPinning: environment.descriptor?.capabilities.threadPinning,
+            supportsPinReorder: environment.descriptor?.capabilities.threadPinReorder,
             supportsTitleRegeneration: environment.descriptor?.capabilities.threadTitleRegeneration,
             supportsSummaryTimeline: environment.descriptor?.capabilities.threadSummaryTimeline,
             isRegeneratingTitle: thread.titleRegeneration != nil,
@@ -4362,9 +4431,11 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
             snoozedUntil: thread.snoozedUntil.map(parseDate),
             snoozedAt: thread.snoozedAt.map(parseDate),
             pinnedAt: thread.pinnedAt.map(parseDate),
+            pinOrderKey: thread.pinOrderKey,
             supportsSettlement: environment.descriptor?.capabilities.threadSettlement,
             supportsSnooze: environment.descriptor?.capabilities.threadSnooze,
             supportsPinning: environment.descriptor?.capabilities.threadPinning,
+            supportsPinReorder: environment.descriptor?.capabilities.threadPinReorder,
             supportsTitleRegeneration: environment.descriptor?.capabilities.threadTitleRegeneration,
             supportsSummaryTimeline: environment.descriptor?.capabilities.threadSummaryTimeline,
             isRegeneratingTitle: thread.titleRegeneration != nil,
@@ -4633,6 +4704,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
             snoozedUntil: loaded.snoozedUntil,
             snoozedAt: loaded.snoozedAt,
             pinnedAt: loaded.pinnedAt,
+            pinOrderKey: loaded.pinOrderKey,
             titleRegeneration: loaded.titleRegeneration,
             deletedAt: loaded.deletedAt,
             messages: prependByID(older.messages, loaded.messages),
@@ -6214,6 +6286,7 @@ enum NativeThreadDetailReducer {
             snoozedUntil: thread.snoozedUntil,
             snoozedAt: thread.snoozedAt,
             pinnedAt: thread.pinnedAt,
+            pinOrderKey: thread.pinOrderKey,
             titleRegeneration: thread.titleRegeneration,
             deletedAt: thread.deletedAt,
             messages: messages ?? thread.messages,

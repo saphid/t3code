@@ -672,12 +672,12 @@ struct DailyUXSidebarIndex {
         }
         let available = visible.filter { !$0.isEffectivelySnoozed(at: now) }
 
-        pinned = available
-            .filter {
+        pinned = PinnedThreadReordering.sorted(
+            available.filter {
                 $0.pinnedAt != nil
                     && !($0.canToggleSettlement && $0.isEffectivelySettled(at: now))
             }
-            .sorted(by: Self.creationOrder)
+        )
 
         active = available
             .filter {
@@ -744,6 +744,150 @@ struct DailyUXSidebarIndex {
                 project?.name ?? "",
                 project?.path ?? "",
             ].contains { $0.localizedCaseInsensitiveContains(normalizedQuery) }
+        }
+    }
+}
+
+public enum PinnedThreadMoveDirection: Sendable {
+    case up
+    case down
+}
+
+struct PinnedThreadMovePosition: Equatable, Sendable {
+    let canMoveUp: Bool
+    let canMoveDown: Bool
+}
+
+struct PinnedThreadReorderAssignment: Equatable, Sendable {
+    let id: String
+    let orderKey: String
+}
+
+enum PinnedThreadReordering {
+    private static let digits = Array("abcdefghijklmnopqrstuvwxyz")
+
+    static func sorted(_ threads: [FeatureThread]) -> [FeatureThread] {
+        let keyed = threads.filter { $0.pinOrderKey != nil }.sorted { lhs, rhs in
+            guard lhs.pinOrderKey == rhs.pinOrderKey else {
+                return (lhs.pinOrderKey ?? "") < (rhs.pinOrderKey ?? "")
+            }
+            return identity(lhs) < identity(rhs)
+        }
+        let keyless = threads.filter { $0.pinOrderKey == nil }.sorted { lhs, rhs in
+            if lhs.createdAt != rhs.createdAt { return lhs.createdAt > rhs.createdAt }
+            return identity(lhs) < identity(rhs)
+        }
+        return keyed + keyless
+    }
+
+    static func eligibleThreads(in threads: [FeatureThread]) -> [FeatureThread] {
+        sorted(threads.filter {
+            !$0.isArchived && $0.pinnedAt != nil && $0.supportsPinReorder == true
+        })
+    }
+
+    static func positions(in threads: [FeatureThread]) -> [String: PinnedThreadMovePosition] {
+        Dictionary(uniqueKeysWithValues: threads.enumerated().map { index, thread in
+            (
+                thread.id,
+                PinnedThreadMovePosition(
+                    canMoveUp: index > 0,
+                    canMoveDown: index < threads.count - 1
+                )
+            )
+        })
+    }
+
+    static func planMove(
+        threads: [FeatureThread],
+        movedID: String,
+        direction: PinnedThreadMoveDirection
+    ) -> [PinnedThreadReorderAssignment]? {
+        let ordered = eligibleThreads(in: threads)
+        guard let from = ordered.firstIndex(where: { $0.id == movedID }) else { return nil }
+        let to = direction == .up ? from - 1 : from + 1
+        guard ordered.indices.contains(to) else { return nil }
+        var desired = ordered
+        let moved = desired.remove(at: from)
+        desired.insert(moved, at: to)
+
+        guard let movedIndex = desired.firstIndex(where: { $0.id == movedID }) else {
+            return nil
+        }
+        let before = movedIndex > 0 ? desired[movedIndex - 1] : nil
+        let after = movedIndex < desired.count - 1 ? desired[movedIndex + 1] : nil
+        let beforeUsable = before == nil || before?.pinOrderKey != nil
+        let afterUsable = after == nil || after?.pinOrderKey != nil
+        if beforeUsable, afterUsable,
+           let key = keyBetween(before?.pinOrderKey, after?.pinOrderKey) {
+            return [.init(id: movedID, orderKey: key)]
+        }
+
+        let keys = spreadKeys(count: desired.count)
+        return zip(desired, keys).compactMap { thread, key in
+            thread.pinOrderKey == key ? nil : .init(id: thread.id, orderKey: key)
+        }
+    }
+
+    private static func identity(_ thread: FeatureThread) -> String {
+        "\(thread.wireID ?? thread.id)\u{0}\(thread.environmentID ?? "")"
+    }
+
+    private static func isValid(_ key: String) -> Bool {
+        !key.isEmpty && key.last != digits[0] && key.allSatisfy(digits.contains)
+    }
+
+    private static func keyBetween(_ before: String?, _ after: String?) -> String? {
+        let lower = before ?? ""
+        let upper = after ?? ""
+        guard (lower.isEmpty || isValid(lower)),
+              (upper.isEmpty || isValid(upper)),
+              upper.isEmpty || lower < upper else { return nil }
+        return midpoint(lower, upper)
+    }
+
+    private static func midpoint(_ lower: String, _ upper: String) -> String {
+        if !upper.isEmpty {
+            var common = 0
+            let lowerCharacters = Array(lower)
+            let upperCharacters = Array(upper)
+            while common < upperCharacters.count {
+                let lowerCharacter = common < lowerCharacters.count
+                    ? lowerCharacters[common]
+                    : digits[0]
+                guard lowerCharacter == upperCharacters[common] else { break }
+                common += 1
+            }
+            if common > 0 {
+                return String(upperCharacters.prefix(common))
+                    + midpoint(
+                        String(lowerCharacters.dropFirst(common)),
+                        String(upperCharacters.dropFirst(common))
+                    )
+            }
+        }
+        let lowerCharacters = Array(lower)
+        let upperCharacters = Array(upper)
+        let lowerDigit = lowerCharacters.first.flatMap(digits.firstIndex) ?? 0
+        let upperDigit = upperCharacters.first.flatMap(digits.firstIndex) ?? digits.count
+        if upperDigit - lowerDigit > 1 {
+            return String(digits[Int(round(Double(lowerDigit + upperDigit) / 2))])
+        }
+        if upperCharacters.count > 1 { return String(upperCharacters[0]) }
+        return String(digits[lowerDigit])
+            + midpoint(String(lowerCharacters.dropFirst()), "")
+    }
+
+    private static func spreadKeys(count: Int) -> [String] {
+        let space = digits.count * digits.count
+        let step = Double(space) / Double(count + 1)
+        var previous = 0
+        return (0..<count).map { index in
+            var value = max(Int(round(step * Double(index + 1))), previous + 1)
+            if value % digits.count == 0 { value += 1 }
+            value = min(value, space - 1)
+            previous = value
+            return String(digits[value / digits.count]) + String(digits[value % digits.count])
         }
     }
 }

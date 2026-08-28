@@ -43,6 +43,8 @@ struct HomeThreadCollectionView: UIViewRepresentable {
     let onSettle: (FeatureThread, Bool, @escaping (Bool) -> Void) -> Void
     let onSnooze: (FeatureThread, Date?) -> Void
     let onPin: (FeatureThread, Bool) -> Void
+    let pinnedMovePositions: [String: PinnedThreadMovePosition]
+    let onMovePinned: (FeatureThread, PinnedThreadMoveDirection) -> Void
     let onDelete: (FeatureThread) -> Void
 
     func makeCoordinator() -> Coordinator {
@@ -561,6 +563,24 @@ struct HomeThreadCollectionView: UIViewRepresentable {
             }
 
             if !isArchived {
+                if let position = parent.pinnedMovePositions[thread.id] {
+                    if position.canMoveUp {
+                        actions.append(accessibilityAction(
+                            "Move up",
+                            systemImage: "arrow.up"
+                        ) { coordinator in
+                            coordinator.parent.onMovePinned(thread, .up)
+                        })
+                    }
+                    if position.canMoveDown {
+                        actions.append(accessibilityAction(
+                            "Move down",
+                            systemImage: "arrow.down"
+                        ) { coordinator in
+                            coordinator.parent.onMovePinned(thread, .down)
+                        })
+                    }
+                }
                 if thread.canTogglePin {
                     let isPinned = thread.pinnedAt != nil
                     actions.append(accessibilityAction(
@@ -718,6 +738,23 @@ struct HomeThreadCollectionView: UIViewRepresentable {
 
             var statusActions: [UIMenuElement] = []
             if !isArchived {
+                if let position = parent.pinnedMovePositions[thread.id] {
+                    let moveUp = UIAction(
+                        title: "Move up",
+                        image: UIImage(systemName: "arrow.up"),
+                        attributes: position.canMoveUp ? [] : .disabled
+                    ) { [weak self] _ in
+                        self?.parent.onMovePinned(thread, .up)
+                    }
+                    let moveDown = UIAction(
+                        title: "Move down",
+                        image: UIImage(systemName: "arrow.down"),
+                        attributes: position.canMoveDown ? [] : .disabled
+                    ) { [weak self] _ in
+                        self?.parent.onMovePinned(thread, .down)
+                    }
+                    statusActions.append(contentsOf: [moveUp, moveDown])
+                }
                 if thread.canTogglePin {
                     let isPinned = thread.pinnedAt != nil
                     statusActions.append(

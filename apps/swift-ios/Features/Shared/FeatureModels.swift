@@ -214,9 +214,11 @@ public struct FeatureThread: Identifiable, Sendable, Equatable, Hashable, Codabl
     public var snoozedUntil: Date?
     public var snoozedAt: Date?
     public var pinnedAt: Date?
+    public var pinOrderKey: String?
     public var supportsSettlement: Bool?
     public var supportsSnooze: Bool?
     public var supportsPinning: Bool?
+    public var supportsPinReorder: Bool?
     public var supportsTitleRegeneration: Bool?
     public var supportsSummaryTimeline: Bool?
     public var isRegeneratingTitle: Bool?
@@ -252,9 +254,11 @@ public struct FeatureThread: Identifiable, Sendable, Equatable, Hashable, Codabl
         snoozedUntil: Date? = nil,
         snoozedAt: Date? = nil,
         pinnedAt: Date? = nil,
+        pinOrderKey: String? = nil,
         supportsSettlement: Bool? = nil,
         supportsSnooze: Bool? = nil,
         supportsPinning: Bool? = nil,
+        supportsPinReorder: Bool? = nil,
         supportsTitleRegeneration: Bool? = nil,
         supportsSummaryTimeline: Bool? = nil,
         isRegeneratingTitle: Bool? = nil,
@@ -289,9 +293,11 @@ public struct FeatureThread: Identifiable, Sendable, Equatable, Hashable, Codabl
         self.snoozedUntil = snoozedUntil
         self.snoozedAt = snoozedAt
         self.pinnedAt = pinnedAt
+        self.pinOrderKey = pinOrderKey
         self.supportsSettlement = supportsSettlement
         self.supportsSnooze = supportsSnooze
         self.supportsPinning = supportsPinning
+        self.supportsPinReorder = supportsPinReorder
         self.supportsTitleRegeneration = supportsTitleRegeneration
         self.supportsSummaryTimeline = supportsSummaryTimeline
         self.isRegeneratingTitle = isRegeneratingTitle

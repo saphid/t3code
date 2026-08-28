@@ -68,6 +68,7 @@ public protocol FeatureClient: AnyObject {
     func setThreadSettled(id: String, settled: Bool) async throws
     func setThreadSnoozed(id: String, until: Date?) async throws
     func setThreadPinned(id: String, pinned: Bool) async throws
+    func reorderPinnedThread(id: String, orderKey: String) async throws
     func setRuntimeMode(id: String, mode: FeatureRuntimeMode) async throws
     func setInteractionMode(id: String, mode: FeatureInteractionMode) async throws
     func deleteThread(id: String) async throws
@@ -321,6 +322,9 @@ public extension FeatureClient {
     func setThreadSettled(id: String, settled: Bool) async throws {}
     func setThreadSnoozed(id: String, until: Date?) async throws {}
     func setThreadPinned(id: String, pinned: Bool) async throws {}
+    func reorderPinnedThread(id: String, orderKey: String) async throws {
+        throw FeatureCapabilityUnavailable("Pinned thread reordering")
+    }
     func setRuntimeMode(id: String, mode: FeatureRuntimeMode) async throws {}
     func setInteractionMode(id: String, mode: FeatureInteractionMode) async throws {}
     func loadReviewFileContents(

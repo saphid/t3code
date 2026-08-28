@@ -857,6 +857,8 @@ struct HomeThreadSwipeActionTests {
             },
             onSnooze: { _, _ in },
             onPin: { _, _ in },
+            pinnedMovePositions: [:],
+            onMovePinned: { _, _ in },
             onDelete: { _ in }
         )
     }

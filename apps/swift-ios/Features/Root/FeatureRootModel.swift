@@ -195,6 +195,7 @@ public final class FeatureRootModel {
     private var titleRegenerationRecoveryTasks: [String: Task<Void, Never>] = [:]
     private let titleRegenerationRefreshTimeout: Duration
     private let accessibilityAnnouncer: @MainActor (String) -> Void
+    private var isReorderingPinnedThread = false
 
     public init(
         client: any FeatureClient,
@@ -650,6 +651,43 @@ public final class FeatureRootModel {
                 }
             }
         }
+    }
+
+    @discardableResult
+    public func movePinnedThread(
+        _ id: String,
+        direction: PinnedThreadMoveDirection
+    ) async -> Bool {
+        guard !isReorderingPinnedThread,
+              let assignments = PinnedThreadReordering.planMove(
+                  threads: snapshot.threads,
+                  movedID: id,
+                  direction: direction
+              ) else { return false }
+        isReorderingPinnedThread = true
+        defer { isReorderingPinnedThread = false }
+
+        let environment = currentEnvironmentIdentity
+        var completedAssignments = 0
+        for assignment in assignments {
+            do {
+                try await client.reorderPinnedThread(
+                    id: assignment.id,
+                    orderKey: assignment.orderKey
+                )
+                guard currentEnvironmentIdentity == environment else { return false }
+                mutateThread(id: assignment.id) { $0.pinOrderKey = assignment.orderKey }
+                completedAssignments += 1
+            } catch {
+                if completedAssignments > 0 {
+                    errorMessage = "Pinned order was partially updated. Try the move again."
+                } else if !Self.isBenignCancellation(error) {
+                    errorMessage = error.localizedDescription
+                }
+                return false
+            }
+        }
+        return true
     }
 
     public func setRuntimeMode(_ id: String, mode: FeatureRuntimeMode) async {
