@@ -2741,6 +2741,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
             // and archived follow-up reads converge, including when the
             // owning passive device drops immediately after the command.
             thread.isArchived = true
+            thread.archivedAt = .now
             archivedThreadsByEnvironmentID[route.environmentID, default: []].append(thread)
         }
 
@@ -4408,6 +4409,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
             modelID: thread.modelSelection.model,
             modelOptions: mapOptionSelections(thread.modelSelection.options),
             isArchived: thread.archivedAt != nil,
+            archivedAt: thread.archivedAt.map(parseDate),
             isSettled: isSettled(thread.settledOverride, settledAt: thread.settledAt),
             keepsActive: thread.settledOverride == "active",
             settledAt: thread.settledAt.map(parseDate),
@@ -4486,6 +4488,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
             modelID: thread.modelSelection.model,
             modelOptions: mapOptionSelections(thread.modelSelection.options),
             isArchived: thread.archivedAt != nil,
+            archivedAt: thread.archivedAt.map(parseDate),
             isSettled: isSettled(thread.settledOverride, settledAt: thread.settledAt),
             keepsActive: thread.settledOverride == "active",
             settledAt: thread.settledAt.map(parseDate),

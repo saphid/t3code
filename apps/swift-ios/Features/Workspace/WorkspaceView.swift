@@ -64,7 +64,6 @@ public struct WorkspaceView: View {
     @State private var threadSearchMatches: [String: FeatureThreadSearchMatch] = [:]
     @AppStorage("t3.swiftui.home.snoozedExpanded") private var isSnoozedExpanded = false
     @AppStorage("t3.swiftui.home.settledExpanded") private var isSettledExpanded = true
-    @AppStorage("t3.swiftui.home.archiveExpanded") private var isArchiveExpanded = false
     @AppStorage(HomeSortPreferences.projectKey) private var projectSortRawValue =
         HomeSortOrder.default.rawValue
     @AppStorage(HomeSortPreferences.threadKey) private var threadSortRawValue =
@@ -74,6 +73,7 @@ public struct WorkspaceView: View {
     @State private var showingNewTask = false
     @State private var newTaskInitialProjectID: String?
     @State private var showingAddProject = false
+    @State private var showingArchive = false
     @State private var showingEnvironments = false
     @State private var showingEnvironmentFilter = false
     @State private var showingSettings = false
@@ -198,6 +198,14 @@ public struct WorkspaceView: View {
         }
         .sheet(isPresented: $showingAddProject) {
             AddProjectView(model: model)
+        }
+        .sheet(isPresented: $showingArchive) {
+            NavigationStack {
+                ArchivedThreadsView(model: model) { threadID in
+                    showingArchive = false
+                    openThread(threadID)
+                }
+            }
         }
         .sheet(isPresented: $showingEnvironments) {
             NavigationStack {
@@ -358,7 +366,6 @@ public struct WorkspaceView: View {
                 hapticsEnabled: model.snapshot.settings.hapticsEnabled,
                 isSnoozedExpanded: isSnoozedExpanded,
                 isSettledExpanded: isSettledExpanded,
-                isArchiveExpanded: isArchiveExpanded,
                 settledLimit: settledLimit,
                 collapsedProjectGroupIDs: collapsedProjectGroupIDs,
                 onToggleProjectGroup: { groupID in
@@ -368,7 +375,7 @@ public struct WorkspaceView: View {
                 onOpenSummaryTimeline: { summaryTimelineThread = $0 },
                 onToggleSnoozed: { isSnoozedExpanded.toggle() },
                 onToggleSettled: { isSettledExpanded.toggle() },
-                onToggleArchive: { isArchiveExpanded.toggle() },
+                onOpenArchive: { showingArchive = true },
                 onShowMoreSettled: { settledLimit += 25 },
                 onRename: { thread in
                     renameTitle = thread.title
@@ -1288,6 +1295,7 @@ struct HomeShelfHeader: View {
     let title: String
     let count: Int
     let isExpanded: Bool
+    let navigates: Bool
     let accent: Color?
 
     var body: some View {
@@ -1297,7 +1305,11 @@ struct HomeShelfHeader: View {
             Rectangle()
                 .fill((accent ?? T3Colors.textTertiary).opacity(accent == nil ? 0.16 : 0.24))
                 .frame(height: 1)
-            Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
+            Image(
+                systemName: navigates
+                    ? "chevron.right"
+                    : (isExpanded ? "chevron.up" : "chevron.down")
+            )
                 .font(.system(size: 8, weight: .bold))
         }
         .font(T3Typography.homeMetadata.weight(.bold))

@@ -226,6 +226,7 @@ public struct FeatureThread: Identifiable, Sendable, Equatable, Hashable, Codabl
     public var modelID: String?
     public var modelOptions: [FeatureModelOptionSelection]
     public var isArchived: Bool
+    public var archivedAt: Date?
     public var isSettled: Bool
     public var keepsActive: Bool
     public var settledAt: Date?
@@ -266,6 +267,7 @@ public struct FeatureThread: Identifiable, Sendable, Equatable, Hashable, Codabl
         modelID: String? = nil,
         modelOptions: [FeatureModelOptionSelection] = [],
         isArchived: Bool = false,
+        archivedAt: Date? = nil,
         isSettled: Bool = false,
         keepsActive: Bool = false,
         settledAt: Date? = nil,
@@ -305,6 +307,7 @@ public struct FeatureThread: Identifiable, Sendable, Equatable, Hashable, Codabl
         self.modelID = modelID
         self.modelOptions = modelOptions
         self.isArchived = isArchived
+        self.archivedAt = archivedAt
         self.isSettled = isSettled
         self.keepsActive = keepsActive
         self.settledAt = settledAt

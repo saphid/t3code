@@ -586,7 +586,10 @@ public final class FeatureRootModel {
         await perform {
             try await client.setThreadArchived(id: id, archived: archived)
             guard currentEnvironmentIdentity == environment else { return }
-            mutateThread(id: id) { $0.isArchived = archived }
+            mutateThread(id: id) { thread in
+                thread.isArchived = archived
+                thread.archivedAt = archived ? (thread.archivedAt ?? .now) : nil
+            }
         }
     }
 

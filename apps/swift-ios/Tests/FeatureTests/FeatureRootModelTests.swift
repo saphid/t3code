@@ -1948,7 +1948,7 @@ struct FeatureRootModelTests {
     }
 
     @Test
-    func testArchiveAndDeleteKeepLocalListsConsistent() async {
+    func testArchiveRestoreAndDeleteKeepLocalListsConsistent() async {
         let client = FeatureClientStub()
         let thread = FeatureThread(id: "thread-1", projectID: "project-1", title: "Thread")
         client.createdThread = thread
@@ -1957,6 +1957,11 @@ struct FeatureRootModelTests {
 
         await model.setArchived(thread.id, archived: true)
         #expect(model.snapshot.threads[0].isArchived)
+        #expect(model.snapshot.threads[0].archivedAt != nil)
+
+        await model.setArchived(thread.id, archived: false)
+        #expect(!model.snapshot.threads[0].isArchived)
+        #expect(model.snapshot.threads[0].archivedAt == nil)
 
         await model.deleteThread(thread.id)
         #expect(model.snapshot.threads.isEmpty)

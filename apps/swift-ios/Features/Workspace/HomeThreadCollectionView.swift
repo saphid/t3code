@@ -28,7 +28,6 @@ struct HomeThreadCollectionView: UIViewRepresentable {
     let hapticsEnabled: Bool
     let isSnoozedExpanded: Bool
     let isSettledExpanded: Bool
-    let isArchiveExpanded: Bool
     let settledLimit: Int
     var collapsedProjectGroupIDs: Set<String> = []
     var onToggleProjectGroup: (String) -> Void = { _ in }
@@ -36,7 +35,7 @@ struct HomeThreadCollectionView: UIViewRepresentable {
     let onOpenSummaryTimeline: (FeatureThread) -> Void
     let onToggleSnoozed: () -> Void
     let onToggleSettled: () -> Void
-    let onToggleArchive: () -> Void
+    let onOpenArchive: () -> Void
     let onShowMoreSettled: () -> Void
     let onRename: (FeatureThread) -> Void
     let regeneratingTitleThreadIDs: Set<String>
@@ -499,8 +498,12 @@ struct HomeThreadCollectionView: UIViewRepresentable {
                 cell.isAccessibilityElement = true
                 cell.accessibilityTraits = .button
                 cell.accessibilityLabel = "\(shelf.title), \(count) \(count == 1 ? "task" : "tasks")"
-                cell.accessibilityValue = isExpanded ? "Expanded" : "Collapsed"
-                cell.accessibilityHint = isExpanded ? "Collapses the task list" : "Expands the task list"
+                cell.accessibilityValue = shelf == .archived
+                    ? nil
+                    : (isExpanded ? "Expanded" : "Collapsed")
+                cell.accessibilityHint = shelf == .archived
+                    ? "Opens archived threads"
+                    : (isExpanded ? "Collapses the task list" : "Expands the task list")
                 cell.onAccessibilityActivate = { [weak self] in self?.toggle(shelf) }
             case let .projectHeader(groupID, title, count, isExpanded):
                 cell.isAccessibilityElement = true
@@ -744,7 +747,7 @@ struct HomeThreadCollectionView: UIViewRepresentable {
             switch shelf {
             case .snoozed: parent.onToggleSnoozed()
             case .settled: parent.onToggleSettled()
-            case .archived: parent.onToggleArchive()
+            case .archived: parent.onOpenArchive()
             case .active: break
             }
         }
@@ -1001,20 +1004,7 @@ struct HomeThreadCollectionView: UIViewRepresentable {
             }
         }
 
-        if !presentation.archived.isEmpty {
-            items.append(.shelfHeader(.archived, presentation.archived.count, isArchiveExpanded))
-            if isArchiveExpanded {
-                items.append(contentsOf: presentation.archived.map {
-                    .thread(
-                        $0,
-                        presentation.rowContexts[$0.id] ?? .fallback,
-                        forceRichRows ? .rich : .slim,
-                        true,
-                        forceRichRows
-                    )
-                })
-            }
-        }
+        items.append(.shelfHeader(.archived, presentation.archived.count, false))
         return items
     }
 
@@ -1318,6 +1308,7 @@ private struct HomeCollectionCellContent: View {
                 title: shelf.title,
                 count: count,
                 isExpanded: isExpanded,
+                navigates: shelf == .archived,
                 accent: shelf == .snoozed ? T3Colors.accent : nil
             )
         case let .projectHeader(groupID, title, count, isExpanded):
