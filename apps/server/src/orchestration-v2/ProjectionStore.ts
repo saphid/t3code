@@ -46,6 +46,8 @@ import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
+import { PROCESS_BOUND_EFFECT_TYPES } from "./EffectOutbox.ts";
+
 export class ProjectionStoreApplyEventError extends Schema.TaggedErrorClass<ProjectionStoreApplyEventError>()(
   "ProjectionStoreApplyEventError",
   {
@@ -110,6 +112,10 @@ export interface ProjectionStoreV2Shape {
   readonly getThreadShell: (
     threadId: ThreadId,
   ) => Effect.Effect<OrchestrationV2ThreadShell | null, ProjectionStoreV2Error>;
+  readonly getRuntimeRecoveryThreadIds: Effect.Effect<
+    ReadonlyArray<ThreadId>,
+    ProjectionStoreV2Error
+  >;
   readonly getThreadProjection: (
     threadId: ThreadId,
   ) => Effect.Effect<OrchestrationV2ThreadProjection, ProjectionStoreV2Error>;
@@ -955,6 +961,37 @@ function isActivityRunForShell(
   readonly status: ShellActivityRunStatus;
 } {
   return isInterruptibleRunForShell(run) || run.status === "waiting";
+}
+
+function projectionNeedsRuntimeRecovery(projection: OrchestrationV2ThreadProjection): boolean {
+  const rolledBackRunIds = new Set(
+    projection.runs.filter((run) => run.status === "rolled_back").map((run) => run.id),
+  );
+  return (
+    projection.runs.some(
+      (run) =>
+        run.status === "queued" ||
+        run.status === "preparing" ||
+        run.status === "starting" ||
+        run.status === "running" ||
+        run.status === "waiting",
+    ) ||
+    projection.runtimeRequests.some((request) => request.status === "pending") ||
+    projection.turnItems.some(
+      (item) =>
+        (item.type === "command_execution" ||
+          item.type === "dynamic_tool" ||
+          item.type === "subagent") &&
+        (item.status === "pending" || item.status === "running" || item.status === "waiting") &&
+        (item.runId === null || !rolledBackRunIds.has(item.runId)),
+    ) ||
+    projection.providerThreads.some(
+      (thread) => thread.status === "active" || (thread.pendingBackgroundTasks?.length ?? 0) > 0,
+    ) ||
+    projection.providerSessions.some(
+      (session) => session.status !== "stopped" && session.status !== "error",
+    )
+  );
 }
 
 type ShellThreadState = {
@@ -3159,10 +3196,85 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         )
         .pipe(Effect.mapError((cause) => new ProjectionStoreReadError({ threadId, cause })));
 
+    const getRuntimeRecoveryThreadIds: ProjectionStoreV2Shape["getRuntimeRecoveryThreadIds"] = sql<{
+      readonly thread_id: string;
+    }>`
+        WITH recovery_candidates(thread_id) AS (
+          SELECT thread_id
+          FROM orchestration_v2_projection_runs
+          WHERE status IN ('queued', 'preparing', 'starting', 'running', 'waiting')
+
+          UNION
+
+          SELECT thread_id
+          FROM orchestration_v2_projection_runtime_requests
+          WHERE status = 'pending'
+
+          UNION
+
+          SELECT turn_item.thread_id
+          FROM orchestration_v2_projection_turn_items AS turn_item
+          LEFT JOIN orchestration_v2_projection_runs AS run
+            ON run.run_id = turn_item.run_id
+          WHERE turn_item.type IN ('command_execution', 'dynamic_tool', 'subagent')
+            AND turn_item.status IN ('pending', 'running', 'waiting')
+            AND (
+              turn_item.run_id IS NULL
+              OR run.run_id IS NULL
+              OR run.status <> 'rolled_back'
+            )
+
+          UNION
+
+          SELECT COALESCE(provider_thread.thread_id, owner_node.thread_id)
+          FROM orchestration_v2_projection_provider_threads AS provider_thread
+          LEFT JOIN orchestration_v2_projection_nodes AS owner_node
+            ON owner_node.node_id = provider_thread.owner_node_id
+          WHERE provider_thread.status = 'active'
+             OR COALESCE(
+               json_array_length(
+                 json_extract(provider_thread.payload_json, '$.pendingBackgroundTasks')
+               ),
+               0
+             ) > 0
+
+          UNION
+
+          SELECT binding.thread_id
+          FROM orchestration_v2_projection_provider_sessions AS provider_session
+          INNER JOIN orchestration_v2_projection_provider_session_bindings AS binding
+            ON binding.provider_session_id = provider_session.provider_session_id
+          WHERE provider_session.status NOT IN ('stopped', 'error')
+
+          UNION
+
+          SELECT thread_id
+          FROM orchestration_v2_effect_outbox
+          WHERE status IN ('pending', 'running')
+            AND effect_type IN ${sql.in(PROCESS_BOUND_EFFECT_TYPES)}
+        )
+        SELECT candidate.thread_id
+        FROM recovery_candidates AS candidate
+        INNER JOIN orchestration_v2_projection_threads AS thread
+          ON thread.thread_id = candidate.thread_id
+        WHERE thread.deleted_at IS NULL
+        ORDER BY candidate.thread_id ASC
+      `.pipe(
+      Effect.map((rows) => rows.map((row) => ThreadId.make(row.thread_id))),
+      Effect.mapError(
+        (cause) =>
+          new ProjectionStoreReadError({
+            threadId: ThreadId.make("thread:runtime-recovery"),
+            cause,
+          }),
+      ),
+    );
+
     return {
       apply,
       getShellSnapshot,
       getThreadShell,
+      getRuntimeRecoveryThreadIds,
       getThreadProjection,
       getThreadSnapshot,
       getThreadSnapshotWindow,
@@ -3232,6 +3344,16 @@ export const layerMemory: Layer.Layer<ProjectionStoreV2> = Layer.effect(
             .pipe(Effect.map(threadShellFromProjection));
           return shell.deletedAt === null ? shell : null;
         }),
+      getRuntimeRecoveryThreadIds: Effect.gen(function* () {
+        const projections = (yield* Ref.get(replayState)).projections;
+        return [...projections.entries()]
+          .filter(
+            ([, projection]) =>
+              projection.thread.deletedAt === null && projectionNeedsRuntimeRecovery(projection),
+          )
+          .map(([threadId]) => threadId)
+          .toSorted((left, right) => String(left).localeCompare(String(right)));
+      }),
       getThreadProjection: (threadId) =>
         Effect.gen(function* () {
           const existing = (yield* Ref.get(replayState)).projections;

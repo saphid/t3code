@@ -56,6 +56,7 @@ it("uses the thread provider for stale background work without provider threads"
               threads: [{ id: threadId }],
               archivedThreads: [],
             } as never),
+          getRuntimeRecoveryThreadIds: Effect.succeed([threadId]),
           getThreadProjection: () => Effect.succeed(projection),
         }),
         Layer.mock(EventSink.EventSinkV2)({

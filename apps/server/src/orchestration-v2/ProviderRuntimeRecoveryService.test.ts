@@ -32,6 +32,7 @@ it.effect("drains durable effects before reporting recovery complete", () =>
       Layer.provide(
         Layer.mergeAll(
           Layer.mock(ProjectionStore.ProjectionStoreV2)({
+            getRuntimeRecoveryThreadIds: Effect.succeed([]),
             getShellSnapshot: () =>
               Effect.succeed({
                 schemaVersion: 2,
@@ -67,6 +68,62 @@ it.effect("drains durable effects before reporting recovery complete", () =>
     });
   }),
 );
+
+it.effect("reads full projections only for threads that need runtime recovery", () => {
+  const settledThreadIds = Array.from({ length: 1_000 }, (_, index) =>
+    ThreadId.make(`thread_recovery_settled_${index}`),
+  );
+  const recoveryThreadId = ThreadId.make("thread_recovery_candidate");
+  const projectionReads = vi.fn<(threadId: ThreadId) => void>();
+  const layer = ProviderRuntimeRecovery.layer.pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        Layer.mock(ProjectionStore.ProjectionStoreV2)({
+          getShellSnapshot: () =>
+            Effect.succeed({
+              schemaVersion: 2,
+              snapshotSequence: 0,
+              threads: [...settledThreadIds, recoveryThreadId].map((id) => ({ id })),
+              archivedThreads: [],
+            } as never),
+          getRuntimeRecoveryThreadIds: Effect.succeed([recoveryThreadId]),
+          getThreadProjection: (threadId) => {
+            projectionReads(threadId);
+            return Effect.succeed({
+              thread: { id: threadId },
+              runtimeRequests: [],
+              providerSessions: [],
+              providerThreads: [],
+              providerTurns: [],
+              runs: [],
+              attempts: [],
+              nodes: [],
+              subagents: [],
+              messages: [],
+              turnItems: [],
+            } as unknown as OrchestrationV2ThreadProjection);
+          },
+        }),
+        Layer.mock(EventSink.EventSinkV2)({}),
+        IdAllocator.layer,
+        Layer.mock(EffectWorker.OrchestrationEffectWorkerV2)({ runOnce: Effect.succeed(false) }),
+        Layer.mock(EffectOutbox.EffectOutboxV2)({
+          cancelUnsettled: () => Effect.succeed([]),
+          signalCancellations: () => Effect.void,
+          reconcileAfterProcessLoss: Effect.succeed({ requeued: 0, cancelled: 0 }),
+        }),
+      ),
+    ),
+  );
+
+  return Effect.gen(function* () {
+    yield* (yield* ProviderRuntimeRecovery.ProviderRuntimeRecoveryService).recover;
+    assert.deepEqual(
+      projectionReads.mock.calls.map(([threadId]) => threadId),
+      [recoveryThreadId],
+    );
+  }).pipe(Effect.provide(layer));
+});
 
 it.effect("expires orphaned runtime requests before command readiness", () => {
   const threadId = ThreadId.make("thread_recovery_requests");
@@ -104,6 +161,7 @@ it.effect("expires orphaned runtime requests before command readiness", () => {
               threads: [{ id: threadId }],
               archivedThreads: [],
             } as never),
+          getRuntimeRecoveryThreadIds: Effect.succeed([threadId]),
           getThreadProjection: () => Effect.succeed(projection),
         }),
         Layer.mock(EventSink.EventSinkV2)({ commitCommand: committed }),
@@ -158,6 +216,7 @@ it.effect("uses the same reconciliation path to cancel runtime requests during s
               threads: [{ id: threadId }],
               archivedThreads: [],
             } as never),
+          getRuntimeRecoveryThreadIds: Effect.succeed([threadId]),
           getThreadProjection: () => Effect.succeed(projection),
         }),
         Layer.mock(EventSink.EventSinkV2)({
@@ -244,6 +303,7 @@ it.effect(
                 threads: [{ id: threadId }],
                 archivedThreads: [],
               } as never),
+            getRuntimeRecoveryThreadIds: Effect.succeed([threadId]),
             getThreadProjection: () => Effect.succeed(projection),
           }),
           Layer.mock(EventSink.EventSinkV2)({
@@ -336,6 +396,7 @@ it.effect("cancels a stale waiting run when no checkpoint capture can finish it"
               threads: [{ id: threadId }],
               archivedThreads: [],
             } as never),
+          getRuntimeRecoveryThreadIds: Effect.succeed([threadId]),
           getThreadProjection: () => Effect.succeed(projection),
         }),
         Layer.mock(EventSink.EventSinkV2)({
@@ -414,6 +475,7 @@ it.effect("cancels accepted queued work instead of replaying it after restart", 
               threads: [{ id: threadId }],
               archivedThreads: [],
             } as never),
+          getRuntimeRecoveryThreadIds: Effect.succeed([threadId]),
           getThreadProjection: () => Effect.succeed(projection),
         }),
         Layer.mock(EventSink.EventSinkV2)({
@@ -529,6 +591,7 @@ it.effect(
                 threads: [{ id: threadId }],
                 archivedThreads: [],
               } as never),
+            getRuntimeRecoveryThreadIds: Effect.succeed([threadId]),
             getThreadProjection: () => Effect.succeed(projection),
           }),
           Layer.mock(EventSink.EventSinkV2)({
@@ -717,6 +780,7 @@ it.effect(
                 threads: [{ id: threadId }],
                 archivedThreads: [],
               } as never),
+            getRuntimeRecoveryThreadIds: Effect.succeed([threadId]),
             getThreadProjection: () => Effect.succeed(projection),
           }),
           Layer.mock(EventSink.EventSinkV2)({
@@ -882,6 +946,7 @@ it.effect(
                 threads: [{ id: threadId }],
                 archivedThreads: [],
               } as never),
+            getRuntimeRecoveryThreadIds: Effect.succeed([threadId]),
             getThreadProjection: () => Effect.succeed(projection),
           }),
           Layer.mock(EventSink.EventSinkV2)({
