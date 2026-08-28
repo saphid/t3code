@@ -1,6 +1,34 @@
 import SwiftUI
 import UIKit
 
+struct HomeThreadSearchRequest: Hashable {
+    struct Environment: Hashable {
+        let id: String
+        let endpoint: String
+        let isEnabled: Bool
+        let connectionState: FeatureConnection.State?
+    }
+
+    let query: String
+    let environments: [Environment]
+
+    init(query: String, environments: [FeatureEnvironment]) {
+        self.query = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.environments = environments
+            .map {
+                Environment(
+                    id: $0.id,
+                    endpoint: $0.endpoint,
+                    isEnabled: $0.isEnabled,
+                    connectionState: $0.connectionState
+                )
+            }
+            .sorted {
+                ($0.id, $0.endpoint) < ($1.id, $1.endpoint)
+            }
+    }
+}
+
 struct FeatureWorkspaceNavigationRequest: Equatable, Sendable {
     enum Destination: Equatable, Sendable {
         case thread(id: String)
@@ -33,6 +61,7 @@ public struct WorkspaceView: View {
     @State private var selectedProjectEnvironmentID: String?
     @State private var searchText = ""
     @State private var isSearching = false
+    @State private var threadSearchMatches: [String: FeatureThreadSearchMatch] = [:]
     @AppStorage("t3.swiftui.home.snoozedExpanded") private var isSnoozedExpanded = false
     @AppStorage("t3.swiftui.home.settledExpanded") private var isSettledExpanded = true
     @AppStorage("t3.swiftui.home.archiveExpanded") private var isArchiveExpanded = false
@@ -291,6 +320,10 @@ public struct WorkspaceView: View {
     }
 
     private var threadList: some View {
+        let searchRequest = HomeThreadSearchRequest(
+            query: searchText,
+            environments: model.snapshot.environments
+        )
         let presentation = homePresentationCache.presentation(
             snapshot: model.snapshot,
             revision: model.homePresentationRevision,
@@ -298,6 +331,7 @@ public struct WorkspaceView: View {
             projectID: selectedProjectID,
             projectEnvironmentID: selectedProjectEnvironmentID,
             disabledEnvironmentIDs: disabledEnvironmentIDs,
+            searchMatches: threadSearchMatches,
             now: sidebarBoundaryNow,
             projectOrder: projectSortOrder,
             threadOrder: threadSortOrder
@@ -365,6 +399,9 @@ public struct WorkspaceView: View {
         .onChange(of: presentation.reconciliationInput) { _, _ in
             reconcileCollapsedProjectGroups(presentation: presentation)
         }
+        .task(id: searchRequest) {
+            await refreshThreadSearch(searchRequest)
+        }
     }
 
     private func reconcileCollapsedProjectGroups(presentation: HomePresentation) {
@@ -375,6 +412,30 @@ public struct WorkspaceView: View {
         if reconciled != collapsedProjectGroupIDs {
             collapsedProjectGroupIDs = reconciled
         }
+    }
+
+    /// Asks every connected environment which threads matched the query in
+    /// message content. Home keeps its local title and project search; these
+    /// matches only widen the result set and explain why a row is there.
+    private func refreshThreadSearch(_ request: HomeThreadSearchRequest) async {
+        // The previous query's matches never describe this one, and a stale
+        // match would keep a row in the list without an excerpt to justify it.
+        threadSearchMatches = [:]
+        // The server rejects anything shorter than two characters.
+        guard request.query.count >= 2 else { return }
+        // Every keystroke replaces this task, so the pause keeps a fast typist
+        // from putting one search request per character on the websocket.
+        try? await Task.sleep(for: .milliseconds(180))
+        guard !Task.isCancelled else { return }
+
+        let matches = await model.client.searchThreadMessages(query: request.query, limit: 20)
+        guard !Task.isCancelled else { return }
+        // An environment can report several matches for one thread; the first
+        // is the server's best and keeps the row stable while more arrive.
+        threadSearchMatches = Dictionary(
+            matches.map { ($0.threadID, $0) },
+            uniquingKeysWith: { first, _ in first }
+        )
     }
 
     @ViewBuilder
@@ -1028,6 +1089,7 @@ struct HomePresentation {
         projectID: String?,
         projectEnvironmentID: String? = nil,
         disabledEnvironmentIDs: Set<String> = [],
+        searchMatches: [String: FeatureThreadSearchMatch] = [:],
         now: Date,
         projectOrder: HomeSortOrder = .default,
         threadOrder: HomeSortOrder = .default,
@@ -1072,9 +1134,14 @@ struct HomePresentation {
             : DailyUXSidebarIndex.matchingThreads(
                 pinned + active + snoozed + settled + archived,
                 snapshot: snapshot,
-                query: normalizedQuery
+                query: normalizedQuery,
+                contentMatchThreadIDs: Set(searchMatches.keys)
             )
-        let rowContexts = HomeThreadRowContext.index(snapshot: snapshot)
+        let rowContexts = HomeThreadRowContext.index(
+            snapshot: snapshot,
+            searchMatches: normalizedQuery.isEmpty ? [:] : searchMatches,
+            query: normalizedQuery
+        )
         self.rowContexts = rowContexts
         let logicalGroups = DailyUXCreationContext.projectGroups(in: snapshot)
         projectGroups = HomeProjectThreadGroup.make(
@@ -1110,6 +1177,7 @@ private final class HomePresentationCache {
         let projectID: String?
         let projectEnvironmentID: String?
         let disabledEnvironmentIDs: Set<String>
+        let searchMatches: [String: FeatureThreadSearchMatch]
         let now: Date
         let projectOrder: HomeSortOrder
         let threadOrder: HomeSortOrder
@@ -1127,6 +1195,7 @@ private final class HomePresentationCache {
         projectID: String?,
         projectEnvironmentID: String?,
         disabledEnvironmentIDs: Set<String>,
+        searchMatches: [String: FeatureThreadSearchMatch],
         now: Date,
         projectOrder: HomeSortOrder,
         threadOrder: HomeSortOrder
@@ -1137,6 +1206,7 @@ private final class HomePresentationCache {
             projectID: projectID,
             projectEnvironmentID: projectEnvironmentID,
             disabledEnvironmentIDs: disabledEnvironmentIDs,
+            searchMatches: searchMatches,
             now: now,
             projectOrder: projectOrder,
             threadOrder: threadOrder
@@ -1169,6 +1239,7 @@ private final class HomePresentationCache {
             projectID: projectID,
             projectEnvironmentID: projectEnvironmentID,
             disabledEnvironmentIDs: disabledEnvironmentIDs,
+            searchMatches: searchMatches,
             now: now,
             projectOrder: projectOrder,
             threadOrder: threadOrder,
@@ -1215,6 +1286,10 @@ struct HomeThreadRowContext: Equatable {
     let providerDriver: String
     let providerName: String
     let connectionState: FeatureConnection.State?
+    /// Present only while a Home search matched this thread's message content.
+    let searchExcerpt: HomeThreadSearchExcerpt?
+    /// The query the excerpt matched, so the row can name it for VoiceOver.
+    let searchQuery: String
 
     static let fallback = HomeThreadRowContext(
         projectName: "Project",
@@ -1225,7 +1300,9 @@ struct HomeThreadRowContext: Equatable {
         providerID: "agent",
         providerDriver: "",
         providerName: "Agent",
-        connectionState: nil
+        connectionState: nil,
+        searchExcerpt: nil,
+        searchQuery: ""
     )
 
     var copyContext: ThreadCopyContext {
@@ -1246,7 +1323,11 @@ struct HomeThreadRowContext: Equatable {
             || normalized.contains("open")
     }
 
-    static func index(snapshot: FeatureSnapshot) -> [String: HomeThreadRowContext] {
+    static func index(
+        snapshot: FeatureSnapshot,
+        searchMatches: [String: FeatureThreadSearchMatch] = [:],
+        query: String = ""
+    ) -> [String: HomeThreadRowContext] {
         let projectByID = snapshot.projects.reduce(into: [String: FeatureProject]()) {
             $0[$1.id] = $1
         }
@@ -1294,7 +1375,11 @@ struct HomeThreadRowContext: Equatable {
                 providerID: providerID,
                 providerDriver: providerDriver,
                 providerName: providerName,
-                connectionState: connectionState
+                connectionState: connectionState,
+                searchExcerpt: searchMatches[thread.id].flatMap {
+                    HomeThreadSearchExcerpt.resolve(match: $0, query: query)
+                },
+                searchQuery: query
             )
         }
     }
@@ -1416,6 +1501,11 @@ struct FeatureThreadRow: View {
                 titleRegenerationProgress
             }
             .padding(.top, 4)
+
+            if let searchExcerpt = context.searchExcerpt {
+                HomeThreadSearchExcerptView(excerpt: searchExcerpt)
+                    .padding(.top, 3)
+            }
 
             HStack(spacing: 6) {
                 Image(systemName: "arrow.triangle.branch")
@@ -1674,6 +1764,9 @@ struct FeatureThreadRow: View {
         }
         if isConnectionStale {
             values.append("last known state")
+        }
+        if let searchExcerpt = context.searchExcerpt {
+            values.append(searchExcerpt.accessibilityDescription(query: context.searchQuery))
         }
         return values.joined(separator: ". ")
     }

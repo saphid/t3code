@@ -187,6 +187,26 @@ public enum FeatureInteractionMode: String, CaseIterable, Sendable, Codable {
     public var mobileNormalized: FeatureInteractionMode { .standard }
 }
 
+/// One server-side message match for a Home search query. The server owns the
+/// index and the snippet bounds; the client only decides how to present them.
+public struct FeatureThreadSearchMatch: Sendable, Equatable, Codable {
+    public enum Source: String, Sendable, Equatable, Codable {
+        case user
+        case agent
+    }
+
+    /// Environment-scoped thread identifier, matching `FeatureThread.id`.
+    public let threadID: String
+    public let source: Source
+    public let snippet: String
+
+    public init(threadID: String, source: Source, snippet: String) {
+        self.threadID = threadID
+        self.source = source
+        self.snippet = snippet
+    }
+}
+
 public struct FeatureThread: Identifiable, Sendable, Equatable, Hashable, Codable {
     public let id: String
     /// The environment-local identifier sent over the wire.

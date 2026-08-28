@@ -575,6 +575,9 @@ struct HomeThreadCollectionView: UIViewRepresentable {
             if let environment = context.environmentLabel {
                 values.append("on \(environment)")
             }
+            if let searchExcerpt = context.searchExcerpt {
+                values.append(searchExcerpt.accessibilityDescription(query: context.searchQuery))
+            }
             return values.joined(separator: ". ")
         }
 

@@ -2119,6 +2119,55 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         return result.entries.map(Self.mapSearchEntry)
     }
 
+    func searchThreadMessages(query: String, limit: Int) async -> [FeatureThreadSearchMatch] {
+        let clients = environmentClients
+        guard !clients.isEmpty else { return [] }
+        return await withTaskGroup(
+            of: [FeatureThreadSearchMatch].self,
+            returning: [FeatureThreadSearchMatch].self
+        ) { group in
+            for (environmentID, client) in clients {
+                group.addTask {
+                    // A disconnected environment, a rejected query, or a server
+                    // without thread search contributes no matches, which leaves
+                    // local title search as the compatibility fallback.
+                    guard let result = try? await client.searchThreads(query: query, limit: limit)
+                    else { return [] }
+                    return result.matches.compactMap { match in
+                        guard let source = Self.mapThreadSearchSource(match.source) else {
+                            return nil
+                        }
+                        return FeatureThreadSearchMatch(
+                            threadID: FeatureScopedID.thread(
+                                environmentID: environmentID,
+                                wireID: match.threadId
+                            ),
+                            source: source,
+                            snippet: match.snippet
+                        )
+                    }
+                }
+            }
+
+            var matches: [FeatureThreadSearchMatch] = []
+            for await environmentMatches in group {
+                matches.append(contentsOf: environmentMatches)
+            }
+            return matches
+        }
+    }
+
+    /// Runs inside the per-environment child tasks, so it stays off the main actor.
+    private nonisolated static func mapThreadSearchSource(
+        _ source: String
+    ) -> FeatureThreadSearchMatch.Source? {
+        switch source {
+        case "user": .user
+        case "assistant": .agent
+        default: nil
+        }
+    }
+
     func searchThreadFiles(
         threadID: String,
         query: String,

@@ -748,10 +748,14 @@ struct DailyUXSidebarIndex {
         return lhs.id < rhs.id
     }
 
+    /// `contentMatchThreadIDs` carries the environment's server-side message
+    /// matches. A thread qualifies on either local metadata or a message match,
+    /// so an unreachable or older environment degrades to metadata-only search.
     static func matchingThreads(
         _ candidates: [FeatureThread],
         snapshot: FeatureSnapshot,
-        query: String
+        query: String,
+        contentMatchThreadIDs: Set<String> = []
     ) -> [FeatureThread] {
         let normalizedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !normalizedQuery.isEmpty else { return [] }
@@ -762,6 +766,7 @@ struct DailyUXSidebarIndex {
             $0[$1.id] = $1
         }
         return candidates.filter { thread in
+            if contentMatchThreadIDs.contains(thread.id) { return true }
             let project = projectByID[thread.projectID]
             return [
                 thread.title,

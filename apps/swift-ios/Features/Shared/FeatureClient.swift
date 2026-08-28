@@ -176,6 +176,9 @@ public protocol FeatureClient: AnyObject {
         query: String,
         limit: Int
     ) async throws -> [FeatureFileEntry]
+    /// Server-side message search across every connected environment. Returns
+    /// no matches rather than throwing when an environment cannot search.
+    func searchThreadMessages(query: String, limit: Int) async -> [FeatureThreadSearchMatch]
     func readFile(threadID: String, path: String) async throws -> FeatureFileContent
     func loadReview(threadID: String) async throws -> FeatureReview
     func loadReviewFileContents(
@@ -475,6 +478,10 @@ public extension FeatureClient {
         limit: Int
     ) async throws -> [FeatureFileEntry] {
         throw FeatureCapabilityUnavailable("File search")
+    }
+
+    func searchThreadMessages(query: String, limit: Int) async -> [FeatureThreadSearchMatch] {
+        []
     }
 
     func readFile(threadID: String, path: String) async throws -> FeatureFileContent {

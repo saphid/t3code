@@ -643,6 +643,23 @@ public actor T3Client {
         )
     }
 
+    /// Full-text search over this environment's thread messages. The server
+    /// owns the index and bounds both query and response, so callers pass the
+    /// user's raw query and render whatever matches come back.
+    public func searchThreads(
+        query: String,
+        limit: Int = 20
+    ) async throws -> ThreadSearchResult {
+        try await rpc.request(
+            RPCMethod.orchestrationSearchThreads.rawValue,
+            payload: .object([
+                "query": .string(query),
+                "limit": .number(Double(limit)),
+            ]),
+            as: ThreadSearchResult.self
+        )
+    }
+
     public func readProjectFile(
         cwd: String,
         relativePath: String
@@ -1567,6 +1584,7 @@ public enum RPCMethod: String, Sendable {
     case getArchivedShellSnapshot = "orchestration.getArchivedShellSnapshot"
     case subscribeShell = "orchestration.subscribeShell"
     case subscribeThread = "orchestration.subscribeThread"
+    case orchestrationSearchThreads = "orchestration.searchThreads"
     case projectsListEntries = "projects.listEntries"
     case projectsSearchEntries = "projects.searchEntries"
     case projectsReadFile = "projects.readFile"

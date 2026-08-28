@@ -446,6 +446,19 @@ public struct OrchestrationMessage: Codable, Identifiable, Equatable, Sendable {
     public let updatedAt: String
 }
 
+public struct ThreadSearchMatch: Codable, Equatable, Sendable {
+    public let threadId: String
+    public let projectId: String
+    /// "user" or "assistant"; the server never returns other message sources.
+    public let source: String
+    public let snippet: String
+    public let messageCreatedAt: String?
+}
+
+public struct ThreadSearchResult: Codable, Equatable, Sendable {
+    @ForwardCompatibleArray public var matches: [ThreadSearchMatch]
+}
+
 public struct ChatAttachment: Codable, Identifiable, Equatable, Sendable {
     public let type: String
     public let id: String
