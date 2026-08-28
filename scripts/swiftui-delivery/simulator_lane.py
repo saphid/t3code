@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Own one explicit Simulator UDID and route UI commands without shared defaults."""
+"""Own explicit Simulator UDIDs and route UI commands without shared defaults."""
 
 import argparse
 import datetime as dt
@@ -21,6 +21,14 @@ UDID_PATTERN = re.compile(r"^[0-9A-Fa-f]{8}(?:-[0-9A-Fa-f]{4}){3}-[0-9A-Fa-f]{12
 LANE_PATTERN = re.compile(r"^[a-z0-9]+(?:[._-][a-z0-9]+)*$")
 XCODEBUILDMCP_VERSION = "2.7.0"
 AXE_VERSION = "1.8.0"
+POOL_SCHEMA_VERSION = 1
+POOL_KIND = "swiftui-simulator-pool"
+DEFAULT_POOL_SIZE = 3
+DEFAULT_POOL_NAME_PREFIX = "T3 SwiftUI iPhone 16 Pro Lane"
+
+
+class LeaseHeldError(RuntimeError):
+    """The exact simulator already has a lane owner."""
 
 
 def utc_now():
@@ -32,6 +40,13 @@ def lease_root():
     if configured:
         return Path(configured).expanduser().resolve()
     return Path.home() / ".local/state/t3/swiftui-delivery/simulator-leases"
+
+
+def pool_path():
+    configured = os.environ.get("T3_SWIFTUI_SIMULATOR_POOL")
+    if configured:
+        return Path(configured).expanduser().resolve()
+    return lease_root().parent / "simulator-pool.json"
 
 
 def atomic_json(path, payload):
@@ -60,6 +75,224 @@ def simulator_catalog():
             item["runtime"] = runtime
             catalog[item["udid"].upper()] = item
     return catalog
+
+
+def validate_pool_identifier(value, kind):
+    prefix = "com.apple.CoreSimulator.%s." % kind
+    if not isinstance(value, str) or not value.startswith(prefix):
+        raise ValueError("invalid CoreSimulator %s identifier" % kind.lower())
+    return value
+
+
+def load_pool(path=None):
+    source = Path(path or pool_path())
+    if not source.is_file():
+        raise ValueError("simulator pool manifest is missing; run ensure-pool")
+    payload = json.loads(source.read_text(encoding="utf-8"))
+    if (payload.get("schemaVersion") != POOL_SCHEMA_VERSION or
+            payload.get("kind") != POOL_KIND):
+        raise ValueError("not a supported simulator pool manifest")
+    validate_pool_identifier(payload.get("deviceTypeIdentifier"), "SimDeviceType")
+    validate_pool_identifier(payload.get("runtimeIdentifier"), "SimRuntime")
+    members = payload.get("members")
+    if not isinstance(members, list) or not members:
+        raise ValueError("simulator pool manifest has no members")
+    slots = set()
+    udids = set()
+    for member in members:
+        if not isinstance(member, dict):
+            raise ValueError("simulator pool manifest has invalid members")
+        slot = member.get("slot")
+        udid = validate_udid(member.get("udid", ""))
+        if not isinstance(slot, int) or slot < 1 or slot in slots or udid in udids:
+            raise ValueError("simulator pool manifest has invalid members")
+        if not isinstance(member.get("name"), str) or not member["name"]:
+            raise ValueError("simulator pool member has no name")
+        slots.add(slot)
+        udids.add(udid)
+        member["udid"] = udid
+    return payload
+
+
+@contextmanager
+def pool_mutation_lock(path):
+    lock_path = Path(path).with_name(Path(path).name + ".lock")
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    with lock_path.open("a+") as handle:
+        lock_path.chmod(0o600)
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        yield
+
+
+def create_simulator(name, device_type_identifier, runtime_identifier, runner=None):
+    execute = runner or subprocess.run
+    completed = execute(
+        ["xcrun", "simctl", "create", name, device_type_identifier, runtime_identifier],
+        check=False, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+    )
+    if completed.returncode != 0:
+        raise RuntimeError("simctl could not create %s: %s" % (
+            name, (completed.stderr or "unknown error").strip()
+        ))
+    output = (completed.stdout or "").strip()
+    try:
+        return validate_udid(output)
+    except ValueError:
+        raise RuntimeError("simctl returned an invalid UDID while creating " + name)
+
+
+def ensure_pool(device_type_identifier, runtime_identifier,
+                count=DEFAULT_POOL_SIZE, name_prefix=DEFAULT_POOL_NAME_PREFIX,
+                path=None, catalog=None, runner=None, root=None):
+    device_type_identifier = validate_pool_identifier(
+        device_type_identifier, "SimDeviceType"
+    )
+    runtime_identifier = validate_pool_identifier(runtime_identifier, "SimRuntime")
+    if not isinstance(count, int) or count < 1 or count > 8:
+        raise ValueError("simulator pool count must be from 1 through 8")
+    if (not isinstance(name_prefix, str) or not name_prefix.strip() or
+            "\n" in name_prefix or "\r" in name_prefix):
+        raise ValueError("simulator pool name prefix is invalid")
+    destination = Path(path or pool_path())
+    with pool_mutation_lock(destination):
+        devices = dict(catalog if catalog is not None else simulator_catalog())
+        previous = None
+        if destination.is_file():
+            previous = load_pool(destination)
+            same_configuration = (
+                previous["deviceTypeIdentifier"] == device_type_identifier and
+                previous["runtimeIdentifier"] == runtime_identifier and
+                previous.get("namePrefix") == name_prefix.strip()
+            )
+            if not same_configuration:
+                raise RuntimeError(
+                    "existing simulator pool configuration differs; use a new manifest path"
+                )
+            if count < len(previous["members"]):
+                raise RuntimeError("existing simulator pool cannot be shrunk")
+        previous_by_slot = {
+            member["slot"]: member for member in (previous or {}).get("members", [])
+        }
+        members = []
+        for slot in range(1, count + 1):
+            name = "%s %d" % (name_prefix.strip(), slot)
+            candidates = [
+                device for device in devices.values()
+                if device.get("name") == name and
+                device.get("runtime") == runtime_identifier and
+                device.get("deviceTypeIdentifier") == device_type_identifier and
+                device.get("isAvailable") is not False
+            ]
+            previous_member = previous_by_slot.get(slot)
+            selected = None
+            if previous_member:
+                selected = next(
+                    (device for device in candidates
+                     if device.get("udid", "").upper() == previous_member["udid"]),
+                    None,
+                )
+                previous_lease = (
+                    lease_directory(previous_member["udid"], root) / "lease.json"
+                )
+                if selected is None and previous_lease.is_file():
+                    owner = "unknown"
+                    try:
+                        owner = load_receipt(previous_lease)["laneId"]
+                    except (OSError, ValueError, KeyError, json.JSONDecodeError):
+                        pass
+                    raise RuntimeError(
+                        "cannot replace simulator pool slot %d while leased by lane %s"
+                        % (slot, owner)
+                    )
+            if selected is None and len(candidates) == 1:
+                selected = candidates[0]
+            elif selected is None and len(candidates) > 1:
+                raise RuntimeError("multiple matching simulators exist for " + name)
+            if selected is None:
+                udid = create_simulator(
+                    name, device_type_identifier, runtime_identifier, runner
+                )
+                selected = {
+                    "udid": udid,
+                    "name": name,
+                    "runtime": runtime_identifier,
+                    "deviceTypeIdentifier": device_type_identifier,
+                    "isAvailable": True,
+                    "state": "Shutdown",
+                }
+                devices[udid] = selected
+            members.append({
+                "slot": slot,
+                "name": name,
+                "udid": validate_udid(selected["udid"]),
+            })
+        payload = {
+            "schemaVersion": POOL_SCHEMA_VERSION,
+            "kind": POOL_KIND,
+            "deviceTypeIdentifier": device_type_identifier,
+            "runtimeIdentifier": runtime_identifier,
+            "desiredCount": count,
+            "namePrefix": name_prefix.strip(),
+            "members": members,
+            "updatedAt": utc_now(),
+        }
+        atomic_json(destination, payload)
+    return payload
+
+
+def acquire_pool_lease(lane_id, receipt_path, path=None, catalog=None, root=None):
+    pool = load_pool(path)
+    devices = catalog if catalog is not None else simulator_catalog()
+    stale = []
+    occupied = []
+    for member in sorted(pool["members"], key=lambda item: item["slot"]):
+        udid = member["udid"]
+        device = devices.get(udid)
+        if (not device or device.get("isAvailable") is False or
+                device.get("name") != member["name"] or
+                device.get("runtime") != pool["runtimeIdentifier"] or
+                device.get("deviceTypeIdentifier") != pool["deviceTypeIdentifier"]):
+            stale.append(str(member["slot"]))
+            continue
+        try:
+            return acquire_lease(lane_id, udid, receipt_path, devices, root)
+        except LeaseHeldError:
+            occupied.append(str(member["slot"]))
+    details = []
+    if occupied:
+        details.append("leased slots " + ", ".join(occupied))
+    if stale:
+        details.append("stale slots " + ", ".join(stale) + " (run ensure-pool)")
+    suffix = ": " + "; ".join(details) if details else ""
+    raise RuntimeError("simulator pool has no free member" + suffix)
+
+
+def inspect_pool(path=None, catalog=None, root=None):
+    pool = load_pool(path)
+    devices = catalog if catalog is not None else simulator_catalog()
+    members = []
+    for member in sorted(pool["members"], key=lambda item: item["slot"]):
+        device = devices.get(member["udid"])
+        state_path = lease_directory(member["udid"], root) / "lease.json"
+        row = dict(member)
+        row.update({
+            "available": bool(device and device.get("isAvailable") is not False),
+            "state": device.get("state", "unknown") if device else "missing",
+            "leased": state_path.is_file(),
+        })
+        if state_path.is_file():
+            try:
+                row["laneId"] = load_receipt(state_path)["laneId"]
+            except (OSError, ValueError, json.JSONDecodeError):
+                row["laneId"] = "unknown"
+        members.append(row)
+    return {
+        "schemaVersion": POOL_SCHEMA_VERSION,
+        "kind": "swiftui-simulator-pool-inspection",
+        "deviceTypeIdentifier": pool["deviceTypeIdentifier"],
+        "runtimeIdentifier": pool["runtimeIdentifier"],
+        "members": members,
+    }
 
 
 def validate_udid(value):
@@ -102,7 +335,7 @@ def acquire_lease(lane_id, udid, receipt_path, catalog=None, root=None):
                 owner = json.loads(existing_path.read_text(encoding="utf-8")).get("laneId", owner)
             except (OSError, ValueError):
                 pass
-        raise RuntimeError("simulator is already leased by lane " + owner)
+        raise LeaseHeldError("simulator is already leased by lane " + owner)
     payload = {
         "schemaVersion": SCHEMA_VERSION,
         "kind": KIND,
@@ -395,6 +628,15 @@ def parser():
     acquire.add_argument("--lane-id", required=True)
     acquire.add_argument("--simulator", required=True)
     acquire.add_argument("--receipt", required=True, type=Path)
+    acquire_pool = subparsers.add_parser("acquire-next")
+    acquire_pool.add_argument("--lane-id", required=True)
+    acquire_pool.add_argument("--receipt", required=True, type=Path)
+    ensure = subparsers.add_parser("ensure-pool")
+    ensure.add_argument("--device-type", required=True)
+    ensure.add_argument("--runtime", required=True)
+    ensure.add_argument("--count", type=int, default=DEFAULT_POOL_SIZE)
+    ensure.add_argument("--name-prefix", default=DEFAULT_POOL_NAME_PREFIX)
+    subparsers.add_parser("pool-status")
     verify = subparsers.add_parser("verify")
     verify.add_argument("--receipt", required=True, type=Path)
     release = subparsers.add_parser("release")
@@ -428,6 +670,15 @@ def main(argv=None):
             payload = acquire_lease(
                 arguments.lane_id, arguments.simulator, arguments.receipt
             )
+        elif arguments.command == "acquire-next":
+            payload = acquire_pool_lease(arguments.lane_id, arguments.receipt)
+        elif arguments.command == "ensure-pool":
+            payload = ensure_pool(
+                arguments.device_type, arguments.runtime,
+                arguments.count, arguments.name_prefix
+            )
+        elif arguments.command == "pool-status":
+            payload = inspect_pool()
         elif arguments.command == "verify":
             payload = verify_lease(arguments.receipt)
         elif arguments.command == "release":

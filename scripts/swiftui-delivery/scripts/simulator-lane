@@ -1,4 +1,4 @@
 #!/bin/bash
 set -u
 script_dir=$(cd "$(dirname "$0")" && pwd -P) || exit 1
-exec python3 "$script_dir/../simulator_lane.py" "$@"
+exec python3 -B "$script_dir/../simulator_lane.py" "$@"

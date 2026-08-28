@@ -13,6 +13,9 @@ MODULE = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(MODULE)
 UDID_A = "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE"
 UDID_B = "11111111-2222-3333-4444-555555555555"
+UDID_C = "66666666-7777-8888-9999-AAAAAAAAAAAA"
+DEVICE_TYPE = "com.apple.CoreSimulator.SimDeviceType.iPhone-16-Pro"
+RUNTIME = "com.apple.CoreSimulator.SimRuntime.iOS-26-5"
 
 
 def catalog():
@@ -22,7 +25,199 @@ def catalog():
     }
 
 
+def pool_catalog():
+    return {
+        UDID_A: {
+            "udid": UDID_A, "name": "Proof Lane 1", "state": "Shutdown",
+            "runtime": RUNTIME, "deviceTypeIdentifier": DEVICE_TYPE,
+            "isAvailable": True,
+        },
+        UDID_B: {
+            "udid": UDID_B, "name": "Proof Lane 2", "state": "Shutdown",
+            "runtime": RUNTIME, "deviceTypeIdentifier": DEVICE_TYPE,
+            "isAvailable": True,
+        },
+    }
+
+
+def write_pool(path):
+    MODULE.atomic_json(path, {
+        "schemaVersion": 1,
+        "kind": "swiftui-simulator-pool",
+        "deviceTypeIdentifier": DEVICE_TYPE,
+        "runtimeIdentifier": RUNTIME,
+        "desiredCount": 2,
+        "namePrefix": "Proof Lane",
+        "members": [
+            {"slot": 1, "name": "Proof Lane 1", "udid": UDID_A},
+            {"slot": 2, "name": "Proof Lane 2", "udid": UDID_B},
+        ],
+        "updatedAt": "2026-08-28T00:00:00Z",
+    })
+
+
 class SimulatorLaneTests(unittest.TestCase):
+    def test_ensure_pool_reuses_matching_device_and_creates_missing_slots(self):
+        created = []
+
+        def runner(command, **_kwargs):
+            created.append(command)
+            return mock.Mock(returncode=0, stdout=UDID_C + "\n", stderr="")
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "pool.json"
+            existing = {UDID_A: dict(pool_catalog()[UDID_A])}
+            result = MODULE.ensure_pool(
+                DEVICE_TYPE, RUNTIME, count=2, name_prefix="Proof Lane",
+                path=path, catalog=existing, runner=runner,
+            )
+            self.assertEqual([member["udid"] for member in result["members"]],
+                             [UDID_A, UDID_C])
+            self.assertEqual(created, [[
+                "xcrun", "simctl", "create", "Proof Lane 2", DEVICE_TYPE, RUNTIME
+            ]])
+            self.assertEqual(MODULE.load_pool(path)["desiredCount"], 2)
+
+    def test_ensure_pool_is_idempotent_for_matching_members(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "pool.json"
+            write_pool(path)
+            runner = mock.Mock()
+            result = MODULE.ensure_pool(
+                DEVICE_TYPE, RUNTIME, count=2, name_prefix="Proof Lane",
+                path=path, catalog=pool_catalog(), runner=runner,
+            )
+            self.assertEqual(len(result["members"]), 2)
+            runner.assert_not_called()
+
+    def test_ensure_pool_refuses_to_reconfigure_or_shrink_existing_pool(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "pool.json"
+            write_pool(path)
+            with self.assertRaisesRegex(RuntimeError, "configuration differs"):
+                MODULE.ensure_pool(
+                    DEVICE_TYPE, "com.apple.CoreSimulator.SimRuntime.iOS-27-0",
+                    count=2, name_prefix="Proof Lane", path=path,
+                    catalog=pool_catalog(),
+                )
+            with self.assertRaisesRegex(RuntimeError, "cannot be shrunk"):
+                MODULE.ensure_pool(
+                    DEVICE_TYPE, RUNTIME, count=1, name_prefix="Proof Lane",
+                    path=path, catalog=pool_catalog(),
+                )
+
+    def test_ensure_pool_refuses_to_replace_a_leased_slot(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "leases"
+            path = Path(directory) / "pool.json"
+            write_pool(path)
+            MODULE.acquire_lease(
+                "lane-a", UDID_A, Path(directory) / "a.json", pool_catalog(), root
+            )
+            replacement = dict(pool_catalog())
+            replacement.pop(UDID_A)
+            replacement[UDID_C] = {
+                "udid": UDID_C, "name": "Proof Lane 1", "state": "Shutdown",
+                "runtime": RUNTIME, "deviceTypeIdentifier": DEVICE_TYPE,
+                "isAvailable": True,
+            }
+            with self.assertRaisesRegex(RuntimeError, "leased by lane lane-a"):
+                MODULE.ensure_pool(
+                    DEVICE_TYPE, RUNTIME, count=2, name_prefix="Proof Lane",
+                    path=path, catalog=replacement, root=root,
+                )
+
+    def test_load_pool_reports_missing_and_malformed_members(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "pool.json"
+            with self.assertRaisesRegex(ValueError, "run ensure-pool"):
+                MODULE.load_pool(path)
+            MODULE.atomic_json(path, {
+                "schemaVersion": 1, "kind": "swiftui-simulator-pool",
+                "deviceTypeIdentifier": DEVICE_TYPE, "runtimeIdentifier": RUNTIME,
+                "members": ["not-an-object"],
+            })
+            with self.assertRaisesRegex(ValueError, "invalid members"):
+                MODULE.load_pool(path)
+
+    def test_concurrent_acquire_next_uses_distinct_pool_members(self):
+        barrier = threading.Barrier(2)
+        leases = []
+        errors = []
+
+        def acquire(lane_id, receipt):
+            try:
+                barrier.wait(5)
+                leases.append(MODULE.acquire_pool_lease(
+                    lane_id, receipt, pool, pool_catalog(), root
+                ))
+            except Exception as error:
+                errors.append(error)
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "leases"
+            pool = Path(directory) / "pool.json"
+            write_pool(pool)
+            first = threading.Thread(
+                target=acquire, args=("lane-a", Path(directory) / "a.json")
+            )
+            second = threading.Thread(
+                target=acquire, args=("lane-b", Path(directory) / "b.json")
+            )
+            first.start()
+            second.start()
+            first.join(2)
+            second.join(2)
+            self.assertFalse(first.is_alive())
+            self.assertFalse(second.is_alive())
+            self.assertEqual(errors, [])
+            self.assertEqual(
+                {lease["simulator"]["udid"] for lease in leases}, {UDID_A, UDID_B}
+            )
+
+    def test_acquire_next_skips_a_leased_pool_member(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "leases"
+            pool = Path(directory) / "pool.json"
+            write_pool(pool)
+            MODULE.acquire_lease(
+                "lane-a", UDID_A, Path(directory) / "a.json", pool_catalog(), root
+            )
+            receipt = Path(directory) / "b.json"
+            lease = MODULE.acquire_pool_lease(
+                "lane-b", receipt, pool, pool_catalog(), root
+            )
+            self.assertEqual(lease["simulator"]["udid"], UDID_B)
+            self.assertEqual(MODULE.verify_lease(receipt, root)["laneId"], "lane-b")
+
+    def test_acquire_next_reports_when_all_pool_members_are_leased(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "leases"
+            pool = Path(directory) / "pool.json"
+            write_pool(pool)
+            MODULE.acquire_lease(
+                "lane-a", UDID_A, Path(directory) / "a.json", pool_catalog(), root
+            )
+            MODULE.acquire_lease(
+                "lane-b", UDID_B, Path(directory) / "b.json", pool_catalog(), root
+            )
+            with self.assertRaisesRegex(RuntimeError, "leased slots 1, 2"):
+                MODULE.acquire_pool_lease(
+                    "lane-c", Path(directory) / "c.json", pool, pool_catalog(), root
+                )
+
+    def test_pool_status_reports_exact_lease_owner(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "leases"
+            pool = Path(directory) / "pool.json"
+            write_pool(pool)
+            MODULE.acquire_lease(
+                "lane-a", UDID_A, Path(directory) / "a.json", pool_catalog(), root
+            )
+            status = MODULE.inspect_pool(pool, pool_catalog(), root)
+            self.assertEqual(status["members"][0]["laneId"], "lane-a")
+            self.assertFalse(status["members"][1]["leased"])
+
     def test_different_simulators_can_be_leased_concurrently(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory) / "leases"

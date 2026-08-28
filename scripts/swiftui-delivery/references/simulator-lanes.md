@@ -6,8 +6,37 @@ may contain several issues; the lane, not an issue, holds the runtime lease.
 
 ## Allocate
 
-Choose an available device by exact UDID and acquire it before boot, install,
-launch, UI automation, capture, or streaming:
+The coordinator maintains three dedicated iPhone 16 Pro instances, matching the
+`simulatorProof` WIP limit. Creating or repairing CoreSimulator devices is an
+explicit host mutation; never put it in ordinary setup or doctor. With approval
+for that host, materialize the pool idempotently with exact identifiers:
+
+```sh
+scripts/simulator-lane ensure-pool \
+  --device-type com.apple.CoreSimulator.SimDeviceType.iPhone-16-Pro \
+  --runtime com.apple.CoreSimulator.SimRuntime.iOS-26-5 --count 3
+scripts/simulator-lane pool-status
+```
+
+The manifest is durable at
+`~/.local/state/t3/swiftui-delivery/simulator-pool.json`; CoreSimulator owns the
+device data. Re-running `ensure-pool` reuses exact matching members and creates
+only missing slots. It does not rename or delete unrelated simulators. An
+existing pool may grow, but it fails closed if asked to shrink or change model,
+runtime, or name prefix. Create a separately approved manifest path for a new
+pool generation after releasing the old generation by setting
+`T3_SWIFTUI_SIMULATOR_POOL` for every command that uses that generation.
+
+Acquire the next free member before boot, install, launch, UI automation,
+capture, or streaming:
+
+```sh
+scripts/simulator-lane acquire-next --lane-id "$LANE_ID" \
+  --receipt lane-simulator.json
+scripts/simulator-lane verify --receipt lane-simulator.json
+```
+
+An explicit UDID remains available for recovery and exceptional routing:
 
 ```sh
 scripts/simulator-lane acquire --lane-id "$LANE_ID" \
