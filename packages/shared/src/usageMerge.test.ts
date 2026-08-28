@@ -365,6 +365,57 @@ describe("mergeUsage", () => {
     expect(merged.projects[0]?.costShare).toBeCloseTo(0.8, 9);
   });
 
+  it("reconciles aggregate, provider, project, and filtered project totals", () => {
+    const environments = [
+      environment(
+        "env-a",
+        summary(
+          [
+            bucket({ project: "App", costUsd: 6 }),
+            bucket({
+              project: "App",
+              provider: "codex",
+              model: "gpt-5.6-sol",
+              costUsd: 3,
+              totals: {
+                uncachedInputTokens: 20,
+                cachedInputTokens: 200,
+                cacheCreationTokens: 0,
+                outputTokens: 10,
+                reasoningTokens: 5,
+              },
+            }),
+            bucket({ costUsd: 2 }),
+          ],
+          [
+            { provider: "claude", hostId: "mac", homePath: "/a/.claude" },
+            { provider: "codex", hostId: "mac", homePath: "/a/.codex" },
+          ],
+        ),
+      ),
+    ];
+    const merged = mergeUsage(environments, USAGE_CONTRACT_VERSION);
+
+    expect(merged.providers.reduce((sum, provider) => sum + provider.costUsd, 0)).toBe(
+      merged.costUsd,
+    );
+    expect(merged.providers.reduce((sum, provider) => sum + provider.totalTokens, 0)).toBe(
+      merged.totalTokens,
+    );
+    expect(merged.projects.reduce((sum, project) => sum + project.costUsd, 0)).toBe(merged.costUsd);
+    expect(merged.projects.reduce((sum, project) => sum + project.totalTokens, 0)).toBe(
+      merged.totalTokens,
+    );
+
+    for (const project of merged.projects) {
+      const filtered = mergeUsage(environments, USAGE_CONTRACT_VERSION, {
+        projectFilter: project.project,
+      });
+      expect(filtered.costUsd).toBe(project.costUsd);
+      expect(filtered.totalTokens).toBe(project.totalTokens);
+    }
+  });
+
   it("filters every figure except the project list when a project is selected", () => {
     const environments = [
       environment(

@@ -15,12 +15,14 @@ function claudeLine(overrides: {
   contentType: string;
   model?: string;
   outputTokens?: number;
+  requestId?: string;
 }): string {
   return JSON.stringify({
     type: "assistant",
     timestamp: "2026-08-07T04:05:13.944Z",
     sessionId: "5a128faa-8253-489e-b935-6c08e8e670c0",
     cwd: "/home/theo/project",
+    ...(overrides.requestId === undefined ? {} : { requestId: overrides.requestId }),
     message: {
       id: overrides.messageId,
       role: "assistant",
@@ -64,6 +66,18 @@ describe("parseClaudeLine", () => {
     expect(text?.totals).toEqual(toolUse?.totals);
   });
 
+  it("keeps a shared message id when the request id differs", () => {
+    const first = parseClaudeLine(
+      claudeLine({ messageId: "msg_shared", requestId: "req_1", contentType: "text" }),
+    );
+    const second = parseClaudeLine(
+      claudeLine({ messageId: "msg_shared", requestId: "req_2", contentType: "text" }),
+    );
+
+    expect(first?.dedupeKey).toBe("msg_shared:req_1");
+    expect(second?.dedupeKey).toBe("msg_shared:req_2");
+  });
+
   it("ignores records that are not assistant messages", () => {
     expect(parseClaudeLine(JSON.stringify({ type: "user", message: {} }))).toBeNull();
     expect(parseClaudeLine("not json")).toBeNull();
@@ -85,7 +99,13 @@ describe("parseCodexLine", () => {
     timestamp: "2026-08-01T05:17:42.694Z",
     payload: { type: "turn_context", model: "gpt-5.6-sol" },
   });
-  const tokenCount = (inputTokens: number, cached: number, output: number, reasoning: number) =>
+  const tokenCount = (
+    inputTokens: number,
+    cached: number,
+    output: number,
+    reasoning: number,
+    cacheWrite = 0,
+  ) =>
     JSON.stringify({
       type: "event_msg",
       timestamp: "2026-08-01T05:17:49.919Z",
@@ -95,7 +115,7 @@ describe("parseCodexLine", () => {
           last_token_usage: {
             input_tokens: inputTokens,
             cached_input_tokens: cached,
-            cache_write_input_tokens: 0,
+            cache_write_input_tokens: cacheWrite,
             output_tokens: output,
             reasoning_output_tokens: reasoning,
           },
@@ -127,6 +147,17 @@ describe("parseCodexLine", () => {
 
     expect(first).not.toBeNull();
     expect(repeat).toBeNull();
+  });
+
+  it("subtracts cached reads and cache writes from input, clamped at zero", () => {
+    const state = initialCodexScanState();
+    parseCodexLine(turnContext, state);
+    const record = parseCodexLine(tokenCount(1000, 800, 25, 5, 100), state);
+    const clamped = parseCodexLine(tokenCount(500, 400, 30, 6, 200), state);
+
+    expect(record?.totals.uncachedInputTokens).toBe(100);
+    expect(record?.totals.cacheCreationTokens).toBe(100);
+    expect(clamped?.totals.uncachedInputTokens).toBe(0);
   });
 
   it("drops usage that arrives before any model is known", () => {
@@ -177,12 +208,22 @@ describe("parseCodexLine", () => {
       return JSON.stringify(parsed);
     };
 
-    it("keeps the child session id over copied ancestor metas", () => {
+    it("uses only the first session meta for identity and fork detection", () => {
       const state = initialCodexScanState();
       parseCodexLine(meta({ id: "child", timestamp: "2026-08-01T05:00:00.000Z" }), state);
-      parseCodexLine(meta({ id: "parent", timestamp: "2026-08-01T05:00:00.000Z" }), state);
-      parseCodexLine(turnContext, state);
-      const record = parseCodexLine(tokenCount(100, 0, 10, 0), state);
+      parseCodexLine(
+        meta({
+          id: "parent",
+          timestamp: "2026-08-01T05:00:00.001Z",
+          forkedFromId: "grandparent",
+        }),
+        state,
+      );
+      parseCodexLine(stamped("2026-08-01T05:00:00.002Z", turnContext), state);
+      const record = parseCodexLine(
+        stamped("2026-08-01T05:00:00.003Z", tokenCount(100, 0, 10, 0)),
+        state,
+      );
 
       expect(record?.sessionId).toBe("child");
     });
@@ -229,6 +270,33 @@ describe("parseCodexLine", () => {
       expect(
         parseCodexLine(stamped("2026-08-01T05:00:00.001Z", tokenCount(100, 0, 10, 0)), state),
       ).toBeNull();
+    });
+
+    it("matches the frozen fork accounting fixture", () => {
+      const state = initialCodexScanState();
+      const forkInstant = "2026-08-13T00:00:00.000Z";
+      parseCodexLine(meta({ id: "child", timestamp: forkInstant, forkedFromId: "parent" }), state);
+      parseCodexLine(stamped(forkInstant, turnContext), state);
+
+      const lines = [
+        stamped("2026-08-13T00:00:00.010Z", tokenCount(1000, 800, 10, 2, 100)),
+        stamped("2026-08-13T00:00:00.500Z", tokenCount(2000, 1600, 20, 4, 200)),
+        stamped("2026-08-13T00:00:01.600Z", tokenCount(500, 300, 25, 5, 50)),
+        stamped("2026-08-13T00:00:01.700Z", tokenCount(500, 300, 25, 5, 50)),
+      ];
+      const records = lines.flatMap((line) => {
+        const parsed = parseCodexLine(line, state);
+        return parsed === null ? [] : [parsed];
+      });
+
+      expect(records).toHaveLength(1);
+      expect(records[0]?.totals).toEqual({
+        uncachedInputTokens: 150,
+        cachedInputTokens: 300,
+        cacheCreationTokens: 50,
+        outputTokens: 25,
+        reasoningTokens: 5,
+      });
     });
 
     it("does not suppress anything in a rollout that is not a fork", () => {
