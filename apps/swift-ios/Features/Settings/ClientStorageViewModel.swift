@@ -11,6 +11,7 @@ final class ClientStorageViewModel {
     }
 
     private let storage: (any FeatureClientStorageManaging)?
+    private var loadGeneration = 0
 
     private(set) var state = State.loading
     private(set) var clearingScope: FeatureClientCache.Scope?
@@ -31,6 +32,8 @@ final class ClientStorageViewModel {
 
     func load() async {
         guard clearingScope == nil else { return }
+        loadGeneration &+= 1
+        let generation = loadGeneration
         let previousSummary = summary
         if previousSummary == nil {
             state = .loading
@@ -43,8 +46,11 @@ final class ClientStorageViewModel {
             return
         }
         do {
-            state = .loaded(try await storage.clientCacheSummary())
+            let summary = try await storage.clientCacheSummary()
+            guard generation == loadGeneration, clearingScope == nil else { return }
+            state = .loaded(summary)
         } catch {
+            guard generation == loadGeneration, clearingScope == nil else { return }
             if previousSummary == nil {
                 state = .unavailable
             } else {
@@ -55,6 +61,7 @@ final class ClientStorageViewModel {
 
     func clear(_ scope: FeatureClientCache.Scope) async {
         guard clearingScope == nil, let storage else { return }
+        loadGeneration &+= 1
         clearingScope = scope
         errorMessage = nil
         do {

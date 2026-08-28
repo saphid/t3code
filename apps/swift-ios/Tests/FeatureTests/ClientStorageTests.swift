@@ -10,7 +10,9 @@ private final class ClientStorageStub: FeatureClientStorageManaging {
     var summaryResults: [Result<FeatureClientCache.Summary, Error>]
     var clearResults: [Result<Void, Error>]
     var onClear: (() async -> Void)?
+    var onSummaryCall: ((Int) async -> Void)?
     private(set) var clearedScopes: [FeatureClientCache.Scope] = []
+    private var summaryCallCount = 0
 
     init(
         summaryResults: [Result<FeatureClientCache.Summary, Error>],
@@ -21,7 +23,11 @@ private final class ClientStorageStub: FeatureClientStorageManaging {
     }
 
     func clientCacheSummary() async throws -> FeatureClientCache.Summary {
-        try summaryResults.removeFirst().get()
+        summaryCallCount += 1
+        let call = summaryCallCount
+        let result = summaryResults.removeFirst()
+        await onSummaryCall?(call)
+        return try result.get()
     }
 
     func clearClientCache(_ scope: FeatureClientCache.Scope) async throws {
@@ -180,5 +186,39 @@ struct ClientStorageTests {
             model.errorMessage
                 == "The cache was cleared, but remaining cached data could not be refreshed. Try again."
         )
+    }
+
+    @Test
+    func loadThatStartedBeforeClearCannotReplaceThePostClearSummary() async {
+        let populated = FeatureClientCache.Summary(records: [
+            .init(environmentID: "alpha", kind: .threads, payloadBytes: 42),
+        ])
+        let empty = FeatureClientCache.Summary(records: [])
+        let staleLoadStarted = AsyncStream<Void>.makeStream()
+        let resumeStaleLoad = AsyncStream<Void>.makeStream()
+        let storage = ClientStorageStub(summaryResults: [
+            .success(populated),
+            .success(populated),
+            .success(empty),
+        ])
+        storage.onSummaryCall = { call in
+            guard call == 2 else { return }
+            staleLoadStarted.continuation.yield()
+            var iterator = resumeStaleLoad.stream.makeAsyncIterator()
+            _ = await iterator.next()
+        }
+        let model = ClientStorageViewModel(storage: storage)
+        await model.load()
+
+        let staleLoad = Task { await model.load() }
+        var startedIterator = staleLoadStarted.stream.makeAsyncIterator()
+        _ = await startedIterator.next()
+        await model.clear(.all)
+        #expect(model.summary == empty)
+
+        resumeStaleLoad.continuation.yield()
+        await staleLoad.value
+        #expect(model.summary == empty)
+        #expect(model.errorMessage == nil)
     }
 }

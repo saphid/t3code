@@ -723,8 +723,9 @@ struct NativeClientStorageTests {
 
         var events = fixture.client.events().makeAsyncIterator()
         await fixture.transport.resumeBlockedShellRead(host: "two.example")
-        _ = await events.next()
+        await fixture.transport.waitUntilBlockedShellReadResumes(host: "two.example")
         await fixture.transport.setShellReadsEnabled(false, host: "two.example")
+        _ = await events.next()
 
         let afterStaleRefresh = try await fixture.client.clientCacheSummary()
         #expect(afterStaleRefresh.environments.map(\.environmentID) == ["one"])
@@ -927,6 +928,8 @@ private actor MultiEnvironmentHTTPTransport: HTTPTransport {
     private var blockedShellReadContinuations: [String: CheckedContinuation<Void, Never>] = [:]
     private var startedBlockedShellReadHosts = Set<String>()
     private var shellReadStartContinuations: [String: CheckedContinuation<Void, Never>] = [:]
+    private var resumedBlockedShellReadHosts = Set<String>()
+    private var shellReadResumeContinuations: [String: CheckedContinuation<Void, Never>] = [:]
 
     init(shells: [String: OrchestrationShellSnapshot]) {
         self.shells = shells
@@ -966,6 +969,13 @@ private actor MultiEnvironmentHTTPTransport: HTTPTransport {
         blockedShellReadContinuations.removeValue(forKey: host)?.resume()
     }
 
+    func waitUntilBlockedShellReadResumes(host: String) async {
+        if resumedBlockedShellReadHosts.remove(host) != nil { return }
+        await withCheckedContinuation { continuation in
+            shellReadResumeContinuations[host] = continuation
+        }
+    }
+
     func setShell(_ shell: OrchestrationShellSnapshot, host: String) {
         shellData[host] = try! JSONEncoder.t3.encode(shell)
     }
@@ -997,6 +1007,11 @@ private actor MultiEnvironmentHTTPTransport: HTTPTransport {
             }
             await withCheckedContinuation { continuation in
                 blockedShellReadContinuations[host] = continuation
+            }
+            if let continuation = shellReadResumeContinuations.removeValue(forKey: host) {
+                continuation.resume()
+            } else {
+                resumedBlockedShellReadHosts.insert(host)
             }
         }
         if path == "/api/orchestration/shell",

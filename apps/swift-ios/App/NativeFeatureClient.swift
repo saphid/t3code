@@ -91,7 +91,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
     private var approvalRoutes: [String: PendingRequestRoute] = [:]
     private var inputRoutes: [String: PendingRequestRoute] = [:]
     private var relayDeviceSessionIDs: Set<String> = []
-    private struct TerminalKey: Hashable {
+    private struct TerminalKey: Hashable, Sendable {
         let threadID: String
         let terminalID: String
     }
@@ -480,69 +480,75 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
     }
 
     func clientCacheSummary() async throws -> FeatureClientCache.Summary {
-        var records: [FeatureClientCache.Record] = []
-        let encoder = JSONEncoder.t3
+        let shells = shellsByEnvironmentID.map { ($0.key, $0.value) }
+        let configs = serverConfigsByEnvironmentID.map { ($0.key, $0.value) }
+        let archived = archivedThreadsByEnvironmentID.compactMap { environmentID, threads in
+            threads.isEmpty ? nil : (environmentID, threads)
+        }
+        let details = latestDetails.compactMap { threadID, detail in
+            let environmentID = threadEnvironmentIDs[threadID] ?? detail.thread.environmentID
+            return environmentID.map { ($0, detail) }
+        }
+        let branches = sourceControlMonitors.compactMap { key, monitor in
+            monitor.latestStatus.map { (key.environmentID, $0) }
+        }
+        let terminals = terminalSnapshots.compactMap { key, snapshot in
+            let environmentID = threadEnvironmentIDs[key.threadID]
+                ?? latestDetails[key.threadID]?.thread.environmentID
+            return environmentID.map { ($0, snapshot) }
+        }
 
-        for (environmentID, shell) in shellsByEnvironmentID {
-            records.append(
-                .init(
+        return try await Task.detached(priority: .userInitiated) {
+            let encoder = JSONEncoder.t3
+            var records: [FeatureClientCache.Record] = []
+            records.reserveCapacity(
+                shells.count + configs.count + archived.count + details.count
+                    + branches.count + terminals.count
+            )
+            for (environmentID, shell) in shells {
+                records.append(.init(
                     environmentID: environmentID,
                     kind: .threads,
                     payloadBytes: try encoder.encode(shell).count
-                )
-            )
-        }
-        for (environmentID, config) in serverConfigsByEnvironmentID {
-            records.append(
-                .init(
+                ))
+            }
+            for (environmentID, config) in configs {
+                records.append(.init(
                     environmentID: environmentID,
                     kind: .serverMetadata,
                     payloadBytes: try encoder.encode(config).count
-                )
-            )
-        }
-        for (environmentID, threads) in archivedThreadsByEnvironmentID where !threads.isEmpty {
-            records.append(
-                .init(
+                ))
+            }
+            for (environmentID, threads) in archived {
+                records.append(.init(
                     environmentID: environmentID,
                     kind: .threads,
                     payloadBytes: try encoder.encode(threads).count
-                )
-            )
-        }
-        for (threadID, detail) in latestDetails {
-            guard let environmentID = threadEnvironmentIDs[threadID]
-                ?? detail.thread.environmentID else { continue }
-            records.append(
-                .init(
+                ))
+            }
+            for (environmentID, detail) in details {
+                records.append(.init(
                     environmentID: environmentID,
                     kind: .threads,
                     payloadBytes: try encoder.encode(detail).count
-                )
-            )
-        }
-        for (key, monitor) in sourceControlMonitors {
-            guard let status = monitor.latestStatus else { continue }
-            records.append(
-                .init(
-                    environmentID: key.environmentID,
+                ))
+            }
+            for (environmentID, status) in branches {
+                records.append(.init(
+                    environmentID: environmentID,
                     kind: .branches,
                     payloadBytes: try encoder.encode(status).count
-                )
-            )
-        }
-        for (key, snapshot) in terminalSnapshots {
-            guard let environmentID = threadEnvironmentIDs[key.threadID] else { continue }
-            records.append(
-                .init(
+                ))
+            }
+            for (environmentID, snapshot) in terminals {
+                records.append(.init(
                     environmentID: environmentID,
                     kind: .threads,
                     payloadBytes: try encoder.encode(snapshot).count
-                )
-            )
-        }
-
-        return FeatureClientCache.Summary(records: records)
+                ))
+            }
+            return FeatureClientCache.Summary(records: records)
+        }.value
     }
 
     func clearClientCache(_ scope: FeatureClientCache.Scope) async throws {
