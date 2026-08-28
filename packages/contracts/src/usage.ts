@@ -21,7 +21,7 @@ import { NonNegativeInt, ProjectId, ThreadId, TrimmedNonEmptyString } from "./ba
  * client renders partial coverage when an environment reports an older version
  * rather than failing the whole page.
  */
-export const USAGE_CONTRACT_VERSION = 10 as const;
+export const USAGE_CONTRACT_VERSION = 11 as const;
 
 /**
  * Oldest {@link UsageSummary} version a current client will still merge.
@@ -29,7 +29,8 @@ export const USAGE_CONTRACT_VERSION = 10 as const;
  * v6 adds explicit coverage metadata, v7 adds the optional bucket `project`,
  * v8 adds its optional stable `projectId`, and v9 distinguishes outside
  * projects from unknown attribution, and v10 adds the separate thread-breakdown
- * request. v4/v5 summaries remain decodable for mixed-version clients, but
+ * request. v11 adds optional cache-write costs. v4/v5 summaries remain
+ * decodable for mixed-version clients, but
  * summaries without coverage are not merged because the client cannot treat
  * them as bounded snapshots.
  */
@@ -124,6 +125,12 @@ export const UsageBucket = Schema.Struct({
    * rather than derived on the client.
    */
   cacheSavingsUsd: Schema.Number,
+  /**
+   * Estimated cost of the cache-creation tokens in this bucket at the model's
+   * cache-write rate. A subset of `costUsd` when the bucket is model-priced.
+   * Absent from summaries written before this field existed.
+   */
+  cacheWriteUsd: Schema.optional(Schema.Number),
   costSource: UsageCostSource,
   /** Distinct assistant responses, after de-duplication. */
   records: NonNegativeInt,
@@ -268,16 +275,21 @@ export const UsageAgentRow = Schema.Struct({
   agentId: TrimmedNonEmptyString,
   totals: UsageTokenTotals,
   costUsd: Schema.Number,
+  cacheWriteUsd: Schema.Number,
 });
 export type UsageAgentRow = typeof UsageAgentRow.Type;
 
 /**
- * One day of a thread's estimated cost. Days the thread was idle are omitted.
- * Unpriced records contribute tokens to the row totals but nothing here.
+ * One day of a thread's model-priced cost split by component. Days the thread
+ * was idle are omitted. Unpriced records contribute tokens to the row totals
+ * but nothing here.
  */
 export const UsageThreadDayCost = Schema.Struct({
   day: UsageDay,
-  costUsd: Schema.Number,
+  cacheWriteUsd: Schema.Number,
+  cacheReadUsd: Schema.Number,
+  /** Fresh input plus output. */
+  freshUsd: Schema.Number,
 });
 export type UsageThreadDayCost = typeof UsageThreadDayCost.Type;
 
@@ -299,6 +311,7 @@ export const UsageThreadRow = Schema.Struct({
   project: Schema.optional(TrimmedNonEmptyString),
   totals: UsageTokenTotals,
   costUsd: Schema.Number,
+  cacheWriteUsd: Schema.Number,
   /** Distinct transcript sessions folded into this row. */
   sessions: NonNegativeInt,
   /** Lower-cost thread rows represented by this grouped remainder row. */
