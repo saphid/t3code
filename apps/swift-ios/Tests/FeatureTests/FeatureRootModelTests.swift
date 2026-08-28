@@ -38,107 +38,6 @@ struct FeatureRootModelTests {
     }
 
     @Test
-    func titleRegenerationBlocksDuplicatesAndAppliesOnlyTheAuthoritativeRow() async {
-        let client = FeatureClientStub()
-        let first = regeneratableThread(id: "first", title: "First")
-        let second = regeneratableThread(id: "second", title: "Second")
-        client.snapshot = FeatureSnapshot(threads: [first, second])
-        client.titleRegenerationReceipt = .regenerating
-        client.holdTitleRegeneration = true
-        let model = testRootModel(client: client)
-        await model.reload()
-
-        let started = AsyncStream<Void>.makeStream()
-        client.onTitleRegenerationStarted = {
-            started.continuation.yield()
-            started.continuation.finish()
-        }
-        let request = Task { await model.regenerateThreadTitle(first.id) }
-        for await _ in started.stream { break }
-
-        #expect(model.regeneratingTitleThreadIDs == [first.id])
-        await model.regenerateThreadTitle(first.id)
-        #expect(client.regeneratedTitleThreadIDs == [first.id])
-
-        client.resumeTitleRegeneration()
-        await request.value
-        var pending = first
-        pending.isRegeneratingTitle = true
-        client.snapshot = FeatureSnapshot(threads: [pending, second])
-        await model.reload()
-
-        var renamed = first
-        renamed.title = "Authoritative title"
-        client.snapshot = FeatureSnapshot(threads: [renamed, second])
-        await model.reload()
-
-        #expect(model.snapshot.threads.first { $0.id == first.id }?.title == "Authoritative title")
-        #expect(model.snapshot.threads.first { $0.id == second.id }?.title == "Second")
-        #expect(model.regeneratingTitleThreadIDs.isEmpty)
-    }
-
-    @Test
-    func failedTitleRegenerationKeepsThreadStateAndCanRetry() async {
-        let client = FeatureClientStub()
-        let thread = regeneratableThread(id: "retry", title: "Keep this title")
-        client.snapshot = FeatureSnapshot(threads: [thread])
-        client.titleRegenerationReceipt = .regenerating
-        let model = testRootModel(client: client)
-        await model.reload()
-
-        await model.regenerateThreadTitle(thread.id)
-        var pending = thread
-        pending.isRegeneratingTitle = true
-        client.snapshot = FeatureSnapshot(threads: [pending])
-        await model.reload()
-        client.snapshot = FeatureSnapshot(threads: [thread])
-        await model.reload()
-
-        #expect(model.snapshot.threads.first?.title == "Keep this title")
-        #expect(model.snapshot.threads.first?.state == thread.state)
-        #expect(model.errorMessage == "Couldn’t regenerate “Keep this title”. Try again.")
-        #expect(model.regeneratingTitleThreadIDs.isEmpty)
-
-        model.errorMessage = nil
-        await model.regenerateThreadTitle(thread.id)
-        var recovered = thread
-        recovered.title = "Recovered title"
-        client.snapshot = FeatureSnapshot(threads: [recovered])
-        await model.reload()
-
-        #expect(client.regeneratedTitleThreadIDs == [thread.id, thread.id])
-        #expect(model.snapshot.threads.first?.title == "Recovered title")
-        #expect(model.snapshot.threads.first?.state == thread.state)
-        #expect(model.errorMessage == nil)
-        #expect(model.regeneratingTitleThreadIDs.isEmpty)
-    }
-
-    @Test
-    func titleRegenerationDispatchFailureIsVisibleAndRetryable() async {
-        let client = FeatureClientStub()
-        let thread = regeneratableThread(id: "retry", title: "Keep this title")
-        client.snapshot = FeatureSnapshot(threads: [thread])
-        client.titleRegenerationError = FeatureCapabilityUnavailable("Temporary failure")
-        let model = testRootModel(client: client)
-        await model.reload()
-
-        await model.regenerateThreadTitle(thread.id)
-
-        #expect(model.snapshot.threads == [thread])
-        #expect(model.errorMessage == "Couldn’t regenerate “Keep this title”. Try again.")
-        #expect(model.regeneratingTitleThreadIDs.isEmpty)
-
-        client.titleRegenerationError = nil
-        client.titleRegenerationReceipt = .completed(title: "Recovered title")
-        model.errorMessage = nil
-        await model.regenerateThreadTitle(thread.id)
-
-        #expect(client.regeneratedTitleThreadIDs == [thread.id, thread.id])
-        #expect(model.errorMessage == nil)
-        #expect(model.regeneratingTitleThreadIDs.isEmpty)
-    }
-
-    @Test
     func savedServersKeepWorkspaceNavigationAvailableWhileDisconnected() {
         let savedEnvironment = FeatureEnvironment(
             id: "offline-demo",
@@ -2405,16 +2304,6 @@ private func testRootModel(client: FeatureClientStub) -> FeatureRootModel {
     )
 }
 
-private func regeneratableThread(id: String, title: String) -> FeatureThread {
-    FeatureThread(
-        id: id,
-        projectID: "project",
-        environmentID: "environment",
-        title: title,
-        supportsTitleRegeneration: true
-    )
-}
-
 private func orchestrationEvent(
     type: String,
     sequence: Int,
@@ -2500,12 +2389,6 @@ private final class FeatureClientStub: FeatureClient, T3ConnectCapable {
     var resolvedInputID: String?
     var resolvedInputAnswers: [String: FeatureInputAnswer]?
     var savedSettings: [FeatureSettings] = []
-    var regeneratedTitleThreadIDs: [String] = []
-    var titleRegenerationReceipt: FeatureTitleRegenerationDispatchReceipt = .completed(title: "Title")
-    var titleRegenerationError: (any Error)?
-    var holdTitleRegeneration = false
-    var onTitleRegenerationStarted: (() -> Void)?
-    private var titleRegenerationContinuation: CheckedContinuation<Void, Never>?
     lazy var t3ConnectController = T3ConnectController(
         resolution: .unavailable(reason: "T3 Connect is disabled in feature tests.")
     )
@@ -2622,23 +2505,6 @@ private final class FeatureClientStub: FeatureClient, T3ConnectCapable {
     }
 
     func renameThread(id: String, title: String) async throws {}
-    func regenerateThreadTitle(
-        id: String
-    ) async throws -> FeatureTitleRegenerationDispatchReceipt {
-        regeneratedTitleThreadIDs.append(id)
-        onTitleRegenerationStarted?()
-        onTitleRegenerationStarted = nil
-        if let titleRegenerationError { throw titleRegenerationError }
-        if holdTitleRegeneration {
-            await withCheckedContinuation { titleRegenerationContinuation = $0 }
-        }
-        return titleRegenerationReceipt
-    }
-    func resumeTitleRegeneration() {
-        holdTitleRegeneration = false
-        titleRegenerationContinuation?.resume()
-        titleRegenerationContinuation = nil
-    }
     func setThreadArchived(id: String, archived: Bool) async throws {}
     func deleteThread(id: String) async throws {}
 

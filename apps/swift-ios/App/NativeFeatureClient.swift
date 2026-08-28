@@ -1514,22 +1514,10 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         try? await refresh(client: route.client)
     }
 
-    func regenerateThreadTitle(
-        id: String
-    ) async throws -> FeatureTitleRegenerationDispatchReceipt {
+    func regenerateThreadTitle(id: String) async throws {
         let route = try threadRoute(for: id)
         _ = try await route.client.regenerateTitle(threadID: route.wireID)
-        do {
-            try await refresh(client: route.client)
-            guard let thread = cachedThread(id: route.uiID) else {
-                return .refreshUnavailable
-            }
-            return thread.isRegeneratingTitle == true
-                ? .regenerating
-                : .completed(title: thread.title)
-        } catch {
-            return .refreshUnavailable
-        }
+        try? await refresh(client: route.client)
     }
 
     func threadSummaryTimeline(id: String) async throws -> FeatureThreadSummaryTimeline {
@@ -2640,7 +2628,6 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
             snoozedUntil: thread.snoozedUntil,
             snoozedAt: thread.snoozedAt,
             pinnedAt: thread.pinnedAt,
-            titleRegeneration: thread.titleRegeneration,
             session: thread.session,
             latestUserMessageAt: thread.latestUserMessageAt,
             hasPendingApprovals: thread.hasPendingApprovals,
@@ -4268,7 +4255,6 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
             supportsPinning: environment.descriptor?.capabilities.threadPinning,
             supportsTitleRegeneration: environment.descriptor?.capabilities.threadTitleRegeneration,
             supportsSummaryTimeline: environment.descriptor?.capabilities.threadSummaryTimeline,
-            isRegeneratingTitle: thread.titleRegeneration != nil,
             attentionAt: failureDate(
                 latestTurn: thread.latestTurn,
                 session: thread.session
@@ -4340,7 +4326,6 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
             supportsPinning: environment.descriptor?.capabilities.threadPinning,
             supportsTitleRegeneration: environment.descriptor?.capabilities.threadTitleRegeneration,
             supportsSummaryTimeline: environment.descriptor?.capabilities.threadSummaryTimeline,
-            isRegeneratingTitle: thread.titleRegeneration != nil,
             attentionAt: failureDate(
                 latestTurn: thread.latestTurn,
                 session: thread.session
@@ -4606,7 +4591,6 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
             snoozedUntil: loaded.snoozedUntil,
             snoozedAt: loaded.snoozedAt,
             pinnedAt: loaded.pinnedAt,
-            titleRegeneration: loaded.titleRegeneration,
             deletedAt: loaded.deletedAt,
             messages: prependByID(older.messages, loaded.messages),
             activities: prependByID(older.activities, loaded.activities),
@@ -6187,7 +6171,6 @@ enum NativeThreadDetailReducer {
             snoozedUntil: thread.snoozedUntil,
             snoozedAt: thread.snoozedAt,
             pinnedAt: thread.pinnedAt,
-            titleRegeneration: thread.titleRegeneration,
             deletedAt: thread.deletedAt,
             messages: messages ?? thread.messages,
             activities: activities ?? thread.activities,

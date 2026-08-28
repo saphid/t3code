@@ -18,88 +18,6 @@ struct FeatureDetailRenderUpdate: Equatable {
     let change: FeatureDetailRenderChange
 }
 
-private struct FeatureTitleRegenerationTracker {
-    private struct Pending {
-        let projectID: String
-        let environmentID: String?
-        let originalTitle: String
-        var observedServerRequest = false
-        var awaitingAuthoritativeUpdate = false
-    }
-
-    private var pendingByThreadID: [String: Pending] = [:]
-
-    var threadIDs: Set<String> { Set(pendingByThreadID.keys) }
-
-    mutating func begin(_ thread: FeatureThread) -> Bool {
-        guard pendingByThreadID[thread.id] == nil, thread.isRegeneratingTitle != true else {
-            return false
-        }
-        pendingByThreadID[thread.id] = Pending(
-            projectID: thread.projectID,
-            environmentID: thread.environmentID,
-            originalTitle: thread.title
-        )
-        return true
-    }
-
-    mutating func cancel(threadID: String) {
-        pendingByThreadID.removeValue(forKey: threadID)
-    }
-
-    mutating func finishDispatch(
-        threadID: String,
-        receipt: FeatureTitleRegenerationDispatchReceipt
-    ) -> String? {
-        guard var pending = pendingByThreadID[threadID] else { return nil }
-        switch receipt {
-        case let .completed(title):
-            pendingByThreadID.removeValue(forKey: threadID)
-            return title == pending.originalTitle ? pending.originalTitle : nil
-        case .regenerating:
-            pending.observedServerRequest = true
-        case .refreshUnavailable:
-            pending.awaitingAuthoritativeUpdate = true
-        }
-        pendingByThreadID[threadID] = pending
-        return nil
-    }
-
-    mutating func reconcile(thread: FeatureThread) -> String? {
-        guard var pending = pendingByThreadID[thread.id] else { return nil }
-        guard thread.projectID == pending.projectID,
-              thread.environmentID == pending.environmentID,
-              thread.title == pending.originalTitle else {
-            pendingByThreadID.removeValue(forKey: thread.id)
-            return nil
-        }
-        if thread.isRegeneratingTitle == true {
-            pending.observedServerRequest = true
-            pendingByThreadID[thread.id] = pending
-            return nil
-        }
-        guard pending.observedServerRequest || pending.awaitingAuthoritativeUpdate else {
-            return nil
-        }
-        pendingByThreadID.removeValue(forKey: thread.id)
-        return pending.originalTitle
-    }
-
-    mutating func reconcile(with threads: [FeatureThread]) -> [String] {
-        let threadsByID = Dictionary(
-            threads.map { ($0.id, $0) },
-            uniquingKeysWith: { first, _ in first }
-        )
-        return Array(pendingByThreadID.keys).compactMap { threadID in
-            guard let thread = threadsByID[threadID] else {
-                pendingByThreadID.removeValue(forKey: threadID)
-                return nil
-            }
-            return reconcile(thread: thread)
-        }
-    }
-}
-
 @MainActor
 @Observable
 public final class FeatureRootModel {
@@ -137,14 +55,6 @@ public final class FeatureRootModel {
     private(set) var isSigningOutT3Connect = false
     public var errorMessage: String?
 
-    var regeneratingTitleThreadIDs: Set<String> {
-        snapshot.threads.reduce(into: titleRegenerationTracker.threadIDs) { ids, thread in
-            if thread.isRegeneratingTitle == true {
-                ids.insert(thread.id)
-            }
-        }
-    }
-
     let client: any FeatureClient
     private let outboxStore: FeatureOutboxStore
     private let draftStore: FeatureComposerDraftStore
@@ -162,7 +72,6 @@ public final class FeatureRootModel {
     private var outboxDrainTask: Task<Void, Never>?
     private var outboxRetryAttempt = 0
     private var outboxGeneration: UInt64 = 0
-    private var titleRegenerationTracker = FeatureTitleRegenerationTracker()
 
     public init(
         client: any FeatureClient,
@@ -496,29 +405,8 @@ public final class FeatureRootModel {
     }
 
     public func regenerateThreadTitle(_ id: String) async {
-        guard let thread = snapshot.threads.first(where: { $0.id == id }) else {
-            errorMessage = "This thread is no longer available."
-            return
-        }
-        guard !thread.isArchived, thread.supportsTitleRegeneration == true else {
-            errorMessage = "Title regeneration is not available for this thread."
-            return
-        }
-        guard titleRegenerationTracker.begin(thread) else { return }
-
-        do {
-            let receipt = try await client.regenerateThreadTitle(id: id)
-            if let unchangedTitle = titleRegenerationTracker.finishDispatch(
-                threadID: id,
-                receipt: receipt
-            ) {
-                showTitleRegenerationFailure(title: unchangedTitle)
-            }
-        } catch {
-            titleRegenerationTracker.cancel(threadID: id)
-            if !Self.isBenignCancellation(error) {
-                showTitleRegenerationFailure(title: thread.title)
-            }
+        await perform {
+            try await client.regenerateThreadTitle(id: id)
         }
     }
 
@@ -958,9 +846,6 @@ public final class FeatureRootModel {
 
     private func upsert(_ thread: FeatureThread) {
         let thread = retainingPendingSettlement(in: thread)
-        if let unchangedTitle = titleRegenerationTracker.reconcile(thread: thread) {
-            showTitleRegenerationFailure(title: unchangedTitle)
-        }
         var metadataChanged = false
         if let index = snapshot.threads.firstIndex(where: { $0.id == thread.id }) {
             let previous = snapshot.threads[index]
@@ -997,7 +882,6 @@ public final class FeatureRootModel {
         guard let index = snapshot.threads.firstIndex(where: { $0.id == id }) else { return }
         let projectID = snapshot.threads[index].projectID
         snapshot.threads.remove(at: index)
-        titleRegenerationTracker.cancel(threadID: id)
         adjustProjectCount(id: projectID, by: -1)
         threadCollectionRevision &+= 1
         homePresentationRevision &+= 1
@@ -1057,9 +941,6 @@ public final class FeatureRootModel {
             threadCollectionRevision &+= 1
         }
         snapshot = value
-        for unchangedTitle in titleRegenerationTracker.reconcile(with: value.threads) {
-            showTitleRegenerationFailure(title: unchangedTitle)
-        }
         if value.connection.state == .connected
             || value.environments.contains(where: { $0.connectionState == .connected }) {
             scheduleOutboxDrain()
@@ -1090,10 +971,6 @@ public final class FeatureRootModel {
         if metadataChanged || detailChanged {
             bumpDetailMetadataRevision(id: id)
         }
-    }
-
-    private func showTitleRegenerationFailure(title: String) {
-        errorMessage = "Couldn’t regenerate “\(title)”. Try again."
     }
 
     private func store(
