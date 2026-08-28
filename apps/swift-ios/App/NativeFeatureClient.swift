@@ -4282,6 +4282,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
                 latestUserMessageAt: thread.latestUserMessageAt,
                 latestTurn: thread.latestTurn
             ),
+            latestUserMessageAt: thread.latestUserMessageAt.flatMap(parseValidDate),
             snoozedUntil: thread.snoozedUntil.map(parseDate),
             snoozedAt: thread.snoozedAt.map(parseDate),
             pinnedAt: thread.pinnedAt.map(parseDate),
@@ -4316,6 +4317,9 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
             environmentID: environment.id
         )
         let backgroundWorkIsActive = backgroundLiveness == .working
+        let latestUserMessageAt = thread.messages
+            .last(where: { $0.role == "user" })?
+            .createdAt
         return FeatureThread(
             id: FeatureScopedID.thread(environmentID: environment.id, wireID: thread.id),
             wireID: thread.id,
@@ -4351,9 +4355,10 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
             keepsActive: thread.settledOverride == "active",
             settledAt: thread.settledAt.map(parseDate),
             lastActivityAt: lastActivityDate(
-                latestUserMessageAt: thread.messages.last(where: { $0.role == "user" })?.createdAt,
+                latestUserMessageAt: latestUserMessageAt,
                 latestTurn: thread.latestTurn
             ),
+            latestUserMessageAt: latestUserMessageAt.flatMap(parseValidDate),
             snoozedUntil: thread.snoozedUntil.map(parseDate),
             snoozedAt: thread.snoozedAt.map(parseDate),
             pinnedAt: thread.pinnedAt.map(parseDate),

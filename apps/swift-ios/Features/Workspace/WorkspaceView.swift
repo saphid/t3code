@@ -36,6 +36,10 @@ public struct WorkspaceView: View {
     @AppStorage("t3.swiftui.home.snoozedExpanded") private var isSnoozedExpanded = false
     @AppStorage("t3.swiftui.home.settledExpanded") private var isSettledExpanded = true
     @AppStorage("t3.swiftui.home.archiveExpanded") private var isArchiveExpanded = false
+    @AppStorage(HomeSortPreferences.projectKey) private var projectSortRawValue =
+        HomeSortOrder.default.rawValue
+    @AppStorage(HomeSortPreferences.threadKey) private var threadSortRawValue =
+        HomeSortOrder.default.rawValue
     @State private var settledLimit = 12
     @State private var showingNewTask = false
     @State private var newTaskInitialProjectID: String?
@@ -290,11 +294,13 @@ public struct WorkspaceView: View {
             query: searchText,
             projectID: selectedProjectID,
             environmentID: selectedEnvironmentID,
-            now: sidebarBoundaryNow
+            now: sidebarBoundaryNow,
+            projectOrder: projectSortOrder,
+            threadOrder: threadSortOrder
         )
 
         return VStack(spacing: 0) {
-            projectFilter
+            projectFilter(projects: environmentScoped(presentation.projects))
             HomeThreadCollectionView(
                 presentation: presentation,
                 projectFaviconClient: model.client,
@@ -550,7 +556,7 @@ public struct WorkspaceView: View {
         return "Create a project to start a task"
     }
 
-    private var projectFilter: some View {
+    private func projectFilter(projects: [FeatureProject]) -> some View {
         HStack(spacing: 0) {
             if showsEnvironmentFilter {
                 Button {
@@ -603,7 +609,7 @@ public struct WorkspaceView: View {
                         Text("All projects")
                     }
                 }
-                ForEach(availableProjects) { project in
+                ForEach(projects) { project in
                     Button {
                         selectProject(project.id, targetEnvironmentID: project.environmentID)
                     } label: {
@@ -638,6 +644,33 @@ public struct WorkspaceView: View {
             .accessibilityValue(selectedProject?.name ?? "All projects")
             .accessibilityIdentifier("sidebar-project-filter")
 
+            Menu {
+                sortOrderMenu(
+                    title: "Sort projects",
+                    selection: projectSortOrder,
+                    onSelect: { projectSortRawValue = $0.rawValue }
+                )
+                sortOrderMenu(
+                    title: "Sort threads",
+                    selection: threadSortOrder,
+                    onSelect: { threadSortRawValue = $0.rawValue }
+                )
+            } label: {
+                Image(systemName: "arrow.up.arrow.down")
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(T3Colors.textTertiary)
+                    .frame(width: T3Metrics.minimumTapTarget, height: 34)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Home sort options")
+            .accessibilityValue(
+                "Projects: \(projectSortOrder.label). Threads: \(threadSortOrder.label)"
+            )
+            .accessibilityHint(
+                "Project order groups each thread shelf. Thread order sorts within each project."
+            )
+            .accessibilityIdentifier("sidebar-sort-options")
+
             Button { showingAddProject = true } label: {
                 Image(systemName: "folder.badge.plus")
                     .font(.system(size: 13, weight: .medium))
@@ -651,6 +684,34 @@ public struct WorkspaceView: View {
         .padding(.leading, 10)
         .padding(.trailing, 2)
         .accessibilityElement(children: .contain)
+    }
+
+    private var projectSortOrder: HomeSortOrder {
+        HomeSortPreferences.order(from: projectSortRawValue)
+    }
+
+    private var threadSortOrder: HomeSortOrder {
+        HomeSortPreferences.order(from: threadSortRawValue)
+    }
+
+    private func sortOrderMenu(
+        title: String,
+        selection: HomeSortOrder,
+        onSelect: @escaping (HomeSortOrder) -> Void
+    ) -> some View {
+        Menu(title) {
+            ForEach(HomeSortOrder.allCases) { order in
+                Button {
+                    onSelect(order)
+                } label: {
+                    if selection == order {
+                        Label(order.label, systemImage: "checkmark")
+                    } else {
+                        Text(order.label)
+                    }
+                }
+            }
+        }
     }
 
     private var selectedProject: FeatureProject? {
@@ -686,8 +747,13 @@ public struct WorkspaceView: View {
     }
 
     private var availableProjects: [FeatureProject] {
-        guard let selectedEnvironmentID else { return model.snapshot.projects }
-        return model.snapshot.projects.filter { $0.environmentID == selectedEnvironmentID }
+        environmentScoped(model.snapshot.projects)
+    }
+
+    /// Applies the Home environment filter to an already-ordered project list.
+    private func environmentScoped(_ projects: [FeatureProject]) -> [FeatureProject] {
+        guard let selectedEnvironmentID else { return projects }
+        return projects.filter { $0.environmentID == selectedEnvironmentID }
     }
 
     private var creationProjects: [FeatureProject] {
@@ -884,6 +950,7 @@ private extension FeatureDraftAttachment {
 }
 
 struct HomePresentation {
+    let projects: [FeatureProject]
     let pinned: [FeatureThread]
     let active: [FeatureThread]
     let snoozed: [FeatureThread]
@@ -897,7 +964,10 @@ struct HomePresentation {
         query: String,
         projectID: String?,
         environmentID: String? = nil,
-        now: Date
+        now: Date,
+        projectOrder: HomeSortOrder = .default,
+        threadOrder: HomeSortOrder = .default,
+        ordering suppliedOrdering: HomeOrdering? = nil
     ) {
         let ownership = HomeEnvironmentFilter.Ownership(projects: snapshot.projects)
         let index = DailyUXSidebarIndex(
@@ -907,7 +977,12 @@ struct HomePresentation {
             environmentID: environmentID,
             now: now
         )
-        let archived = snapshot.threads
+        let ordering = suppliedOrdering ?? HomeOrdering(
+            snapshot: snapshot,
+            projectOrder: projectOrder,
+            threadOrder: threadOrder
+        )
+        let canonicalArchived = snapshot.threads
             .filter { thread in
                 thread.isArchived
                     && (projectID == nil || thread.projectID == projectID)
@@ -918,16 +993,17 @@ struct HomePresentation {
                 return $0.id < $1.id
             }
 
-        pinned = index.pinned
-        active = index.active
-        snoozed = index.snoozed
-        settled = index.settled
-        self.archived = archived
+        projects = ordering.projects
+        pinned = ordering.threads(index.pinned)
+        active = ordering.threads(index.active)
+        snoozed = ordering.threads(index.snoozed)
+        settled = ordering.threads(index.settled)
+        archived = ordering.threads(canonicalArchived)
         let normalizedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
         searchResults = normalizedQuery.isEmpty
             ? []
             : DailyUXSidebarIndex.matchingThreads(
-                index.pinned + index.active + index.snoozed + index.settled + archived,
+                pinned + active + snoozed + settled + archived,
                 snapshot: snapshot,
                 query: normalizedQuery
             )
@@ -937,16 +1013,26 @@ struct HomePresentation {
 
 @MainActor
 private final class HomePresentationCache {
+    private struct OrderingKey: Equatable {
+        let revision: UInt64
+        let projectOrder: HomeSortOrder
+        let threadOrder: HomeSortOrder
+    }
+
     private struct Key: Equatable {
         let revision: UInt64
         let query: String
         let projectID: String?
         let environmentID: String?
         let now: Date
+        let projectOrder: HomeSortOrder
+        let threadOrder: HomeSortOrder
     }
 
     private var cachedKey: Key?
     private var cachedPresentation: HomePresentation?
+    private var cachedOrderingKey: OrderingKey?
+    private var cachedOrdering: HomeOrdering?
 
     func presentation(
         snapshot: FeatureSnapshot,
@@ -954,17 +1040,39 @@ private final class HomePresentationCache {
         query: String,
         projectID: String?,
         environmentID: String?,
-        now: Date
+        now: Date,
+        projectOrder: HomeSortOrder,
+        threadOrder: HomeSortOrder
     ) -> HomePresentation {
         let key = Key(
             revision: revision,
             query: query,
             projectID: projectID,
             environmentID: environmentID,
-            now: now
+            now: now,
+            projectOrder: projectOrder,
+            threadOrder: threadOrder
         )
         if cachedKey == key, let cachedPresentation {
             return cachedPresentation
+        }
+
+        let orderingKey = OrderingKey(
+            revision: revision,
+            projectOrder: projectOrder,
+            threadOrder: threadOrder
+        )
+        let ordering: HomeOrdering
+        if cachedOrderingKey == orderingKey, let cachedOrdering {
+            ordering = cachedOrdering
+        } else {
+            ordering = HomeOrdering(
+                snapshot: snapshot,
+                projectOrder: projectOrder,
+                threadOrder: threadOrder
+            )
+            cachedOrderingKey = orderingKey
+            cachedOrdering = ordering
         }
 
         let presentation = HomePresentation(
@@ -972,7 +1080,10 @@ private final class HomePresentationCache {
             query: query,
             projectID: projectID,
             environmentID: environmentID,
-            now: now
+            now: now,
+            projectOrder: projectOrder,
+            threadOrder: threadOrder,
+            ordering: ordering
         )
         cachedKey = key
         cachedPresentation = presentation
