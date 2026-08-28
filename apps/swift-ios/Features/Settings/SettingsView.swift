@@ -9,8 +9,6 @@ public struct SettingsView: View {
     @State private var textSizeSaveTask: Task<Bool, Never>?
     @State private var saveErrorMessage: String?
     @State private var showingDiscardConfirmation = false
-    @AppStorage(HomeEnvironmentFilter.isEnabledPreferenceKey)
-    private var isEnvironmentFilterEnabled = true
     private let buildIdentity = AppBuildIdentity.current
 
     public init(model: FeatureRootModel) {
@@ -189,13 +187,6 @@ public struct SettingsView: View {
                 .padding(.horizontal, 20)
                 .frame(minHeight: 56)
 
-                settingsDivider
-                SettingsToggleRow(
-                    title: "Environment filter",
-                    systemImage: "line.3.horizontal.decrease.circle",
-                    isOn: $isEnvironmentFilterEnabled
-                )
-                .accessibilityIdentifier("settings-environment-filter-toggle")
                 settingsDivider
                 SettingsToggleRow(
                     title: "Haptics",

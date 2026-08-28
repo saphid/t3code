@@ -7,7 +7,7 @@ struct HomeEnvironmentFilterTests {
     private let now = Date(timeIntervalSince1970: 2_000_000)
 
     @Test
-    func presentationFiltersActiveArchivedAndSearchResultsThenRestoresAll() {
+    func presentationFiltersMultipleShelvesAndRestoresAll() {
         let localProject = project(id: "local-project", environmentID: "local")
         let remoteProject = project(id: "remote-project", environmentID: "remote")
         let snapshot = FeatureSnapshot(
@@ -34,7 +34,7 @@ struct HomeEnvironmentFilterTests {
             snapshot: snapshot,
             query: "Remote",
             projectID: nil,
-            environmentID: "remote",
+            disabledEnvironmentIDs: ["local"],
             now: now
         )
         let restored = HomePresentation(
@@ -52,9 +52,142 @@ struct HomeEnvironmentFilterTests {
     }
 
     @Test
-    func projectAndEnvironmentFiltersComposeWithoutLeakingThreads() {
+    func optionsAreMultiSelectableButKeepOneEnvironmentIncluded() {
+        let environments = [
+            environment(id: "local", state: .connected),
+            environment(id: "remote", state: .connected),
+            environment(id: "studio", state: .connected),
+        ]
+        let projects = environments.map { project(id: "\($0.id)-project", environmentID: $0.id) }
+
+        let withoutLocal = HomeEnvironmentFilter.Selection().togglingEnvironment(
+            "local",
+            isIncluded: false,
+            environments: environments,
+            projects: projects
+        )
+        let onlyStudio = withoutLocal.togglingEnvironment(
+            "remote",
+            isIncluded: false,
+            environments: environments,
+            projects: projects
+        )
+        let refusingEmpty = onlyStudio.togglingEnvironment(
+            "studio",
+            isIncluded: false,
+            environments: environments,
+            projects: projects
+        )
+        let localRestored = onlyStudio.togglingEnvironment(
+            "local",
+            isIncluded: true,
+            environments: environments,
+            projects: projects
+        )
+
+        #expect(withoutLocal.disabledEnvironmentIDs == ["local"])
+        #expect(onlyStudio.disabledEnvironmentIDs == ["local", "remote"])
+        #expect(refusingEmpty == onlyStudio)
+        #expect(localRestored.disabledEnvironmentIDs == ["remote"])
+    }
+
+    @Test
+    func selectionSurvivesConnectionStateChangesAndIncludesNewEnvironments() {
+        let selected = HomeEnvironmentFilter.Selection(disabledEnvironmentIDs: ["local"])
+        let connecting = [
+            environment(id: "local", state: .connecting),
+            environment(id: "remote", state: .connected),
+        ]
+        let disconnected = [
+            environment(id: "local", state: .disconnected),
+            environment(id: "remote", state: .connected),
+        ]
+        let withNewEnvironment = disconnected + [environment(id: "studio", state: .connected)]
+
+        #expect(selected.reconciled(environments: connecting, projects: []) == selected)
+        #expect(selected.reconciled(environments: disconnected, projects: []) == selected)
+        #expect(
+            selected.reconciled(environments: withNewEnvironment, projects: [])
+                .disabledEnvironmentIDs == ["local"]
+        )
+    }
+
+    @Test
+    func catalogChangesPruneInvalidChoicesAndRecoverFromAnEmptySelection() {
+        let local = environment(id: "local", state: .connected)
+        let remote = environment(id: "remote", state: .connected)
+        let selected = HomeEnvironmentFilter.Selection(
+            disabledEnvironmentIDs: ["local"],
+            projectID: "remote-project",
+            projectEnvironmentID: "remote"
+        )
+        let remoteProject = project(id: "remote-project", environmentID: "remote")
+
+        #expect(
+            selected.reconciled(environments: [remote], projects: [remoteProject])
+                == .init(projectID: remoteProject.id, projectEnvironmentID: "remote")
+        )
+        #expect(
+            HomeEnvironmentFilter.Selection(disabledEnvironmentIDs: ["local"])
+                .reconciled(environments: [local], projects: []) == .init()
+        )
+    }
+
+    @Test
+    func disabledOwningEnvironmentClearsAProjectThatRemainsCached() {
+        let localProject = project(id: "local-project", environmentID: "local")
+        let local = environment(id: "local", state: .connected)
+        let remote = environment(id: "remote", state: .connected)
+        let disabledLocal = FeatureEnvironment(
+            id: local.id,
+            name: local.name,
+            endpoint: local.endpoint,
+            isEnabled: false,
+            connectionState: .disconnected
+        )
+        let selected = HomeEnvironmentFilter.Selection(
+            disabledEnvironmentIDs: ["remote"],
+            projectID: localProject.id,
+            projectEnvironmentID: local.id
+        )
+
+        let reconciled = selected.reconciled(
+            environments: [disabledLocal, remote],
+            projects: [localProject]
+        )
+
+        #expect(reconciled == .init())
+    }
+
+    @Test
+    func disablingTheSelectedProjectsEnvironmentClearsOnlyProjectScope() {
         let localProject = project(id: "local-project", environmentID: "local")
         let remoteProject = project(id: "remote-project", environmentID: "remote")
+        let environments = [
+            environment(id: "local", state: .connected),
+            environment(id: "remote", state: .connected),
+        ]
+        let selected = HomeEnvironmentFilter.Selection(
+            projectID: localProject.id,
+            projectEnvironmentID: "local"
+        )
+
+        let result = selected.togglingEnvironment(
+            "local",
+            isIncluded: false,
+            environments: environments,
+            projects: [localProject, remoteProject]
+        )
+
+        #expect(result.disabledEnvironmentIDs == ["local"])
+        #expect(result.projectID == nil)
+        #expect(result.projectEnvironmentID == nil)
+    }
+
+    @Test
+    func projectAndEnvironmentFiltersComposeWithoutLeakingDuplicateIDs() {
+        let localProject = project(id: "shared", environmentID: "local")
+        let remoteProject = project(id: "shared", environmentID: "remote")
         let snapshot = FeatureSnapshot(
             projects: [localProject, remoteProject],
             threads: [
@@ -63,96 +196,55 @@ struct HomeEnvironmentFilterTests {
             ]
         )
 
-        let incompatible = HomePresentation(
+        let presentation = HomePresentation(
             snapshot: snapshot,
             query: "",
-            projectID: localProject.id,
-            environmentID: "remote",
+            projectID: "shared",
+            projectEnvironmentID: "remote",
             now: now
         )
-
-        #expect(incompatible.active.isEmpty)
-        #expect(incompatible.archived.isEmpty)
-    }
-
-    @Test
-    func ownershipIsConsistentForAmbiguousLegacyProjectIDs() {
-        let projects = [
-            project(id: "shared", environmentID: "local"),
-            project(id: "shared", environmentID: "remote"),
-        ]
-        let ownership = HomeEnvironmentFilter.Ownership(projects: projects)
-        let legacy = FeatureThread(id: "legacy", projectID: "shared", title: "Legacy")
-        let explicit = FeatureThread(
-            id: "explicit",
-            projectID: "shared",
-            environmentID: "remote",
-            title: "Explicit"
+        let selection = HomeEnvironmentFilter.Selection().selectingProject(
+            "shared",
+            targetEnvironmentID: "remote",
+            projects: [localProject, remoteProject]
         )
 
-        #expect(ownership.environmentID(for: legacy) == nil)
-        #expect(ownership.includes(legacy, in: "local") == false)
-        #expect(ownership.includes(legacy, in: "remote") == false)
-        #expect(ownership.includes(explicit, in: "remote"))
+        #expect(presentation.active.map(\.id) == ["remote"])
+        #expect(
+            selection == .init(
+                projectID: "shared",
+                projectEnvironmentID: "remote"
+            )
+        )
     }
 
     @Test
-    func selectionSurvivesConnectionChangesAndClearsUnavailableEnvironments() {
+    func routingToAnExcludedProjectReincludesItsEnvironment() {
         let localProject = project(id: "local-project", environmentID: "local")
-        let remoteProject = project(id: "remote-project", environmentID: "remote")
-        let selected = HomeEnvironmentFilter.Selection(
-            environmentID: "local",
-            projectID: localProject.id
-        )
-        let connecting = environment(id: "local", state: .connecting)
-        let disconnected = environment(id: "local", state: .disconnected)
-
-        #expect(
-            selected.reconciled(
-                isFilterEnabled: true,
-                environments: [connecting, environment(id: "remote", state: .connected)],
-                projects: [localProject, remoteProject]
-            ) == selected
-        )
-        #expect(
-            selected.reconciled(
-                isFilterEnabled: true,
-                environments: [disconnected, environment(id: "remote", state: .connected)],
-                projects: [localProject, remoteProject]
-            ) == selected
-        )
-        #expect(
-            selected.reconciled(
-                isFilterEnabled: true,
-                environments: [environment(id: "remote", state: .connected)],
-                projects: [remoteProject]
-            ) == .init(environmentID: nil, projectID: nil)
+        let selection = HomeEnvironmentFilter.Selection(
+            disabledEnvironmentIDs: ["local"],
+            projectID: "remote-project",
+            projectEnvironmentID: "remote"
         )
 
-        let disabledLocal = FeatureEnvironment(
-            id: "local",
-            name: "Local",
-            endpoint: "http://local",
-            isEnabled: false,
-            connectionState: .disconnected
+        let routed = selection.selectingProject(
+            localProject.id,
+            projects: [localProject]
+        )
+
+        #expect(
+            routed == .init(
+                projectID: localProject.id,
+                projectEnvironmentID: localProject.environmentID
+            )
         )
         #expect(
-            selected.reconciled(
-                isFilterEnabled: true,
-                environments: [disabledLocal, environment(id: "remote", state: .connected)],
-                projects: [localProject, remoteProject]
-            ) == .init(environmentID: nil, projectID: nil)
+            routed.selectingProject(nil, projects: [localProject]) == .init()
         )
     }
 
     @Test
-    func preferenceAndEnabledCountControlVisibilityAndRestoreCombinedSelection() {
-        let localProject = project(id: "local-project", environmentID: "local")
-        let remoteProject = project(id: "remote-project", environmentID: "remote")
-        let selected = HomeEnvironmentFilter.Selection(
-            environmentID: "local",
-            projectID: localProject.id
-        )
+    func visibilityRequiresMoreThanOneEnabledEnvironment() {
         let local = environment(id: "local", state: .connected)
         let remote = environment(id: "remote", state: .connected)
         let disabledRemote = FeatureEnvironment(
@@ -163,33 +255,9 @@ struct HomeEnvironmentFilterTests {
             connectionState: .disconnected
         )
 
-        #expect(HomeEnvironmentFilter.shouldShow(isEnabled: true, environments: [local, remote]))
-        #expect(
-            HomeEnvironmentFilter.shouldShow(
-                isEnabled: false,
-                environments: [local, remote]
-            ) == false
-        )
-        #expect(
-            HomeEnvironmentFilter.shouldShow(
-                isEnabled: true,
-                environments: [local, disabledRemote]
-            ) == false
-        )
-        #expect(
-            selected.reconciled(
-                isFilterEnabled: false,
-                environments: [local, remote],
-                projects: [localProject, remoteProject]
-            ) == .init(environmentID: nil, projectID: nil)
-        )
-        #expect(
-            selected.reconciled(
-                isFilterEnabled: true,
-                environments: [local, disabledRemote],
-                projects: [localProject, remoteProject]
-            ) == .init(environmentID: nil, projectID: nil)
-        )
+        #expect(HomeEnvironmentFilter.shouldShow(environments: [local, remote]))
+        #expect(HomeEnvironmentFilter.shouldShow(environments: [local, disabledRemote]) == false)
+        #expect(HomeEnvironmentFilter.shouldShow(environments: [local]) == false)
     }
 
     @Test
@@ -227,108 +295,29 @@ struct HomeEnvironmentFilterTests {
         )
 
         #expect(HomeEnvironmentFilter.connectionStatus(for: environment) == expected)
-        #expect(HomeEnvironmentFilter.connectionStatus(for: environment).accessibilityText.isEmpty == false)
-        #expect(
-            HomeEnvironmentFilter.connectionStatus(for: environment)
-                .accessibilityValue(isSelected: true)
-                .hasSuffix(", Selected")
-        )
+        #expect(expected.accessibilityText.isEmpty == false)
+        #expect(expected.accessibilityValue(isSelected: true).hasSuffix(", Included"))
+        #expect(expected.accessibilityValue(isSelected: false).hasSuffix(", Excluded"))
     }
 
     @Test
-    func selectingAcrossEnvironmentsKeepsProjectRoutesCoherent() {
-        let localProject = project(id: "local-project", environmentID: "local")
-        let remoteProject = project(id: "remote-project", environmentID: "remote")
-        let selected = HomeEnvironmentFilter.Selection(
-            environmentID: "local",
-            projectID: localProject.id
-        )
-
-        #expect(
-            selected.selectingProject(
-                remoteProject.id,
-                projects: [localProject, remoteProject]
-            ) == .init(environmentID: "remote", projectID: remoteProject.id)
-        )
-        #expect(
-            selected.selectingEnvironment(
-                nil,
-                projects: [localProject, remoteProject]
-            ) == .init(environmentID: nil, projectID: nil)
-        )
-    }
-
-    @Test
-    func duplicateProjectIDsResolveWithinTheTargetEnvironment() {
-        let localProject = project(id: "shared", environmentID: "local")
-        let remoteProject = project(id: "shared", environmentID: "remote")
-        let projects = [localProject, remoteProject]
-        let remoteSelection = HomeEnvironmentFilter.Selection(
+    func ambiguousLegacyOwnershipStaysVisibleWhileExplicitOwnershipFilters() {
+        let projects = [
+            project(id: "shared", environmentID: "local"),
+            project(id: "shared", environmentID: "remote"),
+        ]
+        let ownership = HomeEnvironmentFilter.Ownership(projects: projects)
+        let legacy = FeatureThread(id: "legacy", projectID: "shared", title: "Legacy")
+        let explicit = FeatureThread(
+            id: "explicit",
+            projectID: "shared",
             environmentID: "remote",
-            projectID: "shared"
+            title: "Explicit"
         )
 
-        #expect(
-            remoteSelection.reconciled(
-                isFilterEnabled: true,
-                environments: [
-                    environment(id: "local", state: .connected),
-                    environment(id: "remote", state: .connected),
-                ],
-                projects: projects
-            ) == remoteSelection
-        )
-        #expect(
-            HomeEnvironmentFilter.Selection(environmentID: "local", projectID: nil)
-                .selectingProject(
-                    "shared",
-                    targetEnvironmentID: "remote",
-                    projects: projects
-                ) == remoteSelection
-        )
-        #expect(
-            HomeEnvironmentFilter.project(
-                id: "shared",
-                environmentID: "remote",
-                projects: projects
-            ) == remoteProject
-        )
-        #expect(
-            HomeEnvironmentFilter.project(
-                id: "shared",
-                environmentID: nil,
-                projects: projects
-            ) == nil
-        )
-    }
-
-    @Test
-    func projectArrivalReconcilesAUniqueRawIDThatBecomesAmbiguous() {
-        let localProject = project(id: "shared", environmentID: "local")
-        let remoteProject = project(id: "shared", environmentID: "remote")
-        let allEnvironmentsSelection = HomeEnvironmentFilter.Selection(
-            environmentID: nil,
-            projectID: "shared"
-        )
-
-        #expect(
-            allEnvironmentsSelection.reconciled(
-                isFilterEnabled: true,
-                environments: [],
-                projects: [localProject]
-            ) == allEnvironmentsSelection
-        )
-        #expect(
-            allEnvironmentsSelection.reconciled(
-                isFilterEnabled: true,
-                environments: [],
-                projects: [localProject, remoteProject]
-            ) == .init(environmentID: nil, projectID: nil)
-        )
-        #expect(
-            HomeEnvironmentFilter.projectIdentities([localProject])
-                != HomeEnvironmentFilter.projectIdentities([localProject, remoteProject])
-        )
+        #expect(ownership.environmentID(for: legacy) == nil)
+        #expect(ownership.includes(legacy, excluding: ["remote"]))
+        #expect(ownership.includes(explicit, excluding: ["remote"]) == false)
     }
 
     @Test

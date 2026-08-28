@@ -343,7 +343,7 @@ struct DailyUXSidebarTests {
         let filtered = DailyUXSidebarIndex(
             snapshot: snapshot,
             query: "",
-            environmentID: "remote",
+            disabledEnvironmentIDs: ["local"],
             now: now
         )
         let restored = DailyUXSidebarIndex(snapshot: snapshot, query: "", now: now)
@@ -373,7 +373,7 @@ struct DailyUXSidebarTests {
         let filtered = DailyUXSidebarIndex(
             snapshot: snapshot,
             query: "",
-            environmentID: "remote",
+            disabledEnvironmentIDs: ["local"],
             now: now
         )
 

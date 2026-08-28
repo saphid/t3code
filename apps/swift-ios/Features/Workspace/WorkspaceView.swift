@@ -29,11 +29,10 @@ public struct WorkspaceView: View {
 
     @State private var selectedThreadID: String?
     @State private var selectedProjectID: String?
-    @State private var selectedEnvironmentID: String?
+    @State private var disabledEnvironmentIDs: Set<String> = []
+    @State private var selectedProjectEnvironmentID: String?
     @State private var searchText = ""
     @State private var isSearching = false
-    @AppStorage(HomeEnvironmentFilter.isEnabledPreferenceKey)
-    private var isEnvironmentFilterEnabled = true
     @AppStorage("t3.swiftui.home.snoozedExpanded") private var isSnoozedExpanded = false
     @AppStorage("t3.swiftui.home.settledExpanded") private var isSettledExpanded = true
     @AppStorage("t3.swiftui.home.archiveExpanded") private var isArchiveExpanded = false
@@ -238,15 +237,12 @@ public struct WorkspaceView: View {
             preferredCompactColumn = newValue == nil ? .sidebar : .detail
         }
         .onChange(of: selectedProjectIsAvailable) { _, isAvailable in
-            if !isAvailable { selectedProjectID = nil }
+            if !isAvailable { selectProject(nil) }
         }
         .onChange(
             of: HomeEnvironmentFilter.environmentIdentities(model.snapshot.environments),
             initial: true
         ) {
-            reconcileEnvironmentSelection()
-        }
-        .onChange(of: isEnvironmentFilterEnabled) {
             reconcileEnvironmentSelection()
         }
         .onChange(of: HomeEnvironmentFilter.projectIdentities(model.snapshot.projects)) {
@@ -300,7 +296,8 @@ public struct WorkspaceView: View {
             revision: model.homePresentationRevision,
             query: searchText,
             projectID: selectedProjectID,
-            environmentID: selectedEnvironmentID,
+            projectEnvironmentID: selectedProjectEnvironmentID,
+            disabledEnvironmentIDs: disabledEnvironmentIDs,
             now: sidebarBoundaryNow,
             projectOrder: projectSortOrder,
             threadOrder: threadSortOrder
@@ -592,50 +589,9 @@ public struct WorkspaceView: View {
 
     private func projectFilter(projects: [FeatureProject]) -> some View {
         HStack(spacing: 0) {
-            if showsEnvironmentFilter {
-                Button {
-                    showingEnvironmentFilter = true
-                } label: {
-                    HStack(spacing: 7) {
-                        Image(systemName: "network")
-                            .font(.system(size: 13, weight: .medium))
-                        Text(selectedEnvironmentLabel)
-                            .lineLimit(1)
-                        Image(systemName: "chevron.down")
-                            .font(.system(size: 8, weight: .bold))
-                    }
-                    .font(T3Typography.homeMetadata.weight(.semibold))
-                    .foregroundStyle(T3Colors.textSecondary)
-                    .frame(
-                        maxWidth: .infinity,
-                        minHeight: T3Metrics.minimumTapTarget,
-                        alignment: .leading
-                    )
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .popover(isPresented: $showingEnvironmentFilter) {
-                    HomeEnvironmentFilterPopover(
-                        environments: enabledEnvironments,
-                        labels: environmentLabels,
-                        selectedEnvironmentID: selectedEnvironmentID,
-                        onSelect: selectEnvironment
-                    )
-                    .presentationCompactAdaptation(.popover)
-                }
-                .accessibilityLabel("Environment filter")
-                .accessibilityValue(selectedEnvironmentLabel)
-                .accessibilityIdentifier("sidebar-environment-filter")
-
-                Divider()
-                    .frame(height: 20)
-                    .overlay(T3Colors.border)
-                    .padding(.horizontal, 8)
-            }
-
             Menu {
                 Button {
-                    selectedProjectID = nil
+                    selectProject(nil)
                 } label: {
                     if selectedProjectID == nil {
                         Label("All projects", systemImage: "checkmark")
@@ -648,7 +604,8 @@ public struct WorkspaceView: View {
                         selectProject(project.id, targetEnvironmentID: project.environmentID)
                     } label: {
                         let title = projectMenuTitle(project)
-                        if selectedProjectID == project.id {
+                        if selectedProjectID == project.id,
+                           selectedProjectEnvironmentID == project.environmentID {
                             Label(title, systemImage: "checkmark")
                         } else {
                             Text(title)
@@ -705,6 +662,42 @@ public struct WorkspaceView: View {
             )
             .accessibilityIdentifier("sidebar-sort-options")
 
+            if showsEnvironmentFilter {
+                Button("Filter threads by environment", systemImage: "server.rack") {
+                    showingEnvironmentFilter = true
+                }
+                .labelStyle(.iconOnly)
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(T3Colors.textTertiary)
+                .frame(
+                    width: T3Metrics.minimumTapTarget,
+                    height: T3Metrics.minimumTapTarget
+                )
+                .overlay(alignment: .topTrailing) {
+                    if !disabledEnvironmentIDs.isEmpty {
+                        Circle()
+                            .fill(T3Colors.primaryAction)
+                            .frame(width: 6, height: 6)
+                            .padding(.top, 8)
+                            .padding(.trailing, 8)
+                            .accessibilityHidden(true)
+                    }
+                }
+                .buttonStyle(.plain)
+                .popover(isPresented: $showingEnvironmentFilter) {
+                    HomeEnvironmentFilterPopover(
+                        environments: enabledEnvironments,
+                        labels: environmentLabels,
+                        disabledEnvironmentIDs: disabledEnvironmentIDs,
+                        onIncludeAll: includeAllEnvironments,
+                        onToggle: toggleEnvironment
+                    )
+                    .presentationCompactAdaptation(.popover)
+                }
+                .accessibilityValue(environmentFilterAccessibilityValue)
+                .accessibilityIdentifier("sidebar-environment-filter")
+            }
+
             Button { showingAddProject = true } label: {
                 Image(systemName: "folder.badge.plus")
                     .font(.system(size: 13, weight: .medium))
@@ -751,13 +744,9 @@ public struct WorkspaceView: View {
     private var selectedProject: FeatureProject? {
         HomeEnvironmentFilter.project(
             id: selectedProjectID,
-            environmentID: selectedEnvironmentID,
+            environmentID: selectedProjectEnvironmentID,
             projects: model.snapshot.projects
         )
-    }
-
-    private var selectedEnvironment: FeatureEnvironment? {
-        enabledEnvironments.first { $0.id == selectedEnvironmentID }
     }
 
     private var enabledEnvironments: [FeatureEnvironment] {
@@ -765,26 +754,25 @@ public struct WorkspaceView: View {
     }
 
     private var showsEnvironmentFilter: Bool {
-        HomeEnvironmentFilter.shouldShow(
-            isEnabled: isEnvironmentFilterEnabled,
-            environments: model.snapshot.environments
-        )
+        HomeEnvironmentFilter.shouldShow(environments: model.snapshot.environments)
     }
 
     private var environmentLabels: [String: String] {
         HomeEnvironmentFilter.labels(for: enabledEnvironments)
     }
 
-    private var selectedEnvironmentLabel: String {
-        guard let selectedEnvironment else { return "All environments" }
-        return environmentLabels[selectedEnvironment.id] ?? selectedEnvironment.name
+    private var environmentFilterAccessibilityValue: String {
+        let includedCount = enabledEnvironments.count - disabledEnvironmentIDs.count
+        guard includedCount != enabledEnvironments.count else { return "All environments included" }
+        return "\(includedCount) of \(enabledEnvironments.count) environments included"
     }
 
     private var availableProjects: [FeatureProject] {
-        DailyUXCreationContext.projectFilterProjects(
-            in: model.snapshot,
-            environmentID: selectedEnvironmentID
-        )
+        DailyUXCreationContext.projectGroups(in: model.snapshot).compactMap { group in
+            group.projects.first {
+                !disabledEnvironmentIDs.contains($0.environmentID)
+            }
+        }
     }
 
     /// Restricts an already-ordered project list to what the Home project
@@ -834,24 +822,45 @@ public struct WorkspaceView: View {
 
     private var selectedProjectIsAvailable: Bool {
         guard let selectedProjectID else { return true }
-        return availableProjects.contains { $0.id == selectedProjectID }
+        return availableProjects.contains {
+            $0.id == selectedProjectID
+                && $0.environmentID == selectedProjectEnvironmentID
+        }
     }
 
-    private func selectEnvironment(_ id: String?) {
+    private func toggleEnvironment(_ id: String, isIncluded: Bool) {
         applySelection(
             HomeEnvironmentFilter.Selection(
-                environmentID: selectedEnvironmentID,
-                projectID: selectedProjectID
-            ).selectingEnvironment(id, projects: model.snapshot.projects)
+                disabledEnvironmentIDs: disabledEnvironmentIDs,
+                projectID: selectedProjectID,
+                projectEnvironmentID: selectedProjectEnvironmentID
+            ).togglingEnvironment(
+                id,
+                isIncluded: isIncluded,
+                environments: model.snapshot.environments,
+                projects: model.snapshot.projects
+            )
         )
         settledLimit = 12
     }
 
-    private func selectProject(_ id: String, targetEnvironmentID: String? = nil) {
+    private func includeAllEnvironments() {
         applySelection(
             HomeEnvironmentFilter.Selection(
-                environmentID: selectedEnvironmentID,
-                projectID: selectedProjectID
+                disabledEnvironmentIDs: disabledEnvironmentIDs,
+                projectID: selectedProjectID,
+                projectEnvironmentID: selectedProjectEnvironmentID
+            ).includingAll(projects: model.snapshot.projects)
+        )
+        settledLimit = 12
+    }
+
+    private func selectProject(_ id: String?, targetEnvironmentID: String? = nil) {
+        applySelection(
+            HomeEnvironmentFilter.Selection(
+                disabledEnvironmentIDs: disabledEnvironmentIDs,
+                projectID: selectedProjectID,
+                projectEnvironmentID: selectedProjectEnvironmentID
             ).selectingProject(
                 id,
                 targetEnvironmentID: targetEnvironmentID,
@@ -863,10 +872,10 @@ public struct WorkspaceView: View {
     private func reconcileEnvironmentSelection() {
         applySelection(
             HomeEnvironmentFilter.Selection(
-                environmentID: selectedEnvironmentID,
-                projectID: selectedProjectID
+                disabledEnvironmentIDs: disabledEnvironmentIDs,
+                projectID: selectedProjectID,
+                projectEnvironmentID: selectedProjectEnvironmentID
             ).reconciled(
-                isFilterEnabled: isEnvironmentFilterEnabled,
                 environments: model.snapshot.environments,
                 projects: model.snapshot.projects
             )
@@ -874,8 +883,9 @@ public struct WorkspaceView: View {
     }
 
     private func applySelection(_ selection: HomeEnvironmentFilter.Selection) {
-        selectedEnvironmentID = selection.environmentID
+        disabledEnvironmentIDs = selection.disabledEnvironmentIDs
         selectedProjectID = selection.projectID
+        selectedProjectEnvironmentID = selection.projectEnvironmentID
     }
 
     private func openThread(_ id: String) {
@@ -907,7 +917,7 @@ public struct WorkspaceView: View {
             selectProject(id)
             closeSelectedThread()
         case .action(.allProjects):
-            selectedProjectID = nil
+            selectProject(nil)
         case .action(.newTask):
             openNewTaskOrProjectCreation()
         case .action(.addProject):
@@ -1016,7 +1026,8 @@ struct HomePresentation {
         snapshot: FeatureSnapshot,
         query: String,
         projectID: String?,
-        environmentID: String? = nil,
+        projectEnvironmentID: String? = nil,
+        disabledEnvironmentIDs: Set<String> = [],
         now: Date,
         projectOrder: HomeSortOrder = .default,
         threadOrder: HomeSortOrder = .default,
@@ -1027,7 +1038,8 @@ struct HomePresentation {
             snapshot: snapshot,
             query: "",
             projectID: projectID,
-            environmentID: environmentID,
+            projectEnvironmentID: projectEnvironmentID,
+            disabledEnvironmentIDs: disabledEnvironmentIDs,
             now: now
         )
         let ordering = suppliedOrdering ?? HomeOrdering(
@@ -1039,7 +1051,9 @@ struct HomePresentation {
             .filter { thread in
                 thread.isArchived
                     && (projectID == nil || thread.projectID == projectID)
-                    && ownership.includes(thread, in: environmentID)
+                    && (projectEnvironmentID == nil
+                        || ownership.environmentID(for: thread) == projectEnvironmentID)
+                    && ownership.includes(thread, excluding: disabledEnvironmentIDs)
             }
             .sorted {
                 if $0.updatedAt != $1.updatedAt { return $0.updatedAt > $1.updatedAt }
@@ -1094,7 +1108,8 @@ private final class HomePresentationCache {
         let revision: UInt64
         let query: String
         let projectID: String?
-        let environmentID: String?
+        let projectEnvironmentID: String?
+        let disabledEnvironmentIDs: Set<String>
         let now: Date
         let projectOrder: HomeSortOrder
         let threadOrder: HomeSortOrder
@@ -1110,7 +1125,8 @@ private final class HomePresentationCache {
         revision: UInt64,
         query: String,
         projectID: String?,
-        environmentID: String?,
+        projectEnvironmentID: String?,
+        disabledEnvironmentIDs: Set<String>,
         now: Date,
         projectOrder: HomeSortOrder,
         threadOrder: HomeSortOrder
@@ -1119,7 +1135,8 @@ private final class HomePresentationCache {
             revision: revision,
             query: query,
             projectID: projectID,
-            environmentID: environmentID,
+            projectEnvironmentID: projectEnvironmentID,
+            disabledEnvironmentIDs: disabledEnvironmentIDs,
             now: now,
             projectOrder: projectOrder,
             threadOrder: threadOrder
@@ -1150,7 +1167,8 @@ private final class HomePresentationCache {
             snapshot: snapshot,
             query: query,
             projectID: projectID,
-            environmentID: environmentID,
+            projectEnvironmentID: projectEnvironmentID,
+            disabledEnvironmentIDs: disabledEnvironmentIDs,
             now: now,
             projectOrder: projectOrder,
             threadOrder: threadOrder,

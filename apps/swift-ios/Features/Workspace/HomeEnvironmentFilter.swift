@@ -1,8 +1,6 @@
 import Foundation
 
 enum HomeEnvironmentFilter {
-    static let isEnabledPreferenceKey = "t3.swiftui.home.environmentFilterEnabled"
-
     enum ConnectionStatus: Equatable {
         case checking
         case connecting
@@ -21,7 +19,7 @@ enum HomeEnvironmentFilter {
         }
 
         func accessibilityValue(isSelected: Bool) -> String {
-            isSelected ? "\(accessibilityText), Selected" : accessibilityText
+            "\(accessibilityText), \(isSelected ? "Included" : "Excluded")"
         }
     }
 
@@ -50,91 +48,113 @@ enum HomeEnvironmentFilter {
             thread.environmentID ?? environmentByProjectID[thread.projectID]
         }
 
-        func includes(_ thread: FeatureThread, in environmentID: String?) -> Bool {
-            guard let environmentID else { return true }
-            return self.environmentID(for: thread) == environmentID
+        func includes(
+            _ thread: FeatureThread,
+            excluding disabledEnvironmentIDs: Set<String>
+        ) -> Bool {
+            guard let environmentID = environmentID(for: thread) else { return true }
+            return !disabledEnvironmentIDs.contains(environmentID)
         }
     }
 
     struct Selection: Equatable {
-        var environmentID: String?
-        var projectID: String?
+        var disabledEnvironmentIDs: Set<String> = []
+        var projectID: String? = nil
+        var projectEnvironmentID: String? = nil
 
-        func selectingEnvironment(
-            _ environmentID: String?,
+        func togglingEnvironment(
+            _ environmentID: String,
+            isIncluded: Bool,
+            environments: [FeatureEnvironment],
             projects: [FeatureProject]
         ) -> Self {
-            guard let environmentID else {
-                return Self(environmentID: nil, projectID: nil)
+            let optionIDs = Set(HomeEnvironmentFilter.options(from: environments).map(\.id))
+            guard optionIDs.contains(environmentID) else { return self }
+
+            var disabledEnvironmentIDs = disabledEnvironmentIDs
+            if isIncluded {
+                disabledEnvironmentIDs.remove(environmentID)
+            } else {
+                let includedCount = optionIDs.subtracting(disabledEnvironmentIDs).count
+                guard includedCount > 1 else { return self }
+                disabledEnvironmentIDs.insert(environmentID)
             }
+
+            return Self(
+                disabledEnvironmentIDs: disabledEnvironmentIDs,
+                projectID: projectID,
+                projectEnvironmentID: projectEnvironmentID
+            ).reconciled(environments: environments, projects: projects)
+        }
+
+        func includingAll(projects: [FeatureProject]) -> Self {
             let project = HomeEnvironmentFilter.project(
                 id: projectID,
-                environmentID: self.environmentID,
+                environmentID: projectEnvironmentID,
                 projects: projects
             )
             return Self(
-                environmentID: environmentID,
-                projectID: project?.environmentID == environmentID ? projectID : nil
+                disabledEnvironmentIDs: [],
+                projectID: project?.id,
+                projectEnvironmentID: project?.environmentID
             )
         }
 
         func selectingProject(
-            _ projectID: String,
+            _ projectID: String?,
             targetEnvironmentID: String? = nil,
             projects: [FeatureProject]
         ) -> Self {
-            let matches = projects.filter { $0.id == projectID }
-            let lookupEnvironmentID = targetEnvironmentID ?? environmentID
+            guard let projectID else {
+                return Self(
+                    disabledEnvironmentIDs: disabledEnvironmentIDs,
+                    projectID: nil,
+                    projectEnvironmentID: nil
+                )
+            }
             guard let project = HomeEnvironmentFilter.project(
                 id: projectID,
-                environmentID: lookupEnvironmentID,
+                environmentID: targetEnvironmentID,
                 projects: projects
             ) else { return self }
-            let needsEnvironmentDisambiguation = matches.count > 1
+            var disabledEnvironmentIDs = disabledEnvironmentIDs
+            disabledEnvironmentIDs.remove(project.environmentID)
             return Self(
-                environmentID: environmentID == nil && !needsEnvironmentDisambiguation
-                    ? nil
-                    : project.environmentID,
-                projectID: projectID
+                disabledEnvironmentIDs: disabledEnvironmentIDs,
+                projectID: project.id,
+                projectEnvironmentID: project.environmentID
             )
         }
 
         func reconciled(
-            isFilterEnabled: Bool,
             environments: [FeatureEnvironment],
             projects: [FeatureProject]
         ) -> Self {
             let options = HomeEnvironmentFilter.options(from: environments)
-            guard isFilterEnabled, options.count > 1 else {
-                guard environmentID != nil else {
-                    let project = HomeEnvironmentFilter.project(
-                        id: projectID,
-                        environmentID: nil,
-                        projects: projects
-                    )
-                    return Self(environmentID: nil, projectID: project?.id)
-                }
-                return Self(environmentID: nil, projectID: nil)
+            let optionIDs = Set(options.map(\.id))
+            var validDisabledIDs = disabledEnvironmentIDs.intersection(optionIDs)
+            if !optionIDs.isEmpty, optionIDs.isSubset(of: validDisabledIDs) {
+                validDisabledIDs.removeAll()
             }
-            guard let environmentID else {
-                let project = HomeEnvironmentFilter.project(
-                    id: projectID,
-                    environmentID: nil,
-                    projects: projects
-                )
-                return Self(environmentID: nil, projectID: project?.id)
-            }
-            guard options.contains(where: { $0.id == environmentID }) else {
-                return Self(environmentID: nil, projectID: nil)
-            }
+
             let project = HomeEnvironmentFilter.project(
                 id: projectID,
-                environmentID: environmentID,
+                environmentID: projectEnvironmentID,
                 projects: projects
             )
+            guard let project,
+                  optionIDs.contains(project.environmentID),
+                  !validDisabledIDs.contains(project.environmentID) else {
+                return Self(
+                    disabledEnvironmentIDs: validDisabledIDs,
+                    projectID: nil,
+                    projectEnvironmentID: nil
+                )
+            }
             return Self(
-                environmentID: environmentID,
-                projectID: project?.environmentID == environmentID ? projectID : nil
+                disabledEnvironmentIDs: validDisabledIDs,
+                projectID: project.id,
+                projectEnvironmentID: project.environmentID
             )
         }
     }
@@ -167,11 +187,8 @@ enum HomeEnvironmentFilter {
         environments.filter(\.isEnabled)
     }
 
-    static func shouldShow(
-        isEnabled: Bool,
-        environments: [FeatureEnvironment]
-    ) -> Bool {
-        isEnabled && options(from: environments).count > 1
+    static func shouldShow(environments: [FeatureEnvironment]) -> Bool {
+        options(from: environments).count > 1
     }
 
     static func connectionStatus(

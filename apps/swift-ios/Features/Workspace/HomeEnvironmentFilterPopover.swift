@@ -1,64 +1,65 @@
 import SwiftUI
 
 struct HomeEnvironmentFilterPopover: View {
-    @SwiftUI.Environment(\.dismiss) private var dismiss
-
     let environments: [FeatureEnvironment]
     let labels: [String: String]
-    let selectedEnvironmentID: String?
-    let onSelect: (String?) -> Void
+    let disabledEnvironmentIDs: Set<String>
+    let onIncludeAll: () -> Void
+    let onToggle: (String, Bool) -> Void
+
+    private var includedCount: Int {
+        environments.count - disabledEnvironmentIDs.count
+    }
 
     var body: some View {
         NavigationStack {
             List {
-                Button(action: selectAll) {
+                Button(action: onIncludeAll) {
                     HStack {
                         Text("All environments")
                         Spacer(minLength: 8)
-                        if selectedEnvironmentID == nil {
+                        if disabledEnvironmentIDs.isEmpty {
                             Image(systemName: "checkmark")
                                 .accessibilityHidden(true)
                         }
                     }
                 }
-                .accessibilityValue(selectedEnvironmentID == nil ? "Selected" : "Not selected")
+                .disabled(disabledEnvironmentIDs.isEmpty)
+                .accessibilityValue(
+                    disabledEnvironmentIDs.isEmpty ? "All included" : "Include all"
+                )
                 .accessibilityIdentifier("home-environment-option-all")
 
                 ForEach(environments) { environment in
                     let title = labels[environment.id] ?? environment.name
                     let status = HomeEnvironmentFilter.connectionStatus(for: environment)
+                    let isIncluded = !disabledEnvironmentIDs.contains(environment.id)
                     Button {
-                        select(environment.id)
+                        onToggle(environment.id, !isIncluded)
                     } label: {
                         HomeEnvironmentFilterOptionLabel(
                             title: title,
                             status: status,
-                            isSelected: selectedEnvironmentID == environment.id
+                            isSelected: isIncluded
                         )
                     }
+                    .disabled(isIncluded && includedCount == 1)
                     .accessibilityLabel(title)
                     .accessibilityValue(
-                        status.accessibilityValue(
-                            isSelected: selectedEnvironmentID == environment.id
-                        )
+                        status.accessibilityValue(isSelected: isIncluded)
+                    )
+                    .accessibilityHint(
+                        isIncluded && includedCount == 1
+                            ? "At least one environment must remain included"
+                            : isIncluded ? "Double tap to exclude" : "Double tap to include"
                     )
                     .accessibilityIdentifier("home-environment-option-\(environment.id)")
                 }
             }
             .listStyle(.plain)
-            .navigationTitle("Environment")
+            .navigationTitle("Environments")
             .navigationBarTitleDisplayMode(.inline)
         }
         .frame(minWidth: 320, idealHeight: 320)
-    }
-
-    private func selectAll() {
-        onSelect(nil)
-        dismiss()
-    }
-
-    private func select(_ id: String) {
-        onSelect(id)
-        dismiss()
     }
 }
