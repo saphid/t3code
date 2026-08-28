@@ -154,12 +154,15 @@ public struct FeatureSourceLine: Identifiable, Sendable, Equatable, Hashable, Co
 /// A bounded, language-aware lexer for file previews. It runs once when a file loads;
 /// SwiftUI receives immutable line plans and performs no regex or token work while scrolling.
 public enum FeatureSourceHighlighter {
+    public static let maximumContentBytes = 512 * 1_024
+    public static let maximumLineBytes = 32 * 1_024
+
     public static func lines(text: String, language: String?) -> [FeatureSourceLine] {
         let sourceLines = text.split(separator: "\n", omittingEmptySubsequences: false)
-        let highlightsContent = text.utf8.count <= 512 * 1_024
+        let highlightsContent = text.utf8.count <= maximumContentBytes
         var isInsideBlockComment = false
         return sourceLines.enumerated().map { index, line in
-            guard highlightsContent, line.utf8.count <= 32 * 1_024 else {
+            guard highlightsContent, line.utf8.count <= maximumLineBytes else {
                 return FeatureSourceLine(
                     id: index,
                     spans: line.isEmpty

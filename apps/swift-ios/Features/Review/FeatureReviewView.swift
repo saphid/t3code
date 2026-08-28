@@ -204,6 +204,7 @@ private struct FeatureDiffView: View {
     let appendCommentToDraft: (FeatureReviewCommentDraft) -> Void
 
     @State private var renderedLines: [FeatureDiffLine]
+    @State private var syntaxSpansByLineID: [String: [FeatureDiffSyntaxSpan]] = [:]
     @State private var isHydrating = false
     @State private var commentSession = FeatureReviewCommentSession()
     @FocusState private var isCommentFocused: Bool
@@ -241,6 +242,7 @@ private struct FeatureDiffView: View {
                             ForEach(renderedLines.enumerated(), id: \.element.id) { index, line in
                                 FeatureDiffLineRow(
                                     line: line,
+                                    syntaxSpans: syntaxSpansByLineID[line.id],
                                     isSelected: commentSession.selection?.contains(index) == true,
                                     minimumWidth: proxy.size.width,
                                     select: { selectLine(at: index) },
@@ -413,14 +415,25 @@ private struct FeatureDiffView: View {
     private func hydrate() async {
         isHydrating = true
         defer { isHydrating = false }
+        await highlight(renderedLines)
         guard let contents = try? await client.loadReviewFileContents(
             threadID: threadID,
             file: file
         ) else {
             return
         }
-        renderedLines = FeatureFullDiffHydrator.lines(for: file, contents: contents)
+        let hydratedLines = FeatureFullDiffHydrator.lines(for: file, contents: contents)
+        renderedLines = hydratedLines
         commentSession.cancelComposer()
+        await highlight(hydratedLines)
+    }
+
+    private func highlight(_ lines: [FeatureDiffLine]) async {
+        let highlighted = await FeatureDiffSyntaxWorker.shared.lines(for: file, lines: lines)
+        guard !Task.isCancelled else { return }
+        syntaxSpansByLineID = highlighted.reduce(into: [:]) { result, line in
+            result[line.id] = line.spans
+        }
     }
 
     private func appendComment() {
@@ -436,6 +449,7 @@ private struct FeatureDiffView: View {
 
 private struct FeatureDiffLineRow: View {
     let line: FeatureDiffLine
+    let syntaxSpans: [FeatureDiffSyntaxSpan]?
     let isSelected: Bool
     let minimumWidth: CGFloat
     let select: () -> Void
@@ -468,7 +482,8 @@ private struct FeatureDiffLineRow: View {
             minHeight: line.kind == .hunk ? 30 : 22,
             alignment: .leading
         )
-        .background(isSelected ? T3Colors.accent.opacity(0.14) : background)
+        .background(background)
+        .background(isSelected ? T3Colors.accent.opacity(0.14) : Color.clear)
         .overlay(alignment: .leading) {
             if isSelected {
                 Rectangle()
@@ -509,7 +524,19 @@ private struct FeatureDiffLineRow: View {
 
     @ViewBuilder
     private var diffText: some View {
-        if let spans = line.spans, !spans.isEmpty {
+        if let syntaxSpans, !syntaxSpans.isEmpty {
+            HStack(spacing: 0) {
+                ForEach(syntaxSpans.indices, id: \.self) { index in
+                    let span = syntaxSpans[index]
+                    Text(verbatim: span.text)
+                        .foregroundStyle(syntaxColor(for: span.syntax))
+                        .fontWeight(span.emphasis == .changed ? .semibold : .regular)
+                        .background(
+                            span.emphasis == .changed ? changedSpanBackground : Color.clear
+                        )
+                }
+            }
+        } else if let spans = line.spans, !spans.isEmpty {
             HStack(spacing: 0) {
                 ForEach(spans.indices, id: \.self) { index in
                     let span = spans[index]
@@ -522,6 +549,17 @@ private struct FeatureDiffLineRow: View {
         } else {
             Text(line.text.isEmpty ? " " : line.text)
                 .foregroundStyle(.primary)
+        }
+    }
+
+    private func syntaxColor(for kind: FeatureSourceTokenKind) -> Color {
+        switch kind {
+        case .plain: .primary
+        case .comment: T3Colors.textTertiary
+        case .keyword: T3Colors.syntaxKeyword
+        case .literal: T3Colors.syntaxLiteral
+        case .number: T3Colors.syntaxNumber
+        case .property: T3Colors.syntaxProperty
         }
     }
 
