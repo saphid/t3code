@@ -36,10 +36,11 @@ import { HttpClient, HttpClientResponse } from "effect/unstable/http";
 
 import { ServerConfig } from "../config.ts";
 import { expandHomePath } from "../pathExpansion.ts";
+import { ProjectionProjectRepository } from "../persistence/Services/ProjectionProjects.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { resolveClaudeHomePath } from "../provider/Drivers/ClaudeHome.ts";
 import { resolveCodexHomeLayout } from "../provider/Drivers/CodexHomeLayout.ts";
-import { UsageAggregator } from "./usageAggregation.ts";
+import { makeProjectResolver, UsageAggregator } from "./usageAggregation.ts";
 import { parseRateTable, type RateTable } from "./usagePricing.ts";
 import {
   listTranscriptFiles,
@@ -126,6 +127,7 @@ export const make = Effect.gen(function* () {
   const settingsService = yield* ServerSettings.ServerSettingsService;
   const httpClient = yield* HttpClient.HttpClient;
   const hostEnvironment = yield* HostProcessEnvironment;
+  const projectRepository = yield* ProjectionProjectRepository;
 
   const fileCache: ScanCache = new Map();
   let cacheDirty = false;
@@ -238,6 +240,27 @@ export const make = Effect.gen(function* () {
         fileName: "updates.jsonl",
       },
     ];
+  });
+
+  /**
+   * Builds the cwd → project-title resolver for one scan.
+   *
+   * Projects are re-read every scan so a project created or renamed since the
+   * last refresh attributes correctly. A repository failure degrades to "no
+   * attribution" rather than failing the page.
+   */
+  const resolveProjects = Effect.fn("UsageService.resolveProjects")(function* () {
+    const projects = yield* projectRepository
+      .listAll()
+      .pipe(Effect.catchCause(() => Effect.succeed<readonly never[]>([])));
+    return makeProjectResolver(
+      projects.map((project) => ({
+        workspaceRoot: project.workspaceRoot,
+        title: project.title,
+        deleted: project.deletedAt !== null,
+      })),
+      path.sep,
+    );
   });
 
   /**
@@ -362,6 +385,7 @@ export const make = Effect.gen(function* () {
       resolution: input.resolution ?? "day",
       ...hourlyWindow,
       rates,
+      resolveProject: yield* resolveProjects(),
     });
 
     const sources: UsageSource[] = [];
