@@ -21,15 +21,15 @@ import { NonNegativeInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
  * client renders partial coverage when an environment reports an older version
  * rather than failing the whole page.
  */
-export const USAGE_CONTRACT_VERSION = 6 as const;
+export const USAGE_CONTRACT_VERSION = 7 as const;
 
 /**
  * Oldest {@link UsageSummary} version a current client will still merge.
  *
- * v5 only adds `grok` to {@link UsageProviderKind}; v6 only adds the optional
- * bucket `project`. v4 Claude/Codex buckets remain valid, so mixed-version
- * environments keep those totals instead of treating every older server as
- * stale.
+ * v5 only adds `grok` to {@link UsageProviderKind}; v6 and v7 only add the
+ * optional bucket fields `project` and `cacheWriteUsd`. v4 Claude/Codex
+ * buckets remain valid, so mixed-version environments keep those totals
+ * instead of treating every older server as stale.
  */
 export const USAGE_MERGE_COMPATIBLE_SINCE = 4 as const;
 
@@ -111,6 +111,13 @@ export const UsageBucket = Schema.Struct({
    * rather than derived on the client.
    */
   cacheSavingsUsd: Schema.Number,
+  /**
+   * What the cache writes in this bucket cost at the model's cache-write
+   * rate: the price of re-priming context after cache expiry. A subset of
+   * `costUsd` when the bucket is model-priced. Absent from summaries written
+   * before this field existed.
+   */
+  cacheWriteUsd: Schema.optional(Schema.Number),
   costSource: UsageCostSource,
   /** Distinct assistant responses, after de-duplication. */
   records: NonNegativeInt,
