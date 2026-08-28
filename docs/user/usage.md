@@ -12,6 +12,9 @@ Use **Past 24h** for an hourly chart covering the exact rolling 24-hour period. 
 **30 days**, and **90 days** ranges use daily resolution. Cost and token toggles update both the
 headline and chart, and refreshing rescans every connected environment.
 
+Any daily chart zooms: drag across it to make the selection the new date window, and double-click
+to return to the preset. The date fields beside the presets accept any custom range directly.
+
 The **Context re-chunking** total is what cache writes cost at the model's cache-write rate: the
 price of re-priming a session's context after its cache expired. It only applies to providers that
 bill cache writes (Anthropic does, OpenAI does not), so rows without cache writes show a dash.
