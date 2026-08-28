@@ -132,6 +132,9 @@ struct FeatureComposerView: View {
                 heldKeyboardBeforeCommandDrawer = false
                 expandAndFocus()
             }
+            .onChange(of: attachmentDraftIsSettled) { _, isSettled in
+                if isSettled { attachmentPreparation.releaseOrdinals() }
+            }
             .onChange(of: focused) {
                 if FeatureComposerCollapsePolicy.shouldCollapse(
                     isFocused: focused,
@@ -366,6 +369,14 @@ struct FeatureComposerView: View {
         RoundedRectangle(cornerRadius: 22, style: .continuous)
     }
 
+    private var attachmentDraftIsSettled: Bool {
+        FeatureComposerAttachmentOrdinalPolicy.releasesOrdinals(
+            attachmentsAreEmpty: attachments.isEmpty,
+            isPreparingAttachments: attachmentPreparation.isPreparing,
+            isSending: isSending
+        )
+    }
+
     private var isExpanded: Bool {
         forceExpanded
             || isManuallyExpanded
@@ -571,17 +582,18 @@ struct FeatureComposerView: View {
         let loads = accepted.map { provider in
             Result { try FeatureImageItemProviderLoader.start(from: provider) }
         }
-        let operation = attachmentPreparation.begin(itemCount: accepted.count)
+        let operation = attachmentPreparation.begin(
+            itemCount: accepted.count,
+            after: attachments.map(\.filename)
+        )
         Task { @MainActor in
             defer { attachmentPreparation.finish(operation) }
             for (offset, load) in loads.enumerated() {
                 do {
                     let data = try await load.get().data()
+                    let ordinal = operation.ordinal(at: offset)
                     let attachment = try await Task.detached(priority: .userInitiated) {
-                        try FeatureImageProcessor.attachment(
-                            from: data,
-                            ordinal: plan.firstOrdinal + offset
-                        )
+                        try FeatureImageProcessor.attachment(from: data, ordinal: ordinal)
                     }.value
                     attachments.append(attachment)
                 } catch {
@@ -597,6 +609,21 @@ struct FeatureComposerView: View {
         guard imagesAllowed, !providers.isEmpty else { return false }
         attachImageProviders(providers)
         return true
+    }
+}
+
+enum FeatureComposerAttachmentOrdinalPolicy {
+    /// Attachment numbering may restart at one only when the draft holds no
+    /// attachments, no intake is still preparing one, and no send is still
+    /// holding the attachments it took. Restarting during a send would let a
+    /// failed send restore an attachment whose name a new paste had already
+    /// been given.
+    static func releasesOrdinals(
+        attachmentsAreEmpty: Bool,
+        isPreparingAttachments: Bool,
+        isSending: Bool
+    ) -> Bool {
+        attachmentsAreEmpty && !isPreparingAttachments && !isSending
     }
 }
 

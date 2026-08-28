@@ -42,8 +42,8 @@ struct AttachmentPreparationTests {
         var state = FeatureAttachmentPreparationState()
         let firstID = UUID(uuidString: "00000000-0000-0000-0000-000000000001")!
         let secondID = UUID(uuidString: "00000000-0000-0000-0000-000000000002")!
-        let first = state.begin(itemCount: 2, id: firstID)
-        let second = state.begin(itemCount: 1, id: secondID)
+        let first = state.begin(itemCount: 2, after: [], id: firstID)
+        let second = state.begin(itemCount: 1, after: [], id: secondID)
 
         #expect(state.isPreparing)
         #expect(state.pendingItemCount == 3)
@@ -64,7 +64,7 @@ struct AttachmentPreparationTests {
     @Test
     func textOnlySubmissionWaitsForSelectedImagePreparation() {
         var state = FeatureAttachmentPreparationState()
-        let operation = state.begin(itemCount: 1)
+        let operation = state.begin(itemCount: 1, after: [])
 
         #expect(!FeatureComposerSubmissionEligibility.canSend(
             text: "Explain this screenshot",

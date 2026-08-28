@@ -10,12 +10,28 @@ enum FeatureImageAttachmentLimits {
     static let maximumCount = 8
 }
 
+/// Tracks the image intake a composer has accepted but not finished preparing,
+/// and owns the attachment ordinals those intakes reserved.
+///
+/// A reserved ordinal is spent. It is not returned when an item fails, when the
+/// user cancels, or when an attachment is removed, so no later intake can be
+/// handed a number that is still on screen. Numbering restarts only once the
+/// draft is settled — see `releaseOrdinals()`.
 struct FeatureAttachmentPreparationState: Equatable {
-    struct Operation: Hashable {
+    /// One accepted intake, carrying the block of ordinals reserved for it.
+    struct Operation: Equatable {
         fileprivate let id: UUID
+        fileprivate let reservedOrdinals: Range<Int>
+
+        /// The ordinal for the item at `offset`, so a multi-image intake keeps
+        /// the order the user sees.
+        func ordinal(at offset: Int) -> Int {
+            reservedOrdinals.lowerBound + offset
+        }
     }
 
-    private var pendingItemsByOperation: [Operation: Int] = [:]
+    private var pendingItemsByOperation: [UUID: Int] = [:]
+    private var highestReservedOrdinal = 0
 
     var isPreparing: Bool {
         !pendingItemsByOperation.isEmpty
@@ -29,15 +45,34 @@ struct FeatureAttachmentPreparationState: Equatable {
         pendingItemCount == 1 ? "Preparing image…" : "Preparing \(pendingItemCount) images…"
     }
 
+    /// Accepts one intake of `itemCount` items, reserving both its share of the
+    /// attachment cap and a block of ordinals no other intake can be given.
+    /// `existingNames` raises the floor past attachments this composer never
+    /// numbered itself, such as a restored draft or an imported share.
     @discardableResult
-    mutating func begin(itemCount: Int, id: UUID = UUID()) -> Operation {
-        let operation = Operation(id: id)
-        pendingItemsByOperation[operation] = max(1, itemCount)
-        return operation
+    mutating func begin(
+        itemCount: Int,
+        after existingNames: [String],
+        id: UUID = UUID()
+    ) -> Operation {
+        let count = max(1, itemCount)
+        let floor = max(highestReservedOrdinal, FeatureAttachmentOrdinal.highest(in: existingNames))
+        highestReservedOrdinal = floor + count
+        pendingItemsByOperation[id] = count
+        return Operation(id: id, reservedOrdinals: (floor + 1) ..< (floor + 1 + count))
     }
 
     mutating func finish(_ operation: Operation) {
-        pendingItemsByOperation.removeValue(forKey: operation)
+        pendingItemsByOperation.removeValue(forKey: operation.id)
+    }
+
+    /// Lets the next intake start again at "Image 1". Only the composer knows
+    /// when that is safe, so it decides through
+    /// `FeatureComposerAttachmentOrdinalPolicy`; the in-flight guard here keeps
+    /// the reservation invariant true regardless of who calls.
+    mutating func releaseOrdinals() {
+        guard !isPreparing else { return }
+        highestReservedOrdinal = 0
     }
 }
 
@@ -204,8 +239,10 @@ struct FeatureImageAttachmentPicker: View {
 
             let selected = Array(pendingPhotoLibraryItems.prefix(remainingCount))
             pendingPhotoLibraryItems = []
-            let firstOrdinal = attachments.count + preparationState.pendingItemCount + 1
-            let operation = preparationState.begin(itemCount: selected.count)
+            let operation = preparationState.begin(
+                itemCount: selected.count,
+                after: attachments.map(\.filename)
+            )
 
             defer {
                 preparationState.finish(operation)
@@ -215,10 +252,7 @@ struct FeatureImageAttachmentPicker: View {
             for (offset, item) in selected.enumerated() {
                 do {
                     let data = try await item.loadData()
-                    try await appendImage(
-                        data,
-                        ordinal: firstOrdinal + offset
-                    )
+                    try await appendImage(data, ordinal: operation.ordinal(at: offset))
                 } catch {
                     errorMessage = error.localizedDescription
                 }
@@ -232,7 +266,10 @@ struct FeatureImageAttachmentPicker: View {
             isFlowActive = false
             return
         }
-        let operation = preparationState.begin(itemCount: 1)
+        let operation = preparationState.begin(
+            itemCount: 1,
+            after: attachments.map(\.filename)
+        )
 
         Task {
             defer {
@@ -246,7 +283,7 @@ struct FeatureImageAttachmentPicker: View {
                     }
                     return data
                 }.value
-                try await appendImage(data)
+                try await appendImage(data, ordinal: operation.ordinal(at: 0))
             } catch {
                 errorMessage = error.localizedDescription
             }
@@ -260,11 +297,15 @@ struct FeatureImageAttachmentPicker: View {
             errorMessage = error.localizedDescription
         case .success(let urls):
             guard !urls.isEmpty, canAdd else { return }
-            let operation = preparationState.begin(itemCount: min(urls.count, remainingCount))
+            let accepted = Array(urls.prefix(remainingCount))
+            let operation = preparationState.begin(
+                itemCount: accepted.count,
+                after: attachments.map(\.filename)
+            )
 
             Task {
                 defer { preparationState.finish(operation) }
-                for url in urls.prefix(remainingCount) {
+                for (offset, url) in accepted.enumerated() {
                     do {
                         let data = try await Task.detached(priority: .userInitiated) {
                             let hasAccess = url.startAccessingSecurityScopedResource()
@@ -273,7 +314,7 @@ struct FeatureImageAttachmentPicker: View {
                             }
                             return try Data(contentsOf: url, options: .mappedIfSafe)
                         }.value
-                        try await appendImage(data)
+                        try await appendImage(data, ordinal: operation.ordinal(at: offset))
                     } catch {
                         errorMessage = error.localizedDescription
                         break
@@ -283,8 +324,7 @@ struct FeatureImageAttachmentPicker: View {
         }
     }
 
-    private func appendImage(_ data: Data, ordinal: Int? = nil) async throws {
-        let ordinal = ordinal ?? attachments.count + 1
+    private func appendImage(_ data: Data, ordinal: Int) async throws {
         let attachment = try await Task.detached(priority: .userInitiated) {
             try FeatureImageProcessor.attachment(from: data, ordinal: ordinal)
         }.value
@@ -538,7 +578,7 @@ enum FeatureImageProcessor {
         return FeatureDraftAttachment(
             data: data,
             thumbnailData: thumbnailData,
-            filename: "Image \(ordinal).jpg",
+            filename: FeatureAttachmentOrdinal.filename(ordinal),
             mimeType: "image/jpeg"
         )
     }

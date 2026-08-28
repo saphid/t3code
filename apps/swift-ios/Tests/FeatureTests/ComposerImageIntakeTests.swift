@@ -21,18 +21,18 @@ struct ComposerImageIntakeTests {
         let plan = try #require(Self.plan(providerCount: 3))
 
         #expect(plan.acceptedCount == 3)
-        #expect(plan.firstOrdinal == 1)
         #expect(plan.droppedCount == 0)
     }
 
     @Test
-    func ordinalsContinueAfterExistingAndInFlightAttachments() throws {
+    func attachedAndInFlightImagesBothSpendTheCap() throws {
+        // Two attached plus one still preparing leaves room for five more.
         let plan = try #require(
-            Self.plan(providerCount: 1, attachmentCount: 2, pendingCount: 1)
+            Self.plan(providerCount: 8, attachmentCount: 2, pendingCount: 1)
         )
 
-        // Two attached plus one still preparing means this image is number four.
-        #expect(plan.firstOrdinal == 4)
+        #expect(plan.acceptedCount == 5)
+        #expect(plan.droppedCount == 3)
     }
 
     @Test

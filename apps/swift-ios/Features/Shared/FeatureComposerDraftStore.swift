@@ -219,7 +219,13 @@ public actor FeatureComposerDraftStore {
                 : "\(persisted.text)\n\n\(incomingText)"
         }
 
-        persisted.attachments.append(contentsOf: uniqueAttachments.map(PersistedAttachment.init))
+        // The extension numbers its own images from one, so renumber them past
+        // whatever the draft already holds before they become one list.
+        let renumbered = FeatureAttachmentOrdinal.renumbered(
+            uniqueAttachments,
+            after: persisted.attachments.map(\.filename)
+        )
+        persisted.attachments.append(contentsOf: renumbered.map(PersistedAttachment.init))
         importedIDs.append(shareID)
         persisted.importedShareIDs = Array(importedIDs.suffix(32))
         drafts[key] = persisted

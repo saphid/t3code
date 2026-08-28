@@ -8,9 +8,12 @@ import UniformTypeIdentifiers
 /// Paste and drop are two doors into the same room: both produce item
 /// providers, both land in the attachment strip, and both must respect the
 /// attachment cap while earlier images are still being prepared.
+///
+/// The plan settles capacity only. Ordinals come from
+/// `FeatureAttachmentPreparationState`, which is the only thing that knows what
+/// earlier intakes already spent.
 struct FeatureComposerImageIntakePlan: Equatable {
     let acceptedCount: Int
-    let firstOrdinal: Int
     let droppedCount: Int
 
     /// Returns nil when nothing can be accepted, either because the batch is
@@ -28,7 +31,6 @@ struct FeatureComposerImageIntakePlan: Equatable {
 
         return FeatureComposerImageIntakePlan(
             acceptedCount: accepted,
-            firstOrdinal: attachmentCount + pendingCount + 1,
             droppedCount: providerCount - accepted
         )
     }

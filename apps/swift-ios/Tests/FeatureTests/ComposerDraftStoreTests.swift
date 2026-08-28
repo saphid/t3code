@@ -75,6 +75,58 @@ struct ComposerDraftStoreTests {
         #expect(try await store.draft(for: key) == nil)
     }
 
+    @Test func importedShareImagesAreRenumberedPastExistingDraftImages() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = FeatureComposerDraftStore(
+            fileURL: directory.appendingPathComponent("drafts.json")
+        )
+        let key = "environment:test:new-task:project"
+        let existing = [
+            FeatureDraftAttachment(
+                data: Data([0x01]),
+                filename: "Image 1.jpg",
+                mimeType: "image/jpeg"
+            ),
+            FeatureDraftAttachment(
+                data: Data([0x02]),
+                filename: "Image 2.jpg",
+                mimeType: "image/jpeg"
+            ),
+        ]
+        let incoming = [
+            FeatureDraftAttachment(
+                data: Data([0x03]),
+                filename: "Image 1.jpg",
+                mimeType: "image/jpeg"
+            ),
+            FeatureDraftAttachment(
+                data: Data([0x04]),
+                filename: "Image 2.jpg",
+                mimeType: "image/jpeg"
+            ),
+        ]
+        try await store.setDraft(
+            FeatureComposerDraft(attachments: existing),
+            for: key
+        )
+
+        let imported = try await store.importSharedContent(
+            shareID: "share-with-images",
+            text: "",
+            attachments: incoming,
+            for: key
+        )
+
+        #expect(imported.attachments.map(\.filename) == [
+            "Image 1.jpg",
+            "Image 2.jpg",
+            "Image 3.jpg",
+            "Image 4.jpg",
+        ])
+    }
+
     @Test func environmentRemovalLeavesOtherDraftsAlone() async throws {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
