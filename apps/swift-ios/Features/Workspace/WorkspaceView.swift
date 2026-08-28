@@ -1070,9 +1070,10 @@ struct HomePresentation {
             rowContexts: rowContexts
         )
         validProjectGroupIDs = Set(logicalGroups.map(\.id)).union(projectGroups.map(\.id))
-        isProjectCatalogComplete = snapshot.environments
-            .filter(\.isEnabled)
-            .allSatisfy { $0.connectionState == .connected }
+        isProjectCatalogComplete = !snapshot.environments.isEmpty
+            && snapshot.environments.allSatisfy {
+                $0.isEnabled && $0.connectionState == .connected
+            }
     }
 }
 

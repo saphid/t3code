@@ -124,4 +124,98 @@ struct HomeProjectGroupCollapseTests {
         #expect(reconciled == ["alpha"])
         #expect(HomeProjectGroupCollapseStore(defaults: defaults).load() == ["alpha"])
     }
+
+    @Test(.bug("https://github.com/saphid/t3code-personal/issues/148"))
+    func allDisabledCatalogDoesNotErasePersistedChoices() {
+        let suiteName = "home-project-group-disabled-\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let store = HomeProjectGroupCollapseStore(defaults: defaults)
+        store.save(["alpha"])
+
+        let presentation = HomePresentation(
+            snapshot: FeatureSnapshot(
+                environments: [
+                    FeatureEnvironment(
+                        id: "environment",
+                        name: "Disabled",
+                        endpoint: "ws://disabled",
+                        isEnabled: false,
+                        connectionState: .disconnected
+                    ),
+                ]
+            ),
+            query: "",
+            projectID: nil,
+            now: Date(timeIntervalSince1970: 200)
+        )
+
+        let reconciled = store.reconcile(
+            validGroupIDs: presentation.validProjectGroupIDs,
+            catalogIsComplete: presentation.isProjectCatalogComplete
+        )
+
+        #expect(reconciled == ["alpha"])
+        #expect(HomeProjectGroupCollapseStore(defaults: defaults).load() == ["alpha"])
+    }
+
+    @Test(.bug("https://github.com/saphid/t3code-personal/issues/148"))
+    func partiallyDisabledCatalogDoesNotErasePersistedChoices() {
+        let suiteName = "home-project-group-partially-disabled-\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let store = HomeProjectGroupCollapseStore(defaults: defaults)
+        let connectedProject = FeatureProject(
+            id: "connected-project",
+            environmentID: "connected-environment",
+            name: "Connected",
+            path: "/work/connected"
+        )
+        let disabledProject = FeatureProject(
+            id: "disabled-project",
+            environmentID: "disabled-environment",
+            name: "Disabled",
+            path: "/work/disabled"
+        )
+        let connectedGroupID = DailyUXProjectGrouping.logicalProjectID(for: connectedProject)
+        let disabledGroupID = DailyUXProjectGrouping.logicalProjectID(for: disabledProject)
+        store.save([connectedGroupID, disabledGroupID])
+
+        let presentation = HomePresentation(
+            snapshot: FeatureSnapshot(
+                environments: [
+                    FeatureEnvironment(
+                        id: "connected-environment",
+                        name: "Connected",
+                        endpoint: "ws://connected",
+                        connectionState: .connected
+                    ),
+                    FeatureEnvironment(
+                        id: "disabled-environment",
+                        name: "Disabled",
+                        endpoint: "ws://disabled",
+                        isEnabled: false,
+                        connectionState: .disconnected
+                    ),
+                ],
+                projects: [connectedProject, disabledProject]
+            ),
+            query: "",
+            projectID: nil,
+            now: Date(timeIntervalSince1970: 200)
+        )
+
+        #expect(presentation.validProjectGroupIDs == [connectedGroupID])
+        #expect(presentation.isProjectCatalogComplete == false)
+        let reconciled = store.reconcile(
+            validGroupIDs: presentation.validProjectGroupIDs,
+            catalogIsComplete: presentation.isProjectCatalogComplete
+        )
+
+        #expect(reconciled == [connectedGroupID, disabledGroupID])
+        #expect(
+            HomeProjectGroupCollapseStore(defaults: defaults).load()
+                == [connectedGroupID, disabledGroupID]
+        )
+    }
 }
