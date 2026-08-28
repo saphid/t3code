@@ -232,6 +232,12 @@ export const make = Effect.gen(function* () {
     return [
       { provider: "claude" as const, dir: claudeDir },
       { provider: "codex" as const, dir: path.join(codexLayout.sharedHomePath, "sessions") },
+      // Archiving a Codex thread moves its rollout out of `sessions`; the spend
+      // already happened, so archived transcripts must keep counting.
+      {
+        provider: "codex" as const,
+        dir: path.join(codexLayout.sharedHomePath, "archived_sessions"),
+      },
       {
         provider: "grok" as const,
         dir: path.join(grokHome, "sessions"),
