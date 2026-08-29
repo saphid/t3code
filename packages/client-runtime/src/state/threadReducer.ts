@@ -92,6 +92,7 @@ export function applyThreadDetailEvent(
           archivedAt: null,
           settledOverride: null,
           settledAt: null,
+          unsettledAt: null,
           snoozedUntil: null,
           snoozedAt: null,
           deletedAt: null,
@@ -128,8 +129,9 @@ export function applyThreadDetailEvent(
         kind: "updated",
         thread: {
           ...thread,
-          settledOverride: "settled",
+          settledOverride: event.payload.reason === "automatic" ? null : "settled",
           settledAt: event.payload.settledAt,
+          unsettledAt: null,
           updatedAt: event.payload.updatedAt,
         },
       };
@@ -141,6 +143,10 @@ export function applyThreadDetailEvent(
           ...thread,
           settledOverride: event.payload.reason === "user" ? "active" : null,
           settledAt: null,
+          unsettledAt:
+            thread.settledOverride === "active"
+              ? (thread.unsettledAt ?? null)
+              : event.payload.updatedAt,
           updatedAt: event.payload.updatedAt,
         },
       };

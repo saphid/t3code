@@ -180,6 +180,8 @@ public final class FeatureRootModel {
     private var pendingSubmissionsByID: [String: FeatureQueuedSubmission] = [:]
     private var pendingThreadsByID: [String: FeatureThread] = [:]
     private var pendingSettlementMutations: [String: PendingSettlementMutation] = [:]
+    private var automaticSettlementThreadIDsInFlight: Set<String> = []
+    private var automaticSettlementAttemptedVersions: [String: Date] = [:]
     private var pendingCompletionSubmissionIDs: Set<String> = []
     private var pendingDiscardSubmissionIDs: Set<String> = []
     private var detailRecency: [String] = []
@@ -241,6 +243,45 @@ public final class FeatureRootModel {
             if !Self.isBenignCancellation(error) {
                 errorMessage = error.localizedDescription
             }
+        }
+    }
+
+    public func materializeAutomaticSettlements(at now: Date = .now) async {
+        let candidates = snapshot.threads.filter { thread in
+            !thread.isArchived
+                && thread.supportsSettlement == true
+                && thread.pinnedAt == nil
+                && !thread.isEffectivelySnoozed(at: now)
+                && !thread.isSettled
+                && !thread.keepsActive
+                && thread.settledAt == nil
+                && thread.isEffectivelySettled(at: now)
+                && !automaticSettlementThreadIDsInFlight.contains(thread.id)
+                && automaticSettlementAttemptedVersions[thread.id] != thread.updatedAt
+        }
+
+        for thread in candidates {
+            automaticSettlementThreadIDsInFlight.insert(thread.id)
+            automaticSettlementAttemptedVersions[thread.id] = thread.updatedAt
+            do {
+                try await client.reportThreadAutomaticallySettled(
+                    id: thread.id,
+                    observedUpdatedAt: thread.updatedAt
+                )
+                mutateThread(id: thread.id) { current in
+                    guard !current.isSettled,
+                          !current.keepsActive,
+                          current.settledAt == nil,
+                          current.isEffectivelySettled(at: now) else { return }
+                    current.isSettled = true
+                    current.settledAt = now
+                }
+            } catch {
+                // Automatic policy reporting is best effort. A newer thread
+                // version may retry without turning a background sync failure
+                // into a user-facing action error.
+            }
+            automaticSettlementThreadIDsInFlight.remove(thread.id)
         }
     }
 
@@ -1198,6 +1239,10 @@ public final class FeatureRootModel {
             if let index = value.projects.firstIndex(where: { $0.id == pending.projectID }) {
                 value.projects[index].threadCount += 1
             }
+        }
+        let installedThreadIDs = Set(value.threads.map(\.id))
+        automaticSettlementAttemptedVersions = automaticSettlementAttemptedVersions.filter {
+            installedThreadIDs.contains($0.key)
         }
 
         let previousThreads = snapshot.threads.reduce(into: [String: FeatureThread]()) {

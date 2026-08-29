@@ -260,6 +260,18 @@ describe("sortThreadsForListV2", () => {
     ]);
     expect(sorted.map((thread) => thread.id)).toEqual(["newest", "middle", "oldest"]);
   });
+
+  it("reanchors a thread at its durable settled-to-active wake", () => {
+    const sorted = sortThreadsForListV2([
+      {
+        id: "woken",
+        createdAt: "2026-06-01T08:00:00.000Z",
+        unsettledAt: "2026-06-01T13:00:00.000Z",
+      },
+      { id: "newer", createdAt: "2026-06-01T12:00:00.000Z" },
+    ]);
+    expect(sorted.map((thread) => thread.id)).toEqual(["woken", "newer"]);
+  });
 });
 
 describe("buildThreadListV2Items", () => {
@@ -349,6 +361,9 @@ describe("buildThreadListV2Items", () => {
     expect(layout.items.map((item) => item.variant)).toEqual(["card", "slim"]);
     expect(layout.items[1]?.thread.pinnedAt).toBe("2026-06-01T12:00:00.000Z");
     expect(layout.settledCount).toBe(1);
+    expect(layout.automaticSettlementCandidates.map((thread) => thread.id)).toEqual([
+      "pinned-merged",
+    ]);
   });
 
   it("moves inactive pinned threads to the settled shelf", () => {

@@ -7,6 +7,9 @@ one environment.
 Pinned threads still move to **Settled** when they become inactive. They also move when their pull
 request merges if **Auto-settle merged threads** is enabled.
 
+When new work wakes a settled thread, it returns with the newly active threads. Messages on a
+thread that was already active do not move its row.
+
 ## Archived threads on native iOS
 
 In the SwiftUI iOS app, select **Archived** at the bottom of Home to open the archive. Archived

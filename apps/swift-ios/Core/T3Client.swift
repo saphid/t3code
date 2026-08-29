@@ -579,6 +579,19 @@ public actor T3Client {
     }
 
     @discardableResult
+    public func reportAutomaticSettlement(
+        threadID: String,
+        observedUpdatedAt: Date
+    ) async throws -> DispatchResult {
+        try await dispatch(
+            OrchestrationCommands.automaticSettle(
+                threadID: threadID,
+                observedUpdatedAt: observedUpdatedAt
+            )
+        )
+    }
+
+    @discardableResult
     public func snooze(threadID: String, until: Date?) async throws -> DispatchResult {
         try await dispatch(
             OrchestrationCommands.snooze(threadID: threadID, until: until)
@@ -1879,6 +1892,23 @@ public enum OrchestrationCommands {
         return value
     }
 
+    public static func automaticSettle(
+        threadID: String,
+        observedUpdatedAt: Date,
+        commandID: String = UUID().uuidString
+    ) -> JSONValue {
+        var value = basic(
+            type: "thread.automatic-settle",
+            threadID: threadID,
+            commandID: commandID
+        )
+        if case var .object(object) = value {
+            object["observedUpdatedAt"] = .string(preciseISO8601.format(observedUpdatedAt))
+            value = .object(object)
+        }
+        return value
+    }
+
     public static func snooze(
         threadID: String,
         until: Date?,
@@ -1969,4 +1999,5 @@ public enum OrchestrationCommands {
 
     /// Commands are built on several actors, so their shared formatter must be Sendable.
     private static let iso8601 = Date.ISO8601FormatStyle()
+    private static let preciseISO8601 = Date.ISO8601FormatStyle(includingFractionalSeconds: true)
 }

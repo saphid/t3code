@@ -28,6 +28,7 @@ function makeReadModel(
     readonly pinnedAt?: string | null;
     readonly snoozedUntil?: string | null;
     readonly snoozedAt?: string | null;
+    readonly settledAt?: string | null;
   } = {},
 ): OrchestrationReadModel {
   return {
@@ -48,7 +49,7 @@ function makeReadModel(
         updatedAt: NOW,
         archivedAt,
         settledOverride,
-        settledAt: settledOverride === "settled" ? SETTLED_AT : null,
+        settledAt: lifecycle.settledAt ?? (settledOverride === "settled" ? SETTLED_AT : null),
         snoozedUntil: lifecycle.snoozedUntil ?? null,
         snoozedAt: lifecycle.snoozedAt ?? (lifecycle.snoozedUntil != null ? SETTLED_AT : null),
         pinnedAt: lifecycle.pinnedAt ?? null,
@@ -113,6 +114,93 @@ it.layer(NodeServices.layer)("settled thread decider", (it) => {
         // relative-time labels key on it.
         expect(reEmitEvents[0].payload.updatedAt).not.toBe(SETTLED_AT);
       }
+    }),
+  );
+
+  it.effect("materializes automatic settlement and wakes it once on activity", () =>
+    Effect.gen(function* () {
+      const automatic = yield* decideOrchestrationCommand({
+        command: {
+          type: "thread.automatic-settle",
+          commandId: CommandId.make("cmd-auto-settle"),
+          threadId: ThreadId.make("thread-1"),
+          observedUpdatedAt: NOW,
+        },
+        readModel: makeReadModel(null),
+      });
+      const automaticEvents = Array.isArray(automatic) ? automatic : [automatic];
+      expect(automaticEvents.map((event) => event.type)).toEqual(["thread.settled"]);
+      if (automaticEvents[0]?.type === "thread.settled") {
+        expect(automaticEvents[0].payload.reason).toBe("automatic");
+      }
+
+      const wake = yield* decideOrchestrationCommand({
+        command: {
+          type: "thread.turn.start",
+          commandId: CommandId.make("cmd-auto-wake"),
+          threadId: ThreadId.make("thread-1"),
+          message: {
+            messageId: MessageId.make("message-auto-wake"),
+            role: "user",
+            text: "Wake up",
+            attachments: [],
+          },
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          createdAt: SETTLED_AT,
+        },
+        readModel: makeReadModel(null, null, null, [], [], { settledAt: SETTLED_AT }),
+      });
+      const wakeEvents = Array.isArray(wake) ? wake : [wake];
+      expect(wakeEvents.map((event) => event.type)).toEqual([
+        "thread.unsettled",
+        "thread.message-sent",
+        "thread.turn-start-requested",
+      ]);
+      if (wakeEvents[0]?.type === "thread.unsettled") {
+        expect(Date.parse(wakeEvents[0].payload.updatedAt)).toBeGreaterThanOrEqual(Date.parse(NOW));
+      }
+
+      const ordinary = yield* decideOrchestrationCommand({
+        command: {
+          type: "thread.turn.start",
+          commandId: CommandId.make("cmd-ordinary-activity"),
+          threadId: ThreadId.make("thread-1"),
+          message: {
+            messageId: MessageId.make("message-ordinary"),
+            role: "user",
+            text: "Still active",
+            attachments: [],
+          },
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          createdAt: NOW,
+        },
+        readModel: makeReadModel(null),
+      });
+      const ordinaryEvents = Array.isArray(ordinary) ? ordinary : [ordinary];
+      expect(ordinaryEvents.map((event) => event.type)).toEqual([
+        "thread.message-sent",
+        "thread.turn-start-requested",
+      ]);
+    }),
+  );
+
+  it.effect("rejects a stale automatic settlement observation", () =>
+    Effect.gen(function* () {
+      const error = yield* decideOrchestrationCommand({
+        command: {
+          type: "thread.automatic-settle",
+          commandId: CommandId.make("cmd-stale-auto-settle"),
+          threadId: ThreadId.make("thread-1"),
+          observedUpdatedAt: SETTLED_AT,
+        },
+        readModel: makeReadModel(null),
+      }).pipe(Effect.flip);
+
+      expect(error).toMatchObject({
+        detail: expect.stringContaining("changed after automatic settlement was observed"),
+      });
     }),
   );
 

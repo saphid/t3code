@@ -24,6 +24,10 @@ import { projectEvent } from "./projector.ts";
 
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
 
+function latestIso(left: string, right: string): string {
+  return Date.parse(left) >= Date.parse(right) ? left : right;
+}
+
 // Session adoption takes seconds; a user message still unadopted after this
 // window is a failed/stale start, not pending work. Mirrors the client's
 // QUEUED_TURN_START_GRACE_MS in client-runtime threadSettled.ts.
@@ -450,12 +454,26 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
       };
     }
 
-    case "thread.settle": {
+    case "thread.settle":
+    case "thread.automatic-settle": {
       const thread = yield* requireThreadNotArchived({
         readModel,
         command,
         threadId: command.threadId,
       });
+      const isAutomatic = command.type === "thread.automatic-settle";
+      if (isAutomatic && Date.parse(command.observedUpdatedAt) !== Date.parse(thread.updatedAt)) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `thread ${command.threadId} changed after automatic settlement was observed`,
+        });
+      }
+      if (isAutomatic && thread.settledOverride === "active") {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `thread ${command.threadId} is explicitly active and cannot be automatically settled`,
+        });
+      }
       // Server-side twin of the client's canSettle session check: a stale
       // or raced client must not settle a thread whose session is coming
       // alive or working.
@@ -491,7 +509,15 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
       // Settling an already-settled thread re-emits with the original
       // settledAt: the engine rejects zero-event commands, and bulk-settle /
       // double-click must stay silent no-ops rather than surface errors.
-      const alreadySettled = thread.settledOverride === "settled" && thread.settledAt !== null;
+      const alreadySettled = isAutomatic
+        ? thread.settledAt !== null
+        : thread.settledOverride === "settled" && thread.settledAt !== null;
+      const settlementReason =
+        alreadySettled && thread.settledOverride === "settled"
+          ? ("user" as const)
+          : isAutomatic
+            ? ("automatic" as const)
+            : ("user" as const);
       const settledEvent = {
         ...(yield* withEventBase({
           aggregateKind: "thread",
@@ -503,6 +529,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         payload: {
           threadId: command.threadId,
           settledAt: alreadySettled ? thread.settledAt : occurredAt,
+          reason: settlementReason,
           // A re-emission is a projected no-op: keep the existing updatedAt
           // so duplicate settles neither rewind nor churn ordering. A fresh
           // settle stamps the command time.
@@ -512,7 +539,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
       // Settling is "I'm done with this": clear states that would keep the
       // row pinned or snoozed instead of showing the new settled state.
       const companionEvents: Array<Omit<OrchestrationEvent, "sequence">> = [];
-      if (thread.pinnedAt != null) {
+      if (!isAutomatic && thread.pinnedAt != null) {
         companionEvents.push({
           ...(yield* withEventBase({
             aggregateKind: "thread",
@@ -527,7 +554,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           },
         });
       }
-      if (thread.snoozedUntil != null) {
+      if (!isAutomatic && thread.snoozedUntil != null) {
         companionEvents.push({
           ...(yield* withEventBase({
             aggregateKind: "thread",
@@ -707,7 +734,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
       // "user", same override the un-settle button stamps), and a snooze's
       // return ticket is spent — the thread is on top NOW, not on Tuesday.
       const promotionEvents: Array<Omit<OrchestrationEvent, "sequence">> = [];
-      if (thread.settledOverride === "settled") {
+      if (thread.settledAt !== null) {
         promotionEvents.push({
           ...(yield* withEventBase({
             aggregateKind: "thread",
@@ -1001,19 +1028,20 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
       // A snooze clears the same way — sending a message to a snoozed
       // thread is the user re-engaging, so the return ticket is spent.
       const lifecycleResetEvents: Array<Omit<OrchestrationEvent, "sequence">> = [];
-      if (targetThread.settledOverride !== null) {
+      if (targetThread.settledOverride !== null || targetThread.settledAt !== null) {
+        const wakeAt = latestIso(yield* nowIso, targetThread.updatedAt);
         lifecycleResetEvents.push({
           ...(yield* withEventBase({
             aggregateKind: "thread",
             aggregateId: command.threadId,
-            occurredAt: command.createdAt,
+            occurredAt: wakeAt,
             commandId: command.commandId,
           })),
           type: "thread.unsettled",
           payload: {
             threadId: command.threadId,
             reason: "activity",
-            updatedAt: command.createdAt,
+            updatedAt: wakeAt,
           },
         });
       }
@@ -1147,7 +1175,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         const sessionComingAlive =
           thread.session?.status === "starting" || thread.session?.status === "running";
         if (
-          thread.settledOverride !== "settled" ||
+          thread.settledAt === null ||
           sessionComingAlive ||
           threadHasQueuedTurnStart(thread, command.createdAt)
         ) {
@@ -1205,21 +1233,22 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
       const isSessionActivity =
         command.session.status === "starting" || command.session.status === "running";
       // Real activity resets ANY override (settled wakes, active unpins).
-      if (thread.settledOverride === null || !isSessionActivity) {
+      if ((thread.settledOverride === null && thread.settledAt === null) || !isSessionActivity) {
         return sessionSetEvent;
       }
+      const wakeAt = latestIso(yield* nowIso, thread.updatedAt);
       const unsettledEvent: Omit<OrchestrationEvent, "sequence"> = {
         ...(yield* withEventBase({
           aggregateKind: "thread",
           aggregateId: command.threadId,
-          occurredAt: command.createdAt,
+          occurredAt: wakeAt,
           commandId: command.commandId,
         })),
         type: "thread.unsettled",
         payload: {
           threadId: command.threadId,
           reason: "activity",
-          updatedAt: command.createdAt,
+          updatedAt: wakeAt,
         },
       };
       return [unsettledEvent, sessionSetEvent];
@@ -1382,21 +1411,22 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         command.activity.kind === "approval.requested" ||
         command.activity.kind === "user-input.requested";
       // Real activity resets ANY override (settled wakes, active unpins).
-      if (thread.settledOverride === null || !wakesSettledThread) {
+      if ((thread.settledOverride === null && thread.settledAt === null) || !wakesSettledThread) {
         return activityAppendedEvent;
       }
+      const wakeAt = latestIso(yield* nowIso, thread.updatedAt);
       const unsettledEvent: Omit<OrchestrationEvent, "sequence"> = {
         ...(yield* withEventBase({
           aggregateKind: "thread",
           aggregateId: command.threadId,
-          occurredAt: command.createdAt,
+          occurredAt: wakeAt,
           commandId: command.commandId,
         })),
         type: "thread.unsettled",
         payload: {
           threadId: command.threadId,
           reason: "activity",
-          updatedAt: command.createdAt,
+          updatedAt: wakeAt,
         },
       };
       return [unsettledEvent, activityAppendedEvent];

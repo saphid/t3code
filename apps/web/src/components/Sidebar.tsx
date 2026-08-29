@@ -1734,6 +1734,10 @@ export default function Sidebar() {
   const updateThreadMetadata = useAtomCommand(threadEnvironment.updateMetadata, {
     reportFailure: false,
   });
+  const reportAutomaticSettlement = useAtomCommand(threadEnvironment.automaticSettle, {
+    reportFailure: false,
+  });
+  const automaticSettlementAttempts = useRef(new Map<string, string>());
   const { copyToClipboard: copyPathToClipboard } = useCopyToClipboard<{ path: string }>({
     onCopy: ({ path }) => {
       toastManager.add({
@@ -2008,6 +2012,7 @@ export default function Sidebar() {
     activeThreads,
     snoozedThreads,
     settledThreads,
+    automaticSettlementCandidates,
     snoozeNow,
   } = useMemo(() => {
     const now = `${nowMinute}:00.000Z`;
@@ -2027,6 +2032,7 @@ export default function Sidebar() {
     const active: EnvironmentThreadShell[] = [];
     const snoozed: EnvironmentThreadShell[] = [];
     const settled: EnvironmentThreadShell[] = [];
+    const automaticCandidates: EnvironmentThreadShell[] = [];
     for (const thread of visible) {
       // Threads on servers without the settlement capability (old server,
       // or descriptor not loaded yet) never classify as settled: the user
@@ -2055,6 +2061,7 @@ export default function Sidebar() {
         })
       ) {
         settled.push(thread);
+        if (thread.settledAt === null) automaticCandidates.push(thread);
       } else if (thread.pinnedAt != null) {
         pinned.push(thread);
       } else {
@@ -2085,6 +2092,7 @@ export default function Sidebar() {
           firstValidTimestampMs(right.snoozedUntil ?? null),
       ),
       settledThreads: sortSettledThreadsForSidebar(settled),
+      automaticSettlementCandidates: automaticCandidates,
       snoozeNow: preciseNow,
     };
   }, [
@@ -2097,6 +2105,24 @@ export default function Sidebar() {
     snoozeWakeTick,
     threads,
   ]);
+
+  useEffect(() => {
+    const liveKeys = new Set(
+      threads.map((thread) => scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id))),
+    );
+    for (const key of automaticSettlementAttempts.current.keys()) {
+      if (!liveKeys.has(key)) automaticSettlementAttempts.current.delete(key);
+    }
+    for (const thread of automaticSettlementCandidates) {
+      const key = scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
+      if (automaticSettlementAttempts.current.get(key) === thread.updatedAt) continue;
+      automaticSettlementAttempts.current.set(key, thread.updatedAt);
+      void reportAutomaticSettlement({
+        environmentId: thread.environmentId,
+        input: { threadId: thread.id, observedUpdatedAt: thread.updatedAt },
+      });
+    }
+  }, [automaticSettlementCandidates, reportAutomaticSettlement, threads]);
 
   const threadSearchInputRef = useRef<HTMLInputElement>(null);
   const [threadSearchQuery, setThreadSearchQuery] = useState("");

@@ -23,6 +23,7 @@ import * as RpcSession from "../rpc/session.ts";
 import type { WsRpcProtocolClient } from "../rpc/protocol.ts";
 import {
   archiveThread,
+  automaticSettleThread,
   createProject,
   settleThread,
   stopThreadSession,
@@ -141,7 +142,7 @@ describe("environment commands", () => {
     }).pipe(Effect.provide(TEST_CRYPTO_LAYER)),
   );
 
-  it.effect("dispatches settle and unsettle commands without timestamps", () =>
+  it.effect("dispatches explicit and automatic settlement commands", () =>
     Effect.gen(function* () {
       const dispatched: ClientOrchestrationCommand[] = [];
       const supervisor = yield* makeSupervisor(dispatched);
@@ -149,6 +150,11 @@ describe("environment commands", () => {
       yield* settleThread({
         commandId: CommandId.make("settle-command"),
         threadId: ThreadId.make("thread-1"),
+      }).pipe(Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor));
+      yield* automaticSettleThread({
+        commandId: CommandId.make("automatic-settle-command"),
+        threadId: ThreadId.make("thread-1"),
+        observedUpdatedAt: "2026-01-01T00:00:00.000Z",
       }).pipe(Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor));
       yield* unsettleThread({
         commandId: CommandId.make("unsettle-command"),
@@ -161,6 +167,12 @@ describe("environment commands", () => {
           type: "thread.settle",
           commandId: "settle-command",
           threadId: "thread-1",
+        },
+        {
+          type: "thread.automatic-settle",
+          commandId: "automatic-settle-command",
+          threadId: "thread-1",
+          observedUpdatedAt: "2026-01-01T00:00:00.000Z",
         },
         {
           type: "thread.unsettle",

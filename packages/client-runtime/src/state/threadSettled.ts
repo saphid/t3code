@@ -329,6 +329,10 @@ export function effectiveSettled(
   // "active" is the explicit keep-active pin: it suppresses auto-settle
   // until real activity clears it server-side.
   if (shell.settledOverride === "active") return false;
+  // A client-reported automatic settlement has no explicit override, but its
+  // settledAt is durable and authoritative across clients until activity
+  // clears it through thread.unsettled.
+  if (shell.settledAt !== null) return true;
   if (
     changeRequestAutoSettles(options.changeRequest, {
       autoSettleOnMerge: options.autoSettleOnMerge,

@@ -742,8 +742,10 @@ struct DailyUXSidebarIndex {
     }
 
     private static func creationOrder(_ lhs: FeatureThread, _ rhs: FeatureThread) -> Bool {
-        if lhs.createdAt != rhs.createdAt {
-            return lhs.createdAt > rhs.createdAt
+        let lhsAnchor = max(lhs.createdAt, lhs.unsettledAt ?? .distantPast)
+        let rhsAnchor = max(rhs.createdAt, rhs.unsettledAt ?? .distantPast)
+        if lhsAnchor != rhsAnchor {
+            return lhsAnchor > rhsAnchor
         }
         return lhs.id < rhs.id
     }

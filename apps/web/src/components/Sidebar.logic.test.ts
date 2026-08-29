@@ -784,9 +784,23 @@ describe("searchSidebarThreadsByTitle", () => {
 });
 
 describe("sortThreadsForSidebar", () => {
-  const sortable = (input: { id: string; createdAt: string }) => ({
+  const sortable = (input: { id: string; createdAt: string; unsettledAt?: string }) => ({
     id: input.id,
     createdAt: input.createdAt,
+    unsettledAt: input.unsettledAt,
+  });
+
+  it("reanchors a thread at its durable settled-to-active wake", () => {
+    const sorted = sortThreadsForSidebar([
+      sortable({
+        id: "woken",
+        createdAt: "2026-03-09T08:00:00.000Z",
+        unsettledAt: "2026-03-09T13:00:00.000Z",
+      }),
+      sortable({ id: "newer", createdAt: "2026-03-09T12:00:00.000Z" }),
+    ]);
+
+    expect(sorted.map((thread) => thread.id)).toEqual(["woken", "newer"]);
   });
 
   it("orders by creation time, newest first, ignoring activity", () => {

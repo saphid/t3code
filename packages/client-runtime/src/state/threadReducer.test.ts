@@ -196,6 +196,31 @@ describe("applyThreadDetailEvent", () => {
       if (result.kind === "updated") {
         expect(result.thread.settledOverride).toBe("settled");
         expect(result.thread.settledAt).toBe(settledAt);
+        expect(result.thread.unsettledAt).toBeNull();
+      }
+    });
+
+    it("materializes automatic settlement without an explicit override", () => {
+      const settledAt = "2026-04-01T05:00:00.000Z";
+      const result = applyThreadDetailEvent(baseThread, {
+        ...baseEventFields,
+        sequence: 5,
+        occurredAt: settledAt,
+        aggregateKind: "thread",
+        aggregateId: ThreadId.make("thread-1"),
+        type: "thread.settled",
+        payload: {
+          threadId: ThreadId.make("thread-1"),
+          settledAt,
+          reason: "automatic",
+          updatedAt: settledAt,
+        },
+      });
+
+      expect(result.kind).toBe("updated");
+      if (result.kind === "updated") {
+        expect(result.thread.settledOverride).toBeNull();
+        expect(result.thread.settledAt).toBe(settledAt);
       }
     });
 
@@ -227,6 +252,7 @@ describe("applyThreadDetailEvent", () => {
       if (result.kind === "updated") {
         expect(result.thread.settledOverride).toBe(settledOverride);
         expect(result.thread.settledAt).toBeNull();
+        expect(result.thread.unsettledAt).toBe(updatedAt);
       }
     });
   });

@@ -421,6 +421,12 @@ it.effect("decodes thread settle and unsettle commands", () =>
       commandId: "cmd-settle-1",
       threadId: "thread-1",
     });
+    const automatic = yield* decodeOrchestrationCommand({
+      type: "thread.automatic-settle",
+      commandId: "cmd-auto-settle-1",
+      threadId: "thread-1",
+      observedUpdatedAt: "2026-01-01T00:00:00.000Z",
+    });
     const unsettle = yield* decodeOrchestrationCommand({
       type: "thread.unsettle",
       commandId: "cmd-unsettle-1",
@@ -429,6 +435,7 @@ it.effect("decodes thread settle and unsettle commands", () =>
     });
 
     assert.strictEqual(settle.type, "thread.settle");
+    assert.strictEqual(automatic.type, "thread.automatic-settle");
     assert.strictEqual(unsettle.type, "thread.unsettle");
 
     // "activity" is server-owned: it exists on the event, never on the
@@ -565,6 +572,9 @@ it.effect("decodes thread settled and unsettled events", () =>
     });
 
     assert.strictEqual(settled.type, "thread.settled");
+    if (settled.type === "thread.settled") {
+      assert.strictEqual(settled.payload.reason, undefined);
+    }
     assert.strictEqual(unsettled.type, "thread.unsettled");
   }),
 );

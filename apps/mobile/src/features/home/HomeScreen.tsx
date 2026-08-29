@@ -74,6 +74,7 @@ import {
   type HomeProjectSortOrder,
 } from "./homeThreadList";
 import { SwipeableScrollGateProvider, useSwipeableScrollGate } from "./thread-swipe-actions";
+import { useAutomaticSettlementReporting } from "./useThreadListActions";
 
 /* ─── Types ──────────────────────────────────────────────────────────── */
 
@@ -663,6 +664,7 @@ export function HomeScreen(props: HomeScreenProps) {
     if (!threadListV2Enabled)
       return {
         items: [],
+        automaticSettlementCandidates: [],
         hiddenSettledCount: 0,
         snoozedCount: 0,
         snoozedShelfHeaderIndex: null,
@@ -706,6 +708,7 @@ export function HomeScreen(props: HomeScreenProps) {
     threadListV2Enabled,
     v2ScopedProjectGroup,
   ]);
+  useAutomaticSettlementReporting(threadListV2Layout.automaticSettlementCandidates, props.threads);
   // Re-partition the moment the earliest snooze expires (clamped to the
   // signed-32-bit setTimeout range; far-future wakes re-arm at the clamp).
   const nextSnoozeWakeAt = threadListV2Layout.nextSnoozeWakeAt;

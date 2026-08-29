@@ -66,6 +66,7 @@ public protocol FeatureClient: AnyObject {
     func threadSummaryTimeline(id: String) async throws -> FeatureThreadSummaryTimeline
     func setThreadArchived(id: String, archived: Bool) async throws
     func setThreadSettled(id: String, settled: Bool) async throws
+    func reportThreadAutomaticallySettled(id: String, observedUpdatedAt: Date) async throws
     func setThreadSnoozed(id: String, until: Date?) async throws
     func setThreadPinned(id: String, pinned: Bool) async throws
     func reorderPinnedThread(id: String, orderKey: String) async throws
@@ -336,6 +337,9 @@ public extension FeatureClient {
         )
     }
     func setThreadSettled(id: String, settled: Bool) async throws {}
+    func reportThreadAutomaticallySettled(id: String, observedUpdatedAt: Date) async throws {
+        throw FeatureCapabilityUnavailable("Automatic thread settlement")
+    }
     func setThreadSnoozed(id: String, until: Date?) async throws {}
     func setThreadPinned(id: String, pinned: Bool) async throws {}
     func reorderPinnedThread(id: String, orderKey: String) async throws {

@@ -13,6 +13,16 @@ export interface ThreadSortInput {
   }>;
 }
 
+export function activeThreadAnchorTimestampMs(thread: {
+  readonly createdAt: string;
+  readonly unsettledAt?: string | null | undefined;
+}): number {
+  return Math.max(
+    toSortableTimestamp(thread.createdAt) ?? 0,
+    toSortableTimestamp(thread.unsettledAt ?? undefined) ?? 0,
+  );
+}
+
 export function toSortableTimestamp(iso: string | undefined): number | null {
   if (!iso) return null;
   const ms = Date.parse(iso);

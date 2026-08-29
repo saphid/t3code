@@ -112,6 +112,21 @@ final class CoreContractTests: XCTestCase {
             commandID: "command-unpin"
         )
         XCTAssertEqual(unpin["type"]?.stringValue, "thread.unpin")
+
+        let observedUpdatedAt = try Date(
+            "2026-01-01T00:00:00.123Z",
+            strategy: Date.ISO8601FormatStyle(includingFractionalSeconds: true)
+        )
+        let automaticSettle = OrchestrationCommands.automaticSettle(
+            threadID: "thread-1",
+            observedUpdatedAt: observedUpdatedAt,
+            commandID: "command-automatic-settle"
+        )
+        XCTAssertEqual(automaticSettle["type"]?.stringValue, "thread.automatic-settle")
+        XCTAssertEqual(
+            automaticSettle["observedUpdatedAt"]?.stringValue,
+            "2026-01-01T00:00:00.123Z"
+        )
     }
 
     func testRegenerateTitleCommandMatchesOrchestrationContract() {

@@ -124,6 +124,7 @@ describe("changeRequestAutoSettles", () => {
 
 function makeShell(input: {
   readonly settledOverride?: "settled" | "active" | null;
+  readonly settledAt?: string | null;
   readonly activityAt: string | null;
   readonly sessionStatus?: "starting" | "running";
   readonly pending?: "approval" | "user-input";
@@ -153,7 +154,7 @@ function makeShell(input: {
     updatedAt: NOW,
     archivedAt: null,
     settledOverride: input.settledOverride ?? null,
-    settledAt: input.settledOverride === "settled" ? NOW : null,
+    settledAt: input.settledAt ?? (input.settledOverride === "settled" ? NOW : null),
     session:
       input.sessionStatus === undefined
         ? null
@@ -195,6 +196,11 @@ describe("threadLastActivityAt", () => {
 });
 
 describe("effectiveSettled", () => {
+  it("honors a durable automatic settlement without an explicit override", () => {
+    const shell = makeShell({ settledAt: NOW, activityAt: FRESH });
+    expect(effectiveSettled(shell, { now: NOW, autoSettleAfterDays: null })).toBe(true);
+  });
+
   const overrideCases = [null, "settled", "active"] as const;
   const changeRequestStates = [undefined, "open", "merged"] as const;
   const inactivityCases = [

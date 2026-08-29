@@ -2,7 +2,7 @@ import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell
 import { canSettle, canSnooze } from "@t3tools/client-runtime/state/thread-settled";
 import * as Cause from "effect/Cause";
 import * as Haptics from "expo-haptics";
-import { useCallback, useRef } from "react";
+import { useCallback, useEffect, useRef } from "react";
 import { Alert } from "react-native";
 
 import { showConfirmDialog } from "../../components/ConfirmDialogHost";
@@ -32,6 +32,34 @@ function environmentSupportsSnooze(environmentId: EnvironmentThreadShell["enviro
     appAtomRegistry.get(environmentServerConfigsAtom).get(environmentId)?.environment.capabilities
       .threadSnooze === true
   );
+}
+
+export function useAutomaticSettlementReporting(
+  candidates: ReadonlyArray<EnvironmentThreadShell>,
+  liveThreads: ReadonlyArray<EnvironmentThreadShell>,
+) {
+  const reportAutomaticSettlement = useAtomCommand(threadEnvironment.automaticSettle, {
+    reportFailure: false,
+  });
+  const attemptedVersions = useRef(new Map<string, string>());
+
+  useEffect(() => {
+    const liveKeys = new Set(
+      liveThreads.map((thread) => scopedThreadKey(thread.environmentId, thread.id)),
+    );
+    for (const key of attemptedVersions.current.keys()) {
+      if (!liveKeys.has(key)) attemptedVersions.current.delete(key);
+    }
+    for (const thread of candidates) {
+      const key = scopedThreadKey(thread.environmentId, thread.id);
+      if (attemptedVersions.current.get(key) === thread.updatedAt) continue;
+      attemptedVersions.current.set(key, thread.updatedAt);
+      void reportAutomaticSettlement({
+        environmentId: thread.environmentId,
+        input: { threadId: thread.id, observedUpdatedAt: thread.updatedAt },
+      });
+    }
+  }, [candidates, liveThreads, reportAutomaticSettlement]);
 }
 
 function environmentSupportsPinning(environmentId: EnvironmentThreadShell["environmentId"]) {

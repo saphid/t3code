@@ -8,6 +8,7 @@ import {
   createEnvironmentRpcCommand,
 } from "./runtime.ts";
 import {
+  type AutomaticSettleThreadInput,
   type ArchiveThreadInput,
   type CreateThreadInput,
   type DeleteThreadInput,
@@ -29,6 +30,7 @@ import {
   type UnsnoozeThreadInput,
   type UpdateThreadMetadataInput,
   archiveThread,
+  automaticSettleThread,
   createThread,
   deleteThread,
   interruptThreadTurn,
@@ -52,6 +54,7 @@ import {
 import type { EnvironmentRegistry } from "../connection/registry.ts";
 
 export type {
+  AutomaticSettleThreadInput,
   ArchiveThreadInput,
   CreateThreadInput,
   DeleteThreadInput,
@@ -111,6 +114,12 @@ export function createThreadEnvironmentAtoms<R, E>(
     settle: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:thread:settle",
       execute: (input: SettleThreadInput) => settleThread(input),
+      scheduler,
+      concurrency,
+    }),
+    automaticSettle: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:thread:automatic-settle",
+      execute: (input: AutomaticSettleThreadInput) => automaticSettleThread(input),
       scheduler,
       concurrency,
     }),

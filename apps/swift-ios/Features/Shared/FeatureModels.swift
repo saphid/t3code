@@ -230,6 +230,7 @@ public struct FeatureThread: Identifiable, Sendable, Equatable, Hashable, Codabl
     public var isSettled: Bool
     public var keepsActive: Bool
     public var settledAt: Date?
+    public var unsettledAt: Date?
     public var lastActivityAt: Date?
     public var latestUserMessageAt: Date?
     public var snoozedUntil: Date?
@@ -271,6 +272,7 @@ public struct FeatureThread: Identifiable, Sendable, Equatable, Hashable, Codabl
         isSettled: Bool = false,
         keepsActive: Bool = false,
         settledAt: Date? = nil,
+        unsettledAt: Date? = nil,
         lastActivityAt: Date? = nil,
         latestUserMessageAt: Date? = nil,
         snoozedUntil: Date? = nil,
@@ -311,6 +313,7 @@ public struct FeatureThread: Identifiable, Sendable, Equatable, Hashable, Codabl
         self.isSettled = isSettled
         self.keepsActive = keepsActive
         self.settledAt = settledAt
+        self.unsettledAt = unsettledAt
         self.lastActivityAt = lastActivityAt
         self.latestUserMessageAt = latestUserMessageAt
         self.snoozedUntil = snoozedUntil

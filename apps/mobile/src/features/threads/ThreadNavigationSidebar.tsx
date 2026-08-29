@@ -58,7 +58,10 @@ import {
 import { buildHomeProjectScopes, buildHomeThreadGroups } from "../home/homeThreadList";
 import { SwipeableScrollGateProvider, useSwipeableScrollGate } from "../home/thread-swipe-actions";
 import { usePendingTaskListActions } from "../home/usePendingTaskListActions";
-import { useThreadListActions } from "../home/useThreadListActions";
+import {
+  useAutomaticSettlementReporting,
+  useThreadListActions,
+} from "../home/useThreadListActions";
 import {
   getConnectionAwareBrandHeaderOptions,
   WorkspaceConnectionTitle,
@@ -504,6 +507,7 @@ function ThreadNavigationSidebarPane(
     if (!threadListV2Enabled)
       return {
         items: [],
+        automaticSettlementCandidates: [],
         hiddenSettledCount: 0,
         snoozedCount: 0,
         snoozedShelfHeaderIndex: null,
@@ -546,6 +550,7 @@ function ThreadNavigationSidebarPane(
     threads,
     selectedProjectScope,
   ]);
+  useAutomaticSettlementReporting(threadListV2Layout.automaticSettlementCandidates, threads);
   // Re-partition the moment the earliest snooze expires (clamped to the
   // signed-32-bit setTimeout range; far-future wakes re-arm at the clamp).
   const nextSnoozeWakeAt = threadListV2Layout.nextSnoozeWakeAt;
@@ -729,7 +734,6 @@ function ThreadNavigationSidebarPane(
       setThreadSortOrder,
     ],
   );
-
   const backgroundColor = useThemeColor("--color-drawer");
   const borderColor = useThemeColor("--color-border");
   const mutedColor = useThemeColor("--color-foreground-muted");

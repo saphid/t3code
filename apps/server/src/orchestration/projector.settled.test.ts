@@ -63,6 +63,22 @@ it.effect("projects settled lifecycle events", () =>
     expect(settled.threads[0]?.settledOverride).toBe("settled");
     expect(settled.threads[0]?.settledAt).toBe(now);
 
+    const automatic = yield* projectEvent(
+      created,
+      makeEvent({
+        sequence: 2,
+        type: "thread.settled",
+        payload: {
+          threadId: ThreadId.make("thread-1"),
+          settledAt: now,
+          reason: "automatic",
+          updatedAt: now,
+        },
+      }),
+    );
+    expect(automatic.threads[0]?.settledOverride).toBeNull();
+    expect(automatic.threads[0]?.settledAt).toBe(now);
+
     const userUnsettled = yield* projectEvent(
       settled,
       makeEvent({
@@ -73,6 +89,7 @@ it.effect("projects settled lifecycle events", () =>
     );
     expect(userUnsettled.threads[0]?.settledOverride).toBe("active");
     expect(userUnsettled.threads[0]?.settledAt).toBeNull();
+    expect(userUnsettled.threads[0]?.unsettledAt).toBe(now);
 
     const activityUnsettled = yield* projectEvent(
       userUnsettled,
@@ -84,5 +101,6 @@ it.effect("projects settled lifecycle events", () =>
     );
     expect(activityUnsettled.threads[0]?.settledOverride).toBeNull();
     expect(activityUnsettled.threads[0]?.settledAt).toBeNull();
+    expect(activityUnsettled.threads[0]?.unsettledAt).toBe(now);
   }),
 );

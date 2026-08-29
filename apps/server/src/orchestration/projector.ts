@@ -303,6 +303,7 @@ export function projectEvent(
             archivedAt: null,
             settledOverride: null,
             settledAt: null,
+            unsettledAt: null,
             snoozedUntil: null,
             snoozedAt: null,
             deletedAt: null,
@@ -362,8 +363,9 @@ export function projectEvent(
         Effect.map((payload) => ({
           ...nextBase,
           threads: updateThread(nextBase.threads, payload.threadId, {
-            settledOverride: "settled",
+            settledOverride: payload.reason === "automatic" ? null : "settled",
             settledAt: payload.settledAt,
+            unsettledAt: null,
             updatedAt: payload.updatedAt,
           }),
         })),
@@ -371,14 +373,23 @@ export function projectEvent(
 
     case "thread.unsettled":
       return decodeForEvent(ThreadUnsettledPayload, event.payload, event.type, "payload").pipe(
-        Effect.map((payload) => ({
-          ...nextBase,
-          threads: updateThread(nextBase.threads, payload.threadId, {
-            settledOverride: payload.reason === "user" ? "active" : null,
-            settledAt: null,
-            updatedAt: payload.updatedAt,
-          }),
-        })),
+        Effect.map((payload) => {
+          const existing = nextBase.threads.find((thread) => thread.id === payload.threadId);
+          return {
+            ...nextBase,
+            threads: updateThread(nextBase.threads, payload.threadId, {
+              settledOverride: payload.reason === "user" ? "active" : null,
+              settledAt: null,
+              // Clearing an active override is not list re-entry. Every real
+              // settled-to-active transition receives one shared wake stamp.
+              unsettledAt:
+                existing?.settledOverride === "active"
+                  ? (existing.unsettledAt ?? null)
+                  : payload.updatedAt,
+              updatedAt: payload.updatedAt,
+            }),
+          };
+        }),
       );
 
     case "thread.snoozed":

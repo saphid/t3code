@@ -1820,6 +1820,15 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         try? await refresh(client: route.client)
     }
 
+    func reportThreadAutomaticallySettled(id: String, observedUpdatedAt: Date) async throws {
+        let route = try threadRoute(for: id)
+        _ = try await route.client.reportAutomaticSettlement(
+            threadID: route.wireID,
+            observedUpdatedAt: observedUpdatedAt
+        )
+        try? await refresh(client: route.client)
+    }
+
     func setThreadSnoozed(id: String, until: Date?) async throws {
         let route = try threadRoute(for: id)
         _ = try await route.client.snooze(threadID: route.wireID, until: until)
@@ -2993,6 +3002,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
             archivedAt: nil,
             settledOverride: thread.settledOverride,
             settledAt: thread.settledAt,
+            unsettledAt: thread.unsettledAt,
             snoozedUntil: thread.snoozedUntil,
             snoozedAt: thread.snoozedAt,
             pinnedAt: thread.pinnedAt,
@@ -4656,6 +4666,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
             isSettled: isSettled(thread.settledOverride, settledAt: thread.settledAt),
             keepsActive: thread.settledOverride == "active",
             settledAt: thread.settledAt.map(parseDate),
+            unsettledAt: thread.unsettledAt.map(parseDate),
             lastActivityAt: lastActivityDate(
                 latestUserMessageAt: thread.latestUserMessageAt,
                 latestTurn: thread.latestTurn
@@ -4735,6 +4746,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
             isSettled: isSettled(thread.settledOverride, settledAt: thread.settledAt),
             keepsActive: thread.settledOverride == "active",
             settledAt: thread.settledAt.map(parseDate),
+            unsettledAt: thread.unsettledAt.map(parseDate),
             lastActivityAt: lastActivityDate(
                 latestUserMessageAt: latestUserMessageAt,
                 latestTurn: thread.latestTurn
@@ -5013,6 +5025,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
             archivedAt: loaded.archivedAt,
             settledOverride: loaded.settledOverride,
             settledAt: loaded.settledAt,
+            unsettledAt: loaded.unsettledAt,
             snoozedUntil: loaded.snoozedUntil,
             snoozedAt: loaded.snoozedAt,
             pinnedAt: loaded.pinnedAt,
@@ -6595,6 +6608,7 @@ enum NativeThreadDetailReducer {
             archivedAt: thread.archivedAt,
             settledOverride: thread.settledOverride,
             settledAt: thread.settledAt,
+            unsettledAt: thread.unsettledAt,
             snoozedUntil: thread.snoozedUntil,
             snoozedAt: thread.snoozedAt,
             pinnedAt: thread.pinnedAt,

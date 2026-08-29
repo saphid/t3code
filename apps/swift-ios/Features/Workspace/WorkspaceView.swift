@@ -296,6 +296,7 @@ public struct WorkspaceView: View {
             if navigationRequest != nil { consumeNavigationRequest() }
         }
         .task(id: nextSidebarBoundary) {
+            await model.materializeAutomaticSettlements(at: sidebarBoundaryNow)
             guard let boundary = nextSidebarBoundary else { return }
             do {
                 try await Task.sleep(for: .seconds(max(0, boundary.timeIntervalSinceNow)))

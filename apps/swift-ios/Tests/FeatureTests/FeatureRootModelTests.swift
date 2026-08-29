@@ -1994,6 +1994,39 @@ struct FeatureRootModelTests {
     }
 
     @Test
+    func automaticSettlementIsReportedOnceAndMaterializedDurably() async {
+        let client = FeatureClientStub()
+        let now = Date(timeIntervalSince1970: 2_000_000)
+        let stale = FeatureThread(
+            id: "stale",
+            projectID: "project-1",
+            title: "Stale",
+            state: .completed,
+            lastActivityAt: now.addingTimeInterval(-4 * 24 * 60 * 60),
+            supportsSettlement: true
+        )
+        let fresh = FeatureThread(
+            id: "fresh",
+            projectID: "project-1",
+            title: "Fresh",
+            state: .completed,
+            lastActivityAt: now.addingTimeInterval(-60),
+            supportsSettlement: true
+        )
+        client.snapshot = FeatureSnapshot(threads: [stale, fresh])
+        let model = testRootModel(client: client)
+        await model.reload()
+
+        await model.materializeAutomaticSettlements(at: now)
+        await model.materializeAutomaticSettlements(at: now)
+
+        #expect(client.automaticallySettledThreadIDs == ["stale"])
+        #expect(model.snapshot.threads.first(where: { $0.id == "stale" })?.isSettled == true)
+        #expect(model.snapshot.threads.first(where: { $0.id == "stale" })?.settledAt == now)
+        #expect(model.snapshot.threads.first(where: { $0.id == "fresh" })?.isSettled == false)
+    }
+
+    @Test
     func testCancelledDetailRefreshKeepsCachedContentWithoutAlert() async {
         let client = FeatureClientStub()
         let thread = FeatureThread(id: "thread-1", projectID: "project-1", title: "Thread")
@@ -3006,6 +3039,7 @@ private final class FeatureClientStub: FeatureClient, T3ConnectCapable {
     var createThreadCallCount = 0
     var sendMessageCallCount = 0
     var cancelTurnCallCount = 0
+    var automaticallySettledThreadIDs: [String] = []
     var signOutCallCount = 0
     var startTaskError: (any Error)?
     var sendMessageError: (any Error)?
@@ -3168,6 +3202,9 @@ private final class FeatureClientStub: FeatureClient, T3ConnectCapable {
         titleRegenerationContinuation = nil
     }
     func setThreadArchived(id: String, archived: Bool) async throws {}
+    func reportThreadAutomaticallySettled(id: String, observedUpdatedAt: Date) async throws {
+        automaticallySettledThreadIDs.append(id)
+    }
     func deleteThread(id: String) async throws {}
 
     func loadThread(id: String) async throws -> FeatureThreadDetail {

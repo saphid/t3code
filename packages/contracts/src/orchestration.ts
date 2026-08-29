@@ -406,6 +406,9 @@ export const OrchestrationThread = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
   settledAt: Schema.NullOr(IsoDateTime).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
+  // Last durable transition from a settled state back into the active list.
+  // Optional so snapshots from servers before wake ordering still decode.
+  unsettledAt: Schema.optional(Schema.NullOr(IsoDateTime)),
   // Snooze is an overlay on the active lifecycle, not a fourth destination:
   // a snoozed thread stays "active" in the model and is only suppressed from
   // the inbox until snoozedUntil passes (or the thread raises its hand).
@@ -476,6 +479,7 @@ export const OrchestrationThreadShell = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
   settledAt: Schema.NullOr(IsoDateTime).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
+  unsettledAt: Schema.optional(Schema.NullOr(IsoDateTime)),
   snoozedUntil: Schema.optional(Schema.NullOr(IsoDateTime)),
   snoozedAt: Schema.optional(Schema.NullOr(IsoDateTime)),
   pinnedAt: Schema.optional(Schema.NullOr(IsoDateTime)),
@@ -716,6 +720,16 @@ const ThreadSettleCommand = Schema.Struct({
   threadId: ThreadId,
 });
 
+// A client reports that its automatic policy displayed this thread as
+// settled. The server materializes that observation so every client shares
+// the same lifecycle state and a later activity wake can be ordered once.
+const ThreadAutomaticSettleCommand = Schema.Struct({
+  type: Schema.Literal("thread.automatic-settle"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  observedUpdatedAt: IsoDateTime,
+});
+
 const ThreadUnsettleCommand = Schema.Struct({
   type: Schema.Literal("thread.unsettle"),
   commandId: CommandId,
@@ -930,6 +944,7 @@ const DispatchableClientOrchestrationCommand = Schema.Union([
   ThreadArchiveCommand,
   ThreadUnarchiveCommand,
   ThreadSettleCommand,
+  ThreadAutomaticSettleCommand,
   ThreadUnsettleCommand,
   ThreadSnoozeCommand,
   ThreadUnsnoozeCommand,
@@ -958,6 +973,7 @@ export const ClientOrchestrationCommand = Schema.Union([
   ThreadArchiveCommand,
   ThreadUnarchiveCommand,
   ThreadSettleCommand,
+  ThreadAutomaticSettleCommand,
   ThreadUnsettleCommand,
   ThreadSnoozeCommand,
   ThreadUnsnoozeCommand,
@@ -1168,6 +1184,7 @@ export const ThreadUnarchivedPayload = Schema.Struct({
 export const ThreadSettledPayload = Schema.Struct({
   threadId: ThreadId,
   settledAt: IsoDateTime,
+  reason: Schema.optional(Schema.Literals(["user", "automatic"])),
   updatedAt: IsoDateTime,
 });
 

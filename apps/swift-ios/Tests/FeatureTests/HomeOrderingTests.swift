@@ -43,6 +43,41 @@ struct HomeOrderingTests {
     }
 
     @Test
+    func defaultOrderReanchorsOnlyASettledThreadWake() {
+        var historicallyOlder = thread(
+            id: "historically-older",
+            projectID: "project-a",
+            created: -500,
+            updated: -1,
+            latestUserMessage: -1
+        )
+        let newer = thread(
+            id: "newer",
+            projectID: "project-a",
+            created: -100,
+            updated: -100,
+            latestUserMessage: -100
+        )
+
+        let ordinaryActivity = HomePresentation(
+            snapshot: snapshot(threads: [historicallyOlder, newer]),
+            query: "",
+            projectID: nil,
+            now: now
+        )
+        #expect(ordinaryActivity.active.map(\.id) == ["newer", "historically-older"])
+
+        historicallyOlder.unsettledAt = now
+        let afterWake = HomePresentation(
+            snapshot: snapshot(threads: [historicallyOlder, newer]),
+            query: "",
+            projectID: nil,
+            now: now
+        )
+        #expect(afterWake.active.map(\.id) == ["historically-older", "newer"])
+    }
+
+    @Test
     func projectAndThreadOrdersRemainIndependent() {
         let projectARecentMessage = thread(
             id: "a-recent-message",
