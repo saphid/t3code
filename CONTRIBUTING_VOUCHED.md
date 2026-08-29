@@ -102,17 +102,21 @@ gate, or partial scan is not a pass.
 
 Capture the running product, not a mockup or a manually recreated state.
 
-- Publish dark mode evidence first. Put each full-size before and after image
-  under its own heading. Narrow side-by-side tables are hard to inspect on a
-  phone.
+- Publish dark mode evidence first. Put each before and after image under its
+  own heading. Use a tight crop around the changed area, with enough nearby
+  layout to explain it and large enough text to inspect on a phone. Narrow
+  side-by-side tables are hard to inspect on a phone.
+- Keep a matching full-window capture for every cropped frame. Put full-window
+  images and GIFs inside collapsed `Full-window context` details blocks so they
+  remain available without shrinking the important evidence.
 - Put every light mode image and GIF inside one collapsed `<details>` block
   with a plain `Light mode evidence` summary. Keep light media out of the
   default expanded page so opening a PR at night does not fill the screen with
   white images.
 - Add an animated comparison GIF for every real before/after pair. Alternate
-  the same sanitized frames shown as static evidence. Keep the static images
-  because reviewers need frames they can inspect without animation. A genuinely
-  new surface may be after-only when the PR says so.
+  the same sanitized cropped frames shown as static evidence. Keep the static
+  images because reviewers need frames they can inspect without animation. A
+  genuinely new surface may be after-only when the PR says so.
 - Record every action sequence as an animated GIF. Add a linked video when
   timing, smooth motion, pointer precision, text legibility, audio, or GIF size
   makes the GIF incomplete evidence.
@@ -143,6 +147,15 @@ Use this PR-body shape:
 ![Before and after, dark](...gif)
 
 <details>
+<summary>Full-window context, dark mode</summary>
+
+![Before, dark, full window](...)
+
+![After, dark, full window](...)
+
+</details>
+
+<details>
 <summary>Light mode evidence</summary>
 
 #### Before
@@ -157,13 +170,29 @@ Use this PR-body shape:
 
 ![Before and after, light](...gif)
 
+<details>
+<summary>Full-window context, light mode</summary>
+
+![Before, light, full window](...)
+
+![After, light, full window](...)
+
+</details>
+
 </details>
 
 ### Action sequence
 
 ![Action sequence](...gif)
 
+<details>
+<summary>Full-window action context</summary>
+
+![Action sequence, full window](...gif)
+
 Video: [full-fidelity recording](...mp4)
+
+</details>
 ```
 
 Upload review evidence to GitHub. Do not commit PR-only screenshots, videos, or
@@ -181,9 +210,10 @@ verify:
 5. Affected clients, providers, platforms, contracts, and connection modes.
 6. Exact validation commands and results.
 7. Known risks, limitations, and anything not tested.
-8. Static dark evidence, collapsed light evidence, before/after comparison
-   GIFs, and action GIFs for UI work, plus video when the GIF cannot preserve
-   the needed fidelity.
+8. Phone-readable cropped evidence, matching full-window context in collapsed
+   sections, collapsed light evidence, before/after comparison GIFs, and action
+   GIFs for UI work, plus video when the GIF cannot preserve the needed
+   fidelity.
 9. The owning issue, discussion, or stacked PR when one exists.
 
 Keep this current as the branch changes. Remove stale claims and generated
@@ -236,7 +266,8 @@ Before requesting human review, confirm:
       automated coverage adds value; otherwise the direct proof is recorded.
 - [ ] Targeted lint, format, type, and build checks pass where applicable.
 - [ ] Runtime, platform, and performance claims have direct evidence.
-- [ ] UI changes have full-size dark mode before and after images, while all
+- [ ] UI changes have phone-readable cropped before and after images, while
+      matching full-window captures sit in collapsed context sections and all
       light mode images and GIFs sit inside a collapsed details block.
 - [ ] Every before/after pair has an animated comparison GIF, every action
       sequence has an animated GIF, and video is linked when the GIF loses
