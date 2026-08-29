@@ -3055,7 +3055,13 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
     ) -> FeatureTerminalSnapshot {
         let key = TerminalKey(threadID: threadID, terminalID: terminalID)
         if let coreSnapshot = event.snapshot {
-            var snapshot = NativeWorkspaceMapper.terminal(coreSnapshot)
+            var snapshot = NativeWorkspaceMapper.terminal(
+                coreSnapshot,
+                hasRunningSubprocess: Self.retainedTerminalSubprocessActivity(
+                    eventType: event.type,
+                    existing: terminalSnapshots[key]
+                )
+            )
             snapshot.threadID = threadID
             snapshot.buffer = Self.cappedTerminalBuffer(snapshot.buffer)
             terminalSnapshots[key] = snapshot
@@ -3071,11 +3077,14 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         case "exited":
             snapshot.state = .exited
             snapshot.exitCode = event.exitCode
+            snapshot.hasRunningSubprocess = false
         case "closed":
             snapshot.state = .stopped
+            snapshot.hasRunningSubprocess = false
         case "error":
             snapshot.state = .failed
             snapshot.error = event.message
+            snapshot.hasRunningSubprocess = false
         case "cleared":
             snapshot.buffer = ""
         case "activity":
@@ -3087,6 +3096,15 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         }
         terminalSnapshots[key] = snapshot
         return snapshot
+    }
+
+    static func retainedTerminalSubprocessActivity(
+        eventType: String,
+        existing: FeatureTerminalSnapshot?
+    ) -> Bool {
+        eventType == "snapshot"
+            && existing?.state == .running
+            && existing?.hasRunningSubprocess == true
     }
 
     private func mergeTerminalSummary(

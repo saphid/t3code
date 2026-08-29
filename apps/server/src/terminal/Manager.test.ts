@@ -323,6 +323,84 @@ it.layer(
     }),
   );
 
+  it.effect("keeps mouse-mode replay scoped across detach, two clients, and restart", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter, getEvents } = yield* createManager();
+      yield* manager.open(openInput());
+      yield* manager.open(openInput({ terminalId: "sidecar" }));
+      const primaryProcess = ptyAdapter.processes[0];
+      const sidecarProcess = ptyAdapter.processes[1];
+      expect(primaryProcess).toBeDefined();
+      expect(sidecarProcess).toBeDefined();
+      if (!primaryProcess || !sidecarProcess) return;
+
+      const firstClient = yield* Ref.make<ReadonlyArray<TerminalAttachStreamEvent>>([]);
+      const secondClient = yield* Ref.make<ReadonlyArray<TerminalAttachStreamEvent>>([]);
+      const unsubscribeFirst = yield* manager.attachStream(openInput(), (event) =>
+        Ref.update(firstClient, (events) => [...events, event]),
+      );
+      const unsubscribeSecond = yield* manager.attachStream(openInput(), (event) =>
+        Ref.update(secondClient, (events) => [...events, event]),
+      );
+      yield* Effect.addFinalizer(() => Effect.sync(unsubscribeFirst));
+      yield* Effect.addFinalizer(() => Effect.sync(unsubscribeSecond));
+
+      const enableMouse = "\u001b[?1002h\u001b[?1006h";
+      const disableMouse = "\u001b[?1002l\u001b[?1006l";
+      primaryProcess.emitData(enableMouse);
+      sidecarProcess.emitData(`sidecar${enableMouse}`);
+
+      yield* waitFor(
+        Effect.map(Ref.get(secondClient), (events) =>
+          events.some((event) => event.type === "output" && event.data === enableMouse),
+        ),
+      );
+      yield* waitFor(
+        Effect.map(getEvents, (events) =>
+          events.some(
+            (event) =>
+              event.type === "output" &&
+              event.terminalId === "sidecar" &&
+              event.data === `sidecar${enableMouse}`,
+          ),
+        ),
+      );
+      unsubscribeFirst();
+
+      const reconnectedClient = yield* Ref.make<ReadonlyArray<TerminalAttachStreamEvent>>([]);
+      const unsubscribeReconnected = yield* manager.attachStream(openInput(), (event) =>
+        Ref.update(reconnectedClient, (events) => [...events, event]),
+      );
+      yield* Effect.addFinalizer(() => Effect.sync(unsubscribeReconnected));
+      const replay = (yield* Ref.get(reconnectedClient)).find((event) => event.type === "snapshot");
+      expect(replay).toBeDefined();
+      if (!replay || replay.type !== "snapshot") return;
+      assert.equal(replay.snapshot.history, enableMouse);
+
+      primaryProcess.emitData(disableMouse);
+      yield* waitFor(
+        Effect.map(Ref.get(reconnectedClient), (events) =>
+          events.some((event) => event.type === "output" && event.data === disableMouse),
+        ),
+      );
+      yield* waitFor(
+        Effect.map(Ref.get(secondClient), (events) =>
+          events.some((event) => event.type === "output" && event.data === disableMouse),
+        ),
+      );
+
+      const restarted = yield* manager.restart(restartInput());
+      const sidecar = yield* manager.open(openInput({ terminalId: "sidecar" }));
+      assert.equal(restarted.history, "");
+      assert.equal(sidecar.history, `sidecar${enableMouse}`);
+      expect(
+        (yield* Ref.get(secondClient)).some(
+          (event) => event.type === "output" && event.data.startsWith("sidecar"),
+        ),
+      ).toBe(false);
+    }),
+  );
+
   it.effect("keeps attach streams live when a terminal id is closed and reopened", () =>
     Effect.gen(function* () {
       const { manager, ptyAdapter } = yield* createManager();
@@ -539,6 +617,67 @@ it.layer(
 
       expect(process.writes).toEqual(["ls\n"]);
       expect(process.resizeCalls).toEqual([{ cols: 120, rows: 30 }]);
+    }),
+  );
+
+  it.effect("drops stale SGR mouse reports only while the terminal is idle", () =>
+    Effect.gen(function* () {
+      let hasRunningSubprocess = false;
+      const { manager, ptyAdapter, getEvents } = yield* createManager(5, {
+        subprocessInspector: () =>
+          Effect.succeed({
+            hasRunningSubprocess,
+            childCommand: hasRunningSubprocess ? "vim" : null,
+            processIds: hasRunningSubprocess ? [9000, 9001] : [],
+          }),
+        subprocessPollIntervalMs: 20,
+      });
+      yield* manager.open(openInput());
+      const process = ptyAdapter.processes[0];
+      expect(process).toBeDefined();
+      if (!process) return;
+
+      const press = "\u001b[<0;12;5M";
+      const release = "\u001b[<0;12;5m";
+      yield* manager.write({
+        threadId: "thread-1",
+        terminalId: DEFAULT_TERMINAL_ID,
+        data: press,
+      });
+      yield* manager.write({
+        threadId: "thread-1",
+        terminalId: DEFAULT_TERMINAL_ID,
+        data: "printf 'λ'\n",
+      });
+      expect(process.writes).toEqual(["printf 'λ'\n"]);
+
+      hasRunningSubprocess = true;
+      yield* waitFor(
+        Effect.map(getEvents, (events) =>
+          events.some((event) => event.type === "activity" && event.hasRunningSubprocess === true),
+        ),
+        "1200 millis",
+      );
+      yield* manager.write({
+        threadId: "thread-1",
+        terminalId: DEFAULT_TERMINAL_ID,
+        data: `${press}${release}`,
+      });
+      expect(process.writes).toEqual(["printf 'λ'\n", `${press}${release}`]);
+
+      hasRunningSubprocess = false;
+      yield* waitFor(
+        Effect.map(getEvents, (events) =>
+          events.some((event) => event.type === "activity" && event.hasRunningSubprocess === false),
+        ),
+        "1200 millis",
+      );
+      yield* manager.write({
+        threadId: "thread-1",
+        terminalId: DEFAULT_TERMINAL_ID,
+        data: release,
+      });
+      expect(process.writes).toEqual(["printf 'λ'\n", `${press}${release}`]);
     }),
   );
 

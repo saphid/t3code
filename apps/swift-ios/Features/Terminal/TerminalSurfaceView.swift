@@ -9,6 +9,7 @@ struct GhosttyTerminalSurface: UIViewRepresentable {
     let buffer: String
     let fontSize: CGFloat
     let isRunning: Bool
+    let hasRunningSubprocess: Bool
     let focusRequest: Int
     let onInput: (String) -> Void
     let onResize: (Int, Int) -> Void
@@ -38,6 +39,7 @@ struct GhosttyTerminalSurface: UIViewRepresentable {
         view.terminalKey = terminalKey
         view.fontSize = fontSize
         view.isRunning = isRunning
+        view.hasRunningSubprocess = hasRunningSubprocess
         view.buffer = buffer
         view.focusRequest = focusRequest
     }
@@ -551,6 +553,19 @@ final class GhosttyTerminalView: UIView, UITextFieldDelegate, UIContextMenuInter
         }
     }
 
+    var hasRunningSubprocess = false {
+        didSet {
+            guard oldValue != hasRunningSubprocess,
+                  let sequence = TerminalMouseModeRecovery.sequenceAfterActivityChange(
+                    wasRunning: oldValue,
+                    isRunning: hasRunningSubprocess
+                  ) else {
+                return
+            }
+            applyMouseModeRecovery(sequence)
+        }
+    }
+
     var focusRequest = 0 {
         didSet {
             guard oldValue != focusRequest else { return }
@@ -564,6 +579,7 @@ final class GhosttyTerminalView: UIView, UITextFieldDelegate, UIContextMenuInter
     private let keyboardButton = UIButton(type: .system)
     private let focusTapGesture = UITapGestureRecognizer()
     private let scrollPanGesture = UIPanGestureRecognizer()
+    private let mouseWheelPanGesture = UIPanGestureRecognizer()
     private let fontPinchGesture = UIPinchGestureRecognizer()
     private var pendingModifier: TerminalAccessoryAction? {
         didSet { accessoryView.setActiveModifier(pendingModifier) }
@@ -574,6 +590,8 @@ final class GhosttyTerminalView: UIView, UITextFieldDelegate, UIContextMenuInter
     private var lastAppliedBuffer = ""
     private var isReplayingBuffer = false
     private var pendingVerticalScrollPoints: CGFloat = 0
+    private var pendingMouseWheelScrollPoints: CGFloat = 0
+    private var mouseDragActive = false
     private var hasAutoFocused = false
     private var app: ghostty_app_t?
     private var surface: ghostty_surface_t?
@@ -627,13 +645,19 @@ final class GhosttyTerminalView: UIView, UITextFieldDelegate, UIContextMenuInter
 
         accessoryView.onAction = { [weak self] in self?.handleAccessoryAction($0) }
 
-        focusTapGesture.addTarget(self, action: #selector(viewportTapped))
+        focusTapGesture.addTarget(self, action: #selector(viewportTapped(_:)))
         terminalViewport.addGestureRecognizer(focusTapGesture)
 
         scrollPanGesture.addTarget(self, action: #selector(viewportPanned(_:)))
         scrollPanGesture.maximumNumberOfTouches = 1
         scrollPanGesture.cancelsTouchesInView = false
         terminalViewport.addGestureRecognizer(scrollPanGesture)
+
+        mouseWheelPanGesture.addTarget(self, action: #selector(viewportMouseWheelPanned(_:)))
+        mouseWheelPanGesture.minimumNumberOfTouches = 2
+        mouseWheelPanGesture.maximumNumberOfTouches = 2
+        mouseWheelPanGesture.cancelsTouchesInView = false
+        terminalViewport.addGestureRecognizer(mouseWheelPanGesture)
 
         fontPinchGesture.addTarget(self, action: #selector(viewportPinched(_:)))
         terminalViewport.addGestureRecognizer(fontPinchGesture)
@@ -836,6 +860,7 @@ final class GhosttyTerminalView: UIView, UITextFieldDelegate, UIContextMenuInter
     }
 
     private func destroySurface() {
+        mouseDragActive = false
         if let surface {
             ghostty_surface_set_write_callback(surface, nil, nil)
             ghostty_surface_free(surface)
@@ -875,6 +900,29 @@ final class GhosttyTerminalView: UIView, UITextFieldDelegate, UIContextMenuInter
         defer { isReplayingBuffer = false }
         feedData(Data(value.utf8))
         lastAppliedBuffer = value
+        if let sequence = TerminalMouseModeRecovery.sequenceAfterReplay(
+            hasRunningSubprocess: hasRunningSubprocess
+        ) {
+            feedData(Data(sequence.utf8))
+        }
+    }
+
+    private func applyMouseModeRecovery(_ sequence: String) {
+        guard let surface else { return }
+        let wasReplayingBuffer = isReplayingBuffer
+        isReplayingBuffer = true
+        defer { isReplayingBuffer = wasReplayingBuffer }
+        feedData(Data(sequence.utf8))
+        if mouseDragActive {
+            ghostty_surface_mouse_button(
+                surface,
+                GHOSTTY_MOUSE_RELEASE,
+                GHOSTTY_MOUSE_LEFT,
+                GHOSTTY_MODS_NONE
+            )
+            mouseDragActive = false
+            redrawSurface()
+        }
     }
 
     private func feedData(_ data: Data) {
@@ -1027,42 +1075,120 @@ final class GhosttyTerminalView: UIView, UITextFieldDelegate, UIContextMenuInter
         }
     }
 
-    @objc private func viewportTapped() {
+    @objc private func viewportTapped(_ gesture: UITapGestureRecognizer) {
         requestKeyboardFocus()
+        guard let surface, isRunning, ghostty_surface_mouse_captured(surface) else { return }
+        updateMousePosition(gesture.location(in: terminalViewport), surface: surface)
+        ghostty_surface_mouse_button(
+            surface,
+            GHOSTTY_MOUSE_PRESS,
+            GHOSTTY_MOUSE_LEFT,
+            GHOSTTY_MODS_NONE
+        )
+        ghostty_surface_mouse_button(
+            surface,
+            GHOSTTY_MOUSE_RELEASE,
+            GHOSTTY_MOUSE_LEFT,
+            GHOSTTY_MODS_NONE
+        )
+        redrawSurface()
     }
 
     @objc private func viewportPanned(_ gesture: UIPanGestureRecognizer) {
         guard let surface else { return }
-        let location = gesture.location(in: terminalViewport)
-        ghostty_surface_mouse_pos(
-            surface,
-            Double(location.x * contentScaleFactor),
-            Double(location.y * contentScaleFactor),
-            GHOSTTY_MODS_NONE
-        )
+        updateMousePosition(gesture.location(in: terminalViewport), surface: surface)
 
         switch gesture.state {
         case .began:
             pendingVerticalScrollPoints = 0
+            mouseDragActive = isRunning && ghostty_surface_mouse_captured(surface)
+            if mouseDragActive {
+                ghostty_surface_mouse_button(
+                    surface,
+                    GHOSTTY_MOUSE_PRESS,
+                    GHOSTTY_MOUSE_LEFT,
+                    GHOSTTY_MODS_NONE
+                )
+                redrawSurface()
+            }
             gesture.setTranslation(.zero, in: terminalViewport)
         case .changed:
+            if mouseDragActive {
+                redrawSurface()
+                gesture.setTranslation(.zero, in: terminalViewport)
+                return
+            }
             let translation = gesture.translation(in: terminalViewport)
-            let stepSize = max(
-                fontSize * Self.verticalScrollStepMultiplier,
-                Self.minimumVerticalScrollStepPoints
+            let steps = verticalScrollSteps(
+                translation: translation.y,
+                pendingPoints: &pendingVerticalScrollPoints
             )
-            let total = pendingVerticalScrollPoints + translation.y
-            let steps = Int(total / stepSize)
-            pendingVerticalScrollPoints = total - CGFloat(steps) * stepSize
             if steps != 0 {
                 ghostty_surface_mouse_scroll(surface, 0, Double(steps), 0)
                 redrawSurface()
             }
             gesture.setTranslation(.zero, in: terminalViewport)
         default:
+            if mouseDragActive {
+                ghostty_surface_mouse_button(
+                    surface,
+                    GHOSTTY_MOUSE_RELEASE,
+                    GHOSTTY_MOUSE_LEFT,
+                    GHOSTTY_MODS_NONE
+                )
+                redrawSurface()
+            }
+            mouseDragActive = false
             pendingVerticalScrollPoints = 0
             gesture.setTranslation(.zero, in: terminalViewport)
         }
+    }
+
+    @objc private func viewportMouseWheelPanned(_ gesture: UIPanGestureRecognizer) {
+        guard let surface else { return }
+        updateMousePosition(gesture.location(in: terminalViewport), surface: surface)
+
+        switch gesture.state {
+        case .began:
+            pendingMouseWheelScrollPoints = 0
+            gesture.setTranslation(.zero, in: terminalViewport)
+        case .changed:
+            let steps = verticalScrollSteps(
+                translation: gesture.translation(in: terminalViewport).y,
+                pendingPoints: &pendingMouseWheelScrollPoints
+            )
+            if steps != 0 {
+                ghostty_surface_mouse_scroll(surface, 0, Double(steps), 0)
+                redrawSurface()
+            }
+            gesture.setTranslation(.zero, in: terminalViewport)
+        default:
+            pendingMouseWheelScrollPoints = 0
+            gesture.setTranslation(.zero, in: terminalViewport)
+        }
+    }
+
+    private func updateMousePosition(_ location: CGPoint, surface: ghostty_surface_t) {
+        ghostty_surface_mouse_pos(
+            surface,
+            Double(location.x * contentScaleFactor),
+            Double(location.y * contentScaleFactor),
+            GHOSTTY_MODS_NONE
+        )
+    }
+
+    private func verticalScrollSteps(
+        translation: CGFloat,
+        pendingPoints: inout CGFloat
+    ) -> Int {
+        let stepSize = max(
+            fontSize * Self.verticalScrollStepMultiplier,
+            Self.minimumVerticalScrollStepPoints
+        )
+        let total = pendingPoints + translation
+        let steps = Int(total / stepSize)
+        pendingPoints = total - CGFloat(steps) * stepSize
+        return steps
     }
 
     @objc private func viewportPinched(_ gesture: UIPinchGestureRecognizer) {

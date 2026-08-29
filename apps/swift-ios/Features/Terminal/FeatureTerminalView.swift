@@ -87,6 +87,7 @@ public struct FeatureTerminalView: View {
                 buffer: terminal?.buffer ?? "",
                 fontSize: CGFloat(fontSize),
                 isRunning: isRunning,
+                hasRunningSubprocess: terminal?.hasRunningSubprocess ?? false,
                 focusRequest: focusRequest,
                 onInput: { data in
                     let terminalID = activeTerminalID

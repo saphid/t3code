@@ -264,6 +264,51 @@ struct FeatureToolStateTests {
         #expect(TerminalText.plainText(from: prompt) == "repo ❯ ")
     }
 
+    @Test(
+        "Idle replay clears every supported mouse-reporting mode",
+        .bug("https://github.com/saphid/t3code-personal/issues/210")
+    )
+    func idleTerminalReplayRecoversMouseReporting() throws {
+        let sequence = try #require(
+            TerminalMouseModeRecovery.sequenceAfterReplay(hasRunningSubprocess: false)
+        )
+
+        for mode in [9, 1000, 1001, 1002, 1003, 1005, 1006, 1015, 1016] {
+            #expect(sequence.contains("\u{1B}[?\(mode)l"))
+        }
+        #expect(sequence.contains("h") == false)
+    }
+
+    @Test(
+        "Active replay preserves application mouse tracking",
+        .bug("https://github.com/saphid/t3code-personal/issues/210")
+    )
+    func activeTerminalReplayPreservesMouseReporting() {
+        #expect(
+            TerminalMouseModeRecovery.sequenceAfterReplay(hasRunningSubprocess: true) == nil
+        )
+    }
+
+    @Test(
+        "Only a subprocess exit resets live mouse tracking",
+        .bug("https://github.com/saphid/t3code-personal/issues/210"),
+        arguments: [
+            (wasRunning: false, isRunning: false, resets: false),
+            (wasRunning: false, isRunning: true, resets: false),
+            (wasRunning: true, isRunning: true, resets: false),
+            (wasRunning: true, isRunning: false, resets: true),
+        ] as [(wasRunning: Bool, isRunning: Bool, resets: Bool)]
+    )
+    func terminalActivityTransitionsScopeMouseRecovery(
+        transition: (wasRunning: Bool, isRunning: Bool, resets: Bool)
+    ) {
+        let sequence = TerminalMouseModeRecovery.sequenceAfterActivityChange(
+            wasRunning: transition.wasRunning,
+            isRunning: transition.isRunning
+        )
+        #expect((sequence != nil) == transition.resets)
+    }
+
     @Test
     func terminalSessionSelectionPrefersAndAllocatesStableIDs() {
         let sessions = [
@@ -313,5 +358,60 @@ struct FeatureToolStateTests {
         )
 
         #expect(NativeWorkspaceMapper.terminal(snapshot).buffer == history)
+    }
+
+    @Test(
+        "Attach replay keeps authoritative subprocess activity",
+        .bug("https://github.com/saphid/t3code-personal/issues/210")
+    )
+    func terminalSnapshotPreservesKnownSubprocessActivity() {
+        let snapshot = TerminalSessionSnapshot(
+            threadId: "thread",
+            terminalId: "default",
+            cwd: "/repo",
+            worktreePath: nil,
+            status: .running,
+            pid: 123,
+            history: "\u{1B}[?1002h\u{1B}[?1006h",
+            exitCode: nil,
+            exitSignal: nil,
+            label: "vim",
+            updatedAt: "2026-08-29T00:00:00Z",
+            sequence: 2
+        )
+
+        let mapped = NativeWorkspaceMapper.terminal(
+            snapshot,
+            hasRunningSubprocess: true
+        )
+
+        #expect(mapped.hasRunningSubprocess)
+        #expect(mapped.buffer == snapshot.history)
+    }
+
+    @Test(
+        "Only a live attach snapshot retains known subprocess activity",
+        .bug("https://github.com/saphid/t3code-personal/issues/210"),
+        arguments: [
+            (eventType: "snapshot", state: FeatureTerminalState.running, retained: true),
+            (eventType: "snapshot", state: FeatureTerminalState.exited, retained: false),
+            (eventType: "restarted", state: FeatureTerminalState.running, retained: false),
+        ] as [(eventType: String, state: FeatureTerminalState, retained: Bool)]
+    )
+    func terminalLifecycleBoundsRetainedSubprocessActivity(
+        example: (eventType: String, state: FeatureTerminalState, retained: Bool)
+    ) {
+        let existing = FeatureTerminalSnapshot(
+            threadID: "thread",
+            state: example.state,
+            hasRunningSubprocess: true
+        )
+
+        #expect(
+            NativeFeatureClient.retainedTerminalSubprocessActivity(
+                eventType: example.eventType,
+                existing: existing
+            ) == example.retained
+        )
     }
 }

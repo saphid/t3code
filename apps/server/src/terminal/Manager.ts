@@ -796,6 +796,17 @@ function capHistory(history: string, maxLines: number): string {
   return hasTrailingNewline ? `${capped}\n` : capped;
 }
 
+const SGR_MOUSE_REPORT_BODY_PATTERN = /^\[<\d+;\d+;\d+[Mm]$/;
+
+function isSgrMouseReport(data: string): boolean {
+  const reports = data.split("\u001b");
+  return (
+    reports.length > 1 &&
+    reports[0] === "" &&
+    reports.slice(1).every((report) => SGR_MOUSE_REPORT_BODY_PATTERN.test(report))
+  );
+}
+
 function isCsiFinalByte(codePoint: number): boolean {
   return codePoint >= 0x40 && codePoint <= 0x7e;
 }
@@ -2497,6 +2508,9 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
         threadId: input.threadId,
         terminalId,
       });
+    }
+    if (!session.hasRunningSubprocess && isSgrMouseReport(input.data)) {
+      return;
     }
     yield* Effect.try({
       try: () => process.write(input.data),

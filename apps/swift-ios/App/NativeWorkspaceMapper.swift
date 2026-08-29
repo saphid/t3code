@@ -117,7 +117,10 @@ enum NativeWorkspaceMapper {
         }
     }
 
-    static func terminal(_ snapshot: TerminalSessionSnapshot) -> FeatureTerminalSnapshot {
+    static func terminal(
+        _ snapshot: TerminalSessionSnapshot,
+        hasRunningSubprocess: Bool = false
+    ) -> FeatureTerminalSnapshot {
         FeatureTerminalSnapshot(
             threadID: snapshot.threadId,
             terminalID: snapshot.terminalId,
@@ -126,6 +129,7 @@ enum NativeWorkspaceMapper {
             workingDirectory: snapshot.cwd,
             buffer: snapshot.history,
             exitCode: snapshot.exitCode,
+            hasRunningSubprocess: hasRunningSubprocess,
             updatedAt: snapshot.updatedAt
         )
     }
