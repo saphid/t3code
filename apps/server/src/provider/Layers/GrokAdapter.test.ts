@@ -188,6 +188,134 @@ it.layer(grokAdapterTestLayer)("GrokAdapterLive", (it) => {
     }),
   );
 
+  it.effect("switches an active model exactly once before the next prompt", () =>
+    Effect.gen(function* () {
+      const threadId = ThreadId.make("grok-active-model-switch");
+      const tempDir = yield* Effect.promise(() =>
+        NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "grok-model-switch-")),
+      );
+      const requestLogPath = NodePath.join(tempDir, "requests.ndjson");
+      const wrapperPath = yield* Effect.promise(() =>
+        makeMockGrokWrapper({ T3_ACP_REQUEST_LOG_PATH: requestLogPath }),
+      );
+      const adapter = yield* makeTestAdapter(wrapperPath);
+
+      const session = yield* adapter.startSession({
+        threadId,
+        provider: ProviderDriverKind.make("grok"),
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
+        modelSelection: { instanceId: ProviderInstanceId.make("grok"), model: "grok-build" },
+      });
+
+      yield* adapter.sendTurn({ threadId, input: "first prompt", attachments: [] });
+      yield* adapter.sendTurn({
+        threadId,
+        input: "switched prompt",
+        attachments: [],
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("grok"),
+          model: "grok-mock-alt",
+        },
+      });
+      yield* adapter.sendTurn({
+        threadId,
+        input: "same model prompt",
+        attachments: [],
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("grok"),
+          model: "grok-mock-alt",
+        },
+      });
+
+      const requests = yield* Effect.promise(() => readJsonLines(requestLogPath));
+      const modelAndPromptMethods = requests.flatMap((request) =>
+        request.method === "session/set_model" || request.method === "session/prompt"
+          ? [request.method]
+          : [],
+      );
+      const snapshot = yield* adapter.readThread(threadId);
+      const sessions = yield* adapter.listSessions();
+      const activeSession = sessions.find((candidate) => candidate.threadId === threadId);
+
+      assert.deepEqual(modelAndPromptMethods, [
+        "session/prompt",
+        "session/set_model",
+        "session/prompt",
+        "session/prompt",
+      ]);
+      assert.equal(requests.filter((request) => request.method === "session/set_model").length, 1);
+      assert.equal(snapshot.turns.length, 3);
+      assert.deepStrictEqual(activeSession?.resumeCursor, session.resumeCursor);
+      assert.equal(activeSession?.model, "grok-mock-alt");
+
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
+  it.effect("recovers without prompting when an active model switch fails", () =>
+    Effect.gen(function* () {
+      const threadId = ThreadId.make("grok-active-model-switch-failure");
+      const tempDir = yield* Effect.promise(() =>
+        NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "grok-model-switch-failure-")),
+      );
+      const requestLogPath = NodePath.join(tempDir, "requests.ndjson");
+      const wrapperPath = yield* Effect.promise(() =>
+        makeMockGrokWrapper({ T3_ACP_REQUEST_LOG_PATH: requestLogPath }),
+      );
+      const adapter = yield* makeTestAdapter(wrapperPath);
+
+      yield* adapter.startSession({
+        threadId,
+        provider: ProviderDriverKind.make("grok"),
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
+        modelSelection: { instanceId: ProviderInstanceId.make("grok"), model: "grok-build" },
+      });
+      yield* adapter.sendTurn({ threadId, input: "first prompt", attachments: [] });
+
+      const error = yield* Effect.flip(
+        adapter.sendTurn({
+          threadId,
+          input: "must not be prompted",
+          attachments: [],
+          modelSelection: {
+            instanceId: ProviderInstanceId.make("grok"),
+            model: "synthetic-removed-model",
+          },
+        }),
+      );
+      const sessionsAfterFailure = yield* adapter.listSessions();
+      const sessionAfterFailure = sessionsAfterFailure.find(
+        (candidate) => candidate.threadId === threadId,
+      );
+
+      assert.equal(error._tag, "ProviderAdapterRequestError");
+      assert.equal(sessionAfterFailure?.status, "ready");
+      assert.isUndefined(sessionAfterFailure?.activeTurnId);
+      assert.equal(sessionAfterFailure?.model, "grok-build");
+
+      yield* adapter.sendTurn({ threadId, input: "recover on original model", attachments: [] });
+
+      const requests = yield* Effect.promise(() => readJsonLines(requestLogPath));
+      const modelAndPromptMethods = requests.flatMap((request) =>
+        request.method === "session/set_model" || request.method === "session/prompt"
+          ? [request.method]
+          : [],
+      );
+      const snapshot = yield* adapter.readThread(threadId);
+
+      assert.deepEqual(modelAndPromptMethods, [
+        "session/prompt",
+        "session/set_model",
+        "session/prompt",
+      ]);
+      assert.equal(snapshot.turns.length, 2);
+
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
   it.effect("closes the ACP child process when a session stops", () =>
     Effect.gen(function* () {
       const threadId = ThreadId.make("grok-stop-session-close");
@@ -943,12 +1071,17 @@ it.layer(grokAdapterTestLayer)("GrokAdapterLive", (it) => {
     }),
   );
 
-  it.effect("ignores replayed session/load updates when resuming a Grok session", () =>
+  it.effect("switches once before prompting after a Grok session reconnect", () =>
     Effect.gen(function* () {
       const threadId = ThreadId.make("grok-load-replay-filter");
+      const tempDir = yield* Effect.promise(() =>
+        NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "grok-reconnect-model-switch-")),
+      );
+      const requestLogPath = NodePath.join(tempDir, "requests.ndjson");
       const wrapperPath = yield* Effect.promise(() =>
         makeMockGrokWrapper({
           T3_ACP_EMIT_LOAD_REPLAY: "1",
+          T3_ACP_REQUEST_LOG_PATH: requestLogPath,
         }),
       );
       const adapter = yield* makeTestAdapter(wrapperPath);
@@ -964,7 +1097,7 @@ it.layer(grokAdapterTestLayer)("GrokAdapterLive", (it) => {
         provider: ProviderDriverKind.make("grok"),
         cwd: process.cwd(),
         runtimeMode: "full-access",
-        modelSelection: { instanceId: ProviderInstanceId.make("grok"), model: "grok-build" },
+        modelSelection: { instanceId: ProviderInstanceId.make("grok"), model: "grok-mock-alt" },
         resumeCursor: { schemaVersion: 1, sessionId: "mock-session-1" },
       });
 
@@ -989,6 +1122,14 @@ it.layer(grokAdapterTestLayer)("GrokAdapterLive", (it) => {
             event.type === "content.delta" && event.payload.delta === "replayed assistant text",
         ),
       );
+      const requests = yield* Effect.promise(() => readJsonLines(requestLogPath));
+      const modelAndPromptMethods = requests.flatMap((request) =>
+        request.method === "session/set_model" || request.method === "session/prompt"
+          ? [request.method]
+          : [],
+      );
+      assert.deepEqual(modelAndPromptMethods, ["session/set_model", "session/prompt"]);
+      assert.equal(session.model, "grok-mock-alt");
 
       yield* Fiber.interrupt(runtimeEventsFiber);
       yield* adapter.stopSession(threadId);

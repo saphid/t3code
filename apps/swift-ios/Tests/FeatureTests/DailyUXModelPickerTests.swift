@@ -361,6 +361,78 @@ struct DailyUXModelPickerTests {
         )
     }
 
+    @Test(
+        "Grok threads allow advertised alternates and reject removed models",
+        .bug("https://github.com/saphid/t3code-personal/issues/203")
+    )
+    func grokThreadAllowsAdvertisedAlternatesAndRejectsRemovedModels() {
+        let inherited = FeatureSelection(providerID: "grok", modelID: "grok-4.6")
+        let providers = [
+            FeatureProvider(
+                id: "grok",
+                name: "Grok",
+                driver: "grok",
+                models: [
+                    .init(id: "grok-4.6", name: "Grok 4.6"),
+                    .init(id: "grok-4.5", name: "Grok 4.5"),
+                    .init(id: "grok-4", name: "Grok 4"),
+                ]
+            ),
+        ]
+
+        for modelID in ["grok-4.5", "grok-4"] {
+            let alternate = FeatureSelection(providerID: "grok", modelID: modelID)
+            #expect(
+                ExistingThreadModelChangePolicy.allows(
+                    providerID: alternate.providerID,
+                    modelID: alternate.modelID,
+                    threadSelection: inherited,
+                    providers: providers
+                )
+            )
+            #expect(
+                ThreadComposerModelSelectionPolicy.explicitSelection(
+                    alternate,
+                    inherited: inherited,
+                    providers: providers
+                ) == alternate
+            )
+        }
+
+        #expect(
+            ThreadComposerModelSelectionPolicy.explicitSelection(
+                .init(providerID: "grok", modelID: "grok-build"),
+                inherited: inherited,
+                providers: providers
+            ) == nil
+        )
+    }
+
+    @Test
+    func lockedThreadRejectsAnAlternateFromTheSameProvider() {
+        let inherited = FeatureSelection(providerID: "locked", modelID: "current")
+        let providers = [
+            FeatureProvider(
+                id: "locked",
+                name: "Locked provider",
+                requiresNewThreadForModelChange: true,
+                models: [
+                    .init(id: "current", name: "Current"),
+                    .init(id: "other", name: "Other"),
+                ]
+            ),
+        ]
+
+        #expect(
+            ExistingThreadModelChangePolicy.allows(
+                providerID: "locked",
+                modelID: "other",
+                threadSelection: inherited,
+                providers: providers
+            ) == false
+        )
+    }
+
     @Test
     func configurationMaterializesDisplayedDefaultsWithoutOverwritingSelections() {
         let model = FeatureModel(

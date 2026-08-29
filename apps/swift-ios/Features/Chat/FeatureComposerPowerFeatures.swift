@@ -354,20 +354,17 @@ enum FeatureComposerMenuBuilder {
 
         case .model:
             let query = trigger.query.trimmingCharacters(in: .whitespacesAndNewlines)
-            let lockedProviderID = threadSelection.flatMap { selection in
-                providers.first { $0.id == selection.providerID }?
-                    .requiresNewThreadForModelChange == true
-                    ? selection.providerID
-                    : nil
-            }
             return providers
                 .filter(\.isAvailable)
-                .filter { lockedProviderID == nil || $0.id == lockedProviderID }
                 .flatMap { provider in
                     provider.models
                         .filter { model in
-                            guard lockedProviderID != nil, let threadSelection else { return true }
-                            return model.id == threadSelection.modelID
+                            ExistingThreadModelChangePolicy.allows(
+                                providerID: provider.id,
+                                modelID: model.id,
+                                threadSelection: threadSelection,
+                                providers: providers
+                            )
                         }
                         .map { model in
                             (

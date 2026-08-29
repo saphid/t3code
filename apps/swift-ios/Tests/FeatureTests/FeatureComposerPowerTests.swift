@@ -416,6 +416,35 @@ struct FeatureComposerPowerTests {
         }
     }
 
+    @Test(
+        "Model command offers every advertised Grok alternate",
+        .bug("https://github.com/saphid/t3code-personal/issues/203")
+    )
+    func modelCommandOffersAdvertisedGrokAlternates() throws {
+        let provider = FeatureProvider(
+            id: "grok",
+            name: "Grok",
+            driver: "grok",
+            models: [
+                FeatureModel(id: "grok-4.6", name: "Grok 4.6"),
+                FeatureModel(id: "grok-4.5", name: "Grok 4.5"),
+                FeatureModel(id: "grok-4", name: "Grok 4"),
+            ]
+        )
+        let trigger = try #require(FeatureComposerTriggerParser.detect(in: "/model"))
+        let currentSelection = FeatureSelection(providerID: "grok", modelID: "grok-4.6")
+        let items = FeatureComposerMenuBuilder.items(
+            trigger: trigger,
+            providers: [provider],
+            currentSelection: currentSelection,
+            threadSelection: currentSelection,
+            powerFeatures: .disabled,
+            pathEntries: []
+        )
+
+        #expect(items.map(\.label) == ["Grok 4", "Grok 4.5", "Grok 4.6"])
+    }
+
     @Test
     func changingInputQuestionsKeepsAValidActiveQuestionAndDropsStaleAnswers() {
         #expect(

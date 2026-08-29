@@ -11,6 +11,11 @@ On SwiftUI mobile, paste an image from the message field's edit menu or drag an 
 composer to attach it. You can attach up to eight images to one message. The composer grows to
 12 lines, then scrolls within the message field.
 
+After a turn completes, the model picker offers other advertised models when the provider supports
+changing models inside the active thread. Grok applies the selected model to the next message while
+keeping the existing conversation context. Providers that cannot switch an active session keep the
+other models locked; start a new thread to use one of those models.
+
 ## Commands and skills
 
 Type `/` to open the command menu. Type `$` to find and add a skill. Skill rows show their source,

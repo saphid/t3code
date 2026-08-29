@@ -490,18 +490,13 @@ private struct ModelPickerSheet: View {
         }
     }
 
-    private var modelChangesAreLocked: Bool {
-        guard let threadSelection,
-              let provider = providers.first(where: { $0.id == threadSelection.providerID }) else {
-            return false
-        }
-        return provider.requiresNewThreadForModelChange
-    }
-
     private func isLocked(_ option: DailyUXModelOption) -> Bool {
-        guard modelChangesAreLocked, let threadSelection else { return false }
-        return option.provider.id != threadSelection.providerID
-            || option.model.id != threadSelection.modelID
+        ExistingThreadModelChangePolicy.allows(
+            providerID: option.provider.id,
+            modelID: option.model.id,
+            threadSelection: threadSelection,
+            providers: providers
+        ) == false
     }
 
     private func toggleFavorite(_ id: String) {
@@ -647,13 +642,32 @@ enum ThreadComposerModelSelectionPolicy {
             return nil
         }
 
-        let inheritedProvider = providers.first { $0.id == inherited.providerID }
-        if inheritedProvider?.requiresNewThreadForModelChange == true,
-           (validated.providerID != inherited.providerID
-               || validated.modelID != inherited.modelID) {
+        if ExistingThreadModelChangePolicy.allows(
+            providerID: validated.providerID,
+            modelID: validated.modelID,
+            threadSelection: inherited,
+            providers: providers
+        ) == false {
             return nil
         }
         return validated
+    }
+}
+
+enum ExistingThreadModelChangePolicy {
+    static func allows(
+        providerID: String,
+        modelID: String,
+        threadSelection: FeatureSelection?,
+        providers: [FeatureProvider]
+    ) -> Bool {
+        guard let threadSelection,
+              providers.first(where: { $0.id == threadSelection.providerID })?
+              .requiresNewThreadForModelChange == true else {
+            return true
+        }
+        return providerID == threadSelection.providerID
+            && modelID == threadSelection.modelID
     }
 }
 
