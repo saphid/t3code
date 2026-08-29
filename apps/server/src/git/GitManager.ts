@@ -55,7 +55,11 @@ import {
 } from "../textGeneration/TextGenerationPresets.ts";
 import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.ts";
 import * as ProviderRegistry from "../provider/Services/ProviderRegistry.ts";
-import { extractBranchNameFromRemoteRef } from "./remoteRefs.ts";
+import {
+  extractBranchNameFromRemoteRef,
+  parseRemoteNames,
+  parseRemoteRefWithRemoteNames,
+} from "./remoteRefs.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import type { GitManagerServiceError } from "@t3tools/contracts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
@@ -253,6 +257,24 @@ function parseRepositoryOwnerLogin(nameWithOwner: string | null): string | null 
 function normalizeOptionalString(value: string | null | undefined): string | null {
   const trimmed = value?.trim() ?? "";
   return trimmed.length > 0 ? trimmed : null;
+}
+
+function resolvesTrackedBranchAsPullRequestHead(
+  localBranch: string,
+  trackedBranch: string,
+  remoteName: string | null,
+): boolean {
+  if (/^t3code\/pr-\d+\//.test(localBranch)) {
+    return true;
+  }
+
+  const firstRemoteSlash = remoteName?.indexOf("/") ?? -1;
+  if (remoteName === null || firstRemoteSlash < 0) {
+    return false;
+  }
+
+  const localAliasPrefix = remoteName.slice(firstRemoteSlash + 1);
+  return localBranch === `${localAliasPrefix}/${trackedBranch}`;
 }
 
 function normalizeOptionalRepositoryNameWithOwner(value: string | null | undefined): string | null {
@@ -954,24 +976,7 @@ export const make = Effect.gen(function* () {
       };
       return Effect.gen(function* () {
         const headContext = yield* resolveBranchHeadContext(cwd, details);
-        const upstreamHeadIsDefault =
-          headContext.headBranch === details.defaultBranch ||
-          (details.defaultBranch === null &&
-            (headContext.headBranch === "main" || headContext.headBranch === "master"));
-        // `git worktree add -b feature origin/main` makes the new local branch
-        // track origin/main. That upstream is the branch's base, not its
-        // published PR head. Looking up PRs for it can attach an old reverse
-        // merge from main and auto-settle an unrelated feature thread.
-        if (
-          headContext.headBranch !== details.branch &&
-          upstreamHeadIsDefault &&
-          !headContext.isCrossRepository
-        ) {
-          return { latest: null, headContext };
-        }
-        // Only skip when the branch is untracked as well: anything carrying an
-        // upstream keeps the old behaviour.
-        if (details.upstreamRef === null && (yield* isUnpublishedBranch(cwd, headContext))) {
+        if (yield* isUnpublishedBranch(cwd, headContext)) {
           return { latest: null, headContext };
         }
         const latest = yield* findLatestPrForHeadContext(cwd, headContext);
@@ -1189,17 +1194,100 @@ export const make = Effect.gen(function* () {
     };
   });
 
+  const resolvePublishedHeadRemoteName = Effect.fn("resolvePublishedHeadRemoteName")(function* (
+    cwd: string,
+    localBranch: string,
+    headBranch: string,
+    configuredRemoteName: string | null,
+  ) {
+    const [branchPushRemote, defaultPushRemote, remoteNamesResult, remoteRefsResult] =
+      yield* Effect.all(
+        [
+          readConfigValueNullable(cwd, `branch.${localBranch}.pushRemote`),
+          readConfigValueNullable(cwd, "remote.pushDefault"),
+          gitCore.execute({
+            operation: "GitManager.resolvePublishedHeadRemoteName.remotes",
+            cwd,
+            args: ["remote"],
+            timeoutMs: 5_000,
+          }),
+          gitCore.execute({
+            operation: "GitManager.resolvePublishedHeadRemoteName.refs",
+            cwd,
+            args: ["for-each-ref", "--format=%(refname)", `refs/remotes/*/${headBranch}`],
+            timeoutMs: 5_000,
+          }),
+        ],
+        { concurrency: "unbounded" },
+      ).pipe(Effect.orElseSucceed(() => [null, null, null, null] as const));
+    if (remoteNamesResult === null || remoteRefsResult === null) {
+      return configuredRemoteName;
+    }
+
+    const remoteNames = parseRemoteNames(remoteNamesResult.stdout);
+    const publishedRemotes = Array.from(
+      new Set(
+        remoteRefsResult.stdout
+          .split("\n")
+          .map((ref) => ref.trim())
+          .filter((ref) => ref.startsWith("refs/remotes/"))
+          .map((ref) =>
+            parseRemoteRefWithRemoteNames(ref.slice("refs/remotes/".length), remoteNames),
+          )
+          .filter((ref) => ref !== null)
+          .map((ref) => ref.remoteName),
+      ),
+    );
+    if (publishedRemotes.length === 0) {
+      return configuredRemoteName;
+    }
+
+    for (const preferredRemote of [
+      branchPushRemote,
+      defaultPushRemote,
+      configuredRemoteName,
+      "origin",
+    ]) {
+      if (preferredRemote && publishedRemotes.includes(preferredRemote)) {
+        return preferredRemote;
+      }
+    }
+    return publishedRemotes.length === 1 ? (publishedRemotes[0] ?? null) : null;
+  });
+
   const resolveBranchHeadContext = Effect.fn("resolveBranchHeadContext")(function* (
     cwd: string,
     details: { branch: string; upstreamRef: string | null },
   ) {
-    const remoteName = yield* readConfigValueNullable(cwd, `branch.${details.branch}.remote`);
+    const configuredRemoteName = yield* readConfigValueNullable(
+      cwd,
+      `branch.${details.branch}.remote`,
+    );
     const headBranchFromUpstream = details.upstreamRef
-      ? extractBranchNameFromRemoteRef(details.upstreamRef, { remoteName })
+      ? extractBranchNameFromRemoteRef(details.upstreamRef, { remoteName: configuredRemoteName })
       : "";
-    const headBranch = headBranchFromUpstream.length > 0 ? headBranchFromUpstream : details.branch;
-    const shouldProbeLocalBranchSelector =
-      headBranchFromUpstream.length === 0 || headBranch === details.branch;
+    // An upstream can be the branch's integration base rather than its
+    // published head. The checked-out branch is the PR identity unless T3 or
+    // Git created a known synthetic local alias for an explicit tracked head.
+    const headBranch =
+      headBranchFromUpstream.length > 0 &&
+      resolvesTrackedBranchAsPullRequestHead(
+        details.branch,
+        headBranchFromUpstream,
+        configuredRemoteName,
+      )
+        ? headBranchFromUpstream
+        : details.branch;
+    const shouldProbeLocalBranchSelector = headBranch === details.branch;
+    const remoteName =
+      headBranch !== details.branch
+        ? configuredRemoteName
+        : yield* resolvePublishedHeadRemoteName(
+            cwd,
+            details.branch,
+            headBranch,
+            configuredRemoteName,
+          );
 
     const [remoteRepository, originRepository] = yield* Effect.all(
       [
@@ -1302,7 +1390,12 @@ export const make = Effect.gen(function* () {
         { concurrency: "unbounded" },
       );
       if (configuredRemote !== null && configuredMerge !== null) {
-        return false;
+        const configuredHead = configuredMerge.startsWith("refs/heads/")
+          ? configuredMerge.slice("refs/heads/".length)
+          : configuredMerge;
+        if (configuredHead === headContext.headBranch) {
+          return false;
+        }
       }
 
       const [tracksAnyRemote, tracksThisBranch] = yield* Effect.all(

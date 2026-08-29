@@ -378,6 +378,24 @@ struct HomeThreadMetadataTests {
         #expect(HomeThreadPullRequestPresentation.resolve(thread: branchless, status: otherBranch) == nil)
     }
 
+    @Test(.bug("https://github.com/saphid/t3code-personal/issues/228"))
+    func pullRequestIndicatorsClearWhenTheCurrentBranchHasNoPullRequest() {
+        let thread = FeatureThread(
+            id: "thread",
+            projectID: "project",
+            title: "Feature from dev",
+            branch: "feature/from-dev"
+        )
+        let localOnlyStatus = FeatureSourceControlStatus(branch: "feature/from-dev")
+
+        #expect(
+            HomeThreadPullRequestPresentation.resolve(
+                thread: thread,
+                status: localOnlyStatus
+            ) == nil
+        )
+    }
+
     @Test
     func liveSourceControlSnapshotsCarryPullRequestsAndClearMissingRemoteState() {
         let local = VCSLocalStatus(

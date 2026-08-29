@@ -1494,6 +1494,155 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
     }),
   );
 
+  it.effect(
+    "status uses the checked-out feature branch instead of its non-default upstream",
+    () =>
+      Effect.gen(function* () {
+        const repoDir = yield* makeTempDir("t3code-git-manager-");
+        yield* initRepo(repoDir);
+        const remoteDir = yield* createBareRemote();
+        yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+        yield* runGit(repoDir, ["push", "-u", "origin", "main"]);
+        yield* runGit(repoDir, ["checkout", "-b", "dev"]);
+        yield* runGit(repoDir, ["push", "-u", "origin", "dev"]);
+        yield* runGit(repoDir, ["checkout", "-b", "feature/from-dev", "origin/dev"]);
+
+        const featurePullRequest = {
+          number: 55,
+          title: "Feature pull request",
+          url: "https://github.com/pingdotgg/codething-mvp/pull/55",
+          baseRefName: "dev",
+          headRefName: "feature/from-dev",
+          state: "OPEN",
+          updatedAt: "2026-08-29T04:00:00Z",
+        };
+        const { manager, ghCalls } = yield* makeManager({
+          ghScenario: {
+            prListByHeadSelector: {
+              // @effect-diagnostics-next-line preferSchemaOverJson:off
+              "feature/from-dev": JSON.stringify([featurePullRequest]),
+              // @effect-diagnostics-next-line preferSchemaOverJson:off
+              dev: JSON.stringify([
+                {
+                  number: 49,
+                  title: "Release dev to main",
+                  url: "https://github.com/pingdotgg/codething-mvp/pull/49",
+                  baseRefName: "main",
+                  headRefName: "dev",
+                  state: "MERGED",
+                  mergedAt: "2026-08-28T04:00:00Z",
+                  updatedAt: "2026-08-28T04:00:00Z",
+                },
+              ]),
+            },
+          },
+        });
+
+        const localOnly = yield* manager.status({ cwd: repoDir });
+
+        expect(localOnly.refName).toBe("feature/from-dev");
+        expect(localOnly.pr).toBeNull();
+        expect(ghCalls.some((call) => call.includes("pr list "))).toBe(false);
+
+        yield* runGit(repoDir, ["push", "origin", "HEAD:feature/from-dev"]);
+        expect(
+          (yield* runGit(repoDir, ["rev-parse", "--abbrev-ref", "@{upstream}"])).stdout.trim(),
+        ).toBe("origin/dev");
+        yield* manager.invalidateStatus(repoDir);
+
+        const published = yield* manager.status({ cwd: repoDir });
+
+        expect(published.pr).toEqual({
+          number: 55,
+          title: "Feature pull request",
+          url: "https://github.com/pingdotgg/codething-mvp/pull/55",
+          baseRef: "dev",
+          headRef: "feature/from-dev",
+          state: "open",
+          updatedAt: "2026-08-29T04:00:00.000Z",
+        });
+        expect(ghCalls.some((call) => call.includes("pr list --head feature/from-dev "))).toBe(
+          true,
+        );
+        expect(ghCalls.some((call) => call.includes("pr list --head dev "))).toBe(false);
+      }),
+    20_000,
+  );
+
+  it.effect(
+    "status finds the feature head on a renamed fork remote while tracking an integration base",
+    () =>
+      Effect.gen(function* () {
+        const repoDir = yield* makeTempDir("t3code-git-manager-");
+        yield* initRepo(repoDir);
+        const upstreamDir = yield* createBareRemote();
+        const forkDir = yield* createBareRemote();
+        yield* configureRemote(repoDir, "upstream", upstreamDir, "upstream");
+        yield* configureRemote(repoDir, "my-fork", forkDir, "my-fork");
+        yield* runGit(repoDir, ["push", "-u", "upstream", "main"]);
+        yield* runGit(repoDir, ["checkout", "-b", "dev"]);
+        yield* runGit(repoDir, ["push", "-u", "upstream", "dev"]);
+        yield* runGit(repoDir, ["checkout", "-b", "feature/from-dev", "upstream/dev"]);
+        yield* configureVisibleRemoteUrlWithLocalRewrite(
+          repoDir,
+          "upstream",
+          "git@github.com:pingdotgg/codething-mvp.git",
+          upstreamDir,
+        );
+        yield* configureVisibleRemoteUrlWithLocalRewrite(
+          repoDir,
+          "my-fork",
+          "git@github.com:contributor/codething-mvp.git",
+          forkDir,
+        );
+
+        const { manager, ghCalls } = yield* makeManager({
+          ghScenario: {
+            prListByHeadSelector: {
+              // @effect-diagnostics-next-line preferSchemaOverJson:off
+              "contributor:feature/from-dev": JSON.stringify([
+                {
+                  number: 56,
+                  title: "Fork feature pull request",
+                  url: "https://github.com/pingdotgg/codething-mvp/pull/56",
+                  baseRefName: "dev",
+                  headRefName: "feature/from-dev",
+                  state: "OPEN",
+                  updatedAt: "2026-08-29T04:30:00Z",
+                  isCrossRepository: true,
+                  headRepository: {
+                    nameWithOwner: "contributor/codething-mvp",
+                  },
+                  headRepositoryOwner: {
+                    login: "contributor",
+                  },
+                },
+              ]),
+            },
+          },
+        });
+
+        const localOnly = yield* manager.status({ cwd: repoDir });
+        expect(localOnly.pr).toBeNull();
+        expect(ghCalls.some((call) => call.includes("pr list "))).toBe(false);
+
+        yield* runGit(repoDir, ["push", "my-fork", "HEAD:feature/from-dev"]);
+        expect(
+          (yield* runGit(repoDir, ["rev-parse", "--abbrev-ref", "@{upstream}"])).stdout.trim(),
+        ).toBe("upstream/dev");
+        yield* manager.invalidateStatus(repoDir);
+
+        const published = yield* manager.status({ cwd: repoDir });
+
+        expect(published.pr?.number).toBe(56);
+        expect(
+          ghCalls.some((call) => call.includes("pr list --head contributor:feature/from-dev ")),
+        ).toBe(true);
+        expect(ghCalls.some((call) => call.includes("pr list --head pingdotgg:dev "))).toBe(false);
+      }),
+    20_000,
+  );
+
   it.effect("status prefers open PR when merged PR has newer updatedAt", () =>
     Effect.gen(function* () {
       const repoDir = yield* makeTempDir("t3code-git-manager-");
