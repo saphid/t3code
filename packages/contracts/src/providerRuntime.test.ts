@@ -130,6 +130,32 @@ describe("ProviderRuntimeEvent", () => {
     expect(parsed.payload.answers.sandbox_mode).toBe("workspace-write");
   });
 
+  it("decodes a typed Claude Stop-hook boundary", () => {
+    const parsed = decodeRuntimeEvent({
+      type: "hook.started",
+      eventId: "event-stop-hook-1",
+      provider: "claudeAgent",
+      createdAt: "2026-08-29T01:00:00.000Z",
+      threadId: "thread-1",
+      turnId: "turn-1",
+      payload: {
+        hookId: "stop-hook-1",
+        hookName: "Stop:continuation",
+        hookEvent: "Stop",
+      },
+    });
+
+    expect(parsed.type).toBe("hook.started");
+    if (parsed.type !== "hook.started") {
+      throw new Error("expected hook.started");
+    }
+    expect(parsed.payload).toEqual({
+      hookId: "stop-hook-1",
+      hookName: "Stop:continuation",
+      hookEvent: "Stop",
+    });
+  });
+
   it("rejects legacy message.delta type", () => {
     expect(() =>
       decodeRuntimeEvent({

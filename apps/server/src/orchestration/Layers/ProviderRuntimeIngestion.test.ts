@@ -1030,6 +1030,143 @@ describe("ProviderRuntimeIngestion", () => {
     expect(message?.streaming).toBe(false);
   });
 
+  it("preserves assistant segments around replay-safe Claude Stop-hook boundaries", async () => {
+    const harness = await createHarness();
+    const threadId = asThreadId("thread-1");
+    const turnId = asTurnId("turn-stop-hook");
+    const itemId = asItemId("item-stop-hook");
+
+    harness.emit({
+      type: "turn.started",
+      eventId: asEventId("evt-stop-hook-turn-started"),
+      provider: ProviderDriverKind.make("claudeAgent"),
+      createdAt: "2026-08-29T01:00:00.000Z",
+      threadId,
+      turnId,
+    });
+    await waitForThread(harness.readModel, (thread) => thread.session?.activeTurnId === turnId);
+
+    harness.emit({
+      type: "content.delta",
+      eventId: asEventId("evt-stop-hook-first-response"),
+      provider: ProviderDriverKind.make("claudeAgent"),
+      createdAt: "2026-08-29T01:00:01.000Z",
+      threadId,
+      turnId,
+      itemId,
+      payload: {
+        streamKind: "assistant_text",
+        delta: "Original result with warning.",
+      },
+    });
+    const firstHook = {
+      type: "hook.started" as const,
+      eventId: asEventId("evt-stop-hook-first-boundary"),
+      provider: ProviderDriverKind.make("claudeAgent"),
+      createdAt: "2026-08-29T01:00:02.000Z",
+      threadId,
+      turnId,
+      payload: {
+        hookId: "stop-hook-1",
+        hookName: "Stop:continuation",
+        hookEvent: "Stop",
+      },
+    };
+    harness.emit(firstHook);
+
+    harness.emit({
+      type: "content.delta",
+      eventId: asEventId("evt-stop-hook-second-response"),
+      provider: ProviderDriverKind.make("claudeAgent"),
+      createdAt: "2026-08-29T01:00:03.000Z",
+      threadId,
+      turnId,
+      itemId,
+      payload: {
+        streamKind: "assistant_text",
+        delta: "First continuation.",
+      },
+    });
+    harness.emit({
+      type: "hook.started",
+      eventId: asEventId("evt-stop-hook-second-boundary"),
+      provider: ProviderDriverKind.make("claudeAgent"),
+      createdAt: "2026-08-29T01:00:04.000Z",
+      threadId,
+      turnId,
+      payload: {
+        hookId: "stop-hook-2",
+        hookName: "Stop:continuation",
+        hookEvent: "Stop",
+      },
+    });
+    harness.emit({
+      type: "content.delta",
+      eventId: asEventId("evt-stop-hook-third-response"),
+      provider: ProviderDriverKind.make("claudeAgent"),
+      createdAt: "2026-08-29T01:00:05.000Z",
+      threadId,
+      turnId,
+      itemId,
+      payload: {
+        streamKind: "assistant_text",
+        delta: "Interrupted continuation.",
+      },
+    });
+    harness.emit({
+      type: "turn.completed",
+      eventId: asEventId("evt-stop-hook-turn-interrupted"),
+      provider: ProviderDriverKind.make("claudeAgent"),
+      createdAt: "2026-08-29T01:00:06.000Z",
+      threadId,
+      turnId,
+      status: "interrupted",
+    });
+
+    const projected = await waitForThread(harness.readModel, (thread) => {
+      const responses = thread.messages.filter(
+        (message: ProviderRuntimeTestMessage) => message.turnId === turnId && !message.streaming,
+      );
+      const boundaries = thread.activities.filter(
+        (activity: ProviderRuntimeTestActivity) => activity.kind === "hook.started",
+      );
+      return responses.length === 3 && boundaries.length === 2;
+    });
+
+    harness.emit(firstHook);
+    await harness.drain();
+    const replayed = await harness.readModel();
+    const replayedThread = replayed.threads.find((thread) => thread.id === threadId);
+    const responses = projected.messages.filter(
+      (message: ProviderRuntimeTestMessage) => message.turnId === turnId,
+    );
+    expect(responses.map((message: ProviderRuntimeTestMessage) => message.text)).toEqual([
+      "Original result with warning.",
+      "First continuation.",
+      "Interrupted continuation.",
+    ]);
+    expect(new Set(responses.map((message: ProviderRuntimeTestMessage) => message.id)).size).toBe(
+      3,
+    );
+
+    const boundaries = replayedThread?.activities.filter(
+      (activity: ProviderRuntimeTestActivity) => activity.kind === "hook.started",
+    );
+    expect(boundaries).toHaveLength(2);
+    expect(boundaries?.map((activity: ProviderRuntimeTestActivity) => activity.payload)).toEqual([
+      {
+        provider: "claudeAgent",
+        hookId: "stop-hook-1",
+        hookEvent: "Stop",
+      },
+      {
+        provider: "claudeAgent",
+        hookId: "stop-hook-2",
+        hookEvent: "Stop",
+      },
+    ]);
+  });
+
   it("uses assistant item completion detail when no assistant deltas were streamed", async () => {
     const harness = await createHarness();
     const now = "2026-01-01T00:00:00.000Z";

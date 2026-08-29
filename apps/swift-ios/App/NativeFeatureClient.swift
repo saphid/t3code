@@ -4395,6 +4395,8 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         for activity in mutations.activities {
             if activity.tone == "error" {
                 changedIDs.insert("activity-\(activity.id)")
+            } else if ClaudeStopHookTranscriptBoundary.resolve(activity) != nil {
+                changedIDs.insert("hook-boundary-\(activity.id)")
             } else if NativeWorkLogAccumulator.accepts(activity) {
                 changedIDs.insert("work-log-\(activity.turnId ?? "unscoped")")
             }
@@ -4788,7 +4790,8 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
             cache.approvals = pendingApprovals(thread, environment: environment)
             cache.userInputs = pendingUserInputs(thread, environment: environment)
             let errors = thread.activities.compactMap(mapErrorActivity)
-            let activityMessages = (errors + collapsedWorkLogs(thread.activities))
+            let hookBoundaries = thread.activities.compactMap(mapStopHookActivity)
+            let activityMessages = (errors + hookBoundaries + collapsedWorkLogs(thread.activities))
                 .sorted { $0.createdAt < $1.createdAt }
             seedWorkLogs(thread.activities, cache: cache)
             cache.subagents.reset(with: thread.activities)
@@ -4981,6 +4984,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
             mapMessage($0, environmentID: environmentID)
         }
         let activities = thread.activities.compactMap(mapErrorActivity)
+            + thread.activities.compactMap(mapStopHookActivity)
             + collapsedWorkLogs(thread.activities)
         return (messages + activities).sorted { $0.createdAt < $1.createdAt }
     }
@@ -5077,6 +5081,9 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         )
         if let error = mapErrorActivity(activity) {
             upsertMergedMessage(error, cache: cache)
+        }
+        if let hookBoundary = mapStopHookActivity(activity) {
+            upsertMergedMessage(hookBoundary, cache: cache)
         }
         guard NativeWorkLogAccumulator.accepts(activity),
               cache.workLogActivityIDs.insert(activity.id).inserted else {
@@ -5254,6 +5261,11 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
             state: .complete,
             toolName: activity.kind
         )
+    }
+
+    private func mapStopHookActivity(_ activity: OrchestrationActivity) -> FeatureMessage? {
+        guard let boundary = ClaudeStopHookTranscriptBoundary.resolve(activity) else { return nil }
+        return boundary.message(createdAt: parseDate(activity.createdAt))
     }
 
     /// Lifecycle updates can number in the thousands on a long turn. Keep the
@@ -6210,6 +6222,37 @@ struct NativeDetailRenderMutations {
         case .metadata, .none:
             break
         }
+    }
+}
+
+struct ClaudeStopHookTranscriptBoundary: Equatable {
+    static let marker = "claude.stop-hook"
+    static let accessibilityLabel = "Claude Stop hook. Claude may continue this turn."
+
+    let id: String
+    let title: String
+
+    func message(createdAt: Date) -> FeatureMessage {
+        FeatureMessage(
+            id: id,
+            role: .system,
+            text: title,
+            createdAt: createdAt,
+            state: .complete,
+            toolName: Self.marker
+        )
+    }
+
+    static func resolve(_ activity: OrchestrationActivity) -> Self? {
+        guard activity.kind == "hook.started",
+              activity.payload["provider"]?.stringValue?.lowercased() == "claudeagent",
+              activity.payload["hookEvent"]?.stringValue?.lowercased() == "stop" else {
+            return nil
+        }
+        return Self(
+            id: "hook-boundary-\(activity.id)",
+            title: "Claude Stop hook"
+        )
     }
 }
 

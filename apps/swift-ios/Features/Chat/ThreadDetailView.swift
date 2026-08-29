@@ -2345,7 +2345,7 @@ struct FeatureMessageView: View {
                     FeatureMessageAttachmentsView(attachments: message.attachments)
                     if !message.text.isEmpty {
                         MarkdownMessageView(
-                            message.text,
+                            message.copySource,
                             isStreaming: message.state == .streaming,
                             imageContext: imageContext
                         )
@@ -2381,7 +2381,7 @@ struct FeatureMessageView: View {
                 FeatureMessageAttachmentsView(attachments: message.attachments)
                 if !message.text.isEmpty {
                     MarkdownMessageView(
-                        message.text,
+                        message.copySource,
                         isStreaming: message.state == .streaming,
                         imageContext: imageContext
                     )
@@ -2409,11 +2409,15 @@ struct FeatureMessageView: View {
             .frame(minHeight: T3Metrics.minimumTapTarget)
             .accessibilityIdentifier("message-\(message.id)")
         case .system:
-            Text(message.text)
-                .font(T3Typography.supporting)
-                .foregroundStyle(T3Colors.textSecondary)
-                .frame(maxWidth: .infinity, alignment: .center)
-                .accessibilityIdentifier("message-\(message.id)")
+            if message.toolName == ClaudeStopHookTranscriptBoundary.marker {
+                FeatureStopHookBoundaryView(message: message)
+            } else {
+                Text(message.text)
+                    .font(T3Typography.supporting)
+                    .foregroundStyle(T3Colors.textSecondary)
+                    .frame(maxWidth: .infinity, alignment: .center)
+                    .accessibilityIdentifier("message-\(message.id)")
+            }
         }
     }
 
@@ -2425,6 +2429,29 @@ struct FeatureMessageView: View {
         return [message.text, attachmentSummary]
             .filter { !$0.isEmpty }
             .joined(separator: ", ")
+    }
+}
+
+private struct FeatureStopHookBoundaryView: View {
+    let message: FeatureMessage
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Rectangle()
+                .fill(T3Colors.border)
+                .frame(height: 1)
+            Label(message.text, systemImage: "arrow.turn.down.right")
+                .fixedSize()
+            Rectangle()
+                .fill(T3Colors.border)
+                .frame(height: 1)
+        }
+        .font(T3Typography.supportingStrong)
+        .foregroundStyle(T3Colors.textSecondary)
+        .frame(maxWidth: .infinity)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(ClaudeStopHookTranscriptBoundary.accessibilityLabel)
+        .accessibilityIdentifier("message-\(message.id)")
     }
 }
 

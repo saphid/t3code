@@ -3045,6 +3045,132 @@ describe("ClaudeAdapterLive", () => {
     );
   });
 
+  it.effect("emits the complete Claude Stop-hook continuation sequence in order", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      const runtimeEventsFiber = yield* Stream.take(adapter.streamEvents, 12).pipe(
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      const session = yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+      yield* adapter.sendTurn({
+        threadId: session.threadId,
+        input: "hello",
+        attachments: [],
+      });
+
+      const emitTextResponse = (suffix: string, text: string) => {
+        harness.query.emit({
+          type: "stream_event",
+          session_id: "sdk-session-stop-hook",
+          uuid: `stream-stop-hook-start-${suffix}`,
+          parent_tool_use_id: null,
+          event: {
+            type: "content_block_start",
+            index: 0,
+            content_block: { type: "text", text: "" },
+          },
+        } as unknown as SDKMessage);
+        harness.query.emit({
+          type: "stream_event",
+          session_id: "sdk-session-stop-hook",
+          uuid: `stream-stop-hook-delta-${suffix}`,
+          parent_tool_use_id: null,
+          event: {
+            type: "content_block_delta",
+            index: 0,
+            delta: { type: "text_delta", text },
+          },
+        } as unknown as SDKMessage);
+        harness.query.emit({
+          type: "stream_event",
+          session_id: "sdk-session-stop-hook",
+          uuid: `stream-stop-hook-stop-${suffix}`,
+          parent_tool_use_id: null,
+          event: { type: "content_block_stop", index: 0 },
+        } as unknown as SDKMessage);
+      };
+
+      emitTextResponse("before", "Original response");
+      harness.query.emit({
+        type: "system",
+        subtype: "hook_started",
+        hook_id: "stop-hook-1",
+        hook_name: "Stop:continuation",
+        hook_event: "Stop",
+        session_id: "sdk-session-stop-hook",
+        uuid: "stop-hook-started",
+      } as unknown as SDKMessage);
+      harness.query.emit({
+        type: "system",
+        subtype: "hook_response",
+        hook_id: "stop-hook-1",
+        hook_name: "Stop:continuation",
+        hook_event: "Stop",
+        output: "continue",
+        stdout: "",
+        stderr: "",
+        outcome: "success",
+        session_id: "sdk-session-stop-hook",
+        uuid: "stop-hook-completed",
+      } as unknown as SDKMessage);
+      emitTextResponse("after", "Continuation response");
+      harness.query.emit({
+        type: "result",
+        subtype: "success",
+        is_error: false,
+        errors: [],
+        session_id: "sdk-session-stop-hook",
+        uuid: "result-stop-hook",
+      } as unknown as SDKMessage);
+
+      const runtimeEvents = Array.from(yield* Fiber.join(runtimeEventsFiber));
+      const sequence = runtimeEvents.filter(
+        (event) =>
+          event.type === "content.delta" ||
+          event.type === "item.completed" ||
+          event.type === "hook.started" ||
+          event.type === "hook.completed",
+      );
+      assert.deepEqual(
+        sequence.map((event) => event.type),
+        [
+          "content.delta",
+          "item.completed",
+          "hook.started",
+          "hook.completed",
+          "content.delta",
+          "item.completed",
+        ],
+      );
+      assert.equal(sequence[2]?.type, "hook.started");
+      if (sequence[2]?.type === "hook.started") {
+        assert.deepEqual(sequence[2].payload, {
+          hookId: "stop-hook-1",
+          hookName: "Stop:continuation",
+          hookEvent: "Stop",
+        });
+      }
+      const assistantDeltas = sequence.filter(
+        (event) => event.type === "content.delta" && event.payload.streamKind === "assistant_text",
+      );
+      assert.deepEqual(
+        assistantDeltas.map((event) => (event.type === "content.delta" ? event.payload.delta : "")),
+        ["Original response", "Continuation response"],
+      );
+      assert.notEqual(assistantDeltas[0]?.itemId, assistantDeltas[1]?.itemId);
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
   it.effect("falls back to assistant payload text when stream deltas are absent", () => {
     const harness = makeHarness();
     return Effect.gen(function* () {

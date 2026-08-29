@@ -426,6 +426,8 @@ public struct FeatureMessage: Identifiable, Sendable, Equatable, Hashable, Codab
     public var toolName: String?
     public var attachments: [FeatureMessageAttachment]
 
+    public var copySource: String { text }
+
     public init(
         id: String,
         role: FeatureMessageRole,

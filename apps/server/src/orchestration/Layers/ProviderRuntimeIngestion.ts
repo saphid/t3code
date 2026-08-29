@@ -488,6 +488,28 @@ export function runtimeEventToActivities(
       ];
     }
 
+    case "hook.started": {
+      if (event.provider !== "claudeAgent" || event.payload.hookEvent.toLowerCase() !== "stop") {
+        return [];
+      }
+      return [
+        {
+          id: event.eventId,
+          createdAt: event.createdAt,
+          tone: "info",
+          kind: "hook.started",
+          summary: `${event.payload.hookEvent} hook started`,
+          payload: {
+            provider: event.provider,
+            hookId: event.payload.hookId,
+            hookEvent: event.payload.hookEvent,
+          },
+          turnId: toTurnId(event.turnId) ?? null,
+          ...maybeSequence,
+        },
+      ];
+    }
+
     case "turn.plan.updated": {
       return [
         {
@@ -1710,11 +1732,17 @@ const make = Effect.gen(function* () {
         }
       }
 
-      const pauseForUserTurnId =
-        event.type === "request.opened" || event.type === "user-input.requested"
+      const isClaudeStopHookBoundary =
+        event.type === "hook.started" &&
+        event.provider === "claudeAgent" &&
+        event.payload.hookEvent.toLowerCase() === "stop";
+      const assistantBoundaryTurnId =
+        event.type === "request.opened" ||
+        event.type === "user-input.requested" ||
+        isClaudeStopHookBoundary
           ? toTurnId(event.turnId)
           : undefined;
-      if (pauseForUserTurnId) {
+      if (assistantBoundaryTurnId) {
         const detailedThread = yield* getLoadedThreadDetail();
         const assistantDeliveryMode: AssistantDeliveryMode = yield* Effect.map(
           serverSettingsService.getSettings,
@@ -1725,30 +1753,36 @@ const make = Effect.gen(function* () {
             ? yield* flushBufferedAssistantMessagesForTurn({
                 event,
                 threadId: thread.id,
-                turnId: pauseForUserTurnId,
+                turnId: assistantBoundaryTurnId,
                 createdAt: now,
                 commandTag:
                   event.type === "request.opened"
                     ? "assistant-delta-flush-on-request-opened"
-                    : "assistant-delta-flush-on-user-input-requested",
+                    : event.type === "user-input.requested"
+                      ? "assistant-delta-flush-on-user-input-requested"
+                      : "assistant-delta-flush-on-hook-started",
               })
             : new Set<MessageId>();
         yield* finalizeActiveAssistantSegmentForTurn({
           event,
           threadId: thread.id,
-          turnId: pauseForUserTurnId,
+          turnId: assistantBoundaryTurnId,
           createdAt: now,
           commandTag:
             event.type === "request.opened"
               ? "assistant-complete-on-request-opened"
-              : "assistant-complete-on-user-input-requested",
+              : event.type === "user-input.requested"
+                ? "assistant-complete-on-user-input-requested"
+                : "assistant-complete-on-hook-started",
           finalDeltaCommandTag:
             event.type === "request.opened"
               ? "assistant-delta-finalize-on-request-opened"
-              : "assistant-delta-finalize-on-user-input-requested",
+              : event.type === "user-input.requested"
+                ? "assistant-delta-finalize-on-user-input-requested"
+                : "assistant-delta-finalize-on-hook-started",
           hasProjectedMessage:
             detailedThread !== null &&
-            hasAssistantMessageForTurn(detailedThread.messages, pauseForUserTurnId, {
+            hasAssistantMessageForTurn(detailedThread.messages, assistantBoundaryTurnId, {
               streamingOnly: true,
             }),
           flushedMessageIds,
