@@ -95,7 +95,7 @@ private enum GhosttyRuntime {
 }
 
 @MainActor
-private enum TerminalHardwareKeyEncoder {
+private enum TerminalUIKitKeyAdapter {
     private static let controlInputs = "abcdefghijklmnopqrstuvwxyz@[\\]^_-? "
 
     static func makeKeyCommands(action: Selector) -> [UIKeyCommand] {
@@ -146,45 +146,24 @@ private enum TerminalHardwareKeyEncoder {
         return command
     }
 
-    static func sequence(input: String, modifiers: UIKeyModifierFlags) -> String? {
-        if modifiers == .command {
-            return input.lowercased() == "c" ? "copy" : input.lowercased() == "v" ? "paste" : nil
-        }
-
+    static func key(for input: String) -> TerminalHardwareKey {
         switch input {
-        case UIKeyCommand.inputEscape: return "\u{1B}"
-        case UIKeyCommand.inputUpArrow: return "\u{1B}[A"
-        case UIKeyCommand.inputDownArrow: return "\u{1B}[B"
-        case UIKeyCommand.inputRightArrow: return "\u{1B}[C"
-        case UIKeyCommand.inputLeftArrow: return "\u{1B}[D"
-        case "\t": return modifiers.contains(.shift) ? "\u{1B}[Z" : "\t"
-        default: break
+        case UIKeyCommand.inputEscape: .escape
+        case UIKeyCommand.inputUpArrow: .up
+        case UIKeyCommand.inputDownArrow: .down
+        case UIKeyCommand.inputRightArrow: .right
+        case UIKeyCommand.inputLeftArrow: .left
+        default: .text(input)
         }
-
-        guard modifiers.contains(.control),
-              let scalar = input.lowercased().unicodeScalars.first else {
-            return nil
-        }
-        return controlSequence(for: scalar)
     }
 
-    static func applyingControl(to input: String) -> String {
-        guard let scalar = input.lowercased().unicodeScalars.first else { return input }
-        return controlSequence(for: scalar) ?? input
-    }
-
-    private static func controlSequence(for scalar: Unicode.Scalar) -> String? {
-        switch scalar {
-        case "a"..."z": return UnicodeScalar(scalar.value - 96).map(String.init)
-        case " ", "@": return "\u{00}"
-        case "[": return "\u{1B}"
-        case "\\": return "\u{1C}"
-        case "]": return "\u{1D}"
-        case "^": return "\u{1E}"
-        case "_", "-": return "\u{1F}"
-        case "?": return "\u{7F}"
-        default: return nil
-        }
+    static func modifiers(for flags: UIKeyModifierFlags) -> TerminalHardwareModifiers {
+        var modifiers = TerminalHardwareModifiers()
+        if flags.contains(.control) { modifiers.insert(.control) }
+        if flags.contains(.shift) { modifiers.insert(.shift) }
+        if flags.contains(.alternate) { modifiers.insert(.alternate) }
+        if flags.contains(.command) { modifiers.insert(.command) }
+        return modifiers
     }
 }
 
@@ -194,7 +173,7 @@ private final class TerminalInputField: UITextField {
     var onCopyOutput: (() -> Void)?
     var onPasteText: (() -> Void)?
 
-    private static let terminalKeyCommands = TerminalHardwareKeyEncoder.makeKeyCommands(
+    private static let terminalKeyCommands = TerminalUIKitKeyAdapter.makeKeyCommands(
         action: #selector(handleHardwareKeyCommand(_:))
     )
 
@@ -205,20 +184,44 @@ private final class TerminalInputField: UITextField {
         super.deleteBackward()
     }
 
+    override func pressesBegan(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+        var unhandled = presses
+        for press in presses where press.key?.keyCode == .keyboardInsert {
+            guard let key = press.key,
+                  let action = TerminalHardwareKeyEncoder.action(
+                    hidUsage: key.keyCode.rawValue,
+                    modifiers: TerminalUIKitKeyAdapter.modifiers(for: key.modifierFlags)
+                  ) else {
+                continue
+            }
+            unhandled.remove(press)
+            perform(action)
+        }
+
+        if !unhandled.isEmpty {
+            super.pressesBegan(unhandled, with: event)
+        }
+    }
+
     @objc private func handleHardwareKeyCommand(_ command: UIKeyCommand) {
         guard let input = command.input,
-              let sequence = TerminalHardwareKeyEncoder.sequence(
-                input: input,
-                modifiers: command.modifierFlags
+              let action = TerminalHardwareKeyEncoder.action(
+                key: TerminalUIKitKeyAdapter.key(for: input),
+                modifiers: TerminalUIKitKeyAdapter.modifiers(for: command.modifierFlags)
               ) else {
             return
         }
 
-        if sequence == "copy" {
+        perform(action)
+    }
+
+    private func perform(_ action: TerminalHardwareKeyAction) {
+        switch action {
+        case .copySelection:
             onCopyOutput?()
-        } else if sequence == "paste" {
+        case .pasteClipboard:
             onPasteText?()
-        } else {
+        case let .input(sequence):
             onInsert?(sequence)
         }
     }
@@ -708,7 +711,11 @@ final class GhosttyTerminalView: UIView, UITextFieldDelegate, UIContextMenuInter
     ) -> UIContextMenuConfiguration? {
         UIContextMenuConfiguration(identifier: nil, previewProvider: nil) { [weak self] _ in
             guard let self else { return UIMenu() }
-            let copy = UIAction(title: "Copy output", image: UIImage(systemName: "doc.on.doc")) { [weak self] _ in
+            let copy = UIAction(
+                title: "Copy",
+                image: UIImage(systemName: "doc.on.doc"),
+                attributes: self.hasSelection ? [] : .disabled
+            ) { [weak self] _ in
                 self?.copyOutput()
             }
             let paste = UIAction(
@@ -974,12 +981,38 @@ final class GhosttyTerminalView: UIView, UITextFieldDelegate, UIContextMenuInter
     }
 
     private func copyOutput() {
-        UIPasteboard.general.string = TerminalText.plainText(from: buffer)
+        performClipboardAction(.copySelection)
     }
 
     private func pasteText() {
-        guard let value = UIPasteboard.general.string, !value.isEmpty else { return }
-        sendInput(value)
+        performClipboardAction(.pasteClipboard)
+    }
+
+    private var hasSelection: Bool {
+        guard let surface else { return false }
+        return ghostty_surface_has_selection(surface)
+    }
+
+    private func selectedText() -> String? {
+        guard let surface, ghostty_surface_has_selection(surface) else { return nil }
+        var text = ghostty_text_s()
+        guard ghostty_surface_read_selection(surface, &text) else { return nil }
+        defer { ghostty_surface_free_text(surface, &text) }
+        guard let pointer = text.text, text.text_len > 0 else { return nil }
+        let bytes = UnsafeRawPointer(pointer).assumingMemoryBound(to: UInt8.self)
+        return String(
+            decoding: UnsafeBufferPointer(start: bytes, count: Int(text.text_len)),
+            as: UTF8.self
+        )
+    }
+
+    private func performClipboardAction(_ action: TerminalHardwareKeyAction) {
+        TerminalClipboardRouter(
+            readSelection: { [weak self] in self?.selectedText() },
+            readClipboard: { UIPasteboard.general.string },
+            writeClipboard: { UIPasteboard.general.string = $0 },
+            sendInput: { [weak self] in self?.sendInput($0) }
+        ).perform(action)
     }
 
     private func handleAccessoryAction(_ action: TerminalAccessoryAction) {
