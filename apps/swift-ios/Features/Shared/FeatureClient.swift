@@ -91,6 +91,7 @@ public protocol FeatureClient: AnyObject {
         identity: FeatureSubmissionIdentity
     ) async throws
     func cancelTurn(threadID: String) async throws
+    func revertCheckpoint(_ target: FeatureCheckpointRevertTarget) async throws
     func resolveApproval(id: String, decision: FeatureApprovalDecision) async throws
     func resolveUserInput(id: String, answers: [String: FeatureInputAnswer]) async throws
 
@@ -325,6 +326,9 @@ public extension FeatureClient {
         nil
     }
     func releaseThread(id: String) {}
+    func revertCheckpoint(_ target: FeatureCheckpointRevertTarget) async throws {
+        throw FeatureCapabilityUnavailable("Checkpoint revert")
+    }
     func resolveUserInput(id: String, answers: [String: FeatureInputAnswer]) async throws {}
 
     /// Keeps simple text-only callers source-compatible while the typed API

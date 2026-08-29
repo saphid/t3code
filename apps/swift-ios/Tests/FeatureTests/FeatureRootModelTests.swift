@@ -2869,6 +2869,176 @@ struct FeatureRootModelTests {
         #expect(rendered == appended)
     }
 
+    @Test(
+        "Checkpoint revert stays single-flight until authoritative completion",
+        .bug("https://github.com/saphid/t3code-personal/issues/200")
+    )
+    func checkpointRevertDisablesConflictingActionsWhilePending() async {
+        let gate = FeatureSettingsSaveGate()
+        let client = FeatureClientStub()
+        let thread = FeatureThread(
+            id: "thread-1",
+            projectID: "project-1",
+            environmentID: "environment-1",
+            title: "Failed turn",
+            state: .failed
+        )
+        let target = FeatureCheckpointRevertTarget(
+            threadID: thread.id,
+            userMessageID: "user-1",
+            turnID: "turn-1",
+            checkpointRef: "refs/t3/turn-1",
+            checkpointTurnCount: 1,
+            restoreTurnCount: 0
+        )
+        var detail = FeatureThreadDetail(
+            thread: thread,
+            messages: [FeatureMessage(id: "user-1", role: .user, text: "Retry me")]
+        )
+        detail.checkpointRevertActions = ["user-1": .available(target)]
+        client.snapshot = FeatureSnapshot(threads: [thread])
+        client.threadDetail = detail
+        client.beforeRevertCheckpoint = { await gate.enter() }
+        let model = testRootModel(client: client)
+        await model.reload()
+        _ = await model.detail(for: thread.id)
+
+        let revert = Task { await model.revertCheckpoint(target) }
+        await gate.waitUntilCallCount(1)
+
+        #expect(model.isRevertingCheckpoint(threadID: thread.id))
+        #expect(await model.revertCheckpoint(target) == false)
+        #expect(await model.sendMessage(threadID: thread.id, text: "conflict", selection: nil) == false)
+        #expect(client.revertCheckpointCallCount == 1)
+        gate.releaseFirst()
+
+        #expect(await revert.value)
+        #expect(model.isRevertingCheckpoint(threadID: thread.id) == false)
+        #expect(client.revertedCheckpointTarget == target)
+    }
+
+    @Test("Checkpoint revert failure clears pending state and reports the receipt")
+    func checkpointRevertFailureIsRecoverable() async {
+        let client = FeatureClientStub()
+        let thread = FeatureThread(
+            id: "thread-1",
+            projectID: "project-1",
+            environmentID: "environment-1",
+            title: "Failed turn",
+            state: .failed
+        )
+        let target = FeatureCheckpointRevertTarget(
+            threadID: thread.id,
+            userMessageID: "user-1",
+            turnID: "turn-1",
+            checkpointRef: "refs/t3/turn-1",
+            checkpointTurnCount: 1,
+            restoreTurnCount: 0
+        )
+        var detail = FeatureThreadDetail(thread: thread)
+        detail.checkpointRevertActions = ["user-1": .available(target)]
+        client.snapshot = FeatureSnapshot(threads: [thread])
+        client.threadDetail = detail
+        client.revertCheckpointError = FeatureCapabilityUnavailable("Checkpoint receipt")
+        let model = testRootModel(client: client)
+        await model.reload()
+        _ = await model.detail(for: thread.id)
+
+        #expect(await model.revertCheckpoint(target) == false)
+        #expect(model.isRevertingCheckpoint(threadID: thread.id) == false)
+        #expect(model.errorMessage?.contains("Checkpoint receipt") == true)
+    }
+
+    @Test("Checkpoint hydration resolves success and only new matching failures")
+    func checkpointRevertHydrationResolution() {
+        let target = FeatureCheckpointRevertTarget(
+            threadID: "thread-1",
+            userMessageID: "user-2",
+            turnID: "turn-2",
+            checkpointRef: "refs/t3/turn-2",
+            checkpointTurnCount: 2,
+            restoreTurnCount: 1
+        )
+        let sourceCheckpoint = CheckpointSummary(
+            turnId: "turn-2",
+            checkpointTurnCount: 2,
+            checkpointRef: target.checkpointRef,
+            status: "error",
+            files: [],
+            assistantMessageId: "assistant:turn-2",
+            completedAt: "2026-08-29T04:00:00Z"
+        )
+        let restoredCheckpoint = CheckpointSummary(
+            turnId: "turn-1",
+            checkpointTurnCount: 1,
+            checkpointRef: "refs/t3/turn-1",
+            status: "ready",
+            files: [],
+            assistantMessageId: "assistant-1",
+            completedAt: "2026-08-29T03:59:00Z"
+        )
+        let failure = OrchestrationActivity(
+            id: "revert-failure-1",
+            tone: "error",
+            kind: "checkpoint.revert.failed",
+            summary: "Checkpoint revert failed",
+            payload: .object([
+                "turnCount": .number(1),
+                "detail": .string("Workspace ref disappeared"),
+            ]),
+            turnId: nil,
+            sequence: 44,
+            createdAt: "2026-08-29T04:00:01Z"
+        )
+
+        #expect(
+            NativeFeatureClient.checkpointRevertResolution(
+                in: orchestrationThread(checkpoints: [restoredCheckpoint]),
+                target: target,
+                failureActivityIDsAtDispatch: []
+            ) == .restored
+        )
+        #expect(
+            NativeFeatureClient.checkpointRevertResolution(
+                in: orchestrationThread(
+                    activities: [failure],
+                    checkpoints: [restoredCheckpoint, sourceCheckpoint]
+                ),
+                target: target,
+                failureActivityIDsAtDispatch: []
+            ) == .failed("Workspace ref disappeared")
+        )
+        #expect(
+            NativeFeatureClient.checkpointRevertResolution(
+                in: orchestrationThread(
+                    activities: [failure],
+                    checkpoints: [restoredCheckpoint, sourceCheckpoint]
+                ),
+                target: target,
+                failureActivityIDsAtDispatch: [failure.id]
+            ) == .pending
+        )
+    }
+
+    @Test("Checkpoint revert request receipt does not discard hydrated detail")
+    func revertRequestReducerWaitsForCompletion() {
+        let thread = orchestrationThread()
+        let event = orchestrationEvent(
+            type: "thread.checkpoint-revert-requested",
+            sequence: 3,
+            payload: [
+                "threadId": .string(thread.id),
+                "turnCount": .number(0),
+                "createdAt": .string("2026-08-29T04:00:00Z"),
+            ]
+        )
+
+        let reduction = NativeThreadDetailReducer.apply(event, to: thread)
+
+        #expect(reduction.result == .unchanged)
+        #expect(reduction.renderMutation == .none)
+    }
+
     @Test
     func destructiveDetailEventRequestsAuthoritativeSnapshot() {
         let thread = orchestrationThread()
@@ -3006,6 +3176,10 @@ private final class FeatureClientStub: FeatureClient, T3ConnectCapable {
     var createThreadCallCount = 0
     var sendMessageCallCount = 0
     var cancelTurnCallCount = 0
+    var revertCheckpointCallCount = 0
+    var revertedCheckpointTarget: FeatureCheckpointRevertTarget?
+    var revertCheckpointError: (any Error)?
+    var beforeRevertCheckpoint: (@MainActor () async throws -> Void)?
     var signOutCallCount = 0
     var startTaskError: (any Error)?
     var sendMessageError: (any Error)?
@@ -3198,6 +3372,12 @@ private final class FeatureClientStub: FeatureClient, T3ConnectCapable {
 
     func cancelTurn(threadID: String) async throws {
         cancelTurnCallCount += 1
+    }
+    func revertCheckpoint(_ target: FeatureCheckpointRevertTarget) async throws {
+        revertCheckpointCallCount += 1
+        revertedCheckpointTarget = target
+        try await beforeRevertCheckpoint?()
+        if let revertCheckpointError { throw revertCheckpointError }
     }
     func resolveApproval(id: String, decision: FeatureApprovalDecision) async throws {}
     func resolveUserInput(

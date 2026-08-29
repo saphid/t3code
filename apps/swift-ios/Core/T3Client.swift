@@ -544,6 +544,23 @@ public actor T3Client {
     }
 
     @discardableResult
+    public func revertCheckpoint(
+        threadID: String,
+        turnCount: Int,
+        commandID: String = UUID().uuidString,
+        createdAt: String = OrchestrationCommands.now()
+    ) async throws -> DispatchResult {
+        try await dispatch(
+            OrchestrationCommands.revertCheckpoint(
+                threadID: threadID,
+                turnCount: turnCount,
+                commandID: commandID,
+                createdAt: createdAt
+            )
+        )
+    }
+
+    @discardableResult
     public func respondToApproval(
         threadID: String,
         requestID: String,
@@ -1826,6 +1843,21 @@ public enum OrchestrationCommands {
         ]
         if let turnID { value["turnId"] = .string(turnID) }
         return .object(value)
+    }
+
+    public static func revertCheckpoint(
+        threadID: String,
+        turnCount: Int,
+        commandID: String = UUID().uuidString,
+        createdAt: String = now()
+    ) -> JSONValue {
+        .object([
+            "type": .string("thread.checkpoint.revert"),
+            "commandId": .string(commandID),
+            "threadId": .string(threadID),
+            "turnCount": .number(Double(turnCount)),
+            "createdAt": .string(createdAt),
+        ])
     }
 
     public static func respondToApproval(

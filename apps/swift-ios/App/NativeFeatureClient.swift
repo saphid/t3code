@@ -86,6 +86,11 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
     ] = [:]
     private var pendingBootstrapSubmissions: [PendingBootstrapSubmission] = []
     private var pendingTurnSubmissions: [String: PendingTurnSubmission] = [:]
+    private var checkpointRevertIdentities: [FeatureCheckpointRevertTarget: CommandIdentity] = [:]
+    private var checkpointRevertFailureBaselines: [
+        FeatureCheckpointRevertTarget: Set<String>
+    ] = [:]
+    private var pendingCheckpointReverts: [String: PendingCheckpointRevert] = [:]
     private var attachmentHydrationTasks: [
         String: (id: UUID, task: Task<Void, Never>)
     ] = [:]
@@ -187,6 +192,9 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         passiveDetailPollingTask?.cancel()
         attachmentHydrationTasks.values.forEach { $0.task.cancel() }
         projectFaviconRefreshTasks.values.forEach { $0.cancel() }
+        pendingCheckpointReverts.values.forEach {
+            $0.continuation.resume(throwing: CancellationError())
+        }
         continuation.finish()
     }
 
@@ -2004,6 +2012,11 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
 
     func releaseThread(id: String) {
         guard activeThreadID == id else { return }
+        finishCheckpointRevert(
+            threadID: id,
+            result: .failure(CancellationError()),
+            retainIdentity: true
+        )
         resetDetailRefresh()
         resetDetailStream()
         passiveDetailPollingTask?.cancel()
@@ -2165,6 +2178,280 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
             .turnId
         _ = try await route.client.interrupt(threadID: route.wireID, turnID: turnID)
         try? await refresh(client: route.client)
+    }
+
+    func revertCheckpoint(_ target: FeatureCheckpointRevertTarget) async throws {
+        let route = try threadRoute(for: target.threadID)
+        guard route.uiID == target.threadID else {
+            throw NativeFeatureClientError.checkpointUnavailable
+        }
+        guard pendingCheckpointReverts[route.uiID] == nil else {
+            throw NativeFeatureClientError.checkpointRevertInProgress
+        }
+
+        let rawThread: OrchestrationThread
+        if activeThreadID == route.uiID, let activeRawThread {
+            rawThread = activeRawThread
+        } else {
+            rawThread = try await route.client.threadSnapshot(id: route.wireID).thread
+        }
+
+        let currentState = Self.resolveThreadState(
+            latestTurn: rawThread.latestTurn,
+            session: rawThread.session,
+            hasApprovals: false,
+            hasUserInput: false,
+            backgroundLiveness: backgroundLiveness(
+                threadID: rawThread.id,
+                environmentID: route.environmentID
+            )
+        )
+        guard !currentState.preventsCheckpointRevert else {
+            checkpointRevertIdentities[target] = nil
+            checkpointRevertFailureBaselines[target] = nil
+            throw NativeFeatureClientError.checkpointRevertBlockedByActiveTurn
+        }
+
+        let failures = Self.checkpointRevertFailures(in: rawThread, target: target)
+        if checkpointRevertIdentities[target] != nil {
+            let baseline = checkpointRevertFailureBaselines[target] ?? []
+            switch Self.checkpointRevertResolution(
+                in: rawThread,
+                target: target,
+                failureActivityIDsAtDispatch: baseline
+            ) {
+            case .restored:
+                checkpointRevertIdentities[target] = nil
+                checkpointRevertFailureBaselines[target] = nil
+                return
+            case let .failed(detail):
+                checkpointRevertIdentities[target] = nil
+                checkpointRevertFailureBaselines[target] = nil
+                throw NativeFeatureClientError.checkpointRevertFailed(detail)
+            case .pending:
+                break
+            }
+        }
+        guard checkpointRevertActions(rawThread, threadID: route.uiID)[target.userMessageID]
+            == .available(target) else {
+            checkpointRevertIdentities[target] = nil
+            checkpointRevertFailureBaselines[target] = nil
+            throw NativeFeatureClientError.checkpointUnavailable
+        }
+
+        let identity = checkpointRevertIdentities[target] ?? CommandIdentity()
+        let failureBaseline = checkpointRevertFailureBaselines[target]
+            ?? Set(failures.map(\.id))
+        checkpointRevertIdentities[target] = identity
+        checkpointRevertFailureBaselines[target] = failureBaseline
+        try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                pendingCheckpointReverts[route.uiID] = PendingCheckpointRevert(
+                    target: target,
+                    identity: identity,
+                    failureActivityIDsAtDispatch: failureBaseline,
+                    requestSequence: nil,
+                    continuation: continuation
+                )
+                if Task.isCancelled {
+                    finishCheckpointRevert(
+                        threadID: route.uiID,
+                        result: .failure(CancellationError()),
+                        retainIdentity: true
+                    )
+                    return
+                }
+                Task { @MainActor [weak self] in
+                    await self?.dispatchCheckpointRevert(route: route, target: target)
+                }
+            }
+        } onCancel: {
+            Task { @MainActor [weak self] in
+                self?.finishCheckpointRevert(
+                    threadID: route.uiID,
+                    result: .failure(CancellationError()),
+                    retainIdentity: true
+                )
+            }
+        }
+    }
+
+    private func dispatchCheckpointRevert(
+        route: NativeThreadRoute,
+        target: FeatureCheckpointRevertTarget
+    ) async {
+        guard let pending = pendingCheckpointReverts[route.uiID],
+              pending.target == target else { return }
+        do {
+            _ = try await route.client.revertCheckpoint(
+                threadID: route.wireID,
+                turnCount: target.restoreTurnCount,
+                commandID: pending.identity.commandID,
+                createdAt: pending.identity.createdAt
+            )
+        } catch {
+            let ambiguous = Self.isAmbiguousDispatchFailure(error)
+            if ambiguous {
+                try? await refreshThread(id: route.uiID, client: route.client)
+                guard pendingCheckpointReverts[route.uiID]?.target == target else { return }
+            }
+            finishCheckpointRevert(
+                threadID: route.uiID,
+                result: .failure(error),
+                retainIdentity: ambiguous
+            )
+        }
+    }
+
+    private func consumeCheckpointRevertEvent(
+        _ event: JSONValue,
+        route: NativeThreadRoute
+    ) {
+        guard var pending = pendingCheckpointReverts[route.uiID],
+              case let .object(object) = event,
+              let type = object["type"]?.stringValue,
+              let payload = object["payload"],
+              payload["threadId"]?.stringValue == route.wireID else { return }
+        let eventSequence = Self.checkpointTurnCount(object["sequence"])
+
+        switch type {
+        case "thread.checkpoint-revert-requested":
+            guard object["commandId"]?.stringValue == pending.identity.commandID,
+                  Self.checkpointTurnCount(payload["turnCount"])
+                    == pending.target.restoreTurnCount,
+                  let eventSequence else { return }
+            pending.requestSequence = eventSequence
+            pendingCheckpointReverts[route.uiID] = pending
+        case "thread.reverted":
+            guard FeatureCheckpointRevertReceipt.matches(
+                turnCount: Self.checkpointTurnCount(payload["turnCount"]),
+                sequence: eventSequence,
+                targetTurnCount: pending.target.restoreTurnCount,
+                requestSequence: pending.requestSequence
+            ) else { return }
+            finishCheckpointRevert(threadID: route.uiID, result: .success(()))
+        case "thread.activity-appended":
+            guard let rawActivity = payload["activity"],
+                  let activity = try? rawActivity.decode(OrchestrationActivity.self),
+                  activity.kind == "checkpoint.revert.failed",
+                  !pending.failureActivityIDsAtDispatch.contains(activity.id),
+                  Self.checkpointTurnCount(activity.payload["turnCount"])
+                    == pending.target.restoreTurnCount,
+                  Self.checkpointRevertEventFollowsRequest(
+                    sequence: eventSequence,
+                    requestSequence: pending.requestSequence
+                  ) else {
+                return
+            }
+            let detail = activity.payload["detail"]?.stringValue
+                ?? "The checkpoint could not be restored."
+            finishCheckpointRevert(
+                threadID: route.uiID,
+                result: .failure(NativeFeatureClientError.checkpointRevertFailed(detail))
+            )
+        default:
+            return
+        }
+    }
+
+    private func reconcileCheckpointRevert(
+        with thread: OrchestrationThread,
+        route: NativeThreadRoute
+    ) {
+        guard let pending = pendingCheckpointReverts[route.uiID] else { return }
+        switch Self.checkpointRevertResolution(
+            in: thread,
+            target: pending.target,
+            failureActivityIDsAtDispatch: pending.failureActivityIDsAtDispatch
+        ) {
+        case let .failed(detail):
+            finishCheckpointRevert(
+                threadID: route.uiID,
+                result: .failure(NativeFeatureClientError.checkpointRevertFailed(detail))
+            )
+        case .restored:
+            finishCheckpointRevert(threadID: route.uiID, result: .success(()))
+        case .pending:
+            break
+        }
+    }
+
+    private func finishCheckpointRevert(
+        threadID: String,
+        result: Result<Void, any Error>,
+        retainIdentity: Bool = false
+    ) {
+        guard let pending = pendingCheckpointReverts.removeValue(forKey: threadID) else { return }
+        if !retainIdentity {
+            checkpointRevertIdentities[pending.target] = nil
+            checkpointRevertFailureBaselines[pending.target] = nil
+        }
+        switch result {
+        case .success:
+            pending.continuation.resume()
+        case let .failure(error):
+            pending.continuation.resume(throwing: error)
+        }
+    }
+
+    private static func checkpointTurnCount(_ value: JSONValue?) -> Int? {
+        switch value {
+        case let .number(number): Int(exactly: number)
+        case let .integer(number): Int(exactly: number)
+        case let .unsignedInteger(number): Int(exactly: number)
+        default: nil
+        }
+    }
+
+    private static func checkpointRevertFailures(
+        in thread: OrchestrationThread,
+        target: FeatureCheckpointRevertTarget
+    ) -> [OrchestrationActivity] {
+        thread.activities.filter {
+            $0.kind == "checkpoint.revert.failed"
+                && checkpointTurnCount($0.payload["turnCount"]) == target.restoreTurnCount
+        }
+    }
+
+    static func checkpointRevertResolution(
+        in thread: OrchestrationThread,
+        target: FeatureCheckpointRevertTarget,
+        failureActivityIDsAtDispatch: Set<String>
+    ) -> NativeCheckpointRevertResolution {
+        if let failure = checkpointRevertFailures(in: thread, target: target)
+            .last(where: { !failureActivityIDsAtDispatch.contains($0.id) }) {
+            return .failed(
+                failure.payload["detail"]?.stringValue
+                    ?? "The checkpoint could not be restored."
+            )
+        }
+
+        let sourceStillExists = checkpointRevertSourceExists(in: thread, target: target)
+        let latestTurnCount = thread.checkpoints.map(\.checkpointTurnCount).max() ?? 0
+        if !sourceStillExists, latestTurnCount <= target.restoreTurnCount {
+            return .restored
+        }
+        return .pending
+    }
+
+    private static func checkpointRevertEventFollowsRequest(
+        sequence: Int?,
+        requestSequence: Int?
+    ) -> Bool {
+        guard let requestSequence else { return true }
+        guard let sequence else { return false }
+        return sequence > requestSequence
+    }
+
+    private static func checkpointRevertSourceExists(
+        in thread: OrchestrationThread,
+        target: FeatureCheckpointRevertTarget
+    ) -> Bool {
+        thread.checkpoints.contains {
+            $0.turnId == target.turnID
+                && $0.checkpointTurnCount == target.checkpointTurnCount
+                && $0.checkpointRef == target.checkpointRef
+        }
     }
 
     func resolveApproval(id: String, decision: FeatureApprovalDecision) async throws {
@@ -3646,6 +3933,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
             return
         case let .snapshot(snapshot):
             guard snapshot.snapshotSequence > (activeThreadSequence ?? 0) else { return }
+            reconcileCheckpointRevert(with: snapshot.thread, route: route)
             threadHistoryEpoch &+= 1
             pendingOlderThreadPage = nil
             activeThreadSequence = snapshot.snapshotSequence
@@ -3653,6 +3941,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
             activeThreadPage = featurePage(snapshot.page)
             scheduleRawDetailPublish(route: route, mutation: .full)
         case let .event(event):
+            consumeCheckpointRevertEvent(event, route: route)
             guard let current = activeRawThread else {
                 scheduleDetailRefresh(threadID: route.uiID, client: route.client, force: true)
                 return
@@ -4130,6 +4419,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         guard isKnownClient(client, environmentID: environment.id, generation: generation) else {
             throw CancellationError()
         }
+        reconcileCheckpointRevert(with: snapshot.thread, route: route)
         if activeThreadID == route.uiID {
             guard snapshot.snapshotSequence >= (activeThreadSequence ?? 0) else { return }
             threadHistoryEpoch &+= 1
@@ -4423,7 +4713,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         current: FeatureThreadDetail,
         incoming: FeatureThreadDetail
     ) -> FeatureThreadDetail {
-        FeatureThreadDetail(
+        var detail = FeatureThreadDetail(
             thread: incoming.thread,
             messages: replacingChangedSuffix(current.messages, with: incoming.messages),
             approvals: replacingChangedSuffix(current.approvals, with: incoming.approvals),
@@ -4432,6 +4722,8 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
             activeSubagentCount: incoming.activeSubagentCount,
             backgroundWorkIsActive: incoming.backgroundWorkIsActive
         )
+        detail.checkpointRevertActions = incoming.checkpointRevertActions
+        return detail
     }
 
     private func replacingChangedSuffix<Element: Equatable>(
@@ -4830,7 +5122,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
             hasUserInput: !cache.userInputs.isEmpty,
             backgroundLiveness: backgroundLiveness
         )
-        return FeatureThreadDetail(
+        var detail = FeatureThreadDetail(
             thread: mappedThread,
             messages: cache.mergedMessages,
             approvals: cache.approvals,
@@ -4840,6 +5132,46 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
                 ? cache.subagents.activeCount
                 : 0,
             backgroundWorkIsActive: backgroundWorkIsActive
+        )
+        detail.checkpointRevertActions = checkpointRevertActions(thread, threadID: threadID)
+        return detail
+    }
+
+    private func checkpointRevertActions(
+        _ thread: OrchestrationThread,
+        threadID: String
+    ) -> [String: FeatureCheckpointRevertAction] {
+        let latestFailedTurnID = thread.latestTurn?.state == "error"
+            ? thread.latestTurn?.turnId
+            : nil
+        var failedTurnIDs = Set(
+            thread.checkpoints.lazy
+                .filter { $0.status == "error" }
+                .map(\.turnId)
+        )
+        if let turnID = latestFailedTurnID {
+            failedTurnIDs.insert(turnID)
+        }
+        return FeatureCheckpointRevertAssociation.actions(
+            threadID: threadID,
+            messages: thread.messages.map {
+                FeatureCheckpointRevertMessage(
+                    id: $0.id,
+                    isUser: $0.role == "user",
+                    turnID: $0.turnId
+                )
+            },
+            checkpoints: thread.checkpoints.map {
+                FeatureCheckpointRevertSummary(
+                    turnID: $0.turnId,
+                    checkpointTurnCount: $0.checkpointTurnCount,
+                    checkpointRef: $0.checkpointRef,
+                    status: FeatureCheckpointRevertStatus(wireValue: $0.status),
+                    assistantMessageID: $0.assistantMessageId
+                )
+            },
+            failedTurnIDs: failedTurnIDs,
+            latestFailedTurnID: latestFailedTurnID
         )
     }
 
@@ -4954,7 +5286,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
             rebuildMergedIndexes(cache)
         }
 
-        let detail = FeatureThreadDetail(
+        var detail = FeatureThreadDetail(
             thread: currentDetail.thread,
             messages: mergedMessages,
             approvals: currentDetail.approvals,
@@ -4962,6 +5294,10 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
             page: activeThreadPage,
             activeSubagentCount: currentDetail.activeSubagentCount,
             backgroundWorkIsActive: currentDetail.backgroundWorkIsActive
+        )
+        detail.checkpointRevertActions = checkpointRevertActions(
+            mergedThread,
+            threadID: route.uiID
         )
         publish(detail, threadID: route.uiID, renderCacheIsSource: true)
         scheduleAttachmentHydration(
@@ -6338,6 +6674,9 @@ enum NativeThreadDetailReducer {
             // Proposed plans are not rendered by the native detail model yet.
             result = .unchanged
             renderMutation = .none
+        case "thread.checkpoint-revert-requested":
+            result = .unchanged
+            renderMutation = .none
         case "thread.reverted":
             result = .refresh
             renderMutation = .full
@@ -6711,6 +7050,20 @@ private struct CommandIdentity: Equatable {
     }
 }
 
+private struct PendingCheckpointRevert {
+    let target: FeatureCheckpointRevertTarget
+    let identity: CommandIdentity
+    let failureActivityIDsAtDispatch: Set<String>
+    var requestSequence: Int?
+    let continuation: CheckedContinuation<Void, any Error>
+}
+
+enum NativeCheckpointRevertResolution: Equatable {
+    case pending
+    case restored
+    case failed(String)
+}
+
 private struct BootstrapSubmissionSignature: Equatable {
     let projectID: String
     let prompt: String
@@ -6769,6 +7122,10 @@ private enum NativeFeatureClientError: LocalizedError {
     case currentDeviceUnknown
     case missingScope(String)
     case tooManyAttachments
+    case checkpointUnavailable
+    case checkpointRevertInProgress
+    case checkpointRevertBlockedByActiveTurn
+    case checkpointRevertFailed(String)
 
     var errorDescription: String? {
         switch self {
@@ -6785,6 +7142,11 @@ private enum NativeFeatureClientError: LocalizedError {
         case .currentDeviceUnknown: "This installation has not registered for device access yet."
         case .missingScope: "This connection does not have permission to manage devices."
         case .tooManyAttachments: "You can attach up to 8 images per message."
+        case .checkpointUnavailable: "That failed turn no longer has a usable checkpoint."
+        case .checkpointRevertInProgress: "A checkpoint revert is already in progress."
+        case .checkpointRevertBlockedByActiveTurn:
+            "Stop the active turn before reverting a checkpoint."
+        case let .checkpointRevertFailed(detail): "Checkpoint revert failed: \(detail)"
         }
     }
 }

@@ -27,6 +27,8 @@ public struct ThreadDetailView: View {
     @State private var didRestoreDraft = false
     @State private var draftSaveTask: Task<Void, Never>?
     @State private var toolSurface: FeatureThreadToolSurface?
+    @State private var checkpointRevertConfirmation: FeatureCheckpointRevertTarget?
+    @State private var showsCheckpointRevertConfirmation = false
     // Plain state, not `FocusState`: the composer's UIKit text view owns
     // focus and mirrors it through this binding, because SwiftUI drops
     // writes to a `FocusState` no `.focused()` view registers with.
@@ -147,6 +149,21 @@ public struct ThreadDetailView: View {
             Button("OK", role: .cancel) {}
         } message: {
             Text(feedbackAlertMessage ?? "")
+        }
+        .alert(
+            "Revert failed turn?",
+            isPresented: $showsCheckpointRevertConfirmation,
+            presenting: checkpointRevertConfirmation
+        ) { target in
+            Button("Revert failed turn", role: .destructive) {
+                performCheckpointRevert(target)
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: { _ in
+            Text(
+                "This removes the failed turn and its file changes. "
+                    + "The prompt returns to the composer after the server confirms the restore."
+            )
         }
         .background {
             ThreadBackSwipeGestureView(
@@ -411,9 +428,12 @@ public struct ThreadDetailView: View {
                     isMonitoring: detail.thread.state == .monitoring,
                     canLoadEarlier: detail.page?.hasMore == true,
                     isLoadingEarlier: detail.page?.isLoading == true,
+                    checkpointRevertActions: detail.checkpointRevertActions ?? [:],
+                    isRevertingCheckpoint: model.isRevertingCheckpoint(threadID: thread.id),
                     onLoadEarlier: {
                         Task { await model.loadEarlierTurns(for: thread.id) }
                     },
+                    onRevertCheckpoint: requestCheckpointRevert,
                     onDismissKeyboard: dismissKeyboard
                 )
             }
@@ -426,8 +446,8 @@ public struct ThreadDetailView: View {
                 providers: threadProviders,
                 threadSelection: currentSelection,
                 materializesDefaultSelection: false,
-                isSending: isSending,
-                isWorking: detail.thread.state == .working || detail.thread.state == .queued,
+                isSending: isSending || model.isRevertingCheckpoint(threadID: thread.id),
+                isWorking: detail.thread.state.preventsCheckpointRevert,
                 focused: $composerFocused,
                 onSend: send,
                 onStop: {
@@ -468,6 +488,25 @@ public struct ThreadDetailView: View {
                 }
             }
         )
+    }
+
+    private func requestCheckpointRevert(_ target: FeatureCheckpointRevertTarget) {
+        guard !model.isRevertingCheckpoint(threadID: target.threadID) else { return }
+        checkpointRevertConfirmation = target
+        showsCheckpointRevertConfirmation = true
+    }
+
+    private func performCheckpointRevert(_ target: FeatureCheckpointRevertTarget) {
+        guard let message = detail?.messages.first(where: { $0.id == target.userMessageID }) else {
+            return
+        }
+        let restoredPrompt = message.text
+        Task {
+            guard await model.revertCheckpoint(target) else { return }
+            draft = restoredPrompt
+            attachments = []
+            composerFocused = true
+        }
     }
 
     private var threadProviders: [FeatureProvider] {
@@ -824,7 +863,10 @@ private struct FeatureTranscriptCollectionView: UIViewRepresentable {
     let isMonitoring: Bool
     let canLoadEarlier: Bool
     let isLoadingEarlier: Bool
+    let checkpointRevertActions: [String: FeatureCheckpointRevertAction]
+    let isRevertingCheckpoint: Bool
     let onLoadEarlier: () -> Void
+    let onRevertCheckpoint: (FeatureCheckpointRevertTarget) -> Void
     let onDismissKeyboard: () -> Void
 
     func makeCoordinator() -> Coordinator {
@@ -861,7 +903,10 @@ private struct FeatureTranscriptCollectionView: UIViewRepresentable {
             isMonitoring: isMonitoring,
             canLoadEarlier: canLoadEarlier,
             isLoadingEarlier: isLoadingEarlier,
+            checkpointRevertActions: checkpointRevertActions,
+            isRevertingCheckpoint: isRevertingCheckpoint,
             onLoadEarlier: onLoadEarlier,
+            onRevertCheckpoint: onRevertCheckpoint,
             onDismissKeyboard: onDismissKeyboard,
             in: collectionView
         )
@@ -919,8 +964,11 @@ private struct FeatureTranscriptCollectionView: UIViewRepresentable {
         private var currentIsMonitoring = false
         private var currentCanLoadEarlier = false
         private var currentIsLoadingEarlier = false
+        private var currentCheckpointRevertActions: [String: FeatureCheckpointRevertAction] = [:]
+        private var currentIsRevertingCheckpoint = false
         private var markdownPrefetches: [String: MarkdownPrefetch] = [:]
         private var onLoadEarlier: (() -> Void)?
+        private var onRevertCheckpoint: ((FeatureCheckpointRevertTarget) -> Void)?
         private var onDismissKeyboard: (() -> Void)?
         private let timestampReveal = FeatureTimestampRevealState()
         private weak var collectionView: UICollectionView?
@@ -990,6 +1038,12 @@ private struct FeatureTranscriptCollectionView: UIViewRepresentable {
                     FeatureTimestampRevealMessageView(
                         message: message,
                         imageContext: self.currentImageContext,
+                        checkpointRevertAction: self.currentCheckpointRevertActions[messageID],
+                        isRevertingCheckpoint: self.currentIsRevertingCheckpoint,
+                        isWorking: self.currentIsWorking,
+                        onRevertCheckpoint: { [weak self] target in
+                            self?.onRevertCheckpoint?(target)
+                        },
                         reveal: self.timestampReveal
                     )
                         .frame(maxWidth: .infinity, alignment: .leading)
@@ -1107,12 +1161,16 @@ private struct FeatureTranscriptCollectionView: UIViewRepresentable {
             isMonitoring: Bool,
             canLoadEarlier: Bool,
             isLoadingEarlier: Bool,
+            checkpointRevertActions: [String: FeatureCheckpointRevertAction],
+            isRevertingCheckpoint: Bool,
             onLoadEarlier: @escaping () -> Void,
+            onRevertCheckpoint: @escaping (FeatureCheckpointRevertTarget) -> Void,
             onDismissKeyboard: @escaping () -> Void,
             in collectionView: UICollectionView
         ) {
             guard let dataSource else { return }
             self.onLoadEarlier = onLoadEarlier
+            self.onRevertCheckpoint = onRevertCheckpoint
             self.onDismissKeyboard = onDismissKeyboard
 
             let threadChanged = currentThreadID != threadID
@@ -1132,8 +1190,13 @@ private struct FeatureTranscriptCollectionView: UIViewRepresentable {
                 || currentIsMonitoring != isMonitoring
             let loadEarlierChanged = currentCanLoadEarlier != canLoadEarlier
                 || currentIsLoadingEarlier != isLoadingEarlier
+            let checkpointActionsChanged = currentCheckpointRevertActions
+                != checkpointRevertActions
+            let checkpointPendingChanged = currentIsRevertingCheckpoint
+                != isRevertingCheckpoint
             guard threadChanged || imageContextChanged || typeSizeChanged || revisionChanged || workingChanged
-                || workingDetailChanged || loadEarlierChanged else { return }
+                || workingDetailChanged || loadEarlierChanged || checkpointActionsChanged
+                || checkpointPendingChanged else { return }
 
             let incremental = !threadChanged
                 ? incrementalState(messages: messages, renderUpdate: renderUpdate)
@@ -1141,9 +1204,18 @@ private struct FeatureTranscriptCollectionView: UIViewRepresentable {
             let state = incremental ?? fullState(messages: messages)
             let newIDs = state.ids
             let idsChanged = state.idsChanged
-            let changedIDs = typeSizeChanged || imageContextChanged
+            var changedIDs = typeSizeChanged || imageContextChanged
                 ? newIDs
                 : state.changedIDs
+            if checkpointActionsChanged || checkpointPendingChanged || workingChanged {
+                let newIDSet = Set(newIDs)
+                var changedIDSet = Set(changedIDs)
+                let actionMessageIDs = Set(currentCheckpointRevertActions.keys)
+                    .union(checkpointRevertActions.keys)
+                changedIDs.append(contentsOf: actionMessageIDs.filter {
+                    newIDSet.contains($0) && changedIDSet.insert($0).inserted
+                })
+            }
 
             currentImageContext = imageContext
             currentDetailRevision = renderUpdate?.revision
@@ -1155,8 +1227,11 @@ private struct FeatureTranscriptCollectionView: UIViewRepresentable {
             currentIsMonitoring = isMonitoring
             currentCanLoadEarlier = canLoadEarlier
             currentIsLoadingEarlier = isLoadingEarlier
+            currentCheckpointRevertActions = checkpointRevertActions
+            currentIsRevertingCheckpoint = isRevertingCheckpoint
             guard threadChanged || idsChanged || !changedIDs.isEmpty || workingChanged
-                || workingDetailChanged || loadEarlierChanged else { return }
+                || workingDetailChanged || loadEarlierChanged || checkpointActionsChanged
+                || checkpointPendingChanged else { return }
 
             if threadChanged {
                 cancelAllMarkdownPrefetches()
@@ -1714,13 +1789,24 @@ private final class FeatureTimestampRevealState: ObservableObject {
 private struct FeatureTimestampRevealMessageView: View {
     let message: FeatureMessage
     let imageContext: MarkdownImageContext?
+    let checkpointRevertAction: FeatureCheckpointRevertAction?
+    let isRevertingCheckpoint: Bool
+    let isWorking: Bool
+    let onRevertCheckpoint: (FeatureCheckpointRevertTarget) -> Void
     @ObservedObject var reveal: FeatureTimestampRevealState
 
     var body: some View {
         let revealWidth = reveal.width
         if FeatureMessageTimestampMetadata.isEligible(message) {
             let requestedAnchorY = reveal.anchorY(for: message.id)
-            FeatureMessageView(message: message, imageContext: imageContext)
+            FeatureMessageView(
+                message: message,
+                imageContext: imageContext,
+                checkpointRevertAction: checkpointRevertAction,
+                isRevertingCheckpoint: isRevertingCheckpoint,
+                isWorking: isWorking,
+                onRevertCheckpoint: onRevertCheckpoint
+            )
                 .overlay {
                     GeometryReader { geometry in
                         Text(message.createdAt, format: .dateTime.hour().minute())
@@ -1748,7 +1834,14 @@ private struct FeatureTimestampRevealMessageView: View {
                 }
                 .offset(x: -revealWidth)
         } else {
-            FeatureMessageView(message: message, imageContext: imageContext)
+            FeatureMessageView(
+                message: message,
+                imageContext: imageContext,
+                checkpointRevertAction: checkpointRevertAction,
+                isRevertingCheckpoint: isRevertingCheckpoint,
+                isWorking: isWorking,
+                onRevertCheckpoint: onRevertCheckpoint
+            )
                 .offset(x: -revealWidth)
         }
     }
@@ -2335,38 +2428,59 @@ private enum FeatureAttachmentThumbnailError: Error {
 struct FeatureMessageView: View {
     let message: FeatureMessage
     var imageContext: MarkdownImageContext? = nil
+    var checkpointRevertAction: FeatureCheckpointRevertAction?
+    var isRevertingCheckpoint = false
+    var isWorking = false
+    var onRevertCheckpoint: (FeatureCheckpointRevertTarget) -> Void = { _ in }
 
     var body: some View {
         switch message.role {
         case .user:
-            HStack {
-                Spacer(minLength: 44)
-                VStack(alignment: .leading, spacing: 10) {
-                    FeatureMessageAttachmentsView(attachments: message.attachments)
-                    if !message.text.isEmpty {
-                        MarkdownMessageView(
-                            message.text,
-                            isStreaming: message.state == .streaming,
-                            imageContext: imageContext
-                        )
+            VStack(alignment: .trailing, spacing: 4) {
+                HStack {
+                    Spacer(minLength: 44)
+                    VStack(alignment: .leading, spacing: 10) {
+                        FeatureMessageAttachmentsView(attachments: message.attachments)
+                        if !message.text.isEmpty {
+                            MarkdownMessageView(
+                                message.text,
+                                isStreaming: message.state == .streaming,
+                                imageContext: imageContext
+                            )
+                        }
                     }
-                }
-                .padding(.horizontal, 14)
-                .padding(.vertical, 11)
-                .frame(maxWidth: T3Metrics.readingWidth * 0.88, alignment: .leading)
-                .background(
-                    T3Colors.subtleStrong,
-                    in: UnevenRoundedRectangle(
-                        topLeadingRadius: 16,
-                        bottomLeadingRadius: 16,
-                        bottomTrailingRadius: 4,
-                        topTrailingRadius: 16
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 11)
+                    .frame(maxWidth: T3Metrics.readingWidth * 0.88, alignment: .leading)
+                    .background(
+                        T3Colors.subtleStrong,
+                        in: UnevenRoundedRectangle(
+                            topLeadingRadius: 16,
+                            bottomLeadingRadius: 16,
+                            bottomTrailingRadius: 4,
+                            topTrailingRadius: 16
+                        )
                     )
-                )
+                }
+                if let checkpointRevertAction {
+                    FeatureCheckpointRevertControl(
+                        messageID: message.id,
+                        action: checkpointRevertAction,
+                        isPending: isRevertingCheckpoint,
+                        isWorking: isWorking,
+                        onRevert: onRevertCheckpoint
+                    )
+                }
             }
             .accessibilityLabel("You")
             .accessibilityValue(accessibilityValue)
             .accessibilityIdentifier("message-\(message.id)")
+            .modifier(FeatureCheckpointRevertAccessibilityModifier(
+                action: checkpointRevertAction,
+                isPending: isRevertingCheckpoint,
+                isWorking: isWorking,
+                onRevert: onRevertCheckpoint
+            ))
             .modifier(FeatureMessageTimestampAccessibilityModifier(message: message))
         case .assistant:
             VStack(alignment: .leading, spacing: 10) {
@@ -2425,6 +2539,64 @@ struct FeatureMessageView: View {
         return [message.text, attachmentSummary]
             .filter { !$0.isEmpty }
             .joined(separator: ", ")
+    }
+}
+
+private struct FeatureCheckpointRevertAccessibilityModifier: ViewModifier {
+    let action: FeatureCheckpointRevertAction?
+    let isPending: Bool
+    let isWorking: Bool
+    let onRevert: (FeatureCheckpointRevertTarget) -> Void
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if case let .available(target)? = action {
+            content.accessibilityAction(named: "Revert failed turn") {
+                guard !isPending, !isWorking else { return }
+                onRevert(target)
+            }
+        } else {
+            content
+        }
+    }
+}
+
+private struct FeatureCheckpointRevertControl: View {
+    let messageID: String
+    let action: FeatureCheckpointRevertAction
+    let isPending: Bool
+    let isWorking: Bool
+    let onRevert: (FeatureCheckpointRevertTarget) -> Void
+
+    var body: some View {
+        switch action {
+        case let .available(target):
+            Button {
+                onRevert(target)
+            } label: {
+                Label(
+                    isPending ? "Reverting…" : "Revert",
+                    systemImage: "arrow.uturn.backward"
+                )
+            }
+            .font(T3Typography.supportingStrong)
+            .foregroundStyle(T3Colors.textSecondary)
+            .frame(minHeight: T3Metrics.minimumTapTarget)
+            .buttonStyle(.plain)
+            .disabled(isPending || isWorking)
+            .accessibilityLabel(isPending ? "Reverting failed turn" : "Revert failed turn")
+            .accessibilityHint(
+                isWorking ? "Stop the active turn before reverting" : "Restores the preceding checkpoint"
+            )
+            .accessibilityIdentifier("checkpoint-revert-\(messageID)")
+        case let .unavailable(reason):
+            Label(reason.controlLabel, systemImage: "exclamationmark.circle")
+                .font(T3Typography.supporting)
+                .foregroundStyle(T3Colors.textTertiary)
+                .frame(minHeight: T3Metrics.minimumTapTarget)
+                .accessibilityLabel(reason.explanation)
+                .accessibilityIdentifier("checkpoint-revert-unavailable-\(messageID)")
+        }
     }
 }
 

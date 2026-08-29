@@ -193,6 +193,7 @@ public final class FeatureRootModel {
     private var outboxGeneration: UInt64 = 0
     private var titleRegenerationTracker = FeatureTitleRegenerationTracker()
     private var titleRegenerationRecoveryTasks: [String: Task<Void, Never>] = [:]
+    private var revertingCheckpointThreadIDs: Set<String> = []
     private let titleRegenerationRefreshTimeout: Duration
     private let accessibilityAnnouncer: @MainActor (String) -> Void
     private var isReorderingPinnedThread = false
@@ -803,6 +804,7 @@ public final class FeatureRootModel {
     }
 
     public func sendMessage(_ submission: FeatureMessageSubmission) async -> Bool {
+        guard !revertingCheckpointThreadIDs.contains(submission.threadID) else { return false }
         let trimmed = submission.text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty || !submission.attachments.isEmpty else { return false }
 
@@ -883,6 +885,7 @@ public final class FeatureRootModel {
     }
 
     public func cancelTurn(threadID: String) async {
+        guard !revertingCheckpointThreadIDs.contains(threadID) else { return }
         if pendingSubmissionsByID.values.contains(where: {
             $0.threadID == threadID && $0.creation != nil
         }) {
@@ -904,6 +907,34 @@ public final class FeatureRootModel {
         }
         await perform {
             try await client.cancelTurn(threadID: threadID)
+        }
+    }
+
+    public func isRevertingCheckpoint(threadID: String) -> Bool {
+        revertingCheckpointThreadIDs.contains(threadID)
+    }
+
+    public func revertCheckpoint(_ target: FeatureCheckpointRevertTarget) async -> Bool {
+        guard !revertingCheckpointThreadIDs.contains(target.threadID),
+              let detail = details[target.threadID],
+              !detail.thread.state.preventsCheckpointRevert,
+              detail.checkpointRevertActions?[target.userMessageID] == .available(target) else {
+            return false
+        }
+
+        revertingCheckpointThreadIDs.insert(target.threadID)
+        defer { revertingCheckpointThreadIDs.remove(target.threadID) }
+        accessibilityAnnouncer("Reverting the failed turn.")
+        do {
+            try await client.revertCheckpoint(target)
+            accessibilityAnnouncer("Failed turn reverted. The prompt is ready to edit.")
+            return true
+        } catch {
+            if !Self.isBenignCancellation(error) {
+                errorMessage = error.localizedDescription
+                accessibilityAnnouncer("Could not revert the failed turn.")
+            }
+            return false
         }
     }
 
@@ -1335,7 +1366,7 @@ public final class FeatureRootModel {
         acknowledgeDeliveredMessages(incoming.messages)
         let prepared = addingPendingMessages(to: incoming)
         let next = details[id].map { current in
-            FeatureThreadDetail(
+            var merged = FeatureThreadDetail(
                 thread: prepared.thread,
                 messages: replacingChangedSuffix(current.messages, with: prepared.messages),
                 approvals: replacingChangedSuffix(current.approvals, with: prepared.approvals),
@@ -1344,6 +1375,8 @@ public final class FeatureRootModel {
                 activeSubagentCount: prepared.activeSubagentCount,
                 backgroundWorkIsActive: prepared.backgroundWorkIsActive
             )
+            merged.checkpointRevertActions = prepared.checkpointRevertActions
+            return merged
         } ?? prepared
         guard details[id] != next else { return }
         details[id] = next

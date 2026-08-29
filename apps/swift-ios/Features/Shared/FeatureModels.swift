@@ -642,6 +642,7 @@ public struct FeatureThreadDetail: Sendable, Equatable, Codable {
     public var page: FeatureThreadPage?
     public var activeSubagentCount: Int
     public var backgroundWorkIsActive: Bool
+    var checkpointRevertActions: [String: FeatureCheckpointRevertAction]?
 
     public init(
         thread: FeatureThread,
@@ -659,6 +660,7 @@ public struct FeatureThreadDetail: Sendable, Equatable, Codable {
         self.page = page
         self.activeSubagentCount = activeSubagentCount
         self.backgroundWorkIsActive = backgroundWorkIsActive
+        checkpointRevertActions = nil
     }
 }
 
