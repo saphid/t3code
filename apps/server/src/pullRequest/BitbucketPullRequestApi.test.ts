@@ -481,6 +481,31 @@ layer("BitbucketPullRequestApi.layer", (it) => {
     }),
   );
 
+  it.effect.each([403, 404, 409, 429])(
+    "keeps HTTP %i from the merge endpoint as a real write failure",
+    (status) =>
+      Effect.gen(function* () {
+        mockedRequest.mockReturnValue(
+          Effect.fail(
+            new BitbucketApi.BitbucketResponseError({
+              operation: "request",
+              status,
+              responseBodyLength: 0,
+            }),
+          ),
+        );
+        const api = yield* BitbucketPullRequestApi.BitbucketPullRequestApi;
+
+        const error = yield* Effect.flip(
+          api.runAction({ repository: "acme/web", number: 7, action: "merge" }),
+        );
+
+        assert.instanceOf(error, BitbucketApi.BitbucketResponseError);
+        assert.strictEqual(error.status, status);
+        expect(callAt(0).url).toBe("/repositories/acme/web/pullrequests/7/merge");
+      }),
+  );
+
   it.effect("closes a pull request by declining it", () =>
     Effect.gen(function* () {
       mockedRequest.mockReturnValue(Effect.succeed(response("{}")));
@@ -873,17 +898,17 @@ layer("BitbucketPullRequestApi.layer", (it) => {
     }),
   );
 
-  it.effect(
-    "reads a removed permissions endpoint as granted rather than failing the merge on it",
-    () =>
+  it.effect.each([404, 410])(
+    "reads HTTP %i from the removed permissions endpoint as granted",
+    (status) =>
       Effect.gen(function* () {
         // Bitbucket retired /user/permissions/repositories under CHANGE-2770: every account now
-        // gets HTTP 410 here, whatever it may do.
+        // gets HTTP 404 or 410 here, whatever it may do.
         mockedRequest.mockReturnValue(
           Effect.fail(
             new BitbucketApi.BitbucketResponseError({
               operation: "request",
-              status: 410,
+              status,
               responseBodyLength: 0,
             }),
           ),
