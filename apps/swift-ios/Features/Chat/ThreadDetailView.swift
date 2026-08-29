@@ -401,6 +401,7 @@ public struct ThreadDetailView: View {
                 FeatureTranscriptCollectionView(
                     threadID: thread.id,
                     messages: timelineMessages(detail.messages),
+                    assistantHeadingLabel: transcriptAssistantHeadingLabel,
                     imageContext: markdownImageContext,
                     renderUpdate: timelineRenderUpdate,
                     dynamicTypeSize: dynamicTypeSize,
@@ -473,6 +474,22 @@ public struct ThreadDetailView: View {
     private var threadProviders: [FeatureProvider] {
         let project = model.snapshot.projects.first { $0.id == currentThread.projectID }
         return DailyUXCreationContext.providers(for: project, in: model.snapshot)
+    }
+
+    private var transcriptAssistantHeadingLabel: String {
+        let provider = currentThread.providerID.flatMap { providerID in
+            threadProviders.first { $0.id == providerID }
+        }
+        let modelName = currentThread.modelID.flatMap { modelID in
+            provider?.models.first { $0.id == modelID }?.name
+        }
+        let providerName = currentThread.providerName
+            ?? provider?.name
+            ?? currentThread.providerID
+        return FeatureTranscriptAccessibilityMetadata.assistantLabel(
+            modelName: modelName,
+            providerName: providerName
+        )
     }
 
     private var timelineRenderUpdate: FeatureDetailRenderUpdate? {
@@ -814,6 +831,7 @@ private struct FeatureTranscriptCollectionView: UIViewRepresentable {
 
     let threadID: String
     let messages: [FeatureMessage]
+    let assistantHeadingLabel: String
     let imageContext: MarkdownImageContext?
     let renderUpdate: FeatureDetailRenderUpdate?
     let dynamicTypeSize: DynamicTypeSize
@@ -851,6 +869,7 @@ private struct FeatureTranscriptCollectionView: UIViewRepresentable {
         context.coordinator.update(
             threadID: threadID,
             messages: messages,
+            assistantHeadingLabel: assistantHeadingLabel,
             imageContext: imageContext,
             renderUpdate: renderUpdate,
             dynamicTypeSize: dynamicTypeSize,
@@ -909,6 +928,7 @@ private struct FeatureTranscriptCollectionView: UIViewRepresentable {
         private var messagesByID: [String: FeatureMessage] = [:]
         private var orderedIDs: [String] = []
         private var currentThreadID: String?
+        private var currentAssistantHeadingLabel = "Assistant"
         private var currentImageContext: MarkdownImageContext?
         private var currentDetailRevision: UInt64?
         private var currentDynamicTypeSize: DynamicTypeSize?
@@ -989,6 +1009,7 @@ private struct FeatureTranscriptCollectionView: UIViewRepresentable {
                 cell.contentConfiguration = UIHostingConfiguration {
                     FeatureTimestampRevealMessageView(
                         message: message,
+                        assistantHeadingLabel: self.currentAssistantHeadingLabel,
                         imageContext: self.currentImageContext,
                         reveal: self.timestampReveal
                     )
@@ -1097,6 +1118,7 @@ private struct FeatureTranscriptCollectionView: UIViewRepresentable {
         func update(
             threadID: String,
             messages: [FeatureMessage],
+            assistantHeadingLabel: String,
             imageContext: MarkdownImageContext?,
             renderUpdate: FeatureDetailRenderUpdate?,
             dynamicTypeSize: DynamicTypeSize,
@@ -1123,6 +1145,8 @@ private struct FeatureTranscriptCollectionView: UIViewRepresentable {
                     .isTimestampRevealActive = false
             }
             let imageContextChanged = currentImageContext != imageContext
+            let assistantHeadingLabelChanged = currentAssistantHeadingLabel
+                != assistantHeadingLabel
             let typeSizeChanged = currentDynamicTypeSize != dynamicTypeSize
                 || currentCodeSizeSteps != codeSizeSteps
             let revisionChanged = currentDetailRevision != renderUpdate?.revision
@@ -1132,7 +1156,8 @@ private struct FeatureTranscriptCollectionView: UIViewRepresentable {
                 || currentIsMonitoring != isMonitoring
             let loadEarlierChanged = currentCanLoadEarlier != canLoadEarlier
                 || currentIsLoadingEarlier != isLoadingEarlier
-            guard threadChanged || imageContextChanged || typeSizeChanged || revisionChanged || workingChanged
+            guard threadChanged || imageContextChanged || assistantHeadingLabelChanged
+                || typeSizeChanged || revisionChanged || workingChanged
                 || workingDetailChanged || loadEarlierChanged else { return }
 
             let incremental = !threadChanged
@@ -1141,10 +1166,11 @@ private struct FeatureTranscriptCollectionView: UIViewRepresentable {
             let state = incremental ?? fullState(messages: messages)
             let newIDs = state.ids
             let idsChanged = state.idsChanged
-            let changedIDs = typeSizeChanged || imageContextChanged
+            let changedIDs = typeSizeChanged || imageContextChanged || assistantHeadingLabelChanged
                 ? newIDs
                 : state.changedIDs
 
+            currentAssistantHeadingLabel = assistantHeadingLabel
             currentImageContext = imageContext
             currentDetailRevision = renderUpdate?.revision
             currentDynamicTypeSize = dynamicTypeSize
@@ -1391,10 +1417,7 @@ private struct FeatureTranscriptCollectionView: UIViewRepresentable {
         }
 
         private func fullState(messages: [FeatureMessage]) -> MessageState {
-            var seenMessageIDs = Set<String>()
-            let uniqueMessages = Array(messages.reversed().filter {
-                seenMessageIDs.insert($0.id).inserted
-            }.reversed())
+            let uniqueMessages = FeatureTranscriptAccessibilityMetadata.uniqueMessages(messages)
             let ids = uniqueMessages.map(\.id)
             let updatedMessages = uniqueMessages.reduce(into: [String: FeatureMessage]()) {
                 $0[$1.id] = $1
@@ -1713,6 +1736,7 @@ private final class FeatureTimestampRevealState: ObservableObject {
 
 private struct FeatureTimestampRevealMessageView: View {
     let message: FeatureMessage
+    let assistantHeadingLabel: String
     let imageContext: MarkdownImageContext?
     @ObservedObject var reveal: FeatureTimestampRevealState
 
@@ -1720,7 +1744,11 @@ private struct FeatureTimestampRevealMessageView: View {
         let revealWidth = reveal.width
         if FeatureMessageTimestampMetadata.isEligible(message) {
             let requestedAnchorY = reveal.anchorY(for: message.id)
-            FeatureMessageView(message: message, imageContext: imageContext)
+            FeatureMessageView(
+                message: message,
+                assistantHeadingLabel: assistantHeadingLabel,
+                imageContext: imageContext
+            )
                 .overlay {
                     GeometryReader { geometry in
                         Text(message.createdAt, format: .dateTime.hour().minute())
@@ -1748,7 +1776,11 @@ private struct FeatureTimestampRevealMessageView: View {
                 }
                 .offset(x: -revealWidth)
         } else {
-            FeatureMessageView(message: message, imageContext: imageContext)
+            FeatureMessageView(
+                message: message,
+                assistantHeadingLabel: assistantHeadingLabel,
+                imageContext: imageContext
+            )
                 .offset(x: -revealWidth)
         }
     }
@@ -2334,9 +2366,22 @@ private enum FeatureAttachmentThumbnailError: Error {
 
 struct FeatureMessageView: View {
     let message: FeatureMessage
+    var assistantHeadingLabel = "Assistant"
     var imageContext: MarkdownImageContext? = nil
 
     var body: some View {
+        content.modifier(
+            FeatureMessageHeadingAccessibilityModifier(
+                heading: FeatureTranscriptAccessibilityMetadata.heading(
+                    for: message,
+                    assistantLabel: assistantHeadingLabel
+                )
+            )
+        )
+    }
+
+    @ViewBuilder
+    private var content: some View {
         switch message.role {
         case .user:
             HStack {
@@ -2425,6 +2470,30 @@ struct FeatureMessageView: View {
         return [message.text, attachmentSummary]
             .filter { !$0.isEmpty }
             .joined(separator: ", ")
+    }
+}
+
+private struct FeatureMessageHeadingAccessibilityModifier: ViewModifier {
+    let heading: FeatureTranscriptAccessibilityHeading?
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if let heading {
+            content.overlay(alignment: .topLeading) {
+                Text(heading.label)
+                    .foregroundStyle(.clear)
+                    .frame(width: 1, height: 1)
+                    .clipped()
+                    .id(heading.messageID)
+                    .allowsHitTesting(false)
+                    .accessibilityLabel(heading.label)
+                    .accessibilityAddTraits(.isHeader)
+                    .accessibilitySortPriority(1)
+                    .accessibilityIdentifier(heading.accessibilityIdentifier)
+            }
+        } else {
+            content
+        }
     }
 }
 

@@ -275,7 +275,8 @@ private struct MarkdownBlockView: View, Equatable {
             MarkdownInlineText(
                 inline,
                 selectionContext: selectionContext,
-                textColor: textColor
+                textColor: textColor,
+                isAccessibilityHeading: true
             )
                 .padding(.top, level <= 2 ? 3 : 1)
 
@@ -699,19 +700,22 @@ private struct MarkdownInlineText: UIViewRepresentable {
     let lineSpacing: CGFloat
     let textColor: MarkdownTextColor
     let wrapsLines: Bool
+    let isAccessibilityHeading: Bool
 
     init(
         _ rendered: MarkdownRenderedInline,
         selectionContext: MarkdownSelectionContext,
         lineSpacing: CGFloat = 0,
         textColor: MarkdownTextColor = .primary,
-        wrapsLines: Bool = true
+        wrapsLines: Bool = true,
+        isAccessibilityHeading: Bool = false
     ) {
         self.rendered = rendered
         self.selectionContext = selectionContext
         self.lineSpacing = lineSpacing
         self.textColor = textColor
         self.wrapsLines = wrapsLines
+        self.isAccessibilityHeading = isAccessibilityHeading
     }
 
     func makeCoordinator() -> Coordinator {
@@ -735,7 +739,7 @@ private struct MarkdownInlineText: UIViewRepresentable {
             .foregroundColor: T3Colors.uiAccent,
             .underlineStyle: 0,
         ]
-        textView.accessibilityTraits = .staticText
+        textView.accessibilityTraits = accessibilityTraits
         textView.delegate = context.coordinator
         textView.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         textView.setContentHuggingPriority(.defaultHigh, for: .horizontal)
@@ -743,6 +747,7 @@ private struct MarkdownInlineText: UIViewRepresentable {
     }
 
     func updateUIView(_ textView: UITextView, context: Context) {
+        textView.accessibilityTraits = accessibilityTraits
         let attributedText = context.coordinator.attributedText(
             from: rendered,
             lineSpacing: lineSpacing,
@@ -768,6 +773,10 @@ private struct MarkdownInlineText: UIViewRepresentable {
         textView.accessibilityCustomActions = context.coordinator.accessibilityActions(
             title: selectionContext.copyActionTitle
         )
+    }
+
+    private var accessibilityTraits: UIAccessibilityTraits {
+        MarkdownInlineAccessibilityTraits.resolve(isHeading: isAccessibilityHeading)
     }
 
     func sizeThatFits(
@@ -960,6 +969,12 @@ private struct MarkdownInlineText: UIViewRepresentable {
         private func copyMessage() {
             UIPasteboard.general.string = selectionContext.source.text
         }
+    }
+}
+
+enum MarkdownInlineAccessibilityTraits {
+    static func resolve(isHeading: Bool) -> UIAccessibilityTraits {
+        isHeading ? [.staticText, .header] : .staticText
     }
 }
 
