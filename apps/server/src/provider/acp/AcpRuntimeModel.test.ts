@@ -35,6 +35,41 @@ describe("AcpRuntimeModel", () => {
     });
   });
 
+  it("normalizes explicit ACP and Grok metadata usage updates", () => {
+    const explicit = {
+      sessionId: "session-1",
+      update: {
+        sessionUpdate: "usage_update" as const,
+        used: 12_345,
+        size: 200_000,
+      },
+    } satisfies EffectAcpSchema.SessionNotification;
+    expect(parseSessionUpdateEvent(explicit).events).toEqual([
+      {
+        _tag: "TokenUsageUpdated",
+        usage: { usedTokens: 12_345, maxTokens: 200_000 },
+        rawPayload: explicit,
+      },
+    ]);
+
+    const grokMeta = {
+      sessionId: "session-1",
+      update: {
+        sessionUpdate: "agent_message_chunk" as const,
+        content: { type: "text" as const, text: "hello" },
+      },
+      _meta: { totalTokens: 19_267 },
+    } satisfies EffectAcpSchema.SessionNotification;
+    expect(parseSessionUpdateEvent(grokMeta).events).toEqual([
+      { _tag: "ContentDelta", text: "hello", rawPayload: grokMeta },
+      {
+        _tag: "TokenUsageUpdated",
+        usage: { usedTokens: 19_267 },
+        rawPayload: grokMeta,
+      },
+    ]);
+  });
+
   it("extracts the model config id from typed ACP config options", () => {
     const modelConfigId = extractModelConfigId({
       sessionId: "session-1",

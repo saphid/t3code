@@ -1,4 +1,8 @@
-import { type GrokSettings, ProviderDriverKind } from "@t3tools/contracts";
+import {
+  type GrokSettings,
+  ProviderDriverKind,
+  type ThreadTokenUsageSnapshot,
+} from "@t3tools/contracts";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -8,6 +12,7 @@ import * as EffectAcpErrors from "effect-acp/errors";
 import type * as EffectAcpSchema from "effect-acp/schema";
 import { normalizeModelSlug } from "@t3tools/shared/model";
 
+import { finiteNonNegativeTokenCount, finitePositiveTokenCount } from "../tokenUsage.ts";
 import * as AcpSessionRuntime from "./AcpSessionRuntime.ts";
 import { makeXAiPromptCompletionRuntime } from "./XAiAcpExtension.ts";
 
@@ -105,4 +110,94 @@ export function applyGrokAcpModelSelection<E>(input: {
   return input.runtime
     .setSessionModel(input.requestedModelId)
     .pipe(Effect.mapError(input.mapError), Effect.as(input.requestedModelId));
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+export function contextWindowsFromSessionModels(
+  models: EffectAcpSchema.SessionModelState | null | undefined,
+): ReadonlyMap<string, number> {
+  const windows = new Map<string, number>();
+  for (const model of models?.availableModels ?? []) {
+    const meta = isRecord(model._meta) ? model._meta : undefined;
+    const maxTokens = finitePositiveTokenCount(meta?.totalContextTokens);
+    if (maxTokens === undefined) {
+      continue;
+    }
+    windows.set(model.modelId, maxTokens);
+    windows.set(resolveGrokAcpBaseModelId(model.modelId), maxTokens);
+  }
+  return windows;
+}
+
+export function contextWindowForModelId(
+  windows: ReadonlyMap<string, number>,
+  modelId: string | undefined,
+): number | undefined {
+  if (modelId) {
+    const match = windows.get(modelId) ?? windows.get(resolveGrokAcpBaseModelId(modelId));
+    if (match !== undefined) {
+      return match;
+    }
+  }
+  const distinct = new Set(windows.values());
+  return distinct.size === 1 ? distinct.values().next().value : undefined;
+}
+
+export function enrichGrokTokenUsage(
+  usage: ThreadTokenUsageSnapshot,
+  maxTokens: number | undefined,
+): ThreadTokenUsageSnapshot {
+  return {
+    ...usage,
+    ...(usage.maxTokens === undefined && maxTokens !== undefined ? { maxTokens } : {}),
+    compactsAutomatically: usage.compactsAutomatically ?? true,
+  };
+}
+
+export function tokenUsageFromGrokPromptMeta(
+  meta: unknown,
+  maxTokens: number | undefined,
+): ThreadTokenUsageSnapshot | undefined {
+  if (!isRecord(meta)) {
+    return undefined;
+  }
+  const usage = isRecord(meta.usage) ? meta.usage : undefined;
+  const usedTokens =
+    finitePositiveTokenCount(meta.totalTokens) ?? finitePositiveTokenCount(usage?.totalTokens);
+  if (usedTokens === undefined) {
+    return undefined;
+  }
+  const inputTokens =
+    finiteNonNegativeTokenCount(meta.inputTokens) ??
+    finiteNonNegativeTokenCount(usage?.inputTokens);
+  const outputTokens =
+    finiteNonNegativeTokenCount(meta.outputTokens) ??
+    finiteNonNegativeTokenCount(usage?.outputTokens);
+  const cachedInputTokens =
+    finiteNonNegativeTokenCount(meta.cachedReadTokens) ??
+    finiteNonNegativeTokenCount(usage?.cachedReadTokens);
+  const reasoningOutputTokens =
+    finiteNonNegativeTokenCount(meta.reasoningTokens) ??
+    finiteNonNegativeTokenCount(usage?.reasoningTokens);
+
+  return enrichGrokTokenUsage(
+    {
+      usedTokens,
+      lastUsedTokens: usedTokens,
+      ...(inputTokens !== undefined ? { inputTokens, lastInputTokens: inputTokens } : {}),
+      ...(outputTokens !== undefined ? { outputTokens, lastOutputTokens: outputTokens } : {}),
+      ...(cachedInputTokens !== undefined
+        ? { cachedInputTokens, lastCachedInputTokens: cachedInputTokens }
+        : {}),
+      ...(reasoningOutputTokens !== undefined
+        ? { reasoningOutputTokens, lastReasoningOutputTokens: reasoningOutputTokens }
+        : {}),
+    },
+    maxTokens ??
+      finitePositiveTokenCount(meta.totalContextTokens) ??
+      finitePositiveTokenCount(usage?.totalContextTokens),
+  );
 }

@@ -426,6 +426,7 @@ public struct ThreadDetailView: View {
                 providers: threadProviders,
                 threadSelection: currentSelection,
                 materializesDefaultSelection: false,
+                contextUsage: detail.contextUsage,
                 isSending: isSending,
                 isWorking: detail.thread.state == .working || detail.thread.state == .queued,
                 focused: $composerFocused,

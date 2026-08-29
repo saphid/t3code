@@ -72,6 +72,23 @@ const runtimeMock = {
     missingSessionIds: new Set<string>(),
     transientErrorSessionIds: new Set<string>(),
     sessionDirectoryById: new Map<string, string>(),
+    providerList: {
+      connected: ["openrouter"],
+      all: [
+        {
+          id: "openrouter",
+          name: "OpenRouter",
+          models: {
+            "model-a": {
+              id: "model-a",
+              name: "Model A",
+              limit: { context: 200_000, output: 16_000 },
+            },
+          },
+        },
+      ],
+      default: {},
+    },
     sessionUpdateCalls: [] as Array<{ sessionID: string; permission: unknown }>,
     forkCalls: [] as Array<{ sessionID: string; directory?: string }>,
   },
@@ -212,6 +229,9 @@ const OpenCodeRuntimeTestDouble: OpenCodeRuntimeShape = {
           })(),
         }),
       },
+      provider: {
+        list: async () => ({ data: runtimeMock.state.providerList }),
+      },
     }) as unknown as ReturnType<OpenCodeRuntimeShape["createOpenCodeSdkClient"]>,
   loadOpenCodeInventory: () =>
     Effect.fail(
@@ -281,6 +301,68 @@ const advanceTestClock = (ms: number) =>
   TestClock.adjust(`${ms} millis`).pipe(Effect.andThen(Effect.yieldNow));
 
 it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
+  it.effect("emits OpenRouter context usage from delayed assistant updates", () =>
+    Effect.gen(function* () {
+      const adapter = yield* OpenCodeAdapter;
+      const threadId = asThreadId("thread-opencode-openrouter-usage");
+      runtimeMock.state.subscribedEvents = [
+        {
+          type: "message.updated",
+          properties: {
+            sessionID: "http://127.0.0.1:9999/session",
+            info: {
+              id: "msg-openrouter-usage",
+              role: "assistant",
+              providerID: "openrouter",
+              modelID: "model-a",
+              tokens: {
+                input: 12_000,
+                output: 800,
+                reasoning: 200,
+                cache: { read: 3_000, write: 500 },
+              },
+            },
+          },
+        },
+      ];
+      const usageFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter(
+          (event) => event.threadId === threadId && event.type === "thread.token-usage.updated",
+        ),
+        Stream.take(1),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("opencode"),
+        threadId,
+        runtimeMode: "full-access",
+      });
+
+      const events = Array.from(yield* Fiber.join(usageFiber).pipe(Effect.timeout("1 second")));
+      yield* adapter.stopSession(threadId);
+      const event = events[0];
+      NodeAssert.equal(event?.type, "thread.token-usage.updated");
+      if (event?.type === "thread.token-usage.updated") {
+        NodeAssert.deepEqual(event.payload.usage, {
+          usedTokens: 15_500,
+          inputTokens: 12_000,
+          cachedInputTokens: 3_500,
+          outputTokens: 800,
+          reasoningOutputTokens: 200,
+          lastUsedTokens: 15_500,
+          lastInputTokens: 12_000,
+          lastCachedInputTokens: 3_500,
+          lastOutputTokens: 800,
+          lastReasoningOutputTokens: 200,
+          maxTokens: 200_000,
+          compactsAutomatically: true,
+        });
+      }
+    }),
+  );
+
   it.effect("reuses a configured OpenCode server URL instead of spawning a local server", () =>
     Effect.gen(function* () {
       const adapter = yield* OpenCodeAdapter;

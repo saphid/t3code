@@ -4430,7 +4430,8 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
             userInputs: replacingChangedSuffix(current.userInputs, with: incoming.userInputs),
             page: incoming.page,
             activeSubagentCount: incoming.activeSubagentCount,
-            backgroundWorkIsActive: incoming.backgroundWorkIsActive
+            backgroundWorkIsActive: incoming.backgroundWorkIsActive,
+            contextUsage: incoming.contextUsage
         )
     }
 
@@ -4839,7 +4840,8 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
             activeSubagentCount: backgroundWorkIsActive || sessionIsLive
                 ? cache.subagents.activeCount
                 : 0,
-            backgroundWorkIsActive: backgroundWorkIsActive
+            backgroundWorkIsActive: backgroundWorkIsActive,
+            contextUsage: FeatureContextUsage.latest(in: thread.activities)
         )
     }
 
@@ -4961,7 +4963,8 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
             userInputs: currentDetail.userInputs,
             page: activeThreadPage,
             activeSubagentCount: currentDetail.activeSubagentCount,
-            backgroundWorkIsActive: currentDetail.backgroundWorkIsActive
+            backgroundWorkIsActive: currentDetail.backgroundWorkIsActive,
+            contextUsage: currentDetail.contextUsage
         )
         publish(detail, threadID: route.uiID, renderCacheIsSource: true)
         scheduleAttachmentHydration(

@@ -5,7 +5,9 @@ import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import type * as EffectAcpSchema from "effect-acp/schema";
 import { deriveToolActivityPresentation } from "@t3tools/shared/toolActivity";
-import type { ToolLifecycleItemType } from "@t3tools/contracts";
+import type { ThreadTokenUsageSnapshot, ToolLifecycleItemType } from "@t3tools/contracts";
+
+import { finitePositiveTokenCount } from "../tokenUsage.ts";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -107,6 +109,11 @@ export type AcpParsedSessionEvent =
       readonly _tag: "ContentDelta";
       readonly itemId?: string;
       readonly text: string;
+      readonly rawPayload: unknown;
+    }
+  | {
+      readonly _tag: "TokenUsageUpdated";
+      readonly usage: ThreadTokenUsageSnapshot;
       readonly rawPayload: unknown;
     };
 
@@ -574,8 +581,42 @@ export function parseSessionUpdateEvent(params: EffectAcpSchema.SessionNotificat
       }
       break;
     }
+    case "usage_update": {
+      const usedTokens = finitePositiveTokenCount(upd.used);
+      if (usedTokens !== undefined) {
+        const maxTokens = finitePositiveTokenCount(upd.size);
+        events.push({
+          _tag: "TokenUsageUpdated",
+          usage: {
+            usedTokens,
+            ...(maxTokens !== undefined ? { maxTokens } : {}),
+          },
+          rawPayload: params,
+        });
+      }
+      break;
+    }
     default:
       break;
+  }
+
+  if (!events.some((event) => event._tag === "TokenUsageUpdated")) {
+    const meta = isRecord(params._meta) ? params._meta : undefined;
+    const usedTokens = finitePositiveTokenCount(meta?.totalTokens);
+    if (usedTokens !== undefined) {
+      const maxTokens =
+        finitePositiveTokenCount(meta?.totalContextTokens) ??
+        finitePositiveTokenCount(meta?.contextWindow) ??
+        finitePositiveTokenCount(meta?.size);
+      events.push({
+        _tag: "TokenUsageUpdated",
+        usage: {
+          usedTokens,
+          ...(maxTokens !== undefined ? { maxTokens } : {}),
+        },
+        rawPayload: params,
+      });
+    }
   }
 
   return { ...(modeId !== undefined ? { modeId } : {}), events };

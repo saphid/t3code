@@ -642,6 +642,7 @@ public struct FeatureThreadDetail: Sendable, Equatable, Codable {
     public var page: FeatureThreadPage?
     public var activeSubagentCount: Int
     public var backgroundWorkIsActive: Bool
+    public var contextUsage: Double?
 
     public init(
         thread: FeatureThread,
@@ -650,7 +651,8 @@ public struct FeatureThreadDetail: Sendable, Equatable, Codable {
         userInputs: [FeatureUserInput] = [],
         page: FeatureThreadPage? = nil,
         activeSubagentCount: Int = 0,
-        backgroundWorkIsActive: Bool = false
+        backgroundWorkIsActive: Bool = false,
+        contextUsage: Double? = nil
     ) {
         self.thread = thread
         self.messages = messages
@@ -659,6 +661,31 @@ public struct FeatureThreadDetail: Sendable, Equatable, Codable {
         self.page = page
         self.activeSubagentCount = activeSubagentCount
         self.backgroundWorkIsActive = backgroundWorkIsActive
+        self.contextUsage = contextUsage
+    }
+}
+
+enum FeatureContextUsage {
+    static func latest(in activities: [OrchestrationActivity]) -> Double? {
+        for activity in activities.reversed() where activity.kind == "context-window.updated" {
+            guard let usedTokens = number(activity.payload["usedTokens"]),
+                  let maxTokens = number(activity.payload["maxTokens"]),
+                  usedTokens >= 0,
+                  maxTokens > 0 else {
+                continue
+            }
+            return min(max(usedTokens / maxTokens, 0), 1)
+        }
+        return nil
+    }
+
+    private static func number(_ value: JSONValue?) -> Double? {
+        switch value {
+        case let .number(number): number.isFinite ? number : nil
+        case let .integer(number): Double(number)
+        case let .unsignedInteger(number): Double(number)
+        default: nil
+        }
     }
 }
 

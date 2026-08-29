@@ -10,6 +10,7 @@ import {
   ProviderInstanceId,
   RuntimeRequestId,
   type ThreadId,
+  type ThreadTokenUsageSnapshot,
   TurnId,
 } from "@t3tools/contracts";
 import * as Crypto from "effect/Crypto";
@@ -49,16 +50,22 @@ import {
   makeAcpPlanUpdatedEvent,
   makeAcpRequestOpenedEvent,
   makeAcpRequestResolvedEvent,
+  makeAcpTokenUsageUpdatedEvent,
   makeAcpToolCallEvent,
 } from "../acp/AcpCoreRuntimeEvents.ts";
 import { parsePermissionRequest } from "../acp/AcpRuntimeModel.ts";
 import { makeAcpNativeLoggerFactory } from "../acp/AcpNativeLogging.ts";
 import {
   applyGrokAcpModelSelection,
+  contextWindowForModelId,
+  contextWindowsFromSessionModels,
   currentGrokModelIdFromSessionSetup,
+  enrichGrokTokenUsage,
   makeGrokAcpRuntime,
   resolveGrokAcpBaseModelId,
+  tokenUsageFromGrokPromptMeta,
 } from "../acp/GrokAcpSupport.ts";
+import { retainKnownTokenUsageMaximum, shouldEmitTokenUsage } from "../tokenUsage.ts";
 import {
   extractXAiAskUserQuestions,
   makeXAiAskUserQuestionCancelledResponse,
@@ -117,6 +124,9 @@ interface GrokSessionContext {
    * continues it, and only the last remaining prompt settles the turn. */
   promptsInFlight: number;
   currentModelId: string | undefined;
+  readonly contextWindowsByModelId: ReadonlyMap<string, number>;
+  lastTokenUsage: ThreadTokenUsageSnapshot | undefined;
+  suppressUsageUntilNextTurn: boolean;
   stopped: boolean;
 }
 
@@ -745,6 +755,10 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
             mapError: (cause) =>
               mapAcpToAdapterError(PROVIDER, input.threadId, "session/set_model", cause),
           });
+          const setupModelId = currentGrokModelIdFromSessionSetup(started.sessionSetupResult);
+          const contextWindowsByModelId = contextWindowsFromSessionModels(
+            started.sessionSetupResult.models,
+          );
 
           const now = yield* nowIso;
           const session: ProviderSession = {
@@ -777,7 +791,10 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
             activeTurnId: undefined,
             interruptedTurnIds: new Set(),
             promptsInFlight: 0,
-            currentModelId: boundModelId,
+            currentModelId: boundModelId ?? setupModelId,
+            contextWindowsByModelId,
+            lastTokenUsage: undefined,
+            suppressUsageUntilNextTurn: false,
             stopped: false,
           };
 
@@ -791,12 +808,45 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
                 if (
                   event._tag === "PlanUpdated" ||
                   event._tag === "ToolCallUpdated" ||
-                  event._tag === "ContentDelta"
+                  event._tag === "ContentDelta" ||
+                  event._tag === "TokenUsageUpdated"
                 ) {
                   yield* logNative(ctx.threadId, "session/update", event.rawPayload);
                 }
 
                 if (event._tag === "ModeChanged") {
+                  return;
+                }
+
+                if (event._tag === "TokenUsageUpdated") {
+                  if (ctx.suppressUsageUntilNextTurn) {
+                    return;
+                  }
+                  const usageTurnId = resolveNotificationTurnId(ctx);
+                  if (usageTurnId !== undefined && ctx.interruptedTurnIds.has(usageTurnId)) {
+                    return;
+                  }
+                  const usage = retainKnownTokenUsageMaximum(
+                    ctx.lastTokenUsage,
+                    enrichGrokTokenUsage(
+                      event.usage,
+                      contextWindowForModelId(ctx.contextWindowsByModelId, ctx.currentModelId),
+                    ),
+                  );
+                  if (!shouldEmitTokenUsage(ctx.lastTokenUsage, usage)) {
+                    return;
+                  }
+                  ctx.lastTokenUsage = usage;
+                  yield* offerRuntimeEvent(
+                    makeAcpTokenUsageUpdatedEvent({
+                      stamp: yield* makeEventStamp(),
+                      provider: PROVIDER,
+                      threadId: ctx.threadId,
+                      turnId: usageTurnId,
+                      usage,
+                      rawPayload: event.rawPayload,
+                    }),
+                  );
                   return;
                 }
 
@@ -925,6 +975,9 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
             // folds the new prompt into the ongoing work, so the active turn
             // id is reused instead of opening a new turn.
             const steeringTurnId = ctx.promptsInFlight > 0 ? ctx.activeTurnId : undefined;
+            if (steeringTurnId === undefined) {
+              ctx.suppressUsageUntilNextTurn = false;
+            }
             const turnId = steeringTurnId ?? TurnId.make(yield* randomUUIDv4);
             // Count this prompt immediately so a superseded in-flight prompt
             // resolving from here on does not settle the turn; decremented on
@@ -1156,6 +1209,26 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
                 updatedAt: yield* nowIso,
                 ...(prepared.displayModel ? { model: prepared.displayModel } : {}),
               };
+              const rawPromptUsage = tokenUsageFromGrokPromptMeta(
+                result._meta,
+                contextWindowForModelId(ctx.contextWindowsByModelId, ctx.currentModelId),
+              );
+              const promptUsage = rawPromptUsage
+                ? retainKnownTokenUsageMaximum(ctx.lastTokenUsage, rawPromptUsage)
+                : undefined;
+              if (promptUsage && shouldEmitTokenUsage(ctx.lastTokenUsage, promptUsage)) {
+                ctx.lastTokenUsage = promptUsage;
+                yield* offerRuntimeEvent(
+                  makeAcpTokenUsageUpdatedEvent({
+                    stamp: yield* makeEventStamp(),
+                    provider: PROVIDER,
+                    threadId: ctx.threadId,
+                    turnId: prepared.turnId,
+                    usage: promptUsage,
+                    rawPayload: result,
+                  }),
+                );
+              }
               const remainingPrompts = Math.max(0, ctx.promptsInFlight - 1);
               ctx.promptsInFlight = remainingPrompts;
 
@@ -1296,6 +1369,7 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
           const interruptedTurnId = turnId ?? activeTurnId;
           if (interruptedTurnId !== undefined) {
             ctx.interruptedTurnIds.add(interruptedTurnId);
+            ctx.suppressUsageUntilNextTurn = true;
           }
           return {
             _tag: "Proceed" as const,

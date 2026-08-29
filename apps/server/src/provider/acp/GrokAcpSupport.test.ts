@@ -5,7 +5,10 @@ import * as EffectAcpErrors from "effect-acp/errors";
 import {
   applyGrokAcpModelSelection,
   buildGrokAcpSpawnInput,
+  contextWindowForModelId,
+  contextWindowsFromSessionModels,
   resolveGrokAcpBaseModelId,
+  tokenUsageFromGrokPromptMeta,
 } from "./GrokAcpSupport.ts";
 
 describe("resolveGrokAcpBaseModelId", () => {
@@ -31,6 +34,45 @@ describe("buildGrokAcpSpawnInput", () => {
         XAI_API_KEY: "secret",
         GROK_OAUTH2_REFERRER: "t3code",
       },
+    });
+  });
+});
+
+describe("Grok context usage", () => {
+  it("joins prompt usage with the active model context window", () => {
+    const windows = contextWindowsFromSessionModels({
+      currentModelId: "model-a",
+      availableModels: [
+        {
+          modelId: "model-a",
+          name: "Model A",
+          _meta: { totalContextTokens: 500_000 },
+        },
+      ],
+    });
+
+    expect(contextWindowForModelId(windows, "model-a")).toBe(500_000);
+    expect(
+      tokenUsageFromGrokPromptMeta(
+        {
+          totalTokens: 25_000,
+          inputTokens: 24_000,
+          outputTokens: 800,
+          reasoningTokens: 200,
+        },
+        500_000,
+      ),
+    ).toEqual({
+      usedTokens: 25_000,
+      lastUsedTokens: 25_000,
+      inputTokens: 24_000,
+      lastInputTokens: 24_000,
+      outputTokens: 800,
+      lastOutputTokens: 800,
+      reasoningOutputTokens: 200,
+      lastReasoningOutputTokens: 200,
+      maxTokens: 500_000,
+      compactsAutomatically: true,
     });
   });
 });

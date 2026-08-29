@@ -1342,7 +1342,8 @@ public final class FeatureRootModel {
                 userInputs: replacingChangedSuffix(current.userInputs, with: prepared.userInputs),
                 page: prepared.page,
                 activeSubagentCount: prepared.activeSubagentCount,
-                backgroundWorkIsActive: prepared.backgroundWorkIsActive
+                backgroundWorkIsActive: prepared.backgroundWorkIsActive,
+                contextUsage: prepared.contextUsage
             )
         } ?? prepared
         guard details[id] != next else { return }

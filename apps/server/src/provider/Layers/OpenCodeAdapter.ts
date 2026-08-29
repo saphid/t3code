@@ -8,6 +8,7 @@ import {
   RuntimeItemId,
   RuntimeRequestId,
   ThreadId,
+  type ThreadTokenUsageSnapshot,
   type ToolLifecycleItemType,
   TurnId,
   type UserInputQuestion,
@@ -18,12 +19,20 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
-import type { OpencodeClient, Part, PermissionRequest, QuestionRequest } from "@opencode-ai/sdk/v2";
+import type {
+  AssistantMessage,
+  OpencodeClient,
+  Part,
+  PermissionRequest,
+  ProviderListResponse,
+  QuestionRequest,
+} from "@opencode-ai/sdk/v2";
 import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
 
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
@@ -51,7 +60,12 @@ import {
   toOpenCodeQuestionAnswers,
   type OpenCodeServerConnection,
 } from "../opencodeRuntime.ts";
-import * as Option from "effect/Option";
+import {
+  finiteNonNegativeTokenCount,
+  finitePositiveTokenCount,
+  retainKnownTokenUsageMaximum,
+  shouldEmitTokenUsage,
+} from "../tokenUsage.ts";
 
 const PROVIDER = ProviderDriverKind.make("opencode");
 
@@ -237,6 +251,9 @@ interface OpenCodeSessionContext {
   activeTurnId: TurnId | undefined;
   activeAgent: string | undefined;
   activeVariant: string | undefined;
+  readonly contextWindowsByModel: Map<string, number>;
+  lastTokenUsage: ThreadTokenUsageSnapshot | undefined;
+  suppressUsageUntilNextTurn: boolean;
   /**
    * One-shot guard flipped by `stopOpenCodeContext` / `emitUnexpectedExit`.
    * The session lifecycle is owned by `sessionScope`; this Ref exists only
@@ -252,6 +269,76 @@ interface OpenCodeSessionContext {
    *   - tears down the OpenCode server process for scope-owned servers.
    */
   readonly sessionScope: Scope.Closeable;
+}
+
+function openCodeModelKey(providerID: string, modelID: string): string {
+  return `${providerID}/${modelID}`;
+}
+
+function isOpenCodeUsageMessage(message: unknown): message is AssistantMessage {
+  if (!message || typeof message !== "object") {
+    return false;
+  }
+  const record = message as Record<string, unknown>;
+  if (
+    record.role !== "assistant" ||
+    typeof record.providerID !== "string" ||
+    typeof record.modelID !== "string" ||
+    !record.tokens ||
+    typeof record.tokens !== "object"
+  ) {
+    return false;
+  }
+  const cache = (record.tokens as Record<string, unknown>).cache;
+  return typeof cache === "object" && cache !== null;
+}
+
+export function openCodeContextWindow(
+  providers: ProviderListResponse,
+  providerID: string,
+  modelID: string,
+): number | undefined {
+  const provider = providers.all.find((entry) => entry.id === providerID);
+  return finitePositiveTokenCount(provider?.models[modelID]?.limit.context);
+}
+
+export function openCodeTokenUsage(
+  message: AssistantMessage,
+  maxTokens: number | undefined,
+): ThreadTokenUsageSnapshot | undefined {
+  const inputTokens = finiteNonNegativeTokenCount(message.tokens.input);
+  const outputTokens = finiteNonNegativeTokenCount(message.tokens.output);
+  const reasoningOutputTokens = finiteNonNegativeTokenCount(message.tokens.reasoning);
+  const cachedReadTokens = finiteNonNegativeTokenCount(message.tokens.cache.read);
+  const cachedWriteTokens = finiteNonNegativeTokenCount(message.tokens.cache.write);
+  if (
+    inputTokens === undefined ||
+    outputTokens === undefined ||
+    reasoningOutputTokens === undefined ||
+    cachedReadTokens === undefined ||
+    cachedWriteTokens === undefined
+  ) {
+    return undefined;
+  }
+  const cachedInputTokens = cachedReadTokens + cachedWriteTokens;
+  const usedTokens = inputTokens + cachedInputTokens;
+  if (usedTokens <= 0) {
+    return undefined;
+  }
+  return {
+    usedTokens,
+    inputTokens,
+    cachedInputTokens,
+    outputTokens,
+    reasoningOutputTokens,
+    lastUsedTokens: usedTokens,
+    lastInputTokens: inputTokens,
+    lastCachedInputTokens: cachedInputTokens,
+    lastOutputTokens: outputTokens,
+    lastReasoningOutputTokens: reasoningOutputTokens,
+    ...(maxTokens !== undefined ? { maxTokens } : {}),
+    compactsAutomatically: true,
+  };
 }
 
 export interface OpenCodeAdapterLiveOptions {
@@ -799,6 +886,31 @@ export function makeOpenCodeAdapter(
       }
     });
 
+    const resolveOpenCodeContextWindow = Effect.fn("resolveOpenCodeContextWindow")(function* (
+      context: OpenCodeSessionContext,
+      message: AssistantMessage,
+    ) {
+      const key = openCodeModelKey(message.providerID, message.modelID);
+      const cached = context.contextWindowsByModel.get(key);
+      if (cached !== undefined) {
+        return cached;
+      }
+      const maxTokens = yield* runOpenCodeSdk("provider.list", () =>
+        context.client.provider.list(),
+      ).pipe(
+        Effect.map((response) =>
+          response.data
+            ? openCodeContextWindow(response.data, message.providerID, message.modelID)
+            : undefined,
+        ),
+        Effect.orElseSucceed(() => undefined),
+      );
+      if (maxTokens !== undefined) {
+        context.contextWindowsByModel.set(key, maxTokens);
+      }
+      return maxTokens;
+    });
+
     const handleSubscribedEvent = Effect.fn("handleSubscribedEvent")(function* (
       context: OpenCodeSessionContext,
       event: OpenCodeSubscribedEvent,
@@ -843,10 +955,36 @@ export function makeOpenCodeAdapter(
         }
 
         case "message.updated": {
-          context.messageRoleById.set(event.properties.info.id, event.properties.info.role);
-          if (event.properties.info.role === "assistant") {
+          const message = event.properties.info;
+          context.messageRoleById.set(message.id, message.role);
+          if (!context.suppressUsageUntilNextTurn && isOpenCodeUsageMessage(message)) {
+            const usageWithoutMax = openCodeTokenUsage(message, undefined);
+            const maxTokens = usageWithoutMax
+              ? yield* resolveOpenCodeContextWindow(context, message)
+              : undefined;
+            const rawUsage =
+              usageWithoutMax && maxTokens !== undefined
+                ? { ...usageWithoutMax, maxTokens }
+                : usageWithoutMax;
+            const usage = rawUsage
+              ? retainKnownTokenUsageMaximum(context.lastTokenUsage, rawUsage)
+              : undefined;
+            if (usage && shouldEmitTokenUsage(context.lastTokenUsage, usage)) {
+              context.lastTokenUsage = usage;
+              yield* emit({
+                ...(yield* buildEventBase({
+                  threadId: context.session.threadId,
+                  turnId,
+                  raw: event,
+                })),
+                type: "thread.token-usage.updated",
+                payload: { usage },
+              });
+            }
+          }
+          if (message.role === "assistant") {
             for (const part of context.partById.values()) {
-              if (part.messageID !== event.properties.info.id) {
+              if (part.messageID !== message.id) {
                 continue;
               }
               yield* emitAssistantTextDelta(context, part, turnId, event);
@@ -1402,6 +1540,9 @@ export function makeOpenCodeAdapter(
           activeTurnId: undefined,
           activeAgent: undefined,
           activeVariant: undefined,
+          contextWindowsByModel: new Map(),
+          lastTokenUsage: undefined,
+          suppressUsageUntilNextTurn: false,
           stopped: yield* Ref.make(false),
           sessionScope: started.sessionScope,
         };
@@ -1476,6 +1617,7 @@ export function makeOpenCodeAdapter(
       const variant = getModelSelectionStringOptionValue(modelSelection, "variant");
 
       context.activeTurnId = turnId;
+      context.suppressUsageUntilNextTurn = false;
       context.activeAgent = agent ?? (input.interactionMode === "plan" ? "plan" : undefined);
       context.activeVariant = variant;
       yield* updateProviderSession(
@@ -1558,6 +1700,7 @@ export function makeOpenCodeAdapter(
     const interruptTurn: OpenCodeAdapterShape["interruptTurn"] = Effect.fn("interruptTurn")(
       function* (threadId, turnId) {
         const context = yield* ensureSessionContext(sessions, threadId);
+        context.suppressUsageUntilNextTurn = true;
         yield* runOpenCodeSdk("session.abort", () =>
           context.client.session.abort({ sessionID: context.openCodeSessionId }),
         ).pipe(Effect.mapError(toRequestError));

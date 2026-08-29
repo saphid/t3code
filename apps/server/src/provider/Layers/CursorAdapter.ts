@@ -867,6 +867,8 @@ export function makeCursorAdapter(
                       }),
                     );
                     return;
+                  case "TokenUsageUpdated":
+                    return;
                 }
               }),
             ),
