@@ -71,7 +71,9 @@ export interface ProjectionSnapshotQueryShape {
    * Read the latest orchestration projection snapshot.
    *
    * Rehydrates from projection tables and derives snapshot sequence from
-   * projector cursor state.
+   * projector cursor state. This legacy full read is guarded by row and byte
+   * budgets before activity payloads are decoded. Clients should use shell
+   * snapshots and paged thread detail reads.
    */
   readonly getSnapshot: () => Effect.Effect<OrchestrationReadModel, ProjectionRepositoryError>;
 

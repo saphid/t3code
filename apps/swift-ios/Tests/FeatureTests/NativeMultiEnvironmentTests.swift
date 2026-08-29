@@ -627,6 +627,8 @@ final class NativeMultiEnvironmentTests: XCTestCase {
         }
 
         XCTAssertEqual(refreshed?.connection.state, .reconnecting)
+        XCTAssertEqual(refreshed?.threads.first?.title, "Local work")
+        XCTAssertEqual(refreshed?.projects.contains(where: { $0.wireID == addedProject.id }), true)
         await fixture.client.disconnect()
     }
 

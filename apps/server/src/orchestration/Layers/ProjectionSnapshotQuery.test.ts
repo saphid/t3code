@@ -2297,7 +2297,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery windowed thread detail", (it) =
     }),
   );
 
-  it.effect("bounds activity hydration and preserves unresolved requests", () =>
+  it.effect("bounds large-profile activity hydration and preserves unresolved requests", () =>
     Effect.gen(function* () {
       yield* seedFanOutThread();
       const snapshotQuery = yield* ProjectionSnapshotQuery;
@@ -2308,7 +2308,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery windowed thread detail", (it) =
         WITH RECURSIVE activity_rows(sequence) AS (
           SELECT 1
           UNION ALL
-          SELECT sequence + 1 FROM activity_rows WHERE sequence < 501
+          SELECT sequence + 1 FROM activity_rows WHERE sequence < 10000
         )
         INSERT INTO projection_thread_activities (
           activity_id, thread_id, turn_id, tone, kind, summary, payload_json, sequence, created_at
@@ -2326,12 +2326,22 @@ projectionSnapshotLayer("ProjectionSnapshotQuery windowed thread detail", (it) =
         FROM activity_rows
       `;
 
+      const fullSnapshotError = yield* Effect.flip(snapshotQuery.getSnapshot());
+      assert.equal(fullSnapshotError._tag, "PersistenceSqlError");
+      assert.match(fullSnapshotError.message, /10000 rows/);
+      assert.match(fullSnapshotError.message, /Use paged thread detail reads/);
+
+      const shellSnapshot = yield* snapshotQuery.getShellSnapshot();
+      assert.equal(shellSnapshot.threads.length, 1);
+      const commandReadModel = yield* snapshotQuery.getCommandReadModel();
+      assert.equal(commandReadModel.threads[0]?.activities.length, 0);
+
       const fullDetail = yield* snapshotQuery.getThreadDetailById(threadW);
       assert.equal(fullDetail._tag, "Some");
       if (fullDetail._tag === "Some") {
         assert.equal(fullDetail.value.activities.length, 500);
-        assert.equal(fullDetail.value.activities[0]?.id, asEventId("activity-0002"));
-        assert.equal(fullDetail.value.activities.at(-1)?.id, asEventId("activity-0501"));
+        assert.equal(fullDetail.value.activities[0]?.id, asEventId("activity-9501"));
+        assert.equal(fullDetail.value.activities.at(-1)?.id, asEventId("activity-10000"));
       }
 
       const windowedDetail = yield* snapshotQuery.getThreadDetailSnapshot(threadW, {
@@ -2340,8 +2350,11 @@ projectionSnapshotLayer("ProjectionSnapshotQuery windowed thread detail", (it) =
       assert.equal(windowedDetail._tag, "Some");
       if (windowedDetail._tag === "Some") {
         assert.equal(windowedDetail.value.thread.activities.length, 500);
-        assert.equal(windowedDetail.value.thread.activities[0]?.id, asEventId("activity-0002"));
-        assert.equal(windowedDetail.value.thread.activities.at(-1)?.id, asEventId("activity-0501"));
+        assert.equal(windowedDetail.value.thread.activities[0]?.id, asEventId("activity-9501"));
+        assert.equal(
+          windowedDetail.value.thread.activities.at(-1)?.id,
+          asEventId("activity-10000"),
+        );
       }
 
       yield* sql`
@@ -2418,6 +2431,34 @@ projectionSnapshotLayer("ProjectionSnapshotQuery windowed thread detail", (it) =
         assert.equal(ids.includes(asEventId("user-input-closed")), false);
         assert.equal(ids.includes(asEventId("user-input-tied-z-request")), true);
       }
+    }),
+  );
+
+  it.effect("rejects a full snapshot before decoding an oversized activity payload", () =>
+    Effect.gen(function* () {
+      yield* seedFanOutThread();
+      const snapshotQuery = yield* ProjectionSnapshotQuery;
+      const sql = yield* SqlClient.SqlClient;
+
+      yield* sql`DELETE FROM projection_thread_activities`;
+      yield* sql`
+        INSERT INTO projection_thread_activities (
+          activity_id, thread_id, turn_id, tone, kind, summary, payload_json, sequence, created_at
+        )
+        VALUES (
+          'oversized-activity', 'thread-w', 'turn-5', 'tool', 'tool.completed',
+          'oversized tool result',
+          json_object('blob', replace(hex(zeroblob(16777217)), '00', 'x')),
+          1, '2026-03-01T00:04:00.000Z'
+        )
+      `;
+
+      const error = yield* Effect.flip(snapshotQuery.getSnapshot());
+      assert.equal(error._tag, "PersistenceSqlError");
+      assert.match(error.message, /1 rows, \d+ bytes/);
+
+      const shellSnapshot = yield* snapshotQuery.getShellSnapshot();
+      assert.equal(shellSnapshot.threads[0]?.id, threadW);
     }),
   );
 

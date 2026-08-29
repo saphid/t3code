@@ -38,6 +38,7 @@ import * as SqlClient from "effect/unstable/sql/SqlClient";
 import * as SqlSchema from "effect/unstable/sql/SqlSchema";
 
 import {
+  PersistenceSqlError,
   isPersistenceError,
   toPersistenceDecodeError,
   toPersistenceSqlError,
@@ -74,6 +75,13 @@ const decodeThread = Schema.decodeUnknownEffect(OrchestrationThread);
 // activity window. Applying the limit in SQL avoids decoding an unbounded
 // payload_json set before the projector can enforce that invariant.
 const THREAD_DETAIL_ACTIVITY_LIMIT = 500;
+// Full read-model snapshots remain available for small internal reads and tests.
+// Client bootstrap uses shell snapshots, while older thread history is loaded
+// through paged detail reads. Bound the activity portion before decoding
+// payload_json so a legacy caller cannot expand the whole activity table onto
+// the V8 heap.
+const FULL_SNAPSHOT_ACTIVITY_MAX_ROWS = 500;
+const FULL_SNAPSHOT_ACTIVITY_MAX_BYTES = 16 * 1024 * 1024;
 const ProjectionProjectDbRowSchema = ProjectionProject.mapFields(
   Struct.assign({
     defaultModelSelection: Schema.NullOr(Schema.fromJsonString(ModelSelection)),
@@ -120,6 +128,10 @@ const ProjectionStateDbRowSchema = ProjectionState;
 const ProjectionCountsRowSchema = Schema.Struct({
   projectCount: Schema.Number,
   threadCount: Schema.Number,
+});
+const ProjectionActivityBudgetRowSchema = Schema.Struct({
+  rowCount: Schema.Number,
+  payloadBytes: Schema.Number,
 });
 const ProjectionThreadSearchRequest = Schema.Struct({
   pattern: Schema.String,
@@ -588,6 +600,18 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           sequence ASC,
           created_at ASC,
           activity_id ASC
+      `,
+  });
+
+  const readThreadActivityBudget = SqlSchema.findOne({
+    Request: Schema.Void,
+    Result: ProjectionActivityBudgetRowSchema,
+    execute: () =>
+      sql`
+        SELECT
+          COUNT(*) AS "rowCount",
+          COALESCE(SUM(LENGTH(CAST(payload_json AS BLOB))), 0) AS "payloadBytes"
+        FROM projection_thread_activities
       `,
   });
 
@@ -1454,80 +1478,104 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
   const getSnapshot: ProjectionSnapshotQueryShape["getSnapshot"] = () =>
     sql
       .withTransaction(
-        Effect.all([
-          listProjectRows(undefined).pipe(
+        Effect.gen(function* () {
+          const activityBudget = yield* readThreadActivityBudget(undefined).pipe(
             Effect.mapError(
               toPersistenceSqlOrDecodeError(
-                "ProjectionSnapshotQuery.getSnapshot:listProjects:query",
-                "ProjectionSnapshotQuery.getSnapshot:listProjects:decodeRows",
+                "ProjectionSnapshotQuery.getSnapshot:activityBudget:query",
+                "ProjectionSnapshotQuery.getSnapshot:activityBudget:decodeRow",
               ),
             ),
-          ),
-          listThreadRows(undefined).pipe(
-            Effect.mapError(
-              toPersistenceSqlOrDecodeError(
-                "ProjectionSnapshotQuery.getSnapshot:listThreads:query",
-                "ProjectionSnapshotQuery.getSnapshot:listThreads:decodeRows",
+          );
+          if (
+            activityBudget.rowCount > FULL_SNAPSHOT_ACTIVITY_MAX_ROWS ||
+            activityBudget.payloadBytes > FULL_SNAPSHOT_ACTIVITY_MAX_BYTES
+          ) {
+            return yield* new PersistenceSqlError({
+              operation: "ProjectionSnapshotQuery.getSnapshot:activityBudget",
+              detail:
+                `Full snapshot activity budget exceeded ` +
+                `(${activityBudget.rowCount} rows, ${activityBudget.payloadBytes} bytes; ` +
+                `limits: ${FULL_SNAPSHOT_ACTIVITY_MAX_ROWS} rows, ` +
+                `${FULL_SNAPSHOT_ACTIVITY_MAX_BYTES} bytes). Use paged thread detail reads.`,
+            });
+          }
+
+          return yield* Effect.all([
+            listProjectRows(undefined).pipe(
+              Effect.mapError(
+                toPersistenceSqlOrDecodeError(
+                  "ProjectionSnapshotQuery.getSnapshot:listProjects:query",
+                  "ProjectionSnapshotQuery.getSnapshot:listProjects:decodeRows",
+                ),
               ),
             ),
-          ),
-          listThreadMessageRows(undefined).pipe(
-            Effect.mapError(
-              toPersistenceSqlOrDecodeError(
-                "ProjectionSnapshotQuery.getSnapshot:listThreadMessages:query",
-                "ProjectionSnapshotQuery.getSnapshot:listThreadMessages:decodeRows",
+            listThreadRows(undefined).pipe(
+              Effect.mapError(
+                toPersistenceSqlOrDecodeError(
+                  "ProjectionSnapshotQuery.getSnapshot:listThreads:query",
+                  "ProjectionSnapshotQuery.getSnapshot:listThreads:decodeRows",
+                ),
               ),
             ),
-          ),
-          listThreadProposedPlanRows(undefined).pipe(
-            Effect.mapError(
-              toPersistenceSqlOrDecodeError(
-                "ProjectionSnapshotQuery.getSnapshot:listThreadProposedPlans:query",
-                "ProjectionSnapshotQuery.getSnapshot:listThreadProposedPlans:decodeRows",
+            listThreadMessageRows(undefined).pipe(
+              Effect.mapError(
+                toPersistenceSqlOrDecodeError(
+                  "ProjectionSnapshotQuery.getSnapshot:listThreadMessages:query",
+                  "ProjectionSnapshotQuery.getSnapshot:listThreadMessages:decodeRows",
+                ),
               ),
             ),
-          ),
-          listThreadActivityRows(undefined).pipe(
-            Effect.mapError(
-              toPersistenceSqlOrDecodeError(
-                "ProjectionSnapshotQuery.getSnapshot:listThreadActivities:query",
-                "ProjectionSnapshotQuery.getSnapshot:listThreadActivities:decodeRows",
+            listThreadProposedPlanRows(undefined).pipe(
+              Effect.mapError(
+                toPersistenceSqlOrDecodeError(
+                  "ProjectionSnapshotQuery.getSnapshot:listThreadProposedPlans:query",
+                  "ProjectionSnapshotQuery.getSnapshot:listThreadProposedPlans:decodeRows",
+                ),
               ),
             ),
-          ),
-          listThreadSessionRows(undefined).pipe(
-            Effect.mapError(
-              toPersistenceSqlOrDecodeError(
-                "ProjectionSnapshotQuery.getSnapshot:listThreadSessions:query",
-                "ProjectionSnapshotQuery.getSnapshot:listThreadSessions:decodeRows",
+            listThreadActivityRows(undefined).pipe(
+              Effect.mapError(
+                toPersistenceSqlOrDecodeError(
+                  "ProjectionSnapshotQuery.getSnapshot:listThreadActivities:query",
+                  "ProjectionSnapshotQuery.getSnapshot:listThreadActivities:decodeRows",
+                ),
               ),
             ),
-          ),
-          listCheckpointRows(undefined).pipe(
-            Effect.mapError(
-              toPersistenceSqlOrDecodeError(
-                "ProjectionSnapshotQuery.getSnapshot:listCheckpoints:query",
-                "ProjectionSnapshotQuery.getSnapshot:listCheckpoints:decodeRows",
+            listThreadSessionRows(undefined).pipe(
+              Effect.mapError(
+                toPersistenceSqlOrDecodeError(
+                  "ProjectionSnapshotQuery.getSnapshot:listThreadSessions:query",
+                  "ProjectionSnapshotQuery.getSnapshot:listThreadSessions:decodeRows",
+                ),
               ),
             ),
-          ),
-          listLatestTurnRows(undefined).pipe(
-            Effect.mapError(
-              toPersistenceSqlOrDecodeError(
-                "ProjectionSnapshotQuery.getSnapshot:listLatestTurns:query",
-                "ProjectionSnapshotQuery.getSnapshot:listLatestTurns:decodeRows",
+            listCheckpointRows(undefined).pipe(
+              Effect.mapError(
+                toPersistenceSqlOrDecodeError(
+                  "ProjectionSnapshotQuery.getSnapshot:listCheckpoints:query",
+                  "ProjectionSnapshotQuery.getSnapshot:listCheckpoints:decodeRows",
+                ),
               ),
             ),
-          ),
-          listProjectionStateRows(undefined).pipe(
-            Effect.mapError(
-              toPersistenceSqlOrDecodeError(
-                "ProjectionSnapshotQuery.getSnapshot:listProjectionState:query",
-                "ProjectionSnapshotQuery.getSnapshot:listProjectionState:decodeRows",
+            listLatestTurnRows(undefined).pipe(
+              Effect.mapError(
+                toPersistenceSqlOrDecodeError(
+                  "ProjectionSnapshotQuery.getSnapshot:listLatestTurns:query",
+                  "ProjectionSnapshotQuery.getSnapshot:listLatestTurns:decodeRows",
+                ),
               ),
             ),
-          ),
-        ]),
+            listProjectionStateRows(undefined).pipe(
+              Effect.mapError(
+                toPersistenceSqlOrDecodeError(
+                  "ProjectionSnapshotQuery.getSnapshot:listProjectionState:query",
+                  "ProjectionSnapshotQuery.getSnapshot:listProjectionState:decodeRows",
+                ),
+              ),
+            ),
+          ]);
+        }),
       )
       .pipe(
         Effect.flatMap(
