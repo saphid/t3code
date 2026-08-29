@@ -150,7 +150,6 @@ public struct WorkspaceView: View {
                     openThread(thread.id)
                     showingNewTask = false
                 },
-                onCreateProject: openProjectCreation,
                 initialProjectID: newTaskInitialProjectID
             )
         }
@@ -632,23 +631,13 @@ public struct WorkspaceView: View {
         preferredCompactColumn = .sidebar
     }
 
-    @MainActor
-    private func openProjectCreation() {
-        showingNewTask = false
-        showingAddProject = true
-    }
-
     private func openNewTaskOrProjectCreation() {
         openNewTaskOrProjectCreation(initialProjectID: selectedProjectID)
     }
 
     private func openNewTaskOrProjectCreation(initialProjectID: String?) {
-        if creationProjects.isEmpty {
-            showingAddProject = true
-        } else {
-            newTaskInitialProjectID = initialProjectID
-            showingNewTask = true
-        }
+        newTaskInitialProjectID = initialProjectID
+        showingNewTask = true
     }
 
     private func consumeNavigationRequest() {

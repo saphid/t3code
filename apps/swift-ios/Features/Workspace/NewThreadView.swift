@@ -6,7 +6,6 @@ public struct NewThreadView: View {
     @Bindable var model: FeatureRootModel
     let submit: (NewTaskRequest) async -> FeatureThread?
     let onCreated: (FeatureThread) -> Void
-    let onCreateProject: @MainActor () -> Void
     private let draftStore: FeatureComposerDraftStore
     private let initialProjectID: String?
 
@@ -43,14 +42,12 @@ public struct NewThreadView: View {
         model: FeatureRootModel,
         submit: @escaping (NewTaskRequest) async -> FeatureThread?,
         onCreated: @escaping (FeatureThread) -> Void,
-        onCreateProject: @escaping @MainActor () -> Void = {},
         initialProjectID: String? = nil,
         draftStore: FeatureComposerDraftStore = .shared
     ) {
         self.model = model
         self.submit = submit
         self.onCreated = onCreated
-        self.onCreateProject = onCreateProject
         self.initialProjectID = initialProjectID
         self.draftStore = draftStore
     }
@@ -175,14 +172,20 @@ public struct NewThreadView: View {
             switch picker {
             case .project:
                 NewTaskProjectPicker(
+                    model: model,
                     groups: creationProjectGroups,
                     environments: model.snapshot.environments,
                     recentGroupIDs: recentProjectGroupIDs,
                     selectionID: selectedProjectGroup?.id,
+                    initialEnvironmentID: selectedProject?.environmentID,
                     onSelect: { group in
                         if selectProjectGroup(group) {
                             activePicker = nil
                         }
+                    },
+                    onSelectCreated: { project in
+                        selectCreatedProject(project)
+                        activePicker = nil
                     }
                 )
             case .branch:
@@ -321,11 +324,7 @@ public struct NewThreadView: View {
                 .font(T3Typography.threadHeading1.weight(.regular))
                 .foregroundStyle(T3Colors.textPrimary)
             Button("Add project") {
-                dismiss()
-                Task { @MainActor in
-                    await Task.yield()
-                    onCreateProject()
-                }
+                presentPicker(.project)
             }
             .buttonStyle(.borderedProminent)
             .controlSize(.large)
@@ -723,6 +722,41 @@ public struct NewThreadView: View {
         return selectProject(target.id)
     }
 
+    private func selectCreatedProject(_ project: FeatureProject) {
+        let carriedDraft = FeatureComposerDraft(
+            text: prompt,
+            attachments: attachments,
+            selection: selection,
+            workspace: FeatureComposerWorkspaceDraft(
+                mode: workspaceMode,
+                branch: selectedBranch?.name,
+                worktreePath: selectedBranch?.worktreePath,
+                startFromOrigin: startFromOrigin
+            )
+        )
+        guard selectProject(project.id) else { return }
+
+        prompt = carriedDraft.text
+        attachments = carriedDraft.attachments
+        selection = DailyUXModelOptions.validated(
+            carriedDraft.selection,
+            in: creationProviders
+        ) ?? initialSelection
+        selectionIsExplicit = carriedDraft.selection != nil
+        if selectionIsExplicit, let selection {
+            preferredSelection = selection
+        }
+        if let workspace = carriedDraft.workspace {
+            workspaceMode = workspace.mode
+            selectedBranch = workspace.branch.map {
+                FeatureWorkspaceBranch(name: $0, worktreePath: workspace.worktreePath)
+            }
+            startFromOrigin = workspace.startFromOrigin
+        }
+        workspaceSelectionIsExplicit = carriedDraft.workspace != nil
+        scheduleDraftSave()
+    }
+
     private func selectEnvironment(_ id: String) {
         guard selectedProject?.environmentID != id else { return }
         let project = selectedProjectGroup?.project(in: id)
@@ -1103,58 +1137,66 @@ enum NewTaskProjectPickerSearch {
 
 private struct NewTaskProjectPicker: View {
     @SwiftUI.Environment(\.dismiss) private var dismiss
+    @Bindable var model: FeatureRootModel
     let groups: [DailyUXProjectGroup]
     let environments: [FeatureEnvironment]
     let recentGroupIDs: [String]
     let selectionID: String?
+    let initialEnvironmentID: String?
     let onSelect: (DailyUXProjectGroup) -> Void
+    let onSelectCreated: (FeatureProject) -> Void
 
     @State private var query = ""
+    @State private var showingProjectCreation = false
+    @State private var pendingCreationTarget: ProjectCreationTarget?
 
     var body: some View {
         NavigationStack {
-            Group {
-                if groups.isEmpty {
+            let sections = DailyUXProjectPickerSections(
+                groups: filteredGroups,
+                recentGroupIDs: recentGroupIDs
+            )
+            List {
+                if filteredGroups.isEmpty {
                     ContentUnavailableView(
-                        "No projects",
-                        systemImage: "folder"
+                        groups.isEmpty ? "No projects" : "No matching projects",
+                        systemImage: groups.isEmpty ? "folder" : "magnifyingglass"
                     )
-                } else if filteredGroups.isEmpty {
-                    ContentUnavailableView(
-                        "No matching projects",
-                        systemImage: "magnifyingglass"
-                    )
+                    .listRowBackground(T3Colors.background)
                 } else {
-                    let sections = DailyUXProjectPickerSections(
-                        groups: filteredGroups,
-                        recentGroupIDs: recentGroupIDs
-                    )
-                    List {
-                        if sections.recents.isEmpty {
-                            ForEach(sections.others) { group in
+                    if sections.recents.isEmpty {
+                        ForEach(sections.others) { group in
+                            projectRow(group)
+                        }
+                    } else {
+                        Section("Recent") {
+                            ForEach(sections.recents) { group in
                                 projectRow(group)
                             }
-                        } else {
-                            Section("Recent") {
-                                ForEach(sections.recents) { group in
-                                    projectRow(group)
-                                }
-                            }
+                        }
 
-                            if !sections.others.isEmpty {
-                                Section("Other projects") {
-                                    ForEach(sections.others) { group in
-                                        projectRow(group)
-                                    }
+                        if !sections.others.isEmpty {
+                            Section("Other projects") {
+                                ForEach(sections.others) { group in
+                                    projectRow(group)
                                 }
                             }
                         }
                     }
-                    .listStyle(.plain)
-                    .scrollContentBackground(.hidden)
-                    .scrollDismissesKeyboard(.interactively)
+                }
+
+                Section {
+                    Button("Create new project", systemImage: "folder.badge.plus") {
+                        showingProjectCreation = true
+                    }
+                    .foregroundStyle(T3Colors.accent)
+                    .frame(minHeight: 44)
+                    .listRowBackground(T3Colors.background)
                 }
             }
+            .listStyle(.plain)
+            .scrollContentBackground(.hidden)
+            .scrollDismissesKeyboard(.interactively)
             .background(T3Colors.background)
             .navigationTitle("Project")
             .navigationBarTitleDisplayMode(.inline)
@@ -1165,8 +1207,32 @@ private struct NewTaskProjectPicker: View {
                 }
             }
         }
+        .sheet(isPresented: $showingProjectCreation) {
+            AddProjectView(
+                model: model,
+                initialEnvironmentID: initialEnvironmentID,
+                onCreated: projectCreated
+            )
+        }
+        .onChange(of: groups) { selectCreatedProjectIfAvailable() }
         .presentationDetents([.medium, .large])
         .presentationBackground(T3Colors.background)
+    }
+
+    private func projectCreated(_ target: ProjectCreationTarget) {
+        pendingCreationTarget = target
+        selectCreatedProjectIfAvailable()
+    }
+
+    private func selectCreatedProjectIfAvailable() {
+        guard let pendingCreationTarget,
+              let project = pendingCreationTarget.project(
+                  in: groups.flatMap(\.projects)
+              ) else {
+            return
+        }
+        self.pendingCreationTarget = nil
+        onSelectCreated(project)
     }
 
     private func projectRow(_ group: DailyUXProjectGroup) -> some View {

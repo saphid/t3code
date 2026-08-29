@@ -872,6 +872,43 @@ struct DailyUXNewTaskTests {
         #expect(sections.recents.count + sections.others.count == groups.count)
     }
 
+    @Test(.bug("https://github.com/saphid/t3code-personal/issues/240"))
+    func projectCreationHandoffKeepsTheVisibleDraftOverTheNewProjectsStoredDraft() {
+        let attachment = FeatureDraftAttachment(
+            data: Data("pending image".utf8),
+            filename: "pending.png",
+            mimeType: "image/png"
+        )
+        let selection = FeatureSelection(providerID: "codex", modelID: "gpt-5.6-sol")
+        let workspace = FeatureComposerWorkspaceDraft(
+            mode: .worktree,
+            branch: "feature/pending",
+            worktreePath: nil,
+            startFromOrigin: false
+        )
+        let pending = FeatureComposerDraft(
+            text: "Finish the pending task",
+            attachments: [attachment],
+            selection: selection,
+            workspace: workspace
+        )
+        let storedForNewProject = FeatureComposerDraft(
+            text: "stale target draft",
+            selection: FeatureSelection(providerID: "claude", modelID: "opus")
+        )
+        let context = NewTaskDraftRestoreContext(
+            projectID: "created-project",
+            baseline: FeatureComposerDraft()
+        )
+
+        let restored = context.merging(
+            saved: storedForNewProject,
+            current: pending
+        )
+
+        #expect(restored == pending)
+    }
+
     @Test
     func projectPickerKeepsTheAlphabeticalListWhenNoProjectHasBeenUsed() {
         let alpha = rankedProject("alpha", name: "Alpha")

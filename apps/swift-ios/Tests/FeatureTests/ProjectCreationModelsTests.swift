@@ -4,6 +4,29 @@ import Testing
 
 @Suite("Native project creation")
 struct ProjectCreationModelsTests {
+    @Test(.bug("https://github.com/saphid/t3code-personal/issues/240"))
+    func creationTargetWaitsForTheExactEnvironmentAndNormalizedPath() throws {
+        let target = ProjectCreationTarget(
+            environmentID: "remote",
+            path: "~/work/new-project/"
+        )
+        let samePathElsewhere = FeatureProject(
+            id: "local-project",
+            environmentID: "local",
+            name: "New Project",
+            path: "~/work/new-project"
+        )
+        let created = FeatureProject(
+            id: "remote-project",
+            environmentID: "remote",
+            name: "New Project",
+            path: "~/work/new-project"
+        )
+
+        #expect(target.project(in: [samePathElsewhere]) == nil)
+        #expect(try #require(target.project(in: [samePathElsewhere, created])).id == created.id)
+    }
+
     @Test
     func repositoryNamesCoverHttpsSshAndProviderPaths() {
         #expect(
@@ -57,6 +80,12 @@ struct ProjectCreationModelsTests {
 
         #expect(ProjectCreationPath.defaultCloneURL(for: github) == github.url)
         #expect(ProjectCreationPath.defaultCloneURL(for: gitlab) == gitlab.sshUrl)
+        #expect(
+            ProjectCreationPath.cloneURL(
+                repositoryInput: "pingdotgg/t3code",
+                resolvedRepository: github
+            ) == github.url
+        )
     }
 
     @Test

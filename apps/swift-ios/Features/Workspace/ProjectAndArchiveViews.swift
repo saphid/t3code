@@ -25,6 +25,7 @@ public struct AddProjectView: View {
 
     @SwiftUI.Environment(\.dismiss) private var dismiss
     @Bindable var model: FeatureRootModel
+    private let onCreated: @MainActor (ProjectCreationTarget) -> Void
 
     @State private var selectedEnvironmentID: String?
     @State private var mode = ProjectMode.folder
@@ -54,6 +55,17 @@ public struct AddProjectView: View {
 
     public init(model: FeatureRootModel) {
         self.model = model
+        onCreated = { _ in }
+    }
+
+    init(
+        model: FeatureRootModel,
+        initialEnvironmentID: String?,
+        onCreated: @escaping @MainActor (ProjectCreationTarget) -> Void
+    ) {
+        self.model = model
+        self.onCreated = onCreated
+        _selectedEnvironmentID = State(initialValue: initialEnvironmentID)
     }
 
     public var body: some View {
@@ -724,8 +736,10 @@ public struct AddProjectView: View {
                     environmentID: environment.id,
                     path: validated
                 )
+                finishCreation(environmentID: environment.id, path: validated)
                 dismiss()
             } else if environments.count == 1, await model.addProject(path: validated) {
+                finishCreation(environmentID: environment.id, path: validated)
                 dismiss()
             } else {
                 errorMessage = model.errorMessage ?? "The project could not be added."
@@ -781,8 +795,7 @@ public struct AddProjectView: View {
     }
 
     private func cloneProject(_ environment: FeatureEnvironment) async {
-        let remoteURL = resolvedRepository.map(ProjectCreationPath.defaultCloneURL)
-            ?? ProjectCreationPath.normalizedCloneURL(repositoryInput)
+        let remoteURL = currentCloneURL
         guard !remoteURL.isEmpty else {
             errorMessage = "Enter a Git remote URL."
             return
@@ -874,6 +887,7 @@ public struct AddProjectView: View {
                 return
             }
             pendingCloneRegistration = nil
+            finishCreation(environmentID: environment.id, path: clonedPath)
             dismiss()
         } catch is CancellationError {
             return
@@ -900,13 +914,18 @@ public struct AddProjectView: View {
         remoteURL: String,
         destinationPath: String
     ) -> Bool {
-        let currentRemoteURL = resolvedRepository?.sshUrl
-            ?? repositoryInput.trimmingCharacters(in: .whitespacesAndNewlines)
         return cloneRequestID == requestID
             && selectedEnvironmentID == environmentID
-            && currentRemoteURL == remoteURL
+            && currentCloneURL == remoteURL
             && self.destinationPath.trimmingCharacters(in: .whitespacesAndNewlines)
                 == destinationPath
+    }
+
+    private var currentCloneURL: String {
+        ProjectCreationPath.cloneURL(
+            repositoryInput: repositoryInput,
+            resolvedRepository: resolvedRepository
+        )
     }
 
     private func updateSuggestedDestination() {
@@ -920,6 +939,10 @@ public struct AddProjectView: View {
             $0.environmentID == environmentID
                 && ProjectCreationPath.normalizedForComparison($0.path) == normalized
         }
+    }
+
+    private func finishCreation(environmentID: String, path: String) {
+        onCreated(ProjectCreationTarget(environmentID: environmentID, path: path))
     }
 
     private func sourceIcon(_ source: ProjectRemoteSource) -> String {

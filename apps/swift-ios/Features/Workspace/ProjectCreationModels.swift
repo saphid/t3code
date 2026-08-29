@@ -20,6 +20,19 @@ protocol FeatureProjectCreationClient: AnyObject {
     ) async throws -> SourceControlCloneResult
 }
 
+struct ProjectCreationTarget: Equatable, Sendable {
+    let environmentID: String
+    let path: String
+
+    func project(in projects: [FeatureProject]) -> FeatureProject? {
+        let normalizedPath = ProjectCreationPath.normalizedForComparison(path)
+        return projects.first {
+            $0.environmentID == environmentID
+                && ProjectCreationPath.normalizedForComparison($0.path) == normalizedPath
+        }
+    }
+}
+
 enum ProjectRemoteSource: String, CaseIterable, Hashable, Identifiable {
     case url
     case github
@@ -112,6 +125,14 @@ enum ProjectRemoteSourceOptions {
 }
 
 enum ProjectCreationPath {
+    static func cloneURL(
+        repositoryInput: String,
+        resolvedRepository: SourceControlRepositoryInfo?
+    ) -> String {
+        resolvedRepository.map(defaultCloneURL)
+            ?? normalizedCloneURL(repositoryInput)
+    }
+
     static func normalizedCloneURL(_ input: String) -> String {
         let trimmed = input.trimmingCharacters(in: .whitespacesAndNewlines)
         let pattern = #"^[A-Za-z0-9][A-Za-z0-9-]{0,38}/[A-Za-z0-9._-]+(?:\.git)?$"#
