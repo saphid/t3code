@@ -27,6 +27,7 @@ import * as TestClock from "effect/testing/TestClock";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import { expect } from "vite-plus/test";
 
+import packageJson from "../../package.json" with { type: "json" };
 import * as ProcessRunner from "../processRunner.ts";
 import * as TerminalManager from "./Manager.ts";
 import * as PtyAdapter from "./PtyAdapter.ts";
@@ -205,6 +206,7 @@ const multiTerminalHistoryLogPath = (
 interface CreateManagerOptions {
   shellResolver?: () => string;
   env?: NodeJS.ProcessEnv;
+  terminalProgramVersion?: string | null;
   subprocessInspector?: (terminalPid: number) => Effect.Effect<{
     readonly hasRunningSubprocess: boolean;
     readonly childCommand: string | null;
@@ -245,6 +247,9 @@ const createManager = (
         ptyAdapter,
         ...(options.shellResolver !== undefined ? { shellResolver: options.shellResolver } : {}),
         ...(options.env !== undefined ? { env: options.env } : {}),
+        ...(options.terminalProgramVersion !== undefined
+          ? { terminalProgramVersion: options.terminalProgramVersion }
+          : {}),
         ...(options.subprocessInspector !== undefined
           ? { subprocessInspector: options.subprocessInspector }
           : {}),
@@ -1509,6 +1514,142 @@ it.layer(
     }),
   );
 
+  it.effect("uses the server's terminal identity and truecolor capability", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter } = yield* createManager(5, {
+        env: {
+          TERM_PROGRAM: "Apple_Terminal",
+          TERM_PROGRAM_VERSION: "2.14",
+        },
+        terminalProgramVersion: "1.2.3",
+      });
+
+      yield* manager.open(openInput());
+
+      const spawnInput = ptyAdapter.spawnInputs[0];
+      expect(spawnInput).toBeDefined();
+      if (!spawnInput) return;
+      expect(spawnInput.env.TERM_PROGRAM).toBe("t3code");
+      expect(spawnInput.env.TERM_PROGRAM_VERSION).toBe("1.2.3");
+      expect(spawnInput.env.COLORTERM).toBe("truecolor");
+    }),
+  );
+
+  it.effect("preserves explicit terminal runtime identity overrides", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter } = yield* createManager(5, {
+        env: { COLORTERM: "host-color" },
+        terminalProgramVersion: "1.2.3",
+      });
+
+      yield* manager.open(
+        openInput({
+          env: {
+            TERM_PROGRAM: "reviewed-terminal",
+            TERM_PROGRAM_VERSION: "9.8.7",
+            COLORTERM: "24bit",
+          },
+        }),
+      );
+
+      const spawnInput = ptyAdapter.spawnInputs[0];
+      expect(spawnInput).toBeDefined();
+      if (!spawnInput) return;
+      expect(spawnInput.env.TERM_PROGRAM).toBe("reviewed-terminal");
+      expect(spawnInput.env.TERM_PROGRAM_VERSION).toBe("9.8.7");
+      expect(spawnInput.env.COLORTERM).toBe("24bit");
+    }),
+  );
+
+  it.effect("omits an unknown server version without leaking inherited metadata", () =>
+    Effect.gen(function* () {
+      for (const terminalProgramVersion of [null, "", "   "]) {
+        const { manager, ptyAdapter } = yield* createManager(5, {
+          env: {
+            TERM_PROGRAM_VERSION: "client-or-launcher-version",
+          },
+          terminalProgramVersion,
+        });
+
+        yield* manager.open(openInput());
+
+        const spawnInput = ptyAdapter.spawnInputs[0];
+        expect(spawnInput).toBeDefined();
+        if (!spawnInput) continue;
+        expect(spawnInput.env.TERM_PROGRAM).toBe("t3code");
+        expect(spawnInput.env.TERM_PROGRAM_VERSION).toBeUndefined();
+        expect(Object.values(spawnInput.env)).not.toContain("undefined");
+        expect(Object.values(spawnInput.env)).not.toContain("");
+      }
+    }),
+  );
+
+  it.effect("uses the remote server version instead of inherited client identity", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter } = yield* createManager(5, {
+        env: {
+          TERM_PROGRAM: "t3code-client",
+          TERM_PROGRAM_VERSION: "83.0.0-client",
+          T3CODE_CLIENT_VERSION: "83.0.0-client",
+        },
+        terminalProgramVersion: "0.0.33-server",
+      });
+
+      yield* manager.open(openInput());
+
+      const spawnInput = ptyAdapter.spawnInputs[0];
+      expect(spawnInput).toBeDefined();
+      if (!spawnInput) return;
+      expect(spawnInput.env.TERM_PROGRAM).toBe("t3code");
+      expect(spawnInput.env.TERM_PROGRAM_VERSION).toBe("0.0.33-server");
+      expect(spawnInput.env.T3CODE_CLIENT_VERSION).toBeUndefined();
+    }),
+  );
+
+  it.effect("keeps server-owned identity when a client reconnects to a running terminal", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter } = yield* createManager(5, {
+        env: {},
+        terminalProgramVersion: "1.2.3",
+      });
+
+      yield* manager.open(openInput());
+      const unsubscribe = yield* manager.attachStream(
+        {
+          threadId: "thread-1",
+          terminalId: DEFAULT_TERMINAL_ID,
+          cols: 120,
+          rows: 30,
+        },
+        () => Effect.void,
+      );
+      unsubscribe();
+
+      expect(ptyAdapter.spawnInputs).toHaveLength(1);
+      expect(ptyAdapter.spawnInputs[0]?.env.TERM_PROGRAM).toBe("t3code");
+      expect(ptyAdapter.spawnInputs[0]?.env.TERM_PROGRAM_VERSION).toBe("1.2.3");
+    }),
+  );
+
+  it.effect("reapplies server-owned identity when a terminal restarts", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter } = yield* createManager(5, {
+        env: {},
+        terminalProgramVersion: "1.2.3",
+      });
+
+      yield* manager.open(openInput());
+      yield* manager.restart(restartInput());
+
+      expect(ptyAdapter.spawnInputs).toHaveLength(2);
+      for (const spawnInput of ptyAdapter.spawnInputs) {
+        expect(spawnInput.env.TERM_PROGRAM).toBe("t3code");
+        expect(spawnInput.env.TERM_PROGRAM_VERSION).toBe("1.2.3");
+        expect(spawnInput.env.COLORTERM).toBe("truecolor");
+      }
+    }),
+  );
+
   it.effect("strips AppImage runtime env from terminal sessions", () =>
     Effect.gen(function* () {
       const appDir = "/tmp/.mount_T3Codeabc123";
@@ -1548,6 +1689,9 @@ it.layer(
       expect(spawnInput.env.GSETTINGS_SCHEMA_DIR).toBeUndefined();
       // Unrelated host vars still pass through untouched.
       expect(spawnInput.env.TEST_TERMINAL_KEEP).toBe("keep-me");
+      expect(spawnInput.env.TERM_PROGRAM).toBe("t3code");
+      expect(spawnInput.env.TERM_PROGRAM_VERSION).toBe(packageJson.version);
+      expect(spawnInput.env.COLORTERM).toBe("truecolor");
     }),
   );
 

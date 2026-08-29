@@ -51,6 +51,7 @@ import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
 import * as SynchronizedRef from "effect/SynchronizedRef";
 
+import packageJson from "../../package.json" with { type: "json" };
 import * as ServerConfig from "../config.ts";
 import {
   increment,
@@ -1084,12 +1085,22 @@ function stripAppImageRuntimeEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
 function createTerminalSpawnEnv(
   baseEnv: NodeJS.ProcessEnv,
   runtimeEnv?: Record<string, string> | null,
+  terminalProgramVersion?: string | null,
 ): NodeJS.ProcessEnv {
   const spawnEnv: NodeJS.ProcessEnv = {};
   for (const [key, value] of Object.entries(baseEnv)) {
     if (value === undefined) continue;
     if (shouldExcludeTerminalEnvKey(key)) continue;
     spawnEnv[key] = value;
+  }
+  spawnEnv.TERM_PROGRAM = "t3code";
+  delete spawnEnv.TERM_PROGRAM_VERSION;
+  const normalizedVersion = terminalProgramVersion?.trim();
+  if (normalizedVersion) {
+    spawnEnv.TERM_PROGRAM_VERSION = normalizedVersion;
+  }
+  if (!spawnEnv.COLORTERM) {
+    spawnEnv.COLORTERM = "truecolor";
   }
   if (runtimeEnv) {
     for (const [key, value] of Object.entries(runtimeEnv)) {
@@ -1114,6 +1125,7 @@ interface TerminalManagerOptions {
   ptyAdapter: PtyAdapter.PtyAdapter["Service"];
   shellResolver?: () => string;
   env?: NodeJS.ProcessEnv;
+  terminalProgramVersion?: string | null;
   subprocessInspector?: TerminalSubprocessInspector;
   subprocessPollIntervalMs?: number;
   processKillGraceMs?: number;
@@ -1157,6 +1169,10 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
   // things like PSModulePath, DISPLAY, proxies, and toolchain variables.
   // `options.env` is the test seam.
   const baseEnv = options.env ?? process.env;
+  const terminalProgramVersion =
+    options.terminalProgramVersion === undefined
+      ? packageJson.version
+      : options.terminalProgramVersion;
   const shellResolver = options.shellResolver ?? (() => defaultShellResolver(platform, baseEnv));
   const processRunner = yield* ProcessRunner.ProcessRunner;
   // One process-table snapshot per poll tick, shared across every terminal.
@@ -1868,7 +1884,11 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
         Effect.andThen(
           Effect.gen(function* () {
             const shellCandidates = resolveShellCandidates(shellResolver, platform, baseEnv);
-            const terminalEnv = createTerminalSpawnEnv(baseEnv, session.runtimeEnv);
+            const terminalEnv = createTerminalSpawnEnv(
+              baseEnv,
+              session.runtimeEnv,
+              terminalProgramVersion,
+            );
             const spawnResult = yield* trySpawn(shellCandidates, terminalEnv, session);
             ptyProcess = spawnResult.process;
             startedShell = spawnResult.shellLabel;
