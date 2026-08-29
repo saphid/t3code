@@ -1950,7 +1950,7 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
     }),
   );
 
-  it.effect("clears stale pending user input from projected shell summaries", () =>
+  it.effect("clears pending user input when its provider session is gone", () =>
     Effect.gen(function* () {
       const projectionPipeline = yield* OrchestrationProjectionPipeline;
       const eventStore = yield* OrchestrationEventStore;
@@ -2066,8 +2066,7 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
             summary: "Provider user input response failed",
             payload: {
               requestId: "user-input-request-stale-1",
-              detail:
-                "Provider adapter request failed (codex) for item/tool/requestUserInput: Unknown pending Codex user input request: user-input-request-stale-1",
+              detail: "No active provider session is bound to this thread.",
             },
             turnId: null,
             createdAt: "2026-02-26T12:35:03.000Z",

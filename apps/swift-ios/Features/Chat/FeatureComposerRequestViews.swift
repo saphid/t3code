@@ -157,13 +157,16 @@ struct FeatureComposerUserInputPanel: View {
     let input: FeatureUserInput
     let isResponding: Bool
     let onSubmit: ([String: FeatureInputAnswer]) -> Void
+    let onDismiss: () -> Void
 
     @State private var answers: [String: FeatureInputAnswer] = [:]
     @State private var questionIndex = 0
 
     var body: some View {
         Group {
-            if let question = activeQuestion {
+            if !input.isAvailable {
+                unavailablePanel
+            } else if let question = activeQuestion {
                 VStack(spacing: 0) {
                     VStack(alignment: .leading, spacing: 0) {
                         HStack(spacing: 8) {
@@ -260,7 +263,7 @@ struct FeatureComposerUserInputPanel: View {
                         Spacer()
 
                         Button(action: advanceOrSubmit) {
-                            Text(isLastQuestion ? "Submit" : "Next question")
+                            Text(input.isSubmitting ? "Submitting…" : submitButtonTitle)
                                 .font(T3Typography.control.weight(.semibold))
                                 .foregroundStyle(.white)
                                 .padding(.horizontal, 18)
@@ -275,8 +278,8 @@ struct FeatureComposerUserInputPanel: View {
                     .padding(.top, 9)
                     .padding(.bottom, 11)
                 }
-                .disabled(isResponding)
-                .opacity(isResponding ? 0.56 : 1)
+                .disabled(isResponding || !input.canSubmit)
+                .opacity(isResponding || !input.canSubmit ? 0.56 : 1)
             }
         }
         .onChange(of: input.id) {
@@ -296,6 +299,32 @@ struct FeatureComposerUserInputPanel: View {
         }
     }
 
+    private var unavailablePanel: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Input unavailable")
+                .font(T3Typography.eyebrow)
+                .tracking(1.3)
+                .textCase(.uppercase)
+                .foregroundStyle(T3Colors.warning)
+
+            Text("The provider session that asked this question is no longer active.")
+                .font(T3Typography.threadBody)
+                .foregroundStyle(T3Colors.textPrimary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            Button("Dismiss", action: onDismiss)
+                .font(T3Typography.control.weight(.semibold))
+                .foregroundStyle(.white)
+                .frame(maxWidth: .infinity)
+                .frame(height: T3Metrics.minimumTapTarget)
+                .background(T3Colors.accent, in: RoundedRectangle(cornerRadius: 10))
+                .buttonStyle(.plain)
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .contain)
+    }
+
     private var activeQuestion: FeatureInputQuestion? {
         guard input.questions.indices.contains(questionIndex) else { return nil }
         return input.questions[questionIndex]
@@ -307,6 +336,10 @@ struct FeatureComposerUserInputPanel: View {
 
     private var isLastQuestion: Bool {
         questionIndex >= input.questions.count - 1
+    }
+
+    private var submitButtonTitle: String {
+        isLastQuestion ? "Submit" : "Next question"
     }
 
     private var canAdvance: Bool {

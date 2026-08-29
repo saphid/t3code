@@ -300,7 +300,7 @@ it.layer(NodeServices.layer)("settled thread decider", (it) => {
           }),
           activity("user-input.requested", "req-2", {}),
           activity("provider.user-input.respond.failed", "req-2", {
-            detail: "stale pending user-input request req-2",
+            detail: "No active provider session is bound to this thread.",
           }),
         ]),
       });

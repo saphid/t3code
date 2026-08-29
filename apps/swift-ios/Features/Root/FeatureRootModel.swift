@@ -133,6 +133,7 @@ private struct FeatureTitleRegenerationTracker {
 @Observable
 public final class FeatureRootModel {
     private static let maximumRetainedThreadDetails = 6
+    private static let maximumDismissedUnavailableUserInputs = 100
 
     private struct PendingSettlementMutation {
         let id: UUID
@@ -180,6 +181,8 @@ public final class FeatureRootModel {
     private var pendingSubmissionsByID: [String: FeatureQueuedSubmission] = [:]
     private var pendingThreadsByID: [String: FeatureThread] = [:]
     private var pendingSettlementMutations: [String: PendingSettlementMutation] = [:]
+    private var dismissedUnavailableUserInputIDs: Set<String> = []
+    private var dismissedUnavailableUserInputOrder: [String] = []
     private var pendingCompletionSubmissionIDs: Set<String> = []
     private var pendingDiscardSubmissionIDs: Set<String> = []
     private var detailRecency: [String] = []
@@ -927,17 +930,32 @@ public final class FeatureRootModel {
     }
 
     public func resolveUserInput(_ id: String, answers: [String: FeatureInputAnswer]) async {
-        let environment = currentEnvironmentIdentity
         await perform {
             try await client.resolveUserInput(id: id, answers: answers)
-            guard currentEnvironmentIdentity == environment else { return }
-            for key in Array(details.keys)
-                where details[key]?.userInputs.contains(where: { $0.id == id }) == true {
-                mutateDetail(
-                    id: key,
-                    change: .delta(FeatureDetailDelta(changedMessages: []))
-                ) {
-                    $0.userInputs.removeAll { $0.id == id }
+        }
+    }
+
+    public func dismissUnavailableUserInput(_ id: String) {
+        guard details.values.contains(where: { detail in
+            detail.userInputs.contains(where: { $0.id == id && !$0.isAvailable })
+        }) else { return }
+        if dismissedUnavailableUserInputIDs.insert(id).inserted {
+            dismissedUnavailableUserInputOrder.append(id)
+            if dismissedUnavailableUserInputOrder.count
+                > Self.maximumDismissedUnavailableUserInputs {
+                let expired = dismissedUnavailableUserInputOrder.removeFirst()
+                dismissedUnavailableUserInputIDs.remove(expired)
+            }
+        }
+        for key in Array(details.keys)
+            where details[key]?.userInputs.contains(where: { $0.id == id }) == true {
+            mutateDetail(
+                id: key,
+                change: .delta(FeatureDetailDelta(changedMessages: []))
+            ) {
+                $0.userInputs.removeAll { $0.id == id }
+                if $0.userInputs.isEmpty, $0.thread.state == .waitingForInput {
+                    $0.thread.state = $0.approvals.isEmpty ? .idle : .waitingForApproval
                 }
             }
         }
@@ -1330,6 +1348,10 @@ public final class FeatureRootModel {
         invalidatesInFlightLoad: Bool = true
     ) {
         var incoming = retainingLocalAttachmentPreviews(in: incoming)
+        incoming.userInputs.removeAll { dismissedUnavailableUserInputIDs.contains($0.id) }
+        if incoming.userInputs.isEmpty, incoming.thread.state == .waitingForInput {
+            incoming.thread.state = incoming.approvals.isEmpty ? .idle : .waitingForApproval
+        }
         incoming.thread = retainingPendingSettlement(in: incoming.thread)
         let id = incoming.thread.id
         acknowledgeDeliveredMessages(incoming.messages)
@@ -1356,6 +1378,10 @@ public final class FeatureRootModel {
 
     private func store(_ incoming: FeatureThreadDetail, delta: FeatureDetailDelta) {
         var incoming = retainingLocalAttachmentPreviews(in: incoming)
+        incoming.userInputs.removeAll { dismissedUnavailableUserInputIDs.contains($0.id) }
+        if incoming.userInputs.isEmpty, incoming.thread.state == .waitingForInput {
+            incoming.thread.state = incoming.approvals.isEmpty ? .idle : .waitingForApproval
+        }
         incoming.thread = retainingPendingSettlement(in: incoming.thread)
         let id = incoming.thread.id
         acknowledgeDeliveredMessages(incoming.messages)

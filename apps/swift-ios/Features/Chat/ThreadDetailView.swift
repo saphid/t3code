@@ -443,6 +443,9 @@ public struct ThreadDetailView: View {
                 },
                 onUserInputSubmit: { id, answers in
                     Task { await model.resolveUserInput(id, answers: answers) }
+                },
+                onUserInputDismiss: { id in
+                    model.dismissUnavailableUserInput(id)
                 }
             )
         }

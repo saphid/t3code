@@ -2349,8 +2349,9 @@ projectionSnapshotLayer("ProjectionSnapshotQuery windowed thread detail", (it) =
             '2026-03-01T00:00:03.000Z'
           ),
           (
-            'user-input-closed-resolution', 'thread-w', NULL, 'info', 'user-input.resolved',
-            'Closed question', '{"requestId":"input-closed"}', NULL,
+            'user-input-closed-resolution', 'thread-w', NULL, 'error',
+            'provider.user-input.respond.failed', 'Closed question',
+            '{"requestId":"input-closed","detail":"No active provider session is bound to this thread."}', NULL,
             '2026-03-01T00:00:04.000Z'
           ),
           (

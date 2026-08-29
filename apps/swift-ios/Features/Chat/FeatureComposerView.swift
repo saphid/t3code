@@ -36,6 +36,7 @@ struct FeatureComposerView: View {
     private let onDismissKeyboard: (() -> Void)?
     private let onApprovalDecision: ((String, FeatureApprovalDecision) -> Void)?
     private let onUserInputSubmit: ((String, [String: FeatureInputAnswer]) -> Void)?
+    private let onUserInputDismiss: ((String) -> Void)?
 
     init(
         text: Binding<String>,
@@ -57,7 +58,8 @@ struct FeatureComposerView: View {
         powerFeatures: FeatureComposerPowerFeatures = .disabled,
         onDismissKeyboard: (() -> Void)? = nil,
         onApprovalDecision: ((String, FeatureApprovalDecision) -> Void)? = nil,
-        onUserInputSubmit: ((String, [String: FeatureInputAnswer]) -> Void)? = nil
+        onUserInputSubmit: ((String, [String: FeatureInputAnswer]) -> Void)? = nil,
+        onUserInputDismiss: ((String) -> Void)? = nil
     ) {
         _text = text
         _selection = selection
@@ -79,6 +81,7 @@ struct FeatureComposerView: View {
         self.onDismissKeyboard = onDismissKeyboard
         self.onApprovalDecision = onApprovalDecision
         self.onUserInputSubmit = onUserInputSubmit
+        self.onUserInputDismiss = onUserInputDismiss
     }
 
     var body: some View {
@@ -183,12 +186,17 @@ struct FeatureComposerView: View {
                     },
                     onCancelTurn: onStop
                 )
-            } else if let input = pendingUserInputs.first, let onUserInputSubmit {
+            } else if let input = FeaturePendingUserInputSelection.displayed(in: pendingUserInputs),
+                      let onUserInputSubmit,
+                      let onUserInputDismiss {
                 FeatureComposerUserInputPanel(
                     input: input,
                     isResponding: isResolvingRequest,
                     onSubmit: { answers in
                         onUserInputSubmit(input.id, answers)
+                    },
+                    onDismiss: {
+                        onUserInputDismiss(input.id)
                     }
                 )
             } else if isExpanded {

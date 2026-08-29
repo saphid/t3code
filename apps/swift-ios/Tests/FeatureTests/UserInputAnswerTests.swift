@@ -91,4 +91,46 @@ struct UserInputAnswerTests {
             ) == .selections(["Server"])
         )
     }
+
+    @Test
+    func requestAvailabilityRequiresItsBoundSessionAndTurn() {
+        #expect(FeatureUserInputLifecycle.isAvailable(
+            requestTurnID: "turn-1",
+            sessionStatus: "running",
+            activeTurnID: "turn-1"
+        ))
+        #expect(!FeatureUserInputLifecycle.isAvailable(
+            requestTurnID: "turn-1",
+            sessionStatus: "stopped",
+            activeTurnID: nil
+        ))
+        #expect(!FeatureUserInputLifecycle.isAvailable(
+            requestTurnID: "turn-old",
+            sessionStatus: "running",
+            activeTurnID: "turn-new"
+        ))
+        #expect(FeatureUserInputLifecycle.isAvailable(
+            requestTurnID: nil,
+            sessionStatus: "starting",
+            activeTurnID: nil
+        ))
+    }
+
+    @Test
+    func newerAvailableRequestIsDisplayedBeforeAnOlderStaleRequest() {
+        let stale = FeatureUserInput(
+            id: "request-old",
+            threadID: "thread-1",
+            availability: .unavailable,
+            questions: []
+        )
+        let live = FeatureUserInput(
+            id: "request-new",
+            threadID: "thread-1",
+            questions: []
+        )
+
+        #expect(FeaturePendingUserInputSelection.displayed(in: [stale, live])?.id == live.id)
+        #expect(FeaturePendingUserInputSelection.displayed(in: [stale])?.id == stale.id)
+    }
 }

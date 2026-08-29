@@ -1310,6 +1310,8 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
                     LIKE '%unknown pending user input request%'
                   OR lower(COALESCE(json_extract(activity.payload_json, '$.detail'), ''))
                     LIKE '%unknown pending codex user input request%'
+                  OR lower(COALESCE(json_extract(activity.payload_json, '$.detail'), ''))
+                    LIKE '%no active provider session%'
                 )
               )
             )

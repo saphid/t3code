@@ -2192,9 +2192,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
             requestID: request.wireID,
             answers: answers.mapValues(\.jsonValue)
         )
-        inputRoutes[id] = nil
-        removeCachedInput(id: id, threadID: route.uiID)
-        try? await refreshThread(id: route.uiID, client: route.client)
+        markCachedInputSubmitting(id: id, threadID: route.uiID)
     }
 
     func saveSettings(_ settings: FeatureSettings) async throws {
@@ -3029,6 +3027,21 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         detail.userInputs.removeAll { $0.id == id }
         if detail.userInputs.isEmpty, detail.thread.state == .waitingForInput {
             detail.thread.state = detail.approvals.isEmpty ? .idle : .waitingForApproval
+        }
+        publish(detail, threadID: threadID)
+    }
+
+    private func markCachedInputSubmitting(id: String, threadID: String) {
+        guard var detail = latestDetails[threadID],
+              let index = detail.userInputs.firstIndex(where: { $0.id == id }) else {
+            return
+        }
+        detail.userInputs[index].availability = .submitting
+        if let cache = detailRenderCaches[threadID],
+           let cacheIndex = cache.userInputs.firstIndex(where: {
+            $0.id == id
+        }) {
+            cache.userInputs[cacheIndex].availability = .submitting
         }
         publish(detail, threadID: threadID)
     }
@@ -4815,6 +4828,11 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
             assertionFailure("Initialized detail caches require an incremental mutation")
         }
 
+        cache.userInputs = reconcileUserInputAvailability(
+            cache.userInputs,
+            session: thread.session
+        )
+
         var mappedThread = mapThread(thread, environment: environment)
         let backgroundLiveness = backgroundLiveness(
             threadID: thread.id,
@@ -5198,6 +5216,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
                 id: uiRequestID,
                 wireID: requestID,
                 threadID: threadID,
+                turnID: activity.turnId,
                 questions: questions
             )
             cache.userInputs.removeAll { $0.id == uiRequestID }
@@ -5212,9 +5231,14 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
             inputRoutes[uiRequestID] = nil
         case "provider.user-input.respond.failed":
             let detail = activity.payload["detail"]?.stringValue?.lowercased() ?? ""
-            guard detail.contains("stale") || detail.contains("unknown") else { return }
-            cache.userInputs.removeAll { $0.id == uiRequestID }
-            inputRoutes[uiRequestID] = nil
+            guard let index = cache.userInputs.firstIndex(where: { $0.id == uiRequestID }) else {
+                return
+            }
+            cache.userInputs[index].availability =
+                detail.contains("stale") || detail.contains("unknown")
+                    || detail.contains("no active provider session")
+                    ? .unavailable
+                    : .available
         default:
             return
         }
@@ -5396,6 +5420,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
                     id: uiRequestID,
                     wireID: requestID,
                     threadID: threadID,
+                    turnID: activity.turnId,
                     questions: questions
                 )
                 inputRoutes[uiRequestID] = PendingRequestRoute(
@@ -5407,13 +5432,30 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
                 inputRoutes[uiRequestID] = nil
             } else if activity.kind == "provider.user-input.respond.failed", let uiRequestID {
                 let detail = activity.payload["detail"]?.stringValue?.lowercased() ?? ""
-                if detail.contains("stale") || detail.contains("unknown") {
-                    open[uiRequestID] = nil
-                    inputRoutes[uiRequestID] = nil
+                if detail.contains("stale") || detail.contains("unknown")
+                    || detail.contains("no active provider session") {
+                    open[uiRequestID]?.availability = .unavailable
                 }
             }
         }
         return open.values.sorted { $0.id < $1.id }
+    }
+
+    private func reconcileUserInputAvailability(
+        _ inputs: [FeatureUserInput],
+        session: OrchestrationSession?
+    ) -> [FeatureUserInput] {
+        inputs.map { input in
+            var input = input
+            if !input.isAvailable || !FeatureUserInputLifecycle.isAvailable(
+                requestTurnID: input.turnID,
+                sessionStatus: session?.status,
+                activeTurnID: session?.activeTurnId
+            ) {
+                input.availability = .unavailable
+            }
+            return input
+        }
     }
 
     private func parseInputQuestions(_ payload: JSONValue) -> [FeatureInputQuestion]? {

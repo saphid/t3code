@@ -2088,7 +2088,7 @@ struct FeatureRootModelTests {
     }
 
     @Test
-    func testResolveUserInputForwardsTypedAnswersAndClearsTheRequest() async {
+    func testResolveUserInputForwardsTypedAnswersAndWaitsForLifecycleResolution() async {
         let client = FeatureClientStub()
         let thread = FeatureThread(id: "thread-1", projectID: "project-1", title: "Thread")
         let request = FeatureUserInput(
@@ -2108,7 +2108,42 @@ struct FeatureRootModelTests {
 
         #expect(client.resolvedInputID == request.id)
         #expect(client.resolvedInputAnswers == answers)
+        #expect(model.details[thread.id]?.userInputs == [request])
+    }
+
+    @Test
+    func dismissingUnavailableInputSurvivesAThreadRefresh() async {
+        let client = FeatureClientStub()
+        let thread = FeatureThread(id: "thread-1", projectID: "project-1", title: "Thread")
+        let request = FeatureUserInput(
+            id: "request-stale",
+            threadID: thread.id,
+            availability: .unavailable,
+            questions: []
+        )
+        client.threadDetail = FeatureThreadDetail(thread: thread, userInputs: [request])
+        let model = testRootModel(client: client)
+        _ = await model.detail(for: thread.id)
+
+        model.dismissUnavailableUserInput(request.id)
         #expect(model.details[thread.id]?.userInputs.isEmpty == true)
+
+        _ = await model.detail(for: thread.id, force: true)
+        #expect(model.details[thread.id]?.userInputs.isEmpty == true)
+    }
+
+    @Test
+    func liveInputCannotBeDismissedAsStale() async {
+        let client = FeatureClientStub()
+        let thread = FeatureThread(id: "thread-1", projectID: "project-1", title: "Thread")
+        let request = FeatureUserInput(id: "request-live", threadID: thread.id, questions: [])
+        client.threadDetail = FeatureThreadDetail(thread: thread, userInputs: [request])
+        let model = testRootModel(client: client)
+        _ = await model.detail(for: thread.id)
+
+        model.dismissUnavailableUserInput(request.id)
+
+        #expect(model.details[thread.id]?.userInputs == [request])
     }
 
     @Test

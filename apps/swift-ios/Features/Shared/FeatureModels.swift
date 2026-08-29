@@ -595,18 +595,62 @@ public struct FeatureUserInput: Identifiable, Sendable, Equatable, Hashable, Cod
     /// The provider request identifier sent over the wire.
     public var wireID: String?
     public var threadID: String
+    public var turnID: String?
+    public var availability: FeatureUserInputAvailability?
     public var questions: [FeatureInputQuestion]
 
     public init(
         id: String,
         wireID: String? = nil,
         threadID: String,
+        turnID: String? = nil,
+        availability: FeatureUserInputAvailability = .available,
         questions: [FeatureInputQuestion]
     ) {
         self.id = id
         self.wireID = wireID
         self.threadID = threadID
+        self.turnID = turnID
+        self.availability = availability
         self.questions = questions
+    }
+
+    public var isAvailable: Bool {
+        availability != .unavailable
+    }
+
+    public var canSubmit: Bool {
+        availability == nil || availability == .available
+    }
+
+    public var isSubmitting: Bool {
+        availability == .submitting
+    }
+}
+
+public enum FeatureUserInputAvailability: String, Sendable, Codable {
+    case available
+    case submitting
+    case unavailable
+}
+
+enum FeatureUserInputLifecycle {
+    static func isAvailable(
+        requestTurnID: String?,
+        sessionStatus: String?,
+        activeTurnID: String?
+    ) -> Bool {
+        guard sessionStatus == "starting" || sessionStatus == "running" else {
+            return false
+        }
+        guard let requestTurnID else { return true }
+        return activeTurnID == requestTurnID
+    }
+}
+
+enum FeaturePendingUserInputSelection {
+    static func displayed(in inputs: [FeatureUserInput]) -> FeatureUserInput? {
+        inputs.first(where: \.isAvailable) ?? inputs.first
     }
 }
 
