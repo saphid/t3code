@@ -113,126 +113,6 @@ final class NativeMultiEnvironmentTests: XCTestCase {
         await fixture.client.disconnect()
     }
 
-    func testDoneShellRefreshesSelectedThreadWhileDetailStreamRemainsOpen() async throws {
-        let fixture = try await Self.makeFixture(
-            fallbackPollingInitialDelay: .milliseconds(40),
-            fallbackPollingInterval: .milliseconds(40)
-        )
-        defer { try? FileManager.default.removeItem(at: fixture.directory) }
-
-        let snapshot = try await fixture.client.initialSnapshot()
-        let thread = try XCTUnwrap(
-            snapshot.threads.first(where: { $0.wireID == "thread-one" })
-        )
-        _ = try await fixture.client.loadThread(id: thread.id)
-
-        let events = fixture.client.events()
-        let finalMessageArrived = expectation(description: "final assistant message arrived")
-        let observer = Task {
-            for await event in events {
-                let detail: FeatureThreadDetail?
-                switch event {
-                case let .detail(value), let .detailDelta(value, _):
-                    detail = value
-                default:
-                    detail = nil
-                }
-                if detail?.messages.contains(where: { $0.id == "final-message" }) == true {
-                    finalMessageArrived.fulfill()
-                    return
-                }
-            }
-        }
-
-        await fixture.transport.setDetailMessages([
-            OrchestrationMessage(
-                id: "final-message",
-                role: "assistant",
-                text: "The completed response",
-                attachments: nil,
-                turnId: "completed-turn",
-                streaming: false,
-                createdAt: "2026-07-31T12:01:00.000Z",
-                updatedAt: "2026-07-31T12:01:00.000Z"
-            ),
-        ], host: "one.example")
-        let completedShell = multiEnvironmentShell(
-            projectID: "project-one",
-            threadID: "thread-one",
-            title: "Local work",
-            latestTurn: OrchestrationLatestTurn(
-                turnId: "completed-turn",
-                state: "completed",
-                requestedAt: "2026-07-31T12:00:00.000Z",
-                startedAt: "2026-07-31T12:00:01.000Z",
-                completedAt: "2026-07-31T12:01:00.000Z",
-                assistantMessageId: "final-message"
-            )
-        )
-        await fixture.transport.setShell(
-            OrchestrationShellSnapshot(
-                snapshotSequence: completedShell.snapshotSequence + 1,
-                projects: completedShell.projects,
-                threads: completedShell.threads,
-                updatedAt: completedShell.updatedAt
-            ),
-            host: "one.example"
-        )
-
-        await fulfillment(of: [finalMessageArrived], timeout: 1)
-        observer.cancel()
-        await fixture.client.disconnect()
-    }
-
-    func testDisconnectedPassiveThreadRefreshesWithoutReopening() async throws {
-        let fixture = try await Self.makeFixture(
-            fallbackPollingInitialDelay: .milliseconds(40),
-            fallbackPollingInterval: .milliseconds(40)
-        )
-        defer { try? FileManager.default.removeItem(at: fixture.directory) }
-
-        let snapshot = try await fixture.client.initialSnapshot()
-        let thread = try XCTUnwrap(
-            snapshot.threads.first(where: { $0.wireID == "thread-two" })
-        )
-        _ = try await fixture.client.loadThread(id: thread.id)
-
-        let events = fixture.client.events()
-        let remoteMessageArrived = expectation(description: "passive thread update arrived")
-        let observer = Task {
-            for await event in events {
-                let detail: FeatureThreadDetail?
-                switch event {
-                case let .detail(value), let .detailDelta(value, _):
-                    detail = value
-                default:
-                    detail = nil
-                }
-                if detail?.messages.contains(where: { $0.id == "remote-message" }) == true {
-                    remoteMessageArrived.fulfill()
-                    return
-                }
-            }
-        }
-
-        await fixture.transport.setDetailMessages([
-            OrchestrationMessage(
-                id: "remote-message",
-                role: "assistant",
-                text: "Update from the passive environment",
-                attachments: nil,
-                turnId: "remote-turn",
-                streaming: false,
-                createdAt: "2026-07-31T12:01:00.000Z",
-                updatedAt: "2026-07-31T12:01:00.000Z"
-            ),
-        ], host: "two.example")
-
-        await fulfillment(of: [remoteMessageArrived], timeout: 1)
-        observer.cancel()
-        await fixture.client.disconnect()
-    }
-
     func testBackgroundLivenessKeepsASettledThreadWorking() async throws {
         let fixture = try await Self.makeFixture()
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
@@ -775,6 +655,278 @@ final class NativeMultiEnvironmentTests: XCTestCase {
     }
 }
 
+@Suite("Native thread update reliability")
+@MainActor
+struct NativeThreadUpdateReliabilityTests {
+    @Test(
+        "Completion publishes the final response before Done",
+        .bug("https://github.com/saphid/t3code-personal/issues/101"),
+        .timeLimit(.minutes(1))
+    )
+    func completionPublishesFinalResponseBeforeDone() async throws {
+        let fixture = try await NativeMultiEnvironmentTests.makeFixture(
+            fallbackPollingInitialDelay: .milliseconds(40),
+            fallbackPollingInterval: .milliseconds(40)
+        )
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+
+        let snapshot = try await fixture.client.initialSnapshot()
+        let thread = try #require(
+            snapshot.threads.first(where: { $0.wireID == "thread-one" })
+        )
+        _ = try await fixture.client.loadThread(id: thread.id)
+
+        let observedOrder = Task {
+            await threadCompletionOrder(
+                in: fixture.client.events(),
+                threadID: thread.id,
+                finalMessageID: "final-message"
+            )
+        }
+        defer { observedOrder.cancel() }
+        await fixture.transport.failNextDetailRead(host: "one.example")
+        await fixture.transport.setDetailMessages([
+            OrchestrationMessage(
+                id: "final-message",
+                role: "assistant",
+                text: "The completed response",
+                attachments: nil,
+                turnId: "completed-turn",
+                streaming: false,
+                createdAt: "2026-07-31T12:01:00.000Z",
+                updatedAt: "2026-07-31T12:01:00.000Z"
+            ),
+        ], host: "one.example")
+        let completedShell = multiEnvironmentShell(
+            projectID: "project-one",
+            threadID: "thread-one",
+            title: "Local work",
+            latestTurn: OrchestrationLatestTurn(
+                turnId: "completed-turn",
+                state: "completed",
+                requestedAt: "2026-07-31T12:00:00.000Z",
+                startedAt: "2026-07-31T12:00:01.000Z",
+                completedAt: "2026-07-31T12:01:00.000Z",
+                assistantMessageId: "final-message"
+            )
+        )
+        await fixture.transport.setShell(
+            OrchestrationShellSnapshot(
+                snapshotSequence: completedShell.snapshotSequence + 1,
+                projects: completedShell.projects,
+                threads: completedShell.threads,
+                updatedAt: completedShell.updatedAt
+            ),
+            host: "one.example"
+        )
+
+        let order = await observedOrder.value
+
+        #expect(order == [.finalResponse, .done])
+        await fixture.client.disconnect()
+    }
+
+    @Test("Completion without an assistant message ID does not stay deferred")
+    func completionWithoutAssistantMessageIDFinishes() async throws {
+        let fixture = try await NativeMultiEnvironmentTests.makeFixture(
+            fallbackPollingInitialDelay: .milliseconds(40),
+            fallbackPollingInterval: .milliseconds(40)
+        )
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+
+        let snapshot = try await fixture.client.initialSnapshot()
+        let thread = try #require(snapshot.threads.first { $0.wireID == "thread-one" })
+        _ = try await fixture.client.loadThread(id: thread.id)
+        let completion = Task {
+            await threadDidComplete(in: fixture.client.events(), threadID: thread.id)
+        }
+        defer { completion.cancel() }
+
+        let completedShell = multiEnvironmentShell(
+            projectID: "project-one",
+            threadID: "thread-one",
+            title: "Local work",
+            latestTurn: OrchestrationLatestTurn(
+                turnId: "completed-turn",
+                state: "completed",
+                requestedAt: "2026-07-31T12:00:00.000Z",
+                startedAt: "2026-07-31T12:00:01.000Z",
+                completedAt: "2026-07-31T12:01:00.000Z",
+                assistantMessageId: nil
+            )
+        )
+        await fixture.transport.setShell(
+            OrchestrationShellSnapshot(
+                snapshotSequence: completedShell.snapshotSequence + 1,
+                projects: completedShell.projects,
+                threads: completedShell.threads,
+                updatedAt: completedShell.updatedAt
+            ),
+            host: "one.example"
+        )
+
+        #expect(await completion.value)
+        await fixture.client.disconnect()
+    }
+
+    @Test("Persistent detail failure releases completion after bounded retries")
+    func persistentDetailFailureFinishes() async throws {
+        let fixture = try await NativeMultiEnvironmentTests.makeFixture(
+            fallbackPollingInitialDelay: .milliseconds(40),
+            fallbackPollingInterval: .milliseconds(40)
+        )
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+
+        let snapshot = try await fixture.client.initialSnapshot()
+        let thread = try #require(snapshot.threads.first { $0.wireID == "thread-one" })
+        _ = try await fixture.client.loadThread(id: thread.id)
+        await fixture.transport.failDetailReads(host: "one.example")
+        let completion = Task {
+            await threadDidComplete(in: fixture.client.events(), threadID: thread.id)
+        }
+        defer { completion.cancel() }
+
+        let completedShell = multiEnvironmentShell(
+            projectID: "project-one",
+            threadID: "thread-one",
+            title: "Local work",
+            latestTurn: OrchestrationLatestTurn(
+                turnId: "completed-turn",
+                state: "completed",
+                requestedAt: "2026-07-31T12:00:00.000Z",
+                startedAt: "2026-07-31T12:00:01.000Z",
+                completedAt: "2026-07-31T12:01:00.000Z",
+                assistantMessageId: "unavailable-final-message"
+            )
+        )
+        await fixture.transport.setShell(
+            OrchestrationShellSnapshot(
+                snapshotSequence: completedShell.snapshotSequence + 1,
+                projects: completedShell.projects,
+                threads: completedShell.threads,
+                updatedAt: completedShell.updatedAt
+            ),
+            host: "one.example"
+        )
+
+        #expect(await completion.value)
+        await fixture.client.disconnect()
+    }
+
+    @Test(
+        "A disconnected passive thread refreshes without reopening",
+        .timeLimit(.minutes(1))
+    )
+    func disconnectedPassiveThreadRefreshesWithoutReopening() async throws {
+        let fixture = try await NativeMultiEnvironmentTests.makeFixture(
+            fallbackPollingInitialDelay: .milliseconds(40),
+            fallbackPollingInterval: .milliseconds(40)
+        )
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+
+        let snapshot = try await fixture.client.initialSnapshot()
+        let thread = try #require(
+            snapshot.threads.first(where: { $0.wireID == "thread-two" })
+        )
+        _ = try await fixture.client.loadThread(id: thread.id)
+
+        let update = Task {
+            for await event in fixture.client.events() {
+                let detail: FeatureThreadDetail?
+                switch event {
+                case let .detail(value), let .detailDelta(value, _):
+                    detail = value
+                default:
+                    detail = nil
+                }
+                if detail?.messages.contains(where: { $0.id == "remote-message" }) == true {
+                    return true
+                }
+            }
+            return false
+        }
+
+        await fixture.transport.setDetailMessages([
+            OrchestrationMessage(
+                id: "remote-message",
+                role: "assistant",
+                text: "Update from the passive environment",
+                attachments: nil,
+                turnId: "remote-turn",
+                streaming: false,
+                createdAt: "2026-07-31T12:01:00.000Z",
+                updatedAt: "2026-07-31T12:01:00.000Z"
+            ),
+        ], host: "two.example")
+
+        #expect(await update.value)
+        await fixture.client.disconnect()
+    }
+
+    private func threadCompletionOrder(
+        in events: AsyncStream<FeatureEvent>,
+        threadID: String,
+        finalMessageID: String
+    ) async -> [ObservedThreadCompletion] {
+        var order: [ObservedThreadCompletion] = []
+        for await event in events {
+            let detail: FeatureThreadDetail?
+            let completedThreadIDs: Set<String>
+            switch event {
+            case let .snapshot(snapshot):
+                detail = nil
+                completedThreadIDs = Set(
+                    snapshot.threads.filter { $0.state == .completed }.map(\.id)
+                )
+            case let .thread(thread):
+                detail = nil
+                completedThreadIDs = thread.state == .completed ? [thread.id] : []
+            case let .detail(value), let .detailDelta(value, _):
+                detail = value
+                completedThreadIDs = value.thread.state == .completed ? [value.thread.id] : []
+            case .connection, .threadRemoved, .failure:
+                detail = nil
+                completedThreadIDs = []
+            }
+            if detail?.messages.contains(where: { $0.id == finalMessageID }) == true,
+               !order.contains(.finalResponse) {
+                order.append(.finalResponse)
+            }
+            if completedThreadIDs.contains(threadID), !order.contains(.done) {
+                order.append(.done)
+            }
+            if order.count == 2 { return order }
+        }
+        return order
+    }
+
+    private func threadDidComplete(
+        in events: AsyncStream<FeatureEvent>,
+        threadID: String
+    ) async -> Bool {
+        for await event in events {
+            switch event {
+            case let .snapshot(snapshot):
+                if snapshot.threads.contains(where: { $0.id == threadID && $0.state == .completed }) {
+                    return true
+                }
+            case let .thread(thread):
+                if thread.id == threadID && thread.state == .completed { return true }
+            case let .detail(detail), let .detailDelta(detail, _):
+                if detail.thread.id == threadID && detail.thread.state == .completed { return true }
+            case .connection, .threadRemoved, .failure:
+                continue
+            }
+        }
+        return false
+    }
+}
+
+private enum ObservedThreadCompletion: Equatable {
+    case finalResponse
+    case done
+}
+
 @Suite("Native client storage boundaries")
 @MainActor
 struct NativeClientStorageTests {
@@ -1079,6 +1231,8 @@ private actor MultiEnvironmentHTTPTransport: HTTPTransport {
     private var resumedBlockedShellReadHosts = Set<String>()
     private var shellReadResumeContinuations: [String: CheckedContinuation<Void, Never>] = [:]
     private var detailMessagesByHost: [String: [OrchestrationMessage]] = [:]
+    private var failingNextDetailReadHosts = Set<String>()
+    private var failingDetailReadHosts = Set<String>()
 
     init(shells: [String: OrchestrationShellSnapshot]) {
         self.shells = shells
@@ -1133,6 +1287,14 @@ private actor MultiEnvironmentHTTPTransport: HTTPTransport {
         detailMessagesByHost[host] = messages
     }
 
+    func failNextDetailRead(host: String) {
+        failingNextDetailReadHosts.insert(host)
+    }
+
+    func failDetailReads(host: String) {
+        failingDetailReadHosts.insert(host)
+    }
+
     func dispatchHosts() -> [String] {
         dispatched.map(\.host)
     }
@@ -1177,6 +1339,10 @@ private actor MultiEnvironmentHTTPTransport: HTTPTransport {
             let projectID = shells[host]?.threads
                 .first(where: { $0.id == threadID })?
                 .projectId ?? shells[host]?.projects.first?.id ?? "project"
+            if failingDetailReadHosts.contains(host)
+                || failingNextDetailReadHosts.remove(host) != nil {
+                throw URLError(.networkConnectionLost)
+            }
             return (
                 try JSONEncoder.t3.encode(
                     multiEnvironmentDetail(

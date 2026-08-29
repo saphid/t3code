@@ -109,6 +109,10 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
     private var detailStreamTask: Task<Void, Never>?
     private var detailPublishTask: Task<Void, Never>?
     private var passiveDetailPollingTask: Task<Void, Never>?
+    private var shellPublishDeferralGeneration = 0
+    private var shellPublishIsDeferred = false
+    private var shellReconciliationAttemptCount = 0
+    private var releasedTerminalTurnIDsByThreadID: [String: String] = [:]
     private var detailRefreshPending = false
     private var detailRefreshPendingForce = false
     private var detailRefreshGeneration = 0
@@ -1847,7 +1851,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         )
         try? await refresh(client: route.client)
         if activeThreadID == route.uiID {
-            try? await refreshThread(id: route.uiID, client: route.client)
+            _ = try? await refreshThread(id: route.uiID, client: route.client)
         }
     }
 
@@ -1859,7 +1863,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         )
         try? await refresh(client: route.client)
         if activeThreadID == route.uiID {
-            try? await refreshThread(id: route.uiID, client: route.client)
+            _ = try? await refreshThread(id: route.uiID, client: route.client)
         }
     }
 
@@ -2144,7 +2148,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         // Live sync reconciles these snapshots. Refreshes are opportunistic
         // after the accepted command so transient reads cannot invite a
         // duplicate user turn.
-        try? await refreshThread(id: route.uiID, client: client)
+        _ = try? await refreshThread(id: route.uiID, client: client)
         try? await refresh(client: client)
     }
 
@@ -2181,7 +2185,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         )
         approvalRoutes[id] = nil
         removeCachedApproval(id: id, threadID: route.uiID)
-        try? await refreshThread(id: route.uiID, client: route.client)
+        _ = try? await refreshThread(id: route.uiID, client: route.client)
     }
 
     func resolveUserInput(id: String, answers: [String: FeatureInputAnswer]) async throws {
@@ -2196,7 +2200,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         )
         inputRoutes[id] = nil
         removeCachedInput(id: id, threadID: route.uiID)
-        try? await refreshThread(id: route.uiID, client: route.client)
+        _ = try? await refreshThread(id: route.uiID, client: route.client)
     }
 
     func saveSettings(_ settings: FeatureSettings) async throws {
@@ -3407,10 +3411,17 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         shellPublishTask?.cancel()
         shellPublishTask = nil
         latestShell = shell
-        await emitSnapshot(shell)
         if refreshActiveThread, let threadID = activeThreadID {
+            guard shellNeedsSelectedDetailReconciliation(shell, threadID: threadID) else {
+                await emitSnapshot(shell)
+                scheduleDetailRefresh(threadID: threadID, client: client, force: true)
+                return
+            }
+            beginShellPublishDeferral()
             scheduleDetailRefresh(threadID: threadID, client: client, force: true)
+            return
         }
+        await emitSnapshot(shell)
     }
 
     /// HTTP fallback refreshes data while preserving the socket's reconnecting
@@ -3428,15 +3439,25 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         shellPublishTask?.cancel()
         shellPublishTask = nil
         latestShell = shell
-        await emitSnapshot(
-            shell,
-            markSourceConnected: false,
-            expectedGeneration: generation
-        )
         guard isCurrentSession(client: client, generation: generation),
               let threadID = activeThreadID else {
+            await emitSnapshot(
+                shell,
+                markSourceConnected: false,
+                expectedGeneration: generation
+            )
             return
         }
+        guard shellNeedsSelectedDetailReconciliation(shell, threadID: threadID) else {
+            await emitSnapshot(
+                shell,
+                markSourceConnected: false,
+                expectedGeneration: generation
+            )
+            scheduleDetailRefresh(threadID: threadID, client: client, force: true)
+            return
+        }
+        beginShellPublishDeferral()
         scheduleDetailRefresh(threadID: threadID, client: client, force: true)
     }
 
@@ -3539,17 +3560,26 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
             updatedAt: current.updatedAt
         )
         latestShell = shell
-        scheduleShellPublish(client)
         if shouldRefreshArchived, let environment = activeEnvironment {
             scheduleArchivedRefresh(client: client, environment: environment)
         }
         if let changedThreadID, activeThreadID == changedThreadID {
+            if completionNeedsDetailReconciliation {
+                beginShellPublishDeferral()
+                scheduleDetailRefresh(
+                    threadID: changedThreadID,
+                    client: client,
+                    force: true
+                )
+                return
+            }
             scheduleDetailRefresh(
                 threadID: changedThreadID,
                 client: client,
-                force: completionNeedsDetailReconciliation
+                force: false
             )
         }
+        scheduleShellPublish(client)
     }
 
     private static func completionNeedsDetailReconciliation(
@@ -3557,18 +3587,100 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         next: OrchestrationThreadShell
     ) -> Bool {
         guard previous?.latestTurn != next.latestTurn else { return false }
-        switch next.latestTurn?.state {
-        case "completed", "error", "interrupted":
-            return true
-        default:
+        return next.latestTurn?.state == "completed"
+    }
+
+    private func shellNeedsSelectedDetailReconciliation(
+        _ shell: OrchestrationShellSnapshot,
+        threadID: String
+    ) -> Bool {
+        guard let wireID = threadWireIDs[threadID],
+              let shellThread = shell.threads.first(where: { $0.id == wireID }) else {
             return false
         }
+        guard shellThread.latestTurn?.state == "completed" else {
+            return false
+        }
+        if releasedTerminalTurnIDsByThreadID[threadID] == shellThread.latestTurn?.turnId {
+            return false
+        }
+        guard let assistantMessageID = shellThread.latestTurn?.assistantMessageId else {
+            return true
+        }
+        return latestDetails[threadID]?.messages.contains {
+            $0.id == assistantMessageID
+        } != true
+    }
+
+    @discardableResult
+    private func beginShellPublishDeferral() -> Int {
+        shellPublishTask?.cancel()
+        shellPublishTask = nil
+        if shellPublishIsDeferred {
+            return shellPublishDeferralGeneration
+        }
+        shellPublishDeferralGeneration &+= 1
+        shellPublishIsDeferred = true
+        shellReconciliationAttemptCount = 0
+        return shellPublishDeferralGeneration
+    }
+
+    private func releaseShellPublishDeferral(_ generation: Int) -> Bool {
+        guard shellPublishDeferralGeneration == generation else { return false }
+        shellPublishIsDeferred = false
+        shellReconciliationAttemptCount = 0
+        return true
+    }
+
+    private func finishDeferredShellPublishIfReconciled(client: T3Client) {
+        guard shellPublishIsDeferred,
+              let threadID = activeThreadID,
+              let latestShell,
+              (!shellNeedsSelectedDetailReconciliation(latestShell, threadID: threadID)
+                  || selectedShellAssistantMessageID(latestShell, threadID: threadID) == nil),
+              releaseShellPublishDeferral(shellPublishDeferralGeneration) else {
+            return
+        }
+        rememberReleasedTerminalTurn(latestShell, threadID: threadID)
+        scheduleShellPublish(client)
+    }
+
+    private func selectedShellAssistantMessageID(
+        _ shell: OrchestrationShellSnapshot,
+        threadID: String
+    ) -> String? {
+        guard let wireID = threadWireIDs[threadID] else { return nil }
+        return shell.threads.first(where: { $0.id == wireID })?.latestTurn?.assistantMessageId
+    }
+
+    private func finishDeferredShellPublishAfterRetryLimit(client: T3Client) {
+        guard shellPublishIsDeferred,
+              shellReconciliationAttemptCount >= 3,
+              releaseShellPublishDeferral(shellPublishDeferralGeneration) else {
+            return
+        }
+        if let threadID = activeThreadID, let latestShell {
+            rememberReleasedTerminalTurn(latestShell, threadID: threadID)
+        }
+        scheduleShellPublish(client)
+    }
+
+    private func rememberReleasedTerminalTurn(
+        _ shell: OrchestrationShellSnapshot,
+        threadID: String
+    ) {
+        guard let wireID = threadWireIDs[threadID],
+              let turnID = shell.threads.first(where: { $0.id == wireID })?.latestTurn?.turnId else {
+            return
+        }
+        releasedTerminalTurnIDsByThreadID[threadID] = turnID
     }
 
     /// Shell streams can emit many metadata updates during one provider turn.
     /// Home only needs the newest row state, so publish at most four times per
     /// second while the selected transcript continues on its dedicated stream.
     private func scheduleShellPublish(_ client: T3Client) {
+        guard !shellPublishIsDeferred else { return }
         guard shellPublishTask == nil else { return }
         let generation = environmentGeneration
         shellPublishTask = Task { [weak self] in
@@ -3602,6 +3714,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         detailRefreshGeneration &+= 1
         let generation = detailRefreshGeneration
         let sessionGeneration = environmentGeneration
+        let expectedDetailStreamGeneration = detailStreamGeneration
         detailRefreshTask = Task { [weak self] in
             do {
                 // Four updates per second keeps streaming text responsive while
@@ -3619,7 +3732,24 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
                    environmentID: client.environment.id,
                    generation: sessionGeneration
                ) {
-                try? await self.refreshThread(id: threadID, client: client)
+                if self.shellPublishIsDeferred {
+                    self.shellReconciliationAttemptCount += 1
+                }
+                let reconciled = (try? await self.refreshThread(
+                    id: threadID,
+                    client: client,
+                    expectedDetailStreamGeneration: expectedDetailStreamGeneration
+                )) == true
+                if reconciled {
+                    self.finishDeferredShellPublishIfReconciled(client: client)
+                }
+                if self.shellPublishIsDeferred {
+                    self.finishDeferredShellPublishAfterRetryLimit(client: client)
+                    if self.shellPublishIsDeferred {
+                        self.detailRefreshPending = true
+                        self.detailRefreshPendingForce = true
+                    }
+                }
             }
             self.finishDetailRefresh(generation: generation, client: client)
         }
@@ -3754,6 +3884,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
                 renderCacheIsSource: true,
                 delta: delta
             )
+            self.finishDeferredShellPublishIfReconciled(client: route.client)
             self.scheduleAttachmentHydration(
                 in: detail,
                 threadID: route.uiID,
@@ -3789,6 +3920,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         guard route.environmentID != activeEnvironment?.id else { return }
         let generation = environmentGeneration
         let interval = fallbackPollingInterval
+        let expectedDetailStreamGeneration = detailStreamGeneration
         passiveDetailPollingTask = Task { [weak self] in
             while !Task.isCancelled {
                 do {
@@ -3805,8 +3937,11 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
                       ) else {
                     return
                 }
-                guard !(await route.client.liveConnectionActive()) else { continue }
-                try? await self.refreshThread(id: route.uiID, client: route.client)
+                _ = try? await self.refreshThread(
+                    id: route.uiID,
+                    client: route.client,
+                    expectedDetailStreamGeneration: expectedDetailStreamGeneration
+                )
             }
         }
     }
@@ -3833,6 +3968,14 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         detailRefreshTask = nil
         detailRefreshPending = false
         detailRefreshPendingForce = false
+        if shellPublishIsDeferred {
+            shellPublishDeferralGeneration &+= 1
+            shellPublishIsDeferred = false
+            shellReconciliationAttemptCount = 0
+            if let client {
+                scheduleShellPublish(client)
+            }
+        }
     }
 
     private func resetDetailStream() {
@@ -4151,7 +4294,11 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         }
     }
 
-    private func refreshThread(id: String, client: T3Client) async throws {
+    private func refreshThread(
+        id: String,
+        client: T3Client,
+        expectedDetailStreamGeneration: Int? = nil
+    ) async throws -> Bool {
         let route = try threadRoute(for: id)
         guard route.client === client else {
             throw NativeFeatureClientError.threadNotFound
@@ -4165,11 +4312,14 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
             id: route.wireID,
             turnLimit: supportsPagination ? Self.initialThreadUserTurnLimit : nil
         )
-        guard isKnownClient(client, environmentID: environment.id, generation: generation) else {
+        guard isKnownClient(client, environmentID: environment.id, generation: generation),
+              expectedDetailStreamGeneration == nil
+                || (expectedDetailStreamGeneration == detailStreamGeneration
+                    && activeThreadID == route.uiID) else {
             throw CancellationError()
         }
         if activeThreadID == route.uiID {
-            guard snapshot.snapshotSequence >= (activeThreadSequence ?? 0) else { return }
+            guard snapshot.snapshotSequence >= (activeThreadSequence ?? 0) else { return false }
             threadHistoryEpoch &+= 1
             pendingOlderThreadPage = nil
             activeRawThread = snapshot.thread
@@ -4190,11 +4340,15 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
             generation: generation
         )
         guard isKnownClient(client, environmentID: environment.id, generation: generation),
+              expectedDetailStreamGeneration == nil
+                || (expectedDetailStreamGeneration == detailStreamGeneration
+                    && activeThreadID == route.uiID),
               latestDetails[route.uiID] == hydrationBase,
               hydrated != hydrationBase else {
-            return
+            return true
         }
         publish(hydrated, threadID: route.uiID, synchronizeRenderedMessages: true)
+        return true
     }
 
     private func emitSnapshot(
