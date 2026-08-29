@@ -20,6 +20,7 @@ import {
 } from "@t3tools/shared/model";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 import { compareSemverVersions } from "@t3tools/shared/semver";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import {
   query as claudeQuery,
   type Options as ClaudeQueryOptions,
@@ -42,6 +43,10 @@ import {
 import { resolveClaudeSdkExecutablePath } from "../Drivers/ClaudeExecutable.ts";
 import { makeClaudeEnvironment } from "../Drivers/ClaudeHome.ts";
 import { discoverClaudeSkills } from "../Drivers/ClaudeSkills.ts";
+import {
+  makeClaudeCapabilitiesProcessController,
+  type ClaudeCapabilitiesProcessController,
+} from "./ClaudeCapabilitiesProcess.ts";
 
 const DEFAULT_CLAUDE_MODEL_CAPABILITIES: ModelCapabilities = createModelCapabilities({
   optionDescriptors: [],
@@ -600,6 +605,8 @@ export function buildClaudeCapabilitiesProbeQueryOptions(input: {
   readonly abortController: AbortController;
   readonly environment: NodeJS.ProcessEnv;
   readonly cwd: string | undefined;
+  readonly platform: NodeJS.Platform;
+  readonly processController?: ClaudeCapabilitiesProcessController;
 }): ClaudeQueryOptions {
   return {
     persistSession: false,
@@ -620,8 +627,16 @@ export function buildClaudeCapabilitiesProbeQueryOptions(input: {
       // Connected claude.ai MCP servers are discovered outside filesystem
       // config; disable them independently for this health check.
       ENABLE_CLAUDEAI_MCP_SERVERS: "false",
+      ...(input.platform === "win32"
+        ? {
+            FORCE_CODE_TERMINAL: "1",
+            CLAUDE_CODE_AUTO_CONNECT_IDE: "0",
+            CLAUDE_CODE_IDE_SKIP_AUTO_INSTALL: "1",
+          }
+        : {}),
     },
     ...(input.cwd ? { cwd: input.cwd } : {}),
+    ...(input.processController ? { spawnClaudeCodeProcess: input.processController.spawn } : {}),
     stderr: () => {},
   };
 }
@@ -735,7 +750,13 @@ const probeClaudeCapabilities = (
   cwd?: string,
 ) => {
   const abort = new AbortController();
+  let processController: ClaudeCapabilitiesProcessController | undefined;
   return Effect.gen(function* () {
+    const platform = yield* HostProcessPlatform;
+    processController =
+      platform === "win32"
+        ? makeClaudeCapabilitiesProcessController({ abortController: abort })
+        : undefined;
     const claudeEnvironment = yield* makeClaudeEnvironment(claudeSettings, environment);
     const executablePath = yield* resolveClaudeSdkExecutablePath(
       claudeSettings.binaryPath,
@@ -754,6 +775,8 @@ const probeClaudeCapabilities = (
           abortController: abort,
           environment: claudeEnvironment,
           cwd,
+          platform,
+          ...(processController ? { processController } : {}),
         }),
       });
       const init = await q.initializationResult();
@@ -775,8 +798,9 @@ const probeClaudeCapabilities = (
     });
   }).pipe(
     Effect.ensuring(
-      Effect.sync(() => {
+      Effect.promise(async () => {
         if (!abort.signal.aborted) abort.abort();
+        await processController?.reap();
       }),
     ),
     Effect.timeoutOption(CAPABILITIES_PROBE_TIMEOUT_MS),

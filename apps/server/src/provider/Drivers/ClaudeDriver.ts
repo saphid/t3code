@@ -60,6 +60,16 @@ const decodeClaudeSettings = Schema.decodeSync(ClaudeSettings);
 const DRIVER_KIND = ProviderDriverKind.make("claudeAgent");
 const CAPABILITIES_PROBE_TTL = Duration.minutes(5);
 
+export function makeClaudeCapabilitiesProbeCache<Key, Value, Error, Requirements>(
+  lookup: (key: Key) => Effect.Effect<Value, Error, Requirements>,
+) {
+  return Cache.make({
+    capacity: 1,
+    timeToLive: CAPABILITIES_PROBE_TTL,
+    lookup,
+  });
+}
+
 function isClaudeNativeCommandPath(commandPath: string): boolean {
   const normalized = normalizeCommandPath(commandPath);
   return (
@@ -153,14 +163,11 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
 
       // Per-instance capabilities cache: keyed on binary + resolved HOME so
       // account-specific probes never share auth metadata across instances.
-      const capabilitiesProbeCache = yield* Cache.make({
-        capacity: 1,
-        timeToLive: CAPABILITIES_PROBE_TTL,
-        lookup: () =>
-          probeClaudeCapabilities(effectiveConfig, processEnv, cwd).pipe(
-            Effect.provideService(Path.Path, path),
-          ),
-      });
+      const capabilitiesProbeCache = yield* makeClaudeCapabilitiesProbeCache(() =>
+        probeClaudeCapabilities(effectiveConfig, processEnv, cwd).pipe(
+          Effect.provideService(Path.Path, path),
+        ),
+      );
       const capabilitiesCacheKey = yield* makeClaudeCapabilitiesCacheKey(effectiveConfig, cwd);
 
       const checkProvider = checkClaudeProviderStatus(

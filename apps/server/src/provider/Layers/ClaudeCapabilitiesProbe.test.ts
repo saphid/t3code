@@ -1,11 +1,17 @@
 import { ClaudeSettings } from "@t3tools/contracts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
+import * as Cache from "effect/Cache";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Fiber from "effect/Fiber";
 import * as Path from "effect/Path";
+import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
+import { TestClock } from "effect/testing";
 
+import { makeClaudeCapabilitiesProbeCache } from "../Drivers/ClaudeDriver.ts";
 import {
   buildClaudeCapabilitiesProbeQueryOptions,
   CLAUDE_CAPABILITIES_PROBE_SETTING_SOURCES,
@@ -40,6 +46,7 @@ it("isolates Claude capability probes without dropping workspace setting sources
       ENABLE_CLAUDEAI_MCP_SERVERS: "true",
     },
     cwd: "/workspace/project",
+    platform: "darwin",
   });
 
   assert.deepEqual(options.mcpServers, {});
@@ -53,7 +60,71 @@ it("isolates Claude capability probes without dropping workspace setting sources
   assert.equal(options.abortController, abortController);
   assert.equal(options.env?.HOME, "/home/user");
   assert.equal(options.env?.ENABLE_CLAUDEAI_MCP_SERVERS, "false");
+  assert.equal(options.env?.CLAUDE_CODE_AUTO_CONNECT_IDE, undefined);
+  assert.equal(options.spawnClaudeCodeProcess, undefined);
 });
+
+it("disables IDE discovery and installs bounded process ownership on Windows", () => {
+  const abortController = new AbortController();
+  const processController = {
+    spawn: () => {
+      throw new Error("unused");
+    },
+    reap: async () => {},
+  };
+  const options = buildClaudeCapabilitiesProbeQueryOptions({
+    executablePath: "C:\\Program Files\\Claude\\claude.exe",
+    abortController,
+    environment: {
+      FORCE_CODE_TERMINAL: "0",
+      CLAUDE_CODE_AUTO_CONNECT_IDE: "1",
+      CLAUDE_CODE_IDE_SKIP_AUTO_INSTALL: "0",
+    },
+    cwd: "C:\\工作区\\project",
+    platform: "win32",
+    processController,
+  });
+
+  assert.equal(options.env?.FORCE_CODE_TERMINAL, "1");
+  assert.equal(options.env?.CLAUDE_CODE_AUTO_CONNECT_IDE, "0");
+  assert.equal(options.env?.CLAUDE_CODE_IDE_SKIP_AUTO_INSTALL, "1");
+  assert.equal(options.spawnClaudeCodeProcess, processController.spawn);
+});
+
+it.effect("deduplicates concurrent capability callers and starts a new probe after expiry", () =>
+  Effect.gen(function* () {
+    const calls = yield* Ref.make(0);
+    const releaseFirstProbe = yield* Deferred.make<void>();
+    const cache = yield* makeClaudeCapabilitiesProbeCache((key: string) =>
+      Ref.updateAndGet(calls, (count) => count + 1).pipe(
+        Effect.flatMap((call) =>
+          call === 1
+            ? Deferred.await(releaseFirstProbe).pipe(Effect.as(`${key}-${call}`))
+            : Effect.succeed(`${key}-${call}`),
+        ),
+      ),
+    );
+
+    const concurrentResults = yield* Effect.all(
+      [Cache.get(cache, "account"), Cache.get(cache, "account"), Cache.get(cache, "account")],
+      { concurrency: "unbounded" },
+    ).pipe(Effect.forkChild);
+    yield* Effect.yieldNow;
+
+    assert.equal(yield* Ref.get(calls), 1);
+    yield* Deferred.succeed(releaseFirstProbe, undefined);
+    assert.deepStrictEqual(yield* Fiber.join(concurrentResults), [
+      "account-1",
+      "account-1",
+      "account-1",
+    ]);
+
+    yield* TestClock.adjust("5 minutes");
+    yield* TestClock.adjust("1 millis");
+    assert.equal(yield* Cache.get(cache, "account"), "account-2");
+    assert.equal(yield* Ref.get(calls), 2);
+  }).pipe(Effect.provide(TestClock.layer())),
+);
 
 it.layer(NodeServices.layer)("Claude capability probe SDK boundary", (it) => {
   it.effect("serializes strict no-MCP options and still resolves account capabilities", () =>

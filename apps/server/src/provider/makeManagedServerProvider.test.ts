@@ -453,4 +453,62 @@ describe("makeManagedServerProvider", () => {
       }),
     ).pipe(Effect.provide(AlwaysRunTestLayer)),
   );
+
+  it.effect("serializes concurrent manual refresh callers", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const checkCalls = yield* Ref.make(0);
+        const activeChecks = yield* Ref.make(0);
+        const maximumActiveChecks = yield* Ref.make(0);
+        const started = yield* Effect.all([
+          Deferred.make<void>(),
+          Deferred.make<void>(),
+          Deferred.make<void>(),
+          Deferred.make<void>(),
+        ]);
+        const releases = yield* Effect.all([
+          Deferred.make<void>(),
+          Deferred.make<void>(),
+          Deferred.make<void>(),
+          Deferred.make<void>(),
+        ]);
+        const provider = yield* makeManagedServerProvider<TestSettings>({
+          maintenanceCapabilities,
+          getSettings: Effect.succeed({ enabled: true }),
+          streamSettings: Stream.empty,
+          haveSettingsChanged: (previous, next) => previous.enabled !== next.enabled,
+          initialSnapshot: () => Effect.succeed(initialSnapshot),
+          checkProvider: Effect.gen(function* () {
+            const call = yield* Ref.updateAndGet(checkCalls, (count) => count + 1);
+            const active = yield* Ref.updateAndGet(activeChecks, (count) => count + 1);
+            yield* Ref.update(maximumActiveChecks, (maximum) => Math.max(maximum, active));
+            yield* Deferred.succeed(started[call - 1]!, undefined).pipe(Effect.ignore);
+            yield* Deferred.await(releases[call - 1]!);
+            yield* Ref.update(activeChecks, (count) => count - 1);
+            return refreshedSnapshot;
+          }),
+          refreshInterval: "1 hour",
+        });
+
+        yield* Deferred.await(started[0]!);
+        yield* Deferred.succeed(releases[0]!, undefined);
+
+        const refreshes = yield* Effect.all(
+          [provider.refresh, provider.refresh, provider.refresh].map((refresh) =>
+            refresh.pipe(Effect.forkChild),
+          ),
+        );
+
+        for (let index = 1; index < started.length; index += 1) {
+          yield* Deferred.await(started[index]!);
+          assert.strictEqual(yield* Ref.get(activeChecks), 1);
+          yield* Deferred.succeed(releases[index]!, undefined);
+        }
+        yield* Effect.forEach(refreshes, Fiber.join, { discard: true });
+
+        assert.strictEqual(yield* Ref.get(checkCalls), 4);
+        assert.strictEqual(yield* Ref.get(maximumActiveChecks), 1);
+      }),
+    ).pipe(Effect.provide(AlwaysRunTestLayer)),
+  );
 });
