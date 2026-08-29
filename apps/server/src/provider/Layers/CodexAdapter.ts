@@ -12,6 +12,7 @@ import {
   type CanonicalRequestType,
   type CodexSettings,
   ProviderDriverKind,
+  ProviderProcessTermination,
   type ProviderEvent,
   ProviderInstanceId,
   type ProviderRuntimeEvent,
@@ -73,6 +74,10 @@ const isCodexSessionRuntimeThreadIdMissingError = Schema.is(
 const isCodexResumeCursorSchema = Schema.is(CodexResumeCursorSchema);
 
 const PROVIDER = ProviderDriverKind.make("codex");
+const CodexUnexpectedProcessExitPayload = Schema.Struct({
+  unexpected: Schema.Literal(true),
+  termination: ProviderProcessTermination,
+});
 
 export interface CodexAdapterLiveOptions {
   readonly instanceId?: ProviderInstanceId;
@@ -932,6 +937,22 @@ function mapToRuntimeEvents(
   }
 
   if (event.method === "session/exited" || event.method === "session/closed") {
+    const unexpectedProcessExit = Schema.decodeUnknownExit(CodexUnexpectedProcessExitPayload)(
+      event.payload,
+    );
+    if (event.turnId !== undefined && Exit.isSuccess(unexpectedProcessExit)) {
+      return [
+        {
+          ...runtimeEventBase(event, canonicalThreadId),
+          type: "runtime.process.terminated",
+          turnId: event.turnId,
+          payload: {
+            termination: unexpectedProcessExit.value.termination,
+            attribution: "unknown",
+          },
+        },
+      ];
+    }
     return [
       {
         ...runtimeEventBase(event, canonicalThreadId),

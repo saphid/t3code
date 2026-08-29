@@ -93,6 +93,22 @@ function settledTurnStateForSessionStatus(
   }
 }
 
+function providerProcessTerminationLabel(
+  termination: Extract<
+    OrchestrationEvent,
+    { type: "thread.provider-process-terminated" }
+  >["payload"]["termination"],
+): string {
+  switch (termination.kind) {
+    case "signal":
+      return termination.signal;
+    case "exit-code":
+      return `exit code ${termination.exitCode}`;
+    case "unknown":
+      return "unknown cause";
+  }
+}
+
 interface ProjectorDefinition {
   readonly name: ProjectorName;
   readonly apply: (
@@ -853,6 +869,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
         case "thread.message-sent":
         case "thread.proposed-plan-upserted":
         case "thread.activity-appended":
+        case "thread.provider-process-terminated":
         case "thread.approval-response-requested":
         case "thread.user-input-response-requested": {
           const existingRow = yield* projectionThreadRepository.getById({
@@ -1079,6 +1096,27 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
       "applyThreadActivitiesProjection",
     )(function* (event, _attachmentSideEffects) {
       switch (event.type) {
+        case "thread.provider-process-terminated":
+          yield* projectionThreadActivityRepository.upsert({
+            activityId: event.eventId,
+            threadId: event.payload.threadId,
+            turnId: event.payload.turnId,
+            tone: "error",
+            kind: "runtime.process.terminated",
+            summary: `Provider process ended unexpectedly (${providerProcessTerminationLabel(event.payload.termination)})`,
+            payload: {
+              provider: event.payload.provider,
+              ...(event.payload.providerInstanceId !== undefined
+                ? { providerInstanceId: event.payload.providerInstanceId }
+                : {}),
+              termination: event.payload.termination,
+              attribution: event.payload.attribution,
+            },
+            sequence: event.sequence,
+            createdAt: event.occurredAt,
+          });
+          return;
+
         case "thread.activity-appended":
           yield* projectionThreadActivityRepository.upsert({
             activityId: event.payload.activity.id,
@@ -1130,9 +1168,24 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
     const applyThreadSessionsProjection: ProjectorDefinition["apply"] = Effect.fn(
       "applyThreadSessionsProjection",
     )(function* (event, _attachmentSideEffects) {
-      if (event.type !== "thread.session-set") {
+      if (event.type === "thread.provider-process-terminated") {
+        const existingSession = yield* projectionThreadSessionRepository.getByThreadId({
+          threadId: event.payload.threadId,
+        });
+        if (Option.isNone(existingSession)) return;
+        yield* projectionThreadSessionRepository.upsert({
+          threadId: event.payload.threadId,
+          status: "error",
+          providerName: event.payload.provider,
+          providerInstanceId: event.payload.providerInstanceId ?? null,
+          runtimeMode: existingSession.value.runtimeMode,
+          activeTurnId: null,
+          lastError: "Provider process ended unexpectedly.",
+          updatedAt: event.occurredAt,
+        });
         return;
       }
+      if (event.type !== "thread.session-set") return;
       yield* projectionThreadSessionRepository.upsert({
         threadId: event.payload.threadId,
         status: event.payload.session.status,
@@ -1149,6 +1202,26 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
       "applyThreadTurnsProjection",
     )(function* (event, _attachmentSideEffects) {
       switch (event.type) {
+        case "thread.provider-process-terminated": {
+          yield* projectionTurnRepository.deletePendingTurnStartByThreadId({
+            threadId: event.payload.threadId,
+          });
+          const existingTurn = yield* projectionTurnRepository.getByTurnId({
+            threadId: event.payload.threadId,
+            turnId: event.payload.turnId,
+          });
+          if (Option.isNone(existingTurn) || existingTurn.value.state !== "running") {
+            return;
+          }
+          yield* projectionTurnRepository.upsertByTurnId({
+            ...existingTurn.value,
+            turnId: event.payload.turnId,
+            state: "error",
+            completedAt: event.occurredAt,
+          });
+          return;
+        }
+
         case "thread.turn-start-requested": {
           yield* projectionTurnRepository.replacePendingTurnStart({
             threadId: event.payload.threadId,

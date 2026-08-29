@@ -1,3 +1,4 @@
+// @effect-diagnostics nodeBuiltinImport:off
 /**
  * ClaudeAdapterLive - Scoped live implementation for the Claude Agent provider adapter.
  *
@@ -18,8 +19,11 @@ import {
   type SDKResultMessage,
   type SettingSource,
   type SDKUserMessage,
+  type SpawnedProcess,
+  type SpawnOptions,
   type ModelUsage,
 } from "@anthropic-ai/claude-agent-sdk";
+import { spawn } from "node:child_process";
 import { parseCliArgs } from "@t3tools/shared/cliArgs";
 import {
   ApprovalRequestId,
@@ -33,6 +37,7 @@ import {
   type ModelSelection,
   ProviderItemId,
   type ProviderRuntimeEvent,
+  type ProviderProcessTermination,
   type ProviderRuntimeTurnStatus,
   type ProviderSendTurnInput,
   type ProviderSession,
@@ -95,6 +100,7 @@ import {
 } from "../Errors.ts";
 import { type ClaudeAdapterShape } from "../Services/ClaudeAdapter.ts";
 import { type EventNdjsonLogger, makeEventNdjsonLogger } from "./EventNdjsonLogger.ts";
+import { processTerminationFromNodeExit } from "../processTermination.ts";
 const encodeUnknownJsonStringExit = Schema.encodeUnknownExit(Schema.fromJsonString(Schema.Unknown));
 const decodeUnknownJsonStringExit = Schema.decodeUnknownExit(Schema.fromJsonString(Schema.Unknown));
 
@@ -278,6 +284,8 @@ interface ClaudeSessionContext {
   lastKnownTotalProcessedTokens: number | undefined;
   lastAssistantUuid: string | undefined;
   lastThreadStartedId: string | undefined;
+  readonly processTermination: Deferred.Deferred<ProviderProcessTermination>;
+  expectingProcessExit: boolean;
   stopped: boolean;
 }
 
@@ -296,8 +304,32 @@ export interface ClaudeAdapterLiveOptions {
     readonly prompt: AsyncIterable<SDKUserMessage>;
     readonly options: ClaudeQueryOptions;
   }) => ClaudeQueryRuntime;
+  readonly spawnClaudeCodeProcess?: (options: SpawnOptions) => SpawnedProcess;
   readonly nativeEventLogPath?: string;
   readonly nativeEventLogger?: EventNdjsonLogger;
+}
+
+function spawnClaudeCodeProcess(options: SpawnOptions): SpawnedProcess {
+  return spawn(options.command, options.args, {
+    cwd: options.cwd,
+    env: options.env,
+    signal: options.signal,
+    stdio: ["pipe", "pipe", "ignore"],
+    windowsHide: true,
+  });
+}
+
+export function superviseClaudeProcessSpawn(
+  spawnProcess: (options: SpawnOptions) => SpawnedProcess,
+  onTermination: (termination: ProviderProcessTermination) => void,
+): (options: SpawnOptions) => SpawnedProcess {
+  return (options) => {
+    const child = spawnProcess(options);
+    child.once("exit", (exitCode, signal) => {
+      onTermination(processTerminationFromNodeExit(exitCode, signal));
+    });
+    return child;
+  };
 }
 
 function isUuid(value: string): boolean {
@@ -3594,11 +3626,48 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       ),
     );
 
+  const handleUnexpectedProcessTermination = Effect.fn("handleUnexpectedProcessTermination")(
+    function* (context: ClaudeSessionContext, termination: ProviderProcessTermination) {
+      if (context.stopped || context.expectingProcessExit) {
+        return;
+      }
+      context.expectingProcessExit = true;
+      const hadActiveTurn = context.turnState !== undefined;
+
+      if (hadActiveTurn && context.turnState) {
+        const stamp = yield* makeEventStamp();
+        yield* offerRuntimeEvent({
+          type: "runtime.process.terminated",
+          eventId: stamp.eventId,
+          provider: PROVIDER,
+          createdAt: stamp.createdAt,
+          threadId: context.session.threadId,
+          turnId: asCanonicalTurnId(context.turnState.turnId),
+          payload: { termination, attribution: "unknown" },
+          providerRefs: nativeProviderRefs(context),
+        });
+        yield* completeTurn(context, "failed", "Claude provider process ended unexpectedly.");
+      }
+
+      yield* stopSessionInternal(context, { emitExitEvent: !hadActiveTurn });
+    },
+  );
+
   const handleStreamExit = Effect.fn("handleStreamExit")(function* (
     context: ClaudeSessionContext,
     exit: Exit.Exit<void, ProviderAdapterProcessError>,
   ) {
     if (context.stopped) {
+      return;
+    }
+
+    // The SDK stream closes when its owned child exits. Give the exit listener
+    // one scheduler turn to publish the typed reason before classifying the
+    // more generic stream failure.
+    yield* Effect.yieldNow;
+    const processTermination = yield* Deferred.poll(context.processTermination);
+    if (Option.isSome(processTermination)) {
+      yield* handleUnexpectedProcessTermination(context, yield* processTermination.value);
       return;
     }
 
@@ -3635,6 +3704,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
 
     // Schedule process termination before any cleanup that can wait on the
     // provider. The SDK closes stdin, then escalates from SIGTERM to SIGKILL.
+    context.expectingProcessExit = true;
     yield* Effect.try({
       try: () => context.query.close(),
       catch: (cause) =>
@@ -3791,6 +3861,13 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       const runtimeContext = yield* Effect.context<never>();
       const runFork = Effect.runForkWith(runtimeContext);
       const runPromise = Effect.runPromiseWith(runtimeContext);
+      const processTermination = yield* Deferred.make<ProviderProcessTermination>();
+      const supervisedSpawn = superviseClaudeProcessSpawn(
+        options?.spawnClaudeCodeProcess ?? spawnClaudeCodeProcess,
+        (termination) => {
+          runFork(Deferred.succeed(processTermination, termination).pipe(Effect.asVoid));
+        },
+      );
 
       const promptQueue = yield* Queue.unbounded<PromptQueueItem>();
       const prompt = Stream.fromQueue(promptQueue).pipe(
@@ -4176,6 +4253,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         ...(existingResumeSessionId ? { resume: existingResumeSessionId } : {}),
         ...(newSessionId ? { sessionId: newSessionId } : {}),
         includePartialMessages: true,
+        spawnClaudeCodeProcess: supervisedSpawn,
         canUseTool,
         env: claudeEnvironment,
         additionalDirectories,
@@ -4278,6 +4356,8 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         lastKnownTotalProcessedTokens: undefined,
         lastAssistantUuid: resumeState?.resumeSessionAt,
         lastThreadStartedId: undefined,
+        processTermination,
+        expectingProcessExit: false,
         stopped: false,
       };
       yield* Ref.set(contextRef, context);
@@ -4350,6 +4430,15 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           context.streamFiber = undefined;
         }
       });
+
+      runFork(
+        Deferred.await(processTermination).pipe(
+          Effect.flatMap((termination) => handleUnexpectedProcessTermination(context, termination)),
+          Effect.catch((cause) =>
+            Effect.logError("Failed to record Claude provider process termination.", { cause }),
+          ),
+        ),
+      );
 
       return {
         ...session,

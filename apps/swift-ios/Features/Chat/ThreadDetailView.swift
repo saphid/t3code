@@ -27,6 +27,7 @@ public struct ThreadDetailView: View {
     @State private var didRestoreDraft = false
     @State private var draftSaveTask: Task<Void, Never>?
     @State private var toolSurface: FeatureThreadToolSurface?
+    @State private var retryingProviderTerminationID: String?
     // Plain state, not `FocusState`: the composer's UIKit text view owns
     // focus and mirrors it through this binding, because SwiftUI drops
     // writes to a `FocusState` no `.focused()` view registers with.
@@ -419,32 +420,91 @@ public struct ThreadDetailView: View {
             }
         }
         .safeAreaInset(edge: .bottom, spacing: 0) {
-            FeatureComposerView(
-                text: $draft,
-                selection: $selection,
-                attachments: $attachments,
-                providers: threadProviders,
-                threadSelection: currentSelection,
-                materializesDefaultSelection: false,
-                isSending: isSending,
-                isWorking: detail.thread.state == .working || detail.thread.state == .queued,
-                focused: $composerFocused,
-                onSend: send,
-                onStop: {
-                    Task { await model.cancelTurn(threadID: thread.id) }
-                },
-                pendingApprovals: detail.approvals,
-                pendingUserInputs: detail.userInputs,
-                isResolvingRequest: model.isPerformingAction,
-                powerFeatures: composerPowerFeatures,
-                onDismissKeyboard: dismissKeyboard,
-                onApprovalDecision: { id, decision in
-                    Task { await model.resolveApproval(id, decision: decision) }
-                },
-                onUserInputSubmit: { id, answers in
-                    Task { await model.resolveUserInput(id, answers: answers) }
+            VStack(spacing: 0) {
+                if let termination = FeatureProviderTerminationRecovery.recoverableMessage(
+                    in: detail
+                ) {
+                    providerTerminationRecoveryBanner(termination)
                 }
+                FeatureComposerView(
+                    text: $draft,
+                    selection: $selection,
+                    attachments: $attachments,
+                    providers: threadProviders,
+                    threadSelection: currentSelection,
+                    materializesDefaultSelection: false,
+                    isSending: isSending,
+                    isWorking: detail.thread.state == .working || detail.thread.state == .queued,
+                    focused: $composerFocused,
+                    onSend: send,
+                    onStop: {
+                        Task { await model.cancelTurn(threadID: thread.id) }
+                    },
+                    pendingApprovals: detail.approvals,
+                    pendingUserInputs: detail.userInputs,
+                    isResolvingRequest: model.isPerformingAction,
+                    powerFeatures: composerPowerFeatures,
+                    onDismissKeyboard: dismissKeyboard,
+                    onApprovalDecision: { id, decision in
+                        Task { await model.resolveApproval(id, decision: decision) }
+                    },
+                    onUserInputSubmit: { id, answers in
+                        Task { await model.resolveUserInput(id, answers: answers) }
+                    }
+                )
+            }
+        }
+    }
+
+    private func providerTerminationRecoveryBanner(_ termination: FeatureMessage) -> some View {
+        HStack(alignment: .center, spacing: 12) {
+            Image(systemName: "arrow.clockwise.circle")
+                .foregroundStyle(T3Colors.danger)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Provider stopped unexpectedly")
+                    .font(.subheadline.weight(.semibold))
+                Text("Partial output is preserved. Retry safely from the current state.")
+                    .font(.caption)
+                    .foregroundStyle(T3Colors.textSecondary)
+            }
+            Spacer(minLength: 8)
+            Button("Retry") {
+                retryProviderTermination(termination)
+            }
+            .buttonStyle(.borderedProminent)
+            .disabled(retryingProviderTerminationID == termination.id)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
+        .background(T3Colors.surface)
+        .overlay(alignment: .top) {
+            Divider()
+        }
+        .accessibilityIdentifier("provider-termination-recovery")
+    }
+
+    private func retryProviderTermination(_ termination: FeatureMessage) {
+        guard retryingProviderTerminationID == nil else { return }
+        let plan = FeatureProviderTerminationRecovery.plan(
+            eventID: termination.id,
+            createdAt: termination.createdAt
+        )
+        retryingProviderTerminationID = termination.id
+        Task {
+            _ = await submitMessage(
+                FeatureMessageSubmission(
+                    threadID: thread.id,
+                    text: plan.prompt,
+                    selection: selection ?? currentSelection,
+                    identity: FeatureSubmissionIdentity(
+                        threadID: currentThread.wireID ?? currentThread.id,
+                        commandID: plan.commandID,
+                        messageID: plan.messageID,
+                        createdAt: plan.createdAt
+                    )
+                )
             )
+            retryingProviderTerminationID = nil
         }
     }
 

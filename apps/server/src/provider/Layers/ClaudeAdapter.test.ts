@@ -10,6 +10,7 @@ import type {
   PermissionResult,
   SDKMessage,
   SDKUserMessage,
+  SpawnedProcess,
 } from "@anthropic-ai/claude-agent-sdk";
 import {
   ApprovalRequestId,
@@ -37,7 +38,11 @@ import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { ProviderAdapterProcessError, ProviderAdapterValidationError } from "../Errors.ts";
 import type { ClaudeAdapterShape } from "../Services/ClaudeAdapter.ts";
-import { makeClaudeAdapter, type ClaudeAdapterLiveOptions } from "./ClaudeAdapter.ts";
+import {
+  makeClaudeAdapter,
+  superviseClaudeProcessSpawn,
+  type ClaudeAdapterLiveOptions,
+} from "./ClaudeAdapter.ts";
 const decodeClaudeSettings = Schema.decodeSync(ClaudeSettings);
 
 // Test-local service tag so the rest of the file can keep using `yield* ClaudeAdapter`.
@@ -267,6 +272,32 @@ const THREAD_ID = ThreadId.make("thread-claude-1");
 const RESUME_THREAD_ID = ThreadId.make("thread-claude-resume");
 
 describe("ClaudeAdapterLive", () => {
+  it.effect("observes the SDK-owned child exit at the adapter boundary", () =>
+    Effect.sync(() => {
+      let exitListener: ((code: number | null, signal: NodeJS.Signals | null) => void) | undefined;
+      const child = {
+        once: (
+          event: string,
+          listener: (code: number | null, signal: NodeJS.Signals | null) => void,
+        ) => {
+          if (event === "exit") exitListener = listener;
+        },
+      } as unknown as SpawnedProcess;
+      const observed: Array<unknown> = [];
+      const spawn = superviseClaudeProcessSpawn(
+        () => child,
+        (termination) => observed.push(termination),
+      );
+
+      assert.equal(
+        spawn({ command: "claude", args: [], env: {}, signal: new AbortController().signal }),
+        child,
+      );
+      exitListener?.(null, "SIGKILL");
+      assert.deepStrictEqual(observed, [{ kind: "signal", signal: "SIGKILL" }]);
+    }),
+  );
+
   it.effect("returns validation error for non-claude provider on startSession", () => {
     const harness = makeHarness();
     return Effect.gen(function* () {

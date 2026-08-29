@@ -557,6 +557,39 @@ function startLifecycleRuntime() {
 }
 
 lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
+  it.effect("maps an unexpected owned-process exit to the typed runtime boundary", () =>
+    Effect.gen(function* () {
+      const { adapter, runtime } = yield* startLifecycleRuntime();
+      const firstEventFiber = yield* Stream.runHead(adapter.streamEvents).pipe(Effect.forkChild);
+
+      yield* runtime.emit({
+        id: asEventId("evt-codex-process-exit"),
+        kind: "session",
+        provider: ProviderDriverKind.make("codex"),
+        createdAt: "2026-01-01T00:00:00.000Z",
+        method: "session/exited",
+        message: "Codex App Server ended unexpectedly (SIGKILL).",
+        threadId: asThreadId("thread-1"),
+        turnId: asTurnId("turn-1"),
+        payload: {
+          unexpected: true,
+          termination: { kind: "signal", signal: "SIGKILL" },
+        },
+      });
+
+      const event = yield* Fiber.join(firstEventFiber);
+      NodeAssert.equal(event._tag, "Some");
+      if (event._tag !== "Some") return;
+      NodeAssert.equal(event.value.type, "runtime.process.terminated");
+      if (event.value.type !== "runtime.process.terminated") return;
+      NodeAssert.equal(event.value.turnId, "turn-1");
+      NodeAssert.deepStrictEqual(event.value.payload, {
+        termination: { kind: "signal", signal: "SIGKILL" },
+        attribution: "unknown",
+      });
+    }),
+  );
+
   it.effect("does not reactivate an idle child after a parent interaction", () =>
     Effect.gen(function* () {
       const { adapter, runtime } = yield* startLifecycleRuntime();

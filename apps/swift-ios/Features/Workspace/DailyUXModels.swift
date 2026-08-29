@@ -80,17 +80,20 @@ public struct FeatureMessageSubmission: Sendable, Equatable {
     public var text: String
     public var selection: FeatureSelection?
     public var attachments: [FeatureDraftAttachment]
+    public var identity: FeatureSubmissionIdentity?
 
     public init(
         threadID: String,
         text: String,
         selection: FeatureSelection?,
-        attachments: [FeatureDraftAttachment] = []
+        attachments: [FeatureDraftAttachment] = [],
+        identity: FeatureSubmissionIdentity? = nil
     ) {
         self.threadID = threadID
         self.text = text
         self.selection = selection
         self.attachments = attachments
+        self.identity = identity
     }
 }
 

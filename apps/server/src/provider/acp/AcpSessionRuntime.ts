@@ -20,6 +20,7 @@ import * as EffectAcpErrors from "effect-acp/errors";
 import type * as EffectAcpSchema from "effect-acp/schema";
 import type * as EffectAcpProtocol from "effect-acp/protocol";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
+import type { ProviderProcessTermination } from "@t3tools/contracts";
 
 import {
   collectSessionConfigOptionValues,
@@ -35,6 +36,7 @@ import {
   type AcpSessionModeState,
   type AcpToolCallState,
 } from "./AcpRuntimeModel.ts";
+import { processTerminationFromExit } from "../processTermination.ts";
 
 function formatConfigOptionValue(value: string | boolean): string {
   return JSON.stringify(value);
@@ -183,6 +185,8 @@ export class AcpSessionRuntime extends Context.Service<
     readonly getEvents: () => Stream.Stream<AcpSessionRuntimeEvent, never>;
     /** Waits until the current event consumer has processed every queued event. */
     readonly drainEvents: Effect.Effect<void>;
+    /** Sanitized exit status of the owned ACP child process. */
+    readonly processTermination: Effect.Effect<ProviderProcessTermination>;
     /** Latest mode state observed from session setup and `session/update` notifications. */
     readonly getModeState: Effect.Effect<AcpSessionModeState | undefined>;
     /** Latest configuration options observed from session setup and configuration writes. */
@@ -714,6 +718,7 @@ export const make = (
         });
         yield* Deferred.await(acknowledge);
       }),
+      processTermination: child.exitCode.pipe(Effect.exit, Effect.map(processTerminationFromExit)),
       getModeState: Ref.get(modeStateRef),
       getConfigOptions: Ref.get(configOptionsRef),
       prompt: (payload) =>

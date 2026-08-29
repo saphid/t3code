@@ -1225,6 +1225,44 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
       return [unsettledEvent, sessionSetEvent];
     }
 
+    case "thread.provider-process-termination.record": {
+      const thread = yield* requireThread({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      if (
+        thread.session?.status !== "running" ||
+        thread.session.activeTurnId !== command.turnId ||
+        thread.latestTurn?.state !== "running" ||
+        thread.latestTurn.turnId !== command.turnId
+      ) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `thread ${command.threadId} no longer has running turn ${command.turnId}`,
+        });
+      }
+      return {
+        ...(yield* withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        })),
+        type: "thread.provider-process-terminated",
+        payload: {
+          threadId: command.threadId,
+          provider: command.provider,
+          ...(command.providerInstanceId !== undefined
+            ? { providerInstanceId: command.providerInstanceId }
+            : {}),
+          turnId: command.turnId,
+          termination: command.termination,
+          attribution: command.attribution,
+        },
+      };
+    }
+
     case "thread.message.assistant.delta": {
       yield* requireThread({
         readModel,

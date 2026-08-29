@@ -15,6 +15,7 @@ import {
   ProjectDeletedPayload,
   ProjectMetaUpdatedPayload,
   ThreadActivityAppendedPayload,
+  ThreadProviderProcessTerminatedPayload,
   ThreadArchivedPayload,
   ThreadCreatedPayload,
   ThreadDeletedPayload,
@@ -793,6 +794,79 @@ export function projectEvent(
           return {
             ...nextBase,
             threads: updateThread(nextBase.threads, payload.threadId, {
+              activities,
+              updatedAt: event.occurredAt,
+            }),
+          };
+        }),
+      );
+
+    case "thread.provider-process-terminated":
+      return decodeForEvent(
+        ThreadProviderProcessTerminatedPayload,
+        event.payload,
+        event.type,
+        "payload",
+      ).pipe(
+        Effect.map((payload) => {
+          const thread = nextBase.threads.find((entry) => entry.id === payload.threadId);
+          if (!thread) {
+            return nextBase;
+          }
+          const terminationLabel =
+            payload.termination.kind === "signal"
+              ? payload.termination.signal
+              : payload.termination.kind === "exit-code"
+                ? `exit code ${payload.termination.exitCode}`
+                : "unknown cause";
+          const activity = {
+            id: event.eventId,
+            tone: "error" as const,
+            kind: "runtime.process.terminated",
+            summary: `Provider process ended unexpectedly (${terminationLabel})`,
+            payload: {
+              provider: payload.provider,
+              ...(payload.providerInstanceId !== undefined
+                ? { providerInstanceId: payload.providerInstanceId }
+                : {}),
+              termination: payload.termination,
+              attribution: payload.attribution,
+            },
+            turnId: payload.turnId,
+            sequence: event.sequence,
+            createdAt: event.occurredAt,
+          };
+          const session = {
+            threadId: payload.threadId,
+            status: "error" as const,
+            providerName: payload.provider,
+            ...(payload.providerInstanceId !== undefined
+              ? { providerInstanceId: payload.providerInstanceId }
+              : {}),
+            runtimeMode: thread.session?.runtimeMode ?? thread.runtimeMode,
+            activeTurnId: null,
+            lastError: "Provider process ended unexpectedly.",
+            updatedAt: event.occurredAt,
+          };
+          const latestTurn =
+            thread.latestTurn?.turnId === payload.turnId && thread.latestTurn.state === "running"
+              ? {
+                  ...thread.latestTurn,
+                  state: "error" as const,
+                  completedAt: event.occurredAt,
+                }
+              : thread.latestTurn;
+          const activities = [
+            ...thread.activities.filter((entry) => entry.id !== activity.id),
+            activity,
+          ]
+            .toSorted(compareThreadActivities)
+            .slice(-500);
+          return {
+            ...nextBase,
+            threads: updateThread(nextBase.threads, payload.threadId, {
+              session,
+              latestTurn,
               activities,
               updatedAt: event.occurredAt,
             }),

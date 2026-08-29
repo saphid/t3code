@@ -476,6 +476,45 @@ export function makeCursorAdapter(
         });
       });
 
+    const observeUnexpectedProcessTermination = (ctx: CursorSessionContext) =>
+      ctx.acp.processTermination.pipe(
+        Effect.flatMap((termination) =>
+          withThreadLock(
+            ctx.threadId,
+            Effect.gen(function* () {
+              if (sessions.get(ctx.threadId) !== ctx || ctx.stopped) return;
+              const turnId = ctx.activeTurnId ?? ctx.session.activeTurnId;
+              ctx.stopped = true;
+              sessions.delete(ctx.threadId);
+              yield* settlePendingApprovalsAsCancelled(ctx.pendingApprovals);
+              yield* settlePendingUserInputsAsEmptyAnswers(ctx.pendingUserInputs);
+              if (ctx.notificationFiber) {
+                yield* Fiber.interrupt(ctx.notificationFiber);
+              }
+              if (turnId !== undefined) {
+                yield* offerRuntimeEvent({
+                  type: "runtime.process.terminated",
+                  ...(yield* makeEventStamp()),
+                  provider: PROVIDER,
+                  threadId: ctx.threadId,
+                  turnId,
+                  payload: { termination, attribution: "unknown" },
+                });
+              } else {
+                yield* offerRuntimeEvent({
+                  type: "session.exited",
+                  ...(yield* makeEventStamp()),
+                  provider: PROVIDER,
+                  threadId: ctx.threadId,
+                  payload: { exitKind: "graceful" },
+                });
+              }
+              yield* Effect.ignore(Scope.close(ctx.scope, Exit.void));
+            }),
+          ),
+        ),
+      );
+
     const startSession: CursorAdapterShape["startSession"] = (input) =>
       withThreadLock(
         input.threadId,
@@ -886,6 +925,7 @@ export function makeCursorAdapter(
           ctx.notificationFiber = nf;
           sessions.set(input.threadId, ctx);
           sessionScopeTransferred = true;
+          yield* observeUnexpectedProcessTermination(ctx).pipe(Effect.forkIn(ctx.scope));
 
           yield* offerRuntimeEvent({
             type: "session.started",

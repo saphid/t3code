@@ -5245,7 +5245,16 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
     private func mapErrorActivity(_ activity: OrchestrationActivity) -> FeatureMessage? {
         guard activity.tone == "error" else { return nil }
         let detail = activity.payload["detail"]?.stringValue
-        let text = detail.map { "\(activity.summary)\n\($0)" } ?? activity.summary
+        let text: String
+        if activity.kind == "runtime.process.terminated" {
+            text = """
+                \(activity.summary)
+                Partial output and completed work are preserved. Retry will inspect the current \
+                state before continuing.
+                """
+        } else {
+            text = detail.map { "\(activity.summary)\n\($0)" } ?? activity.summary
+        }
         return FeatureMessage(
             id: "activity-\(activity.id)",
             role: .system,
@@ -5466,8 +5475,8 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         if hasApprovals { return .waitingForApproval }
         if hasUserInput { return .waitingForInput }
         if session?.status == "starting" { return .queued }
-        if session?.status == "running" || latestTurn?.state == "running" { return .working }
         if session?.status == "error" || latestTurn?.state == "error" { return .failed }
+        if session?.status == "running" || latestTurn?.state == "running" { return .working }
         if backgroundLiveness == .working { return .working }
         if backgroundLiveness == .monitoring { return .monitoring }
         if latestTurn?.state == "completed" { return .completed }
@@ -6330,6 +6339,15 @@ enum NativeThreadDetailReducer {
                 thread: thread,
                 renderMutation: &renderMutation
             )
+        case "thread.provider-process-terminated":
+            result = reduceProviderProcessTermination(
+                eventID: object["eventId"]?.stringValue,
+                sequence: sequence,
+                payload: payload,
+                occurredAt: occurredAt,
+                thread: thread,
+                renderMutation: &renderMutation
+            )
         case "thread.session-set":
             result = reduceSession(payload: payload, occurredAt: occurredAt, thread: thread)
         case "thread.turn-diff-completed":
@@ -6471,6 +6489,88 @@ enum NativeThreadDetailReducer {
             // snapshot array shared avoids copying tens of thousands of old
             // activities for each append; a resnapshot rebuilds after recovery.
             replacing(thread, updatedAt: occurredAt)
+        )
+    }
+
+    private static func reduceProviderProcessTermination(
+        eventID: String?,
+        sequence: Int,
+        payload: JSONValue,
+        occurredAt: String,
+        thread: OrchestrationThread,
+        renderMutation: inout NativeDetailRenderMutation
+    ) -> NativeThreadDetailReductionResult {
+        guard let eventID,
+              let provider = payload["provider"]?.stringValue,
+              let turnID = payload["turnId"]?.stringValue,
+              let termination = payload["termination"],
+              let terminationKind = termination["kind"]?.stringValue,
+              let attribution = payload["attribution"]?.stringValue else {
+            return .refresh
+        }
+
+        let terminationLabel: String
+        switch terminationKind {
+        case "signal":
+            guard let signal = termination["signal"]?.stringValue else { return .refresh }
+            terminationLabel = signal
+        case "exit-code":
+            guard let exitCode = intValue(termination["exitCode"]) else { return .refresh }
+            terminationLabel = "exit code \(exitCode)"
+        case "unknown":
+            terminationLabel = "unknown cause"
+        default:
+            return .refresh
+        }
+
+        var activityPayload: [String: JSONValue] = [
+            "provider": .string(provider),
+            "termination": termination,
+            "attribution": .string(attribution),
+        ]
+        if let providerInstanceID = payload["providerInstanceId"]?.stringValue {
+            activityPayload["providerInstanceId"] = .string(providerInstanceID)
+        }
+        let activity = OrchestrationActivity(
+            id: eventID,
+            tone: "error",
+            kind: "runtime.process.terminated",
+            summary: "Provider process ended unexpectedly (\(terminationLabel))",
+            payload: .object(activityPayload),
+            turnId: turnID,
+            sequence: sequence,
+            createdAt: occurredAt
+        )
+        renderMutation = .activity(activity)
+
+        let session = OrchestrationSession(
+            threadId: thread.id,
+            status: "error",
+            providerName: provider,
+            providerInstanceId: payload["providerInstanceId"]?.stringValue,
+            runtimeMode: thread.session?.runtimeMode ?? thread.runtimeMode,
+            activeTurnId: nil,
+            lastError: "Provider process ended unexpectedly.",
+            updatedAt: occurredAt
+        )
+        let latestTurn = thread.latestTurn.map { current in
+            guard current.turnId == turnID, current.state == "running" else { return current }
+            return OrchestrationLatestTurn(
+                turnId: current.turnId,
+                state: "error",
+                requestedAt: current.requestedAt,
+                startedAt: current.startedAt,
+                completedAt: occurredAt,
+                assistantMessageId: current.assistantMessageId
+            )
+        }
+        return .updated(
+            replacing(
+                thread,
+                latestTurn: latestTurn,
+                session: session,
+                updatedAt: occurredAt
+            )
         )
     }
 
@@ -6618,8 +6718,12 @@ enum NativeThreadDetailReducer {
     }
 
     private static func intValue(_ value: JSONValue?) -> Int? {
-        guard case let .number(number)? = value else { return nil }
-        return Int(exactly: number)
+        switch value {
+        case let .number(number): Int(exactly: number)
+        case let .integer(number): Int(exactly: number)
+        case let .unsignedInteger(number): Int(exactly: number)
+        default: nil
+        }
     }
 
     private static func boolValue(_ value: JSONValue?) -> Bool? {

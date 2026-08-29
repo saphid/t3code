@@ -26,3 +26,13 @@ On desktop, press `Cmd+Enter` on macOS or `Ctrl+Enter` on Windows and Linux from
 start it in the background. T3 Code opens another new thread and shows an **Open** action for the
 thread that started. The new thread keeps the selected workspace mode and base branch. If **New
 worktree** is selected, each background thread creates its own worktree.
+
+## Recovering an interrupted provider
+
+If a provider process ends unexpectedly during a turn, T3 Code marks that turn as failed while
+keeping its completed messages and tool output. SwiftUI mobile shows a **Retry** action. Retry asks
+the provider to inspect the current state and continue from the last completed step; it does not
+automatically run the interrupted command again.
+
+Using **Stop** is different: it intentionally interrupts the turn and does not report a provider
+failure.

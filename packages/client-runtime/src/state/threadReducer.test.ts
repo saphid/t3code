@@ -6,6 +6,7 @@ import {
   EventId,
   MessageId,
   ProjectId,
+  ProviderDriverKind,
   ProviderInstanceId,
   ThreadId,
   TurnId,
@@ -768,6 +769,67 @@ describe("applyThreadDetailEvent", () => {
         // usage value by walking backwards past the malformed row.
         const ids = result.thread.activities.map((activity) => activity.id);
         expect(ids).toEqual(["activity-cw-resolvable", "activity-cw-broken"]);
+      }
+    });
+  });
+
+  describe("thread.provider-process-terminated", () => {
+    it("atomically preserves activity and settles the active turn as failed", () => {
+      const runningThread: OrchestrationThread = {
+        ...baseThread,
+        latestTurn: {
+          turnId: TurnId.make("turn-1"),
+          state: "running",
+          requestedAt: "2026-04-01T10:00:00.000Z",
+          startedAt: "2026-04-01T10:00:01.000Z",
+          completedAt: null,
+          assistantMessageId: null,
+        },
+        session: {
+          threadId: ThreadId.make("thread-1"),
+          status: "running",
+          providerName: ProviderDriverKind.make("claudeAgent"),
+          providerInstanceId: ProviderInstanceId.make("claude-main"),
+          runtimeMode: "full-access",
+          activeTurnId: TurnId.make("turn-1"),
+          lastError: null,
+          updatedAt: "2026-04-01T10:00:01.000Z",
+        },
+      };
+      const result = applyThreadDetailEvent(runningThread, {
+        ...baseEventFields,
+        eventId: EventId.make("event-process-terminated"),
+        sequence: 12,
+        occurredAt: "2026-04-01T11:00:00.000Z",
+        aggregateKind: "thread",
+        aggregateId: ThreadId.make("thread-1"),
+        type: "thread.provider-process-terminated",
+        payload: {
+          threadId: ThreadId.make("thread-1"),
+          provider: ProviderDriverKind.make("claudeAgent"),
+          providerInstanceId: ProviderInstanceId.make("claude-main"),
+          turnId: TurnId.make("turn-1"),
+          termination: { kind: "signal", signal: "SIGKILL" },
+          attribution: "unknown",
+        },
+      });
+
+      expect(result.kind).toBe("updated");
+      if (result.kind === "updated") {
+        expect(result.thread.session?.status).toBe("error");
+        expect(result.thread.session?.activeTurnId).toBeNull();
+        expect(result.thread.latestTurn?.state).toBe("error");
+        expect(result.thread.activities).toMatchObject([
+          {
+            id: "event-process-terminated",
+            kind: "runtime.process.terminated",
+            tone: "error",
+            payload: {
+              termination: { kind: "signal", signal: "SIGKILL" },
+              attribution: "unknown",
+            },
+          },
+        ]);
       }
     });
   });

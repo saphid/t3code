@@ -810,7 +810,8 @@ public final class FeatureRootModel {
               let environmentID = thread.environmentID else {
             return false
         }
-        let identity = FeatureSubmissionIdentity(threadID: thread.wireID ?? thread.id)
+        let identity = submission.identity
+            ?? FeatureSubmissionIdentity(threadID: thread.wireID ?? thread.id)
         let uploads = submission.attachments.map(\.upload)
         let queued = FeatureQueuedSubmission(
             environmentID: environmentID,

@@ -448,6 +448,11 @@ export function runtimeEventToActivities(
       ];
     }
 
+    case "runtime.process.terminated":
+      // The dedicated orchestration event projects the durable activity and
+      // failed session together, so the generic activity path must stay empty.
+      return [];
+
     case "tool.denied": {
       return [
         {
@@ -1517,6 +1522,32 @@ const make = Effect.gen(function* () {
       const hasPendingTurnStart =
         Option.isSome(pendingTurnStart) && thread.session?.status === "starting";
 
+      if (event.type === "runtime.process.terminated") {
+        if (
+          eventTurnId === undefined ||
+          activeTurnId === null ||
+          !sameId(activeTurnId, eventTurnId) ||
+          thread.session?.status !== "running" ||
+          thread.latestTurn?.state !== "running" ||
+          !sameId(thread.latestTurn.turnId, eventTurnId)
+        ) {
+          return;
+        }
+        yield* orchestrationEngine.dispatch({
+          type: "thread.provider-process-termination.record",
+          commandId: yield* providerCommandId(event, "provider-process-termination-record"),
+          threadId: thread.id,
+          provider: event.provider,
+          ...(event.providerInstanceId !== undefined
+            ? { providerInstanceId: event.providerInstanceId }
+            : {}),
+          turnId: eventTurnId,
+          termination: event.payload.termination,
+          attribution: event.payload.attribution,
+          createdAt: now,
+        });
+      }
+
       const conflictsWithActiveTurn =
         activeTurnId !== null && eventTurnId !== undefined && !sameId(activeTurnId, eventTurnId);
       const missingTurnForActiveTurn = activeTurnId !== null && eventTurnId === undefined;
@@ -1843,7 +1874,7 @@ const make = Effect.gen(function* () {
         });
       }
 
-      if (event.type === "turn.completed") {
+      if (event.type === "turn.completed" || event.type === "runtime.process.terminated") {
         const detailedThread = yield* getLoadedThreadDetail();
         const messages = detailedThread?.messages ?? [];
         const proposedPlans = detailedThread?.proposedPlans ?? [];
@@ -1976,7 +2007,11 @@ const make = Effect.gen(function* () {
       } else if (!conflictsWithActiveTurn) {
         if (event.type === "turn.plan.updated") {
           threadPlanProgress.recordPlanProgress(thread.id, event.payload.plan);
-        } else if (event.type === "turn.completed" || event.type === "turn.aborted") {
+        } else if (
+          event.type === "turn.completed" ||
+          event.type === "turn.aborted" ||
+          event.type === "runtime.process.terminated"
+        ) {
           threadPlanProgress.clearThreadPlanProgress(thread.id);
         }
       }
@@ -2012,6 +2047,7 @@ const make = Effect.gen(function* () {
           break;
         }
         case "session.exited":
+        case "runtime.process.terminated":
           threadBackgroundLiveness.clearThreadLiveness(thread.id);
           break;
         default:

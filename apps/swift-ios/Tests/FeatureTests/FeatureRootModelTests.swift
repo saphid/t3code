@@ -2870,6 +2870,63 @@ struct FeatureRootModelTests {
     }
 
     @Test
+    func providerTerminationReducerAtomicallyFailsTheActiveTurn() {
+        let turn = OrchestrationLatestTurn(
+            turnId: "turn-1",
+            state: "running",
+            requestedAt: "2026-07-31T20:00:00Z",
+            startedAt: "2026-07-31T20:00:01Z",
+            completedAt: nil,
+            assistantMessageId: "assistant-1"
+        )
+        let session = OrchestrationSession(
+            threadId: "thread-1",
+            status: "running",
+            providerName: "claudeAgent",
+            providerInstanceId: "claude-main",
+            runtimeMode: .fullAccess,
+            activeTurnId: "turn-1",
+            lastError: nil,
+            updatedAt: "2026-07-31T20:00:01Z"
+        )
+        let thread = orchestrationThread(latestTurn: turn, session: session)
+        let event = orchestrationEvent(
+            type: "thread.provider-process-terminated",
+            sequence: 13,
+            eventID: "termination-event",
+            payload: [
+                "threadId": .string(thread.id),
+                "provider": .string("claudeAgent"),
+                "providerInstanceId": .string("claude-main"),
+                "turnId": .string("turn-1"),
+                "termination": .object([
+                    "kind": .string("signal"),
+                    "signal": .string("SIGKILL"),
+                ]),
+                "attribution": .string("unknown"),
+            ]
+        )
+
+        let reduction = NativeThreadDetailReducer.apply(event, to: thread)
+
+        guard case let .updated(updated) = reduction.result else {
+            Issue.record("Expected provider termination update")
+            return
+        }
+        #expect(updated.session?.status == "error")
+        #expect(updated.session?.activeTurnId == nil)
+        #expect(updated.latestTurn?.state == "error")
+        guard case let .activity(activity) = reduction.renderMutation else {
+            Issue.record("Expected provider termination activity")
+            return
+        }
+        #expect(activity.id == "termination-event")
+        #expect(activity.kind == "runtime.process.terminated")
+        #expect(activity.sequence == 13)
+        #expect(activity.summary.contains("SIGKILL"))
+    }
+
+    @Test
     func destructiveDetailEventRequestsAuthoritativeSnapshot() {
         let thread = orchestrationThread()
         let event = orchestrationEvent(
@@ -2939,9 +2996,11 @@ private func regeneratableThread(id: String, title: String) -> FeatureThread {
 private func orchestrationEvent(
     type: String,
     sequence: Int,
+    eventID: String = "event-\(UUID().uuidString)",
     payload: [String: JSONValue]
 ) -> JSONValue {
     .object([
+        "eventId": .string(eventID),
         "type": .string(type),
         "sequence": .number(Double(sequence)),
         "occurredAt": .string("2026-07-31T20:00:02Z"),
@@ -2952,7 +3011,9 @@ private func orchestrationEvent(
 private func orchestrationThread(
     messages: [OrchestrationMessage] = [],
     activities: [OrchestrationActivity] = [],
-    checkpoints: [CheckpointSummary] = []
+    checkpoints: [CheckpointSummary] = [],
+    latestTurn: OrchestrationLatestTurn? = nil,
+    session: OrchestrationSession? = nil
 ) -> OrchestrationThread {
     OrchestrationThread(
         id: "thread-1",
@@ -2963,7 +3024,7 @@ private func orchestrationThread(
         interactionMode: .default,
         branch: "main",
         worktreePath: "/native",
-        latestTurn: nil,
+        latestTurn: latestTurn,
         createdAt: "2026-07-31T20:00:00Z",
         updatedAt: "2026-07-31T20:00:00Z",
         archivedAt: nil,
@@ -2976,7 +3037,7 @@ private func orchestrationThread(
         messages: messages,
         activities: activities,
         checkpoints: checkpoints,
-        session: nil
+        session: session
     )
 }
 

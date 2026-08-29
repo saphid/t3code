@@ -426,6 +426,68 @@ export function applyThreadDetailEvent(
       };
     }
 
+    case "thread.provider-process-terminated": {
+      const terminationLabel =
+        event.payload.termination.kind === "signal"
+          ? event.payload.termination.signal
+          : event.payload.termination.kind === "exit-code"
+            ? `exit code ${event.payload.termination.exitCode}`
+            : "unknown cause";
+      const activity: OrchestrationThreadActivity = {
+        id: event.eventId,
+        tone: "error",
+        kind: "runtime.process.terminated",
+        summary: `Provider process ended unexpectedly (${terminationLabel})`,
+        payload: {
+          provider: event.payload.provider,
+          ...(event.payload.providerInstanceId !== undefined
+            ? { providerInstanceId: event.payload.providerInstanceId }
+            : {}),
+          termination: event.payload.termination,
+          attribution: event.payload.attribution,
+        },
+        turnId: event.payload.turnId,
+        sequence: event.sequence,
+        createdAt: event.occurredAt,
+      };
+      const latestTurn: OrchestrationLatestTurn | null =
+        thread.latestTurn?.turnId === event.payload.turnId && thread.latestTurn.state === "running"
+          ? {
+              ...thread.latestTurn,
+              state: "error",
+              completedAt: event.occurredAt,
+            }
+          : thread.latestTurn;
+      const session: OrchestrationSession = {
+        threadId: event.payload.threadId,
+        status: "error",
+        providerName: event.payload.provider,
+        ...(event.payload.providerInstanceId !== undefined
+          ? { providerInstanceId: event.payload.providerInstanceId }
+          : {}),
+        runtimeMode: thread.session?.runtimeMode ?? thread.runtimeMode,
+        activeTurnId: null,
+        lastError: "Provider process ended unexpectedly.",
+        updatedAt: event.occurredAt,
+      };
+      const activities = pipe(
+        thread.activities,
+        Arr.filter((entry) => entry.id !== activity.id),
+        Arr.append(activity),
+        Arr.sort(activityOrder),
+      );
+      return {
+        kind: "updated",
+        thread: {
+          ...thread,
+          latestTurn,
+          session,
+          activities,
+          updatedAt: event.occurredAt,
+        },
+      };
+    }
+
     case "thread.session-stop-requested":
       return thread.session === null
         ? { kind: "unchanged" }

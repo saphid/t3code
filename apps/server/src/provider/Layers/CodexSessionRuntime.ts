@@ -9,6 +9,7 @@ import {
   type ProviderApprovalOption,
   type ProviderEvent,
   type ProviderInteractionMode,
+  type ProviderProcessTermination,
   type ProviderRequestKind,
   type ProviderSession,
   type ProviderTurnStartResult,
@@ -38,6 +39,7 @@ import * as EffectCodexSchema from "effect-codex-app-server/schema";
 
 import { buildCodexInitializeParams } from "./CodexProvider.ts";
 import { codexSessionAppServerArgs } from "./codexLaunchArgs.ts";
+import { processTerminationFromExit, processTerminationLabel } from "../processTermination.ts";
 import { expandHomePath } from "../../pathExpansion.ts";
 import { buildCodexDeveloperInstructions } from "../CodexDeveloperInstructions.ts";
 const decodeV2TurnStartResponse = Schema.decodeUnknownEffect(EffectCodexSchema.V2TurnStartResponse);
@@ -1213,12 +1215,23 @@ export const makeCodexSessionRuntime = (
           ...event,
         });
       });
-    const emitSessionEvent = (method: string, message: string) =>
+    const emitSessionEvent = (
+      method: string,
+      message: string,
+      eventOptions?: {
+        readonly turnId?: TurnId;
+        readonly termination?: ProviderProcessTermination;
+      },
+    ) =>
       emitEvent({
         kind: "session",
         threadId: options.threadId,
         method,
         message,
+        ...(eventOptions?.turnId ? { turnId: eventOptions.turnId } : {}),
+        ...(eventOptions?.termination
+          ? { payload: { unexpected: true, termination: eventOptions.termination } }
+          : {}),
       });
 
     const settlePendingApprovals = (decision: ProviderApprovalDecision) =>
@@ -1999,27 +2012,30 @@ export const makeCodexSessionRuntime = (
     );
 
     yield* child.exitCode.pipe(
-      Effect.flatMap((exitCode) =>
+      Effect.exit,
+      Effect.map(processTerminationFromExit),
+      Effect.flatMap((termination) =>
         Ref.get(closedRef).pipe(
-          Effect.flatMap((closed) => {
-            if (closed) {
-              return Effect.void;
-            }
-            const nextStatus = exitCode === 0 ? "closed" : "error";
-            return updateSession(sessionRef, {
-              status: nextStatus,
-              activeTurnId: undefined,
-            }).pipe(
-              Effect.andThen(
-                emitSessionEvent(
-                  "session/exited",
-                  exitCode === 0
-                    ? "Codex App Server exited."
-                    : `Codex App Server exited with code ${exitCode}.`,
-                ),
-              ),
-            );
-          }),
+          Effect.flatMap((closed) =>
+            Effect.gen(function* () {
+              if (closed) {
+                return;
+              }
+              const session = yield* Ref.get(sessionRef);
+              yield* updateSession(sessionRef, {
+                status: "error",
+                activeTurnId: undefined,
+              });
+              yield* emitSessionEvent(
+                "session/exited",
+                `Codex App Server ended unexpectedly (${processTerminationLabel(termination)}).`,
+                {
+                  ...(session.activeTurnId ? { turnId: session.activeTurnId } : {}),
+                  termination,
+                },
+              );
+            }),
+          ),
         ),
       ),
       Effect.forkIn(runtimeScope),

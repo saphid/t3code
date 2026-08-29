@@ -69,6 +69,29 @@ describe("ProviderRuntimeEvent", () => {
     expect(parsed.payload.planMarkdown).toBe("# Ship it");
   });
 
+  it("decodes typed unexpected provider process termination", () => {
+    const parsed = decodeRuntimeEvent({
+      type: "runtime.process.terminated",
+      eventId: "event-process-terminated",
+      provider: "claudeAgent",
+      providerInstanceId: "claude-main",
+      createdAt: "2026-02-28T00:00:00.000Z",
+      threadId: "thread-1",
+      turnId: "turn-1",
+      payload: {
+        termination: { kind: "signal", signal: "SIGKILL" },
+        attribution: "unknown",
+      },
+    });
+
+    expect(parsed.type).toBe("runtime.process.terminated");
+    if (parsed.type !== "runtime.process.terminated") {
+      throw new Error("expected runtime.process.terminated");
+    }
+    expect(parsed.payload.termination).toEqual({ kind: "signal", signal: "SIGKILL" });
+    expect(parsed.payload.attribution).toBe("unknown");
+  });
+
   it("decodes user-input.requested with structured questions", () => {
     const parsed = decodeRuntimeEvent({
       type: "user-input.requested",

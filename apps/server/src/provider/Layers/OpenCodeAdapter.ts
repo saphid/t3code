@@ -3,6 +3,7 @@ import {
   type OpenCodeSettings,
   ProviderDriverKind,
   ProviderInstanceId,
+  type ProviderProcessTermination,
   type ProviderRuntimeEvent,
   type ProviderSession,
   RuntimeItemId,
@@ -51,6 +52,7 @@ import {
   toOpenCodeQuestionAnswers,
   type OpenCodeServerConnection,
 } from "../opencodeRuntime.ts";
+import { processTerminationFromExit, processTerminationLabel } from "../processTermination.ts";
 import * as Option from "effect/Option";
 
 const PROVIDER = ProviderDriverKind.make("opencode");
@@ -685,7 +687,9 @@ export function makeOpenCodeAdapter(
 
     const emitUnexpectedExit = Effect.fn("emitUnexpectedExit")(function* (
       context: OpenCodeSessionContext,
-      message: string,
+      cause:
+        | { readonly kind: "process"; readonly termination: ProviderProcessTermination }
+        | { readonly kind: "transport"; readonly message: string },
     ) {
       // Atomic one-shot: two fibers can race here (the event-pump on stream
       // failure and the server-exit watcher). `getAndSet` flips the flag in
@@ -695,34 +699,45 @@ export function makeOpenCodeAdapter(
         return;
       }
       const turnId = context.activeTurnId;
+      const message =
+        cause.kind === "process"
+          ? `OpenCode provider process ended unexpectedly (${processTerminationLabel(cause.termination)}).`
+          : cause.message;
       sessions.delete(context.session.threadId);
       // Emit lifecycle events BEFORE tearing down the scope. Both call sites
       // run this inside a fiber forked via `Effect.forkIn(context.sessionScope)`;
       // closing that scope triggers the fiber-interrupt finalizer, so any
       // subsequent yield point would unwind and silently drop these emits.
-      yield* emit({
-        ...(yield* buildEventBase({
-          threadId: context.session.threadId,
-          turnId,
-        })),
-        type: "runtime.error",
-        payload: {
-          message,
-          class: "transport_error",
-        },
-      }).pipe(Effect.ignore);
-      yield* emit({
-        ...(yield* buildEventBase({
-          threadId: context.session.threadId,
-          turnId,
-        })),
-        type: "session.exited",
-        payload: {
-          reason: message,
-          recoverable: false,
-          exitKind: "error",
-        },
-      }).pipe(Effect.ignore);
+      if (cause.kind === "process") {
+        yield* emit(
+          turnId === undefined
+            ? {
+                ...(yield* buildEventBase({ threadId: context.session.threadId })),
+                type: "session.exited",
+                payload: { reason: message, exitKind: "graceful" },
+              }
+            : {
+                ...(yield* buildEventBase({
+                  threadId: context.session.threadId,
+                  turnId,
+                })),
+                type: "runtime.process.terminated",
+                turnId,
+                payload: { termination: cause.termination, attribution: "unknown" },
+              },
+        ).pipe(Effect.ignore);
+      } else {
+        yield* emit({
+          ...(yield* buildEventBase({ threadId: context.session.threadId, turnId })),
+          type: "runtime.error",
+          payload: { message, class: "transport_error" },
+        }).pipe(Effect.ignore);
+        yield* emit({
+          ...(yield* buildEventBase({ threadId: context.session.threadId, turnId })),
+          type: "session.exited",
+          payload: { reason: message, recoverable: false, exitKind: "error" },
+        }).pipe(Effect.ignore);
+      }
       // Inline the teardown that `stopOpenCodeContext` would do; we can't
       // delegate to it because our `getAndSet` above already flipped the
       // one-shot guard, so the call would no-op.
@@ -1176,10 +1191,10 @@ export function makeOpenCodeAdapter(
               return;
             }
             if (Exit.isFailure(exit)) {
-              yield* emitUnexpectedExit(
-                context,
-                openCodeRuntimeErrorDetail(Cause.squash(exit.cause)),
-              );
+              yield* emitUnexpectedExit(context, {
+                kind: "transport",
+                message: openCodeRuntimeErrorDetail(Cause.squash(exit.cause)),
+              });
             }
           }),
         ),
@@ -1188,12 +1203,14 @@ export function makeOpenCodeAdapter(
 
       if (!context.server.external && context.server.exitCode !== null) {
         yield* context.server.exitCode.pipe(
-          Effect.flatMap((code) =>
+          Effect.exit,
+          Effect.map(processTerminationFromExit),
+          Effect.flatMap((termination) =>
             Effect.gen(function* () {
               if (yield* Ref.get(context.stopped)) {
                 return;
               }
-              yield* emitUnexpectedExit(context, `OpenCode server exited unexpectedly (${code}).`);
+              yield* emitUnexpectedExit(context, { kind: "process", termination });
             }),
           ),
           Effect.forkIn(context.sessionScope),

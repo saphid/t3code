@@ -75,6 +75,21 @@ spills the whole accumulated text as one delta. The buffer also flushes at inter
 when a request opens (approval) or user input is requested, via
 `flushBufferedAssistantMessagesForTurn`.
 
+### Unexpected process termination
+
+Each built-in adapter observes the child process it owns and normalizes an unexpected exit during
+an active turn to `runtime.process.terminated`. The payload contains only the typed exit code or
+allow-listed signal and an attribution state; it never persists stderr, environment data, or a
+guessed actor. Intentional shutdown is guarded at the adapter boundary and remains a normal session
+exit.
+
+`ProviderRuntimeIngestion` accepts the event only while the same turn is still active. It dispatches
+`thread.provider-process-termination.record`, whose durable
+`thread.provider-process-terminated` event projects the activity, failed session, and failed turn.
+The command receipt and active-turn guard make delayed and duplicate exit callbacks no-ops. Because
+the typed event is part of the thread-detail stream and SQL projection, reconnecting local, relay,
+and tunnel clients hydrate the same terminal state.
+
 [drivers]: ../../apps/server/src/provider/builtInDrivers.ts
 [codex]: ../../apps/server/src/provider/Drivers/CodexDriver.ts
 [claude]: ../../apps/server/src/provider/Drivers/ClaudeDriver.ts

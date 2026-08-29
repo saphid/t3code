@@ -341,6 +341,42 @@ describe("orchestration projector", () => {
     expect(settledThread?.latestTurn?.turnId).toBe("turn-1");
     expect(settledThread?.latestTurn?.state).toBe("completed");
     expect(settledThread?.latestTurn?.completedAt).toBe(settledAt);
+
+    const terminatedAt = "2026-02-23T08:00:30.000Z";
+    const afterTermination = await Effect.runPromise(
+      projectEvent(
+        afterRunning,
+        makeEvent({
+          sequence: 3,
+          type: "thread.provider-process-terminated",
+          aggregateKind: "thread",
+          aggregateId: "thread-1",
+          occurredAt: terminatedAt,
+          commandId: "cmd-process-terminated",
+          payload: {
+            threadId: "thread-1",
+            provider: "codex",
+            providerInstanceId: "codex",
+            turnId: "turn-1",
+            termination: { kind: "signal", signal: "SIGKILL" },
+            attribution: "unknown",
+          },
+        }),
+      ),
+    );
+    const failedThread = afterTermination.threads[0];
+    expect(failedThread?.session?.status).toBe("error");
+    expect(failedThread?.session?.activeTurnId).toBeNull();
+    expect(failedThread?.latestTurn?.state).toBe("error");
+    expect(failedThread?.latestTurn?.completedAt).toBe(terminatedAt);
+    expect(failedThread?.activities).toContainEqual(
+      expect.objectContaining({
+        id: "event-3",
+        kind: "runtime.process.terminated",
+        summary: "Provider process ended unexpectedly (SIGKILL)",
+        turnId: "turn-1",
+      }),
+    );
   });
 
   it("updates canonical thread runtime mode from thread.runtime-mode-set", async () => {

@@ -14,6 +14,10 @@ import {
   TurnId,
 } from "./baseSchemas.ts";
 import { ProviderInstanceId, ProviderDriverKind } from "./providerInstance.ts";
+import {
+  ProviderProcessTermination,
+  ProviderProcessTerminationAttribution,
+} from "./providerProcessTermination.ts";
 import { ProviderApprovalOption } from "./orchestration.ts";
 
 const TrimmedNonEmptyStringSchema = TrimmedNonEmptyString;
@@ -196,6 +200,7 @@ const ProviderRuntimeEventType = Schema.Literals([
   "files.persisted",
   "runtime.warning",
   "runtime.error",
+  "runtime.process.terminated",
 ]);
 export type ProviderRuntimeEventType = typeof ProviderRuntimeEventType.Type;
 
@@ -248,6 +253,7 @@ const FilesPersistedType = Schema.Literal("files.persisted");
 const ToolDeniedType = Schema.Literal("tool.denied");
 const RuntimeWarningType = Schema.Literal("runtime.warning");
 const RuntimeErrorType = Schema.Literal("runtime.error");
+const RuntimeProcessTerminatedType = Schema.Literal("runtime.process.terminated");
 
 const ProviderRuntimeEventBase = Schema.Struct({
   eventId: EventId,
@@ -780,6 +786,12 @@ const RuntimeErrorPayload = Schema.Struct({
 });
 export type RuntimeErrorPayload = typeof RuntimeErrorPayload.Type;
 
+const RuntimeProcessTerminatedPayload = Schema.Struct({
+  termination: ProviderProcessTermination,
+  attribution: ProviderProcessTerminationAttribution,
+});
+export type RuntimeProcessTerminatedPayload = typeof RuntimeProcessTerminatedPayload.Type;
+
 const ProviderRuntimeSessionStartedEvent = Schema.Struct({
   ...ProviderRuntimeEventBase.fields,
   type: SessionStartedType,
@@ -1140,6 +1152,15 @@ const ProviderRuntimeErrorEvent = Schema.Struct({
 });
 export type ProviderRuntimeErrorEvent = typeof ProviderRuntimeErrorEvent.Type;
 
+const ProviderRuntimeProcessTerminatedEvent = Schema.Struct({
+  ...ProviderRuntimeEventBase.fields,
+  type: RuntimeProcessTerminatedType,
+  turnId: TurnId,
+  payload: RuntimeProcessTerminatedPayload,
+});
+export type ProviderRuntimeProcessTerminatedEvent =
+  typeof ProviderRuntimeProcessTerminatedEvent.Type;
+
 export const ProviderRuntimeEventV2 = Schema.Union([
   ProviderRuntimeSessionStartedEvent,
   ProviderRuntimeSessionConfiguredEvent,
@@ -1190,6 +1211,7 @@ export const ProviderRuntimeEventV2 = Schema.Union([
   ProviderRuntimeToolDeniedEvent,
   ProviderRuntimeWarningEvent,
   ProviderRuntimeErrorEvent,
+  ProviderRuntimeProcessTerminatedEvent,
 ]);
 export type ProviderRuntimeEventV2 = typeof ProviderRuntimeEventV2.Type;
 

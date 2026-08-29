@@ -288,6 +288,7 @@ export function isThreadDetailEvent(event: OrchestrationEvent): event is Extract
       | "thread.message-sent"
       | "thread.proposed-plan-upserted"
       | "thread.activity-appended"
+      | "thread.provider-process-terminated"
       | "thread.turn-diff-completed"
       | "thread.reverted"
       | "thread.session-set";
@@ -297,6 +298,7 @@ export function isThreadDetailEvent(event: OrchestrationEvent): event is Extract
     event.type === "thread.message-sent" ||
     event.type === "thread.proposed-plan-upserted" ||
     event.type === "thread.activity-appended" ||
+    event.type === "thread.provider-process-terminated" ||
     event.type === "thread.turn-diff-completed" ||
     event.type === "thread.reverted" ||
     event.type === "thread.session-set"

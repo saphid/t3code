@@ -2746,6 +2746,167 @@ describe("ProviderRuntimeIngestion", () => {
     expect(activityPayload?.message).toBe("runtime activity exploded");
   });
 
+  it("durably records unexpected process termination and fails only the active turn", async () => {
+    const harness = await createHarness();
+    const turnId = asTurnId("turn-process-terminated");
+
+    harness.emit({
+      type: "turn.started",
+      eventId: asEventId("evt-process-turn-started"),
+      provider: ProviderDriverKind.make("claudeAgent"),
+      providerInstanceId: ProviderInstanceId.make("claude-main"),
+      createdAt: "2026-01-01T00:00:00.000Z",
+      threadId: asThreadId("thread-1"),
+      turnId,
+      payload: {},
+    });
+    await waitForThread(
+      harness.readModel,
+      (entry) => entry.session?.status === "running" && entry.latestTurn?.turnId === turnId,
+    );
+
+    const terminationEvent = {
+      type: "runtime.process.terminated" as const,
+      eventId: asEventId("evt-process-terminated"),
+      provider: ProviderDriverKind.make("claudeAgent"),
+      providerInstanceId: ProviderInstanceId.make("claude-main"),
+      createdAt: "2026-01-01T00:00:01.000Z",
+      threadId: asThreadId("thread-1"),
+      turnId,
+      payload: {
+        termination: { kind: "signal" as const, signal: "SIGKILL" as const },
+        attribution: "unknown" as const,
+      },
+    };
+    harness.emit(terminationEvent);
+    await harness.drain();
+    const terminatedReadModel = await harness.readModel();
+    const thread = terminatedReadModel.threads.find((entry) => entry.id === "thread-1");
+    expect(thread?.session).toMatchObject({ status: "error", activeTurnId: null });
+    expect(thread?.latestTurn?.state).toBe("error");
+    if (!thread) return;
+    const activities = thread.activities.filter(
+      (activity) => activity.kind === "runtime.process.terminated",
+    );
+    expect(activities).toHaveLength(1);
+    expect(activities[0]).toMatchObject({
+      tone: "error",
+      turnId,
+      payload: {
+        provider: "claudeAgent",
+        providerInstanceId: "claude-main",
+        termination: { kind: "signal", signal: "SIGKILL" },
+        attribution: "unknown",
+      },
+    });
+    expect(thread.session?.lastError).toBe("Provider process ended unexpectedly.");
+
+    // A delayed duplicate must not create another durable failure after the
+    // original event has atomically settled the turn.
+    harness.emit(terminationEvent);
+    await harness.drain();
+    const afterDuplicate = await harness.readModel();
+    const sameThread = afterDuplicate.threads.find((entry) => entry.id === "thread-1");
+    expect(
+      sameThread?.activities.filter((activity) => activity.kind === "runtime.process.terminated"),
+    ).toHaveLength(1);
+  });
+
+  it("ignores a delayed process callback after normal turn completion", async () => {
+    const harness = await createHarness();
+    const turnId = asTurnId("turn-completed-before-exit");
+    const base = {
+      provider: ProviderDriverKind.make("codex"),
+      threadId: asThreadId("thread-1"),
+      turnId,
+    };
+
+    harness.emit({
+      ...base,
+      type: "turn.started",
+      eventId: asEventId("evt-completed-before-exit-start"),
+      createdAt: "2026-01-01T00:00:00.000Z",
+      payload: {},
+    });
+    await waitForThread(harness.readModel, (entry) => entry.latestTurn?.state === "running");
+    harness.emit({
+      ...base,
+      type: "turn.completed",
+      eventId: asEventId("evt-completed-before-exit-complete"),
+      createdAt: "2026-01-01T00:00:01.000Z",
+      payload: { state: "completed" },
+    });
+    await waitForThread(harness.readModel, (entry) => entry.latestTurn?.state === "completed");
+
+    harness.emit({
+      ...base,
+      type: "runtime.process.terminated",
+      eventId: asEventId("evt-delayed-exit-after-completion"),
+      createdAt: "2026-01-01T00:00:02.000Z",
+      payload: {
+        termination: { kind: "exit-code", exitCode: 0 },
+        attribution: "unknown",
+      },
+    });
+    await harness.drain();
+
+    const readModel = await harness.readModel();
+    const thread = readModel.threads.find((entry) => entry.id === "thread-1");
+    expect(thread?.latestTurn?.state).toBe("completed");
+    expect(
+      thread?.activities.some((activity) => activity.kind === "runtime.process.terminated"),
+    ).toBe(false);
+  });
+
+  it("keeps intentional session stop distinct from a delayed process callback", async () => {
+    const harness = await createHarness();
+    const turnId = asTurnId("turn-stopped-before-exit");
+    const base = {
+      provider: ProviderDriverKind.make("cursor"),
+      threadId: asThreadId("thread-1"),
+      turnId,
+    };
+
+    harness.emit({
+      ...base,
+      type: "turn.started",
+      eventId: asEventId("evt-stopped-before-exit-start"),
+      createdAt: "2026-01-01T00:00:00.000Z",
+      payload: {},
+    });
+    await waitForThread(harness.readModel, (entry) => entry.latestTurn?.state === "running");
+    harness.emit({
+      ...base,
+      type: "session.exited",
+      eventId: asEventId("evt-intentional-session-stop"),
+      createdAt: "2026-01-01T00:00:01.000Z",
+      payload: { exitKind: "graceful" },
+    });
+    await waitForThread(
+      harness.readModel,
+      (entry) => entry.session?.status === "stopped" && entry.session.activeTurnId === null,
+    );
+
+    harness.emit({
+      ...base,
+      type: "runtime.process.terminated",
+      eventId: asEventId("evt-delayed-exit-after-stop"),
+      createdAt: "2026-01-01T00:00:02.000Z",
+      payload: {
+        termination: { kind: "signal", signal: "SIGTERM" },
+        attribution: "t3-runtime",
+      },
+    });
+    await harness.drain();
+
+    const readModel = await harness.readModel();
+    const thread = readModel.threads.find((entry) => entry.id === "thread-1");
+    expect(thread?.session?.status).toBe("stopped");
+    expect(
+      thread?.activities.some((activity) => activity.kind === "runtime.process.terminated"),
+    ).toBe(false);
+  });
+
   it("keeps the session running when a runtime.warning arrives during an active turn", async () => {
     const harness = await createHarness();
     const now = "2026-01-01T00:00:00.000Z";

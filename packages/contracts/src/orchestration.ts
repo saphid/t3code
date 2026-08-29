@@ -22,7 +22,11 @@ import {
   TrimmedString,
   TurnId,
 } from "./baseSchemas.ts";
-import { ProviderInstanceId } from "./providerInstance.ts";
+import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
+import {
+  ProviderProcessTermination,
+  ProviderProcessTerminationAttribution,
+} from "./providerProcessTermination.ts";
 
 export const ORCHESTRATION_WS_METHODS = {
   dispatchCommand: "orchestration.dispatchCommand",
@@ -1033,6 +1037,18 @@ const ThreadActivityAppendCommand = Schema.Struct({
   createdAt: IsoDateTime,
 });
 
+const ThreadProviderProcessTerminationRecordCommand = Schema.Struct({
+  type: Schema.Literal("thread.provider-process-termination.record"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  provider: ProviderDriverKind,
+  providerInstanceId: Schema.optional(ProviderInstanceId),
+  turnId: TurnId,
+  termination: ProviderProcessTermination,
+  attribution: ProviderProcessTerminationAttribution,
+  createdAt: IsoDateTime,
+});
+
 const ThreadRevertCompleteCommand = Schema.Struct({
   type: Schema.Literal("thread.revert.complete"),
   commandId: CommandId,
@@ -1056,6 +1072,7 @@ const InternalOrchestrationCommand = Schema.Union([
   ThreadProposedPlanUpsertCommand,
   ThreadTurnDiffCompleteCommand,
   ThreadActivityAppendCommand,
+  ThreadProviderProcessTerminationRecordCommand,
   ThreadRevertCompleteCommand,
   ThreadTitleRegenerationCompleteCommand,
 ]);
@@ -1097,6 +1114,7 @@ export const OrchestrationEventType = Schema.Literals([
   "thread.proposed-plan-upserted",
   "thread.turn-diff-completed",
   "thread.activity-appended",
+  "thread.provider-process-terminated",
 ]);
 export type OrchestrationEventType = typeof OrchestrationEventType.Type;
 
@@ -1331,6 +1349,17 @@ export const ThreadActivityAppendedPayload = Schema.Struct({
   activity: OrchestrationThreadActivity,
 });
 
+export const ThreadProviderProcessTerminatedPayload = Schema.Struct({
+  threadId: ThreadId,
+  provider: ProviderDriverKind,
+  providerInstanceId: Schema.optional(ProviderInstanceId),
+  turnId: TurnId,
+  termination: ProviderProcessTermination,
+  attribution: ProviderProcessTerminationAttribution,
+});
+export type ThreadProviderProcessTerminatedPayload =
+  typeof ThreadProviderProcessTerminatedPayload.Type;
+
 /**
  * Which client connection dispatched the command that produced an event.
  * Stamped by the orchestration engine on client-dispatched commands; absent on
@@ -1510,6 +1539,11 @@ export const OrchestrationEvent = Schema.Union([
     ...EventBaseFields,
     type: Schema.Literal("thread.activity-appended"),
     payload: ThreadActivityAppendedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("thread.provider-process-terminated"),
+    payload: ThreadProviderProcessTerminatedPayload,
   }),
 ]);
 export type OrchestrationEvent = typeof OrchestrationEvent.Type;
