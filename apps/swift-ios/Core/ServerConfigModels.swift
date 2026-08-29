@@ -101,6 +101,8 @@ public struct ServerProviderSkillSnapshot: Codable, Equatable, Sendable {
     public let enabled: Bool
     public let displayName: String?
     public let shortDescription: String?
+    public let userInvocationOnly: Bool?
+    public let userInvocable: Bool?
 }
 
 public struct ServerProviderSnapshot: Codable, Identifiable, Equatable, Sendable {

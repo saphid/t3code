@@ -24,9 +24,10 @@ struct FeatureComposerCommandPopover: View {
                             Button {
                                 onSelect(item)
                             } label: {
-                                FeatureComposerCommandRow(item: item, triggerKind: triggerKind)
+                                FeatureComposerCommandRow(item: item)
                             }
                             .buttonStyle(.plain)
+                            .disabled(!item.isSelectable)
                             .accessibilityLabel(accessibilityLabel(for: item))
                             .accessibilityIdentifier("composer-suggestion-\(item.id)")
 
@@ -92,7 +93,6 @@ struct FeatureComposerCommandPopover: View {
 
 private struct FeatureComposerCommandRow: View {
     let item: FeatureComposerMenuItem
-    let triggerKind: FeatureComposerTriggerKind
 
     var body: some View {
         HStack(spacing: 10) {
@@ -126,15 +126,11 @@ private struct FeatureComposerCommandRow: View {
         switch item {
         case .modelCommand, .model: return "cpu"
         case .providerCommand: return "terminal"
-        case let .skill(skill): return skill.source.systemImage
+        case let .skill(invocation): return invocation.skill.source.systemImage
+        case .unavailableSkill: return "exclamationmark.circle"
         case let .path(entry): return entry.kind == .directory ? "folder" : "doc"
         }
     }
 
-    private var displayLabel: String {
-        if triggerKind == .slashCommand, case let .skill(skill) = item {
-            return "/skill:\(skill.displayName ?? skill.name)"
-        }
-        return item.label
-    }
+    private var displayLabel: String { item.label }
 }

@@ -295,6 +295,16 @@ struct FeatureComposerView: View {
                     .accessibilityIdentifier("attachment-preparing")
             }
 
+            if let skillInvocationValidationMessage {
+                Label(skillInvocationValidationMessage, systemImage: "exclamationmark.circle")
+                    .font(T3Typography.supporting)
+                    .foregroundStyle(T3Colors.danger)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 15)
+                    .padding(.bottom, 4)
+                    .accessibilityIdentifier("skill-invocation-error")
+            }
+
             composerFooter
         }
     }
@@ -400,6 +410,7 @@ struct FeatureComposerView: View {
 
     private var canSend: Bool {
         guard composerTrigger?.kind != .model else { return false }
+        guard skillInvocationValidationMessage == nil else { return false }
         return FeatureComposerSubmissionEligibility.canSend(
             text: text,
             attachmentCount: attachments.count,
@@ -416,12 +427,38 @@ struct FeatureComposerView: View {
         )
     }
 
+    private var skillInvocationValidationMessage: String? {
+        if triggerMemo.validationText == text,
+           triggerMemo.validationProviders == providers,
+           triggerMemo.validationSelection == selection,
+           triggerMemo.validationThreadSelection == threadSelection {
+            return triggerMemo.validationMessage
+        }
+        let message = FeatureProviderSkillInvocationPolicy.validationMessage(
+            in: text,
+            providers: providers,
+            selection: selection,
+            threadSelection: threadSelection
+        )
+        triggerMemo.validationText = text
+        triggerMemo.validationProviders = providers
+        triggerMemo.validationSelection = selection
+        triggerMemo.validationThreadSelection = threadSelection
+        triggerMemo.validationMessage = message
+        return message
+    }
+
     /// Trigger detection walks the whole draft with character indices and is
     /// read from several computed properties per body evaluation, so one parse
     /// per keystroke is memoized instead of four.
     private final class TriggerMemo {
         var text: String?
         var trigger: FeatureComposerTrigger?
+        var validationText: String?
+        var validationProviders: [FeatureProvider] = []
+        var validationSelection: FeatureSelection?
+        var validationThreadSelection: FeatureSelection?
+        var validationMessage: String?
     }
 
     @State private var triggerMemo = TriggerMemo()
@@ -505,8 +542,10 @@ struct FeatureComposerView: View {
             replacement = ""
         case let .providerCommand(command):
             replacement = "/\(command.name) "
-        case let .skill(skill):
-            replacement = "$\(skill.name) "
+        case let .skill(invocation):
+            replacement = invocation.replacement
+        case .unavailableSkill:
+            return
         case let .path(entry):
             replacement = FeatureComposerFileLinkSerializer.markdownLink(for: entry.path) + " "
         }

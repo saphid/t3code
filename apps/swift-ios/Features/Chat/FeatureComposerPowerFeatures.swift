@@ -52,6 +52,8 @@ public struct FeatureProviderSkill: Identifiable, Sendable, Equatable, Hashable,
     public let path: String
     public let scope: String?
     public let isEnabled: Bool
+    public let userInvocationOnly: Bool
+    public let userInvocable: Bool
 
     public init(
         name: String,
@@ -60,7 +62,9 @@ public struct FeatureProviderSkill: Identifiable, Sendable, Equatable, Hashable,
         shortDescription: String? = nil,
         path: String = "",
         scope: String? = nil,
-        isEnabled: Bool = true
+        isEnabled: Bool = true,
+        userInvocationOnly: Bool = false,
+        userInvocable: Bool = true
     ) {
         self.name = name
         self.displayName = displayName
@@ -69,6 +73,8 @@ public struct FeatureProviderSkill: Identifiable, Sendable, Equatable, Hashable,
         self.path = path
         self.scope = scope
         self.isEnabled = isEnabled
+        self.userInvocationOnly = userInvocationOnly
+        self.userInvocable = userInvocable
     }
 
     var source: FeatureProviderSkillSource {
@@ -275,7 +281,8 @@ enum FeatureComposerMenuItem: Identifiable, Sendable, Equatable {
     case modelCommand
     case model(selection: FeatureSelection, label: String, description: String)
     case providerCommand(FeatureProviderSlashCommand)
-    case skill(FeatureProviderSkill)
+    case skill(FeatureProviderSkillInvocation)
+    case unavailableSkill(FeatureProviderSkill, label: String, message: String)
     case path(FeatureComposerPathEntry)
 
     var id: String {
@@ -283,7 +290,8 @@ enum FeatureComposerMenuItem: Identifiable, Sendable, Equatable {
         case .modelCommand: "command:model"
         case let .model(selection, _, _): "model:\(selection.providerID):\(selection.modelID)"
         case let .providerCommand(command): "command:\(command.id)"
-        case let .skill(skill): "skill:\(skill.id)"
+        case let .skill(invocation): "skill:\(invocation.skill.id)"
+        case let .unavailableSkill(skill, _, _): "unavailable-skill:\(skill.id)"
         case let .path(entry): "path:\(entry.path)"
         }
     }
@@ -293,7 +301,8 @@ enum FeatureComposerMenuItem: Identifiable, Sendable, Equatable {
         case .modelCommand: "/model"
         case let .model(_, label, _): label
         case let .providerCommand(command): "/\(command.name)"
-        case let .skill(skill): skill.displayName ?? skill.name
+        case let .skill(invocation): invocation.token
+        case let .unavailableSkill(_, label, _): label
         case let .path(entry): entry.name
         }
     }
@@ -304,9 +313,178 @@ enum FeatureComposerMenuItem: Identifiable, Sendable, Equatable {
         case let .model(_, _, description): description
         case let .providerCommand(command):
             command.description ?? command.inputHint ?? ""
-        case let .skill(skill):
-            skill.shortDescription ?? skill.description ?? skill.scope ?? ""
+        case let .skill(invocation):
+            invocation.skill.shortDescription
+                ?? invocation.skill.description
+                ?? invocation.skill.scope
+                ?? ""
+        case let .unavailableSkill(_, _, message): message
         case let .path(entry): entry.parentPath
+        }
+    }
+}
+
+extension FeatureComposerMenuItem {
+    var isSelectable: Bool {
+        if case .unavailableSkill = self { return false }
+        return true
+    }
+}
+
+enum FeatureProviderSkillInvocationSyntax: String, Sendable, Equatable {
+    case slash = "/"
+    case dollar = "$"
+}
+
+struct FeatureProviderSkillInvocation: Sendable, Equatable {
+    let skill: FeatureProviderSkill
+    let syntax: FeatureProviderSkillInvocationSyntax
+
+    var token: String { "\(syntax.rawValue)\(skill.name)" }
+    var replacement: String { "\(token) " }
+}
+
+enum FeatureProviderSkillInvocationResolution: Sendable, Equatable {
+    case available(FeatureProviderSkillInvocation)
+    case unavailable(label: String, message: String)
+}
+
+enum FeatureProviderSkillInvocationPolicy {
+    private static let invocationExpression = try? NSRegularExpression(
+        pattern: "(?<!\\S)([/\\$])([^\\s/\\$]+)(?=$|\\s)",
+        options: [.caseInsensitive]
+    )
+
+    static func resolution(
+        for skill: FeatureProviderSkill,
+        trigger: FeatureComposerTrigger,
+        provider: FeatureProvider?
+    ) -> FeatureProviderSkillInvocationResolution {
+        let typedSyntax: FeatureProviderSkillInvocationSyntax = trigger.kind == .slashCommand
+            ? .slash
+            : .dollar
+        guard let provider else {
+            return .available(FeatureProviderSkillInvocation(skill: skill, syntax: .dollar))
+        }
+
+        let brand = ProviderBrand.resolve(
+            driver: provider.driver,
+            providerID: provider.id,
+            providerName: provider.name
+        )
+        if brand == .claude {
+            switch trigger.kind {
+            case .slashCommand where trigger.range.lowerBound == 0 && !skill.userInvocable:
+                return .unavailable(
+                    label: "\(typedSyntax.rawValue)\(skill.name)",
+                    message: "This Claude skill only accepts $\(skill.name)."
+                )
+            case .slashCommand where trigger.range.lowerBound == 0:
+                return .available(FeatureProviderSkillInvocation(skill: skill, syntax: .slash))
+            case .slashCommand where skill.userInvocationOnly:
+                return .unavailable(
+                    label: "\(typedSyntax.rawValue)\(skill.name)",
+                    message: "Start a new message with /\(skill.name), or delete this trigger."
+                )
+            case .slashCommand:
+                return .unavailable(
+                    label: "\(typedSyntax.rawValue)\(skill.name)",
+                    message: "Start the message with /\(skill.name), or use $\(skill.name) here."
+                )
+            case .skill where skill.userInvocationOnly:
+                return .unavailable(
+                    label: "\(typedSyntax.rawValue)\(skill.name)",
+                    message: "This Claude skill only accepts /\(skill.name) at the start of a message."
+                )
+            case .skill:
+                return .available(FeatureProviderSkillInvocation(skill: skill, syntax: .dollar))
+            case .model, .path:
+                return .unavailable(label: skill.name, message: "Choose this skill from / or $.")
+            }
+        }
+
+        return .available(FeatureProviderSkillInvocation(skill: skill, syntax: .dollar))
+    }
+
+    static func validationMessage(
+        in text: String,
+        providers: [FeatureProvider],
+        selection: FeatureSelection?,
+        threadSelection: FeatureSelection?
+    ) -> String? {
+        guard let selectedProviderID = (selection ?? threadSelection)?.providerID,
+              let provider = providers.first(where: { $0.id == selectedProviderID }) else {
+            return nil
+        }
+
+        let allSkillNames = Set(
+            providers.flatMap { $0.skills ?? [] }.map { $0.name.lowercased() }
+        )
+        var providerSkills: [String: FeatureProviderSkill] = [:]
+        for skill in provider.skills ?? [] {
+            providerSkills[skill.name.lowercased()] = skill
+        }
+        let providerCommands = Set((provider.slashCommands ?? []).map { $0.name.lowercased() })
+        let brand = ProviderBrand.resolve(
+            driver: provider.driver,
+            providerID: provider.id,
+            providerName: provider.name
+        )
+
+        for invocation in detectedInvocations(in: text, skillNames: allSkillNames) {
+            let normalizedName = invocation.name.lowercased()
+            if invocation.syntax == .slash, providerCommands.contains(normalizedName) {
+                continue
+            }
+            guard let skill = providerSkills[normalizedName] else {
+                return "\(provider.name) does not offer \(invocation.token). Switch providers or delete that token."
+            }
+            switch (brand, invocation.syntax) {
+            case (.claude, .slash) where invocation.location == 0 && !skill.userInvocable:
+                return "This Claude skill only accepts $\(skill.name). Replace or delete /\(skill.name)."
+            case (.claude, .slash) where invocation.location == 0:
+                continue
+            case (.claude, .slash):
+                return "Move /\(skill.name) to the start of the message, use $\(skill.name), or delete it."
+            case (.claude, .dollar) where skill.userInvocationOnly:
+                return "This Claude skill only accepts /\(skill.name) at the start of a message."
+            case (_, .slash):
+                return "\(provider.name) invokes \(skill.name) as $\(skill.name). Replace or delete /\(skill.name)."
+            default:
+                continue
+            }
+        }
+        return nil
+    }
+
+    private struct DetectedInvocation {
+        let name: String
+        let syntax: FeatureProviderSkillInvocationSyntax
+        let location: Int
+
+        var token: String { "\(syntax.rawValue)\(name)" }
+    }
+
+    private static func detectedInvocations(
+        in text: String,
+        skillNames: Set<String>
+    ) -> [DetectedInvocation] {
+        guard let invocationExpression else { return [] }
+        let fullRange = NSRange(text.startIndex..., in: text)
+        return invocationExpression.matches(in: text, range: fullRange).compactMap { match in
+            guard let sigilRange = Range(match.range(at: 1), in: text),
+                  let nameRange = Range(match.range(at: 2), in: text),
+                  let matchRange = Range(match.range, in: text),
+                  let syntax = FeatureProviderSkillInvocationSyntax(
+                      rawValue: String(text[sigilRange])
+                  ) else { return nil }
+            let name = String(text[nameRange])
+            guard skillNames.contains(name.lowercased()) else { return nil }
+            return DetectedInvocation(
+                name: name,
+                syntax: syntax,
+                location: text.distance(from: text.startIndex, to: matchRange.lowerBound)
+            )
         }
     }
 }
@@ -320,6 +498,8 @@ enum FeatureComposerMenuBuilder {
         powerFeatures: FeatureComposerPowerFeatures,
         pathEntries: [FeatureComposerPathEntry]
     ) -> [FeatureComposerMenuItem] {
+        let selectedProviderID = (currentSelection ?? threadSelection)?.providerID
+        let provider = providers.first { $0.id == selectedProviderID }
         switch trigger.kind {
         case .slashCommand:
             let query = trigger.query.lowercased()
@@ -349,7 +529,7 @@ enum FeatureComposerMenuBuilder {
                 .filter { query.isEmpty || $0.name.localizedCaseInsensitiveContains(query) }
                 .sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
             items.append(contentsOf: commands.map(FeatureComposerMenuItem.providerCommand))
-            items.append(contentsOf: skills.map(FeatureComposerMenuItem.skill))
+            items.append(contentsOf: skills.map { menuItem(for: $0, trigger: trigger, provider: provider) })
             return Array(items.prefix(20))
 
         case .model:
@@ -406,13 +586,30 @@ enum FeatureComposerMenuBuilder {
                         == .orderedAscending
                 }
                 .prefix(20)
-                .map(FeatureComposerMenuItem.skill)
+                .map { menuItem(for: $0, trigger: trigger, provider: provider) }
 
         case .path:
             return pathEntries
                 .uniquedByPath()
                 .prefix(20)
                 .map(FeatureComposerMenuItem.path)
+        }
+    }
+
+    private static func menuItem(
+        for skill: FeatureProviderSkill,
+        trigger: FeatureComposerTrigger,
+        provider: FeatureProvider?
+    ) -> FeatureComposerMenuItem {
+        switch FeatureProviderSkillInvocationPolicy.resolution(
+            for: skill,
+            trigger: trigger,
+            provider: provider
+        ) {
+        case let .available(invocation):
+            return .skill(invocation)
+        case let .unavailable(label, message):
+            return .unavailableSkill(skill, label: label, message: message)
         }
     }
 }

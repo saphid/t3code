@@ -28,7 +28,35 @@ const FRONTMATTER_PATTERN = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/;
 type SkillFrontmatter =
   | { readonly kind: "missing" }
   | { readonly kind: "malformed" }
-  | { readonly kind: "parsed"; readonly name?: string; readonly description?: string };
+  | {
+      readonly kind: "parsed";
+      readonly name?: string;
+      readonly description?: string;
+      readonly userInvocationOnly?: boolean;
+      readonly userInvocable?: boolean;
+    };
+
+function parseFrontmatterBoolean(value: unknown): boolean | undefined {
+  if (typeof value === "boolean") return value;
+  if (typeof value === "number") {
+    return value === 1 ? true : value === 0 ? false : undefined;
+  }
+  if (typeof value !== "string") return undefined;
+  switch (value.trim().toLowerCase()) {
+    case "true":
+    case "yes":
+    case "on":
+    case "y":
+      return true;
+    case "false":
+    case "no":
+    case "off":
+    case "n":
+      return false;
+    default:
+      return undefined;
+  }
+}
 
 function parseSkillFrontmatter(contents: string): SkillFrontmatter {
   const match = FRONTMATTER_PATTERN.exec(contents);
@@ -53,6 +81,12 @@ function parseSkillFrontmatter(contents: string): SkillFrontmatter {
     kind: "parsed",
     ...(name ? { name } : {}),
     ...(description ? { description } : {}),
+    ...(parseFrontmatterBoolean(record["disable-model-invocation"]) === true
+      ? { userInvocationOnly: true }
+      : {}),
+    ...(parseFrontmatterBoolean(record["user-invocable"]) === false
+      ? { userInvocable: false }
+      : {}),
   };
 }
 
@@ -146,6 +180,12 @@ export const discoverClaudeSkills = Effect.fn("discoverClaudeSkills")(function* 
         scope: root.scope,
         ...(frontmatter.kind === "parsed" && frontmatter.description
           ? { description: frontmatter.description }
+          : {}),
+        ...(frontmatter.kind === "parsed" && frontmatter.userInvocationOnly === true
+          ? { userInvocationOnly: true }
+          : {}),
+        ...(frontmatter.kind === "parsed" && frontmatter.userInvocable === false
+          ? { userInvocable: false }
           : {}),
       });
     }

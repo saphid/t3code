@@ -34,6 +34,7 @@ it.layer(NodeServices.layer)("discoverClaudeSkills", (it) => {
           "---",
           "name: codex-review",
           "description: Ask Codex for a review.",
+          "disable-model-invocation: true",
           "---",
           "",
           "# Body",
@@ -54,6 +55,7 @@ it.layer(NodeServices.layer)("discoverClaudeSkills", (it) => {
           enabled: true,
           scope: "user",
           description: "Ask Codex for a review.",
+          userInvocationOnly: true,
         },
         {
           name: "deploy",
@@ -216,6 +218,37 @@ it.layer(NodeServices.layer)("discoverClaudeSkills", (it) => {
         ["no-frontmatter"],
       );
       assert.equal(skills[0]?.description, undefined);
+    }),
+  );
+
+  it.effect("discovers Claude user and model invocation restrictions", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-claude-skills-" });
+      const configDir = path.join(tempDir, "claude-home");
+      const skillsDir = path.join(configDir, "skills");
+
+      yield* writeSkill(
+        skillsDir,
+        "user-only",
+        ["---", "disable-model-invocation: yes", "---", "", "# Body"].join("\n"),
+      );
+      yield* writeSkill(
+        skillsDir,
+        "agent-only",
+        ["---", "user-invocable: no", "---", "", "# Body"].join("\n"),
+      );
+
+      const skills = yield* discoverClaudeSkills({ homePath: configDir });
+
+      assert.deepEqual(
+        skills.map((skill) => [skill.name, skill.userInvocationOnly, skill.userInvocable]),
+        [
+          ["agent-only", undefined, false],
+          ["user-only", true, undefined],
+        ],
+      );
     }),
   );
 

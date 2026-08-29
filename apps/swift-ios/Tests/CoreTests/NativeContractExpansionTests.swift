@@ -288,7 +288,9 @@ final class NativeContractExpansionTests: XCTestCase {
                       "scope": "user",
                       "enabled": true,
                       "displayName": "Fix CI",
-                      "shortDescription": "Debug GitHub Actions"
+                      "shortDescription": "Debug GitHub Actions",
+                      "userInvocationOnly": true,
+                      "userInvocable": false
                     }]
                   }]
                 }
@@ -303,6 +305,8 @@ final class NativeContractExpansionTests: XCTestCase {
         XCTAssertEqual(provider.slashCommands?.first?.name, "review")
         XCTAssertEqual(provider.slashCommands?.first?.input?.hint, "focus")
         XCTAssertEqual(provider.skills?.first?.displayName, "Fix CI")
+        XCTAssertEqual(provider.skills?.first?.userInvocationOnly, true)
+        XCTAssertEqual(provider.skills?.first?.userInvocable, false)
         XCTAssertEqual(config.settings?.defaultThreadEnvMode, .worktree)
         XCTAssertEqual(config.settings?.newWorktreesStartFromOrigin, false)
         let model = try XCTUnwrap(provider.models.first)

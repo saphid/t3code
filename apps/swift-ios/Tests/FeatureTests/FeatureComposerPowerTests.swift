@@ -267,7 +267,7 @@ struct FeatureComposerPowerTests {
             pathEntries: []
         )
 
-        #expect(items.map(\.label) == ["/model", "/review", "Deploy project"])
+        #expect(items.map(\.label) == ["/model", "/review", "$deploy"])
     }
 
     @Test
@@ -288,7 +288,213 @@ struct FeatureComposerPowerTests {
             pathEntries: []
         )
 
-        #expect(items.map(\.label) == ["Fix CI"])
+        #expect(items.map(\.label) == ["$gh-fix-ci"])
+    }
+
+    @Test(
+        "Claude slash selection preserves the literal slash token",
+        .bug("https://github.com/saphid/t3code-personal/issues/198")
+    )
+    func claudeSlashSelectionPreservesSlashInvocation() throws {
+        let skill = FeatureProviderSkill(
+            name: "clarify",
+            userInvocationOnly: true
+        )
+        let provider = FeatureProvider(
+            id: "work-claude",
+            name: "Claude",
+            driver: "claudeAgent",
+            skills: [skill]
+        )
+        let trigger = try #require(FeatureComposerTriggerParser.detect(in: "/clar"))
+        let items = FeatureComposerMenuBuilder.items(
+            trigger: trigger,
+            providers: [provider],
+            currentSelection: FeatureSelection(providerID: provider.id, modelID: "opus"),
+            threadSelection: nil,
+            powerFeatures: FeatureComposerPowerFeatures(skills: [skill]),
+            pathEntries: []
+        )
+
+        guard case let .skill(invocation) = try #require(items.first) else {
+            Issue.record("Expected an invocable Claude skill")
+            return
+        }
+        #expect(invocation.token == "/clarify")
+        #expect(
+            FeatureComposerTriggerParser.replacing(
+                trigger.range,
+                in: "/clar",
+                with: invocation.replacement
+            ) == "/clarify "
+        )
+    }
+
+    @Test(
+        "Codex uses dollar invocation from both picker triggers",
+        .bug("https://github.com/saphid/t3code-personal/issues/198")
+    )
+    func codexSkillSelectionUsesDollarInvocation() throws {
+        let skill = FeatureProviderSkill(name: "review")
+        let provider = FeatureProvider(
+            id: "work-openai",
+            name: "Codex",
+            driver: "codex",
+            skills: [skill]
+        )
+        let selection = FeatureSelection(providerID: provider.id, modelID: "sol")
+
+        for text in ["/rev", "$rev"] {
+            let trigger = try #require(FeatureComposerTriggerParser.detect(in: text))
+            let item = try #require(FeatureComposerMenuBuilder.items(
+                trigger: trigger,
+                providers: [provider],
+                currentSelection: selection,
+                threadSelection: nil,
+                powerFeatures: FeatureComposerPowerFeatures(skills: [skill]),
+                pathEntries: []
+            ).first { if case .skill = $0 { true } else { false } })
+            guard case let .skill(invocation) = item else {
+                Issue.record("Expected an invocable Codex skill")
+                return
+            }
+            #expect(invocation.token == "$review")
+        }
+    }
+
+    @Test(
+        "Claude user-only skills explain unsupported dollar and inline slash paths",
+        .bug("https://github.com/saphid/t3code-personal/issues/198")
+    )
+    func claudeUserOnlySkillBlocksUnsupportedPickerPaths() throws {
+        let skill = FeatureProviderSkill(
+            name: "clarify",
+            userInvocationOnly: true
+        )
+        let provider = FeatureProvider(
+            id: "claude",
+            name: "Claude",
+            driver: "claudeAgent",
+            skills: [skill]
+        )
+
+        for text in ["$clar", "First line\n/clar"] {
+            let trigger = try #require(FeatureComposerTriggerParser.detect(in: text))
+            let resolution = FeatureProviderSkillInvocationPolicy.resolution(
+                for: skill,
+                trigger: trigger,
+                provider: provider
+            )
+            guard case let .unavailable(label, message) = resolution else {
+                Issue.record("Expected an unavailable invocation")
+                return
+            }
+            #expect(label.hasSuffix("clarify"))
+            #expect(message.contains("start"))
+        }
+    }
+
+    @Test(
+        "Claude agent-only skill rejects slash invocation",
+        .bug("https://github.com/saphid/t3code-personal/issues/198")
+    )
+    func claudeAgentOnlySkillRejectsSlashInvocation() throws {
+        let skill = FeatureProviderSkill(name: "agent-only", userInvocable: false)
+        let provider = FeatureProvider(
+            id: "claude",
+            name: "Claude",
+            driver: "claudeAgent",
+            skills: [skill]
+        )
+        let trigger = try #require(FeatureComposerTriggerParser.detect(in: "/agent"))
+        let resolution = FeatureProviderSkillInvocationPolicy.resolution(
+            for: skill,
+            trigger: trigger,
+            provider: provider
+        )
+
+        #expect(
+            resolution == .unavailable(
+                label: "/agent-only",
+                message: "This Claude skill only accepts $agent-only."
+            )
+        )
+        #expect(FeatureProviderSkillInvocationPolicy.validationMessage(
+            in: "/agent-only run this",
+            providers: [provider],
+            selection: FeatureSelection(providerID: provider.id, modelID: "opus"),
+            threadSelection: nil
+        ) == "This Claude skill only accepts $agent-only. Replace or delete /agent-only.")
+    }
+
+    @Test(
+        "Provider changes invalidate only the incompatible skill token",
+        .bug("https://github.com/saphid/t3code-personal/issues/198")
+    )
+    func providerChangeValidatesRestoredInvocationWithoutRewritingDraft() {
+        let claudeSkill = FeatureProviderSkill(
+            name: "clarify",
+            userInvocationOnly: true
+        )
+        let codexSkill = FeatureProviderSkill(name: "clarify")
+        let claude = FeatureProvider(
+            id: "claude",
+            name: "Claude",
+            driver: "claudeAgent",
+            skills: [claudeSkill]
+        )
+        let codex = FeatureProvider(
+            id: "codex",
+            name: "Codex",
+            driver: "codex",
+            skills: [codexSkill]
+        )
+        let draft = "/clarify keep the rest of this prompt"
+
+        #expect(FeatureProviderSkillInvocationPolicy.validationMessage(
+            in: draft,
+            providers: [claude, codex],
+            selection: FeatureSelection(providerID: claude.id, modelID: "opus"),
+            threadSelection: nil
+        ) == nil)
+        #expect(FeatureProviderSkillInvocationPolicy.validationMessage(
+            in: draft,
+            providers: [claude, codex],
+            selection: FeatureSelection(providerID: codex.id, modelID: "sol"),
+            threadSelection: nil
+        ) == "Codex invokes clarify as $clarify. Replace or delete /clarify.")
+        #expect(draft == "/clarify keep the rest of this prompt")
+        #expect(FeatureProviderSkillInvocationPolicy.validationMessage(
+            in: "keep the rest of this prompt",
+            providers: [claude, codex],
+            selection: FeatureSelection(providerID: codex.id, modelID: "sol"),
+            threadSelection: nil
+        ) == nil)
+    }
+
+    @Test(
+        "Restored Claude dollar invocation blocks send for a user-only skill",
+        .bug("https://github.com/saphid/t3code-personal/issues/198")
+    )
+    func restoredClaudeDollarInvocationIsRejected() {
+        let skill = FeatureProviderSkill(
+            name: "clarify",
+            userInvocationOnly: true
+        )
+        let provider = FeatureProvider(
+            id: "claude",
+            name: "Claude",
+            driver: "claudeAgent",
+            skills: [skill]
+        )
+        let message = FeatureProviderSkillInvocationPolicy.validationMessage(
+            in: "Please $clarify this ticket",
+            providers: [provider],
+            selection: FeatureSelection(providerID: provider.id, modelID: "opus"),
+            threadSelection: nil
+        )
+
+        #expect(message == "This Claude skill only accepts /clarify at the start of a message.")
     }
 
     @Test
@@ -379,7 +585,7 @@ struct FeatureComposerPowerTests {
             ),
             pathEntries: []
         )
-        #expect(skillItems.map(\.label) == ["Fix CI"])
+        #expect(skillItems.map(\.label) == ["$gh-fix-ci"])
     }
 
     @Test

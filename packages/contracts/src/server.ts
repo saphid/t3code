@@ -93,6 +93,10 @@ export const ServerProviderSkill = Schema.Struct({
   enabled: Schema.Boolean,
   displayName: Schema.optional(TrimmedNonEmptyString),
   shortDescription: Schema.optional(TrimmedNonEmptyString),
+  /** The provider permits this skill only as an explicit user invocation. */
+  userInvocationOnly: Schema.optional(Schema.Boolean),
+  /** The provider permits the user to invoke this skill directly. */
+  userInvocable: Schema.optional(Schema.Boolean),
 });
 export type ServerProviderSkill = typeof ServerProviderSkill.Type;
 

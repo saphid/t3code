@@ -5584,7 +5584,9 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
                             shortDescription: skill.shortDescription,
                             path: skill.path,
                             scope: skill.scope,
-                            isEnabled: skill.enabled
+                            isEnabled: skill.enabled,
+                            userInvocationOnly: skill.userInvocationOnly ?? false,
+                            userInvocable: skill.userInvocable ?? true
                         )
                     }
                 )
