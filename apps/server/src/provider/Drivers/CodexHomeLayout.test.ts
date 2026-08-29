@@ -10,6 +10,7 @@ import { CodexSettings } from "@t3tools/contracts";
 import {
   CodexShadowHomeEntryConflictError,
   CodexShadowHomePathConflictError,
+  CodexShadowHomePrivateEntrySymlinkError,
   materializeCodexShadowHome,
   resolveCodexHomeLayout,
 } from "./CodexHomeLayout.ts";
@@ -132,6 +133,151 @@ it.layer(NodeServices.layer)("CodexHomeLayout", (it) => {
         expect(authLinkResult._tag).toBe("Failure");
         expect(authContents).toContain("shadow");
       }),
+    );
+
+    it.effect("keeps every credential-like shared entry out of the shadow home", () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const sharedHome = yield* makeTempDir("t3code-codex-shared-");
+        const shadowRoot = yield* makeTempDir("t3code-codex-shadow-root-");
+        const shadowHome = path.join(shadowRoot, "shadow");
+        const credentialFileNames = [
+          "auth",
+          "auth.json",
+          "auth.json.bak",
+          "auth_fixture.json",
+          "auth-backup",
+          "AUTH.JSON",
+          "AuTh.fixture",
+        ];
+
+        for (const entryName of credentialFileNames) {
+          const fixturePath = path.join(sharedHome, entryName);
+          yield* writeTextFile(fixturePath, `fixture:${entryName}\n`);
+          yield* fileSystem.chmod(fixturePath, 0o600);
+        }
+        yield* fileSystem.makeDirectory(path.join(sharedHome, "auth-fixtures"));
+        yield* fileSystem.symlink(
+          path.join(sharedHome, "missing-auth-target"),
+          path.join(sharedHome, "auth.broken"),
+        );
+        yield* writeTextFile(path.join(sharedHome, "author.json"), '{"name":"fixture"}\n');
+        yield* writeTextFile(path.join(sharedHome, "authé.json"), "unicode-adjacent fixture\n");
+
+        const layout = yield* resolveCodexHomeLayout(
+          decodeCodexSettings({
+            homePath: sharedHome,
+            shadowHomePath: shadowHome,
+          }),
+        );
+
+        yield* materializeCodexShadowHome(layout);
+
+        const shadowEntries = yield* fileSystem.readDirectory(shadowHome);
+        for (const entryName of [...credentialFileNames, "auth-fixtures", "auth.broken"]) {
+          expect(shadowEntries).not.toContain(entryName);
+        }
+        expect(yield* fileSystem.readLink(path.join(shadowHome, "author.json"))).toBe(
+          path.join(sharedHome, "author.json"),
+        );
+        expect(yield* fileSystem.readLink(path.join(shadowHome, "authé.json"))).toBe(
+          path.join(sharedHome, "authé.json"),
+        );
+      }),
+    );
+
+    it.effect(
+      "fails closed on existing credential-like shadow symlinks without exposing targets",
+      () =>
+        Effect.gen(function* () {
+          const fileSystem = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const sharedHome = yield* makeTempDir("t3code-codex-shared-");
+          const shadowRoot = yield* makeTempDir("t3code-codex-shadow-root-");
+          const unsafeNames = ["auth.json", "AUTH-backup", "auth_fixture.json", "auth.broken"];
+
+          for (const [index, entryName] of unsafeNames.entries()) {
+            const shadowHome = path.join(shadowRoot, `shadow-${index}`);
+            const target = path.join(sharedHome, `private-target-${index}`);
+            yield* fileSystem.makeDirectory(shadowHome, { recursive: true });
+            if (entryName !== "auth.broken") {
+              yield* writeTextFile(target, `fixture:${index}\n`);
+            }
+            yield* fileSystem.symlink(target, path.join(shadowHome, entryName));
+
+            const layout = yield* resolveCodexHomeLayout(
+              decodeCodexSettings({
+                homePath: sharedHome,
+                shadowHomePath: shadowHome,
+              }),
+            );
+            const error = yield* materializeCodexShadowHome(layout).pipe(Effect.flip);
+
+            expect(error).toBeInstanceOf(CodexShadowHomePrivateEntrySymlinkError);
+            expect(error).toMatchObject({
+              entryName,
+              path: path.join(shadowHome, entryName),
+            });
+            expect(error.message).not.toContain(target);
+          }
+        }),
+    );
+
+    it.effect(
+      "preserves private shadow files and directories across repeated materialization",
+      () =>
+        Effect.gen(function* () {
+          const fileSystem = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const sharedHome = yield* makeTempDir("t3code-codex-shared-");
+          const shadowRoot = yield* makeTempDir("t3code-codex-shadow-root-");
+          const firstShadow = path.join(shadowRoot, "first");
+          const secondShadow = path.join(shadowRoot, "second");
+
+          yield* writeTextFile(path.join(sharedHome, "config.toml"), 'model = "fixture"\n');
+          yield* writeTextFile(path.join(sharedHome, "auth.json.bak"), "shared fixture\n");
+          for (const shadowHome of [firstShadow, secondShadow]) {
+            const privateFile = path.join(shadowHome, "AUTH_private.json");
+            yield* writeTextFile(privateFile, "shadow fixture\n");
+            yield* fileSystem.chmod(privateFile, 0o600);
+            yield* fileSystem.makeDirectory(path.join(shadowHome, "auth-fixtures"));
+          }
+
+          const layouts = yield* Effect.all(
+            [firstShadow, secondShadow].map((shadowHome) =>
+              resolveCodexHomeLayout(
+                decodeCodexSettings({ homePath: sharedHome, shadowHomePath: shadowHome }),
+              ),
+            ),
+          );
+          yield* Effect.all(layouts.map(materializeCodexShadowHome), { concurrency: "unbounded" });
+          yield* Effect.all(layouts.map(materializeCodexShadowHome), { concurrency: "unbounded" });
+
+          for (const shadowHome of [firstShadow, secondShadow]) {
+            const privateFile = path.join(shadowHome, "AUTH_private.json");
+            const privateFileLink = yield* fileSystem.readLink(privateFile).pipe(Effect.result);
+            const privateDirectoryLink = yield* fileSystem
+              .readLink(path.join(shadowHome, "auth-fixtures"))
+              .pipe(Effect.result);
+            const fileInfo = yield* fileSystem.stat(privateFile);
+
+            expect(privateFileLink._tag).toBe("Failure");
+            expect(privateDirectoryLink._tag).toBe("Failure");
+            expect(fileInfo.mode & 0o777).toBe(0o600);
+            expect(yield* fileSystem.readLink(path.join(shadowHome, "config.toml"))).toBe(
+              path.join(sharedHome, "config.toml"),
+            );
+            expect(yield* fileSystem.exists(path.join(shadowHome, "auth.json.bak"))).toBe(false);
+          }
+
+          yield* fileSystem.remove(firstShadow, { recursive: true });
+          yield* materializeCodexShadowHome(layouts[0]!);
+          expect(yield* fileSystem.exists(path.join(firstShadow, "auth.json.bak"))).toBe(false);
+          expect(yield* fileSystem.readLink(path.join(firstShadow, "config.toml"))).toBe(
+            path.join(sharedHome, "config.toml"),
+          );
+        }),
     );
 
     it.effect("replaces Codex-created local MCP OAuth locks with the shared lock directory", () =>

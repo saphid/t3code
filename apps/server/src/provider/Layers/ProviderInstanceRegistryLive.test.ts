@@ -36,7 +36,9 @@ import {
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
 import * as Stream from "effect/Stream";
 import { HttpClient, HttpClientResponse } from "effect/unstable/http";
 
@@ -220,6 +222,59 @@ describe("ProviderInstanceRegistryLive — multi-instance codex slice", () => {
       // Nothing goes to the unavailable bucket — both drivers are registered.
       const unavailable = yield* registry.listUnavailable;
       expect(unavailable).toEqual([]);
+    }).pipe(Effect.provide(testLayer)),
+  );
+
+  it.live("constructs the Codex adapter with a credential-safe shadow home", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-codex-driver-shadow-home-",
+      });
+      const sharedHome = path.join(root, "shared");
+      const shadowHome = path.join(root, "shadow");
+      const codexId = ProviderInstanceId.make("codex_shadow_fixture");
+      const codexDriverKind = ProviderDriverKind.make("codex");
+
+      yield* fileSystem.makeDirectory(sharedHome);
+      yield* fileSystem.writeFileString(
+        path.join(sharedHome, "auth.json.bak"),
+        "credential fixture\n",
+      );
+      yield* fileSystem.chmod(path.join(sharedHome, "auth.json.bak"), 0o600);
+      yield* fileSystem.makeDirectory(path.join(sharedHome, "AUTH-fixtures"));
+      yield* fileSystem.writeFileString(
+        path.join(sharedHome, "author.json"),
+        "shareable fixture\n",
+      );
+      yield* fileSystem.writeFileString(
+        path.join(sharedHome, "config.toml"),
+        "model = 'fixture'\n",
+      );
+
+      const { registry } = yield* makeProviderInstanceRegistry({
+        drivers: [CodexDriver],
+        configMap: {
+          [codexId]: {
+            driver: codexDriverKind,
+            enabled: false,
+            config: makeCodexConfig({ homePath: sharedHome, shadowHomePath: shadowHome }),
+          },
+        },
+      });
+
+      const instance = yield* registry.getInstance(codexId);
+      const shadowEntries = yield* fileSystem.readDirectory(shadowHome);
+      expect(instance?.adapter).toBeDefined();
+      expect(shadowEntries).not.toContain("auth.json.bak");
+      expect(shadowEntries).not.toContain("AUTH-fixtures");
+      expect(yield* fileSystem.readLink(path.join(shadowHome, "author.json"))).toBe(
+        path.join(sharedHome, "author.json"),
+      );
+      expect(yield* fileSystem.readLink(path.join(shadowHome, "config.toml"))).toBe(
+        path.join(sharedHome, "config.toml"),
+      );
     }).pipe(Effect.provide(testLayer)),
   );
 
