@@ -907,6 +907,20 @@ public final class FeatureRootModel {
         }
     }
 
+    public func recoverThreadWorkspace(
+        threadID: String,
+        recovery: FeatureWorkspaceRecovery,
+        selection: FeatureWorkspaceRecovery.Selection
+    ) async -> Bool {
+        await perform {
+            try await client.recoverThreadWorkspace(
+                threadID: threadID,
+                recovery: recovery,
+                selection: selection
+            )
+        }
+    }
+
     public func resolveApproval(_ id: String, decision: FeatureApprovalDecision) async {
         let environment = currentEnvironmentIdentity
         await perform {

@@ -131,6 +131,34 @@ final class CoreContractTests: XCTestCase {
         )
     }
 
+    func testWorkspaceRecoveryCommandMatchesOrchestrationContract() {
+        let command = OrchestrationCommands.recoverWorkspace(
+            threadID: "thread-1",
+            messageID: "message-1",
+            strategy: "matching-worktree",
+            targetPath: "/work/café/候補",
+            expectedBranch: "feature/日本語",
+            expectedWorktreePath: "/work/削除済み",
+            commandID: "command-recovery",
+            createdAt: "2026-08-29T00:00:00.000Z"
+        )
+
+        XCTAssertEqual(
+            command,
+            .object([
+                "type": .string("thread.workspace.recovery.request"),
+                "commandId": .string("command-recovery"),
+                "threadId": .string("thread-1"),
+                "messageId": .string("message-1"),
+                "strategy": .string("matching-worktree"),
+                "targetPath": .string("/work/café/候補"),
+                "expectedBranch": .string("feature/日本語"),
+                "expectedWorktreePath": .string("/work/削除済み"),
+                "createdAt": .string("2026-08-29T00:00:00.000Z"),
+            ])
+        )
+    }
+
     func testFirstSendCommandCarriesCanonicalBootstrapMetadata() throws {
         let model = ModelSelection(instanceId: "codex", model: "gpt-5.4")
         let command = try OrchestrationCommands.createThreadAndSend(

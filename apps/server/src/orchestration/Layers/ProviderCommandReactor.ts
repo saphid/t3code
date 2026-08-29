@@ -2,12 +2,16 @@ import {
   type ChatAttachment,
   CommandId,
   EventId,
+  MessageId,
   type ModelSelection,
   type OrchestrationEvent,
   ProviderDriverKind,
   type ProjectId,
   type OrchestrationSession,
   ThreadId,
+  ThreadWorkspaceRecoveryCompletedPayload,
+  ThreadWorkspaceRecoveryRequiredPayload,
+  ThreadWorkspaceRecoveryRequestedPayload,
   type ProviderSession,
   type RuntimeMode,
   type TurnId,
@@ -46,8 +50,22 @@ import {
 } from "../../serverSettings.ts";
 import { VcsStatusBroadcaster } from "../../vcs/VcsStatusBroadcaster.ts";
 import { GitWorkflowService } from "../../git/GitWorkflowService.ts";
+import { ThreadWorkspaceRecovery } from "../../workspace/ThreadWorkspaceRecovery.ts";
+
 const isProviderAdapterRequestError = Schema.is(ProviderAdapterRequestError);
 const isProviderDriverKind = Schema.is(ProviderDriverKind);
+const decodeWorkspaceRecoveryRequest = Schema.decodeUnknownEffect(
+  ThreadWorkspaceRecoveryRequestedPayload,
+);
+const decodeWorkspaceRecoveryRequestOption = Schema.decodeUnknownOption(
+  ThreadWorkspaceRecoveryRequestedPayload,
+);
+const decodeWorkspaceRecoveryRequiredOption = Schema.decodeUnknownOption(
+  ThreadWorkspaceRecoveryRequiredPayload,
+);
+const decodeWorkspaceRecoveryCompletedOption = Schema.decodeUnknownOption(
+  ThreadWorkspaceRecoveryCompletedPayload,
+);
 
 type ProviderIntentEvent = Extract<
   OrchestrationEvent,
@@ -59,13 +77,42 @@ type ProviderIntentEvent = Extract<
       | "thread.turn-interrupt-requested"
       | "thread.approval-response-requested"
       | "thread.user-input-response-requested"
-      | "thread.session-stop-requested";
+      | "thread.session-stop-requested"
+      | "thread.activity-appended";
   }
 >;
 
 function toNonEmptyProviderInput(value: string | undefined): string | undefined {
   const normalized = value?.trim();
   return normalized && normalized.length > 0 ? normalized : undefined;
+}
+
+function workspaceRecoveryDetail(reason: string): string {
+  switch (reason) {
+    case "missing-branch":
+      return "The linked worktree was removed, and the thread has no recorded branch to match.";
+    case "missing-project":
+      return "The linked worktree and the main project directory are no longer available.";
+    case "missing-repository":
+      return "The linked worktree was removed, and the main project is not an available Git repository.";
+    case "dirty-match":
+      return "The linked worktree was removed. Its branch is checked out in a modified checkout, so T3 will not move the thread automatically.";
+    case "ambiguous-match":
+      return "The linked worktree was removed, and more than one checkout matches its branch.";
+    case "invalid-target":
+    case "repository-mismatch":
+    case "branch-mismatch":
+      return "The selected checkout no longer matches the thread's repository and branch.";
+    case "target-exists":
+      return "The original worktree path exists again. Refresh the thread before choosing a recovery target.";
+    case "branch-checked-out":
+      return "The branch is already checked out. Select its current checkout instead of recreating the worktree.";
+    case "git-failed":
+      return "Git could not recreate the removed worktree.";
+    case "no-match":
+    default:
+      return "The linked worktree was removed, and no safe checkout of its branch was found.";
+  }
 }
 
 function mapProviderSessionStatusToOrchestrationStatus(
@@ -305,6 +352,7 @@ const make = Effect.gen(function* () {
   const providerService = yield* ProviderService;
   const providerRegistry = yield* ProviderRegistry;
   const gitWorkflow = yield* GitWorkflowService;
+  const threadWorkspaceRecovery = yield* ThreadWorkspaceRecovery;
   const vcsStatusBroadcaster = yield* VcsStatusBroadcaster;
   const textGeneration = yield* TextGeneration;
   const serverSettingsService = yield* ServerSettingsService;
@@ -359,6 +407,37 @@ const make = Effect.gen(function* () {
               ...(input.requestId ? { requestId: input.requestId } : {}),
             },
             turnId: input.turnId,
+            createdAt: input.createdAt,
+          },
+          createdAt: input.createdAt,
+        }),
+      ),
+    );
+
+  const appendWorkspaceRecoveryActivity = (input: {
+    readonly threadId: ThreadId;
+    readonly kind: "thread.workspace.recovery.required" | "thread.workspace.recovery.completed";
+    readonly tone: "info" | "error";
+    readonly summary: string;
+    readonly payload: unknown;
+    readonly createdAt: string;
+  }) =>
+    Effect.all({
+      commandId: serverCommandId("workspace-recovery-activity"),
+      eventId: serverEventId(),
+    }).pipe(
+      Effect.flatMap(({ commandId, eventId }) =>
+        orchestrationEngine.dispatch({
+          type: "thread.activity.append",
+          commandId,
+          threadId: input.threadId,
+          activity: {
+            id: eventId,
+            tone: input.tone,
+            kind: input.kind,
+            summary: input.summary,
+            payload: input.payload,
+            turnId: null,
             createdAt: input.createdAt,
           },
           createdAt: input.createdAt,
@@ -422,6 +501,34 @@ const make = Effect.gen(function* () {
     });
   });
 
+  const handleTurnStartFailure = (input: {
+    readonly threadId: ThreadId;
+    readonly createdAt: string;
+    readonly cause: Cause.Cause<unknown>;
+  }) => {
+    if (Cause.hasInterruptsOnly(input.cause)) {
+      return Effect.void;
+    }
+    const detail = formatFailureDetail(input.cause);
+    return setThreadSessionErrorOnTurnStartFailure({
+      threadId: input.threadId,
+      detail,
+      createdAt: input.createdAt,
+    }).pipe(
+      Effect.flatMap(() =>
+        appendProviderFailureActivity({
+          threadId: input.threadId,
+          kind: "provider.turn.start.failed",
+          summary: "Provider turn start failed",
+          detail,
+          turnId: null,
+          createdAt: input.createdAt,
+        }),
+      ),
+      Effect.asVoid,
+    );
+  };
+
   const resolveProject = Effect.fnUntraced(function* (projectId: ProjectId) {
     return yield* projectionSnapshotQuery
       .getProjectShellById(projectId)
@@ -433,6 +540,135 @@ const make = Effect.gen(function* () {
       .getThreadDetailById(threadId)
       .pipe(Effect.map(Option.getOrUndefined));
   });
+
+  const appendWorkspaceRecoveryRequired = Effect.fn("appendWorkspaceRecoveryRequired")(
+    function* (input: {
+      readonly threadId: ThreadId;
+      readonly messageId: MessageId;
+      readonly branch: string | null;
+      readonly missingWorktreePath: string;
+      readonly reason: string;
+      readonly candidates: ReadonlyArray<{
+        readonly path: string;
+        readonly isProjectRoot: boolean;
+        readonly dirty: boolean;
+      }>;
+      readonly canRecreate: boolean;
+      readonly createdAt: string;
+      readonly detail?: string;
+    }) {
+      const recoveryId = yield* serverCommandId("workspace-recovery");
+      const detail = input.detail ?? workspaceRecoveryDetail(input.reason);
+      yield* appendWorkspaceRecoveryActivity({
+        threadId: input.threadId,
+        kind: "thread.workspace.recovery.required",
+        tone: "error",
+        summary: "Worktree removed",
+        payload: {
+          recoveryId,
+          messageId: input.messageId,
+          branch: input.branch,
+          missingWorktreePath: input.missingWorktreePath,
+          reason: input.reason,
+          candidates: input.candidates,
+          canRecreate: input.canRecreate,
+          detail,
+        },
+        createdAt: input.createdAt,
+      });
+      return detail;
+    },
+  );
+
+  const requireWorkspaceRecoveryChoice = Effect.fn("requireWorkspaceRecoveryChoice")(function* (
+    input: Parameters<typeof appendWorkspaceRecoveryRequired>[0],
+  ) {
+    const detail = yield* appendWorkspaceRecoveryRequired(input);
+    return yield* new ProviderAdapterRequestError({
+      provider: "workspace",
+      method: "thread.turn.start",
+      detail,
+    });
+  });
+
+  const relocateThreadWorkspace = Effect.fn("relocateThreadWorkspace")(function* (input: {
+    readonly threadId: ThreadId;
+    readonly branch: string;
+    readonly expectedWorktreePath: string;
+    readonly candidate: {
+      readonly path: string;
+      readonly isProjectRoot: boolean;
+    };
+  }) {
+    const worktreePath = input.candidate.isProjectRoot ? null : input.candidate.path;
+    yield* orchestrationEngine.dispatch({
+      type: "thread.meta.update",
+      commandId: yield* serverCommandId("workspace-relocate"),
+      threadId: input.threadId,
+      expectedBranch: input.branch,
+      expectedWorktreePath: input.expectedWorktreePath,
+      worktreePath,
+    });
+    const updated = yield* resolveThread(input.threadId);
+    return updated?.branch === input.branch && updated.worktreePath === worktreePath
+      ? updated
+      : undefined;
+  });
+
+  const prepareThreadWorkspaceForTurn = Effect.fn("prepareThreadWorkspaceForTurn")(
+    function* (input: {
+      readonly threadId: ThreadId;
+      readonly messageId: MessageId;
+      readonly createdAt: string;
+    }) {
+      const thread = yield* resolveThread(input.threadId);
+      if (!thread || thread.worktreePath === null) return thread;
+      const project = yield* resolveProject(thread.projectId);
+      if (!project) {
+        return yield* requireWorkspaceRecoveryChoice({
+          ...input,
+          branch: thread.branch,
+          missingWorktreePath: thread.worktreePath,
+          reason: "missing-project",
+          candidates: [],
+          canRecreate: false,
+        });
+      }
+      const inspection = yield* threadWorkspaceRecovery.inspect({
+        projectWorkspaceRoot: project.workspaceRoot,
+        recordedWorktreePath: thread.worktreePath,
+        branch: thread.branch,
+      });
+      if (inspection._tag === "Current") return thread;
+      if (inspection._tag === "ChoiceRequired" || thread.branch === null) {
+        return yield* requireWorkspaceRecoveryChoice({
+          ...input,
+          branch: thread.branch,
+          missingWorktreePath: thread.worktreePath,
+          reason: inspection._tag === "ChoiceRequired" ? inspection.reason : "missing-branch",
+          candidates: inspection._tag === "ChoiceRequired" ? inspection.candidates : [],
+          canRecreate: inspection._tag === "ChoiceRequired" && inspection.canRecreate,
+        });
+      }
+      const relocated = yield* relocateThreadWorkspace({
+        threadId: input.threadId,
+        branch: thread.branch,
+        expectedWorktreePath: thread.worktreePath,
+        candidate: inspection.candidate,
+      });
+      if (relocated) return relocated;
+      return yield* requireWorkspaceRecoveryChoice({
+        ...input,
+        branch: thread.branch,
+        missingWorktreePath: thread.worktreePath,
+        reason: "no-match",
+        candidates: [inspection.candidate],
+        canRecreate: false,
+        detail:
+          "The thread changed while T3 was recovering its removed worktree. Refresh and choose again.",
+      });
+    },
+  );
 
   const rejectStartedThreadModelChangeIfRequired = Effect.fnUntraced(function* (input: {
     readonly threadId: ThreadId;
@@ -1065,12 +1301,12 @@ const make = Effect.gen(function* () {
       return;
     }
 
-    const thread = yield* resolveThread(event.payload.threadId);
-    if (!thread) {
+    const initialThread = yield* resolveThread(event.payload.threadId);
+    if (!initialThread) {
       return;
     }
 
-    const message = thread.messages.find((entry) => entry.id === event.payload.messageId);
+    const message = initialThread.messages.find((entry) => entry.id === event.payload.messageId);
     if (!message || message.role !== "user") {
       yield* appendProviderFailureActivity({
         threadId: event.payload.threadId,
@@ -1082,6 +1318,23 @@ const make = Effect.gen(function* () {
       });
       return;
     }
+
+    const preparedThread = yield* prepareThreadWorkspaceForTurn({
+      threadId: event.payload.threadId,
+      messageId: event.payload.messageId,
+      createdAt: event.payload.createdAt,
+    }).pipe(
+      Effect.map(Option.fromNullishOr),
+      Effect.catchCause((cause) =>
+        handleTurnStartFailure({
+          threadId: event.payload.threadId,
+          createdAt: event.payload.createdAt,
+          cause,
+        }).pipe(Effect.as(Option.none())),
+      ),
+    );
+    if (Option.isNone(preparedThread)) return;
+    const thread = preparedThread.value;
 
     const isFirstUserMessageTurn =
       thread.messages.filter((entry) => entry.role === "user").length === 1;
@@ -1114,32 +1367,12 @@ const make = Effect.gen(function* () {
       }
     }
 
-    const handleTurnStartFailure = (cause: Cause.Cause<unknown>) => {
-      if (Cause.hasInterruptsOnly(cause)) {
-        return Effect.void;
-      }
-      const detail = formatFailureDetail(cause);
-      return setThreadSessionErrorOnTurnStartFailure({
-        threadId: event.payload.threadId,
-        detail,
-        createdAt: event.payload.createdAt,
-      }).pipe(
-        Effect.flatMap(() =>
-          appendProviderFailureActivity({
-            threadId: event.payload.threadId,
-            kind: "provider.turn.start.failed",
-            summary: "Provider turn start failed",
-            detail,
-            turnId: null,
-            createdAt: event.payload.createdAt,
-          }),
-        ),
-        Effect.asVoid,
-      );
-    };
-
     const recoverTurnStartFailure = (cause: Cause.Cause<unknown>) =>
-      handleTurnStartFailure(cause).pipe(
+      handleTurnStartFailure({
+        threadId: event.payload.threadId,
+        createdAt: event.payload.createdAt,
+        cause,
+      }).pipe(
         Effect.catchCause((recoveryCause) =>
           Effect.logWarning("provider command reactor failed to recover turn start failure", {
             eventType: event.type,
@@ -1161,7 +1394,13 @@ const make = Effect.gen(function* () {
       createdAt: event.payload.createdAt,
     }).pipe(
       Effect.map(Option.some),
-      Effect.catchCause((cause) => handleTurnStartFailure(cause).pipe(Effect.as(Option.none()))),
+      Effect.catchCause((cause) =>
+        handleTurnStartFailure({
+          threadId: event.payload.threadId,
+          createdAt: event.payload.createdAt,
+          cause,
+        }).pipe(Effect.as(Option.none())),
+      ),
     );
 
     if (Option.isNone(sendTurnRequest)) {
@@ -1172,6 +1411,176 @@ const make = Effect.gen(function* () {
       .sendTurn(sendTurnRequest.value)
       .pipe(Effect.catchCause(recoverTurnStartFailure), Effect.forkScoped);
   });
+
+  const processWorkspaceRecoveryRequest = Effect.fn("processWorkspaceRecoveryRequest")(
+    function* (input: {
+      readonly threadId: ThreadId;
+      readonly request: ThreadWorkspaceRecoveryRequestedPayload;
+      readonly occurredAt: string;
+    }) {
+      const request = input.request;
+      const thread = yield* resolveThread(input.threadId);
+      if (
+        !thread ||
+        thread.branch !== request.expectedBranch ||
+        thread.worktreePath !== request.expectedWorktreePath
+      ) {
+        return;
+      }
+      const project = yield* resolveProject(thread.projectId);
+      const message = thread.messages.find((entry) => entry.id === request.messageId);
+      if (!project || !message || message.role !== "user") {
+        yield* appendWorkspaceRecoveryRequired({
+          threadId: thread.id,
+          messageId: request.messageId,
+          branch: thread.branch,
+          missingWorktreePath: request.expectedWorktreePath,
+          reason: project ? "no-match" : "missing-project",
+          candidates: [],
+          canRecreate: false,
+          createdAt: input.occurredAt,
+        });
+        return;
+      }
+
+      let selection:
+        | { readonly strategy: "main-project" }
+        | { readonly strategy: "matching-worktree"; readonly targetPath: string }
+        | { readonly strategy: "recreate-worktree" };
+      if (request.strategy === "matching-worktree") {
+        if (request.targetPath === undefined) return;
+        selection = { strategy: request.strategy, targetPath: request.targetPath };
+      } else {
+        selection = { strategy: request.strategy };
+      }
+      const recovered = yield* threadWorkspaceRecovery
+        .recover({
+          projectWorkspaceRoot: project.workspaceRoot,
+          recordedWorktreePath: request.expectedWorktreePath,
+          branch: request.expectedBranch,
+          selection,
+        })
+        .pipe(
+          Effect.map(Option.some),
+          Effect.catch((error) =>
+            threadWorkspaceRecovery
+              .inspect({
+                projectWorkspaceRoot: project.workspaceRoot,
+                recordedWorktreePath: request.expectedWorktreePath,
+                branch: request.expectedBranch,
+              })
+              .pipe(
+                Effect.flatMap((inspection) =>
+                  appendWorkspaceRecoveryRequired({
+                    threadId: thread.id,
+                    messageId: request.messageId,
+                    branch: request.expectedBranch,
+                    missingWorktreePath: request.expectedWorktreePath,
+                    reason: error.reason,
+                    candidates: inspection._tag === "ChoiceRequired" ? inspection.candidates : [],
+                    canRecreate: inspection._tag === "ChoiceRequired" && inspection.canRecreate,
+                    createdAt: input.occurredAt,
+                    detail: error.detail,
+                  }),
+                ),
+                Effect.as(Option.none()),
+              ),
+          ),
+        );
+      if (Option.isNone(recovered)) return;
+
+      const relocated = yield* relocateThreadWorkspace({
+        threadId: thread.id,
+        branch: request.expectedBranch,
+        expectedWorktreePath: request.expectedWorktreePath,
+        candidate: recovered.value,
+      });
+      if (!relocated) return;
+      yield* appendWorkspaceRecoveryActivity({
+        threadId: thread.id,
+        kind: "thread.workspace.recovery.completed",
+        tone: "info",
+        summary: "Worktree recovered",
+        payload: {
+          recoveryId: request.recoveryId,
+          messageId: request.messageId,
+          branch: request.expectedBranch,
+          worktreePath: relocated.worktreePath,
+        },
+        createdAt: input.occurredAt,
+      });
+
+      const sendTurnRequest = yield* buildSendTurnRequestForThread({
+        threadId: thread.id,
+        messageText: message.text,
+        ...(message.attachments !== undefined ? { attachments: message.attachments } : {}),
+        interactionMode: relocated.interactionMode,
+        createdAt: input.occurredAt,
+      });
+      yield* providerService.sendTurn(sendTurnRequest).pipe(
+        Effect.catchCause((cause) =>
+          handleTurnStartFailure({
+            threadId: thread.id,
+            createdAt: input.occurredAt,
+            cause,
+          }),
+        ),
+        Effect.forkScoped,
+      );
+    },
+  );
+
+  const processWorkspaceRecoveryRequested = Effect.fn("processWorkspaceRecoveryRequested")(
+    function* (event: Extract<ProviderIntentEvent, { type: "thread.activity-appended" }>) {
+      if (event.payload.activity.kind !== "thread.workspace.recovery.requested") return;
+      const request = yield* decodeWorkspaceRecoveryRequest(event.payload.activity.payload);
+      yield* processWorkspaceRecoveryRequest({
+        threadId: event.payload.threadId,
+        request,
+        occurredAt: event.occurredAt,
+      });
+    },
+  );
+
+  const findInterruptedWorkspaceRecoveries = Effect.fn("findInterruptedWorkspaceRecoveries")(
+    function* () {
+      const readModel = yield* projectionSnapshotQuery.getSnapshot();
+      return readModel.threads.flatMap((thread) => {
+        const pending = new Map<
+          string,
+          {
+            readonly threadId: ThreadId;
+            readonly request: ThreadWorkspaceRecoveryRequestedPayload;
+            readonly occurredAt: string;
+          }
+        >();
+        for (const activity of thread.activities) {
+          if (activity.kind === "thread.workspace.recovery.requested") {
+            const decoded = decodeWorkspaceRecoveryRequestOption(activity.payload);
+            if (Option.isSome(decoded)) {
+              pending.set(decoded.value.messageId, {
+                threadId: thread.id,
+                request: decoded.value,
+                occurredAt: activity.createdAt,
+              });
+            }
+            continue;
+          }
+          const completed =
+            activity.kind === "thread.workspace.recovery.completed"
+              ? decodeWorkspaceRecoveryCompletedOption(activity.payload)
+              : Option.none();
+          const required =
+            activity.kind === "thread.workspace.recovery.required"
+              ? decodeWorkspaceRecoveryRequiredOption(activity.payload)
+              : Option.none();
+          if (Option.isSome(completed)) pending.delete(completed.value.messageId);
+          if (Option.isSome(required)) pending.delete(required.value.messageId);
+        }
+        return Array.from(pending.values());
+      });
+    },
+  );
 
   const processTurnInterruptRequested = Effect.fn("processTurnInterruptRequested")(function* (
     event: Extract<ProviderIntentEvent, { type: "thread.turn-interrupt-requested" }>,
@@ -1358,6 +1767,9 @@ const make = Effect.gen(function* () {
       case "thread.session-stop-requested":
         yield* processSessionStopRequested(event);
         return;
+      case "thread.activity-appended":
+        yield* processWorkspaceRecoveryRequested(event);
+        return;
     }
   });
 
@@ -1396,7 +1808,9 @@ const make = Effect.gen(function* () {
         event.type === "thread.turn-interrupt-requested" ||
         event.type === "thread.approval-response-requested" ||
         event.type === "thread.user-input-response-requested" ||
-        event.type === "thread.session-stop-requested"
+        event.type === "thread.session-stop-requested" ||
+        (event.type === "thread.activity-appended" &&
+          event.payload.activity.kind === "thread.workspace.recovery.requested")
       ) {
         return yield* worker.enqueue(event);
       }
@@ -1404,29 +1818,43 @@ const make = Effect.gen(function* () {
 
     yield* forkParked(Stream.runForEach(orchestrationEngine.streamDomainEvents, processEvent));
 
-    // The domain event stream is hot, so work pending before this reactor
-    // starts cannot be resumed. Correlated completions only clear the request
-    // captured here, leaving any newer request untouched.
-    const clearInterrupted = clearInterruptedThreadTitleRegenerations(
-      interruptedTitleRegenerations,
-    ).pipe(
+    const interruptedWorkspaceRecoveries = yield* findInterruptedWorkspaceRecoveries().pipe(
       Effect.catchCause((cause) => {
         if (Cause.hasInterruptsOnly(cause)) {
           return Effect.interrupt;
         }
         return Effect.logWarning(
-          "provider command reactor failed to clear interrupted title regenerations",
-          {
-            cause: Cause.pretty(cause),
-          },
-        );
+          "provider command reactor failed to find interrupted workspace recoveries",
+          { cause: Cause.pretty(cause) },
+        ).pipe(Effect.as([]));
+      }),
+    );
+
+    // The domain event stream is hot, so work pending before this reactor
+    // starts must be resolved from the durable read model. Correlated title
+    // completions and workspace activities leave newer requests untouched.
+    const finishInterruptedWork = clearInterruptedThreadTitleRegenerations(
+      interruptedTitleRegenerations,
+    ).pipe(
+      Effect.andThen(
+        Effect.forEach(interruptedWorkspaceRecoveries, processWorkspaceRecoveryRequest, {
+          discard: true,
+        }),
+      ),
+      Effect.catchCause((cause) => {
+        if (Cause.hasInterruptsOnly(cause)) {
+          return Effect.interrupt;
+        }
+        return Effect.logWarning("provider command reactor failed to finish interrupted work", {
+          cause: Cause.pretty(cause),
+        });
       }),
     );
     const activation = yield* ServerActivation;
     if (activation === undefined) {
-      yield* clearInterrupted;
+      yield* finishInterruptedWork;
     } else {
-      yield* forkParked(clearInterrupted);
+      yield* forkParked(finishInterruptedWork);
     }
   });
 

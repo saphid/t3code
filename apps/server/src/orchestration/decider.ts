@@ -811,12 +811,12 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         command,
         threadId: command.threadId,
       });
-      const branch =
-        command.branch !== undefined &&
-        command.expectedBranch !== undefined &&
-        thread.branch !== command.expectedBranch
-          ? thread.branch
-          : command.branch;
+      const workspaceExpectationMatches =
+        (command.expectedBranch === undefined || thread.branch === command.expectedBranch) &&
+        (command.expectedWorktreePath === undefined ||
+          thread.worktreePath === command.expectedWorktreePath);
+      const branch = workspaceExpectationMatches ? command.branch : thread.branch;
+      const worktreePath = workspaceExpectationMatches ? command.worktreePath : thread.worktreePath;
       const occurredAt = yield* nowIso;
       return {
         ...(yield* withEventBase({
@@ -846,8 +846,62 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
             ? { modelSelection: command.modelSelection }
             : {}),
           ...(branch !== undefined ? { branch } : {}),
-          ...(command.worktreePath !== undefined ? { worktreePath: command.worktreePath } : {}),
+          ...(worktreePath !== undefined ? { worktreePath } : {}),
           updatedAt: occurredAt,
+        },
+      };
+    }
+
+    case "thread.workspace.recovery.request": {
+      const thread = yield* requireThread({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      if (
+        thread.branch !== command.expectedBranch ||
+        thread.worktreePath !== command.expectedWorktreePath
+      ) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `thread ${command.threadId} workspace changed before recovery could start`,
+        });
+      }
+      const message = thread.messages.find((entry) => entry.id === command.messageId);
+      if (!message || message.role !== "user") {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `thread ${command.threadId} recovery message ${command.messageId} was not found`,
+        });
+      }
+      const crypto = yield* Crypto.Crypto;
+      const activityId = EventId.make(yield* crypto.randomUUIDv4);
+      return {
+        ...(yield* withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        })),
+        type: "thread.activity-appended",
+        payload: {
+          threadId: command.threadId,
+          activity: {
+            id: activityId,
+            tone: "info",
+            kind: "thread.workspace.recovery.requested",
+            summary: "Worktree recovery requested",
+            payload: {
+              recoveryId: command.commandId,
+              messageId: command.messageId,
+              strategy: command.strategy,
+              ...(command.targetPath !== undefined ? { targetPath: command.targetPath } : {}),
+              expectedBranch: command.expectedBranch,
+              expectedWorktreePath: command.expectedWorktreePath,
+            },
+            turnId: null,
+            createdAt: command.createdAt,
+          },
         },
       };
     }

@@ -709,6 +709,44 @@ it.effect("accepts a title regeneration intent in thread.meta.update", () =>
   }),
 );
 
+it.effect("accepts a typed removed-worktree recovery request", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeClientOrchestrationCommand({
+      type: "thread.workspace.recovery.request",
+      commandId: "cmd-workspace-recovery",
+      threadId: "thread-1",
+      messageId: "message-1",
+      strategy: "matching-worktree",
+      targetPath: "/repo/worktrees/feature",
+      expectedBranch: "feature/recovery",
+      expectedWorktreePath: "/repo/worktrees/removed",
+      createdAt: "2026-01-01T00:00:00.000Z",
+    });
+    assert.strictEqual(parsed.type, "thread.workspace.recovery.request");
+    if (parsed.type === "thread.workspace.recovery.request") {
+      assert.strictEqual(parsed.targetPath, "/repo/worktrees/feature");
+    }
+  }),
+);
+
+it.effect("rejects a matching-worktree recovery without a target path", () =>
+  Effect.gen(function* () {
+    const result = yield* Effect.exit(
+      decodeClientOrchestrationCommand({
+        type: "thread.workspace.recovery.request",
+        commandId: "cmd-workspace-recovery-missing-target",
+        threadId: "thread-1",
+        messageId: "message-1",
+        strategy: "matching-worktree",
+        expectedBranch: "feature/recovery",
+        expectedWorktreePath: "/repo/worktrees/removed",
+        createdAt: "2026-01-01T00:00:00.000Z",
+      }),
+    );
+    assert.strictEqual(result._tag, "Failure");
+  }),
+);
+
 it.effect("accepts an internal title regeneration completion", () =>
   Effect.gen(function* () {
     const parsed = yield* decodeOrchestrationCommand({

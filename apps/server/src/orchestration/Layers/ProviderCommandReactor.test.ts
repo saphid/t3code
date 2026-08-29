@@ -63,6 +63,7 @@ import * as Clock from "effect/Clock";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { VcsStatusBroadcaster } from "../../vcs/VcsStatusBroadcaster.ts";
 import * as GitWorkflowService from "../../git/GitWorkflowService.ts";
+import * as ThreadWorkspaceRecovery from "../../workspace/ThreadWorkspaceRecovery.ts";
 
 const asProjectId = (value: string): ProjectId => ProjectId.make(value);
 const asApprovalRequestId = (value: string): ApprovalRequestId => ApprovalRequestId.make(value);
@@ -150,6 +151,11 @@ describe("ProviderCommandReactor", () => {
     readonly requiresNewThreadForModelChange?: boolean;
     readonly titleRegenerationCompletionDispatchFailures?: number;
     readonly titleRegenerationBeforeStart?: "one" | "two";
+    readonly threadBranch?: string;
+    readonly threadWorktreePath?: string;
+    readonly workspaceInspection?: ThreadWorkspaceRecovery.ThreadWorkspaceInspection;
+    readonly workspaceRecoveryCandidate?: ThreadWorkspaceRecovery.ThreadWorkspaceCandidate;
+    readonly workspaceRecoveryBeforeStart?: boolean;
     readonly startSessionEffect?: (
       session: ProviderSession,
     ) => Effect.Effect<ProviderSession, ProviderAdapterRequestError>;
@@ -298,6 +304,14 @@ describe("ProviderCommandReactor", () => {
         }),
       ),
     );
+    const inspectWorkspace = vi.fn(() =>
+      Effect.succeed(input?.workspaceInspection ?? ({ _tag: "Current" } as const)),
+    );
+    const recoverWorkspace = vi.fn(() =>
+      input?.workspaceRecoveryCandidate
+        ? Effect.succeed(input.workspaceRecoveryCandidate)
+        : Effect.die("workspace recovery should not be called in this test"),
+    );
     const providerSnapshots = [
       {
         instanceId: modelSelection.instanceId,
@@ -399,6 +413,12 @@ describe("ProviderCommandReactor", () => {
         } satisfies Partial<GitWorkflowService.GitWorkflowService["Service"]>),
       ),
       Layer.provideMerge(
+        Layer.succeed(ThreadWorkspaceRecovery.ThreadWorkspaceRecovery, {
+          inspect: inspectWorkspace,
+          recover: recoverWorkspace,
+        }),
+      ),
+      Layer.provideMerge(
         Layer.succeed(VcsStatusBroadcaster, {
           getStatus: () => Effect.die("getStatus should not be called in this test"),
           refreshLocalStatus: () =>
@@ -445,8 +465,8 @@ describe("ProviderCommandReactor", () => {
         modelSelection: modelSelection,
         interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
         runtimeMode: "approval-required",
-        branch: null,
-        worktreePath: null,
+        branch: input?.threadBranch ?? null,
+        worktreePath: input?.threadWorktreePath ?? null,
         createdAt: now,
       }),
     );
@@ -485,6 +505,40 @@ describe("ProviderCommandReactor", () => {
         }),
       );
     }
+    if (input?.workspaceRecoveryBeforeStart === true) {
+      const branch = input.threadBranch ?? "feature/recovery";
+      const worktreePath = input.threadWorktreePath ?? "/tmp/provider-project-removed";
+      const messageId = asMessageId("message-recovery-before-reactor-start");
+      await Effect.runPromise(
+        engine.dispatch({
+          type: "thread.turn.start",
+          commandId: CommandId.make("cmd-turn-before-reactor-start"),
+          threadId: ThreadId.make("thread-1"),
+          message: {
+            messageId,
+            role: "user",
+            text: "resume after restart",
+            attachments: [],
+          },
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          runtimeMode: "approval-required",
+          createdAt: now,
+        }),
+      );
+      await Effect.runPromise(
+        engine.dispatch({
+          type: "thread.workspace.recovery.request",
+          commandId: CommandId.make("cmd-recovery-before-reactor-start"),
+          threadId: ThreadId.make("thread-1"),
+          messageId,
+          strategy: "matching-worktree",
+          targetPath: input.workspaceRecoveryCandidate?.path ?? "/tmp/provider-project-matching",
+          expectedBranch: branch,
+          expectedWorktreePath: worktreePath,
+          createdAt: "2026-01-01T00:00:01.000Z",
+        }),
+      );
+    }
 
     scope = await Effect.runPromise(Scope.make("sequential"));
     await Effect.runPromise(reactor.start().pipe(Scope.provide(scope)));
@@ -503,6 +557,8 @@ describe("ProviderCommandReactor", () => {
       refreshStatus,
       generateBranchName,
       generateThreadTitle,
+      inspectWorkspace,
+      recoverWorkspace,
       runtimeSessions,
       stateDir,
       drain,
@@ -551,6 +607,141 @@ describe("ProviderCommandReactor", () => {
     expect(thread?.session?.threadId).toBe("thread-1");
     expect(thread?.session?.status).toBe("starting");
     expect(thread?.session?.runtimeMode).toBe("approval-required");
+  });
+
+  it("relocates a removed worktree to one clean exact-branch checkout before sending", async () => {
+    const harness = await createHarness({
+      threadBranch: "feature/recovery",
+      threadWorktreePath: "/tmp/provider-project-removed",
+      workspaceInspection: {
+        _tag: "Relocate",
+        candidate: { path: "/tmp/provider-project", isProjectRoot: true, dirty: false },
+      },
+    });
+    const now = "2026-01-01T00:00:00.000Z";
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-turn-start-auto-workspace-recovery"),
+        threadId: ThreadId.make("thread-1"),
+        message: {
+          messageId: asMessageId("message-auto-workspace-recovery"),
+          role: "user",
+          text: "continue after removal",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: now,
+      }),
+    );
+
+    await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+    const readModel = await harness.readModel();
+    const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
+    expect(thread?.worktreePath).toBeNull();
+    expect(harness.startSession.mock.calls[0]?.[1]).toMatchObject({ cwd: "/tmp/provider-project" });
+    expect(harness.inspectWorkspace).toHaveBeenCalledTimes(1);
+  });
+
+  it("projects ambiguity and retries the original message after an explicit recovery", async () => {
+    const missingPath = "/tmp/provider-project-removed";
+    const matchingPath = "/tmp/provider-project-matching";
+    const harness = await createHarness({
+      threadBranch: "feature/recovery",
+      threadWorktreePath: missingPath,
+      workspaceInspection: {
+        _tag: "ChoiceRequired",
+        reason: "ambiguous-match",
+        candidates: [
+          { path: "/tmp/provider-project", isProjectRoot: true, dirty: false },
+          { path: matchingPath, isProjectRoot: false, dirty: false },
+        ],
+        canRecreate: false,
+      },
+      workspaceRecoveryCandidate: {
+        path: matchingPath,
+        isProjectRoot: false,
+        dirty: false,
+      },
+    });
+    const now = "2026-01-01T00:00:00.000Z";
+    const messageId = asMessageId("message-explicit-workspace-recovery");
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-turn-start-explicit-workspace-recovery"),
+        threadId: ThreadId.make("thread-1"),
+        message: {
+          messageId,
+          role: "user",
+          text: "retry this message",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: now,
+      }),
+    );
+
+    await waitFor(async () => {
+      const readModel = await harness.readModel();
+      return readModel.threads.some((thread) =>
+        thread.activities.some(
+          (activity) => activity.kind === "thread.workspace.recovery.required",
+        ),
+      );
+    });
+    expect(harness.sendTurn).not.toHaveBeenCalled();
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.workspace.recovery.request",
+        commandId: CommandId.make("cmd-explicit-workspace-recovery"),
+        threadId: ThreadId.make("thread-1"),
+        messageId,
+        strategy: "matching-worktree",
+        targetPath: matchingPath,
+        expectedBranch: "feature/recovery",
+        expectedWorktreePath: missingPath,
+        createdAt: "2026-01-01T00:00:01.000Z",
+      }),
+    );
+
+    await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+    const readModel = await harness.readModel();
+    const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
+    expect(thread?.worktreePath).toBe(matchingPath);
+    expect(thread?.messages.filter((message) => message.role === "user")).toHaveLength(1);
+    expect(
+      thread?.activities.some(
+        (activity) => activity.kind === "thread.workspace.recovery.completed",
+      ),
+    ).toBe(true);
+    expect(harness.recoverWorkspace).toHaveBeenCalledTimes(1);
+  });
+
+  it("resumes a durable recovery request that predates reactor startup", async () => {
+    const matchingPath = "/tmp/provider-project-matching";
+    const harness = await createHarness({
+      threadBranch: "feature/recovery",
+      threadWorktreePath: "/tmp/provider-project-removed",
+      workspaceRecoveryBeforeStart: true,
+      workspaceRecoveryCandidate: {
+        path: matchingPath,
+        isProjectRoot: false,
+        dirty: false,
+      },
+    });
+
+    await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+    const readModel = await harness.readModel();
+    const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
+    expect(thread?.worktreePath).toBe(matchingPath);
+    expect(thread?.messages.filter((message) => message.role === "user")).toHaveLength(1);
+    expect(harness.recoverWorkspace).toHaveBeenCalledTimes(1);
   });
 
   effectIt.effect("projects starting before a slow provider session finishes", () =>

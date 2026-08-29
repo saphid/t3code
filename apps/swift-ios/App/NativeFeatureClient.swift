@@ -2163,6 +2163,42 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         return snapshot.thread.messages.contains { $0.id == messageID }
     }
 
+    func recoverThreadWorkspace(
+        threadID: String,
+        recovery: FeatureWorkspaceRecovery,
+        selection: FeatureWorkspaceRecovery.Selection
+    ) async throws {
+        guard let branch = recovery.branch else {
+            throw FeatureCapabilityUnavailable(
+                "This thread has no recorded branch, so its worktree cannot be recovered safely."
+            )
+        }
+        let route = try threadRoute(for: threadID)
+        let strategy: String
+        let targetPath: String?
+        switch selection {
+        case .mainProject:
+            strategy = "main-project"
+            targetPath = nil
+        case let .matchingWorktree(path):
+            strategy = "matching-worktree"
+            targetPath = path
+        case .recreateWorktree:
+            strategy = "recreate-worktree"
+            targetPath = nil
+        }
+
+        _ = try await route.client.recoverWorkspace(
+            threadID: route.wireID,
+            messageID: recovery.messageID,
+            strategy: strategy,
+            targetPath: targetPath,
+            expectedBranch: branch,
+            expectedWorktreePath: recovery.missingWorktreePath
+        )
+        _ = try? await refreshThread(id: route.uiID, client: route.client)
+    }
+
     func cancelTurn(threadID: String) async throws {
         let route = try threadRoute(for: threadID)
         let turnID = shellsByEnvironmentID[route.environmentID]?.threads
@@ -5031,7 +5067,8 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
             activeSubagentCount: backgroundWorkIsActive || sessionIsLive
                 ? cache.subagents.activeCount
                 : 0,
-            backgroundWorkIsActive: backgroundWorkIsActive
+            backgroundWorkIsActive: backgroundWorkIsActive,
+            workspaceRecovery: FeatureWorkspaceRecovery.latest(in: thread.activities)
         )
     }
 

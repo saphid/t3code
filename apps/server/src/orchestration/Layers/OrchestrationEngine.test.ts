@@ -620,6 +620,96 @@ describe("OrchestrationEngine", () => {
     await system.dispose();
   });
 
+  it("persists a recovery request and its compare-and-set relocation", async () => {
+    const createdAt = now();
+    const system = await createOrchestrationSystem();
+    const { engine } = system;
+    const projectId = asProjectId("project-removed-worktree");
+    const threadId = ThreadId.make("thread-removed-worktree");
+    const messageId = asMessageId("message-removed-worktree");
+
+    await system.run(
+      engine.dispatch({
+        type: "project.create",
+        commandId: CommandId.make("cmd-project-removed-worktree"),
+        projectId,
+        title: "Removed Worktree Project",
+        workspaceRoot: "/tmp/project-removed-worktree",
+        defaultModelSelection: {
+          instanceId: ProviderInstanceId.make("codex"),
+          model: "gpt-5-codex",
+        },
+        createdAt,
+      }),
+    );
+    await system.run(
+      engine.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make("cmd-thread-removed-worktree"),
+        threadId,
+        projectId,
+        title: "Removed Worktree Thread",
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("codex"),
+          model: "gpt-5-codex",
+        },
+        runtimeMode: "full-access",
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        branch: "feature/recovery",
+        worktreePath: "/tmp/project-removed-worktree-old",
+        createdAt,
+      }),
+    );
+    await system.run(
+      engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-turn-removed-worktree"),
+        threadId,
+        message: {
+          messageId,
+          role: "user",
+          text: "continue",
+          attachments: [],
+        },
+        runtimeMode: "full-access",
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        createdAt,
+      }),
+    );
+    await system.run(
+      engine.dispatch({
+        type: "thread.workspace.recovery.request",
+        commandId: CommandId.make("cmd-request-workspace-recovery"),
+        threadId,
+        messageId,
+        strategy: "main-project",
+        expectedBranch: "feature/recovery",
+        expectedWorktreePath: "/tmp/project-removed-worktree-old",
+        createdAt,
+      }),
+    );
+    await system.run(
+      engine.dispatch({
+        type: "thread.meta.update",
+        commandId: CommandId.make("cmd-relocate-workspace"),
+        threadId,
+        expectedBranch: "feature/recovery",
+        expectedWorktreePath: "/tmp/project-removed-worktree-old",
+        worktreePath: null,
+      }),
+    );
+
+    const snapshot = await system.readModel();
+    const thread = snapshot.threads.find((entry) => entry.id === threadId);
+    expect(thread?.worktreePath).toBeNull();
+    expect(
+      thread?.activities.some(
+        (activity) => activity.kind === "thread.workspace.recovery.requested",
+      ),
+    ).toBe(true);
+    await system.dispose();
+  });
+
   it("records command ack duration using the first committed event type", async () => {
     const system = await createOrchestrationSystem();
     const { engine } = system;

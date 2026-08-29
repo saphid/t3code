@@ -90,6 +90,11 @@ public protocol FeatureClient: AnyObject {
         attachments: [FeatureUploadAttachment],
         identity: FeatureSubmissionIdentity
     ) async throws
+    func recoverThreadWorkspace(
+        threadID: String,
+        recovery: FeatureWorkspaceRecovery,
+        selection: FeatureWorkspaceRecovery.Selection
+    ) async throws
     func cancelTurn(threadID: String) async throws
     func resolveApproval(id: String, decision: FeatureApprovalDecision) async throws
     func resolveUserInput(id: String, answers: [String: FeatureInputAnswer]) async throws
@@ -458,6 +463,14 @@ public extension FeatureClient {
             selection: selection,
             attachments: attachments
         )
+    }
+
+    func recoverThreadWorkspace(
+        threadID: String,
+        recovery: FeatureWorkspaceRecovery,
+        selection: FeatureWorkspaceRecovery.Selection
+    ) async throws {
+        throw FeatureCapabilityUnavailable("Removed worktree recovery")
     }
 
     func listFiles(threadID: String, path: String?) async throws -> [FeatureFileEntry] {

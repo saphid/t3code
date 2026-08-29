@@ -642,6 +642,7 @@ public struct FeatureThreadDetail: Sendable, Equatable, Codable {
     public var page: FeatureThreadPage?
     public var activeSubagentCount: Int
     public var backgroundWorkIsActive: Bool
+    public var workspaceRecovery: FeatureWorkspaceRecovery?
 
     public init(
         thread: FeatureThread,
@@ -650,7 +651,8 @@ public struct FeatureThreadDetail: Sendable, Equatable, Codable {
         userInputs: [FeatureUserInput] = [],
         page: FeatureThreadPage? = nil,
         activeSubagentCount: Int = 0,
-        backgroundWorkIsActive: Bool = false
+        backgroundWorkIsActive: Bool = false,
+        workspaceRecovery: FeatureWorkspaceRecovery? = nil
     ) {
         self.thread = thread
         self.messages = messages
@@ -659,6 +661,7 @@ public struct FeatureThreadDetail: Sendable, Equatable, Codable {
         self.page = page
         self.activeSubagentCount = activeSubagentCount
         self.backgroundWorkIsActive = backgroundWorkIsActive
+        self.workspaceRecovery = workspaceRecovery
     }
 }
 

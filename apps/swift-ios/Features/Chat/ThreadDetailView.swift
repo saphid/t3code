@@ -27,6 +27,7 @@ public struct ThreadDetailView: View {
     @State private var didRestoreDraft = false
     @State private var draftSaveTask: Task<Void, Never>?
     @State private var toolSurface: FeatureThreadToolSurface?
+    @State private var dismissedWorkspaceRecoveryID: String?
     // Plain state, not `FocusState`: the composer's UIKit text view owns
     // focus and mirrors it through this binding, because SwiftUI drops
     // writes to a `FocusState` no `.focused()` view registers with.
@@ -124,6 +125,18 @@ public struct ThreadDetailView: View {
             .presentationDragIndicator(.visible)
             .t3CodeSizing(steps: codeSizeSteps)
         }
+        .sheet(item: workspaceRecoveryPresentation) { recovery in
+            WorkspaceRecoverySheet(recovery: recovery) { selection in
+                await model.recoverThreadWorkspace(
+                    threadID: thread.id,
+                    recovery: recovery,
+                    selection: selection
+                )
+            }
+            .presentationDetents([.medium, .large])
+            .presentationDragIndicator(.visible)
+            .t3CodeSizing(steps: codeSizeSteps)
+        }
         .alert("Message not sent", isPresented: $sendFailed) {
             // Refocusing happens here rather than when the send fails: the
             // alert takes first responder from the composer, so a refocus
@@ -159,6 +172,22 @@ public struct ThreadDetailView: View {
 
     private var detail: FeatureThreadDetail? {
         model.details[thread.id]
+    }
+
+    private var workspaceRecoveryPresentation: Binding<FeatureWorkspaceRecovery?> {
+        Binding(
+            get: {
+                guard detail?.workspaceRecovery?.id != dismissedWorkspaceRecoveryID else {
+                    return nil
+                }
+                return detail?.workspaceRecovery
+            },
+            set: { recovery in
+                if recovery == nil {
+                    dismissedWorkspaceRecoveryID = detail?.workspaceRecovery?.id
+                }
+            }
+        )
     }
 
     private var currentThread: FeatureThread {

@@ -362,6 +362,66 @@ export const OrchestrationThreadActivity = Schema.Struct({
 });
 export type OrchestrationThreadActivity = typeof OrchestrationThreadActivity.Type;
 
+export const ThreadWorkspaceRecoveryStrategy = Schema.Literals([
+  "main-project",
+  "matching-worktree",
+  "recreate-worktree",
+]);
+export type ThreadWorkspaceRecoveryStrategy = typeof ThreadWorkspaceRecoveryStrategy.Type;
+
+export const ThreadWorkspaceRecoveryCandidate = Schema.Struct({
+  path: TrimmedNonEmptyString,
+  isProjectRoot: Schema.Boolean,
+  dirty: Schema.Boolean,
+});
+export type ThreadWorkspaceRecoveryCandidate = typeof ThreadWorkspaceRecoveryCandidate.Type;
+
+export const ThreadWorkspaceRecoveryRequiredPayload = Schema.Struct({
+  recoveryId: CommandId,
+  messageId: MessageId,
+  branch: Schema.NullOr(TrimmedNonEmptyString),
+  missingWorktreePath: TrimmedNonEmptyString,
+  reason: Schema.Literals([
+    "missing-branch",
+    "missing-project",
+    "missing-repository",
+    "no-match",
+    "dirty-match",
+    "ambiguous-match",
+    "invalid-target",
+    "repository-mismatch",
+    "branch-mismatch",
+    "target-exists",
+    "branch-checked-out",
+    "git-failed",
+  ]),
+  candidates: Schema.Array(ThreadWorkspaceRecoveryCandidate),
+  canRecreate: Schema.Boolean,
+  detail: TrimmedNonEmptyString,
+});
+export type ThreadWorkspaceRecoveryRequiredPayload =
+  typeof ThreadWorkspaceRecoveryRequiredPayload.Type;
+
+export const ThreadWorkspaceRecoveryRequestedPayload = Schema.Struct({
+  recoveryId: CommandId,
+  messageId: MessageId,
+  strategy: ThreadWorkspaceRecoveryStrategy,
+  targetPath: Schema.optional(TrimmedNonEmptyString),
+  expectedBranch: TrimmedNonEmptyString,
+  expectedWorktreePath: TrimmedNonEmptyString,
+});
+export type ThreadWorkspaceRecoveryRequestedPayload =
+  typeof ThreadWorkspaceRecoveryRequestedPayload.Type;
+
+export const ThreadWorkspaceRecoveryCompletedPayload = Schema.Struct({
+  recoveryId: CommandId,
+  messageId: MessageId,
+  branch: TrimmedNonEmptyString,
+  worktreePath: Schema.NullOr(TrimmedNonEmptyString),
+});
+export type ThreadWorkspaceRecoveryCompletedPayload =
+  typeof ThreadWorkspaceRecoveryCompletedPayload.Type;
+
 const OrchestrationLatestTurnState = Schema.Literals([
   "running",
   "interrupted",
@@ -784,11 +844,30 @@ const ThreadMetaUpdateCommand = Schema.Struct({
   branch: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   expectedBranch: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   worktreePath: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  expectedWorktreePath: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
 }).check(
   Schema.makeFilter(
     (input) =>
       !(input.title !== undefined && input.regenerateTitle === true) ||
       "title and regenerateTitle cannot be specified together",
+  ),
+);
+
+const ThreadWorkspaceRecoveryRequestCommand = Schema.Struct({
+  type: Schema.Literal("thread.workspace.recovery.request"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  messageId: MessageId,
+  strategy: ThreadWorkspaceRecoveryStrategy,
+  targetPath: Schema.optional(TrimmedNonEmptyString),
+  expectedBranch: TrimmedNonEmptyString,
+  expectedWorktreePath: TrimmedNonEmptyString,
+  createdAt: IsoDateTime,
+}).check(
+  Schema.makeFilter(
+    (input) =>
+      (input.strategy === "matching-worktree") === (input.targetPath !== undefined) ||
+      "targetPath is required only for matching-worktree recovery",
   ),
 );
 
@@ -937,6 +1016,7 @@ const DispatchableClientOrchestrationCommand = Schema.Union([
   ThreadUnpinCommand,
   ThreadPinReorderCommand,
   ThreadMetaUpdateCommand,
+  ThreadWorkspaceRecoveryRequestCommand,
   ThreadRuntimeModeSetCommand,
   ThreadInteractionModeSetCommand,
   ThreadTurnStartCommand,
@@ -965,6 +1045,7 @@ export const ClientOrchestrationCommand = Schema.Union([
   ThreadUnpinCommand,
   ThreadPinReorderCommand,
   ThreadMetaUpdateCommand,
+  ThreadWorkspaceRecoveryRequestCommand,
   ThreadRuntimeModeSetCommand,
   ThreadInteractionModeSetCommand,
   ClientThreadTurnStartCommand,

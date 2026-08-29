@@ -537,6 +537,27 @@ public actor T3Client {
     }
 
     @discardableResult
+    public func recoverWorkspace(
+        threadID: String,
+        messageID: String,
+        strategy: String,
+        targetPath: String?,
+        expectedBranch: String,
+        expectedWorktreePath: String
+    ) async throws -> DispatchResult {
+        try await dispatch(
+            OrchestrationCommands.recoverWorkspace(
+                threadID: threadID,
+                messageID: messageID,
+                strategy: strategy,
+                targetPath: targetPath,
+                expectedBranch: expectedBranch,
+                expectedWorktreePath: expectedWorktreePath
+            )
+        )
+    }
+
+    @discardableResult
     public func interrupt(threadID: String, turnID: String? = nil) async throws -> DispatchResult {
         try await dispatch(
             OrchestrationCommands.interrupt(threadID: threadID, turnID: turnID)
@@ -1810,6 +1831,32 @@ public enum OrchestrationCommands {
             "threadId": .string(threadID),
             "regenerateTitle": .bool(true),
         ])
+    }
+
+    public static func recoverWorkspace(
+        threadID: String,
+        messageID: String,
+        strategy: String,
+        targetPath: String?,
+        expectedBranch: String,
+        expectedWorktreePath: String,
+        commandID: String = UUID().uuidString,
+        createdAt: String = now()
+    ) -> JSONValue {
+        var command: [String: JSONValue] = [
+            "type": .string("thread.workspace.recovery.request"),
+            "commandId": .string(commandID),
+            "threadId": .string(threadID),
+            "messageId": .string(messageID),
+            "strategy": .string(strategy),
+            "expectedBranch": .string(expectedBranch),
+            "expectedWorktreePath": .string(expectedWorktreePath),
+            "createdAt": .string(createdAt),
+        ]
+        if let targetPath {
+            command["targetPath"] = .string(targetPath)
+        }
+        return .object(command)
     }
 
     public static func interrupt(
