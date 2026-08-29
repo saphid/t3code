@@ -77,6 +77,117 @@ struct FeatureComposerPowerTests {
     }
 
     @Test
+    func promptHistoryWalksBoundsAndRestoresTheDraft() {
+        var history = FeatureComposerPromptHistory()
+        history.synchronize(
+            threadID: "thread-a",
+            prompts: [
+                message(id: "one", text: "first"),
+                message(id: "two", text: "second"),
+            ]
+        )
+
+        #expect(history.navigate(.older, currentDraft: "") == "second")
+        #expect(history.navigate(.older, currentDraft: "second") == "first")
+        #expect(history.navigate(.older, currentDraft: "first") == "first")
+        #expect(history.navigate(.newer, currentDraft: "first") == "second")
+        #expect(history.navigate(.newer, currentDraft: "second") == "")
+        #expect(!history.isRecalling)
+    }
+
+    @Test
+    func editingARecalledPromptReturnsArrowKeysToTextEditing() {
+        var history = FeatureComposerPromptHistory()
+        history.synchronize(
+            threadID: "thread-a",
+            prompts: [message(id: "one", text: "original")]
+        )
+
+        #expect(history.navigate(.older, currentDraft: "") == "original")
+        history.draftDidChange("original, edited")
+
+        #expect(!history.isRecalling)
+        #expect(history.navigate(.older, currentDraft: "original, edited") == nil)
+        #expect(history.navigate(.newer, currentDraft: "original, edited") == nil)
+    }
+
+    @Test
+    func promptHistoryUsesHydratedUserMessagesWithoutQueuedDuplicates() {
+        var history = FeatureComposerPromptHistory()
+        history.synchronize(
+            threadID: "thread-a",
+            prompts: [
+                message(id: "sent", text: "hydrated"),
+                message(id: "sent", text: "queued duplicate", state: .queued),
+                message(id: "queued", text: "not sent", state: .queued),
+                message(id: "assistant", text: "reply", isUser: false),
+                message(id: "tool", text: "tool output", isUser: false),
+            ]
+        )
+
+        #expect(history.navigate(.older, currentDraft: "") == "hydrated")
+        history.synchronize(
+            threadID: "thread-a",
+            prompts: [
+                message(id: "earlier", text: "loaded earlier"),
+                message(id: "sent", text: "hydrated"),
+            ]
+        )
+        #expect(history.navigate(.older, currentDraft: "hydrated") == "loaded earlier")
+    }
+
+    @Test
+    func switchingThreadsCannotLeakPromptHistory() {
+        var history = FeatureComposerPromptHistory()
+        history.synchronize(
+            threadID: "thread-a",
+            prompts: [message(id: "one", text: "thread a")]
+        )
+        #expect(history.navigate(.older, currentDraft: "") == "thread a")
+
+        history.synchronize(
+            threadID: "thread-b",
+            prompts: [message(id: "two", text: "thread b")]
+        )
+
+        #expect(!history.isRecalling)
+        #expect(history.navigate(.older, currentDraft: "") == "thread b")
+    }
+
+    @Test
+    func suggestionMenusKeepArrowKeyOwnership() {
+        var handledDirections: [FeatureComposerPromptHistory.Direction] = []
+        let handler: (FeatureComposerPromptHistory.Direction) -> Bool = { direction in
+            handledDirections.append(direction)
+            return true
+        }
+
+        let suggestionHandler = FeatureComposerPromptHistoryInputPolicy.handler(
+            handler,
+            suggestionsArePresented: true
+        )
+        let composerHandler = FeatureComposerPromptHistoryInputPolicy.handler(
+            handler,
+            suggestionsArePresented: false
+        )
+
+        #expect(suggestionHandler == nil)
+        #expect(composerHandler?(.older) == true)
+        #expect(handledDirections == [.older])
+    }
+
+    @Test
+    func onlyUnmodifiedArrowKeyCodesMapToPromptHistoryDirections() {
+        #expect(
+            FeatureComposerPromptHistory.Direction(keyCode: .keyboardUpArrow) == .older
+        )
+        #expect(
+            FeatureComposerPromptHistory.Direction(keyCode: .keyboardDownArrow) == .newer
+        )
+        #expect(FeatureComposerPromptHistory.Direction(keyCode: .keyboardReturnOrEnter) == nil)
+    }
+
+    @Test
     @MainActor
     func imageCapableComposerAdvertisesImagesToTheNativePasteMenu() {
         let textView = FeatureComposerUITextView()
@@ -165,6 +276,20 @@ struct FeatureComposerPowerTests {
         ]
 
         #expect(FeatureComposerPasteboardPolicy.containsImage(in: pasteboard))
+    }
+
+    private func message(
+        id: String,
+        text: String,
+        state: FeatureMessageState = .complete,
+        isUser: Bool = true
+    ) -> FeatureComposerPromptHistory.Prompt {
+        FeatureComposerPromptHistory.Prompt(
+            id: id,
+            text: text,
+            isUser: isUser,
+            isQueued: state == .queued
+        )
     }
 
     @Test

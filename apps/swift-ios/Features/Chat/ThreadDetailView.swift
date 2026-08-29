@@ -31,6 +31,7 @@ public struct ThreadDetailView: View {
     // focus and mirrors it through this binding, because SwiftUI drops
     // writes to a `FocusState` no `.focused()` view registers with.
     @State private var composerFocused = false
+    @State private var promptHistory = FeatureComposerPromptHistory()
 
     public init(
         model: FeatureRootModel,
@@ -82,7 +83,10 @@ public struct ThreadDetailView: View {
             await restoreDraft(from: restoreBaseline, key: restoreKey)
             isLoading = false
         }
-        .onChange(of: draft) { scheduleDraftSave() }
+        .onChange(of: draft) {
+            promptHistory.draftDidChange(draft)
+            scheduleDraftSave()
+        }
         .onChange(of: attachments) { scheduleDraftSave() }
         .onChange(of: selection) { scheduleDraftSave() }
         .onChange(of: scenePhase) { _, phase in
@@ -438,6 +442,7 @@ public struct ThreadDetailView: View {
                 isResolvingRequest: model.isPerformingAction,
                 powerFeatures: composerPowerFeatures,
                 onDismissKeyboard: dismissKeyboard,
+                onPromptHistoryNavigation: navigatePromptHistory,
                 onApprovalDecision: { id, decision in
                     Task { await model.resolveApproval(id, decision: decision) }
                 },
@@ -473,6 +478,28 @@ public struct ThreadDetailView: View {
     private var threadProviders: [FeatureProvider] {
         let project = model.snapshot.projects.first { $0.id == currentThread.projectID }
         return DailyUXCreationContext.providers(for: project, in: model.snapshot)
+    }
+
+    private func navigatePromptHistory(
+        _ direction: FeatureComposerPromptHistory.Direction
+    ) -> Bool {
+        guard let detail else { return false }
+        promptHistory.synchronize(
+            threadID: currentThread.id,
+            prompts: detail.messages.map {
+                FeatureComposerPromptHistory.Prompt(
+                    id: $0.id,
+                    text: $0.text,
+                    isUser: $0.role == .user,
+                    isQueued: $0.state == .queued
+                )
+            }
+        )
+        guard let recalled = promptHistory.navigate(direction, currentDraft: draft) else {
+            return false
+        }
+        draft = recalled
+        return true
     }
 
     private var timelineRenderUpdate: FeatureDetailRenderUpdate? {

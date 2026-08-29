@@ -34,6 +34,7 @@ struct FeatureComposerView: View {
     private let onSend: () -> Void
     private let onStop: () -> Void
     private let onDismissKeyboard: (() -> Void)?
+    private let onPromptHistoryNavigation: ((FeatureComposerPromptHistory.Direction) -> Bool)?
     private let onApprovalDecision: ((String, FeatureApprovalDecision) -> Void)?
     private let onUserInputSubmit: ((String, [String: FeatureInputAnswer]) -> Void)?
 
@@ -56,6 +57,7 @@ struct FeatureComposerView: View {
         isResolvingRequest: Bool = false,
         powerFeatures: FeatureComposerPowerFeatures = .disabled,
         onDismissKeyboard: (() -> Void)? = nil,
+        onPromptHistoryNavigation: ((FeatureComposerPromptHistory.Direction) -> Bool)? = nil,
         onApprovalDecision: ((String, FeatureApprovalDecision) -> Void)? = nil,
         onUserInputSubmit: ((String, [String: FeatureInputAnswer]) -> Void)? = nil
     ) {
@@ -77,6 +79,7 @@ struct FeatureComposerView: View {
         self.isResolvingRequest = isResolvingRequest
         self.powerFeatures = powerFeatures
         self.onDismissKeyboard = onDismissKeyboard
+        self.onPromptHistoryNavigation = onPromptHistoryNavigation
         self.onApprovalDecision = onApprovalDecision
         self.onUserInputSubmit = onUserInputSubmit
     }
@@ -258,7 +261,11 @@ struct FeatureComposerView: View {
                     acceptsImages: imagesAllowed,
                     selectionRequest: textSelectionRequest,
                     onPasteImages: attachImageProviders,
-                    onDismissKeyboard: onDismissKeyboard
+                    onDismissKeyboard: onDismissKeyboard,
+                    onPromptHistoryNavigation: FeatureComposerPromptHistoryInputPolicy.handler(
+                        onPromptHistoryNavigation,
+                        suggestionsArePresented: showsCommandMenu
+                    )
                 )
                 .padding(.horizontal, 16)
                 .padding(.top, 14)

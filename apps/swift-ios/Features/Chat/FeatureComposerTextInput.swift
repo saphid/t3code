@@ -18,6 +18,7 @@ struct FeatureComposerTextInput: UIViewRepresentable {
     let selectionRequest: FeatureComposerTextSelectionRequest?
     let onPasteImages: ([NSItemProvider]) -> Void
     let onDismissKeyboard: (() -> Void)?
+    let onPromptHistoryNavigation: ((FeatureComposerPromptHistory.Direction) -> Bool)?
 
     func makeCoordinator() -> Coordinator {
         Coordinator(self)
@@ -29,6 +30,7 @@ struct FeatureComposerTextInput: UIViewRepresentable {
         textView.acceptsImages = acceptsImages
         textView.onPasteImages = onPasteImages
         textView.onDismissKeyboard = onDismissKeyboard
+        textView.onPromptHistoryNavigation = onPromptHistoryNavigation
         if onDismissKeyboard != nil {
             textView.installDismissPanRecognizer()
         }
@@ -59,6 +61,7 @@ struct FeatureComposerTextInput: UIViewRepresentable {
         textView.acceptsImages = acceptsImages
         textView.onPasteImages = onPasteImages
         textView.onDismissKeyboard = onDismissKeyboard
+        textView.onPromptHistoryNavigation = onPromptHistoryNavigation
 
         let shouldApplySelection = selectionRequest.map {
             context.coordinator.lastAppliedSelectionRequestID != $0.id
@@ -175,6 +178,7 @@ final class FeatureComposerUITextView: UITextView {
     }
     var onPasteImages: (([NSItemProvider]) -> Void)?
     var onDismissKeyboard: (() -> Void)?
+    var onPromptHistoryNavigation: ((FeatureComposerPromptHistory.Direction) -> Bool)?
     private var wantsFirstResponderOnAttach = false
 
     /// Programmatic focus can arrive before the view joins a window (a host
@@ -199,6 +203,17 @@ final class FeatureComposerUITextView: UITextView {
             wantsFirstResponderOnAttach = false
             becomeFirstResponder()
         }
+    }
+
+    override func pressesBegan(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+        if presses.count == 1,
+           let key = presses.first?.key,
+           key.modifierFlags.isEmpty,
+           let direction = FeatureComposerPromptHistory.Direction(keyCode: key.keyCode),
+           onPromptHistoryNavigation?(direction) == true {
+            return
+        }
+        super.pressesBegan(presses, with: event)
     }
 
     // A SwiftUI drag gesture on the composer never sees drags that start
@@ -377,6 +392,16 @@ enum FeatureComposerTextSelectionPolicy {
         selectedLocation: Int
     ) -> Int {
         previousText.isEmpty ? newText.utf16.count : min(selectedLocation, newText.utf16.count)
+    }
+}
+
+extension FeatureComposerPromptHistory.Direction {
+    init?(keyCode: UIKeyboardHIDUsage) {
+        switch keyCode {
+        case .keyboardUpArrow: self = .older
+        case .keyboardDownArrow: self = .newer
+        default: return nil
+        }
     }
 }
 
