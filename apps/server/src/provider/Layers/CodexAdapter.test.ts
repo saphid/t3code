@@ -719,6 +719,50 @@ lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
     }),
   );
 
+  it.effect("labels the workspace dependency loader for client work logs", () =>
+    Effect.gen(function* () {
+      const { adapter, runtime } = yield* startLifecycleRuntime();
+      const firstEventFiber = yield* Stream.runHead(adapter.streamEvents).pipe(Effect.forkChild);
+
+      yield* runtime.emit({
+        id: asEventId("evt-workspace-loader-complete"),
+        kind: "notification",
+        provider: ProviderDriverKind.make("codex"),
+        createdAt: "2026-08-30T00:00:00.000Z",
+        method: "item/completed",
+        threadId: asThreadId("thread-1"),
+        turnId: asTurnId("turn-1"),
+        itemId: asItemId("loader_1"),
+        payload: {
+          completedAtMs: 1_788_048_000_000,
+          threadId: "thread-1",
+          turnId: "turn-1",
+          item: {
+            type: "dynamicToolCall",
+            id: "loader_1",
+            namespace: "codex_app",
+            tool: "load_workspace_dependencies",
+            arguments: {},
+            contentItems: [
+              { type: "inputText", text: "Verified Codex workspace dependency runtime loaded." },
+            ],
+            durationMs: 8,
+            status: "completed",
+            success: true,
+          },
+        },
+      });
+      const firstEvent = yield* Fiber.join(firstEventFiber);
+
+      NodeAssert.equal(firstEvent._tag, "Some");
+      if (firstEvent._tag !== "Some" || firstEvent.value.type !== "item.completed") {
+        return;
+      }
+      NodeAssert.equal(firstEvent.value.payload.itemType, "dynamic_tool_call");
+      NodeAssert.equal(firstEvent.value.payload.title, "codex_app · load_workspace_dependencies");
+    }),
+  );
+
   it.effect("preserves failed and declined outcomes on completed tool items", () =>
     Effect.gen(function* () {
       const { adapter, runtime } = yield* startLifecycleRuntime();

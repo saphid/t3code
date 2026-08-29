@@ -2,6 +2,37 @@ import { assert, it } from "@effect/vitest";
 import * as Schema from "effect/Schema";
 
 import * as CodexSchema from "./schema.ts";
+const isThreadStartParams = Schema.is(CodexSchema.V2ThreadStartParams);
+
+it("accepts host dynamic tools on thread/start", () => {
+  const params = {
+    cwd: "/tmp/project",
+    dynamicTools: [
+      {
+        type: "namespace",
+        name: "codex_app",
+        description: "Host tools",
+        tools: [
+          {
+            type: "function",
+            name: "load_workspace_dependencies",
+            description: "Load dependencies",
+            inputSchema: { type: "object", properties: {}, additionalProperties: false },
+          },
+        ],
+      },
+    ],
+  };
+
+  assert.equal(isThreadStartParams(params), true);
+  assert.equal(
+    isThreadStartParams({
+      ...params,
+      dynamicTools: [{ ...params.dynamicTools[0], tools: "not-an-array" }],
+    }),
+    false,
+  );
+});
 
 it("accepts Codex 0.150 multi-agent values", () => {
   const schemas = [

@@ -5876,7 +5876,7 @@ private final class NativeDetailRenderCache {
     var subagents = FeatureActiveSubagentTracker()
 }
 
-private struct NativeWorkLogAccumulator {
+struct NativeWorkLogAccumulator {
     private static let terminalKinds = Set([
         "tool.completed", "task.completed", "turn.plan.updated",
     ])

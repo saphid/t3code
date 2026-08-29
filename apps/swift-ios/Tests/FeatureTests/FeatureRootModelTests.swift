@@ -8,6 +8,44 @@ import UIKit
 @MainActor
 @Suite("Feature root model")
 struct FeatureRootModelTests {
+    @Test(.bug("https://github.com/saphid/t3code-personal/issues/238"))
+    func codexWorkspaceDependencyLoaderAppearsAsCompletedWorkInsteadOfApproval() {
+        let activity = OrchestrationActivity(
+            id: "workspace-loader-complete",
+            tone: "tool",
+            kind: "tool.completed",
+            summary: "codex_app · load_workspace_dependencies",
+            payload: .object([
+                "itemType": .string("dynamic_tool_call"),
+                "status": .string("completed"),
+            ]),
+            turnId: "turn-1",
+            sequence: 1,
+            createdAt: "2026-08-30T00:00:00Z"
+        )
+        let obsoleteApproval = OrchestrationActivity(
+            id: "workspace-loader-request",
+            tone: "info",
+            kind: "approval.requested",
+            summary: "Dynamic tool call",
+            payload: .object([:]),
+            turnId: "turn-1",
+            sequence: 0,
+            createdAt: "2026-08-30T00:00:00Z"
+        )
+
+        #expect(NativeWorkLogAccumulator.accepts(activity))
+        #expect(NativeWorkLogAccumulator.accepts(obsoleteApproval) == false)
+
+        var accumulator = NativeWorkLogAccumulator()
+        accumulator.append(activity, preview: nil, createdAt: Date(timeIntervalSince1970: 0))
+        let message = accumulator.message(groupID: "turn-1")
+
+        #expect(message.id == "work-log-turn-1")
+        #expect(message.toolName == "Work log · 1")
+        #expect(message.text == "• codex_app · load_workspace_dependencies")
+    }
+
     @Test
     func appearanceAppliesImmediatelyAndPersistsWithoutSavingTheDraft() async {
         let client = FeatureClientStub()

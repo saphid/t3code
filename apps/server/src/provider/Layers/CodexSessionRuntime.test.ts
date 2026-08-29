@@ -16,6 +16,7 @@ import {
 } from "../CodexDeveloperInstructions.ts";
 import { codexSessionAppServerArgs } from "./codexLaunchArgs.ts";
 import {
+  buildThreadStartParams,
   buildTurnStartParams,
   describeMcpElicitation,
   hasConfiguredMcpServer,
@@ -775,6 +776,86 @@ describe("isRecoverableThreadResumeError", () => {
 });
 
 describe("openCodexThread", () => {
+  it.effect("registers the workspace dependency loader on fresh threads", () =>
+    Effect.gen(function* () {
+      let startPayload: CodexRpc.ClientRequestParamsByMethod["thread/start"] | undefined;
+      const client = {
+        request: <M extends "thread/start" | "thread/resume">(
+          method: M,
+          payload: CodexRpc.ClientRequestParamsByMethod[M],
+        ) => {
+          NodeAssert.equal(method, "thread/start");
+          startPayload = payload;
+          return Effect.succeed(
+            makeThreadOpenResponse("fresh-thread") as CodexRpc.ClientRequestResponsesByMethod[M],
+          );
+        },
+      };
+
+      yield* openCodexThread({
+        client,
+        threadId: ThreadId.make("thread-1"),
+        runtimeMode: "full-access",
+        cwd: "/tmp/project",
+        requestedModel: "gpt-5.3-codex",
+        serviceTier: undefined,
+        resumeThreadId: undefined,
+      });
+
+      NodeAssert.deepStrictEqual(startPayload?.dynamicTools, [
+        {
+          type: "namespace",
+          name: "codex_app",
+          description: "Read-only tools supplied by the local T3 Code host.",
+          tools: [
+            {
+              type: "function",
+              name: "load_workspace_dependencies",
+              description:
+                "Load the verified bundled workspace runtime paths for artifact creation in this T3 Code environment.",
+              inputSchema: {
+                type: "object",
+                properties: {},
+                additionalProperties: false,
+              },
+            },
+          ],
+        },
+      ]);
+    }),
+  );
+
+  it.effect("resumes without replacing persisted dynamic tools", () =>
+    Effect.gen(function* () {
+      let resumePayload: CodexRpc.ClientRequestParamsByMethod["thread/resume"] | undefined;
+      const client = {
+        request: <M extends "thread/start" | "thread/resume">(
+          method: M,
+          payload: CodexRpc.ClientRequestParamsByMethod[M],
+        ) => {
+          NodeAssert.equal(method, "thread/resume");
+          resumePayload = payload as CodexRpc.ClientRequestParamsByMethod["thread/resume"];
+          return Effect.succeed(
+            makeThreadOpenResponse("resumed-thread") as CodexRpc.ClientRequestResponsesByMethod[M],
+          );
+        },
+      };
+
+      yield* openCodexThread({
+        client,
+        threadId: ThreadId.make("thread-1"),
+        runtimeMode: "full-access",
+        cwd: "/tmp/project",
+        requestedModel: "gpt-5.3-codex",
+        serviceTier: undefined,
+        resumeThreadId: "resumed-thread",
+      });
+
+      NodeAssert.equal(resumePayload?.threadId, "resumed-thread");
+      NodeAssert.equal("dynamicTools" in (resumePayload ?? {}), false);
+    }),
+  );
+
   it.effect("falls back to thread/start when resume fails recoverably", () =>
     Effect.gen(function* () {
       const calls: Array<{ method: "thread/start" | "thread/resume"; payload: unknown }> = [];
@@ -811,6 +892,19 @@ describe("openCodexThread", () => {
       NodeAssert.deepStrictEqual(
         calls.map((call) => call.method),
         ["thread/resume", "thread/start"],
+      );
+      const [resumeCall, startCall] = calls;
+      NodeAssert.ok(resumeCall);
+      NodeAssert.ok(startCall);
+      NodeAssert.equal("dynamicTools" in (resumeCall.payload as object), false);
+      NodeAssert.deepStrictEqual(
+        (startCall.payload as ReturnType<typeof buildThreadStartParams>).dynamicTools,
+        buildThreadStartParams({
+          cwd: "/tmp/project",
+          runtimeMode: "full-access",
+          model: "gpt-5.3-codex",
+          serviceTier: undefined,
+        }).dynamicTools,
       );
     }),
   );

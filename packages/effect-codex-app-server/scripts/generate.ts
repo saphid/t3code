@@ -172,6 +172,28 @@ const Codex0150DefinitionSchemas: Record<string, Schema.Json> = {
   },
 };
 
+function applyHostIntegrationSchemaPatches(schemas: Record<string, Schema.Json>): void {
+  const threadStartParams = schemas.V2ThreadStartParams;
+  if (
+    threadStartParams === null ||
+    typeof threadStartParams !== "object" ||
+    Array.isArray(threadStartParams) ||
+    !("properties" in threadStartParams)
+  ) {
+    throw new Error("Missing V2ThreadStartParams schema for host integration patches");
+  }
+
+  const properties = threadStartParams.properties as Record<string, Schema.Json>;
+  if (properties === null || typeof properties !== "object" || Array.isArray(properties)) {
+    throw new Error("V2ThreadStartParams schema has no properties object");
+  }
+
+  properties.dynamicTools = {
+    type: "array",
+    items: { $ref: "#/definitions/V2ThreadStartParams__DynamicToolSpec" },
+  };
+}
+
 const getGeneratedPaths = Effect.fn("getGeneratedPaths")(function* () {
   const path = yield* Path.Path;
   const generatedDir = path.join(import.meta.dirname, "..", "src", "_generated");
@@ -621,6 +643,11 @@ const generateFiles = Effect.fn("generateFiles")(function* () {
       aggregateSchemas[name] = stripNullDefaults(normalizeNullableTypes(schema));
     }
   }
+
+  // `dynamicTools` is an experimental host integration supported by Codex app-server.
+  // Its shared types are present in the published schema, but the field itself is omitted
+  // from ThreadStartParams. Keep the generated client schema from stripping it.
+  applyHostIntegrationSchemaPatches(aggregateSchemas);
 
   const generator = makeJsonSchemaGenerator();
   for (const [name, schema] of Object.entries(aggregateSchemas).toSorted(([left], [right]) =>
