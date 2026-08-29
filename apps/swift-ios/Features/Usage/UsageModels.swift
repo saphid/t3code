@@ -184,6 +184,11 @@ struct UsageLoadState: Equatable {
 }
 
 enum UsageMerger {
+    private enum SourceClaimKey: Hashable {
+        case trusted(provider: UsageProviderKind, identity: String)
+        case legacy(UsageSourceFingerprint)
+    }
+
     private struct OwnedContribution {
         let buckets: [UsageBucket]
         let sessions: Int
@@ -364,21 +369,22 @@ enum UsageMerger {
 
     private static func claimSources(
         _ environments: [(FeatureEnvironmentUsage, UsageSummary)]
-    ) -> (ownerByFingerprint: [UsageSourceFingerprint: String], duplicates: [String]) {
+    ) -> (ownerByFingerprint: [SourceClaimKey: String], duplicates: [String]) {
         var selected: [
-            UsageSourceFingerprint: (environmentID: String, status: UsageSourceStatus)
+            SourceClaimKey: (environmentID: String, status: UsageSourceStatus)
         ] = [:]
         var duplicates: [String] = []
         let ordered = environments.sorted { $0.0.environmentID < $1.0.environmentID }
 
         for (environment, summary) in ordered {
             for source in summary.sources where source.status != .missing {
-                if let current = selected[source.fingerprint] {
+                let key = sourceClaimKey(source.fingerprint)
+                if let current = selected[key] {
                     if source.status.ownershipPriority > current.status.ownershipPriority {
-                        selected[source.fingerprint] = (environment.environmentID, source.status)
+                        selected[key] = (environment.environmentID, source.status)
                     }
                 } else {
-                    selected[source.fingerprint] = (environment.environmentID, source.status)
+                    selected[key] = (environment.environmentID, source.status)
                 }
             }
         }
@@ -386,7 +392,7 @@ enum UsageMerger {
         let owners = selected.mapValues(\.environmentID)
         for (environment, summary) in ordered {
             for source in summary.sources where source.status != .missing {
-                if owners[source.fingerprint] != environment.environmentID {
+                if owners[sourceClaimKey(source.fingerprint)] != environment.environmentID {
                     duplicates.append(
                         "\(environment.label): \(source.fingerprint.resolvedHomePath)"
                     )
@@ -399,12 +405,12 @@ enum UsageMerger {
     private static func ownedContribution(
         environment: FeatureEnvironmentUsage,
         summary: UsageSummary,
-        ownerByFingerprint: [UsageSourceFingerprint: String]
+        ownerByFingerprint: [SourceClaimKey: String]
     ) -> OwnedContribution {
         var providers: Set<UsageProviderKind> = []
         var sessions = 0
         for source in summary.sources where source.status != .missing {
-            if ownerByFingerprint[source.fingerprint] == environment.environmentID {
+            if ownerByFingerprint[sourceClaimKey(source.fingerprint)] == environment.environmentID {
                 providers.insert(source.fingerprint.provider)
                 sessions += source.distinctSessions
             }
@@ -413,6 +419,14 @@ enum UsageMerger {
             buckets: summary.buckets.filter { providers.contains($0.provider) },
             sessions: sessions
         )
+    }
+
+    private static func sourceClaimKey(_ fingerprint: UsageSourceFingerprint) -> SourceClaimKey {
+        if let sourceIdentity = fingerprint.sourceIdentity {
+            .trusted(provider: fingerprint.provider, identity: sourceIdentity)
+        } else {
+            .legacy(fingerprint)
+        }
     }
 
     private static func totalTokens(_ bucket: UsageBucket) -> Int {

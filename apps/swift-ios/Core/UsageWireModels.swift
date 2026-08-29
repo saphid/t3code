@@ -1,10 +1,11 @@
 import Foundation
 
 public let usageContractVersion = 5
-public let minimumCompatibleUsageContractVersion = 3
+public let minimumCompatibleUsageContractVersion = 5
 
-/// Versions 3 through 5 contain every field this client needs. Keep them working
-/// while servers update independently across a user's environments.
+/// Version 5 carries the trusted source identity needed for cross-boundary
+/// deduplication. Older summaries remain decodable, but excluding them avoids
+/// doubling totals during a rolling Windows/WSL server update.
 public func isCompatibleUsageContractVersion(_ version: Int) -> Bool {
     (minimumCompatibleUsageContractVersion ... usageContractVersion).contains(version)
 }
@@ -112,6 +113,21 @@ public struct UsageSourceFingerprint: Codable, Equatable, Hashable, Sendable {
     public let provider: UsageProviderKind
     public let resolvedHomePath: String
     public let volumeId: String
+    public let sourceIdentity: String?
+
+    public init(
+        hostId: String,
+        provider: UsageProviderKind,
+        resolvedHomePath: String,
+        volumeId: String,
+        sourceIdentity: String? = nil
+    ) {
+        self.hostId = hostId
+        self.provider = provider
+        self.resolvedHomePath = resolvedHomePath
+        self.volumeId = volumeId
+        self.sourceIdentity = sourceIdentity
+    }
 }
 
 public enum UsageSourceStatus: String, Codable, Sendable {

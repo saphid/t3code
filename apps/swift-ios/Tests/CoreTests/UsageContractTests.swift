@@ -36,7 +36,8 @@ final class UsageContractTests: XCTestCase {
                   "hostId": "mac-1",
                   "provider": "grok",
                   "resolvedHomePath": "/Users/theo/.grok",
-                  "volumeId": "1:2"
+                  "volumeId": "1:2",
+                  "sourceIdentity": "windows-fs-v1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
                 },
                 "status": "ok",
                 "scannedFiles": 3,
@@ -63,5 +64,51 @@ final class UsageContractTests: XCTestCase {
         XCTAssertEqual(summary.sources.first?.fingerprint.provider, .grok)
         XCTAssertEqual(summary.buckets.first?.totals.cachedInputTokens, 200)
         XCTAssertEqual(summary.sources.first?.fingerprint.volumeId, "1:2")
+        XCTAssertEqual(
+            summary.sources.first?.fingerprint.sourceIdentity,
+            "windows-fs-v1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        )
+    }
+
+    func testUsageSummaryStillDecodesLegacyFingerprintForRollingUpdates() throws {
+        let data = Data(
+            #"""
+            {
+              "contractVersion": 4,
+              "readAt": "2026-08-09T12:00:00.000Z",
+              "timeZone": "UTC",
+              "sinceDay": "2026-08-09",
+              "untilDay": "2026-08-09",
+              "buckets": [],
+              "sources": [{
+                "fingerprint": {
+                  "hostId": "legacy-host",
+                  "provider": "claude",
+                  "resolvedHomePath": "/home/alex/.claude/projects",
+                  "volumeId": "1:2"
+                },
+                "status": "ok",
+                "scannedFiles": 0,
+                "skippedFiles": 0,
+                "malformedRecords": 0,
+                "distinctSessions": 0,
+                "message": null
+              }],
+              "pricing": {
+                "status": "cached",
+                "source": "LiteLLM",
+                "fetchedAt": null,
+                "knownModels": 0
+              },
+              "scanDurationMs": 1
+            }
+            """#.utf8
+        )
+
+        let summary = try JSONDecoder.t3.decode(UsageSummary.self, from: data)
+
+        XCTAssertEqual(summary.contractVersion, 4)
+        XCTAssertNil(summary.sources.first?.fingerprint.sourceIdentity)
+        XCTAssertFalse(isCompatibleUsageContractVersion(summary.contractVersion))
     }
 }

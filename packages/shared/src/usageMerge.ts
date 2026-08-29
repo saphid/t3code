@@ -84,20 +84,38 @@ export interface MergedUsage {
 }
 
 /**
- * Two sources are the same physical transcript directory only when host,
- * provider, path and filesystem identity all agree.
+ * A trusted source identity takes precedence because it proves a Windows
+ * directory across Windows and WSL path/stat namespaces. Without one, host,
+ * provider, path and filesystem identity must all agree as before.
  *
  * `volumeId` is what stops two machines that happen to share a hostname and a
  * home path, which is every Mac in a fleet, from collapsing into one source and
  * having one of them silently dropped.
  */
 function fingerprintKey(fingerprint: UsageSourceFingerprint): string {
+  if (fingerprint.sourceIdentity !== undefined) {
+    return ["trusted", fingerprint.provider, fingerprint.sourceIdentity].join(" ");
+  }
   return [
+    "legacy",
     fingerprint.hostId,
     fingerprint.provider,
     fingerprint.resolvedHomePath,
     fingerprint.volumeId,
   ].join(" ");
+}
+
+function ownershipPriority(status: "ok" | "missing" | "partial" | "failed"): number {
+  switch (status) {
+    case "missing":
+      return 0;
+    case "failed":
+      return 1;
+    case "partial":
+      return 2;
+    case "ok":
+      return 3;
+  }
 }
 
 /**
@@ -113,7 +131,10 @@ function claimSources(environments: readonly EnvironmentUsage[]): {
   readonly ownerByFingerprint: ReadonlyMap<string, EnvironmentId>;
   readonly duplicates: readonly string[];
 } {
-  const ownerByFingerprint = new Map<string, EnvironmentId>();
+  const selected = new Map<
+    string,
+    { readonly environmentId: EnvironmentId; readonly status: "ok" | "partial" | "failed" }
+  >();
   const duplicates: string[] = [];
 
   const ordered = [...environments].sort((a, b) => a.environmentId.localeCompare(b.environmentId));
@@ -122,11 +143,26 @@ function claimSources(environments: readonly EnvironmentUsage[]): {
     for (const source of environment.summary.sources) {
       if (source.status === "missing") continue;
       const key = fingerprintKey(source.fingerprint);
-      if (ownerByFingerprint.has(key)) {
-        duplicates.push(`${environment.label}: ${source.fingerprint.resolvedHomePath}`);
-        continue;
+      const current = selected.get(key);
+      if (
+        current === undefined ||
+        ownershipPriority(source.status) > ownershipPriority(current.status)
+      ) {
+        selected.set(key, { environmentId: environment.environmentId, status: source.status });
       }
-      ownerByFingerprint.set(key, environment.environmentId);
+    }
+  }
+
+  const ownerByFingerprint = new Map(
+    [...selected].map(([key, owner]) => [key, owner.environmentId] as const),
+  );
+  for (const environment of ordered) {
+    for (const source of environment.summary.sources) {
+      if (source.status === "missing") continue;
+      const key = fingerprintKey(source.fingerprint);
+      if (ownerByFingerprint.get(key) !== environment.environmentId) {
+        duplicates.push(`${environment.label}: ${source.fingerprint.resolvedHomePath}`);
+      }
     }
   }
 

@@ -39,6 +39,8 @@ function summary(
     hostId: string;
     homePath: string;
     volumeId?: string;
+    sourceIdentity?: string;
+    status?: "ok" | "missing" | "partial" | "failed";
     distinctSessions?: number;
   }[],
   contractVersion: number = USAGE_CONTRACT_VERSION,
@@ -56,8 +58,9 @@ function summary(
         provider: source.provider,
         resolvedHomePath: source.homePath,
         volumeId: source.volumeId ?? `vol-${source.hostId}`,
+        ...(source.sourceIdentity === undefined ? {} : { sourceIdentity: source.sourceIdentity }),
       },
-      status: "ok" as const,
+      status: source.status ?? ("ok" as const),
       scannedFiles: 1,
       skippedFiles: 0,
       malformedRecords: 0,
@@ -254,6 +257,148 @@ describe("mergeUsage", () => {
 
     expect(merged.costUsd).toBe(10);
     expect(merged.duplicateSources).toHaveLength(1);
+  });
+
+  it("counts one Windows directory once across Windows and WSL namespaces", () => {
+    const sourceIdentity = `windows-fs-v1:${"a".repeat(64)}`;
+    const merged = mergeUsage(
+      [
+        environment(
+          "windows",
+          summary(
+            [bucket()],
+            [
+              {
+                provider: "claude",
+                hostId: "DESKTOP",
+                homePath: "C:\\Users\\Alex\\.claude\\projects",
+                volumeId: "ntfs:123",
+                sourceIdentity,
+              },
+            ],
+          ),
+        ),
+        environment(
+          "wsl",
+          summary(
+            [bucket({ costUsd: 99 })],
+            [
+              {
+                provider: "claude",
+                hostId: "custom-wsl-host",
+                homePath: "/home/alex/.claude/projects",
+                volumeId: "drvfs:456",
+                sourceIdentity,
+              },
+            ],
+          ),
+        ),
+      ],
+      USAGE_CONTRACT_VERSION,
+    );
+
+    expect(merged.costUsd).toBe(10);
+    expect(merged.sessions).toBe(1);
+    expect(merged.contributingEnvironments).toEqual(["windows"]);
+    expect(merged.duplicateSources).toEqual(["wsl: /home/alex/.claude/projects"]);
+  });
+
+  it("keeps trusted identities separate despite matching hostnames, paths, and session counts", () => {
+    const visible = {
+      provider: "claude" as const,
+      hostId: "DESKTOP",
+      homePath: "C:\\Users\\Alex\\.claude\\projects",
+      volumeId: "same-visible-value",
+      distinctSessions: 3,
+    };
+    const merged = mergeUsage(
+      [
+        environment(
+          "env-a",
+          summary([bucket()], [{ ...visible, sourceIdentity: "windows-fs-v1:first" }]),
+        ),
+        environment(
+          "env-b",
+          summary(
+            [bucket({ costUsd: 20 })],
+            [{ ...visible, sourceIdentity: "windows-fs-v1:second" }],
+          ),
+        ),
+      ],
+      USAGE_CONTRACT_VERSION,
+    );
+
+    expect(merged.costUsd).toBe(30);
+    expect(merged.sessions).toBe(6);
+    expect(merged.duplicateSources).toEqual([]);
+  });
+
+  it("never joins providers from a colliding opaque identity", () => {
+    const sourceIdentity = "windows-fs-v1:collision";
+    const merged = mergeUsage(
+      [
+        environment(
+          "claude",
+          summary(
+            [bucket()],
+            [{ provider: "claude", hostId: "host", homePath: "/claude", sourceIdentity }],
+          ),
+        ),
+        environment(
+          "codex",
+          summary(
+            [bucket({ provider: "codex", costUsd: 20 })],
+            [{ provider: "codex", hostId: "host", homePath: "/codex", sourceIdentity }],
+          ),
+        ),
+      ],
+      USAGE_CONTRACT_VERSION,
+    );
+
+    expect(merged.costUsd).toBe(30);
+    expect(merged.providers).toHaveLength(2);
+  });
+
+  it("prefers a complete scan over a stable-order partial scan", () => {
+    const sourceIdentity = "windows-fs-v1:shared";
+    const merged = mergeUsage(
+      [
+        environment(
+          "a-partial",
+          summary(
+            [bucket({ costUsd: 4 })],
+            [
+              {
+                provider: "claude",
+                hostId: "wsl",
+                homePath: "/mnt/c/history",
+                sourceIdentity,
+                status: "partial",
+              },
+            ],
+          ),
+        ),
+        environment(
+          "z-complete",
+          summary(
+            [bucket({ costUsd: 10 })],
+            [
+              {
+                provider: "claude",
+                hostId: "windows",
+                homePath: "C:\\history",
+                sourceIdentity,
+              },
+            ],
+          ),
+        ),
+      ],
+      USAGE_CONTRACT_VERSION,
+    );
+
+    expect(merged.costUsd).toBe(10);
+    expect(merged.contributingEnvironments).toEqual(["z-complete"]);
+    expect(merged.duplicateSources).toEqual(["a-partial: /mnt/c/history"]);
   });
 
   it("totals sessions from per-directory distinct counts, not per-bucket sums", () => {

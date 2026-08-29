@@ -119,6 +119,111 @@ struct UsageModelsTests {
         #expect(merged.duplicateSources == ["Failed: /Users/theo/.codex"])
     }
 
+    @Test("Windows and WSL count one trusted transcript source", .bug("https://github.com/saphid/t3code-personal/issues/230"))
+    func windowsAndWSLSharedDirectoryCountsOnce() {
+        let sourceIdentity = "windows-fs-v1:shared"
+        let windows = FeatureEnvironmentUsage(
+            environmentID: "windows",
+            label: "Windows",
+            summary: summary(
+                provider: .claude,
+                costUsd: 10,
+                sourceIdentity: sourceIdentity,
+                hostID: "DESKTOP",
+                path: "C:\\Users\\Alex\\.claude\\projects",
+                volumeID: "ntfs:123"
+            ),
+            errorMessage: nil
+        )
+        let wsl = FeatureEnvironmentUsage(
+            environmentID: "wsl",
+            label: "WSL",
+            summary: summary(
+                provider: .claude,
+                costUsd: 99,
+                sourceIdentity: sourceIdentity,
+                hostID: "custom-wsl-host",
+                path: "/home/alex/.claude/projects",
+                volumeID: "drvfs:456"
+            ),
+            errorMessage: nil
+        )
+
+        let merged = UsageMerger.merge([wsl, windows])
+
+        #expect(merged.costUsd == 10)
+        #expect(merged.sessions == 1)
+        #expect(merged.contributingEnvironments == ["windows"])
+        #expect(merged.duplicateSources == ["WSL: /home/alex/.claude/projects"])
+    }
+
+    @Test("Distinct trusted sources survive visible fingerprint collisions", .bug("https://github.com/saphid/t3code-personal/issues/230"))
+    func distinctTrustedSourcesRemainSeparate() {
+        let first = FeatureEnvironmentUsage(
+            environmentID: "first",
+            label: "First",
+            summary: summary(
+                provider: .codex,
+                costUsd: 10,
+                sourceIdentity: "windows-fs-v1:first",
+                hostID: "DESKTOP",
+                path: "C:\\Users\\Alex\\.codex\\sessions",
+                volumeID: "same"
+            ),
+            errorMessage: nil
+        )
+        let second = FeatureEnvironmentUsage(
+            environmentID: "second",
+            label: "Second",
+            summary: summary(
+                provider: .codex,
+                costUsd: 20,
+                sourceIdentity: "windows-fs-v1:second",
+                hostID: "DESKTOP",
+                path: "C:\\Users\\Alex\\.codex\\sessions",
+                volumeID: "same"
+            ),
+            errorMessage: nil
+        )
+
+        let merged = UsageMerger.merge([first, second])
+
+        #expect(merged.costUsd == 30)
+        #expect(merged.sessions == 2)
+        #expect(merged.duplicateSources.isEmpty)
+    }
+
+    @Test("Complete scan owns a trusted source over a partial scan", .bug("https://github.com/saphid/t3code-personal/issues/230"))
+    func completeScanOwnsTrustedSource() {
+        let partial = FeatureEnvironmentUsage(
+            environmentID: "a-partial",
+            label: "Partial",
+            summary: summary(
+                provider: .claude,
+                costUsd: 4,
+                sourceStatus: .partial,
+                sourceIdentity: "windows-fs-v1:shared"
+            ),
+            errorMessage: nil
+        )
+        let complete = FeatureEnvironmentUsage(
+            environmentID: "z-complete",
+            label: "Complete",
+            summary: summary(
+                provider: .claude,
+                costUsd: 10,
+                sourceIdentity: "windows-fs-v1:shared"
+            ),
+            errorMessage: nil
+        )
+
+        let merged = UsageMerger.merge([partial, complete])
+
+        #expect(merged.costUsd == 10)
+        #expect(merged.contributingEnvironments == ["z-complete"])
+        #expect(merged.duplicateSources == ["Partial: /Users/theo/.claude"])
+    }
+
     @Test
     func staleContractsDoNotChangeTotals() {
         let current = FeatureEnvironmentUsage(
@@ -360,7 +465,7 @@ struct UsageModelsTests {
     }
 
     @Test
-    func rollingServerVersionsLoadWhenAnotherEnvironmentIsOffline() throws {
+    func mixedServerVersionsExcludeOlderTotalsWhenAnotherEnvironmentIsOffline() throws {
         let timeZone = try #require(TimeZone(identifier: "America/Los_Angeles"))
         let now = try #require(
             ISO8601DateFormatter().date(from: "2026-08-18T12:00:00Z")
@@ -400,16 +505,14 @@ struct UsageModelsTests {
         )
         #expect(received)
 
-        #expect(state.merged.costUsd == 30)
-        #expect(
-            state.merged.contributingEnvironments == ["current-server", "previous-server"]
-        )
-        #expect(state.merged.staleEnvironments.isEmpty)
+        #expect(state.merged.costUsd == 10)
+        #expect(state.merged.contributingEnvironments == ["current-server"])
+        #expect(state.merged.staleEnvironments == ["previous-server"])
         #expect(state.environments.filter { $0.errorMessage != nil } == [offlineServer])
     }
 
     @Test
-    func grokUsageMergesWithOlderServersAndAppearsInCharts() {
+    func grokUsageAppearsInChartsWhileOlderServersRemainStale() {
         let environments = [
             FeatureEnvironmentUsage(
                 environmentID: "new", label: "New",
@@ -428,11 +531,11 @@ struct UsageModelsTests {
             ),
         ]
         let merged = UsageMerger.merge(environments)
-        #expect(merged.costUsd == 30)
-        #expect(Set(merged.providers.map(\.provider)) == [.grok, .codex, .claude])
+        #expect(merged.costUsd == 15)
+        #expect(merged.providers.map(\.provider) == [.grok])
         #expect(merged.daily.first?.byProvider[.grok]?.costUsd == 15)
         #expect(merged.models.contains { $0.provider == .grok })
-        #expect(merged.staleEnvironments.isEmpty)
+        #expect(merged.staleEnvironments == ["legacy", "older"])
         #expect(!isCompatibleUsageContractVersion(2))
         #expect(!isCompatibleUsageContractVersion(6))
     }
@@ -447,9 +550,13 @@ struct UsageModelsTests {
         output: Int = 20,
         reasoning: Int = 0,
         sourceStatus: UsageSourceStatus = .ok,
-        hourStart: String? = nil
+        hourStart: String? = nil,
+        sourceIdentity: String? = nil,
+        hostID: String = "host",
+        path: String? = nil,
+        volumeID: String = "1:2"
     ) -> UsageSummary {
-        let path = "/Users/theo/.\(provider.rawValue)"
+        let resolvedPath = path ?? "/Users/theo/.\(provider.rawValue)"
         return UsageSummary(
             contractVersion: contractVersion,
             readAt: "2026-08-09T12:00:00.000Z",
@@ -480,10 +587,11 @@ struct UsageModelsTests {
             sources: [
                 UsageSource(
                     fingerprint: UsageSourceFingerprint(
-                        hostId: "host",
+                        hostId: hostID,
                         provider: provider,
-                        resolvedHomePath: path,
-                        volumeId: "1:2"
+                        resolvedHomePath: resolvedPath,
+                        volumeId: volumeID,
+                        sourceIdentity: sourceIdentity
                     ),
                     status: sourceStatus,
                     scannedFiles: 1,

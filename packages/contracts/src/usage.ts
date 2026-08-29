@@ -131,6 +131,19 @@ export const UsageSourceFingerprint = Schema.Struct({
    * effectively never collides across machines. Empty when it cannot be read.
    */
   volumeId: Schema.String,
+  /**
+   * Opaque identity proved through the filesystem that owns the directory.
+   *
+   * Windows and WSL can name one NTFS directory through unrelated path and
+   * stat namespaces. When the server can map the real path to a local Windows
+   * drive and read its machine, volume and file identities through Windows, it
+   * emits the same value on both sides. Clients never infer this value from a
+   * hostname, visible path, or transcript contents.
+   *
+   * Optional so current clients can decode older servers during a rolling
+   * update. Contract-version filtering decides whether their totals contribute.
+   */
+  sourceIdentity: Schema.optional(TrimmedNonEmptyString),
 });
 export type UsageSourceFingerprint = typeof UsageSourceFingerprint.Type;
 

@@ -21,7 +21,7 @@ import {
   type UsageSummaryInput,
   UsageReadError,
 } from "@t3tools/contracts";
-import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
+import { HostProcessEnvironment, HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
@@ -36,11 +36,13 @@ import { HttpClient, HttpClientResponse } from "effect/unstable/http";
 
 import { ServerConfig } from "../config.ts";
 import { expandHomePath } from "../pathExpansion.ts";
+import * as ProcessRunner from "../processRunner.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { resolveClaudeHomePath } from "../provider/Drivers/ClaudeHome.ts";
 import { resolveCodexHomeLayout } from "../provider/Drivers/CodexHomeLayout.ts";
 import { UsageAggregator } from "./usageAggregation.ts";
 import { parseRateTable, type RateTable } from "./usagePricing.ts";
+import { makeUsageSourceIdentityResolver } from "./usageSourceIdentity.ts";
 import {
   listTranscriptFiles,
   readDirectoryVolumeId,
@@ -125,7 +127,34 @@ export const make = Effect.gen(function* () {
   const config = yield* ServerConfig;
   const settingsService = yield* ServerSettings.ServerSettingsService;
   const httpClient = yield* HttpClient.HttpClient;
+  const processRunner = yield* ProcessRunner.ProcessRunner;
+  const hostPlatform = yield* HostProcessPlatform;
   const hostEnvironment = yield* HostProcessEnvironment;
+  const sourceIdentityResolver = yield* makeUsageSourceIdentityResolver({
+    platform: hostPlatform,
+    isWsl:
+      hostPlatform === "linux" &&
+      (hostEnvironment.WSL_DISTRO_NAME !== undefined ||
+        hostEnvironment.WSL_INTEROP !== undefined ||
+        NodeOS.release().toLowerCase().includes("microsoft")),
+    realpath: (value) => fileSystem.realPath(value).pipe(Effect.orElseSucceed(() => null)),
+    run: (command, args) =>
+      processRunner
+        .run({
+          command,
+          args: [...args],
+          timeout: "3 seconds",
+          maxOutputBytes: 64 * 1024,
+          outputMode: "truncate",
+          timeoutBehavior: "timedOutResult",
+        })
+        .pipe(
+          Effect.map((result) =>
+            result.code === 0 && !result.timedOut ? result.stdout.replaceAll("\0", "") : null,
+          ),
+          Effect.catchCause(() => Effect.succeed(null)),
+        ),
+  });
 
   const fileCache: ScanCache = new Map();
   let cacheDirty = false;
@@ -369,14 +398,13 @@ export const make = Effect.gen(function* () {
     const walkedRoots: string[] = [];
 
     for (const { provider, dir, fileName } of dirs) {
-      const volumeId = yield* Effect.promise(() => readDirectoryVolumeId(dir));
       const exists = yield* fileSystem
         .exists(dir)
         .pipe(Effect.catchCause(() => Effect.succeed(false)));
 
       if (!exists) {
         sources.push({
-          fingerprint: { hostId, provider, resolvedHomePath: dir, volumeId },
+          fingerprint: { hostId, provider, resolvedHomePath: dir, volumeId: "" },
           status: "missing",
           scannedFiles: 0,
           skippedFiles: 0,
@@ -386,6 +414,21 @@ export const make = Effect.gen(function* () {
         });
         continue;
       }
+
+      const [volumeId, sourceIdentity] = yield* Effect.all(
+        [
+          Effect.promise(() => readDirectoryVolumeId(dir)),
+          sourceIdentityResolver.resolve(provider, dir),
+        ],
+        { concurrency: "unbounded" },
+      );
+      const fingerprint = {
+        hostId,
+        provider,
+        resolvedHomePath: dir,
+        volumeId,
+        ...(sourceIdentity === undefined ? {} : { sourceIdentity }),
+      };
 
       walkedRoots.push(dir);
       const files = yield* Effect.promise(() =>
@@ -415,7 +458,7 @@ export const make = Effect.gen(function* () {
       }
 
       sources.push({
-        fingerprint: { hostId, provider, resolvedHomePath: dir, volumeId },
+        fingerprint,
         status: "ok",
         scannedFiles,
         skippedFiles,
