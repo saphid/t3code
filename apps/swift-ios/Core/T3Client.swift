@@ -102,6 +102,21 @@ public actor T3Client {
         )
     }
 
+    public func refreshProviders(instanceID: String? = nil) async throws
+        -> [ServerProviderSnapshot]
+    {
+        var payload: [String: JSONValue] = [:]
+        if let instanceID {
+            payload["instanceId"] = .string(instanceID)
+        }
+        let result = try await rpc.request(
+            RPCMethod.serverRefreshProviders.rawValue,
+            payload: .object(payload),
+            as: ServerProviderUpdatedSnapshot.self
+        )
+        return result.providers
+    }
+
     public func usageSummary(_ input: UsageSummaryInput) async throws -> UsageSummary {
         try await rpc.request(
             RPCMethod.serverGetUsageSummary.rawValue,
@@ -1564,6 +1579,7 @@ public actor EnvironmentRuntime {
 public enum RPCMethod: String, Sendable {
     case serverProbe = "server.probe"
     case serverGetConfig = "server.getConfig"
+    case serverRefreshProviders = "server.refreshProviders"
     case serverGetUsageSummary = "server.getUsageSummary"
     case threadSummaryGetTimeline = "threadSummary.getTimeline"
     case pullRequestsList = "pullRequests.list"

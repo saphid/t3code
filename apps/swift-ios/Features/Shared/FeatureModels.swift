@@ -445,6 +445,25 @@ public struct FeatureMessage: Identifiable, Sendable, Equatable, Hashable, Codab
     }
 }
 
+public struct FeatureProviderAuthenticationFailure: Sendable, Equatable, Codable {
+    public let providerID: String
+    public let message: String
+    public let failedMessageText: String
+    public let createdAt: Date
+
+    public init(
+        providerID: String,
+        message: String,
+        failedMessageText: String,
+        createdAt: Date
+    ) {
+        self.providerID = providerID
+        self.message = message
+        self.failedMessageText = failedMessageText
+        self.createdAt = createdAt
+    }
+}
+
 public enum FeatureApprovalKind: String, Sendable, Codable {
     case command
     case fileRead
@@ -642,6 +661,7 @@ public struct FeatureThreadDetail: Sendable, Equatable, Codable {
     public var page: FeatureThreadPage?
     public var activeSubagentCount: Int
     public var backgroundWorkIsActive: Bool
+    public var providerAuthenticationFailure: FeatureProviderAuthenticationFailure?
 
     public init(
         thread: FeatureThread,
@@ -650,7 +670,8 @@ public struct FeatureThreadDetail: Sendable, Equatable, Codable {
         userInputs: [FeatureUserInput] = [],
         page: FeatureThreadPage? = nil,
         activeSubagentCount: Int = 0,
-        backgroundWorkIsActive: Bool = false
+        backgroundWorkIsActive: Bool = false,
+        providerAuthenticationFailure: FeatureProviderAuthenticationFailure? = nil
     ) {
         self.thread = thread
         self.messages = messages
@@ -659,6 +680,7 @@ public struct FeatureThreadDetail: Sendable, Equatable, Codable {
         self.page = page
         self.activeSubagentCount = activeSubagentCount
         self.backgroundWorkIsActive = backgroundWorkIsActive
+        self.providerAuthenticationFailure = providerAuthenticationFailure
     }
 }
 
@@ -826,6 +848,8 @@ public struct FeatureProvider: Identifiable, Sendable, Equatable, Hashable, Coda
     public var models: [FeatureModel]
     public var slashCommands: [FeatureProviderSlashCommand]?
     public var skills: [FeatureProviderSkill]?
+    public var authStatus: String?
+    public var statusMessage: String?
 
     public init(
         id: String,
@@ -835,7 +859,9 @@ public struct FeatureProvider: Identifiable, Sendable, Equatable, Hashable, Coda
         requiresNewThreadForModelChange: Bool = false,
         models: [FeatureModel] = [],
         slashCommands: [FeatureProviderSlashCommand] = [],
-        skills: [FeatureProviderSkill] = []
+        skills: [FeatureProviderSkill] = [],
+        authStatus: String? = nil,
+        statusMessage: String? = nil
     ) {
         self.id = id
         self.name = name
@@ -845,6 +871,8 @@ public struct FeatureProvider: Identifiable, Sendable, Equatable, Hashable, Coda
         self.models = models
         self.slashCommands = slashCommands
         self.skills = skills
+        self.authStatus = authStatus
+        self.statusMessage = statusMessage
     }
 }
 

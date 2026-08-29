@@ -27,6 +27,8 @@ public struct ThreadDetailView: View {
     @State private var didRestoreDraft = false
     @State private var draftSaveTask: Task<Void, Never>?
     @State private var toolSurface: FeatureThreadToolSurface?
+    @State private var showingProviderSettings = false
+    @State private var isRetryingAuthenticationFailure = false
     // Plain state, not `FocusState`: the composer's UIKit text view owns
     // focus and mirrors it through this binding, because SwiftUI drops
     // writes to a `FocusState` no `.focused()` view registers with.
@@ -123,6 +125,21 @@ public struct ThreadDetailView: View {
             .presentationDetents([.large])
             .presentationDragIndicator(.visible)
             .t3CodeSizing(steps: codeSizeSteps)
+        }
+        .sheet(isPresented: $showingProviderSettings) {
+            NavigationStack {
+                ProviderSettingsView(
+                    model: model,
+                    focusedEnvironmentID: currentThread.environmentID,
+                    focusedProviderID: detail?.providerAuthenticationFailure?.providerID
+                )
+                .toolbar {
+                    ToolbarItem(placement: .confirmationAction) {
+                        Button("Done") { showingProviderSettings = false }
+                    }
+                }
+            }
+            .presentationDragIndicator(.visible)
         }
         .alert("Message not sent", isPresented: $sendFailed) {
             // Refocusing happens here rather than when the send fails: the
@@ -389,16 +406,20 @@ public struct ThreadDetailView: View {
         let isWorking = detail.thread.state == .working
             || detail.thread.state == .queued
             || detail.thread.state == .monitoring
-        return Group {
-            if detail.messages.isEmpty, !isWorking {
-                ContentUnavailableView(
-                    "Ready for a task",
-                    systemImage: "sparkles",
-                    description: Text("Tell the agent what you want to build.")
-                )
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else {
-                FeatureTranscriptCollectionView(
+        return VStack(spacing: 0) {
+            if let failure = detail.providerAuthenticationFailure {
+                providerAuthenticationCard(failure)
+            }
+            Group {
+                if detail.messages.isEmpty, !isWorking {
+                    ContentUnavailableView(
+                        "Ready for a task",
+                        systemImage: "sparkles",
+                        description: Text("Tell the agent what you want to build.")
+                    )
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else {
+                    FeatureTranscriptCollectionView(
                     threadID: thread.id,
                     messages: timelineMessages(detail.messages),
                     imageContext: markdownImageContext,
@@ -415,7 +436,8 @@ public struct ThreadDetailView: View {
                         Task { await model.loadEarlierTurns(for: thread.id) }
                     },
                     onDismissKeyboard: dismissKeyboard
-                )
+                    )
+                }
             }
         }
         .safeAreaInset(edge: .bottom, spacing: 0) {
@@ -445,6 +467,73 @@ public struct ThreadDetailView: View {
                     Task { await model.resolveUserInput(id, answers: answers) }
                 }
             )
+        }
+    }
+
+    private func providerAuthenticationCard(
+        _ failure: FeatureProviderAuthenticationFailure
+    ) -> some View {
+        let provider = threadProviders.first { $0.id == failure.providerID }
+        let recovered = provider?.authStatus == "authenticated"
+        return VStack(alignment: .leading, spacing: 10) {
+            Label(
+                recovered ? "Claude is signed in again" : "Claude is signed out",
+                systemImage: recovered ? "checkmark.circle.fill" : "person.crop.circle.badge.xmark"
+            )
+            .font(T3Typography.threadHeading4)
+            .foregroundStyle(recovered ? T3Colors.success : T3Colors.danger)
+
+            Text(
+                recovered
+                    ? "Retry the preserved message in this thread."
+                    : failure.message
+            )
+            .font(T3Typography.supporting)
+            .foregroundStyle(T3Colors.textSecondary)
+
+            HStack(spacing: 12) {
+                if recovered, !failure.failedMessageText.isEmpty {
+                    Button(isRetryingAuthenticationFailure ? "Retrying…" : "Retry message") {
+                        retryAuthenticationFailure(failure)
+                    }
+                    .disabled(isRetryingAuthenticationFailure)
+                    .accessibilityIdentifier("claude-auth-retry-message")
+                } else {
+                    Button("Provider settings") {
+                        showingProviderSettings = true
+                    }
+                    .accessibilityIdentifier("claude-auth-provider-settings")
+                    Button("Open terminal") {
+                        toolSurface = .terminal
+                    }
+                    .accessibilityIdentifier("claude-auth-open-terminal")
+                }
+            }
+            .font(T3Typography.control)
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(T3Colors.subtle, in: RoundedRectangle(cornerRadius: 14))
+        .padding(.horizontal, 16)
+        .padding(.top, 10)
+        .accessibilityIdentifier("claude-authentication-required")
+    }
+
+    private func retryAuthenticationFailure(_ failure: FeatureProviderAuthenticationFailure) {
+        guard !isRetryingAuthenticationFailure else { return }
+        isRetryingAuthenticationFailure = true
+        Task {
+            let sent = await submitMessage(
+                FeatureMessageSubmission(
+                    threadID: thread.id,
+                    text: failure.failedMessageText,
+                    selection: currentSelection
+                )
+            )
+            isRetryingAuthenticationFailure = false
+            if !sent {
+                sendFailed = true
+            }
         }
     }
 

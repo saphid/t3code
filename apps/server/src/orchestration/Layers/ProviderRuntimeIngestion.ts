@@ -8,6 +8,7 @@ import {
   type OrchestrationProposedPlanId,
   CheckpointRef,
   classifyTaskAgentKind,
+  defaultInstanceIdForDriver,
   EventId,
   isToolLifecycleItemType,
   ThreadId,
@@ -30,6 +31,7 @@ import * as Stream from "effect/Stream";
 import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
 
 import { ProviderService } from "../../provider/Services/ProviderService.ts";
+import { ProviderRegistry } from "../../provider/Services/ProviderRegistry.ts";
 import { ProjectionTurnRepository } from "../../persistence/Services/ProjectionTurns.ts";
 import { ProjectionTurnRepositoryLive } from "../../persistence/Layers/ProjectionTurns.ts";
 import { isGitRepository } from "../../git/Utils.ts";
@@ -432,15 +434,20 @@ export function runtimeEventToActivities(
     }
 
     case "runtime.error": {
+      const isAuthenticationError = event.payload.class === "authentication_error";
+      const detail = truncateDetail(event.payload.message);
       return [
         {
           id: event.eventId,
           createdAt: event.createdAt,
           tone: "error",
-          kind: "runtime.error",
-          summary: "Runtime error",
+          kind: isAuthenticationError ? "provider.authentication.required" : "runtime.error",
+          summary: isAuthenticationError ? "Claude is signed out" : "Runtime error",
           payload: {
-            message: truncateDetail(event.payload.message),
+            message: detail,
+            detail,
+            ...(event.payload.class ? { errorClass: event.payload.class } : {}),
+            ...(event.providerInstanceId ? { providerInstanceId: event.providerInstanceId } : {}),
           },
           turnId: toTurnId(event.turnId) ?? null,
           ...maybeSequence,
@@ -894,6 +901,7 @@ const make = Effect.gen(function* () {
   const orchestrationEngine = yield* OrchestrationEngineService;
   const projectionSnapshotQuery = yield* ProjectionSnapshotQuery;
   const providerService = yield* ProviderService;
+  const providerRegistry = yield* ProviderRegistry;
   const projectionTurnRepository = yield* ProjectionTurnRepository;
   const serverSettingsService = yield* ServerSettingsService;
   const providerCommandId = (event: ProviderRuntimeEvent, tag: string) =>
@@ -1885,6 +1893,13 @@ const make = Effect.gen(function* () {
 
       if (event.type === "runtime.error") {
         const runtimeErrorMessage = event.payload.message;
+
+        if (event.payload.class === "authentication_error") {
+          yield* providerRegistry.markUnauthenticated(
+            event.providerInstanceId ?? defaultInstanceIdForDriver(event.provider),
+            runtimeErrorMessage,
+          );
+        }
 
         const shouldApplyRuntimeError = !STRICT_PROVIDER_LIFECYCLE_GUARD
           ? true

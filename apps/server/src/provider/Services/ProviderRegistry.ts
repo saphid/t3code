@@ -49,6 +49,16 @@ export interface ProviderRegistryShape {
   ) => Effect.Effect<ReadonlyArray<ServerProvider>>;
 
   /**
+   * Record an authentication failure observed by a live provider session.
+   * The override remains authoritative until a focused provider refresh
+   * proves that the instance is authenticated again.
+   */
+  readonly markUnauthenticated: (
+    instanceId: ProviderInstanceId,
+    detail: string,
+  ) => Effect.Effect<ReadonlyArray<ServerProvider>>;
+
+  /**
    * Resolve the maintenance capabilities owned by one live provider instance.
    * Falls back to manual-only capabilities when the instance is not live.
    */

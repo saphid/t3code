@@ -203,6 +203,10 @@ public struct ServerConfigSnapshot: Codable, Equatable, Sendable {
     }
 }
 
+public struct ServerProviderUpdatedSnapshot: Codable, Equatable, Sendable {
+    public let providers: [ServerProviderSnapshot]
+}
+
 private struct LossyDecodableElement<Value: Decodable>: Decodable {
     let value: Value?
 

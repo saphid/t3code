@@ -34,6 +34,17 @@ When you set this field, T3 Code points Claude Code at that directory with the
 `CLAUDE_CONFIG_DIR` environment variable. It does not change `HOME`, so your system keychain and
 the rest of your environment stay as they are.
 
+## If Claude Signs Out During A Thread
+
+T3 Code marks the Claude provider as signed out instead of showing Claude Code's raw authentication
+response as an assistant message. The thread keeps your failed prompt.
+
+Open the provider settings from the thread, or use **Settings → Providers**. Run the displayed
+`claude auth login` command on that environment, then refresh the provider status. Remote clients can
+open the thread's terminal to run the command on the correct machine. When the provider reports that
+it is signed in again, retry the preserved prompt in the same thread. You do not need to restart the
+server or create another thread.
+
 ## Where Claude Skills Are Loaded
 
 T3 Code looks for Claude skills in the Claude config directory's `skills` folder, then

@@ -23,7 +23,7 @@ private struct T3ConnectManagedCleanupError: LocalizedError {
 
 /// Composes the transport-focused Core layer with the UI-focused Features layer.
 @MainActor
-final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
+final class NativeFeatureClient: FeatureClient, FeatureProviderStatusRefreshing, FeatureDeviceManaging,
     FeatureProjectCreationClient, FeatureWorkspaceAssetResolving,
     FeatureFeedbackSubmitting, FeatureClientStorageManaging, T3ConnectCapable
 {
@@ -2207,6 +2207,21 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         let data = try JSONEncoder().encode(settings)
         settingsStore.set(data, forKey: Self.settingsKey)
         latestSnapshot?.settings = settings
+    }
+
+    func refreshProviderStatus(environmentID: String, providerID: String?) async throws {
+        let client = try await projectCreationClient(environmentID: environmentID)
+        let providers = try await client.refreshProviders(instanceID: providerID)
+        let previous = serverConfigsByEnvironmentID[environmentID]
+        setServerConfig(
+            ServerConfigSnapshot(
+                providers: providers,
+                settings: previous?.settings,
+                threadSnapshotPagination: previous?.threadSnapshotPagination
+            ),
+            environmentID: environmentID
+        )
+        await emitCachedSnapshot(for: environmentID)
     }
 
     func saveProjectGroupingPreferences(
@@ -5031,7 +5046,8 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
             activeSubagentCount: backgroundWorkIsActive || sessionIsLive
                 ? cache.subagents.activeCount
                 : 0,
-            backgroundWorkIsActive: backgroundWorkIsActive
+            backgroundWorkIsActive: backgroundWorkIsActive,
+            providerAuthenticationFailure: Self.providerAuthenticationFailure(in: thread)
         )
     }
 
@@ -5436,7 +5452,9 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
 
     private func mapErrorActivity(_ activity: OrchestrationActivity) -> FeatureMessage? {
         guard activity.tone == "error" else { return nil }
+        guard activity.kind != "provider.authentication.required" else { return nil }
         let detail = activity.payload["detail"]?.stringValue
+            ?? activity.payload["message"]?.stringValue
         let text = detail.map { "\(activity.summary)\n\($0)" } ?? activity.summary
         return FeatureMessage(
             id: "activity-\(activity.id)",
@@ -5445,6 +5463,42 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
             createdAt: parseDate(activity.createdAt),
             state: .complete,
             toolName: activity.kind
+        )
+    }
+
+    nonisolated static func providerAuthenticationFailure(
+        in thread: OrchestrationThread
+    ) -> FeatureProviderAuthenticationFailure? {
+        guard let activity = thread.activities.last(where: {
+            $0.kind == "provider.authentication.required"
+        }) else {
+            return nil
+        }
+        let failureDate = (try? Date(activity.createdAt, strategy: .iso8601)) ?? .distantPast
+        if thread.latestTurn?.state == "completed",
+           let completedAt = thread.latestTurn?.completedAt,
+           let completedDate = try? Date(completedAt, strategy: .iso8601),
+           completedDate > failureDate {
+            return nil
+        }
+        let failedMessage = thread.messages.last(where: { message in
+            guard message.role == "user" else { return false }
+            if let activityTurnID = activity.turnId, message.turnId == activityTurnID {
+                return true
+            }
+            return message.createdAt <= activity.createdAt
+        })
+        let providerID = activity.payload["providerInstanceId"]?.stringValue
+            ?? thread.session?.providerInstanceId
+            ?? thread.modelSelection.instanceId
+        let guidance = activity.payload["detail"]?.stringValue
+            ?? activity.payload["message"]?.stringValue
+            ?? "Claude is signed out. Sign in on this environment, refresh provider status, and retry."
+        return FeatureProviderAuthenticationFailure(
+            providerID: providerID,
+            message: guidance,
+            failedMessageText: failedMessage?.text ?? "",
+            createdAt: failureDate
         )
     }
 
@@ -5778,7 +5832,9 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
                             scope: skill.scope,
                             isEnabled: skill.enabled
                         )
-                    }
+                    },
+                    authStatus: provider.auth.status,
+                    statusMessage: provider.message
                 )
             })
     }

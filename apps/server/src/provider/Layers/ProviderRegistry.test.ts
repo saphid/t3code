@@ -529,6 +529,88 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
     });
 
     describe("ProviderRegistryLive", () => {
+      it.effect("keeps an observed auth failure until a focused refresh proves recovery", () =>
+        Effect.gen(function* () {
+          const instanceId = ProviderInstanceId.make("claude_work");
+          const driver = ProviderDriverKind.make("claudeAgent");
+          const authenticatedProvider = {
+            instanceId,
+            driver,
+            status: "ready",
+            enabled: true,
+            installed: true,
+            auth: { status: "authenticated" },
+            checkedAt: "2026-08-30T00:00:00.000Z",
+            version: "2.1.239",
+            models: [],
+            slashCommands: [],
+            skills: [],
+          } as const satisfies ServerProvider;
+          const refreshedProviderRef = yield* Ref.make<ServerProvider>(authenticatedProvider);
+          const instance = {
+            instanceId,
+            driverKind: driver,
+            continuationIdentity: {
+              driverKind: driver,
+              continuationKey: `${driver}:instance:${instanceId}`,
+            },
+            displayName: "Claude Work",
+            enabled: true,
+            snapshot: {
+              maintenanceCapabilities: makeManualOnlyProviderMaintenanceCapabilities({
+                provider: driver,
+                packageName: null,
+              }),
+              getSnapshot: Effect.succeed(authenticatedProvider),
+              refresh: Ref.get(refreshedProviderRef),
+              streamChanges: Stream.empty,
+            },
+            adapter: {} as ProviderInstance["adapter"],
+            textGeneration: {} as ProviderInstance["textGeneration"],
+          } satisfies ProviderInstance;
+          const changes = yield* PubSub.unbounded<void>();
+          const instanceRegistryLayer = Layer.succeed(
+            ProviderInstanceRegistry.ProviderInstanceRegistry,
+            {
+              getInstance: (candidate) =>
+                Effect.succeed(candidate === instanceId ? instance : undefined),
+              listInstances: Effect.succeed([instance]),
+              listUnavailable: Effect.succeed([]),
+              streamChanges: Stream.fromPubSub(changes),
+              subscribeChanges: PubSub.subscribe(changes),
+            },
+          );
+          const scope = yield* Scope.make();
+          yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
+          const services = yield* Layer.build(
+            ProviderRegistryLive.pipe(
+              Layer.provideMerge(instanceRegistryLayer),
+              Layer.provideMerge(
+                ServerConfig.layerTest(process.cwd(), {
+                  prefix: "t3-provider-registry-auth-recovery-",
+                }),
+              ),
+            ),
+          ).pipe(Scope.provide(scope));
+
+          yield* Effect.gen(function* () {
+            const registry = yield* ProviderRegistry.ProviderRegistry;
+            const guidance = "Claude is signed out. Run `claude auth login`, then refresh.";
+            const signedOut = yield* registry.markUnauthenticated(instanceId, guidance);
+            const failed = signedOut.find((provider) => provider.instanceId === instanceId);
+            assert.strictEqual(failed?.status, "error");
+            assert.strictEqual(failed?.auth.status, "unauthenticated");
+            assert.strictEqual(failed?.message, guidance);
+
+            const recovered = yield* registry.refreshInstance(instanceId);
+            const ready = recovered.find((provider) => provider.instanceId === instanceId);
+            assert.strictEqual(ready?.status, "ready");
+            assert.strictEqual(ready?.auth.status, "authenticated");
+            assert.strictEqual(ready?.message, undefined);
+          }).pipe(Effect.provide(services));
+        }),
+      );
+
       it("treats equal provider snapshots as unchanged", () => {
         const providers = [
           {

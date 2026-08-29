@@ -1513,6 +1513,96 @@ describe("ClaudeAdapterLive", () => {
     );
   });
 
+  it.effect("classifies Claude authentication failures without projecting provider prose", () => {
+    const harness = makeHarness({ instanceId: ProviderInstanceId.make("claude_work") });
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      const runtimeEventsFiber = yield* Stream.take(adapter.streamEvents, 7).pipe(
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      const session = yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        providerInstanceId: ProviderInstanceId.make("claude_work"),
+        runtimeMode: "full-access",
+      });
+      const turn = yield* adapter.sendTurn({
+        threadId: session.threadId,
+        input: "hello",
+        attachments: [],
+      });
+
+      harness.query.emit({
+        type: "assistant",
+        error: "authentication_failed",
+        session_id: "sdk-session-auth",
+        uuid: "assistant-auth",
+        parent_tool_use_id: null,
+        message: {
+          id: "assistant-auth-message",
+          model: "claude-opus-5",
+          role: "assistant",
+          stop_reason: null,
+          stop_sequence: null,
+          type: "message",
+          usage: { input_tokens: 0, output_tokens: 0 },
+          content: [
+            {
+              type: "text",
+              text: "Failed to authenticate: OAuth session expired and could not be refreshed",
+              citations: null,
+            },
+          ],
+        },
+      } as unknown as SDKMessage);
+      harness.query.emit({
+        type: "result",
+        subtype: "success",
+        is_error: false,
+        errors: [],
+        result: "Failed to authenticate: OAuth session expired and could not be refreshed",
+        session_id: "sdk-session-auth",
+        uuid: "result-auth",
+      } as unknown as SDKMessage);
+
+      const runtimeEvents = Array.from(yield* Fiber.join(runtimeEventsFiber));
+      assert.deepEqual(
+        runtimeEvents.map((event) => event.type),
+        [
+          "session.started",
+          "session.configured",
+          "session.state.changed",
+          "turn.started",
+          "thread.started",
+          "runtime.error",
+          "turn.completed",
+        ],
+      );
+      assert.equal(
+        runtimeEvents.every((event) => event.providerInstanceId === "claude_work"),
+        true,
+      );
+      const authError = runtimeEvents.find((event) => event.type === "runtime.error");
+      assert.equal(authError?.type, "runtime.error");
+      if (authError?.type === "runtime.error") {
+        assert.equal(authError.payload.class, "authentication_error");
+        assert.equal(authError.payload.message.includes("claude auth login"), true);
+        assert.equal(authError.payload.message.includes("OAuth session expired"), false);
+      }
+      const completion = runtimeEvents.at(-1);
+      assert.equal(completion?.type, "turn.completed");
+      if (completion?.type === "turn.completed") {
+        assert.equal(String(completion.turnId), String(turn.turnId));
+        assert.equal(completion.payload.state, "failed");
+      }
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
   it.effect("treats aborted_tools results as interrupted and hides ede_diagnostic errors", () => {
     const harness = makeHarness();
     return Effect.gen(function* () {

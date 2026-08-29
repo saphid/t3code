@@ -292,6 +292,9 @@ export const ProviderRegistryLive = Layer.effect(
     const maintenanceActionStatesRef = yield* Ref.make<
       ReadonlyMap<ProviderInstanceId, { readonly update?: ServerProviderUpdateState | undefined }>
     >(new Map());
+    const authenticationFailuresRef = yield* Ref.make<ReadonlyMap<ProviderInstanceId, string>>(
+      new Map(),
+    );
 
     // Live-source registry — the dynamic counterpart to the boot-time
     // `bootSources`. Keyed by `instanceId`; the stored `ProviderInstance`
@@ -344,6 +347,24 @@ export const ProviderRegistryLive = Layer.effect(
       };
     });
 
+    const applyAuthenticationFailure = Effect.fn("applyAuthenticationFailure")(function* (
+      provider: ServerProvider,
+    ) {
+      const detail = (yield* Ref.get(authenticationFailuresRef)).get(provider.instanceId);
+      if (!detail) {
+        return provider;
+      }
+      return {
+        ...provider,
+        status: "error" as const,
+        auth: {
+          ...provider.auth,
+          status: "unauthenticated" as const,
+        },
+        message: detail,
+      };
+    });
+
     const upsertProviders = Effect.fn("upsertProviders")(function* (
       nextProviders: ReadonlyArray<ServerProvider>,
       options?: {
@@ -354,7 +375,8 @@ export const ProviderRegistryLive = Layer.effect(
     ) {
       const nextProvidersWithUpdateState = yield* Effect.forEach(
         nextProviders,
-        applyProviderUpdateState,
+        (provider) =>
+          applyAuthenticationFailure(provider).pipe(Effect.flatMap(applyProviderUpdateState)),
         {
           concurrency: "unbounded",
         },
@@ -453,12 +475,38 @@ export const ProviderRegistryLive = Layer.effect(
       providerSource: ProviderSnapshotSource,
     ) {
       return yield* providerSource.refresh.pipe(
+        Effect.flatMap((nextProvider) => correlateSnapshotWithSource(providerSource, nextProvider)),
         Effect.flatMap((nextProvider) =>
-          correlateSnapshotWithSource(providerSource, nextProvider).pipe(
-            Effect.flatMap(syncProvider),
-          ),
+          Effect.gen(function* () {
+            if (nextProvider.auth.status === "authenticated") {
+              yield* Ref.update(authenticationFailuresRef, (previous) => {
+                const next = new Map(previous);
+                next.delete(providerSource.instanceId);
+                return next;
+              });
+            }
+            return yield* syncProvider(nextProvider);
+          }),
         ),
       );
+    });
+
+    const markUnauthenticated = Effect.fn("markUnauthenticated")(function* (
+      instanceId: ProviderInstanceId,
+      detail: string,
+    ) {
+      yield* Ref.update(authenticationFailuresRef, (previous) => {
+        const next = new Map(previous);
+        next.set(instanceId, detail);
+        return next;
+      });
+      const provider = (yield* Ref.get(providersRef)).find(
+        (candidate) => candidate.instanceId === instanceId,
+      );
+      if (!provider) {
+        return yield* Ref.get(providersRef);
+      }
+      return yield* syncProvider(provider);
     });
 
     const refreshAll = Effect.fn("refreshAll")(function* () {
@@ -710,6 +758,7 @@ export const ProviderRegistryLive = Layer.effect(
         refresh(provider).pipe(Effect.catchCause(recoverRefreshFailure)),
       refreshInstance: (instanceId: ProviderInstanceId) =>
         refreshInstance(instanceId).pipe(Effect.catchCause(recoverRefreshFailure)),
+      markUnauthenticated,
       getProviderMaintenanceCapabilitiesForInstance,
       setProviderMaintenanceActionState,
       get streamChanges() {

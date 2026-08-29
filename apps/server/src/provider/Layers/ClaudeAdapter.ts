@@ -141,6 +141,7 @@ interface ClaudeTurnState {
   readonly assistantTextBlocks: Map<number, AssistantTextBlockState>;
   readonly assistantTextBlockOrder: Array<AssistantTextBlockState>;
   readonly capturedProposedPlanKeys: Set<string>;
+  authenticationFailed: boolean;
   nextSyntheticAssistantBlockIndex: number;
 }
 
@@ -1704,7 +1705,10 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
   const makeEventStamp = () => Effect.all({ eventId: nextEventId, createdAt: nowIso });
 
   const offerRuntimeEvent = (event: ProviderRuntimeEvent): Effect.Effect<void> =>
-    Queue.offer(runtimeEventQueue, event).pipe(Effect.asVoid);
+    Queue.offer(runtimeEventQueue, {
+      ...event,
+      providerInstanceId: boundInstanceId,
+    }).pipe(Effect.asVoid);
 
   const logNativeSdkMessage = Effect.fnUntraced(function* (
     context: ClaudeSessionContext,
@@ -2004,6 +2008,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     context: ClaudeSessionContext,
     message: string,
     cause?: unknown,
+    errorClass: "provider_error" | "authentication_error" = "provider_error",
   ) {
     if (cause !== undefined) {
       void cause;
@@ -2019,7 +2024,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       ...(turnState ? { turnId: asCanonicalTurnId(turnState.turnId) } : {}),
       payload: {
         message,
-        class: "provider_error",
+        class: errorClass,
         ...(cause !== undefined ? { detail: cause } : {}),
       },
       providerRefs: nativeProviderRefs(context),
@@ -2863,6 +2868,21 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       return;
     }
 
+    if (message.error === "authentication_failed") {
+      if (context.turnState) {
+        context.turnState.authenticationFailed = true;
+      }
+      yield* emitRuntimeError(
+        context,
+        "Claude is signed out. Run `claude auth login` on this environment, then refresh provider status and retry.",
+        undefined,
+        "authentication_error",
+      );
+      context.lastAssistantUuid = message.uuid;
+      yield* updateResumeCursor(context);
+      return;
+    }
+
     // Subagent-owned assistant snapshots (parent_tool_use_id set) are the
     // subagent's own conversation, not the parent's. Emitting them created
     // interleaved "Agent N done"-adjacent leak messages and spawned synthetic
@@ -2896,6 +2916,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         assistantTextBlocks: new Map(),
         assistantTextBlockOrder: [],
         capturedProposedPlanKeys: new Set(),
+        authenticationFailed: false,
         nextSyntheticAssistantBlockIndex: -1,
       };
       context.session = {
@@ -2971,14 +2992,20 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       return;
     }
 
-    const status = turnStatusFromResult(message);
+    const authenticationFailed = context.turnState?.authenticationFailed === true;
+    const status = authenticationFailed ? "failed" : turnStatusFromResult(message);
     const errorMessage = resultUserFacingError(message);
 
-    if (status === "failed") {
+    if (status === "failed" && !authenticationFailed) {
       yield* emitRuntimeError(context, errorMessage ?? "Claude turn failed.");
     }
 
-    yield* completeTurn(context, status, errorMessage, message);
+    yield* completeTurn(
+      context,
+      status,
+      authenticationFailed ? "Claude authentication is required." : errorMessage,
+      message,
+    );
   });
 
   /**
@@ -4422,6 +4449,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         assistantTextBlocks: new Map(),
         assistantTextBlockOrder: [],
         capturedProposedPlanKeys: new Set(),
+        authenticationFailed: false,
         nextSyntheticAssistantBlockIndex: -1,
       };
 

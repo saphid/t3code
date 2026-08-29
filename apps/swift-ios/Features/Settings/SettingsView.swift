@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 public struct SettingsView: View {
     @SwiftUI.Environment(\.dismiss) private var dismiss
@@ -121,6 +122,18 @@ public struct SettingsView: View {
                 .accessibilityLabel("Environments")
                 .accessibilityValue(environmentAccessibilityValue)
                 .accessibilityHint("Manage saved environments")
+                settingsDivider
+                NavigationLink {
+                    ProviderSettingsView(model: model)
+                } label: {
+                    SettingsNavigationRow(
+                        title: "Providers",
+                        systemImage: "cpu"
+                    )
+                }
+                .buttonStyle(.plain)
+                .accessibilityHint("Check provider sign-in status")
+                .accessibilityIdentifier("settings-providers")
                 settingsDivider
                 NavigationLink {
                     ClientStorageView(model: model)
@@ -424,6 +437,150 @@ public struct SettingsView: View {
             } else {
                 saveErrorMessage = model.errorMessage ?? "Settings could not be saved."
             }
+        }
+    }
+}
+
+struct ProviderSettingsView: View {
+    @Bindable var model: FeatureRootModel
+    let focusedEnvironmentID: String?
+    let focusedProviderID: String?
+
+    @State private var refreshingProviderIDs: Set<String> = []
+    @State private var errorMessage: String?
+
+    init(
+        model: FeatureRootModel,
+        focusedEnvironmentID: String? = nil,
+        focusedProviderID: String? = nil
+    ) {
+        self.model = model
+        self.focusedEnvironmentID = focusedEnvironmentID
+        self.focusedProviderID = focusedProviderID
+    }
+
+    var body: some View {
+        List {
+            ForEach(environments) { environment in
+                Section(environment.name) {
+                    let providers = providers(for: environment)
+                    if providers.isEmpty {
+                        Text("This environment has not reported any providers.")
+                            .foregroundStyle(T3Colors.textSecondary)
+                    } else {
+                        ForEach(providers) { provider in
+                            providerRow(provider, environment: environment)
+                        }
+                    }
+                }
+            }
+        }
+        .scrollContentBackground(.hidden)
+        .background(T3Colors.background)
+        .navigationTitle("Providers")
+        .navigationBarTitleDisplayMode(.inline)
+        .t3NavigationChrome()
+        .alert(
+            "Couldn’t refresh providers",
+            isPresented: Binding(
+                get: { errorMessage != nil },
+                set: { if !$0 { errorMessage = nil } }
+            )
+        ) {
+            Button("OK") { errorMessage = nil }
+        } message: {
+            Text(errorMessage ?? "Try again after reconnecting to the environment.")
+        }
+    }
+
+    private var environments: [FeatureEnvironment] {
+        if let focusedEnvironmentID {
+            return model.snapshot.environments.filter { $0.id == focusedEnvironmentID }
+        }
+        return model.snapshot.environments.filter(\.isEnabled)
+    }
+
+    private func providers(for environment: FeatureEnvironment) -> [FeatureProvider] {
+        let providers = model.snapshot.providersByEnvironment?[environment.id] ?? []
+        guard environment.id == focusedEnvironmentID, let focusedProviderID else {
+            return providers
+        }
+        return providers.sorted {
+            ($0.id == focusedProviderID ? 0 : 1, $0.name)
+                < ($1.id == focusedProviderID ? 0 : 1, $1.name)
+        }
+    }
+
+    private func providerRow(
+        _ provider: FeatureProvider,
+        environment: FeatureEnvironment
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .firstTextBaseline) {
+                Text(provider.name)
+                    .font(T3Typography.threadHeading4)
+                Spacer()
+                Text(providerStatusLabel(provider))
+                    .font(T3Typography.supportingStrong)
+                    .foregroundStyle(providerStatusColor(provider))
+            }
+
+            if provider.authStatus == "unauthenticated" {
+                Text(provider.statusMessage ?? "Claude is signed out on this environment.")
+                    .font(T3Typography.supporting)
+                    .foregroundStyle(T3Colors.textSecondary)
+                Text("claude auth login")
+                    .font(T3Typography.tool)
+                    .textSelection(.enabled)
+                Button("Copy login command") {
+                    UIPasteboard.general.string = "claude auth login"
+                }
+                .font(T3Typography.control)
+            }
+
+            Button(refreshingProviderIDs.contains(provider.id) ? "Refreshing…" : "Refresh status") {
+                refresh(provider, environmentID: environment.id)
+            }
+            .font(T3Typography.control)
+            .disabled(refreshingProviderIDs.contains(provider.id))
+            .accessibilityIdentifier("provider-refresh-\(provider.id)")
+        }
+        .padding(.vertical, 4)
+        .accessibilityIdentifier("provider-status-\(provider.id)")
+    }
+
+    private func refresh(_ provider: FeatureProvider, environmentID: String) {
+        guard let refresher = model.client as? any FeatureProviderStatusRefreshing else {
+            errorMessage = "This server does not support provider refresh."
+            return
+        }
+        refreshingProviderIDs.insert(provider.id)
+        Task {
+            defer { refreshingProviderIDs.remove(provider.id) }
+            do {
+                try await refresher.refreshProviderStatus(
+                    environmentID: environmentID,
+                    providerID: provider.id
+                )
+            } catch {
+                errorMessage = error.localizedDescription
+            }
+        }
+    }
+
+    private func providerStatusLabel(_ provider: FeatureProvider) -> String {
+        switch provider.authStatus {
+        case "authenticated": "Signed in"
+        case "unauthenticated": "Signed out"
+        default: provider.isAvailable ? "Available" : "Unavailable"
+        }
+    }
+
+    private func providerStatusColor(_ provider: FeatureProvider) -> Color {
+        switch provider.authStatus {
+        case "authenticated": T3Colors.success
+        case "unauthenticated": T3Colors.danger
+        default: provider.isAvailable ? T3Colors.textSecondary : T3Colors.warning
         }
     }
 }

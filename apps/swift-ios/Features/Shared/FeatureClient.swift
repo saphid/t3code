@@ -7,6 +7,11 @@ public enum FeatureTitleRegenerationDispatchReceipt: Equatable, Sendable {
     case refreshUnavailable
 }
 
+@MainActor
+public protocol FeatureProviderStatusRefreshing: AnyObject {
+    func refreshProviderStatus(environmentID: String, providerID: String?) async throws
+}
+
 /// The app-owned adapter between the native feature layer and T3's WebSocket/Core runtime.
 /// Implementations are main-actor isolated so UI state never depends on locking.
 @MainActor

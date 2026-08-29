@@ -6,6 +6,27 @@ import { classifyTaskAgentKind, ProviderRuntimeEvent } from "./providerRuntime.t
 const decodeRuntimeEvent = Schema.decodeUnknownSync(ProviderRuntimeEvent);
 
 describe("ProviderRuntimeEvent", () => {
+  it("decodes typed provider authentication failures", () => {
+    const parsed = decodeRuntimeEvent({
+      type: "runtime.error",
+      eventId: "event-auth-failure",
+      provider: "claudeAgent",
+      providerInstanceId: "claude_work",
+      createdAt: "2026-08-30T00:00:00.000Z",
+      threadId: "thread-1",
+      turnId: "turn-1",
+      payload: {
+        message: "Claude is signed out.",
+        class: "authentication_error",
+      },
+    });
+
+    expect(parsed.type).toBe("runtime.error");
+    if (parsed.type !== "runtime.error") throw new Error("expected runtime.error");
+    expect(parsed.payload.class).toBe("authentication_error");
+    expect(parsed.providerInstanceId).toBe("claude_work");
+  });
+
   it("accepts fork-provided driver kinds as branded slugs", () => {
     const parsed = decodeRuntimeEvent({
       type: "session.started",
