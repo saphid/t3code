@@ -6,6 +6,7 @@ import * as Layer from "effect/Layer";
 import * as PlatformError from "effect/PlatformError";
 
 import { ServerConfig } from "../config.ts";
+import * as ProjectionSnapshotQuery from "../orchestration/Services/ProjectionSnapshotQuery.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 import * as ReviewService from "./ReviewService.ts";
@@ -14,6 +15,7 @@ function makeLayer(input: {
   readonly workspaceRoot: string;
   readonly baseDir: string;
   readonly detectCalls?: Array<{ readonly cwd: string }>;
+  readonly projectRoots?: ReadonlyArray<string>;
 }) {
   return ReviewService.layer.pipe(
     Layer.provide(
@@ -28,6 +30,12 @@ function makeLayer(input: {
       }),
     ),
     Layer.provide(Layer.mock(GitVcsDriver.GitVcsDriver)({})),
+    Layer.provide(
+      Layer.mock(ProjectionSnapshotQuery.ProjectionSnapshotQuery)({
+        hasActiveProjectAtWorkspaceRoot: (workspaceRoot) =>
+          Effect.succeed(input.projectRoots?.includes(workspaceRoot) === true),
+      }),
+    ),
     Layer.provide(ServerConfig.layerTest(input.workspaceRoot, input.baseDir)),
     Layer.provideMerge(NodeServices.layer),
   );
@@ -105,6 +113,40 @@ describe("ReviewService", () => {
       assert.strictEqual(result.cwd, workspaceRoot);
       assert.deepStrictEqual(result.sources, []);
       assert.deepStrictEqual(detectCalls, [{ cwd: workspaceRoot }]);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("allows a normalized registered project root with spaces and Unicode", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const workspaceRoot = yield* fs.makeTempDirectoryScoped({ prefix: "t3-review-workspace-" });
+      const outsideRoot = yield* fs.makeTempDirectoryScoped({ prefix: "t3-review-outside-" });
+      const projectRoot = `${outsideRoot}/Canonical Project/Unicode Ω`;
+      yield* fs.makeDirectory(projectRoot, { recursive: true });
+      const canonicalProjectRoot = yield* fs.realPath(projectRoot);
+      const linkedProjectRoot = `${outsideRoot}/Windows Projects Ω`;
+      yield* fs.symlink(projectRoot, linkedProjectRoot);
+      const requestedRoot = `${linkedProjectRoot}/.`;
+      const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-review-base-" });
+      const detectCalls: Array<{ readonly cwd: string }> = [];
+
+      const result = yield* Effect.gen(function* () {
+        const review = yield* ReviewService.ReviewService;
+        return yield* review.getDiffPreview({ cwd: requestedRoot });
+      }).pipe(
+        Effect.provide(
+          makeLayer({
+            workspaceRoot,
+            baseDir,
+            detectCalls,
+            projectRoots: [canonicalProjectRoot],
+          }),
+        ),
+      );
+
+      assert.strictEqual(result.cwd, requestedRoot);
+      assert.deepStrictEqual(result.sources, []);
+      assert.deepStrictEqual(detectCalls, [{ cwd: requestedRoot }]);
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 

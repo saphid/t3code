@@ -125,6 +125,33 @@ final class WorkspaceContractTests: XCTestCase {
         XCTAssertFalse(file.truncated)
     }
 
+    func testReviewDiffPreviewDecodesWindowsWorkspaceAndUnicodePath() throws {
+        let data = Data(
+            #"""
+            {
+              "cwd": "C:\\Users\\Alex\\Code Space\\Unicode Ω",
+              "generatedAt": "2026-08-29T00:00:00.000Z",
+              "sources": [{
+                "id": "working-tree",
+                "kind": "working-tree",
+                "title": "Working tree",
+                "baseRef": "HEAD",
+                "headRef": null,
+                "diff": "",
+                "diffHash": "windows-path-hash",
+                "truncated": false
+              }]
+            }
+            """#.utf8
+        )
+
+        let review = try JSONDecoder.t3.decode(ReviewDiffPreview.self, from: data)
+
+        XCTAssertEqual(review.cwd, #"C:\Users\Alex\Code Space\Unicode Ω"#)
+        XCTAssertEqual(review.sources.first?.baseRef, "HEAD")
+        XCTAssertEqual(review.sources.first?.diffHash, "windows-path-hash")
+    }
+
     func testWorkspaceRPCMethodNamesMatchContractConstants() {
         XCTAssertEqual(RPCMethod.projectsListEntries.rawValue, "projects.listEntries")
         XCTAssertEqual(RPCMethod.vcsRefreshStatus.rawValue, "vcs.refreshStatus")

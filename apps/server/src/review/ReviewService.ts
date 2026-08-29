@@ -16,6 +16,7 @@ import {
 } from "@t3tools/contracts";
 
 import * as ServerConfig from "../config.ts";
+import * as ProjectionSnapshotQuery from "../orchestration/Services/ProjectionSnapshotQuery.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 
@@ -35,6 +36,7 @@ export const make = Effect.gen(function* () {
   const config = yield* ServerConfig.ServerConfig;
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
+  const projectionSnapshotQuery = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
   const vcsRegistry = yield* VcsDriverRegistry.VcsDriverRegistry;
   const git = yield* GitVcsDriver.GitVcsDriver;
 
@@ -73,6 +75,23 @@ export const make = Effect.gen(function* () {
     ]);
 
     if (isWithinRoot(candidate, workspaceRoot) || isWithinRoot(candidate, worktreesRoot)) {
+      return;
+    }
+
+    // Desktop and WSL backends can run outside checkout-mode project roots.
+    // Accept the stored normalized spelling or its canonical filesystem path.
+    const normalizedCwd = path.resolve(cwd);
+    const projectRootCandidates =
+      normalizedCwd === candidate ? [candidate] : [normalizedCwd, candidate];
+    const isProjectRoot = yield* Effect.forEach(
+      projectRootCandidates,
+      (projectRoot) => projectionSnapshotQuery.hasActiveProjectAtWorkspaceRoot(projectRoot),
+      { concurrency: 1 },
+    ).pipe(
+      Effect.map((matches) => matches.some(Boolean)),
+      Effect.orElseSucceed(() => false),
+    );
+    if (isProjectRoot) {
       return;
     }
 

@@ -193,9 +193,9 @@ enum NativeWorkspaceMapper {
         for (index, line) in rawLines.enumerated() {
             if line.hasPrefix("diff --git ") {
                 finishFile()
-                let parts = line.split(separator: " ")
-                currentPath = parts.count > 3 ? stripDiffPrefix(String(parts[3])) : source.title
-                previousPath = parts.count > 2 ? stripDiffPrefix(String(parts[2])) : nil
+                let paths = gitPathTokens(String(line.dropFirst("diff --git ".count)))
+                currentPath = paths.count > 1 ? stripDiffPrefix(paths[1]) : source.title
+                previousPath = paths.first.map(stripDiffPrefix)
                 change = .modified
                 lines = []
                 oldLine = nil
@@ -213,12 +213,12 @@ enum NativeWorkspaceMapper {
                 continue
             }
             if line.hasPrefix("rename from ") {
-                previousPath = String(line.dropFirst("rename from ".count))
+                previousPath = decodeGitPath(String(line.dropFirst("rename from ".count)))
                 change = .renamed
                 continue
             }
             if line.hasPrefix("rename to ") {
-                currentPath = String(line.dropFirst("rename to ".count))
+                currentPath = decodeGitPath(String(line.dropFirst("rename to ".count)))
                 change = .renamed
                 continue
             }
@@ -227,12 +227,12 @@ enum NativeWorkspaceMapper {
                 continue
             }
             if line.hasPrefix("+++ ") {
-                let path = String(line.dropFirst(4))
+                let path = decodeGitPath(String(line.dropFirst(4)))
                 if path != "/dev/null" { currentPath = stripDiffPrefix(path) }
                 continue
             }
             if line.hasPrefix("--- ") {
-                let path = String(line.dropFirst(4))
+                let path = decodeGitPath(String(line.dropFirst(4)))
                 if path != "/dev/null" { previousPath = stripDiffPrefix(path) }
                 continue
             }
@@ -305,6 +305,100 @@ enum NativeWorkspaceMapper {
             ]
         }
         return files
+    }
+
+    private static func gitPathTokens(_ value: String) -> [String] {
+        var tokens: [String] = []
+        var index = value.startIndex
+
+        while tokens.count < 2 {
+            while index < value.endIndex, value[index].isWhitespace {
+                index = value.index(after: index)
+            }
+            guard index < value.endIndex else { break }
+
+            if value[index] == "\"" {
+                let parsed = readQuotedGitPath(value, from: index)
+                tokens.append(parsed.path)
+                index = parsed.endIndex
+            } else {
+                let start = index
+                while index < value.endIndex, !value[index].isWhitespace {
+                    index = value.index(after: index)
+                }
+                tokens.append(String(value[start ..< index]))
+            }
+        }
+
+        return tokens
+    }
+
+    private static func decodeGitPath(_ value: String) -> String {
+        let trimmed = value.trimmingCharacters(in: .whitespaces)
+        guard trimmed.first == "\"" else { return trimmed }
+        return readQuotedGitPath(trimmed, from: trimmed.startIndex).path
+    }
+
+    private static func readQuotedGitPath(
+        _ value: String,
+        from openingQuote: String.Index
+    ) -> (path: String, endIndex: String.Index) {
+        var bytes: [UInt8] = []
+        var index = value.index(after: openingQuote)
+
+        while index < value.endIndex {
+            let character = value[index]
+            index = value.index(after: index)
+            if character == "\"" {
+                break
+            }
+            guard character == "\\", index < value.endIndex else {
+                bytes.append(contentsOf: String(character).utf8)
+                continue
+            }
+
+            let escaped = value[index]
+            if isOctalDigit(escaped) {
+                var octal = 0
+                var digits = 0
+                while index < value.endIndex,
+                      digits < 3,
+                      let digit = value[index].wholeNumberValue,
+                      digit < 8 {
+                    octal = octal * 8 + digit
+                    digits += 1
+                    index = value.index(after: index)
+                }
+                bytes.append(UInt8(truncatingIfNeeded: octal))
+                continue
+            }
+
+            index = value.index(after: index)
+            let byte: UInt8? = switch escaped {
+            case "a": 7
+            case "b": 8
+            case "t": 9
+            case "n": 10
+            case "v": 11
+            case "f": 12
+            case "r": 13
+            case "\"": 34
+            case "\\": 92
+            default: nil
+            }
+            if let byte {
+                bytes.append(byte)
+            } else {
+                bytes.append(contentsOf: String(escaped).utf8)
+            }
+        }
+
+        return (String(decoding: bytes, as: UTF8.self), index)
+    }
+
+    private static func isOctalDigit(_ character: Character) -> Bool {
+        guard let digit = character.wholeNumberValue else { return false }
+        return digit < 8
     }
 
     /// Git presents replacements as adjacent deletion/addition blocks. Pairing those

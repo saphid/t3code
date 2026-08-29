@@ -128,6 +128,55 @@ struct FeatureToolStateTests {
         #expect(addition?.spans?.filter { $0.kind == .changed }.map(\.text) == ["green"])
     }
 
+    @Test(.bug("https://github.com/saphid/t3code-personal/issues/216"))
+    func workspaceReviewMapperDecodesQuotedPathsAndKeepsCommentIdentity() throws {
+        let preview = ReviewDiffPreview(
+            cwd: #"C:\Users\Alex\Code Space\Unicode Ω"#,
+            generatedAt: "2026-08-29T00:00:00Z",
+            sources: [
+                ReviewDiffSource(
+                    id: "working-tree",
+                    kind: "working-tree",
+                    title: "Working tree",
+                    baseRef: "HEAD",
+                    headRef: nil,
+                    diff: #"""
+                    diff --git "a/Sources/Old Name/\316\251.swift" "b/Sources/New Name/\316\251.swift"
+                    similarity index 80%
+                    rename from "Sources/Old Name/\316\251.swift"
+                    rename to "Sources/New Name/\316\251.swift"
+                    --- "a/Sources/Old Name/\316\251.swift"
+                    +++ "b/Sources/New Name/\316\251.swift"
+                    @@ -1,1 +1,1 @@
+                    -let value = 1
+                    +let value = 2
+                    """#,
+                    diffHash: "windows-path-hash",
+                    truncated: false
+                ),
+            ]
+        )
+
+        let file = try #require(NativeWorkspaceMapper.review(preview).files.first)
+        let additionIndex = try #require(file.lines.firstIndex { $0.kind == .addition })
+        var session = FeatureReviewCommentSession()
+        session.selectLine(at: additionIndex, in: file.lines)
+        session.comment = "Keep the Windows review target."
+        let pendingDraft = session.takeDraft(
+            sectionID: "working-tree",
+            sectionTitle: "Working tree",
+            filePath: file.path
+        )
+        let draft = try #require(pendingDraft)
+
+        #expect(file.change == .renamed)
+        #expect(file.previousPath == "Sources/Old Name/Ω.swift")
+        #expect(file.path == "Sources/New Name/Ω.swift")
+        #expect(draft.filePath == file.path)
+        #expect(draft.prompt.contains(#"filePath="Sources/New Name/Ω.swift""#))
+        #expect(draft.prompt.contains(#"rangeLabel="new line 1""#))
+    }
+
     @Test
     func fullDiffHydrationRestoresUnchangedRegionsWithoutLosingPatchRows() {
         let file = FeatureReviewFile(

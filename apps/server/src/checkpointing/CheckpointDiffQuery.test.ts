@@ -86,6 +86,7 @@ describe("CheckpointDiffQuery.layer", () => {
             getSnapshotSequence: () => Effect.succeed({ snapshotSequence: 0 }),
             getCounts: () => Effect.succeed({ projectCount: 0, threadCount: 0 }),
             getActiveProjectByWorkspaceRoot: () => Effect.succeed(Option.none()),
+            hasActiveProjectAtWorkspaceRoot: () => Effect.succeed(false),
             getProjectShellById: () => Effect.succeed(Option.none()),
             getFirstActiveThreadIdByProjectId: () => Effect.succeed(Option.none()),
             getThreadCheckpointContext: () =>
@@ -141,10 +142,11 @@ describe("CheckpointDiffQuery.layer", () => {
     }),
   );
 
-  it.effect("computes diffs using canonical turn-0 checkpoint refs", () =>
+  it.effect("forwards Windows roots while using canonical turn-0 checkpoint refs", () =>
     Effect.gen(function* () {
       const projectId = ProjectId.make("project-1");
       const threadId = ThreadId.make("thread-1");
+      const workspaceRoot = String.raw`C:\Users\Alex\Code Space\Unicode Ω`;
       const toCheckpointRef = checkpointRefForThreadTurn(threadId, 1);
       const diffCheckpointsCalls: Array<{
         readonly fromCheckpointRef: CheckpointRef;
@@ -156,7 +158,7 @@ describe("CheckpointDiffQuery.layer", () => {
       const threadCheckpointContext = makeThreadCheckpointContext({
         projectId,
         threadId,
-        workspaceRoot: "/tmp/workspace",
+        workspaceRoot,
         worktreePath: null,
         checkpointTurnCount: 1,
         checkpointRef: toCheckpointRef,
@@ -195,6 +197,7 @@ describe("CheckpointDiffQuery.layer", () => {
             getSnapshotSequence: () => Effect.succeed({ snapshotSequence: 0 }),
             getCounts: () => Effect.succeed({ projectCount: 0, threadCount: 0 }),
             getActiveProjectByWorkspaceRoot: () => Effect.succeed(Option.none()),
+            hasActiveProjectAtWorkspaceRoot: () => Effect.succeed(false),
             getProjectShellById: () => Effect.succeed(Option.none()),
             getFirstActiveThreadIdByProjectId: () => Effect.succeed(Option.none()),
             getThreadCheckpointContext: () => Effect.succeed(Option.some(threadCheckpointContext)),
@@ -220,7 +223,7 @@ describe("CheckpointDiffQuery.layer", () => {
       const expectedFromRef = checkpointRefForThreadTurn(threadId, 0);
       expect(diffCheckpointsCalls).toEqual([
         {
-          cwd: "/tmp/workspace",
+          cwd: workspaceRoot,
           fromCheckpointRef: expectedFromRef,
           toCheckpointRef,
           ignoreWhitespace: true,
@@ -279,6 +282,7 @@ describe("CheckpointDiffQuery.layer", () => {
             getSnapshotSequence: () => Effect.succeed({ snapshotSequence: 0 }),
             getCounts: () => Effect.succeed({ projectCount: 0, threadCount: 0 }),
             getActiveProjectByWorkspaceRoot: () => Effect.succeed(Option.none()),
+            hasActiveProjectAtWorkspaceRoot: () => Effect.succeed(false),
             getProjectShellById: () => Effect.succeed(Option.none()),
             getFirstActiveThreadIdByProjectId: () => Effect.succeed(Option.none()),
             getThreadCheckpointContext: () => Effect.succeed(Option.some(threadCheckpointContext)),
@@ -348,6 +352,7 @@ describe("CheckpointDiffQuery.layer", () => {
             getSnapshotSequence: () => Effect.succeed({ snapshotSequence: 0 }),
             getCounts: () => Effect.succeed({ projectCount: 0, threadCount: 0 }),
             getActiveProjectByWorkspaceRoot: () => Effect.succeed(Option.none()),
+            hasActiveProjectAtWorkspaceRoot: () => Effect.succeed(false),
             getProjectShellById: () => Effect.succeed(Option.none()),
             getFirstActiveThreadIdByProjectId: () => Effect.succeed(Option.none()),
             getThreadCheckpointContext: () => Effect.succeed(Option.some(threadCheckpointContext)),
@@ -402,6 +407,7 @@ describe("CheckpointDiffQuery.layer", () => {
             getSnapshotSequence: () => Effect.succeed({ snapshotSequence: 0 }),
             getCounts: () => Effect.succeed({ projectCount: 0, threadCount: 0 }),
             getActiveProjectByWorkspaceRoot: () => Effect.succeed(Option.none()),
+            hasActiveProjectAtWorkspaceRoot: () => Effect.succeed(false),
             getProjectShellById: () => Effect.succeed(Option.none()),
             getFirstActiveThreadIdByProjectId: () => Effect.succeed(Option.none()),
             getThreadCheckpointContext: () => Effect.succeed(Option.none()),
