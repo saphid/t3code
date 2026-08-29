@@ -474,115 +474,107 @@ private struct MarkdownImageView: View {
     let image: MarkdownImage
     let context: MarkdownImageContext?
 
-    @State private var loadedImage: UIImage?
-    @State private var failed = false
+    @State private var preview = FeatureAssetPreviewModel<FeatureAssetImage>()
 
     private var classifiedSource: MarkdownImageSource {
         MarkdownImageSource.classify(image.source, workspaceRoot: context?.workspaceRoot)
     }
 
+    private var request: FeatureAssetPreviewRequest {
+        switch classifiedSource {
+        case let .direct(url):
+            FeatureAssetPreviewRequest(scopeID: "direct", resourceID: url.absoluteString)
+        case let .workspaceFile(path):
+            FeatureAssetPreviewRequest(
+                scopeID: context?.threadID ?? "missing-environment",
+                resourceID: path
+            )
+        case .blocked:
+            FeatureAssetPreviewRequest(scopeID: "blocked", resourceID: image.source)
+        }
+    }
+
     var body: some View {
         if classifiedSource != .blocked {
             Group {
-                if let loadedImage {
-                    Image(uiImage: loadedImage)
+                switch preview.state {
+                case .idle:
+                    Image(systemName: "photo")
+                        .font(.title2)
+                        .foregroundStyle(T3Colors.textSecondary)
+                        .frame(maxWidth: .infinity, minHeight: 140)
+                        .background(T3Colors.surfaceRaised)
+                        .accessibilityLabel(
+                            image.alternativeText.isEmpty ? "Image" : image.alternativeText
+                        )
+                case .pending:
+                    ProgressView("Preparing image preview…")
+                        .frame(maxWidth: .infinity, minHeight: 140)
+                        .background(T3Colors.surfaceRaised)
+                        .accessibilityLabel(
+                            image.alternativeText.isEmpty
+                                ? "Preparing image preview"
+                                : "Preparing \(image.alternativeText)"
+                        )
+                case let .success(asset):
+                    Image(uiImage: asset.image)
                         .resizable()
                         .scaledToFit()
                         .frame(maxHeight: 480)
-                } else {
-                    Image(systemName: failed ? "exclamationmark.triangle" : "photo")
-                        .font(.title2)
-                        .foregroundStyle(T3Colors.textSecondary)
+                        .accessibilityLabel(
+                            image.alternativeText.isEmpty ? "Image" : image.alternativeText
+                        )
+                case let .failure(failure):
+                    VStack(spacing: 8) {
+                        Label(failure.title, systemImage: "photo.badge.exclamationmark")
+                            .font(T3Typography.supportingStrong)
+                        Text(failure.message)
+                            .font(T3Typography.supporting)
+                            .foregroundStyle(T3Colors.textSecondary)
+                            .multilineTextAlignment(.center)
+                            .lineLimit(3)
+                        Button("Retry", systemImage: "arrow.clockwise", action: retry)
+                            .buttonStyle(.bordered)
+                    }
+                        .padding(12)
                         .frame(maxWidth: .infinity, minHeight: 140)
                         .background(T3Colors.surfaceRaised)
                 }
             }
             .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-            .accessibilityLabel(image.alternativeText.isEmpty ? "Image" : image.alternativeText)
-            .task(id: "\(image.source):\(context?.threadID ?? ""):\(context?.workspaceRoot ?? "")") {
+            .task(id: request) {
                 await loadImage()
             }
+            .onDisappear(perform: preview.cancel)
         }
     }
 
-    @MainActor
+    private func retry() {
+        preview.retry(request: request, operation: resolveImage)
+    }
+
     private func loadImage() async {
-        do {
-            let url: URL
-            switch classifiedSource {
-            case let .direct(directURL):
-                url = directURL
-            case let .workspaceFile(path):
-                guard let context else { return }
-                url = try await context.resolver.workspaceAssetURL(
-                    threadID: context.threadID,
-                    path: path
-                )
-            case .blocked:
-                return
-            }
-            loadedImage = try await MarkdownImageLoader.load(url)
-        } catch is CancellationError {
-            return
-        } catch {
-            failed = true
-        }
+        await preview.load(request: request, operation: resolveImage)
     }
-}
 
-@MainActor
-private enum MarkdownImageLoader {
-    private static let cache: NSCache<NSURL, UIImage> = {
-        let cache = NSCache<NSURL, UIImage>()
-        cache.countLimit = 64
-        cache.totalCostLimit = 32 * 1_024 * 1_024
-        return cache
-    }()
-
-    private static let session: URLSession = {
-        let configuration = URLSessionConfiguration.ephemeral
-        configuration.httpShouldSetCookies = false
-        configuration.httpCookieStorage = nil
-        configuration.urlCredentialStorage = nil
-        return URLSession(configuration: configuration)
-    }()
-
-    static func load(_ url: URL) async throws -> UIImage {
-        if let cached = cache.object(forKey: url as NSURL) {
-            return cached
-        }
-
-        let data: Data
-        if url.scheme?.lowercased() == "data" {
-            guard let comma = url.absoluteString.firstIndex(of: ","),
-                  url.absoluteString[..<comma].lowercased().contains(";base64"),
-                  let decoded = Data(base64Encoded: String(url.absoluteString[url.absoluteString.index(after: comma)...])) else {
-                throw MarkdownImageLoadingError.invalidImage
+    private func resolveImage() async throws -> FeatureAssetImage {
+        let url: URL
+        switch classifiedSource {
+        case let .direct(directURL):
+            url = directURL
+        case let .workspaceFile(path):
+            guard let context else {
+                throw FeatureCapabilityUnavailable("Workspace image previews")
             }
-            data = decoded
-        } else {
-            let response: URLResponse
-            (data, response) = try await session.data(from: url)
-            if let httpResponse = response as? HTTPURLResponse,
-               !(200...299).contains(httpResponse.statusCode) {
-                throw MarkdownImageLoadingError.invalidResponse
-            }
+            url = try await context.resolver.workspaceAssetURL(
+                threadID: context.threadID,
+                path: path
+            )
+        case .blocked:
+            throw FeatureCapabilityUnavailable("Blocked image previews")
         }
-        try Task.checkCancellation()
-        let decoded = await Task.detached(priority: .utility) {
-            UIImage(data: data)
-        }.value
-        try Task.checkCancellation()
-        guard let decoded else { throw MarkdownImageLoadingError.invalidImage }
-        let cost = decoded.cgImage.map { $0.bytesPerRow * $0.height } ?? data.count
-        cache.setObject(decoded, forKey: url as NSURL, cost: cost)
-        return decoded
+        return try await FeatureAssetImageLoader.load(url: url)
     }
-}
-
-private enum MarkdownImageLoadingError: Error {
-    case invalidImage
-    case invalidResponse
 }
 
 private struct MarkdownCodeBlockView: View {

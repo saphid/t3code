@@ -1,4 +1,3 @@
-import ImageIO
 import SwiftUI
 import UIKit
 
@@ -150,14 +149,14 @@ private struct FeatureFileRow: View {
 }
 
 private struct FeatureFilePreviewView: View {
+    @SwiftUI.Environment(\.dismiss) private var dismiss
     let client: any FeatureClient
     let threadID: String
     let entry: FeatureFileEntry
 
     @State private var content: FeatureFileContent?
     @State private var sourceLines: [FeatureSourceLine] = []
-    @State private var image: UIImage?
-    @State private var assetURL: URL?
+    @State private var assetPreview = FeatureAssetPreviewModel<FeatureAssetImage>()
     @State private var errorMessage: String?
     @State private var isLoading = true
 
@@ -165,14 +164,33 @@ private struct FeatureFilePreviewView: View {
         FeatureFilePreviewKind.infer(path: entry.path, language: content?.language)
     }
 
+    private var request: FeatureAssetPreviewRequest {
+        FeatureAssetPreviewRequest(scopeID: threadID, resourceID: entry.path)
+    }
+
     var body: some View {
         Group {
-            if isLoading, content == nil, image == nil {
+            if previewKind == .image {
+                switch assetPreview.state {
+                case .idle:
+                    Color.clear
+                        .accessibilityHidden(true)
+                case .pending:
+                    ProgressView("Preparing image preview…")
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                case let .success(asset):
+                    FeatureZoomableImageView(image: asset.image)
+                        .background(Color.black)
+                case let .failure(failure):
+                    FeatureAssetPreviewFailureView(
+                        failure: failure,
+                        onRetry: retryImage,
+                        onClose: dismiss.callAsFunction
+                    )
+                }
+            } else if isLoading, content == nil {
                 ProgressView("Loading file…")
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else if let image {
-                FeatureZoomableImageView(image: image)
-                    .background(Color.black)
             } else if let content {
                 VStack(spacing: 0) {
                     if content.isTruncated {
@@ -215,9 +233,9 @@ private struct FeatureFilePreviewView: View {
         .navigationTitle(entry.name)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
-            if let assetURL {
+            if case let .success(asset) = assetPreview.state {
                 ToolbarItem(placement: .topBarTrailing) {
-                    ShareLink(item: assetURL) {
+                    ShareLink(item: asset.url) {
                         Image(systemName: "square.and.arrow.up")
                     }
                     .accessibilityLabel("Share image")
@@ -231,7 +249,31 @@ private struct FeatureFilePreviewView: View {
                 }
             }
         }
-        .task { await load() }
+        .task(id: request) { await load() }
+        .onDisappear(perform: assetPreview.cancel)
+    }
+
+    private func retryImage() {
+        assetPreview.retry(request: request, operation: resolveImage)
+    }
+
+    private func loadImage() async {
+        await assetPreview.load(request: request, operation: resolveImage)
+    }
+
+    private func resolveImage() async throws -> FeatureAssetImage {
+        guard let resolver = client as? any FeatureWorkspaceAssetResolving else {
+            throw FeatureCapabilityUnavailable("Signed image previews")
+        }
+        let url = try await resolver.workspaceAssetURL(
+            threadID: threadID,
+            path: entry.path
+        )
+        return try await FeatureAssetImageLoader.load(
+            url: url,
+            maxPixelSize: 4_096,
+            maximumBytes: 64 * 1_024 * 1_024
+        )
     }
 
     private func load() async {
@@ -239,31 +281,7 @@ private struct FeatureFilePreviewView: View {
         defer { isLoading = false }
         do {
             if previewKind == .image {
-                guard let resolver = client as? any FeatureWorkspaceAssetResolving else {
-                    throw FeatureCapabilityUnavailable("Signed image previews")
-                }
-                let resolvedURL = try await resolver.workspaceAssetURL(
-                    threadID: threadID,
-                    path: entry.path
-                )
-                let (data, response) = try await URLSession.shared.data(from: resolvedURL)
-                if let response = response as? HTTPURLResponse,
-                   !(200 ... 299).contains(response.statusCode) {
-                    throw FeatureImagePreviewError.httpStatus(response.statusCode)
-                }
-                guard data.count <= 64 * 1_024 * 1_024 else {
-                    throw FeatureImagePreviewError.tooLarge
-                }
-                guard let decoded = await Task.detached(priority: .userInitiated, operation: {
-                    FeatureImageDecoder.downsample(data, maxPixelSize: 4_096)
-                }).value else {
-                    throw FeatureImagePreviewError.invalidImage
-                }
-                guard !Task.isCancelled else { return }
-                assetURL = resolvedURL
-                image = decoded
-                content = nil
-                sourceLines = []
+                await loadImage()
             } else {
                 let loaded = try await client.readFile(threadID: threadID, path: entry.path)
                 let loadedKind = FeatureFilePreviewKind.infer(
@@ -294,8 +312,6 @@ private struct FeatureFilePreviewView: View {
                 guard !Task.isCancelled else { return }
                 content = loaded
                 sourceLines = lines
-                image = nil
-                assetURL = nil
             }
             errorMessage = nil
         } catch {
@@ -430,39 +446,6 @@ private struct FeatureZoomableImageView: UIViewRepresentable {
                 ? scrollView.minimumZoomScale
                 : min(2.5, scrollView.maximumZoomScale)
             scrollView.setZoomScale(scale, animated: true)
-        }
-    }
-}
-
-private enum FeatureImageDecoder {
-    static func downsample(_ data: Data, maxPixelSize: CGFloat) -> UIImage? {
-        let sourceOptions = [kCGImageSourceShouldCache: false] as CFDictionary
-        guard let source = CGImageSourceCreateWithData(data as CFData, sourceOptions) else {
-            return nil
-        }
-        let options = [
-            kCGImageSourceCreateThumbnailFromImageAlways: true,
-            kCGImageSourceCreateThumbnailWithTransform: true,
-            kCGImageSourceShouldCacheImmediately: true,
-            kCGImageSourceThumbnailMaxPixelSize: maxPixelSize,
-        ] as CFDictionary
-        guard let image = CGImageSourceCreateThumbnailAtIndex(source, 0, options) else {
-            return nil
-        }
-        return UIImage(cgImage: image)
-    }
-}
-
-private enum FeatureImagePreviewError: LocalizedError {
-    case httpStatus(Int)
-    case invalidImage
-    case tooLarge
-
-    var errorDescription: String? {
-        switch self {
-        case let .httpStatus(status): "The image server returned HTTP \(status)."
-        case .invalidImage: "The file is not a supported image."
-        case .tooLarge: "The image is larger than the 64 MB preview limit."
         }
     }
 }

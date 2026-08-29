@@ -17,6 +17,7 @@ public struct FeatureCapabilityUnavailable: LocalizedError, Sendable, Equatable 
 @MainActor
 public protocol FeatureWorkspaceAssetResolving: AnyObject {
     func workspaceAssetURL(threadID: String, path: String) async throws -> URL
+    func attachmentAssetURL(threadID: String, attachmentID: String) async throws -> URL
 }
 
 @MainActor

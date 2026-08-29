@@ -871,6 +871,13 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         )
     }
 
+    func attachmentAssetURL(threadID: String, attachmentID: String) async throws -> URL {
+        let route = try threadRoute(for: threadID)
+        return try await route.client.resolvedAssetURL(
+            resource: .attachment(id: attachmentID)
+        )
+    }
+
     func submitCodexFeedback(threadID: String, reason: String?) async throws -> String {
         let route = try threadRoute(for: threadID)
         return try await route.client.uploadFeedback(

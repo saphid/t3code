@@ -2332,7 +2332,10 @@ struct FeatureMessageView: View {
             HStack {
                 Spacer(minLength: 44)
                 VStack(alignment: .leading, spacing: 10) {
-                    FeatureMessageAttachmentsView(attachments: message.attachments)
+                    FeatureMessageAttachmentsView(
+                        attachments: message.attachments,
+                        imageContext: imageContext
+                    )
                     if !message.text.isEmpty {
                         MarkdownMessageView(
                             message.text,
@@ -2368,7 +2371,10 @@ struct FeatureMessageView: View {
                     .font(T3Typography.supportingStrong)
                     .foregroundStyle(T3Colors.statusRunning)
                 }
-                FeatureMessageAttachmentsView(attachments: message.attachments)
+                FeatureMessageAttachmentsView(
+                    attachments: message.attachments,
+                    imageContext: imageContext
+                )
                 if !message.text.isEmpty {
                     MarkdownMessageView(
                         message.text,
@@ -2438,6 +2444,7 @@ private struct FeatureMessageTimestampAccessibilityModifier: ViewModifier {
 
 private struct FeatureMessageAttachmentsView: View {
     let attachments: [FeatureMessageAttachment]
+    let imageContext: MarkdownImageContext?
     @State private var previewedAttachment: FeatureMessageAttachment?
 
     var body: some View {
@@ -2513,32 +2520,38 @@ private struct FeatureMessageAttachmentsView: View {
                     .accessibilityValue(attachmentAccessibilityValue(attachment))
                     .accessibilityIdentifier("attachment-\(attachment.id)")
                     .accessibilityAddTraits(
-                        attachment.mimeType.hasPrefix("image/") && attachment.url != nil
-                            ? .isButton
-                            : []
+                        canPreview(attachment) ? .isButton : []
                     )
                     .accessibilityHint(
-                        attachment.mimeType.hasPrefix("image/") && attachment.url != nil
+                        canPreview(attachment)
                             ? "Opens full-screen preview"
                             : ""
                     )
                     .accessibilityAction {
-                        if attachment.mimeType.hasPrefix("image/"), attachment.url != nil {
+                        if canPreview(attachment) {
                             previewedAttachment = attachment
                         }
                     }
                     .contentShape(Rectangle())
                     .onTapGesture {
-                        if attachment.mimeType.hasPrefix("image/"), attachment.url != nil {
+                        if canPreview(attachment) {
                             previewedAttachment = attachment
                         }
                     }
                 }
             }
             .fullScreenCover(item: $previewedAttachment) { attachment in
-                FeatureAttachmentPreview(attachment: attachment)
+                FeatureAttachmentPreview(
+                    attachment: attachment,
+                    imageContext: imageContext
+                )
             }
         }
+    }
+
+    private func canPreview(_ attachment: FeatureMessageAttachment) -> Bool {
+        attachment.mimeType.hasPrefix("image/")
+            && (attachment.url != nil || imageContext != nil)
     }
 
     private func attachmentPlaceholder(systemImage: String) -> some View {
@@ -2562,41 +2575,86 @@ private struct FeatureMessageAttachmentsView: View {
 private struct FeatureAttachmentPreview: View {
     @SwiftUI.Environment(\.dismiss) private var dismiss
     let attachment: FeatureMessageAttachment
+    let imageContext: MarkdownImageContext?
+
+    @State private var preview = FeatureAssetPreviewModel<FeatureAssetImage>()
+    @State private var initialURL: URL?
+
+    init(
+        attachment: FeatureMessageAttachment,
+        imageContext: MarkdownImageContext?
+    ) {
+        self.attachment = attachment
+        self.imageContext = imageContext
+        _initialURL = State(initialValue: attachment.url)
+    }
+
+    private var request: FeatureAssetPreviewRequest {
+        FeatureAssetPreviewRequest(
+            scopeID: imageContext?.threadID ?? attachment.url?.absoluteString ?? "unavailable",
+            resourceID: "attachment:\(attachment.id)"
+        )
+    }
 
     var body: some View {
         NavigationStack {
             ZStack {
                 Color.black.ignoresSafeArea()
-                if let url = attachment.url {
-                    AsyncImage(url: url) { phase in
-                        switch phase {
-                        case let .success(image):
-                            image
-                                .resizable()
-                                .scaledToFit()
-                        case .failure:
-                            ContentUnavailableView(
-                                "Image unavailable",
-                                systemImage: "exclamationmark.triangle"
-                            )
-                        case .empty:
-                            ProgressView()
-                        @unknown default:
-                            ProgressView()
-                        }
-                    }
-                    .padding(12)
+                switch preview.state {
+                case .idle:
+                    Color.clear
+                        .accessibilityHidden(true)
+                case .pending:
+                    ProgressView("Preparing image preview…")
+                        .tint(.white)
+                        .foregroundStyle(.white)
+                case let .success(asset):
+                    Image(uiImage: asset.image)
+                        .resizable()
+                        .scaledToFit()
+                        .padding(12)
+                case let .failure(failure):
+                    FeatureAssetPreviewFailureView(
+                        failure: failure,
+                        onRetry: retry
+                    )
                 }
             }
             .navigationTitle(attachment.name)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Done") { dismiss() }
+                    Button("Close", action: dismiss.callAsFunction)
                 }
             }
             .t3NavigationChrome()
         }
         .preferredColorScheme(.dark)
+        .task(id: request) { await load() }
+        .onDisappear(perform: preview.cancel)
+    }
+
+    private func retry() {
+        preview.retry(request: request, operation: resolveImage)
+    }
+
+    private func load() async {
+        await preview.load(request: request, operation: resolveImage)
+    }
+
+    private func resolveImage() async throws -> FeatureAssetImage {
+        let url: URL
+        if let initialURL {
+            self.initialURL = nil
+            url = initialURL
+        } else if let imageContext {
+            url = try await imageContext.resolver.attachmentAssetURL(
+                threadID: imageContext.threadID,
+                attachmentID: attachment.id
+            )
+        } else {
+            throw FeatureCapabilityUnavailable("Signed image previews")
+        }
+        return try await FeatureAssetImageLoader.load(url: url)
     }
 }
