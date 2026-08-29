@@ -15,6 +15,7 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 import * as Semaphore from "effect/Semaphore";
+import * as Stream from "effect/Stream";
 import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/unstable/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import { HostProcessArchitecture, HostProcessPlatform } from "./hostProcess.ts";
@@ -59,7 +60,8 @@ export class RelayClientInstallError extends Data.TaggedError("RelayClientInstal
 
 class CloudflaredCommandError extends Data.TaggedError("CloudflaredCommandError")<{
   readonly command: string;
-  readonly exitCode: number;
+  readonly failure: "exit" | "invalid_output" | "timeout";
+  readonly exitCode?: number;
 }> {}
 
 export interface CloudflaredReleaseAsset {
@@ -101,6 +103,19 @@ const CLOUDFLARED_RELEASE_ASSETS: Readonly<
 const INSTALL_LOCK_RETRY_COUNT = 100;
 const INSTALL_LOCK_RETRY_DELAY = "100 millis";
 const INSTALL_LOCK_STALE_MS = 5 * 60 * 1_000;
+const RELAY_CLIENT_VALIDATION_TIMEOUT = "10 seconds";
+const WINDOWS_SIGNATURE_PATH_ENV_NAME = "T3CODE_CLOUDFLARED_SIGNATURE_PATH";
+const WINDOWS_SIGNATURE_SCRIPT = [
+  `$signature = Microsoft.PowerShell.Security\\Get-AuthenticodeSignature -LiteralPath $env:${WINDOWS_SIGNATURE_PATH_ENV_NAME}`,
+  "if ($signature.Status -ne 'Valid' -or $null -eq $signature.SignerCertificate) { exit 1 }",
+  "Write-Output 'Valid'",
+].join("; ");
+
+interface CloudflaredCommandResult {
+  readonly stdout: string;
+  readonly stderr: string;
+  readonly exitCode: number;
+}
 
 const trimmedString = (name: string) =>
   Config.string(name).pipe(
@@ -148,6 +163,13 @@ function resolveReleaseAsset(
 
 function isAlreadyExists(error: PlatformError.PlatformError): boolean {
   return error.reason._tag === "AlreadyExists";
+}
+
+export function parseCloudflaredVersion(output: string): string | null {
+  const match = /^cloudflared version (\d+\.\d+\.\d+)(?: \(built [^()\r\n]+\))?$/u.exec(
+    output.trim(),
+  );
+  return match?.[1] ?? null;
 }
 
 const wrapInstallFailure =
@@ -263,18 +285,138 @@ export const makeCloudflaredRelayClient = Effect.fn("cloudflared.make")(function
   const runCommand = Effect.fn("cloudflared.runCommand")(function* (
     command: string,
     args: ReadonlyArray<string>,
+    env?: Readonly<Record<string, string>>,
   ) {
-    const child = yield* spawner.spawn(
-      ChildProcess.make(command, args, {
-        shell: false,
-        stdout: "ignore",
-        stderr: "ignore",
-      }),
-    );
-    const exitCode = Number(yield* child.exitCode);
-    if (exitCode !== 0) {
-      return yield* new CloudflaredCommandError({ command, exitCode });
+    return yield* Effect.gen(function* () {
+      const child = yield* spawner.spawn(
+        ChildProcess.make(command, args, {
+          ...(env ? { env, extendEnv: true } : {}),
+          shell: false,
+        }),
+      );
+      const [stdout, stderr, exitCode] = yield* Effect.all(
+        [
+          child.stdout.pipe(
+            Stream.decodeText(),
+            Stream.runFold(
+              () => "",
+              (output, chunk) => `${output}${chunk}`,
+            ),
+          ),
+          child.stderr.pipe(
+            Stream.decodeText(),
+            Stream.runFold(
+              () => "",
+              (output, chunk) => `${output}${chunk}`,
+            ),
+          ),
+          child.exitCode.pipe(Effect.map(Number)),
+        ],
+        { concurrency: "unbounded" },
+      );
+      return { stdout, stderr, exitCode } satisfies CloudflaredCommandResult;
+    }).pipe(Effect.scoped);
+  });
+
+  const runSuccessfulCommand = Effect.fn("cloudflared.runSuccessfulCommand")(function* (
+    command: string,
+    args: ReadonlyArray<string>,
+    env?: Readonly<Record<string, string>>,
+  ) {
+    const result = yield* runCommand(command, args, env);
+    if (result.exitCode !== 0) {
+      return yield* new CloudflaredCommandError({
+        command,
+        failure: "exit",
+        exitCode: result.exitCode,
+      });
     }
+    return result;
+  });
+
+  const runBoundedCommand = (
+    command: string,
+    args: ReadonlyArray<string>,
+    env?: Readonly<Record<string, string>>,
+  ) =>
+    runCommand(command, args, env).pipe(
+      Effect.timeoutOption(RELAY_CLIENT_VALIDATION_TIMEOUT),
+      Effect.flatMap(
+        Option.match({
+          onNone: () => Effect.fail(new CloudflaredCommandError({ command, failure: "timeout" })),
+          onSome: Effect.succeed,
+        }),
+      ),
+    );
+
+  const validateVersionOutput = (result: CloudflaredCommandResult) => {
+    const output = [result.stdout.trim(), result.stderr.trim()].filter(Boolean).join("\n");
+    return parseCloudflaredVersion(output) === CLOUDFLARED_VERSION;
+  };
+
+  const validateCloudflaredVersion = Effect.fn("cloudflared.validateVersion")(function* (
+    executablePath: string,
+  ) {
+    const preferred = yield* runBoundedCommand(executablePath, ["version"]);
+    if (preferred.exitCode === 0) {
+      if (validateVersionOutput(preferred)) return;
+      return yield* new CloudflaredCommandError({
+        command: executablePath,
+        failure: "invalid_output",
+        exitCode: preferred.exitCode,
+      });
+    }
+    if (preferred.exitCode !== 1) {
+      return yield* new CloudflaredCommandError({
+        command: executablePath,
+        failure: "exit",
+        exitCode: preferred.exitCode,
+      });
+    }
+
+    const legacy = yield* runBoundedCommand(executablePath, ["--version"]);
+    if (legacy.exitCode !== 0 || !validateVersionOutput(legacy)) {
+      return yield* new CloudflaredCommandError({
+        command: executablePath,
+        failure: legacy.exitCode === 0 ? "invalid_output" : "exit",
+        exitCode: legacy.exitCode,
+      });
+    }
+  });
+
+  const validateWindowsSignature = Effect.fn("cloudflared.validateWindowsSignature")(function* (
+    executablePath: string,
+  ) {
+    if (platform !== "win32") return;
+    const result = yield* runBoundedCommand(
+      "powershell.exe",
+      ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", WINDOWS_SIGNATURE_SCRIPT],
+      { [WINDOWS_SIGNATURE_PATH_ENV_NAME]: executablePath },
+    );
+    if (result.exitCode !== 0 || result.stdout.trim() !== "Valid" || result.stderr.trim() !== "") {
+      return yield* new CloudflaredCommandError({
+        command: "powershell.exe",
+        failure: result.exitCode === 0 ? "invalid_output" : "exit",
+        exitCode: result.exitCode,
+      });
+    }
+  });
+
+  const realPathContainedBy = Effect.fn("cloudflared.realPathContainedBy")(function* (
+    root: string,
+    candidate: string,
+  ) {
+    const [realRoot, realCandidate] = yield* Effect.all([
+      fileSystem.realPath(root),
+      fileSystem.realPath(candidate),
+    ]);
+    const relative = path.relative(realRoot, realCandidate);
+    return (
+      relative !== "" &&
+      relative !== ".." &&
+      !relative.startsWith(`..${path.sep}`) &&
+      !path.isAbsolute(relative)
+    );
   });
 
   const downloadAsset = Effect.fn("cloudflared.downloadAsset")(function* (
@@ -357,7 +499,7 @@ export const makeCloudflaredRelayClient = Effect.fn("cloudflared.make")(function
   ) {
     yield* report("checking");
     const existing = yield* resolve;
-    if (existing.status === "available") return existing;
+    if (existing.status === "available" && existing.source !== "managed") return existing;
     const config = yield* loadCloudflaredConfig;
     if (Option.isSome(config.executableOverride)) {
       return yield* new RelayClientInstallError({
@@ -365,7 +507,7 @@ export const makeCloudflaredRelayClient = Effect.fn("cloudflared.make")(function
         message: `${CLOUDFLARED_PATH_ENV_NAME} does not point to an executable file.`,
       });
     }
-    if (!releaseAsset) {
+    if (!releaseAsset && !(existing.status === "available" && existing.source === "managed")) {
       return yield* new RelayClientInstallError({
         reason: "unsupported_platform",
         message: `T3 Code does not provide a managed relay client binary for ${platform}-${arch}.`,
@@ -379,6 +521,25 @@ export const makeCloudflaredRelayClient = Effect.fn("cloudflared.make")(function
       .pipe(
         wrapInstallFailure("write_failed", "Could not create the relay client tool directory."),
       );
+    const managedDirectoryIsContained = yield* realPathContainedBy(
+      options.baseDir,
+      managedDirectory,
+    ).pipe(
+      Effect.mapError(
+        (cause) =>
+          new RelayClientInstallError({
+            reason: "validation_failed",
+            message: "Could not validate the managed relay client directory.",
+            cause,
+          }),
+      ),
+    );
+    if (!managedDirectoryIsContained) {
+      return yield* new RelayClientInstallError({
+        reason: "validation_failed",
+        message: "The managed relay client directory escaped the T3 Code home directory.",
+      });
+    }
     yield* report("waiting_for_lock");
     yield* acquireInstallLock(lockPath).pipe(
       Effect.catchTag("PlatformError", (cause) =>
@@ -394,11 +555,23 @@ export const makeCloudflaredRelayClient = Effect.fn("cloudflared.make")(function
     return yield* Effect.gen(function* () {
       const afterLock = yield* resolve;
       if (afterLock.status === "available") return afterLock;
+      if (!releaseAsset) {
+        return yield* new RelayClientInstallError({
+          reason: "unsupported_platform",
+          message: `T3 Code does not provide a managed relay client binary for ${platform}-${arch}.`,
+        });
+      }
 
-      const tempDirectory = yield* fileSystem.makeTempDirectoryScoped({
+      const tempDirectory = yield* fileSystem.makeTempDirectory({
         directory: managedDirectory,
         prefix: ".install-",
       });
+      if (!(yield* realPathContainedBy(managedDirectory, tempDirectory))) {
+        return yield* new RelayClientInstallError({
+          reason: "validation_failed",
+          message: "The relay client staging directory escaped the managed tool directory.",
+        });
+      }
       const archivePath = path.join(
         tempDirectory,
         releaseAsset.archive === "tgz" ? "cloudflared.tgz" : executableFileName(platform),
@@ -411,7 +584,7 @@ export const makeCloudflaredRelayClient = Effect.fn("cloudflared.make")(function
 
       const executablePath = path.join(tempDirectory, executableFileName(platform));
       if (releaseAsset.archive === "tgz") {
-        yield* runCommand("tar", ["-xzf", archivePath, "-C", tempDirectory]).pipe(
+        yield* runSuccessfulCommand("tar", ["-xzf", archivePath, "-C", tempDirectory]).pipe(
           wrapInstallFailure("write_failed", "Could not extract the relay client."),
         );
       }
@@ -421,21 +594,62 @@ export const makeCloudflaredRelayClient = Effect.fn("cloudflared.make")(function
           .pipe(wrapInstallFailure("write_failed", "Could not make the relay client executable."));
       }
       yield* report("validating");
-      yield* runCommand(executablePath, ["--version"]).pipe(
-        wrapInstallFailure("validation_failed", "The downloaded relay client binary did not run."),
+      if (!(yield* realPathContainedBy(tempDirectory, executablePath))) {
+        return yield* new RelayClientInstallError({
+          reason: "validation_failed",
+          message: "The downloaded relay client executable escaped its staging directory.",
+        });
+      }
+      yield* validateWindowsSignature(executablePath).pipe(
+        Effect.mapError(
+          (cause) =>
+            new RelayClientInstallError({
+              reason: "validation_failed",
+              message:
+                cause instanceof CloudflaredCommandError && cause.failure === "timeout"
+                  ? "Timed out while validating the downloaded relay client signature."
+                  : "The downloaded relay client signature was not valid.",
+              cause,
+            }),
+        ),
+      );
+      yield* validateCloudflaredVersion(executablePath).pipe(
+        Effect.mapError(
+          (cause) =>
+            new RelayClientInstallError({
+              reason: "validation_failed",
+              message:
+                cause instanceof CloudflaredCommandError && cause.failure === "timeout"
+                  ? "Timed out while validating the downloaded relay client version."
+                  : cause instanceof CloudflaredCommandError && cause.failure === "invalid_output"
+                    ? `The downloaded relay client did not report version ${CLOUDFLARED_VERSION}.`
+                    : "The downloaded relay client binary did not run successfully.",
+              cause,
+            }),
+        ),
       );
 
       const stagedPath = `${managedPath}.${yield* crypto.randomUUIDv4}.tmp`;
       yield* report("activating");
-      yield* fileSystem
-        .rename(executablePath, stagedPath)
-        .pipe(wrapInstallFailure("write_failed", "Could not stage the relay client."));
-      yield* fileSystem
-        .rename(stagedPath, managedPath)
-        .pipe(
-          wrapInstallFailure("write_failed", "Could not activate the relay client."),
-          Effect.ensuring(fileSystem.remove(stagedPath, { force: true }).pipe(Effect.ignore)),
-        );
+      yield* Effect.gen(function* () {
+        yield* fileSystem
+          .rename(executablePath, stagedPath)
+          .pipe(wrapInstallFailure("write_failed", "Could not stage the relay client."));
+        yield* fileSystem
+          .rename(stagedPath, managedPath)
+          .pipe(wrapInstallFailure("write_failed", "Could not activate the relay client."));
+      }).pipe(
+        Effect.onExit(() =>
+          fileSystem
+            .remove(stagedPath, { force: true })
+            .pipe(
+              wrapInstallFailure(
+                "write_failed",
+                "Could not remove the relay client activation staging file.",
+              ),
+            ),
+        ),
+      );
       return {
         status: "available",
         executablePath: managedPath,
@@ -443,8 +657,35 @@ export const makeCloudflaredRelayClient = Effect.fn("cloudflared.make")(function
         version: CLOUDFLARED_VERSION,
       } satisfies AvailableRelayClient;
     }).pipe(
-      Effect.scoped,
-      Effect.ensuring(fileSystem.remove(lockPath, { force: true }).pipe(Effect.ignore)),
+      Effect.onExit(() =>
+        fileSystem.readDirectory(managedDirectory).pipe(
+          Effect.flatMap((entries) =>
+            Effect.forEach(
+              entries.filter((entry) => entry.startsWith(".install-")),
+              (entry) =>
+                fileSystem.remove(path.join(managedDirectory, entry), {
+                  recursive: true,
+                  force: true,
+                }),
+              { concurrency: 1, discard: true },
+            ),
+          ),
+          wrapInstallFailure(
+            "write_failed",
+            "Could not remove relay client installation staging directories.",
+          ),
+        ),
+      ),
+      Effect.onExit(() =>
+        fileSystem
+          .remove(lockPath, { force: true })
+          .pipe(
+            wrapInstallFailure(
+              "write_failed",
+              "Could not release the relay client installation lock.",
+            ),
+          ),
+      ),
       Effect.catch((cause) =>
         cause instanceof RelayClientInstallError
           ? Effect.fail(cause)
