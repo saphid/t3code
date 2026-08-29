@@ -19,6 +19,8 @@ import {
   ensurePinnedRuntimeInstalled,
   pinnedRuntimePaths,
   PinnedRuntimeInstallError,
+  type PinnedRuntimePruneResult,
+  prunePinnedRuntimes,
 } from "./pinnedRuntime.ts";
 import {
   SERVICE_LAUNCHER_FILE,
@@ -396,10 +398,68 @@ export class BootServiceInstallError extends Schema.TaggedErrorClass<BootService
 
 export class BootServiceUpdatePendingError extends Schema.TaggedErrorClass<BootServiceUpdatePendingError>()(
   "BootServiceUpdatePendingError",
-  {},
+  { removedVersions: Schema.optional(Schema.Array(Schema.String)) },
 ) {
   override get message(): string {
-    return "A remote server update is still pending. Wait for it to finish, then retry.";
+    const removed =
+      this.removedVersions === undefined || this.removedVersions.length === 0
+        ? ""
+        : ` Removed before the update began: ${this.removedVersions.map((version) => `t3@${version}`).join(", ")}.`;
+    return `A remote server update is still pending. Wait for it to finish, then retry.${removed}`;
+  }
+}
+
+export class BootServicePruneStateError extends Schema.TaggedErrorClass<BootServicePruneStateError>()(
+  "BootServicePruneStateError",
+  { statePath: Schema.String, removedVersions: Schema.Array(Schema.String) },
+) {
+  override get message(): string {
+    const removed =
+      this.removedVersions.length === 0
+        ? ""
+        : ` Removed before the failure: ${this.removedVersions.map((version) => `t3@${version}`).join(", ")}.`;
+    return `The T3 Code service state at '${this.statePath}' is missing or invalid. Run \`npx t3@latest service update\` before pruning runtimes.${removed}`;
+  }
+}
+
+export class BootServicePruneStateChangedError extends Schema.TaggedErrorClass<BootServicePruneStateChangedError>()(
+  "BootServicePruneStateChangedError",
+  {
+    statePath: Schema.String,
+    expectedActiveVersion: Schema.String,
+    actualActiveVersion: Schema.String,
+    removedVersions: Schema.Array(Schema.String),
+  },
+) {
+  override get message(): string {
+    const removed =
+      this.removedVersions.length === 0
+        ? "No runtimes were removed."
+        : `Removed before the change: ${this.removedVersions.map((version) => `t3@${version}`).join(", ")}.`;
+    const change =
+      this.expectedActiveVersion === this.actualActiveVersion
+        ? "The T3 Code service state changed while pruning."
+        : `The active T3 Code service runtime changed from t3@${this.expectedActiveVersion} to t3@${this.actualActiveVersion} while pruning.`;
+    return `${change} ${removed}`;
+  }
+}
+
+export class BootServicePruneError extends Schema.TaggedErrorClass<BootServicePruneError>()(
+  "BootServicePruneError",
+  {
+    stage: Schema.Literals(["checking service state", "reading service state", "pruning runtimes"]),
+    path: Schema.String,
+    version: Schema.optional(Schema.String),
+    removedVersions: Schema.Array(Schema.String),
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    const removed =
+      this.removedVersions.length === 0
+        ? ""
+        : ` Removed before the failure: ${this.removedVersions.map((version) => `t3@${version}`).join(", ")}.`;
+    return `Could not prune T3 Code service runtimes while ${this.stage} at '${this.path}'.${removed}`;
   }
 }
 
@@ -417,12 +477,27 @@ export interface BootServiceStatus {
   readonly logPath: string;
 }
 
+export interface BootServicePruneOptions {
+  readonly dryRun: boolean;
+}
+
+export type BootServicePruneResult = PinnedRuntimePruneResult;
+
 export class BootService extends Context.Service<
   BootService,
   {
     readonly install: Effect.Effect<BootServicePlan, BootServiceError>;
     readonly uninstall: Effect.Effect<boolean, BootServiceError>;
     readonly status: Effect.Effect<BootServiceStatus, BootServiceError>;
+    readonly prune: (
+      options: BootServicePruneOptions,
+    ) => Effect.Effect<
+      BootServicePruneResult,
+      | BootServicePruneStateError
+      | BootServicePruneStateChangedError
+      | BootServicePruneError
+      | BootServiceUpdatePendingError
+    >;
   }
 >()("t3/cloud/bootService") {}
 
@@ -683,7 +758,104 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
     Effect.withSpan("cloud.boot_service.status"),
   );
 
-  return BootService.of({ install, uninstall, status });
+  const readPruneState = Effect.fn("cloud.boot_service.read_prune_state")(function* (
+    removedVersions: ReadonlyArray<string> = [],
+  ) {
+    const stateExists = yield* fs.exists(statePath).pipe(
+      Effect.mapError(
+        (cause) =>
+          new BootServicePruneError({
+            stage: "checking service state",
+            path: statePath,
+            removedVersions,
+            cause,
+          }),
+      ),
+    );
+    if (!stateExists) {
+      return yield* new BootServicePruneStateError({ statePath, removedVersions });
+    }
+    const stateText = yield* fs.readFileString(statePath).pipe(
+      Effect.mapError(
+        (cause) =>
+          new BootServicePruneError({
+            stage: "reading service state",
+            path: statePath,
+            removedVersions,
+            cause,
+          }),
+      ),
+    );
+    const state = parseServiceState(stateText);
+    if (state === undefined) {
+      return yield* new BootServicePruneStateError({ statePath, removedVersions });
+    }
+    if (state.update?.status === "pending") {
+      return yield* new BootServiceUpdatePendingError({ removedVersions });
+    }
+    return state;
+  });
+
+  const prune: BootService["Service"]["prune"] = Effect.fn("cloud.boot_service.prune")(
+    function* (options) {
+      const state = yield* readPruneState();
+      // @effect-diagnostics-next-line preferSchemaOverJson:off - compares two already parsed launcher-state values.
+      const stateFingerprint = JSON.stringify(state);
+      const verifyState = Effect.fn("cloud.boot_service.verify_prune_state")(function* (
+        removedVersions: ReadonlyArray<string>,
+      ) {
+        const currentState = yield* readPruneState(removedVersions);
+        // @effect-diagnostics-next-line preferSchemaOverJson:off - compares two already parsed launcher-state values.
+        if (JSON.stringify(currentState) !== stateFingerprint) {
+          return yield* new BootServicePruneStateChangedError({
+            statePath,
+            expectedActiveVersion: state.activeVersion,
+            actualActiveVersion: currentState.activeVersion,
+            removedVersions,
+          });
+        }
+      });
+      return yield* prunePinnedRuntimes({
+        baseDir: input.baseDir,
+        state,
+        dryRun: options.dryRun,
+        fs,
+        path,
+        verifyState,
+      }).pipe(
+        Effect.catch((error) => {
+          switch (error._tag) {
+            case "BootServicePruneStateError":
+            case "BootServicePruneStateChangedError":
+            case "BootServicePruneError":
+            case "BootServiceUpdatePendingError":
+              return Effect.fail(error);
+            case "PinnedRuntimePruneError":
+              return Effect.fail(
+                new BootServicePruneError({
+                  stage: "pruning runtimes",
+                  path: error.path,
+                  version: error.version,
+                  removedVersions: error.removedVersions,
+                  cause: error,
+                }),
+              );
+            case "PlatformError":
+              return Effect.fail(
+                new BootServicePruneError({
+                  stage: "pruning runtimes",
+                  path: path.dirname(runtimePaths.versionDir),
+                  removedVersions: [],
+                  cause: error,
+                }),
+              );
+          }
+        }),
+      );
+    },
+  );
+
+  return BootService.of({ install, uninstall, status, prune });
 });
 
 export const layer = (input: {

@@ -23,6 +23,19 @@ Update or repair it:
 npx t3@latest service update
 ```
 
+Preview completed runtimes that the service no longer needs:
+
+```sh
+npx t3@latest service prune --dry-run
+```
+
+The preview lists each exact version and the disk space it can recover. Remove those same
+runtimes with:
+
+```sh
+npx t3@latest service prune
+```
+
 Stop it and remove it from startup:
 
 ```sh
@@ -31,6 +44,9 @@ npx t3@latest service uninstall
 
 Updating restarts T3 Code briefly. Let active agent work and terminal commands finish first.
 If a remote update is already in progress, wait for it to finish before retrying a local update.
+Pruning does not stop or restart the service. It keeps the active runtime and both versions in the
+latest update record. It refuses to run if an update is pending, service state changes, another
+prune is running, or a candidate changes while the command inspects it.
 
 The service runs a small stable launcher. Exact T3 Code versions are installed separately, so a
 failed remote candidate can return to the previous version without rewriting the service

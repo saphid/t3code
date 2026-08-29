@@ -54,6 +54,26 @@ snapshot, records rollback, and starts A. A durable restore marker makes an inte
 resume before either version can boot. After commit, B is active and the service manager's normal
 restart policy applies.
 
+## Runtime pruning
+
+`t3 service prune` removes completed exact-version installs that are older than the active version
+and are not named by the latest update record. It leaves incomplete installs, staging directories,
+top-level symlinks, unexpected names, the active runtime, and newer runtimes untouched. `--dry-run`
+lists the same candidates and their allocated byte totals without removing anything.
+
+The command reads launcher-owned state before selecting candidates and refuses to run while an
+update is pending. A filesystem lock serializes mutating prune processes. Before each removal, the
+command reads service state again and repeats the candidate inspection, including path identity,
+entry type, size, and modification metadata. It checks state once more after removal. State changes,
+path escapes, candidate changes, unreadable files, lock failures, and partial removals stop the
+operation. Unreadable service state or candidate traversal also stops the operation; an unreadable
+completion marker is treated as incomplete and left untouched. An error after one or more completed
+removals names those versions.
+
+Pruning never edits the launcher, service state, unit, or launch agent, and it does not invoke the
+service manager. npm-created symlinks inside a completed runtime are unlinked with that runtime and
+do not contribute external targets to the recoverable byte total.
+
 ## Database Rollback
 
 The launcher snapshots `state.sqlite`, `state.sqlite-wal`, and `state.sqlite-shm` after the old

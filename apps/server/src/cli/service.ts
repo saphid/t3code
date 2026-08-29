@@ -3,7 +3,7 @@ import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Terminal from "effect/Terminal";
-import { Command, GlobalFlag, Prompt } from "effect/unstable/cli";
+import { Command, Flag, GlobalFlag, Prompt } from "effect/unstable/cli";
 
 import packageJson from "../../package.json" with { type: "json" };
 import * as BootService from "../cloud/bootService.ts";
@@ -60,6 +60,34 @@ export function formatServiceStatus(
     `  Unit: ${status.unitPath}`,
     `  Logs: ${status.logPath}`,
     ...(status.current ? [] : ["  Next: Run `npx t3@latest service update`."]),
+  ].join("\n");
+}
+
+const formatBytes = (bytes: number): string => {
+  if (bytes < 1024) return `${bytes} B`;
+  const units = ["KiB", "MiB", "GiB", "TiB"] as const;
+  let value = bytes / 1024;
+  let unit: (typeof units)[number] = units[0];
+  for (const nextUnit of units.slice(1)) {
+    if (value < 1024) break;
+    value /= 1024;
+    unit = nextUnit;
+  }
+  return `${value.toFixed(2)} ${unit}`;
+};
+
+export function formatServicePruneResult(result: BootService.BootServicePruneResult): string {
+  if (result.runtimes.length === 0) {
+    return "No old T3 Code service runtimes found.";
+  }
+  const action = result.dryRun ? "Would prune" : "Pruned";
+  const spaceAction = result.dryRun ? "recover" : "recovered";
+  const noun = result.runtimes.length === 1 ? "runtime" : "runtimes";
+  return [
+    `${action} ${result.runtimes.length} old T3 Code service ${noun} and ${spaceAction} ${formatBytes(result.recoverableBytes)}:`,
+    ...result.runtimes.map(
+      (runtime) => `  t3@${runtime.version} (${formatBytes(runtime.recoverableBytes)})`,
+    ),
   ].join("\n");
 }
 
@@ -143,6 +171,27 @@ const serviceStatusCommand = Command.make("status", projectLocationFlags).pipe(
   ),
 );
 
+const dryRunFlag = Flag.boolean("dry-run").pipe(
+  Flag.withDescription("Show exact runtimes and recoverable bytes without changing anything."),
+  Flag.withDefault(false),
+);
+
+const servicePruneCommand = Command.make("prune", {
+  ...projectLocationFlags,
+  dryRun: dryRunFlag,
+}).pipe(
+  Command.withDescription("Remove completed service runtimes that launcher state no longer needs."),
+  Command.withHandler((flags) =>
+    runServiceCommand(
+      flags,
+      Effect.gen(function* () {
+        const service = yield* BootService.BootService;
+        yield* Console.log(formatServicePruneResult(yield* service.prune(flags)));
+      }),
+    ),
+  ),
+);
+
 export const offerServiceDuringOnboarding = Effect.gen(function* () {
   const service = yield* BootService.BootService;
   const { supported, installed, current } = yield* service.status;
@@ -204,5 +253,6 @@ export const serviceCommand = Command.make("service").pipe(
     serviceUninstallCommand,
     serviceUpdateCommand,
     serviceStatusCommand,
+    servicePruneCommand,
   ]),
 );

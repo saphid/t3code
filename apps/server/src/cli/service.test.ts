@@ -1,6 +1,6 @@
 import { assert, it } from "@effect/vitest";
 
-import { formatServiceStatus } from "./service.ts";
+import { formatServicePruneResult, formatServiceStatus } from "./service.ts";
 
 const status = {
   supported: true,
@@ -33,5 +33,50 @@ it("explains where the service is supported", () => {
   assert.include(
     formatServiceStatus({ ...status, supported: false, installed: false }, "0.0.29"),
     "Supported on: Linux with systemd, macOS with launchd",
+  );
+});
+
+it("formats an exact service runtime prune preview with recoverable bytes", () => {
+  assert.equal(
+    formatServicePruneResult({
+      dryRun: true,
+      versions: ["0.0.31", "0.0.32"],
+      runtimes: [
+        { version: "0.0.31", recoverableBytes: 1024 },
+        { version: "0.0.32", recoverableBytes: 1536 },
+      ],
+      recoverableBytes: 2560,
+    }),
+    [
+      "Would prune 2 old T3 Code service runtimes and recover 2.50 KiB:",
+      "  t3@0.0.31 (1.00 KiB)",
+      "  t3@0.0.32 (1.50 KiB)",
+    ].join("\n"),
+  );
+});
+
+it("formats every successful service runtime removal", () => {
+  assert.equal(
+    formatServicePruneResult({
+      dryRun: false,
+      versions: ["0.0.31"],
+      runtimes: [{ version: "0.0.31", recoverableBytes: 1024 }],
+      recoverableBytes: 1024,
+    }),
+    ["Pruned 1 old T3 Code service runtime and recovered 1.00 KiB:", "  t3@0.0.31 (1.00 KiB)"].join(
+      "\n",
+    ),
+  );
+});
+
+it("reports when there are no old service runtimes", () => {
+  assert.equal(
+    formatServicePruneResult({
+      dryRun: false,
+      versions: [],
+      runtimes: [],
+      recoverableBytes: 0,
+    }),
+    "No old T3 Code service runtimes found.",
   );
 });

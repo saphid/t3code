@@ -12,6 +12,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import * as PlatformError from "effect/PlatformError";
 import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
 
 import * as ProcessRunner from "../processRunner.ts";
@@ -97,6 +98,7 @@ it("escapes XML in host paths", () => {
 const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
   platform: NodeJS.Platform = "linux",
   usePinnedLauncher = false,
+  transformFileSystem: (fs: FileSystem.FileSystem) => FileSystem.FileSystem = (fs) => fs,
 ) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -135,6 +137,7 @@ const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
         };
       }),
   });
+  const serviceFileSystem = transformFileSystem(fs);
   const service = yield* BootService.make({
     baseDir,
     logsDir: path.join(baseDir, "userdata", "logs"),
@@ -145,6 +148,7 @@ const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
     },
   }).pipe(
     Effect.provideService(ProcessRunner.ProcessRunner, runner),
+    Effect.provideService(FileSystem.FileSystem, serviceFileSystem),
     Effect.provide(
       Layer.mergeAll(
         Layer.succeed(HostProcessPlatform, platform),
@@ -155,7 +159,7 @@ const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
       ),
     ),
   );
-  return { service, fs, statePath, commands, timeouts, control };
+  return { service, fs, baseDir, statePath, commands, timeouts, control };
 });
 
 it.layer(NodeServices.layer)("boot service install", (it) => {
@@ -247,6 +251,192 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
         "systemctl --user stop t3code.service",
         "systemctl --user restart t3code.service",
       ]);
+    }),
+  );
+
+  it.effect("previews and prunes old runtimes without restarting the service", () =>
+    Effect.gen(function* () {
+      const { service, fs, baseDir, statePath, commands } = yield* makeHarness();
+      const plan = yield* service.install;
+      const path = yield* Path.Path;
+      const oldRuntime = pinnedRuntimePaths(path, baseDir, "1.2.2");
+      yield* fs.makeDirectory(path.dirname(oldRuntime.entryPath), { recursive: true });
+      yield* fs.writeFileString(oldRuntime.entryPath, "export {};\n");
+      yield* fs.writeFileString(oldRuntime.sentinelPath, "1.2.2\n");
+      const stateBefore = yield* fs.readFileString(statePath);
+      const unitBefore = yield* fs.readFileString(plan.unitPath);
+      commands.length = 0;
+
+      const preview = yield* service.prune({ dryRun: true });
+      expect(preview.versions).toEqual(["1.2.2"]);
+      expect(preview.recoverableBytes).toBeGreaterThan(0);
+      expect(yield* fs.exists(oldRuntime.versionDir)).toBe(true);
+
+      const pruned = yield* service.prune({ dryRun: false });
+      expect(pruned.versions).toEqual(["1.2.2"]);
+      expect(pruned.recoverableBytes).toBe(preview.recoverableBytes);
+      expect(yield* fs.exists(oldRuntime.versionDir)).toBe(false);
+      expect(yield* fs.readFileString(statePath)).toBe(stateBefore);
+      expect(yield* fs.readFileString(plan.unitPath)).toBe(unitBefore);
+      expect(yield* fs.exists(plan.launcherPath)).toBe(true);
+      expect(commands).toEqual([]);
+    }),
+  );
+
+  it.effect("refuses to prune while a remote update is pending", () =>
+    Effect.gen(function* () {
+      const { service, fs, statePath } = yield* makeHarness();
+      yield* service.install;
+      // @effect-diagnostics-next-line preferSchemaOverJson:off - fixed launcher-owned test document.
+      const pendingState = JSON.stringify({
+        protocol: SERVICE_LAUNCHER_PROTOCOL,
+        activeVersion: "1.2.3",
+        update: {
+          id: "remote-update",
+          fromVersion: "1.2.3",
+          targetVersion: "1.2.4",
+          dbPath: "/tmp/state.sqlite",
+          status: "pending",
+        },
+      });
+      yield* fs.writeFileString(statePath, pendingState);
+
+      expect((yield* service.prune({ dryRun: false }).pipe(Effect.flip))._tag).toBe(
+        "BootServiceUpdatePendingError",
+      );
+    }),
+  );
+
+  it.effect("fails closed when service state is missing", () =>
+    Effect.gen(function* () {
+      const { service, statePath } = yield* makeHarness();
+
+      expect(yield* service.prune({ dryRun: false }).pipe(Effect.flip)).toMatchObject({
+        _tag: "BootServicePruneStateError",
+        statePath,
+      });
+    }),
+  );
+
+  it.effect("preserves candidates when the active runtime changes during prune", () =>
+    Effect.gen(function* () {
+      let stateReads = 0;
+      let statePathForHook = "";
+      const { service, fs, baseDir, statePath } = yield* makeHarness("linux", false, (baseFs) =>
+        FileSystem.FileSystem.of({
+          ...baseFs,
+          readFileString: (target, encoding) => {
+            if (target !== statePathForHook) return baseFs.readFileString(target, encoding);
+            stateReads += 1;
+            if (stateReads !== 2) return baseFs.readFileString(target, encoding);
+            return baseFs
+              .writeFileString(
+                target,
+                `${JSON.stringify({
+                  protocol: SERVICE_LAUNCHER_PROTOCOL,
+                  activeVersion: "1.2.4",
+                })}\n`,
+              )
+              .pipe(Effect.andThen(baseFs.readFileString(target, encoding)));
+          },
+        }),
+      );
+      statePathForHook = statePath;
+      yield* service.install;
+      const path = yield* Path.Path;
+      const oldRuntime = pinnedRuntimePaths(path, baseDir, "1.2.2");
+      yield* fs.makeDirectory(path.dirname(oldRuntime.entryPath), { recursive: true });
+      yield* fs.writeFileString(oldRuntime.entryPath, "export {};\n");
+      yield* fs.writeFileString(oldRuntime.sentinelPath, "1.2.2\n");
+
+      const error = yield* service.prune({ dryRun: false }).pipe(Effect.flip);
+
+      expect(error).toMatchObject({
+        _tag: "BootServicePruneStateChangedError",
+        expectedActiveVersion: "1.2.3",
+        actualActiveVersion: "1.2.4",
+      });
+      expect(yield* fs.exists(oldRuntime.versionDir)).toBe(true);
+    }),
+  );
+
+  it.effect("reports a completed removal when service state changes afterward", () =>
+    Effect.gen(function* () {
+      let stateReads = 0;
+      let statePathForHook = "";
+      const { service, fs, baseDir, statePath } = yield* makeHarness("linux", false, (baseFs) =>
+        FileSystem.FileSystem.of({
+          ...baseFs,
+          readFileString: (target, encoding) => {
+            if (target !== statePathForHook) return baseFs.readFileString(target, encoding);
+            stateReads += 1;
+            if (stateReads !== 3) return baseFs.readFileString(target, encoding);
+            return baseFs
+              .writeFileString(
+                target,
+                `${JSON.stringify({
+                  protocol: SERVICE_LAUNCHER_PROTOCOL,
+                  activeVersion: "1.2.4",
+                })}\n`,
+              )
+              .pipe(Effect.andThen(baseFs.readFileString(target, encoding)));
+          },
+        }),
+      );
+      statePathForHook = statePath;
+      yield* service.install;
+      const path = yield* Path.Path;
+      const oldRuntime = pinnedRuntimePaths(path, baseDir, "1.2.2");
+      yield* fs.makeDirectory(path.dirname(oldRuntime.entryPath), { recursive: true });
+      yield* fs.writeFileString(oldRuntime.entryPath, "export {};\n");
+      yield* fs.writeFileString(oldRuntime.sentinelPath, "1.2.2\n");
+
+      const error = yield* service.prune({ dryRun: false }).pipe(Effect.flip);
+
+      expect(error).toMatchObject({
+        _tag: "BootServicePruneStateChangedError",
+        expectedActiveVersion: "1.2.3",
+        actualActiveVersion: "1.2.4",
+        removedVersions: ["1.2.2"],
+      });
+      expect(yield* fs.exists(oldRuntime.versionDir)).toBe(false);
+    }),
+  );
+
+  it.effect("reports unreadable launcher state without touching runtimes", () =>
+    Effect.gen(function* () {
+      let statePathForHook = "";
+      const failure = PlatformError.systemError({
+        _tag: "PermissionDenied",
+        module: "FileSystem",
+        method: "readFileString",
+      });
+      const { service, fs, baseDir, statePath } = yield* makeHarness("linux", false, (baseFs) =>
+        FileSystem.FileSystem.of({
+          ...baseFs,
+          readFileString: (target, encoding) =>
+            target === statePathForHook
+              ? Effect.fail(failure)
+              : baseFs.readFileString(target, encoding),
+        }),
+      );
+      statePathForHook = statePath;
+      yield* service.install;
+      const path = yield* Path.Path;
+      const oldRuntime = pinnedRuntimePaths(path, baseDir, "1.2.2");
+      yield* fs.makeDirectory(path.dirname(oldRuntime.entryPath), { recursive: true });
+      yield* fs.writeFileString(oldRuntime.entryPath, "export {};\n");
+      yield* fs.writeFileString(oldRuntime.sentinelPath, "1.2.2\n");
+
+      const error = yield* service.prune({ dryRun: false }).pipe(Effect.flip);
+
+      expect(error).toMatchObject({
+        _tag: "BootServicePruneError",
+        stage: "reading service state",
+        path: statePath,
+        removedVersions: [],
+      });
+      expect(yield* fs.exists(oldRuntime.versionDir)).toBe(true);
     }),
   );
 
