@@ -2822,6 +2822,108 @@ struct FeatureRootModelTests {
     }
 
     @Test
+    func grokReplacementHydratesInterruptedThenWorkingWithoutDroppingTranscript() throws {
+        let oldTurn = OrchestrationLatestTurn(
+            turnId: "turn-grok-old",
+            state: "running",
+            requestedAt: "2026-07-31T20:00:00Z",
+            startedAt: "2026-07-31T20:00:00Z",
+            completedAt: nil,
+            assistantMessageId: "assistant-old"
+        )
+        let retained = OrchestrationMessage(
+            id: "assistant-old",
+            role: "assistant",
+            text: "Work completed before interruption",
+            attachments: nil,
+            turnId: oldTurn.turnId,
+            streaming: false,
+            createdAt: "2026-07-31T20:00:00Z",
+            updatedAt: "2026-07-31T20:00:01Z"
+        )
+        let running = OrchestrationSession(
+            threadId: "thread-1",
+            status: "running",
+            providerName: "grok",
+            providerInstanceId: "grok",
+            runtimeMode: .fullAccess,
+            activeTurnId: oldTurn.turnId,
+            lastError: nil,
+            updatedAt: "2026-07-31T20:00:01Z"
+        )
+        let thread = orchestrationThread(
+            messages: [retained],
+            latestTurn: oldTurn,
+            session: running
+        )
+        let interrupted = OrchestrationSession(
+            threadId: thread.id,
+            status: "interrupted",
+            providerName: "grok",
+            providerInstanceId: "grok",
+            runtimeMode: .fullAccess,
+            activeTurnId: nil,
+            lastError: nil,
+            updatedAt: "2026-07-31T20:00:02Z"
+        )
+        let interruptedEvent = orchestrationEvent(
+            type: "thread.session-set",
+            sequence: 20,
+            payload: [
+                "threadId": .string(thread.id),
+                "session": try JSONValue.encode(interrupted),
+            ]
+        )
+
+        let interruptedReduction = NativeThreadDetailReducer.apply(interruptedEvent, to: thread)
+        guard case let .updated(interruptedThread) = interruptedReduction.result else {
+            Issue.record("Expected interrupted Grok hydration")
+            return
+        }
+        #expect(interruptedThread.latestTurn?.turnId == oldTurn.turnId)
+        #expect(interruptedThread.latestTurn?.state == "interrupted")
+        #expect(interruptedThread.messages == [retained])
+
+        let replacement = OrchestrationSession(
+            threadId: thread.id,
+            status: "running",
+            providerName: "grok",
+            providerInstanceId: "grok",
+            runtimeMode: .fullAccess,
+            activeTurnId: "turn-grok-replacement",
+            lastError: nil,
+            updatedAt: "2026-07-31T20:00:03Z"
+        )
+        let replacementEvent = orchestrationEvent(
+            type: "thread.session-set",
+            sequence: 21,
+            payload: [
+                "threadId": .string(thread.id),
+                "session": try JSONValue.encode(replacement),
+            ]
+        )
+
+        let replacementReduction = NativeThreadDetailReducer.apply(
+            replacementEvent,
+            to: interruptedThread
+        )
+        guard case let .updated(replacementThread) = replacementReduction.result else {
+            Issue.record("Expected replacement Grok hydration")
+            return
+        }
+        #expect(replacementThread.latestTurn?.turnId == replacement.activeTurnId)
+        #expect(replacementThread.latestTurn?.state == "running")
+        #expect(replacementThread.messages == [retained])
+        #expect(NativeFeatureClient.resolveThreadState(
+            latestTurn: replacementThread.latestTurn,
+            session: replacementThread.session,
+            hasApprovals: false,
+            hasUserInput: false,
+            backgroundLiveness: nil
+        ) == .working)
+    }
+
+    @Test
     func activityReducerKeepsLargeSnapshotHistorySharedAndExposesOnlyTheTail() throws {
         let historical = (0..<1_000).map { (index: Int) in
             OrchestrationActivity(
@@ -2952,7 +3054,9 @@ private func orchestrationEvent(
 private func orchestrationThread(
     messages: [OrchestrationMessage] = [],
     activities: [OrchestrationActivity] = [],
-    checkpoints: [CheckpointSummary] = []
+    checkpoints: [CheckpointSummary] = [],
+    latestTurn: OrchestrationLatestTurn? = nil,
+    session: OrchestrationSession? = nil
 ) -> OrchestrationThread {
     OrchestrationThread(
         id: "thread-1",
@@ -2963,7 +3067,7 @@ private func orchestrationThread(
         interactionMode: .default,
         branch: "main",
         worktreePath: "/native",
-        latestTurn: nil,
+        latestTurn: latestTurn,
         createdAt: "2026-07-31T20:00:00Z",
         updatedAt: "2026-07-31T20:00:00Z",
         archivedAt: nil,
@@ -2976,7 +3080,7 @@ private func orchestrationThread(
         messages: messages,
         activities: activities,
         checkpoints: checkpoints,
-        session: nil
+        session: session
     )
 }
 

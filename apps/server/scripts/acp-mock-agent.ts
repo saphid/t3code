@@ -23,6 +23,8 @@ const emitXAiPromptCompleteThenHang = process.env.T3_ACP_EMIT_XAI_PROMPT_COMPLET
 const emitForeignSessionUpdates = process.env.T3_ACP_EMIT_FOREIGN_SESSION_UPDATES === "1";
 const hangPromptForever = process.env.T3_ACP_HANG_PROMPT_FOREVER === "1";
 const hangFirstPromptForever = process.env.T3_ACP_HANG_FIRST_PROMPT_FOREVER === "1";
+const hangFirstPromptAfterToolUpdate =
+  process.env.T3_ACP_HANG_FIRST_PROMPT_AFTER_TOOL_UPDATE === "1";
 const emitLateUpdateAfterCancel = process.env.T3_ACP_EMIT_LATE_UPDATE_AFTER_CANCEL === "1";
 const omitXAiPromptCompleteStopReason =
   process.env.T3_ACP_OMIT_XAI_PROMPT_COMPLETE_STOP_REASON === "1";
@@ -36,6 +38,7 @@ const emitStaleXAiPromptCompleteBeforeSecondHang =
 const emitOverlappingXAiPromptCompleteOutOfOrder =
   process.env.T3_ACP_EMIT_OVERLAPPING_XAI_PROMPT_COMPLETE_OUT_OF_ORDER === "1";
 const failPrompt = process.env.T3_ACP_FAIL_PROMPT === "1";
+const failPromptAfterCancel = process.env.T3_ACP_FAIL_PROMPT_AFTER_CANCEL === "1";
 const failSetConfigOption = process.env.T3_ACP_FAIL_SET_CONFIG_OPTION === "1";
 const exitOnSetConfigOption = process.env.T3_ACP_EXIT_ON_SET_CONFIG_OPTION === "1";
 const promptResponseText = process.env.T3_ACP_PROMPT_RESPONSE_TEXT;
@@ -54,6 +57,7 @@ let currentReasoning = "medium";
 let currentContext = "272k";
 let currentFast = false;
 let promptCount = 0;
+let cancelObserved = false;
 let overlappingFirstPromptId: string | undefined;
 const cancelledSessions = new Set<string>();
 
@@ -436,6 +440,7 @@ const program = Effect.gen(function* () {
   yield* agent.handleCancel(({ sessionId }) =>
     Effect.gen(function* () {
       const cancelledSessionId = String(sessionId ?? "mock-session-1");
+      cancelObserved = true;
       cancelledSessions.add(cancelledSessionId);
       if (emitLateUpdateAfterCancel) {
         yield* Effect.sleep("50 millis");
@@ -461,7 +466,7 @@ const program = Effect.gen(function* () {
         yield* Effect.sleep(`${promptDelayMs} millis`);
       }
 
-      if (failPrompt) {
+      if (failPrompt || (failPromptAfterCancel && cancelObserved)) {
         return yield* AcpError.AcpRequestError.internalError("Mock prompt failure");
       }
 
@@ -729,6 +734,17 @@ const program = Effect.gen(function* () {
             rawInput: {},
           },
         });
+
+        if (hangFirstPromptAfterToolUpdate && promptCount === 1) {
+          if (requestLogPath) {
+            NodeFS.appendFileSync(
+              requestLogPath,
+              '{"mockToolRunning":true,"promptCount":1}\n',
+              "utf8",
+            );
+          }
+          return yield* Effect.never;
+        }
 
         yield* agent.client.sessionUpdate({
           sessionId: requestedSessionId,

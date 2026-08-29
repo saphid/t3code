@@ -765,9 +765,7 @@ export const make = (
             if (Option.isSome(activePromptFiber)) {
               yield* Fiber.interrupt(activePromptFiber.value).pipe(Effect.ignore);
             }
-            yield* acp.agent
-              .cancel({ sessionId: started.sessionId })
-              .pipe(Effect.ignore, Effect.forkIn(runtimeScope));
+            yield* acp.agent.cancel({ sessionId: started.sessionId }).pipe(Effect.asVoid);
           }),
         ),
       ),

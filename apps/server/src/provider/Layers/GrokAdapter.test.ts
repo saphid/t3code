@@ -594,6 +594,286 @@ it.layer(grokAdapterTestLayer)("GrokAdapterLive", (it) => {
     }).pipe(TestClock.withLive),
   );
 
+  it.effect("interrupts a silent prompt and starts one replacement turn for a follow-up", () =>
+    Effect.gen(function* () {
+      const threadId = ThreadId.make("grok-follow-up-replaces-silent-turn");
+      const tempDir = yield* Effect.promise(() =>
+        NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "grok-follow-up-steer-")),
+      );
+      const requestLogPath = NodePath.join(tempDir, "requests.ndjson");
+      const wrapperPath = yield* Effect.promise(() =>
+        makeMockGrokWrapper({
+          T3_ACP_HANG_FIRST_PROMPT_FOREVER: "1",
+          T3_ACP_REQUEST_LOG_PATH: requestLogPath,
+        }),
+      );
+      const adapter = yield* makeTestAdapter(wrapperPath);
+
+      const runtimeEvents: ProviderRuntimeEvent[] = [];
+      const firstTurnStarted = yield* Deferred.make<TurnId>();
+      const replacementCompleted = yield* Deferred.make<void>();
+      const runtimeEventsFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
+        Effect.sync(() => {
+          runtimeEvents.push(event);
+        }).pipe(
+          Effect.andThen(
+            event.type === "turn.started" &&
+              event.turnId !== undefined &&
+              String(event.threadId) === String(threadId)
+              ? Deferred.succeed(firstTurnStarted, event.turnId).pipe(Effect.asVoid)
+              : event.type === "turn.completed" &&
+                  String(event.threadId) === String(threadId) &&
+                  event.payload.state === "completed"
+                ? Deferred.succeed(replacementCompleted, undefined).pipe(Effect.asVoid)
+                : Effect.void,
+          ),
+        ),
+      ).pipe(Effect.forkChild);
+
+      yield* adapter.startSession({
+        threadId,
+        provider: ProviderDriverKind.make("grok"),
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
+      });
+
+      const firstSendFiber = yield* adapter
+        .sendTurn({ threadId, input: "keep working silently", attachments: [] })
+        .pipe(Effect.forkChild);
+      const firstTurnId = yield* Deferred.await(firstTurnStarted).pipe(Effect.timeout("2 seconds"));
+      yield* waitForFileContent(requestLogPath, 80, '"method":"session/prompt"');
+
+      const replacement = yield* adapter
+        .sendTurn({ threadId, input: "replace that with this", attachments: [] })
+        .pipe(Effect.timeout("2 seconds"));
+      yield* Fiber.join(firstSendFiber).pipe(Effect.timeout("2 seconds"));
+      yield* Deferred.await(replacementCompleted).pipe(Effect.timeout("2 seconds"));
+
+      const turnEvents = runtimeEvents.filter(
+        (event) =>
+          String(event.threadId) === String(threadId) &&
+          (event.type === "turn.started" || event.type === "turn.completed"),
+      );
+      const completed = turnEvents.filter(
+        (event): event is Extract<ProviderRuntimeEvent, { type: "turn.completed" }> =>
+          event.type === "turn.completed",
+      );
+      const requests = yield* Effect.promise(() => readJsonLines(requestLogPath));
+      const promptLifecycleMethods = requests.flatMap((entry) =>
+        typeof entry.method === "string" &&
+        (entry.method === "session/prompt" || entry.method === "session/cancel")
+          ? [entry.method]
+          : [],
+      );
+      const sessions = yield* adapter.listSessions();
+
+      assert.notEqual(String(replacement.turnId), String(firstTurnId));
+      assert.deepEqual(
+        completed.map((event) => [String(event.turnId), event.payload.state]),
+        [
+          [String(firstTurnId), "cancelled"],
+          [String(replacement.turnId), "completed"],
+        ],
+      );
+      assert.deepEqual(promptLifecycleMethods, [
+        "session/prompt",
+        "session/cancel",
+        "session/prompt",
+      ]);
+      assert.lengthOf(
+        runtimeEvents.filter(
+          (event) =>
+            event.type === "session.started" && String(event.threadId) === String(threadId),
+        ),
+        1,
+      );
+      assert.equal(sessions.find((session) => session.threadId === threadId)?.status, "ready");
+
+      yield* Fiber.interrupt(runtimeEventsFiber);
+      yield* adapter.stopSession(threadId);
+    }).pipe(TestClock.withLive),
+  );
+
+  it.effect("keeps tool events on their turn while a follow-up replaces the active prompt", () =>
+    Effect.gen(function* () {
+      const threadId = ThreadId.make("grok-follow-up-replaces-tool-turn");
+      const tempDir = yield* Effect.promise(() =>
+        NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "grok-follow-up-tool-")),
+      );
+      const requestLogPath = NodePath.join(tempDir, "requests.ndjson");
+      const wrapperPath = yield* Effect.promise(() =>
+        makeMockGrokWrapper({
+          T3_ACP_EMIT_GENERIC_TOOL_PLACEHOLDERS: "1",
+          T3_ACP_HANG_FIRST_PROMPT_AFTER_TOOL_UPDATE: "1",
+          T3_ACP_REQUEST_LOG_PATH: requestLogPath,
+        }),
+      );
+      const adapter = yield* makeTestAdapter(wrapperPath);
+      const runtimeEvents: ProviderRuntimeEvent[] = [];
+      const firstTurnStarted = yield* Deferred.make<TurnId>();
+      const replacementCompleted = yield* Deferred.make<void>();
+      const runtimeEventsFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
+        Effect.gen(function* () {
+          runtimeEvents.push(event);
+          if (String(event.threadId) !== String(threadId)) {
+            return;
+          }
+          if (event.type === "turn.started" && event.turnId !== undefined) {
+            yield* Deferred.succeed(firstTurnStarted, event.turnId).pipe(Effect.ignore);
+          }
+          if (event.type === "turn.completed" && event.payload.state === "completed") {
+            yield* Deferred.succeed(replacementCompleted, undefined).pipe(Effect.ignore);
+          }
+        }),
+      ).pipe(Effect.forkChild);
+
+      yield* adapter.startSession({
+        threadId,
+        provider: ProviderDriverKind.make("grok"),
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
+      });
+      const firstSendFiber = yield* adapter
+        .sendTurn({ threadId, input: "run the first tool", attachments: [] })
+        .pipe(Effect.forkChild);
+      const firstTurnId = yield* Deferred.await(firstTurnStarted).pipe(Effect.timeout("1 second"));
+      yield* waitForFileContent(requestLogPath, 80, '"mockToolRunning":true');
+
+      const replacement = yield* adapter
+        .sendTurn({ threadId, input: "use a different tool plan", attachments: [] })
+        .pipe(Effect.timeout("2 seconds"));
+      yield* Fiber.join(firstSendFiber).pipe(Effect.timeout("2 seconds"));
+      yield* Deferred.await(replacementCompleted).pipe(Effect.timeout("2 seconds"));
+
+      const completed = runtimeEvents.filter(
+        (event): event is Extract<ProviderRuntimeEvent, { type: "turn.completed" }> =>
+          event.type === "turn.completed" && String(event.threadId) === String(threadId),
+      );
+      const replacementStartedIndex = runtimeEvents.findIndex(
+        (event) =>
+          event.type === "turn.started" &&
+          String(event.threadId) === String(threadId) &&
+          String(event.turnId) === String(replacement.turnId),
+      );
+      const turnScopedTypes = new Set([
+        "content.delta",
+        "item.started",
+        "item.updated",
+        "item.completed",
+        "turn.plan.updated",
+      ]);
+      const mismatchedReplacementEvents = runtimeEvents
+        .slice(replacementStartedIndex + 1)
+        .filter(
+          (event) =>
+            String(event.threadId) === String(threadId) &&
+            turnScopedTypes.has(event.type) &&
+            String(event.turnId) !== String(replacement.turnId),
+        );
+
+      assert.notEqual(String(replacement.turnId), String(firstTurnId));
+      assert.deepEqual(
+        completed.map((event) => [String(event.turnId), event.payload.state]),
+        [
+          [String(firstTurnId), "cancelled"],
+          [String(replacement.turnId), "completed"],
+        ],
+      );
+      assert.isAtLeast(replacementStartedIndex, 0);
+      assert.deepEqual(mismatchedReplacementEvents, []);
+
+      yield* Fiber.interrupt(runtimeEventsFiber);
+      yield* adapter.stopSession(threadId);
+    }).pipe(TestClock.withLive),
+  );
+
+  it.effect("settles once with recovery guidance when the replacement prompt fails", () =>
+    Effect.gen(function* () {
+      const threadId = ThreadId.make("grok-follow-up-cancel-failure");
+      const tempDir = yield* Effect.promise(() =>
+        NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "grok-follow-up-cancel-failure-")),
+      );
+      const requestLogPath = NodePath.join(tempDir, "requests.ndjson");
+      const wrapperPath = yield* Effect.promise(() =>
+        makeMockGrokWrapper({
+          T3_ACP_FAIL_PROMPT_AFTER_CANCEL: "1",
+          T3_ACP_HANG_FIRST_PROMPT_FOREVER: "1",
+          T3_ACP_REQUEST_LOG_PATH: requestLogPath,
+        }),
+      );
+      const adapter = yield* makeTestAdapter(wrapperPath);
+      const runtimeEvents: ProviderRuntimeEvent[] = [];
+      const firstTurnStarted = yield* Deferred.make<TurnId>();
+      const runtimeEventsFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
+        Effect.sync(() => {
+          runtimeEvents.push(event);
+        }).pipe(
+          Effect.andThen(
+            event.type === "turn.started" &&
+              event.turnId !== undefined &&
+              String(event.threadId) === String(threadId)
+              ? Deferred.succeed(firstTurnStarted, event.turnId).pipe(Effect.asVoid)
+              : Effect.void,
+          ),
+        ),
+      ).pipe(Effect.forkChild);
+
+      yield* adapter.startSession({
+        threadId,
+        provider: ProviderDriverKind.make("grok"),
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
+      });
+      const firstSendFiber = yield* adapter
+        .sendTurn({ threadId, input: "keep working", attachments: [] })
+        .pipe(Effect.forkChild);
+      const firstTurnId = yield* Deferred.await(firstTurnStarted).pipe(Effect.timeout("2 seconds"));
+      yield* waitForFileContent(requestLogPath, 80, '"method":"session/prompt"');
+
+      const failure = yield* Effect.flip(
+        adapter
+          .sendTurn({ threadId, input: "replace the active work", attachments: [] })
+          .pipe(Effect.timeout("2 seconds")),
+      );
+      yield* Fiber.join(firstSendFiber).pipe(Effect.timeout("2 seconds"));
+      const requests = yield* Effect.promise(() => readJsonLines(requestLogPath));
+      const promptLifecycleMethods = requests.flatMap((entry) =>
+        typeof entry.method === "string" &&
+        (entry.method === "session/prompt" || entry.method === "session/cancel")
+          ? [entry.method]
+          : [],
+      );
+      const completed = runtimeEvents.filter(
+        (event): event is Extract<ProviderRuntimeEvent, { type: "turn.completed" }> =>
+          event.type === "turn.completed" && String(event.threadId) === String(threadId),
+      );
+      const sessions = yield* adapter.listSessions();
+
+      assert.equal(failure._tag, "ProviderAdapterRequestError");
+      if (failure._tag === "ProviderAdapterRequestError") {
+        assert.include(failure.detail, "Retry");
+        assert.include(failure.detail, "Stop");
+      }
+      assert.deepEqual(promptLifecycleMethods, [
+        "session/prompt",
+        "session/cancel",
+        "session/prompt",
+      ]);
+      assert.lengthOf(completed, 2);
+      assert.deepEqual(
+        completed.map((event) => event.payload.state),
+        ["cancelled", "failed"],
+      );
+      assert.equal(String(completed[0]?.turnId), String(firstTurnId));
+      assert.notEqual(String(completed[1]?.turnId), String(firstTurnId));
+      assert.equal(sessions.find((session) => session.threadId === threadId)?.status, "ready");
+      assert.isUndefined(sessions.find((session) => session.threadId === threadId)?.activeTurnId);
+
+      yield* Fiber.interrupt(runtimeEventsFiber);
+      yield* adapter.stopSession(threadId);
+    }).pipe(TestClock.withLive),
+  );
+
   it.effect("does not let a cancelled prompt settlement consume the follow-up prompt slot", () =>
     Effect.gen(function* () {
       const threadId = ThreadId.make("grok-cancelled-settlement-before-follow-up");

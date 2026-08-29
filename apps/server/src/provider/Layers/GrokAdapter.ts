@@ -114,8 +114,10 @@ interface GrokSessionContext {
   interruptedTurnIds: Set<TurnId>;
   /** Number of sendTurn prompts currently in flight or being prepared.
    * >0 means a turn is actively running, so a new sendTurn is a steer that
-   * continues it, and only the last remaining prompt settles the turn. */
+   * replaces it after cancellation. */
   promptsInFlight: number;
+  /** Keeps cancel then prompt ordering atomic across follow-ups and Stop. */
+  readonly promptLifecycle: Semaphore.Semaphore;
   currentModelId: string | undefined;
   stopped: boolean;
 }
@@ -777,6 +779,7 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
             activeTurnId: undefined,
             interruptedTurnIds: new Set(),
             promptsInFlight: 0,
+            promptLifecycle: yield* Semaphore.make(1),
             currentModelId: boundModelId,
             stopped: false,
           };
@@ -921,24 +924,22 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
           input.threadId,
           Effect.gen(function* () {
             const ctx = yield* requireSession(input.threadId);
-            // A sendTurn while a prompt is in flight is a steer: the agent
-            // folds the new prompt into the ongoing work, so the active turn
-            // id is reused instead of opening a new turn.
-            const steeringTurnId = ctx.promptsInFlight > 0 ? ctx.activeTurnId : undefined;
-            const turnId = steeringTurnId ?? TurnId.make(yield* randomUUIDv4);
-            // Count this prompt immediately so a superseded in-flight prompt
-            // resolving from here on does not settle the turn; decremented on
-            // preparation failure here, and after the prompt below otherwise.
-            ctx.promptsInFlight += 1;
-            // Bind the turn id before cooperative yields so interruptTurn can
-            // settle this prompt even if stop arrives during preparation.
-            ctx.activeTurnId = turnId;
-            ctx.session = {
-              ...ctx.session,
-              status: steeringTurnId === undefined ? "connecting" : "running",
-              activeTurnId: turnId,
-              updatedAt: yield* nowIso,
-            };
+            // Grok serializes ACP prompts. A follow-up therefore replaces the
+            // live prompt after cancellation instead of entering that queue.
+            const replacedTurnId = ctx.promptsInFlight > 0 ? ctx.activeTurnId : undefined;
+            const turnId = TurnId.make(yield* randomUUIDv4);
+            if (replacedTurnId === undefined) {
+              // Bind first turns before cooperative yields so Stop can settle
+              // a prompt that is still being prepared.
+              ctx.promptsInFlight = 1;
+              ctx.activeTurnId = turnId;
+              ctx.session = {
+                ...ctx.session,
+                status: "connecting",
+                activeTurnId: turnId,
+                updatedAt: yield* nowIso,
+              };
+            }
 
             return yield* Effect.gen(function* () {
               const turnModelSelection =
@@ -1010,11 +1011,14 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
               for (let yieldAttempt = 0; yieldAttempt < 8; yieldAttempt += 1) {
                 yield* Effect.yieldNow;
               }
-              if (ctx.interruptedTurnIds.has(turnId)) {
+              if (
+                ctx.interruptedTurnIds.has(turnId) ||
+                (replacedTurnId !== undefined && ctx.interruptedTurnIds.has(replacedTurnId))
+              ) {
                 yield* settlePromptInFlight(input.threadId, turnId, ctx.acpSessionId, {
                   completedStopReason: "cancelled",
                   emitTurnCompletion: false,
-                  settleAllPrompts: true,
+                  settleAllPrompts: replacedTurnId === undefined,
                 });
                 return yield* new ProviderAdapterRequestError({
                   provider: PROVIDER,
@@ -1022,18 +1026,15 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
                   detail: "Grok prompt was interrupted during preparation.",
                 });
               }
-              if (steeringTurnId === undefined) {
+              if (replacedTurnId === undefined) {
                 ctx.lastPlanFingerprint = undefined;
-              }
-              ctx.session = {
-                ...ctx.session,
-                status: "running",
-                activeTurnId: turnId,
-                updatedAt: yield* nowIso,
-                ...(displayModel ? { model: displayModel } : {}),
-              };
-
-              if (steeringTurnId === undefined) {
+                ctx.session = {
+                  ...ctx.session,
+                  status: "running",
+                  activeTurnId: turnId,
+                  updatedAt: yield* nowIso,
+                  ...(displayModel ? { model: displayModel } : {}),
+                };
                 yield* offerRuntimeEvent({
                   type: "turn.started",
                   ...(yield* makeEventStamp()),
@@ -1049,6 +1050,8 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
                 acpSessionId: ctx.acpSessionId,
                 displayModel,
                 promptParts,
+                promptLifecycle: ctx.promptLifecycle,
+                replacedTurnId,
                 turnId,
               };
             }).pipe(
@@ -1076,27 +1079,173 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
         const promptFailureMessageRef = yield* Ref.make<string | undefined>(undefined);
 
         return yield* Effect.gen(function* () {
-          const result = yield* prepared.acp
-            .prompt({
-              prompt: prepared.promptParts,
-            })
-            .pipe(
-              Effect.tap((promptResult) =>
-                Effect.all([
-                  Ref.set(promptRpcSucceeded, true),
-                  Ref.set(promptResultRef, promptResult),
-                ]),
-              ),
-              Effect.tapError((error) =>
-                Ref.set(
-                  promptFailureMessageRef,
-                  mapAcpToAdapterError(PROVIDER, input.threadId, "session/prompt", error).message,
-                ).pipe(Effect.andThen(prepared.acp.drainEvents)),
-              ),
-              Effect.mapError((error) =>
-                mapAcpToAdapterError(PROVIDER, input.threadId, "session/prompt", error),
+          const promptStart = yield* prepared.promptLifecycle.withPermit(
+            Effect.gen(function* () {
+              const liveCtx = sessions.get(input.threadId);
+              if (!liveCtx || liveCtx.acpSessionId !== prepared.acpSessionId) {
+                return { _tag: "Skipped" as const, interrupted: false };
+              }
+
+              if (prepared.replacedTurnId !== undefined) {
+                const activeTurnId = liveCtx.activeTurnId ?? liveCtx.session.activeTurnId;
+                if (activeTurnId !== undefined) {
+                  liveCtx.interruptedTurnIds.add(activeTurnId);
+                  yield* liveCtx.acp.cancel.pipe(
+                    Effect.mapError(
+                      (error) =>
+                        new ProviderAdapterRequestError({
+                          provider: PROVIDER,
+                          method: "session/cancel",
+                          detail:
+                            "Grok could not replace the active turn. Retry, or press Stop and send the follow-up again.",
+                          cause: mapAcpToAdapterError(
+                            PROVIDER,
+                            input.threadId,
+                            "session/cancel",
+                            error,
+                          ),
+                        }),
+                    ),
+                    Effect.tapError(() =>
+                      withThreadLock(
+                        input.threadId,
+                        Effect.gen(function* () {
+                          const current = yield* requireSession(input.threadId);
+                          yield* settlePendingApprovalsAsCancelled(current.pendingApprovals);
+                          yield* settlePendingUserInputsAsCancelled(current.pendingUserInputs);
+                          yield* settlePromptInFlight(
+                            input.threadId,
+                            activeTurnId,
+                            liveCtx.acpSessionId,
+                            {
+                              errorMessage:
+                                "Grok could not interrupt the active turn. Retry, or press Stop and send the follow-up again.",
+                              settleAllPrompts: true,
+                            },
+                          );
+                        }),
+                      ),
+                    ),
+                  );
+                  // The acknowledgement is the boundary after which queued
+                  // old-prompt notifications can be drained without assigning
+                  // them to the replacement turn.
+                  yield* liveCtx.acp.drainEvents;
+                  yield* withThreadLock(
+                    input.threadId,
+                    Effect.gen(function* () {
+                      const current = yield* requireSession(input.threadId);
+                      yield* settlePendingApprovalsAsCancelled(current.pendingApprovals);
+                      yield* settlePendingUserInputsAsCancelled(current.pendingUserInputs);
+                      yield* settlePromptInFlight(
+                        input.threadId,
+                        activeTurnId,
+                        current.acpSessionId,
+                        {
+                          completedStopReason: "cancelled",
+                          settleAllPrompts: true,
+                        },
+                      );
+                    }),
+                  );
+                }
+                // The old prompt can finish while this follow-up is being
+                // prepared. Either way, the follow-up still owns a distinct
+                // replacement turn and must be started exactly once.
+                yield* withThreadLock(
+                  input.threadId,
+                  Effect.gen(function* () {
+                    const current = yield* requireSession(input.threadId);
+                    if (current.acpSessionId !== prepared.acpSessionId) {
+                      return yield* new ProviderAdapterRequestError({
+                        provider: PROVIDER,
+                        method: "session/prompt",
+                        detail: "Grok session changed before the replacement turn started.",
+                      });
+                    }
+                    current.lastPlanFingerprint = undefined;
+                    current.promptsInFlight = 1;
+                    current.activeTurnId = prepared.turnId;
+                    current.session = {
+                      ...current.session,
+                      status: "running",
+                      activeTurnId: prepared.turnId,
+                      updatedAt: yield* nowIso,
+                      ...(prepared.displayModel ? { model: prepared.displayModel } : {}),
+                    };
+                    yield* offerRuntimeEvent({
+                      type: "turn.started",
+                      ...(yield* makeEventStamp()),
+                      provider: PROVIDER,
+                      threadId: input.threadId,
+                      turnId: prepared.turnId,
+                      payload: prepared.displayModel ? { model: prepared.displayModel } : {},
+                    });
+                  }),
+                );
+              }
+
+              if (liveCtx.interruptedTurnIds.has(prepared.turnId)) {
+                return { _tag: "Skipped" as const, interrupted: true };
+              }
+              const fiber = yield* liveCtx.acp
+                .prompt({ prompt: prepared.promptParts })
+                .pipe(Effect.forkChild({ startImmediately: true }));
+              // Let prompt() register its ACP fiber before a later follow-up
+              // or explicit Stop is allowed to cancel it.
+              for (let yieldAttempt = 0; yieldAttempt < 8; yieldAttempt += 1) {
+                yield* Effect.yieldNow;
+              }
+              return { _tag: "Started" as const, fiber };
+            }),
+          );
+          if (promptStart._tag === "Skipped") {
+            yield* withThreadLock(
+              input.threadId,
+              settlePromptInFlight(
+                input.threadId,
+                prepared.turnId,
+                prepared.acpSessionId,
+                promptStart.interrupted
+                  ? { completedStopReason: "cancelled", settleAllPrompts: true }
+                  : { emitTurnCompletion: false },
               ),
             );
+            yield* Ref.set(promptSettled, true);
+            const liveCtx = sessions.get(input.threadId);
+            return {
+              threadId: input.threadId,
+              turnId: prepared.turnId,
+              resumeCursor: liveCtx?.session.resumeCursor,
+            };
+          }
+
+          const mapPromptFailure = (error: EffectAcpErrors.AcpError) => {
+            const mapped = mapAcpToAdapterError(PROVIDER, input.threadId, "session/prompt", error);
+            return prepared.replacedTurnId === undefined
+              ? mapped
+              : new ProviderAdapterRequestError({
+                  provider: PROVIDER,
+                  method: "session/prompt",
+                  detail:
+                    "Grok interrupted the active turn but could not start its replacement. Retry, or press Stop and send the follow-up again.",
+                  cause: mapped,
+                });
+          };
+          const result = yield* Fiber.join(promptStart.fiber).pipe(
+            Effect.tap((promptResult) =>
+              Effect.all([
+                Ref.set(promptRpcSucceeded, true),
+                Ref.set(promptResultRef, promptResult),
+              ]),
+            ),
+            Effect.tapError((error) =>
+              Ref.set(promptFailureMessageRef, mapPromptFailure(error).message).pipe(
+                Effect.andThen(prepared.acp.drainEvents),
+              ),
+            ),
+            Effect.mapError(mapPromptFailure),
+          );
 
           return yield* withThreadLock(
             input.threadId,
@@ -1127,6 +1276,7 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
               }
               yield* prepared.acp.drainEvents;
               if (ctx.interruptedTurnIds.has(prepared.turnId)) {
+                ctx.interruptedTurnIds.delete(prepared.turnId);
                 yield* Ref.set(promptSettled, true);
                 return {
                   threadId: input.threadId,
@@ -1269,8 +1419,20 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
               const errorMessage = yield* Ref.get(promptFailureMessageRef);
               yield* withThreadLock(
                 input.threadId,
-                settlePromptInFlight(input.threadId, prepared.turnId, prepared.acpSessionId, {
-                  errorMessage: errorMessage ?? "Grok prompt request failed.",
+                Effect.gen(function* () {
+                  const ctx = sessions.get(input.threadId);
+                  if (ctx?.interruptedTurnIds.has(prepared.turnId)) {
+                    ctx.interruptedTurnIds.delete(prepared.turnId);
+                    return;
+                  }
+                  yield* settlePromptInFlight(
+                    input.threadId,
+                    prepared.turnId,
+                    prepared.acpSessionId,
+                    {
+                      errorMessage: errorMessage ?? "Grok prompt request failed.",
+                    },
+                  );
                 }),
               );
             }).pipe(Effect.catch(() => Effect.void)),
@@ -1287,6 +1449,7 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
               _tag: "Proceed" as const,
               acpSessionId: undefined,
               interruptedTurnId: turnId,
+              promptLifecycle: undefined,
             };
           }
           const activeTurnId = ctx.activeTurnId ?? ctx.session.activeTurnId;
@@ -1301,13 +1464,14 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
             _tag: "Proceed" as const,
             acpSessionId: ctx.acpSessionId,
             interruptedTurnId,
+            promptLifecycle: ctx.promptLifecycle,
           };
         });
         if (observed._tag === "Ignore") {
           return;
         }
 
-        yield* withThreadLock(
+        const interrupt = withThreadLock(
           threadId,
           Effect.gen(function* () {
             const ctx = yield* requireSession(threadId);
@@ -1359,6 +1523,9 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
             }
           }),
         );
+        yield* observed.promptLifecycle
+          ? observed.promptLifecycle.withPermit(interrupt)
+          : interrupt;
       });
 
     const respondToRequest: GrokAdapterShape["respondToRequest"] = (
