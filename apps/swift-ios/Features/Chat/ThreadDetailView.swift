@@ -381,7 +381,7 @@ public struct ThreadDetailView: View {
         case .input: T3Colors.statusInput
         case .failed: T3Colors.danger
         case .done: T3Colors.success
-        case .ready: T3Colors.textTertiary
+        case .stopped, .ready: T3Colors.textTertiary
         }
     }
 

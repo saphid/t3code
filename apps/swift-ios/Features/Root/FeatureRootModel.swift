@@ -182,6 +182,7 @@ public final class FeatureRootModel {
     private var pendingSettlementMutations: [String: PendingSettlementMutation] = [:]
     private var pendingCompletionSubmissionIDs: Set<String> = []
     private var pendingDiscardSubmissionIDs: Set<String> = []
+    private var stoppingGrokThreadIDs: Set<String> = []
     private var detailRecency: [String] = []
     private var detailLoadGeneration: UInt64 = 0
     private var detailLoadRevisions: [String: UInt64] = [:]
@@ -850,6 +851,13 @@ public final class FeatureRootModel {
             $0.messages.append(optimistic)
         }
 
+        // Grok serializes ACP prompts. Keep a rapid Stop-then-Send durable in
+        // the outbox until the interrupted receipt proves the old prompt is
+        // terminal, then let the normal identity-preserving drain send it.
+        if stoppingGrokThreadIDs.contains(submission.threadID) {
+            return true
+        }
+
         isPerformingAction = true
         defer { isPerformingAction = false }
         do {
@@ -883,6 +891,11 @@ public final class FeatureRootModel {
     }
 
     public func cancelTurn(threadID: String) async {
+        let usesGrokBarrier = snapshot.threads.first(where: { $0.id == threadID })
+            .map(Self.isGrokThread) == true
+        if usesGrokBarrier, !stoppingGrokThreadIDs.insert(threadID).inserted {
+            return
+        }
         if pendingSubmissionsByID.values.contains(where: {
             $0.threadID == threadID && $0.creation != nil
         }) {
@@ -895,16 +908,38 @@ public final class FeatureRootModel {
             }
             if pendingThreadsByID[threadID] == nil,
                snapshot.threads.contains(where: { $0.id == threadID }) {
-                await perform {
-                    try await client.cancelTurn(threadID: threadID)
-                }
+                await dispatchTurnCancellation(
+                    threadID: threadID,
+                    clearsGrokBarrierOnFailure: usesGrokBarrier
+                )
             }
             scheduleOutboxDrain()
             return
         }
-        await perform {
+        await dispatchTurnCancellation(
+            threadID: threadID,
+            clearsGrokBarrierOnFailure: usesGrokBarrier
+        )
+    }
+
+    private func dispatchTurnCancellation(
+        threadID: String,
+        clearsGrokBarrierOnFailure: Bool
+    ) async {
+        let succeeded = await perform {
             try await client.cancelTurn(threadID: threadID)
         }
+        if clearsGrokBarrierOnFailure, !succeeded {
+            stoppingGrokThreadIDs.remove(threadID)
+            scheduleOutboxDrain()
+        }
+    }
+
+    private static func isGrokThread(_ thread: FeatureThread) -> Bool {
+        thread.providerName?.trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased() == "grok"
+            || thread.providerID?.trimmingCharacters(in: .whitespacesAndNewlines)
+                .lowercased() == "grok"
     }
 
     public func resolveApproval(_ id: String, decision: FeatureApprovalDecision) async {
@@ -1166,6 +1201,7 @@ public final class FeatureRootModel {
         if metadataChanged || detailChanged {
             bumpDetailMetadataRevision(id: thread.id)
         }
+        reconcileGrokStopBarrier(with: thread)
     }
 
     private func removeThread(id: String) {
@@ -1174,6 +1210,7 @@ public final class FeatureRootModel {
         snapshot.threads.remove(at: index)
         titleRegenerationTracker.cancel(threadID: id)
         cancelTitleRegenerationRecovery(threadID: id)
+        stoppingGrokThreadIDs.remove(id)
         adjustProjectCount(id: projectID, by: -1)
         threadCollectionRevision &+= 1
         homePresentationRevision &+= 1
@@ -1190,6 +1227,7 @@ public final class FeatureRootModel {
             value.threads[index] = retainingPendingSettlement(in: value.threads[index])
         }
         let authoritativeThreadIDs = Set(value.threads.map(\.id))
+        stoppingGrokThreadIDs.formIntersection(authoritativeThreadIDs)
         for id in authoritativeThreadIDs {
             pendingThreadsByID.removeValue(forKey: id)
         }
@@ -1233,6 +1271,9 @@ public final class FeatureRootModel {
             threadCollectionRevision &+= 1
         }
         snapshot = value
+        for thread in value.threads {
+            reconcileGrokStopBarrier(with: thread)
+        }
         for resolution in titleRegenerationTracker.reconcile(with: value.threads) {
             resolveTitleRegeneration(resolution)
         }
@@ -1376,6 +1417,17 @@ public final class FeatureRootModel {
         var thread = thread
         mutation.apply(to: &thread)
         return thread
+    }
+
+    private func reconcileGrokStopBarrier(with thread: FeatureThread) {
+        guard stoppingGrokThreadIDs.contains(thread.id) else { return }
+        switch thread.state {
+        case .stopped, .failed, .completed:
+            stoppingGrokThreadIDs.remove(thread.id)
+            scheduleOutboxDrain()
+        case .idle, .queued, .working, .monitoring, .waitingForApproval, .waitingForInput:
+            break
+        }
     }
 
     @discardableResult
@@ -1808,6 +1860,9 @@ public final class FeatureRootModel {
                 if !(await discardQueuedSubmission(submission)) {
                     needsRetry = true
                 }
+                continue
+            }
+            if stoppingGrokThreadIDs.contains(submission.threadID) {
                 continue
             }
             var policySnapshot = snapshot

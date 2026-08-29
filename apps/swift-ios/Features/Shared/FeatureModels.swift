@@ -159,6 +159,7 @@ public enum FeatureThreadState: String, Sendable, Codable {
     case waitingForInput
     case failed
     case completed
+    case stopped
 }
 
 public enum FeatureRuntimeMode: String, CaseIterable, Sendable, Codable {
@@ -351,7 +352,7 @@ public struct FeatureThread: Identifiable, Sendable, Equatable, Hashable, Codabl
         switch state {
         case .queued, .working, .monitoring, .waitingForApproval, .waitingForInput:
             return false
-        case .idle, .failed, .completed:
+        case .idle, .failed, .completed, .stopped:
             return true
         }
     }

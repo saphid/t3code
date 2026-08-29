@@ -17,6 +17,7 @@ struct HomeThreadMetadataTests {
             (.waitingForInput, .input, "Input"),
             (.failed, .failed, "Failed"),
             (.completed, .done, "Done"),
+            (.stopped, .stopped, "Stopped"),
         ]
 
         for (state, status, label) in expected {

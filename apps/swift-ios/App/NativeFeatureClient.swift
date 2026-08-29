@@ -5660,6 +5660,10 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         if session?.status == "starting" { return .queued }
         if session?.status == "running" || latestTurn?.state == "running" { return .working }
         if session?.status == "error" || latestTurn?.state == "error" { return .failed }
+        if session?.status == "interrupted" || session?.status == "stopped"
+            || latestTurn?.state == "interrupted" {
+            return .stopped
+        }
         if backgroundLiveness == .working { return .working }
         if backgroundLiveness == .monitoring { return .monitoring }
         if latestTurn?.state == "completed" { return .completed }

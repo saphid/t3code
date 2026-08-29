@@ -1652,7 +1652,7 @@ struct FeatureThreadRow: View {
         switch thread.homeStatus {
         case .working: "circle.dotted"
         case .failed: "exclamationmark.circle"
-        case .approval, .input, .monitoring, .done, .ready: nil
+        case .approval, .input, .monitoring, .done, .stopped, .ready: nil
         }
     }
 
@@ -1674,7 +1674,7 @@ struct FeatureThreadRow: View {
         case .approval: T3Colors.warning
         case .input: T3Colors.statusInput
         case .failed: T3Colors.danger
-        case .done, .ready: T3Colors.textTertiary
+        case .done, .stopped, .ready: T3Colors.textTertiary
         }
     }
 

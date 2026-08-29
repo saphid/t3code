@@ -1069,6 +1069,77 @@ struct FeatureRootModelTests {
     }
 
     @Test
+    func grokStopHoldsRapidFollowUpUntilTerminalReceiptAndCoalescesRepeatedStop() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("t3-root-grok-stop-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = FeatureOutboxStore(fileURL: directory.appendingPathComponent("outbox.json"))
+        let thread = FeatureThread(
+            id: "environment-1::thread::grok-thread",
+            wireID: "grok-thread",
+            projectID: "project-1",
+            environmentID: "environment-1",
+            title: "Stop Grok",
+            state: .working,
+            providerID: "grok",
+            providerName: "grok"
+        )
+        let client = FeatureClientStub()
+        client.snapshot = FeatureSnapshot(
+            connection: .init(state: .connected),
+            environments: [
+                .init(
+                    id: "environment-1",
+                    name: "Studio",
+                    endpoint: "https://studio.example",
+                    isActive: true,
+                    connectionState: .connected
+                ),
+            ],
+            projects: [
+                .init(
+                    id: "project-1",
+                    environmentID: "environment-1",
+                    name: "Native",
+                    path: "/native"
+                ),
+            ],
+            threads: [thread]
+        )
+        let cancelGate = FeatureCallGate(blocksFirstCall: true)
+        let sendGate = FeatureCallGate()
+        client.cancelTurnGate = cancelGate
+        client.sendMessageGate = sendGate
+        let model = FeatureRootModel(client: client, outboxStore: store)
+        await model.reload()
+
+        let cancellation = Task { await model.cancelTurn(threadID: thread.id) }
+        await cancelGate.waitUntilCallCount(1)
+        await model.cancelTurn(threadID: thread.id)
+        let sent = await model.sendMessage(
+            threadID: thread.id,
+            text: "Start new work",
+            selection: nil
+        )
+
+        #expect(sent)
+        #expect(client.cancelTurnCallCount == 1)
+        #expect(client.sendMessageCallCount == 0)
+        #expect(try await store.submissions().map(\.text) == ["Start new work"])
+
+        cancelGate.releaseFirst()
+        await cancellation.value
+        var stopped = thread
+        stopped.state = .stopped
+        client.snapshot.threads = [stopped]
+        await model.reload()
+        await sendGate.waitUntilCallCount(1)
+
+        #expect(client.sendMessageCallCount == 1)
+        #expect(client.sentText == "Start new work")
+    }
+
+    @Test
     func retryableCreationFailureReturnsTheAcknowledgedServerThread() async throws {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("t3-root-acknowledged-creation-\(UUID().uuidString)", isDirectory: true)
@@ -2822,6 +2893,131 @@ struct FeatureRootModelTests {
     }
 
     @Test
+    func grokStopReceiptReducesToStoppedBeforeTheNextPromptStarts() throws {
+        let oldTurn = OrchestrationLatestTurn(
+            turnId: "turn-grok-old",
+            state: "running",
+            requestedAt: "2026-07-31T20:00:00Z",
+            startedAt: "2026-07-31T20:00:00Z",
+            completedAt: nil,
+            assistantMessageId: "assistant-old"
+        )
+        let retained = OrchestrationMessage(
+            id: "assistant-old",
+            role: "assistant",
+            text: "Work before Stop",
+            attachments: nil,
+            turnId: oldTurn.turnId,
+            streaming: false,
+            createdAt: "2026-07-31T20:00:00Z",
+            updatedAt: "2026-07-31T20:00:01Z"
+        )
+        let running = OrchestrationSession(
+            threadId: "thread-1",
+            status: "running",
+            providerName: "grok",
+            providerInstanceId: "grok",
+            runtimeMode: .fullAccess,
+            activeTurnId: oldTurn.turnId,
+            lastError: nil,
+            updatedAt: "2026-07-31T20:00:01Z"
+        )
+        let thread = orchestrationThread(
+            messages: [retained],
+            latestTurn: oldTurn,
+            session: running
+        )
+        let interrupted = OrchestrationSession(
+            threadId: thread.id,
+            status: "interrupted",
+            providerName: "grok",
+            providerInstanceId: "grok",
+            runtimeMode: .fullAccess,
+            activeTurnId: nil,
+            lastError: nil,
+            updatedAt: "2026-07-31T20:00:02Z"
+        )
+        let interruptedEvent = orchestrationEvent(
+            type: "thread.session-set",
+            sequence: 20,
+            payload: [
+                "threadId": .string(thread.id),
+                "session": try JSONValue.encode(interrupted),
+            ]
+        )
+
+        let interruptedReduction = NativeThreadDetailReducer.apply(interruptedEvent, to: thread)
+        guard case let .updated(stoppedThread) = interruptedReduction.result else {
+            Issue.record("Expected interrupted Grok reduction")
+            return
+        }
+        #expect(stoppedThread.latestTurn?.state == "interrupted")
+        #expect(stoppedThread.messages == [retained])
+        #expect(NativeFeatureClient.resolveThreadState(
+            latestTurn: stoppedThread.latestTurn,
+            session: stoppedThread.session,
+            hasApprovals: false,
+            hasUserInput: false,
+            backgroundLiveness: nil
+        ) == .stopped)
+
+        let starting = OrchestrationSession(
+            threadId: thread.id,
+            status: "starting",
+            providerName: "grok",
+            providerInstanceId: "grok",
+            runtimeMode: .fullAccess,
+            activeTurnId: nil,
+            lastError: nil,
+            updatedAt: "2026-07-31T20:00:03Z"
+        )
+        #expect(NativeFeatureClient.resolveThreadState(
+            latestTurn: stoppedThread.latestTurn,
+            session: starting,
+            hasApprovals: false,
+            hasUserInput: false,
+            backgroundLiveness: nil
+        ) == .queued)
+
+        let replacement = OrchestrationSession(
+            threadId: thread.id,
+            status: "running",
+            providerName: "grok",
+            providerInstanceId: "grok",
+            runtimeMode: .fullAccess,
+            activeTurnId: "turn-grok-next",
+            lastError: nil,
+            updatedAt: "2026-07-31T20:00:04Z"
+        )
+        let replacementEvent = orchestrationEvent(
+            type: "thread.session-set",
+            sequence: 21,
+            payload: [
+                "threadId": .string(thread.id),
+                "session": try JSONValue.encode(replacement),
+            ]
+        )
+        let replacementReduction = NativeThreadDetailReducer.apply(
+            replacementEvent,
+            to: stoppedThread
+        )
+        guard case let .updated(replacementThread) = replacementReduction.result else {
+            Issue.record("Expected replacement Grok reduction")
+            return
+        }
+        #expect(replacementThread.latestTurn?.turnId == replacement.activeTurnId)
+        #expect(replacementThread.latestTurn?.state == "running")
+        #expect(replacementThread.messages == [retained])
+        #expect(NativeFeatureClient.resolveThreadState(
+            latestTurn: replacementThread.latestTurn,
+            session: replacementThread.session,
+            hasApprovals: false,
+            hasUserInput: false,
+            backgroundLiveness: nil
+        ) == .working)
+    }
+
+    @Test
     func activityReducerKeepsLargeSnapshotHistorySharedAndExposesOnlyTheTail() throws {
         let historical = (0..<1_000).map { (index: Int) in
             OrchestrationActivity(
@@ -2952,7 +3148,9 @@ private func orchestrationEvent(
 private func orchestrationThread(
     messages: [OrchestrationMessage] = [],
     activities: [OrchestrationActivity] = [],
-    checkpoints: [CheckpointSummary] = []
+    checkpoints: [CheckpointSummary] = [],
+    latestTurn: OrchestrationLatestTurn? = nil,
+    session: OrchestrationSession? = nil
 ) -> OrchestrationThread {
     OrchestrationThread(
         id: "thread-1",
@@ -2963,7 +3161,7 @@ private func orchestrationThread(
         interactionMode: .default,
         branch: "main",
         worktreePath: "/native",
-        latestTurn: nil,
+        latestTurn: latestTurn,
         createdAt: "2026-07-31T20:00:00Z",
         updatedAt: "2026-07-31T20:00:00Z",
         archivedAt: nil,
@@ -2976,7 +3174,7 @@ private func orchestrationThread(
         messages: messages,
         activities: activities,
         checkpoints: checkpoints,
-        session: nil
+        session: session
     )
 }
 
@@ -3014,6 +3212,8 @@ private final class FeatureClientStub: FeatureClient, T3ConnectCapable {
     var removedEnvironmentID: String?
     var beforeStartTask: (() async throws -> Void)?
     var beforeSendMessage: (() throws -> Void)?
+    var cancelTurnGate: FeatureCallGate?
+    var sendMessageGate: FeatureCallGate?
     var beforeSaveSettings: (@MainActor () async throws -> Void)?
     var loadThreadError: (any Error)?
     var loadThreadHandler: ((String) async throws -> FeatureThreadDetail)?
@@ -3194,10 +3394,12 @@ private final class FeatureClientStub: FeatureClient, T3ConnectCapable {
         try beforeSendMessage?()
         if let sendMessageError { throw sendMessageError }
         sentText = text
+        sendMessageGate?.record()
     }
 
     func cancelTurn(threadID: String) async throws {
         cancelTurnCallCount += 1
+        await cancelTurnGate?.enter()
     }
     func resolveApproval(id: String, decision: FeatureApprovalDecision) async throws {}
     func resolveUserInput(
@@ -3244,6 +3446,41 @@ private final class FeatureSettingsSaveGate {
     func waitUntilCallCount(_ count: Int) async {
         guard calls < count else { return }
         await withCheckedContinuation { callWaiters.append((count, $0)) }
+    }
+
+    func releaseFirst() {
+        firstRelease?.resume()
+        firstRelease = nil
+    }
+}
+
+@MainActor
+private final class FeatureCallGate {
+    private let blocksFirstCall: Bool
+    private var calls = 0
+    private var waiters: [(Int, CheckedContinuation<Void, Never>)] = []
+    private var firstRelease: CheckedContinuation<Void, Never>?
+
+    init(blocksFirstCall: Bool = false) {
+        self.blocksFirstCall = blocksFirstCall
+    }
+
+    func record() {
+        calls += 1
+        let ready = waiters.filter { calls >= $0.0 }
+        waiters.removeAll { calls >= $0.0 }
+        ready.forEach { $0.1.resume() }
+    }
+
+    func enter() async {
+        record()
+        guard blocksFirstCall, calls == 1 else { return }
+        await withCheckedContinuation { firstRelease = $0 }
+    }
+
+    func waitUntilCallCount(_ count: Int) async {
+        guard calls < count else { return }
+        await withCheckedContinuation { waiters.append((count, $0)) }
     }
 
     func releaseFirst() {

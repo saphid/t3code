@@ -114,7 +114,7 @@ enum PlatformAgentAwarenessProjection {
         switch state {
         case .queued, .working, .monitoring, .waitingForApproval, .waitingForInput:
             true
-        case .idle, .failed, .completed:
+        case .idle, .failed, .completed, .stopped:
             false
         }
     }
@@ -128,7 +128,7 @@ enum PlatformAgentAwarenessProjection {
         case .waitingForInput: .waitingForInput
         case .failed: .failed
         case .completed: .completed
-        case .idle: .stale
+        case .idle, .stopped: .stale
         }
     }
 
@@ -141,6 +141,7 @@ enum PlatformAgentAwarenessProjection {
         case .waitingForInput: "Input"
         case .failed: "Failed"
         case .completed: "Done"
+        case .stopped: "Stopped"
         case .idle: "Idle"
         }
     }

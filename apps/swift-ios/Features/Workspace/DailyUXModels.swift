@@ -955,7 +955,7 @@ enum DailyUXSidebarRefresh {
             return nil
         }
         switch thread.state {
-        case .idle, .failed, .completed:
+        case .idle, .failed, .completed, .stopped:
             break
         case .queued, .working, .monitoring, .waitingForApproval, .waitingForInput:
             return nil
@@ -1014,6 +1014,7 @@ enum HomeThreadStatus: String, Sendable, Equatable {
     case monitoring
     case failed
     case done
+    case stopped
     case ready
 }
 
@@ -1058,6 +1059,8 @@ extension FeatureThread {
             .failed
         case .completed:
             .done
+        case .stopped:
+            .stopped
         case .idle:
             .ready
         }
@@ -1071,6 +1074,7 @@ extension FeatureThread {
         case .monitoring: "Monitoring"
         case .failed: "Failed"
         case .done: "Done"
+        case .stopped: "Stopped"
         case .ready: nil
         }
     }
@@ -1081,7 +1085,7 @@ extension FeatureThread {
             nil
         case .ready:
             "Ready"
-        case .approval, .input, .working, .monitoring, .failed:
+        case .approval, .input, .working, .monitoring, .failed, .stopped:
             homeStatusLabel
         }
     }
@@ -1092,7 +1096,7 @@ extension FeatureThread {
             "circle.dotted"
         case .failed:
             "exclamationmark.circle"
-        case .done, .approval, .input, .monitoring, .ready:
+        case .done, .approval, .input, .monitoring, .stopped, .ready:
             nil
         }
     }
@@ -1101,7 +1105,7 @@ extension FeatureThread {
         switch homeStatus {
         case .done, .ready:
             SidebarRelativeAge.compact(since: updatedAt, now: now)
-        case .approval, .input, .working, .monitoring, .failed:
+        case .approval, .input, .working, .monitoring, .failed, .stopped:
             homeStatusLabel ?? SidebarRelativeAge.compact(since: updatedAt, now: now)
         }
     }
@@ -1166,7 +1170,7 @@ extension FeatureThread {
         switch state {
         case .queued, .working, .monitoring, .waitingForApproval, .waitingForInput:
             return false
-        case .idle, .failed, .completed:
+        case .idle, .failed, .completed, .stopped:
             break
         }
         if isSettled {
