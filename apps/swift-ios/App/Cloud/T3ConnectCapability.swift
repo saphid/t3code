@@ -11,6 +11,11 @@ public extension Notification.Name {
 public protocol T3ConnectCapable: AnyObject {
     var t3ConnectController: T3ConnectController { get }
 
+    /// Reconciles the signed-in account's provisioned relay environments with
+    /// the native runtime. A failed discovery leaves device-owned connections
+    /// and the last known managed runtime untouched.
+    func reconcileT3ConnectEnvironments() async -> T3ConnectReconciliationResult
+
     /// Save and activate the relay-managed environment without treating its
     /// bootstrap credential as a bearer token. Implementations prepare the
     /// DPoP access token and socket ticket through `managedAuthorizer`.
@@ -21,6 +26,37 @@ public protocol T3ConnectCapable: AnyObject {
     /// Ends the account session and removes only relay-managed runtime state.
     /// Directly paired environments belong to the device and must survive.
     func signOutT3Connect() async
+}
+
+public enum T3ConnectDiscoveryPhase: Equatable, Sendable {
+    case idle
+    case refreshing
+    case loaded
+    case failed
+}
+
+public enum T3ConnectReconciliationResult: Equatable, Sendable {
+    case unavailable
+    case signedOut
+    case unchanged
+    case changed
+    case failed(String)
+}
+
+struct T3ConnectDiscoverySnapshot: Equatable, Sendable {
+    let accountID: String
+    let authorizationGeneration: UInt64
+    let environments: [T3ConnectRelayEnvironment]
+
+    func isCurrent(
+        accountID: String?,
+        authorizationGeneration: UInt64,
+        isInvalidated: Bool
+    ) -> Bool {
+        !isInvalidated
+            && accountID == self.accountID
+            && authorizationGeneration == self.authorizationGeneration
+    }
 }
 
 public struct T3ConnectCloudEnvironment: Identifiable, Equatable, Sendable {
@@ -78,6 +114,7 @@ public final class T3ConnectController: T3ConnectDeviceManaging {
     }
     public private(set) var environments: [T3ConnectCloudEnvironment] = []
     public private(set) var isRefreshing = false
+    public private(set) var discoveryPhase: T3ConnectDiscoveryPhase = .idle
     public private(set) var busyEnvironmentID: String?
     public var errorMessage: String?
 
@@ -162,8 +199,10 @@ public final class T3ConnectController: T3ConnectDeviceManaging {
         guard !isLocalAuthorizationInvalidated else { return }
         refreshGeneration &+= 1
         let generation = refreshGeneration
-        let authGeneration = authorizationGeneration
+        var authGeneration = authorizationGeneration
         isRefreshing = true
+        discoveryPhase = .refreshing
+        errorMessage = nil
         defer {
             if refreshGeneration == generation { isRefreshing = false }
         }
@@ -172,9 +211,10 @@ public final class T3ConnectController: T3ConnectDeviceManaging {
             guard refreshGeneration == generation,
                   authorizationGeneration == authGeneration,
                   !isLocalAuthorizationInvalidated else { return }
-            await adoptAccount(auth.account, relay: relay)
+            authGeneration = await adoptAccount(auth.account, relay: relay)
             guard account != nil else {
                 environments = []
+                discoveryPhase = .loaded
                 return
             }
             let token = try await auth.relayToken()
@@ -185,12 +225,13 @@ public final class T3ConnectController: T3ConnectDeviceManaging {
             guard refreshGeneration == generation,
                   authorizationGeneration == authGeneration,
                   !isLocalAuthorizationInvalidated else { return }
-            environments = records.map { T3ConnectCloudEnvironment(environment: $0) }
+            let uniqueRecords = T3ConnectEnvironmentReconciliationPlan.unique(records)
+            environments = uniqueRecords.map { T3ConnectCloudEnvironment(environment: $0) }
             let loaded = await withTaskGroup(
                 of: T3ConnectCloudEnvironment.self,
                 returning: [T3ConnectCloudEnvironment].self
             ) { group in
-                for record in records {
+                for record in uniqueRecords {
                     group.addTask {
                         do {
                             let status = try await relay.status(for: record, clerkToken: token)
@@ -216,9 +257,11 @@ public final class T3ConnectController: T3ConnectDeviceManaging {
                   authorizationGeneration == authGeneration,
                   !isLocalAuthorizationInvalidated else { return }
             environments = loaded
+            discoveryPhase = .loaded
         } catch {
             if refreshGeneration == generation {
                 errorMessage = error.localizedDescription
+                discoveryPhase = .failed
             }
         }
     }
@@ -248,6 +291,7 @@ public final class T3ConnectController: T3ConnectDeviceManaging {
         }
         account = nil
         environments = []
+        discoveryPhase = .loaded
         registeredDeviceID = nil
         await relay.clearTokenCache()
         await waitForAuthorizationOperations()
@@ -454,14 +498,14 @@ public final class T3ConnectController: T3ConnectDeviceManaging {
 
     private func loadedRelayToken(_ auth: T3ConnectClerkSession) async throws -> String {
         guard !isLocalAuthorizationInvalidated else { throw T3ConnectAuthError.noSession }
-        let generation = authorizationGeneration
+        var generation = authorizationGeneration
         if !auth.isLoaded {
             try await auth.refresh()
         }
         guard authorizationGeneration == generation,
               !isLocalAuthorizationInvalidated else { throw T3ConnectAuthError.noSession }
         if let relay {
-            await adoptAccount(auth.account, relay: relay)
+            generation = await adoptAccount(auth.account, relay: relay)
         } else {
             account = auth.account
         }
@@ -475,13 +519,37 @@ public final class T3ConnectController: T3ConnectDeviceManaging {
     private func adoptAccount(
         _ nextAccount: T3ConnectAccount?,
         relay: T3ConnectRelayClient
-    ) async {
+    ) async -> UInt64 {
         if account?.id != nextAccount?.id {
+            authorizationGeneration &+= 1
             environments = []
             registeredDeviceID = nil
             await relay.clearTokenCache()
         }
         account = nextAccount
+        return authorizationGeneration
+    }
+
+    var discoverySnapshot: T3ConnectDiscoverySnapshot? {
+        guard discoveryPhase == .loaded, let accountID = account?.id else { return nil }
+        return T3ConnectDiscoverySnapshot(
+            accountID: accountID,
+            authorizationGeneration: authorizationGeneration,
+            environments: environments.map(\.environment)
+        )
+    }
+
+    func isCurrent(_ snapshot: T3ConnectDiscoverySnapshot) -> Bool {
+        snapshot.isCurrent(
+            accountID: account?.id,
+            authorizationGeneration: authorizationGeneration,
+            isInvalidated: isLocalAuthorizationInvalidated
+        )
+    }
+
+    func recordReconciliationFailure(_ message: String) {
+        errorMessage = message
+        discoveryPhase = .failed
     }
 
     private func isAuthorizationCurrent(_ generation: UInt64) -> Bool {

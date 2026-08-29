@@ -17,6 +17,7 @@ public struct T3ConnectView: View {
     private let connectEnvironment:
         @MainActor (T3ConnectManagedEnvironmentCredential) async throws -> Void
     private let signOut: @MainActor () async -> Void
+    private let refreshDiscovery: @MainActor () async -> Void
     private let onConnected: @MainActor () async -> Void
     private let onUnlinked: @MainActor (String) async -> Void
     private let purpose: Purpose
@@ -35,6 +36,11 @@ public struct T3ConnectView: View {
         } else {
             capability.signOutT3Connect
         }
+        refreshDiscovery = if let model {
+            model.refreshT3ConnectEnvironments
+        } else {
+            capability.t3ConnectController.refresh
+        }
         self.purpose = purpose
         self.onConnected = onConnected
         self.onUnlinked = onUnlinked
@@ -47,10 +53,10 @@ public struct T3ConnectView: View {
             .toolbarBackground(T3Colors.background, for: .navigationBar)
             .toolbarBackground(.visible, for: .navigationBar)
             .refreshable {
-                await controller.refresh()
+                await refreshDiscovery()
             }
             .task {
-                await controller.refresh()
+                await refreshDiscovery()
                 guard !Task.isCancelled else { return }
                 didFinishInitialRefresh = true
                 presentAuthenticationIfNeeded()
@@ -155,6 +161,7 @@ public struct T3ConnectView: View {
             T3ConnectAuthenticationView {
                 await controller.refreshAfterAuthentication()
                 if controller.account != nil {
+                    await refreshDiscovery()
                     isAuthPresented = false
                     return true
                 }
@@ -175,7 +182,7 @@ public struct T3ConnectView: View {
 
     private func handleAuthenticationDismissal() {
         Task {
-            await controller.refresh()
+            await refreshDiscovery()
             if controller.account == nil {
                 dismiss()
             }
@@ -238,7 +245,13 @@ public struct T3ConnectView: View {
 
     private var environmentSection: some View {
         Section("Environments") {
-            if controller.environments.isEmpty, !controller.isRefreshing {
+            if discoveryFailureMessage != nil {
+                discoveryFailureRow
+            }
+
+            if controller.environments.isEmpty,
+               !controller.isRefreshing,
+               discoveryFailureMessage == nil {
                 VStack(alignment: .leading, spacing: 8) {
                     Text("No linked environments")
                         .font(T3Typography.homeTitle)
@@ -247,7 +260,7 @@ public struct T3ConnectView: View {
                         .foregroundStyle(T3Colors.textSecondary)
 
                     Button("Refresh") {
-                        Task { await controller.refresh() }
+                        Task { await refreshDiscovery() }
                     }
                     .font(T3Typography.control)
                     .frame(minHeight: T3Metrics.minimumTapTarget)
@@ -286,6 +299,31 @@ public struct T3ConnectView: View {
                 .accessibilityElement(children: .combine)
             }
         }
+    }
+
+    private var discoveryFailureRow: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Could not refresh T3 Connect")
+                .font(T3Typography.homeTitle)
+            Text(discoveryFailureMessage ?? "Check your account and relay connection, then retry.")
+                .font(T3Typography.supporting)
+                .foregroundStyle(T3Colors.danger)
+            Button("Retry") {
+                Task { await refreshDiscovery() }
+            }
+            .font(T3Typography.control)
+            .frame(minHeight: T3Metrics.minimumTapTarget)
+            .accessibilityIdentifier("t3-connect-discovery-retry")
+        }
+        .padding(.vertical, 8)
+        .listRowBackground(T3Colors.background)
+    }
+
+    private var discoveryFailureMessage: String? {
+        if controller.discoveryPhase == .failed {
+            return controller.errorMessage ?? "Could not refresh linked environments."
+        }
+        return controller.environments.compactMap(\.statusError).first
     }
 
     private func environmentRow(_ item: T3ConnectCloudEnvironment) -> some View {

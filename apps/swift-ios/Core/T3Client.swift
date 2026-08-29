@@ -1378,7 +1378,8 @@ public actor EnvironmentRuntime {
     @discardableResult
     public func saveManagedEnvironment(
         _ environment: Environment,
-        credential: EnvironmentCredential
+        credential: EnvironmentCredential,
+        activate: Bool = true
     ) async throws -> T3Client {
         guard environment.kind == .managedDPoP,
               environment.descriptor?.environmentId == environment.id,
@@ -1397,7 +1398,9 @@ public actor EnvironmentRuntime {
         )
         do {
             try await environmentStore.upsert(environment)
-            try await environmentStore.setActiveEnvironment(id: environment.id)
+            if activate {
+                try await environmentStore.setActiveEnvironment(id: environment.id)
+            }
         } catch {
             let operationError = error
             var rollbackErrors: [String] = []
@@ -1429,13 +1432,15 @@ public actor EnvironmentRuntime {
             } catch {
                 rollbackErrors.append("environment catalog: \(error.localizedDescription)")
             }
-            do {
-                let activeIDAfterFailure = try await environmentStore.activeEnvironmentID()
-                if activeIDAfterFailure == environment.id {
-                    try await environmentStore.setActiveEnvironment(id: previousActiveID)
+            if activate {
+                do {
+                    let activeIDAfterFailure = try await environmentStore.activeEnvironmentID()
+                    if activeIDAfterFailure == environment.id {
+                        try await environmentStore.setActiveEnvironment(id: previousActiveID)
+                    }
+                } catch {
+                    rollbackErrors.append("active environment: \(error.localizedDescription)")
                 }
-            } catch {
-                rollbackErrors.append("active environment: \(error.localizedDescription)")
             }
             guard rollbackErrors.isEmpty else {
                 throw EnvironmentPersistenceError(

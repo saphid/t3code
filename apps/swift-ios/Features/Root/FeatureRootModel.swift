@@ -218,6 +218,9 @@ public final class FeatureRootModel {
     }
 
     public func start() async {
+        if let capability = client as? any T3ConnectCapable {
+            _ = await capability.reconcileT3ConnectEnvironments()
+        }
         do {
             install(try await client.initialSnapshot())
         } catch {
@@ -261,6 +264,22 @@ public final class FeatureRootModel {
     public func reloadAfterConnection() async {
         clearDetails()
         await reload()
+    }
+
+    public func refreshT3ConnectEnvironments() async {
+        guard let capability = client as? any T3ConnectCapable else { return }
+        let result = await capability.reconcileT3ConnectEnvironments()
+        switch result {
+        case .changed:
+            clearDetails()
+            await reload()
+        case .unchanged:
+            await reload()
+        case .failed:
+            await reload()
+        case .unavailable, .signedOut:
+            break
+        }
     }
 
     public func pair(endpoint: String, token: String?) async -> Bool {

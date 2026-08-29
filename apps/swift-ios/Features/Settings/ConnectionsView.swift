@@ -31,7 +31,7 @@ struct ConnectionsView: View {
         .toolbar(.visible, for: .navigationBar)
         .t3NavigationChrome()
         .task {
-            await t3ConnectController?.refresh()
+            await model.refreshT3ConnectEnvironments()
         }
         .sheet(isPresented: $showingAddConnection) {
             ConnectionOnboardingView(
@@ -215,6 +215,20 @@ struct ConnectionsView: View {
                 .accessibilityIdentifier("connections-manage-t3-connect-button")
             }
 
+            if t3ConnectDiscoveryFailureMessage != nil {
+                t3ConnectDiscoveryFailure
+            } else if t3ConnectController?.isRefreshing == true,
+                      t3ConnectRows.isEmpty == false {
+                HStack(spacing: 10) {
+                    ProgressView()
+                        .controlSize(.small)
+                    Text("Checking T3 Connect")
+                        .font(T3Typography.supporting)
+                        .foregroundStyle(T3Colors.textSecondary)
+                }
+                .frame(minHeight: 44)
+            }
+
             if t3ConnectRows.isEmpty {
                 if t3ConnectController?.isRefreshing == true {
                     HStack(spacing: 10) {
@@ -226,6 +240,8 @@ struct ConnectionsView: View {
                     }
                     .frame(minHeight: 44)
                     .frame(maxWidth: .infinity, alignment: .leading)
+                } else if t3ConnectDiscoveryFailureMessage != nil {
+                    EmptyView()
                 } else if t3ConnectCapability == nil {
                     emptyRow("T3 Connect unavailable")
                 } else if t3ConnectController?.account == nil {
@@ -241,6 +257,29 @@ struct ConnectionsView: View {
                 }
             }
         }
+    }
+
+    private var t3ConnectDiscoveryFailure: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(t3ConnectDiscoveryFailureMessage ?? "Could not refresh linked environments.")
+                .font(T3Typography.supporting)
+                .foregroundStyle(T3Colors.danger)
+            Button("Retry") {
+                Task { await model.refreshT3ConnectEnvironments() }
+            }
+            .font(T3Typography.control)
+            .frame(minHeight: T3Metrics.minimumTapTarget)
+            .accessibilityIdentifier("connections-t3-connect-retry")
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var t3ConnectDiscoveryFailureMessage: String? {
+        guard let controller = t3ConnectController else { return nil }
+        if controller.discoveryPhase == .failed {
+            return controller.errorMessage ?? "Could not refresh linked environments."
+        }
+        return controller.environments.compactMap(\.statusError).first
     }
 
     private func t3ConnectConnectionRow(

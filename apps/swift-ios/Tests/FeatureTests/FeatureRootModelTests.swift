@@ -2905,7 +2905,7 @@ private func textInputText(_ view: UIView?) -> String? {
 }
 
 @MainActor
-private func testRootModel(
+func testRootModel(
     client: FeatureClientStub,
     titleRegenerationRefreshTimeout: Duration = .seconds(60),
     accessibilityAnnouncer: @escaping @MainActor (String) -> Void = { _ in }
@@ -2976,7 +2976,7 @@ private func orchestrationThread(
 }
 
 @MainActor
-private final class FeatureClientStub: FeatureClient, T3ConnectCapable {
+final class FeatureClientStub: FeatureClient, T3ConnectCapable {
     private let eventStream: AsyncStream<FeatureEvent>
     private let eventContinuation: AsyncStream<FeatureEvent>.Continuation
     var snapshot = FeatureSnapshot()
@@ -3002,6 +3002,8 @@ private final class FeatureClientStub: FeatureClient, T3ConnectCapable {
     var sendMessageCallCount = 0
     var cancelTurnCallCount = 0
     var signOutCallCount = 0
+    var t3ConnectReconciliationResults: [T3ConnectReconciliationResult] = [.unavailable]
+    var t3ConnectReconciliationCallCount = 0
     var startTaskError: (any Error)?
     var sendMessageError: (any Error)?
     var enabledEnvironmentID: String?
@@ -3087,6 +3089,17 @@ private final class FeatureClientStub: FeatureClient, T3ConnectCapable {
     func connectT3Environment(
         _ credential: T3ConnectManagedEnvironmentCredential
     ) async throws {}
+
+    func reconcileT3ConnectEnvironments() async -> T3ConnectReconciliationResult {
+        guard let lastResult = t3ConnectReconciliationResults.last else { return .unavailable }
+        let result = t3ConnectReconciliationResults.indices.contains(
+            t3ConnectReconciliationCallCount
+        )
+            ? t3ConnectReconciliationResults[t3ConnectReconciliationCallCount]
+            : lastResult
+        t3ConnectReconciliationCallCount += 1
+        return result
+    }
 
     func signOutT3Connect() async {
         signOutCallCount += 1

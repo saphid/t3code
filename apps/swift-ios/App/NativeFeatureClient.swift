@@ -325,6 +325,85 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         startPolling(pairedClient)
     }
 
+    func reconcileT3ConnectEnvironments() async -> T3ConnectReconciliationResult {
+        guard hasMatchingT3ConnectController,
+              runtime.supportsManagedAuthorization,
+              t3ConnectController.unavailableReason == nil else {
+            return .unavailable
+        }
+
+        await t3ConnectController.refresh()
+        if t3ConnectController.discoveryPhase == .failed {
+            return .failed(
+                t3ConnectController.errorMessage ?? "Could not discover T3 Connect environments."
+            )
+        }
+        guard t3ConnectController.account != nil else { return .signedOut }
+        guard let discovery = t3ConnectController.discoverySnapshot else {
+            return .unchanged
+        }
+
+        do {
+            let saved = try await runtime.environments()
+            let plan = T3ConnectEnvironmentReconciliationPlan(
+                discovered: discovery.environments,
+                saved: saved
+            )
+            var changed = false
+            var firstFailure: (any Error)?
+
+            for environmentID in plan.removeEnvironmentIDs {
+                guard t3ConnectController.isCurrent(discovery) else { return .signedOut }
+                do {
+                    try await removeEnvironment(id: environmentID)
+                    changed = true
+                } catch {
+                    firstFailure = firstFailure ?? error
+                }
+                guard t3ConnectController.isCurrent(discovery) else { return .signedOut }
+            }
+
+            for linkedEnvironment in plan.connect {
+                guard t3ConnectController.isCurrent(discovery) else { return .signedOut }
+                do {
+                    let credential = try await t3ConnectController.credential(
+                        for: linkedEnvironment
+                    )
+                    guard t3ConnectController.isCurrent(discovery) else { return .signedOut }
+                    let prepared = try await prepareManagedEnvironment(credential)
+                    guard t3ConnectController.isCurrent(discovery) else { return .signedOut }
+                    _ = try await runtime.saveManagedEnvironment(
+                        prepared.environment,
+                        credential: prepared.credential,
+                        activate: false
+                    )
+                    guard t3ConnectController.isCurrent(discovery) else {
+                        try? await removeEnvironment(id: prepared.environment.id)
+                        return .signedOut
+                    }
+                    changed = true
+                } catch T3ConnectAuthError.noSession {
+                    return .signedOut
+                } catch {
+                    firstFailure = firstFailure ?? error
+                }
+                guard t3ConnectController.isCurrent(discovery) else { return .signedOut }
+            }
+
+            if let firstFailure {
+                let message = firstFailure.localizedDescription
+                t3ConnectController.recordReconciliationFailure(message)
+                return .failed(message)
+            }
+
+            return changed ? .changed : .unchanged
+        } catch {
+            let message = error.localizedDescription
+            t3ConnectController.recordReconciliationFailure(message)
+            return .failed(message)
+        }
+    }
+
     func connectT3Environment(
         _ credential: T3ConnectManagedEnvironmentCredential
     ) async throws {
@@ -338,6 +417,30 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
                 "This client runtime was created without T3 Connect authorization."
             )
         }
+        let prepared = try await prepareManagedEnvironment(credential)
+        let managedClient = try await runtime.saveManagedEnvironment(
+            prepared.environment,
+            credential: prepared.credential
+        )
+        await adoptEnvironment(prepared.environment, client: managedClient)
+        do {
+            try await refresh(client: managedClient)
+        } catch {
+            let environments = (try? await runtime.environments()) ?? [prepared.environment]
+            let snapshot = makeSnapshot(
+                environments: environments,
+                activeEnvironment: prepared.environment,
+                connectionState: .connecting,
+                connectionDetail: "Connected securely. Loading this environment."
+            )
+            publish(snapshot)
+        }
+        startPolling(managedClient)
+    }
+
+    private func prepareManagedEnvironment(
+        _ credential: T3ConnectManagedEnvironmentCredential
+    ) async throws -> (environment: Environment, credential: EnvironmentCredential) {
         guard credential.environmentID.isEmpty == false,
               let httpBaseURL = credential.endpoint.httpBaseURL,
               let webSocketBaseURL = credential.endpoint.webSocketBaseURL,
@@ -366,39 +469,23 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
             throw T3ConnectRelayError.environmentMismatch
         }
 
-        let environment = Environment(
-            id: descriptor.environmentId,
-            label: descriptor.label,
-            httpBaseURL: httpBaseURL,
-            webSocketBaseURL: webSocketBaseURL,
-            kind: .managedDPoP,
-            descriptor: descriptor
-        )
-        let savedCredential = EnvironmentCredential.managedDPoP(
-            accessToken: authorization.accessToken,
-            expiresAt: authorization.expiresAt,
-            scopes: authorization.scopes,
-            environmentID: authorization.environmentID,
-            proofKeyThumbprint: authorization.proofKeyThumbprint
-        )
-        let managedClient = try await runtime.saveManagedEnvironment(
-            environment,
-            credential: savedCredential
-        )
-        await adoptEnvironment(environment, client: managedClient)
-        do {
-            try await refresh(client: managedClient)
-        } catch {
-            let environments = (try? await runtime.environments()) ?? [environment]
-            let snapshot = makeSnapshot(
-                environments: environments,
-                activeEnvironment: environment,
-                connectionState: .connecting,
-                connectionDetail: "Connected securely. Loading this environment."
+        return (
+            Environment(
+                id: descriptor.environmentId,
+                label: descriptor.label,
+                httpBaseURL: httpBaseURL,
+                webSocketBaseURL: webSocketBaseURL,
+                kind: .managedDPoP,
+                descriptor: descriptor
+            ),
+            EnvironmentCredential.managedDPoP(
+                accessToken: authorization.accessToken,
+                expiresAt: authorization.expiresAt,
+                scopes: authorization.scopes,
+                environmentID: authorization.environmentID,
+                proofKeyThumbprint: authorization.proofKeyThumbprint
             )
-            publish(snapshot)
-        }
-        startPolling(managedClient)
+        )
     }
 
     func signOutT3Connect() async {
