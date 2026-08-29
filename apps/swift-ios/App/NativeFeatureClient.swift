@@ -918,6 +918,15 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         )
     }
 
+    func searchProjectRepositories(
+        environmentID: String,
+        query: String,
+        page: Int
+    ) async throws -> SourceControlRepositorySearchResult {
+        let client = try await projectCreationClient(environmentID: environmentID)
+        return try await client.searchRepositories(query: query, page: page)
+    }
+
     func cloneProjectRepository(
         environmentID: String,
         remoteURL: String,

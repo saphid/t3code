@@ -292,6 +292,75 @@ describe("GitHubCli.layer", () => {
     }).pipe(Effect.provide(layer)),
   );
 
+  it.effect("searches one repository page and preserves result classifications", () =>
+    Effect.gen(function* () {
+      mockRun.mockReturnValueOnce(
+        Effect.succeed(
+          processOutput(
+            // @effect-diagnostics-next-line preferSchemaOverJson:off
+            JSON.stringify({
+              total_count: 21,
+              items: [
+                {
+                  full_name: "acme/t3code",
+                  html_url: "https://github.com/acme/t3code",
+                  ssh_url: "git@github.com:acme/t3code.git",
+                  private: true,
+                  fork: true,
+                  archived: false,
+                  owner: { type: "Organization" },
+                },
+              ],
+            }),
+          ),
+        ),
+      );
+
+      const gh = yield* GitHubCli.GitHubCli;
+      const result = yield* gh.searchRepositories({
+        cwd: "/repo",
+        query: "t3 code",
+        page: 1,
+        perPage: 20,
+      });
+
+      assert.deepStrictEqual(result, {
+        items: [
+          {
+            nameWithOwner: "acme/t3code",
+            url: "https://github.com/acme/t3code",
+            sshUrl: "git@github.com:acme/t3code.git",
+            visibility: "private",
+            isFork: true,
+            isArchived: false,
+            ownerKind: "organization",
+          },
+        ],
+        hasNextPage: true,
+      });
+      expect(mockRun).toHaveBeenCalledWith({
+        operation: "GitHubCli.execute",
+        command: "gh",
+        args: [
+          "api",
+          "--method",
+          "GET",
+          "search/repositories",
+          "-f",
+          "q=t3 code in:name",
+          "-f",
+          "page=1",
+          "-f",
+          "per_page=20",
+          "--jq",
+          "{total_count: .total_count, items: [.items[] | {full_name, html_url, ssh_url, private, fork, archived, owner: {type: .owner.type}}]}",
+        ],
+        cwd: "/repo",
+        timeoutMs: 30_000,
+      });
+    }).pipe(Effect.provide(layer)),
+  );
+
   it.effect("creates repositories and parses clone URLs from create output", () =>
     Effect.gen(function* () {
       mockRun.mockReturnValueOnce(

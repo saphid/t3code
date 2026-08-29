@@ -13,11 +13,41 @@ protocol FeatureProjectCreationClient: AnyObject {
         provider: SourceControlProviderKind,
         repository: String
     ) async throws -> SourceControlRepositoryInfo
+    func searchProjectRepositories(
+        environmentID: String,
+        query: String,
+        page: Int
+    ) async throws -> SourceControlRepositorySearchResult
     func cloneProjectRepository(
         environmentID: String,
         remoteURL: String,
         destinationPath: String
     ) async throws -> SourceControlCloneResult
+}
+
+extension SourceControlRepositorySearchItem {
+    var badges: [String] {
+        var values: [String] = []
+        if visibility == .privateRepository { values.append("Private") }
+        if isFork { values.append("Fork") }
+        if isArchived { values.append("Archived") }
+        if ownerKind == .organization { values.append("Organization") }
+        return values
+    }
+}
+
+enum ProjectRepositorySearch {
+    static let debounceDuration = Duration.milliseconds(300)
+
+    static func mergedItems(
+        existing: [SourceControlRepositorySearchItem],
+        page: [SourceControlRepositorySearchItem],
+        appending: Bool
+    ) -> [SourceControlRepositorySearchItem] {
+        guard appending else { return page }
+        let known = Set(existing.map(\.id))
+        return existing + page.filter { !known.contains($0.id) }
+    }
 }
 
 enum ProjectRemoteSource: String, CaseIterable, Hashable, Identifiable {

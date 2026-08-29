@@ -6,7 +6,9 @@ import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 
 import {
+  NonNegativeInt,
   TrimmedNonEmptyString,
+  type SourceControlRepositoryOwnerKind,
   type SourceControlRepositoryVisibility,
   type VcsError,
 } from "@t3tools/contracts";
@@ -148,6 +150,19 @@ export class GitHubRepositoryDecodeError extends Schema.TaggedErrorClass<GitHubR
   }
 }
 
+export class GitHubRepositorySearchDecodeError extends Schema.TaggedErrorClass<GitHubRepositorySearchDecodeError>()(
+  "GitHubRepositorySearchDecodeError",
+  gitHubCliDecodeFields,
+) {
+  get detail(): string {
+    return "GitHub CLI returned invalid repository search JSON.";
+  }
+
+  override get message(): string {
+    return `GitHub CLI failed in searchRepositories: ${this.detail}`;
+  }
+}
+
 export const GitHubCliError = Schema.Union([
   GitHubCliUnavailableError,
   GitHubCliAuthenticationError,
@@ -158,6 +173,7 @@ export const GitHubCliError = Schema.Union([
   GitHubChangeRequestListDecodeError,
   GitHubPullRequestDecodeError,
   GitHubRepositoryDecodeError,
+  GitHubRepositorySearchDecodeError,
 ]);
 export type GitHubCliError = typeof GitHubCliError.Type;
 
@@ -213,6 +229,18 @@ export interface GitHubRepositoryCloneUrls {
   readonly sshUrl: string;
 }
 
+export interface GitHubRepositorySearchItem extends GitHubRepositoryCloneUrls {
+  readonly visibility: SourceControlRepositoryVisibility;
+  readonly isFork: boolean;
+  readonly isArchived: boolean;
+  readonly ownerKind: SourceControlRepositoryOwnerKind;
+}
+
+export interface GitHubRepositorySearchResult {
+  readonly items: ReadonlyArray<GitHubRepositorySearchItem>;
+  readonly hasNextPage: boolean;
+}
+
 export class GitHubCli extends Context.Service<
   GitHubCli,
   {
@@ -240,6 +268,13 @@ export class GitHubCli extends Context.Service<
       readonly cwd: string;
       readonly repository: string;
     }) => Effect.Effect<GitHubRepositoryCloneUrls, GitHubCliError>;
+
+    readonly searchRepositories: (input: {
+      readonly cwd: string;
+      readonly query: string;
+      readonly page: number;
+      readonly perPage: number;
+    }) => Effect.Effect<GitHubRepositorySearchResult, GitHubCliError>;
 
     readonly createRepository: (input: {
       readonly cwd: string;
@@ -274,6 +309,24 @@ const RawGitHubRepositoryCloneUrlsSchema = Schema.Struct({
 });
 const decodeRawGitHubRepositoryCloneUrls = Schema.decodeEffect(
   Schema.fromJsonString(RawGitHubRepositoryCloneUrlsSchema),
+);
+
+const RawGitHubRepositorySearchSchema = Schema.Struct({
+  total_count: NonNegativeInt,
+  items: Schema.Array(
+    Schema.Struct({
+      full_name: TrimmedNonEmptyString,
+      html_url: TrimmedNonEmptyString,
+      ssh_url: TrimmedNonEmptyString,
+      private: Schema.Boolean,
+      fork: Schema.Boolean,
+      archived: Schema.Boolean,
+      owner: Schema.Struct({ type: TrimmedNonEmptyString }),
+    }),
+  ),
+});
+const decodeRawGitHubRepositorySearch = Schema.decodeEffect(
+  Schema.fromJsonString(RawGitHubRepositorySearchSchema),
 );
 
 function normalizeRepositoryCloneUrls(
@@ -431,6 +484,52 @@ export const make = Effect.gen(function* () {
           ),
         ),
         Effect.map(normalizeRepositoryCloneUrls),
+      ),
+    searchRepositories: (input) =>
+      execute({
+        cwd: input.cwd,
+        args: [
+          "api",
+          "--method",
+          "GET",
+          "search/repositories",
+          "-f",
+          `q=${input.query} in:name`,
+          "-f",
+          `page=${input.page}`,
+          "-f",
+          `per_page=${input.perPage}`,
+          "--jq",
+          "{total_count: .total_count, items: [.items[] | {full_name, html_url, ssh_url, private, fork, archived, owner: {type: .owner.type}}]}",
+        ],
+      }).pipe(
+        Effect.map((result) => result.stdout.trim()),
+        Effect.flatMap((raw) =>
+          decodeRawGitHubRepositorySearch(raw).pipe(
+            Effect.mapError(
+              (cause) =>
+                new GitHubRepositorySearchDecodeError({
+                  command: "gh",
+                  cwd: input.cwd,
+                  cause,
+                }),
+            ),
+          ),
+        ),
+        Effect.map((result) => ({
+          items: result.items.map((repository) => ({
+            nameWithOwner: repository.full_name,
+            url: repository.html_url,
+            sshUrl: repository.ssh_url,
+            visibility: repository.private ? "private" : "public",
+            isFork: repository.fork,
+            isArchived: repository.archived,
+            ownerKind: repository.owner.type === "Organization" ? "organization" : "user",
+          })),
+          hasNextPage:
+            input.page * input.perPage < Math.min(result.total_count, 1_000) &&
+            result.items.length > 0,
+        })),
       ),
     createRepository: (input) =>
       execute({

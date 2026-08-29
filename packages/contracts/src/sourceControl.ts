@@ -64,6 +64,32 @@ export const SourceControlRepositoryLookupInput = Schema.Struct({
 });
 export type SourceControlRepositoryLookupInput = typeof SourceControlRepositoryLookupInput.Type;
 
+export const SourceControlRepositoryOwnerKind = Schema.Literals(["user", "organization"]);
+export type SourceControlRepositoryOwnerKind = typeof SourceControlRepositoryOwnerKind.Type;
+
+export const SourceControlRepositorySearchItem = Schema.Struct({
+  ...SourceControlRepositoryInfo.fields,
+  visibility: SourceControlRepositoryVisibility,
+  isFork: Schema.Boolean,
+  isArchived: Schema.Boolean,
+  ownerKind: SourceControlRepositoryOwnerKind,
+});
+export type SourceControlRepositorySearchItem = typeof SourceControlRepositorySearchItem.Type;
+
+export const SourceControlRepositorySearchInput = Schema.Struct({
+  provider: Schema.Literal("github"),
+  query: TrimmedNonEmptyString.check(Schema.isMaxLength(256)),
+  page: PositiveInt.check(Schema.isLessThanOrEqualTo(50)),
+  cwd: Schema.optional(TrimmedNonEmptyString),
+});
+export type SourceControlRepositorySearchInput = typeof SourceControlRepositorySearchInput.Type;
+
+export const SourceControlRepositorySearchResult = Schema.Struct({
+  items: Schema.Array(SourceControlRepositorySearchItem),
+  nextPage: Schema.NullOr(PositiveInt),
+});
+export type SourceControlRepositorySearchResult = typeof SourceControlRepositorySearchResult.Type;
+
 export const SourceControlCloneRepositoryInput = Schema.Struct({
   provider: Schema.optional(SourceControlProviderKind),
   repository: Schema.optional(TrimmedNonEmptyString),

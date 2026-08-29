@@ -67,6 +67,13 @@ function unsupportedProvider(
 ): SourceControlProvider.SourceControlProvider["Service"] {
   return SourceControlProvider.SourceControlProvider.of({
     kind,
+    searchRepositories: (input) =>
+      new SourceControlProviderError({
+        provider: kind,
+        operation: "searchRepositories",
+        cwd: input.cwd,
+        detail: `No ${kind} source control provider is registered.`,
+      }),
     listChangeRequests: (input) =>
       new SourceControlProviderError({
         provider: kind,
@@ -160,6 +167,7 @@ function bindProviderContext(
 
   return SourceControlProvider.SourceControlProvider.of({
     kind: provider.kind,
+    searchRepositories: (input) => provider.searchRepositories(input),
     listChangeRequests: (input) =>
       provider.listChangeRequests({
         ...input,

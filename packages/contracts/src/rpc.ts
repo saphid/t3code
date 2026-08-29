@@ -203,6 +203,8 @@ import {
   SourceControlRepositoryError,
   SourceControlRepositoryInfo,
   SourceControlRepositoryLookupInput,
+  SourceControlRepositorySearchInput,
+  SourceControlRepositorySearchResult,
 } from "./sourceControl.ts";
 import { VcsError } from "./vcs.ts";
 
@@ -317,6 +319,7 @@ export const WS_METHODS = {
 
   // Source control methods
   sourceControlLookupRepository: "sourceControl.lookupRepository",
+  sourceControlSearchRepositories: "sourceControl.searchRepositories",
   sourceControlCloneRepository: "sourceControl.cloneRepository",
   sourceControlPublishRepository: "sourceControl.publishRepository",
 
@@ -617,6 +620,15 @@ export const WsSourceControlLookupRepositoryRpc = Rpc.make(
   {
     payload: SourceControlRepositoryLookupInput,
     success: SourceControlRepositoryInfo,
+    error: Schema.Union([SourceControlRepositoryError, EnvironmentAuthorizationError]),
+  },
+);
+
+export const WsSourceControlSearchRepositoriesRpc = Rpc.make(
+  WS_METHODS.sourceControlSearchRepositories,
+  {
+    payload: SourceControlRepositorySearchInput,
+    success: SourceControlRepositorySearchResult,
     error: Schema.Union([SourceControlRepositoryError, EnvironmentAuthorizationError]),
   },
 );
@@ -1059,6 +1071,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsPullRequestsReviewerCandidatesRpc,
   WsPullRequestsRequestReviewersRpc,
   WsSourceControlLookupRepositoryRpc,
+  WsSourceControlSearchRepositoriesRpc,
   WsSourceControlCloneRepositoryRpc,
   WsSourceControlPublishRepositoryRpc,
   WsProjectsListEntriesRpc,

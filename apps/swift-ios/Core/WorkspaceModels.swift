@@ -80,6 +80,43 @@ public struct SourceControlRepositoryInfo: Codable, Equatable, Sendable {
     public let sshUrl: String
 }
 
+public enum SourceControlRepositoryVisibility: String, Codable, Sendable {
+    case privateRepository = "private"
+    case publicRepository = "public"
+}
+
+public enum SourceControlRepositoryOwnerKind: String, Codable, Sendable {
+    case user
+    case organization
+}
+
+public struct SourceControlRepositorySearchItem: Codable, Equatable, Identifiable, Sendable {
+    public let provider: SourceControlProviderKind
+    public let nameWithOwner: String
+    public let url: String
+    public let sshUrl: String
+    public let visibility: SourceControlRepositoryVisibility
+    public let isFork: Bool
+    public let isArchived: Bool
+    public let ownerKind: SourceControlRepositoryOwnerKind
+
+    public var id: String { "\(provider.rawValue):\(nameWithOwner)" }
+
+    public var repository: SourceControlRepositoryInfo {
+        SourceControlRepositoryInfo(
+            provider: provider,
+            nameWithOwner: nameWithOwner,
+            url: url,
+            sshUrl: sshUrl
+        )
+    }
+}
+
+public struct SourceControlRepositorySearchResult: Codable, Equatable, Sendable {
+    public let items: [SourceControlRepositorySearchItem]
+    public let nextPage: Int?
+}
+
 public struct SourceControlCloneResult: Codable, Equatable, Sendable {
     public let cwd: String
     public let remoteUrl: String

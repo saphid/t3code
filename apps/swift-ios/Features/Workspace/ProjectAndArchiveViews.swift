@@ -33,6 +33,7 @@ public struct AddProjectView: View {
     @State private var repositoryInput = ""
     @State private var destinationPath = "~/"
     @State private var resolvedRepository: SourceControlRepositoryInfo?
+    @State private var selectedRepositoryBadges: [String] = []
     @State private var didEditDestination = false
     @State private var pendingCloneRegistration: PendingCloneRegistration?
 
@@ -46,6 +47,16 @@ public struct AddProjectView: View {
     @State private var isDiscovering = false
     @State private var discoveryError: String?
     @State private var discoveryRequestID: UUID?
+
+    @State private var repositorySearchResults: [SourceControlRepositorySearchItem] = []
+    @State private var repositorySearchNextPage: Int?
+    @State private var repositorySearchError: String?
+    @State private var lastRepositorySearchQuery = ""
+    @State private var isSearchingRepositories = false
+    @State private var isRepositorySearchPaused = false
+    @State private var repositorySearchRequestID: UUID?
+    @State private var repositorySearchRequestedPage = 1
+    @State private var repositorySearchRetryID = UUID()
 
     @State private var isSubmitting = false
     @State private var errorMessage: String?
@@ -109,6 +120,8 @@ public struct AddProjectView: View {
         }
         .onChange(of: source) {
             resolvedRepository = nil
+            selectedRepositoryBadges = []
+            resetRepositorySearch()
             pendingCloneRegistration = nil
             cloneRequestID = nil
             updateSuggestedDestination()
@@ -116,6 +129,8 @@ public struct AddProjectView: View {
         }
         .onChange(of: repositoryInput) {
             resolvedRepository = nil
+            selectedRepositoryBadges = []
+            resetRepositorySearch()
             pendingCloneRegistration = nil
             cloneRequestID = nil
             updateSuggestedDestination()
@@ -126,6 +141,9 @@ public struct AddProjectView: View {
             resetEnvironmentState()
             await loadDirectory(browsePath, updateSelection: false)
             await loadDiscovery()
+        }
+        .task(id: repositorySearchTaskID) {
+            await searchGitHubRepositoriesAfterDebounce()
         }
     }
 
@@ -163,6 +181,17 @@ public struct AddProjectView: View {
         ProjectCreationPath.repositoryName(
             from: resolvedRepository?.nameWithOwner ?? repositoryInput
         )
+    }
+
+    private var repositorySearchTaskID: String {
+        [
+            selectedEnvironmentID ?? "",
+            source.rawValue,
+            repositoryInput,
+            isRepositorySearchPaused ? "paused" : "active",
+            String(repositorySearchRequestedPage),
+            repositorySearchRetryID.uuidString,
+        ].joined(separator: "|")
     }
 
     private var modePicker: some View {
@@ -282,7 +311,11 @@ public struct AddProjectView: View {
             }
 
             VStack(alignment: .leading, spacing: 8) {
-                sectionTitle(source == .url ? "Remote URL" : "Repository")
+                sectionTitle(
+                    source == .url
+                        ? "Remote URL"
+                        : source == .github ? "Search repositories" : "Repository"
+                )
                 TextField(source.prompt, text: $repositoryInput)
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
@@ -290,24 +323,35 @@ public struct AddProjectView: View {
                     .submitLabel(needsRepositoryLookup ? .next : .done)
                     .focused($focusedField, equals: .repository)
                     .onSubmit {
-                        Task {
-                            if needsRepositoryLookup {
-                                await resolveRepository(environment)
-                            } else {
-                                focusedField = .destination
+                        if source == .github, resolvedRepository == nil {
+                            repositorySearchRequestedPage = 1
+                            repositorySearchRetryID = UUID()
+                        } else {
+                            Task {
+                                if needsRepositoryLookup {
+                                    await resolveRepository(environment)
+                                } else {
+                                    focusedField = .destination
+                                }
                             }
                         }
                     }
                     .t3ProjectInput()
             }
 
+            if source == .github, resolvedRepository == nil {
+                githubRepositorySearch(environment)
+            }
+
             if let resolvedRepository {
-                repositorySummary(resolvedRepository)
+                repositorySummary(resolvedRepository, badges: selectedRepositoryBadges)
             }
 
             if needsRepositoryLookup {
-                primaryAction(label: "Find repository", icon: "magnifyingglass") {
-                    await resolveRepository(environment)
+                if source != .github {
+                    primaryAction(label: "Find repository", icon: "magnifyingglass") {
+                        await resolveRepository(environment)
+                    }
                 }
             } else {
                 VStack(alignment: .leading, spacing: 8) {
@@ -330,6 +374,108 @@ public struct AddProjectView: View {
                 }
             }
         }
+    }
+
+    @ViewBuilder
+    private func githubRepositorySearch(_ environment: FeatureEnvironment) -> some View {
+        let query = repositoryInput.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        if isSearchingRepositories {
+            HStack(spacing: 10) {
+                ProgressView().controlSize(.small)
+                Text("Searching repositories…")
+                    .font(T3Typography.supporting)
+                    .foregroundStyle(T3Colors.textTertiary)
+                Spacer()
+                Button("Cancel") {
+                    isRepositorySearchPaused = true
+                    isSearchingRepositories = false
+                    repositorySearchRequestID = nil
+                }
+                .font(T3Typography.supporting)
+            }
+        } else if let repositorySearchError {
+            VStack(alignment: .leading, spacing: 8) {
+                Label(repositorySearchError, systemImage: "exclamationmark.triangle")
+                    .font(T3Typography.supporting)
+                    .foregroundStyle(T3Colors.warning)
+                Button("Retry") {
+                    repositorySearchRequestedPage = 1
+                    isRepositorySearchPaused = false
+                    repositorySearchRetryID = UUID()
+                }
+                .font(T3Typography.control)
+                .disabled(query.isEmpty)
+            }
+        } else if !query.isEmpty,
+                  lastRepositorySearchQuery == query,
+                  repositorySearchResults.isEmpty {
+            ContentUnavailableView(
+                "No repositories found",
+                systemImage: "magnifyingglass",
+                description: Text("Try another name or enter a Git URL instead.")
+            )
+        }
+
+        if !repositorySearchResults.isEmpty {
+            LazyVStack(spacing: 0) {
+                ForEach(repositorySearchResults) { repository in
+                    Button {
+                        selectSearchedRepository(repository)
+                    } label: {
+                        repositorySearchRow(repository)
+                    }
+                    .buttonStyle(.plain)
+                    Divider().overlay(T3Colors.border)
+                }
+            }
+            .background(T3Colors.input, in: RoundedRectangle(cornerRadius: 12))
+            .clipShape(RoundedRectangle(cornerRadius: 12))
+            .overlay {
+                RoundedRectangle(cornerRadius: 12).stroke(T3Colors.border, lineWidth: 1)
+            }
+        }
+
+        if let nextPage = repositorySearchNextPage {
+            Button("Load more") {
+                repositorySearchRequestedPage = nextPage
+            }
+            .font(T3Typography.control)
+            .disabled(isSearchingRepositories)
+        }
+
+        Button("Enter a Git URL instead") {
+            source = .url
+            focusedField = .repository
+        }
+        .font(T3Typography.supporting)
+        .foregroundStyle(T3Colors.textSecondary)
+    }
+
+    private func repositorySearchRow(_ repository: SourceControlRepositorySearchItem) -> some View {
+        HStack(alignment: .top, spacing: 11) {
+            Image(systemName: "chevron.left.forwardslash.chevron.right")
+                .font(.body.weight(.semibold))
+                .foregroundStyle(T3Colors.textSecondary)
+                .frame(width: 24)
+            VStack(alignment: .leading, spacing: 6) {
+                Text(repository.nameWithOwner)
+                    .font(T3Typography.control)
+                    .foregroundStyle(T3Colors.textPrimary)
+                    .lineLimit(1)
+                if !repository.badges.isEmpty {
+                    Text(repository.badges.joined(separator: " · "))
+                        .font(T3Typography.supporting)
+                        .foregroundStyle(T3Colors.textSecondary)
+                }
+            }
+            Spacer(minLength: 8)
+            Image(systemName: "chevron.right")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(T3Colors.textTertiary)
+        }
+        .padding(12)
+        .contentShape(Rectangle())
     }
 
     private var sourcePicker: some View {
@@ -378,7 +524,11 @@ public struct AddProjectView: View {
         .buttonStyle(.plain)
     }
 
-    private func repositorySummary(_ repository: SourceControlRepositoryInfo) -> some View {
+    @ViewBuilder
+    private func repositorySummary(
+        _ repository: SourceControlRepositoryInfo,
+        badges: [String]
+    ) -> some View {
         HStack(alignment: .top, spacing: 11) {
             Image(systemName: sourceIcon(source))
                 .font(.body.weight(.semibold))
@@ -392,12 +542,24 @@ public struct AddProjectView: View {
                     .font(T3Typography.supporting.monospaced())
                     .foregroundStyle(T3Colors.textTertiary)
                     .lineLimit(2)
+                if !badges.isEmpty {
+                    Text(badges.joined(separator: " · "))
+                        .font(T3Typography.supporting)
+                        .foregroundStyle(T3Colors.textTertiary)
+                }
             }
             Spacer(minLength: 0)
             Image(systemName: "checkmark.circle.fill")
                 .foregroundStyle(T3Colors.success)
         }
         .padding(.vertical, 4)
+        Button("Choose another repository") {
+            resolvedRepository = nil
+            selectedRepositoryBadges = []
+            isRepositorySearchPaused = false
+            focusedField = .repository
+        }
+        .font(T3Typography.supporting)
     }
 
     private func folderBrowser(_ environment: FeatureEnvironment) -> some View {
@@ -594,6 +756,8 @@ public struct AddProjectView: View {
         discoveryRequestID = nil
         source = .url
         resolvedRepository = nil
+        selectedRepositoryBadges = []
+        resetRepositorySearch()
         pendingCloneRegistration = nil
         cloneRequestID = nil
         didEditDestination = false
@@ -602,6 +766,120 @@ public struct AddProjectView: View {
             ? "~/"
             : ProjectCreationPath.appending(repositoryName, to: "~/")
         errorMessage = nil
+    }
+
+    private func resetRepositorySearch() {
+        repositorySearchResults = []
+        repositorySearchNextPage = nil
+        repositorySearchError = nil
+        lastRepositorySearchQuery = ""
+        isSearchingRepositories = false
+        isRepositorySearchPaused = false
+        repositorySearchRequestID = nil
+        repositorySearchRequestedPage = 1
+    }
+
+    private func selectSearchedRepository(_ repository: SourceControlRepositorySearchItem) {
+        resolvedRepository = repository.repository
+        selectedRepositoryBadges = repository.badges
+        repositorySearchResults = []
+        repositorySearchNextPage = nil
+        repositorySearchError = nil
+        isRepositorySearchPaused = true
+        repositorySearchRequestID = nil
+        repositorySearchRequestedPage = 1
+        updateSuggestedDestination()
+        focusedField = .destination
+    }
+
+    private func searchGitHubRepositoriesAfterDebounce() async {
+        guard source == .github,
+              resolvedRepository == nil,
+              !isRepositorySearchPaused,
+              let environment = selectedEnvironment else {
+            return
+        }
+        let query = repositoryInput.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else {
+            repositorySearchResults = []
+            repositorySearchNextPage = nil
+            repositorySearchError = nil
+            lastRepositorySearchQuery = ""
+            return
+        }
+
+        let page = repositorySearchRequestedPage
+        if page == 1 {
+            do {
+                try await Task.sleep(for: ProjectRepositorySearch.debounceDuration)
+            } catch {
+                return
+            }
+        }
+        guard !Task.isCancelled else { return }
+        await searchGitHubRepositories(
+            environment,
+            query: query,
+            page: page,
+            appending: page > 1
+        )
+    }
+
+    private func searchGitHubRepositories(
+        _ environment: FeatureEnvironment,
+        query: String,
+        page: Int,
+        appending: Bool = false
+    ) async {
+        guard let projectClient else {
+            repositorySearchError = "Repository search is unavailable on this connection."
+            return
+        }
+
+        let requestID = UUID()
+        repositorySearchRequestID = requestID
+        repositorySearchError = nil
+        isSearchingRepositories = true
+        defer {
+            if repositorySearchRequestID == requestID {
+                isSearchingRepositories = false
+                repositorySearchRequestID = nil
+            }
+        }
+
+        do {
+            let result = try await projectClient.searchProjectRepositories(
+                environmentID: environment.id,
+                query: query,
+                page: page
+            )
+            guard repositorySearchRequestID == requestID,
+                  selectedEnvironmentID == environment.id,
+                  source == .github,
+                  repositoryInput.trimmingCharacters(in: .whitespacesAndNewlines) == query,
+                  resolvedRepository == nil else {
+                return
+            }
+
+            repositorySearchResults = ProjectRepositorySearch.mergedItems(
+                existing: repositorySearchResults,
+                page: result.items,
+                appending: appending
+            )
+            repositorySearchNextPage = result.nextPage
+            lastRepositorySearchQuery = query
+        } catch is CancellationError {
+            return
+        } catch {
+            guard repositorySearchRequestID == requestID,
+                  selectedEnvironmentID == environment.id,
+                  source == .github,
+                  repositoryInput.trimmingCharacters(in: .whitespacesAndNewlines) == query else {
+                return
+            }
+            repositorySearchError = projectErrorMessage(error)
+            lastRepositorySearchQuery = query
+        }
     }
 
     private func loadDiscovery() async {

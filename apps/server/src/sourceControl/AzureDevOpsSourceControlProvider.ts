@@ -81,6 +81,15 @@ export const make = Effect.gen(function* () {
 
   return SourceControlProvider.SourceControlProvider.of({
     kind: "azure-devops",
+    searchRepositories: (input) =>
+      Effect.fail(
+        new SourceControlProviderError({
+          provider: "azure-devops",
+          operation: "searchRepositories",
+          cwd: input.cwd,
+          detail: "Repository search is not available for Azure DevOps.",
+        }),
+      ),
     listChangeRequests: (input) => {
       const source = SourceControlProvider.sourceControlRefFromInput(input);
       return azure

@@ -20,6 +20,7 @@ T3 Code works with the platforms your team already uses:
 - Open the Command Palette (`Cmd/Ctrl + K`) → **Add Project**
 - Choose **GitHub repository**, **GitLab repository**, **Bitbucket repository**, **Azure DevOps repository**, or paste any **Git URL**
 - Enter the repository path (`owner/repo`, `group/project`, `workspace/repository`, or `project/repository`) or a full Git URL, pick a destination, and start coding
+- In the native iOS app, an authenticated GitHub account can search accessible repositories by name. Search results identify private, forked, archived, and organization repositories. Direct Git URL entry remains available.
 
 **Publish local projects to the cloud**
 

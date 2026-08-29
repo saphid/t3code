@@ -59,6 +59,56 @@ struct ProjectCreationModelsTests {
         #expect(ProjectCreationPath.defaultCloneURL(for: gitlab) == gitlab.sshUrl)
     }
 
+    @Test(.bug("https://github.com/saphid/t3code-personal/issues/239"))
+    func searchedRepositoryCarriesCloneIdentityAndVisibleClassifications() {
+        let repository = SourceControlRepositorySearchItem(
+            provider: .github,
+            nameWithOwner: "acme/t3code",
+            url: "https://github.com/acme/t3code",
+            sshUrl: "git@github.com:acme/t3code.git",
+            visibility: .privateRepository,
+            isFork: true,
+            isArchived: true,
+            ownerKind: .organization
+        )
+
+        #expect(repository.badges == ["Private", "Fork", "Archived", "Organization"])
+        #expect(ProjectCreationPath.defaultCloneURL(for: repository.repository) == repository.url)
+    }
+
+    @Test(.bug("https://github.com/saphid/t3code-personal/issues/239"))
+    func repositorySearchPagesAppendWithoutDuplicatingCloneIdentities() {
+        let first = SourceControlRepositorySearchItem(
+            provider: .github,
+            nameWithOwner: "acme/first",
+            url: "https://github.com/acme/first",
+            sshUrl: "git@github.com:acme/first.git",
+            visibility: .publicRepository,
+            isFork: false,
+            isArchived: false,
+            ownerKind: .organization
+        )
+        let second = SourceControlRepositorySearchItem(
+            provider: .github,
+            nameWithOwner: "octocat/second",
+            url: "https://github.com/octocat/second",
+            sshUrl: "git@github.com:octocat/second.git",
+            visibility: .privateRepository,
+            isFork: false,
+            isArchived: false,
+            ownerKind: .user
+        )
+
+        let merged = ProjectRepositorySearch.mergedItems(
+            existing: [first],
+            page: [first, second],
+            appending: true
+        )
+
+        #expect(ProjectRepositorySearch.debounceDuration == .milliseconds(300))
+        #expect(merged == [first, second])
+    }
+
     @Test
     func pathsRequireServerAbsoluteOrHomeRelativeInput() throws {
         #expect(try ProjectCreationPath.validated(" ~/work/t3code ").get() == "~/work/t3code")

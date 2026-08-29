@@ -32,6 +32,7 @@ function makeProvider(
 
   return {
     kind: "github",
+    searchRepositories: () => unsupported("searchRepositories"),
     listChangeRequests: () => unsupported("listChangeRequests"),
     getChangeRequest: () => unsupported("getChangeRequest"),
     createChangeRequest: () => unsupported("createChangeRequest"),
@@ -42,6 +43,86 @@ function makeProvider(
     ...overrides,
   };
 }
+
+it.effect("searches a requested GitHub page and returns clone-ready identities", () => {
+  const calls: Array<{ cwd: string; query: string; page: number }> = [];
+  const provider = makeProvider({
+    searchRepositories: (input) =>
+      Effect.sync(() => {
+        calls.push(input);
+        return {
+          items: [
+            {
+              provider: "github" as const,
+              ...CLONE_URLS,
+              visibility: "private" as const,
+              isFork: false,
+              isArchived: true,
+              ownerKind: "organization" as const,
+            },
+          ],
+          hasNextPage: true,
+        };
+      }),
+  });
+
+  return Effect.gen(function* () {
+    const service = yield* SourceControlRepositoryService.SourceControlRepositoryService;
+    const result = yield* service.searchRepositories({
+      provider: "github",
+      query: " t3code ",
+      page: 2,
+      cwd: "/workspace",
+    });
+
+    assert.deepStrictEqual(calls, [{ cwd: "/workspace", query: "t3code", page: 2 }]);
+    assert.deepStrictEqual(result, {
+      items: [
+        {
+          provider: "github",
+          ...CLONE_URLS,
+          visibility: "private",
+          isFork: false,
+          isArchived: true,
+          ownerKind: "organization",
+        },
+      ],
+      nextPage: 3,
+    });
+  }).pipe(Effect.provide(makeLayer({ provider })));
+});
+
+it.effect("returns safe GitHub search recovery without echoing a private query", () => {
+  const provider = makeProvider({
+    searchRepositories: (input) =>
+      Effect.fail(
+        new SourceControlProviderError({
+          provider: "github",
+          operation: "searchRepositories",
+          cwd: input.cwd,
+          detail: "GitHub CLI is not authenticated. Run `gh auth login` and retry.",
+        }),
+      ),
+  });
+
+  return Effect.gen(function* () {
+    const service = yield* SourceControlRepositoryService.SourceControlRepositoryService;
+    const error = yield* service
+      .searchRepositories({
+        provider: "github",
+        query: "private-acquisition-codename",
+        page: 1,
+        cwd: "/workspace",
+      })
+      .pipe(Effect.flip);
+
+    assert.strictEqual(
+      error.detail,
+      "GitHub CLI is not authenticated. Run `gh auth login` and retry.",
+    );
+    assert.notInclude(error.message, "private-acquisition-codename");
+  }).pipe(Effect.provide(makeLayer({ provider })));
+});
 
 function processOutput(): GitVcsDriver.ExecuteGitResult {
   return {

@@ -966,6 +966,21 @@ public actor T3Client {
         )
     }
 
+    public func searchRepositories(
+        query: String,
+        page: Int
+    ) async throws -> SourceControlRepositorySearchResult {
+        try await rpc.request(
+            RPCMethod.sourceControlSearch.rawValue,
+            payload: .object([
+                "provider": .string(SourceControlProviderKind.github.rawValue),
+                "query": .string(query),
+                "page": .number(Double(page)),
+            ]),
+            as: SourceControlRepositorySearchResult.self
+        )
+    }
+
     public func discoverSourceControl() async throws -> SourceControlDiscoveryResult {
         try await rpc.request(
             RPCMethod.serverDiscoverSourceControl.rawValue,
@@ -1591,6 +1606,7 @@ public enum RPCMethod: String, Sendable {
     case vcsInitialize = "vcs.init"
     case gitRunStackedAction = "git.runStackedAction"
     case sourceControlLookup = "sourceControl.lookupRepository"
+    case sourceControlSearch = "sourceControl.searchRepositories"
     case sourceControlClone = "sourceControl.cloneRepository"
     case sourceControlPublish = "sourceControl.publishRepository"
     case reviewDiffPreview = "review.getDiffPreview"

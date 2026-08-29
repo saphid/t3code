@@ -7,6 +7,7 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 
 import {
+  SourceControlProviderError,
   SourceControlRepositoryError,
   type SourceControlCloneRepositoryInput,
   type SourceControlCloneRepositoryResult,
@@ -17,12 +18,15 @@ import {
   type SourceControlRepositoryCloneUrls,
   type SourceControlRepositoryInfo,
   type SourceControlRepositoryLookupInput,
+  type SourceControlRepositorySearchInput,
+  type SourceControlRepositorySearchResult,
 } from "@t3tools/contracts";
 
 import { ServerConfig } from "../config.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as SourceControlProviderRegistry from "./SourceControlProviderRegistry.ts";
 const isSourceControlRepositoryError = Schema.is(SourceControlRepositoryError);
+const isSourceControlProviderError = Schema.is(SourceControlProviderError);
 
 export class SourceControlRepositoryService extends Context.Service<
   SourceControlRepositoryService,
@@ -30,6 +34,9 @@ export class SourceControlRepositoryService extends Context.Service<
     readonly lookupRepository: (
       input: SourceControlRepositoryLookupInput,
     ) => Effect.Effect<SourceControlRepositoryInfo, SourceControlRepositoryError>;
+    readonly searchRepositories: (
+      input: SourceControlRepositorySearchInput,
+    ) => Effect.Effect<SourceControlRepositorySearchResult, SourceControlRepositoryError>;
     readonly cloneRepository: (
       input: SourceControlCloneRepositoryInput,
     ) => Effect.Effect<SourceControlCloneRepositoryResult, SourceControlRepositoryError>;
@@ -125,6 +132,51 @@ export const make = Effect.gen(function* () {
     });
     return toRepositoryInfo(providerKind, urls);
   });
+
+  const searchRepositories = Effect.fn("SourceControlRepositoryService.searchRepositories")(
+    function* (input: SourceControlRepositorySearchInput) {
+      const provider = yield* providers.get(input.provider).pipe(
+        Effect.mapError(
+          (cause) =>
+            new SourceControlRepositoryError({
+              operation: "searchRepositories",
+              provider: input.provider,
+              detail: isSourceControlProviderError(cause)
+                ? cause.detail
+                : "GitHub repositories could not be searched.",
+              cause,
+            }),
+        ),
+      );
+      const result = yield* provider
+        .searchRepositories({
+          cwd: input.cwd ?? config.cwd,
+          query: input.query.trim(),
+          page: input.page,
+        })
+        .pipe(
+          Effect.mapError(
+            (cause) =>
+              new SourceControlRepositoryError({
+                operation: "searchRepositories",
+                provider: input.provider,
+                detail: isSourceControlProviderError(cause)
+                  ? cause.detail
+                  : "GitHub repositories could not be searched.",
+                cause,
+              }),
+          ),
+        );
+
+      return {
+        items: result.items.map((repository) => ({
+          ...repository,
+          provider: input.provider,
+        })),
+        nextPage: result.hasNextPage ? input.page + 1 : null,
+      };
+    },
+  );
 
   const normalizeDestinationPath = Effect.fn("SourceControlRepositoryService.normalizeDestination")(
     function* (destinationPath: string) {
@@ -276,6 +328,7 @@ export const make = Effect.gen(function* () {
   );
 
   return SourceControlRepositoryService.of({
+    searchRepositories,
     lookupRepository: (input) =>
       lookupRepository(input).pipe(mapRepositoryError("lookupRepository", input.provider)),
     cloneRepository: (input) =>

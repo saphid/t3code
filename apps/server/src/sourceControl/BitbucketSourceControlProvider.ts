@@ -35,6 +35,15 @@ export const make = Effect.gen(function* () {
 
   return SourceControlProvider.SourceControlProvider.of({
     kind: "bitbucket",
+    searchRepositories: (input) =>
+      Effect.fail(
+        new SourceControlProviderError({
+          provider: "bitbucket",
+          operation: "searchRepositories",
+          cwd: input.cwd,
+          detail: "Repository search is not available for Bitbucket.",
+        }),
+      ),
     listChangeRequests: (input) => {
       const source = SourceControlProvider.sourceControlRefFromInput(input);
       return bitbucket

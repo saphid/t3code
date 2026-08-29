@@ -105,6 +105,15 @@ export const make = Effect.gen(function* () {
 
   return SourceControlProvider.SourceControlProvider.of({
     kind: "gitlab",
+    searchRepositories: (input) =>
+      Effect.fail(
+        new SourceControlProviderError({
+          provider: "gitlab",
+          operation: "searchRepositories",
+          cwd: input.cwd,
+          detail: "Repository search is not available for GitLab.",
+        }),
+      ),
     listChangeRequests: (input) => {
       const source = SourceControlProvider.sourceControlRefFromInput(input);
       return gitlab

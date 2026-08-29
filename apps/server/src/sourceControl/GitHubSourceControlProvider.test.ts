@@ -30,6 +30,42 @@ function makeProvider(github: Partial<GitHubCli.GitHubCli["Service"]>) {
   );
 }
 
+it.effect("maps GitHub repository search into clone-ready provider results", () =>
+  Effect.gen(function* () {
+    let requestedPerPage = 0;
+    const provider = yield* makeProvider({
+      searchRepositories: (input) => {
+        requestedPerPage = input.perPage;
+        return Effect.succeed({
+          items: [
+            {
+              nameWithOwner: "acme/t3code",
+              url: "https://github.com/acme/t3code",
+              sshUrl: "git@github.com:acme/t3code.git",
+              visibility: "private",
+              isFork: false,
+              isArchived: false,
+              ownerKind: "organization",
+            },
+          ],
+          hasNextPage: true,
+        });
+      },
+    });
+
+    const result = yield* provider.searchRepositories({
+      cwd: "/repo",
+      query: "t3code",
+      page: 1,
+    });
+
+    assert.strictEqual(requestedPerPage, 20);
+    assert.strictEqual(result.items[0]?.provider, "github");
+    assert.strictEqual(result.items[0]?.nameWithOwner, "acme/t3code");
+    assert.strictEqual(result.hasNextPage, true);
+  }),
+);
+
 it.effect("maps GitHub PR summaries into provider-neutral change requests", () =>
   Effect.gen(function* () {
     const provider = yield* makeProvider({
