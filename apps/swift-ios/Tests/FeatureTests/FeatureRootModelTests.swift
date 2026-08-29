@@ -1556,6 +1556,78 @@ struct FeatureRootModelTests {
         #expect(model.details[thread.id]?.messages.last?.state == .complete)
     }
 
+    @Test(arguments: ProviderSwitchRecovery.allCases)
+    func failedProviderInstanceSwitchLeavesRetryAndReselectionActionable(
+        recovery: ProviderSwitchRecovery
+    ) async {
+        let source = FeatureSelection(providerID: "codex", modelID: "gpt-5.6-sol")
+        let target = FeatureSelection(providerID: "codex-a2", modelID: "gpt-5.6-sol")
+        let thread = FeatureThread(
+            id: "thread-provider-switch",
+            projectID: "project-1",
+            environmentID: "environment-1",
+            title: "Provider switch",
+            providerID: source.providerID,
+            modelID: source.modelID
+        )
+        let priorMessage = FeatureMessage(
+            id: "message-before-switch",
+            role: .assistant,
+            text: "Prior thread state"
+        )
+        let client = FeatureClientStub()
+        client.snapshot = FeatureSnapshot(
+            connection: .init(state: .connected),
+            environments: [
+                .init(
+                    id: "environment-1",
+                    name: "Studio",
+                    endpoint: "https://studio.example",
+                    isActive: true,
+                    connectionState: .connected
+                ),
+            ],
+            threads: [thread]
+        )
+        client.threadDetail = FeatureThreadDetail(
+            thread: thread,
+            messages: [priorMessage]
+        )
+        client.sendMessageError = FeatureCapabilityUnavailable(
+            "thread already has an active writer"
+        )
+        let model = testRootModel(client: client)
+        await model.reload()
+        _ = await model.detail(for: thread.id)
+
+        let firstAttempt = await model.sendMessage(
+            threadID: thread.id,
+            text: "Continue after switching",
+            selection: target
+        )
+
+        #expect(firstAttempt == false)
+        #expect(client.sendMessageCallCount == 1)
+        #expect(client.sentSelections == [target])
+        #expect(model.details[thread.id]?.messages == [priorMessage])
+
+        client.sendMessageError = nil
+        model.errorMessage = nil
+        let recoverySelection = recovery == .retryTarget ? target : source
+        let recovered = await model.sendMessage(
+            threadID: thread.id,
+            text: "Continue after switching",
+            selection: recoverySelection
+        )
+
+        #expect(recovered)
+        #expect(client.sendMessageCallCount == 2)
+        #expect(client.sentSelections == [target, recoverySelection])
+        #expect(model.details[thread.id]?.messages.first == priorMessage)
+        #expect(model.details[thread.id]?.messages.last?.text == "Continue after switching")
+        #expect(model.details[thread.id]?.messages.last?.state == .complete)
+    }
+
     @Test
     func loadingEarlierTurnsPrependsHistoryAndClearsTheCursor() async {
         let client = FeatureClientStub()
@@ -2980,6 +3052,11 @@ private func orchestrationThread(
     )
 }
 
+private enum ProviderSwitchRecovery: CaseIterable, Sendable {
+    case retryTarget
+    case reselectSource
+}
+
 @MainActor
 private final class FeatureClientStub: FeatureClient, T3ConnectCapable {
     private let eventStream: AsyncStream<FeatureEvent>
@@ -2997,6 +3074,7 @@ private final class FeatureClientStub: FeatureClient, T3ConnectCapable {
     var pairEndpoint: String?
     var pairToken: String?
     var sentText: String?
+    var sentSelections: [FeatureSelection?] = []
     var startedPrompt: String?
     var startedAttachments: [FeatureUploadAttachment] = []
     var startedWorkspaceMode: FeatureWorkspaceMode?
@@ -3191,6 +3269,7 @@ private final class FeatureClientStub: FeatureClient, T3ConnectCapable {
 
     func sendMessage(threadID: String, text: String, selection: FeatureSelection?) async throws {
         sendMessageCallCount += 1
+        sentSelections.append(selection)
         try beforeSendMessage?()
         if let sendMessageError { throw sendMessageError }
         sentText = text
