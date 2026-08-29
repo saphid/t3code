@@ -27,6 +27,8 @@ public struct ThreadDetailView: View {
     @State private var didRestoreDraft = false
     @State private var draftSaveTask: Task<Void, Never>?
     @State private var toolSurface: FeatureThreadToolSurface?
+    @State private var previewedAttachment: FeatureMessageAttachment?
+    @State private var controlState = FeatureThreadControlState()
     // Plain state, not `FocusState`: the composer's UIKit text view owns
     // focus and mirrors it through this binding, because SwiftUI drops
     // writes to a `FocusState` no `.focused()` view registers with.
@@ -75,6 +77,9 @@ public struct ThreadDetailView: View {
             }
         }
         .task(id: thread.id) {
+            previewedAttachment = nil
+            controlState.reset()
+            isSending = false
             let restoreBaseline = composerDraft
             let restoreKey = draftKey
             isLoading = detail == nil
@@ -91,6 +96,8 @@ public struct ThreadDetailView: View {
             }
         }
         .onDisappear {
+            previewedAttachment = nil
+            controlState.reset()
             model.releaseThread(thread.id)
             persistDraftBeforeLeaving()
         }
@@ -123,6 +130,9 @@ public struct ThreadDetailView: View {
             .presentationDetents([.large])
             .presentationDragIndicator(.visible)
             .t3CodeSizing(steps: codeSizeSteps)
+        }
+        .fullScreenCover(item: $previewedAttachment) { attachment in
+            FeatureAttachmentPreview(attachment: attachment)
         }
         .alert("Message not sent", isPresented: $sendFailed) {
             // Refocusing happens here rather than when the send fails: the
@@ -414,6 +424,7 @@ public struct ThreadDetailView: View {
                     onLoadEarlier: {
                         Task { await model.loadEarlierTurns(for: thread.id) }
                     },
+                    onPreviewAttachment: { previewedAttachment = $0 },
                     onDismissKeyboard: dismissKeyboard
                 )
             }
@@ -430,9 +441,7 @@ public struct ThreadDetailView: View {
                 isWorking: detail.thread.state == .working || detail.thread.state == .queued,
                 focused: $composerFocused,
                 onSend: send,
-                onStop: {
-                    Task { await model.cancelTurn(threadID: thread.id) }
-                },
+                onStop: stop,
                 pendingApprovals: detail.approvals,
                 pendingUserInputs: detail.userInputs,
                 isResolvingRequest: model.isPerformingAction,
@@ -529,13 +538,20 @@ public struct ThreadDetailView: View {
             || !pendingAttachments.isEmpty else {
             return
         }
+        guard let controlToken = controlState.begin(.send) else { return }
+        let submissionDraftKey = draftKey
         if pendingAttachments.isEmpty,
            let command = FeatureCodexFeedbackCommand.parse(message),
            let providerID = currentThread.providerID,
            threadProviders.first(where: { $0.id == providerID })?.driver == "codex"
                || currentThread.providerName?.lowercased() == "codex",
            let submitter = model.client as? any FeatureFeedbackSubmitting {
-            sendFeedback(command, message: message, submitter: submitter)
+            sendFeedback(
+                command,
+                message: message,
+                submitter: submitter,
+                controlToken: controlToken
+            )
             return
         }
         draftSaveTask?.cancel()
@@ -552,12 +568,14 @@ public struct ThreadDetailView: View {
                 attachments: pendingAttachments
                 )
             )
+            guard controlState.finish(controlToken) else { return }
+            isSending = false
             if sent {
                 let followUpDraft = composerDraft
                 if followUpDraft.text.isEmpty && followUpDraft.attachments.isEmpty {
-                    try? await draftStore.removeDraft(for: draftKey)
+                    try? await draftStore.removeDraft(for: submissionDraftKey)
                 } else {
-                    try? await draftStore.setDraft(followUpDraft, for: draftKey)
+                    try? await draftStore.setDraft(followUpDraft, for: submissionDraftKey)
                 }
             } else {
                 let currentDraft = draft
@@ -573,10 +591,17 @@ public struct ThreadDetailView: View {
                 }
                 sendFailed = true
             }
-            isSending = false
             if !sent {
                 persistDraftImmediately()
             }
+        }
+    }
+
+    private func stop() {
+        guard let controlToken = controlState.begin(.stop) else { return }
+        Task {
+            await model.cancelTurn(threadID: thread.id)
+            controlState.finish(controlToken)
         }
     }
 
@@ -589,9 +614,11 @@ public struct ThreadDetailView: View {
     private func sendFeedback(
         _ command: FeatureCodexFeedbackCommand,
         message: String,
-        submitter: any FeatureFeedbackSubmitting
+        submitter: any FeatureFeedbackSubmitting,
+        controlToken: FeatureThreadControlState.Token
     ) {
         guard detail?.messages.isEmpty == false else {
+            controlState.finish(controlToken)
             feedbackAlertMessage = "Send a message before you submit feedback."
             return
         }
@@ -616,22 +643,26 @@ public struct ThreadDetailView: View {
         draft = ""
         composerFocused = false
         isSending = true
+        let feedbackDraftKey = draftKey
 
         Task {
-            defer { isSending = false }
             do {
                 let identifier = try await submitter.submitCodexFeedback(
                     threadID: thread.id,
                     reason: command.reason
                 )
+                guard controlState.finish(controlToken) else { return }
+                isSending = false
                 updateFeedbackMessage(
                     id: assistantID,
                     text: "Feedback sent to OpenAI.\n\nThread ID: `\(identifier)`"
                 )
                 feedbackIdentifier = identifier
                 feedbackAlertMessage = "Thread ID: \(identifier)"
-                try? await draftStore.removeDraft(for: draftKey)
+                try? await draftStore.removeDraft(for: feedbackDraftKey)
             } catch {
+                guard controlState.finish(controlToken) else { return }
+                isSending = false
                 let detail = error.localizedDescription
                 updateFeedbackMessage(
                     id: assistantID,
@@ -825,6 +856,7 @@ private struct FeatureTranscriptCollectionView: UIViewRepresentable {
     let canLoadEarlier: Bool
     let isLoadingEarlier: Bool
     let onLoadEarlier: () -> Void
+    let onPreviewAttachment: (FeatureMessageAttachment) -> Void
     let onDismissKeyboard: () -> Void
 
     func makeCoordinator() -> Coordinator {
@@ -862,6 +894,7 @@ private struct FeatureTranscriptCollectionView: UIViewRepresentable {
             canLoadEarlier: canLoadEarlier,
             isLoadingEarlier: isLoadingEarlier,
             onLoadEarlier: onLoadEarlier,
+            onPreviewAttachment: onPreviewAttachment,
             onDismissKeyboard: onDismissKeyboard,
             in: collectionView
         )
@@ -921,6 +954,7 @@ private struct FeatureTranscriptCollectionView: UIViewRepresentable {
         private var currentIsLoadingEarlier = false
         private var markdownPrefetches: [String: MarkdownPrefetch] = [:]
         private var onLoadEarlier: (() -> Void)?
+        private var onPreviewAttachment: ((FeatureMessageAttachment) -> Void)?
         private var onDismissKeyboard: (() -> Void)?
         private let timestampReveal = FeatureTimestampRevealState()
         private weak var collectionView: UICollectionView?
@@ -990,6 +1024,9 @@ private struct FeatureTranscriptCollectionView: UIViewRepresentable {
                     FeatureTimestampRevealMessageView(
                         message: message,
                         imageContext: self.currentImageContext,
+                        onPreviewAttachment: { [weak self] attachment in
+                            self?.onPreviewAttachment?(attachment)
+                        },
                         reveal: self.timestampReveal
                     )
                         .frame(maxWidth: .infinity, alignment: .leading)
@@ -1108,11 +1145,13 @@ private struct FeatureTranscriptCollectionView: UIViewRepresentable {
             canLoadEarlier: Bool,
             isLoadingEarlier: Bool,
             onLoadEarlier: @escaping () -> Void,
+            onPreviewAttachment: @escaping (FeatureMessageAttachment) -> Void,
             onDismissKeyboard: @escaping () -> Void,
             in collectionView: UICollectionView
         ) {
             guard let dataSource else { return }
             self.onLoadEarlier = onLoadEarlier
+            self.onPreviewAttachment = onPreviewAttachment
             self.onDismissKeyboard = onDismissKeyboard
 
             let threadChanged = currentThreadID != threadID
@@ -1714,13 +1753,18 @@ private final class FeatureTimestampRevealState: ObservableObject {
 private struct FeatureTimestampRevealMessageView: View {
     let message: FeatureMessage
     let imageContext: MarkdownImageContext?
+    let onPreviewAttachment: (FeatureMessageAttachment) -> Void
     @ObservedObject var reveal: FeatureTimestampRevealState
 
     var body: some View {
         let revealWidth = reveal.width
         if FeatureMessageTimestampMetadata.isEligible(message) {
             let requestedAnchorY = reveal.anchorY(for: message.id)
-            FeatureMessageView(message: message, imageContext: imageContext)
+            FeatureMessageView(
+                message: message,
+                imageContext: imageContext,
+                onPreviewAttachment: onPreviewAttachment
+            )
                 .overlay {
                     GeometryReader { geometry in
                         Text(message.createdAt, format: .dateTime.hour().minute())
@@ -1748,7 +1792,11 @@ private struct FeatureTimestampRevealMessageView: View {
                 }
                 .offset(x: -revealWidth)
         } else {
-            FeatureMessageView(message: message, imageContext: imageContext)
+            FeatureMessageView(
+                message: message,
+                imageContext: imageContext,
+                onPreviewAttachment: onPreviewAttachment
+            )
                 .offset(x: -revealWidth)
         }
     }
@@ -2335,6 +2383,7 @@ private enum FeatureAttachmentThumbnailError: Error {
 struct FeatureMessageView: View {
     let message: FeatureMessage
     var imageContext: MarkdownImageContext? = nil
+    var onPreviewAttachment: (FeatureMessageAttachment) -> Void = { _ in }
 
     var body: some View {
         switch message.role {
@@ -2342,7 +2391,10 @@ struct FeatureMessageView: View {
             HStack {
                 Spacer(minLength: 44)
                 VStack(alignment: .leading, spacing: 10) {
-                    FeatureMessageAttachmentsView(attachments: message.attachments)
+                    FeatureMessageAttachmentsView(
+                        attachments: message.attachments,
+                        onPreviewAttachment: onPreviewAttachment
+                    )
                     if !message.text.isEmpty {
                         MarkdownMessageView(
                             message.text,
@@ -2378,7 +2430,10 @@ struct FeatureMessageView: View {
                     .font(T3Typography.supportingStrong)
                     .foregroundStyle(T3Colors.statusRunning)
                 }
-                FeatureMessageAttachmentsView(attachments: message.attachments)
+                FeatureMessageAttachmentsView(
+                    attachments: message.attachments,
+                    onPreviewAttachment: onPreviewAttachment
+                )
                 if !message.text.isEmpty {
                     MarkdownMessageView(
                         message.text,
@@ -2448,7 +2503,7 @@ private struct FeatureMessageTimestampAccessibilityModifier: ViewModifier {
 
 private struct FeatureMessageAttachmentsView: View {
     let attachments: [FeatureMessageAttachment]
-    @State private var previewedAttachment: FeatureMessageAttachment?
+    let onPreviewAttachment: (FeatureMessageAttachment) -> Void
 
     var body: some View {
         if !attachments.isEmpty {
@@ -2513,6 +2568,7 @@ private struct FeatureMessageAttachmentsView: View {
                     .overlay {
                         RoundedRectangle(cornerRadius: 8)
                             .stroke(T3Colors.border, lineWidth: 1)
+                            .allowsHitTesting(false)
                     }
                     .accessibilityElement(children: .combine)
                     .accessibilityLabel(
@@ -2534,19 +2590,16 @@ private struct FeatureMessageAttachmentsView: View {
                     )
                     .accessibilityAction {
                         if attachment.mimeType.hasPrefix("image/"), attachment.url != nil {
-                            previewedAttachment = attachment
+                            onPreviewAttachment(attachment)
                         }
                     }
                     .contentShape(Rectangle())
                     .onTapGesture {
                         if attachment.mimeType.hasPrefix("image/"), attachment.url != nil {
-                            previewedAttachment = attachment
+                            onPreviewAttachment(attachment)
                         }
                     }
                 }
-            }
-            .fullScreenCover(item: $previewedAttachment) { attachment in
-                FeatureAttachmentPreview(attachment: attachment)
             }
         }
     }
@@ -2571,6 +2624,7 @@ private struct FeatureMessageAttachmentsView: View {
 
 private struct FeatureAttachmentPreview: View {
     @SwiftUI.Environment(\.dismiss) private var dismiss
+    @SwiftUI.Environment(\.openURL) private var openURL
     let attachment: FeatureMessageAttachment
 
     var body: some View {
@@ -2601,8 +2655,15 @@ private struct FeatureAttachmentPreview: View {
             .navigationTitle(attachment.name)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Done") { dismiss() }
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Close") { dismiss() }
+                        .accessibilityIdentifier("attachment-preview-close")
+                }
+                if let url = attachment.url {
+                    ToolbarItem(placement: .confirmationAction) {
+                        Button("Open") { openURL(url) }
+                            .accessibilityIdentifier("attachment-preview-open")
+                    }
                 }
             }
             .t3NavigationChrome()

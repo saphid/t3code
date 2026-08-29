@@ -191,6 +191,7 @@ public final class FeatureRootModel {
     private var outboxDrainTask: Task<Void, Never>?
     private var outboxRetryAttempt = 0
     private var outboxGeneration: UInt64 = 0
+    private var cancellingThreadIDs: Set<String> = []
     private var titleRegenerationTracker = FeatureTitleRegenerationTracker()
     private var titleRegenerationRecoveryTasks: [String: Task<Void, Never>] = [:]
     private let titleRegenerationRefreshTimeout: Duration
@@ -883,6 +884,9 @@ public final class FeatureRootModel {
     }
 
     public func cancelTurn(threadID: String) async {
+        guard cancellingThreadIDs.insert(threadID).inserted else { return }
+        defer { cancellingThreadIDs.remove(threadID) }
+
         if pendingSubmissionsByID.values.contains(where: {
             $0.threadID == threadID && $0.creation != nil
         }) {

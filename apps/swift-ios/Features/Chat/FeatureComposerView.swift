@@ -201,6 +201,7 @@ struct FeatureComposerView: View {
         .overlay {
             composerShape
                 .stroke(T3Colors.inputBorder, lineWidth: 1)
+                .allowsHitTesting(false)
         }
         .clipShape(composerShape)
         .modifier(

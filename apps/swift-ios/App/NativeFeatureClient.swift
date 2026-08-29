@@ -49,6 +49,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
     private let aggregateRefreshInterval: Duration
     private let environmentShellTimeoutInterval: TimeInterval
     private let aggregateEnvironmentLoader: @Sendable (EnvironmentRuntime) async throws -> [Environment]
+    private let detailReductionWorker = NativeThreadDetailReductionWorker()
     private let stream: AsyncStream<FeatureEvent>
     private let continuation: AsyncStream<FeatureEvent>.Continuation
 
@@ -3621,7 +3622,12 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
                           ) else {
                         break
                     }
-                    self.consumeDetailStreamItem(item, route: route)
+                    await self.consumeDetailStreamItem(
+                        item,
+                        route: route,
+                        streamGeneration: streamGeneration,
+                        sessionGeneration: sessionGeneration
+                    )
                 }
             } catch is CancellationError {
                 return
@@ -3639,8 +3645,10 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
 
     private func consumeDetailStreamItem(
         _ item: ThreadStreamItem,
-        route: NativeThreadRoute
-    ) {
+        route: NativeThreadRoute,
+        streamGeneration: Int,
+        sessionGeneration: Int
+    ) async {
         switch item {
         case .synchronized:
             return
@@ -3657,7 +3665,21 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
                 scheduleDetailRefresh(threadID: route.uiID, client: route.client, force: true)
                 return
             }
-            let reduction = NativeThreadDetailReducer.apply(event, to: current)
+            let reduction = await detailReductionWorker.apply(event, to: current)
+            guard NativeThreadDetailReductionApplicability.isCurrent(
+                isCancelled: Task.isCancelled,
+                streamGeneration: streamGeneration,
+                currentStreamGeneration: detailStreamGeneration,
+                threadID: route.uiID,
+                activeThreadID: activeThreadID,
+                sessionIsCurrent: isKnownClient(
+                    route.client,
+                    environmentID: route.environmentID,
+                    generation: sessionGeneration
+                )
+            ) else {
+                return
+            }
             if reduction.sequence < 0 {
                 threadHistoryEpoch &+= 1
                 pendingOlderThreadPage = nil
@@ -6175,7 +6197,7 @@ extension FeatureDeviceSession {
     }
 }
 
-enum NativeDetailRenderMutation: Equatable {
+enum NativeDetailRenderMutation: Equatable, Sendable {
     case full
     case message(OrchestrationMessage)
     case activity(OrchestrationActivity)
@@ -6270,13 +6292,13 @@ private struct NativeWorkLogAccumulator {
     }
 }
 
-enum NativeThreadDetailReductionResult: Equatable {
+enum NativeThreadDetailReductionResult: Equatable, Sendable {
     case updated(OrchestrationThread)
     case unchanged
     case refresh
 }
 
-struct NativeThreadDetailReduction: Equatable {
+struct NativeThreadDetailReduction: Equatable, Sendable {
     let sequence: Int
     let result: NativeThreadDetailReductionResult
     let renderMutation: NativeDetailRenderMutation
@@ -6625,6 +6647,33 @@ enum NativeThreadDetailReducer {
     private static func boolValue(_ value: JSONValue?) -> Bool? {
         guard case let .bool(boolean)? = value else { return nil }
         return boolean
+    }
+}
+
+/// Serializes pure transcript reduction away from `MainActor` so a ready
+/// stream backlog cannot monopolize the executor that handles touch input.
+actor NativeThreadDetailReductionWorker {
+    func apply(
+        _ event: JSONValue,
+        to thread: OrchestrationThread
+    ) -> NativeThreadDetailReduction {
+        NativeThreadDetailReducer.apply(event, to: thread)
+    }
+}
+
+enum NativeThreadDetailReductionApplicability {
+    static func isCurrent(
+        isCancelled: Bool,
+        streamGeneration: Int,
+        currentStreamGeneration: Int,
+        threadID: String,
+        activeThreadID: String?,
+        sessionIsCurrent: Bool
+    ) -> Bool {
+        !isCancelled
+            && streamGeneration == currentStreamGeneration
+            && threadID == activeThreadID
+            && sessionIsCurrent
     }
 }
 
