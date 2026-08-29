@@ -282,16 +282,14 @@ private struct MarkdownBlockView: View, Equatable {
         case let .unorderedList(items):
             MarkdownListView(
                 items: items,
-                start: nil,
                 selectionContext: selectionContext,
                 imageContext: imageContext,
                 textColor: textColor
             )
 
-        case let .orderedList(start, items):
+        case let .orderedList(items):
             MarkdownListView(
                 items: items,
-                start: start,
                 selectionContext: selectionContext,
                 imageContext: imageContext,
                 textColor: textColor
@@ -422,18 +420,18 @@ private struct MarkdownTableView: View {
 
 private struct MarkdownListView: View {
     let items: [MarkdownRenderedListItem]
-    let start: Int?
     let selectionContext: MarkdownSelectionContext
     let imageContext: MarkdownImageContext?
     let textColor: MarkdownTextColor
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        Grid(alignment: .leading, horizontalSpacing: 8, verticalSpacing: 8) {
             ForEach(items.indices, id: \.self) { offset in
                 let item = items[offset]
-                HStack(alignment: .top, spacing: 8) {
-                    marker(for: item, offset: offset)
-                        .frame(width: 24, height: 24, alignment: .trailing)
+                GridRow(alignment: .top) {
+                    marker(for: item)
+                        .frame(minWidth: 24, minHeight: 24, alignment: .trailing)
+                        .gridCellAnchor(.trailing)
                     MarkdownBlocksView(
                         blocks: item.blocks,
                         selectionContext: selectionContext,
@@ -448,7 +446,7 @@ private struct MarkdownListView: View {
     }
 
     @ViewBuilder
-    private func marker(for item: MarkdownRenderedListItem, offset: Int) -> some View {
+    private func marker(for item: MarkdownRenderedListItem) -> some View {
         if let task = item.task {
             Image(systemName: task == .complete ? "checkmark.square.fill" : "square")
                 .font(T3Typography.control)
@@ -456,11 +454,11 @@ private struct MarkdownListView: View {
                     task == .complete ? T3Colors.success : T3Colors.textSecondary
                 )
                 .accessibilityLabel(task == .complete ? "Completed" : "Not completed")
-        } else if let start {
-            Text("\(start + offset).")
+        } else if let marker = item.orderedMarkerText {
+            Text(marker)
                 .font(T3Typography.supporting.monospaced())
                 .foregroundStyle(T3Colors.textSecondary)
-                .accessibilityLabel("Item \(start + offset)")
+                .accessibilityLabel(item.orderedMarkerAccessibilityLabel ?? marker)
         } else {
             Text("•")
                 .font(T3Typography.threadBody.weight(.semibold))

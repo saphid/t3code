@@ -27,19 +27,145 @@ struct MarkdownDocumentTests {
                 .heading(level: 1, text: "Release notes"),
                 .paragraph("Includes **important** details."),
                 .unorderedList([
-                    MarkdownListItem(task: nil, blocks: [.paragraph("First")]),
-                    MarkdownListItem(task: .complete, blocks: [.paragraph("Shipped")]),
-                    MarkdownListItem(task: .incomplete, blocks: [.paragraph("Follow up")]),
+                    MarkdownListItem(orderedMarker: nil, task: nil, blocks: [.paragraph("First")]),
+                    MarkdownListItem(orderedMarker: nil, task: .complete, blocks: [.paragraph("Shipped")]),
+                    MarkdownListItem(orderedMarker: nil, task: .incomplete, blocks: [.paragraph("Follow up")]),
                 ]),
-                .orderedList(
-                    start: 3,
-                    items: [
-                        MarkdownListItem(task: nil, blocks: [.paragraph("Third")]),
-                        MarkdownListItem(task: nil, blocks: [.paragraph("Fourth")]),
-                    ]
-                ),
+                .orderedList([
+                    MarkdownListItem(
+                        orderedMarker: MarkdownOrderedListMarker(text: "3.", number: 3),
+                        task: nil,
+                        blocks: [.paragraph("Third")]
+                    ),
+                    MarkdownListItem(
+                        orderedMarker: MarkdownOrderedListMarker(text: "4.", number: 4),
+                        task: nil,
+                        blocks: [.paragraph("Fourth")]
+                    ),
+                ]),
             ]
         )
+    }
+
+    @Test(
+        "Ordered lists preserve every explicit decimal marker",
+        .bug("https://github.com/saphid/t3code-personal/issues/207")
+    )
+    func preservesExplicitOrderedListMarkers() throws {
+        let document = MarkdownDocument(
+            parsing: """
+            1. First
+            5. Fifth
+            8. Eighth
+            15. Fifteenth
+            15. Repeated
+            03) Leading zero and closing parenthesis
+            """
+        )
+
+        guard case let .orderedList(items) = try #require(document.blocks.first) else {
+            Issue.record("Expected an ordered list")
+            return
+        }
+
+        #expect(items.compactMap(\.orderedMarker?.number) == [1, 5, 8, 15, 15, 3])
+        #expect(items.compactMap(\.orderedMarker?.text) == ["1.", "5.", "8.", "15.", "15.", "03)"])
+        #expect(items.map(\.task) == [nil, nil, nil, nil, nil, nil])
+        #expect(
+            items.map(\.blocks) == [
+                [.paragraph("First")],
+                [.paragraph("Fifth")],
+                [.paragraph("Eighth")],
+                [.paragraph("Fifteenth")],
+                [.paragraph("Repeated")],
+                [.paragraph("Leading zero and closing parenthesis")],
+            ]
+        )
+    }
+
+    @Test("Sequential and nested ordered lists keep their own markers")
+    func preservesSequentialAndNestedOrderedListMarkers() throws {
+        let document = MarkdownDocument(
+            parsing: """
+            3. Parent
+               9. Nested ninth
+               4. Nested fourth
+            4. Next parent
+            """
+        )
+
+        guard case let .orderedList(items) = try #require(document.blocks.first) else {
+            Issue.record("Expected an ordered list")
+            return
+        }
+        #expect(items.compactMap(\.orderedMarker?.number) == [3, 4])
+
+        guard case let .orderedList(nestedItems) = try #require(items.first?.blocks.last) else {
+            Issue.record("Expected a nested ordered list")
+            return
+        }
+        #expect(nestedItems.compactMap(\.orderedMarker?.number) == [9, 4])
+    }
+
+    @Test("Unordered, task, continuation, code, and malformed lines retain their structure")
+    func orderedMarkersDoNotChangeOtherMarkdown() throws {
+        let source = """
+        - Unordered
+        - [x] Complete
+
+        7. Ordered
+           continuation paragraph
+
+           ```text
+           1. literal code
+           ```
+
+        Version 12.5 stays prose.
+        1.no whitespace
+        1234567890. too many digits
+        """
+        let document = MarkdownDocument(parsing: source)
+
+        guard case let .unorderedList(unordered) = try #require(document.blocks.first) else {
+            Issue.record("Expected an unordered list")
+            return
+        }
+        #expect(unordered.map(\.orderedMarker) == [nil, nil])
+        #expect(unordered.map(\.task) == [nil, .complete])
+
+        guard case let .orderedList(ordered) = try #require(document.blocks.dropFirst().first) else {
+            Issue.record("Expected an ordered list")
+            return
+        }
+        #expect(ordered.compactMap(\.orderedMarker?.number) == [7])
+        #expect(
+            ordered.first?.blocks == [
+                .paragraph("Ordered\ncontinuation paragraph"),
+                .codeBlock(language: "text", code: "1. literal code"),
+            ]
+        )
+        #expect(
+            document.blocks.last
+                == .paragraph(
+                    "Version 12.5 stays prose.\n1.no whitespace\n1234567890. too many digits"
+                )
+        )
+    }
+
+    @Test("Long ordered lists retain each source marker")
+    func preservesLongOrderedListMarkers() throws {
+        let markers = (0..<128).map { ($0 * 37 + 11) % 10_000 }
+        let source = markers.enumerated()
+            .map { offset, marker in "\(marker). Item \(offset)" }
+            .joined(separator: "\n")
+        let document = MarkdownDocument(parsing: source)
+
+        guard case let .orderedList(items) = try #require(document.blocks.first) else {
+            Issue.record("Expected an ordered list")
+            return
+        }
+        #expect(items.compactMap(\.orderedMarker?.number) == markers)
+        #expect(items.count == 128)
     }
 
     @Test
@@ -124,7 +250,11 @@ struct MarkdownDocumentTests {
                 .heading(level: 2, text: "Heads up"),
                 .paragraph("Read this first."),
                 .unorderedList([
-                    MarkdownListItem(task: nil, blocks: [.paragraph("Quoted item")]),
+                    MarkdownListItem(
+                        orderedMarker: nil,
+                        task: nil,
+                        blocks: [.paragraph("Quoted item")]
+                    ),
                 ]),
             ]
         )
@@ -136,11 +266,16 @@ struct MarkdownDocumentTests {
         #expect(
             items == [
                 MarkdownListItem(
+                    orderedMarker: nil,
                     task: nil,
                     blocks: [
                         .paragraph("Parent"),
                         .unorderedList([
-                            MarkdownListItem(task: nil, blocks: [.paragraph("Nested child")]),
+                            MarkdownListItem(
+                                orderedMarker: nil,
+                                task: nil,
+                                blocks: [.paragraph("Nested child")]
+                            ),
                         ]),
                     ]
                 ),

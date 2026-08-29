@@ -109,8 +109,17 @@ extension MarkdownRenderedInline: Equatable {
 }
 
 struct MarkdownRenderedListItem: Equatable, @unchecked Sendable {
+    let orderedMarker: MarkdownOrderedListMarker?
     let task: MarkdownTaskState?
     let blocks: [MarkdownRenderedBlock]
+
+    var orderedMarkerText: String? {
+        orderedMarker?.text
+    }
+
+    var orderedMarkerAccessibilityLabel: String? {
+        orderedMarker.map { "Item \($0.number)" }
+    }
 }
 
 struct MarkdownRenderedTable: Equatable, @unchecked Sendable {
@@ -149,7 +158,7 @@ indirect enum MarkdownRenderedBlock: Equatable, @unchecked Sendable {
     case image(MarkdownImage)
     case heading(level: Int, inline: MarkdownRenderedInline)
     case unorderedList([MarkdownRenderedListItem])
-    case orderedList(start: Int, items: [MarkdownRenderedListItem])
+    case orderedList([MarkdownRenderedListItem])
     case blockquote([MarkdownRenderedBlock])
     case table(MarkdownRenderedTable)
     case codeBlock(language: String?, code: String, inline: MarkdownRenderedInline)
@@ -376,9 +385,9 @@ final class MarkdownRenderCache: @unchecked Sendable {
                 guard let items = renderItems(items) else { return nil }
                 rendered = .unorderedList(items)
 
-            case let .orderedList(start, items):
+            case let .orderedList(items):
                 guard let items = renderItems(items) else { return nil }
-                rendered = .orderedList(start: start, items: items)
+                rendered = .orderedList(items)
 
             case let .blockquote(document):
                 guard let blocks = renderBlocks(document.blocks) else { return nil }
@@ -437,7 +446,13 @@ final class MarkdownRenderCache: @unchecked Sendable {
         renderedItems.reserveCapacity(items.count)
         for item in items {
             guard !Task.isCancelled, let blocks = renderBlocks(item.blocks) else { return nil }
-            renderedItems.append(MarkdownRenderedListItem(task: item.task, blocks: blocks))
+            renderedItems.append(
+                MarkdownRenderedListItem(
+                    orderedMarker: item.orderedMarker,
+                    task: item.task,
+                    blocks: blocks
+                )
+            )
         }
         return renderedItems
     }

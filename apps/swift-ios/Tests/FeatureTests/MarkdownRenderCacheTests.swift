@@ -45,6 +45,30 @@ struct MarkdownRenderCacheTests {
         #expect(document.blocks.count == 2)
     }
 
+    @Test(
+        "Rendered ordered lists expose exact visible and accessibility markers",
+        .bug("https://github.com/saphid/t3code-personal/issues/207")
+    )
+    func rendersExplicitOrderedListMarkers() throws {
+        let source = "1. First\n5. Fifth\n8. Eighth\n15. Fifteenth\n15. Repeated\n03) Third"
+        let revision = MarkdownContentRevision(source)
+        let cache = MarkdownRenderCache(documentCountLimit: 8, documentCostLimit: 64_000)
+        let document = try #require(cache.documentImmediately(for: revision))
+
+        #expect(document.revision.source == source)
+        guard case let .orderedList(items) = try #require(document.blocks.first) else {
+            Issue.record("Expected a rendered ordered list")
+            return
+        }
+        #expect(
+            items.map(\.orderedMarkerText) == ["1.", "5.", "8.", "15.", "15.", "03)"]
+        )
+        #expect(
+            items.map(\.orderedMarkerAccessibilityLabel)
+                == ["Item 1", "Item 5", "Item 8", "Item 15", "Item 15", "Item 3"]
+        )
+    }
+
     @Test
     func coalescesConcurrentRequestsForOneRevision() async {
         let cache = MarkdownRenderCache(documentCountLimit: 8, documentCostLimit: 64_000)
@@ -84,6 +108,35 @@ struct MarkdownRenderCacheTests {
         #expect(firstInline === secondInline)
         #expect(firstInline.style == .body)
         #expect(String(firstInline.attributedText.characters) == "Shared paragraph.")
+    }
+
+    @Test("Streaming revisions never normalize or reuse stale ordered markers")
+    func streamingRevisionsPreserveExplicitOrderedListMarkers() async throws {
+        let cache = MarkdownRenderCache(documentCountLimit: 8, documentCostLimit: 64_000)
+        let partialSource = "1. First\n5. Fifth"
+        let finalSource = "1. First\n5. Fifth\n8. Eighth\n15. Fifteenth"
+        let partial = try #require(
+            await cache.document(
+                for: MarkdownContentRevision(partialSource),
+                isIntermediate: true
+            )
+        )
+        let final = try #require(
+            await cache.document(
+                for: MarkdownContentRevision(finalSource),
+                isIntermediate: true
+            )
+        )
+
+        guard case let .orderedList(partialItems) = try #require(partial.blocks.first),
+              case let .orderedList(finalItems) = try #require(final.blocks.first) else {
+            Issue.record("Expected rendered ordered lists")
+            return
+        }
+        #expect(partial.revision.source == partialSource)
+        #expect(partialItems.map(\.orderedMarkerText) == ["1.", "5."])
+        #expect(final.revision.source == finalSource)
+        #expect(finalItems.map(\.orderedMarkerText) == ["1.", "5.", "8.", "15."])
     }
 
     @Test

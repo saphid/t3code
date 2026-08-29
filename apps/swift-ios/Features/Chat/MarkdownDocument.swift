@@ -23,7 +23,7 @@ indirect enum MarkdownBlock: Equatable, Sendable {
     case image(MarkdownImage)
     case heading(level: Int, text: String)
     case unorderedList([MarkdownListItem])
-    case orderedList(start: Int, items: [MarkdownListItem])
+    case orderedList([MarkdownListItem])
     case blockquote(MarkdownDocument)
     case table(MarkdownTable)
     case codeBlock(language: String?, code: String)
@@ -130,8 +130,14 @@ enum MarkdownTableAlignment: Equatable, Sendable {
 }
 
 struct MarkdownListItem: Equatable, Sendable {
+    let orderedMarker: MarkdownOrderedListMarker?
     let task: MarkdownTaskState?
     let blocks: [MarkdownBlock]
+}
+
+struct MarkdownOrderedListMarker: Equatable, Sendable {
+    let text: String
+    let number: Int
 }
 
 enum MarkdownTaskState: Equatable, Sendable {
@@ -267,12 +273,12 @@ private struct MarkdownBlockParser {
 
     private mutating func parseList(opening: ListMarker) -> MarkdownBlock {
         var items: [MarkdownListItem] = []
-        let ordered = opening.number != nil
+        let ordered = opening.orderedMarker != nil
 
         while index < lines.count,
               let marker = listMarker(in: lines[index]),
               marker.indent == opening.indent,
-              (marker.number != nil) == ordered {
+              (marker.orderedMarker != nil) == ordered {
             index += 1
             var itemLines = [marker.content]
 
@@ -288,7 +294,7 @@ private struct MarkdownBlockParser {
 
                     if let nextMarker = listMarker(in: lines[next]),
                        nextMarker.indent == opening.indent,
-                       (nextMarker.number != nil) == ordered {
+                       (nextMarker.orderedMarker != nil) == ordered {
                         index = next
                         break
                     }
@@ -332,18 +338,24 @@ private struct MarkdownBlockParser {
                 itemLines[0] = removingTaskMarker(from: itemLines[0])
             }
             var itemParser = MarkdownBlockParser(source: itemLines.joined(separator: "\n"))
-            items.append(MarkdownListItem(task: task, blocks: itemParser.parse()))
+            items.append(
+                MarkdownListItem(
+                    orderedMarker: marker.orderedMarker,
+                    task: task,
+                    blocks: itemParser.parse()
+                )
+            )
 
             guard index < lines.count,
                   let nextMarker = listMarker(in: lines[index]),
                   nextMarker.indent == opening.indent,
-                  (nextMarker.number != nil) == ordered else {
+                  (nextMarker.orderedMarker != nil) == ordered else {
                 break
             }
         }
 
-        if let start = opening.number {
-            return .orderedList(start: start, items: items)
+        if opening.orderedMarker != nil {
+            return .orderedList(items)
         }
         return .unorderedList(items)
     }
@@ -590,7 +602,7 @@ private struct MarkdownBlockParser {
         guard indent <= 3, indent < characters.count else { return nil }
 
         var cursor = indent
-        var number: Int?
+        var orderedMarker: MarkdownOrderedListMarker?
 
         if ["-", "+", "*"].contains(characters[cursor]) {
             cursor += 1
@@ -607,7 +619,10 @@ private struct MarkdownBlockParser {
                   let parsedNumber = Int(String(characters[numberStart..<cursor])) else {
                 return nil
             }
-            number = parsedNumber
+            orderedMarker = MarkdownOrderedListMarker(
+                text: String(characters[numberStart...cursor]),
+                number: parsedNumber
+            )
             cursor += 1
         } else {
             return nil
@@ -623,7 +638,7 @@ private struct MarkdownBlockParser {
         return ListMarker(
             indent: indent,
             contentIndent: cursor,
-            number: number,
+            orderedMarker: orderedMarker,
             content: cursor < characters.count ? String(characters[cursor...]) : ""
         )
     }
@@ -713,7 +728,7 @@ private struct FenceMarker {
 private struct ListMarker {
     let indent: Int
     let contentIndent: Int
-    let number: Int?
+    let orderedMarker: MarkdownOrderedListMarker?
     let content: String
 }
 
