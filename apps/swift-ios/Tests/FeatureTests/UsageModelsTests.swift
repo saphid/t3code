@@ -120,24 +120,107 @@ struct UsageModelsTests {
     }
 
     @Test
-    func staleContractsDoNotChangeTotals() {
+    func olderAndNewerContractsAreExcludedWithTheirActualDirection() {
         let current = FeatureEnvironmentUsage(
             environmentID: "current",
             label: "Current",
             summary: summary(provider: .codex, costUsd: 10),
             errorMessage: nil
         )
-        let stale = FeatureEnvironmentUsage(
-            environmentID: "stale",
-            label: "Stale",
+        let older = FeatureEnvironmentUsage(
+            environmentID: "older",
+            label: "Older",
             summary: summary(contractVersion: 2, provider: .claude, costUsd: 25),
             errorMessage: nil
         )
+        let newer = FeatureEnvironmentUsage(
+            environmentID: "newer",
+            label: "Newer",
+            summary: summary(contractVersion: 5, provider: .claude, costUsd: 50),
+            errorMessage: nil
+        )
 
-        let merged = UsageMerger.merge([current, stale])
+        let merged = UsageMerger.merge([current, older, newer])
 
         #expect(merged.costUsd == 10)
-        #expect(merged.staleEnvironments == ["stale"])
+        #expect(
+            merged.contractMismatches.map(\.direction) == [.serverBehind, .clientBehind]
+        )
+        #expect(
+            merged.contractMismatches[0].notice
+                == "Older's server is behind this app's usage format and is excluded from totals."
+        )
+        #expect(
+            merged.contractMismatches[1].notice
+                == "This app is behind Newer's usage format, so that environment is excluded from totals."
+        )
+    }
+
+    @Test
+    func mixedConnectionStatesMergeOnlyCompatibleUniqueSources() {
+        let local = FeatureEnvironmentUsage(
+            environmentID: "a-local",
+            label: "Local",
+            summary: summary(provider: .codex, costUsd: 10),
+            errorMessage: nil
+        )
+        let lanDuplicate = FeatureEnvironmentUsage(
+            environmentID: "b-lan",
+            label: "LAN",
+            summary: summary(
+                contractVersion: minimumCompatibleUsageContractVersion,
+                provider: .codex,
+                costUsd: 99
+            ),
+            errorMessage: nil
+        )
+        let relay = FeatureEnvironmentUsage(
+            environmentID: "c-relay",
+            label: "Relay",
+            summary: summary(provider: .claude, costUsd: 20),
+            errorMessage: nil
+        )
+        let tunnelNewer = FeatureEnvironmentUsage(
+            environmentID: "d-tunnel",
+            label: "Tunnel",
+            summary: summary(contractVersion: 5, provider: .claude, costUsd: 50),
+            errorMessage: nil
+        )
+        let older = FeatureEnvironmentUsage(
+            environmentID: "e-older",
+            label: "Older",
+            summary: summary(contractVersion: 2, provider: .claude, costUsd: 25),
+            errorMessage: nil
+        )
+        let offline = FeatureEnvironmentUsage(
+            environmentID: "f-offline",
+            label: "Offline",
+            summary: nil,
+            errorMessage: "This environment could not report usage."
+        )
+        let failed = FeatureEnvironmentUsage(
+            environmentID: "g-failed",
+            label: "Failed",
+            summary: nil,
+            errorMessage: "This environment could not report usage."
+        )
+
+        let merged = UsageMerger.merge([
+            local,
+            lanDuplicate,
+            relay,
+            tunnelNewer,
+            older,
+            offline,
+            failed,
+        ])
+
+        #expect(merged.costUsd == 30)
+        #expect(merged.contributingEnvironments == ["a-local", "c-relay"])
+        #expect(merged.duplicateSources == ["LAN: /Users/theo/.codex"])
+        #expect(
+            merged.contractMismatches.map(\.direction) == [.clientBehind, .serverBehind]
+        )
     }
 
     @Test
@@ -404,8 +487,99 @@ struct UsageModelsTests {
         #expect(
             state.merged.contributingEnvironments == ["current-server", "previous-server"]
         )
-        #expect(state.merged.staleEnvironments.isEmpty)
+        #expect(state.merged.contractMismatches.isEmpty)
         #expect(state.environments.filter { $0.errorMessage != nil } == [offlineServer])
+    }
+
+    @Test
+    func reconnectReplacesVersionWarningWithCurrentTotals() throws {
+        let timeZone = try #require(TimeZone(identifier: "Australia/Sydney"))
+        let now = try #require(
+            ISO8601DateFormatter().date(from: "2026-08-18T12:00:00Z")
+        )
+        var state = UsageLoadState(days: 30, now: now, timeZone: timeZone)
+        let mismatchedRequest = state.begin(days: 30, now: now, timeZone: timeZone)
+        let newer = FeatureEnvironmentUsage(
+            environmentID: "environment",
+            label: "Studio",
+            summary: summary(contractVersion: 5, provider: .codex, costUsd: 50),
+            errorMessage: nil
+        )
+        let receivedNewer = state.receive([newer], for: mismatchedRequest)
+        #expect(receivedNewer)
+        #expect(state.merged.costUsd == 0)
+        #expect(state.merged.contractMismatches.map(\.direction) == [.clientBehind])
+
+        let currentRequest = state.begin(days: 30, now: now, timeZone: timeZone)
+        let current = FeatureEnvironmentUsage(
+            environmentID: "environment",
+            label: "Studio",
+            summary: summary(provider: .codex, costUsd: 12),
+            errorMessage: nil
+        )
+        let receivedCurrent = state.receive([current], for: currentRequest)
+        #expect(receivedCurrent)
+        #expect(state.merged.costUsd == 12)
+        #expect(state.merged.contractMismatches.isEmpty)
+    }
+
+    @Test
+    func changingRangeClearsVersionWarningAndZeroSummary() throws {
+        let timeZone = try #require(TimeZone(identifier: "Australia/Sydney"))
+        let now = try #require(
+            ISO8601DateFormatter().date(from: "2026-08-18T12:00:00Z")
+        )
+        var state = UsageLoadState(days: 30, now: now, timeZone: timeZone)
+        let request = state.begin(days: 30, now: now, timeZone: timeZone)
+        let older = FeatureEnvironmentUsage(
+            environmentID: "environment",
+            label: "Studio",
+            summary: summary(contractVersion: 2, provider: .codex, costUsd: 50),
+            errorMessage: nil
+        )
+        let receivedOlder = state.receive([older], for: request)
+        #expect(receivedOlder)
+        #expect(state.merged.contractMismatches.map(\.direction) == [.serverBehind])
+
+        state.selectWindow(days: 1, now: now, timeZone: timeZone)
+
+        #expect(state.environments.isEmpty)
+        #expect(state.merged == MergedUsage())
+        #expect(state.windowInput.resolution == .hour)
+    }
+
+    @Test
+    func timezoneRefreshRecomputesCompatibilityAndClearsWarning() throws {
+        let utc = try #require(TimeZone(identifier: "UTC"))
+        let sydney = try #require(TimeZone(identifier: "Australia/Sydney"))
+        let now = try #require(
+            ISO8601DateFormatter().date(from: "2026-08-18T15:00:00Z")
+        )
+        var state = UsageLoadState(days: 30, now: now, timeZone: utc)
+        let oldZoneRequest = state.begin(days: 30, now: now, timeZone: utc)
+        let newer = FeatureEnvironmentUsage(
+            environmentID: "environment",
+            label: "Studio",
+            summary: summary(contractVersion: 5, provider: .codex, costUsd: 50),
+            errorMessage: nil
+        )
+        let receivedNewer = state.receive([newer], for: oldZoneRequest)
+        #expect(receivedNewer)
+        #expect(state.merged.contractMismatches.map(\.direction) == [.clientBehind])
+
+        let newZoneRequest = state.begin(days: 30, now: now, timeZone: sydney)
+        let current = FeatureEnvironmentUsage(
+            environmentID: "environment",
+            label: "Studio",
+            summary: summary(provider: .codex, costUsd: 12),
+            errorMessage: nil
+        )
+        let receivedCurrent = state.receive([current], for: newZoneRequest)
+        #expect(receivedCurrent)
+        #expect(state.windowInput.timeZone == "Australia/Sydney")
+        #expect(state.windowInput.untilDay == "2026-08-19")
+        #expect(state.merged.costUsd == 12)
+        #expect(state.merged.contractMismatches.isEmpty)
     }
 
     private func summary(

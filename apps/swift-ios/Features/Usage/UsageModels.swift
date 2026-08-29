@@ -73,6 +73,24 @@ struct UsageCostQuality: Equatable {
     let cacheSavingsUsd: Double
 }
 
+struct UsageContractMismatch: Identifiable, Equatable {
+    let environmentID: String
+    let label: String
+    let direction: UsageContractMismatchDirection
+
+    var id: String { environmentID }
+
+    var notice: String {
+        switch direction {
+        case .serverBehind:
+            "\(label)'s server is behind this app's usage format and is excluded from totals."
+        case .clientBehind:
+            "This app is behind \(label)'s usage format, so that environment "
+                + "is excluded from totals."
+        }
+    }
+}
+
 struct MergedUsage: Equatable {
     var costUsd = 0.0
     var uncachedInputTokens = 0
@@ -95,7 +113,7 @@ struct MergedUsage: Equatable {
     )
     var duplicateSources: [String] = []
     var contributingEnvironments: [String] = []
-    var staleEnvironments: [String] = []
+    var contractMismatches: [UsageContractMismatch] = []
 }
 
 struct UsageLoadRequest: Equatable {
@@ -213,19 +231,27 @@ enum UsageMerger {
             guard let summary = environment.summary else { return nil }
             return (environment, summary)
         }
-        let current = available.filter {
-            isCompatibleUsageContractVersion($0.1.contractVersion)
+        var compatible: [(FeatureEnvironmentUsage, UsageSummary)] = []
+        var contractMismatches: [UsageContractMismatch] = []
+        for (environment, summary) in available {
+            switch usageContractCompatibility(summary.contractVersion) {
+            case .compatible:
+                compatible.append((environment, summary))
+            case let .incompatible(direction):
+                contractMismatches.append(
+                    UsageContractMismatch(
+                        environmentID: environment.environmentID,
+                        label: environment.label,
+                        direction: direction
+                    )
+                )
+            }
         }
-        let staleEnvironmentIDs = available.compactMap { environment, summary in
-            isCompatibleUsageContractVersion(summary.contractVersion)
-                ? nil
-                : environment.environmentID
-        }
-        let claims = claimSources(current)
+        let claims = claimSources(compatible)
 
         var result = MergedUsage()
         result.duplicateSources = claims.duplicates
-        result.staleEnvironments = staleEnvironmentIDs
+        result.contractMismatches = contractMismatches
 
         var cacheSavingsUsd = 0.0
         var providerReportedRecords = 0
@@ -235,7 +261,7 @@ enum UsageMerger {
         var daily: [String: DailyAccumulator] = [:]
         var hourly: [String: DailyAccumulator] = [:]
 
-        for (environment, summary) in current {
+        for (environment, summary) in compatible {
             let contribution = ownedContribution(
                 environment: environment,
                 summary: summary,

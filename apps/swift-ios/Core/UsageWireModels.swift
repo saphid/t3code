@@ -3,10 +3,30 @@ import Foundation
 public let usageContractVersion = 4
 public let minimumCompatibleUsageContractVersion = 3
 
+public enum UsageContractMismatchDirection: Equatable, Sendable {
+    case serverBehind
+    case clientBehind
+}
+
+public enum UsageContractCompatibility: Equatable, Sendable {
+    case compatible
+    case incompatible(UsageContractMismatchDirection)
+}
+
 /// Versions 3 and 4 contain every field this client needs. Keep both working
 /// while servers update independently across a user's environments.
+public func usageContractCompatibility(_ version: Int) -> UsageContractCompatibility {
+    if version < minimumCompatibleUsageContractVersion {
+        .incompatible(.serverBehind)
+    } else if version > usageContractVersion {
+        .incompatible(.clientBehind)
+    } else {
+        .compatible
+    }
+}
+
 public func isCompatibleUsageContractVersion(_ version: Int) -> Bool {
-    (minimumCompatibleUsageContractVersion ... usageContractVersion).contains(version)
+    usageContractCompatibility(version) == .compatible
 }
 
 public enum UsageProviderKind: String, Codable, CaseIterable, Sendable {

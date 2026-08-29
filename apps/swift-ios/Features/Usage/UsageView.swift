@@ -107,11 +107,11 @@ public struct UsageView: View {
     @ViewBuilder
     private var coverageNotice: some View {
         let failed = environments.filter { $0.errorMessage != nil }
-        let stale = environments.filter { merged.staleEnvironments.contains($0.environmentID) }
+        let mismatches = merged.contractMismatches
         let hasRefreshError = errorMessage != nil && hasCompatibleSummary
         if hasRefreshError
             || !failed.isEmpty
-            || !stale.isEmpty
+            || !mismatches.isEmpty
             || !merged.duplicateSources.isEmpty {
             VStack(alignment: .leading, spacing: 6) {
                 if hasRefreshError {
@@ -120,8 +120,8 @@ public struct UsageView: View {
                 ForEach(failed) { environment in
                     Text("\(environment.label) could not report usage.")
                 }
-                ForEach(stale) { environment in
-                    Text("\(environment.label) uses an unsupported usage format and is excluded from totals.")
+                ForEach(mismatches) { mismatch in
+                    Text(mismatch.notice)
                 }
                 if !merged.duplicateSources.isEmpty {
                     Text(
