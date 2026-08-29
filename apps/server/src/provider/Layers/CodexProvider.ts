@@ -50,6 +50,31 @@ export interface CodexAppServerProviderSnapshot {
   readonly skills: ReadonlyArray<ServerProviderSkill>;
 }
 
+const CodexInitializeResponse = Schema.Struct({
+  userAgent: Schema.String,
+  codexHome: Schema.optionalKey(Schema.String),
+  platformFamily: Schema.optionalKey(Schema.String),
+  platformOs: Schema.optionalKey(Schema.String),
+});
+const decodeCodexInitializeResponse = Schema.decodeUnknownEffect(CodexInitializeResponse);
+
+export type CodexInitializeResponse = typeof CodexInitializeResponse.Type;
+
+export class CodexInitializeCompatibilityError extends Schema.TaggedErrorClass<CodexInitializeCompatibilityError>()(
+  "CodexInitializeCompatibilityError",
+  {
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return "The installed Codex CLI returned an incompatible app-server initialize response. Update Codex and try again";
+  }
+}
+
+export type CodexInitializeError =
+  | CodexErrors.CodexAppServerError
+  | CodexInitializeCompatibilityError;
+
 const REASONING_EFFORT_LABELS: Readonly<Record<string, string>> = {
   none: "None",
   minimal: "Minimal",
@@ -304,7 +329,6 @@ export function buildCodexInitializeParams(): CodexSchema.V1InitializeParams {
   return {
     clientInfo: {
       name: "t3code_desktop",
-      title: "T3 Code Desktop",
       version: packageJson.version,
     },
     capabilities: {
@@ -312,6 +336,25 @@ export function buildCodexInitializeParams(): CodexSchema.V1InitializeParams {
     },
   };
 }
+
+/**
+ * Initialize through the stable wire subset and decode response metadata that
+ * Codex added incrementally. Codex 0.100 returned only `userAgent`; newer
+ * versions also report the platform and home path.
+ */
+export const initializeCodexAppServer = Effect.fn("initializeCodexAppServer")(function* (
+  client: CodexClient.CodexAppServerClient["Service"],
+): Effect.fn.Return<CodexInitializeResponse, CodexInitializeError> {
+  const response = yield* client.raw.request("initialize", buildCodexInitializeParams());
+  return yield* decodeCodexInitializeResponse(response).pipe(
+    Effect.mapError(
+      (cause) =>
+        new CodexInitializeCompatibilityError({
+          cause,
+        }),
+    ),
+  );
+});
 
 const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(function* (input: {
   readonly binaryPath: string;
@@ -363,16 +406,7 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
     Effect.provide(clientContext),
   );
 
-  const initialize = yield* client.request("initialize", {
-    clientInfo: {
-      name: "t3code_desktop",
-      title: "T3 Code Desktop",
-      version: "0.1.0",
-    },
-    capabilities: {
-      experimentalApi: true,
-    },
-  });
+  const initialize = yield* initializeCodexAppServer(client);
   yield* client.notify("initialized", undefined);
 
   // Extract the version string after the first '/' in userAgent, up to the next space or the end
@@ -505,7 +539,7 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
     readonly environment?: NodeJS.ProcessEnv;
   }) => Effect.Effect<
     CodexAppServerProviderSnapshot,
-    CodexErrors.CodexAppServerError,
+    CodexInitializeError,
     ChildProcessSpawner.ChildProcessSpawner | Scope.Scope
   > = probeCodexAppServerProvider,
   environment?: NodeJS.ProcessEnv,

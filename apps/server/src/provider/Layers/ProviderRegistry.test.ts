@@ -31,7 +31,11 @@ import { deepMerge } from "@t3tools/shared/Struct";
 import { createModelCapabilities } from "@t3tools/shared/model";
 import { applyServerSettingsPatch } from "@t3tools/shared/serverSettings";
 
-import { checkCodexProviderStatus, type CodexAppServerProviderSnapshot } from "./CodexProvider.ts";
+import {
+  checkCodexProviderStatus,
+  CodexInitializeCompatibilityError,
+  type CodexAppServerProviderSnapshot,
+} from "./CodexProvider.ts";
 import { checkClaudeProviderStatus } from "./ClaudeProvider.ts";
 import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
 import * as ModelManifest from "../ModelManifest.ts";
@@ -503,6 +507,25 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
           assert.strictEqual(status.installed, false);
           assert.strictEqual(status.auth.status, "unknown");
           assert.strictEqual(status.message, "Codex CLI (`codex`) was not found on PATH.");
+        }),
+      );
+
+      it.effect("surfaces an actionable Codex compatibility error in provider status", () =>
+        Effect.gen(function* () {
+          const status = yield* checkCodexProviderStatus(defaultCodexSettings, () =>
+            Effect.fail(
+              new CodexInitializeCompatibilityError({
+                cause: new Error("initialize response omitted userAgent"),
+              }),
+            ),
+          );
+
+          assert.strictEqual(status.status, "error");
+          assert.strictEqual(status.installed, true);
+          assert.strictEqual(
+            status.message,
+            "Codex app-server provider probe failed: The installed Codex CLI returned an incompatible app-server initialize response. Update Codex and try again.",
+          );
         }),
       );
 

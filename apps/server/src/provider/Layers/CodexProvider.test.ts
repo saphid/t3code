@@ -1,6 +1,82 @@
 import { assert, it } from "@effect/vitest";
+import * as Effect from "effect/Effect";
+import type * as CodexClient from "effect-codex-app-server/client";
+import packageJson from "../../../package.json" with { type: "json" };
 
-import { applyPreferredCodexDefaultModel, mapCodexModelCapabilities } from "./CodexProvider.ts";
+import {
+  applyPreferredCodexDefaultModel,
+  buildCodexInitializeParams,
+  CodexInitializeCompatibilityError,
+  initializeCodexAppServer,
+  mapCodexModelCapabilities,
+} from "./CodexProvider.ts";
+
+it("builds the stable Codex initialize payload", () => {
+  assert.deepStrictEqual(buildCodexInitializeParams(), {
+    clientInfo: {
+      name: "t3code_desktop",
+      version: packageJson.version,
+    },
+    capabilities: {
+      experimentalApi: true,
+    },
+  });
+});
+
+it.effect("accepts initialize responses from older supported Codex versions", () =>
+  Effect.gen(function* () {
+    let request: { readonly method: string; readonly payload: unknown } | undefined;
+    const client = {
+      raw: {
+        request: (method: string, payload: unknown) => {
+          request = { method, payload };
+          return Effect.succeed({ userAgent: "codex_cli_rs/0.100.0" });
+        },
+      },
+    } as unknown as CodexClient.CodexAppServerClient["Service"];
+
+    const response = yield* initializeCodexAppServer(client);
+
+    assert.deepStrictEqual(response, { userAgent: "codex_cli_rs/0.100.0" });
+    assert.deepStrictEqual(request, {
+      method: "initialize",
+      payload: buildCodexInitializeParams(),
+    });
+  }),
+);
+
+it.effect("accepts current Codex initialize response metadata", () =>
+  Effect.gen(function* () {
+    const response = {
+      userAgent: "codex_cli_rs/0.149.1",
+      codexHome: "C:\\Users\\Jos\u00e9 Agent\\.codex",
+      platformFamily: "windows",
+      platformOs: "windows",
+    };
+    const client = {
+      raw: {
+        request: () => Effect.succeed(response),
+      },
+    } as unknown as CodexClient.CodexAppServerClient["Service"];
+
+    assert.deepStrictEqual(yield* initializeCodexAppServer(client), response);
+  }),
+);
+
+it.effect("returns an actionable typed error for incompatible initialize responses", () =>
+  Effect.gen(function* () {
+    const client = {
+      raw: {
+        request: () => Effect.succeed({ platformFamily: "windows" }),
+      },
+    } as unknown as CodexClient.CodexAppServerClient["Service"];
+
+    const error = yield* initializeCodexAppServer(client).pipe(Effect.flip);
+
+    assert.instanceOf(error, CodexInitializeCompatibilityError);
+    assert.match(error.message, /Update Codex and try again/);
+  }),
+);
 
 it("maps current Codex model capability fields", () => {
   const capabilities = mapCodexModelCapabilities({
