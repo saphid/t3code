@@ -129,6 +129,11 @@ private struct FeatureReviewFileRow: View {
                         .foregroundStyle(T3Colors.textSecondary)
                         .lineLimit(1)
                 }
+                if file.isPathResolved == false {
+                    Label("Opening unavailable", systemImage: "exclamationmark.triangle")
+                        .font(T3Typography.supporting)
+                        .foregroundStyle(T3Colors.warning)
+                }
             }
             Spacer()
             FeatureDiffStatsLabel(additions: file.additions, deletions: file.deletions)
@@ -227,6 +232,7 @@ private struct FeatureDiffView: View {
                                     isSelected: selection(for: line) == selectedLine,
                                     minimumWidth: proxy.size.width
                                 ) {
+                                    guard file.isPathResolved else { return }
                                     guard let selection = selection(for: line) else { return }
                                     selectedLine = selection
                                     openCommentComposer()
@@ -240,17 +246,33 @@ private struct FeatureDiffView: View {
             }
         }
         .background(T3Colors.background)
+        .safeAreaInset(edge: .top, spacing: 0) {
+            if file.isPathResolved == false {
+                Label(
+                    "Git did not provide a safe workspace path. File opening is unavailable.",
+                    systemImage: "exclamationmark.triangle"
+                )
+                .font(T3Typography.supporting)
+                .foregroundStyle(T3Colors.warning)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .background(T3Colors.surface)
+            }
+        }
         .navigationTitle(file.path.split(separator: "/").last.map(String.init) ?? file.path)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
-                Button {
-                    selectedLine = nil
-                    openCommentComposer()
-                } label: {
-                    Image(systemName: "text.bubble")
+            if file.isPathResolved {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button {
+                        selectedLine = nil
+                        openCommentComposer()
+                    } label: {
+                        Image(systemName: "text.bubble")
+                    }
+                    .accessibilityLabel("Add file review comment")
                 }
-                .accessibilityLabel("Add file review comment")
             }
         }
         .safeAreaInset(edge: .bottom, spacing: 0) {
@@ -389,9 +411,11 @@ private struct FeatureDiffView: View {
     }
 
     private func hydrate() async {
+        guard file.isPathResolved else { return }
         isHydrating = true
         defer { isHydrating = false }
-        guard let contents = try? await client.loadReviewFileContents(
+        guard let contents = try? await FeatureReviewFileLoader.contents(
+            client: client,
             threadID: threadID,
             file: file
         ) else {
@@ -417,6 +441,32 @@ private struct FeatureDiffView: View {
             }
             isSending = false
         }
+    }
+}
+
+enum FeatureReviewFileLoader {
+    struct Target: Equatable {
+        let threadID: String
+        let path: String
+        let previousPath: String?
+    }
+
+    static func target(
+        threadID: String,
+        file: FeatureReviewFile
+    ) -> Target? {
+        guard file.isPathResolved else { return nil }
+        return Target(threadID: threadID, path: file.path, previousPath: file.previousPath)
+    }
+
+    @MainActor
+    static func contents(
+        client: any FeatureClient,
+        threadID: String,
+        file: FeatureReviewFile
+    ) async throws -> FeatureReviewFileContents? {
+        guard target(threadID: threadID, file: file) != nil else { return nil }
+        return try await client.loadReviewFileContents(threadID: threadID, file: file)
     }
 }
 

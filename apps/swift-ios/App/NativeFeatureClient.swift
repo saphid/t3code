@@ -2171,7 +2171,9 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         threadID: String,
         file: FeatureReviewFile
     ) async throws -> FeatureReviewFileContents? {
-        guard file.change != .binary, let sourceKind = file.sourceKind else { return nil }
+        guard file.isPathResolved,
+              file.change != .binary,
+              let sourceKind = file.sourceKind else { return nil }
         let route = try threadRoute(for: threadID)
         let context = try workspaceContext(route: route)
         let changeType: String = switch file.change {

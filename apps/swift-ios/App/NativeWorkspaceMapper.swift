@@ -184,6 +184,10 @@ enum NativeWorkspaceMapper {
         var files: [FeatureReviewFile] = []
         var currentPath: String?
         var previousPath: String?
+        var currentPathResolved = false
+        var previousPathResolved = false
+        var oldPrefix: String?
+        var newPrefix: String?
         var change = FeatureReviewChangeKind.modified
         var lines: [FeatureDiffLine] = []
         var oldLine: Int?
@@ -203,7 +207,9 @@ enum NativeWorkspaceMapper {
                     lines: annotateChangedSpans(lines),
                     sourceKind: source.kind,
                     sourceBaseReference: source.baseRef,
-                    sourceHeadReference: source.headRef
+                    sourceHeadReference: source.headRef,
+                    isPathResolved: currentPathResolved
+                        && (previousPath == nil || previousPathResolved)
                 )
             )
         }
@@ -211,9 +217,13 @@ enum NativeWorkspaceMapper {
         for (index, line) in rawLines.enumerated() {
             if line.hasPrefix("diff --git ") {
                 finishFile()
-                let parts = line.split(separator: " ")
-                currentPath = parts.count > 3 ? stripDiffPrefix(String(parts[3])) : source.title
-                previousPath = parts.count > 2 ? stripDiffPrefix(String(parts[2])) : nil
+                let header = GitDiffPathParser.header(line)
+                currentPath = header.newPath ?? header.displayPath
+                previousPath = header.oldPath
+                currentPathResolved = header.newPath != nil
+                previousPathResolved = header.oldPath != nil
+                oldPrefix = header.oldPrefix
+                newPrefix = header.newPrefix
                 change = .modified
                 lines = []
                 oldLine = nil
@@ -231,12 +241,38 @@ enum NativeWorkspaceMapper {
                 continue
             }
             if line.hasPrefix("rename from ") {
-                previousPath = String(line.dropFirst("rename from ".count))
+                let parsed = GitDiffPathParser.metadata(
+                    String(line.dropFirst("rename from ".count))
+                )
+                previousPath = parsed.workspacePath ?? parsed.displayPath
+                previousPathResolved = parsed.workspacePath != nil
                 change = .renamed
                 continue
             }
             if line.hasPrefix("rename to ") {
-                currentPath = String(line.dropFirst("rename to ".count))
+                let parsed = GitDiffPathParser.metadata(
+                    String(line.dropFirst("rename to ".count))
+                )
+                currentPath = parsed.workspacePath ?? parsed.displayPath
+                currentPathResolved = parsed.workspacePath != nil
+                change = .renamed
+                continue
+            }
+            if line.hasPrefix("copy from ") {
+                let parsed = GitDiffPathParser.metadata(
+                    String(line.dropFirst("copy from ".count))
+                )
+                previousPath = parsed.workspacePath ?? parsed.displayPath
+                previousPathResolved = parsed.workspacePath != nil
+                change = .renamed
+                continue
+            }
+            if line.hasPrefix("copy to ") {
+                let parsed = GitDiffPathParser.metadata(
+                    String(line.dropFirst("copy to ".count))
+                )
+                currentPath = parsed.workspacePath ?? parsed.displayPath
+                currentPathResolved = parsed.workspacePath != nil
                 change = .renamed
                 continue
             }
@@ -245,13 +281,24 @@ enum NativeWorkspaceMapper {
                 continue
             }
             if line.hasPrefix("+++ ") {
-                let path = String(line.dropFirst(4))
-                if path != "/dev/null" { currentPath = stripDiffPrefix(path) }
+                let raw = String(line.dropFirst(4))
+                if raw != "/dev/null" {
+                    let parsed = GitDiffPathParser.marker(raw, expectedPrefix: newPrefix)
+                    currentPath = parsed.workspacePath ?? parsed.displayPath
+                    currentPathResolved = parsed.workspacePath != nil
+                }
                 continue
             }
             if line.hasPrefix("--- ") {
-                let path = String(line.dropFirst(4))
-                if path != "/dev/null" { previousPath = stripDiffPrefix(path) }
+                let raw = String(line.dropFirst(4))
+                if raw == "/dev/null" {
+                    previousPath = nil
+                    previousPathResolved = false
+                } else {
+                    let parsed = GitDiffPathParser.marker(raw, expectedPrefix: oldPrefix)
+                    previousPath = parsed.workspacePath ?? parsed.displayPath
+                    previousPathResolved = parsed.workspacePath != nil
+                }
                 continue
             }
             if line.hasPrefix("@@") {
@@ -318,7 +365,8 @@ enum NativeWorkspaceMapper {
                     lines: annotateChangedSpans(lines),
                     sourceKind: source.kind,
                     sourceBaseReference: source.baseRef,
-                    sourceHeadReference: source.headRef
+                    sourceHeadReference: source.headRef,
+                    isPathResolved: false
                 ),
             ]
         }
@@ -355,13 +403,6 @@ enum NativeWorkspaceMapper {
             }
         }
         return lines
-    }
-
-    private static func stripDiffPrefix(_ path: String) -> String {
-        if path.hasPrefix("a/") || path.hasPrefix("b/") {
-            return String(path.dropFirst(2))
-        }
-        return path
     }
 
     private static func rangeStart(_ range: String) -> Int? {

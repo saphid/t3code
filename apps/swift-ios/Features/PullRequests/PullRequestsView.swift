@@ -1186,6 +1186,16 @@ private struct PullRequestFilesView: View {
                             Text(file.path)
                                 .font(T3Typography.supportingStrong.monospaced())
                                 .padding(12)
+                            if file.isPathResolved == false {
+                                Label(
+                                    "Git did not provide a safe workspace path. File opening is unavailable.",
+                                    systemImage: "exclamationmark.triangle"
+                                )
+                                .font(T3Typography.supporting)
+                                .foregroundStyle(T3Colors.warning)
+                                .padding(.horizontal, 12)
+                                .padding(.bottom, 12)
+                            }
                             Divider().overlay(T3Colors.separator)
                             ScrollView(.horizontal) {
                                 LazyVStack(alignment: .leading, spacing: 0) {
@@ -1206,13 +1216,15 @@ private struct PullRequestFilesView: View {
                                         .background(line.background)
                                         .contentShape(Rectangle())
                                         .contextMenu {
-                                            if canComment, line.position != nil {
+                                            if file.isPathResolved, canComment, line.position != nil {
                                                 Button("Add review comment", systemImage: "text.bubble") {
                                                     commentingLine = PullRequestDiffSelection(file: file, line: line)
                                                 }
                                             }
-                                            Button("Send line to agent", systemImage: "paperplane") {
-                                                sendToAgent(line, file)
+                                            if file.isPathResolved {
+                                                Button("Send line to agent", systemImage: "paperplane") {
+                                                    sendToAgent(line, file)
+                                                }
                                             }
                                         }
                                     }
@@ -1393,6 +1405,7 @@ struct PullRequestDiffFile: Identifiable, Equatable {
     let path: String
     let oldPath: String?
     let lines: [PullRequestDiffLine]
+    let isPathResolved: Bool
 }
 
 struct PullRequestDiffLine: Identifiable, Equatable {
@@ -1462,6 +1475,10 @@ enum PullRequestDiffParser {
         var files: [PullRequestDiffFile] = []
         var path = ""
         var oldPath: String?
+        var isPathResolved = false
+        var oldPathResolved = false
+        var oldPrefix: String?
+        var newPrefix: String?
         var lines: [PullRequestDiffLine] = []
         var oldLine = 0
         var newLine = 0
@@ -1469,9 +1486,19 @@ enum PullRequestDiffParser {
 
         func finish() {
             guard !path.isEmpty else { return }
-            files.append(.init(id: "\(files.count):\(path)", path: path, oldPath: oldPath, lines: lines))
+            files.append(.init(
+                id: "\(files.count):\(path)",
+                path: path,
+                oldPath: oldPath,
+                lines: lines,
+                isPathResolved: isPathResolved && (oldPath == nil || oldPathResolved)
+            ))
             lines = []
             oldPath = nil
+            isPathResolved = false
+            oldPathResolved = false
+            oldPrefix = nil
+            newPrefix = nil
         }
 
         for raw in patch.split(separator: "\n", omittingEmptySubsequences: false).map(String.init) {
@@ -1480,18 +1507,51 @@ enum PullRequestDiffParser {
             }
             if raw.hasPrefix("diff --git ") {
                 finish()
-                let parts = raw.split(separator: " ")
-                path = parts.count > 3 ? String(parts[3]).replacingOccurrences(of: "b/", with: "", options: .anchored) : "Changed file"
+                let header = GitDiffPathParser.header(raw)
+                path = header.newPath ?? header.displayPath
+                oldPath = header.oldPath
+                isPathResolved = header.newPath != nil
+                oldPathResolved = header.oldPath != nil
+                oldPrefix = header.oldPrefix
+                newPrefix = header.newPrefix
+                continue
+            }
+            if raw.hasPrefix("rename from ") || raw.hasPrefix("copy from ") {
+                let prefix = raw.hasPrefix("rename from ") ? "rename from " : "copy from "
+                let parsed = GitDiffPathParser.metadata(String(raw.dropFirst(prefix.count)))
+                oldPath = parsed.workspacePath ?? parsed.displayPath
+                oldPathResolved = parsed.workspacePath != nil
+                continue
+            }
+            if raw.hasPrefix("rename to ") || raw.hasPrefix("copy to ") {
+                let prefix = raw.hasPrefix("rename to ") ? "rename to " : "copy to "
+                let parsed = GitDiffPathParser.metadata(String(raw.dropFirst(prefix.count)))
+                path = parsed.workspacePath ?? parsed.displayPath
+                isPathResolved = parsed.workspacePath != nil
                 continue
             }
             if raw.hasPrefix("--- ") {
                 let value = String(raw.dropFirst(4))
-                oldPath = value == "/dev/null" ? nil : value.replacingOccurrences(of: "a/", with: "", options: .anchored)
+                if value == "/dev/null" {
+                    oldPath = nil
+                    oldPathResolved = false
+                } else {
+                    let parsed = GitDiffPathParser.marker(value, expectedPrefix: oldPrefix)
+                    oldPath = parsed.workspacePath ?? parsed.displayPath
+                    oldPathResolved = parsed.workspacePath != nil
+                }
                 continue
             }
             if raw.hasPrefix("+++ ") {
                 let value = String(raw.dropFirst(4))
-                if value != "/dev/null" { path = value.replacingOccurrences(of: "b/", with: "", options: .anchored) }
+                if value != "/dev/null" {
+                    let parsed = GitDiffPathParser.marker(value, expectedPrefix: newPrefix)
+                    path = parsed.workspacePath ?? parsed.displayPath
+                    isPathResolved = parsed.workspacePath != nil
+                }
+                continue
+            }
+            if raw.hasPrefix("Binary files ") || raw == "GIT binary patch" {
                 continue
             }
             if raw.hasPrefix("@@") {

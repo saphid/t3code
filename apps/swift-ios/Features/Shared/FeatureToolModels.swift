@@ -584,6 +584,9 @@ public struct FeatureReviewFile: Identifiable, Sendable, Equatable, Hashable, Co
     public var sourceKind: String?
     public var sourceBaseReference: String?
     public var sourceHeadReference: String?
+    private var pathResolutionFailed: Bool?
+
+    public var isPathResolved: Bool { pathResolutionFailed != true }
 
     public init(
         path: String,
@@ -594,7 +597,8 @@ public struct FeatureReviewFile: Identifiable, Sendable, Equatable, Hashable, Co
         lines: [FeatureDiffLine] = [],
         sourceKind: String? = nil,
         sourceBaseReference: String? = nil,
-        sourceHeadReference: String? = nil
+        sourceHeadReference: String? = nil,
+        isPathResolved: Bool = true
     ) {
         self.path = path
         self.previousPath = previousPath
@@ -605,6 +609,7 @@ public struct FeatureReviewFile: Identifiable, Sendable, Equatable, Hashable, Co
         self.sourceKind = sourceKind
         self.sourceBaseReference = sourceBaseReference
         self.sourceHeadReference = sourceHeadReference
+        pathResolutionFailed = isPathResolved ? nil : true
     }
 }
 
