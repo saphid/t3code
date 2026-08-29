@@ -2222,15 +2222,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         : undefined;
     const hasResultUsageIteration =
       resultUsageRecord !== undefined && lastClaudeUsageIteration(resultUsageRecord) !== undefined;
-    const resultHasActiveUsage =
-      resultUsageRecord !== undefined &&
-      (hasResultUsageIteration ||
-        claudeUsageInputTokens(resultUsageRecord) + claudeUsageOutputTokens(resultUsageRecord) > 0);
-    const resultTotalOnly =
-      resultUsageRecord !== undefined &&
-      !resultHasActiveUsage &&
-      claudeTotalProcessedTokens(resultUsageRecord) !== undefined;
-    const resultIterationSnapshot = resultUsageRecord
+    const resultIterationSnapshot = hasResultUsageIteration
       ? normalizeClaudeActiveTokenUsage(
           resultUsageRecord,
           maxTokens,
@@ -2240,21 +2232,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     const lastGoodUsage = context.lastKnownTokenUsage;
     const usageSnapshot: ThreadTokenUsageSnapshot | undefined =
       contextUsageSnapshot ??
-      (resultTotalOnly && lastGoodUsage
-        ? {
-            ...lastGoodUsage,
-            ...(typeof maxTokens === "number" && Number.isFinite(maxTokens) && maxTokens > 0
-              ? { maxTokens }
-              : {}),
-            ...(typeof accumulatedTotalProcessedTokens === "number" &&
-            Number.isFinite(accumulatedTotalProcessedTokens) &&
-            accumulatedTotalProcessedTokens > lastGoodUsage.usedTokens
-              ? {
-                  totalProcessedTokens: accumulatedTotalProcessedTokens,
-                }
-              : {}),
-          }
-        : resultIterationSnapshot) ??
+      resultIterationSnapshot ??
       (lastGoodUsage
         ? {
             ...lastGoodUsage,
