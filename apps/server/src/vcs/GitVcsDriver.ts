@@ -610,6 +610,9 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
     if (relativePaths.length === 0) {
       return relativePaths;
     }
+    if (!(yield* isInsideWorkTree(cwd))) {
+      return relativePaths;
+    }
 
     const ignoredPaths = new Set<string>();
     const chunks = chunkPathsForGitCheckIgnore(relativePaths);

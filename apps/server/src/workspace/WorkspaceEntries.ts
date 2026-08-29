@@ -3,6 +3,7 @@ import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 
 import * as Context from "effect/Context";
+import * as Cache from "effect/Cache";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
@@ -19,10 +20,13 @@ import type {
   ProjectSearchEntriesInput,
   ProjectSearchEntriesResult,
 } from "@t3tools/contracts";
+import { isWorkspaceImagePreviewPath } from "@t3tools/shared/filePreview";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { isExplicitRelativePath, isWindowsAbsolutePath } from "@t3tools/shared/path";
-import { normalizeSearchQuery } from "@t3tools/shared/searchRanking";
+import { normalizeSearchQuery, scoreQueryMatch } from "@t3tools/shared/searchRanking";
 
+import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
+import * as WorkspaceDotEntries from "./WorkspaceDotEntries.ts";
 import * as WorkspacePaths from "./WorkspacePaths.ts";
 import * as WorkspaceSearchIndex from "./WorkspaceSearchIndex.ts";
 
@@ -65,6 +69,14 @@ export class WorkspaceEntriesReadDirectoryError extends Schema.TaggedErrorClass<
     return `Failed to read workspace directory '${this.parentPath}' while browsing '${this.partialPath}'${cwd}.`;
   }
 }
+
+class WorkspaceDotEntriesScanFailed extends Schema.TaggedErrorClass<WorkspaceDotEntriesScanFailed>()(
+  "WorkspaceDotEntriesScanFailed",
+  {
+    cwd: Schema.String,
+    cause: Schema.Defect(),
+  },
+) {}
 
 export const WorkspaceEntriesBrowseError = Schema.Union([
   WorkspaceEntriesWindowsPathUnsupportedError,
@@ -140,8 +152,19 @@ const resolveBrowseTarget = Effect.fn("WorkspaceEntries.resolveBrowseTarget")(fu
 
 export const make = Effect.gen(function* () {
   const path = yield* Path.Path;
+  const vcsDrivers = yield* VcsDriverRegistry.VcsDriverRegistry;
   const workspacePaths = yield* WorkspacePaths.WorkspacePaths;
   const workspaceSearchIndexes = yield* WorkspaceSearchIndex.WorkspaceSearchIndexMap;
+  const repositoryStates = new Map<string, boolean>();
+  const dotEntriesCache = yield* Cache.make({
+    capacity: 2_048,
+    timeToLive: "30 seconds",
+    lookup: (cwd: string) =>
+      Effect.tryPromise({
+        try: (signal) => WorkspaceDotEntries.scanWorkspaceDotEntries(cwd, signal),
+        catch: (cause) => new WorkspaceDotEntriesScanFailed({ cwd, cause }),
+      }),
+  });
 
   const normalizeWorkspaceRoot = Effect.fn("WorkspaceEntries.normalizeWorkspaceRoot")(function* (
     cwd: string,
@@ -149,11 +172,98 @@ export const make = Effect.gen(function* () {
     return yield* workspacePaths.normalizeWorkspaceRoot(cwd);
   });
 
+  const prepareWorkspaceIndex = Effect.fn("WorkspaceEntries.prepareWorkspaceIndex")(function* (
+    cwd: string,
+  ) {
+    const isGitRepository = yield* Effect.gen(function* () {
+      const git = yield* vcsDrivers.get("git");
+      return yield* git.isInsideWorkTree(cwd);
+    }).pipe(Effect.orElseSucceed(() => true));
+    const previousState = repositoryStates.get(cwd);
+    repositoryStates.set(cwd, isGitRepository);
+    if (previousState !== undefined && previousState !== isGitRepository) {
+      yield* Cache.invalidate(dotEntriesCache, cwd);
+      yield* Effect.forEach(
+        WorkspaceSearchIndex.WORKSPACE_SEARCH_INDEX_VARIANTS,
+        (variant) =>
+          workspaceSearchIndexes.invalidate(
+            WorkspaceSearchIndex.workspaceSearchIndexKey(cwd, variant),
+          ),
+        { discard: true },
+      );
+    }
+    return isGitRepository;
+  });
+
+  const dotEntries = Effect.fn("WorkspaceEntries.dotEntries")(function* (
+    cwd: string,
+    isGitRepository: boolean,
+  ) {
+    if (isGitRepository) return { entries: [], truncated: false };
+    return yield* Cache.get(dotEntriesCache, cwd).pipe(
+      Effect.catch((cause) =>
+        Effect.logWarning("Failed to scan non-Git workspace dot entries", { cwd, cause }).pipe(
+          Effect.as({ entries: [], truncated: false }),
+        ),
+      ),
+    );
+  });
+
+  const mergeEntries = (
+    primary: ReadonlyArray<ProjectListEntriesResult["entries"][number]>,
+    additional: ReadonlyArray<ProjectListEntriesResult["entries"][number]>,
+  ) => {
+    const entries = new Map(primary.map((entry) => [entry.path, entry]));
+    for (const entry of additional) entries.set(entry.path, entry);
+    return Array.from(entries.values());
+  };
+
+  const searchDotEntries = (
+    entries: ReadonlyArray<ProjectListEntriesResult["entries"][number]>,
+    query: string,
+    limit: number,
+    kind?: ProjectSearchEntriesInput["kind"],
+    imageOnly?: boolean,
+  ) =>
+    entries
+      .filter((entry) => kind === undefined || entry.kind === kind)
+      .filter((entry) => !imageOnly || isWorkspaceImagePreviewPath(entry.path))
+      .flatMap((entry) => {
+        if (!query) return [{ entry, score: 0 }];
+        const pathScore = scoreQueryMatch({
+          value: entry.path.toLowerCase(),
+          query,
+          exactBase: 0,
+          prefixBase: 100,
+          boundaryBase: 200,
+          includesBase: 300,
+          fuzzyBase: 400,
+        });
+        const nameScore = scoreQueryMatch({
+          value: path.basename(entry.path).toLowerCase(),
+          query,
+          exactBase: 0,
+          prefixBase: 50,
+          includesBase: 150,
+          fuzzyBase: 350,
+        });
+        const score = Math.min(pathScore ?? Number.POSITIVE_INFINITY, nameScore ?? Infinity);
+        return Number.isFinite(score) ? [{ entry, score }] : [];
+      })
+      .toSorted(
+        (left, right) =>
+          left.score - right.score || left.entry.path.localeCompare(right.entry.path),
+      )
+      .slice(0, limit)
+      .map(({ entry }) => entry);
+
   const refresh: WorkspaceEntries["Service"]["refresh"] = Effect.fn("WorkspaceEntries.refresh")(
     function* (cwd) {
       const normalizedCwd = yield* normalizeWorkspaceRoot(cwd).pipe(
         Effect.orElseSucceed(() => cwd),
       );
+      yield* Cache.invalidate(dotEntriesCache, normalizedCwd);
+      yield* prepareWorkspaceIndex(normalizedCwd);
       for (const variant of WorkspaceSearchIndex.WORKSPACE_SEARCH_INDEX_VARIANTS) {
         const indexKey = WorkspaceSearchIndex.workspaceSearchIndexKey(normalizedCwd, variant);
         if (!(yield* RcMap.has(workspaceSearchIndexes.rcMap, indexKey))) {
@@ -240,10 +350,11 @@ export const make = Effect.gen(function* () {
   const search: WorkspaceEntries["Service"]["search"] = Effect.fn("WorkspaceEntries.search")(
     function* (input) {
       const normalizedCwd = yield* normalizeWorkspaceRoot(input.cwd);
+      const isGitRepository = yield* prepareWorkspaceIndex(normalizedCwd);
       const normalizedQuery = normalizeSearchQuery(input.query, {
         trimLeadingPattern: /^[@./]+/,
       });
-      return yield* Effect.gen(function* () {
+      const indexed = yield* Effect.gen(function* () {
         const searchIndex = yield* WorkspaceSearchIndex.WorkspaceSearchIndex;
         return yield* searchIndex.search(normalizedQuery, input.limit, input.kind, input.imageOnly);
       }).pipe(
@@ -253,6 +364,20 @@ export const make = Effect.gen(function* () {
           ),
         ),
       );
+      const supplemental = yield* dotEntries(normalizedCwd, isGitRepository);
+      const matchedDotEntries = searchDotEntries(
+        supplemental.entries,
+        normalizedQuery,
+        input.limit,
+        input.kind,
+        input.imageOnly,
+      );
+      const merged = mergeEntries(matchedDotEntries, indexed.entries);
+      const entries = merged.slice(0, input.limit);
+      return {
+        entries,
+        truncated: indexed.truncated || supplemental.truncated || entries.length < merged.length,
+      };
     },
   );
 
@@ -260,6 +385,7 @@ export const make = Effect.gen(function* () {
     "WorkspaceEntries.searchContents",
   )(function* (input) {
     const normalizedCwd = yield* normalizeWorkspaceRoot(input.cwd);
+    yield* prepareWorkspaceIndex(normalizedCwd);
     return yield* Effect.gen(function* () {
       const searchIndex = yield* WorkspaceSearchIndex.WorkspaceSearchIndex;
       return yield* searchIndex.searchContents(input);
@@ -275,7 +401,8 @@ export const make = Effect.gen(function* () {
   const list: WorkspaceEntries["Service"]["list"] = Effect.fn("WorkspaceEntries.list")(
     function* (input) {
       const normalizedCwd = yield* normalizeWorkspaceRoot(input.cwd);
-      return yield* Effect.gen(function* () {
+      const isGitRepository = yield* prepareWorkspaceIndex(normalizedCwd);
+      const indexed = yield* Effect.gen(function* () {
         const searchIndex = yield* WorkspaceSearchIndex.WorkspaceSearchIndex;
         return yield* searchIndex.list();
       }).pipe(
@@ -285,6 +412,15 @@ export const make = Effect.gen(function* () {
           ),
         ),
       );
+      const supplemental = yield* dotEntries(normalizedCwd, isGitRepository);
+      const merged = mergeEntries(indexed.entries, supplemental.entries).toSorted((left, right) =>
+        left.path.localeCompare(right.path),
+      );
+      const entries = merged.slice(0, 25_000);
+      return {
+        entries,
+        truncated: indexed.truncated || supplemental.truncated || entries.length < merged.length,
+      };
     },
   );
 

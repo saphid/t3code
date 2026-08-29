@@ -3,6 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   ProjectReadFileError,
+  ProjectListEntriesResult,
   ProjectSearchContentsError,
   ProjectSearchContentsInput,
   ProjectSearchEntriesError,
@@ -12,8 +13,24 @@ import {
 
 const decodeSearchEntriesInput = Schema.decodeUnknownSync(ProjectSearchEntriesInput);
 const decodeSearchContentsInput = Schema.decodeUnknownSync(ProjectSearchContentsInput);
+const decodeListEntriesResult = Schema.decodeUnknownSync(ProjectListEntriesResult);
 
 describe("project search inputs", () => {
+  it("preserves dotfile and dot-directory paths in workspace listings", () => {
+    const decoded = decodeListEntriesResult({
+      entries: [
+        { path: ".hidden-file.txt", kind: "file" },
+        { path: ".hidden-dir", kind: "directory" },
+      ],
+      truncated: false,
+    });
+
+    expect(decoded.entries).toEqual([
+      { path: ".hidden-file.txt", kind: "file" },
+      { path: ".hidden-dir", kind: "directory" },
+    ]);
+  });
+
   it("allows an empty entries query for bounded frecency browsing", () => {
     const decoded = decodeSearchEntriesInput({
       cwd: "/workspace",

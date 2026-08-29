@@ -32,7 +32,7 @@ enum NativeWorkspaceMapper {
             )
         }
 
-        return Array(children.values).featureFiltered(by: "", includesHidden: true)
+        return Array(children.values).featureFiltered(by: "")
     }
 
     static func language(for path: String) -> String? {

@@ -54,13 +54,12 @@ public struct FeatureFileEntry: Identifiable, Sendable, Equatable, Hashable, Cod
 }
 
 public extension Array where Element == FeatureFileEntry {
-    func featureFiltered(by query: String, includesHidden: Bool) -> [FeatureFileEntry] {
-        let visible = includesHidden ? self : filter { !$0.isHidden }
+    func featureFiltered(by query: String) -> [FeatureFileEntry] {
         let filtered: [FeatureFileEntry]
         if query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            filtered = visible
+            filtered = self
         } else {
-            filtered = visible.filter { $0.name.localizedCaseInsensitiveContains(query) }
+            filtered = filter { $0.name.localizedCaseInsensitiveContains(query) }
         }
         return filtered.sorted {
             if $0.kind == .directory, $1.kind != .directory { return true }

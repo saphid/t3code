@@ -41,7 +41,6 @@ private struct FeatureFileDirectoryView: View {
 
     @State private var entries: [FeatureFileEntry] = []
     @State private var searchText = ""
-    @State private var includesHidden = false
     @State private var isLoading = true
     @State private var errorMessage: String?
 
@@ -81,17 +80,11 @@ private struct FeatureFileDirectoryView: View {
         .searchable(text: $searchText, prompt: "Filter files")
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
-                Menu {
-                    Toggle("Show hidden files", isOn: $includesHidden)
-                    Button {
-                        Task { await load() }
-                    } label: {
-                        Label("Reload", systemImage: "arrow.clockwise")
-                    }
+                Button {
+                    Task { await load() }
                 } label: {
-                    Image(systemName: "ellipsis")
+                    Label("Reload", systemImage: "arrow.clockwise")
                 }
-                .accessibilityLabel("File browser options")
             }
         }
         .task(id: path) { await load() }
@@ -112,7 +105,7 @@ private struct FeatureFileDirectoryView: View {
     }
 
     private var filteredEntries: [FeatureFileEntry] {
-        entries.featureFiltered(by: searchText, includesHidden: includesHidden)
+        entries.featureFiltered(by: searchText)
     }
 
     private func load() async {

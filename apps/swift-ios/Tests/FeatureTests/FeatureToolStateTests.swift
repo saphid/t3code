@@ -4,18 +4,19 @@ import Testing
 @Suite("Thread tool state")
 struct FeatureToolStateTests {
     @Test
-    func fileFilteringKeepsDirectoriesFirstAndHonorsHiddenFiles() {
+    func fileFilteringKeepsServerApprovedDotEntriesAndDirectoriesFirst() {
         let entries = [
             FeatureFileEntry(path: "z.swift", name: "z.swift", kind: .file),
             FeatureFileEntry(path: ".env", name: ".env", kind: .file, isHidden: true),
+            FeatureFileEntry(path: ".config", name: ".config", kind: .directory, isHidden: true),
             FeatureFileEntry(path: "Sources", name: "Sources", kind: .directory),
             FeatureFileEntry(path: "a.swift", name: "a.swift", kind: .file),
         ]
 
-        #expect(entries.featureFiltered(by: "", includesHidden: false).map(\.name) == [
-            "Sources", "a.swift", "z.swift",
+        #expect(entries.featureFiltered(by: "").map(\.name) == [
+            ".config", "Sources", ".env", "a.swift", "z.swift",
         ])
-        #expect(entries.featureFiltered(by: "env", includesHidden: true).map(\.name) == [".env"])
+        #expect(entries.featureFiltered(by: "env").map(\.name) == [".env"])
     }
 
     @Test

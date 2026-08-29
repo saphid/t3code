@@ -13,6 +13,7 @@ import { vi } from "vite-plus/test";
 import * as ServerConfig from "../config.ts";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
+import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 import * as WorkspaceEntries from "./WorkspaceEntries.ts";
 import * as WorkspacePaths from "./WorkspacePaths.ts";
 
@@ -24,6 +25,7 @@ vi.mock("node:fs/promises", async (importOriginal) => {
 const TestLayer = Layer.empty.pipe(
   Layer.provideMerge(WorkspaceEntries.layer.pipe(Layer.provide(WorkspacePaths.layer))),
   Layer.provideMerge(WorkspacePaths.layer),
+  Layer.provideMerge(VcsDriverRegistry.layer.pipe(Layer.provide(VcsProcess.layer))),
   Layer.provideMerge(VcsProcess.layer),
   Layer.provide(
     ServerConfig.ServerConfig.layerTest(process.cwd(), {
@@ -96,6 +98,51 @@ it.layer(TestLayer, { excludeTestServices: true })("WorkspaceEntries", (it) => {
   });
 
   describe("list", () => {
+    it.effect("lists readable dot entries in a non-Git workspace", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTempDir({ prefix: "t3code-workspace-non-git-dot-" });
+        yield* writeTextFile(cwd, ".hidden-file.txt", "visible\n");
+        yield* writeTextFile(cwd, ".hidden-dir/inside.txt", "visible\n");
+        yield* writeTextFile(cwd, "visible.txt", "visible\n");
+
+        const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
+        const initial = yield* workspaceEntries.list({ cwd });
+        yield* workspaceEntries.refresh(cwd);
+        const refreshed = yield* workspaceEntries.list({ cwd });
+
+        const expectedDotEntries = [
+          { path: ".hidden-dir", kind: "directory" },
+          { path: ".hidden-dir/inside.txt", kind: "file" },
+          { path: ".hidden-file.txt", kind: "file" },
+        ];
+        expect(initial.entries).toEqual(expect.arrayContaining(expectedDotEntries));
+        expect(refreshed.entries).toEqual(initial.entries);
+        expect(new Set(refreshed.entries.map((entry) => entry.path)).size).toBe(
+          refreshed.entries.length,
+        );
+      }),
+    );
+
+    it.effect("recalculates dot-entry policy when a non-Git workspace becomes a repository", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTempDir({ prefix: "t3code-workspace-dot-transition-" });
+        yield* writeTextFile(cwd, ".hidden-dir/inside.txt", "visible\n");
+
+        const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
+        const nonGit = yield* workspaceEntries.list({ cwd });
+        expect(nonGit.entries.map((entry) => entry.path)).toContain(".hidden-dir/inside.txt");
+
+        yield* git(cwd, ["init"]);
+        yield* writeTextFile(cwd, ".gitignore", ".hidden-dir/\n");
+        yield* workspaceEntries.refresh(cwd);
+        const gitIgnored = yield* workspaceEntries.list({ cwd });
+
+        expect(gitIgnored.entries.some((entry) => entry.path.startsWith(".hidden-dir"))).toBe(
+          false,
+        );
+      }),
+    );
+
     it.effect("returns the complete cached workspace index", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTempDir();
@@ -124,6 +171,42 @@ it.layer(TestLayer, { excludeTestServices: true })("WorkspaceEntries", (it) => {
   });
 
   describe("search", () => {
+    it.effect("finds non-Git dot entries without exposing ignored or generated directories", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTempDir({ prefix: "t3code-workspace-dot-search-" });
+        yield* writeTextFile(cwd, ".env.local", "TOKEN=test\n");
+        yield* writeTextFile(cwd, ".settings/editor.json", "{}\n");
+        yield* writeTextFile(cwd, ".settings/private/secret.json", "{}\n");
+        yield* writeTextFile(cwd, ".settings/.gitignore", "private/\n");
+        yield* writeTextFile(cwd, ".ignored/secret.txt", "secret\n");
+        yield* writeTextFile(cwd, ".convex/local-storage/data.json", "{}\n");
+        yield* writeTextFile(cwd, ".gitignore", ".ignored/\n");
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const outside = yield* makeTempDir({ prefix: "t3code-workspace-dot-outside-" });
+        yield* writeTextFile(outside, "secret.txt", "secret\n");
+        yield* fileSystem.symlink(outside, path.join(cwd, ".linked-outside"));
+
+        const envResult = yield* searchWorkspaceEntries({ cwd, query: "env", limit: 20 });
+        const settingsResult = yield* searchWorkspaceEntries({
+          cwd,
+          query: "settings",
+          limit: 20,
+        });
+        const allResult = yield* searchWorkspaceEntries({ cwd, query: "", limit: 100 });
+        const allPaths = allResult.entries.map((entry) => entry.path);
+
+        expect(envResult.entries.map((entry) => entry.path)).toContain(".env.local");
+        expect(settingsResult.entries.map((entry) => entry.path)).toEqual(
+          expect.arrayContaining([".settings", ".settings/editor.json"]),
+        );
+        expect(allPaths.some((entryPath) => entryPath.startsWith(".ignored"))).toBe(false);
+        expect(allPaths.some((entryPath) => entryPath.startsWith(".convex"))).toBe(false);
+        expect(allPaths.some((entryPath) => entryPath.startsWith(".settings/private"))).toBe(false);
+        expect(allPaths.some((entryPath) => entryPath.startsWith(".linked-outside"))).toBe(false);
+      }),
+    );
+
     it.effect("returns files and directories relative to cwd", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTempDir();

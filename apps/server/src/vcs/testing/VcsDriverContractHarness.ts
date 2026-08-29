@@ -136,6 +136,18 @@ export function runVcsDriverContractSuite<R, E>(input: VcsDriverContractSuiteInp
     });
 
     describe("ignored path filtering", () => {
+      it.effect("returns paths unchanged outside a repository", () =>
+        Effect.gen(function* () {
+          const cwd = yield* makeTmpDir();
+          const driver = yield* VcsDriver.VcsDriver;
+
+          assert.deepStrictEqual(
+            yield* driver.filterIgnoredPaths(cwd, ["keep.ts", ".hidden-file.txt"]),
+            ["keep.ts", ".hidden-file.txt"],
+          );
+        }),
+      );
+
       it.effect("filters ignored paths", () =>
         Effect.gen(function* () {
           const cwd = yield* makeTmpDir();
