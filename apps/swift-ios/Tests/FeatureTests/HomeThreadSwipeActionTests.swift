@@ -765,7 +765,7 @@ struct HomeThreadSwipeActionTests {
         }
 
         let initialCell = try #require(
-            collectionView.cellForItem(at: IndexPath(item: 0, section: 0))
+            collectionView.cellForItem(at: IndexPath(item: 1, section: 0))
         )
         #expect(initialCell.accessibilityValue?.contains("Regenerating title") == false)
         #expect(initialCell.accessibilityCustomActions?.contains { $0.name == "Regenerate title" } == true)
@@ -779,7 +779,7 @@ struct HomeThreadSwipeActionTests {
         collectionView.layoutIfNeeded()
 
         let updatedCell = try #require(
-            collectionView.cellForItem(at: IndexPath(item: 0, section: 0))
+            collectionView.cellForItem(at: IndexPath(item: 1, section: 0))
         )
         #expect(updatedCell.accessibilityValue?.contains("Regenerating title") == true)
         #expect(updatedCell.accessibilityCustomActions?.contains { $0.name == "Regenerate title" } == false)
@@ -788,7 +788,7 @@ struct HomeThreadSwipeActionTests {
         collectionView.layoutIfNeeded()
 
         let completedCell = try #require(
-            collectionView.cellForItem(at: IndexPath(item: 0, section: 0))
+            collectionView.cellForItem(at: IndexPath(item: 1, section: 0))
         )
         #expect(completedCell.accessibilityValue?.contains("Regenerating title") == false)
         #expect(completedCell.accessibilityCustomActions?.contains { $0.name == "Regenerate title" } == true)
@@ -871,7 +871,7 @@ struct HomeThreadSwipeActionTests {
         }
 
         let initialHeader = try #require(
-            collectionView.cellForItem(at: IndexPath(item: 1, section: 0))
+            collectionView.cellForItem(at: IndexPath(item: 2, section: 0))
         )
         #expect(initialHeader.accessibilityLabel == "Archived, 2 tasks")
 

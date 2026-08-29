@@ -110,6 +110,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
     private var detailPublishTask: Task<Void, Never>?
     private var passiveDetailPollingTask: Task<Void, Never>?
     private var detailRefreshPending = false
+    private var detailRefreshPendingForce = false
     private var detailRefreshGeneration = 0
     private var detailStreamGeneration = 0
     private var pendingDetailRenderMutations = NativeDetailRenderMutations()
@@ -1940,6 +1941,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
             after: snapshot.snapshotSequence,
             turnLimit: supportsPagination ? Self.initialThreadUserTurnLimit : nil
         )
+        startPassiveDetailPolling(route)
         return detail
     }
 
@@ -3407,7 +3409,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         latestShell = shell
         await emitSnapshot(shell)
         if refreshActiveThread, let threadID = activeThreadID {
-            scheduleDetailRefresh(threadID: threadID, client: client)
+            scheduleDetailRefresh(threadID: threadID, client: client, force: true)
         }
     }
 
@@ -3435,7 +3437,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
               let threadID = activeThreadID else {
             return
         }
-        scheduleDetailRefresh(threadID: threadID, client: client)
+        scheduleDetailRefresh(threadID: threadID, client: client, force: true)
     }
 
     private func consume(delta: ShellStreamItem, client: T3Client) async {
@@ -3469,6 +3471,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         var projects = current.projects
         var threads = current.threads
         var changedThreadID: String?
+        var completionNeedsDetailReconciliation = false
         var shouldRefreshArchived = false
 
         switch delta {
@@ -3490,8 +3493,16 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
                 }
             }
             if let index = threads.firstIndex(where: { $0.id == thread.id }) {
+                completionNeedsDetailReconciliation = Self.completionNeedsDetailReconciliation(
+                    previous: threads[index],
+                    next: thread
+                )
                 threads[index] = thread
             } else {
+                completionNeedsDetailReconciliation = Self.completionNeedsDetailReconciliation(
+                    previous: nil,
+                    next: thread
+                )
                 threads.append(thread)
             }
         case let .threadRemoved(_, threadID):
@@ -3533,7 +3544,24 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
             scheduleArchivedRefresh(client: client, environment: environment)
         }
         if let changedThreadID, activeThreadID == changedThreadID {
-            scheduleDetailRefresh(threadID: changedThreadID, client: client)
+            scheduleDetailRefresh(
+                threadID: changedThreadID,
+                client: client,
+                force: completionNeedsDetailReconciliation
+            )
+        }
+    }
+
+    private static func completionNeedsDetailReconciliation(
+        previous: OrchestrationThreadShell?,
+        next: OrchestrationThreadShell
+    ) -> Bool {
+        guard previous?.latestTurn != next.latestTurn else { return false }
+        switch next.latestTurn?.state {
+        case "completed", "error", "interrupted":
+            return true
+        default:
+            return false
         }
     }
 
@@ -3566,9 +3594,11 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         guard force || detailStreamTask == nil else { return }
         guard detailRefreshTask == nil else {
             detailRefreshPending = true
+            detailRefreshPendingForce = detailRefreshPendingForce || force
             return
         }
         detailRefreshPending = false
+        detailRefreshPendingForce = false
         detailRefreshGeneration &+= 1
         let generation = detailRefreshGeneration
         let sessionGeneration = environmentGeneration
@@ -3749,7 +3779,6 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         }
         detailStreamTask = nil
         scheduleDetailRefresh(threadID: route.uiID, client: route.client)
-        startPassiveDetailPolling(route)
     }
 
     /// Passive environments intentionally avoid full shell WebSocket streams.
@@ -3759,10 +3788,11 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         passiveDetailPollingTask = nil
         guard route.environmentID != activeEnvironment?.id else { return }
         let generation = environmentGeneration
+        let interval = fallbackPollingInterval
         passiveDetailPollingTask = Task { [weak self] in
             while !Task.isCancelled {
                 do {
-                    try await Task.sleep(for: .seconds(2))
+                    try await Task.sleep(for: interval)
                 } catch {
                     return
                 }
@@ -3775,6 +3805,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
                       ) else {
                     return
                 }
+                guard !(await route.client.liveConnectionActive()) else { continue }
                 try? await self.refreshThread(id: route.uiID, client: route.client)
             }
         }
@@ -3784,9 +3815,15 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         guard detailRefreshGeneration == generation else { return }
         detailRefreshTask = nil
         let needsTrailingRefresh = detailRefreshPending
+        let trailingRefreshMustBypassStream = detailRefreshPendingForce
         detailRefreshPending = false
+        detailRefreshPendingForce = false
         if needsTrailingRefresh, let threadID = activeThreadID {
-            scheduleDetailRefresh(threadID: threadID, client: client)
+            scheduleDetailRefresh(
+                threadID: threadID,
+                client: client,
+                force: trailingRefreshMustBypassStream
+            )
         }
     }
 
@@ -3795,6 +3832,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         detailRefreshTask?.cancel()
         detailRefreshTask = nil
         detailRefreshPending = false
+        detailRefreshPendingForce = false
     }
 
     private func resetDetailStream() {

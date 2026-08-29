@@ -369,13 +369,12 @@ struct HomeThreadSearchExcerptTests {
             hapticsEnabled: false,
             isSnoozedExpanded: false,
             isSettledExpanded: false,
-            isArchiveExpanded: false,
             settledLimit: 12,
             onOpen: onOpen,
             onOpenSummaryTimeline: { _ in },
             onToggleSnoozed: {},
             onToggleSettled: {},
-            onToggleArchive: {},
+            onOpenArchive: {},
             onShowMoreSettled: {},
             onRename: { _ in },
             regeneratingTitleThreadIDs: [],
@@ -384,6 +383,8 @@ struct HomeThreadSearchExcerptTests {
             onSettle: { _, _, completion in completion(true) },
             onSnooze: { _, _ in },
             onPin: { _, _ in },
+            pinnedMovePositions: [:],
+            onMovePinned: { _, _ in },
             onDelete: { _ in }
         )
     }
