@@ -87,6 +87,24 @@ struct MarkdownRenderCacheTests {
     }
 
     @Test
+    func streamingAndHydratedRenderPlansPreserveIdenticalAuthoredNumbers() async throws {
+        let cache = MarkdownRenderCache(documentCountLimit: 8, documentCostLimit: 64_000)
+        let revision = MarkdownContentRevision(
+            "1. First\n5. Fifth\n5. Fifth again\n3. Third\n15. Fifteenth"
+        )
+
+        let streaming = try #require(
+            await cache.document(for: revision, isIntermediate: true)
+        )
+        #expect(cache.cachedDocument(for: revision) == nil)
+        let hydrated = try #require(cache.documentImmediately(for: revision))
+
+        #expect(orderedNumbers(in: streaming) == [1, 5, 5, 3, 15])
+        #expect(orderedNumbers(in: hydrated) == [1, 5, 5, 3, 15])
+        #expect(streaming.revision.source == hydrated.revision.source)
+    }
+
+    @Test
     func canceledRequestDoesNotRenderOrCache() async {
         let cache = MarkdownRenderCache(documentCountLimit: 8, documentCostLimit: 64_000)
         let revision = MarkdownContentRevision(String(repeating: "Paragraph.\n\n", count: 2_000))
@@ -98,5 +116,10 @@ struct MarkdownRenderCacheTests {
         render.cancel()
         #expect(await render.value == nil)
         #expect(cache.cachedDocument(for: revision) == nil)
+    }
+
+    private func orderedNumbers(in document: MarkdownRenderedDocument) -> [Int]? {
+        guard case let .orderedList(_, items) = document.blocks.first else { return nil }
+        return items.compactMap(\.number)
     }
 }

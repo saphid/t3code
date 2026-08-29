@@ -130,8 +130,15 @@ enum MarkdownTableAlignment: Equatable, Sendable {
 }
 
 struct MarkdownListItem: Equatable, Sendable {
+    let number: Int?
     let task: MarkdownTaskState?
     let blocks: [MarkdownBlock]
+
+    init(number: Int? = nil, task: MarkdownTaskState?, blocks: [MarkdownBlock]) {
+        self.number = number
+        self.task = task
+        self.blocks = blocks
+    }
 }
 
 enum MarkdownTaskState: Equatable, Sendable {
@@ -332,7 +339,13 @@ private struct MarkdownBlockParser {
                 itemLines[0] = removingTaskMarker(from: itemLines[0])
             }
             var itemParser = MarkdownBlockParser(source: itemLines.joined(separator: "\n"))
-            items.append(MarkdownListItem(task: task, blocks: itemParser.parse()))
+            items.append(
+                MarkdownListItem(
+                    number: marker.number,
+                    task: task,
+                    blocks: itemParser.parse()
+                )
+            )
 
             guard index < lines.count,
                   let nextMarker = listMarker(in: lines[index]),

@@ -34,12 +34,135 @@ struct MarkdownDocumentTests {
                 .orderedList(
                     start: 3,
                     items: [
-                        MarkdownListItem(task: nil, blocks: [.paragraph("Third")]),
-                        MarkdownListItem(task: nil, blocks: [.paragraph("Fourth")]),
+                        MarkdownListItem(number: 3, task: nil, blocks: [.paragraph("Third")]),
+                        MarkdownListItem(number: 4, task: nil, blocks: [.paragraph("Fourth")]),
                     ]
                 ),
             ]
         )
+    }
+
+    @Test
+    func preservesSparseRepeatedAndDescendingOrderedListNumbers() throws {
+        let document = MarkdownDocument(
+            parsing: """
+            1. First
+            5. Fifth
+            5. Fifth again
+            3. Third
+            15. Fifteenth
+            """
+        )
+
+        guard case let .orderedList(start, items) = document.blocks.first else {
+            Issue.record("Expected an ordered list")
+            return
+        }
+
+        #expect(start == 1)
+        #expect(items.map(\.number) == [1, 5, 5, 3, 15])
+        #expect(items.map(\.blocks) == [
+            [.paragraph("First")],
+            [.paragraph("Fifth")],
+            [.paragraph("Fifth again")],
+            [.paragraph("Third")],
+            [.paragraph("Fifteenth")],
+        ])
+    }
+
+    @Test
+    func preservesNestedListsTasksAndContinuationParagraphs() throws {
+        let document = MarkdownDocument(
+            parsing: """
+            4. Parent
+               10. Nested ten
+               7. Nested seven
+               - Nested bullet
+
+               Continued parent paragraph.
+            2. [x] Done
+            """
+        )
+
+        guard case let .orderedList(start, items) = document.blocks.first else {
+            Issue.record("Expected an ordered list")
+            return
+        }
+        #expect(start == 4)
+        #expect(items.map(\.number) == [4, 2])
+        guard items.count == 2, items[0].blocks.count == 4 else {
+            Issue.record("Expected two outer items and four blocks in the first item")
+            return
+        }
+        #expect(items[1].task == .complete)
+        #expect(items[1].blocks == [.paragraph("Done")])
+
+        guard case let .orderedList(nestedStart, nestedItems) = items[0].blocks[1] else {
+            Issue.record("Expected the nested ordered list")
+            return
+        }
+        #expect(nestedStart == 10)
+        #expect(nestedItems.map(\.number) == [10, 7])
+        #expect(items[0].blocks[2] == .unorderedList([
+            MarkdownListItem(task: nil, blocks: [.paragraph("Nested bullet")]),
+        ]))
+        #expect(items[0].blocks[3] == .paragraph("Continued parent paragraph."))
+    }
+
+    @Test
+    func doesNotReclassifyCodeDecimalsDatesEscapesOrMalformedMarkers() {
+        let document = MarkdownDocument(
+            parsing: """
+            2.5 stays decimal prose.
+            2026-08-29 stays a date.
+            \\1. Escaped marker stays prose.
+            1.No separating space stays prose.
+            1234567890. Ten digits stay prose.
+
+            ```text
+            8. Code stays literal.
+            ```
+            """
+        )
+
+        #expect(document.blocks == [
+            .paragraph(
+                "2.5 stays decimal prose.\n"
+                    + "2026-08-29 stays a date.\n"
+                    + "\\1. Escaped marker stays prose.\n"
+                    + "1.No separating space stays prose.\n"
+                    + "1234567890. Ten digits stay prose."
+            ),
+            .codeBlock(language: "text", code: "8. Code stays literal."),
+        ])
+    }
+
+    @Test
+    func listMarkerPresentationUsesTheAuthoredNumberForTextAndVoiceOver() {
+        let markers = [1, 5, 8, 15].map {
+            MarkdownListMarkerPresentation(task: nil, orderedNumber: $0)
+        }
+
+        #expect(markers.map(\.visibleText) == ["1.", "5.", "8.", "15."])
+        #expect(markers.map(\.accessibilityLabel) == [
+            "Item 1", "Item 5", "Item 8", "Item 15",
+        ])
+        #expect(
+            MarkdownListMarkerPresentation(task: .complete, orderedNumber: 8)
+                .accessibilityLabel == "Completed"
+        )
+        #expect(
+            MarkdownListMarkerPresentation(task: nil, orderedNumber: nil) == .unordered
+        )
+    }
+
+    @Test
+    func wholeMessageCopyTracksTheExactStreamingSource() {
+        let source = MarkdownSelectionSource("1. First\n5. Fifth")
+        #expect(source.copyText == "1. First\n5. Fifth")
+
+        source.text = "1. First\n5. Fifth\n8. Eighth\n15. Fifteenth"
+        #expect(source.copyText == "1. First\n5. Fifth\n8. Eighth\n15. Fifteenth")
     }
 
     @Test

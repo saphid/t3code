@@ -109,6 +109,7 @@ extension MarkdownRenderedInline: Equatable {
 }
 
 struct MarkdownRenderedListItem: Equatable, @unchecked Sendable {
+    let number: Int?
     let task: MarkdownTaskState?
     let blocks: [MarkdownRenderedBlock]
 }
@@ -437,7 +438,13 @@ final class MarkdownRenderCache: @unchecked Sendable {
         renderedItems.reserveCapacity(items.count)
         for item in items {
             guard !Task.isCancelled, let blocks = renderBlocks(item.blocks) else { return nil }
-            renderedItems.append(MarkdownRenderedListItem(task: item.task, blocks: blocks))
+            renderedItems.append(
+                MarkdownRenderedListItem(
+                    number: item.number,
+                    task: item.task,
+                    blocks: blocks
+                )
+            )
         }
         return renderedItems
     }

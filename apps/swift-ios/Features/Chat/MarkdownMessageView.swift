@@ -71,7 +71,7 @@ struct MarkdownMessageView: View {
             }
         }
         .accessibilityAction(named: copyActionTitle) {
-            UIPasteboard.general.string = source
+            UIPasteboard.general.string = selectionSource.copyText
         }
         .task(id: RenderRequest(revision: revision, isStreaming: isStreaming)) {
             if !isStreaming {
@@ -197,8 +197,10 @@ private final class StreamingMarkdownRenderer {
     }
 }
 
-private final class MarkdownSelectionSource: @unchecked Sendable {
+final class MarkdownSelectionSource: @unchecked Sendable {
     var text: String
+
+    var copyText: String { text }
 
     init(_ text: String) {
         self.text = text
@@ -449,23 +451,68 @@ private struct MarkdownListView: View {
 
     @ViewBuilder
     private func marker(for item: MarkdownRenderedListItem, offset: Int) -> some View {
-        if let task = item.task {
+        let presentation = MarkdownListMarkerPresentation(
+            task: item.task,
+            orderedNumber: item.number ?? start.map { $0 + offset }
+        )
+        switch presentation {
+        case let .task(task):
             Image(systemName: task == .complete ? "checkmark.square.fill" : "square")
                 .font(T3Typography.control)
                 .foregroundStyle(
                     task == .complete ? T3Colors.success : T3Colors.textSecondary
                 )
-                .accessibilityLabel(task == .complete ? "Completed" : "Not completed")
-        } else if let start {
-            Text("\(start + offset).")
+                .accessibilityLabel(presentation.accessibilityLabel)
+        case .ordered:
+            Text(presentation.visibleText)
                 .font(T3Typography.supporting.monospaced())
                 .foregroundStyle(T3Colors.textSecondary)
-                .accessibilityLabel("Item \(start + offset)")
-        } else {
-            Text("•")
+                .accessibilityLabel(presentation.accessibilityLabel)
+        case .unordered:
+            Text(presentation.visibleText)
                 .font(T3Typography.threadBody.weight(.semibold))
                 .foregroundStyle(T3Colors.textSecondary)
                 .accessibilityHidden(true)
+        }
+    }
+}
+
+enum MarkdownListMarkerPresentation: Equatable, Sendable {
+    case task(MarkdownTaskState)
+    case ordered(Int)
+    case unordered
+
+    init(task: MarkdownTaskState?, orderedNumber: Int?) {
+        if let task {
+            self = .task(task)
+        } else if let orderedNumber {
+            self = .ordered(orderedNumber)
+        } else {
+            self = .unordered
+        }
+    }
+
+    var visibleText: String {
+        switch self {
+        case .task:
+            ""
+        case let .ordered(number):
+            "\(number)."
+        case .unordered:
+            "•"
+        }
+    }
+
+    var accessibilityLabel: String {
+        switch self {
+        case .task(.complete):
+            "Completed"
+        case .task(.incomplete):
+            "Not completed"
+        case let .ordered(number):
+            "Item \(number)"
+        case .unordered:
+            ""
         }
     }
 }
@@ -958,7 +1005,7 @@ private struct MarkdownInlineText: UIViewRepresentable {
         }
 
         private func copyMessage() {
-            UIPasteboard.general.string = selectionContext.source.text
+            UIPasteboard.general.string = selectionContext.source.copyText
         }
     }
 }
