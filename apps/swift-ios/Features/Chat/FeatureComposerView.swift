@@ -24,6 +24,7 @@ struct FeatureComposerView: View {
     private let materializesDefaultSelection: Bool
     private let isSending: Bool
     private let isWorking: Bool
+    private let isStopping: Bool
     @Binding private var focused: Bool
     private let contextUsage: Double?
     private let forceExpanded: Bool
@@ -46,6 +47,7 @@ struct FeatureComposerView: View {
         materializesDefaultSelection: Bool = true,
         isSending: Bool,
         isWorking: Bool,
+        isStopping: Bool = false,
         focused: Binding<Bool>,
         onSend: @escaping () -> Void,
         onStop: @escaping () -> Void,
@@ -67,6 +69,7 @@ struct FeatureComposerView: View {
         self.materializesDefaultSelection = materializesDefaultSelection
         self.isSending = isSending
         self.isWorking = isWorking
+        self.isStopping = isStopping
         _focused = focused
         self.onSend = onSend
         self.onStop = onStop
@@ -335,19 +338,41 @@ struct FeatureComposerView: View {
 
     private var submitButton: some View {
         Button(action: performPrimaryAction) {
-            Image(systemName: submitSymbol)
-                .font(.system(size: showsStop ? 11 : 14, weight: .bold))
+            Group {
+                if isStopping {
+                    HStack(spacing: 6) {
+                        ProgressView()
+                            .controlSize(.small)
+                            .tint(.white)
+                        Text("Stopping…")
+                            .font(T3Typography.supportingStrong)
+                    }
+                    .padding(.horizontal, 11)
+                } else {
+                    Image(systemName: submitSymbol)
+                        .font(.system(size: showsStop ? 11 : 14, weight: .bold))
+                        .frame(width: 34)
+                }
+            }
                 .foregroundStyle(.white)
-                .frame(width: 34, height: 34)
-                .background(showsStop ? T3Colors.danger : T3Colors.accent, in: Circle())
-                .frame(width: T3Metrics.minimumTapTarget, height: T3Metrics.minimumTapTarget)
+                .frame(height: 34)
+                .background(
+                    showsStop ? T3Colors.danger : T3Colors.accent,
+                    in: Capsule()
+                )
+                .frame(
+                    minWidth: T3Metrics.minimumTapTarget,
+                    minHeight: T3Metrics.minimumTapTarget
+                )
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .disabled(submitDisabled)
         .opacity(submitDisabled ? 0.3 : 1)
         .accessibilityLabel(submitAccessibilityLabel)
-        .accessibilityIdentifier(showsStop ? "thread-stop" : "message-send")
+        .accessibilityIdentifier(
+            isStopping ? "thread-stopping" : showsStop ? "thread-stop" : "message-send"
+        )
     }
 
     private var composerPlaceholder: String {
@@ -361,6 +386,7 @@ struct FeatureComposerView: View {
 
     private var submitAccessibilityLabel: String {
         if isSending { return "Sending message" }
+        if isStopping { return "Stopping agent" }
         if showsStop { return "Stop agent" }
         return isWorking ? "Queue message" : "Send message"
     }
@@ -391,7 +417,7 @@ struct FeatureComposerView: View {
     }
 
     private var submitDisabled: Bool {
-        isSending || (!showsStop && !canSend)
+        isSending || isStopping || (!showsStop && !canSend)
     }
 
     private var textIsEmpty: Bool {

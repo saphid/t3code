@@ -454,6 +454,42 @@ describe("applyThreadDetailEvent", () => {
     });
   });
 
+  describe("thread.turn-interrupt-requested", () => {
+    it("interrupts the latest unsettled turn when legacy events omit turnId", () => {
+      const runningTurnId = TurnId.make("turn-running");
+      const runningThread: OrchestrationThread = {
+        ...baseThread,
+        latestTurn: {
+          turnId: runningTurnId,
+          state: "running",
+          requestedAt: "2026-04-01T06:59:00.000Z",
+          startedAt: "2026-04-01T06:59:00.000Z",
+          completedAt: null,
+          assistantMessageId: null,
+        },
+      };
+
+      const result = applyThreadDetailEvent(runningThread, {
+        ...baseEventFields,
+        sequence: 9,
+        occurredAt: "2026-04-01T07:00:00.000Z",
+        aggregateKind: "thread",
+        aggregateId: ThreadId.make("thread-1"),
+        type: "thread.turn-interrupt-requested",
+        payload: {
+          threadId: ThreadId.make("thread-1"),
+          createdAt: "2026-04-01T07:00:00.000Z",
+        },
+      });
+
+      expect(result.kind).toBe("updated");
+      if (result.kind === "updated") {
+        expect(result.thread.latestTurn?.turnId).toBe(runningTurnId);
+        expect(result.thread.latestTurn?.state).toBe("interrupted");
+      }
+    });
+  });
+
   describe("thread.session-set", () => {
     it("settles a running latestTurn when the session leaves the running status", () => {
       const threadWithRunningTurn: OrchestrationThread = {

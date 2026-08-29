@@ -882,7 +882,8 @@ public final class FeatureRootModel {
         }
     }
 
-    public func cancelTurn(threadID: String) async {
+    @discardableResult
+    public func cancelTurn(threadID: String) async -> Bool {
         if pendingSubmissionsByID.values.contains(where: {
             $0.threadID == threadID && $0.creation != nil
         }) {
@@ -893,16 +894,17 @@ public final class FeatureRootModel {
                     scheduleOutboxRetry()
                 }
             }
+            var succeeded = true
             if pendingThreadsByID[threadID] == nil,
                snapshot.threads.contains(where: { $0.id == threadID }) {
-                await perform {
+                succeeded = await perform {
                     try await client.cancelTurn(threadID: threadID)
                 }
             }
             scheduleOutboxDrain()
-            return
+            return succeeded
         }
-        await perform {
+        return await perform {
             try await client.cancelTurn(threadID: threadID)
         }
     }

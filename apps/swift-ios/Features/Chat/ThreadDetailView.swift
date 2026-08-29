@@ -27,6 +27,7 @@ public struct ThreadDetailView: View {
     @State private var didRestoreDraft = false
     @State private var draftSaveTask: Task<Void, Never>?
     @State private var toolSurface: FeatureThreadToolSurface?
+    @State private var turnStopState = FeatureTurnStopState()
     // Plain state, not `FocusState`: the composer's UIKit text view owns
     // focus and mirrors it through this binding, because SwiftUI drops
     // writes to a `FocusState` no `.focused()` view registers with.
@@ -389,6 +390,7 @@ public struct ThreadDetailView: View {
         let isWorking = detail.thread.state == .working
             || detail.thread.state == .queued
             || detail.thread.state == .monitoring
+        let composerIsWorking = detail.thread.state == .working || detail.thread.state == .queued
         return Group {
             if detail.messages.isEmpty, !isWorking {
                 ContentUnavailableView(
@@ -427,12 +429,11 @@ public struct ThreadDetailView: View {
                 threadSelection: currentSelection,
                 materializesDefaultSelection: false,
                 isSending: isSending,
-                isWorking: detail.thread.state == .working || detail.thread.state == .queued,
+                isWorking: composerIsWorking,
+                isStopping: turnStopState.isStopping(threadID: thread.id),
                 focused: $composerFocused,
                 onSend: send,
-                onStop: {
-                    Task { await model.cancelTurn(threadID: thread.id) }
-                },
+                onStop: stopTurn,
                 pendingApprovals: detail.approvals,
                 pendingUserInputs: detail.userInputs,
                 isResolvingRequest: model.isPerformingAction,
@@ -445,6 +446,18 @@ public struct ThreadDetailView: View {
                     Task { await model.resolveUserInput(id, answers: answers) }
                 }
             )
+        }
+        .onChange(of: composerIsWorking) { _, nextIsWorking in
+            turnStopState.reconcile(threadID: thread.id, isWorking: nextIsWorking)
+        }
+    }
+
+    private func stopTurn() {
+        guard turnStopState.begin(threadID: thread.id) else { return }
+        Task {
+            if await model.cancelTurn(threadID: thread.id) == false {
+                turnStopState.finish(threadID: thread.id)
+            }
         }
     }
 

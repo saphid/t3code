@@ -33,6 +33,7 @@ import {
   ThreadRevertedPayload,
   ThreadSessionSetPayload,
   ThreadTurnDiffCompletedPayload,
+  ThreadTurnInterruptRequestedPayload,
 } from "./Schemas.ts";
 
 type ThreadPatch = Partial<Omit<OrchestrationThread, "id" | "projectId">>;
@@ -611,6 +612,37 @@ export function projectEvent(
           }),
         };
       });
+
+    case "thread.turn-interrupt-requested":
+      return decodeForEvent(
+        ThreadTurnInterruptRequestedPayload,
+        event.payload,
+        event.type,
+        "payload",
+      ).pipe(
+        Effect.map((payload) => {
+          const thread = nextBase.threads.find((entry) => entry.id === payload.threadId);
+          if (thread?.latestTurn === null || thread?.latestTurn.state !== "running") {
+            return nextBase;
+          }
+          const targetTurnId = payload.turnId ?? thread.latestTurn.turnId;
+          if (thread.latestTurn.turnId !== targetTurnId) {
+            return nextBase;
+          }
+          return {
+            ...nextBase,
+            threads: updateThread(nextBase.threads, payload.threadId, {
+              latestTurn: {
+                ...thread.latestTurn,
+                state: "interrupted",
+                startedAt: thread.latestTurn.startedAt ?? payload.createdAt,
+                completedAt: thread.latestTurn.completedAt ?? payload.createdAt,
+              },
+              updatedAt: event.occurredAt,
+            }),
+          };
+        }),
+      );
 
     case "thread.proposed-plan-upserted":
       return Effect.gen(function* () {

@@ -1441,6 +1441,88 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
     }),
   );
 
+  it.effect("binds legacy turn interrupts to the latest running projected turn", () =>
+    Effect.gen(function* () {
+      const projectionPipeline = yield* OrchestrationProjectionPipeline;
+      const eventStore = yield* OrchestrationEventStore;
+      const sql = yield* SqlClient.SqlClient;
+      const now = "2026-08-29T00:00:00.000Z";
+      const threadId = ThreadId.make("thread-legacy-interrupt");
+      const turnId = TurnId.make("turn-legacy-interrupt");
+
+      yield* eventStore.append({
+        type: "thread.created",
+        eventId: EventId.make("evt-legacy-interrupt-1"),
+        aggregateKind: "thread",
+        aggregateId: threadId,
+        occurredAt: now,
+        commandId: CommandId.make("cmd-legacy-interrupt-1"),
+        causationEventId: null,
+        correlationId: CorrelationId.make("cmd-legacy-interrupt-1"),
+        metadata: {},
+        payload: {
+          threadId,
+          projectId: ProjectId.make("project-legacy-interrupt"),
+          title: "Legacy interrupt",
+          modelSelection: {
+            instanceId: ProviderInstanceId.make("codex"),
+            model: "gpt-5.6-codex",
+          },
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          createdAt: now,
+          updatedAt: now,
+        },
+      });
+      yield* eventStore.append({
+        type: "thread.session-set",
+        eventId: EventId.make("evt-legacy-interrupt-2"),
+        aggregateKind: "thread",
+        aggregateId: threadId,
+        occurredAt: now,
+        commandId: CommandId.make("cmd-legacy-interrupt-2"),
+        causationEventId: null,
+        correlationId: CorrelationId.make("cmd-legacy-interrupt-2"),
+        metadata: {},
+        payload: {
+          threadId,
+          session: {
+            threadId,
+            status: "running",
+            providerName: "codex",
+            runtimeMode: "full-access",
+            activeTurnId: turnId,
+            lastError: null,
+            updatedAt: now,
+          },
+        },
+      });
+      yield* eventStore.append({
+        type: "thread.turn-interrupt-requested",
+        eventId: EventId.make("evt-legacy-interrupt-3"),
+        aggregateKind: "thread",
+        aggregateId: threadId,
+        occurredAt: now,
+        commandId: CommandId.make("cmd-legacy-interrupt-3"),
+        causationEventId: null,
+        correlationId: CorrelationId.make("cmd-legacy-interrupt-3"),
+        metadata: {},
+        payload: { threadId, createdAt: now },
+      });
+
+      yield* projectionPipeline.bootstrap;
+
+      const rows = yield* sql<{ readonly state: string; readonly completedAt: string | null }>`
+        SELECT state, completed_at AS "completedAt"
+        FROM projection_turns
+        WHERE thread_id = ${threadId} AND turn_id = ${turnId}
+      `;
+      assert.deepEqual(rows, [{ state: "interrupted", completedAt: now }]);
+    }),
+  );
+
   it.effect("settles a superseded running turn when a new turn becomes active", () =>
     Effect.gen(function* () {
       const projectionPipeline = yield* OrchestrationProjectionPipeline;

@@ -920,6 +920,22 @@ struct FeatureRootModelTests {
         #expect(client.cancelTurnCallCount == 0)
     }
 
+    @Test(
+        "A remote Stop failure is surfaced and retryable",
+        .bug("https://github.com/saphid/t3code-personal/issues/223")
+    )
+    func remoteStopFailureIsSurfaced() async {
+        let client = FeatureClientStub()
+        client.cancelTurnError = URLError(.networkConnectionLost)
+        let model = testRootModel(client: client)
+
+        let succeeded = await model.cancelTurn(threadID: "thread-remote")
+
+        #expect(succeeded == false)
+        #expect(client.cancelTurnCallCount == 1)
+        #expect(model.errorMessage?.isEmpty == false)
+    }
+
     @Test
     func cancellingARestoredServerThreadAlsoInterruptsItsTurn() async throws {
         let directory = FileManager.default.temporaryDirectory
@@ -3009,6 +3025,7 @@ private final class FeatureClientStub: FeatureClient, T3ConnectCapable {
     var signOutCallCount = 0
     var startTaskError: (any Error)?
     var sendMessageError: (any Error)?
+    var cancelTurnError: (any Error)?
     var enabledEnvironmentID: String?
     var environmentEnabledValue: Bool?
     var removedEnvironmentID: String?
@@ -3198,6 +3215,7 @@ private final class FeatureClientStub: FeatureClient, T3ConnectCapable {
 
     func cancelTurn(threadID: String) async throws {
         cancelTurnCallCount += 1
+        if let cancelTurnError { throw cancelTurnError }
     }
     func resolveApproval(id: String, decision: FeatureApprovalDecision) async throws {}
     func resolveUserInput(

@@ -258,11 +258,13 @@ export function applyThreadDetailEvent(
       };
 
     case "thread.turn-interrupt-requested": {
-      if (event.payload.turnId === undefined) {
-        return { kind: "unchanged" };
-      }
       const latestTurn = thread.latestTurn;
-      if (latestTurn === null || latestTurn.turnId !== event.payload.turnId) {
+      const targetTurnId = event.payload.turnId ?? latestTurn?.turnId;
+      if (
+        latestTurn === null ||
+        latestTurn.state !== "running" ||
+        latestTurn.turnId !== targetTurnId
+      ) {
         return { kind: "unchanged" };
       }
       return {

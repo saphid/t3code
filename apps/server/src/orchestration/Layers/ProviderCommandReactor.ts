@@ -16,9 +16,11 @@ import { isTemporaryWorktreeBranch, WORKTREE_BRANCH_PREFIX } from "@t3tools/shar
 import * as Cache from "effect/Cache";
 import * as Cause from "effect/Cause";
 import * as Crypto from "effect/Crypto";
+import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Equal from "effect/Equal";
+import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -48,6 +50,7 @@ import { VcsStatusBroadcaster } from "../../vcs/VcsStatusBroadcaster.ts";
 import { GitWorkflowService } from "../../git/GitWorkflowService.ts";
 const isProviderAdapterRequestError = Schema.is(ProviderAdapterRequestError);
 const isProviderDriverKind = Schema.is(ProviderDriverKind);
+const TURN_INTERRUPT_FALLBACK_GRACE = Duration.seconds(5);
 
 type ProviderIntentEvent = Extract<
   OrchestrationEvent,
@@ -1180,8 +1183,12 @@ const make = Effect.gen(function* () {
     if (!thread) {
       return;
     }
-    const hasSession = thread.session && thread.session.status !== "stopped";
-    if (!hasSession) {
+    const session = thread.session;
+    if (session?.status === "interrupted" || session?.status === "stopped") {
+      return;
+    }
+    const hasLiveSession = session?.status === "starting" || session?.status === "running";
+    if (!hasLiveSession) {
       return yield* appendProviderFailureActivity({
         threadId: event.payload.threadId,
         kind: "provider.turn.interrupt.failed",
@@ -1192,8 +1199,127 @@ const make = Effect.gen(function* () {
       });
     }
 
+    const targetsCurrentTurn =
+      event.payload.turnId !== undefined
+        ? thread.latestTurn?.turnId === event.payload.turnId ||
+          (thread.latestTurn === null && session.activeTurnId === event.payload.turnId)
+        : event.payload.targetSessionUpdatedAt !== undefined;
+    const targetsCurrentSession =
+      targetsCurrentTurn &&
+      (event.payload.targetSessionUpdatedAt === undefined ||
+        session.updatedAt === event.payload.targetSessionUpdatedAt);
+    if (!targetsCurrentSession) {
+      return yield* appendProviderFailureActivity({
+        threadId: event.payload.threadId,
+        kind: "provider.turn.interrupt.failed",
+        summary: "Provider turn interrupt skipped",
+        detail: "The requested turn is no longer the active turn for this thread.",
+        turnId: event.payload.turnId ?? null,
+        createdAt: event.payload.createdAt,
+      });
+    }
+
     // Orchestration turn ids are not provider turn ids, so interrupt by session.
-    yield* providerService.interruptTurn({ threadId: event.payload.threadId });
+    const interruptExit = yield* providerService
+      .interruptTurn({ threadId: event.payload.threadId })
+      .pipe(Effect.timeoutOption(TURN_INTERRUPT_FALLBACK_GRACE), Effect.exit);
+    const interruptFailureDetail = Exit.isFailure(interruptExit)
+      ? formatFailureDetail(interruptExit.cause)
+      : Option.isNone(interruptExit.value)
+        ? "Provider turn interrupt timed out after 5 seconds."
+        : null;
+
+    if (Exit.isSuccess(interruptExit) && Option.isSome(interruptExit.value)) {
+      yield* Effect.sleep(TURN_INTERRUPT_FALLBACK_GRACE);
+    }
+
+    const currentThread = yield* resolveThread(event.payload.threadId);
+    const currentSession = currentThread?.session;
+    if (
+      !currentThread ||
+      !currentSession ||
+      (currentSession.status !== "starting" && currentSession.status !== "running")
+    ) {
+      if (interruptFailureDetail !== null) {
+        yield* appendProviderFailureActivity({
+          threadId: event.payload.threadId,
+          kind: "provider.turn.interrupt.failed",
+          summary: "Provider turn interrupt failed",
+          detail: interruptFailureDetail,
+          turnId: event.payload.turnId ?? null,
+          createdAt: event.payload.createdAt,
+        });
+      }
+      return;
+    }
+
+    const stillTargetsSameTurn =
+      event.payload.turnId !== undefined
+        ? currentThread.latestTurn?.turnId === event.payload.turnId ||
+          (currentThread.latestTurn === null &&
+            currentSession.activeTurnId === event.payload.turnId)
+        : event.payload.targetSessionUpdatedAt !== undefined;
+    const stillTargetsSameSession =
+      stillTargetsSameTurn &&
+      (event.payload.targetSessionUpdatedAt === undefined ||
+        currentSession.updatedAt === event.payload.targetSessionUpdatedAt);
+    if (!stillTargetsSameSession) {
+      return;
+    }
+
+    const terminalAt = DateTime.formatIso(yield* DateTime.now);
+    const stopExit = yield* providerService
+      .stopSession({ threadId: event.payload.threadId })
+      .pipe(Effect.exit);
+    if (Exit.isFailure(stopExit)) {
+      const stopFailureDetail = formatFailureDetail(stopExit.cause);
+      const detail =
+        interruptFailureDetail === null
+          ? `Provider session fallback failed: ${stopFailureDetail}`
+          : `${interruptFailureDetail} Provider session fallback also failed: ${stopFailureDetail}`;
+      yield* appendProviderFailureActivity({
+        threadId: event.payload.threadId,
+        kind: "provider.turn.interrupt.failed",
+        summary: "Provider turn interrupt failed",
+        detail,
+        turnId: event.payload.turnId ?? null,
+        createdAt: terminalAt,
+      });
+      yield* setThreadSession({
+        threadId: event.payload.threadId,
+        session: {
+          ...currentSession,
+          status: "error",
+          activeTurnId: null,
+          lastError: detail,
+          updatedAt: terminalAt,
+        },
+        createdAt: terminalAt,
+      });
+      return;
+    }
+
+    if (interruptFailureDetail !== null) {
+      yield* appendProviderFailureActivity({
+        threadId: event.payload.threadId,
+        kind: "provider.turn.interrupt.failed",
+        summary: "Provider turn interrupt recovered",
+        detail: `${interruptFailureDetail} The provider session was stopped.`,
+        turnId: event.payload.turnId ?? null,
+        createdAt: terminalAt,
+      });
+    }
+    yield* setThreadSession({
+      threadId: event.payload.threadId,
+      session: {
+        ...currentSession,
+        status: "stopped",
+        activeTurnId: null,
+        lastError: null,
+        updatedAt: terminalAt,
+      },
+      createdAt: terminalAt,
+    });
   });
 
   const processApprovalResponseRequested = Effect.fn("processApprovalResponseRequested")(function* (

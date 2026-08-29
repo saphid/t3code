@@ -137,6 +137,81 @@ describe("orchestration projector", () => {
     ).rejects.toBeDefined();
   });
 
+  it("interrupts the latest running turn when a legacy event omits turnId", async () => {
+    const now = "2026-08-29T00:00:00.000Z";
+    const threadId = "thread-remote-stop";
+    const turnId = "turn-remote-stop";
+    let model = createEmptyReadModel(now);
+
+    model = await Effect.runPromise(
+      projectEvent(
+        model,
+        makeEvent({
+          sequence: 1,
+          type: "thread.created",
+          aggregateKind: "thread",
+          aggregateId: threadId,
+          occurredAt: now,
+          commandId: "cmd-create-remote-stop",
+          payload: {
+            threadId,
+            projectId: "project-1",
+            title: "Remote stop",
+            modelSelection: { instanceId: "codex", model: "gpt-5.6-codex" },
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: null,
+            createdAt: now,
+            updatedAt: now,
+          },
+        }),
+      ),
+    );
+    model = await Effect.runPromise(
+      projectEvent(
+        model,
+        makeEvent({
+          sequence: 2,
+          type: "thread.session-set",
+          aggregateKind: "thread",
+          aggregateId: threadId,
+          occurredAt: now,
+          commandId: "cmd-session-remote-stop",
+          payload: {
+            threadId,
+            session: {
+              threadId,
+              status: "running",
+              providerName: "codex",
+              runtimeMode: "full-access",
+              activeTurnId: turnId,
+              lastError: null,
+              updatedAt: now,
+            },
+          },
+        }),
+      ),
+    );
+    model = await Effect.runPromise(
+      projectEvent(
+        model,
+        makeEvent({
+          sequence: 3,
+          type: "thread.turn-interrupt-requested",
+          aggregateKind: "thread",
+          aggregateId: threadId,
+          occurredAt: now,
+          commandId: "cmd-interrupt-remote-stop",
+          payload: { threadId, createdAt: now },
+        }),
+      ),
+    );
+
+    expect(model.threads[0]?.latestTurn?.turnId).toBe(turnId);
+    expect(model.threads[0]?.latestTurn?.state).toBe("interrupted");
+  });
+
   it("applies thread.archived and thread.unarchived events", async () => {
     const now = "2026-01-01T00:00:00.000Z";
     const later = "2026-01-01T00:00:01.000Z";

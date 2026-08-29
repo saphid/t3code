@@ -1272,6 +1272,7 @@ export const ThreadTurnStartRequestedPayload = Schema.Struct({
 export const ThreadTurnInterruptRequestedPayload = Schema.Struct({
   threadId: ThreadId,
   turnId: Schema.optional(TurnId),
+  targetSessionUpdatedAt: Schema.optional(IsoDateTime),
   createdAt: IsoDateTime,
 });
 

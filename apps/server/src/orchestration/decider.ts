@@ -1037,11 +1037,30 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
     }
 
     case "thread.turn.interrupt": {
-      yield* requireThread({
+      const targetThread = yield* requireThread({
         readModel,
         command,
         threadId: command.threadId,
       });
+      const liveSession =
+        targetThread.session?.status === "starting" || targetThread.session?.status === "running"
+          ? targetThread.session
+          : null;
+      const latestRunningTurnId =
+        targetThread.latestTurn?.state === "running" ? targetThread.latestTurn.turnId : undefined;
+      const requestedTurnIsStaleSessionIdentity =
+        command.turnId !== undefined &&
+        liveSession?.activeTurnId !== null &&
+        command.turnId === liveSession?.activeTurnId;
+      const shouldUseLatestRunningTurn =
+        latestRunningTurnId !== undefined &&
+        (command.turnId === undefined ||
+          liveSession?.activeTurnId === null ||
+          command.turnId === latestRunningTurnId ||
+          requestedTurnIsStaleSessionIdentity);
+      const targetTurnId = shouldUseLatestRunningTurn
+        ? latestRunningTurnId
+        : (command.turnId ?? liveSession?.activeTurnId ?? undefined);
       return {
         ...(yield* withEventBase({
           aggregateKind: "thread",
@@ -1052,7 +1071,8 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         type: "thread.turn-interrupt-requested",
         payload: {
           threadId: command.threadId,
-          ...(command.turnId !== undefined ? { turnId: command.turnId } : {}),
+          ...(targetTurnId !== undefined ? { turnId: targetTurnId } : {}),
+          ...(liveSession !== null ? { targetSessionUpdatedAt: liveSession.updatedAt } : {}),
           createdAt: command.createdAt,
         },
       };

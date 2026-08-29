@@ -2487,6 +2487,215 @@ describe("ProviderCommandReactor", () => {
     });
   });
 
+  it("stops a session that remains running after provider interrupt succeeds", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+    const turnId = asTurnId("turn-bounded-success");
+
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.session.set",
+        commandId: CommandId.make("cmd-session-bounded-success"),
+        threadId: ThreadId.make("thread-1"),
+        session: {
+          threadId: ThreadId.make("thread-1"),
+          status: "running",
+          providerName: "codex",
+          runtimeMode: "approval-required",
+          activeTurnId: turnId,
+          lastError: null,
+          updatedAt: now,
+        },
+        createdAt: now,
+      }),
+    );
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.turn.interrupt",
+        commandId: CommandId.make("cmd-interrupt-bounded-success"),
+        threadId: ThreadId.make("thread-1"),
+        turnId,
+        createdAt: now,
+      }),
+    );
+
+    await harness.drain();
+
+    expect(harness.interruptTurn).toHaveBeenCalledTimes(1);
+    expect(harness.stopSession).toHaveBeenCalledTimes(1);
+    const readModel = await harness.readModel();
+    const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
+    expect(thread?.session?.status).toBe("stopped");
+    expect(thread?.session?.activeTurnId).toBeNull();
+    expect(thread?.latestTurn?.state).toBe("interrupted");
+  });
+
+  it("times out a hung provider interrupt and stops the same session", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+    const turnId = asTurnId("turn-bounded-timeout");
+    harness.interruptTurn.mockReturnValue(Effect.never);
+
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.session.set",
+        commandId: CommandId.make("cmd-session-bounded-timeout"),
+        threadId: ThreadId.make("thread-1"),
+        session: {
+          threadId: ThreadId.make("thread-1"),
+          status: "running",
+          providerName: "codex",
+          runtimeMode: "approval-required",
+          activeTurnId: turnId,
+          lastError: null,
+          updatedAt: now,
+        },
+        createdAt: now,
+      }),
+    );
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.turn.interrupt",
+        commandId: CommandId.make("cmd-interrupt-bounded-timeout"),
+        threadId: ThreadId.make("thread-1"),
+        turnId,
+        createdAt: now,
+      }),
+    );
+
+    await harness.drain();
+
+    expect(harness.stopSession).toHaveBeenCalledTimes(1);
+    const readModel = await harness.readModel();
+    const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
+    expect(thread?.session?.status).toBe("stopped");
+    expect(
+      thread?.activities.find((activity) => activity.kind === "provider.turn.interrupt.failed")
+        ?.payload,
+    ).toMatchObject({ detail: expect.stringContaining("timed out after 5 seconds") });
+  });
+
+  it("does not stop a newer turn that becomes active during the interrupt grace", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+    const oldTurnId = asTurnId("turn-before-race");
+    const newTurnId = asTurnId("turn-after-race");
+
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.session.set",
+        commandId: CommandId.make("cmd-session-before-race"),
+        threadId: ThreadId.make("thread-1"),
+        session: {
+          threadId: ThreadId.make("thread-1"),
+          status: "running",
+          providerName: "codex",
+          runtimeMode: "approval-required",
+          activeTurnId: oldTurnId,
+          lastError: null,
+          updatedAt: now,
+        },
+        createdAt: now,
+      }),
+    );
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.turn.interrupt",
+        commandId: CommandId.make("cmd-interrupt-before-race"),
+        threadId: ThreadId.make("thread-1"),
+        turnId: oldTurnId,
+        createdAt: now,
+      }),
+    );
+    await waitFor(() => harness.interruptTurn.mock.calls.length === 1);
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.session.set",
+        commandId: CommandId.make("cmd-session-after-race"),
+        threadId: ThreadId.make("thread-1"),
+        session: {
+          threadId: ThreadId.make("thread-1"),
+          status: "running",
+          providerName: "codex",
+          runtimeMode: "approval-required",
+          activeTurnId: newTurnId,
+          lastError: null,
+          updatedAt: "2026-01-01T00:00:01.000Z",
+        },
+        createdAt: "2026-01-01T00:00:01.000Z",
+      }),
+    );
+
+    await harness.drain();
+
+    expect(harness.stopSession).not.toHaveBeenCalled();
+    const readModel = await harness.readModel();
+    const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
+    expect(thread?.session?.status).toBe("running");
+    expect(thread?.session?.activeTurnId).toBe(newTurnId);
+    expect(thread?.latestTurn?.turnId).toBe(newTurnId);
+  });
+
+  it("does not stop a replacement session that reuses the interrupted turn id", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+    const turnId = asTurnId("turn-reused-by-new-session");
+
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.session.set",
+        commandId: CommandId.make("cmd-session-before-replacement"),
+        threadId: ThreadId.make("thread-1"),
+        session: {
+          threadId: ThreadId.make("thread-1"),
+          status: "running",
+          providerName: "codex",
+          runtimeMode: "approval-required",
+          activeTurnId: turnId,
+          lastError: null,
+          updatedAt: now,
+        },
+        createdAt: now,
+      }),
+    );
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.turn.interrupt",
+        commandId: CommandId.make("cmd-interrupt-before-replacement"),
+        threadId: ThreadId.make("thread-1"),
+        turnId,
+        createdAt: now,
+      }),
+    );
+    await waitFor(() => harness.interruptTurn.mock.calls.length === 1);
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.session.set",
+        commandId: CommandId.make("cmd-session-replacement"),
+        threadId: ThreadId.make("thread-1"),
+        session: {
+          threadId: ThreadId.make("thread-1"),
+          status: "running",
+          providerName: "codex",
+          runtimeMode: "approval-required",
+          activeTurnId: turnId,
+          lastError: null,
+          updatedAt: "2026-01-01T00:00:01.000Z",
+        },
+        createdAt: "2026-01-01T00:00:01.000Z",
+      }),
+    );
+
+    await harness.drain();
+
+    expect(harness.stopSession).not.toHaveBeenCalled();
+    const readModel = await harness.readModel();
+    const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
+    expect(thread?.session?.status).toBe("running");
+    expect(thread?.session?.activeTurnId).toBe(turnId);
+    expect(thread?.session?.updatedAt).toBe("2026-01-01T00:00:01.000Z");
+  });
+
   it("starts a fresh session when only projected session state exists", async () => {
     const harness = await createHarness();
     const now = "2026-01-01T00:00:00.000Z";

@@ -1357,14 +1357,30 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
         }
 
         case "thread.turn-interrupt-requested": {
-          if (event.payload.turnId === undefined) {
+          const targetTurnId =
+            event.payload.turnId ??
+            (yield* projectionTurnRepository.listByThreadId({
+              threadId: event.payload.threadId,
+            }))
+              .filter((turn) => turn.turnId !== null && turn.state === "running")
+              .toSorted(
+                (left, right) =>
+                  left.requestedAt.localeCompare(right.requestedAt) ||
+                  String(left.turnId).localeCompare(String(right.turnId)),
+              )
+              .at(-1)?.turnId ??
+            null;
+          if (targetTurnId === null) {
             return;
           }
           const existingTurn = yield* projectionTurnRepository.getByTurnId({
             threadId: event.payload.threadId,
-            turnId: event.payload.turnId,
+            turnId: targetTurnId,
           });
           if (Option.isSome(existingTurn)) {
+            if (existingTurn.value.state !== "running") {
+              return;
+            }
             yield* projectionTurnRepository.upsertByTurnId({
               ...existingTurn.value,
               state: "interrupted",
@@ -1375,7 +1391,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             return;
           }
           yield* projectionTurnRepository.upsertByTurnId({
-            turnId: event.payload.turnId,
+            turnId: targetTurnId,
             threadId: event.payload.threadId,
             pendingMessageId: null,
             sourceProposedPlanThreadId: null,
