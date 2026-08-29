@@ -1323,6 +1323,7 @@ private struct HomeCollectionCellContent: View {
                     title: title,
                     count: count,
                     isExpanded: isExpanded,
+                    navigates: false,
                     accent: T3Colors.accent
                 )
             }
