@@ -33,6 +33,7 @@ struct FeatureComposerView: View {
     private let onDismissKeyboard: (() -> Void)?
     private let onApprovalDecision: ((String, FeatureApprovalDecision) -> Void)?
     private let onUserInputSubmit: ((String, [String: FeatureInputAnswer]) -> Void)?
+    private let onRetryProvider: (@MainActor (String) async -> Void)?
 
     init(
         text: Binding<String>,
@@ -54,7 +55,8 @@ struct FeatureComposerView: View {
         powerFeatures: FeatureComposerPowerFeatures = .disabled,
         onDismissKeyboard: (() -> Void)? = nil,
         onApprovalDecision: ((String, FeatureApprovalDecision) -> Void)? = nil,
-        onUserInputSubmit: ((String, [String: FeatureInputAnswer]) -> Void)? = nil
+        onUserInputSubmit: ((String, [String: FeatureInputAnswer]) -> Void)? = nil,
+        onRetryProvider: (@MainActor (String) async -> Void)? = nil
     ) {
         _text = text
         _selection = selection
@@ -76,6 +78,7 @@ struct FeatureComposerView: View {
         self.onDismissKeyboard = onDismissKeyboard
         self.onApprovalDecision = onApprovalDecision
         self.onUserInputSubmit = onUserInputSubmit
+        self.onRetryProvider = onRetryProvider
     }
 
     var body: some View {
@@ -295,7 +298,8 @@ struct FeatureComposerView: View {
                 style: .compact,
                 threadSelection: threadSelection,
                 materializesDefaultSelection: materializesDefaultSelection,
-                onPresentationChange: handleModelPickerPresentation
+                onPresentationChange: handleModelPickerPresentation,
+                onRetryProvider: onRetryProvider
             )
             .frame(maxWidth: 220, alignment: .leading)
             .layoutPriority(2)

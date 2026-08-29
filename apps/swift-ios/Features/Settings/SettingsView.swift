@@ -8,6 +8,7 @@ public struct SettingsView: View {
     @State private var appearanceSaveTask: Task<Bool, Never>?
     @State private var saveErrorMessage: String?
     @State private var showingDiscardConfirmation = false
+    @State private var providerRetryKey: String?
 
     public init(model: FeatureRootModel) {
         self.model = model
@@ -19,6 +20,9 @@ public struct SettingsView: View {
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 36) {
                     connectionSection
+                    if !providerEnvironments.isEmpty {
+                        providersSection
+                    }
                     generalSection
                     preferencesSection
                     aboutSection
@@ -82,6 +86,9 @@ public struct SettingsView: View {
             .onChange(of: settings.appearance) { _, appearance in
                 saveAppearance(appearance)
             }
+            .task(id: providerRetryKey) {
+                await retryRequestedProvider()
+            }
         }
         .interactiveDismissDisabled(isSaving || hasUnsavedChanges)
         .presentationBackground(T3Colors.background)
@@ -132,6 +139,52 @@ public struct SettingsView: View {
                 }
                 .buttonStyle(.plain)
                 .accessibilityHint("Shows provider usage")
+            }
+        }
+    }
+
+    private var providersSection: some View {
+        SettingsSection(title: "Providers") {
+            VStack(spacing: 0) {
+                ForEach(providerEnvironments) { environment in
+                    let providers = model.snapshot.providersByEnvironment?[environment.id] ?? []
+                    ForEach(providers) { provider in
+                        let status = ProviderStatusPresentation.primary(in: [provider])
+                        let retryKey = providerRetryKey(
+                            environmentID: environment.id,
+                            providerID: provider.id
+                        )
+                        HStack(spacing: 12) {
+                            ProviderIcon(
+                                driver: provider.driver,
+                                providerID: provider.id,
+                                fallbackName: provider.name,
+                                size: 22
+                            )
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text(provider.name)
+                                    .font(T3Typography.threadBody)
+                                    .foregroundStyle(T3Colors.textPrimary)
+                                Text(status?.title ?? "Ready in \(environment.name)")
+                                    .font(T3Typography.supporting)
+                                    .foregroundStyle(T3Colors.textSecondary)
+                            }
+                            Spacer(minLength: 8)
+                            if status?.canRetry == true {
+                                Button("Retry") {
+                                    providerRetryKey = retryKey
+                                }
+                                .disabled(providerRetryKey != nil)
+                                .accessibilityLabel("Retry \(provider.name) in \(environment.name)")
+                            }
+                        }
+                        .padding(.horizontal, 20)
+                        .frame(minHeight: 60)
+                        if provider.id != providers.last?.id {
+                            settingsDivider
+                        }
+                    }
+                }
             }
         }
     }
@@ -220,6 +273,12 @@ public struct SettingsView: View {
                     .frame(minHeight: 56)
                 }
             }
+        }
+    }
+
+    private var providerEnvironments: [FeatureEnvironment] {
+        model.snapshot.environments.filter {
+            model.snapshot.providersByEnvironment?[$0.id]?.isEmpty == false
         }
     }
 
@@ -320,6 +379,22 @@ public struct SettingsView: View {
 
     private var canSave: Bool {
         !isSaving && hasUnsavedChanges
+    }
+
+    private func providerRetryKey(environmentID: String, providerID: String) -> String {
+        "\(environmentID)\u{0}\(providerID)"
+    }
+
+    @MainActor
+    private func retryRequestedProvider() async {
+        guard let providerRetryKey,
+              let separator = providerRetryKey.firstIndex(of: "\u{0}") else { return }
+        let environmentID = String(providerRetryKey[..<separator])
+        let providerID = String(providerRetryKey[providerRetryKey.index(after: separator)...])
+        await model.retryProvider(environmentID: environmentID, providerID: providerID)
+        if self.providerRetryKey == providerRetryKey {
+            self.providerRetryKey = nil
+        }
     }
 
     @MainActor

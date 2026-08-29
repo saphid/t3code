@@ -9,6 +9,20 @@ import UIKit
 @Suite("Feature root model")
 struct FeatureRootModelTests {
     @Test
+    func providerRetryTargetsOneProviderInOneEnvironment() async {
+        let client = FeatureClientStub()
+        let model = testRootModel(client: client)
+
+        await model.retryProvider(environmentID: "remote-linux", providerID: "opencode-work")
+
+        #expect(
+            client.providerRefreshes == [
+                .init(environmentID: "remote-linux", providerID: "opencode-work")
+            ]
+        )
+    }
+
+    @Test
     func appearanceAppliesImmediatelyAndPersistsWithoutSavingTheDraft() async {
         let client = FeatureClientStub()
         let model = testRootModel(client: client)
@@ -2609,6 +2623,11 @@ private func orchestrationThread(
 
 @MainActor
 private final class FeatureClientStub: FeatureClient, T3ConnectCapable {
+    struct ProviderRefresh: Equatable {
+        let environmentID: String
+        let providerID: String
+    }
+
     private let eventStream: AsyncStream<FeatureEvent>
     private let eventContinuation: AsyncStream<FeatureEvent>.Continuation
     var snapshot = FeatureSnapshot()
@@ -2616,6 +2635,7 @@ private final class FeatureClientStub: FeatureClient, T3ConnectCapable {
     var snapshotAfterEnvironmentToggle: FeatureSnapshot?
     var initialSnapshotCallCount = 0
     var backgroundSnapshotCallCount = 0
+    var providerRefreshes: [ProviderRefresh] = []
     var snapshotAfterPair: FeatureSnapshot?
     var snapshotAfterEnvironmentRemoval: FeatureSnapshot?
     var createdThread = FeatureThread(id: "created", projectID: "project", title: "Created")
@@ -2703,6 +2723,12 @@ private final class FeatureClientStub: FeatureClient, T3ConnectCapable {
 
     func removeEnvironment(id: String) async throws {
         removedEnvironmentID = id
+    }
+
+    func refreshProvider(environmentID: String, providerID: String) async throws {
+        providerRefreshes.append(
+            ProviderRefresh(environmentID: environmentID, providerID: providerID)
+        )
     }
 
     func connectT3Environment(

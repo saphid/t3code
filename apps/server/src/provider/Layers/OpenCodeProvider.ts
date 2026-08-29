@@ -1,6 +1,7 @@
 import {
   type ModelCapabilities,
   type OpenCodeSettings,
+  type ServerProviderProbeFailure,
   type ServerProviderModel,
   type ServerProviderSkill,
 } from "@t3tools/contracts";
@@ -8,6 +9,7 @@ import * as Cause from "effect/Cause";
 import * as Data from "effect/Data";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 
 import { createModelCapabilities } from "@t3tools/shared/model";
 import { compareSemverVersions } from "@t3tools/shared/semver";
@@ -30,11 +32,32 @@ const OPENCODE_PRESENTATION = {
   showInteractionModeToggle: false,
 } as const;
 const MINIMUM_OPENCODE_VERSION = "1.14.19";
+const OPENCODE_PROBE_TIMEOUT_MS = 10_000;
 
 class OpenCodeProbeError extends Data.TaggedError("OpenCodeProbeError")<{
   readonly cause: unknown;
   readonly detail: string;
 }> {}
+
+const withOpenCodeProbeTimeout = <A, E, R>(
+  effect: Effect.Effect<A, E, R>,
+  timeoutMs: number,
+): Effect.Effect<A, E | OpenCodeProbeError, R> =>
+  effect.pipe(
+    Effect.timeoutOption(timeoutMs),
+    Effect.flatMap(
+      Option.match({
+        onNone: () =>
+          Effect.fail(
+            new OpenCodeProbeError({
+              cause: new Error("OpenCode provider probe timed out."),
+              detail: `Timed out while checking OpenCode provider after ${timeoutMs}ms.`,
+            }),
+          ),
+        onSome: Effect.succeed,
+      }),
+    ),
+  );
 
 function normalizeProbeMessage(message: string): string | undefined {
   const trimmed = message.trim();
@@ -66,7 +89,11 @@ function formatOpenCodeProbeError(input: {
   readonly cause: unknown;
   readonly isExternalServer: boolean;
   readonly serverUrl: string;
-}): { readonly installed: boolean; readonly message: string } {
+}): {
+  readonly installed: boolean;
+  readonly message: string;
+  readonly probeFailure?: ServerProviderProbeFailure;
+} {
   const detail = normalizedErrorMessage(input.cause);
   const lower = detail?.toLowerCase() ?? "";
 
@@ -95,6 +122,9 @@ function formatOpenCodeProbeError(input: {
       return {
         installed: true,
         message: `Couldn't reach the configured OpenCode server at ${input.serverUrl}. Check that the server is running and the URL is correct.`,
+        ...(lower.includes("timed out") || lower.includes("timeout")
+          ? { probeFailure: "timeout" as const }
+          : {}),
       };
     }
 
@@ -108,6 +138,24 @@ function formatOpenCodeProbeError(input: {
     return {
       installed: false,
       message: "OpenCode CLI (`opencode`) is not installed or not on PATH.",
+      probeFailure: "missing_binary",
+    };
+  }
+
+  if (lower.includes("timed out") || lower.includes("timeout")) {
+    return {
+      installed: true,
+      message:
+        "OpenCode provider check timed out. Retry after checking the configured binary or wrapper.",
+      probeFailure: "timeout",
+    };
+  }
+
+  if (lower.includes("exited with code")) {
+    return {
+      installed: true,
+      message: `OpenCode provider check failed: ${detail}`,
+      probeFailure: "nonzero_exit",
     };
   }
 
@@ -326,19 +374,27 @@ export const checkOpenCodeProviderStatus = Effect.fn("checkOpenCodeProviderStatu
   openCodeSettings: OpenCodeSettings,
   cwd: string,
   environment?: NodeJS.ProcessEnv,
+  options?: { readonly probeTimeoutMs?: number },
 ): Effect.fn.Return<ServerProviderDraft, never, OpenCodeRuntime> {
   const openCodeRuntime = yield* OpenCodeRuntime;
   const resolvedEnvironment = environment ?? process.env;
   const checkedAt = DateTime.formatIso(yield* DateTime.now);
   const customModels = openCodeSettings.customModels;
   const isExternalServer = openCodeSettings.serverUrl.trim().length > 0;
+  const probeTimeoutMs = options?.probeTimeoutMs ?? OPENCODE_PROBE_TIMEOUT_MS;
 
-  const fallback = (cause: unknown, version: string | null = null) => {
+  const fallback = (
+    cause: unknown,
+    version: string | null = null,
+    probeFailure?: ServerProviderProbeFailure,
+    message?: string,
+  ) => {
     const failure = formatOpenCodeProbeError({
       cause,
       isExternalServer,
       serverUrl: openCodeSettings.serverUrl,
     });
+    const resolvedProbeFailure = probeFailure ?? failure.probeFailure;
     return buildServerProvider({
       presentation: OPENCODE_PRESENTATION,
       enabled: openCodeSettings.enabled,
@@ -349,7 +405,8 @@ export const checkOpenCodeProviderStatus = Effect.fn("checkOpenCodeProviderStatu
         version,
         status: "error",
         auth: { status: "unknown" },
-        message: failure.message,
+        message: message ?? failure.message,
+        ...(resolvedProbeFailure ? { probeFailure: resolvedProbeFailure } : {}),
       },
     });
   };
@@ -385,10 +442,22 @@ export const checkOpenCodeProviderStatus = Effect.fn("checkOpenCodeProviderStatu
           Effect.mapError(
             (cause) => new OpenCodeProbeError({ cause, detail: openCodeRuntimeErrorDetail(cause) }),
           ),
+          (effect) => withOpenCodeProbeTimeout(effect, probeTimeoutMs),
         ),
     );
     if (versionExit._tag === "Failure") {
       return fallback(Cause.squash(versionExit.cause));
+    }
+    if (versionExit.value.code !== 0) {
+      const detail =
+        normalizeProbeMessage(versionExit.value.stderr) ??
+        normalizeProbeMessage(versionExit.value.stdout);
+      return fallback(
+        new Error(`OpenCode version command exited with code ${versionExit.value.code}.`),
+        null,
+        "nonzero_exit",
+        `OpenCode CLI health check exited with code ${versionExit.value.code}${detail ? `: ${detail}` : "."}`,
+      );
     }
     version = parseGenericCliVersion(versionExit.value.stdout) ?? null;
 
@@ -412,6 +481,7 @@ export const checkOpenCodeProviderStatus = Effect.fn("checkOpenCodeProviderStatu
           status: "error",
           auth: { status: "unknown" },
           message: `OpenCode v${version} is too old. Upgrade to v${MINIMUM_OPENCODE_VERSION} or newer.`,
+          probeFailure: "incompatible_version",
         },
       });
     }
@@ -446,6 +516,7 @@ export const checkOpenCodeProviderStatus = Effect.fn("checkOpenCodeProviderStatu
       Effect.mapError(
         (cause) => new OpenCodeProbeError({ cause, detail: openCodeRuntimeErrorDetail(cause) }),
       ),
+      (effect) => withOpenCodeProbeTimeout(effect, probeTimeoutMs),
     ),
   );
   if (inventoryExit._tag === "Failure") {

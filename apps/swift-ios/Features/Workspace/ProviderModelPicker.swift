@@ -14,6 +14,7 @@ public struct ProviderModelPicker: View {
     let threadSelection: FeatureSelection?
     let materializesDefaultSelection: Bool
     private let onPresentationChange: ((Bool) -> Void)?
+    private let onRetryProvider: (@MainActor (String) async -> Void)?
 
     @State private var isPresented = false
 
@@ -24,7 +25,8 @@ public struct ProviderModelPicker: View {
         isLoading: Bool = false,
         threadSelection: FeatureSelection? = nil,
         materializesDefaultSelection: Bool = true,
-        onPresentationChange: ((Bool) -> Void)? = nil
+        onPresentationChange: ((Bool) -> Void)? = nil,
+        onRetryProvider: (@MainActor (String) async -> Void)? = nil
     ) {
         self.providers = providers
         normalizedProviders = ProviderModelCatalogNormalizer.normalized(providers)
@@ -34,6 +36,7 @@ public struct ProviderModelPicker: View {
         self.threadSelection = threadSelection
         self.materializesDefaultSelection = materializesDefaultSelection
         self.onPresentationChange = onPresentationChange
+        self.onRetryProvider = onRetryProvider
     }
 
     public var body: some View {
@@ -89,7 +92,8 @@ public struct ProviderModelPicker: View {
                 selection: $selection,
                 isLoading: isLoading,
                 threadSelection: threadSelection,
-                materializesDefaultSelection: materializesDefaultSelection
+                materializesDefaultSelection: materializesDefaultSelection,
+                onRetryProvider: onRetryProvider
             )
         }
         .onAppear(perform: materializeSelection)
@@ -189,6 +193,7 @@ private struct ModelPickerSheet: View {
     let isLoading: Bool
     let threadSelection: FeatureSelection?
     let materializesDefaultSelection: Bool
+    let onRetryProvider: (@MainActor (String) async -> Void)?
 
     @AppStorage("swift-ios.model-picker.favorites") private var favoriteStorage = ""
     @AppStorage("swift-ios.model-picker.recents") private var recentStorage = ""
@@ -196,6 +201,7 @@ private struct ModelPickerSheet: View {
     @State private var configuring: DailyUXModelOption?
     @State private var legacyModelsExpanded = false
     @State private var catalogCache = ModelPickerCatalogCache()
+    @State private var retryProviderID: String?
 
     var body: some View {
         NavigationStack {
@@ -212,11 +218,7 @@ private struct ModelPickerSheet: View {
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else if availableModelCount == 0 {
-                    ContentUnavailableView(
-                        emptyStateTitle,
-                        systemImage: emptyStateSymbol,
-                        description: Text(emptyStateMessage)
-                    )
+                    providerUnavailableView
                 } else {
                     modelList
                 }
@@ -247,6 +249,30 @@ private struct ModelPickerSheet: View {
         .onAppear(perform: revealSelectedLegacyModel)
         .onChange(of: selection) { revealSelectedLegacyModel() }
         .onChange(of: providers) { revealSelectedLegacyModel() }
+        .task(id: retryProviderID) {
+            guard let retryProviderID, let onRetryProvider else { return }
+            await onRetryProvider(retryProviderID)
+            if self.retryProviderID == retryProviderID {
+                self.retryProviderID = nil
+            }
+        }
+    }
+
+    private var providerUnavailableView: some View {
+        let status = ProviderStatusPresentation.primary(in: providers)
+        return ContentUnavailableView {
+            Label(status?.title ?? emptyStateTitle, systemImage: status?.systemImage ?? emptyStateSymbol)
+        } description: {
+            Text(status?.message ?? emptyStateMessage)
+        } actions: {
+            if let status, status.canRetry, onRetryProvider != nil {
+                Button("Retry") {
+                    retryProviderID = status.providerID
+                }
+                .disabled(retryProviderID != nil)
+                .accessibilityIdentifier("provider-status-retry")
+            }
+        }
     }
 
     private var modelList: some View {

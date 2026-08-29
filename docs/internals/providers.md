@@ -39,6 +39,19 @@ directory to route session and turn operations for a thread, so callers name a t
 Adding a driver means writing the driver plus adapter and adding it to `BUILT_IN_DRIVERS`. No
 orchestration, contract, or client change is required for the common case.
 
+## Provider probe lifecycle
+
+Provider status checks are scoped work. OpenCode gives its version and inventory stages a
+10-second deadline. Timeout, cancellation, registry shutdown, or server shutdown interrupts the
+scope. The process runner then terminates the isolated process group on Linux and macOS, or the
+complete process tree on Windows. This cleanup includes shell and version-manager descendants but
+does not match or signal unrelated provider processes.
+
+OpenCode snapshots report `probeFailure` as `timeout`, `missing_binary`,
+`incompatible_version`, or `nonzero_exit` when one applies. Clients can show a terminal reason and
+retry one provider instance with `server.refreshProviders`. Managed providers serialize refreshes,
+so a second request cannot start another probe while the first still owns the refresh permit.
+
 ## Model manifest
 
 The model picker's legacy section is driven by `apps/server/src/provider/model-manifest.json`, which

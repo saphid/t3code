@@ -46,6 +46,14 @@ const ServerConfigIssues = ForwardCompatibleArray(ServerConfigIssue);
 export const ServerProviderState = Schema.Literals(["ready", "warning", "error", "disabled"]);
 export type ServerProviderState = typeof ServerProviderState.Type;
 
+export const ServerProviderProbeFailure = Schema.Literals([
+  "timeout",
+  "missing_binary",
+  "incompatible_version",
+  "nonzero_exit",
+]);
+export type ServerProviderProbeFailure = typeof ServerProviderProbeFailure.Type;
+
 export const ServerProviderAuthStatus = Schema.Literals([
   "authenticated",
   "unauthenticated",
@@ -178,6 +186,7 @@ export const ServerProvider = Schema.Struct({
   auth: ServerProviderAuth,
   checkedAt: IsoDateTime,
   message: Schema.optional(TrimmedNonEmptyString),
+  probeFailure: Schema.optional(ServerProviderProbeFailure),
   // Optional for back-compat: every legacy producer omits this field and
   // an absent value is interpreted as `"available"` by consumers (see
   // `isProviderAvailable`). New `ProviderInstanceRegistry` outputs set it

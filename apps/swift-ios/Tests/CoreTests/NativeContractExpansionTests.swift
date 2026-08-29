@@ -370,6 +370,7 @@ final class NativeContractExpansionTests: XCTestCase {
           "enabled": true,
           "installed": true,
           "status": "ready",
+          "probeFailure": "timeout",
           "auth": { "status": "authenticated" },
           "checkedAt": "2026-08-04T12:00:00.000Z",
           "models": [{
@@ -396,6 +397,7 @@ final class NativeContractExpansionTests: XCTestCase {
         )
 
         XCTAssertEqual(snapshot.providers.map(\.instanceId), ["codex"])
+        XCTAssertEqual(snapshot.providers.first?.probeFailure, "timeout")
         XCTAssertEqual(snapshot.settings?.defaultThreadEnvMode, .worktree)
 
         let event = try JSONDecoder.t3.decode(

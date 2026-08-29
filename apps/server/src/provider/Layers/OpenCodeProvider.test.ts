@@ -3,8 +3,10 @@ import * as NodeAssert from "node:assert/strict";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
+import * as TestClock from "effect/testing/TestClock";
 import { beforeEach } from "vite-plus/test";
 
 import { OpenCodeSettings } from "@t3tools/contracts";
@@ -32,8 +34,15 @@ const DEFAULT_VERSION_STDOUT = "opencode 1.14.19\n";
 const runtimeMock = {
   state: {
     runVersionError: null as Error | null,
+    versionNever: false,
+    versionStarts: 0,
+    versionFinalizers: 0,
     versionStdout: DEFAULT_VERSION_STDOUT,
+    versionStderr: "",
+    versionCode: 0,
     inventoryError: null as Error | null,
+    inventoryNever: false,
+    inventoryFinalizers: 0,
     inventoryCwd: null as string | null,
     closeCalls: 0,
     inventory: {
@@ -44,8 +53,15 @@ const runtimeMock = {
   },
   reset() {
     this.state.runVersionError = null;
+    this.state.versionNever = false;
+    this.state.versionStarts = 0;
+    this.state.versionFinalizers = 0;
     this.state.versionStdout = DEFAULT_VERSION_STDOUT;
+    this.state.versionStderr = "";
+    this.state.versionCode = 0;
     this.state.inventoryError = null;
+    this.state.inventoryNever = false;
+    this.state.inventoryFinalizers = 0;
     this.state.inventoryCwd = null;
     this.state.closeCalls = 0;
     this.state.inventory = {
@@ -78,15 +94,29 @@ const OpenCodeRuntimeTestDouble: OpenCodeRuntimeShape = {
       };
     }),
   runOpenCodeCommand: () =>
-    runtimeMock.state.runVersionError
-      ? Effect.fail(
-          new OpenCodeRuntimeError({
-            operation: "runOpenCodeCommand",
-            detail: runtimeMock.state.runVersionError.message,
-            cause: runtimeMock.state.runVersionError,
+    runtimeMock.state.versionNever
+      ? Effect.acquireRelease(
+          Effect.sync(() => {
+            runtimeMock.state.versionStarts += 1;
           }),
-        )
-      : Effect.succeed({ stdout: runtimeMock.state.versionStdout, stderr: "", code: 0 }),
+          () =>
+            Effect.sync(() => {
+              runtimeMock.state.versionFinalizers += 1;
+            }),
+        ).pipe(Effect.andThen(Effect.never), Effect.scoped)
+      : runtimeMock.state.runVersionError
+        ? Effect.fail(
+            new OpenCodeRuntimeError({
+              operation: "runOpenCodeCommand",
+              detail: runtimeMock.state.runVersionError.message,
+              cause: runtimeMock.state.runVersionError,
+            }),
+          )
+        : Effect.succeed({
+            stdout: runtimeMock.state.versionStdout,
+            stderr: runtimeMock.state.versionStderr,
+            code: runtimeMock.state.versionCode,
+          }),
   createOpenCodeSdkClient: () =>
     ({}) as unknown as ReturnType<OpenCodeRuntimeShape["createOpenCodeSdkClient"]>,
   loadOpenCodeInventory: () =>
@@ -101,15 +131,21 @@ const OpenCodeRuntimeTestDouble: OpenCodeRuntimeShape = {
       : Effect.succeed(runtimeMock.state.inventory as OpenCodeInventory),
   loadInventoryFromCli: ({ cwd }) => {
     runtimeMock.state.inventoryCwd = cwd;
-    return runtimeMock.state.inventoryError
-      ? Effect.fail(
-          new OpenCodeRuntimeError({
-            operation: "loadInventoryFromCli",
-            detail: runtimeMock.state.inventoryError.message,
-            cause: runtimeMock.state.inventoryError,
+    return runtimeMock.state.inventoryNever
+      ? Effect.acquireRelease(Effect.void, () =>
+          Effect.sync(() => {
+            runtimeMock.state.inventoryFinalizers += 1;
           }),
-        )
-      : Effect.succeed(runtimeMock.state.inventory as OpenCodeInventory);
+        ).pipe(Effect.andThen(Effect.never), Effect.scoped)
+      : runtimeMock.state.inventoryError
+        ? Effect.fail(
+            new OpenCodeRuntimeError({
+              operation: "loadInventoryFromCli",
+              detail: runtimeMock.state.inventoryError.message,
+              cause: runtimeMock.state.inventoryError,
+            }),
+          )
+        : Effect.succeed(runtimeMock.state.inventory as OpenCodeInventory);
   },
 };
 
@@ -140,10 +176,113 @@ it.layer(testLayer)("checkOpenCodeProviderStatus", (it) => {
 
       NodeAssert.equal(snapshot.status, "error");
       NodeAssert.equal(snapshot.installed, false);
+      NodeAssert.equal(snapshot.probeFailure, "missing_binary");
       NodeAssert.equal(
         snapshot.message,
         "OpenCode CLI (`opencode`) is not installed or not on PATH.",
       );
+    }),
+  );
+
+  it.effect("distinguishes an incompatible OpenCode version", () =>
+    Effect.gen(function* () {
+      runtimeMock.state.versionStdout = "opencode 1.14.18\n";
+
+      const snapshot = yield* checkOpenCodeProviderStatus(makeOpenCodeSettings(), process.cwd());
+
+      NodeAssert.equal(snapshot.status, "error");
+      NodeAssert.equal(snapshot.installed, true);
+      NodeAssert.equal(snapshot.probeFailure, "incompatible_version");
+      NodeAssert.match(snapshot.message ?? "", /too old/);
+    }),
+  );
+
+  it.effect("distinguishes an ordinary nonzero version-probe exit", () =>
+    Effect.gen(function* () {
+      runtimeMock.state.versionStdout = "";
+      runtimeMock.state.versionStderr = "wrapper configuration failed\n";
+      runtimeMock.state.versionCode = 7;
+
+      const snapshot = yield* checkOpenCodeProviderStatus(makeOpenCodeSettings(), process.cwd());
+
+      NodeAssert.equal(snapshot.status, "error");
+      NodeAssert.equal(snapshot.installed, true);
+      NodeAssert.equal(snapshot.probeFailure, "nonzero_exit");
+      NodeAssert.equal(
+        snapshot.message,
+        "OpenCode CLI health check exited with code 7: wrapper configuration failed",
+      );
+    }),
+  );
+
+  it.effect("projects a timed-out version probe as a typed terminal failure", () =>
+    Effect.gen(function* () {
+      runtimeMock.state.runVersionError = new Error(
+        "Timed out while running 'opencode --version' after 10000ms.",
+      );
+      const snapshot = yield* checkOpenCodeProviderStatus(makeOpenCodeSettings(), process.cwd());
+
+      NodeAssert.equal(snapshot.status, "error");
+      NodeAssert.equal(snapshot.installed, true);
+      NodeAssert.equal(snapshot.probeFailure, "timeout");
+      NodeAssert.equal(
+        snapshot.message,
+        "OpenCode provider check timed out. Retry after checking the configured binary or wrapper.",
+      );
+    }),
+  );
+
+  it.effect("bounds a version probe that never exits", () =>
+    Effect.gen(function* () {
+      runtimeMock.state.versionNever = true;
+      const fiber = yield* checkOpenCodeProviderStatus(makeOpenCodeSettings(), process.cwd()).pipe(
+        Effect.forkChild,
+      );
+
+      yield* TestClock.adjust("10 seconds");
+
+      const exit = fiber.pollUnsafe();
+      NodeAssert.ok(exit, "the provider check should reach a terminal result");
+      NodeAssert.equal(exit._tag, "Success");
+      if (exit._tag === "Success") {
+        NodeAssert.equal(exit.value.status, "error");
+        NodeAssert.equal(exit.value.probeFailure, "timeout");
+      }
+      NodeAssert.equal(runtimeMock.state.versionStarts, 1);
+      NodeAssert.equal(runtimeMock.state.versionFinalizers, 1);
+    }),
+  );
+
+  it.effect("closes the active probe scope when its owner is cancelled", () =>
+    Effect.gen(function* () {
+      runtimeMock.state.versionNever = true;
+      const fiber = yield* checkOpenCodeProviderStatus(makeOpenCodeSettings(), process.cwd()).pipe(
+        Effect.forkChild,
+      );
+      yield* Effect.yieldNow;
+
+      NodeAssert.equal(runtimeMock.state.versionStarts, 1);
+      yield* Fiber.interrupt(fiber);
+      NodeAssert.equal(runtimeMock.state.versionFinalizers, 1);
+    }),
+  );
+
+  it.effect("bounds and closes a health inventory probe that never exits", () =>
+    Effect.gen(function* () {
+      runtimeMock.state.inventoryNever = true;
+      const fiber = yield* checkOpenCodeProviderStatus(makeOpenCodeSettings(), process.cwd()).pipe(
+        Effect.forkChild,
+      );
+
+      yield* TestClock.adjust("10 seconds");
+
+      const exit = fiber.pollUnsafe();
+      NodeAssert.ok(exit, "the inventory check should reach a terminal result");
+      NodeAssert.equal(exit._tag, "Success");
+      if (exit._tag === "Success") {
+        NodeAssert.equal(exit.value.probeFailure, "timeout");
+      }
+      NodeAssert.equal(runtimeMock.state.inventoryFinalizers, 1);
     }),
   );
 
@@ -303,6 +442,20 @@ it.layer(testLayer)("checkOpenCodeProviderStatus", (it) => {
       );
     }),
   );
+
+  it.effect("classifies a nonzero inventory command as a typed failure", () =>
+    Effect.gen(function* () {
+      runtimeMock.state.inventoryError = new Error("OpenCode models command exited with code 9.");
+      const snapshot = yield* checkOpenCodeProviderStatus(makeOpenCodeSettings(), process.cwd());
+
+      NodeAssert.equal(snapshot.status, "error");
+      NodeAssert.equal(snapshot.probeFailure, "nonzero_exit");
+      NodeAssert.equal(
+        snapshot.message,
+        "OpenCode provider check failed: OpenCode models command exited with code 9.",
+      );
+    }),
+  );
 });
 
 it.layer(testLayer)("checkOpenCodeProviderStatus with configured server URL", (it) => {
@@ -345,6 +498,19 @@ it.layer(testLayer)("checkOpenCodeProviderStatus with configured server URL", (i
         snapshot.message,
         "Couldn't reach the configured OpenCode server at http://127.0.0.1:9999. Check that the server is running and the URL is correct.",
       );
+    }),
+  );
+
+  it.effect("types a configured server timeout", () =>
+    Effect.gen(function* () {
+      runtimeMock.state.inventoryError = new Error("request timed out");
+      const snapshot = yield* checkOpenCodeProviderStatus(
+        makeOpenCodeSettings({ serverUrl: "http://127.0.0.1:9999" }),
+        process.cwd(),
+      );
+
+      NodeAssert.equal(snapshot.probeFailure, "timeout");
+      NodeAssert.match(snapshot.message ?? "", /Couldn't reach/);
     }),
   );
 });

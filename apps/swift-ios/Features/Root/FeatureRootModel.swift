@@ -122,6 +122,19 @@ public final class FeatureRootModel {
         }
     }
 
+    func retryProvider(environmentID: String, providerID: String) async {
+        do {
+            try await client.refreshProvider(
+                environmentID: environmentID,
+                providerID: providerID
+            )
+        } catch {
+            if !Self.isBenignCancellation(error) {
+                errorMessage = error.localizedDescription
+            }
+        }
+    }
+
     /// Background refresh is deliberately separate from `reload()`: native
     /// clients must not mount WebSocket streams or timers for a bounded BG task.
     public func refreshInBackground() async -> Bool {

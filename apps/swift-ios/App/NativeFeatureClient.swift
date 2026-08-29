@@ -418,6 +418,30 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         await clearActiveEnvironment()
     }
 
+    func refreshProvider(environmentID: String, providerID: String) async throws {
+        let environmentClient = try await projectCreationClient(environmentID: environmentID)
+        let generation = environmentGeneration
+        let providers = try await environmentClient.refreshProvider(instanceID: providerID)
+        guard generation == environmentGeneration,
+              environmentClients[environmentID] === environmentClient else {
+            throw CancellationError()
+        }
+
+        let previous = serverConfigsByEnvironmentID[environmentID]
+        let config = ServerConfigSnapshot(
+            providers: providers,
+            settings: previous?.settings,
+            threadSnapshotPagination: previous?.threadSnapshotPagination
+        )
+        setServerConfig(config, environmentID: environmentID)
+        if activeEnvironment?.id == environmentID {
+            latestServerConfig = config
+        }
+        if let shell = shellsByEnvironmentID[environmentID] {
+            await emitSnapshot(shell, environment: environmentClient.environment)
+        }
+    }
+
     func usageSummaries(_ input: UsageSummaryInput) async throws -> [FeatureEnvironmentUsage] {
         let environments = try await runtime.environments().filter(\.isEnabled)
         let runtime = runtime
@@ -5200,6 +5224,8 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
                         && provider.auth.status != "unauthenticated"
                         && provider.availability != "unavailable",
                     driver: provider.driver,
+                    readiness: Self.providerReadiness(provider),
+                    statusMessage: provider.message,
                     requiresNewThreadForModelChange:
                         provider.requiresNewThreadForModelChange ?? false,
                     models: provider.models.map { model in
@@ -5240,6 +5266,23 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
                     }
                 )
             })
+    }
+
+    private static func providerReadiness(
+        _ provider: ServerProviderSnapshot
+    ) -> FeatureProviderReadiness {
+        switch provider.probeFailure {
+        case "timeout": return .timeout
+        case "missing_binary": return .missingBinary
+        case "incompatible_version": return .incompatibleVersion
+        case "nonzero_exit": return .failed
+        case .some: return .failed
+        case nil:
+            if provider.enabled, !provider.installed, provider.status == "warning" {
+                return .checking
+            }
+            return provider.status == "error" ? .failed : .ready
+        }
     }
 
     /// Without a server config the catalog is inferred from selections in the

@@ -82,6 +82,10 @@ Each provider CLI must be on the server's `PATH`, or have an explicit binary pat
 manager or a non-standard install location keeps the CLI off the `PATH` of the shell that
 started T3 Code.
 
+Provider checks stop after a short deadline. If an OpenCode binary or version-manager wrapper
+hangs, T3 Code reports a timeout instead of leaving the provider in Checking. Fix the wrapper or
+binary path, then use Retry in the provider picker or Settings.
+
 ### When Auth Is Needed
 
 Provider auth is required before you start a session with that provider, not before you start

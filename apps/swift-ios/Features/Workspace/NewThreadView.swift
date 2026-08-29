@@ -99,7 +99,14 @@ public struct NewThreadView: View {
                         onStop: {},
                         forceExpanded: true,
                         powerFeatures: composerPowerFeatures,
-                        onDismissKeyboard: { promptFocused = false }
+                        onDismissKeyboard: { promptFocused = false },
+                        onRetryProvider: { providerID in
+                            guard let environmentID = selectedProject?.environmentID else { return }
+                            await model.retryProvider(
+                                environmentID: environmentID,
+                                providerID: providerID
+                            )
+                        }
                     )
                 }
                 .background(T3Colors.background)

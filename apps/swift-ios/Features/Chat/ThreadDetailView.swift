@@ -565,6 +565,12 @@ public struct ThreadDetailView: View {
                     },
                     onUserInputSubmit: { id, answers in
                         Task { await model.resolveUserInput(id, answers: answers) }
+                    },
+                    onRetryProvider: { providerID in
+                        await model.retryProvider(
+                            environmentID: thread.environmentID,
+                            providerID: providerID
+                        )
                     }
                 )
             }

@@ -4,6 +4,38 @@ import Testing
 
 @Suite("Model picker")
 struct DailyUXModelPickerTests {
+    @Test(
+        "Provider probe statuses remain actionable",
+        arguments: [
+            (FeatureProviderReadiness.timeout, "OpenCode check timed out", true),
+            (FeatureProviderReadiness.missingBinary, "OpenCode isn't installed", true),
+            (FeatureProviderReadiness.incompatibleVersion, "OpenCode needs an update", true),
+            (FeatureProviderReadiness.failed, "OpenCode check failed", true),
+            (FeatureProviderReadiness.checking, "Checking OpenCode", false),
+        ]
+    )
+    func providerProbeStatusPresentation(
+        readiness: FeatureProviderReadiness,
+        title: String,
+        canRetry: Bool
+    ) {
+        let provider = FeatureProvider(
+            id: "opencode",
+            name: "OpenCode",
+            isAvailable: false,
+            driver: "opencode",
+            readiness: readiness,
+            statusMessage: "Probe detail"
+        )
+
+        let presentation = ProviderStatusPresentation.primary(in: [provider])
+
+        #expect(presentation?.providerID == "opencode")
+        #expect(presentation?.title == title)
+        #expect(presentation?.message == "Probe detail")
+        #expect(presentation?.canRetry == canRetry)
+    }
+
     @Test
     func providerBrandsResolveFromDriversAndFallbackIDs() {
         #expect(

@@ -120,6 +120,7 @@ public struct ServerProviderSnapshot: Codable, Identifiable, Equatable, Sendable
     public let auth: ServerProviderAuthSnapshot
     public let checkedAt: String
     public let message: String?
+    public let probeFailure: String?
     public let availability: String?
     public let unavailableReason: String?
     public let models: [ServerProviderModelSnapshot]
@@ -201,6 +202,10 @@ public struct ServerConfigSnapshot: Codable, Equatable, Sendable {
             forKey: .threadSnapshotPagination
         )
     }
+}
+
+public struct ServerProviderUpdatedSnapshot: Codable, Equatable, Sendable {
+    public let providers: [ServerProviderSnapshot]
 }
 
 private struct LossyDecodableElement<Value: Decodable>: Decodable {

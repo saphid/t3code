@@ -14,6 +14,7 @@ public protocol FeatureClient: AnyObject {
     func setEnvironmentEnabled(id: String, enabled: Bool) async throws
     func removeEnvironment(id: String) async throws
     func disconnect() async
+    func refreshProvider(environmentID: String, providerID: String) async throws
 
     func addProject(path: String) async throws
     func createThread(projectID: String, title: String?, selection: FeatureSelection?) async throws -> FeatureThread
@@ -214,6 +215,9 @@ public extension FeatureClient {
     func setEnvironmentEnabled(id: String, enabled: Bool) async throws {}
     func removeEnvironment(id: String) async throws {}
     func disconnect() async {}
+    func refreshProvider(environmentID _: String, providerID _: String) async throws {
+        throw FeatureCapabilityUnavailable("Provider refresh")
+    }
     func addProject(path: String) async throws {}
     func usageSummaries(_ input: UsageSummaryInput) async throws -> [FeatureEnvironmentUsage] {
         []

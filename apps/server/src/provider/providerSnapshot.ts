@@ -6,6 +6,7 @@ import type {
   ServerProviderSkill,
   ServerProviderSlashCommand,
   ServerProviderModel,
+  ServerProviderProbeFailure,
   ServerProviderState,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
@@ -50,6 +51,7 @@ export interface ProviderProbeResult {
   readonly status: Exclude<ServerProviderState, "disabled">;
   readonly auth: ServerProviderAuth;
   readonly message?: string;
+  readonly probeFailure?: ServerProviderProbeFailure;
 }
 
 export interface ServerProviderPresentation {
@@ -246,6 +248,7 @@ export function buildServerProvider(input: {
     auth: input.probe.auth,
     checkedAt: input.checkedAt,
     ...(input.probe.message ? { message: input.probe.message } : {}),
+    ...(input.probe.probeFailure ? { probeFailure: input.probe.probeFailure } : {}),
     models: input.models,
     slashCommands: [...(input.slashCommands ?? [])],
     skills: [...(input.skills ?? [])],
