@@ -53,6 +53,7 @@ import {
 import {
   applyClaudePromptEffortPrefix,
   getModelSelectionBooleanOptionValue,
+  getModelSelectionOptionValue,
   getModelSelectionStringOptionValue,
   getProviderOptionDescriptors,
   resolvePromptInjectedEffort,
@@ -78,6 +79,7 @@ import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import { resolveClaudeSdkExecutablePath } from "../Drivers/ClaudeExecutable.ts";
 import { makeClaudeEnvironment } from "../Drivers/ClaudeHome.ts";
 import {
+  applyClaudeContextWindowEnvironment,
   getClaudeModelCapabilities,
   isClaudeUltracodeEffort,
   normalizeClaudeCliEffort,
@@ -452,6 +454,16 @@ function selectedClaudeContextWindow(
     default:
       return undefined;
   }
+}
+
+function unsupportedClaudeContextWindowSelection(
+  modelSelection: ModelSelection | undefined,
+): string | boolean | undefined {
+  const requested = getModelSelectionOptionValue(modelSelection, "contextWindow");
+  if (requested === undefined) return undefined;
+  return typeof requested === "string" && resolveClaudeContextWindow(modelSelection) === requested
+    ? undefined
+    : requested;
 }
 
 function finiteNonNegativeInteger(value: unknown): number | undefined {
@@ -3769,6 +3781,17 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         });
       }
 
+      const unsupportedContextWindow = unsupportedClaudeContextWindowSelection(
+        input.modelSelection,
+      );
+      if (unsupportedContextWindow !== undefined) {
+        return yield* new ProviderAdapterValidationError({
+          provider: PROVIDER,
+          operation: "startSession",
+          issue: `Context window '${String(unsupportedContextWindow)}' is unavailable for model '${input.modelSelection?.model ?? ""}'.`,
+        });
+      }
+
       const existingContext = sessions.get(input.threadId);
       if (existingContext) {
         yield* Effect.logWarning("claude.session.replacing", {
@@ -4177,7 +4200,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         ...(newSessionId ? { sessionId: newSessionId } : {}),
         includePartialMessages: true,
         canUseTool,
-        env: claudeEnvironment,
+        env: applyClaudeContextWindowEnvironment(claudeEnvironment, modelSelection),
         additionalDirectories,
         ...(Object.keys(extraArgs).length > 0 ? { extraArgs } : {}),
         ...(mcpSession
@@ -4363,6 +4386,14 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       input.modelSelection !== undefined && input.modelSelection.instanceId === boundInstanceId
         ? input.modelSelection
         : undefined;
+    const unsupportedContextWindow = unsupportedClaudeContextWindowSelection(modelSelection);
+    if (unsupportedContextWindow !== undefined) {
+      return yield* new ProviderAdapterValidationError({
+        provider: PROVIDER,
+        operation: "sendTurn",
+        issue: `Context window '${String(unsupportedContextWindow)}' is unavailable for model '${modelSelection?.model ?? ""}'.`,
+      });
+    }
 
     // A sendTurn while a real turn is running is a steer: the message is
     // queued into the live SDK agent loop and the work continues as the same

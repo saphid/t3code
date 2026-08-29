@@ -2,6 +2,31 @@ import Foundation
 import Testing
 @testable import T3Code
 
+private func claudeProviderWithContextWindows() -> FeatureProvider {
+    FeatureProvider(
+        id: "claudeAgent",
+        name: "Claude",
+        driver: "claudeAgent",
+        models: [
+            FeatureModel(
+                id: "claude-opus-5",
+                name: "Claude Opus 5",
+                options: [
+                    FeatureModelOptionDescriptor(
+                        id: "contextWindow",
+                        label: "Context Window",
+                        kind: .select,
+                        choices: [
+                            .init(id: "200k", label: "200k"),
+                            .init(id: "1m", label: "1M", isDefault: true),
+                        ]
+                    ),
+                ]
+            ),
+        ]
+    )
+}
+
 @Suite("Model picker")
 struct DailyUXModelPickerTests {
     @Test
@@ -363,6 +388,7 @@ struct DailyUXModelPickerTests {
 
     @Test
     func configurationMaterializesDisplayedDefaultsWithoutOverwritingSelections() {
+        let provider = FeatureProvider(id: "codex", name: "Codex", models: [])
         let model = FeatureModel(
             id: "gpt-5.6-sol",
             name: "Sol",
@@ -390,12 +416,61 @@ struct DailyUXModelPickerTests {
         #expect(
             ProviderModelConfiguration.materializedOptions(
                 for: model,
+                provider: provider,
                 preserving: existing
             ) == [
                 .init(id: "effort", value: .string("custom")),
                 .init(id: "fast", value: .boolean(true)),
             ]
         )
+    }
+
+    @Test(arguments: ["200k", "1m"])
+    func claudeContextWindowSelectionsSurviveCatalogRefresh(_ value: String) {
+        let provider = claudeProviderWithContextWindows()
+        let selection = FeatureSelection(
+            providerID: provider.id,
+            modelID: provider.models[0].id,
+            options: [.init(id: "contextWindow", value: .string(value))]
+        )
+
+        let resolved = ProviderModelSelectionResolver.materialized(selection, in: [provider])
+
+        #expect(resolved?.options == [
+            .init(id: "contextWindow", value: .string(value)),
+        ])
+    }
+
+    @Test
+    func claudeContextWindowSelectionFallsBackWhenChoiceBecomesUnavailable() {
+        var provider = claudeProviderWithContextWindows()
+        provider.models[0].options[0].choices.removeAll { $0.id == "200k" }
+        let selection = FeatureSelection(
+            providerID: provider.id,
+            modelID: provider.models[0].id,
+            options: [.init(id: "contextWindow", value: .string("200k"))]
+        )
+
+        let resolved = ProviderModelSelectionResolver.materialized(selection, in: [provider])
+
+        #expect(resolved?.options == [
+            .init(id: "contextWindow", value: .string("1m")),
+        ])
+    }
+
+    @Test
+    func claudeContextWindowSelectionIsRemovedWithItsCapability() {
+        var provider = claudeProviderWithContextWindows()
+        provider.models[0].options = []
+        let selection = FeatureSelection(
+            providerID: provider.id,
+            modelID: provider.models[0].id,
+            options: [.init(id: "contextWindow", value: .string("200k"))]
+        )
+
+        let resolved = ProviderModelSelectionResolver.materialized(selection, in: [provider])
+
+        #expect(resolved?.options.isEmpty == true)
     }
 
     @Test

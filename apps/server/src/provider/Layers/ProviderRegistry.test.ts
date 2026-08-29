@@ -1832,6 +1832,21 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
           );
           const opus5 = status.models.find((model) => model.slug === "claude-opus-5");
           assert.strictEqual(opus5?.name, "Claude Opus 5");
+          const contextWindow = opus5?.capabilities?.optionDescriptors?.find(
+            (descriptor) => descriptor.type === "select" && descriptor.id === "contextWindow",
+          );
+          assert.deepStrictEqual(
+            contextWindow?.type === "select"
+              ? contextWindow.options.map((option) => ({
+                  id: option.id,
+                  isDefault: option.isDefault === true,
+                }))
+              : undefined,
+            [
+              { id: "200k", isDefault: false },
+              { id: "1m", isDefault: true },
+            ],
+          );
         }).pipe(
           Effect.provide(
             mockSpawnerLayer((args) => {
@@ -1868,6 +1883,36 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
             mockSpawnerLayer((args) => {
               const joined = args.join(" ");
               if (joined === "--version") return { stdout: "2.1.218\n", stderr: "", code: 0 };
+              if (joined === "auth status")
+                return {
+                  stdout: '{"loggedIn":true,"authMethod":"claude.ai"}\n',
+                  stderr: "",
+                  code: 0,
+                };
+              throw new Error(`Unexpected args: ${joined}`);
+            }),
+          ),
+        ),
+      );
+
+      it.effect("hides context-window choices when Claude Code cannot honor them", () =>
+        Effect.gen(function* () {
+          const status = yield* checkClaudeProviderStatus(
+            defaultClaudeSettings,
+            claudeCapabilities(),
+          );
+          const opus46 = status.models.find((model) => model.slug === "claude-opus-4-6");
+          assert.strictEqual(
+            opus46?.capabilities?.optionDescriptors?.some(
+              (descriptor) => descriptor.id === "contextWindow",
+            ),
+            false,
+          );
+        }).pipe(
+          Effect.provide(
+            mockSpawnerLayer((args) => {
+              const joined = args.join(" ");
+              if (joined === "--version") return { stdout: "2.1.49\n", stderr: "", code: 0 };
               if (joined === "auth status")
                 return {
                   stdout: '{"loggedIn":true,"authMethod":"claude.ai"}\n',

@@ -51,6 +51,7 @@ const CLAUDE_PRESENTATION = {
   displayName: "Claude",
   showInteractionModeToggle: true,
 } as const;
+const MINIMUM_CLAUDE_CONTEXT_WINDOW_SELECTION_VERSION = "2.1.50";
 const MINIMUM_CLAUDE_OPUS_5_VERSION = "2.1.219";
 const MINIMUM_CLAUDE_FABLE_5_VERSION = "2.1.169";
 const MINIMUM_CLAUDE_OPUS_4_8_VERSION = "2.1.154";
@@ -347,10 +348,34 @@ function supportsClaudeOpus47(version: string | null | undefined): boolean {
   return version ? compareSemverVersions(version, MINIMUM_CLAUDE_OPUS_4_7_VERSION) >= 0 : false;
 }
 
+function supportsClaudeContextWindowSelection(version: string | null | undefined): boolean {
+  return version
+    ? compareSemverVersions(version, MINIMUM_CLAUDE_CONTEXT_WINDOW_SELECTION_VERSION) >= 0
+    : false;
+}
+
+function withoutClaudeContextWindowCapability(model: ServerProviderModel): ServerProviderModel {
+  const descriptors = model.capabilities?.optionDescriptors;
+  if (!descriptors?.some((descriptor) => descriptor.id === "contextWindow")) {
+    return model;
+  }
+  return {
+    ...model,
+    capabilities: {
+      ...model.capabilities,
+      optionDescriptors: descriptors.filter((descriptor) => descriptor.id !== "contextWindow"),
+    },
+  };
+}
+
+function getBuiltInClaudeModelsForUnverifiedVersion(): ReadonlyArray<ServerProviderModel> {
+  return BUILT_IN_MODELS.map(withoutClaudeContextWindowCapability);
+}
+
 function getBuiltInClaudeModelsForVersion(
   version: string | null | undefined,
 ): ReadonlyArray<ServerProviderModel> {
-  return BUILT_IN_MODELS.filter((model) => {
+  const models = BUILT_IN_MODELS.filter((model) => {
     if (model.slug === "claude-opus-5") {
       return supportsClaudeOpus5(version);
     }
@@ -365,6 +390,9 @@ function getBuiltInClaudeModelsForVersion(
     }
     return true;
   });
+  return supportsClaudeContextWindowSelection(version)
+    ? models
+    : models.map(withoutClaudeContextWindowCapability);
 }
 
 function formatClaudeOpus5UpgradeMessage(version: string | null): string {
@@ -467,6 +495,29 @@ export function resolveClaudeApiModelId(modelSelection: ModelSelection): string 
       return `${modelSelection.model}[1m]`;
     default:
       return modelSelection.model;
+  }
+}
+
+export function applyClaudeContextWindowEnvironment(
+  environment: NodeJS.ProcessEnv,
+  modelSelection: ModelSelection | undefined,
+): NodeJS.ProcessEnv {
+  switch (resolveClaudeContextWindow(modelSelection)) {
+    case "200k":
+      return {
+        ...environment,
+        CLAUDE_CODE_DISABLE_1M_CONTEXT: "1",
+      };
+    case "1m": {
+      if (environment.CLAUDE_CODE_DISABLE_1M_CONTEXT === undefined) {
+        return environment;
+      }
+      const next = { ...environment };
+      delete next.CLAUDE_CODE_DISABLE_1M_CONTEXT;
+      return next;
+    }
+    default:
+      return environment;
   }
 }
 
@@ -819,7 +870,7 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
   const resolvedEnvironment = environment ?? process.env;
   const checkedAt = DateTime.formatIso(yield* DateTime.now);
   const allModels = providerModelsFromSettings(
-    BUILT_IN_MODELS,
+    getBuiltInClaudeModelsForUnverifiedVersion(),
     claudeSettings.customModels,
     DEFAULT_CLAUDE_MODEL_CAPABILITIES,
   );
@@ -982,7 +1033,7 @@ export const makePendingClaudeProvider = (
   Effect.gen(function* () {
     const checkedAt = yield* nowIso;
     const models = providerModelsFromSettings(
-      BUILT_IN_MODELS,
+      getBuiltInClaudeModelsForUnverifiedVersion(),
       claudeSettings.customModels,
       DEFAULT_CLAUDE_MODEL_CAPABILITIES,
     );

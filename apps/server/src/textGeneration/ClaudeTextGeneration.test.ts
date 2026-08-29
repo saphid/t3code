@@ -71,6 +71,14 @@ function makeFakeClaudeBinary(dir: string) {
         '  fail("CLAUDE_CONFIG_DIR was " + (process.env.CLAUDE_CONFIG_DIR ?? ""), 5);',
         "}",
         "",
+        "const contextWindowMustBe = process.env.T3_FAKE_CLAUDE_CONTEXT_WINDOW_MUST_BE;",
+        'if (contextWindowMustBe === "200k" && process.env.CLAUDE_CODE_DISABLE_1M_CONTEXT !== "1") {',
+        '  fail("200k context was not encoded in the environment", 6);',
+        "}",
+        'if (contextWindowMustBe === "1m" && process.env.CLAUDE_CODE_DISABLE_1M_CONTEXT !== undefined) {',
+        '  fail("1M context retained the disable flag", 7);',
+        "}",
+        "",
         "const stderrText = process.env.T3_FAKE_CLAUDE_STDERR;",
         "if (stderrText) {",
         '  process.stderr.write(stderrText + "\\n");',
@@ -111,6 +119,7 @@ function withFakeClaudeEnv<A, E, R>(
     argsMustNotContain?: string;
     stdinMustContain?: string;
     configDirMustBe?: string;
+    contextWindowMustBe?: "200k" | "1m";
     claudeConfig?: Partial<ClaudeSettings>;
   },
   effectFn: (textGeneration: TextGeneration.TextGeneration["Service"]) => Effect.Effect<A, E, R>,
@@ -128,6 +137,8 @@ function withFakeClaudeEnv<A, E, R>(
     const previousArgsMustNotContain = process.env.T3_FAKE_CLAUDE_ARGS_MUST_NOT_CONTAIN;
     const previousStdinMustContain = process.env.T3_FAKE_CLAUDE_STDIN_MUST_CONTAIN;
     const previousConfigDirMustBe = process.env.T3_FAKE_CLAUDE_CONFIG_DIR_MUST_BE;
+    const previousContextWindowMustBe = process.env.T3_FAKE_CLAUDE_CONTEXT_WINDOW_MUST_BE;
+    const previousDisable1MContext = process.env.CLAUDE_CODE_DISABLE_1M_CONTEXT;
 
     yield* Effect.acquireRelease(
       Effect.sync(() => {
@@ -168,6 +179,15 @@ function withFakeClaudeEnv<A, E, R>(
           process.env.T3_FAKE_CLAUDE_CONFIG_DIR_MUST_BE = input.configDirMustBe;
         } else {
           delete process.env.T3_FAKE_CLAUDE_CONFIG_DIR_MUST_BE;
+        }
+
+        if (input.contextWindowMustBe !== undefined) {
+          process.env.T3_FAKE_CLAUDE_CONTEXT_WINDOW_MUST_BE = input.contextWindowMustBe;
+        } else {
+          delete process.env.T3_FAKE_CLAUDE_CONTEXT_WINDOW_MUST_BE;
+        }
+        if (input.contextWindowMustBe === "1m") {
+          process.env.CLAUDE_CODE_DISABLE_1M_CONTEXT = "1";
         }
       }),
       () =>
@@ -214,6 +234,17 @@ function withFakeClaudeEnv<A, E, R>(
             delete process.env.T3_FAKE_CLAUDE_CONFIG_DIR_MUST_BE;
           } else {
             process.env.T3_FAKE_CLAUDE_CONFIG_DIR_MUST_BE = previousConfigDirMustBe;
+          }
+
+          if (previousContextWindowMustBe === undefined) {
+            delete process.env.T3_FAKE_CLAUDE_CONTEXT_WINDOW_MUST_BE;
+          } else {
+            process.env.T3_FAKE_CLAUDE_CONTEXT_WINDOW_MUST_BE = previousContextWindowMustBe;
+          }
+          if (previousDisable1MContext === undefined) {
+            delete process.env.CLAUDE_CODE_DISABLE_1M_CONTEXT;
+          } else {
+            process.env.CLAUDE_CODE_DISABLE_1M_CONTEXT = previousDisable1MContext;
           }
         }),
     );
@@ -317,6 +348,55 @@ it.layer(ClaudeTextGenerationTestLayer)("ClaudeTextGeneration", (it) => {
               '"Reconnect failures after restart because the session state does not recover"',
             ),
           );
+        }),
+    ),
+  );
+
+  it.effect("runs 200k Claude text generation with the 1M upgrade disabled", () =>
+    withFakeClaudeEnv(
+      {
+        output: JSON.stringify({ structured_output: { title: "Use 200k context" } }),
+        argsMustContain: "--model claude-opus-5",
+        argsMustNotContain: "claude-opus-5[1m]",
+        contextWindowMustBe: "200k",
+      },
+      (textGeneration) =>
+        Effect.gen(function* () {
+          const generated = yield* textGeneration.generateThreadTitle({
+            cwd: process.cwd(),
+            message: "Name this thread.",
+            modelSelection: createModelSelection(
+              ProviderInstanceId.make("claudeAgent"),
+              "claude-opus-5",
+              [{ id: "contextWindow", value: "200k" }],
+            ),
+          });
+
+          expect(generated.title).toBe("Use 200k context");
+        }),
+    ),
+  );
+
+  it.effect("runs 1M Claude text generation with the distinct runtime setting", () =>
+    withFakeClaudeEnv(
+      {
+        output: JSON.stringify({ structured_output: { title: "Use 1M context" } }),
+        argsMustContain: "--model claude-opus-5[1m]",
+        contextWindowMustBe: "1m",
+      },
+      (textGeneration) =>
+        Effect.gen(function* () {
+          const generated = yield* textGeneration.generateThreadTitle({
+            cwd: process.cwd(),
+            message: "Name this thread.",
+            modelSelection: createModelSelection(
+              ProviderInstanceId.make("claudeAgent"),
+              "claude-opus-5",
+              [{ id: "contextWindow", value: "1m" }],
+            ),
+          });
+
+          expect(generated.title).toBe("Use 1M context");
         }),
     ),
   );

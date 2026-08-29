@@ -591,13 +591,13 @@ enum ProviderModelSelectionResolver {
     ) -> FeatureSelection? {
         guard !providers.isEmpty else { return selection }
         guard var validated = DailyUXModelOptions.validated(selection, in: providers),
-              let model = providers
-                  .first(where: { $0.id == validated.providerID })?
-                  .models.first(where: { $0.id == validated.modelID }) else {
+              let provider = providers.first(where: { $0.id == validated.providerID }),
+              let model = provider.models.first(where: { $0.id == validated.modelID }) else {
             return nil
         }
         validated.options = ProviderModelConfiguration.materializedOptions(
             for: model,
+            provider: provider,
             preserving: validated.options
         )
         return validated
@@ -804,6 +804,7 @@ private struct ModelConfigurationView: View {
            currentSelection?.modelID == option.model.id {
             _optionSelections = State(initialValue: ProviderModelConfiguration.materializedOptions(
                 for: option.model,
+                provider: option.provider,
                 preserving: currentSelection?.options ?? []
             ))
         } else {
@@ -919,10 +920,26 @@ private struct ModelConfigurationView: View {
 enum ProviderModelConfiguration {
     static func materializedOptions(
         for model: FeatureModel,
+        provider: FeatureProvider,
         preserving selections: [FeatureModelOptionSelection]
     ) -> [FeatureModelOptionSelection] {
-        let selectedIDs = Set(selections.map(\.id))
-        return selections + DailyUXModelOptions.defaults(for: model).filter {
+        let supportedSelections = selections.filter { selection in
+            guard selection.id == "contextWindow",
+                  ProviderBrand.resolve(
+                      driver: provider.driver,
+                      providerID: provider.id
+                  ) == .claude else {
+                return true
+            }
+            guard let descriptor = model.options.first(where: { $0.id == selection.id }),
+                  descriptor.kind == .select,
+                  case let .string(value) = selection.value else {
+                return false
+            }
+            return descriptor.choices.contains { $0.id == value }
+        }
+        let selectedIDs = Set(supportedSelections.map(\.id))
+        return supportedSelections + DailyUXModelOptions.defaults(for: model).filter {
             !selectedIDs.contains($0.id)
         }
     }

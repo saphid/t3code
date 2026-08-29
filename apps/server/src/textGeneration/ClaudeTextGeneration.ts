@@ -37,6 +37,7 @@ import {
   getProviderOptionDescriptors,
 } from "@t3tools/shared/model";
 import {
+  applyClaudeContextWindowEnvironment,
   getClaudeModelCapabilities,
   isClaudeUltracodeEffort,
   normalizeClaudeCliEffort,
@@ -155,6 +156,10 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
             "Failed to encode Claude CLI settings.",
           )
         : undefined;
+    const runtimeEnvironment = applyClaudeContextWindowEnvironment(
+      claudeEnvironment,
+      modelSelection,
+    );
 
     const runClaudeCommand = Effect.fn("runClaudeJson.runClaudeCommand")(function* () {
       const spawnCommand = yield* resolveSpawnCommand(
@@ -171,10 +176,10 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
           ...(settingsJson ? ["--settings", settingsJson] : []),
           "--dangerously-skip-permissions",
         ],
-        { env: claudeEnvironment },
+        { env: runtimeEnvironment },
       );
       const command = ChildProcess.make(spawnCommand.command, spawnCommand.args, {
-        env: claudeEnvironment,
+        env: runtimeEnvironment,
         cwd,
         shell: spawnCommand.shell,
         stdin: {
