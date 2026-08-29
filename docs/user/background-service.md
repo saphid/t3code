@@ -17,6 +17,9 @@ Check whether it is installed:
 npx t3@latest service status
 ```
 
+On Linux, status also reports whether the systemd unit is enabled and active. An inactive or
+disabled unit is reported as needing repair even when its files are current.
+
 Update or repair it:
 
 ```sh
@@ -31,6 +34,9 @@ npx t3@latest service uninstall
 
 Updating restarts T3 Code briefly. Let active agent work and terminal commands finish first.
 If a remote update is already in progress, wait for it to finish before retrying a local update.
+If a new Linux install cannot finish activation, T3 Code removes that partial unit. Fix the error
+reported for the failed step, then run `service install` again. An existing but inactive unit can be
+repaired with `service update`.
 
 The service runs a small stable launcher. Exact T3 Code versions are installed separately, so a
 failed remote candidate can return to the previous version without rewriting the service

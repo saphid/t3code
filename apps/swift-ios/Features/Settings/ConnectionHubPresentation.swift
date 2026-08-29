@@ -70,6 +70,15 @@ struct T3ConnectEnvironmentPresentation: Identifiable, Equatable {
 }
 
 enum ConnectionHubPresentation {
+    static func updateManagement(for environment: FeatureEnvironment) -> String? {
+        switch environment.serverSelfUpdate {
+        case "boot-service": "Background service"
+        case "desktop-managed": "Desktop app"
+        case "respawn": "Server"
+        default: nil
+        }
+    }
+
     static func status(
         for environment: FeatureEnvironment,
         pendingEnabled: Bool? = nil

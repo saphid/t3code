@@ -233,12 +233,46 @@ struct ConnectionHubPresentationTests {
         #expect(row.endpoint == "https://linked.example")
     }
 
+    @Test(
+        arguments: [
+            ("boot-service", "Background service"),
+            ("desktop-managed", "Desktop app"),
+            ("respawn", "Server"),
+        ]
+    )
+    func environmentDetailsExposeManagedUpdateCapability(
+        capability: String,
+        expectedLabel: String
+    ) {
+        let managed = environment(
+            id: "managed",
+            source: .direct,
+            serverSelfUpdate: capability
+        )
+
+        #expect(ConnectionHubPresentation.updateManagement(for: managed) == expectedLabel)
+    }
+
+    @Test
+    func environmentDetailsHideMissingOrUnknownUpdateCapabilities() {
+        let unmanaged = environment(id: "unmanaged", source: .direct)
+        let future = environment(
+            id: "future",
+            source: .direct,
+            serverSelfUpdate: "future-method"
+        )
+
+        #expect(ConnectionHubPresentation.updateManagement(for: unmanaged) == nil)
+        #expect(ConnectionHubPresentation.updateManagement(for: future) == nil)
+    }
+
     private func environment(
         id: String,
         name: String? = nil,
         source: FeatureEnvironment.Source,
         isEnabled: Bool = true,
-        connectionState: FeatureConnection.State? = nil
+        connectionState: FeatureConnection.State? = nil,
+        serverSelfUpdate: String? = nil
     ) -> FeatureEnvironment {
         FeatureEnvironment(
             id: id,
@@ -246,7 +280,8 @@ struct ConnectionHubPresentationTests {
             endpoint: "https://\(id).example",
             isEnabled: isEnabled,
             source: source,
-            connectionState: connectionState
+            connectionState: connectionState,
+            serverSelfUpdate: serverSelfUpdate
         )
     }
 

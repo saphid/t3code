@@ -69,6 +69,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
     private var pendingThreadCreations: [PendingThreadCreation] = []
     private var environmentConnectionStates: [String: FeatureConnection.State] = [:]
     private var environmentConnectionDetails: [String: String] = [:]
+    private var descriptorRefreshPendingEnvironmentIDs = Set<String>()
     private var latestServerConfig: ServerConfigSnapshot?
     private var serverConfigsByEnvironmentID: [String: ServerConfigSnapshot] = [:]
     private var latestSnapshot: FeatureSnapshot?
@@ -198,7 +199,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
     func initialSnapshot() async throws -> FeatureSnapshot {
         let savedEnvironments = try await runtime.environments()
         await hydrateOfflineCacheIfNeeded(savedEnvironments: savedEnvironments)
-        let environments = await refreshingLegacyPinReorderDescriptors(in: savedEnvironments)
+        let environments = await refreshingEnabledDescriptors(in: savedEnvironments)
         guard let activeEnvironment = await activeEnvironment(in: environments) else {
             await clearActiveEnvironment()
             let snapshot = disconnectedSnapshot(environments: environments)
@@ -236,14 +237,14 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         return snapshot
     }
 
-    private func refreshingLegacyPinReorderDescriptors(
+    /// Server capabilities depend on the process that answered. Refresh them
+    /// before rebuilding connection rows so a repaired or replaced service does
+    /// not inherit the previous process's update path.
+    private func refreshingEnabledDescriptors(
         in environments: [Environment]
     ) async -> [Environment] {
         var refreshed = environments
-        let candidates = refreshed.indices.filter {
-            refreshed[$0].isEnabled
-                && refreshed[$0].descriptor?.capabilities.threadPinReorder == nil
-        }
+        let candidates = refreshed.indices.filter { refreshed[$0].isEnabled }
         let runtime = runtime
         let timeout = environmentShellTimeoutInterval
         await withTaskGroup(of: (Int, Environment?).self) { group in
@@ -991,6 +992,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
             provisionalThreadRoutes.removeAll()
             environmentConnectionStates.removeAll()
             environmentConnectionDetails.removeAll()
+            descriptorRefreshPendingEnvironmentIDs.removeAll()
         }
         latestSnapshot = nil
         activeThreadID = nil
@@ -3185,7 +3187,9 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
                             )
                         }
                     case .synchronized:
-                        break
+                        if let shell = self.latestShell {
+                            await self.emitSnapshot(shell)
+                        }
                     }
                 }
             } catch is CancellationError {
@@ -4087,6 +4091,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         environmentConnectionDetails = environmentConnectionDetails.filter {
             savedIDs.contains($0.key)
         }
+        descriptorRefreshPendingEnvironmentIDs.formIntersection(savedIDs)
 
         for load in loads {
             environmentClients[load.environment.id] = load.client
@@ -4359,10 +4364,26 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         expectedCacheEpoch: Int? = nil
     ) async {
         guard let environment = activeEnvironment else { return }
-        let sourceEnvironment = sourceEnvironment ?? environment
+        var sourceEnvironment = sourceEnvironment ?? environment
         let generation = environmentGeneration
         guard expectedGeneration == nil || expectedGeneration == generation else { return }
-        let environments = (try? await runtime.environments()) ?? [environment]
+        var environments = (try? await runtime.environments()) ?? [environment]
+        if markSourceConnected,
+           descriptorRefreshPendingEnvironmentIDs.remove(sourceEnvironment.id) != nil,
+           let refreshed = await Self.refreshDescriptor(
+               id: sourceEnvironment.id,
+               runtime: runtime,
+               timeout: environmentShellTimeoutInterval
+           ) {
+            guard generation == environmentGeneration else { return }
+            if let index = environments.firstIndex(where: { $0.id == refreshed.id }) {
+                environments[index] = refreshed
+            }
+            sourceEnvironment = refreshed
+            if refreshed.id == environment.id {
+                activeEnvironment = refreshed
+            }
+        }
         guard generation == environmentGeneration,
               expectedGeneration == nil || expectedGeneration == environmentGeneration,
               expectedCacheEpoch == nil
@@ -4398,7 +4419,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         }
         let snapshot = makeSnapshot(
             environments: environments,
-            activeEnvironment: environment,
+            activeEnvironment: activeEnvironment ?? environment,
             connectionState: connectionState,
             connectionDetail: connectionDetail
         )
@@ -4655,9 +4676,13 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         detail: String? = nil
     ) {
         guard let environment = activeEnvironment else { return }
+        let previousState = environmentConnectionStates[environment.id]
         // Shell event loops call this per event; only publish real transitions.
-        guard environmentConnectionStates[environment.id] != state
+        guard previousState != state
             || environmentConnectionDetails[environment.id] != detail else { return }
+        if state == .connected, previousState != .connected {
+            descriptorRefreshPendingEnvironmentIDs.insert(environment.id)
+        }
         environmentConnectionStates[environment.id] = state
         environmentConnectionDetails[environment.id] = detail
         let connection = FeatureConnection(
@@ -4804,7 +4829,8 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
                 : .disconnected,
             connectionDetail: environment.isEnabled
                 ? environmentConnectionDetails[environment.id]
-                : nil
+                : nil,
+            serverSelfUpdate: environment.descriptor?.capabilities.serverSelfUpdate
         )
     }
 

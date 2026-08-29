@@ -44,6 +44,7 @@ public struct FeatureEnvironment: Identifiable, Sendable, Equatable, Hashable, C
     /// has not probed this saved environment yet.
     public var connectionState: FeatureConnection.State?
     public var connectionDetail: String?
+    public var serverSelfUpdate: String?
 
     public init(
         id: String,
@@ -53,7 +54,8 @@ public struct FeatureEnvironment: Identifiable, Sendable, Equatable, Hashable, C
         isEnabled: Bool = true,
         source: Source = .direct,
         connectionState: FeatureConnection.State? = nil,
-        connectionDetail: String? = nil
+        connectionDetail: String? = nil,
+        serverSelfUpdate: String? = nil
     ) {
         self.id = id
         self.name = name
@@ -63,6 +65,7 @@ public struct FeatureEnvironment: Identifiable, Sendable, Equatable, Hashable, C
         self.source = source
         self.connectionState = connectionState
         self.connectionDetail = connectionDetail
+        self.serverSelfUpdate = serverSelfUpdate
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -74,6 +77,7 @@ public struct FeatureEnvironment: Identifiable, Sendable, Equatable, Hashable, C
         case source
         case connectionState
         case connectionDetail
+        case serverSelfUpdate
     }
 
     public init(from decoder: any Decoder) throws {
@@ -89,6 +93,7 @@ public struct FeatureEnvironment: Identifiable, Sendable, Equatable, Hashable, C
             forKey: .connectionState
         )
         connectionDetail = try container.decodeIfPresent(String.self, forKey: .connectionDetail)
+        serverSelfUpdate = try container.decodeIfPresent(String.self, forKey: .serverSelfUpdate)
     }
 }
 

@@ -195,6 +195,11 @@ export interface BootServiceManager {
   readonly deactivate: ReadonlyArray<BootServiceStep>;
   /** Uninstall, after the unit file is removed. */
   readonly finalize: ReadonlyArray<BootServiceStep>;
+  /** Runtime health facts that are meaningful for this service manager. */
+  readonly health?: {
+    readonly enabled: BootServiceStep;
+    readonly active: BootServiceStep;
+  };
 }
 
 export function systemdManager(input: {
@@ -261,6 +266,18 @@ export function systemdManager(input: {
         args: ["--user", "daemon-reload"],
       },
     ],
+    health: {
+      enabled: {
+        step: "checking whether the service is enabled",
+        command: "systemctl",
+        args: ["--user", "is-enabled", BOOT_SERVICE_UNIT_FILE],
+      },
+      active: {
+        step: "checking whether the service is active",
+        command: "systemctl",
+        args: ["--user", "is-active", BOOT_SERVICE_UNIT_FILE],
+      },
+    },
   };
 }
 
@@ -385,6 +402,8 @@ export class BootServiceCommandError extends Schema.TaggedErrorClass<BootService
   }
 }
 
+const isBootServiceCommandError = Schema.is(BootServiceCommandError);
+
 export class BootServiceInstallError extends Schema.TaggedErrorClass<BootServiceInstallError>()(
   "BootServiceInstallError",
   { cause: Schema.Defect() },
@@ -413,6 +432,8 @@ export interface BootServiceStatus {
   readonly supported: boolean;
   readonly installed: boolean;
   readonly current: boolean;
+  readonly enabled?: boolean;
+  readonly active?: boolean;
   readonly unitPath: string;
   readonly logPath: string;
 }
@@ -529,6 +550,29 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
       { discard: true },
     );
 
+  const readHealthFact = (entry: BootServiceStep) =>
+    runner.run({ command: entry.command, args: entry.args }).pipe(
+      Effect.mapError(
+        (cause) =>
+          new BootServiceCommandError({
+            step: entry.step,
+            cause,
+          }),
+      ),
+      Effect.flatMap((result) => {
+        if (result.code === 0) return Effect.succeed(true);
+        if (result.stdout.trim() !== "") return Effect.succeed(false);
+        return Effect.fail(
+          new BootServiceCommandError({
+            step: entry.step,
+            exitCode: result.code === null ? undefined : Number(result.code),
+            stdoutLength: result.stdout.length,
+            stderrLength: result.stderr.length,
+          }),
+        );
+      }),
+    );
+
   const install: BootService["Service"]["install"] = Effect.gen(function* () {
     const manager = yield* requireManager;
     yield* fs
@@ -591,9 +635,32 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
     const installed = yield* fs
       .exists(unitPath)
       .pipe(Effect.mapError((cause) => new BootServiceInstallError({ cause })));
+    const previousSystemdArtifacts =
+      installed && manager.kind === "systemd"
+        ? yield* Effect.all({
+            unit: fs.readFileString(unitPath),
+            launcher: fs.readFileString(launcherPath).pipe(Effect.option),
+            state: fs.readFileString(statePath).pipe(Effect.option),
+          }).pipe(Effect.mapError((cause) => new BootServiceInstallError({ cause })))
+        : undefined;
     if (installed) {
       yield* runSteps(manager.stop);
     }
+
+    const restoreFile = (filePath: string, contents: Option.Option<string>) =>
+      Option.isSome(contents)
+        ? writeDurably(filePath, contents.value).pipe(Effect.ignore)
+        : fs.remove(filePath).pipe(Effect.ignore);
+    const recoverInstalledSystemdService =
+      previousSystemdArtifacts === undefined
+        ? Effect.void
+        : Effect.gen(function* () {
+            yield* restoreFile(launcherPath, previousSystemdArtifacts.launcher);
+            yield* restoreFile(statePath, previousSystemdArtifacts.state);
+            yield* writeDurably(unitPath, previousSystemdArtifacts.unit).pipe(Effect.ignore);
+            yield* runSteps(manager.finalize).pipe(Effect.ignore);
+            yield* runSteps(manager.restart).pipe(Effect.ignore);
+          });
 
     yield* Effect.gen(function* () {
       if (installed) {
@@ -626,7 +693,17 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
       yield* runSteps(manager.activate);
     }).pipe(
       Effect.tapError(() =>
-        installed ? runSteps(manager.restart).pipe(Effect.ignore) : Effect.void,
+        installed
+          ? manager.kind === "systemd"
+            ? recoverInstalledSystemdService
+            : runSteps(manager.restart).pipe(Effect.ignore)
+          : manager.kind === "systemd"
+            ? Effect.gen(function* () {
+                yield* runSteps(manager.deactivate).pipe(Effect.ignore);
+                yield* fs.remove(unitPath).pipe(Effect.ignore);
+                yield* runSteps(manager.finalize).pipe(Effect.ignore);
+              })
+            : Effect.void,
       ),
     );
     return plan;
@@ -655,19 +732,29 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
     if (!(yield* fs.exists(unitPath))) {
       return { supported: true, installed: false, current: false, unitPath, logPath };
     }
-    const [unit, launcherExists, runtimeEntryExists, runtimeSentinel, stateText] =
+    const [unit, launcherExists, runtimeEntryExists, runtimeSentinel, stateText, health] =
       yield* Effect.all([
         fs.readFileString(unitPath),
         fs.exists(launcherPath),
         fs.exists(runtimePaths.entryPath),
         fs.readFileString(runtimePaths.sentinelPath).pipe(Effect.option),
         fs.readFileString(statePath).pipe(Effect.option),
+        detectedManager.health === undefined
+          ? Effect.void
+          : Effect.all({
+              enabled: readHealthFact(detectedManager.health.enabled),
+              active: readHealthFact(detectedManager.health.active),
+            }),
       ]);
     const state = Option.isSome(stateText) ? parseServiceState(stateText.value) : undefined;
+    const enabled = health?.enabled;
+    const active = health?.active;
     return {
       supported: true,
       installed: true,
       current:
+        enabled !== false &&
+        active !== false &&
         unit === detectedManager.render(plan) &&
         launcherExists &&
         runtimeEntryExists &&
@@ -675,11 +762,15 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
         runtimeSentinel.value.trim() === input.cliVersion &&
         state?.activeVersion === input.cliVersion &&
         state?.update?.status !== "pending",
+      ...(enabled === undefined ? {} : { enabled }),
+      ...(active === undefined ? {} : { active }),
       unitPath,
       logPath,
     };
   }).pipe(
-    Effect.mapError((cause) => new BootServiceInstallError({ cause })),
+    Effect.mapError((cause) =>
+      isBootServiceCommandError(cause) ? cause : new BootServiceInstallError({ cause }),
+    ),
     Effect.withSpan("cloud.boot_service.status"),
   );
 

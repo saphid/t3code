@@ -57,6 +57,8 @@ export function formatServiceStatus(
   return [
     "T3 Code service",
     `  Status: ${status.current ? `installed · t3@${cliVersion}` : "needs an update or repair"}`,
+    ...(status.enabled === undefined ? [] : [`  Enabled: ${status.enabled ? "yes" : "no"}`]),
+    ...(status.active === undefined ? [] : [`  Active: ${status.active ? "yes" : "no"}`]),
     `  Unit: ${status.unitPath}`,
     `  Logs: ${status.logPath}`,
     ...(status.current ? [] : ["  Next: Run `npx t3@latest service update`."]),
@@ -131,7 +133,7 @@ const serviceUninstallCommand = Command.make("uninstall", projectLocationFlags).
 );
 
 const serviceStatusCommand = Command.make("status", projectLocationFlags).pipe(
-  Command.withDescription("Show whether the T3 Code background service is installed."),
+  Command.withDescription("Show the background service installation and runtime health."),
   Command.withHandler((flags) =>
     runServiceCommand(
       flags,

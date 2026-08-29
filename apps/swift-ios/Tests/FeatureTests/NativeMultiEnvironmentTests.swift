@@ -927,6 +927,50 @@ private enum ObservedThreadCompletion: Equatable {
     case done
 }
 
+@Suite("Native environment service projection")
+@MainActor
+struct NativeEnvironmentServiceProjectionTests {
+    @Test(.bug("https://github.com/saphid/t3code-personal/issues/220"))
+    func inactiveEnvironmentReconnectsWithManagedUpdateCapabilityAfterRepair() async throws {
+        let fixture = try await NativeMultiEnvironmentTests.makeFixture(
+            pullRequestsAvailable: true
+        )
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        await fixture.transport.setReachable(false, host: "one.example")
+
+        let offline = try await fixture.client.initialSnapshot()
+        let offlineEnvironment = try #require(
+            offline.environments.first(where: { $0.id == "one" })
+        )
+        #expect(offline.connection.state == .disconnected)
+        #expect(offlineEnvironment.connectionState == .disconnected)
+        #expect(offlineEnvironment.serverSelfUpdate == nil)
+
+        let repairedDescriptor = try #require(
+            multiEnvironmentDescriptor(
+                environmentID: "one",
+                label: "Left Book",
+                pullRequestsAvailable: true,
+                serverSelfUpdate: "boot-service"
+            )
+        )
+        await fixture.transport.setDescriptor(
+            repairedDescriptor,
+            host: "one.example"
+        )
+        await fixture.transport.setReachable(true, host: "one.example")
+
+        let repaired = try await fixture.client.initialSnapshot()
+        let repairedEnvironment = try #require(
+            repaired.environments.first(where: { $0.id == "one" })
+        )
+        #expect(repaired.connection.state == .connected)
+        #expect(repairedEnvironment.connectionState == .connected)
+        #expect(repairedEnvironment.serverSelfUpdate == "boot-service")
+        await fixture.client.disconnect()
+    }
+}
+
 @Suite("Native client storage boundaries")
 @MainActor
 struct NativeClientStorageTests {
@@ -1233,6 +1277,7 @@ private actor MultiEnvironmentHTTPTransport: HTTPTransport {
     private var detailMessagesByHost: [String: [OrchestrationMessage]] = [:]
     private var failingNextDetailReadHosts = Set<String>()
     private var failingDetailReadHosts = Set<String>()
+    private var descriptorsByHost: [String: EnvironmentDescriptor] = [:]
 
     init(shells: [String: OrchestrationShellSnapshot]) {
         self.shells = shells
@@ -1247,6 +1292,10 @@ private actor MultiEnvironmentHTTPTransport: HTTPTransport {
         } else {
             reachableHosts.remove(host)
         }
+    }
+
+    func setDescriptor(_ descriptor: EnvironmentDescriptor, host: String) {
+        descriptorsByHost[host] = descriptor
     }
 
     func setShellReadsEnabled(_ enabled: Bool, host: String) {
@@ -1313,6 +1362,13 @@ private actor MultiEnvironmentHTTPTransport: HTTPTransport {
             throw URLError(.cannotConnectToHost)
         }
         let path = request.url?.path ?? ""
+        if path == "/.well-known/t3/environment",
+           let descriptor = descriptorsByHost[host] {
+            return (
+                try JSONEncoder.t3.encode(descriptor),
+                multiEnvironmentResponse(request)
+            )
+        }
         if path == "/api/orchestration/shell",
            blockedNextShellReadHosts.remove(host) != nil {
             if let continuation = shellReadStartContinuations.removeValue(forKey: host) {
@@ -1493,9 +1549,18 @@ private actor PullRequestPageWebSocketConnection: WebSocketConnection {
 private func multiEnvironmentDescriptor(
     environmentID: String,
     label: String,
-    pullRequestsAvailable: Bool
+    pullRequestsAvailable: Bool,
+    serverSelfUpdate: String? = nil
 ) throws -> EnvironmentDescriptor? {
     guard pullRequestsAvailable else { return nil }
+    var capabilities: [String: JSONValue] = [
+        "repositoryIdentity": .bool(true),
+        "pullRequests": .bool(true),
+        "threadPinReorder": .bool(true),
+    ]
+    if let serverSelfUpdate {
+        capabilities["serverSelfUpdate"] = .string(serverSelfUpdate)
+    }
     let value = JSONValue.object([
         "environmentId": .string(environmentID),
         "label": .string(label),
@@ -1504,10 +1569,7 @@ private func multiEnvironmentDescriptor(
             "arch": .string("arm64"),
         ]),
         "serverVersion": .string("0.1.0"),
-        "capabilities": .object([
-            "repositoryIdentity": .bool(true),
-            "pullRequests": .bool(true),
-        ]),
+        "capabilities": .object(capabilities),
     ])
     return try value.decode(EnvironmentDescriptor.self)
 }

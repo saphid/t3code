@@ -116,17 +116,55 @@ const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
 
   const commands: string[] = [];
   const timeouts = new Map<string, unknown>();
-  const control: { failCommand: string | undefined } = { failCommand: undefined };
+  const control: {
+    failCommand: string | undefined;
+    failExitCode: number;
+    failCommands: Set<string>;
+    enabled: boolean;
+    active: boolean;
+  } = {
+    failCommand: undefined,
+    failExitCode: 1,
+    failCommands: new Set(),
+    enabled: false,
+    active: false,
+  };
   const runner = ProcessRunner.ProcessRunner.of({
     run: (input) =>
       Effect.sync(() => {
         const command = `${input.command} ${input.args.join(" ")}`;
         commands.push(command);
         timeouts.set(command, input.timeout);
+        const failed = command === control.failCommand || control.failCommands.has(command);
+        if (!failed) {
+          if (command === "systemctl --user enable t3code.service") {
+            control.enabled = true;
+          } else if (command === "systemctl --user restart t3code.service") {
+            control.active = true;
+          } else if (
+            command === "systemctl --user stop t3code.service" ||
+            command === "systemctl --user disable --now t3code.service"
+          ) {
+            control.active = false;
+            if (command.includes("disable")) control.enabled = false;
+          }
+        }
+        const healthResult = failed
+          ? undefined
+          : command === "systemctl --user is-enabled t3code.service"
+            ? {
+                code: control.enabled ? 0 : 1,
+                stdout: control.enabled ? "enabled\n" : "disabled\n",
+              }
+            : command === "systemctl --user is-active t3code.service"
+              ? { code: control.active ? 0 : 3, stdout: control.active ? "active\n" : "inactive\n" }
+              : undefined;
         return {
-          stdout: input.args[1] === "--version" ? "t3 v1.2.3\n" : "",
+          stdout: healthResult?.stdout ?? (input.args[1] === "--version" ? "t3 v1.2.3\n" : ""),
           stderr: "",
-          code: ChildProcessSpawner.ExitCode(command === control.failCommand ? 1 : 0),
+          code: ChildProcessSpawner.ExitCode(
+            failed ? control.failExitCode : (healthResult?.code ?? 0),
+          ),
           timedOut: false,
           stdoutTruncated: false,
           stderrTruncated: false,
@@ -206,6 +244,149 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
     }),
   );
 
+  it.effect("reports enabled and active systemd health", () =>
+    Effect.gen(function* () {
+      const { service, control } = yield* makeHarness();
+      yield* service.install;
+
+      expect(yield* service.status).toMatchObject({
+        installed: true,
+        current: true,
+        enabled: true,
+        active: true,
+      });
+
+      control.active = false;
+      expect(yield* service.status).toMatchObject({
+        installed: true,
+        current: false,
+        enabled: true,
+        active: false,
+      });
+
+      yield* service.install;
+      expect(yield* service.status).toMatchObject({
+        installed: true,
+        current: true,
+        enabled: true,
+        active: true,
+      });
+    }),
+  );
+
+  it.effect("rolls back every failed fresh systemd activation step", () =>
+    Effect.gen(function* () {
+      for (const failedCommand of [
+        "systemctl --user daemon-reload",
+        "systemctl --user enable t3code.service",
+        "systemctl --user restart t3code.service",
+      ]) {
+        const { service, control } = yield* makeHarness();
+        control.failCommand = failedCommand;
+
+        expect((yield* service.install.pipe(Effect.flip))._tag).toBe("BootServiceCommandError");
+        expect((yield* service.status).installed).toBe(false);
+      }
+    }),
+  );
+
+  it.effect("reports a missing loginctl command and rolls back", () =>
+    Effect.gen(function* () {
+      const { service, control } = yield* makeHarness();
+      control.failCommand = "loginctl enable-linger";
+      control.failExitCode = 127;
+
+      expect(yield* service.install.pipe(Effect.flip)).toMatchObject({
+        _tag: "BootServiceCommandError",
+        step: "enabling lingering for this user",
+        exitCode: 127,
+      });
+      expect((yield* service.status).installed).toBe(false);
+    }),
+  );
+
+  it.effect("returns consistent facts to concurrent status callers", () =>
+    Effect.gen(function* () {
+      const { service } = yield* makeHarness();
+      yield* service.install;
+
+      const statuses = yield* Effect.all([service.status, service.status], {
+        concurrency: "unbounded",
+      });
+      expect(statuses).toEqual([statuses[0], statuses[0]]);
+      expect(statuses[0]).toMatchObject({
+        installed: true,
+        current: true,
+        enabled: true,
+        active: true,
+      });
+    }),
+  );
+
+  it.effect("reports a precise error when systemd health cannot be checked", () =>
+    Effect.gen(function* () {
+      const { service, control } = yield* makeHarness();
+      yield* service.install;
+      control.failCommand = "systemctl --user is-active t3code.service";
+
+      expect(yield* service.status.pipe(Effect.flip)).toMatchObject({
+        _tag: "BootServiceCommandError",
+        step: "checking whether the service is active",
+        exitCode: 1,
+      });
+    }),
+  );
+
+  it.effect("rolls back a fresh install when activation fails and permits retry", () =>
+    Effect.gen(function* () {
+      const { service, commands, control } = yield* makeHarness();
+      control.failCommand = "loginctl enable-linger";
+
+      const error = yield* service.install.pipe(Effect.flip);
+      expect(error).toMatchObject({
+        _tag: "BootServiceCommandError",
+        step: "enabling lingering for this user",
+        exitCode: 1,
+      });
+      const status = yield* service.status;
+      expect(status).toMatchObject({ installed: false, current: false });
+      expect(commands.filter((command) => command.startsWith("systemctl "))).toEqual([
+        "systemctl --user daemon-reload",
+        "systemctl --user enable t3code.service",
+        "systemctl --user disable --now t3code.service",
+        "systemctl --user daemon-reload",
+      ]);
+
+      expect((yield* service.install.pipe(Effect.flip))._tag).toBe("BootServiceCommandError");
+      expect((yield* service.status).installed).toBe(false);
+      control.failCommand = undefined;
+      yield* service.install;
+      expect(yield* service.status).toMatchObject({
+        installed: true,
+        current: true,
+        enabled: true,
+        active: true,
+      });
+    }),
+  );
+
+  it.effect("keeps the activation error when rollback commands also fail", () =>
+    Effect.gen(function* () {
+      const { service, control } = yield* makeHarness();
+      control.failCommands.add("systemctl --user restart t3code.service");
+      control.failCommands.add("systemctl --user disable --now t3code.service");
+      control.failCommands.add("systemctl --user daemon-reload");
+
+      const error = yield* service.install.pipe(Effect.flip);
+      expect(error).toMatchObject({
+        _tag: "BootServiceCommandError",
+        step: "reloading systemd user units",
+        exitCode: 1,
+      });
+      expect((yield* service.status).installed).toBe(false);
+    }),
+  );
+
   it.effect("restarts an installed service when repair fails", () =>
     Effect.gen(function* () {
       const { service, commands, control } = yield* makeHarness();
@@ -218,8 +399,61 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
       expect(commands.filter((command) => command.startsWith("systemctl "))).toEqual([
         "systemctl --user stop t3code.service",
         "systemctl --user daemon-reload",
+        "systemctl --user daemon-reload",
         "systemctl --user restart t3code.service",
       ]);
+    }),
+  );
+
+  it.effect("restores a working systemd service when repair activation fails", () =>
+    Effect.gen(function* () {
+      const { service, fs, statePath, commands, control } = yield* makeHarness();
+      const plan = yield* service.install;
+      const previousLauncher = "export const version = '1.2.2';\n";
+      // @effect-diagnostics-next-line preferSchemaOverJson:off - fixed launcher-owned test document.
+      const previousState = `${JSON.stringify({
+        protocol: SERVICE_LAUNCHER_PROTOCOL,
+        activeVersion: "1.2.2",
+      })}\n`;
+      const previousUnit = "previous working unit\n";
+      yield* fs.writeFileString(plan.launcherPath, previousLauncher);
+      yield* fs.writeFileString(statePath, previousState);
+      yield* fs.writeFileString(plan.unitPath, previousUnit);
+      commands.length = 0;
+      control.failCommand = "loginctl enable-linger";
+
+      expect((yield* service.install.pipe(Effect.flip))._tag).toBe("BootServiceCommandError");
+      expect(yield* fs.readFileString(plan.launcherPath)).toBe(previousLauncher);
+      expect(yield* fs.readFileString(statePath)).toBe(previousState);
+      expect(yield* fs.readFileString(plan.unitPath)).toBe(previousUnit);
+      expect(yield* service.status).toMatchObject({
+        installed: true,
+        current: false,
+        enabled: true,
+        active: true,
+      });
+      expect(commands.filter((command) => command.startsWith("systemctl "))).toEqual([
+        "systemctl --user stop t3code.service",
+        "systemctl --user daemon-reload",
+        "systemctl --user enable t3code.service",
+        "systemctl --user daemon-reload",
+        "systemctl --user restart t3code.service",
+        "systemctl --user is-enabled t3code.service",
+        "systemctl --user is-active t3code.service",
+      ]);
+
+      control.failCommands.add("systemctl --user restart t3code.service");
+      expect(yield* service.install.pipe(Effect.flip)).toMatchObject({
+        _tag: "BootServiceCommandError",
+        step: "enabling lingering for this user",
+      });
+      expect(yield* fs.readFileString(plan.unitPath)).toBe(previousUnit);
+      expect(yield* service.status).toMatchObject({
+        installed: true,
+        current: false,
+        enabled: true,
+        active: false,
+      });
     }),
   );
 
@@ -245,6 +479,7 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
       expect(serviceStateHasPendingUpdate(yield* fs.readFileString(statePath))).toBe(true);
       expect(commands.filter((command) => command.startsWith("systemctl "))).toEqual([
         "systemctl --user stop t3code.service",
+        "systemctl --user daemon-reload",
         "systemctl --user restart t3code.service",
       ]);
     }),

@@ -528,6 +528,11 @@ private struct ConnectionDetailView: View {
                     Text(environment.endpoint)
                         .textSelection(.enabled)
                     LabeledContent("Projects", value: "\(projectCount)")
+                    if let updateManagement = ConnectionHubPresentation.updateManagement(
+                        for: environment
+                    ) {
+                        LabeledContent("Updates", value: updateManagement)
+                    }
                 }
 
                 Section {
