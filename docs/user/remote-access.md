@@ -229,6 +229,11 @@ works for a server that was wiped or is no longer reachable. Device-local connec
 controls remain in **Settings** → **Connections** on web and desktop or **Settings** →
 **Environments** on mobile.
 
+If SwiftUI mobile reports **Relink required**, its saved T3 Connect session could not be refreshed.
+Choose **Retry** for a temporary account or network failure. Choose **Relink** to request new access
+for that environment. Relinking replaces only that environment's credential and does not remove
+other saved environments.
+
 ## Security Notes
 
 - Treat pairing URLs and pairing tokens like passwords.

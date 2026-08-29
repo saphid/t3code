@@ -96,6 +96,7 @@ struct ConnectionHubPresentationTests {
             (.connecting, .connecting),
             (.reconnecting, .connecting),
             (.disconnected, .offline),
+            (.relinkRequired, .relinkRequired),
         ]
     )
     func savedEnvironmentStatusMatchesConnectionState(
@@ -130,6 +131,32 @@ struct ConnectionHubPresentationTests {
 
         #expect(ConnectionHubPresentation.status(for: saved) == .checking)
         #expect(ConnectionHubPresentation.status(for: saved, pendingEnabled: false) == .disabled)
+    }
+
+    @Test(
+        "Only an expired saved T3 Connect environment offers recovery actions",
+        .bug("https://github.com/saphid/t3code-personal/issues/205")
+    )
+    func relinkActionsAreScopedToManagedEnvironment() {
+        let managed = T3ConnectEnvironmentPresentation(
+            linkedEnvironment: nil,
+            savedEnvironment: environment(
+                id: "managed",
+                source: .t3Connect,
+                connectionState: .relinkRequired
+            )
+        )
+        let direct = T3ConnectEnvironmentPresentation(
+            linkedEnvironment: nil,
+            savedEnvironment: environment(
+                id: "direct",
+                source: .direct,
+                connectionState: .relinkRequired
+            )
+        )
+
+        #expect(managed.requiresRecoveryActions)
+        #expect(direct.requiresRecoveryActions == false)
     }
 
     @Test

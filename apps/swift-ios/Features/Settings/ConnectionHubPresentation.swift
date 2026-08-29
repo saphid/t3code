@@ -6,6 +6,7 @@ enum ConnectionHubStatus: Equatable {
     case connecting
     case offline
     case online
+    case relinkRequired
 
     var title: String {
         switch self {
@@ -14,6 +15,7 @@ enum ConnectionHubStatus: Equatable {
         case .connecting: "Connecting"
         case .offline: "Offline"
         case .online: "Online"
+        case .relinkRequired: "Relink required"
         }
     }
 }
@@ -40,6 +42,11 @@ struct T3ConnectEnvironmentPresentation: Identifiable, Equatable {
 
     var isOnline: Bool {
         status == .online
+    }
+
+    var requiresRecoveryActions: Bool {
+        savedEnvironment?.source == .t3Connect
+            && savedEnvironment?.connectionState == .relinkRequired
     }
 
     var status: ConnectionHubStatus {
@@ -84,6 +91,7 @@ enum ConnectionHubPresentation {
         case .connected: .online
         case .connecting, .reconnecting: .connecting
         case .disconnected: .offline
+        case .relinkRequired: .relinkRequired
         case nil: .checking
         }
     }

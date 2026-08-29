@@ -336,9 +336,18 @@ export const AuthCreatePairingCredentialInput = Schema.Struct({
 });
 export type AuthCreatePairingCredentialInput = typeof AuthCreatePairingCredentialInput.Type;
 
+export const AuthSessionCredentialStatus = Schema.Literals(["absent", "rejected"]);
+export type AuthSessionCredentialStatus = typeof AuthSessionCredentialStatus.Type;
+
 export const AuthSessionState = Schema.Struct({
   authenticated: Schema.Boolean,
   auth: ServerAuthDescriptor,
+  /**
+   * Present on unauthenticated responses from servers that distinguish a
+   * request with no credential from one whose credential was rejected.
+   * Optional for compatibility with older environment servers.
+   */
+  credentialStatus: Schema.optionalKey(AuthSessionCredentialStatus),
   scopes: Schema.optionalKey(AuthEnvironmentScopes),
   sessionMethod: Schema.optionalKey(ServerAuthSessionMethod),
   expiresAt: Schema.optionalKey(Schema.DateTimeUtc),

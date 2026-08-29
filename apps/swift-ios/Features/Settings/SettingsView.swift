@@ -328,6 +328,10 @@ public struct SettingsView: View {
             return (text, T3Colors.textTertiary)
         }
 
+        if let expired = enabled.first(where: { $0.connectionState == .relinkRequired }) {
+            return ("\(expired.name) needs relinking", T3Colors.danger)
+        }
+
         let text = enabled.count == 1 ? "\(enabled[0].name) offline" : "All offline"
         return (text, T3Colors.danger)
     }

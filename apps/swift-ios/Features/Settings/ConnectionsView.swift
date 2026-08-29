@@ -246,36 +246,55 @@ struct ConnectionsView: View {
     private func t3ConnectConnectionRow(
         _ item: T3ConnectEnvironmentPresentation
     ) -> some View {
-        HStack(spacing: 12) {
-            Group {
-                if let environment = item.savedEnvironment {
-                    Button {
-                        detailEnvironmentID = environment.id
-                    } label: {
+        VStack(alignment: .trailing, spacing: 6) {
+            HStack(spacing: 12) {
+                Group {
+                    if let environment = item.savedEnvironment {
+                        Button {
+                            detailEnvironmentID = environment.id
+                        } label: {
+                            t3ConnectEnvironmentLabel(item)
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityHint("Shows connection details")
+                    } else {
                         t3ConnectEnvironmentLabel(item)
                     }
-                    .buttonStyle(.plain)
-                    .accessibilityHint("Shows connection details")
-                } else {
-                    t3ConnectEnvironmentLabel(item)
                 }
+
+                Toggle("Enabled", isOn: t3ConnectEnabledBinding(for: item))
+                    .labelsHidden()
+                    .tint(T3Colors.success)
+                    .disabled(isT3ConnectToggleDisabled(item))
+                    .accessibilityHint(
+                        item.savedEnvironment == nil && item.status == .offline
+                            ? "Environment is offline"
+                            : ""
+                    )
+                    .accessibilityLabel(
+                        toggleAccessibilityLabel(
+                            name: item.name,
+                            endpoint: t3ConnectEndpointLabel(for: item)
+                        )
+                    )
             }
 
-            Toggle("Enabled", isOn: t3ConnectEnabledBinding(for: item))
-                .labelsHidden()
-                .tint(T3Colors.success)
-                .disabled(isT3ConnectToggleDisabled(item))
-                .accessibilityHint(
-                    item.savedEnvironment == nil && item.status == .offline
-                        ? "Environment is offline"
-                        : ""
-                )
-                .accessibilityLabel(
-                    toggleAccessibilityLabel(
-                        name: item.name,
-                        endpoint: t3ConnectEndpointLabel(for: item)
-                    )
-                )
+            if item.requiresRecoveryActions {
+                HStack(spacing: 14) {
+                    Button("Retry") {
+                        Task { await model.reload() }
+                    }
+                    .accessibilityLabel("Retry \(item.name) connection")
+                    .accessibilityIdentifier("connections-retry-\(item.id)")
+
+                    Button("Relink") {
+                        Task { await relinkT3ConnectEnvironment(item) }
+                    }
+                    .accessibilityLabel("Relink \(item.name)")
+                    .accessibilityIdentifier("connections-relink-\(item.id)")
+                }
+                .font(T3Typography.control)
+            }
         }
         .frame(minHeight: 70)
     }
@@ -456,6 +475,28 @@ struct ConnectionsView: View {
         }
     }
 
+    private func relinkT3ConnectEnvironment(
+        _ item: T3ConnectEnvironmentPresentation
+    ) async {
+        guard let linkedEnvironment = item.linkedEnvironment,
+              let capability = t3ConnectCapability else {
+            showingT3Connect = true
+            return
+        }
+
+        connectingEnvironmentID = item.id
+        defer { connectingEnvironmentID = nil }
+        do {
+            let credential = try await capability.t3ConnectController.credential(
+                for: linkedEnvironment.environment
+            )
+            try await capability.connectT3Environment(credential)
+            await model.reloadAfterConnection()
+        } catch {
+            connectionErrorMessage = error.localizedDescription
+        }
+    }
+
     private func isT3ConnectToggleDisabled(
         _ item: T3ConnectEnvironmentPresentation
     ) -> Bool {
@@ -604,7 +645,7 @@ private extension ConnectionHubStatus {
         switch self {
         case .disabled, .checking: T3Colors.textTertiary
         case .connecting: T3Colors.warning
-        case .offline: T3Colors.danger
+        case .offline, .relinkRequired: T3Colors.danger
         case .online: T3Colors.success
         }
     }

@@ -1556,6 +1556,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       const response = yield* fetchEffect(url);
       const body = yield* responseJsonEffect<{
         readonly authenticated: boolean;
+        readonly credentialStatus?: string;
         readonly auth: {
           readonly policy: string;
           readonly bootstrapMethods: ReadonlyArray<string>;
@@ -1566,6 +1567,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
 
       assert.equal(response.status, 200);
       assert.equal(body.authenticated, false);
+      assert.equal(body.credentialStatus, "absent");
       assert.equal(body.auth.policy, "desktop-managed-local");
       assert.deepEqual(body.auth.bootstrapMethods, ["desktop-bootstrap"]);
       assert.deepEqual(body.auth.sessionMethods, [
@@ -1763,10 +1765,12 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         const bearerResponse = yield* fetchEffect(sessionUrl, {
           headers: { authorization: `Bearer ${token.access_token}` },
         });
-        const bearerState = yield* responseJsonEffect<{ readonly authenticated: boolean }>(
-          bearerResponse,
-        );
+        const bearerState = yield* responseJsonEffect<{
+          readonly authenticated: boolean;
+          readonly credentialStatus?: string;
+        }>(bearerResponse);
         assert.equal(bearerState.authenticated, false);
+        assert.equal(bearerState.credentialStatus, "rejected");
 
         const sessionProof = makeDpopProof({
           method: "GET",

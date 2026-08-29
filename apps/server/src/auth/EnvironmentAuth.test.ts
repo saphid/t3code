@@ -1,8 +1,10 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { AuthAdministrativeScopes } from "@t3tools/contracts";
 import { expect, it } from "@effect/vitest";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as TestClock from "effect/testing/TestClock";
 
 import * as ServerConfig from "../config.ts";
 import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
@@ -50,6 +52,14 @@ const makeCookieRequest = (
     EnvironmentAuth.EnvironmentAuth["Service"]["authenticateHttpRequest"]
   >[0];
 
+const makeBearerRequest = (
+  token?: string,
+): Parameters<EnvironmentAuth.EnvironmentAuth["Service"]["getSessionState"]>[0] =>
+  ({
+    cookies: {},
+    headers: token === undefined ? {} : { authorization: `Bearer ${token}` },
+  }) as unknown as Parameters<EnvironmentAuth.EnvironmentAuth["Service"]["getSessionState"]>[0];
+
 const requestMetadata = {
   deviceType: "desktop" as const,
   os: "macOS",
@@ -66,6 +76,43 @@ it.layer(NodeServices.layer)("EnvironmentAuth.layer", (it) => {
 
       expect(error._tag).toBe("ServerAuthInvalidCredentialError");
     }),
+  );
+
+  it.effect("distinguishes absent credentials from malformed credentials", () =>
+    Effect.gen(function* () {
+      const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
+
+      const absent = yield* serverAuth.getSessionState(makeBearerRequest());
+      const malformed = yield* serverAuth.getSessionState(makeBearerRequest("not-a-token"));
+
+      expect(absent.authenticated).toBe(false);
+      expect(absent.credentialStatus).toBe("absent");
+      expect(malformed.authenticated).toBe(false);
+      expect(malformed.credentialStatus).toBe("rejected");
+    }).pipe(Effect.provide(makeEnvironmentAuthLayer())),
+  );
+
+  it.effect("reports expired and revoked credentials as rejected", () =>
+    Effect.gen(function* () {
+      const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
+      const expiredSession = yield* serverAuth.issueSession({
+        subject: "expired-session-state",
+        ttl: Duration.seconds(1),
+      });
+      const revokedSession = yield* serverAuth.issueSession({
+        subject: "revoked-session-state",
+      });
+      yield* serverAuth.revokeSession(revokedSession.sessionId);
+      yield* TestClock.adjust(Duration.seconds(2));
+
+      const expired = yield* serverAuth.getSessionState(makeBearerRequest(expiredSession.token));
+      const revoked = yield* serverAuth.getSessionState(makeBearerRequest(revokedSession.token));
+
+      expect(expired.authenticated).toBe(false);
+      expect(expired.credentialStatus).toBe("rejected");
+      expect(revoked.authenticated).toBe(false);
+      expect(revoked.credentialStatus).toBe("rejected");
+    }).pipe(Effect.provide(Layer.merge(makeEnvironmentAuthLayer(), TestClock.layer()))),
   );
 
   it.effect("maps unexpected bootstrap failures to 500", () =>

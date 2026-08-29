@@ -6,6 +6,7 @@ public struct FeatureConnection: Sendable, Equatable, Codable {
         case connecting
         case connected
         case reconnecting
+        case relinkRequired
     }
 
     public var state: State

@@ -41,7 +41,7 @@ struct HomeEnvironmentFilterOptionLabel: View {
         case .unreachable:
             Image(systemName: "exclamationmark.triangle.fill")
                 .foregroundStyle(T3Colors.warning)
-        case .disconnected:
+        case .disconnected, .relinkRequired:
             Image(systemName: "exclamationmark.triangle.fill")
                 .foregroundStyle(T3Colors.danger)
         }

@@ -78,6 +78,8 @@ public enum HTTPError: LocalizedError, Sendable {
     case missingCredential
     case incompatibleCredential
     case managedAuthorizationUnavailable
+    case rejectedCredential
+    case managedSessionExpired
 
     public var errorDescription: String? {
         switch self {
@@ -91,7 +93,18 @@ public enum HTTPError: LocalizedError, Sendable {
             "This environment's saved authentication method is invalid. Connect it again."
         case .managedAuthorizationUnavailable:
             "This build cannot authorize a managed T3 Connect environment."
+        case .rejectedCredential:
+            "The environment rejected this credential."
+        case .managedSessionExpired:
+            "This T3 Connect session expired. Retry, or relink this environment if its access was revoked."
         }
+    }
+}
+
+public extension HTTPError {
+    var requiresManagedEnvironmentRelink: Bool {
+        if case .managedSessionExpired = self { return true }
+        return false
     }
 }
 
@@ -240,6 +253,9 @@ public actor EnvironmentAPI {
             environment: environment,
             path: "/api/auth/session",
             method: "GET",
+            rejectedResult: {
+                $0.authenticated == false && $0.credentialStatus == .rejected
+            },
             as: AuthSessionState.self
         )
     }
@@ -286,10 +302,13 @@ public actor EnvironmentAPI {
         method: String,
         body: Data? = nil,
         timeoutInterval: TimeInterval? = nil,
+        rejectedResult: (Result) -> Bool = { _ in false },
         as type: Result.Type
     ) async throws -> Result {
         guard let credential = try await credentials.credential(for: environment.id) else {
-            throw HTTPError.missingCredential
+            throw environment.kind == .managedDPoP
+                ? HTTPError.managedSessionExpired
+                : HTTPError.missingCredential
         }
 
         switch environment.kind {
@@ -323,15 +342,23 @@ public actor EnvironmentAPI {
             }
 
             var current = credential
+            var attemptedManagedRefresh = false
             let bindingRequiresRefresh = try await managedAuthorization
                 .credentialRequiresRefresh(current, environment: environment)
             if current.expiresAt?.timeIntervalSinceNow ?? 0 <= Self.managedRefreshMargin
                 || bindingRequiresRefresh {
-                current = try await refreshManagedCredential(
-                    current,
-                    environment: environment,
-                    using: managedAuthorization
-                )
+                do {
+                    attemptedManagedRefresh = true
+                    current = try await refreshManagedCredential(
+                        current,
+                        environment: environment,
+                        using: managedAuthorization
+                    )
+                } catch is CancellationError {
+                    throw CancellationError()
+                } catch {
+                    throw HTTPError.managedSessionExpired
+                }
             }
             var request = try await managedAuthorization.authorize(
                 makeRequest(
@@ -348,36 +375,54 @@ public actor EnvironmentAPI {
                 request.timeoutInterval = timeoutInterval
             }
             do {
-                return try await send(request, as: type)
+                let result = try await send(request, as: type)
+                guard rejectedResult(result) == false else {
+                    throw HTTPError.rejectedCredential
+                }
+                return result
             } catch let error as HTTPError where error.isRejectedAuthorization {
-                if let saved = try await newestUsableManagedCredential(
-                    replacing: current,
-                    environment: environment,
-                    using: managedAuthorization
-                ) {
-                    current = saved
-                } else {
-                    current = try await refreshManagedCredential(
-                        current,
+                do {
+                    if let saved = try await newestUsableManagedCredential(
+                        replacing: current,
                         environment: environment,
                         using: managedAuthorization
-                    )
-                }
-                var retry = try await managedAuthorization.authorize(
-                    makeRequest(
+                    ) {
+                        current = saved
+                    } else {
+                        guard attemptedManagedRefresh == false else {
+                            throw HTTPError.managedSessionExpired
+                        }
+                        attemptedManagedRefresh = true
+                        current = try await refreshManagedCredential(
+                            current,
+                            environment: environment,
+                            using: managedAuthorization
+                        )
+                    }
+                    var retry = try await managedAuthorization.authorize(
+                        makeRequest(
+                            environment: environment,
+                            path: path,
+                            queryItems: queryItems,
+                            method: method,
+                            body: body
+                        ),
                         environment: environment,
-                        path: path,
-                        queryItems: queryItems,
-                        method: method,
-                        body: body
-                    ),
-                    environment: environment,
-                    credential: current
-                )
-                if let timeoutInterval {
-                    retry.timeoutInterval = timeoutInterval
+                        credential: current
+                    )
+                    if let timeoutInterval {
+                        retry.timeoutInterval = timeoutInterval
+                    }
+                    let result = try await send(retry, as: type)
+                    guard rejectedResult(result) == false else {
+                        throw HTTPError.rejectedCredential
+                    }
+                    return result
+                } catch is CancellationError {
+                    throw CancellationError()
+                } catch {
+                    throw HTTPError.managedSessionExpired
                 }
-                return try await send(retry, as: type)
             }
         }
     }
@@ -478,6 +523,7 @@ public actor EnvironmentAPI {
 
 private extension HTTPError {
     var isRejectedAuthorization: Bool {
+        if case .rejectedCredential = self { return true }
         guard case let .status(status, _, _) = self else { return false }
         return status == 401
     }
@@ -492,8 +538,14 @@ public struct WebSocketTicket: Codable, Equatable, Sendable {
     public let expiresAt: String
 }
 
+public enum AuthSessionCredentialStatus: String, Codable, Equatable, Sendable {
+    case absent
+    case rejected
+}
+
 public struct AuthSessionState: Codable, Equatable, Sendable {
     public let authenticated: Bool
+    public let credentialStatus: AuthSessionCredentialStatus?
     public let scopes: [String]?
     public let sessionMethod: String?
     public let expiresAt: String?

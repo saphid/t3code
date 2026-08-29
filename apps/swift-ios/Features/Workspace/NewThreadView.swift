@@ -552,6 +552,7 @@ public struct NewThreadView: View {
         case .disconnected: return "Offline"
         case .connecting: return "Connecting"
         case .reconnecting: return "Reconnecting"
+        case .relinkRequired: return "Relink required"
         case .connected, .none: return nil
         }
     }

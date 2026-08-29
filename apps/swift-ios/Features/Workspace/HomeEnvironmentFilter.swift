@@ -7,6 +7,7 @@ enum HomeEnvironmentFilter {
         case connected
         case unreachable
         case disconnected
+        case relinkRequired
 
         var accessibilityText: String {
             switch self {
@@ -15,6 +16,7 @@ enum HomeEnvironmentFilter {
             case .connected: "Connected"
             case .unreachable: "Unreachable, reconnecting"
             case .disconnected: "Disconnected"
+            case .relinkRequired: "T3 Connect relink required"
             }
         }
 
@@ -199,6 +201,7 @@ enum HomeEnvironmentFilter {
         case .connecting: .connecting
         case .reconnecting: .unreachable
         case .disconnected: .disconnected
+        case .relinkRequired: .relinkRequired
         case nil: .checking
         }
     }

@@ -1,4 +1,5 @@
 import CryptoKit
+import Testing
 import XCTest
 @testable import T3Code
 
@@ -408,7 +409,7 @@ final class T3ConnectRuntimeTests: XCTestCase {
         )
     }
 
-    func testRejectedTokenRefreshesOnceAndRetriesWithANewProof() async throws {
+    func testTypedRejectedSessionRefreshesOnceAndRetriesWithANewProof() async throws {
         let signer = try testSigner()
         let thumbprint = try await signer.thumbprint()
         let environment = managedEnvironment(descriptor: descriptor())
@@ -424,7 +425,7 @@ final class T3ConnectRuntimeTests: XCTestCase {
         let transport = T3ConnectScriptedHTTPTransport { request, ordinal in
             switch (request.url?.path, ordinal) {
             case ("/api/auth/session", 1):
-                return (Data(#"{"message":"expired"}"#.utf8), 401)
+                return (.rejectedAuthSession, 200)
             case ("/.well-known/t3/environment", 2):
                 return (.descriptor, 200)
             case ("/oauth/token", 3):
@@ -1090,6 +1091,276 @@ final class T3ConnectRuntimeTests: XCTestCase {
     }
 }
 
+@Suite("Expired managed environment session transport")
+struct ExpiredManagedEnvironmentSessionTransportTests {
+    @Test(
+        "A rejected retry stops after one refresh and preserves scoped credentials",
+        .bug("https://github.com/saphid/t3code-personal/issues/205")
+    )
+    func rejectedRetryStopsAfterOneRefresh() async throws {
+        let fixture = try await fixture { request, ordinal in
+            switch (request.url?.path, ordinal) {
+            case ("/api/auth/session", 1), ("/api/auth/session", 4):
+                return (.rejectedAuthSession, 200)
+            case ("/.well-known/t3/environment", 2):
+                return (.descriptor, 200)
+            case ("/oauth/token", 3):
+                return (
+                    .token(
+                        scopes: T3ConnectManagedEnvironmentAuthorizer.standardScopes
+                            .joined(separator: " ")
+                    ),
+                    200
+                )
+            default:
+                throw T3ConnectTestError.unexpectedPath(request.url?.path)
+            }
+        }
+
+        do {
+            _ = try await fixture.api.session(for: fixture.environment)
+            Issue.record("A second rejected session response should require relinking.")
+        } catch HTTPError.managedSessionExpired {
+            // The refresh budget is exhausted and the caller can offer Retry or Relink.
+        } catch {
+            Issue.record("Unexpected recovery error: \(error)")
+        }
+
+        #expect(await fixture.bootstrap.calls == 1)
+        let requests = await fixture.transport.requests
+        let sessions = requests.filter { $0.url?.path == "/api/auth/session" }
+        #expect(sessions.count == 2)
+        #expect(
+            sessions.map { $0.value(forHTTPHeaderField: "Authorization") }
+                == ["DPoP rejected-token", "DPoP fresh-environment-token"]
+        )
+        let firstProof = try #require(sessions.first?.value(forHTTPHeaderField: "DPoP"))
+        let lastProof = try #require(sessions.last?.value(forHTTPHeaderField: "DPoP"))
+        #expect(firstProof != lastProof)
+        #expect(
+            await fixture.credentials.credential(for: fixture.environment.id)?.accessToken
+                == "fresh-environment-token"
+        )
+        #expect(
+            await fixture.credentials.credential(for: "unrelated")?.accessToken
+                == "unrelated-token"
+        )
+    }
+
+    @Test(
+        "A preflight refresh exhausts the request refresh budget",
+        .bug("https://github.com/saphid/t3code-personal/issues/205")
+    )
+    func preflightRefreshDoesNotMintTwice() async throws {
+        let fixture = try await fixture(
+            credentialExpiresAt: Date().addingTimeInterval(30)
+        ) { request, _ in
+            switch request.url?.path {
+            case "/.well-known/t3/environment":
+                return (.descriptor, 200)
+            case "/oauth/token":
+                return (
+                    .token(
+                        scopes: T3ConnectManagedEnvironmentAuthorizer.standardScopes
+                            .joined(separator: " ")
+                    ),
+                    200
+                )
+            case "/api/auth/session":
+                return (.rejectedAuthSession, 200)
+            default:
+                throw T3ConnectTestError.unexpectedPath(request.url?.path)
+            }
+        }
+
+        do {
+            _ = try await fixture.api.session(for: fixture.environment)
+            Issue.record("A rejected preflight refresh should require relinking.")
+        } catch HTTPError.managedSessionExpired {
+            // The single refresh budget was already spent before the request.
+        } catch {
+            Issue.record("Unexpected recovery error: \(error)")
+        }
+
+        #expect(await fixture.bootstrap.calls == 1)
+        let requests = await fixture.transport.requests
+        let paths = requests.map(\.url?.path)
+        #expect(paths.filter { $0 == "/oauth/token" }.count == 1)
+        #expect(paths.filter { $0 == "/api/auth/session" }.count == 1)
+    }
+
+    @Test(
+        "A failed refresh keeps the saved environment credentials",
+        .bug("https://github.com/saphid/t3code-personal/issues/205")
+    )
+    func failedRefreshPreservesCredentials() async throws {
+        let signer = try signer()
+        let environment = try managedEnvironment()
+        let rejected = try await rejectedCredential(signer: signer)
+        let credentials = InMemoryCredentialStore(credentials: [
+            environment.id: rejected,
+            "unrelated": EnvironmentCredential(accessToken: "unrelated-token"),
+        ])
+        let transport = T3ConnectScriptedHTTPTransport { request, ordinal in
+            guard request.url?.path == "/api/auth/session", ordinal == 1 else {
+                throw T3ConnectTestError.unexpectedPath(request.url?.path)
+            }
+            return (.rejectedAuthSession, 200)
+        }
+        let failedRefresh = FailedManagedRefreshSource()
+        let authorization = T3ConnectRuntimeAuthorization(
+            authorizer: T3ConnectManagedEnvironmentAuthorizer(
+                transport: transport,
+                signer: signer
+            ),
+            bootstrapProvider: { id in try await failedRefresh.value(for: id) }
+        )
+        let api = EnvironmentAPI(
+            transport: transport,
+            credentials: credentials,
+            managedAuthorization: authorization
+        )
+
+        do {
+            _ = try await api.session(for: environment)
+            Issue.record("A failed refresh should require relinking.")
+        } catch HTTPError.managedSessionExpired {
+            // Expected terminal recovery state.
+        } catch {
+            Issue.record("Unexpected recovery error: \(error)")
+        }
+
+        #expect(await failedRefresh.calls == 1)
+        #expect(await credentials.credential(for: environment.id) == rejected)
+        #expect(await credentials.credential(for: "unrelated")?.accessToken == "unrelated-token")
+    }
+
+    @Test(
+        "Direct bearer sessions do not enter managed recovery",
+        .bug("https://github.com/saphid/t3code-personal/issues/205")
+    )
+    func directBearerSessionPreservesUnauthenticatedResponse() async throws {
+        let httpURL = try #require(URL(string: "https://direct.example"))
+        let webSocketURL = try #require(URL(string: "wss://direct.example/ws"))
+        let environment = Environment(
+            id: "direct",
+            label: "Direct",
+            httpBaseURL: httpURL,
+            webSocketBaseURL: webSocketURL
+        )
+        let credentials = InMemoryCredentialStore(credentials: [
+            environment.id: EnvironmentCredential(accessToken: "direct-token"),
+        ])
+        let transport = T3ConnectScriptedHTTPTransport { request, _ in
+            guard request.url?.path == "/api/auth/session" else {
+                throw T3ConnectTestError.unexpectedPath(request.url?.path)
+            }
+            return (Data(#"{"authenticated":false,"credentialStatus":"absent"}"#.utf8), 200)
+        }
+        let api = EnvironmentAPI(transport: transport, credentials: credentials)
+
+        let state = try await api.session(for: environment)
+
+        #expect(state.authenticated == false)
+        #expect(state.credentialStatus == .absent)
+        #expect((await transport.requests).count == 1)
+    }
+
+    private func fixture(
+        credentialExpiresAt: Date = Date().addingTimeInterval(300),
+        handler: @escaping T3ConnectScriptedHTTPTransport.Handler
+    ) async throws -> T3ConnectRefreshFixture {
+        let signer = try signer()
+        let environment = try managedEnvironment()
+        let credentials = InMemoryCredentialStore(credentials: [
+            environment.id: try await rejectedCredential(
+                signer: signer,
+                expiresAt: credentialExpiresAt
+            ),
+            "unrelated": EnvironmentCredential(accessToken: "unrelated-token"),
+        ])
+        let transport = T3ConnectScriptedHTTPTransport(handler: handler)
+        let bootstrap = T3ConnectBootstrapSource(
+            credential: try await bootstrapCredential(signer: signer)
+        )
+        let authorization = T3ConnectRuntimeAuthorization(
+            authorizer: T3ConnectManagedEnvironmentAuthorizer(
+                transport: transport,
+                signer: signer
+            ),
+            bootstrapProvider: { id in try await bootstrap.value(for: id) }
+        )
+        return T3ConnectRefreshFixture(
+            signer: signer,
+            environment: environment,
+            credentials: credentials,
+            transport: transport,
+            bootstrap: bootstrap,
+            api: EnvironmentAPI(
+                transport: transport,
+                credentials: credentials,
+                managedAuthorization: authorization
+            ),
+            secondAPI: EnvironmentAPI(
+                transport: transport,
+                credentials: credentials,
+                managedAuthorization: authorization
+            )
+        )
+    }
+
+    private func signer() throws -> T3ConnectDPoPSigner {
+        var scalar = Data(repeating: 0, count: 32)
+        scalar[31] = 13
+        return try T3ConnectDPoPSigner(privateKeyRawRepresentation: scalar)
+    }
+
+    private func managedEnvironment() throws -> Environment {
+        let descriptor = try JSONDecoder.t3.decode(
+            EnvironmentDescriptor.self,
+            from: .descriptor
+        )
+        return Environment(
+            id: descriptor.environmentId,
+            label: descriptor.label,
+            httpBaseURL: try #require(URL(string: "https://managed.example")),
+            webSocketBaseURL: try #require(URL(string: "wss://managed.example")),
+            kind: .managedDPoP,
+            descriptor: descriptor
+        )
+    }
+
+    private func rejectedCredential(
+        signer: T3ConnectDPoPSigner,
+        expiresAt: Date = Date().addingTimeInterval(300)
+    ) async throws -> EnvironmentCredential {
+        .managedDPoP(
+            accessToken: "rejected-token",
+            expiresAt: expiresAt,
+            scopes: T3ConnectManagedEnvironmentAuthorizer.standardScopes,
+            environmentID: "managed-1",
+            proofKeyThumbprint: try await signer.thumbprint()
+        )
+    }
+
+    private func bootstrapCredential(
+        signer: T3ConnectDPoPSigner
+    ) async throws -> T3ConnectManagedEnvironmentCredential {
+        T3ConnectManagedEnvironmentCredential(
+            environmentID: "managed-1",
+            label: "Managed Studio",
+            endpoint: T3ConnectManagedEndpoint(
+                httpBaseUrl: "https://managed.example",
+                wsBaseUrl: "wss://managed.example",
+                providerKind: .t3Relay
+            ),
+            bootstrapCredential: "one-use-bootstrap",
+            bootstrapExpiresAt: "2030-08-01T12:00:00.000Z",
+            proofKeyThumbprint: try await signer.thumbprint()
+        )
+    }
+}
+
 private struct T3ConnectRefreshFixture {
     let signer: T3ConnectDPoPSigner
     let environment: Environment
@@ -1103,6 +1374,15 @@ private struct T3ConnectRefreshFixture {
 private enum T3ConnectTestError: Error {
     case unexpectedRefresh
     case unexpectedPath(String?)
+}
+
+private actor FailedManagedRefreshSource {
+    private(set) var calls = 0
+
+    func value(for _: String) throws -> T3ConnectManagedEnvironmentCredential {
+        calls += 1
+        throw T3ConnectTestError.unexpectedRefresh
+    }
 }
 
 private actor ManagedPersistenceCredentialStore: CredentialStore {
@@ -1335,6 +1615,10 @@ private actor T3ConnectFailingReceiveConnection: WebSocketConnection {
 private extension Data {
     static var authSession: Data {
         Data(#"{"authenticated":true,"scopes":[],"sessionMethod":"dpop","expiresAt":null}"#.utf8)
+    }
+
+    static var rejectedAuthSession: Data {
+        Data(#"{"authenticated":false,"credentialStatus":"rejected"}"#.utf8)
     }
 
     static var descriptor: Data { descriptor("managed-1") }

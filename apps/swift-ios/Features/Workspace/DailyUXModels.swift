@@ -236,6 +236,7 @@ enum DailyUXCreationContext {
             guard environment.isEnabled else { return false }
             return environment.connectionState == .disconnected
                 || environment.connectionState == .reconnecting
+                || environment.connectionState == .relinkRequired
         }
     }
 

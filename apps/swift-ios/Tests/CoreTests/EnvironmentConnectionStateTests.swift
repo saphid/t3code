@@ -27,6 +27,58 @@ struct EnvironmentConnectionStateTests {
         #expect(environment.source == .direct)
     }
 
+    @Test(
+        "Auth session responses distinguish absent and rejected credentials",
+        .bug("https://github.com/saphid/t3code-personal/issues/205"),
+        arguments: [
+            ("absent", AuthSessionCredentialStatus.absent),
+            ("rejected", .rejected),
+        ]
+    )
+    func authSessionCredentialStatusDecodes(
+        rawValue: String,
+        expected: AuthSessionCredentialStatus
+    ) throws {
+        let data = Data(
+            #"{"authenticated":false,"credentialStatus":"\#(rawValue)"}"#.utf8
+        )
+
+        let state = try JSONDecoder.t3.decode(AuthSessionState.self, from: data)
+
+        #expect(state.authenticated == false)
+        #expect(state.credentialStatus == expected)
+    }
+
+    @Test(
+        "Only managed session expiry requires relinking",
+        .bug("https://github.com/saphid/t3code-personal/issues/205")
+    )
+    func connectionFailureKeepsDirectAuthenticationSeparate() throws {
+        let direct = environment(id: "direct")
+        let managedHTTPURL = try #require(URL(string: "https://managed.example"))
+        let managedWebSocketURL = try #require(URL(string: "wss://managed.example/ws"))
+        let managed = Environment(
+            id: "managed",
+            label: "Managed",
+            httpBaseURL: managedHTTPURL,
+            webSocketBaseURL: managedWebSocketURL,
+            kind: .managedDPoP
+        )
+
+        let directFailure = NativeFeatureClient.connectionFailure(
+            for: direct,
+            error: HTTPError.managedSessionExpired
+        )
+        let managedFailure = NativeFeatureClient.connectionFailure(
+            for: managed,
+            error: HTTPError.managedSessionExpired
+        )
+
+        #expect(directFailure.state == .disconnected)
+        #expect(managedFailure.state == .relinkRequired)
+        #expect(managedFailure.detail?.contains("Retry or relink") == true)
+    }
+
     @Test
     func disablingLastUsedEnvironmentSelectsAnotherEnabledFallback() async throws {
         let directory = FileManager.default.temporaryDirectory

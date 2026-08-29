@@ -571,7 +571,9 @@ public struct AddProjectView: View {
     }
 
     private func canCreateProject(in environment: FeatureEnvironment) -> Bool {
-        environment.isEnabled && environment.connectionState != .disconnected
+        environment.isEnabled
+            && environment.connectionState != .disconnected
+            && environment.connectionState != .relinkRequired
     }
 
     private func selectEnvironmentIfNeeded() {

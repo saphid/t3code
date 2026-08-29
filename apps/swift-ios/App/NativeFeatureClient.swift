@@ -37,6 +37,22 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
     private static let projectFaviconRefreshInterval: TimeInterval = 15 * 60
     private static let projectFaviconFallbackMarker = "project-favicon-missing"
 
+    nonisolated static func connectionFailure(
+        for environment: Environment,
+        error: any Error
+    ) -> FeatureConnection {
+        let requiresRelink = environment.kind == .managedDPoP
+            && (error as? HTTPError)?.requiresManagedEnvironmentRelink == true
+        return FeatureConnection(
+            state: requiresRelink ? .relinkRequired : .disconnected,
+            environmentName: environment.label,
+            endpoint: environment.httpBaseURL.absoluteString,
+            detail: requiresRelink
+                ? "T3 Connect access expired. Retry or relink this environment."
+                : "That server is currently unreachable."
+        )
+    }
+
     private let runtime: EnvironmentRuntime
     let t3ConnectController: T3ConnectController
     private let t3ConnectDeviceManager: any T3ConnectDeviceManaging
@@ -224,8 +240,12 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         let snapshot = makeSnapshot(
             environments: environments,
             activeEnvironment: environment,
-            connectionState: activeIsReachable ? .connected : .disconnected,
-            connectionDetail: activeIsReachable ? nil : "That server is currently unreachable."
+            connectionState: activeIsReachable
+                ? .connected
+                : environmentConnectionStates[environment.id] ?? .disconnected,
+            connectionDetail: activeIsReachable
+                ? nil
+                : environmentConnectionDetails[environment.id]
         )
         latestSnapshot = snapshot
         return snapshot
@@ -309,8 +329,12 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         let snapshot = makeSnapshot(
             environments: environments,
             activeEnvironment: environment,
-            connectionState: activeIsReachable ? .connected : .disconnected,
-            connectionDetail: activeIsReachable ? nil : "That server is currently unreachable."
+            connectionState: activeIsReachable
+                ? .connected
+                : environmentConnectionStates[environment.id] ?? .disconnected,
+            connectionDetail: activeIsReachable
+                ? nil
+                : environmentConnectionDetails[environment.id]
         )
         latestSnapshot = snapshot
         return snapshot
@@ -395,6 +419,8 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
             environment,
             credential: savedCredential
         )
+        environmentConnectionStates[environment.id] = .connecting
+        environmentConnectionDetails[environment.id] = "Loading this environment."
         await adoptEnvironment(environment, client: managedClient)
         do {
             try await refresh(client: managedClient)
@@ -1744,7 +1770,8 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
             case .invalidResponse:
                 return true
             case .status, .missingCredential, .incompatibleCredential,
-                 .managedAuthorizationUnavailable:
+                 .managedAuthorizationUnavailable, .rejectedCredential,
+                 .managedSessionExpired:
                 return false
             }
         }
@@ -3160,7 +3187,10 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
                         break
                     }
                     self.lastShellEventAt = .now
-                    self.emitConnection(.connected)
+                    if self.environmentConnectionStates[activeClient.environment.id]
+                        != .relinkRequired {
+                        self.emitConnection(.connected)
+                    }
                     switch item {
                     case let .snapshot(shell):
                         await self.consume(
@@ -3195,10 +3225,13 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
                 return
             }
             self.lastShellEventAt = nil
-            self.emitConnection(
-                .reconnecting,
-                detail: "Live updates paused. Refreshing over HTTP."
-            )
+            if self.environmentConnectionStates[activeClient.environment.id]
+                != .relinkRequired {
+                self.emitConnection(
+                    .reconnecting,
+                    detail: "Live updates paused. Refreshing over HTTP."
+                )
+            }
         }
         let fallbackPollingInitialDelay = fallbackPollingInitialDelay
         let fallbackPollingInterval = fallbackPollingInterval
@@ -3214,6 +3247,10 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
                           client: activeClient,
                           generation: generation
                       ) else {
+                    return
+                }
+                if self.environmentConnectionStates[activeClient.environment.id]
+                    == .relinkRequired {
                     return
                 }
                 let socketIsSynchronized =
@@ -3246,6 +3283,13 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
                                   client: activeClient,
                                   generation: generation
                               ) else {
+                            return
+                        }
+                        if (error as? HTTPError)?.requiresManagedEnvironmentRelink == true {
+                            self.emitConnection(
+                                .relinkRequired,
+                                detail: "T3 Connect access expired. Retry or relink this environment."
+                            )
                             return
                         }
                         self.emitConnection(
@@ -3829,15 +3873,22 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         return await withTaskGroup(of: EnvironmentShellLoad.self) { group in
             for pair in clients {
                 group.addTask {
-                    let shell = try? await pair.client.shellSnapshot(
-                        timeoutInterval: shellTimeoutInterval
-                    )
-                    guard shell != nil else {
+                    let shell: OrchestrationShellSnapshot
+                    do {
+                        shell = try await pair.client.shellSnapshot(
+                            timeoutInterval: shellTimeoutInterval
+                        )
+                    } catch {
+                        let failure = Self.connectionFailure(
+                            for: pair.environment,
+                            error: error
+                        )
                         return EnvironmentShellLoad(
                             environment: pair.environment,
                             client: pair.client,
                             shell: nil,
                             config: nil,
+                            failure: failure,
                             cacheEpoch: cacheEpochs[pair.environment.id, default: 0]
                         )
                     }
@@ -3866,6 +3917,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
                         client: pair.client,
                         shell: shell,
                         config: config,
+                        failure: nil,
                         cacheEpoch: cacheEpochs[pair.environment.id, default: 0]
                     )
                 }
@@ -3927,9 +3979,9 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
                 environmentConnectionStates[load.environment.id] = .connected
                 environmentConnectionDetails[load.environment.id] = nil
             } else {
-                environmentConnectionStates[load.environment.id] = .disconnected
-                environmentConnectionDetails[load.environment.id] =
-                    "That server is currently unreachable."
+                environmentConnectionStates[load.environment.id] =
+                    load.failure?.state ?? .disconnected
+                environmentConnectionDetails[load.environment.id] = load.failure?.detail
             }
         }
         rebuildEntityIndexes(savedEnvironments)
@@ -4168,6 +4220,8 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
     ) async {
         guard let environment = activeEnvironment else { return }
         let sourceEnvironment = sourceEnvironment ?? environment
+        let sourceCanMarkConnected = markSourceConnected
+            && environmentConnectionStates[sourceEnvironment.id] != .relinkRequired
         let generation = environmentGeneration
         guard expectedGeneration == nil || expectedGeneration == generation else { return }
         let environments = (try? await runtime.environments()) ?? [environment]
@@ -4181,7 +4235,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
             return
         }
         shellsByEnvironmentID[sourceEnvironment.id] = shell
-        if markSourceConnected {
+        if sourceCanMarkConnected {
             environmentConnectionStates[sourceEnvironment.id] = .connected
             environmentConnectionDetails[sourceEnvironment.id] = nil
         }
@@ -4195,7 +4249,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         )
         let connectionState: FeatureConnection.State
         let connectionDetail: String?
-        if sourceEnvironment.id == environment.id, markSourceConnected {
+        if sourceEnvironment.id == environment.id, sourceCanMarkConnected {
             connectionState = .connected
             connectionDetail = nil
         } else {
@@ -6643,6 +6697,7 @@ private struct EnvironmentShellLoad: Sendable {
     let client: T3Client
     let shell: OrchestrationShellSnapshot?
     let config: ServerConfigSnapshot?
+    let failure: FeatureConnection?
     let cacheEpoch: Int
 }
 

@@ -92,6 +92,14 @@ bearer token.
 assume it. Relay-brokered clients use this mode so that a leaked token cannot be
 replayed without the corresponding key.
 
+`GET /api/auth/session` remains a public session probe and returns HTTP 200 for unauthenticated
+requests. Its `credentialStatus` distinguishes `absent`, where the request carried no usable
+credential, from `rejected`, where verification failed because the credential was expired,
+revoked, malformed, or otherwise invalid. Managed clients may refresh once after `rejected`; they
+must retry with a new request-bound proof and stop after that retry fails. Older servers omit the
+field, so clients keep the field optional and do not treat an ordinary `authenticated: false`
+response as evidence of expiry.
+
 ### WebSocket Ticket
 
 `POST /api/auth/websocket-ticket` accepts any authenticated session and returns

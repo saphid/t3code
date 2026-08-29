@@ -643,10 +643,12 @@ export const make = Effect.gen(function* () {
             ...(session.expiresAt ? { expiresAt: DateTime.toUtc(session.expiresAt) } : {}),
           }) satisfies AuthSessionState,
       ),
-      Effect.catchIf(isServerAuthCredentialError, () =>
+      Effect.catchIf(isServerAuthCredentialError, (error) =>
         Effect.succeed({
           authenticated: false,
           auth: descriptor,
+          credentialStatus:
+            error._tag === "ServerAuthMissingCredentialError" ? "absent" : "rejected",
         } satisfies AuthSessionState),
       ),
       Effect.withSpan("EnvironmentAuth.getSessionState"),

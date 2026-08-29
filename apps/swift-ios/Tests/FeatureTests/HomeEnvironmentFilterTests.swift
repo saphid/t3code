@@ -281,6 +281,7 @@ struct HomeEnvironmentFilterTests {
             (.some(.connected), .connected),
             (.some(.reconnecting), .unreachable),
             (.some(.disconnected), .disconnected),
+            (.some(.relinkRequired), .relinkRequired),
         ]
     )
     func connectionStatusMapsLiveState(

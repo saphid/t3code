@@ -865,7 +865,9 @@ public struct WorkspaceView: View {
 
     private var unreachableEnvironments: [FeatureEnvironment] {
         model.snapshot.environments.filter {
-            $0.isEnabled && $0.connectionState == .disconnected
+            $0.isEnabled
+                && ($0.connectionState == .disconnected
+                    || $0.connectionState == .relinkRequired)
         }
     }
 
@@ -1682,7 +1684,7 @@ struct FeatureThreadRow: View {
         switch context.connectionState {
         case .connecting, .reconnecting:
             "wifi"
-        case .disconnected:
+        case .disconnected, .relinkRequired:
             "wifi.slash"
         case .connected, nil:
             "server.rack"
@@ -1693,7 +1695,7 @@ struct FeatureThreadRow: View {
         switch context.connectionState {
         case .connecting, .reconnecting:
             T3Colors.warning.opacity(0.78)
-        case .disconnected:
+        case .disconnected, .relinkRequired:
             T3Colors.danger.opacity(0.78)
         case .connected, nil:
             T3Colors.textTertiary
@@ -1703,6 +1705,7 @@ struct FeatureThreadRow: View {
     private var isConnectionStale: Bool {
         context.connectionState == .connecting
             || context.connectionState == .reconnecting
+            || context.connectionState == .relinkRequired
             || context.connectionState == .disconnected
     }
 

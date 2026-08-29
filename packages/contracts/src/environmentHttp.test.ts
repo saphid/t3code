@@ -1,5 +1,7 @@
+import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vite-plus/test";
 
+import { AuthSessionState } from "./auth.ts";
 import {
   EnvironmentAuthInvalidError,
   EnvironmentInternalError,
@@ -10,6 +12,30 @@ import {
 } from "./environmentHttp.ts";
 
 const traceId = "trace-1";
+
+describe("environment auth session state", () => {
+  const decode = Schema.decodeUnknownSync(AuthSessionState);
+
+  it.each([
+    ["absent", "absent"],
+    ["expired", "rejected"],
+    ["revoked", "rejected"],
+    ["malformed", "rejected"],
+  ] as const)("decodes %s credentials as %s", (_scenario, credentialStatus) => {
+    const state = decode({
+      authenticated: false,
+      credentialStatus,
+      auth: {
+        policy: "remote-reachable",
+        bootstrapMethods: ["one-time-token"],
+        sessionMethods: ["dpop-access-token"],
+        sessionCookieName: "t3_session_test",
+      },
+    });
+
+    expect(state.credentialStatus).toBe(credentialStatus);
+  });
+});
 
 describe("environment HTTP errors", () => {
   // A client squashes the cause and shows `message`; an empty one becomes a generic
