@@ -4,6 +4,38 @@ import Testing
 @Suite("Thread tool state")
 struct FeatureToolStateTests {
     @Test
+    func latestTurnReviewUsesTheServerSelectedBranchLineage() {
+        let result = TurnDiffResult(
+            threadId: "thread-1",
+            fromTurnCount: 1,
+            toTurnCount: 2,
+            diff: """
+            diff --git a/branch-b.txt b/branch-b.txt
+            new file mode 100644
+            --- /dev/null
+            +++ b/branch-b.txt
+            @@ -0,0 +1 @@
+            +branch B latest edit
+            """,
+            availability: TurnDiffAvailability(status: "available", reason: nil),
+            lineage: CheckpointLineage(
+                repositoryRoot: "/repo/.git",
+                worktreePath: "/repo/worktree",
+                headCommit: "abc123",
+                branch: "branch-b"
+            )
+        )
+
+        let review = NativeWorkspaceMapper.review(result)
+
+        #expect(review.title == "Latest turn")
+        #expect(review.baseReference == "branch-b")
+        #expect(review.files.map(\.path) == ["branch-b.txt"])
+        #expect(review.files.flatMap(\.lines).contains { $0.text.contains("branch B latest edit") })
+        #expect(review.files.flatMap(\.lines).contains { $0.text.contains("branch A") } == false)
+    }
+
+    @Test
     func fileFilteringKeepsDirectoriesFirstAndHonorsHiddenFiles() {
         let entries = [
             FeatureFileEntry(path: "z.swift", name: "z.swift", kind: .file),

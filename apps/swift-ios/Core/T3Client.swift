@@ -1017,6 +1017,24 @@ public actor T3Client {
 
     // MARK: Review
 
+    public func turnDiff(
+        threadID: String,
+        fromTurnCount: Int,
+        toTurnCount: Int,
+        ignoreWhitespace: Bool = true
+    ) async throws -> TurnDiffResult {
+        try await rpc.request(
+            RPCMethod.getTurnDiff.rawValue,
+            payload: .object([
+                "threadId": .string(threadID),
+                "fromTurnCount": .number(Double(fromTurnCount)),
+                "toTurnCount": .number(Double(toTurnCount)),
+                "ignoreWhitespace": .bool(ignoreWhitespace),
+            ]),
+            as: TurnDiffResult.self
+        )
+    }
+
     public func reviewDiffPreview(
         cwd: String,
         baseRef: String? = nil,
@@ -1585,6 +1603,7 @@ public enum RPCMethod: String, Sendable {
     case subscribeShell = "orchestration.subscribeShell"
     case subscribeThread = "orchestration.subscribeThread"
     case orchestrationSearchThreads = "orchestration.searchThreads"
+    case getTurnDiff = "orchestration.getTurnDiff"
     case projectsListEntries = "projects.listEntries"
     case projectsSearchEntries = "projects.searchEntries"
     case projectsReadFile = "projects.readFile"

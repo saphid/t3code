@@ -17,6 +17,14 @@ import * as VcsProcess from "./VcsProcess.ts";
 export interface VcsCaptureCheckpointInput {
   readonly cwd: string;
   readonly checkpointRef: CheckpointRef;
+  readonly source?: "working-tree" | "head";
+}
+
+export interface VcsCheckpointLineage {
+  readonly repositoryRoot: string;
+  readonly worktreePath: string;
+  readonly headCommit: string | null;
+  readonly branch: string | null;
 }
 
 export interface VcsRestoreCheckpointInput {
@@ -39,7 +47,17 @@ export interface VcsDeleteCheckpointRefsInput {
 }
 
 export interface VcsCheckpointOps {
-  readonly captureCheckpoint: (input: VcsCaptureCheckpointInput) => Effect.Effect<void, VcsError>;
+  readonly captureCheckpoint: (
+    input: VcsCaptureCheckpointInput,
+  ) => Effect.Effect<VcsCheckpointLineage, VcsError>;
+  readonly inspectCheckpoint: (
+    input: Omit<VcsRestoreCheckpointInput, "fallbackToHead">,
+  ) => Effect.Effect<VcsCheckpointLineage | null, VcsError>;
+  readonly isAncestor: (input: {
+    readonly cwd: string;
+    readonly ancestorCommit: string;
+    readonly descendantCommit: string;
+  }) => Effect.Effect<boolean, VcsError>;
   readonly hasCheckpointRef: (
     input: Omit<VcsRestoreCheckpointInput, "fallbackToHead">,
   ) => Effect.Effect<boolean, VcsError>;

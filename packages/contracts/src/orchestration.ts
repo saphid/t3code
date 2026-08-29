@@ -1546,10 +1546,34 @@ export const TurnCountRange = Schema.Struct({
   ),
 );
 
+export const CheckpointLineage = Schema.Struct({
+  repositoryRoot: TrimmedNonEmptyString,
+  worktreePath: TrimmedNonEmptyString,
+  headCommit: Schema.NullOr(TrimmedNonEmptyString),
+  branch: Schema.NullOr(TrimmedNonEmptyString),
+});
+export type CheckpointLineage = typeof CheckpointLineage.Type;
+
+export const TurnDiffAvailability = Schema.Union([
+  Schema.Struct({ status: Schema.Literal("available") }),
+  Schema.Struct({
+    status: Schema.Literal("unavailable"),
+    reason: Schema.Literals([
+      "checkpoint-unavailable",
+      "lineage-unavailable",
+      "lineage-changed",
+      "workspace-unavailable",
+    ]),
+  }),
+]);
+export type TurnDiffAvailability = typeof TurnDiffAvailability.Type;
+
 export const ThreadTurnDiff = TurnCountRange.mapFields(
   Struct.assign({
     threadId: ThreadId,
     diff: Schema.String,
+    availability: TurnDiffAvailability,
+    lineage: Schema.NullOr(CheckpointLineage),
   }),
   { unsafePreserveChecks: true },
 );

@@ -129,6 +129,7 @@ final class WorkspaceContractTests: XCTestCase {
         XCTAssertEqual(RPCMethod.projectsListEntries.rawValue, "projects.listEntries")
         XCTAssertEqual(RPCMethod.vcsRefreshStatus.rawValue, "vcs.refreshStatus")
         XCTAssertEqual(RPCMethod.reviewDiffPreview.rawValue, "review.getDiffPreview")
+        XCTAssertEqual(RPCMethod.getTurnDiff.rawValue, "orchestration.getTurnDiff")
         XCTAssertEqual(
             RPCMethod.getArchivedShellSnapshot.rawValue,
             "orchestration.getArchivedShellSnapshot"

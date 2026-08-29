@@ -495,6 +495,27 @@ public struct CheckpointSummary: Codable, Equatable, Sendable {
     public let completedAt: String
 }
 
+public struct CheckpointLineage: Codable, Equatable, Sendable {
+    public let repositoryRoot: String
+    public let worktreePath: String
+    public let headCommit: String?
+    public let branch: String?
+}
+
+public struct TurnDiffAvailability: Codable, Equatable, Sendable {
+    public let status: String
+    public let reason: String?
+}
+
+public struct TurnDiffResult: Codable, Equatable, Sendable {
+    public let threadId: String
+    public let fromTurnCount: Int
+    public let toTurnCount: Int
+    public let diff: String
+    public let availability: TurnDiffAvailability
+    public let lineage: CheckpointLineage?
+}
+
 public struct OrchestrationThread: Codable, Identifiable, Equatable, Sendable {
     public let id: String
     public let projectId: String

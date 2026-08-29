@@ -11,7 +11,7 @@ import * as PlatformError from "effect/PlatformError";
 import * as Scope from "effect/Scope";
 import { describe, expect } from "vite-plus/test";
 
-import { checkpointRefForThreadTurn } from "./Utils.ts";
+import { checkpointBaselineRefForThreadTurn, checkpointRefForThreadTurn } from "./Utils.ts";
 import * as CheckpointStore from "./CheckpointStore.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
@@ -115,6 +115,54 @@ it.layer(TestLayer)("CheckpointStore.layer", (it) => {
   });
 
   describe("diffCheckpoints", () => {
+    it.effect("keeps a switched branch turn on its own baseline lineage", () =>
+      Effect.gen(function* () {
+        const tmp = yield* makeTmpDir();
+        yield* initRepoWithCommit(tmp);
+        const checkpointStore = yield* CheckpointStore.CheckpointStore;
+        const threadId = ThreadId.make("thread-branch-lineage");
+
+        yield* writeTextFile(NodePath.join(tmp, "README.md"), "# branch A only\n");
+        yield* checkpointStore.captureCheckpoint({
+          cwd: tmp,
+          checkpointRef: checkpointRefForThreadTurn(threadId, 1),
+        });
+        yield* git(tmp, ["restore", "--", "README.md"]);
+        yield* git(tmp, ["switch", "-c", "branch-b"]);
+
+        const baselineRef = checkpointBaselineRefForThreadTurn(threadId, 2);
+        const targetRef = checkpointRefForThreadTurn(threadId, 2);
+        yield* checkpointStore.captureCheckpoint({
+          cwd: tmp,
+          checkpointRef: baselineRef,
+          source: "head",
+        });
+        yield* writeTextFile(NodePath.join(tmp, "README.md"), "# branch B latest edit\n");
+        yield* checkpointStore.captureCheckpoint({ cwd: tmp, checkpointRef: targetRef });
+
+        const diff = yield* checkpointStore.diffCheckpoints({
+          cwd: tmp,
+          fromCheckpointRef: baselineRef,
+          toCheckpointRef: targetRef,
+          ignoreWhitespace: false,
+        });
+        const baselineLineage = yield* checkpointStore.inspectCheckpoint({
+          cwd: tmp,
+          checkpointRef: baselineRef,
+        });
+        const targetLineage = yield* checkpointStore.inspectCheckpoint({
+          cwd: tmp,
+          checkpointRef: targetRef,
+        });
+
+        expect(diff).toContain("+# branch B latest edit");
+        expect(diff).not.toContain("branch A only");
+        expect(baselineLineage).toMatchObject({ branch: "branch-b" });
+        expect(baselineLineage?.worktreePath).toContain(NodePath.basename(tmp));
+        expect(targetLineage).toEqual(baselineLineage);
+      }),
+    );
+
     it.effect("returns full oversized checkpoint diffs without truncation", () =>
       Effect.gen(function* () {
         const tmp = yield* makeTmpDir();

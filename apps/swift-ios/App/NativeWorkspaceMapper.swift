@@ -48,6 +48,29 @@ enum NativeWorkspaceMapper {
         )
     }
 
+    static func review(_ result: TurnDiffResult) -> FeatureReview {
+        let source = ReviewDiffSource(
+            id: "turn-\(result.toTurnCount)",
+            kind: "checkpoint",
+            title: "Latest turn",
+            baseRef: result.lineage?.branch,
+            headRef: result.lineage?.headCommit,
+            diff: result.diff,
+            diffHash: "",
+            truncated: false
+        )
+        var files = parseDiff(source)
+        for index in files.indices {
+            files[index].sourceKind = nil
+        }
+        return FeatureReview(
+            title: "Latest turn",
+            baseReference: result.lineage?.branch ?? "Detached HEAD",
+            files: files,
+            isTruncated: false
+        )
+    }
+
     static func sourceControl(_ status: VCSStatus) -> FeatureSourceControlStatus {
         sourceControl(
             isRepository: status.isRepo,

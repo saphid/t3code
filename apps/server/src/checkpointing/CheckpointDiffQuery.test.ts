@@ -11,6 +11,13 @@ import * as CheckpointDiffQuery from "./CheckpointDiffQuery.ts";
 import * as CheckpointStore from "./CheckpointStore.ts";
 import { CheckpointThreadNotFoundError } from "./Errors.ts";
 
+const checkpointLineage = {
+  repositoryRoot: "/tmp/repository/.git",
+  worktreePath: "/tmp/workspace",
+  headCommit: "0123456789abcdef",
+  branch: "main",
+} as const;
+
 function makeThreadCheckpointContext(input: {
   readonly projectId: ProjectId;
   readonly threadId: ThreadId;
@@ -55,7 +62,9 @@ describe("CheckpointDiffQuery.layer", () => {
 
       const checkpointStore: CheckpointStore.CheckpointStore["Service"] = {
         isGitRepository: () => Effect.succeed(true),
-        captureCheckpoint: () => Effect.void,
+        captureCheckpoint: () => Effect.succeed(checkpointLineage),
+        inspectCheckpoint: () => Effect.succeed(checkpointLineage),
+        isAncestor: () => Effect.succeed(true),
         hasCheckpointRef: () => Effect.succeed(true),
         restoreCheckpoint: () => Effect.succeed(true),
         diffCheckpoints: ({ fromCheckpointRef, toCheckpointRef, cwd, ignoreWhitespace }) =>
@@ -137,6 +146,8 @@ describe("CheckpointDiffQuery.layer", () => {
         fromTurnCount: 0,
         toTurnCount: 4,
         diff: "full thread diff patch",
+        availability: { status: "available" },
+        lineage: checkpointLineage,
       });
     }),
   );
@@ -164,8 +175,10 @@ describe("CheckpointDiffQuery.layer", () => {
 
       const checkpointStore: CheckpointStore.CheckpointStore["Service"] = {
         isGitRepository: () => Effect.succeed(true),
-        captureCheckpoint: () => Effect.void,
-        hasCheckpointRef: () => Effect.succeed(true),
+        captureCheckpoint: () => Effect.succeed(checkpointLineage),
+        inspectCheckpoint: () => Effect.succeed(checkpointLineage),
+        isAncestor: () => Effect.succeed(true),
+        hasCheckpointRef: () => Effect.succeed(false),
         restoreCheckpoint: () => Effect.succeed(true),
         diffCheckpoints: ({ fromCheckpointRef, toCheckpointRef, cwd, ignoreWhitespace }) =>
           Effect.sync(() => {
@@ -231,6 +244,8 @@ describe("CheckpointDiffQuery.layer", () => {
         fromTurnCount: 0,
         toTurnCount: 1,
         diff: "diff patch",
+        availability: { status: "available" },
+        lineage: checkpointLineage,
       });
     }),
   );
@@ -253,8 +268,10 @@ describe("CheckpointDiffQuery.layer", () => {
 
       const checkpointStore: CheckpointStore.CheckpointStore["Service"] = {
         isGitRepository: () => Effect.succeed(true),
-        captureCheckpoint: () => Effect.void,
-        hasCheckpointRef: () => Effect.succeed(true),
+        captureCheckpoint: () => Effect.succeed(checkpointLineage),
+        inspectCheckpoint: () => Effect.succeed(checkpointLineage),
+        isAncestor: () => Effect.succeed(true),
+        hasCheckpointRef: () => Effect.succeed(false),
         restoreCheckpoint: () => Effect.succeed(true),
         diffCheckpoints: ({ ignoreWhitespace }) =>
           Effect.sync(() => {
@@ -304,7 +321,7 @@ describe("CheckpointDiffQuery.layer", () => {
     }),
   );
 
-  it.effect("does not preflight checkpoint refs before diffing", () =>
+  it.effect("prefers a recorded baseline for an adjacent turn diff", () =>
     Effect.gen(function* () {
       const projectId = ProjectId.make("project-no-preflight");
       const threadId = ThreadId.make("thread-no-preflight");
@@ -322,7 +339,9 @@ describe("CheckpointDiffQuery.layer", () => {
 
       const checkpointStore: CheckpointStore.CheckpointStore["Service"] = {
         isGitRepository: () => Effect.succeed(true),
-        captureCheckpoint: () => Effect.void,
+        captureCheckpoint: () => Effect.succeed(checkpointLineage),
+        inspectCheckpoint: () => Effect.succeed(checkpointLineage),
+        isAncestor: () => Effect.succeed(true),
         hasCheckpointRef: () =>
           Effect.sync(() => {
             hasCheckpointRefCallCount += 1;
@@ -370,7 +389,80 @@ describe("CheckpointDiffQuery.layer", () => {
         });
       }).pipe(Effect.provide(layer));
 
-      expect(hasCheckpointRefCallCount).toBe(0);
+      expect(hasCheckpointRefCallCount).toBe(1);
+    }),
+  );
+
+  it.effect("returns unavailable instead of diffing incompatible branch lineages", () =>
+    Effect.gen(function* () {
+      const projectId = ProjectId.make("project-lineage-changed");
+      const threadId = ThreadId.make("thread-lineage-changed");
+      const toCheckpointRef = checkpointRefForThreadTurn(threadId, 1);
+      const threadCheckpointContext = makeThreadCheckpointContext({
+        projectId,
+        threadId,
+        workspaceRoot: "/tmp/workspace",
+        worktreePath: null,
+        checkpointTurnCount: 1,
+        checkpointRef: toCheckpointRef,
+      });
+      let inspectCallCount = 0;
+
+      const checkpointStore: CheckpointStore.CheckpointStore["Service"] = {
+        isGitRepository: () => Effect.succeed(true),
+        captureCheckpoint: () => Effect.succeed(checkpointLineage),
+        inspectCheckpoint: () =>
+          Effect.sync(() => ({
+            ...checkpointLineage,
+            branch: inspectCallCount++ === 0 ? "branch-a" : "branch-b",
+          })),
+        isAncestor: () => Effect.die("Different branches must not use commit ancestry"),
+        hasCheckpointRef: () => Effect.succeed(false),
+        restoreCheckpoint: () => Effect.succeed(true),
+        diffCheckpoints: () => Effect.die("Incompatible lineages must not be diffed"),
+        deleteCheckpointRefs: () => Effect.void,
+      };
+
+      const layer = CheckpointDiffQuery.layer.pipe(
+        Layer.provideMerge(Layer.succeed(CheckpointStore.CheckpointStore, checkpointStore)),
+        Layer.provideMerge(
+          Layer.succeed(ProjectionSnapshotQuery.ProjectionSnapshotQuery, {
+            getCommandReadModel: () => Effect.die("unused"),
+            getSnapshot: () => Effect.die("unused"),
+            getShellSnapshot: () => Effect.die("unused"),
+            getArchivedShellSnapshot: () => Effect.die("unused"),
+            getSnapshotSequence: () => Effect.succeed({ snapshotSequence: 0 }),
+            getCounts: () => Effect.succeed({ projectCount: 0, threadCount: 0 }),
+            getActiveProjectByWorkspaceRoot: () => Effect.succeed(Option.none()),
+            getProjectShellById: () => Effect.succeed(Option.none()),
+            getFirstActiveThreadIdByProjectId: () => Effect.succeed(Option.none()),
+            getThreadCheckpointContext: () => Effect.succeed(Option.some(threadCheckpointContext)),
+            getFullThreadDiffContext: () => Effect.die("unused"),
+            getThreadShellById: () => Effect.succeed(Option.none()),
+            getThreadDetailById: () => Effect.succeed(Option.none()),
+            getThreadDetailSnapshot: () => Effect.succeed(Option.none()),
+            searchThreads: () => Effect.succeed({ matches: [] }),
+          }),
+        ),
+      );
+
+      const result = yield* Effect.gen(function* () {
+        const query = yield* CheckpointDiffQuery.CheckpointDiffQuery;
+        return yield* query.getTurnDiff({
+          threadId,
+          fromTurnCount: 0,
+          toTurnCount: 1,
+        });
+      }).pipe(Effect.provide(layer));
+
+      expect(result).toEqual({
+        threadId,
+        fromTurnCount: 0,
+        toTurnCount: 1,
+        diff: "",
+        availability: { status: "unavailable", reason: "lineage-changed" },
+        lineage: { ...checkpointLineage, branch: "branch-b" },
+      });
     }),
   );
 
@@ -380,7 +472,9 @@ describe("CheckpointDiffQuery.layer", () => {
 
       const checkpointStore: CheckpointStore.CheckpointStore["Service"] = {
         isGitRepository: () => Effect.succeed(true),
-        captureCheckpoint: () => Effect.void,
+        captureCheckpoint: () => Effect.succeed(checkpointLineage),
+        inspectCheckpoint: () => Effect.succeed(checkpointLineage),
+        isAncestor: () => Effect.succeed(true),
         hasCheckpointRef: () => Effect.succeed(true),
         restoreCheckpoint: () => Effect.succeed(true),
         diffCheckpoints: () => Effect.succeed(""),

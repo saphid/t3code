@@ -19,12 +19,13 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
 import type { CheckpointStoreError } from "./Errors.ts";
-import type { VcsCheckpointOps } from "../vcs/VcsDriver.ts";
+import type { VcsCheckpointLineage, VcsCheckpointOps } from "../vcs/VcsDriver.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 
 export interface CaptureCheckpointInput {
   readonly cwd: string;
   readonly checkpointRef: CheckpointRef;
+  readonly source?: "working-tree" | "head";
 }
 
 export interface RestoreCheckpointInput {
@@ -60,7 +61,19 @@ export class CheckpointStore extends Context.Service<
      */
     readonly captureCheckpoint: (
       input: CaptureCheckpointInput,
-    ) => Effect.Effect<void, CheckpointStoreError>;
+    ) => Effect.Effect<VcsCheckpointLineage, CheckpointStoreError>;
+
+    /** Read the repository and branch identity embedded in a checkpoint commit. */
+    readonly inspectCheckpoint: (
+      input: Omit<RestoreCheckpointInput, "fallbackToHead">,
+    ) => Effect.Effect<VcsCheckpointLineage | null, CheckpointStoreError>;
+
+    /** Check whether one captured HEAD commit is an ancestor of another. */
+    readonly isAncestor: (input: {
+      readonly cwd: string;
+      readonly ancestorCommit: string;
+      readonly descendantCommit: string;
+    }) => Effect.Effect<boolean, CheckpointStoreError>;
 
     /** Check whether a checkpoint ref exists. */
     readonly hasCheckpointRef: (
@@ -147,6 +160,20 @@ export const make = Effect.gen(function* () {
     return yield* checkpoints.diffCheckpoints(input);
   });
 
+  const inspectCheckpoint: CheckpointStore["Service"]["inspectCheckpoint"] = Effect.fn(
+    "inspectCheckpoint",
+  )(function* (input) {
+    const checkpoints = yield* resolveCheckpoints("CheckpointStore.inspectCheckpoint", input.cwd);
+    return yield* checkpoints.inspectCheckpoint(input);
+  });
+
+  const isAncestor: CheckpointStore["Service"]["isAncestor"] = Effect.fn("isAncestor")(
+    function* (input) {
+      const checkpoints = yield* resolveCheckpoints("CheckpointStore.isAncestor", input.cwd);
+      return yield* checkpoints.isAncestor(input);
+    },
+  );
+
   const deleteCheckpointRefs: CheckpointStore["Service"]["deleteCheckpointRefs"] = Effect.fn(
     "deleteCheckpointRefs",
   )(function* (input) {
@@ -160,6 +187,8 @@ export const make = Effect.gen(function* () {
   return CheckpointStore.of({
     isGitRepository,
     captureCheckpoint,
+    inspectCheckpoint,
+    isAncestor,
     hasCheckpointRef,
     restoreCheckpoint,
     diffCheckpoints,

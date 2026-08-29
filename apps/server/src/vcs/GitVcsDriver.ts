@@ -7,6 +7,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as Schema from "effect/Schema";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
 import {
@@ -29,10 +30,38 @@ import {
   type VcsRemoveWorktreeInput,
   type VcsStatusInput,
   type VcsStatusResult,
+  type VcsError,
 } from "@t3tools/contracts";
 import { makeGitVcsDriverCore } from "./GitVcsDriverCore.ts";
 import * as VcsDriver from "./VcsDriver.ts";
 import * as VcsProcess from "./VcsProcess.ts";
+
+const CHECKPOINT_LINEAGE_MARKER = "t3-checkpoint-lineage-v1 ";
+const CheckpointLineageJson = Schema.fromJsonString(
+  Schema.Struct({
+    repositoryRoot: Schema.String,
+    worktreePath: Schema.String,
+    headCommit: Schema.NullOr(Schema.String),
+    branch: Schema.NullOr(Schema.String),
+  }),
+);
+const encodeCheckpointLineage = Schema.encodeSync(CheckpointLineageJson);
+const decodeCheckpointLineageJson = Schema.decodeUnknownSync(CheckpointLineageJson);
+
+function decodeCheckpointLineage(message: string): VcsDriver.VcsCheckpointLineage | null {
+  const encoded = message
+    .split("\n")
+    .find((line) => line.startsWith(CHECKPOINT_LINEAGE_MARKER))
+    ?.slice(CHECKPOINT_LINEAGE_MARKER.length);
+  if (!encoded) {
+    return null;
+  }
+  try {
+    return decodeCheckpointLineageJson(encoded);
+  } catch {
+    return null;
+  }
+}
 
 export interface ExecuteGitInput {
   readonly operation: string;
@@ -704,9 +733,34 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
       return path.isAbsolute(gitCommonDir) ? gitCommonDir : path.resolve(cwd, gitCommonDir);
     });
 
+  const resolveCheckpointLineage = (
+    cwd: string,
+  ): Effect.Effect<VcsDriver.VcsCheckpointLineage, VcsError> =>
+    Effect.gen(function* () {
+      const repositoryRoot = yield* resolveGitCommonDir(cwd);
+      const worktreeResult = yield* execute({
+        operation: "GitVcsDriver.checkpoints.resolveWorktreePath",
+        cwd,
+        args: ["rev-parse", "--show-toplevel"],
+      });
+      const branchResult = yield* execute({
+        operation: "GitVcsDriver.checkpoints.resolveBranch",
+        cwd,
+        args: ["symbolic-ref", "--quiet", "--short", "HEAD"],
+        allowNonZeroExit: true,
+      });
+      return {
+        repositoryRoot,
+        worktreePath: path.resolve(worktreeResult.stdout.trim()),
+        headCommit: yield* resolveHeadCommit(cwd),
+        branch: branchResult.exitCode === 0 ? branchResult.stdout.trim() || null : null,
+      };
+    });
+
   const checkpoints: VcsDriver.VcsCheckpointOps = {
     captureCheckpoint: Effect.fn("GitVcsDriver.checkpoints.captureCheckpoint")(function* (input) {
       const operation = "GitVcsDriver.checkpoints.captureCheckpoint";
+      const lineage = yield* resolveCheckpointLineage(input.cwd);
       const gitCommonDir = yield* resolveGitCommonDir(input.cwd);
       const tempIndexPath = path.join(
         gitCommonDir,
@@ -734,14 +788,23 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
             args: ["read-tree", "HEAD"],
             env: commitEnv,
           });
+        } else {
+          yield* execute({
+            operation,
+            cwd: input.cwd,
+            args: ["read-tree", "--empty"],
+            env: commitEnv,
+          });
         }
 
-        yield* execute({
-          operation,
-          cwd: input.cwd,
-          args: ["add", "-A", "--", "."],
-          env: commitEnv,
-        });
+        if (input.source !== "head") {
+          yield* execute({
+            operation,
+            cwd: input.cwd,
+            args: ["add", "-A", "--", "."],
+            env: commitEnv,
+          });
+        }
 
         const writeTreeResult = yield* execute({
           operation,
@@ -760,11 +823,20 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
           });
         }
 
-        const message = `t3 checkpoint ref=${input.checkpointRef}`;
+        const message = [
+          `t3 checkpoint ref=${input.checkpointRef}`,
+          `${CHECKPOINT_LINEAGE_MARKER}${encodeCheckpointLineage(lineage)}`,
+        ].join("\n");
         const commitTreeResult = yield* execute({
           operation,
           cwd: input.cwd,
-          args: ["commit-tree", treeOid, "-m", message],
+          args: [
+            "commit-tree",
+            treeOid,
+            ...(lineage.headCommit ? ["-p", lineage.headCommit] : []),
+            "-m",
+            message,
+          ],
           env: commitEnv,
         });
         const commitOid = commitTreeResult.stdout.trim();
@@ -784,6 +856,39 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
           args: ["update-ref", input.checkpointRef, commitOid],
         });
       }).pipe(Effect.ensuring(cleanupTempIndex));
+      return lineage;
+    }),
+
+    inspectCheckpoint: Effect.fn("GitVcsDriver.checkpoints.inspectCheckpoint")(function* (input) {
+      const result = yield* execute({
+        operation: "GitVcsDriver.checkpoints.inspectCheckpoint",
+        cwd: input.cwd,
+        args: ["show", "-s", "--format=%B", input.checkpointRef],
+        allowNonZeroExit: true,
+      });
+      return result.exitCode === 0 ? decodeCheckpointLineage(result.stdout) : null;
+    }),
+
+    isAncestor: Effect.fn("GitVcsDriver.checkpoints.isAncestor")(function* (input) {
+      const result = yield* execute({
+        operation: "GitVcsDriver.checkpoints.isAncestor",
+        cwd: input.cwd,
+        args: ["merge-base", "--is-ancestor", input.ancestorCommit, input.descendantCommit],
+        allowNonZeroExit: true,
+      });
+      if (result.exitCode === 0) {
+        return true;
+      }
+      if (result.exitCode === 1) {
+        return false;
+      }
+      return yield* new VcsProcessExitError({
+        operation: "GitVcsDriver.checkpoints.isAncestor",
+        command: "git merge-base --is-ancestor",
+        cwd: input.cwd,
+        exitCode: result.exitCode,
+        detail: result.stderr.trim() || "Git could not compare checkpoint lineage.",
+      });
     }),
 
     hasCheckpointRef: (input) =>

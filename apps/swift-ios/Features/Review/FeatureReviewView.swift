@@ -85,7 +85,11 @@ public struct FeatureReviewView: View {
                     ContentUnavailableView(
                         "No changes",
                         systemImage: "checkmark.circle",
-                        description: Text("The working tree is clean.")
+                        description: Text(
+                            review.title == "Latest turn"
+                                ? "This turn has no file changes."
+                                : "The working tree is clean."
+                        )
                     )
                     .listRowBackground(Color.clear)
                 }

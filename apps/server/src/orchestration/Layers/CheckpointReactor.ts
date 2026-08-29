@@ -23,6 +23,8 @@ import { isTemporaryWorktreeBranch } from "@t3tools/shared/git";
 
 import { parseTurnDiffFilesFromUnifiedDiff } from "../../checkpointing/Diffs.ts";
 import {
+  checkpointBaselineRefForThreadTurn,
+  checkpointLineageBaselineRefForThreadTurn,
   checkpointRefForThreadTurn,
   resolveThreadWorkspaceCwd,
 } from "../../checkpointing/Utils.ts";
@@ -38,6 +40,7 @@ import type { OrchestrationDispatchError } from "../Errors.ts";
 import { isGitRepository } from "../../git/Utils.ts";
 import { VcsStatusBroadcaster } from "../../vcs/VcsStatusBroadcaster.ts";
 import * as WorkspaceEntries from "../../workspace/WorkspaceEntries.ts";
+import type { VcsCheckpointLineage } from "../../vcs/VcsDriver.ts";
 
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
 
@@ -88,6 +91,31 @@ const make = Effect.gen(function* () {
   const receiptBus = yield* RuntimeReceiptBus;
   const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
   const vcsStatusBroadcaster = yield* VcsStatusBroadcaster;
+
+  const checkpointLineagesAreCompatible = Effect.fn("checkpointLineagesAreCompatible")(function* (
+    cwd: string,
+    from: VcsCheckpointLineage,
+    to: VcsCheckpointLineage,
+  ) {
+    if (
+      from.repositoryRoot !== to.repositoryRoot ||
+      from.worktreePath !== to.worktreePath ||
+      from.branch !== to.branch
+    ) {
+      return false;
+    }
+    if (from.headCommit === null || to.headCommit === null) {
+      return from.headCommit === to.headCommit;
+    }
+    return (
+      from.headCommit === to.headCommit ||
+      (yield* checkpointStore.isAncestor({
+        cwd,
+        ancestorCommit: from.headCommit,
+        descendantCommit: to.headCommit,
+      }))
+    );
+  });
 
   const appendRevertFailureActivity = (input: {
     readonly threadId: ThreadId;
@@ -235,7 +263,17 @@ const make = Effect.gen(function* () {
     readonly createdAt: string;
   }) {
     const fromTurnCount = Math.max(0, input.turnCount - 1);
-    const fromCheckpointRef = checkpointRefForThreadTurn(input.threadId, fromTurnCount);
+    const legacyFromCheckpointRef = checkpointRefForThreadTurn(input.threadId, fromTurnCount);
+    const turnBaselineRef = checkpointBaselineRefForThreadTurn(input.threadId, input.turnCount);
+    const lineageBaselineRef = checkpointLineageBaselineRefForThreadTurn(
+      input.threadId,
+      input.turnCount,
+    );
+    const dedicatedBaselineExists = yield* checkpointStore.hasCheckpointRef({
+      cwd: input.cwd,
+      checkpointRef: turnBaselineRef,
+    });
+    let fromCheckpointRef = dedicatedBaselineExists ? turnBaselineRef : legacyFromCheckpointRef;
     const targetCheckpointRef = checkpointRefForThreadTurn(input.threadId, input.turnCount);
 
     const fromCheckpointExists = yield* checkpointStore.hasCheckpointRef({
@@ -250,49 +288,96 @@ const make = Effect.gen(function* () {
       });
     }
 
-    yield* checkpointStore.captureCheckpoint({
+    const targetLineage = yield* checkpointStore.captureCheckpoint({
       cwd: input.cwd,
       checkpointRef: targetCheckpointRef,
     });
+
+    const fromLineage = yield* checkpointStore.inspectCheckpoint({
+      cwd: input.cwd,
+      checkpointRef: fromCheckpointRef,
+    });
+    let diffAvailable =
+      fromLineage !== null &&
+      (yield* checkpointLineagesAreCompatible(input.cwd, fromLineage, targetLineage));
+    if (
+      !diffAvailable &&
+      fromLineage !== null &&
+      fromLineage.repositoryRoot === targetLineage.repositoryRoot &&
+      fromLineage.worktreePath === targetLineage.worktreePath &&
+      fromLineage.branch !== targetLineage.branch
+    ) {
+      yield* checkpointStore.captureCheckpoint({
+        cwd: input.cwd,
+        checkpointRef: lineageBaselineRef,
+        source: "head",
+      });
+      const branchDiff = yield* checkpointStore.diffCheckpoints({
+        cwd: input.cwd,
+        fromCheckpointRef: lineageBaselineRef,
+        toCheckpointRef: targetCheckpointRef,
+        fallbackFromToHead: false,
+        ignoreWhitespace: false,
+      });
+      const headChanged = fromLineage.headCommit !== targetLineage.headCommit;
+      if (branchDiff.length > 0 || !headChanged) {
+        fromCheckpointRef = lineageBaselineRef;
+        diffAvailable = true;
+        yield* Effect.logInfo("checkpoint turn baseline followed branch lineage", {
+          threadId: input.threadId,
+          turnId: input.turnId,
+          turnCount: input.turnCount,
+          previousBranch: fromLineage.branch,
+          branch: targetLineage.branch,
+        });
+      } else {
+        yield* checkpointStore.deleteCheckpointRefs({
+          cwd: input.cwd,
+          checkpointRefs: [lineageBaselineRef],
+        });
+      }
+    }
 
     // Refresh the workspace entry index so the @-mention file picker
     // reflects files created or deleted during this turn.
     yield* workspaceEntries.refresh(input.cwd);
 
-    const files = yield* checkpointStore
-      .diffCheckpoints({
-        cwd: input.cwd,
-        fromCheckpointRef,
-        toCheckpointRef: targetCheckpointRef,
-        fallbackFromToHead: false,
-        ignoreWhitespace: false,
-      })
-      .pipe(
-        Effect.map((diff) =>
-          parseTurnDiffFilesFromUnifiedDiff(diff).map((file) => ({
-            path: file.path,
-            kind: "modified" as const,
-            additions: file.additions,
-            deletions: file.deletions,
-          })),
-        ),
-        Effect.tapError((error) =>
-          appendCaptureFailureActivity({
-            threadId: input.threadId,
-            turnId: input.turnId,
-            detail: `Checkpoint captured, but turn diff summary is unavailable: ${error.message}`,
-            createdAt: input.createdAt,
-          }),
-        ),
-        Effect.catch((error) =>
-          Effect.logWarning("failed to derive checkpoint file summary", {
-            threadId: input.threadId,
-            turnId: input.turnId,
-            turnCount: input.turnCount,
-            detail: error.message,
-          }).pipe(Effect.as([])),
-        ),
-      );
+    const files = yield* diffAvailable
+      ? checkpointStore
+          .diffCheckpoints({
+            cwd: input.cwd,
+            fromCheckpointRef,
+            toCheckpointRef: targetCheckpointRef,
+            fallbackFromToHead: false,
+            ignoreWhitespace: false,
+          })
+          .pipe(
+            Effect.map((diff) =>
+              parseTurnDiffFilesFromUnifiedDiff(diff).map((file) => ({
+                path: file.path,
+                kind: "modified" as const,
+                additions: file.additions,
+                deletions: file.deletions,
+              })),
+            ),
+            Effect.tapError((error) =>
+              appendCaptureFailureActivity({
+                threadId: input.threadId,
+                turnId: input.turnId,
+                detail: `Checkpoint captured, but turn diff summary is unavailable: ${error.message}`,
+                createdAt: input.createdAt,
+              }),
+            ),
+            Effect.catch((error) =>
+              Effect.logWarning("failed to derive checkpoint file summary", {
+                threadId: input.threadId,
+                turnId: input.turnId,
+                turnCount: input.turnCount,
+                detail: error.message,
+              }).pipe(Effect.as([])),
+            ),
+          )
+      : Effect.succeed([]);
 
     const assistantMessageId =
       input.assistantMessageId ??
@@ -506,7 +591,10 @@ const make = Effect.gen(function* () {
         (maxTurnCount, checkpoint) => Math.max(maxTurnCount, checkpoint.checkpointTurnCount),
         0,
       );
-      const baselineCheckpointRef = checkpointRefForThreadTurn(thread.id, currentTurnCount);
+      const baselineCheckpointRef =
+        currentTurnCount === 0
+          ? checkpointRefForThreadTurn(thread.id, 0)
+          : checkpointBaselineRefForThreadTurn(thread.id, currentTurnCount + 1);
       const baselineExists = yield* checkpointStore.hasCheckpointRef({
         cwd: checkpointCwd,
         checkpointRef: baselineCheckpointRef,
@@ -665,7 +753,10 @@ const make = Effect.gen(function* () {
       (maxTurnCount, checkpoint) => Math.max(maxTurnCount, checkpoint.checkpointTurnCount),
       0,
     );
-    const baselineCheckpointRef = checkpointRefForThreadTurn(threadId, currentTurnCount);
+    const baselineCheckpointRef =
+      currentTurnCount === 0
+        ? checkpointRefForThreadTurn(threadId, 0)
+        : checkpointBaselineRefForThreadTurn(threadId, currentTurnCount + 1);
     const baselineExists = yield* checkpointStore.hasCheckpointRef({
       cwd: checkpointCwd,
       checkpointRef: baselineCheckpointRef,
@@ -786,6 +877,18 @@ const make = Effect.gen(function* () {
     for (const checkpoint of thread.checkpoints) {
       if (checkpoint.checkpointTurnCount > event.payload.turnCount) {
         staleCheckpointRefs.push(checkpoint.checkpointRef);
+        staleCheckpointRefs.push(
+          checkpointBaselineRefForThreadTurn(
+            event.payload.threadId,
+            checkpoint.checkpointTurnCount,
+          ),
+        );
+        staleCheckpointRefs.push(
+          checkpointLineageBaselineRefForThreadTurn(
+            event.payload.threadId,
+            checkpoint.checkpointTurnCount,
+          ),
+        );
       }
     }
 

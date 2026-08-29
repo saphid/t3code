@@ -95,6 +95,27 @@ it.effect("parses turn diff input with whitespace ignoring enabled", () =>
   }),
 );
 
+it.effect("parses an available turn diff with server-owned lineage", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeThreadTurnDiff({
+      threadId: "thread-1",
+      fromTurnCount: 1,
+      toTurnCount: 2,
+      diff: "diff --git a/file b/file",
+      availability: { status: "available" },
+      lineage: {
+        repositoryRoot: "/repo/.git",
+        worktreePath: "/repo/worktree",
+        headCommit: "abc123",
+        branch: "branch-b",
+      },
+    });
+
+    assert.deepStrictEqual(parsed.availability, { status: "available" });
+    assert.strictEqual(parsed.lineage?.branch, "branch-b");
+  }),
+);
+
 it.effect("parses full thread diff input with whitespace ignoring enabled", () =>
   Effect.gen(function* () {
     const parsed = yield* decodeFullThreadDiffInput({

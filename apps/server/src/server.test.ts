@@ -828,6 +828,8 @@ const buildAppUnderTest = (options?: {
               fromTurnCount: 0,
               toTurnCount: 0,
               diff: "",
+              availability: { status: "available" },
+              lineage: null,
             }),
           getFullThreadDiff: () =>
             Effect.succeed({
@@ -835,6 +837,8 @@ const buildAppUnderTest = (options?: {
               fromTurnCount: 0,
               toTurnCount: 0,
               diff: "",
+              availability: { status: "available" },
+              lineage: null,
             }),
           ...options?.layers?.checkpointDiffQuery,
         }),
@@ -6105,6 +6109,8 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
                 fromTurnCount: 0,
                 toTurnCount: 1,
                 diff: "turn-diff",
+                availability: { status: "available" },
+                lineage: null,
               }),
             getFullThreadDiff: () =>
               Effect.succeed({
@@ -6112,6 +6118,8 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
                 fromTurnCount: 0,
                 toTurnCount: 1,
                 diff: "full-diff",
+                availability: { status: "available" },
+                lineage: null,
               }),
           },
         },

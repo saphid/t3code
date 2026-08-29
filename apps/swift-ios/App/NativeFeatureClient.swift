@@ -21,6 +21,23 @@ private struct T3ConnectManagedCleanupError: LocalizedError {
     }
 }
 
+private struct NativeTurnDiffUnavailableError: LocalizedError {
+    let reason: String?
+
+    var errorDescription: String? {
+        switch reason {
+        case "lineage-changed":
+            "The latest turn changed branch lineage, so T3 Code cannot compare it safely."
+        case "workspace-unavailable":
+            "The checkpoint repository is no longer available."
+        case "checkpoint-unavailable":
+            "The latest turn checkpoint is no longer available."
+        default:
+            "The latest turn does not have enough lineage data for a safe comparison."
+        }
+    }
+}
+
 /// Composes the transport-focused Core layer with the UI-focused Features layer.
 @MainActor
 final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
@@ -2403,9 +2420,29 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
 
     func loadReview(threadID: String) async throws -> FeatureReview {
         let route = try threadRoute(for: threadID)
-        let context = try workspaceContext(route: route)
-        let preview = try await route.client.reviewDiffPreview(cwd: context.cwd)
-        return NativeWorkspaceMapper.review(preview)
+        let rawThread: OrchestrationThread
+        if activeThreadID == route.uiID, let activeRawThread {
+            rawThread = activeRawThread
+        } else {
+            rawThread = try await route.client.threadSnapshot(id: route.wireID).thread
+        }
+        guard let checkpoint = rawThread.checkpoints
+            .filter({ $0.status == "ready" })
+            .max(by: { $0.checkpointTurnCount < $1.checkpointTurnCount }) else {
+            let context = try workspaceContext(route: route)
+            return NativeWorkspaceMapper.review(
+                try await route.client.reviewDiffPreview(cwd: context.cwd)
+            )
+        }
+        let result = try await route.client.turnDiff(
+            threadID: route.wireID,
+            fromTurnCount: max(0, checkpoint.checkpointTurnCount - 1),
+            toTurnCount: checkpoint.checkpointTurnCount
+        )
+        guard result.availability.status == "available" else {
+            throw NativeTurnDiffUnavailableError(reason: result.availability.reason)
+        }
+        return NativeWorkspaceMapper.review(result)
     }
 
     func loadReviewFileContents(
