@@ -1,6 +1,5 @@
-import * as NodeOS from "node:os";
-
 import { QrCode } from "@t3tools/shared/qrCode";
+import { buildTailscaleHttpsBaseUrl, readTailscaleStatus } from "@t3tools/tailscale";
 import * as Effect from "effect/Effect";
 import { HttpServer } from "effect/unstable/http";
 
@@ -8,12 +7,10 @@ import { ServerConfig } from "./config.ts";
 import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
 
 export interface HeadlessServeAccessInfo {
-  readonly connectionString: string;
+  readonly connectionString: string | null;
   readonly token: string;
-  readonly pairingUrl: string;
+  readonly pairingUrl: string | null;
 }
-
-type NetworkInterfacesMap = ReturnType<typeof NodeOS.networkInterfaces>;
 
 export const isLoopbackHost = (host: string | undefined): boolean => {
   if (!host || host.length === 0) {
@@ -38,43 +35,45 @@ export const formatHostForUrl = (host: string): string =>
 const normalizeHost = (host: string): string =>
   host.startsWith("[") && host.endsWith("]") ? host.slice(1, -1) : host;
 
-const isIpv4Family = (family: string | number): boolean => family === "IPv4" || family === 4;
+const explicitAdvertisedUrl = (value: string, fallbackPort: number): URL | null => {
+  const trimmed = value.trim();
+  if (trimmed.length === 0) return null;
 
-const isIpv6Family = (family: string | number): boolean => family === "IPv6" || family === 6;
+  const hasScheme = /^[A-Za-z][A-Za-z\d+.-]*:\/\//u.test(trimmed);
+  const unbracketedIpv6 =
+    !hasScheme &&
+    !trimmed.startsWith("[") &&
+    trimmed.includes(":") &&
+    trimmed.split(":").length > 2;
+  const candidate = hasScheme ? trimmed : `http://${unbracketedIpv6 ? `[${trimmed}]` : trimmed}`;
 
-export const resolveHeadlessConnectionHost = (
-  host: string | undefined,
-  interfaces: NetworkInterfacesMap = NodeOS.networkInterfaces(),
-): string => {
-  if (!host) {
-    return "localhost";
+  try {
+    const url = new URL(candidate);
+    if (url.protocol !== "http:" && url.protocol !== "https:") return null;
+    if (url.username.length > 0 || url.password.length > 0) return null;
+    const hostname = normalizeHost(url.hostname);
+    if (isWildcardHost(hostname) || isLoopbackHost(hostname)) return null;
+    if (!hasScheme && url.port.length === 0) url.port = String(fallbackPort);
+    url.search = "";
+    url.hash = "";
+    return url;
+  } catch {
+    return null;
   }
-
-  if (!isWildcardHost(host)) {
-    return normalizeHost(host);
-  }
-
-  const interfaceEntries = Object.values(interfaces).flatMap((entries) => entries ?? []);
-  const externalIpv4 = interfaceEntries.find(
-    (entry) => !entry.internal && isIpv4Family(entry.family),
-  );
-  if (externalIpv4) {
-    return externalIpv4.address;
-  }
-
-  const externalIpv6 = interfaceEntries.find(
-    (entry) => !entry.internal && isIpv6Family(entry.family),
-  );
-  return externalIpv6 ? normalizeHost(externalIpv6.address) : "localhost";
 };
 
 export const resolveHeadlessConnectionString = (
   host: string | undefined,
   port: number,
-  interfaces: NetworkInterfacesMap = NodeOS.networkInterfaces(),
-): string => {
-  const connectionHost = resolveHeadlessConnectionHost(host, interfaces);
-  return `http://${formatHostForUrl(connectionHost)}:${port}`;
+  advertisedHost?: string,
+): string | null => {
+  const selected = advertisedHost ?? host;
+  if (!selected || isWildcardHost(selected) || isLoopbackHost(selected)) return null;
+
+  const url = explicitAdvertisedUrl(selected, port);
+  if (!url) return null;
+  const value = url.toString();
+  return url.pathname === "/" ? value.slice(0, -1) : value.replace(/\/+$/u, "");
 };
 
 export const resolveListeningPort = (address: unknown, fallbackPort: number): number => {
@@ -91,7 +90,7 @@ export const resolveListeningPort = (address: unknown, fallbackPort: number): nu
 
 export const buildPairingUrl = (connectionString: string, token: string): string => {
   const url = new URL(connectionString);
-  url.pathname = "/pair";
+  url.pathname = `${url.pathname.replace(/\/+$/u, "")}/pair`;
   url.searchParams.delete("token");
   url.hash = new URLSearchParams([["token", token]]).toString();
   return url.toString();
@@ -120,29 +119,51 @@ export const renderTerminalQrCode = (value: string, margin = 2): string => {
 };
 
 export const formatHeadlessServeOutput = (accessInfo: HeadlessServeAccessInfo): string =>
-  [
-    "T3 Code server is ready.",
-    `Connection string: ${accessInfo.connectionString}`,
-    `Token: ${accessInfo.token}`,
-    `Pairing URL: ${accessInfo.pairingUrl}`,
-    "",
-    renderTerminalQrCode(accessInfo.pairingUrl),
-    "",
-  ].join("\n");
+  accessInfo.connectionString && accessInfo.pairingUrl
+    ? [
+        "T3 Code server is ready.",
+        `Connection string: ${accessInfo.connectionString}`,
+        `Token: ${accessInfo.token}`,
+        `Pairing URL: ${accessInfo.pairingUrl}`,
+        "",
+        renderTerminalQrCode(accessInfo.pairingUrl),
+        "",
+      ].join("\n")
+    : [
+        "T3 Code server is ready.",
+        `Token: ${accessInfo.token}`,
+        "Pairing URL unavailable: the bind address is not a phone destination.",
+        "Restart with --advertised-host set to an HTTP(S) address this phone can reach.",
+        "",
+      ].join("\n");
 
 export const issueHeadlessServeAccessInfo = Effect.fn("issueHeadlessServeAccessInfo")(function* () {
   const serverConfig = yield* ServerConfig;
   const httpServer = yield* HttpServer.HttpServer;
   const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
+  const tailscaleAdvertisedHost = serverConfig.tailscaleServeEnabled
+    ? yield* readTailscaleStatus.pipe(
+        Effect.map((status) =>
+          status.magicDnsName
+            ? buildTailscaleHttpsBaseUrl({
+                magicDnsName: status.magicDnsName,
+                servePort: serverConfig.tailscaleServePort,
+              })
+            : undefined,
+        ),
+        Effect.orElseSucceed(() => undefined),
+      )
+    : undefined;
   const connectionString = resolveHeadlessConnectionString(
     serverConfig.host,
     resolveListeningPort(httpServer.address, serverConfig.port),
+    serverConfig.advertisedHost ?? tailscaleAdvertisedHost,
   );
   const issued = yield* serverAuth.issueStartupPairingCredential();
 
   return {
     connectionString,
     token: issued.credential,
-    pairingUrl: buildPairingUrl(connectionString, issued.credential),
+    pairingUrl: connectionString ? buildPairingUrl(connectionString, issued.credential) : null,
   } satisfies HeadlessServeAccessInfo;
 });

@@ -19,6 +19,7 @@ public enum PairingURLError: LocalizedError, Equatable {
     case unsupportedScheme
     case missingToken
     case missingHost
+    case wildcardHost
     case emptyQRCode
     case invalidQRCode
 
@@ -29,6 +30,8 @@ public enum PairingURLError: LocalizedError, Equatable {
         case .unsupportedScheme: "Pairing URL uses an unsupported scheme."
         case .missingToken: "Pairing URL is missing its token."
         case .missingHost: "Pairing URL is missing its environment host."
+        case .wildcardHost:
+            "Replace 0.0.0.0 or :: with a server address this iPhone can reach. Your pairing code has been kept."
         case .emptyQRCode: "Scanned QR code did not contain a pairing URL."
         case .invalidQRCode: "Scanned QR code is not a T3 pairing link."
         }
@@ -123,8 +126,9 @@ public enum PairingURL {
 
     public static func build(host: String, pairingCode: String) throws -> String {
         let base = try normalizedBaseURL(host)
+        try requirePhoneDestination(base)
         var components = URLComponents(url: base, resolvingAgainstBaseURL: false)!
-        components.path = "/pair"
+        components.path = appendedPath(components.path, component: "pair")
         components.percentEncodedFragment = URLComponents().withQueryItems([
             URLQueryItem(name: "token", value: try requireToken(pairingCode)),
         ]).percentEncodedQuery
@@ -137,7 +141,16 @@ public enum PairingURL {
     /// Converts any supported pairing transport into the HTTP origin used by
     /// onboarding's environment probe.
     static func httpBaseURL(for rawValue: String) throws -> URL {
-        try httpBaseURL(from: normalizedBaseURL(rawValue))
+        let base = try normalizedBaseURL(rawValue)
+        try requirePhoneDestination(base)
+        return try httpBaseURL(from: base)
+    }
+
+    static func isWildcardDestination(_ host: String?) -> Bool {
+        let normalized = host?
+            .trimmingCharacters(in: CharacterSet(charactersIn: "[]"))
+            .lowercased()
+        return normalized == "0.0.0.0" || normalized == "::"
     }
 
     private static func extractPairingURL(
@@ -182,7 +195,9 @@ public enum PairingURL {
     }
 
     private static func directTarget(host: String, credential: String) throws -> PairingTarget {
-        try target(baseURL: normalizedBaseURL(host), credential: credential)
+        let base = try normalizedBaseURL(host)
+        try requirePhoneDestination(base)
+        return try target(baseURL: base, credential: credential)
     }
 
     private static func normalizedBaseURL(_ rawValue: String) throws -> URL {
@@ -210,7 +225,7 @@ public enum PairingURL {
         }
         try requireSupportedScheme(components.scheme)
         guard components.host != nil else { throw PairingURLError.missingHost }
-        components.path = "/"
+        components.path = basePath(from: components.path)
         components.query = nil
         components.fragment = nil
         guard let base = components.url else { throw PairingURLError.invalidURL }
@@ -284,6 +299,25 @@ public enum PairingURL {
         guard supportedSchemes.contains(scheme?.lowercased() ?? "") else {
             throw PairingURLError.unsupportedScheme
         }
+    }
+
+    private static func requirePhoneDestination(_ url: URL) throws {
+        guard !isWildcardDestination(url.host(percentEncoded: false)) else {
+            throw PairingURLError.wildcardHost
+        }
+    }
+
+    private static func basePath(from path: String) -> String {
+        var components = path.split(separator: "/").map(String.init)
+        if components.last?.caseInsensitiveCompare("pair") == .orderedSame {
+            components.removeLast()
+        }
+        return components.isEmpty ? "/" : "/\(components.joined(separator: "/"))/"
+    }
+
+    private static func appendedPath(_ path: String, component: String) -> String {
+        let prefix = path.split(separator: "/").joined(separator: "/")
+        return prefix.isEmpty ? "/\(component)" : "/\(prefix)/\(component)"
     }
 
     private static func requireToken(_ token: String?) throws -> String {

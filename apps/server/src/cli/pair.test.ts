@@ -47,6 +47,18 @@ describe("pair base URL selection", () => {
     );
     expect(resolveDirectPairingBaseUrl(baseState)).toBe("http://localhost:3773");
   });
+
+  it("never turns a wildcard bind into a phone pairing destination", () => {
+    expect(resolveDirectPairingBaseUrl({ ...baseState, host: "0.0.0.0" })).toBeNull();
+    expect(resolveDirectPairingBaseUrl({ ...baseState, host: "::" })).toBeNull();
+    expect(
+      resolveDirectPairingBaseUrl({
+        ...baseState,
+        host: "0.0.0.0",
+        advertisedHost: "https://forwarded.example.com/t3",
+      }),
+    ).toBe("https://forwarded.example.com/t3");
+  });
 });
 
 describe("pair tailscale local target", () => {

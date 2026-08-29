@@ -9,6 +9,7 @@ enum ConnectionDetailsError: LocalizedError, Equatable {
     case empty
     case invalidAddress
     case unsupportedScheme
+    case wildcardAddress
 
     var errorDescription: String? {
         switch self {
@@ -18,6 +19,8 @@ enum ConnectionDetailsError: LocalizedError, Equatable {
             "That connection link does not include a valid server address."
         case .unsupportedScheme:
             "Use an HTTP or HTTPS T3 server address."
+        case .wildcardAddress:
+            "Replace 0.0.0.0 or :: with a server address this iPhone can reach. Your pairing code has been kept."
         }
     }
 }
@@ -97,7 +100,7 @@ enum ConnectionDetailsParser {
             throw ConnectionDetailsError.invalidAddress
         }
 
-        components.path = ""
+        components.path = basePath(from: components.path)
         components.query = nil
         components.fragment = nil
         guard var normalized = components.url?.absoluteString else {
@@ -107,6 +110,16 @@ enum ConnectionDetailsParser {
             normalized.removeLast()
         }
         return normalized
+    }
+
+    static func validatePairingEndpoint(_ endpoint: String) throws {
+        guard let host = URLComponents(string: endpoint)?.host
+        else {
+            throw ConnectionDetailsError.invalidAddress
+        }
+        guard !PairingURL.isWildcardDestination(host) else {
+            throw ConnectionDetailsError.wildcardAddress
+        }
     }
 
     private static func parseURL(
@@ -218,6 +231,14 @@ enum ConnectionDetailsParser {
             return value
         }
         return "[\(value)]"
+    }
+
+    private static func basePath(from path: String) -> String {
+        var components = path.split(separator: "/").map(String.init)
+        if components.last?.caseInsensitiveCompare("pair") == .orderedSame {
+            components.removeLast()
+        }
+        return components.isEmpty ? "" : "/\(components.joined(separator: "/"))"
     }
 }
 

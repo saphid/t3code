@@ -533,7 +533,9 @@ public struct AuthOtherClientSessionsRevokeResult: Codable, Equatable, Sendable 
 
 func endpoint(_ baseURL: URL, path: String, queryItems: [URLQueryItem] = []) -> URL {
     var components = URLComponents(url: baseURL, resolvingAgainstBaseURL: false)!
-    components.path = path
+    let basePath = components.path.split(separator: "/").joined(separator: "/")
+    let requestPath = path.split(separator: "/").joined(separator: "/")
+    components.path = "/" + [basePath, requestPath].filter { !$0.isEmpty }.joined(separator: "/")
     components.queryItems = queryItems.isEmpty ? nil : queryItems
     components.fragment = nil
     return components.url!

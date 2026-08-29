@@ -13,6 +13,43 @@ struct ConnectionDetailsTests {
         #expect(details.pairingCode == "PAIRCODE")
     }
 
+    @Test(
+        "Wildcard links keep their code for repair without becoming pairable",
+        .bug("https://github.com/saphid/t3code-personal/issues/221"),
+        arguments: [
+            "http://0.0.0.0:3773/pair#token=PAIRCODE",
+            "http://[::]:3773/pair#token=PAIRCODE",
+        ]
+    )
+    func rejectsWildcardDestinationBeforePairing(_ link: String) throws {
+        let details = try ConnectionDetailsParser.parse(link)
+
+        #expect(details.pairingCode == "PAIRCODE")
+        #expect(throws: ConnectionDetailsError.wildcardAddress) {
+            try ConnectionDetailsParser.validatePairingEndpoint(details.endpoint)
+        }
+    }
+
+    @Test(
+        "Reachable address forms remain normalized",
+        .bug("https://github.com/saphid/t3code-personal/issues/221"),
+        arguments: [
+            ("http://172.18.0.2:3773/pair#token=C", "http://172.18.0.2:3773"),
+            ("http://192.168.1.42:3773/pair#token=C", "http://192.168.1.42:3773"),
+            ("http://100.64.0.7:3773/pair#token=C", "http://100.64.0.7:3773"),
+            ("https://relay.example.com/pair#token=C", "https://relay.example.com"),
+            ("https://tunnel.example.com/t3/pair#token=C", "https://tunnel.example.com/t3"),
+            ("https://[2001:db8::7]:8443/t3/pair#token=C", "https://[2001:db8::7]:8443/t3"),
+        ]
+    )
+    func acceptsExplicitDestinations(input: String, expected: String) throws {
+        let details = try ConnectionDetailsParser.parse(input)
+        try ConnectionDetailsParser.validatePairingEndpoint(details.endpoint)
+
+        #expect(details.endpoint == expected)
+        #expect(details.pairingCode == "C")
+    }
+
     @Test
     func parsesHostedPairingURL() throws {
         let details = try ConnectionDetailsParser.parse(

@@ -103,6 +103,15 @@ export class MagicDnsNameMissingError extends Schema.TaggedErrorClass<MagicDnsNa
   }
 }
 
+export class PairingDestinationRequiredError extends Schema.TaggedErrorClass<PairingDestinationRequiredError>()(
+  "PairingDestinationRequiredError",
+  {},
+) {
+  override get message(): string {
+    return "This server has no phone-reachable address. Restart it with --advertised-host set to an HTTP(S) address this phone can reach.";
+  }
+}
+
 export class ServesOtherEnvironmentError extends Schema.TaggedErrorClass<ServesOtherEnvironmentError>()(
   "ServesOtherEnvironmentError",
   { servePort: Schema.Number },
@@ -131,8 +140,17 @@ export class ServePortOccupiedError extends Schema.TaggedErrorClass<ServePortOcc
 }
 
 /** The URL a browser or phone should pair through, absent Tailscale. */
-export const resolveDirectPairingBaseUrl = (state: PersistedServerRuntimeState): string =>
-  state.devUrl ?? resolveHeadlessConnectionString(state.host, state.port);
+export const resolveDirectPairingBaseUrl = (state: PersistedServerRuntimeState): string | null => {
+  if (state.devUrl) return state.devUrl;
+  if (state.advertisedHost) {
+    return resolveHeadlessConnectionString(state.host, state.port, state.advertisedHost);
+  }
+  if (isWildcardHost(state.host)) return null;
+  return (
+    resolveHeadlessConnectionString(state.host, state.port) ??
+    (state.host ? state.origin : `http://localhost:${String(state.port)}`)
+  );
+};
 
 export class DevServerNotProxiableError extends Schema.TaggedErrorClass<DevServerNotProxiableError>()(
   "DevServerNotProxiableError",
@@ -510,7 +528,11 @@ export const pairCommand = Command.make("pair", {
         pairingBaseUrl = resolved.baseUrl;
         notes.push(...resolved.notes);
       } else {
-        pairingBaseUrl = resolveDirectPairingBaseUrl(target.state);
+        const directPairingBaseUrl = resolveDirectPairingBaseUrl(target.state);
+        if (directPairingBaseUrl === null) {
+          return yield* new PairingDestinationRequiredError();
+        }
+        pairingBaseUrl = directPairingBaseUrl;
         if (isLoopbackHost(new URL(pairingBaseUrl).hostname)) {
           notes.push(
             "This URL is only reachable from this machine. Re-run with --tailscale, or restart the server with a reachable --host.",

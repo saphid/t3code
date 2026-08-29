@@ -106,6 +106,17 @@ From there, connect from another device in either of these ways:
 
 Use `t3 serve --help` for the full flag reference. It supports the same general startup options as the normal server command, including an optional `cwd` argument.
 
+`0.0.0.0` and `::` are bind addresses, not destinations a phone can open. When you bind to
+either wildcard (including inside Docker), also provide the public, forwarded, LAN, or Tailnet
+address that the phone should use:
+
+```bash
+npx t3 serve --host 0.0.0.0 --advertised-host https://code.example.com/t3
+```
+
+You can also set `T3CODE_ADVERTISED_HOST`. If no reachable address is explicit, `t3 serve`
+prints a repair instruction instead of guessing an interface and emitting a misleading QR code.
+
 For hosted web pairing over Tailscale HTTPS, opt in to Tailscale Serve:
 
 ```bash

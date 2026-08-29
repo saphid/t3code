@@ -512,6 +512,7 @@ public struct ConnectionOnboardingView: View {
         do {
             let normalized = try ConnectionDetailsParser.normalizedEndpoint(endpoint)
             endpoint = normalized
+            try ConnectionDetailsParser.validatePairingEndpoint(normalized)
             errorMessage = nil
             showsPermissionAction = false
             focusedField = nil
@@ -550,6 +551,15 @@ public struct ConnectionOnboardingView: View {
             endpoint = details.endpoint
             pairingCode = details.pairingCode ?? ""
             entryHeading = heading
+            stage = .details
+            do {
+                try ConnectionDetailsParser.validatePairingEndpoint(details.endpoint)
+            } catch {
+                errorMessage = error.localizedDescription
+                showsPermissionAction = false
+                focusedField = .endpoint
+                return
+            }
             errorMessage = details.pairingCode == nil
                 ? "The link did not include a pairing code. Enter it below."
                 : nil
@@ -558,7 +568,6 @@ public struct ConnectionOnboardingView: View {
                 focusedField = nil
                 connect(.pair(endpoint: details.endpoint, code: code))
             } else {
-                stage = .details
                 focusedField = details.pairingCode == nil ? .pairingCode : nil
             }
         } catch {
@@ -578,13 +587,29 @@ public struct ConnectionOnboardingView: View {
         }
         endpoint = details.endpoint
         pairingCode = code
-        errorMessage = nil
-        focusedField = nil
+        do {
+            try ConnectionDetailsParser.validatePairingEndpoint(details.endpoint)
+            errorMessage = nil
+            focusedField = nil
+        } catch {
+            errorMessage = error.localizedDescription
+            focusedField = .endpoint
+        }
     }
 
     @MainActor
     private func connect(_ action: ConnectionAction) {
         cancelConnectionAttempt()
+        do {
+            try ConnectionDetailsParser.validatePairingEndpoint(action.endpoint)
+        } catch {
+            endpoint = action.endpoint
+            errorMessage = error.localizedDescription
+            showsPermissionAction = false
+            stage = action.returnStage
+            focusedField = .endpoint
+            return
+        }
         let attemptID = UUID()
         connectionAttemptID = attemptID
         switch action {
@@ -680,6 +705,13 @@ private enum ConnectionAction {
         switch self {
         case let .pair(endpoint, _), let .activate(_, endpoint):
             endpoint
+        }
+    }
+
+    var returnStage: ConnectionStage {
+        switch self {
+        case .pair: .details
+        case .activate: .welcome
         }
     }
 }

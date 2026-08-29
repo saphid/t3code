@@ -12,6 +12,7 @@ export const PersistedServerRuntimeState = Schema.Struct({
   version: Schema.Literal(1),
   pid: Schema.Int,
   host: Schema.optional(Schema.String),
+  advertisedHost: Schema.optional(Schema.String),
   port: Schema.Int,
   origin: Schema.String,
   // Present when the server fronts a dev web server (VITE_DEV_SERVER_URL).
@@ -48,13 +49,14 @@ const runtimeOriginForConfig = (
 };
 
 export const makePersistedServerRuntimeState = (input: {
-  readonly config: Pick<ServerConfig.ServerConfig["Service"], "host" | "devUrl">;
+  readonly config: Pick<ServerConfig.ServerConfig["Service"], "host" | "advertisedHost" | "devUrl">;
   readonly port: number;
 }): Effect.Effect<PersistedServerRuntimeState> =>
   Effect.map(DateTime.now, (now) => ({
     version: 1,
     pid: process.pid,
     ...(input.config.host ? { host: input.config.host } : {}),
+    ...(input.config.advertisedHost ? { advertisedHost: input.config.advertisedHost } : {}),
     port: input.port,
     origin: runtimeOriginForConfig(input.config, input.port),
     ...(input.config.devUrl ? { devUrl: input.config.devUrl.toString() } : {}),

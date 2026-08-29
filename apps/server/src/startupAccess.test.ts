@@ -4,46 +4,35 @@ import {
   buildPairingUrl,
   formatHeadlessServeOutput,
   renderTerminalQrCode,
-  resolveHeadlessConnectionHost,
   resolveHeadlessConnectionString,
   resolveListeningPort,
 } from "./startupAccess.ts";
 
-it("prefers localhost when no explicit host is configured", () => {
-  expect(resolveHeadlessConnectionHost(undefined)).toBe("localhost");
-  expect(resolveHeadlessConnectionString(undefined, 3773)).toBe("http://localhost:3773");
+it("does not advertise an address when no phone-reachable host is configured", () => {
+  expect(resolveHeadlessConnectionString(undefined, 3773)).toBeNull();
 });
 
-it("keeps explicit bind hosts in the connection string", () => {
-  expect(resolveHeadlessConnectionString("127.0.0.1", 3773)).toBe("http://127.0.0.1:3773");
-  expect(resolveHeadlessConnectionString("::1", 3773)).toBe("http://[::1]:3773");
+it("rejects wildcard and loopback bind hosts as phone destinations", () => {
+  expect(resolveHeadlessConnectionString("0.0.0.0", 3773)).toBeNull();
+  expect(resolveHeadlessConnectionString("::", 3773)).toBeNull();
+  expect(resolveHeadlessConnectionString("127.0.0.1", 3773)).toBeNull();
+  expect(resolveHeadlessConnectionString("::1", 3773)).toBeNull();
 });
 
-it("resolves wildcard hosts to a concrete external interface when one is available", () => {
-  const connectionString = resolveHeadlessConnectionString("0.0.0.0", 3773, {
-    en0: [
-      {
-        address: "192.168.1.42",
-        netmask: "255.255.255.0",
-        family: "IPv4",
-        mac: "00:00:00:00:00:00",
-        internal: false,
-        cidr: "192.168.1.42/24",
-      },
-    ],
-    lo0: [
-      {
-        address: "127.0.0.1",
-        netmask: "255.0.0.0",
-        family: "IPv4",
-        mac: "00:00:00:00:00:00",
-        internal: true,
-        cidr: "127.0.0.1/8",
-      },
-    ],
-  });
+it("uses explicit LAN, Tailnet, forwarded, and IPv6 destinations", () => {
+  expect(resolveHeadlessConnectionString("192.168.1.42", 3773)).toBe("http://192.168.1.42:3773");
+  expect(resolveHeadlessConnectionString("100.64.0.7", 3773)).toBe("http://100.64.0.7:3773");
+  expect(resolveHeadlessConnectionString("0.0.0.0", 3773, "https://code.example.com:8443/t3")).toBe(
+    "https://code.example.com:8443/t3",
+  );
+  expect(resolveHeadlessConnectionString("::", 3773, "fd7a:115c:a1e0::1")).toBe(
+    "http://[fd7a:115c:a1e0::1]:3773",
+  );
+});
 
-  expect(connectionString).toBe("http://192.168.1.42:3773");
+it("never accepts a wildcard or loopback advertised host", () => {
+  expect(resolveHeadlessConnectionString("0.0.0.0", 3773, "0.0.0.0")).toBeNull();
+  expect(resolveHeadlessConnectionString("0.0.0.0", 3773, "http://localhost:3773")).toBeNull();
 });
 
 it("prefers the actual bound port when an http server address is available", () => {
@@ -56,6 +45,21 @@ it("builds a pairing URL that embeds the token in the hash", () => {
   expect(buildPairingUrl("http://192.168.1.42:3773", "PAIRCODE")).toBe(
     "http://192.168.1.42:3773/pair#token=PAIRCODE",
   );
+  expect(buildPairingUrl("https://code.example.com/t3", "PAIRCODE")).toBe(
+    "https://code.example.com/t3/pair#token=PAIRCODE",
+  );
+});
+
+it("explains how to repair a server without a phone destination and omits the qr code", () => {
+  const output = formatHeadlessServeOutput({
+    connectionString: null,
+    token: "PAIRCODE",
+    pairingUrl: null,
+  });
+
+  expect(output).toContain("--advertised-host");
+  expect(output).not.toContain("Connection string:");
+  assert.isFalse(output.includes("█") || output.includes("▀") || output.includes("▄"));
 });
 
 it("renders terminal QR codes as a multi-line unicode block grid", () => {

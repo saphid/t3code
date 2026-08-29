@@ -25,29 +25,41 @@ public actor T3Client {
             connectionWaitTimeout: rpcConnectionWaitTimeout
         ) {
             let ticket = try await api.webSocketTicket(for: environment)
-            var components = URLComponents(
-                url: environment.webSocketBaseURL,
-                resolvingAgainstBaseURL: false
-            )!
-            if components.path.isEmpty || components.path == "/" {
-                components.path = "/ws"
-            }
-            var query = components.queryItems ?? []
-            query.removeAll {
-                $0.name == "wsTicket"
-                    || $0.name == "clientSurface"
-                    || $0.name == "clientAppVersion"
-            }
-            query.append(URLQueryItem(name: "wsTicket", value: ticket.ticket))
-            query.append(URLQueryItem(name: "clientSurface", value: "mobile"))
-            if let appVersion = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String,
-               !appVersion.isEmpty {
-                query.append(URLQueryItem(name: "clientAppVersion", value: appVersion))
-            }
-            components.queryItems = query
-            guard let url = components.url else { throw PairingURLError.invalidURL }
-            return url
+            return try Self.webSocketEndpoint(
+                baseURL: environment.webSocketBaseURL,
+                ticket: ticket.ticket,
+                appVersion: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String
+            )
         }
+    }
+
+    static func webSocketEndpoint(
+        baseURL: URL,
+        ticket: String,
+        appVersion: String?
+    ) throws -> URL {
+        guard var components = URLComponents(url: baseURL, resolvingAgainstBaseURL: false)
+        else {
+            throw PairingURLError.invalidURL
+        }
+        if components.path.isEmpty || components.path.hasSuffix("/") {
+            let prefix = components.path.split(separator: "/").joined(separator: "/")
+            components.path = prefix.isEmpty ? "/ws" : "/\(prefix)/ws"
+        }
+        var query = components.queryItems ?? []
+        query.removeAll {
+            $0.name == "wsTicket"
+                || $0.name == "clientSurface"
+                || $0.name == "clientAppVersion"
+        }
+        query.append(URLQueryItem(name: "wsTicket", value: ticket))
+        query.append(URLQueryItem(name: "clientSurface", value: "mobile"))
+        if let appVersion, !appVersion.isEmpty {
+            query.append(URLQueryItem(name: "clientAppVersion", value: appVersion))
+        }
+        components.queryItems = query
+        guard let url = components.url else { throw PairingURLError.invalidURL }
+        return url
     }
 
     public func connect() async {

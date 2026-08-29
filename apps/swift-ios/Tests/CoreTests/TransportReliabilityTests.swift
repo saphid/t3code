@@ -499,6 +499,41 @@ final class TransportReliabilityTests: XCTestCase {
         XCTAssertEqual(target.webSocketBaseURL.absoluteString, "ws://192.168.1.7:18773/")
     }
 
+    func testPairingParserRejectsWildcardBeforeNetworkAndPreservesCodeFields() throws {
+        for link in [
+            "http://0.0.0.0:3773/pair#token=PAIRCODE",
+            "http://[::]:3773/pair#token=PAIRCODE",
+        ] {
+            let fields = try PairingURL.parseFields(link)
+            XCTAssertEqual(fields.pairingCode, "PAIRCODE")
+            XCTAssertThrowsError(try PairingURL.resolve(link)) { error in
+                XCTAssertEqual(error as? PairingURLError, .wildcardHost)
+            }
+        }
+    }
+
+    func testPairingParserPreservesTLSIPv6PortsAndPathPrefixes() throws {
+        let target = try PairingURL.resolve(
+            "https://[2001:db8::7]:8443/t3/pair#token=PAIRCODE"
+        )
+
+        XCTAssertEqual(target.credential, "PAIRCODE")
+        XCTAssertEqual(target.httpBaseURL.absoluteString, "https://[2001:db8::7]:8443/t3/")
+        XCTAssertEqual(target.webSocketBaseURL.absoluteString, "wss://[2001:db8::7]:8443/t3/")
+        XCTAssertEqual(
+            endpoint(target.httpBaseURL, path: "/oauth/token").absoluteString,
+            "https://[2001:db8::7]:8443/t3/oauth/token"
+        )
+        XCTAssertEqual(
+            try T3Client.webSocketEndpoint(
+                baseURL: target.webSocketBaseURL,
+                ticket: "ticket",
+                appVersion: nil
+            ).absoluteString,
+            "wss://[2001:db8::7]:8443/t3/ws?wsTicket=ticket&clientSurface=mobile"
+        )
+    }
+
     func testLocalNetworkProbeClassificationDistinguishesFailureModes() {
         XCTAssertTrue(LocalNetworkProbe.isLocalHost("192.168.20.4"))
         XCTAssertTrue(LocalNetworkProbe.isLocalHost("studio.local"))
