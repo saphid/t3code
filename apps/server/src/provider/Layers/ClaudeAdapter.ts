@@ -1221,12 +1221,14 @@ function buildPromptText(
 }
 
 function buildUserMessage(input: {
-  readonly sdkContent: Array<Record<string, unknown>>;
+  readonly sdkContent: string | Array<Record<string, unknown>>;
+  readonly shouldQuery?: boolean;
 }): SDKUserMessage {
   return {
     type: "user",
     session_id: "",
     parent_tool_use_id: null,
+    ...(input.shouldQuery !== undefined ? { shouldQuery: input.shouldQuery } : {}),
     message: {
       role: "user",
       content: input.sdkContent as unknown as SDKUserMessage["message"]["content"],
@@ -1248,7 +1250,7 @@ function buildClaudeImageContentBlock(input: {
   };
 }
 
-const buildUserMessageEffect = Effect.fn("buildUserMessageEffect")(function* (
+const buildUserMessagesEffect = Effect.fn("buildUserMessagesEffect")(function* (
   input: ProviderSendTurnInput,
   dependencies: {
     readonly fileSystem: FileSystem.FileSystem;
@@ -1308,7 +1310,19 @@ const buildUserMessageEffect = Effect.fn("buildUserMessageEffect")(function* (
     );
   }
 
-  return buildUserMessage({ sdkContent });
+  const isSlashCommand = input.input?.trim().startsWith("/") === true;
+  const attachmentContent = sdkContent.filter((block) => block.type === "image");
+  if (isSlashCommand && text.length > 0 && attachmentContent.length > 0) {
+    return [
+      buildUserMessage({
+        sdkContent: attachmentContent,
+        shouldQuery: false,
+      }),
+      buildUserMessage({ sdkContent: text }),
+    ];
+  }
+
+  return [buildUserMessage({ sdkContent })];
 });
 
 function turnStatusFromResult(result: SDKResultMessage): ProviderRuntimeTurnStatus {
@@ -4447,16 +4461,18 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       });
     }
 
-    const message = yield* buildUserMessageEffect(input, {
+    const messages = yield* buildUserMessagesEffect(input, {
       fileSystem,
       attachmentsDir: serverConfig.attachmentsDir,
       boundInstanceId,
     });
 
-    yield* Queue.offer(context.promptQueue, {
-      type: "message",
-      message,
-    }).pipe(Effect.mapError((cause) => toRequestError(input.threadId, "turn/start", cause)));
+    for (const message of messages) {
+      yield* Queue.offer(context.promptQueue, {
+        type: "message",
+        message,
+      }).pipe(Effect.mapError((cause) => toRequestError(input.threadId, "turn/start", cause)));
+    }
 
     return {
       threadId: context.session.threadId,

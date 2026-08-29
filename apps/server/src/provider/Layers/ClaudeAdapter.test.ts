@@ -263,6 +263,29 @@ async function readFirstPromptMessage(
   return next.value;
 }
 
+async function readPromptMessages(
+  input:
+    | {
+        readonly prompt: AsyncIterable<SDKUserMessage>;
+      }
+    | undefined,
+  count: number,
+): Promise<ReadonlyArray<SDKUserMessage>> {
+  const iterator = input?.prompt[Symbol.asyncIterator]();
+  if (!iterator) {
+    return [];
+  }
+  const messages: Array<SDKUserMessage> = [];
+  while (messages.length < count) {
+    const next = await iterator.next();
+    if (next.done) {
+      break;
+    }
+    messages.push(next.value);
+  }
+  return messages;
+}
+
 const THREAD_ID = ThreadId.make("thread-claude-1");
 const RESUME_THREAD_ID = ThreadId.make("thread-claude-resume");
 
@@ -789,6 +812,149 @@ describe("ClaudeAdapterLive", () => {
           },
         },
       ]);
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("preserves Claude slash command expansion with an image attachment", () => {
+    const baseDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "claude-command-image-"));
+    const harness = makeHarness({
+      cwd: "/tmp/project-claude-command-image",
+      baseDir,
+    });
+    return Effect.gen(function* () {
+      yield* Effect.addFinalizer(() =>
+        Effect.sync(() =>
+          NodeFS.rmSync(baseDir, {
+            recursive: true,
+            force: true,
+          }),
+        ),
+      );
+
+      const adapter = yield* ClaudeAdapter;
+      const { attachmentsDir } = yield* ServerConfig;
+      const attachment = {
+        type: "image" as const,
+        id: "thread-claude-command-image-12345678-1234-1234-1234-123456789abc",
+        name: "screenshot.png",
+        mimeType: "image/png",
+        sizeBytes: 4,
+      };
+      const attachmentPath = NodePath.join(attachmentsDir, attachmentRelativePath(attachment));
+      NodeFS.mkdirSync(NodePath.dirname(attachmentPath), { recursive: true });
+      NodeFS.writeFileSync(attachmentPath, Uint8Array.from([1, 2, 3, 4]));
+
+      const session = yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+
+      yield* adapter.sendTurn({
+        threadId: session.threadId,
+        input: "/flow-patterns hello",
+        attachments: [attachment],
+      });
+
+      const messages = yield* Effect.promise(() =>
+        readPromptMessages(harness.getLastCreateQueryInput(), 2),
+      );
+      assert.equal(messages[0]?.shouldQuery, false);
+      assert.deepEqual(messages[0]?.message.content, [
+        {
+          type: "image",
+          source: {
+            type: "base64",
+            media_type: "image/png",
+            data: "AQIDBA==",
+          },
+        },
+      ]);
+      assert.equal(messages[1]?.message.content, "/flow-patterns hello");
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("preserves Claude slash command expansion with multiple image attachments", () => {
+    const baseDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "claude-command-images-"));
+    const harness = makeHarness({
+      cwd: "/tmp/project-claude-command-images",
+      baseDir,
+    });
+    return Effect.gen(function* () {
+      yield* Effect.addFinalizer(() =>
+        Effect.sync(() =>
+          NodeFS.rmSync(baseDir, {
+            recursive: true,
+            force: true,
+          }),
+        ),
+      );
+
+      const adapter = yield* ClaudeAdapter;
+      const { attachmentsDir } = yield* ServerConfig;
+      const attachments = [
+        {
+          type: "image" as const,
+          id: "thread-claude-command-images-12345678-1234-1234-1234-123456789abc",
+          name: "first.png",
+          mimeType: "image/png",
+          sizeBytes: 2,
+        },
+        {
+          type: "image" as const,
+          id: "thread-claude-command-images-87654321-4321-4321-4321-cba987654321",
+          name: "second.png",
+          mimeType: "image/png",
+          sizeBytes: 2,
+        },
+      ];
+      for (const [index, attachment] of attachments.entries()) {
+        const attachmentPath = NodePath.join(attachmentsDir, attachmentRelativePath(attachment));
+        NodeFS.mkdirSync(NodePath.dirname(attachmentPath), { recursive: true });
+        NodeFS.writeFileSync(attachmentPath, Uint8Array.from([index + 1, index + 2]));
+      }
+
+      const session = yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+
+      yield* adapter.sendTurn({
+        threadId: session.threadId,
+        input: "/flow-patterns compare these",
+        attachments,
+      });
+
+      const messages = yield* Effect.promise(() =>
+        readPromptMessages(harness.getLastCreateQueryInput(), 2),
+      );
+      assert.equal(messages[0]?.shouldQuery, false);
+      assert.deepEqual(messages[0]?.message.content, [
+        {
+          type: "image",
+          source: {
+            type: "base64",
+            media_type: "image/png",
+            data: "AQI=",
+          },
+        },
+        {
+          type: "image",
+          source: {
+            type: "base64",
+            media_type: "image/png",
+            data: "AgM=",
+          },
+        },
+      ]);
+      assert.equal(messages[1]?.message.content, "/flow-patterns compare these");
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
       Effect.provide(harness.layer),
