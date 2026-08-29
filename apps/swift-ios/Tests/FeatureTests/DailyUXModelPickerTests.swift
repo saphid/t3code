@@ -261,6 +261,141 @@ struct DailyUXModelPickerTests {
         #expect(selection?.modelID == "project")
     }
 
+    @Test(
+        "Codex legacy tiers fall back to the server default without changing effort",
+        .bug("https://github.com/saphid/t3code-personal/issues/212")
+    )
+    func codexLegacyServiceTiersUseServerCapabilities() throws {
+        let providers = [
+            FeatureProvider(
+                id: "codex-work",
+                name: "Codex Work",
+                driver: "codex",
+                models: [
+                    .init(
+                        id: "gpt-5.6-sol",
+                        name: "Sol",
+                        options: [
+                            .init(
+                                id: "reasoningEffort",
+                                label: "Reasoning",
+                                kind: .select,
+                                choices: [
+                                    .init(id: "high", label: "High"),
+                                    .init(id: "xhigh", label: "Extra High", isDefault: true),
+                                ],
+                                defaultValue: .string("xhigh")
+                            ),
+                            .init(
+                                id: "serviceTier",
+                                label: "Service Tier",
+                                kind: .select,
+                                choices: [
+                                    .init(id: "default", label: "Standard", isDefault: true),
+                                    .init(id: "priority", label: "Fast"),
+                                ],
+                                defaultValue: .string("default")
+                            ),
+                        ]
+                    ),
+                ]
+            ),
+        ]
+        let saved = FeatureSelection(
+            providerID: "codex-work",
+            modelID: "gpt-5.6-sol",
+            options: [
+                .init(id: "reasoningEffort", value: .string("high")),
+                .init(id: "serviceTier", value: .string("flex")),
+                .init(id: "fastMode", value: .boolean(true)),
+            ]
+        )
+
+        let selection = try #require(DailyUXModelOptions.validated(saved, in: providers))
+
+        #expect(selection.options == [
+            .init(id: "reasoningEffort", value: .string("high")),
+            .init(id: "serviceTier", value: .string("default")),
+        ])
+
+        let withoutReasoning = try #require(DailyUXModelOptions.validated(
+            FeatureSelection(
+                providerID: "codex-work",
+                modelID: "gpt-5.6-sol",
+                options: [.init(id: "fastMode", value: .boolean(true))]
+            ),
+            in: providers
+        ))
+        #expect(withoutReasoning.options == [
+            .init(id: "serviceTier", value: .string("default")),
+        ])
+    }
+
+    @Test(
+        "Older Codex runtimes keep tiers they still advertise",
+        .bug("https://github.com/saphid/t3code-personal/issues/212")
+    )
+    func olderCodexRuntimeKeepsAdvertisedTier() throws {
+        let providers = [
+            FeatureProvider(
+                id: "codex-legacy",
+                name: "Codex Legacy",
+                driver: "codex",
+                models: [
+                    .init(
+                        id: "gpt-5.4",
+                        name: "GPT-5.4",
+                        options: [
+                            .init(
+                                id: "serviceTier",
+                                label: "Service Tier",
+                                kind: .select,
+                                choices: [
+                                    .init(id: "default", label: "Standard", isDefault: true),
+                                    .init(id: "fast", label: "Fast"),
+                                ],
+                                defaultValue: .string("default")
+                            ),
+                        ]
+                    ),
+                ]
+            ),
+        ]
+        let saved = FeatureSelection(
+            providerID: "codex-legacy",
+            modelID: "gpt-5.4",
+            options: [.init(id: "serviceTier", value: .string("fast"))]
+        )
+
+        let selection = try #require(DailyUXModelOptions.validated(saved, in: providers))
+
+        #expect(selection.options == saved.options)
+    }
+
+    @Test(
+        "Other providers keep their saved options",
+        .bug("https://github.com/saphid/t3code-personal/issues/212")
+    )
+    func otherProviderSelectionsRemainUnchanged() throws {
+        let providers = [
+            FeatureProvider(
+                id: "claude",
+                name: "Claude",
+                driver: "claudeAgent",
+                models: [.init(id: "opus", name: "Opus")]
+            ),
+        ]
+        let saved = FeatureSelection(
+            providerID: "claude",
+            modelID: "opus",
+            options: [.init(id: "futureOption", value: .string("kept"))]
+        )
+
+        let selection = try #require(DailyUXModelOptions.validated(saved, in: providers))
+
+        #expect(selection == saved)
+    }
+
     @Test
     func missingAndStaleSelectionsMaterializeTheConcretePreferredModel() {
         let providers = [

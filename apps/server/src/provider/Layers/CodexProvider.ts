@@ -134,7 +134,7 @@ export function mapCodexModelCapabilities(
         },
   );
   const defaultReasoning = reasoningOptions.find((option) => option.isDefault)?.id;
-  const serviceTiers =
+  const advertisedServiceTiers =
     model.serviceTiers && model.serviceTiers.length > 0
       ? model.serviceTiers
       : (model.additionalSpeedTiers ?? []).map((id) => ({
@@ -142,12 +142,16 @@ export function mapCodexModelCapabilities(
           name: id === "fast" ? "Fast" : id,
           description: "",
         }));
+  const serviceTiers = advertisedServiceTiers.filter((tier) => tier.id !== DEFAULT_SERVICE_TIER_ID);
   const catalogDefaultServiceTier = serviceTiers.some(
     (tier) => tier.id === model.defaultServiceTier,
   )
     ? model.defaultServiceTier
     : null;
-  const defaultServiceTier = catalogDefaultServiceTier ?? DEFAULT_SERVICE_TIER_ID;
+  const defaultServiceTier =
+    model.defaultServiceTier === DEFAULT_SERVICE_TIER_ID
+      ? DEFAULT_SERVICE_TIER_ID
+      : (catalogDefaultServiceTier ?? DEFAULT_SERVICE_TIER_ID);
   const optionDescriptors: ProviderOptionDescriptor[] = [];
 
   if (reasoningOptions.length > 0) {
@@ -159,7 +163,7 @@ export function mapCodexModelCapabilities(
       ...(defaultReasoning ? { currentValue: defaultReasoning } : {}),
     });
   }
-  if (serviceTiers.length > 0) {
+  if (advertisedServiceTiers.length > 0) {
     optionDescriptors.push({
       id: "serviceTier",
       label: "Service Tier",

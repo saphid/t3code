@@ -150,6 +150,7 @@ describe("ProviderCommandReactor", () => {
     readonly requiresNewThreadForModelChange?: boolean;
     readonly titleRegenerationCompletionDispatchFailures?: number;
     readonly titleRegenerationBeforeStart?: "one" | "two";
+    readonly providerSnapshots?: ReadonlyArray<unknown>;
     readonly startSessionEffect?: (
       session: ProviderSession,
     ) => Effect.Effect<ProviderSession, ProviderAdapterRequestError>;
@@ -298,7 +299,7 @@ describe("ProviderCommandReactor", () => {
         }),
       ),
     );
-    const providerSnapshots = [
+    const providerSnapshots = input?.providerSnapshots ?? [
       {
         instanceId: modelSelection.instanceId,
         ...(input?.requiresNewThreadForModelChange === true
@@ -1511,8 +1512,44 @@ describe("ProviderCommandReactor", () => {
     expect(harness.refreshStatus.mock.calls[0]?.[0]).toBe("/tmp/provider-project-worktree");
   });
 
-  it("forwards codex model options through session start and turn send", async () => {
-    const harness = await createHarness();
+  it("normalizes legacy Codex tiers before session start and turn send", async () => {
+    const harness = await createHarness({
+      providerSnapshots: [
+        {
+          instanceId: "codex",
+          driver: "codex",
+          models: [
+            {
+              slug: "gpt-5.6-sol",
+              capabilities: {
+                optionDescriptors: [
+                  {
+                    id: "reasoningEffort",
+                    label: "Reasoning",
+                    type: "select",
+                    options: [
+                      { id: "high", label: "High" },
+                      { id: "xhigh", label: "Extra High", isDefault: true },
+                    ],
+                    currentValue: "xhigh",
+                  },
+                  {
+                    id: "serviceTier",
+                    label: "Service Tier",
+                    type: "select",
+                    options: [
+                      { id: "default", label: "Standard", isDefault: true },
+                      { id: "priority", label: "Fast" },
+                    ],
+                    currentValue: "default",
+                  },
+                ],
+              },
+            },
+          ],
+        },
+      ],
+    });
     const now = "2026-01-01T00:00:00.000Z";
 
     await Effect.runPromise(
@@ -1526,9 +1563,9 @@ describe("ProviderCommandReactor", () => {
           text: "hello fast mode",
           attachments: [],
         },
-        modelSelection: createModelSelection(ProviderInstanceId.make("codex"), "gpt-5.3-codex", [
+        modelSelection: createModelSelection(ProviderInstanceId.make("codex"), "gpt-5.6-sol", [
           { id: "reasoningEffort", value: "high" },
-          { id: "fastMode", value: true },
+          { id: "serviceTier", value: "flex" },
         ]),
         interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
         runtimeMode: "approval-required",
@@ -1539,16 +1576,16 @@ describe("ProviderCommandReactor", () => {
     await waitFor(() => harness.startSession.mock.calls.length === 1);
     await waitFor(() => harness.sendTurn.mock.calls.length === 1);
     expect(harness.startSession.mock.calls[0]?.[1]).toMatchObject({
-      modelSelection: createModelSelection(ProviderInstanceId.make("codex"), "gpt-5.3-codex", [
+      modelSelection: createModelSelection(ProviderInstanceId.make("codex"), "gpt-5.6-sol", [
         { id: "reasoningEffort", value: "high" },
-        { id: "fastMode", value: true },
+        { id: "serviceTier", value: "default" },
       ]),
     });
     expect(harness.sendTurn.mock.calls[0]?.[0]).toMatchObject({
       threadId: ThreadId.make("thread-1"),
-      modelSelection: createModelSelection(ProviderInstanceId.make("codex"), "gpt-5.3-codex", [
+      modelSelection: createModelSelection(ProviderInstanceId.make("codex"), "gpt-5.6-sol", [
         { id: "reasoningEffort", value: "high" },
-        { id: "fastMode", value: true },
+        { id: "serviceTier", value: "default" },
       ]),
     });
   });

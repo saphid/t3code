@@ -1285,10 +1285,15 @@ enum DailyUXModelOptions {
               let provider = providers.first(where: {
                   $0.id == selection.providerID && $0.isAvailable
               }),
-              provider.models.contains(where: { $0.id == selection.modelID }) else {
+              let model = provider.models.first(where: { $0.id == selection.modelID }) else {
             return nil
         }
-        return selection
+        guard provider.driver == "codex" else { return selection }
+        return FeatureSelection(
+            providerID: selection.providerID,
+            modelID: selection.modelID,
+            options: normalizedSelections(selection.options, for: model)
+        )
     }
 
     static func preferredSelection(in providers: [FeatureProvider]) -> FeatureSelection? {
@@ -1323,6 +1328,41 @@ enum DailyUXModelOptions {
                 return FeatureModelOptionSelection(id: descriptor.id, value: .boolean(false))
             }
         }
+    }
+
+    private static func normalizedSelections(
+        _ selections: [FeatureModelOptionSelection],
+        for model: FeatureModel
+    ) -> [FeatureModelOptionSelection] {
+        let selectedServiceTier = selections.first(where: { $0.id == "serviceTier" })?.value
+        let legacyFastMode = selections.first(where: { $0.id == "fastMode" })?.value
+        guard selectedServiceTier != nil || legacyFastMode != nil else { return selections }
+
+        let preserved = selections.filter { $0.id != "serviceTier" && $0.id != "fastMode" }
+        guard let descriptor = model.options.first(where: {
+            $0.id == "serviceTier" && $0.kind == .select
+        }) else {
+            return preserved
+        }
+
+        let candidate: String
+        if case let .string(value) = selectedServiceTier {
+            candidate = value
+        } else if case let .boolean(isEnabled) = legacyFastMode, isEnabled {
+            candidate = "fast"
+        } else {
+            candidate = "default"
+        }
+        let selectedChoice = descriptor.choices.first(where: { $0.id == candidate })
+            ?? descriptor.choices.first(where: \.isDefault)
+            ?? descriptor.choices.first
+        guard let selectedChoice else { return preserved }
+        return preserved + [
+            FeatureModelOptionSelection(
+                id: descriptor.id,
+                value: .string(selectedChoice.id)
+            ),
+        ]
     }
 
     static func value(

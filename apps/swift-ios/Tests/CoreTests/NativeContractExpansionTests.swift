@@ -261,10 +261,18 @@ final class NativeContractExpansionTests: XCTestCase {
                           }],
                           "currentValue": "high"
                         }, {
-                          "id": "fastMode",
-                          "type": "boolean",
-                          "label": "Fast mode",
-                          "currentValue": true
+                          "id": "serviceTier",
+                          "type": "select",
+                          "label": "Service Tier",
+                          "options": [{
+                            "id": "default",
+                            "label": "Standard",
+                            "isDefault": true
+                          }, {
+                            "id": "priority",
+                            "label": "Fast"
+                          }],
+                          "currentValue": "priority"
                         }]
                       }
                     }, {
@@ -311,13 +319,14 @@ final class NativeContractExpansionTests: XCTestCase {
         XCTAssertEqual(provider.models[1].isLegacy, true)
         let descriptors = try XCTUnwrap(model.capabilities?.optionDescriptors)
         guard case let .select(effort) = descriptors[0],
-              case let .boolean(fastMode) = descriptors[1]
+              case let .select(serviceTier) = descriptors[1]
         else {
-            return XCTFail("Expected typed select and boolean descriptors")
+            return XCTFail("Expected typed select descriptors")
         }
         XCTAssertEqual(effort.options.first?.label, "High")
         XCTAssertEqual(effort.currentValue, "high")
-        XCTAssertEqual(fastMode.currentValue, true)
+        XCTAssertEqual(serviceTier.options.map(\.id), ["default", "priority"])
+        XCTAssertEqual(serviceTier.currentValue, "priority")
     }
 
     func testServerConfigSettingsUpdateDecodesEnvironmentPreferences() throws {
