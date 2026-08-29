@@ -18,6 +18,43 @@ import { OpenCodeRuntime, OpenCodeRuntimeLive } from "./opencodeRuntime.ts";
 const testLayer = OpenCodeRuntimeLive.pipe(Layer.provideMerge(NodeServices.layer));
 
 it.layer(testLayer)("OpenCodeRuntime inventory", (it) => {
+  it.effect("loads SDK inventory without racing OpenCode's database", () =>
+    Effect.gen(function* () {
+      const runtime = yield* OpenCodeRuntime;
+      let active = false;
+      const completed: Array<string> = [];
+      const withDatabase = async <A>(operation: string, data: A): Promise<{ data: A }> => {
+        if (active) {
+          throw new Error("database is locked");
+        }
+        active = true;
+        await Promise.resolve();
+        completed.push(operation);
+        active = false;
+        return { data };
+      };
+      const client = {
+        provider: {
+          list: () =>
+            withDatabase("providers", {
+              connected: ["openai"],
+              all: [],
+              default: {},
+            }),
+        },
+        app: {
+          agents: () => withDatabase("agents", []),
+          skills: () => withDatabase("skills", []),
+        },
+      } as unknown as OpencodeClient;
+
+      const inventory = yield* runtime.loadOpenCodeInventory(client);
+
+      NodeAssert.deepEqual(inventory.providerList.connected, ["openai"]);
+      NodeAssert.deepEqual(completed, ["providers", "agents", "skills"]);
+    }),
+  );
+
   it.effect("keeps provider inventory when skill discovery fails", () =>
     Effect.gen(function* () {
       const runtime = yield* OpenCodeRuntime;
@@ -35,6 +72,34 @@ it.layer(testLayer)("OpenCodeRuntime inventory", (it) => {
         app: {
           agents: () => Promise.resolve({ data: [] }),
           skills: () => Promise.reject(new Error("skills endpoint unavailable")),
+        },
+      } as unknown as OpencodeClient;
+
+      const inventory = yield* runtime.loadOpenCodeInventory(client);
+
+      NodeAssert.deepEqual(inventory.providerList.connected, ["openai"]);
+      NodeAssert.deepEqual(inventory.agents, []);
+      NodeAssert.deepEqual(inventory.skills, []);
+    }),
+  );
+
+  it.effect("keeps provider inventory when agent discovery fails", () =>
+    Effect.gen(function* () {
+      const runtime = yield* OpenCodeRuntime;
+      const client = {
+        provider: {
+          list: () =>
+            Promise.resolve({
+              data: {
+                connected: ["openai"],
+                all: [],
+                default: {},
+              },
+            }),
+        },
+        app: {
+          agents: () => Promise.reject(new Error("agents endpoint unavailable")),
+          skills: () => Promise.resolve({ data: [] }),
         },
       } as unknown as OpencodeClient;
 
@@ -140,6 +205,66 @@ it.layer(testLayer)("OpenCodeRuntime inventory", (it) => {
 
       NodeAssert.deepEqual(inventory.providerList.connected, ["openai"]);
       NodeAssert.equal(inventory.skills.length, 0);
+    }),
+  );
+
+  it.effect("uses the supported verbose model command without requiring JSON mode", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const hostEnvironment = yield* HostProcessEnvironment;
+      const executablePath = yield* HostProcessExecutablePath;
+      const hostPlatform = yield* HostProcessPlatform;
+      const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-opencode-compatibility-" });
+      const isWindows = hostPlatform === "win32";
+      const binaryPath = path.join(tempDir, isWindows ? "opencode.cmd" : "opencode");
+      const scriptPath = path.join(tempDir, "opencode.mjs");
+      const invocationsPath = path.join(tempDir, "invocations.txt");
+
+      yield* fs.writeFileString(
+        scriptPath,
+        [
+          'import { appendFileSync } from "node:fs";',
+          'appendFileSync(process.env.T3_TEST_INVOCATIONS, `${process.argv.slice(2).join(" ")}\\n`);',
+          'if (process.argv.includes("--json")) process.exit(9);',
+          'if (process.argv[2] === "models" && process.argv.includes("--verbose")) {',
+          '  process.stdout.write(`openai/gpt-test\\n{"id":"gpt-test","providerID":"openai","name":"GPT Test"}\\n`);',
+          '} else if (process.argv[2] === "debug") {',
+          '  process.stdout.write("[]");',
+          "}",
+          "",
+        ].join("\n"),
+      );
+      yield* fs.writeFileString(
+        binaryPath,
+        [
+          ...(isWindows ? ["@echo off"] : ["#!/bin/sh"]),
+          isWindows
+            ? '"%T3_TEST_NODE_BINARY%" "%T3_TEST_OPENCODE_SCRIPT%" %*'
+            : 'exec "$T3_TEST_NODE_BINARY" "$T3_TEST_OPENCODE_SCRIPT" "$@"',
+          "",
+        ].join("\n"),
+      );
+      if (!isWindows) {
+        yield* fs.chmod(binaryPath, 0o755);
+      }
+
+      const runtime = yield* OpenCodeRuntime;
+      const inventory = yield* runtime.loadInventoryFromCli({
+        binaryPath,
+        cwd: tempDir,
+        environment: {
+          ...hostEnvironment,
+          T3_TEST_INVOCATIONS: invocationsPath,
+          T3_TEST_NODE_BINARY: executablePath,
+          T3_TEST_OPENCODE_SCRIPT: scriptPath,
+        },
+      });
+      const invocations = yield* fs.readFileString(invocationsPath);
+
+      NodeAssert.deepEqual(inventory.providerList.connected, ["openai"]);
+      NodeAssert.match(invocations, /^models --verbose$/m);
+      NodeAssert.doesNotMatch(invocations, /--json/);
     }),
   );
 

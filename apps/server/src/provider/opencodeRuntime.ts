@@ -704,6 +704,7 @@ const makeOpenCodeRuntime = Effect.gen(function* () {
   const loadAgents = (client: OpencodeClient) =>
     runOpenCodeSdk("app.agents", () => client.app.agents()).pipe(
       Effect.map((result) => result.data ?? []),
+      Effect.orElseSucceed((): ReadonlyArray<Agent> => []),
     );
 
   const loadSkills = (client: OpencodeClient) =>
@@ -719,9 +720,12 @@ const makeOpenCodeRuntime = Effect.gen(function* () {
     );
 
   const loadOpenCodeInventory: OpenCodeRuntimeShape["loadOpenCodeInventory"] = (client) =>
-    Effect.all([loadProviders(client), loadAgents(client), loadSkills(client)], {
-      concurrency: "unbounded",
-    }).pipe(Effect.map(([providerList, agents, skills]) => ({ providerList, agents, skills })));
+    Effect.gen(function* () {
+      const providerList = yield* loadProviders(client);
+      const agents = yield* loadAgents(client);
+      const skills = yield* loadSkills(client);
+      return { providerList, agents, skills };
+    });
 
   const loadInventoryFromCli: OpenCodeRuntimeShape["loadInventoryFromCli"] = (input) =>
     Effect.gen(function* () {

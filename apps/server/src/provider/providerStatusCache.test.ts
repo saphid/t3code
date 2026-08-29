@@ -86,8 +86,16 @@ it.layer(NodeServices.layer)("providerStatusCache", (it) => {
         auth: { status: "unknown" },
       });
       const openCodeProvider = makeProvider(OPENCODE_DRIVER, {
-        status: "warning",
-        auth: { status: "unknown", type: "opencode" },
+        auth: { status: "authenticated", type: "opencode" },
+        models: [
+          {
+            slug: "openai/gpt-5.6-sol",
+            name: "GPT-5.6 Sol",
+            subProvider: "OpenAI",
+            isCustom: false,
+            capabilities: emptyCapabilities,
+          },
+        ],
       });
       const codexPath = yield* resolveProviderStatusCachePath({
         cacheDir: tempDir,

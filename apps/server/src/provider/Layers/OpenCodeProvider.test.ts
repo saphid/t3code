@@ -33,8 +33,12 @@ const runtimeMock = {
   state: {
     runVersionError: null as Error | null,
     versionStdout: DEFAULT_VERSION_STDOUT,
-    inventoryError: null as Error | null,
+    cliInventoryError: null as Error | null,
+    sdkInventoryError: null as Error | null,
     inventoryCwd: null as string | null,
+    serverBinaryPath: null as string | null,
+    serverEnvironment: undefined as NodeJS.ProcessEnv | undefined,
+    sdkServerPassword: undefined as string | undefined,
     closeCalls: 0,
     inventory: {
       providerList: { connected: [] as string[], all: [] as unknown[], default: {} },
@@ -45,8 +49,12 @@ const runtimeMock = {
   reset() {
     this.state.runVersionError = null;
     this.state.versionStdout = DEFAULT_VERSION_STDOUT;
-    this.state.inventoryError = null;
+    this.state.cliInventoryError = null;
+    this.state.sdkInventoryError = null;
     this.state.inventoryCwd = null;
+    this.state.serverBinaryPath = null;
+    this.state.serverEnvironment = undefined;
+    this.state.sdkServerPassword = undefined;
     this.state.closeCalls = 0;
     this.state.inventory = {
       providerList: { connected: [], all: [] as unknown[], default: {} },
@@ -62,8 +70,10 @@ const OpenCodeRuntimeTestDouble: OpenCodeRuntimeShape = {
       url: "http://127.0.0.1:4301",
       exitCode: Effect.never,
     }),
-  connectToOpenCodeServer: ({ serverUrl }) =>
+  connectToOpenCodeServer: ({ binaryPath, serverUrl, environment }) =>
     Effect.gen(function* () {
+      runtimeMock.state.serverBinaryPath = binaryPath;
+      runtimeMock.state.serverEnvironment = environment;
       if (!serverUrl) {
         yield* Effect.addFinalizer(() =>
           Effect.sync(() => {
@@ -87,26 +97,28 @@ const OpenCodeRuntimeTestDouble: OpenCodeRuntimeShape = {
           }),
         )
       : Effect.succeed({ stdout: runtimeMock.state.versionStdout, stderr: "", code: 0 }),
-  createOpenCodeSdkClient: () =>
-    ({}) as unknown as ReturnType<OpenCodeRuntimeShape["createOpenCodeSdkClient"]>,
+  createOpenCodeSdkClient: ({ serverPassword }) => {
+    runtimeMock.state.sdkServerPassword = serverPassword;
+    return {} as unknown as ReturnType<OpenCodeRuntimeShape["createOpenCodeSdkClient"]>;
+  },
   loadOpenCodeInventory: () =>
-    runtimeMock.state.inventoryError
+    runtimeMock.state.sdkInventoryError
       ? Effect.fail(
           new OpenCodeRuntimeError({
             operation: "loadOpenCodeInventory",
-            detail: runtimeMock.state.inventoryError.message,
-            cause: runtimeMock.state.inventoryError,
+            detail: runtimeMock.state.sdkInventoryError.message,
+            cause: runtimeMock.state.sdkInventoryError,
           }),
         )
       : Effect.succeed(runtimeMock.state.inventory as OpenCodeInventory),
   loadInventoryFromCli: ({ cwd }) => {
     runtimeMock.state.inventoryCwd = cwd;
-    return runtimeMock.state.inventoryError
+    return runtimeMock.state.cliInventoryError
       ? Effect.fail(
           new OpenCodeRuntimeError({
             operation: "loadInventoryFromCli",
-            detail: runtimeMock.state.inventoryError.message,
-            cause: runtimeMock.state.inventoryError,
+            detail: runtimeMock.state.cliInventoryError.message,
+            cause: runtimeMock.state.cliInventoryError,
           }),
         )
       : Effect.succeed(runtimeMock.state.inventory as OpenCodeInventory);
@@ -291,7 +303,8 @@ it.layer(testLayer)("checkOpenCodeProviderStatus", (it) => {
 
   it.effect("reports local model inventory failures without treating them as empty", () =>
     Effect.gen(function* () {
-      runtimeMock.state.inventoryError = new Error("opencode models failed");
+      runtimeMock.state.cliInventoryError = new Error("opencode models failed");
+      runtimeMock.state.sdkInventoryError = new Error("OpenCode server inventory failed");
       const snapshot = yield* checkOpenCodeProviderStatus(makeOpenCodeSettings(), process.cwd());
 
       NodeAssert.equal(snapshot.status, "error");
@@ -299,16 +312,72 @@ it.layer(testLayer)("checkOpenCodeProviderStatus", (it) => {
       NodeAssert.equal(snapshot.models.length, 0);
       NodeAssert.equal(
         snapshot.message,
-        "Failed to execute OpenCode CLI health check: opencode models failed",
+        "Failed to load OpenCode provider inventory: OpenCode server inventory failed",
       );
     }),
+  );
+
+  it.effect(
+    "recovers local inventory through a scoped OpenCode server when the CLI probe fails",
+    () =>
+      Effect.gen(function* () {
+        runtimeMock.state.cliInventoryError = new Error(
+          "OpenCode models command exited with code 1.",
+        );
+        runtimeMock.state.inventory = {
+          providerList: {
+            connected: ["openai"],
+            all: [
+              {
+                id: "openai",
+                name: "OpenAI",
+                models: {
+                  "gpt-5.6-sol": {
+                    id: "gpt-5.6-sol",
+                    name: "GPT-5.6 Sol",
+                    variants: {},
+                  },
+                },
+              },
+            ],
+            default: {},
+          },
+          agents: [],
+          skills: [],
+        };
+
+        const environment = { OPENCODE_SERVER_PASSWORD: "local-secret" };
+        const snapshot = yield* checkOpenCodeProviderStatus(
+          makeOpenCodeSettings({
+            binaryPath: "/opt/custom/opencode",
+            customModels: ["saved/custom-model"],
+          }),
+          process.cwd(),
+          environment,
+        );
+
+        NodeAssert.equal(snapshot.status, "ready");
+        NodeAssert.equal(snapshot.auth.status, "authenticated");
+        NodeAssert.deepEqual(
+          snapshot.models.map((model) => model.slug),
+          ["openai/gpt-5.6-sol", "saved/custom-model"],
+        );
+        NodeAssert.equal(
+          snapshot.models.find((model) => model.slug === "saved/custom-model")?.isCustom,
+          true,
+        );
+        NodeAssert.equal(runtimeMock.state.closeCalls, 1);
+        NodeAssert.equal(runtimeMock.state.serverBinaryPath, "/opt/custom/opencode");
+        NodeAssert.equal(runtimeMock.state.serverEnvironment, environment);
+        NodeAssert.equal(runtimeMock.state.sdkServerPassword, "local-secret");
+      }),
   );
 });
 
 it.layer(testLayer)("checkOpenCodeProviderStatus with configured server URL", (it) => {
   it.effect("surfaces a friendly auth error for configured servers", () =>
     Effect.gen(function* () {
-      runtimeMock.state.inventoryError = new Error("401 Unauthorized");
+      runtimeMock.state.sdkInventoryError = new Error("401 Unauthorized");
       const snapshot = yield* checkOpenCodeProviderStatus(
         makeOpenCodeSettings({
           serverUrl: "http://127.0.0.1:9999",
@@ -328,7 +397,7 @@ it.layer(testLayer)("checkOpenCodeProviderStatus with configured server URL", (i
 
   it.effect("surfaces a friendly connection error for configured servers", () =>
     Effect.gen(function* () {
-      runtimeMock.state.inventoryError = new Error(
+      runtimeMock.state.sdkInventoryError = new Error(
         "fetch failed: connect ECONNREFUSED 127.0.0.1:9999",
       );
       const snapshot = yield* checkOpenCodeProviderStatus(
