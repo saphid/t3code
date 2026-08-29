@@ -223,7 +223,14 @@ diff and confirm co-authorship with them before adding it.
 
 ## Clean up the branch before review
 
-- Rebase or otherwise resolve conflicts against the current target branch.
+- Fetch the live target branch immediately before the handoff. Record the
+  fetched target-tip SHA and remote PR-head SHA, then run
+  `git merge-base --is-ancestor <target-tip> <remote-head>`. Exit 0 proves the
+  branch contains the current target. GitHub's `CLEAN` or `MERGEABLE` state and
+  a PR object's cached base OID do not prove freshness.
+- Rebase or otherwise update against that fetched target branch and resolve
+  conflicts. If the target moves while checks or review run, repeat the fetch
+  and ancestry check before reporting readiness.
 - Rerun the affected checks after conflict resolution.
 - Remove unrelated files, temporary plans, research notes, debug output, and
   accidental generated changes.
@@ -275,8 +282,9 @@ Before requesting human review, confirm:
 - [ ] Every affected screenshot, GIF, and video was regenerated after the
       latest UI change and renders in the live PR body.
 - [ ] Missing proof and known limitations are stated plainly.
-- [ ] The branch is current, mergeable, and free of temporary or unrelated
-      files.
+- [ ] The latest fetched target-tip SHA is an ancestor of the remote PR-head
+      SHA, both are recorded, and the branch is mergeable and free of temporary
+      or unrelated files.
 - [ ] The PR description and review replies match the current head.
 - [ ] A human can tell whether the PR is ready without repeating your
       investigation.
