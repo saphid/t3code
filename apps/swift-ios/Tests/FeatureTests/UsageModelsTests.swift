@@ -486,7 +486,7 @@ struct UsageModelsTests {
             environmentID: "previous-server",
             label: "Previous server",
             summary: summary(
-                contractVersion: minimumCompatibleUsageContractVersion,
+                contractVersion: minimumCompatibleUsageContractVersion - 1,
                 provider: .claude,
                 costUsd: 20
             ),
