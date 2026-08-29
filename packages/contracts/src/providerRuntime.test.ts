@@ -130,6 +130,26 @@ describe("ProviderRuntimeEvent", () => {
     expect(parsed.payload.answers.sandbox_mode).toBe("workspace-write");
   });
 
+  it("decodes typed Codex permission approvals", () => {
+    const parsed = decodeRuntimeEvent({
+      type: "request.opened",
+      eventId: "event-permissions-approval",
+      provider: "codex",
+      createdAt: "2026-08-30T00:00:00.000Z",
+      threadId: "thread-1",
+      turnId: "turn-1",
+      requestId: "request-permissions-1",
+      payload: {
+        requestType: "permissions_approval",
+        detail: "Requested permissions:\n• Network access",
+      },
+    });
+
+    expect(parsed.type).toBe("request.opened");
+    if (parsed.type !== "request.opened") throw new Error("expected request.opened");
+    expect(parsed.payload.requestType).toBe("permissions_approval");
+  });
+
   it("rejects legacy message.delta type", () => {
     expect(() =>
       decodeRuntimeEvent({

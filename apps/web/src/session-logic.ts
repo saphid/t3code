@@ -393,6 +393,8 @@ function requestKindFromRequestType(requestType: unknown): PendingApproval["requ
     case "file_change_approval":
     case "apply_patch_approval":
       return "file-change";
+    case "permissions_approval":
+      return "permissions";
     case "mcp_elicitation_approval":
       return "mcp-elicitation";
     default:
@@ -1708,7 +1710,8 @@ function extractWorkLogRequestKind(
   if (
     payload?.requestKind === "command" ||
     payload?.requestKind === "file-read" ||
-    payload?.requestKind === "file-change"
+    payload?.requestKind === "file-change" ||
+    payload?.requestKind === "permissions"
   ) {
     return payload.requestKind;
   }

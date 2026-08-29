@@ -17,11 +17,13 @@ import {
 import { codexSessionAppServerArgs } from "./codexLaunchArgs.ts";
 import {
   buildTurnStartParams,
+  describePermissionRequest,
   describeMcpElicitation,
   hasConfiguredMcpServer,
   isRecoverableThreadResumeError,
   makeMemoryConsolidationNotificationFilter,
   openCodexThread,
+  permissionsApprovalResponse,
   toMcpElicitationResponse,
 } from "./CodexSessionRuntime.ts";
 const isCodexAppServerRequestError = Schema.is(CodexErrors.CodexAppServerRequestError);
@@ -449,6 +451,56 @@ describe("Codex MCP elicitation approvals", () => {
       { decision: "decline", label: "Decline" },
       { decision: "accept", label: "Approve" },
     ]);
+  });
+});
+
+describe("Codex permission approvals", () => {
+  const permissions = {
+    network: { enabled: true },
+    fileSystem: {
+      entries: [{ access: "write" as const, path: { type: "path" as const, path: "/tmp/output" } }],
+    },
+  };
+
+  it("describes the reason and requested permission profile", () => {
+    const detail = describePermissionRequest({
+      cwd: "/tmp/project",
+      itemId: "permission-call-1",
+      permissions,
+      reason: "Let the GitHub connector download an artifact",
+      startedAtMs: 1,
+      threadId: "provider-thread-1",
+      turnId: "turn-1",
+    });
+
+    NodeAssert.equal(
+      detail,
+      [
+        "Let the GitHub connector download an artifact",
+        "Requested permissions:",
+        "• Network access",
+        "• Write: /tmp/output",
+      ].join("\n"),
+    );
+  });
+
+  it("grants the requested profile only for affirmative decisions", () => {
+    NodeAssert.deepStrictEqual(permissionsApprovalResponse(permissions, "accept"), {
+      permissions,
+      scope: "turn",
+    });
+    NodeAssert.deepStrictEqual(permissionsApprovalResponse(permissions, "acceptForSession"), {
+      permissions,
+      scope: "session",
+    });
+    NodeAssert.deepStrictEqual(permissionsApprovalResponse(permissions, "decline"), {
+      permissions: {},
+      scope: "turn",
+    });
+    NodeAssert.deepStrictEqual(permissionsApprovalResponse(permissions, "cancel"), {
+      permissions: {},
+      scope: "turn",
+    });
   });
 });
 

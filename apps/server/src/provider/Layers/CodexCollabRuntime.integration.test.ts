@@ -27,7 +27,7 @@ import { makeCodexSessionRuntime } from "./CodexSessionRuntime.ts";
 const ROOT = wireFixture.rootThreadId;
 const [CHILD_A, CHILD_B] = wireFixture.childThreadIds as [string, string];
 const MEMORY = "memory-consolidation-thread";
-const decodeMcpElicitationResponse = Schema.decodeUnknownEffect(
+const decodeServerResponse = Schema.decodeUnknownEffect(
   Schema.fromJsonString(
     Schema.Struct({
       id: Schema.Number,
@@ -440,7 +440,7 @@ describe("CodexSessionRuntime collab integration", () => {
         yield* runtime.respondToRequest(approval.requestId, decision);
         yield* Deferred.await(turnCompleted);
 
-        const recordedResponse = yield* decodeMcpElicitationResponse(
+        const recordedResponse = yield* decodeServerResponse(
           NodeFS.readFileSync(responsesPath, "utf8"),
         );
         assert.equal(recordedResponse.id, scriptedRequest.id);
@@ -449,5 +449,103 @@ describe("CodexSessionRuntime collab integration", () => {
         yield* runtime.close;
       }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
     );
+  }
+
+  const permissionModes = [
+    "approval-required",
+    "auto-accept-edits",
+    "full-access",
+    "auto",
+  ] as const;
+  const permissionDecisions = ["accept", "decline"] as const;
+
+  for (const runtimeMode of permissionModes) {
+    for (const decision of permissionDecisions) {
+      it.live(`returns the Codex permission ${decision} response in ${runtimeMode} mode`, () =>
+        Effect.gen(function* () {
+          const requestedPermissions = {
+            network: { enabled: true },
+            fileSystem: {
+              entries: [{ access: "write", path: { type: "path", path: "/tmp/output" } }],
+            },
+          };
+          const scriptedRequest = {
+            id: 8001,
+            method: "item/permissions/requestApproval",
+            params: {
+              cwd: "/tmp",
+              itemId: "permission-call-1",
+              permissions: requestedPermissions,
+              reason: "Let the GitHub connector download an artifact",
+              startedAtMs: 1,
+              threadId: ROOT,
+              turnId: wireFixture.responses.turnStart.turn.id,
+            },
+          };
+          const script = {
+            rootThreadId: ROOT,
+            holdTurnOpen: true,
+            completeTurnOnServerResponse: true,
+            notifications: [],
+            serverRequests: [scriptedRequest],
+          };
+          const responsesPath = `${scriptPath}.responses`;
+          // @effect-diagnostics-next-line preferSchemaOverJson:off
+          NodeFS.writeFileSync(scriptPath, JSON.stringify(script), "utf8");
+          NodeFS.rmSync(responsesPath, { force: true });
+          yield* Effect.addFinalizer(() =>
+            Effect.sync(() => {
+              NodeFS.rmSync(scriptPath, { force: true });
+              NodeFS.rmSync(responsesPath, { force: true });
+            }),
+          );
+
+          const runtime = yield* makeCodexSessionRuntime({
+            threadId: ThreadId.make(`thread-codex-permissions-${runtimeMode}-${decision}`),
+            binaryPath: peerPath,
+            cwd: "/tmp",
+            runtimeMode,
+            environment: { ...process.env, T3_CODEX_COLLAB_SCRIPT: scriptPath },
+          });
+          const approvalRequested = yield* Deferred.make<ProviderEvent>();
+          const turnCompleted = yield* Deferred.make<void>();
+          yield* runtime.events.pipe(
+            Stream.runForEach((event) =>
+              event.method === "item/permissions/requestApproval"
+                ? Deferred.succeed(approvalRequested, event).pipe(Effect.asVoid)
+                : event.method === "turn/completed"
+                  ? Deferred.succeed(turnCompleted, undefined).pipe(Effect.asVoid)
+                  : Effect.void,
+            ),
+            Effect.forkScoped,
+          );
+
+          yield* runtime.start();
+          yield* runtime.sendTurn({ input: "Use the GitHub connector" });
+          const approval = yield* Deferred.await(approvalRequested);
+          assert.equal(approval.requestKind, "permissions");
+          assert.isDefined(approval.requestId);
+          if (approval.requestId === undefined) return;
+
+          yield* runtime.respondToRequest(approval.requestId, decision);
+          const duplicate = yield* Effect.exit(
+            runtime.respondToRequest(approval.requestId, decision),
+          );
+          assert.isTrue(duplicate._tag === "Failure", "the exact request must resolve once");
+          yield* Deferred.await(turnCompleted);
+
+          const recordedResponse = yield* decodeServerResponse(
+            NodeFS.readFileSync(responsesPath, "utf8"),
+          );
+          assert.equal(recordedResponse.id, scriptedRequest.id);
+          assert.deepEqual(recordedResponse.result, {
+            permissions: decision === "accept" ? requestedPermissions : {},
+            scope: "turn",
+          });
+
+          yield* runtime.close;
+        }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+      );
+    }
   }
 });

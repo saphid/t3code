@@ -1111,6 +1111,73 @@ lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
     }),
   );
 
+  it.effect("maps Codex permission requests into typed approvals with permission context", () =>
+    Effect.gen(function* () {
+      const { adapter, runtime } = yield* startLifecycleRuntime();
+      const firstEventFiber = yield* Stream.runHead(adapter.streamEvents).pipe(Effect.forkChild);
+
+      yield* runtime.emit({
+        id: asEventId("evt-permissions-approval"),
+        kind: "request",
+        provider: ProviderDriverKind.make("codex"),
+        threadId: asThreadId("thread-1"),
+        createdAt: "2026-08-30T00:00:00.000Z",
+        method: "item/permissions/requestApproval",
+        requestKind: "permissions",
+        requestId: ApprovalRequestId.make("req-permissions"),
+        turnId: asTurnId("turn-1"),
+        itemId: asItemId("permission-call-1"),
+        payload: {
+          cwd: "/tmp/project",
+          itemId: "permission-call-1",
+          permissions: { network: { enabled: true } },
+          reason: "Let the GitHub connector access the network",
+          startedAtMs: 1,
+          threadId: "provider-thread-1",
+          turnId: "turn-1",
+        },
+      } satisfies ProviderEvent);
+
+      const firstEvent = yield* Fiber.join(firstEventFiber);
+      NodeAssert.equal(firstEvent._tag, "Some");
+      if (firstEvent._tag !== "Some" || firstEvent.value.type !== "request.opened") return;
+      NodeAssert.equal(firstEvent.value.payload.requestType, "permissions_approval");
+      NodeAssert.equal(
+        firstEvent.value.payload.detail,
+        [
+          "Let the GitHub connector access the network",
+          "Requested permissions:",
+          "• Network access",
+        ].join("\n"),
+      );
+    }),
+  );
+
+  it.effect("preserves permission approval type when the exact request resolves", () =>
+    Effect.gen(function* () {
+      const { adapter, runtime } = yield* startLifecycleRuntime();
+      const firstEventFiber = yield* Stream.runHead(adapter.streamEvents).pipe(Effect.forkChild);
+
+      yield* runtime.emit({
+        id: asEventId("evt-permissions-resolved"),
+        kind: "notification",
+        provider: ProviderDriverKind.make("codex"),
+        threadId: asThreadId("thread-1"),
+        createdAt: "2026-08-30T00:00:01.000Z",
+        method: "item/requestApproval/decision",
+        requestKind: "permissions",
+        requestId: ApprovalRequestId.make("req-permissions"),
+        payload: { decision: "decline" },
+      } satisfies ProviderEvent);
+
+      const firstEvent = yield* Fiber.join(firstEventFiber);
+      NodeAssert.equal(firstEvent._tag, "Some");
+      if (firstEvent._tag !== "Some" || firstEvent.value.type !== "request.resolved") return;
+      NodeAssert.equal(firstEvent.value.payload.requestType, "permissions_approval");
+      NodeAssert.equal(firstEvent.value.payload.decision, "decline");
+    }),
+  );
+
   it.effect("preserves MCP elicitation type when an app access request resolves", () =>
     Effect.gen(function* () {
       const { adapter, runtime } = yield* startLifecycleRuntime();

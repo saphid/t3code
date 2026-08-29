@@ -5543,6 +5543,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         case "command": .command
         case "file-read": .fileRead
         case "file-change": .fileChange
+        case "permissions": .permissions
         case "mcp-elicitation": .mcpElicitation
         default: .other
         }

@@ -2017,6 +2017,70 @@ describe("ProviderRuntimeIngestion", () => {
     expect(message?.streaming).toBe(false);
   });
 
+  it("projects typed Codex permission approvals with their decision context", async () => {
+    const harness = await createHarness();
+    const now = "2026-08-30T00:00:00.000Z";
+
+    harness.emit({
+      type: "request.opened",
+      eventId: asEventId("evt-permissions-requested"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-permissions"),
+      requestId: ApprovalRequestId.make("req-permissions"),
+      payload: {
+        requestType: "permissions_approval",
+        detail: "Requested permissions:\n• Network access",
+      },
+    });
+
+    const requested = await waitForThread(harness.readModel, (entry) =>
+      entry.activities.some((activity) => activity.id === "evt-permissions-requested"),
+    );
+    expect(
+      requested.activities.find((activity) => activity.id === "evt-permissions-requested"),
+    ).toMatchObject({
+      kind: "approval.requested",
+      summary: "Permission approval requested",
+      payload: {
+        requestId: "req-permissions",
+        requestKind: "permissions",
+        requestType: "permissions_approval",
+        detail: "Requested permissions:\n• Network access",
+      },
+    });
+
+    harness.emit({
+      type: "request.resolved",
+      eventId: asEventId("evt-permissions-resolved"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: "2026-08-30T00:00:01.000Z",
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-permissions"),
+      requestId: ApprovalRequestId.make("req-permissions"),
+      payload: {
+        requestType: "permissions_approval",
+        decision: "decline",
+      },
+    });
+
+    const resolved = await waitForThread(harness.readModel, (entry) =>
+      entry.activities.some((activity) => activity.id === "evt-permissions-resolved"),
+    );
+    expect(
+      resolved.activities.find((activity) => activity.id === "evt-permissions-resolved"),
+    ).toMatchObject({
+      kind: "approval.resolved",
+      payload: {
+        requestId: "req-permissions",
+        requestKind: "permissions",
+        requestType: "permissions_approval",
+        decision: "decline",
+      },
+    });
+  });
+
   it("flushes and completes buffered assistant text when user input is requested", async () => {
     const harness = await createHarness();
     const now = "2026-01-01T00:00:00.000Z";

@@ -655,6 +655,127 @@ final class NativeMultiEnvironmentTests: XCTestCase {
     }
 }
 
+@Suite("Native Codex permission approvals")
+@MainActor
+struct NativeCodexPermissionApprovalTests {
+    @Test(
+        "Approve resolves the exact permission request once",
+        .bug("https://github.com/saphid/t3code-personal/issues/234")
+    )
+    func approveResolvesPermissionRequestOnce() async throws {
+        try await verifyPermissionDecision(.allowOnce, wireDecision: "accept")
+    }
+
+    @Test(
+        "Deny resolves the exact permission request once",
+        .bug("https://github.com/saphid/t3code-personal/issues/234")
+    )
+    func denyResolvesPermissionRequestOnce() async throws {
+        try await verifyPermissionDecision(.deny, wireDecision: "decline")
+    }
+
+    private func verifyPermissionDecision(
+        _ decision: FeatureApprovalDecision,
+        wireDecision: String
+    ) async throws {
+        let fixture = try await NativeMultiEnvironmentTests.makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        let requested = permissionActivity(id: "permission-requested")
+        let replayed = permissionActivity(id: "permission-requested-replayed")
+
+        await fixture.transport.setShell(
+            multiEnvironmentShell(
+                projectID: "project-one",
+                threadID: "thread-one",
+                title: "Local work",
+                hasPendingApprovals: true
+            ),
+            host: "one.example"
+        )
+        await fixture.transport.setDetailActivities(
+            [requested, replayed],
+            host: "one.example"
+        )
+
+        let snapshot = try await fixture.client.initialSnapshot()
+        let thread = try #require(snapshot.threads.first { $0.wireID == "thread-one" })
+        #expect(thread.state == .waitingForApproval)
+
+        let detail = try await fixture.client.loadThread(id: thread.id)
+        let approval = try #require(detail.approvals.first)
+        #expect(detail.approvals.count == 1)
+        #expect(approval.kind == .permissions)
+        #expect(approval.title == "Permission approval requested")
+        #expect(
+            approval.detail
+                == "Let the GitHub connector access the network\nRequested permissions:\n• Network access"
+        )
+
+        await fixture.transport.setDetailActivities(
+            [requested, replayed, permissionResolvedActivity(decision: wireDecision)],
+            host: "one.example"
+        )
+        try await fixture.client.resolveApproval(id: approval.id, decision: decision)
+
+        let dispatches = await fixture.transport.dispatchRecords()
+        let command = try #require(dispatches.last?.command)
+        #expect(command["type"]?.stringValue == "thread.approval.respond")
+        #expect(command["threadId"]?.stringValue == "thread-one")
+        #expect(command["requestId"]?.stringValue == "req-permissions")
+        #expect(command["decision"]?.stringValue == wireDecision)
+        let resolvedDetail = try await fixture.client.loadThread(id: thread.id)
+        #expect(resolvedDetail.approvals.isEmpty)
+
+        do {
+            try await fixture.client.resolveApproval(id: approval.id, decision: decision)
+            Issue.record("The resolved approval route remained actionable.")
+        } catch {
+            #expect(error.localizedDescription == "The approval request is no longer active.")
+        }
+        await fixture.client.disconnect()
+    }
+
+    private func permissionActivity(id: String) -> OrchestrationActivity {
+        OrchestrationActivity(
+            id: id,
+            tone: "approval",
+            kind: "approval.requested",
+            summary: "Permission approval requested",
+            payload: .object([
+                "requestId": .string("req-permissions"),
+                "requestKind": .string("permissions"),
+                "requestType": .string("permissions_approval"),
+                "detail": .string(
+                    "Let the GitHub connector access the network\nRequested permissions:\n• Network access"
+                ),
+            ]),
+            turnId: "turn-1",
+            sequence: nil,
+            createdAt: id.hasSuffix("replayed")
+                ? "2026-08-30T00:00:01.000Z"
+                : "2026-08-30T00:00:00.000Z"
+        )
+    }
+
+    private func permissionResolvedActivity(decision: String) -> OrchestrationActivity {
+        OrchestrationActivity(
+            id: "permission-resolved",
+            tone: "approval",
+            kind: "approval.resolved",
+            summary: "Approval resolved",
+            payload: .object([
+                "requestId": .string("req-permissions"),
+                "requestKind": .string("permissions"),
+                "requestType": .string("permissions_approval"),
+                "decision": .string(decision),
+            ]),
+            turnId: "turn-1",
+            sequence: nil,
+            createdAt: "2026-08-30T00:00:02.000Z"
+        )
+    }
+}
+
 @Suite("Native thread update reliability")
 @MainActor
 struct NativeThreadUpdateReliabilityTests {
@@ -1231,6 +1352,7 @@ private actor MultiEnvironmentHTTPTransport: HTTPTransport {
     private var resumedBlockedShellReadHosts = Set<String>()
     private var shellReadResumeContinuations: [String: CheckedContinuation<Void, Never>] = [:]
     private var detailMessagesByHost: [String: [OrchestrationMessage]] = [:]
+    private var detailActivitiesByHost: [String: [OrchestrationActivity]] = [:]
     private var failingNextDetailReadHosts = Set<String>()
     private var failingDetailReadHosts = Set<String>()
 
@@ -1285,6 +1407,10 @@ private actor MultiEnvironmentHTTPTransport: HTTPTransport {
 
     func setDetailMessages(_ messages: [OrchestrationMessage], host: String) {
         detailMessagesByHost[host] = messages
+    }
+
+    func setDetailActivities(_ activities: [OrchestrationActivity], host: String) {
+        detailActivitiesByHost[host] = activities
     }
 
     func failNextDetailRead(host: String) {
@@ -1348,7 +1474,8 @@ private actor MultiEnvironmentHTTPTransport: HTTPTransport {
                     multiEnvironmentDetail(
                         projectID: projectID,
                         threadID: threadID,
-                        messages: detailMessagesByHost[host] ?? []
+                        messages: detailMessagesByHost[host] ?? [],
+                        activities: detailActivitiesByHost[host] ?? []
                     )
                 ),
                 multiEnvironmentResponse(request)
@@ -1520,7 +1647,8 @@ private func multiEnvironmentShell(
     modelID: String = "gpt-5.6-sol",
     repositoryIdentity: RepositoryIdentity? = nil,
     backgroundLiveness: OrchestrationBackgroundLiveness? = nil,
-    latestTurn: OrchestrationLatestTurn? = nil
+    latestTurn: OrchestrationLatestTurn? = nil,
+    hasPendingApprovals: Bool = false
 ) -> OrchestrationShellSnapshot {
     let timestamp = "2026-07-31T12:00:00.000Z"
     let model = ModelSelection(instanceId: providerID, model: modelID)
@@ -1560,7 +1688,7 @@ private func multiEnvironmentShell(
                 pinnedAt: nil,
                 session: nil,
                 latestUserMessageAt: nil,
-                hasPendingApprovals: false,
+                hasPendingApprovals: hasPendingApprovals,
                 hasPendingUserInput: false,
                 hasActionableProposedPlan: false,
                 backgroundLiveness: backgroundLiveness
@@ -1573,7 +1701,8 @@ private func multiEnvironmentShell(
 private func multiEnvironmentDetail(
     projectID: String,
     threadID: String,
-    messages: [OrchestrationMessage] = []
+    messages: [OrchestrationMessage] = [],
+    activities: [OrchestrationActivity] = []
 ) -> OrchestrationThreadDetailSnapshot {
     let timestamp = "2026-07-31T12:00:00.000Z"
     return OrchestrationThreadDetailSnapshot(
@@ -1598,7 +1727,7 @@ private func multiEnvironmentDetail(
             pinnedAt: nil,
             deletedAt: nil,
             messages: messages,
-            activities: [],
+            activities: activities,
             checkpoints: [],
             session: nil
         )

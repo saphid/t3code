@@ -184,6 +184,70 @@ export interface CodexThreadSnapshot {
   readonly turns: ReadonlyArray<CodexThreadTurnSnapshot>;
 }
 
+function permissionPathLabel(
+  path: EffectCodexSchema.PermissionsRequestApprovalParams__FileSystemPath,
+): string {
+  switch (path.type) {
+    case "path":
+      return path.path;
+    case "glob_pattern":
+      return path.pattern;
+    case "special": {
+      const value = path.value;
+      if (value.kind === "unknown") {
+        return [value.path, value.subpath].filter(Boolean).join("/");
+      }
+      if (value.kind === "project_roots" && value.subpath) {
+        return `project roots/${value.subpath}`;
+      }
+      return value.kind.replaceAll("_", " ");
+    }
+  }
+}
+
+export function describePermissionRequest(
+  payload: EffectCodexSchema.PermissionsRequestApprovalParams,
+): string {
+  const requested: string[] = [];
+  if (payload.permissions.network?.enabled === true) {
+    requested.push("Network access");
+  }
+
+  const fileSystem = payload.permissions.fileSystem;
+  for (const entry of fileSystem?.entries ?? []) {
+    const access = entry.access === "write" ? "Write" : entry.access === "read" ? "Read" : "Deny";
+    requested.push(`${access}: ${permissionPathLabel(entry.path)}`);
+  }
+  if ((fileSystem?.entries?.length ?? 0) === 0) {
+    for (const path of fileSystem?.read ?? []) requested.push(`Read: ${path}`);
+    for (const path of fileSystem?.write ?? []) requested.push(`Write: ${path}`);
+  }
+
+  const permissionLines = requested.slice(0, 12);
+  if (requested.length > permissionLines.length) {
+    permissionLines.push(`${requested.length - permissionLines.length} more permissions`);
+  }
+  const reason = payload.reason?.trim();
+  if (permissionLines.length === 0) {
+    return reason || "Codex requested additional permissions.";
+  }
+  return [reason, "Requested permissions:", ...permissionLines.map((line) => `• ${line}`)]
+    .filter(Boolean)
+    .join("\n");
+}
+
+export function permissionsApprovalResponse(
+  permissions: EffectCodexSchema.PermissionsRequestApprovalParams__RequestPermissionProfile,
+  decision: ProviderApprovalDecision,
+): EffectCodexSchema.PermissionsRequestApprovalResponse {
+  const accepted =
+    decision === "accept" || decision === "acceptForSession" || decision === "acceptAlways";
+  return {
+    permissions: accepted ? permissions : {},
+    scope: decision === "acceptForSession" || decision === "acceptAlways" ? "session" : "turn",
+  };
+}
+
 export interface CodexSessionRuntimeShape {
   readonly start: () => Effect.Effect<ProviderSession, CodexSessionRuntimeError>;
   readonly getSession: Effect.Effect<ProviderSession>;
@@ -1826,6 +1890,62 @@ export const makeCodexSessionRuntime = (
       }),
     );
 
+    yield* client.handleServerRequest("item/permissions/requestApproval", (payload) =>
+      Effect.gen(function* () {
+        const requestId = ApprovalRequestId.make(
+          yield* randomUUIDv4("permissions-approval-request"),
+        );
+        const turnId = TurnId.make(payload.turnId);
+        const itemId = ProviderItemId.make(payload.itemId);
+        const decision = yield* Deferred.make<ProviderApprovalDecision>();
+
+        yield* Ref.update(pendingApprovalsRef, (current) => {
+          const next = new Map(current);
+          next.set(requestId, {
+            requestId,
+            jsonRpcId: payload.itemId,
+            requestKind: "permissions",
+            turnId,
+            itemId,
+            decision,
+          });
+          return next;
+        });
+        yield* Ref.update(approvalCorrelationsRef, (current) => {
+          const next = new Map(current);
+          next.set(payload.itemId, {
+            requestId,
+            requestKind: "permissions",
+            turnId,
+            itemId,
+          });
+          return next;
+        });
+
+        yield* emitEvent({
+          kind: "request",
+          threadId: options.threadId,
+          method: "item/permissions/requestApproval",
+          requestId,
+          requestKind: "permissions",
+          turnId,
+          itemId,
+          payload,
+        });
+
+        const resolved = yield* Deferred.await(decision).pipe(
+          Effect.ensuring(
+            Ref.update(pendingApprovalsRef, (current) => {
+              const next = new Map(current);
+              next.delete(requestId);
+              return next;
+            }),
+          ),
+        );
+        return permissionsApprovalResponse(payload.permissions, resolved);
+      }),
+    );
+
     yield* client.handleServerRequest("mcpServer/elicitation/request", (payload) =>
       Effect.gen(function* () {
         if (toMcpElicitationResponse(payload, "accept").action !== "accept") {
@@ -2213,17 +2333,18 @@ export const makeCodexSessionRuntime = (
         }),
       respondToRequest: (requestId, decision) =>
         Effect.gen(function* () {
-          const pending = (yield* Ref.get(pendingApprovalsRef)).get(requestId);
+          const pending = yield* Ref.modify(pendingApprovalsRef, (current) => {
+            const value = current.get(requestId);
+            if (!value) return [undefined, current] as const;
+            const next = new Map(current);
+            next.delete(requestId);
+            return [value, next] as const;
+          });
           if (!pending) {
             return yield* new CodexSessionRuntimePendingApprovalNotFoundError({
               requestId,
             });
           }
-          yield* Ref.update(pendingApprovalsRef, (current) => {
-            const next = new Map(current);
-            next.delete(requestId);
-            return next;
-          });
           yield* Deferred.succeed(pending.decision, decision);
           yield* emitEvent({
             kind: "notification",

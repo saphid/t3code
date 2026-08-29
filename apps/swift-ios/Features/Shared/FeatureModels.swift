@@ -449,6 +449,7 @@ public enum FeatureApprovalKind: String, Sendable, Codable {
     case command
     case fileRead
     case fileChange
+    case permissions
     case mcpElicitation
     case patch
     case other

@@ -130,6 +130,7 @@ struct FeatureComposerApprovalPanel: View {
         case .command: "Command"
         case .fileRead: "File access"
         case .fileChange: "File change"
+        case .permissions: "Requested permissions"
         case .mcpElicitation: "App access"
         case .patch: "Patch"
         case .other: "Details"

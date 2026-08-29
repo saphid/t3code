@@ -158,6 +158,8 @@ function requestKindFromRequestType(requestType: unknown): PendingApproval["requ
     case "file_change_approval":
     case "apply_patch_approval":
       return "file-change";
+    case "permissions_approval":
+      return "permissions";
     case "mcp_elicitation_approval":
       return "mcp-elicitation";
     default:
@@ -645,6 +647,7 @@ function workEntryIcon(entry: DerivedWorkLogEntry): ThreadFeedActivity["icon"] {
   if (entry.requestKind === "command") return "command";
   if (entry.requestKind === "file-read") return "eye";
   if (entry.requestKind === "file-change") return "edit";
+  if (entry.requestKind === "permissions") return "wrench";
   if (entry.itemType === "command_execution" || entry.command) return "command";
   if (entry.itemType === "file_change" || (entry.changedFiles?.length ?? 0) > 0) return "edit";
   if (entry.itemType === "web_search") return "globe";
@@ -980,7 +983,8 @@ function extractWorkLogRequestKind(
   if (
     payload?.requestKind === "command" ||
     payload?.requestKind === "file-read" ||
-    payload?.requestKind === "file-change"
+    payload?.requestKind === "file-change" ||
+    payload?.requestKind === "permissions"
   ) {
     return payload.requestKind;
   }

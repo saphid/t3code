@@ -144,6 +144,29 @@ describe("pending user input answers", () => {
 });
 
 describe("pending approvals", () => {
+  it("keeps typed Codex permission approvals actionable", () => {
+    const activity = makeActivity({
+      id: EventId.make("approval-permissions"),
+      kind: "approval.requested",
+      summary: "Permission approval requested",
+      createdAt: "2026-08-30T00:00:00.000Z",
+      payload: {
+        requestId: "req-permissions",
+        requestType: "permissions_approval",
+        detail: "Requested permissions:\n• Network access",
+      },
+    });
+
+    expect(derivePendingApprovals([activity])).toEqual([
+      {
+        requestId: "req-permissions",
+        requestKind: "permissions",
+        createdAt: "2026-08-30T00:00:00.000Z",
+        detail: "Requested permissions:\n• Network access",
+      },
+    ]);
+  });
+
   it("keeps app access approvals and persistence choices from remote environments", () => {
     const options = [
       { decision: "decline", label: "Decline" },
