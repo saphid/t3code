@@ -27,6 +27,7 @@ indirect enum MarkdownBlock: Equatable, Sendable {
     case blockquote(MarkdownDocument)
     case table(MarkdownTable)
     case codeBlock(language: String?, code: String)
+    case math(MarkdownMathExpression)
     case thematicBreak
 }
 
@@ -360,7 +361,43 @@ private struct MarkdownBlockParser {
             index += 1
         }
 
-        return imageBlocks(in: paragraphLines.joined(separator: "\n"))
+        return imageBlocks(in: paragraphLines.joined(separator: "\n")).flatMap { block in
+            guard case let .paragraph(source) = block else { return [block] }
+            return displayMathBlocks(in: source)
+        }
+    }
+
+    private func displayMathBlocks(in paragraph: String) -> [MarkdownBlock] {
+        guard paragraph.contains("\\[") else { return [.paragraph(paragraph)] }
+        let segments = MarkdownMathParser.segments(in: paragraph)
+        guard segments.contains(where: {
+            if case let .math(expression) = $0 { return expression.style == .display }
+            return false
+        }) else {
+            return [.paragraph(paragraph)]
+        }
+
+        var blocks: [MarkdownBlock] = []
+        var prose = ""
+        func appendProse() {
+            let trimmed = prose.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmed.isEmpty { blocks.append(.paragraph(trimmed)) }
+            prose = ""
+        }
+
+        for segment in segments {
+            switch segment {
+            case let .text(text):
+                prose += text
+            case let .math(expression) where expression.style == .display:
+                appendProse()
+                blocks.append(.math(expression))
+            case let .math(expression):
+                prose += expression.source
+            }
+        }
+        appendProse()
+        return blocks
     }
 
     private func imageBlocks(in paragraph: String) -> [MarkdownBlock] {

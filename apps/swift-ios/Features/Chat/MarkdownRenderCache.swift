@@ -91,10 +91,16 @@ enum MarkdownInlineStyle: String, Hashable, Sendable {
 /// Reference semantics let consecutive streaming revisions share unchanged inline runs.
 final class MarkdownRenderedInline: @unchecked Sendable {
     let attributedText: AttributedString
+    let mathExpressions: [MarkdownMathExpression]
     let style: MarkdownInlineStyle
 
-    init(attributedText: AttributedString, style: MarkdownInlineStyle) {
+    init(
+        attributedText: AttributedString,
+        mathExpressions: [MarkdownMathExpression] = [],
+        style: MarkdownInlineStyle
+    ) {
         self.attributedText = attributedText
+        self.mathExpressions = mathExpressions
         self.style = style
     }
 }
@@ -153,6 +159,7 @@ indirect enum MarkdownRenderedBlock: Equatable, @unchecked Sendable {
     case blockquote([MarkdownRenderedBlock])
     case table(MarkdownRenderedTable)
     case codeBlock(language: String?, code: String, inline: MarkdownRenderedInline)
+    case math(MarkdownMathExpression)
     case thematicBreak
 }
 
@@ -392,6 +399,9 @@ final class MarkdownRenderCache: @unchecked Sendable {
                 guard let inline = renderInline(code, style: .code) else { return nil }
                 rendered = .codeBlock(language: language, code: code, inline: inline)
 
+            case let .math(expression):
+                rendered = .math(expression)
+
             case .thematicBreak:
                 rendered = .thematicBreak
             }
@@ -452,12 +462,19 @@ final class MarkdownRenderCache: @unchecked Sendable {
             return cached.value
         }
 
-        let attributedText = if style == .code {
-            AttributedString(source)
+        let formatted = if style == .code {
+            MarkdownFormattedInline(
+                attributedText: AttributedString(source),
+                mathExpressions: []
+            )
         } else {
-            MarkdownInlineFormatter.format(source)
+            MarkdownInlineFormatter.render(source)
         }
-        let inline = MarkdownRenderedInline(attributedText: attributedText, style: style)
+        let inline = MarkdownRenderedInline(
+            attributedText: formatted.attributedText,
+            mathExpressions: formatted.mathExpressions,
+            style: style
+        )
         guard !Task.isCancelled else { return nil }
         inlineRuns.setObject(
             MarkdownRenderedInlineBox(inline),

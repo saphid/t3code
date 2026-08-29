@@ -9,6 +9,7 @@
 /* Begin PBXBuildFile section */
 		B10000000000000000000001 /* ClerkKit in Frameworks */ = {isa = PBXBuildFile; productRef = B30000000000000000000001 /* ClerkKit */; };
 		B10000000000000000000002 /* ClerkKitUI in Frameworks */ = {isa = PBXBuildFile; productRef = B30000000000000000000002 /* ClerkKitUI */; };
+		B10000000000000000000003 /* SwiftMath in Frameworks */ = {isa = PBXBuildFile; productRef = B30000000000000000000003 /* SwiftMath */; };
 		D10000000000000000000001 /* GhosttyKit.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = D40000000000000000000001 /* GhosttyKit.xcframework */; };
 		C10000000000000000000001 /* AgentActivityAttributes.swift in Sources */ = {isa = PBXBuildFile; fileRef = C40000000000000000000001 /* AgentActivityAttributes.swift */; };
 		C10000000000000000000002 /* SharedContainer.swift in Sources */ = {isa = PBXBuildFile; fileRef = C40000000000000000000002 /* SharedContainer.swift */; };
@@ -97,6 +98,7 @@
 			files = (
 				B10000000000000000000001 /* ClerkKit in Frameworks */,
 				B10000000000000000000002 /* ClerkKitUI in Frameworks */,
+				B10000000000000000000003 /* SwiftMath in Frameworks */,
 				D10000000000000000000001 /* GhosttyKit.xcframework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -258,6 +260,7 @@
 			packageProductDependencies = (
 				B30000000000000000000001 /* ClerkKit */,
 				B30000000000000000000002 /* ClerkKitUI */,
+				B30000000000000000000003 /* SwiftMath */,
 			);
 			productName = T3Code;
 			productReference = A40000000000000000000001 /* T3 Code.app */;
@@ -387,6 +390,7 @@
 			productRefGroup = A30000000000000000000002 /* Products */;
 			packageReferences = (
 				B20000000000000000000001 /* XCRemoteSwiftPackageReference "clerk-ios" */,
+				B20000000000000000000002 /* XCRemoteSwiftPackageReference "SwiftMath" */,
 			);
 			projectDirPath = "";
 			projectRoot = "";
@@ -953,6 +957,14 @@
 				version = 1.2.0;
 			};
 		};
+		B20000000000000000000002 /* XCRemoteSwiftPackageReference "SwiftMath" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/mgriebling/SwiftMath.git";
+			requirement = {
+				kind = exactVersion;
+				version = 1.7.3;
+			};
+		};
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
@@ -965,6 +977,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = B20000000000000000000001 /* XCRemoteSwiftPackageReference "clerk-ios" */;
 			productName = ClerkKitUI;
+		};
+		B30000000000000000000003 /* SwiftMath */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = B20000000000000000000002 /* XCRemoteSwiftPackageReference "SwiftMath" */;
+			productName = SwiftMath;
 		};
 /* End XCSwiftPackageProductDependency section */
 

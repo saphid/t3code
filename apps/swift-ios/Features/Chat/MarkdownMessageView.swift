@@ -1,4 +1,5 @@
 import SwiftUI
+import SwiftMath
 import UIKit
 
 struct MarkdownImageContext: Equatable, @unchecked Sendable {
@@ -326,6 +327,13 @@ private struct MarkdownBlockView: View, Equatable {
                 code: code,
                 renderedCode: renderedCode,
                 selectionContext: selectionContext
+            )
+
+        case let .math(expression):
+            MarkdownDisplayMathView(
+                expression: expression,
+                selectionContext: selectionContext,
+                textColor: textColor
             )
 
         case .thematicBreak:
@@ -691,6 +699,7 @@ enum MarkdownCodeBlockWrapping {
 }
 
 private struct MarkdownInlineText: UIViewRepresentable {
+    @SwiftUI.Environment(\.colorScheme) private var colorScheme
     @SwiftUI.Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @SwiftUI.Environment(\.openURL) private var openURL
 
@@ -719,7 +728,7 @@ private struct MarkdownInlineText: UIViewRepresentable {
     }
 
     func makeUIView(context: Context) -> UITextView {
-        let textView = UITextView()
+        let textView = MarkdownTextView()
         textView.backgroundColor = .clear
         textView.isEditable = false
         textView.isSelectable = true
@@ -747,6 +756,7 @@ private struct MarkdownInlineText: UIViewRepresentable {
             from: rendered,
             lineSpacing: lineSpacing,
             textColor: textColor,
+            colorScheme: colorScheme,
             dynamicTypeSize: dynamicTypeSize,
             wrapsLines: wrapsLines
         )
@@ -792,6 +802,7 @@ private struct MarkdownInlineText: UIViewRepresentable {
         private struct CacheKey: Equatable {
             let lineSpacing: CGFloat
             let textColor: MarkdownTextColor
+            let colorScheme: ColorScheme
             let dynamicTypeSize: DynamicTypeSize
             let wrapsLines: Bool
         }
@@ -818,12 +829,14 @@ private struct MarkdownInlineText: UIViewRepresentable {
             from rendered: MarkdownRenderedInline,
             lineSpacing: CGFloat,
             textColor: MarkdownTextColor,
+            colorScheme: ColorScheme,
             dynamicTypeSize: DynamicTypeSize,
             wrapsLines: Bool
         ) -> NSAttributedString {
             let key = CacheKey(
                 lineSpacing: lineSpacing,
                 textColor: textColor,
+                colorScheme: colorScheme,
                 dynamicTypeSize: dynamicTypeSize,
                 wrapsLines: wrapsLines
             )
@@ -834,6 +847,7 @@ private struct MarkdownInlineText: UIViewRepresentable {
                 from: rendered,
                 lineSpacing: lineSpacing,
                 foregroundColor: textColor.uiColor,
+                colorScheme: colorScheme,
                 dynamicTypeSize: dynamicTypeSize,
                 wrapsLines: wrapsLines
             )
@@ -964,11 +978,16 @@ private struct MarkdownInlineText: UIViewRepresentable {
 }
 
 enum MarkdownSelectableTextAttributes {
+    static let mathSourceAttribute = NSAttributedString.Key(
+        "codes.t3.native.markdown-math-source"
+    )
+
     @MainActor
     static func make(
         from rendered: MarkdownRenderedInline,
         lineSpacing: CGFloat,
         foregroundColor: UIColor = T3Colors.uiTextPrimary,
+        colorScheme: ColorScheme = .light,
         dynamicTypeSize: DynamicTypeSize = .large,
         wrapsLines: Bool = true
     ) -> NSAttributedString {
@@ -977,6 +996,7 @@ enum MarkdownSelectableTextAttributes {
         paragraphStyle.lineSpacing = lineSpacing
         paragraphStyle.lineBreakMode = wrapsLines ? .byWordWrapping : .byClipping
 
+        var mathIndex = 0
         for run in rendered.attributedText.runs {
             let intent = run.inlinePresentationIntent
             var attributes: [NSAttributedString.Key: Any] = [
@@ -997,15 +1017,71 @@ enum MarkdownSelectableTextAttributes {
             if let link = run.link {
                 attributes[.link] = link
             }
-            result.append(
-                NSAttributedString(
-                    string: String(rendered.attributedText[run.range].characters),
-                    attributes: attributes
-                )
-            )
+            var text = ""
+            for character in rendered.attributedText[run.range].characters {
+                guard character == "\u{FFFC}",
+                      rendered.mathExpressions.indices.contains(mathIndex) else {
+                    text.append(character)
+                    continue
+                }
+                if !text.isEmpty {
+                    result.append(NSAttributedString(string: text, attributes: attributes))
+                    text = ""
+                }
+                let expression = rendered.mathExpressions[mathIndex]
+                mathIndex += 1
+                if let attachment = mathAttachment(
+                    for: expression,
+                    font: attributes[.font] as? UIFont,
+                    foregroundColor: foregroundColor,
+                    colorScheme: colorScheme
+                ) {
+                    let attachmentText = NSMutableAttributedString(attachment: attachment)
+                    attachmentText.addAttributes(
+                        attributes.merging([mathSourceAttribute: expression.source]) { _, new in new },
+                        range: NSRange(location: 0, length: attachmentText.length)
+                    )
+                    result.append(attachmentText)
+                } else {
+                    result.append(NSAttributedString(string: expression.source, attributes: attributes))
+                }
+            }
+            if !text.isEmpty {
+                result.append(NSAttributedString(string: text, attributes: attributes))
+            }
         }
 
         return result
+    }
+
+    @MainActor
+    private static func mathAttachment(
+        for expression: MarkdownMathExpression,
+        font: UIFont?,
+        foregroundColor: UIColor,
+        colorScheme: ColorScheme
+    ) -> NSTextAttachment? {
+        let fontSize = font?.pointSize ?? UIFont.preferredFont(forTextStyle: .body).pointSize
+        let userInterfaceStyle: UIUserInterfaceStyle = colorScheme == .dark ? .dark : .light
+        let resolvedColor = foregroundColor.resolvedColor(
+            with: UITraitCollection(userInterfaceStyle: userInterfaceStyle)
+        )
+        guard let rendered = MarkdownMathImageCache.render(
+            expression: expression,
+            fontSize: fontSize,
+            color: resolvedColor,
+            colorScheme: colorScheme
+        ) else { return nil }
+
+        let attachment = NSTextAttachment(image: rendered.image)
+        attachment.bounds = CGRect(
+            x: 0,
+            y: -rendered.descent,
+            width: rendered.image.size.width,
+            height: rendered.image.size.height
+        )
+        attachment.accessibilityLabel = expression.accessibilityLabel
+        return attachment
     }
 
     @MainActor
@@ -1040,6 +1116,60 @@ enum MarkdownSelectableTextAttributes {
     }
 }
 
+@MainActor
+private enum MarkdownMathImageCache {
+    fileprivate final class RenderedImage: NSObject {
+        let image: UIImage
+        let descent: CGFloat
+
+        init(image: UIImage, descent: CGFloat) {
+            self.image = image
+            self.descent = descent
+        }
+    }
+
+    private static let images: NSCache<NSString, RenderedImage> = {
+        let cache = NSCache<NSString, RenderedImage>()
+        cache.countLimit = 512
+        cache.totalCostLimit = 32 * 1_024 * 1_024
+        return cache
+    }()
+
+    static func render(
+        expression: MarkdownMathExpression,
+        fontSize: CGFloat,
+        color: UIColor,
+        colorScheme: ColorScheme
+    ) -> RenderedImage? {
+        let colorKey = (color.cgColor.components ?? []).map {
+            String(Double($0).bitPattern)
+        }.joined(separator: ",")
+        let key = [
+            expression.style == .display ? "display" : "inline",
+            String(Double(fontSize).bitPattern),
+            colorScheme == .dark ? "dark" : "light",
+            colorKey,
+            expression.latex,
+        ].joined(separator: "\u{0}") as NSString
+        if let cached = images.object(forKey: key) { return cached }
+
+        var renderer = MathImage(
+            latex: expression.latex,
+            fontSize: fontSize,
+            textColor: color,
+            labelMode: expression.style == .display ? .display : .text,
+            textAlignment: .left
+        )
+        let (error, image, layout) = renderer.asImage()
+        guard error == nil, let image, let layout else { return nil }
+
+        let rendered = RenderedImage(image: image, descent: layout.descent)
+        let cost = image.cgImage.map { $0.bytesPerRow * $0.height } ?? 1
+        images.setObject(rendered, forKey: key, cost: cost)
+        return rendered
+    }
+}
+
 enum MarkdownSelectionRestoration {
     static func range(
         previousText: String,
@@ -1057,14 +1187,146 @@ enum MarkdownSelectionRestoration {
 
 enum MarkdownInlineFormatter {
     static func format(_ source: String) -> AttributedString {
-        (
+        render(source).attributedText
+    }
+
+    static func render(_ source: String) -> MarkdownFormattedInline {
+        var placeholderSource = ""
+        var expressions: [MarkdownMathExpression] = []
+        for segment in MarkdownMathParser.segments(in: source) {
+            switch segment {
+            case let .text(text):
+                placeholderSource += text
+            case let .math(expression):
+                placeholderSource.append("\u{FFFC}")
+                expressions.append(expression)
+            }
+        }
+
+        let attributedText = (
             try? AttributedString(
-                markdown: source,
+                markdown: placeholderSource,
                 options: AttributedString.MarkdownParsingOptions(
                     interpretedSyntax: .inlineOnlyPreservingWhitespace,
                     failurePolicy: .returnPartiallyParsedIfPossible
                 )
             )
-        ) ?? AttributedString(source)
+        ) ?? AttributedString(placeholderSource)
+        return MarkdownFormattedInline(
+            attributedText: attributedText,
+            mathExpressions: expressions
+        )
+    }
+}
+
+struct MarkdownFormattedInline: Sendable {
+    let attributedText: AttributedString
+    let mathExpressions: [MarkdownMathExpression]
+}
+
+enum MarkdownMathCopySource {
+    static func string(
+        from attributedText: NSAttributedString,
+        in range: NSRange
+    ) -> String? {
+        guard range.length > 0, NSMaxRange(range) <= attributedText.length else { return nil }
+        var copied = ""
+        var containsMath = false
+        attributedText.enumerateAttributes(in: range) { attributes, attributeRange, _ in
+            let selectedRange = NSIntersectionRange(range, attributeRange)
+            if let source = attributes[MarkdownSelectableTextAttributes.mathSourceAttribute]
+                as? String {
+                copied += source
+                containsMath = true
+            } else {
+                copied += attributedText.attributedSubstring(from: selectedRange).string
+            }
+        }
+        return containsMath ? copied : nil
+    }
+}
+
+private final class MarkdownTextView: UITextView {
+    override func copy(_ sender: Any?) {
+        if let source = MarkdownMathCopySource.string(
+            from: attributedText,
+            in: selectedRange
+        ) {
+            UIPasteboard.general.string = source
+            return
+        }
+        super.copy(sender)
+    }
+}
+
+private struct MarkdownDisplayMathView: View {
+    let expression: MarkdownMathExpression
+    let selectionContext: MarkdownSelectionContext
+    let textColor: MarkdownTextColor
+
+    var body: some View {
+        ScrollView(.horizontal) {
+            MarkdownMathLabel(expression: expression, textColor: textColor)
+                .fixedSize(horizontal: true, vertical: true)
+                .padding(.vertical, 4)
+        }
+        .scrollIndicators(.visible)
+        .contextMenu {
+            Button("Copy formula", systemImage: "doc.on.doc", action: copyFormula)
+            Button(
+                selectionContext.copyActionTitle,
+                systemImage: "doc.on.doc.fill",
+                action: copyMessage
+            )
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(expression.accessibilityLabel)
+        .accessibilityHint("Long press to copy the LaTeX source")
+        .accessibilityAction(named: "Copy formula", copyFormula)
+    }
+
+    private func copyFormula() {
+        UIPasteboard.general.string = expression.source
+    }
+
+    private func copyMessage() {
+        UIPasteboard.general.string = selectionContext.source.text
+    }
+}
+
+private struct MarkdownMathLabel: UIViewRepresentable {
+    @SwiftUI.Environment(\.dynamicTypeSize) private var dynamicTypeSize
+
+    let expression: MarkdownMathExpression
+    let textColor: MarkdownTextColor
+
+    func makeUIView(context: Context) -> MTMathUILabel {
+        let label = MTMathUILabel()
+        label.backgroundColor = .clear
+        label.displayErrorInline = false
+        label.labelMode = .display
+        label.textAlignment = .left
+        label.isAccessibilityElement = false
+        label.setContentHuggingPriority(.required, for: .horizontal)
+        label.setContentHuggingPriority(.required, for: .vertical)
+        label.setContentCompressionResistancePriority(.required, for: .horizontal)
+        label.setContentCompressionResistancePriority(.required, for: .vertical)
+        return label
+    }
+
+    func updateUIView(_ label: MTMathUILabel, context: Context) {
+        let font = MarkdownInlineStyle.body.uiFont(dynamicTypeSize: dynamicTypeSize)
+        if label.latex != expression.latex { label.latex = expression.latex }
+        if label.fontSize != font.pointSize { label.fontSize = font.pointSize }
+        label.textColor = textColor.uiColor
+        label.invalidateIntrinsicContentSize()
+    }
+
+    func sizeThatFits(
+        _ proposal: ProposedViewSize,
+        uiView: MTMathUILabel,
+        context: Context
+    ) -> CGSize? {
+        uiView.intrinsicContentSize
     }
 }
