@@ -135,19 +135,6 @@ struct FeatureComposerPathEntry: Identifiable, Sendable, Equatable, Hashable {
     }
 }
 
-enum FeatureComposerTriggerKind: Sendable, Equatable {
-    case slashCommand
-    case model
-    case skill
-    case path
-}
-
-struct FeatureComposerTrigger: Sendable, Equatable {
-    let kind: FeatureComposerTriggerKind
-    let query: String
-    let range: Range<Int>
-}
-
 struct FeatureCodexFeedbackCommand: Sendable, Equatable {
     private static let expression = try? NSRegularExpression(
         pattern: #"^/feedback(?:\s+([\s\S]*))?$"#,
@@ -172,74 +159,6 @@ struct FeatureCodexFeedbackCommand: Sendable, Equatable {
         }
         let reason = trimmed[reasonRange].trimmingCharacters(in: .whitespacesAndNewlines)
         return Self(reason: reason.isEmpty ? nil : reason)
-    }
-}
-
-/// Mirrors the shared web/mobile trigger grammar while keeping this target
-/// independent of the TypeScript runtime.
-enum FeatureComposerTriggerParser {
-    static func detect(in text: String, cursorOffset: Int? = nil) -> FeatureComposerTrigger? {
-        let cursor = min(max(cursorOffset ?? text.count, 0), text.count)
-        let cursorIndex = text.index(text.startIndex, offsetBy: cursor)
-        let prefix = text[..<cursorIndex]
-        let lineStartIndex = prefix.lastIndex(of: "\n").map { text.index(after: $0) }
-            ?? text.startIndex
-        let lineStart = text.distance(from: text.startIndex, to: lineStartIndex)
-        let linePrefix = String(text[lineStartIndex..<cursorIndex])
-        let lowercasedLine = linePrefix.lowercased()
-
-        if lowercasedLine == "/model" {
-            return FeatureComposerTrigger(kind: .model, query: "", range: lineStart..<cursor)
-        }
-        if lowercasedLine.hasPrefix("/model ") {
-            let query = String(linePrefix.dropFirst("/model ".count))
-                .trimmingCharacters(in: .whitespaces)
-            return FeatureComposerTrigger(kind: .model, query: query, range: lineStart..<cursor)
-        }
-        if linePrefix.first == "/", !linePrefix.dropFirst().contains(where: { $0.isWhitespace }) {
-            return FeatureComposerTrigger(
-                kind: .slashCommand,
-                query: String(linePrefix.dropFirst()),
-                range: lineStart..<cursor
-            )
-        }
-
-        var tokenStartIndex = cursorIndex
-        while tokenStartIndex > text.startIndex {
-            let previous = text.index(before: tokenStartIndex)
-            if text[previous].isWhitespace { break }
-            tokenStartIndex = previous
-        }
-        let token = String(text[tokenStartIndex..<cursorIndex])
-        let tokenStart = text.distance(from: text.startIndex, to: tokenStartIndex)
-
-        if token.first == "$" {
-            return FeatureComposerTrigger(
-                kind: .skill,
-                query: String(token.dropFirst()),
-                range: tokenStart..<cursor
-            )
-        }
-        if token.first == "@" {
-            return FeatureComposerTrigger(
-                kind: .path,
-                query: String(token.dropFirst()),
-                range: tokenStart..<cursor
-            )
-        }
-        return nil
-    }
-
-    static func replacing(
-        _ range: Range<Int>,
-        in text: String,
-        with replacement: String
-    ) -> String {
-        let lower = min(max(range.lowerBound, 0), text.count)
-        let upper = min(max(range.upperBound, lower), text.count)
-        let start = text.index(text.startIndex, offsetBy: lower)
-        let end = text.index(text.startIndex, offsetBy: upper)
-        return String(text[..<start]) + replacement + String(text[end...])
     }
 }
 
@@ -308,6 +227,21 @@ enum FeatureComposerMenuItem: Identifiable, Sendable, Equatable {
             skill.shortDescription ?? skill.description ?? skill.scope ?? ""
         case let .path(entry): entry.parentPath
         }
+    }
+
+    var composerReplacement: String {
+        switch self {
+        case .modelCommand: "/model "
+        case .model: ""
+        case let .providerCommand(command): "/\(command.name) "
+        case let .skill(skill): "$\(skill.name) "
+        case let .path(entry): FeatureComposerFileLinkSerializer.markdownLink(for: entry.path) + " "
+        }
+    }
+
+    var modelSelection: FeatureSelection? {
+        guard case let .model(selection, _, _) = self else { return nil }
+        return selection
     }
 }
 

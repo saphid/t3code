@@ -4,6 +4,27 @@ import Testing
 
 @Suite("Composer draft persistence")
 struct ComposerDraftStoreTests {
+    @Test(
+        "Restored drafts preserve pasted at-sign source text",
+        .bug("https://github.com/saphid/t3code-personal/issues/218")
+    )
+    func restoredDraftPreservesPastedAtSignSourceText() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let fileURL = directory.appendingPathComponent("drafts.json")
+        let text = "@MainActor\nfunc load() {}\n@decorator(\"🧪\")\nalex@example.com"
+        let key = "environment:test:thread:at-sign"
+
+        try await FeatureComposerDraftStore(fileURL: fileURL).setDraft(
+            FeatureComposerDraft(text: text),
+            for: key
+        )
+
+        let restored = try await FeatureComposerDraftStore(fileURL: fileURL).draft(for: key)
+        #expect(restored?.text == text)
+    }
+
     @Test func roundTripsThreadTextImagesAndSelection() async throws {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)

@@ -120,6 +120,43 @@ struct FeatureComposerPowerTests {
         #expect(textView.canPaste([text]))
     }
 
+    @Test(
+        "Text paste preserves source characters and selection",
+        .bug("https://github.com/saphid/t3code-personal/issues/218"),
+        arguments: [
+            "@foo(bar)",
+            "@MainActor\nfunc load() async {}",
+            "@sealed\nclass Example {}",
+            "@decorator(name=\"café\")\ndef run(): pass",
+            "alex@example.com",
+            "echo \"$PATH\" && printf '@foo(bar)\\n'",
+            "@注釈(値: \"🧪\")\n次の行",
+        ]
+    )
+    @MainActor
+    func textPastePreservesSourceCharactersAndSelection(pastedText: String) {
+        let pasteboard = UIPasteboard.withUniqueName()
+        defer { UIPasteboard.remove(withName: pasteboard.name) }
+        pasteboard.string = pastedText
+        let textView = FeatureComposerUITextView()
+        textView.featurePasteboard = pasteboard
+        textView.text = "🧪 replace this suffix"
+        let prefix = "🧪 "
+        textView.selectedRange = NSRange(
+            location: prefix.utf16.count,
+            length: "replace this".utf16.count
+        )
+
+        textView.paste(nil)
+
+        #expect(textView.text == prefix + pastedText + " suffix")
+        #expect(textView.selectedRange == NSRange(
+            location: prefix.utf16.count + pastedText.utf16.count,
+            length: 0
+        ))
+        #expect(textView.consumeEditOrigin() == .paste)
+    }
+
     @Test
     func downwardDragDismissalRespectsDraftScrolling() {
         #expect(FeatureComposerDragDismissPolicy.shouldDismiss(
@@ -193,6 +230,31 @@ struct FeatureComposerPowerTests {
         )
     }
 
+    @Test(
+        "Only interactive edits activate pasted at-sign triggers",
+        .bug("https://github.com/saphid/t3code-personal/issues/218")
+    )
+    func onlyInteractiveEditsActivateAtSignTriggers() {
+        let text = "🧪 @foo(bar) trailing"
+        let cursorLocation = "🧪 @foo(bar)".utf16.count
+        let pasted = FeatureComposerTextEdit(
+            text: text,
+            selectedUTF16Location: cursorLocation,
+            origin: .paste
+        )
+        let typed = FeatureComposerTextEdit(
+            text: text,
+            selectedUTF16Location: cursorLocation,
+            origin: .interactive
+        )
+
+        #expect(FeatureComposerTriggerContext.activated(by: pasted) == nil)
+        #expect(
+            FeatureComposerTriggerContext.activated(by: typed)?.trigger
+                == FeatureComposerTrigger(kind: .path, query: "foo(bar)", range: 2..<11)
+        )
+    }
+
     @Test
     func replacementsPreserveTextOutsideTheActiveTrigger() {
         let text = "Review @Sources/App please"
@@ -222,6 +284,30 @@ struct FeatureComposerPowerTests {
             FeatureComposerFileLinkSerializer.markdownLink(for: "@scope/package.json")
                 == "[package.json](@scope/package.json)"
         )
+    }
+
+    @Test(
+        "Explicit completion selections keep their composer serialization",
+        .bug("https://github.com/saphid/t3code-personal/issues/218")
+    )
+    func explicitCompletionSelectionsKeepTheirSerialization() {
+        let modelSelection = FeatureSelection(providerID: "claude", modelID: "opus")
+        let items: [(FeatureComposerMenuItem, String)] = [
+            (.modelCommand, "/model "),
+            (.model(selection: modelSelection, label: "Opus", description: "Claude"), ""),
+            (.providerCommand(FeatureProviderSlashCommand(name: "review")), "/review "),
+            (.skill(FeatureProviderSkill(name: "fix-ci")), "$fix-ci "),
+            (
+                .path(FeatureComposerPathEntry(path: "Sources/My File.swift", kind: .file)),
+                "[My File.swift](Sources/My%20File.swift) "
+            ),
+        ]
+
+        for (item, expectedReplacement) in items {
+            #expect(item.composerReplacement == expectedReplacement)
+        }
+        #expect(items[1].0.modelSelection == modelSelection)
+        #expect(items[0].0.modelSelection == nil)
     }
 
     @Test

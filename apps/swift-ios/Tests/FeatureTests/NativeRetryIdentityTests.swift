@@ -162,11 +162,12 @@ final class NativeRetryIdentityTests: XCTestCase {
             messageID: "persisted-turn-message",
             createdAt: Date(timeIntervalSince1970: 1_750_000_000)
         )
+        let retryText = "@foo(bar)\n@MainActor\n@decorator(\"🧪\")\nalex@example.com"
         for _ in 0..<2 {
             do {
                 try await client.sendMessage(
                     threadID: "thread-existing",
-                    text: "Retry without duplicating",
+                    text: retryText,
                     selection: nil,
                     attachments: [],
                     identity: turnIdentity
@@ -193,7 +194,7 @@ final class NativeRetryIdentityTests: XCTestCase {
             + transport.dispatchCommands()
         XCTAssertEqual(commands.count, 4)
         let turnCommands = commands.filter {
-            $0["message"]?["text"]?.stringValue == "Retry without duplicating"
+            $0["message"]?["text"]?.stringValue == retryText
         }
         XCTAssertEqual(turnCommands.count, 2)
         let initialTurn = try XCTUnwrap(turnCommands.first)

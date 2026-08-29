@@ -15,6 +15,7 @@ struct FeatureComposerView: View {
     @State private var pathSearchError: String?
     @State private var textSelectionRequest: FeatureComposerTextSelectionRequest?
     @State private var imageIntakeErrorMessage: String?
+    @State private var triggerContext: FeatureComposerTriggerContext?
     @Binding private var text: String
     @Binding private var selection: FeatureSelection?
     @Binding private var attachments: [FeatureDraftAttachment]
@@ -257,6 +258,7 @@ struct FeatureComposerView: View {
                     placeholder: composerPlaceholder,
                     acceptsImages: imagesAllowed,
                     selectionRequest: textSelectionRequest,
+                    onTextEdit: recordTextEdit,
                     onPasteImages: attachImageProviders,
                     onDismissKeyboard: onDismissKeyboard
                 )
@@ -416,22 +418,9 @@ struct FeatureComposerView: View {
         )
     }
 
-    /// Trigger detection walks the whole draft with character indices and is
-    /// read from several computed properties per body evaluation, so one parse
-    /// per keystroke is memoized instead of four.
-    private final class TriggerMemo {
-        var text: String?
-        var trigger: FeatureComposerTrigger?
-    }
-
-    @State private var triggerMemo = TriggerMemo()
-
     private var composerTrigger: FeatureComposerTrigger? {
-        if triggerMemo.text == text { return triggerMemo.trigger }
-        let trigger = FeatureComposerTriggerParser.detect(in: text)
-        triggerMemo.text = text
-        triggerMemo.trigger = trigger
-        return trigger
+        guard triggerContext?.text == text else { return nil }
+        return triggerContext?.trigger
     }
 
     private var commandMenuItems: [FeatureComposerMenuItem] {
@@ -496,20 +485,10 @@ struct FeatureComposerView: View {
 
     private func selectCommandItem(_ item: FeatureComposerMenuItem) {
         guard let trigger = composerTrigger else { return }
-        let replacement: String
-        switch item {
-        case .modelCommand:
-            replacement = "/model "
-        case let .model(nextSelection, _, _):
-            selection = nextSelection
-            replacement = ""
-        case let .providerCommand(command):
-            replacement = "/\(command.name) "
-        case let .skill(skill):
-            replacement = "$\(skill.name) "
-        case let .path(entry):
-            replacement = FeatureComposerFileLinkSerializer.markdownLink(for: entry.path) + " "
+        if let modelSelection = item.modelSelection {
+            selection = modelSelection
         }
+        let replacement = item.composerReplacement
         textSelectionRequest = FeatureComposerTextSelectionRequest(
             location: FeatureComposerTextSelectionPolicy.cursorLocation(
                 afterReplacing: trigger.range,
@@ -522,12 +501,17 @@ struct FeatureComposerView: View {
             in: text,
             with: replacement
         )
+        triggerContext = nil
         pathEntries = []
         pathSearchError = nil
         Task { @MainActor in
             await Task.yield()
             focused = true
         }
+    }
+
+    private func recordTextEdit(_ edit: FeatureComposerTextEdit) {
+        triggerContext = FeatureComposerTriggerContext.activated(by: edit)
     }
 
     private func performPrimaryAction() {

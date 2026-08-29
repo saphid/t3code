@@ -16,11 +16,12 @@ struct FeatureOutboxStoreTests {
             messageID: "message-wire",
             createdAt: Date(timeIntervalSince1970: 42)
         )
+        let text = "@foo(bar)\n@MainActor\nalex@example.com\nprintf '@done\\n'"
         let submission = FeatureQueuedSubmission(
             environmentID: "environment-1",
             identity: identity,
             threadID: "thread-scoped",
-            text: "Ship it",
+            text: text,
             selection: .init(providerID: "codex", modelID: "gpt-5.6-sol"),
             runtimeMode: .automatic,
             interactionMode: .plan,
@@ -38,6 +39,7 @@ struct FeatureOutboxStoreTests {
         #expect(restored[0].identity == identity)
         #expect(restored[0].runtimeMode == .fullAccess)
         #expect(restored[0].interactionMode == .standard)
+        #expect(restored[0].text == text)
         #expect(restored[0].attachments.first?.data == Data([0x01, 0x02]))
     }
 

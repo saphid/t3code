@@ -16,6 +16,7 @@ struct FeatureComposerTextInput: UIViewRepresentable {
     let placeholder: String
     let acceptsImages: Bool
     let selectionRequest: FeatureComposerTextSelectionRequest?
+    let onTextEdit: (FeatureComposerTextEdit) -> Void
     let onPasteImages: ([NSItemProvider]) -> Void
     let onDismissKeyboard: (() -> Void)?
 
@@ -137,8 +138,16 @@ struct FeatureComposerTextInput: UIViewRepresentable {
         }
 
         func textViewDidChange(_ textView: UITextView) {
-            guard parent.text != textView.text else { return }
-            parent.text = textView.text
+            let text = textView.text ?? ""
+            let origin = (textView as? FeatureComposerUITextView)?.consumeEditOrigin()
+                ?? .interactive
+            guard parent.text != text else { return }
+            parent.text = text
+            parent.onTextEdit(FeatureComposerTextEdit(
+                text: text,
+                selectedUTF16Location: textView.selectedRange.location,
+                origin: origin
+            ))
         }
 
         func textViewDidBeginEditing(_ textView: UITextView) {
@@ -158,8 +167,9 @@ struct FeatureComposerTextInput: UIViewRepresentable {
 }
 
 /// Advertises image support to the paste menu and routes image pastes out to
-/// the attachment pipeline. Text-only pastes fall through to UIKit untouched.
+/// the attachment pipeline. Text-only pastes insert their plain characters.
 final class FeatureComposerUITextView: UITextView {
+    var featurePasteboard = UIPasteboard.general
     var acceptsImages = false {
         didSet {
             guard oldValue != acceptsImages else { return }
@@ -176,6 +186,7 @@ final class FeatureComposerUITextView: UITextView {
     var onPasteImages: (([NSItemProvider]) -> Void)?
     var onDismissKeyboard: (() -> Void)?
     private var wantsFirstResponderOnAttach = false
+    private var pendingEditOrigin = FeatureComposerTextEditOrigin.interactive
 
     /// Programmatic focus can arrive before the view joins a window (a host
     /// refocusing right as the composer expands); retry once attached. The
@@ -262,7 +273,7 @@ final class FeatureComposerUITextView: UITextView {
     override func canPerformAction(_ action: Selector, withSender sender: Any?) -> Bool {
         if action == #selector(paste(_:)),
            acceptsImages,
-           FeatureComposerPasteboardPolicy.containsImage(in: UIPasteboard.general) {
+           FeatureComposerPasteboardPolicy.containsImage(in: featurePasteboard) {
             return true
         }
         return super.canPerformAction(action, withSender: sender)
@@ -286,18 +297,35 @@ final class FeatureComposerUITextView: UITextView {
     // purpose: Slack and X do the same, and inserting a stray URL next to an
     // attached screenshot reads as a bug.
     override func paste(_ sender: Any?) {
-        guard acceptsImages else {
-            super.paste(sender)
-            return
-        }
-        let imageProviders = UIPasteboard.general.itemProviders.filter {
+        let imageProviders = featurePasteboard.itemProviders.filter {
             $0.hasItemConformingToTypeIdentifier(UTType.image.identifier)
         }
-        guard !imageProviders.isEmpty else {
+        if acceptsImages, !imageProviders.isEmpty {
+            onPasteImages?(imageProviders)
+            return
+        }
+        guard let pastedText = featurePasteboard.string else {
             super.paste(sender)
             return
         }
-        onPasteImages?(imageProviders)
+        insertPastedText(pastedText)
+    }
+
+    /// Inserts only the pasteboard's string representation. This avoids rich
+    /// paste payloads being interpreted as links while retaining UITextView's
+    /// native selection, caret, deletion, and undo behavior.
+    func insertPastedText(_ text: String) {
+        let previousText = self.text
+        pendingEditOrigin = .paste
+        insertText(text)
+        if self.text == previousText {
+            pendingEditOrigin = .interactive
+        }
+    }
+
+    func consumeEditOrigin() -> FeatureComposerTextEditOrigin {
+        defer { pendingEditOrigin = .interactive }
+        return pendingEditOrigin
     }
 }
 
