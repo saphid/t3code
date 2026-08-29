@@ -7,14 +7,17 @@ import {
 } from "@t3tools/contracts";
 import { ServerProviderUpdateError } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as PlatformError from "effect/PlatformError";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 import { HttpClient, HttpClientResponse } from "effect/unstable/http";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import { HostProcessEnvironment, HostProcessPlatform } from "@t3tools/shared/hostProcess";
@@ -70,7 +73,7 @@ const baseProvider: ServerProvider = {
   driver: CODEX_DRIVER,
   enabled: true,
   installed: true,
-  version: null,
+  version: "1.0.0",
   status: "ready",
   auth: { status: "authenticated" },
   checkedAt: "2026-04-10T00:00:00.000Z",
@@ -148,6 +151,33 @@ function mockSpawnerLayer(
   );
 }
 
+function hangingSpawnerLayer(killCalls: { count: number }, onSpawn?: () => void) {
+  return Layer.succeed(
+    ChildProcessSpawner.ChildProcessSpawner,
+    ChildProcessSpawner.make(() => {
+      onSpawn?.();
+      return Effect.succeed(
+        ChildProcessSpawner.makeHandle({
+          pid: ChildProcessSpawner.ProcessId(1),
+          exitCode: Effect.never,
+          isRunning: Effect.succeed(true),
+          kill: () =>
+            Effect.sync(() => {
+              killCalls.count += 1;
+            }),
+          unref: Effect.succeed(Effect.void),
+          stdin: Sink.drain,
+          stdout: Stream.empty,
+          stderr: Stream.empty,
+          all: Stream.empty,
+          getInputFd: () => Sink.drain,
+          getOutputFd: () => Stream.empty,
+        }),
+      );
+    }),
+  );
+}
+
 function makeRegistry(
   initialProviders: ServerProvider | ReadonlyArray<ServerProvider> = baseProvider,
 ) {
@@ -163,6 +193,7 @@ function makeRegistry(
       readonly instanceId: ProviderInstanceId;
       readonly action: "update";
       readonly state: ServerProviderUpdateState | null;
+      readonly verifiedProvider?: ServerProvider | undefined;
     }) {
       const updateState = input.state;
       if (updateState) {
@@ -173,12 +204,13 @@ function makeRegistry(
           if (candidate.instanceId !== input.instanceId) {
             return candidate;
           }
+          const provider = input.verifiedProvider ?? candidate;
           if (!updateState) {
-            const { updateState: _updateState, ...providerWithoutUpdateState } = candidate;
+            const { updateState: _updateState, ...providerWithoutUpdateState } = provider;
             return providerWithoutUpdateState;
           }
           return {
-            ...candidate,
+            ...provider,
             updateState,
           };
         }),
@@ -197,6 +229,7 @@ function makeRegistry(
 
     return {
       registry,
+      providersRef,
       updateStatesRef,
     };
   });
@@ -412,7 +445,8 @@ describe("providerMaintenanceRunner", () => {
       const updateState = result.providers[0]?.updateState;
 
       assert.strictEqual(updateState?.status, "failed");
-      assert.strictEqual(updateState?.message, "Update command exited with code 1.");
+      assert.strictEqual(updateState?.reason, "permission_denied");
+      assert.include(updateState?.message ?? "", "denied permission");
       assert.include(updateState?.output ?? "", "permission denied");
     }).pipe(
       Effect.provide(
@@ -425,30 +459,167 @@ describe("providerMaintenanceRunner", () => {
     ),
   );
 
-  it.effect(
-    "marks successful commands as unchanged when the refreshed provider is still outdated",
-    () =>
-      Effect.gen(function* () {
-        const { registry } = yield* makeRegistry({
-          ...baseProvider,
-          installed: true,
-          version: "0.1.0",
-        });
-        const updater = yield* makeTestRunner(registry);
+  it.effect("records a missing package manager as an actionable terminal failure", () =>
+    Effect.gen(function* () {
+      const { registry } = yield* makeRegistry();
+      const updater = yield* makeTestRunner(registry);
 
-        const result = yield* updater.updateProvider(CODEX_DRIVER);
+      const result = yield* updater.updateProvider(CODEX_DRIVER);
+      const updateState = result.providers[0]?.updateState;
 
-        assert.strictEqual(result.providers[0]?.updateState?.status, "unchanged");
-        assert.include(result.providers[0]?.updateState?.message ?? "", "still detects");
-      }).pipe(
-        Effect.provide(
-          Layer.mergeAll(
-            NonWindowsPlatform,
-            latestVersionHttpClient("9.9.9"),
-            mockSpawnerLayer(() => ({ stdout: "updated" })),
+      assert.strictEqual(updateState?.status, "failed");
+      assert.strictEqual(updateState?.reason, "command_not_found");
+      assert.include(updateState?.message ?? "", "npm is not installed or not on PATH");
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          NonWindowsPlatform,
+          latestVersionHttpClient("1.0.0"),
+          Layer.succeed(
+            ChildProcessSpawner.ChildProcessSpawner,
+            ChildProcessSpawner.make(() =>
+              Effect.fail(
+                PlatformError.systemError({
+                  _tag: "NotFound",
+                  module: "ChildProcess",
+                  method: "spawn",
+                  description: "spawn npm ENOENT",
+                }),
+              ),
+            ),
           ),
         ),
       ),
+    ),
+  );
+
+  it.effect("times out, kills the child, and records a terminal failure", () => {
+    let spawnedResolve: () => void = () => {};
+    const killCalls = { count: 0 };
+    const spawned = new Promise<void>((resolve) => {
+      spawnedResolve = resolve;
+    });
+    return Effect.gen(function* () {
+      const { registry } = yield* makeRegistry();
+      const updater = yield* makeTestRunner(registry);
+      const updateFiber = yield* updater.updateProvider(CODEX_DRIVER).pipe(Effect.forkScoped);
+      yield* Effect.promise(() => spawned);
+
+      yield* TestClock.adjust(Duration.millis(ProviderMaintenanceRunner.UPDATE_TIMEOUT_MS));
+      const result = yield* Fiber.join(updateFiber);
+
+      assert.strictEqual(result.providers[0]?.updateState?.status, "failed");
+      assert.strictEqual(result.providers[0]?.updateState?.reason, "timed_out");
+      assert.strictEqual(killCalls.count, 1);
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          TestClock.layer(),
+          NonWindowsPlatform,
+          latestVersionHttpClient("1.0.0"),
+          hangingSpawnerLayer(killCalls, spawnedResolve),
+        ),
+      ),
+    );
+  });
+
+  it.effect("records cancellation and kills the child when the request is interrupted", () => {
+    let spawnedResolve: () => void = () => {};
+    const killCalls = { count: 0 };
+    const spawned = new Promise<void>((resolve) => {
+      spawnedResolve = resolve;
+    });
+    return Effect.gen(function* () {
+      const { registry } = yield* makeRegistry();
+      const updater = yield* makeTestRunner(registry);
+      const updateFiber = yield* updater.updateProvider(CODEX_DRIVER).pipe(Effect.forkScoped);
+      yield* Effect.promise(() => spawned);
+
+      yield* Fiber.interrupt(updateFiber);
+      const providers = yield* registry.getProviders;
+
+      assert.strictEqual(providers[0]?.updateState?.status, "failed");
+      assert.strictEqual(providers[0]?.updateState?.reason, "cancelled");
+      assert.strictEqual(killCalls.count, 1);
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          NonWindowsPlatform,
+          latestVersionHttpClient("1.0.0"),
+          hangingSpawnerLayer(killCalls, spawnedResolve),
+        ),
+      ),
+    );
+  });
+
+  it.effect("publishes the refreshed current advisory with the terminal success", () =>
+    Effect.gen(function* () {
+      const { registry, providersRef } = yield* makeRegistry({
+        ...baseProvider,
+        version: "1.0.0",
+        versionAdvisory: {
+          status: "behind_latest",
+          currentVersion: "1.0.0",
+          latestVersion: "2.0.0",
+          updateCommand: "npm install -g @openai/codex@latest",
+          canUpdate: true,
+          checkedAt: "2026-04-10T00:00:00.000Z",
+          message: "Update available.",
+        },
+      });
+      const updater = yield* makeTestRunner({
+        ...registry,
+        refreshInstance: () =>
+          Ref.set(providersRef, [
+            {
+              ...baseProvider,
+              version: "2.0.0",
+            },
+          ]).pipe(Effect.andThen(Ref.get(providersRef))),
+      });
+
+      const result = yield* updater.updateProvider(CODEX_DRIVER);
+      const provider = result.providers[0];
+
+      assert.strictEqual(provider?.version, "2.0.0");
+      assert.strictEqual(provider?.versionAdvisory?.status, "current");
+      assert.strictEqual(provider?.versionAdvisory?.latestVersion, "2.0.0");
+      assert.strictEqual(provider?.updateState?.status, "succeeded");
+      assert.strictEqual(provider?.updateState?.reason, "current");
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          NonWindowsPlatform,
+          latestVersionHttpClient("2.0.0"),
+          mockSpawnerLayer(() => ({ stdout: "already current" })),
+        ),
+      ),
+    ),
+  );
+
+  it.effect("records a post-command version mismatch as a retryable failure", () =>
+    Effect.gen(function* () {
+      const { registry } = yield* makeRegistry({
+        ...baseProvider,
+        installed: true,
+        version: "0.1.0",
+      });
+      const updater = yield* makeTestRunner(registry);
+
+      const result = yield* updater.updateProvider(CODEX_DRIVER);
+
+      assert.strictEqual(result.providers[0]?.updateState?.status, "failed");
+      assert.strictEqual(result.providers[0]?.updateState?.reason, "version_mismatch");
+      assert.include(result.providers[0]?.updateState?.message ?? "", "still behind");
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          NonWindowsPlatform,
+          latestVersionHttpClient("9.9.9"),
+          mockSpawnerLayer(() => ({ stdout: "updated" })),
+        ),
+      ),
+    ),
   );
 
   it.effect("prevents concurrent updates for the same provider", () => {
@@ -474,6 +645,7 @@ describe("providerMaintenanceRunner", () => {
         assert.strictEqual(isServerProviderUpdateError(error), true);
         if (isServerProviderUpdateError(error)) {
           assert.include(error.reason, "already running");
+          assert.strictEqual(error.code, "concurrent_update");
         }
       }
 

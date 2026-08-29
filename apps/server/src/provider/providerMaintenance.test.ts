@@ -8,7 +8,7 @@ import { ProviderDriverKind, ProviderInstanceId, type ServerProvider } from "@t3
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
-import { HttpClient } from "effect/unstable/http";
+import { HttpClient, HttpClientResponse } from "effect/unstable/http";
 import {
   createProviderVersionAdvisory,
   enrichProviderSnapshotWithVersionAdvisory,
@@ -82,6 +82,20 @@ const installedPackageToolProvider: ServerProvider = {
   skills: [],
 };
 
+const jsonHttpClient = (requestedUrls: string[], responses: Record<string, unknown>) =>
+  HttpClient.make((request) => {
+    requestedUrls.push(request.url);
+    const body = responses[request.url];
+    return Effect.succeed(
+      HttpClientResponse.fromWeb(
+        request,
+        body === undefined
+          ? new Response(null, { status: 404 })
+          : Response.json(body, { headers: { "content-type": "application/json" } }),
+      ),
+    );
+  });
+
 it.layer(NodeServices.layer)("providerMaintenance", (it) => {
   it.effect("reads cached versions through the injectable cache reference", () =>
     resolveLatestProviderVersion(packageToolUpdate.resolve()).pipe(
@@ -107,6 +121,115 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
         expect(version).toBe("9.9.9");
       }),
     ),
+  );
+
+  it.effect("bypasses a cached latest version after an update command", () =>
+    Effect.gen(function* () {
+      const requestedUrls: string[] = [];
+      const version = yield* resolveLatestProviderVersion(packageToolUpdate.resolve(), {
+        forceRefresh: true,
+      }).pipe(
+        Effect.provideService(
+          ProviderVersionCache,
+          new Map([
+            ["@example/package-tool", { expiresAt: Number.MAX_SAFE_INTEGER, version: "1.0.0" }],
+          ]),
+        ),
+        Effect.provideService(
+          HttpClient.HttpClient,
+          jsonHttpClient(requestedUrls, {
+            "https://registry.npmjs.org/%40example%2Fpackage-tool/latest": {
+              version: "2.0.0",
+            },
+          }),
+        ),
+      );
+
+      expect(version).toBe("2.0.0");
+      expect(requestedUrls).toEqual([
+        "https://registry.npmjs.org/%40example%2Fpackage-tool/latest",
+      ]);
+    }),
+  );
+
+  it.effect("asks Homebrew for the version its update command can install", () =>
+    Effect.gen(function* () {
+      const requestedUrls: string[] = [];
+      const capabilities = packageToolUpdate.resolve({
+        binaryPath: "/opt/homebrew/bin/package-tool",
+        env: { PATH: "" },
+      });
+      const version = yield* resolveLatestProviderVersion(capabilities).pipe(
+        Effect.provideService(ProviderVersionCache, new Map()),
+        Effect.provideService(
+          HttpClient.HttpClient,
+          jsonHttpClient(requestedUrls, {
+            "https://formulae.brew.sh/api/cask/package-tool.json": {
+              version: "2.0.0,4567",
+            },
+          }),
+        ),
+      );
+
+      expect(capabilities.homebrewFormula).toBe("package-tool");
+      expect(version).toBe("2.0.0");
+      expect(requestedUrls).toEqual(["https://formulae.brew.sh/api/cask/package-tool.json"]);
+    }),
+  );
+
+  it.effect("falls back to the Homebrew formula endpoint", () =>
+    Effect.gen(function* () {
+      const requestedUrls: string[] = [];
+      const version = yield* resolveLatestProviderVersion(
+        packageToolUpdate.resolve({
+          binaryPath: "/opt/homebrew/bin/package-tool",
+          env: { PATH: "" },
+        }),
+      ).pipe(
+        Effect.provideService(ProviderVersionCache, new Map()),
+        Effect.provideService(
+          HttpClient.HttpClient,
+          jsonHttpClient(requestedUrls, {
+            "https://formulae.brew.sh/api/formula/package-tool.json": {
+              versions: { stable: "3.0.0" },
+            },
+          }),
+        ),
+      );
+
+      expect(version).toBe("3.0.0");
+      expect(requestedUrls).toEqual([
+        "https://formulae.brew.sh/api/cask/package-tool.json",
+        "https://formulae.brew.sh/api/formula/package-tool.json",
+      ]);
+    }),
+  );
+
+  it.effect("keeps npm as the version source for third-party Homebrew taps", () =>
+    Effect.gen(function* () {
+      const requestedUrls: string[] = [];
+      const version = yield* resolveLatestProviderVersion(
+        scopedPackageToolUpdate.resolve({
+          binaryPath: "/opt/homebrew/bin/scoped-package-tool",
+          env: { PATH: "" },
+        }),
+      ).pipe(
+        Effect.provideService(ProviderVersionCache, new Map()),
+        Effect.provideService(
+          HttpClient.HttpClient,
+          jsonHttpClient(requestedUrls, {
+            "https://registry.npmjs.org/%40example%2Fscoped-package-tool/latest": {
+              version: "4.0.0",
+            },
+          }),
+        ),
+      );
+
+      expect(version).toBe("4.0.0");
+      expect(requestedUrls).toEqual([
+        "https://registry.npmjs.org/%40example%2Fscoped-package-tool/latest",
+      ]);
+    }),
   );
 
   it.effect("does not fetch latest provider versions when update checks are disabled", () =>
@@ -320,6 +443,7 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
     ).toEqual({
       provider: driver("packageTool"),
       packageName: "@example/package-tool",
+      homebrewFormula: "package-tool",
       update: {
         command: "brew upgrade package-tool",
 
@@ -329,6 +453,19 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
 
         lockKey: "homebrew",
       },
+    });
+  });
+
+  it("does not treat an unresolved /usr/local/bin executable as Homebrew", () => {
+    expect(
+      packageToolUpdate.resolve({
+        binaryPath: "/usr/local/bin/package-tool",
+        env: { PATH: "" },
+      }),
+    ).toEqual({
+      provider: driver("packageTool"),
+      packageName: "@example/package-tool",
+      update: null,
     });
   });
 
@@ -417,6 +554,7 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
     ).toEqual({
       provider: driver("nativePackageTool"),
       packageName: "@example/native-package-tool",
+      homebrewFormula: "native-package-tool",
       update: {
         command: "brew upgrade native-package-tool",
 
@@ -440,6 +578,7 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
     ).toEqual({
       provider: driver("scopedPackageTool"),
       packageName: "@example/scoped-package-tool",
+      homebrewFormula: "example/tap/scoped-package-tool",
       update: {
         command: "brew upgrade example/tap/scoped-package-tool",
 

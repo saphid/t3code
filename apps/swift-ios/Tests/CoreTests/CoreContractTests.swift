@@ -81,6 +81,33 @@ final class CoreContractTests: XCTestCase {
         XCTAssertEqual(config.threadSnapshotPagination, true)
     }
 
+    func testProviderMaintenanceStateDecodesFromServerConfig() throws {
+        let config = try JSONDecoder.t3.decode(
+            ServerConfigSnapshot.self,
+            from: Data(
+                #"{"providers":[{"instanceId":"codex","driver":"codex","enabled":true,"installed":true,"version":"1.2.3","status":"ready","auth":{"status":"authenticated"},"checkedAt":"2026-08-29T00:00:00.000Z","models":[],"versionAdvisory":{"status":"current","currentVersion":"1.2.3","latestVersion":"1.2.3","canUpdate":false,"message":"Provider is current."},"updateState":{"status":"succeeded","reason":"current","finishedAt":"2026-08-29T00:00:01.000Z","message":"Provider is current."}}]}"#.utf8
+            )
+        )
+
+        let provider = try XCTUnwrap(config.providers.first)
+        XCTAssertEqual(provider.versionAdvisory?.status, "current")
+        XCTAssertEqual(provider.versionAdvisory?.canUpdate, false)
+        XCTAssertEqual(provider.updateState?.status, "succeeded")
+        XCTAssertEqual(provider.updateState?.reason, "current")
+    }
+
+    func testProviderMaintenanceFieldsRemainOptionalForOlderServers() throws {
+        let config = try JSONDecoder.t3.decode(
+            ServerConfigSnapshot.self,
+            from: Data(
+                #"{"providers":[{"instanceId":"claude","driver":"claude","enabled":true,"installed":true,"status":"ready","auth":{"status":"authenticated"},"checkedAt":"2026-08-29T00:00:00.000Z","models":[]}]}"#.utf8
+            )
+        )
+
+        XCTAssertNil(config.providers.first?.versionAdvisory)
+        XCTAssertNil(config.providers.first?.updateState)
+    }
+
     func testCommandBuildersMatchOrchestrationContract() throws {
         let model = ModelSelection(instanceId: "codex", model: "gpt-5.6-sol")
         let command = try OrchestrationCommands.createThread(

@@ -67,6 +67,8 @@ export interface ProviderRegistryShape {
     readonly instanceId: ProviderInstanceId;
     readonly action: ProviderMaintenanceActionKind;
     readonly state: ServerProviderUpdateState | null;
+    /** Freshly verified snapshot to publish atomically with terminal state. */
+    readonly verifiedProvider?: ServerProvider | undefined;
   }) => Effect.Effect<ReadonlyArray<ServerProvider>>;
 
   /**

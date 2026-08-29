@@ -86,6 +86,12 @@ public protocol FeatureClient: AnyObject {
     func resolveUserInput(id: String, answers: [String: FeatureInputAnswer]) async throws
 
     func saveSettings(_ settings: FeatureSettings) async throws
+    func updateProvider(
+        environmentID: String,
+        providerID: String,
+        driver: String
+    ) async throws
+    func refreshProvider(environmentID: String, providerID: String) async throws
 
     func usageSummaries(_ input: UsageSummaryInput) async throws -> [FeatureEnvironmentUsage]
     func pullRequestLists(_ input: PullRequestListInput) async throws
@@ -199,6 +205,18 @@ public extension FeatureClient {
 
     func regenerateThreadTitle(id _: String) async throws {
         throw FeatureCapabilityUnavailable("Thread title regeneration")
+    }
+
+    func updateProvider(
+        environmentID _: String,
+        providerID _: String,
+        driver _: String
+    ) async throws {
+        throw FeatureCapabilityUnavailable("Provider updates")
+    }
+
+    func refreshProvider(environmentID _: String, providerID _: String) async throws {
+        throw FeatureCapabilityUnavailable("Provider refresh")
     }
 
     func loadEarlierThreadTurns(id _: String) async throws -> FeatureThreadDetail? {

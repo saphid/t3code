@@ -415,6 +415,7 @@ export const ProviderRegistryLive = Layer.effect(
         readonly instanceId: ProviderInstanceId;
         readonly action: "update";
         readonly state: ServerProviderUpdateState | null;
+        readonly verifiedProvider?: ServerProvider | undefined;
       }) {
         yield* Ref.update(maintenanceActionStatesRef, (previous) => {
           const previousActions = previous.get(input.instanceId);
@@ -435,10 +436,10 @@ export const ProviderRegistryLive = Layer.effect(
         });
 
         const existingProviders = yield* Ref.get(providersRef);
-        const matchingProvider = existingProviders.find(
-          (candidate) => candidate.instanceId === input.instanceId,
-        );
-        if (!matchingProvider) {
+        const matchingProvider =
+          input.verifiedProvider ??
+          existingProviders.find((candidate) => candidate.instanceId === input.instanceId);
+        if (!matchingProvider || matchingProvider.instanceId !== input.instanceId) {
           return existingProviders;
         }
 

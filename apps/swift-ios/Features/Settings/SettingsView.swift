@@ -90,21 +90,36 @@ public struct SettingsView: View {
 
     private var connectionSection: some View {
         SettingsSection(title: "Connection") {
-            NavigationLink {
-                ConnectionsView(model: model)
-            } label: {
-                SettingsNavigationRow(
-                    title: "Environments",
-                    value: environmentCountLabel,
-                    subtitle: environmentSummary.text,
-                    systemImage: "server.rack",
-                    statusColor: environmentSummary.color
-                )
+            VStack(spacing: 0) {
+                NavigationLink {
+                    ConnectionsView(model: model)
+                } label: {
+                    SettingsNavigationRow(
+                        title: "Environments",
+                        value: environmentCountLabel,
+                        subtitle: environmentSummary.text,
+                        systemImage: "server.rack",
+                        statusColor: environmentSummary.color
+                    )
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Environments")
+                .accessibilityValue(environmentAccessibilityValue)
+                .accessibilityHint("Manage saved environments")
+                settingsDivider
+                NavigationLink {
+                    ProviderSettingsView(model: model)
+                } label: {
+                    SettingsNavigationRow(
+                        title: "Providers",
+                        value: ProviderSettingsPresentation.settingsSummary(in: model.snapshot),
+                        systemImage: "shippingbox"
+                    )
+                }
+                .buttonStyle(.plain)
+                .accessibilityHint("Inspect, refresh, and update provider installations")
+                .accessibilityIdentifier("settings-providers")
             }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Environments")
-            .accessibilityValue(environmentAccessibilityValue)
-            .accessibilityHint("Manage saved environments")
         }
     }
 

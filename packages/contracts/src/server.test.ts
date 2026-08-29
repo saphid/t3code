@@ -73,6 +73,32 @@ describe("ServerProvider", () => {
     expect(parsed.versionAdvisory?.canUpdate).toBe(false);
   });
 
+  it("decodes actionable provider update terminal reasons", () => {
+    const parsed = decodeServerProvider({
+      instanceId: "codex",
+      driver: "codex",
+      enabled: true,
+      installed: true,
+      version: "1.0.0",
+      status: "ready",
+      auth: {
+        status: "authenticated",
+      },
+      checkedAt: "2026-04-10T00:00:00.000Z",
+      models: [],
+      updateState: {
+        status: "failed",
+        reason: "timed_out",
+        startedAt: "2026-04-10T00:00:00.000Z",
+        finishedAt: "2026-04-10T00:01:30.000Z",
+        message: "Update timed out after 90 seconds.",
+        output: null,
+      },
+    });
+
+    expect(parsed.updateState?.reason).toBe("timed_out");
+  });
+
   it("decodes continuation group metadata", () => {
     const parsed = decodeServerProvider({
       instanceId: "codex_personal",

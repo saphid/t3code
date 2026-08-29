@@ -835,6 +835,9 @@ public struct FeatureProvider: Identifiable, Sendable, Equatable, Hashable, Coda
     public var isAvailable: Bool
     public var driver: String
     public var requiresNewThreadForModelChange: Bool
+    public var version: String?
+    public var versionAdvisory: ServerProviderVersionAdvisorySnapshot?
+    public var updateState: ServerProviderUpdateStateSnapshot?
     public var models: [FeatureModel]
     public var slashCommands: [FeatureProviderSlashCommand]?
     public var skills: [FeatureProviderSkill]?
@@ -845,6 +848,9 @@ public struct FeatureProvider: Identifiable, Sendable, Equatable, Hashable, Coda
         isAvailable: Bool = true,
         driver: String = "",
         requiresNewThreadForModelChange: Bool = false,
+        version: String? = nil,
+        versionAdvisory: ServerProviderVersionAdvisorySnapshot? = nil,
+        updateState: ServerProviderUpdateStateSnapshot? = nil,
         models: [FeatureModel] = [],
         slashCommands: [FeatureProviderSlashCommand] = [],
         skills: [FeatureProviderSkill] = []
@@ -854,6 +860,9 @@ public struct FeatureProvider: Identifiable, Sendable, Equatable, Hashable, Coda
         self.isAvailable = isAvailable
         self.driver = driver
         self.requiresNewThreadForModelChange = requiresNewThreadForModelChange
+        self.version = version
+        self.versionAdvisory = versionAdvisory
+        self.updateState = updateState
         self.models = models
         self.slashCommands = slashCommands
         self.skills = skills

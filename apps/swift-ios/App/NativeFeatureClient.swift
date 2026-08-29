@@ -2467,6 +2467,34 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
             )
     }
 
+    func updateProvider(
+        environmentID: String,
+        providerID: String,
+        driver: String
+    ) async throws {
+        let client = try await projectCreationClient(environmentID: environmentID)
+        let generation = environmentGeneration
+        let result = try await client.updateProvider(driver: driver, instanceID: providerID)
+        try Task.checkCancellation()
+        guard isKnownClient(client, environmentID: environmentID, generation: generation) else {
+            throw CancellationError()
+        }
+        commitProviderStatuses(result.providers, environmentID: environmentID)
+        await emitCachedSnapshot(for: environmentID)
+    }
+
+    func refreshProvider(environmentID: String, providerID: String) async throws {
+        let client = try await projectCreationClient(environmentID: environmentID)
+        let generation = environmentGeneration
+        let result = try await client.refreshProvider(instanceID: providerID)
+        try Task.checkCancellation()
+        guard isKnownClient(client, environmentID: environmentID, generation: generation) else {
+            throw CancellationError()
+        }
+        commitProviderStatuses(result.providers, environmentID: environmentID)
+        await emitCachedSnapshot(for: environmentID)
+    }
+
     private func requireClient() throws -> T3Client {
         guard let client else { throw NativeFeatureClientError.notConnected }
         return client
@@ -5172,6 +5200,22 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         providerCatalogCache[environmentID] = nil
     }
 
+    private func commitProviderStatuses(
+        _ providers: [ServerProviderSnapshot],
+        environmentID: String
+    ) {
+        let previous = serverConfigsByEnvironmentID[environmentID]
+        let config = ServerConfigSnapshot(
+            providers: providers,
+            settings: previous?.settings,
+            threadSnapshotPagination: previous?.threadSnapshotPagination
+        )
+        setServerConfig(config, environmentID: environmentID)
+        if activeEnvironment?.id == environmentID {
+            latestServerConfig = config
+        }
+    }
+
     private func mapProviders(
         environmentID: String,
         shell: OrchestrationShellSnapshot,
@@ -5202,6 +5246,9 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
                     driver: provider.driver,
                     requiresNewThreadForModelChange:
                         provider.requiresNewThreadForModelChange ?? false,
+                    version: provider.version,
+                    versionAdvisory: provider.versionAdvisory,
+                    updateState: provider.updateState,
                     models: provider.models.map { model in
                         let options = (model.capabilities?.optionDescriptors ?? [])
                             .map(mapOptionDescriptor)

@@ -149,8 +149,21 @@ export const ServerProviderUpdateStatus = Schema.Literals([
 ]);
 export type ServerProviderUpdateStatus = typeof ServerProviderUpdateStatus.Type;
 
+export const ServerProviderUpdateReason = Schema.Literals([
+  "current",
+  "timed_out",
+  "command_not_found",
+  "permission_denied",
+  "nonzero_exit",
+  "cancelled",
+  "verification_failed",
+  "version_mismatch",
+]);
+export type ServerProviderUpdateReason = typeof ServerProviderUpdateReason.Type;
+
 export const ServerProviderUpdateState = Schema.Struct({
   status: ServerProviderUpdateStatus,
+  reason: Schema.optionalKey(ServerProviderUpdateReason),
   startedAt: Schema.NullOr(IsoDateTime),
   finishedAt: Schema.NullOr(IsoDateTime),
   message: Schema.NullOr(TrimmedNonEmptyString),
@@ -603,10 +616,14 @@ export const ServerProviderUpdateInput = Schema.Struct({
 });
 export type ServerProviderUpdateInput = typeof ServerProviderUpdateInput.Type;
 
+export const ServerProviderUpdateErrorCode = Schema.Literals(["concurrent_update", "unsupported"]);
+export type ServerProviderUpdateErrorCode = typeof ServerProviderUpdateErrorCode.Type;
+
 export class ServerProviderUpdateError extends Schema.TaggedErrorClass<ServerProviderUpdateError>()(
   "ServerProviderUpdateError",
   {
     provider: ProviderDriverKind,
+    code: Schema.optionalKey(ServerProviderUpdateErrorCode),
     reason: TrimmedNonEmptyString,
     cause: Schema.optional(Schema.Defect()),
   },

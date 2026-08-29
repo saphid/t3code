@@ -28,7 +28,7 @@ import type { ProviderMaintenanceCapabilities } from "./providerMaintenance.ts";
 import { collectUint8StreamText } from "../stream/collectUint8StreamText.ts";
 const isServerProviderUpdateError = Schema.is(ServerProviderUpdateError);
 
-const UPDATE_TIMEOUT_MS = 5 * 60_000;
+export const UPDATE_TIMEOUT_MS = 90_000;
 const UPDATE_OUTPUT_MAX_BYTES = 10_000;
 
 export interface ProviderMaintenanceCommandResult {
@@ -169,20 +169,42 @@ function commandOutput(result: ProviderMaintenanceCommandResult): string | null 
 
 function failureMessage(result: ProviderMaintenanceCommandResult): string {
   if (result.timedOut) {
-    return "Update timed out.";
+    return "Update timed out after 90 seconds. Check the package manager, then retry.";
   }
   if (result.exitCode !== null && result.exitCode !== 0) {
+    const output = `${result.stderr}\n${result.stdout}`.toLowerCase();
+    if (
+      output.includes("permission denied") ||
+      output.includes("eacces") ||
+      output.includes("eperm")
+    ) {
+      return "The update command was denied permission. Fix the package-manager permissions, then retry.";
+    }
     return `Update command exited with code ${result.exitCode}.`;
   }
   return "Update command failed.";
 }
 
-function isOutdatedProvider(provider: ServerProvider | undefined): boolean {
-  return provider?.versionAdvisory?.status === "behind_latest";
+function commandFailureReason(
+  result: ProviderMaintenanceCommandResult,
+): ServerProviderUpdateState["reason"] {
+  if (result.timedOut) {
+    return "timed_out";
+  }
+  const output = `${result.stderr}\n${result.stdout}`.toLowerCase();
+  if (
+    output.includes("permission denied") ||
+    output.includes("eacces") ||
+    output.includes("eperm")
+  ) {
+    return "permission_denied";
+  }
+  return "nonzero_exit";
 }
 
 function makeUpdateState(input: {
   readonly status: ServerProviderUpdateState["status"];
+  readonly reason?: ServerProviderUpdateState["reason"] | undefined;
   readonly startedAt: string | null;
   readonly finishedAt: string | null;
   readonly message: string | null;
@@ -190,6 +212,7 @@ function makeUpdateState(input: {
 }): ServerProviderUpdateState {
   return {
     status: input.status,
+    ...(input.reason ? { reason: input.reason } : {}),
     startedAt: input.startedAt,
     finishedAt: input.finishedAt,
     message: input.message,
@@ -211,7 +234,9 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
     makeAlreadyRunningError: () =>
       new ServerProviderUpdateError({
         provider: ProviderDriverKind.make("unknown"),
-        reason: "An update is already running for this provider.",
+        code: "concurrent_update",
+        reason:
+          "An update is already running for this provider. Wait for it to finish, then retry.",
       }),
   });
 
@@ -255,10 +280,9 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
         return Effect.forEach(
           refreshedProviders,
           (refreshedProvider) =>
-            enrichProviderSnapshotWithVersionAdvisory(
-              refreshedProvider,
-              maintenanceCapabilities,
-            ).pipe(Effect.provideService(HttpClient.HttpClient, httpClient)),
+            enrichProviderSnapshotWithVersionAdvisory(refreshedProvider, maintenanceCapabilities, {
+              forceLatestVersionRefresh: true,
+            }).pipe(Effect.provideService(HttpClient.HttpClient, httpClient)),
           {
             concurrency: "unbounded",
           },
@@ -301,15 +325,20 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
     if (!update) {
       return yield* new ServerProviderUpdateError({
         provider,
+        code: "unsupported",
         reason: "This provider does not support one-click updates.",
       });
     }
 
-    const setUpdateState = (state: ServerProviderUpdateState | null) =>
+    const setUpdateState = (
+      state: ServerProviderUpdateState | null,
+      verifiedProvider?: ServerProvider,
+    ) =>
       providerRegistry.setProviderMaintenanceActionState({
         instanceId,
         action: "update",
         state,
+        ...(verifiedProvider ? { verifiedProvider } : {}),
       });
     const setQueuedState = setUpdateState(
       makeUpdateState({
@@ -320,12 +349,17 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
       }),
     ).pipe(Effect.asVoid);
 
+    const startedAtRef = yield* Ref.make<string | null>(null);
+    const terminalStateRecordedRef = yield* Ref.make(false);
+    const finish = (state: ServerProviderUpdateState, verifiedProvider?: ServerProvider) =>
+      setUpdateState(state, verifiedProvider).pipe(
+        Effect.tap(() => Ref.set(terminalStateRecordedRef, true)),
+        Effect.map((providers) => ({ providers })),
+        Effect.uninterruptible,
+      );
+
     const runProviderUpdate = Effect.fn("ProviderMaintenanceRunner.runProviderUpdate")(
       function* () {
-        const finish = (state: ServerProviderUpdateState) =>
-          setUpdateState(state).pipe(Effect.map((providers) => ({ providers })));
-        const startedAtRef = yield* Ref.make<string | null>(null);
-
         const runCommandAndVerify = Effect.fn("ProviderMaintenanceRunner.runCommandAndVerify")(
           function* () {
             const startedAt = yield* nowIso;
@@ -345,6 +379,7 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
               return yield* finish(
                 makeUpdateState({
                   status: "failed",
+                  reason: commandFailureReason(result),
                   startedAt,
                   finishedAt,
                   message: failureMessage(result),
@@ -358,36 +393,69 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
               capabilities,
               instanceId,
             );
-            const couldNotVerify = verifiedProviders.length === 0;
-            const stillOutdated =
-              couldNotVerify ||
-              verifiedProviders.some((verifiedProvider) => isOutdatedProvider(verifiedProvider));
+            const verifiedProvider = verifiedProviders[0];
+            const nativeCommandVerified =
+              capabilities.packageName === null &&
+              verifiedProvider?.installed === true &&
+              verifiedProvider.version !== null;
+            const couldNotVerify =
+              !verifiedProvider ||
+              (verifiedProvider.versionAdvisory?.status === "unknown" && !nativeCommandVerified);
+            const stillOutdated = verifiedProvider?.versionAdvisory?.status === "behind_latest";
             return yield* finish(
               makeUpdateState({
-                status: stillOutdated ? "unchanged" : "succeeded",
+                status: couldNotVerify || stillOutdated ? "failed" : "succeeded",
+                reason: couldNotVerify
+                  ? "verification_failed"
+                  : stillOutdated
+                    ? "version_mismatch"
+                    : "current",
                 startedAt,
                 finishedAt,
                 message: couldNotVerify
-                  ? "Update command completed, but T3 Code could not verify the provider version."
+                  ? "The update command finished, but T3 Code could not verify the installed version. Refresh provider status, then retry."
                   : stillOutdated
-                    ? "Update command completed, but T3 Code still detects an outdated provider version."
-                    : "Provider updated.",
+                    ? "The update command finished, but the installed version is still behind the package manager. Check the command output, then retry."
+                    : "Provider is current.",
                 output: commandOutput(result),
               }),
+              verifiedProvider,
             );
           },
         );
 
         const recordFailedUpdate = Effect.fn("ProviderMaintenanceRunner.recordFailedUpdate")(
           function* (cause: Cause.Cause<unknown>) {
+            if (Cause.hasInterruptsOnly(cause)) {
+              return yield* Effect.interrupt;
+            }
             const failure = Cause.squash(cause);
             const startedAt = yield* Ref.get(startedAtRef);
+            const detail = failure instanceof Error ? failure.message : "Update command failed.";
+            const normalizedDetail = detail.toLowerCase();
+            const commandNotFound =
+              normalizedDetail.includes("notfound") ||
+              normalizedDetail.includes("not found") ||
+              normalizedDetail.includes("enoent");
+            const permissionDenied =
+              normalizedDetail.includes("permission denied") ||
+              normalizedDetail.includes("eacces") ||
+              normalizedDetail.includes("eperm");
             return yield* finish(
               makeUpdateState({
                 status: "failed",
+                reason: commandNotFound
+                  ? "command_not_found"
+                  : permissionDenied
+                    ? "permission_denied"
+                    : "nonzero_exit",
                 startedAt,
                 finishedAt: yield* nowIso,
-                message: failure instanceof Error ? failure.message : "Update command failed.",
+                message: commandNotFound
+                  ? `The update command could not start because ${update.executable} is not installed or not on PATH.`
+                  : permissionDenied
+                    ? "The update command was denied permission. Fix the package-manager permissions, then retry."
+                    : detail,
                 output: null,
               }),
             );
@@ -398,6 +466,26 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
       },
     );
 
+    const recordCancelledUpdate = Ref.get(terminalStateRecordedRef).pipe(
+      Effect.flatMap((terminalStateRecorded) =>
+        terminalStateRecorded
+          ? Effect.void
+          : Effect.gen(function* () {
+              const startedAt = yield* Ref.get(startedAtRef);
+              yield* finish(
+                makeUpdateState({
+                  status: "failed",
+                  reason: "cancelled",
+                  startedAt,
+                  finishedAt: yield* nowIso,
+                  message:
+                    "The update was cancelled before completion. Reconnect or restart the server if needed, then retry.",
+                }),
+              );
+            }),
+      ),
+    );
+
     return yield* commandCoordinator
       .withCommandLock({
         targetKey,
@@ -406,10 +494,12 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
         run: runProviderUpdate(),
       })
       .pipe(
+        Effect.onInterrupt(() => recordCancelledUpdate),
         Effect.mapError((error) =>
           isServerProviderUpdateError(error)
             ? new ServerProviderUpdateError({
                 provider,
+                ...(error.code ? { code: error.code } : {}),
                 reason: error.reason,
               })
             : error,

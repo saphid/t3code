@@ -135,6 +135,30 @@ public actor T3Client {
         )
     }
 
+    public func updateProvider(
+        driver: String,
+        instanceID: String
+    ) async throws -> ServerProviderUpdatedSnapshot {
+        try await rpc.request(
+            RPCMethod.serverUpdateProvider.rawValue,
+            payload: .object([
+                "provider": .string(driver),
+                "instanceId": .string(instanceID),
+            ]),
+            responseTimeout: .seconds(10 * 60),
+            as: ServerProviderUpdatedSnapshot.self
+        )
+    }
+
+    public func refreshProvider(instanceID: String) async throws -> ServerProviderUpdatedSnapshot {
+        try await rpc.request(
+            RPCMethod.serverRefreshProviders.rawValue,
+            payload: .object(["instanceId": .string(instanceID)]),
+            responseTimeout: .seconds(2 * 60),
+            as: ServerProviderUpdatedSnapshot.self
+        )
+    }
+
     public func usageSummary(_ input: UsageSummaryInput) async throws -> UsageSummary {
         try await rpc.request(
             RPCMethod.serverGetUsageSummary.rawValue,
@@ -1550,6 +1574,8 @@ public actor EnvironmentRuntime {
 public enum RPCMethod: String, Sendable {
     case serverProbe = "server.probe"
     case serverGetConfig = "server.getConfig"
+    case serverRefreshProviders = "server.refreshProviders"
+    case serverUpdateProvider = "server.updateProvider"
     case serverGetUsageSummary = "server.getUsageSummary"
     case pullRequestsList = "pullRequests.list"
     case pullRequestsDetail = "pullRequests.detail"

@@ -103,6 +103,88 @@ public struct ServerProviderSkillSnapshot: Codable, Equatable, Sendable {
     public let shortDescription: String?
 }
 
+public struct ServerProviderVersionAdvisorySnapshot: Codable, Equatable, Hashable, Sendable {
+    public let status: String
+    public let currentVersion: String?
+    public let latestVersion: String?
+    public let updateCommand: String?
+    public let canUpdate: Bool
+    public let checkedAt: String?
+    public let message: String?
+
+    private enum CodingKeys: String, CodingKey {
+        case status, currentVersion, latestVersion, updateCommand, canUpdate, checkedAt, message
+    }
+
+    public init(
+        status: String,
+        currentVersion: String? = nil,
+        latestVersion: String? = nil,
+        updateCommand: String? = nil,
+        canUpdate: Bool = false,
+        checkedAt: String? = nil,
+        message: String? = nil
+    ) {
+        self.status = status
+        self.currentVersion = currentVersion
+        self.latestVersion = latestVersion
+        self.updateCommand = updateCommand
+        self.canUpdate = canUpdate
+        self.checkedAt = checkedAt
+        self.message = message
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        status = try container.decode(String.self, forKey: .status)
+        currentVersion = try container.decodeIfPresent(String.self, forKey: .currentVersion)
+        latestVersion = try container.decodeIfPresent(String.self, forKey: .latestVersion)
+        updateCommand = try container.decodeIfPresent(String.self, forKey: .updateCommand)
+        canUpdate = try container.decodeIfPresent(Bool.self, forKey: .canUpdate) ?? false
+        checkedAt = try container.decodeIfPresent(String.self, forKey: .checkedAt)
+        message = try container.decodeIfPresent(String.self, forKey: .message)
+    }
+}
+
+public struct ServerProviderUpdateStateSnapshot: Codable, Equatable, Hashable, Sendable {
+    public let status: String
+    public let reason: String?
+    public let startedAt: String?
+    public let finishedAt: String?
+    public let message: String?
+    public let output: String?
+
+    public init(
+        status: String,
+        reason: String? = nil,
+        startedAt: String? = nil,
+        finishedAt: String? = nil,
+        message: String? = nil,
+        output: String? = nil
+    ) {
+        self.status = status
+        self.reason = reason
+        self.startedAt = startedAt
+        self.finishedAt = finishedAt
+        self.message = message
+        self.output = output
+    }
+}
+
+public struct ServerProviderUpdatedSnapshot: Codable, Equatable, Sendable {
+    public let providers: [ServerProviderSnapshot]
+
+    private enum CodingKeys: String, CodingKey { case providers }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        providers = try container.decode(
+            [LossyDecodableElement<ServerProviderSnapshot>].self,
+            forKey: .providers
+        ).compactMap(\.value)
+    }
+}
+
 public struct ServerProviderSnapshot: Codable, Identifiable, Equatable, Sendable {
     public var id: String { instanceId }
 
@@ -125,6 +207,8 @@ public struct ServerProviderSnapshot: Codable, Identifiable, Equatable, Sendable
     public let models: [ServerProviderModelSnapshot]
     public let slashCommands: [ServerProviderSlashCommandSnapshot]?
     public let skills: [ServerProviderSkillSnapshot]?
+    public let versionAdvisory: ServerProviderVersionAdvisorySnapshot?
+    public let updateState: ServerProviderUpdateStateSnapshot?
 }
 
 public enum ServerThreadEnvironmentMode: String, Codable, Equatable, Sendable {

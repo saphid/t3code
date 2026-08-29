@@ -826,6 +826,31 @@ public final class FeatureRootModel {
         }
     }
 
+    @discardableResult
+    public func updateProvider(
+        environmentID: String,
+        providerID: String,
+        driver: String
+    ) async -> Bool {
+        await perform {
+            try await client.updateProvider(
+                environmentID: environmentID,
+                providerID: providerID,
+                driver: driver
+            )
+        }
+    }
+
+    @discardableResult
+    public func refreshProvider(environmentID: String, providerID: String) async -> Bool {
+        await perform {
+            try await client.refreshProvider(
+                environmentID: environmentID,
+                providerID: providerID
+            )
+        }
+    }
+
     /// Applies appearance optimistically so selecting a theme updates every
     /// surface immediately, then persists just that preference in the current
     /// settings snapshot. Other unsaved Settings edits remain drafts.
