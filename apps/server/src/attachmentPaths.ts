@@ -2,8 +2,16 @@
 import * as NodePath from "node:path";
 
 export function normalizeAttachmentRelativePath(rawRelativePath: string): string | null {
-  const normalized = NodePath.normalize(rawRelativePath).replace(/^[/\\]+/, "");
-  if (normalized.length === 0 || normalized.startsWith("..") || normalized.includes("\0")) {
+  if (
+    rawRelativePath.length === 0 ||
+    NodePath.posix.isAbsolute(rawRelativePath) ||
+    NodePath.win32.isAbsolute(rawRelativePath) ||
+    rawRelativePath.includes("\0")
+  ) {
+    return null;
+  }
+  const normalized = NodePath.normalize(rawRelativePath);
+  if (normalized.length === 0 || normalized.startsWith("..")) {
     return null;
   }
   return normalized.replace(/\\/g, "/");

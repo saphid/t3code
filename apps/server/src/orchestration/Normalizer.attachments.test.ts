@@ -27,8 +27,8 @@ const attachmentUuid = "00000000-0000-4000-8000-0000000000aa";
 function turnStartCommand(input: {
   readonly threadId?: string;
   readonly attachments: ReadonlyArray<
-    | { readonly id: string; readonly sizeBytes: number }
-    | { readonly dataUrl: string; readonly sizeBytes: number }
+    | { readonly id: string; readonly sizeBytes: number; readonly name?: string }
+    | { readonly dataUrl: string; readonly sizeBytes: number; readonly name?: string }
   >;
 }): ClientOrchestrationCommand {
   return {
@@ -96,6 +96,48 @@ describe("normalizeDispatchCommand attachments", () => {
       expect(NodeFS.existsSync(NodePath.join(config.attachmentsDir, `${attachmentId}.png`))).toBe(
         true,
       );
+    }).pipe(Effect.provide(testLayer)),
+  );
+
+  it.effect("claims two and maximum-count Linux uploads in order under environment storage", () =>
+    Effect.gen(function* () {
+      const config = yield* ServerConfig.ServerConfig;
+
+      for (const count of [2, 8]) {
+        const inputs = Array.from({ length: count }, (_, index) => {
+          const suffix = String(index + 1).padStart(12, "0");
+          const id = `pending-00000000-0000-4000-8000-${suffix}`;
+          const bytes = Buffer.from(`pixels-${index + 1}`);
+          NodeFS.writeFileSync(NodePath.join(config.attachmentsDir, `${id}.png`), bytes);
+          return {
+            id,
+            name: index === 1 ? "スクリーンショット 2.png" : `Image ${index + 1}.png`,
+            sizeBytes: bytes.byteLength,
+            bytes,
+          };
+        });
+
+        const normalized = yield* normalizeDispatchCommand(
+          turnStartCommand({
+            threadId: `linux-thread-${count}`,
+            attachments: inputs.map(({ id, name, sizeBytes }) => ({ id, name, sizeBytes })),
+          }),
+        );
+        if (normalized.type !== "thread.turn.start") {
+          throw new Error("Expected a thread.turn.start command.");
+        }
+
+        expect(normalized.message.attachments).toHaveLength(count);
+        expect(normalized.message.attachments.map((attachment) => attachment.name)).toEqual(
+          inputs.map((input) => input.name),
+        );
+        for (const [index, attachment] of normalized.message.attachments.entries()) {
+          const storedPath = NodePath.join(config.attachmentsDir, `${attachment.id}.png`);
+          expect(attachment.id.startsWith(`linux-thread-${count}-`)).toBe(true);
+          expect(NodePath.relative(config.attachmentsDir, storedPath).startsWith("..")).toBe(false);
+          expect(NodeFS.readFileSync(storedPath)).toEqual(inputs[index]!.bytes);
+        }
+      }
     }).pipe(Effect.provide(testLayer)),
   );
 

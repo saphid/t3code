@@ -1,4 +1,5 @@
 import XCTest
+import Testing
 @testable import T3Code
 
 @MainActor
@@ -284,7 +285,111 @@ final class TransportReliabilityTests: XCTestCase {
         XCTAssertEqual(httpRequests[1].httpBody, Data([0x89, 0x50, 0x4e, 0x47]))
         XCTAssertNil(httpRequests[1].value(forHTTPHeaderField: "Authorization"))
     }
+}
 
+@Suite("Multi-image attachment transport")
+struct MultiImageAttachmentTransportTests {
+    @Test(
+        "Linux servers receive multiple image bytes and references in selection order",
+        .bug("https://github.com/saphid/t3code-personal/issues/215")
+    )
+    func linuxServersUploadMultipleImagesInSelectionOrder() async throws {
+        let descriptor = try JSONDecoder.t3.decode(
+            EnvironmentDescriptor.self,
+            from: Data(
+                """
+                {
+                  "environmentId": "linux-environment",
+                  "label": "Linux Studio",
+                  "platform": {"os": "linux", "arch": "x64"},
+                  "serverVersion": "1.0.0",
+                  "capabilities": {"attachmentUploads": true}
+                }
+                """.utf8
+            )
+        )
+        let environment = Environment(
+            id: "linux-environment",
+            label: "Linux Studio",
+            httpBaseURL: URL(string: "https://linux.example")!,
+            webSocketBaseURL: URL(string: "wss://linux.example")!,
+            descriptor: descriptor
+        )
+        let credentials = InMemoryCredentialStore(credentials: [
+            environment.id: EnvironmentCredential(accessToken: "access-token"),
+        ])
+        let transport = RecordingHTTPTransport { request in
+            if request.url?.path == "/api/auth/websocket-ticket" {
+                return (
+                    Data(#"{"ticket":"websocket-ticket","expiresAt":"2026-07-30T12:05:00.000Z"}"#.utf8),
+                    transportResponse(request)
+                )
+            }
+            return (Data(), transportResponse(request, status: 204))
+        }
+        let connection = RecordingWebSocketConnection()
+        let client = T3Client(
+            environment: environment,
+            credentialStore: credentials,
+            httpTransport: transport,
+            webSocketConnector: StaticWebSocketConnector(connection: connection)
+        )
+        let images = try [
+            UploadChatImageAttachment(
+                data: Data([0x01, 0x02]),
+                name: "設計図 1.png",
+                mimeType: "image/png"
+            ),
+            UploadChatImageAttachment(
+                data: Data([0x03, 0x04, 0x05]),
+                name: "Screenshot 2.jpg",
+                mimeType: "image/jpeg"
+            ),
+        ]
+
+        _ = try await client.sendTurn(
+            threadID: "thread-linux",
+            text: "Compare these images",
+            runtimeMode: .fullAccess,
+            attachments: images
+        )
+        await client.disconnect()
+
+        let socketRequests = await connection.requests()
+        #expect(socketRequests.map { $0["tag"]?.stringValue } == [
+            "attachments.createUploadUrl",
+            "attachments.createUploadUrl",
+            "orchestration.dispatchCommand",
+        ])
+        #expect(
+            socketRequests.prefix(2).compactMap { $0["payload"]?["name"]?.stringValue }
+                == images.map(\.name)
+        )
+        guard case let .array(attachments)? = socketRequests[2]["payload"]?["message"]?["attachments"] else {
+            Issue.record("Expected two persisted attachment references")
+            return
+        }
+        #expect(attachments.compactMap { $0["id"]?.stringValue } == [
+            "uploaded-attachment-1",
+            "uploaded-attachment-2",
+        ])
+        #expect(attachments.compactMap { $0["name"]?.stringValue } == images.map(\.name))
+        #expect(attachments.allSatisfy { $0["dataUrl"] == nil })
+
+        let httpRequests = await transport.requests
+        #expect(httpRequests.map(\.url?.path) == [
+            "/api/auth/websocket-ticket",
+            "/api/attachments/upload/signed-token",
+            "/api/attachments/upload/signed-token-2",
+        ])
+        #expect(httpRequests.dropFirst().compactMap(\.httpBody) == images.compactMap(\.imageData))
+        #expect(httpRequests.dropFirst().allSatisfy {
+            $0.value(forHTTPHeaderField: "Authorization") == nil
+        })
+    }
+}
+
+extension TransportReliabilityTests {
     func testOlderServersKeepInlineImageAttachments() async throws {
         let environment = Environment(
             id: "environment-1",
@@ -636,6 +741,7 @@ private actor RecordingWebSocketConnection: WebSocketConnection {
     private var recordedRequests: [JSONValue] = []
     private var queuedResponses: [Data] = []
     private var receiver: CheckedContinuation<Data, Error>?
+    private var attachmentUploadCount = 0
 
     func send(_ data: Data) throws {
         let request = try JSONDecoder.t3.decode(JSONValue.self, from: data)
@@ -644,9 +750,14 @@ private actor RecordingWebSocketConnection: WebSocketConnection {
         let value: JSONValue
         switch request["tag"]?.stringValue {
         case "attachments.createUploadUrl":
+            attachmentUploadCount += 1
             value = .object([
-                "attachmentId": .string("uploaded-attachment-1"),
-                "relativeUrl": .string("/api/attachments/upload/signed-token"),
+                "attachmentId": .string("uploaded-attachment-\(attachmentUploadCount)"),
+                "relativeUrl": .string(
+                    attachmentUploadCount == 1
+                        ? "/api/attachments/upload/signed-token"
+                        : "/api/attachments/upload/signed-token-\(attachmentUploadCount)"
+                ),
                 "expiresAt": .number(1_785_466_800_000),
             ])
         case "provider.uploadFeedback":

@@ -4,8 +4,8 @@ import Testing
 
 @Suite("Durable mobile outbox")
 struct FeatureOutboxStoreTests {
-    @Test
-    func roundTripPreservesStableWireIdentityAndAttachments() async throws {
+    @Test(.bug("https://github.com/saphid/t3code-personal/issues/215"))
+    func retryRoundTripPreservesStableWireIdentityAndAttachmentSet() async throws {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("t3-feature-outbox-\(UUID().uuidString)", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -25,10 +25,12 @@ struct FeatureOutboxStoreTests {
             runtimeMode: .automatic,
             interactionMode: .plan,
             attachments: [
-                .init(data: Data([0x01, 0x02]), name: "reference.png", mimeType: "image/png"),
+                .init(data: Data([0x01, 0x02]), name: "設計図 1.png", mimeType: "image/png"),
+                .init(data: Data([0x03, 0x04]), name: "reference 2.jpg", mimeType: "image/jpeg"),
             ]
         )
 
+        try await store.enqueue(submission)
         try await store.enqueue(submission)
         let restored = try await FeatureOutboxStore(
             fileURL: store.fileURL
@@ -38,7 +40,8 @@ struct FeatureOutboxStoreTests {
         #expect(restored[0].identity == identity)
         #expect(restored[0].runtimeMode == .fullAccess)
         #expect(restored[0].interactionMode == .standard)
-        #expect(restored[0].attachments.first?.data == Data([0x01, 0x02]))
+        #expect(restored[0].attachments == submission.attachments)
+        #expect(restored[0].uploads.map(\.name) == ["設計図 1.png", "reference 2.jpg"])
     }
 
     @Test

@@ -1,4 +1,5 @@
 import XCTest
+import Testing
 @testable import T3Code
 
 @MainActor
@@ -85,7 +86,44 @@ final class NativeContractExpansionTests: XCTestCase {
         )
         XCTAssertEqual(command["modelSelection"]?["instanceId"]?.stringValue, "codex")
     }
+}
 
+@Suite("Multi-image attachment encoding")
+struct MultiImageAttachmentEncodingTests {
+    @Test(
+        "The maximum image count keeps bytes, Unicode names, and order",
+        .bug("https://github.com/saphid/t3code-personal/issues/215")
+    )
+    func maximumCountPreservesBytesUnicodeNamesAndOrder() throws {
+        let images = try (1...8).map { ordinal in
+            try UploadChatImageAttachment(
+                data: Data([UInt8(ordinal)]),
+                name: ordinal == 2 ? "スクリーンショット 2.png" : "Image \(ordinal).png",
+                mimeType: "image/png"
+            )
+        }
+
+        let command = try OrchestrationCommands.sendTurn(
+            threadID: "thread-maximum-images",
+            text: "Review every image",
+            runtimeMode: .fullAccess,
+            attachments: images
+        )
+
+        guard case let .array(attachments)? = command["message"]?["attachments"] else {
+            Issue.record("Expected eight inline attachments")
+            return
+        }
+        #expect(attachments.count == 8)
+        #expect(attachments.compactMap { $0["name"]?.stringValue } == images.map(\.name))
+        #expect(
+            attachments.compactMap { $0["dataUrl"]?.stringValue }
+                == images.map(\.dataUrl)
+        )
+    }
+}
+
+extension NativeContractExpansionTests {
     func testImageAttachmentRejectsOversizedInput() {
         XCTAssertThrowsError(
             try UploadChatImageAttachment(

@@ -23,9 +23,16 @@ layer("ProjectionThreadMessageRepository", (it) => {
         {
           type: "image" as const,
           id: "thread-preserve-attachments-att-1",
-          name: "example.png",
+          name: "設計図 1.png",
           mimeType: "image/png",
           sizeBytes: 5,
+        },
+        {
+          type: "image" as const,
+          id: "thread-preserve-attachments-att-2",
+          name: "reference 2.jpg",
+          mimeType: "image/jpeg",
+          sizeBytes: 7,
         },
       ];
 
