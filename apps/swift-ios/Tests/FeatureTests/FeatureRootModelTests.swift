@@ -8,6 +8,80 @@ import UIKit
 @MainActor
 @Suite("Feature root model")
 struct FeatureRootModelTests {
+    @Test(
+        "Hydration baselines old completions and later completion clears when viewed",
+        .bug("https://github.com/saphid/t3code-personal/issues/201")
+    )
+    func projectAttentionVisitLifecycle() async throws {
+        let suiteName = "root-thread-visits-\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let client = FeatureClientStub()
+        let initialCompletion = Date(timeIntervalSince1970: 1_000)
+        var thread = FeatureThread(
+            id: "environment:thread",
+            projectID: "environment:project",
+            environmentID: "environment",
+            title: "Attention",
+            state: .completed,
+            lastActivityAt: initialCompletion,
+            latestTurnCompletedAt: initialCompletion
+        )
+        client.snapshot = FeatureSnapshot(threads: [thread])
+        client.finishEvents()
+        let model = FeatureRootModel(
+            client: client,
+            outboxStore: FeatureOutboxStore(
+                fileURL: FileManager.default.temporaryDirectory
+                    .appendingPathComponent("root-thread-visits-\(UUID().uuidString).json")
+            ),
+            threadVisitStore: FeatureThreadVisitStore(defaults: defaults),
+            accessibilityAnnouncer: { _ in }
+        )
+
+        await model.start()
+
+        #expect(model.threadLastVisitedAtByID[thread.id] == initialCompletion)
+        #expect(
+            ProjectAttentionRollup(
+                threads: model.snapshot.threads,
+                lastVisitedAtByThreadID: model.threadLastVisitedAtByID,
+                now: initialCompletion
+            ).state(for: thread.projectID) == nil
+        )
+
+        let nextCompletion = initialCompletion.addingTimeInterval(60)
+        thread.updatedAt = nextCompletion
+        thread.lastActivityAt = nextCompletion
+        thread.latestTurnCompletedAt = nextCompletion
+        client.snapshot = FeatureSnapshot(threads: [thread])
+        await model.reload()
+
+        #expect(
+            ProjectAttentionRollup(
+                threads: model.snapshot.threads,
+                lastVisitedAtByThreadID: model.threadLastVisitedAtByID,
+                now: nextCompletion
+            ).state(for: thread.projectID) == .unseenCompletion
+        )
+
+        let revisionBeforeVisit = model.homePresentationRevision
+        model.markThreadVisited(thread.id, at: nextCompletion.addingTimeInterval(10))
+
+        #expect(model.threadLastVisitedAtByID[thread.id] == nextCompletion)
+        #expect(model.homePresentationRevision == revisionBeforeVisit + 1)
+        #expect(
+            ProjectAttentionRollup(
+                threads: model.snapshot.threads,
+                lastVisitedAtByThreadID: model.threadLastVisitedAtByID,
+                now: nextCompletion
+            ).state(for: thread.projectID) == nil
+        )
+        #expect(
+            FeatureThreadVisitStore(defaults: defaults).load()[thread.id] == nextCompletion
+        )
+    }
+
     @Test
     func projectGroupingSavesAndUpdatesHomeWithoutChangingWorkspaceState() async {
         let client = FeatureClientStub()

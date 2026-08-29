@@ -37,6 +37,17 @@ each environment, so they remain in effect after the app reconnects or relaunche
 project filter and thread labels to match the effective grouping rules.
 Workspaces kept separate continue to use their individual project names.
 
+## Project attention on native iOS
+
+The Home project filter and the New Task project picker show an icon when a project has a live
+thread that failed, is waiting for your input, or completed since you last viewed it. A failure
+takes priority over pending input, and pending input takes priority over an unseen completion.
+VoiceOver announces the state in addition to the icon, so color is not required to identify it.
+
+Viewing the completed thread clears its completion state. Resolving a request, or settling,
+archiving, or applying an available snooze to the final thread that needs attention, removes the
+icon or lowers it to the next state in that project.
+
 ## Environment artwork
 
 Dev and Nightly environments can identify themselves with artwork at the top of the sidebar and in

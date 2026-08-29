@@ -293,6 +293,9 @@ public struct WorkspaceView: View {
         // snapshot stays pending; retry it as data lands so cold-start deep
         // links are not silently stranded.
         .onChange(of: model.homePresentationRevision) { _, _ in
+            if let selectedThreadID {
+                model.markThreadVisited(selectedThreadID)
+            }
             if navigationRequest != nil { consumeNavigationRequest() }
         }
         .task(id: nextSidebarBoundary) {
@@ -354,9 +357,29 @@ public struct WorkspaceView: View {
         let pinnedMovePositions = PinnedThreadReordering.positions(
             in: PinnedThreadReordering.eligibleThreads(in: model.snapshot.threads)
         )
+        let attentionRollup = ProjectAttentionRollup(
+            threads: model.snapshot.threads,
+            lastVisitedAtByThreadID: model.threadLastVisitedAtByID,
+            now: sidebarBoundaryNow
+        )
+        let projectGroups = DailyUXCreationContext.projectGroups(in: model.snapshot)
+        let projectGroupByMemberID = projectGroups.reduce(
+            into: [String: DailyUXProjectGroup]()
+        ) { result, group in
+            for projectID in group.memberProjectIDs {
+                result[projectID] = group
+            }
+        }
 
         return VStack(spacing: 0) {
-            projectFilter(projects: projectFilterScoped(presentation.projects))
+            projectFilter(
+                projects: projectFilterScoped(
+                    presentation.projects,
+                    projectGroups: projectGroups
+                ),
+                attentionRollup: attentionRollup,
+                projectGroupByMemberID: projectGroupByMemberID
+            )
             HomeThreadCollectionView(
                 presentation: presentation,
                 projectFaviconClient: model.client,
@@ -662,7 +685,11 @@ public struct WorkspaceView: View {
         return "Create a project to start a task"
     }
 
-    private func projectFilter(projects: [FeatureProject]) -> some View {
+    private func projectFilter(
+        projects: [FeatureProject],
+        attentionRollup: ProjectAttentionRollup,
+        projectGroupByMemberID: [String: DailyUXProjectGroup]
+    ) -> some View {
         HStack(spacing: 0) {
             Menu {
                 Button {
@@ -679,12 +706,30 @@ public struct WorkspaceView: View {
                         selectProject(project.id, targetEnvironmentID: project.environmentID)
                     } label: {
                         let title = projectMenuTitle(project)
-                        if selectedProjectID == project.id,
-                           selectedProjectEnvironmentID == project.environmentID {
-                            Label(title, systemImage: "checkmark")
-                        } else {
+                        let isSelected = selectedProjectID == project.id
+                            && selectedProjectEnvironmentID == project.environmentID
+                        let attention = projectGroupByMemberID[project.id].flatMap {
+                            attentionRollup.state(for: $0)
+                        } ?? attentionRollup.state(for: project.id)
+                        HStack {
                             Text(title)
+                            if let attention {
+                                ProjectAttentionIndicator(state: attention)
+                                    .accessibilityHidden(true)
+                            }
+                            if isSelected {
+                                Image(systemName: "checkmark")
+                                    .accessibilityHidden(true)
+                            }
                         }
+                        .accessibilityElement(children: .ignore)
+                        .accessibilityLabel(title)
+                        .accessibilityValue(
+                            projectMenuAccessibilityValue(
+                                attention: attention,
+                                isSelected: isSelected
+                            )
+                        )
                     }
                 }
             } label: {
@@ -854,8 +899,15 @@ public struct WorkspaceView: View {
     /// filter offers. Issue #145 owns the order, issue #147 owns the
     /// grouping-aware membership, and issue #144's environment scope applies
     /// inside it.
-    private func projectFilterScoped(_ projects: [FeatureProject]) -> [FeatureProject] {
-        let offered = Set(availableProjects.map(\.id))
+    private func projectFilterScoped(
+        _ projects: [FeatureProject],
+        projectGroups: [DailyUXProjectGroup]
+    ) -> [FeatureProject] {
+        let offered = Set(projectGroups.compactMap { group in
+            group.projects.first {
+                !disabledEnvironmentIDs.contains($0.environmentID)
+            }?.id
+        })
         return projects.filter { offered.contains($0.id) }
     }
 
@@ -964,6 +1016,7 @@ public struct WorkspaceView: View {
     }
 
     private func openThread(_ id: String) {
+        model.markThreadVisited(id, at: .now)
         selectedThreadID = id
         preferredCompactColumn = .detail
     }
@@ -1068,6 +1121,18 @@ public struct WorkspaceView: View {
             return groupName
         }
         return "\(groupName) · \(environment.name)"
+    }
+
+    private func projectMenuAccessibilityValue(
+        attention: ProjectAttentionState?,
+        isSelected: Bool
+    ) -> String {
+        [
+            isSelected ? "Selected" : nil,
+            attention?.accessibilityLabel,
+        ]
+        .compactMap { $0 }
+        .joined(separator: ". ")
     }
 }
 

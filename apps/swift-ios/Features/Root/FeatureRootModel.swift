@@ -159,6 +159,7 @@ public final class FeatureRootModel {
     public private(set) var detailRevision: UInt64 = 0
     /// The latest detail revision for each loaded thread.
     public private(set) var detailRevisions: [String: UInt64] = [:]
+    public private(set) var threadLastVisitedAtByID: [String: Date]
     private(set) var detailRenderUpdates: [String: FeatureDetailRenderUpdate] = [:]
     public private(set) var isLoading = true
     public private(set) var isPerformingAction = false
@@ -177,6 +178,7 @@ public final class FeatureRootModel {
     let client: any FeatureClient
     private let outboxStore: FeatureOutboxStore
     private let draftStore: FeatureComposerDraftStore
+    private let threadVisitStore: FeatureThreadVisitStore
     private var pendingSubmissionsByID: [String: FeatureQueuedSubmission] = [:]
     private var pendingThreadsByID: [String: FeatureThread] = [:]
     private var pendingSettlementMutations: [String: PendingSettlementMutation] = [:]
@@ -204,6 +206,7 @@ public final class FeatureRootModel {
         client: any FeatureClient,
         outboxStore: FeatureOutboxStore = .shared,
         draftStore: FeatureComposerDraftStore = .shared,
+        threadVisitStore: FeatureThreadVisitStore = .init(),
         titleRegenerationRefreshTimeout: Duration = .seconds(60),
         accessibilityAnnouncer: @escaping @MainActor (String) -> Void = { message in
             guard UIAccessibility.isVoiceOverRunning else { return }
@@ -213,13 +216,15 @@ public final class FeatureRootModel {
         self.client = client
         self.outboxStore = outboxStore
         self.draftStore = draftStore
+        self.threadVisitStore = threadVisitStore
+        threadLastVisitedAtByID = threadVisitStore.load()
         self.titleRegenerationRefreshTimeout = titleRegenerationRefreshTimeout
         self.accessibilityAnnouncer = accessibilityAnnouncer
     }
 
     public func start() async {
         do {
-            install(try await client.initialSnapshot())
+            install(try await client.initialSnapshot(), establishesVisitBaseline: true)
         } catch {
             if !Self.isBenignCancellation(error) {
                 errorMessage = error.localizedDescription
@@ -242,6 +247,15 @@ public final class FeatureRootModel {
                 errorMessage = error.localizedDescription
             }
         }
+    }
+
+    public func markThreadVisited(_ id: String, at visitedAt: Date? = nil) {
+        guard let thread = snapshot.threads.first(where: { $0.id == id }) else { return }
+        guard let visit = thread.latestTurnCompletedAt ?? visitedAt else { return }
+        if let previous = threadLastVisitedAtByID[id], previous >= visit { return }
+        threadLastVisitedAtByID[id] = visit
+        threadVisitStore.save(threadLastVisitedAtByID)
+        homePresentationRevision &+= 1
     }
 
     /// Background refresh is deliberately separate from `reload()`: native
@@ -1184,8 +1198,14 @@ public final class FeatureRootModel {
         snapshot.projects[index].threadCount = max(0, snapshot.projects[index].threadCount + delta)
     }
 
-    private func install(_ value: FeatureSnapshot) {
+    private func install(
+        _ value: FeatureSnapshot,
+        establishesVisitBaseline: Bool = false
+    ) {
         var value = value
+        if establishesVisitBaseline {
+            establishVisitBaseline(for: value.threads)
+        }
         for index in value.threads.indices {
             value.threads[index] = retainingPendingSettlement(in: value.threads[index])
         }
@@ -1241,6 +1261,17 @@ public final class FeatureRootModel {
         if value.connection.state == .connected
             || value.environments.contains(where: { $0.connectionState == .connected }) {
             scheduleOutboxDrain()
+        }
+    }
+
+    private func establishVisitBaseline(for threads: [FeatureThread], now: Date = .now) {
+        var changed = false
+        for thread in threads where threadLastVisitedAtByID[thread.id] == nil {
+            threadLastVisitedAtByID[thread.id] = thread.latestTurnCompletedAt ?? now
+            changed = true
+        }
+        if changed {
+            threadVisitStore.save(threadLastVisitedAtByID)
         }
     }
 

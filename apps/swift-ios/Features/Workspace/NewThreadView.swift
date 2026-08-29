@@ -179,6 +179,8 @@ public struct NewThreadView: View {
                     environments: model.snapshot.environments,
                     recentGroupIDs: recentProjectGroupIDs,
                     selectionID: selectedProjectGroup?.id,
+                    attentionThreads: model.snapshot.threads,
+                    lastVisitedAtByThreadID: model.threadLastVisitedAtByID,
                     onSelect: { group in
                         if selectProjectGroup(group) {
                             activePicker = nil
@@ -1160,9 +1162,12 @@ private struct NewTaskProjectPicker: View {
     let environments: [FeatureEnvironment]
     let recentGroupIDs: [String]
     let selectionID: String?
+    let attentionThreads: [FeatureThread]
+    let lastVisitedAtByThreadID: [String: Date]
     let onSelect: (DailyUXProjectGroup) -> Void
 
     @State private var query = ""
+    @State private var attentionBoundaryNow = Date.now
 
     var body: some View {
         NavigationStack {
@@ -1248,6 +1253,15 @@ private struct NewTaskProjectPicker: View {
         }
         .presentationDetents([.medium, .large])
         .presentationBackground(T3Colors.background)
+        .task(id: nextAttentionBoundary) {
+            guard let boundary = nextAttentionBoundary else { return }
+            do {
+                try await Task.sleep(for: .seconds(max(0, boundary.timeIntervalSinceNow)))
+                attentionBoundaryNow = max(.now, boundary)
+            } catch {
+                return
+            }
+        }
     }
 
     private func projectUnavailableRow(_ title: String, systemImage: String) -> some View {
@@ -1266,6 +1280,7 @@ private struct NewTaskProjectPicker: View {
     }
 
     private func projectRow(_ group: DailyUXProjectGroup) -> some View {
+        let attention = attentionRollup.state(for: group)
         Button {
             onSelect(group)
         } label: {
@@ -1283,6 +1298,11 @@ private struct NewTaskProjectPicker: View {
 
                 Spacer(minLength: 10)
 
+                if let attention {
+                    ProjectAttentionIndicator(state: attention)
+                        .accessibilityHidden(true)
+                }
+
                 if group.id == selectionID {
                     Image(systemName: "checkmark")
                         .font(.system(size: 13, weight: .semibold))
@@ -1294,11 +1314,38 @@ private struct NewTaskProjectPicker: View {
         }
         .buttonStyle(.plain)
         .accessibilityLabel(group.name)
-        .accessibilityValue(projectLocation(group))
+        .accessibilityValue(projectAccessibilityValue(group, attention: attention))
         .accessibilityAddTraits(
             group.id == selectionID ? .isSelected : []
         )
         .listRowBackground(T3Colors.background)
+    }
+
+    private func projectAccessibilityValue(
+        _ group: DailyUXProjectGroup,
+        attention: ProjectAttentionState?
+    ) -> String {
+        [
+            projectLocation(group),
+            attention?.accessibilityLabel,
+        ]
+        .compactMap { $0 }
+        .joined(separator: ". ")
+    }
+
+    private var attentionRollup: ProjectAttentionRollup {
+        ProjectAttentionRollup(
+            threads: attentionThreads,
+            lastVisitedAtByThreadID: lastVisitedAtByThreadID,
+            now: attentionBoundaryNow
+        )
+    }
+
+    private var nextAttentionBoundary: Date? {
+        DailyUXSidebarRefresh.nextBoundary(
+            for: attentionThreads,
+            after: attentionBoundaryNow
+        )
     }
 
     private var filteredGroups: [DailyUXProjectGroup] {
