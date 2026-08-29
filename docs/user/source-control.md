@@ -41,6 +41,8 @@ T3 Code works with the platforms your team already uses:
 - Open several reviews from the **Pull requests** page as tabs in the right panel
 - While working in a thread, open linked reviews in the same compact right-panel tabs without
   leaving the conversation
+- In the SwiftUI mobile client, open **Pull request** from a thread's workspace menu to see the
+  exact open review for its repository and branch, then open the native review details
 - Open the review directly in your browser with one click
 - Command-click (Control-click on Windows and Linux) a pull request number in the sidebar to open it in your browser instead of in T3 Code
 - Check out a teammate's branch to review code locally

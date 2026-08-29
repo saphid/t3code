@@ -76,4 +76,21 @@ final class PullRequestContractTests: XCTestCase {
         XCTAssertFalse(combined.truncated)
         XCTAssertTrue(combined.nextCursors.isEmpty)
     }
+
+    func testCachedPullRequestMetadataDecodesCurrentAndLegacyShapes() throws {
+        let current = Data(
+            #"{"number":42,"title":"Active PR","state":"open","url":null,"headBranch":"feature/active","baseBranch":"release"}"#.utf8
+        )
+        let legacy = Data(
+            #"{"number":41,"title":"Cached PR","state":"open","url":null}"#.utf8
+        )
+
+        let currentPullRequest = try JSONDecoder.t3.decode(FeaturePullRequest.self, from: current)
+        let legacyPullRequest = try JSONDecoder.t3.decode(FeaturePullRequest.self, from: legacy)
+
+        XCTAssertEqual(currentPullRequest.headBranch, "feature/active")
+        XCTAssertEqual(currentPullRequest.baseBranch, "release")
+        XCTAssertNil(legacyPullRequest.headBranch)
+        XCTAssertNil(legacyPullRequest.baseBranch)
+    }
 }

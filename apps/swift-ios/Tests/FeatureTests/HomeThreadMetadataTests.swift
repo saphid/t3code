@@ -340,7 +340,9 @@ struct HomeThreadMetadataTests {
                 pullRequest: FeaturePullRequest(
                     number: 42,
                     title: "Add native PR indicators",
-                    state: state
+                    state: state,
+                    headBranch: "feature/native-pull-requests",
+                    baseBranch: "main"
                 )
             )
 
@@ -365,11 +367,23 @@ struct HomeThreadMetadataTests {
         )
         let otherBranch = FeatureSourceControlStatus(
             branch: "feature/other",
-            pullRequest: FeaturePullRequest(number: 42, title: "Other work", state: "open")
+            pullRequest: FeaturePullRequest(
+                number: 42,
+                title: "Other work",
+                state: "open",
+                headBranch: "feature/other",
+                baseBranch: "main"
+            )
         )
         let unsupportedState = FeatureSourceControlStatus(
             branch: "feature/current",
-            pullRequest: FeaturePullRequest(number: 42, title: "Current work", state: "draft")
+            pullRequest: FeaturePullRequest(
+                number: 42,
+                title: "Current work",
+                state: "draft",
+                headBranch: "feature/current",
+                baseBranch: "main"
+            )
         )
         let branchless = FeatureThread(id: "branchless", projectID: "project", title: "Task")
 
@@ -410,6 +424,8 @@ struct HomeThreadMetadataTests {
         #expect(status.branch == "feature/native-pull-requests")
         #expect(status.pullRequest?.number == 42)
         #expect(status.pullRequest?.state == "open")
+        #expect(status.pullRequest?.headBranch == "feature/native-pull-requests")
+        #expect(status.pullRequest?.baseBranch == "main")
         #expect(status.aheadCount == 2)
         #expect(status.behindCount == 1)
         #expect(withoutRemote.pullRequest == nil)

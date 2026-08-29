@@ -106,6 +106,8 @@ public struct ThreadDetailView: View {
                             threadID: thread.id,
                             appendCommentToDraft: appendReviewCommentToDraft
                         )
+                    case .pullRequest:
+                        ActivePullRequestView(rootModel: model, thread: currentThread)
                     case .sourceControl:
                         FeatureSourceControlView(client: model.client, threadID: thread.id)
                     case .terminal:
@@ -319,6 +321,9 @@ public struct ThreadDetailView: View {
                 }
                 Button { toolSurface = .review } label: {
                     Label("Review changes", systemImage: "doc.text.magnifyingglass")
+                }
+                Button { toolSurface = .pullRequest } label: {
+                    Label("Pull request", systemImage: "arrow.triangle.pull")
                 }
                 Button { toolSurface = .sourceControl } label: {
                     Label("Source control", systemImage: "arrow.triangle.branch")
@@ -743,6 +748,7 @@ private struct FeatureThreadOpeningView: View {
 private enum FeatureThreadToolSurface: String, Identifiable {
     case files
     case review
+    case pullRequest
     case sourceControl
     case terminal
 

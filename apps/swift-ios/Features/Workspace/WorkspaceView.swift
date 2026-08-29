@@ -1454,6 +1454,7 @@ struct HomeThreadPullRequestPresentation: Equatable {
               !branch.isEmpty,
               status.branch == branch,
               let pullRequest = status.pullRequest,
+              pullRequest.headBranch == branch,
               let state = State(rawValue: pullRequest.state.lowercased()) else {
             return nil
         }

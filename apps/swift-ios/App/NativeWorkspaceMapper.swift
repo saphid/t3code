@@ -98,7 +98,9 @@ enum NativeWorkspaceMapper {
                     number: $0.number,
                     title: $0.title,
                     state: $0.state,
-                    url: URL(string: $0.url)
+                    url: URL(string: $0.url),
+                    headBranch: $0.headRef,
+                    baseBranch: $0.baseRef
                 )
             }
         )

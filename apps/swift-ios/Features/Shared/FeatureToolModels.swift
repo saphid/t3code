@@ -1077,12 +1077,23 @@ public struct FeaturePullRequest: Sendable, Equatable, Hashable, Codable {
     public var title: String
     public var state: String
     public var url: URL?
+    public var headBranch: String?
+    public var baseBranch: String?
 
-    public init(number: Int, title: String, state: String, url: URL? = nil) {
+    public init(
+        number: Int,
+        title: String,
+        state: String,
+        url: URL? = nil,
+        headBranch: String? = nil,
+        baseBranch: String? = nil
+    ) {
         self.number = number
         self.title = title
         self.state = state
         self.url = url
+        self.headBranch = headBranch
+        self.baseBranch = baseBranch
     }
 }
 

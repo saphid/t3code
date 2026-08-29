@@ -88,7 +88,18 @@ public struct FeatureSourceControlView: View {
                 if let pullRequest = status.pullRequest {
                     if let url = pullRequest.url {
                         Link(destination: url) {
-                            Label("PR #\(pullRequest.number) · \(pullRequest.title)", systemImage: "arrow.up.right.square")
+                            VStack(alignment: .leading, spacing: 3) {
+                                Label(
+                                    "PR #\(pullRequest.number) · \(pullRequest.title)",
+                                    systemImage: "arrow.up.right.square"
+                                )
+                                if let headBranch = pullRequest.headBranch,
+                                   let baseBranch = pullRequest.baseBranch {
+                                    Text("\(headBranch) → \(baseBranch) · \(pullRequest.state)")
+                                        .font(T3Typography.supporting)
+                                        .foregroundStyle(T3Colors.textSecondary)
+                                }
+                            }
                         }
                     } else {
                         LabeledContent("Pull Request", value: "#\(pullRequest.number) · \(pullRequest.state)")

@@ -20,6 +20,141 @@ struct FeaturePullRequestRow: Identifiable, Equatable {
     }
 }
 
+private struct ActivePullRequestContext: Equatable, Sendable {
+    let threadID: String
+    let threadBranch: String?
+    let environmentID: String
+    let environmentName: String
+    let projectID: String
+    let repositoryIdentity: ActivePullRequestResolution.RepositoryIdentity?
+    let connectionState: FeatureConnection.State?
+
+    func matchesScope(of other: Self) -> Bool {
+        threadID == other.threadID
+            && threadBranch == other.threadBranch
+            && environmentID == other.environmentID
+            && projectID == other.projectID
+            && repositoryIdentity == other.repositoryIdentity
+    }
+}
+
+private struct ActivePullRequestMatch: Equatable, Sendable {
+    let resolution: ActivePullRequestResolution
+    let target: FeaturePullRequestTarget
+}
+
+@MainActor
+@Observable
+private final class ActivePullRequestModel {
+    var match: ActivePullRequestMatch?
+    var isLoading = false
+    var errorMessage: String?
+
+    private let client: any FeatureClient
+    private var observationGeneration: UInt64 = 0
+    private var observedContext: ActivePullRequestContext?
+
+    init(client: any FeatureClient) {
+        self.client = client
+    }
+
+    func observe(_ context: ActivePullRequestContext) async {
+        observationGeneration &+= 1
+        let generation = observationGeneration
+        if observedContext?.matchesScope(of: context) != true {
+            match = nil
+        }
+        observedContext = context
+        errorMessage = nil
+
+        await refresh(context, generation: generation)
+        guard !Task.isCancelled, observationGeneration == generation else { return }
+
+        for await status in client.sourceControlStatusEvents(threadID: context.threadID) {
+            guard !Task.isCancelled, observationGeneration == generation else { return }
+            apply(status, context: context)
+        }
+    }
+
+    func refresh(_ context: ActivePullRequestContext) async {
+        await refresh(context, generation: observationGeneration)
+    }
+
+    func clearMatch() {
+        match = nil
+        errorMessage = nil
+    }
+
+    func clear() {
+        observationGeneration &+= 1
+        observedContext = nil
+        match = nil
+        isLoading = false
+        errorMessage = nil
+    }
+
+    private func refresh(
+        _ context: ActivePullRequestContext,
+        generation: UInt64
+    ) async {
+        isLoading = true
+        do {
+            let status = try await client.sourceControlStatus(threadID: context.threadID)
+            guard !Task.isCancelled, observationGeneration == generation else { return }
+            apply(status, context: context)
+        } catch {
+            guard !Task.isCancelled, observationGeneration == generation else { return }
+            errorMessage = error.localizedDescription
+        }
+        if observationGeneration == generation {
+            isLoading = false
+        }
+    }
+
+    private func apply(
+        _ status: FeatureSourceControlStatus,
+        context: ActivePullRequestContext
+    ) {
+        let pullRequest = status.pullRequest.map {
+            ActivePullRequestResolution.PullRequest(
+                number: $0.number,
+                title: $0.title,
+                state: $0.state,
+                headBranch: $0.headBranch,
+                baseBranch: $0.baseBranch
+            )
+        }
+        let resolution = ActivePullRequestResolution.resolve(
+            threadBranch: context.threadBranch,
+            statusBranch: status.branch,
+            repositoryIdentity: context.repositoryIdentity,
+            pullRequest: pullRequest
+        )
+
+        match = resolution.map {
+            ActivePullRequestMatch(
+                resolution: $0,
+                target: FeaturePullRequestTarget(
+                    environmentID: context.environmentID,
+                    environmentName: context.environmentName,
+                    reference: PullRequestRef(
+                        projectId: context.projectID,
+                        repository: $0.repository,
+                        number: $0.number
+                    )
+                )
+            )
+        }
+        if pullRequest?.state.trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased() == "open", resolution == nil {
+            errorMessage =
+                "The active pull request did not match this project and branch with complete head and base metadata."
+        } else {
+            errorMessage = nil
+        }
+    }
+}
+
 @MainActor
 @Observable
 final class PullRequestsModel {
@@ -492,6 +627,152 @@ private struct PullRequestRowView: View {
     }
 }
 
+struct ActivePullRequestView: View {
+    @Bindable private var rootModel: FeatureRootModel
+    let thread: FeatureThread
+    @State private var model: ActivePullRequestModel
+
+    init(rootModel: FeatureRootModel, thread: FeatureThread) {
+        self.rootModel = rootModel
+        self.thread = thread
+        _model = State(initialValue: ActivePullRequestModel(client: rootModel.client))
+    }
+
+    var body: some View {
+        Group {
+            if model.isLoading, model.match == nil {
+                ProgressView("Finding pull request…")
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if let match = model.match {
+                List {
+                    Section("Current branch") {
+                        NavigationLink {
+                            PullRequestDetailView(
+                                rootModel: rootModel,
+                                target: match.target,
+                                onAction: { action in
+                                    if action == .close || action == .merge {
+                                        model.clearMatch()
+                                    }
+                                    await refresh()
+                                }
+                            )
+                        } label: {
+                            activeRow(match.resolution, environmentName: match.target.environmentName)
+                        }
+                        .accessibilityIdentifier("active-pull-request-\(match.resolution.number)")
+                    }
+                }
+                .listStyle(.insetGrouped)
+                .refreshable { await refresh() }
+            } else if let errorMessage = model.errorMessage {
+                ContentUnavailableView(
+                    "Couldn’t match the pull request",
+                    systemImage: "exclamationmark.triangle",
+                    description: Text(errorMessage)
+                )
+            } else {
+                ContentUnavailableView(
+                    "No open pull request",
+                    systemImage: "arrow.triangle.pull",
+                    description: Text(emptyDescription)
+                )
+            }
+        }
+        .background(T3Colors.background)
+        .navigationTitle("Pull Request")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button { Task { await refresh() } } label: {
+                    Image(systemName: "arrow.clockwise")
+                }
+                .disabled(model.isLoading || context == nil)
+                .accessibilityLabel("Refresh pull request")
+            }
+        }
+        .t3NavigationChrome()
+        .task(id: context) {
+            guard let context else {
+                model.clear()
+                return
+            }
+            await model.observe(context)
+        }
+    }
+
+    private var context: ActivePullRequestContext? {
+        guard let environmentID = thread.environmentID,
+              let project = rootModel.snapshot.projects.first(where: {
+                  $0.id == thread.projectID && $0.environmentID == environmentID
+              }) else {
+            return nil
+        }
+        let environment = rootModel.snapshot.environments.first { $0.id == environmentID }
+        let identity = project.repositoryIdentity.map {
+            ActivePullRequestResolution.RepositoryIdentity(
+                canonicalKey: $0.canonicalKey,
+                displayName: $0.displayName,
+                name: $0.name
+            )
+        }
+        return ActivePullRequestContext(
+            threadID: thread.id,
+            threadBranch: thread.branch,
+            environmentID: environmentID,
+            environmentName: environment?.name ?? thread.environmentName ?? environmentID,
+            projectID: project.wireID ?? project.id,
+            repositoryIdentity: identity,
+            connectionState: environment?.connectionState
+        )
+    }
+
+    private var emptyDescription: String {
+        guard let branch = thread.branch?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !branch.isEmpty else {
+            return "This thread is not on a named branch."
+        }
+        return "No open pull request matches \(branch) in this project."
+    }
+
+    private func refresh() async {
+        guard let context else { return }
+        await model.refresh(context)
+    }
+
+    private func activeRow(
+        _ pullRequest: ActivePullRequestResolution,
+        environmentName: String
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 7) {
+            HStack(spacing: 7) {
+                Image(systemName: PullRequestState.open.systemImage)
+                    .foregroundStyle(PullRequestState.open.color)
+                Text("\(pullRequest.repository) #\(pullRequest.number)")
+                    .font(T3Typography.supportingStrong)
+                    .foregroundStyle(T3Colors.textSecondary)
+                Spacer(minLength: 8)
+                Text("Open")
+                    .font(T3Typography.supporting)
+                    .foregroundStyle(T3Colors.success)
+            }
+            Text(pullRequest.title)
+                .font(T3Typography.threadBody.weight(.semibold))
+                .foregroundStyle(T3Colors.textPrimary)
+                .lineLimit(2)
+            HStack(spacing: 8) {
+                Text("\(pullRequest.headBranch) → \(pullRequest.baseBranch)")
+                    .lineLimit(1)
+                Spacer(minLength: 4)
+                Text(environmentName)
+            }
+            .font(T3Typography.supporting)
+            .foregroundStyle(T3Colors.textSecondary)
+        }
+        .padding(.vertical, 5)
+    }
+}
+
 @MainActor
 @Observable
 private final class PullRequestDetailModel {
@@ -508,11 +789,17 @@ private final class PullRequestDetailModel {
     var isLoadingReviewers = false
 
     private let client: any FeatureClient
+    private let didRunAction: @MainActor (PullRequestAction) async -> Void
     let target: FeaturePullRequestTarget
 
-    init(client: any FeatureClient, target: FeaturePullRequestTarget) {
+    init(
+        client: any FeatureClient,
+        target: FeaturePullRequestTarget,
+        didRunAction: @escaping @MainActor (PullRequestAction) async -> Void = { _ in }
+    ) {
         self.client = client
         self.target = target
+        self.didRunAction = didRunAction
     }
 
     func load(invalidate: Bool = false) async {
@@ -551,7 +838,7 @@ private final class PullRequestDetailModel {
         mergeMethod: PullRequestMergeMethod? = nil,
         updateMethod: PullRequestUpdateMethod? = nil
     ) async {
-        await mutate {
+        let didSucceed = await mutate {
             try await client.runPullRequestAction(
                 target,
                 action: action,
@@ -559,6 +846,7 @@ private final class PullRequestDetailModel {
                 updateMethod: updateMethod
             )
         }
+        if didSucceed { await didRunAction(action) }
     }
 
     func update(title: String? = nil, body: String? = nil) async {
@@ -633,16 +921,20 @@ private final class PullRequestDetailModel {
         await loadReviewers()
     }
 
-    private func mutate(_ operation: () async throws -> Void) async {
+    @discardableResult
+    private func mutate(_ operation: () async throws -> Void) async -> Bool {
         isActing = true
+        var didSucceed = false
         do {
             try await operation()
             try await client.invalidatePullRequests(target)
             await load()
+            didSucceed = true
         } catch {
             errorMessage = error.localizedDescription
         }
         isActing = false
+        return didSucceed
     }
 }
 
@@ -661,7 +953,7 @@ private struct PullRequestDetailView: View {
     }
 
     @Bindable var rootModel: FeatureRootModel
-    let row: FeaturePullRequestRow
+    let target: FeaturePullRequestTarget
     @State private var model: PullRequestDetailModel
     @State private var tab: PullRequestDetailTab = .summary
     @State private var editor: PullRequestEditor?
@@ -672,8 +964,22 @@ private struct PullRequestDetailView: View {
 
     init(rootModel: FeatureRootModel, row: FeaturePullRequestRow) {
         self.rootModel = rootModel
-        self.row = row
+        target = row.target
         _model = State(initialValue: PullRequestDetailModel(client: rootModel.client, target: row.target))
+    }
+
+    init(
+        rootModel: FeatureRootModel,
+        target: FeaturePullRequestTarget,
+        onAction: @escaping @MainActor (PullRequestAction) async -> Void = { _ in }
+    ) {
+        self.rootModel = rootModel
+        self.target = target
+        _model = State(initialValue: PullRequestDetailModel(
+            client: rootModel.client,
+            target: target,
+            didRunAction: onAction
+        ))
     }
 
     var body: some View {
@@ -702,7 +1008,7 @@ private struct PullRequestDetailView: View {
             }
         }
         .background(T3Colors.background)
-        .navigationTitle("#\(row.entry.number)")
+        .navigationTitle("#\(target.reference.number)")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) { actionMenu }
@@ -770,7 +1076,7 @@ private struct PullRequestDetailView: View {
             HStack(spacing: 7) {
                 Label(detail.state.label, systemImage: detail.state.systemImage)
                     .foregroundStyle(detail.state.color)
-                Text("\(detail.repository) · \(row.environmentName)")
+                Text("\(detail.repository) · \(target.environmentName)")
                 Spacer()
                 Text("+\(detail.additions)").foregroundStyle(T3Colors.success)
                 Text("−\(detail.deletions)").foregroundStyle(T3Colors.danger)
@@ -878,8 +1184,8 @@ private struct PullRequestDetailView: View {
 
     private func sendToAgent(_ line: PullRequestDiffLine, file: PullRequestDiffFile) {
         guard let project = rootModel.snapshot.projects.first(where: {
-            $0.environmentID == row.environmentID
-                && ($0.wireID ?? $0.id) == row.entry.projectId
+            $0.environmentID == target.environmentID
+                && ($0.wireID ?? $0.id) == target.reference.projectId
         }) else {
             notice = "The project for this pull request is not available on this computer."
             return
@@ -892,7 +1198,7 @@ private struct PullRequestDetailView: View {
             return
         }
         let prompt = """
-        Please inspect and address this line from pull request #\(row.entry.number) in \(row.entry.repository).
+        Please inspect and address this line from pull request #\(target.reference.number) in \(target.reference.repository).
 
         File: \(file.path)
         Line: \(line.displayLineNumber)
