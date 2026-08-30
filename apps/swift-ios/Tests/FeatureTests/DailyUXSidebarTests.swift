@@ -457,6 +457,28 @@ struct DailyUXSidebarTests {
     }
 
     @Test
+    func delegatedWorkBlocksSettlementAndParentCompletionDoesNotWakeSnooze() {
+        var delegated = thread(
+            id: "delegated",
+            created: -30,
+            updated: -5,
+            state: .working
+        )
+        delegated.isSettled = true
+        delegated.settlementFacts = FeatureThreadSettlementFacts(
+            settlementOverride: .settled,
+            sessionStatus: "ready"
+        )
+        delegated.snoozedUntil = now.addingTimeInterval(3_600)
+        delegated.snoozedAt = now.addingTimeInterval(-10)
+        delegated.latestTurnCompletedAt = now.addingTimeInterval(-5)
+
+        #expect(!delegated.isEffectivelySettled(at: now))
+        #expect(!delegated.canSettleNow(at: now))
+        #expect(delegated.isEffectivelySnoozed(at: now))
+    }
+
+    @Test
     func projectFilterAndSearchUseRepositoryContext() {
         let projects = [
             FeatureProject(id: "p1", environmentID: "e", name: "Mobile", path: "/work/mobile"),

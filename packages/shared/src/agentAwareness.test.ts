@@ -39,6 +39,7 @@ function thread(
     updatedAt: NOW,
     hasPendingApprovals: false,
     hasPendingUserInput: false,
+    backgroundLiveness: null,
     ...overrides,
   };
 }
@@ -100,6 +101,69 @@ describe("projectThreadAwareness", () => {
       modelTitle: "gpt-5.4",
       deepLink: "/threads/env-1/thread-1",
     });
+  });
+
+  it.each(["working", "monitoring"] as const)(
+    "keeps a completed parent run active while background liveness is %s",
+    (backgroundLiveness) => {
+      const state = projectThreadAwareness({
+        environmentId: "env-1" as EnvironmentId,
+        project,
+        thread: thread({
+          backgroundLiveness,
+          latestTurn: {
+            turnId: "turn-1" as TurnId,
+            state: "completed",
+            requestedAt: NOW,
+            startedAt: NOW,
+            completedAt: NOW,
+            assistantMessageId: null,
+          },
+        }),
+      });
+
+      expect(state?.phase).toBe("running");
+      expect(state?.headline).toBe("Agent is working");
+    },
+  );
+
+  it("keeps attention and failure ahead of delegated-run liveness", () => {
+    const approval = projectThreadAwareness({
+      environmentId: "env-1" as EnvironmentId,
+      project,
+      thread: thread({
+        backgroundLiveness: "working",
+        hasPendingApprovals: true,
+      }),
+    });
+    const failure = projectThreadAwareness({
+      environmentId: "env-1" as EnvironmentId,
+      project,
+      thread: thread({
+        backgroundLiveness: "working",
+        session: {
+          threadId: "thread-1" as ThreadId,
+          status: "error",
+          providerName: "Codex",
+          runtimeMode: "full-access",
+          activeTurnId: null,
+          lastError: "Provider process exited.",
+          updatedAt: NOW,
+        },
+      }),
+    });
+    const question = projectThreadAwareness({
+      environmentId: "env-1" as EnvironmentId,
+      project,
+      thread: thread({
+        backgroundLiveness: "working",
+        hasPendingUserInput: true,
+      }),
+    });
+
+    expect(approval?.phase).toBe("waiting_for_approval");
+    expect(failure?.phase).toBe("failed");
+    expect(question?.phase).toBe("waiting_for_input");
   });
 
   it("projects completed turns as completed even when teardown settled them as interrupted", () => {

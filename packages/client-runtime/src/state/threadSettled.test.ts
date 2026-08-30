@@ -539,6 +539,21 @@ describe("canSettle", () => {
     expect(canSettle(queued, { now: NOW })).toBe(true);
   });
 
+  it("keeps a logical run active while delegated work remains live", () => {
+    const delegated = {
+      ...makeShell({ settledOverride: "settled", activityAt: STALE }),
+      backgroundLiveness: "working" as const,
+    };
+
+    expect(canSettle(delegated, { now: NOW })).toBe(false);
+    expect(
+      effectiveSettled(delegated, {
+        now: NOW,
+        autoSettleAfterDays: 3,
+      }),
+    ).toBe(false);
+  });
+
   it("lets a server-accepted settle overrule the clock-derived queued blocker", () => {
     // The settle action ran with wall-clock `now` (past the grace window);
     // the list partition re-evaluates with a minute-floored `now` that is

@@ -316,6 +316,21 @@ describe("hasUnseenCompletion", () => {
       }),
     ).toBe(false);
   });
+
+  it("does not mark a parent completion unread while delegated work remains live", () => {
+    const thread = {
+      hasActionableProposedPlan: false,
+      hasPendingApprovals: false,
+      hasPendingUserInput: false,
+      interactionMode: "default" as const,
+      latestTurn: makeLatestTurn(),
+      lastVisitedAt: "2026-03-09T10:04:00.000Z",
+      session: null,
+    };
+
+    expect(hasUnseenCompletion({ ...thread, backgroundLiveness: "working" })).toBe(false);
+    expect(hasUnseenCompletion({ ...thread, backgroundLiveness: null })).toBe(true);
+  });
 });
 
 describe("createThreadJumpHintVisibilityController", () => {

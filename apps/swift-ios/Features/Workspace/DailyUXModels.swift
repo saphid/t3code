@@ -1004,6 +1004,9 @@ extension FeatureThread {
     }
 
     var hasHardSettlementActivityBlock: Bool {
+        if state == .queued || state == .working || state == .monitoring {
+            return true
+        }
         guard let facts = settlementFacts else {
             return [
                 .queued,
@@ -1072,7 +1075,8 @@ extension FeatureThread {
            attentionAt > snoozedAt {
             return false
         }
-        if let snoozedAt,
+        if !hasHardSettlementActivityBlock,
+           let snoozedAt,
            let latestTurnCompletedAt,
            latestTurnCompletedAt > snoozedAt {
             return false

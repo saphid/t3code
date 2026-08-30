@@ -40,6 +40,7 @@ export interface ProjectThreadAwarenessInput {
     | "updatedAt"
     | "hasPendingApprovals"
     | "hasPendingUserInput"
+    | "backgroundLiveness"
   >;
 }
 
@@ -85,6 +86,9 @@ function resolveThreadAwarenessPhase(
   }
   if (thread.session?.status === "error" || thread.latestTurn?.state === "error") {
     return "failed";
+  }
+  if (thread.backgroundLiveness !== null && thread.backgroundLiveness !== undefined) {
+    return "running";
   }
   if (thread.session?.status === "starting") {
     return "starting";
