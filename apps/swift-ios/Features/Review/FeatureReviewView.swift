@@ -10,6 +10,7 @@ public struct FeatureReviewView: View {
     @State private var review: FeatureReview?
     @State private var isLoading = true
     @State private var errorMessage: String?
+    @State private var loadGeneration = 0
 
     public init(
         client: any FeatureClient,
@@ -86,7 +87,7 @@ public struct FeatureReviewView: View {
                     ContentUnavailableView(
                         "No changes",
                         systemImage: "checkmark.circle",
-                        description: Text("The working tree is clean.")
+                        description: Text("The last turn did not change any files.")
                     )
                     .listRowBackground(Color.clear)
                 }
@@ -105,12 +106,21 @@ public struct FeatureReviewView: View {
     }
 
     private func load() async {
+        loadGeneration += 1
+        let generation = loadGeneration
         isLoading = true
-        defer { isLoading = false }
+        defer {
+            if generation == loadGeneration {
+                isLoading = false
+            }
+        }
         do {
-            review = try await client.loadReview(threadID: threadID)
+            let loadedReview = try await client.loadReview(threadID: threadID)
+            guard generation == loadGeneration else { return }
+            review = loadedReview
             errorMessage = nil
         } catch {
+            guard generation == loadGeneration else { return }
             errorMessage = error.localizedDescription
         }
     }
