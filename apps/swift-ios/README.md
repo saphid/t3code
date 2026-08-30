@@ -48,7 +48,7 @@ the active selection are stored separately in Application Support.
 - Provider/model selection, paginated synchronized conversation history, rich Markdown,
   photo/camera/file image attachments, turn cancellation, approval decisions, and
   structured user-input requests.
-- Workspace files and previews, working-tree review, Git status and common actions,
+- Workspace files and previews, thread-attributed last-turn review, Git status and common actions,
   plus Ghostty-rendered terminal sessions with VT/ANSI output, scrollback, hardware
   and software keyboard controls, and per-thread session switching.
 - Native settings with persisted appearance and behavior preferences, platform

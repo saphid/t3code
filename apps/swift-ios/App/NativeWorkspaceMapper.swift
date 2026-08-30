@@ -66,6 +66,33 @@ enum NativeWorkspaceMapper {
         )
     }
 
+    static func review(_ turnDiff: ThreadTurnDiff) -> FeatureReview {
+        let source = ReviewDiffSource(
+            id: "thread-\(turnDiff.threadId)-turn-\(turnDiff.toTurnCount)",
+            kind: "turn",
+            title: "Turn \(turnDiff.toTurnCount)",
+            baseRef: nil,
+            headRef: nil,
+            diff: turnDiff.diff,
+            diffHash: "thread-\(turnDiff.threadId)-turn-\(turnDiff.toTurnCount)",
+            truncated: false
+        )
+        let files = parseDiff(source).map { file in
+            FeatureReviewFile(
+                path: file.path,
+                previousPath: file.previousPath,
+                change: file.change,
+                additions: file.additions,
+                deletions: file.deletions,
+                lines: file.lines
+            )
+        }
+        return FeatureReview(
+            title: "Last turn · Turn \(turnDiff.toTurnCount)",
+            files: files
+        )
+    }
+
     static func sourceControl(_ status: VCSStatus) -> FeatureSourceControlStatus {
         sourceControl(
             isRepository: status.isRepo,

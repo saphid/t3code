@@ -5,14 +5,20 @@ public struct FeatureReviewView: View {
     @SwiftUI.Environment(\.scenePhase) private var scenePhase
     let client: any FeatureClient
     let threadID: String
+    let latestTurnCompletedAt: Date?
 
     @State private var review: FeatureReview?
     @State private var isLoading = true
     @State private var errorMessage: String?
 
-    public init(client: any FeatureClient, threadID: String) {
+    public init(
+        client: any FeatureClient,
+        threadID: String,
+        latestTurnCompletedAt: Date? = nil
+    ) {
         self.client = client
         self.threadID = threadID
+        self.latestTurnCompletedAt = latestTurnCompletedAt
     }
 
     public var body: some View {
@@ -43,7 +49,7 @@ public struct FeatureReviewView: View {
                 .accessibilityLabel("Reload changes")
             }
         }
-        .task { await load() }
+        .task(id: latestTurnCompletedAt) { await load() }
         .onChange(of: scenePhase) { _, phase in
             guard phase == .active, review != nil, !isLoading else { return }
             Task { await load() }

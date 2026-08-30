@@ -488,6 +488,13 @@ public struct CheckpointSummary: Codable, Equatable, Sendable {
     public let completedAt: String
 }
 
+public struct ThreadTurnDiff: Codable, Equatable, Sendable {
+    public let threadId: String
+    public let fromTurnCount: Int
+    public let toTurnCount: Int
+    public let diff: String
+}
+
 public struct OrchestrationThread: Codable, Identifiable, Equatable, Sendable {
     public let id: String
     public let projectId: String

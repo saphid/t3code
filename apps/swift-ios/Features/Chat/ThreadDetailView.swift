@@ -114,7 +114,11 @@ public struct ThreadDetailView: View {
                     case let .file(path):
                         FeatureFilesView(client: model.client, threadID: thread.id, initialPath: path)
                     case .review:
-                        FeatureReviewView(client: model.client, threadID: thread.id)
+                        FeatureReviewView(
+                            client: model.client,
+                            threadID: thread.id,
+                            latestTurnCompletedAt: currentThread.latestTurnCompletedAt
+                        )
                     case .sourceControl:
                         FeatureSourceControlView(client: model.client, threadID: thread.id)
                     case .terminal:

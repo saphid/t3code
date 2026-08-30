@@ -395,6 +395,48 @@ final class TransportReliabilityTests: XCTestCase {
         XCTAssertNil(requests[1]["payload"]?["reason"])
     }
 
+    func testTurnDiffRPCScopesTheRequestAndResponseToOneThread() async throws {
+        let environment = Environment(
+            id: "environment-1",
+            label: "Studio",
+            httpBaseURL: URL(string: "https://studio.example")!,
+            webSocketBaseURL: URL(string: "wss://studio.example")!
+        )
+        let credentials = InMemoryCredentialStore(credentials: [
+            environment.id: EnvironmentCredential(accessToken: "access-token"),
+        ])
+        let transport = RecordingHTTPTransport { request in
+            (
+                Data(#"{"ticket":"websocket-ticket","expiresAt":"2026-07-30T12:05:00.000Z"}"#.utf8),
+                transportResponse(request)
+            )
+        }
+        let connection = RecordingWebSocketConnection()
+        let client = T3Client(
+            environment: environment,
+            credentialStore: credentials,
+            httpTransport: transport,
+            webSocketConnector: StaticWebSocketConnector(connection: connection)
+        )
+
+        let diff = try await client.turnDiff(
+            threadID: "thread-a",
+            fromTurnCount: 2,
+            toTurnCount: 3
+        )
+        await client.disconnect()
+
+        XCTAssertEqual(diff.threadId, "thread-a")
+        XCTAssertEqual(diff.fromTurnCount, 2)
+        XCTAssertEqual(diff.toTurnCount, 3)
+        let requests = await connection.requests()
+        let request = try XCTUnwrap(requests.first)
+        XCTAssertEqual(request["tag"]?.stringValue, "orchestration.getTurnDiff")
+        XCTAssertEqual(request["payload"]?["threadId"]?.stringValue, "thread-a")
+        XCTAssertEqual(request["payload"]?["fromTurnCount"], .number(2))
+        XCTAssertEqual(request["payload"]?["toTurnCount"], .number(3))
+    }
+
     func testUnsentCommandsFallBackToHTTPButBootstrapDoesNot() async throws {
         let environment = Environment(
             id: "environment-1",
@@ -671,6 +713,13 @@ private actor RecordingWebSocketConnection: WebSocketConnection {
             ])
         case "provider.uploadFeedback":
             value = .object(["feedbackId": .string("codex-thread-1")])
+        case "orchestration.getTurnDiff":
+            value = .object([
+                "threadId": request["payload"]?["threadId"] ?? .null,
+                "fromTurnCount": request["payload"]?["fromTurnCount"] ?? .null,
+                "toTurnCount": request["payload"]?["toTurnCount"] ?? .null,
+                "diff": .string("diff --git a/App.swift b/App.swift"),
+            ])
         default:
             value = .object(["sequence": .number(42)])
         }

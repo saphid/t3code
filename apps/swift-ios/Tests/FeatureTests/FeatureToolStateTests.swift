@@ -129,6 +129,91 @@ struct FeatureToolStateTests {
     }
 
     @Test
+    func threadReviewMapperKeepsConcurrentChangesToTheSamePathSeparate() throws {
+        let threadA = ThreadTurnDiff(
+            threadId: "thread-a",
+            fromTurnCount: 1,
+            toTurnCount: 2,
+            diff: """
+            diff --git a/App.swift b/App.swift
+            --- a/App.swift
+            +++ b/App.swift
+            @@ -1,1 +1,1 @@
+            -let owner = "old"
+            +let owner = "thread-a"
+            """
+        )
+        let threadB = ThreadTurnDiff(
+            threadId: "thread-b",
+            fromTurnCount: 4,
+            toTurnCount: 5,
+            diff: """
+            diff --git a/App.swift b/App.swift
+            --- a/App.swift
+            +++ b/App.swift
+            @@ -1,1 +1,1 @@
+            -let owner = "old"
+            +let owner = "thread-b"
+            """
+        )
+
+        let reviewA = NativeWorkspaceMapper.review(threadA)
+        let reviewB = NativeWorkspaceMapper.review(threadB)
+
+        let lineA = try #require(reviewA.files.first?.lines.first { $0.kind == .addition })
+        let lineB = try #require(reviewB.files.first?.lines.first { $0.kind == .addition })
+        #expect(reviewA.title == "Last turn · Turn 2")
+        #expect(reviewB.title == "Last turn · Turn 5")
+        #expect(lineA.text == "let owner = \"thread-a\"")
+        #expect(lineB.text == "let owner = \"thread-b\"")
+        #expect(reviewA.files.first?.sourceKind == nil)
+        #expect(reviewB.files.first?.sourceKind == nil)
+    }
+
+    @Test
+    func reviewRequestSelectsEachThreadLatestReadyCheckpoint() throws {
+        let threadACheckpoints = [
+            checkpoint(threadID: "thread-a", turnCount: 1, status: "ready"),
+            checkpoint(threadID: "thread-a", turnCount: 3, status: "missing"),
+            checkpoint(threadID: "thread-a", turnCount: 2, status: "ready"),
+        ]
+        let threadBCheckpoints = [
+            checkpoint(threadID: "thread-b", turnCount: 1, status: "ready"),
+        ]
+
+        let threadA = try #require(
+            NativeFeatureClient.reviewRequest(
+                threadID: "thread-a",
+                checkpoints: threadACheckpoints
+            )
+        )
+        let threadB = try #require(
+            NativeFeatureClient.reviewRequest(
+                threadID: "thread-b",
+                checkpoints: threadBCheckpoints
+            )
+        )
+        #expect(threadA.threadID == "thread-a")
+        #expect(threadA.fromTurnCount == 1)
+        #expect(threadA.toTurnCount == 2)
+        #expect(threadB.threadID == "thread-b")
+        #expect(threadB.fromTurnCount == 0)
+        #expect(threadB.toTurnCount == 1)
+    }
+
+    private func checkpoint(threadID: String, turnCount: Int, status: String) -> CheckpointSummary {
+        CheckpointSummary(
+            turnId: "\(threadID)-turn-\(turnCount)",
+            checkpointTurnCount: turnCount,
+            checkpointRef: "refs/t3/checkpoints/\(threadID)/turn/\(turnCount)",
+            status: status,
+            files: [],
+            assistantMessageId: nil,
+            completedAt: "2026-08-30T00:00:00.000Z"
+        )
+    }
+
+    @Test
     func fullDiffHydrationRestoresUnchangedRegionsWithoutLosingPatchRows() {
         let file = FeatureReviewFile(
             path: "App.swift",

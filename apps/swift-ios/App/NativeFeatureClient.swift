@@ -2045,9 +2045,40 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
 
     func loadReview(threadID: String) async throws -> FeatureReview {
         let route = try threadRoute(for: threadID)
-        let context = try workspaceContext(route: route)
-        let preview = try await route.client.reviewDiffPreview(cwd: context.cwd)
-        return NativeWorkspaceMapper.review(preview)
+        let snapshot = try await route.client.threadSnapshot(id: route.wireID)
+        guard let request = Self.reviewRequest(
+            threadID: route.wireID,
+            checkpoints: snapshot.thread.checkpoints
+        ) else {
+            return FeatureReview(title: "Last turn")
+        }
+        let diff = try await route.client.turnDiff(
+            threadID: request.threadID,
+            fromTurnCount: request.fromTurnCount,
+            toTurnCount: request.toTurnCount
+        )
+        guard diff.threadId == request.threadID,
+              diff.fromTurnCount == request.fromTurnCount,
+              diff.toTurnCount == request.toTurnCount else {
+            throw RPCError.protocolViolation("The server returned a diff for another thread.")
+        }
+        return NativeWorkspaceMapper.review(diff)
+    }
+
+    static func reviewRequest(
+        threadID: String,
+        checkpoints: [CheckpointSummary]
+    ) -> NativeThreadReviewRequest? {
+        guard let checkpoint = checkpoints
+            .filter({ $0.status == "ready" })
+            .max(by: { $0.checkpointTurnCount < $1.checkpointTurnCount }) else {
+            return nil
+        }
+        return NativeThreadReviewRequest(
+            threadID: threadID,
+            fromTurnCount: max(0, checkpoint.checkpointTurnCount - 1),
+            toTurnCount: checkpoint.checkpointTurnCount
+        )
     }
 
     func loadReviewFileContents(
@@ -6408,6 +6439,12 @@ private struct NativeThreadRoute {
     let wireID: String
     let environmentID: String
     let client: T3Client
+}
+
+struct NativeThreadReviewRequest: Equatable {
+    let threadID: String
+    let fromTurnCount: Int
+    let toTurnCount: Int
 }
 
 private struct NativeSourceControlMonitorKey: Hashable {

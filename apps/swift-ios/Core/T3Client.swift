@@ -522,6 +522,24 @@ public actor T3Client {
         )
     }
 
+    public func turnDiff(
+        threadID: String,
+        fromTurnCount: Int,
+        toTurnCount: Int,
+        ignoreWhitespace: Bool = false
+    ) async throws -> ThreadTurnDiff {
+        try await rpc.request(
+            RPCMethod.getTurnDiff.rawValue,
+            payload: .object([
+                "threadId": .string(threadID),
+                "fromTurnCount": .number(Double(fromTurnCount)),
+                "toTurnCount": .number(Double(toTurnCount)),
+                "ignoreWhitespace": .bool(ignoreWhitespace),
+            ]),
+            as: ThreadTurnDiff.self
+        )
+    }
+
     @discardableResult
     public func createProject(
         projectID: String = UUID().uuidString,
@@ -1566,6 +1584,7 @@ public enum RPCMethod: String, Sendable {
     case pullRequestsReviewerCandidates = "pullRequests.reviewerCandidates"
     case pullRequestsRequestReviewers = "pullRequests.requestReviewers"
     case dispatchCommand = "orchestration.dispatchCommand"
+    case getTurnDiff = "orchestration.getTurnDiff"
     case getArchivedShellSnapshot = "orchestration.getArchivedShellSnapshot"
     case subscribeShell = "orchestration.subscribeShell"
     case subscribeThread = "orchestration.subscribeThread"

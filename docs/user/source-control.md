@@ -2,6 +2,10 @@
 
 T3 Code connects to your Git hosting provider so you can create pull requests, review code, and manage repositories without leaving the app.
 
+On SwiftUI mobile, a thread's **Review** panel shows the files changed by that thread's latest
+completed turn. **Git status** remains project-wide, so it can include combined working-tree
+changes from other threads using the same project.
+
 ## Supported Providers
 
 T3 Code works with the platforms your team already uses:
