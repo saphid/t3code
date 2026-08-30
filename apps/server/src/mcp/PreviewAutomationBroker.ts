@@ -113,6 +113,11 @@ interface BrokerState {
   readonly focusSequence: number;
 }
 
+// The renderer owns navigation readiness and can settle at the exact deadline
+// it received. Keep the broker pending long enough for that terminal response
+// to cross the client/server boundary instead of racing it with the same clock.
+const PREVIEW_NAVIGATION_RESPONSE_SETTLEMENT_MS = 1_000;
+
 const removeConnectionFromState = (
   current: BrokerState,
   clientId: string,
@@ -544,7 +549,11 @@ export const make = Effect.gen(function* PreviewAutomationBrokerMake() {
         }
         return yield* new PreviewAutomationRequestQueueClosedError(requestContext);
       }
-      const result = yield* Deferred.await(deferred).pipe(Effect.timeoutOption(timeoutMs));
+      const responseTimeoutMs =
+        input.operation === "navigate"
+          ? timeoutMs + PREVIEW_NAVIGATION_RESPONSE_SETTLEMENT_MS
+          : timeoutMs;
+      const result = yield* Deferred.await(deferred).pipe(Effect.timeoutOption(responseTimeoutMs));
       return yield* Option.match(result, {
         onNone: () => Effect.fail(new PreviewAutomationTimeoutError(requestContext)),
         onSome: (value) => Effect.succeed(value as A),

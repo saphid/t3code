@@ -5,6 +5,9 @@ import { EnvironmentId, PreviewTabId, ProviderInstanceId, ThreadId } from "@t3to
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
+import * as Deferred from "effect/Deferred";
+import * as Fiber from "effect/Fiber";
+import * as TestClock from "effect/testing/TestClock";
 import { McpProtocol, McpSchema, McpServer } from "effect/unstable/ai";
 import { HttpBody, HttpClient, HttpRouter, HttpServerResponse } from "effect/unstable/http";
 
@@ -92,6 +95,66 @@ it.effect("returns bounded structural preview snapshot failures", () =>
           operation: "snapshot",
           failureCount: 1,
         },
+      });
+    }),
+  ).pipe(Effect.provide(TestLayer)),
+);
+
+it.effect("returns a successful navigate result that reaches the client deadline", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const server = yield* McpServer.McpServer;
+      const broker = yield* PreviewAutomationBroker.PreviewAutomationBroker;
+      const requestReceived = yield* Deferred.make<{
+        readonly connectionId: string;
+        readonly requestId: string;
+      }>();
+      const events = yield* broker.connect({
+        clientId: "mcp-navigation-boundary-client",
+        environmentId,
+      });
+      yield* Stream.runForEach(events, (event) =>
+        event.type === "connected"
+          ? Effect.void
+          : Deferred.succeed(requestReceived, {
+              connectionId: event.connectionId,
+              requestId: event.request.requestId,
+            }).pipe(Effect.asVoid),
+      ).pipe(Effect.forkScoped);
+      yield* Effect.yieldNow;
+
+      const call = yield* server
+        .callTool({
+          name: "preview_navigate",
+          arguments: { url: "https://example.com/", timeoutMs: 100 },
+        })
+        .pipe(
+          Effect.provideService(McpInvocationContext.McpInvocationContext, invocation),
+          Effect.provideService(McpSchema.McpServerClient, client),
+          Effect.forkScoped,
+        );
+      const request = yield* Deferred.await(requestReceived);
+      yield* TestClock.adjust("100 millis");
+      yield* broker.respond({
+        clientId: "mcp-navigation-boundary-client",
+        connectionId: request.connectionId,
+        requestId: request.requestId,
+        ok: true,
+        result: {
+          available: true,
+          visible: true,
+          tabId,
+          url: "https://example.com/",
+          title: "Example",
+          loading: false,
+        },
+      });
+
+      const result = yield* Fiber.join(call);
+      expect(result.isError).toBe(false);
+      expect(result.structuredContent).toMatchObject({
+        url: "https://example.com/",
+        loading: false,
       });
     }),
   ).pipe(Effect.provide(TestLayer)),

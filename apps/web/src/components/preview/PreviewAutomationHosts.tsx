@@ -62,6 +62,7 @@ import {
 } from "./previewAutomationOpenReadiness";
 import {
   assertPreviewRuntimeCurrent,
+  navigateWithReadiness,
   waitForNavigationReadiness,
 } from "./previewNavigationReadiness";
 import { createPreviewAutomationRequestConsumerAtom } from "./previewAutomationRequestConsumer";
@@ -481,8 +482,7 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
                 url: input.url!,
               },
             );
-            await ready.bridge.navigate(ready.runtimeTabId, resolution.resolvedUrl);
-            await waitForNavigationReadiness(
+            await navigateWithReadiness(
               threadRef,
               request.requestId,
               ready.tabId,
@@ -490,6 +490,8 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
               request.operation,
               input.readiness ?? "load",
               input.timeoutMs ?? request.timeoutMs,
+              resolution.resolvedUrl,
+              () => ready.bridge.navigate(ready.runtimeTabId, resolution.resolvedUrl),
             );
             return await currentStatus(threadRef, ready.tabId);
           }

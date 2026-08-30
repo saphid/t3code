@@ -7,6 +7,7 @@ import {
   PreviewAutomationMalformedResponseError,
   PreviewAutomationNoAvailableHostError,
   PreviewAutomationTargetNotEditableError,
+  PreviewAutomationTimeoutError,
   PreviewTabId,
   ProviderInstanceId,
   ThreadId,
@@ -19,6 +20,7 @@ import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
 import * as Result from "effect/Result";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 
 import * as PreviewAutomationBroker from "./PreviewAutomationBroker.ts";
 
@@ -80,6 +82,53 @@ it.effect("atomically registers a connected host and correlates its response", (
       });
 
       expect(result).toEqual({ available: true });
+    }),
+  ),
+);
+
+it.effect("accepts a navigation response that settles at the client deadline", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const broker = yield* makeBroker;
+      const requestReceived = yield* Deferred.make<RoutedRequest>();
+      const requests = requestsFrom(yield* broker.connect(makeHost()));
+      yield* Stream.runForEach(requests, (request) =>
+        Deferred.succeed(requestReceived, request).pipe(Effect.asVoid),
+      ).pipe(Effect.forkScoped);
+      yield* Effect.yieldNow;
+
+      const invocation = yield* broker
+        .invoke<string>({ scope, operation: "navigate", input: {}, timeoutMs: 100 })
+        .pipe(Effect.forkScoped);
+      const request = yield* Deferred.await(requestReceived);
+      yield* TestClock.adjust("100 millis");
+      yield* broker.respond({
+        clientId: "client-1",
+        connectionId: request.connectionId,
+        requestId: request.requestId,
+        ok: true,
+        result: "loaded",
+      });
+
+      expect(yield* Fiber.join(invocation)).toBe("loaded");
+    }),
+  ),
+);
+
+it.effect("still times out a navigation with no terminal client response", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const broker = yield* makeBroker;
+      const requests = requestsFrom(yield* broker.connect(makeHost()));
+      yield* Stream.runDrain(requests).pipe(Effect.forkScoped);
+      const invocation = yield* broker
+        .invoke<void>({ scope, operation: "navigate", input: {}, timeoutMs: 100 })
+        .pipe(Effect.flip, Effect.forkScoped);
+      yield* Effect.yieldNow;
+
+      yield* TestClock.adjust("1100 millis");
+
+      expect(yield* Fiber.join(invocation)).toBeInstanceOf(PreviewAutomationTimeoutError);
     }),
   ),
 );
