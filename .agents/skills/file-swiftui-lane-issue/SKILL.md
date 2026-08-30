@@ -20,9 +20,17 @@ Neither the issue nor the work item owns its lane.
    base live. Recorded paths, IDs, and SHAs are evidence, never configuration.
 2. Search open and closed issues for the same user outcome. Update a true match
    instead of creating a duplicate.
-3. Write observable acceptance statements. Assign one existing or intentionally
-   new `laneId`, a rank within that lane, and typed dependencies.
-4. If authorized, create the issue first so GitHub assigns its number. Then add
+3. Classify intake provenance. File only an Alex-requested SwiftUI or Electron
+   outcome (`alex-priority`, `swiftui-product`, or `electron-product`). The
+   upstream contribution queue and React Native parity are discovery inputs,
+   not automatic work sources; do not create an issue from either unless Alex
+   explicitly promotes the concrete behavior.
+4. Write observable acceptance statements. Assign one existing or intentionally
+   new `laneId`, a rank within that lane, and typed dependencies. For a port of
+   a web or React Native feature, capture reference screenshots of that feature
+   in the React Native mobile app first, attach them to the issue, and derive
+   the acceptance points from what they show.
+5. If authorized, create the issue first so GitHub assigns its number. Then add
    exactly one validated block and one stage label.
 
 ```swiftui-work-item-v2
@@ -33,6 +41,17 @@ Neither the issue nor the work item owns its lane.
   "laneId": "native-ui",
   "rank": 10,
   "stage": "queued",
+  "classification": {
+    "category": "feature",
+    "surface": "ui",
+    "source": "alex-priority",
+    "upstream": [
+      {
+        "kind": "issue",
+        "reference": "pingdotgg/t3code#1234"
+      }
+    ]
+  },
   "acceptance": ["An observable outcome"],
   "dependencies": [],
   "binding": {
@@ -48,6 +67,14 @@ Neither the issue nor the work item owns its lane.
   }
 }
 ```
+
+`classification.category` and `classification.source` use the contract's `workItemClassification`
+categories. `surface` is exactly `ui` or `non-ui`. Record every known upstream
+issue or pull request with an exact `kind` and an
+`owner/repository#number` reference; leave the array empty only when there is
+no upstream record yet. Existing work items without this object remain valid,
+but the dashboard shows them as unclassified until their next normal issue
+update.
 
 Validate the extracted JSON:
 

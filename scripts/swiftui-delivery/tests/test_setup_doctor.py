@@ -24,12 +24,14 @@ SKILLS = (
 )
 TOOL_NAMES = (
     "swiftui-delivery",
+    "compose-generation",
     "simulator-lane",
     "phone-lease",
     "audit-package",
     "setup",
     "doctor",
     "status",
+    "controller",
 )
 
 
@@ -79,6 +81,7 @@ class SkeletonHarness(unittest.TestCase):
         self.bin.mkdir()
         _write_executable(self.bin / "gh", "#!/bin/bash\nexit 0\n")
         _write_executable(self.bin / "launchctl", "#!/bin/bash\nexit 0\n")
+        _write_executable(self.bin / "t3", "#!/bin/bash\nexit 0\n")
         # Skeleton watcher parity: deployed copy == vendored copy.
         watcher_dir = self.pkg / "watcher"
         watcher_dir.mkdir()
@@ -90,6 +93,34 @@ class SkeletonHarness(unittest.TestCase):
         stream.mkdir(parents=True)
         (stream / "watcher-config.json").write_text(
             '{"deviceId": "STUB-DEVICE", "teamIdentifier": "STUBTEAM01"}\n')
+        controller_source = "#!/usr/bin/python3\nprint('stub-controller')\n"
+        (self.pkg / "controller.py").write_text(controller_source)
+        controller_dir = self.pkg / "controller"
+        controller_dir.mkdir()
+        controller_plist = controller_dir / \
+            "com.saphid.t3-swiftui-delivery-controller.plist"
+        controller_plist.write_text("stub-controller-plist\n")
+        deployed_controller = (self.home /
+                               ".local/libexec/t3-swiftui-delivery")
+        deployed_controller.mkdir(parents=True)
+        (deployed_controller / "controller.py").write_text(controller_source)
+        agents = self.home / "Library/LaunchAgents"
+        agents.mkdir(parents=True)
+        (agents / controller_plist.name).write_text(
+            controller_plist.read_text())
+        controller_state = (self.home /
+                            ".local/state/t3/swiftui-delivery/controller")
+        controller_state.mkdir(parents=True)
+        headroom_reporter = self.home / "headroom-reporter.py"
+        headroom_reporter.write_text("#!/usr/bin/python3\n")
+        (controller_state / "config.json").write_text(json.dumps({
+            "schemaVersion": 1,
+            "checkout": str(self.repo),
+            "t3Command": str(self.bin / "t3"),
+            "t3Home": str(self.home / ".t3"),
+            "headroomReporter": str(headroom_reporter),
+            "path": str(self.bin),
+        }))
 
     def run_tool(self, tool, *args):
         env = dict(os.environ)

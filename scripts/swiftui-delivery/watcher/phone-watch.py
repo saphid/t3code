@@ -12,6 +12,7 @@ import subprocess
 import sys
 import tempfile
 import zipfile
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -20,6 +21,7 @@ READY = ROOT / "ready"
 RECEIPTS = ROOT / "device-receipts"
 LOCK = Path.home() / ".t3/locks/swiftui-phone-install.lock"
 CONFIG = ROOT / "watcher-config.json"
+MINIMUM_PROVISIONING_VALIDITY = timedelta(hours=24)
 
 
 def run(*args: str, check: bool = False) -> subprocess.CompletedProcess[str]:
@@ -120,8 +122,41 @@ def _under_allowed_root(path: Path) -> bool:
                for root in ALLOWED_BUILD_ROOTS if root.exists())
 
 
-def valid_pointer(pointer: dict[str, Any], channel_name: str,
-                  config: dict[str, Any]) -> bool:
+def provisioning_profiles_current(path: Path) -> tuple[bool, str | None]:
+    profiles = [path / "embedded.mobileprovision"]
+    profiles.extend(
+        extension / "embedded.mobileprovision"
+        for extension in sorted(path.glob("PlugIns/*.appex"))
+    )
+    if not profiles[0].is_file():
+        return (False, "missing-provisioning")
+
+    deadline = datetime.now(timezone.utc) + MINIMUM_PROVISIONING_VALIDITY
+    for profile in profiles:
+        if not profile.is_file():
+            return (False, "missing-provisioning")
+        decoded = run("security", "cms", "-D", "-i", str(profile))
+        if decoded.returncode:
+            return (False, "invalid-provisioning")
+        try:
+            value = plistlib.loads(decoded.stdout.encode())
+            expiration = value["ExpirationDate"]
+            if not isinstance(expiration, datetime):
+                return (False, "invalid-provisioning")
+            if expiration.tzinfo is None:
+                expiration = expiration.replace(tzinfo=timezone.utc)
+            if expiration <= deadline:
+                return (False, "expiring-provisioning")
+        except (KeyError, TypeError, ValueError, plistlib.InvalidFileException):
+            return (False, "invalid-provisioning")
+    return (True, None)
+
+
+def _valid_pointer_without_profile_expiry(
+    pointer: dict[str, Any],
+    channel_name: str,
+    config: dict[str, Any],
+) -> bool:
     required = (
         "channel", "build", "sequence", "commit", "bundleId", "appPath",
         "zipPath", "sha256", "deviceId",
@@ -169,6 +204,14 @@ def valid_pointer(pointer: dict[str, Any], channel_name: str,
     metadata_matches = app_metadata_matches(path, pointer)
     signature = run("codesign", "--verify", "--deep", "--strict", str(path))
     return metadata_matches and signature.returncode == 0
+
+
+def valid_pointer(pointer: dict[str, Any], channel_name: str,
+                  config: dict[str, Any]) -> bool:
+    if not _valid_pointer_without_profile_expiry(pointer, channel_name, config):
+        return False
+    profiles_current, _ = provisioning_profiles_current(Path(pointer["appPath"]))
+    return profiles_current
 
 
 def app_metadata_matches(path: Path, pointer: dict[str, Any]) -> bool:
@@ -259,7 +302,7 @@ def process_channel(path: Path, config: dict[str, Any]) -> None:
     # The caller holds the one global device lease. Read only the current
     # atomic pointer so an older queued invocation can never install stale work.
     pointer = load(path)
-    if not valid_pointer(pointer, path.stem, config):
+    if not _valid_pointer_without_profile_expiry(pointer, path.stem, config):
         return
     configured = config.get("deviceId")
     if configured and configured != pointer["deviceId"]:
@@ -267,6 +310,15 @@ def process_channel(path: Path, config: dict[str, Any]) -> None:
     device = configured or pointer["deviceId"]
     channel = pointer["channel"]
     receipt_path = RECEIPTS / f"{channel}.json"
+    profiles_current, profile_reason = provisioning_profiles_current(
+        Path(pointer["appPath"])
+    )
+    if not profiles_current:
+        atomic_json(
+            receipt_path,
+            receipt(pointer, device, f"rejected-{profile_reason}", True),
+        )
+        return
     previous = load(receipt_path) if receipt_path.exists() else {}
     status, current = installed_build(device, pointer["bundleId"])
 

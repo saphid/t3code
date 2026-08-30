@@ -1,0 +1,4 @@
+#!/bin/bash
+# Visual delivery board: serve status_report --html on localhost, read-only.
+SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd -P)
+exec python3 "$(dirname "$SCRIPT_DIR")/board_server.py" "$@"

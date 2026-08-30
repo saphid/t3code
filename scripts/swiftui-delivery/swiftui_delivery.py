@@ -14,6 +14,7 @@ import json
 import re
 import sys
 from copy import deepcopy
+from datetime import datetime
 from pathlib import Path, PurePosixPath
 
 
@@ -61,6 +62,16 @@ def matches(pattern, value):
     return isinstance(value, str) and pattern.fullmatch(value) is not None
 
 
+def parse_utc(value):
+    """Real datetime or None: shape-valid but impossible dates return None."""
+    if not matches(UTC_RE, value):
+        return None
+    try:
+        return datetime.fromisoformat(value[:-1] + "+00:00")
+    except ValueError:
+        return None
+
+
 def add(errors, condition, message):
     if not condition:
         errors.append(message)
@@ -99,14 +110,49 @@ def validate_work_item(value):
     add(errors, stage in CONTRACT["stages"], "stage is invalid")
     add(errors, isinstance(value.get("rank"), int) and value.get("rank", -1) >= 0,
         "rank must be a non-negative integer")
+    successor_duty = CONTRACT.get("successorDuty", {}).get("accepted", {})
+    if stage == "accepted" and successor_duty:
+        issue_number = str(value.get("issue") or "").rsplit("#", 1)[-1]
+        grandfathered = issue_number.isdigit() and int(issue_number) in \
+            successor_duty.get("preDutyAccepted", [])
+        if not grandfathered:
+            errors.extend(validate_acceptance_successor(
+                value.get("successor"), value, successor_duty))
     acceptance = value.get("acceptance")
     add(errors, isinstance(acceptance, list) and bool(acceptance) and
         all(nonempty(point) for point in acceptance or []),
         "acceptance must contain observable statements")
+    classification = value.get("classification")
+    add(errors, classification is None or isinstance(classification, dict),
+        "classification must be an object when recorded")
+    if isinstance(classification, dict):
+        policy = CONTRACT["workItemClassification"]
+        add(errors, classification.get("category") in policy["categories"],
+            "classification.category is invalid")
+        add(errors, classification.get("surface") in policy["surfaces"],
+            "classification.surface is invalid")
+        if classification.get("source") is not None:
+            add(errors, classification.get("source") in policy["intakeSources"],
+                "classification.source is invalid")
+        upstream = classification.get("upstream")
+        add(errors, isinstance(upstream, list),
+            "classification.upstream must be an array")
+        for index, reference in enumerate(
+                upstream if isinstance(upstream, list) else []):
+            prefix = "classification.upstream[%d]" % index
+            add(errors, isinstance(reference, dict),
+                "%s must be an object" % prefix)
+            if not isinstance(reference, dict):
+                continue
+            add(errors, reference.get("kind") in ("issue", "pull"),
+                "%s.kind is invalid" % prefix)
+            add(errors, matches(ISSUE_RE, reference.get("reference")),
+                "classification.upstream[%d].reference is invalid" % index)
     dependencies = value.get("dependencies")
     add(errors, isinstance(dependencies, list), "dependencies must be an array")
     seen = set()
-    for index, dep in enumerate(dependencies or []):
+    for index, dep in enumerate(
+            dependencies if isinstance(dependencies, list) else []):
         prefix = "dependencies[%d]" % index
         add(errors, isinstance(dep, dict), "%s must be an object" % prefix)
         if not isinstance(dep, dict):
@@ -405,7 +451,13 @@ def validate_capture(capture, prefix, phase, commit, proof_schema, expected_lane
     return errors
 
 
-def validate_proof(value, check_files=True):
+def validate_proof(value, check_files=True, require_retained=True):
+    """Validate a proof.
+
+    `require_retained` is False only for an already-installed generation carry,
+    whose authority is the prior generation receipt rather than a fresh reopen
+    of retained simulator builds. Candidates always keep the full gate.
+    """
     errors = []
     add(errors, isinstance(value, dict), "proof must be an object")
     if not isinstance(value, dict):
@@ -423,10 +475,11 @@ def validate_proof(value, check_files=True):
     add(errors, base != head, "baseCommit and headCommit must differ")
     add(errors, isinstance(value.get("userVisible"), bool), "userVisible must be boolean")
     add(errors, isinstance(value.get("visualChange"), bool), "visualChange must be boolean")
+    retained_files = check_files and require_retained
     base_receipt, base_errors = validate_build_receipt(
-        value.get("baseBuildReceipt"), "baseBuildReceipt", base, check_files)
+        value.get("baseBuildReceipt"), "baseBuildReceipt", base, retained_files)
     head_receipt, head_errors = validate_build_receipt(
-        value.get("headBuildReceipt"), "headBuildReceipt", head, check_files)
+        value.get("headBuildReceipt"), "headBuildReceipt", head, retained_files)
     errors.extend(base_errors)
     errors.extend(head_errors)
     captures = value.get("captures")
@@ -442,9 +495,10 @@ def validate_proof(value, check_files=True):
         ))
         expected_binary = base_receipt.get("binarySha256") if phase == "before" and isinstance(base_receipt, dict) \
             else head_receipt.get("binarySha256") if phase == "after" and isinstance(head_receipt, dict) else None
-        add(errors, capture.get("installedBinarySha256") == expected_binary
-            if isinstance(capture, dict) and expected_binary is not None else False,
-            "%s installed binary must match the retained %s build" % (prefix, phase))
+        if expected_binary is not None or require_retained:
+            add(errors, capture.get("installedBinarySha256") == expected_binary
+                if isinstance(capture, dict) and expected_binary is not None else False,
+                "%s installed binary must match the retained %s build" % (prefix, phase))
         capture_id = capture.get("id") if isinstance(capture, dict) else None
         add(errors, capture_id not in ids, "%s.id is duplicated" % prefix)
         ids.add(capture_id)
@@ -567,6 +621,120 @@ def read_validated_artifact(descriptor, validator, prefix, errors):
         return None
 
 
+def validate_composition_plan(value):
+    """Validate the immutable recipe used to materialize a phone build."""
+    errors = []
+    add(errors, isinstance(value, dict), "composition plan must be an object")
+    if not isinstance(value, dict):
+        return errors
+    add(errors, value.get("schemaVersion") == 1,
+        "composition plan schemaVersion must be 1")
+    add(errors, value.get("kind") == "swiftui-build-composition-plan",
+        "composition plan kind is invalid")
+    add(errors, value.get("mode") in ("publish-test", "publish-dev"),
+        "composition plan mode must be publish-test or publish-dev")
+    source = value.get("sourceBase")
+    add(errors, isinstance(source, dict), "sourceBase must be an object")
+    policy = CONTRACT["buildComposition"]
+    if isinstance(source, dict):
+        add(errors, source.get("repository") == policy["sourceRepository"],
+            "sourceBase.repository must be the upstream product repository")
+        add(errors, source.get("remote") == policy["sourceRemote"],
+            "sourceBase.remote must be the configured upstream remote")
+        add(errors, source.get("ref") == policy["sourceRef"],
+            "sourceBase.ref must be Theo's SwiftUI branch")
+        add(errors, matches(COMMIT_RE, source.get("commit")),
+            "sourceBase.commit is invalid")
+        add(errors, parse_utc(source.get("resolvedAt")) is not None,
+            "sourceBase.resolvedAt must be a real UTC timestamp ending in Z")
+    generation = value.get("generationPlan")
+    generation_value = read_validated_artifact(
+        generation, validate_generation_plan, "generationPlan", errors)
+    overlays = value.get("overlays")
+    add(errors, isinstance(overlays, list) and bool(overlays),
+        "overlays must not be empty")
+    seen = set()
+    actual = []
+    for index, overlay in enumerate(overlays or []):
+        prefix = "overlays[%d]" % index
+        add(errors, isinstance(overlay, dict), "%s must be an object" % prefix)
+        if not isinstance(overlay, dict):
+            continue
+        issue = overlay.get("issue")
+        add(errors, matches(ISSUE_RE, issue), "%s.issue is invalid" % prefix)
+        add(errors, issue not in seen, "%s.issue is duplicated" % prefix)
+        seen.add(issue)
+        add(errors, matches(COMMIT_RE, overlay.get("baseCommit")),
+            "%s.baseCommit is invalid" % prefix)
+        add(errors, matches(COMMIT_RE, overlay.get("headCommit")),
+            "%s.headCommit is invalid" % prefix)
+        if isinstance(source, dict):
+            add(errors, overlay.get("baseCommit") == source.get("commit"),
+                "%s.baseCommit must equal the fresh Theo source base" % prefix)
+        actual.append((issue, overlay.get("headCommit")))
+    if isinstance(generation_value, dict):
+        add(errors, generation_value.get("mode") == value.get("mode"),
+            "composition mode must match generation plan")
+        expected = [(entry.get("issue"), entry.get("headCommit"))
+                    for entry in generation_value.get("entries", [])
+                    if isinstance(entry, dict)]
+        add(errors, actual == expected,
+            "composition overlays must match generation plan issue/head order")
+        for index, entry in enumerate(generation_value.get("entries", [])):
+            if index >= len(overlays or []) or not isinstance(entry, dict):
+                continue
+            descriptor = entry.get("workItem")
+            if not isinstance(descriptor, dict) or not nonempty(descriptor.get("path")):
+                continue
+            try:
+                item = load(Path(descriptor["path"]).expanduser())
+                add(errors, item.get("binding", {}).get("baseCommit") ==
+                    overlays[index].get("baseCommit"),
+                    "overlays[%d].baseCommit must match its work item binding" % index)
+            except (OSError, ValueError, json.JSONDecodeError) as exc:
+                errors.append("overlays[%d] work item cannot be read: %s" % (index, exc))
+    return errors
+
+
+def validate_composition_receipt(value, plan, plan_path):
+    errors = []
+    add(errors, isinstance(value, dict), "composition receipt must be an object")
+    if not isinstance(value, dict):
+        return errors
+    add(errors, value.get("schemaVersion") == 1,
+        "composition receipt schemaVersion must be 1")
+    add(errors, value.get("kind") == "swiftui-build-composition-receipt",
+        "composition receipt kind is invalid")
+    add(errors, value.get("planSha256") == sha256(plan_path),
+        "composition receipt must bind exact composition plan bytes")
+    add(errors, value.get("sourceBase") == plan.get("sourceBase"),
+        "composition receipt sourceBase must match plan")
+    add(errors, value.get("priorCompositeUsedAsBase") is False,
+        "composition receipt must attest that no prior composite was used as base")
+    expected = [(entry.get("issue"), entry.get("baseCommit"), entry.get("headCommit"))
+                for entry in plan.get("overlays", [])]
+    actual = [(entry.get("issue"), entry.get("baseCommit"), entry.get("headCommit"))
+              for entry in value.get("overlays", [])] \
+        if isinstance(value.get("overlays"), list) else None
+    add(errors, actual == expected,
+        "composition receipt overlays must match plan issue/base/head order")
+    for index, entry in enumerate(value.get("overlays", [])):
+        if not isinstance(entry, dict):
+            errors.append("composition receipt overlays[%d] must be an object" % index)
+            continue
+        add(errors, matches(SHA_RE, entry.get("patchSha256")),
+            "composition receipt overlays[%d].patchSha256 is invalid" % index)
+        add(errors, matches(COMMIT_RE, entry.get("resultingCommit")),
+            "composition receipt overlays[%d].resultingCommit is invalid" % index)
+    add(errors, matches(COMMIT_RE, value.get("resultingCommit")),
+        "composition receipt resultingCommit is invalid")
+    add(errors, matches(COMMIT_RE, value.get("resultingTree")),
+        "composition receipt resultingTree is invalid")
+    add(errors, parse_utc(value.get("completedAt")) is not None,
+        "composition receipt completedAt must be a real UTC timestamp ending in Z")
+    return errors
+
+
 def validate_generation_plan(value):
     errors = []
     add(errors, isinstance(value, dict), "generation plan must be an object")
@@ -618,8 +786,15 @@ def validate_generation_plan(value):
             "%s.headCommit is invalid" % prefix)
         work_item = read_validated_artifact(entry.get("workItem"), validate_work_item,
                                             "%s.workItem" % prefix, errors)
-        proof = read_validated_artifact(entry.get("proof"), lambda item: validate_proof(item, True),
-                                        "%s.proof" % prefix, errors)
+        # An installed-carry entry is already on the device; the prior generation
+        # receipt and the exact carry-set match below are its authority, so it does
+        # not re-reopen retained simulator builds that reviewed eviction may have
+        # since removed. Candidates keep the full retained-artifact gate.
+        require_retained = not (mode == "publish-test" and role == "installed-carry")
+        proof = read_validated_artifact(
+            entry.get("proof"),
+            lambda item, retained=require_retained: validate_proof(item, True, retained),
+            "%s.proof" % prefix, errors)
         inspection_descriptor = entry.get("inspection")
         errors.extend(artifact_errors(inspection_descriptor, "%s.inspection" % prefix, True))
         inspection = None
@@ -720,7 +895,9 @@ def validate_generation_receipt(value, plan, plan_path):
     add(errors, isinstance(plan, dict), "generation receipt plan must be an object")
     if not isinstance(plan, dict):
         return errors
-    add(errors, value.get("schemaVersion") == 2, "generation receipt schemaVersion must be 2")
+    receipt_version = value.get("schemaVersion")
+    add(errors, receipt_version in (2, 3),
+        "generation receipt schemaVersion must be 2 or 3")
     add(errors, value.get("kind") == "swiftui-generation-receipt", "generation receipt kind is invalid")
     add(errors, value.get("mode") == plan.get("mode"), "generation receipt mode must match plan")
     add(errors, value.get("planSha256") == sha256(plan_path),
@@ -737,6 +914,40 @@ def validate_generation_receipt(value, plan, plan_path):
         add(errors, nonempty(value.get("resolvedDestination")), "resolvedDestination is required")
         add(errors, matches(SHA_RE, value.get("installedArtifactSha256")),
             "installedArtifactSha256 must be a lowercase SHA-256")
+        completed_at = parse_utc(value.get("completedAt"))
+        composition_effective = parse_utc(CONTRACT["buildComposition"]["effectiveFrom"])
+        requires_composition = completed_at is not None and composition_effective is not None \
+            and completed_at >= composition_effective
+        add(errors, not requires_composition or receipt_version == 3,
+            "phone generation receipts after buildComposition.effectiveFrom must use schemaVersion 3")
+        if receipt_version == 3:
+            descriptor = value.get("compositionReceipt")
+            errors.extend(artifact_errors(descriptor, "compositionReceipt", True))
+            if isinstance(descriptor, dict) and nonempty(descriptor.get("path")):
+                receipt_path = Path(descriptor["path"]).expanduser()
+                if receipt_path.is_file():
+                    try:
+                        composition = load(receipt_path)
+                        composition_plan_descriptor = value.get("compositionPlan")
+                        errors.extend(artifact_errors(
+                            composition_plan_descriptor, "compositionPlan", True))
+                        if (isinstance(composition_plan_descriptor, dict) and
+                                nonempty(composition_plan_descriptor.get("path"))):
+                            composition_plan_path = Path(
+                                composition_plan_descriptor["path"]).expanduser()
+                            if composition_plan_path.is_file():
+                                composition_plan = load(composition_plan_path)
+                                errors.extend(validate_composition_plan(composition_plan))
+                                errors.extend(validate_composition_receipt(
+                                    composition, composition_plan, composition_plan_path))
+                                add(errors, composition_plan.get("generationPlan", {}).get("sha256") ==
+                                    sha256(plan_path),
+                                    "composition plan must bind this generation plan")
+                                add(errors, value.get("resultingCommit") ==
+                                    composition.get("resultingCommit"),
+                                    "generation resultingCommit must match composition receipt")
+                    except (OSError, ValueError, json.JSONDecodeError) as exc:
+                        errors.append("composition receipt cannot be read: %s" % exc)
     if plan.get("mode") == "open-pr":
         add(errors, nonempty(value.get("pullRequestUrl")), "pullRequestUrl is required for open-pr")
         add(errors, value.get("vouchedHandoffChecklist") == "pass",
@@ -798,12 +1009,66 @@ def validate_launch_receipt(value, item):
     return errors
 
 
+def validate_acceptance_successor(value, item, duty, accepted_at=None):
+    """A bare acceptance cannot exist: the verdict binds its successor.
+
+    Thread liveness itself is a coordinator attestation (the same trust model
+    as every other receipt); board reconciliation exposes a fabricated or
+    dead thread because no live turn matches the bound #issue title.
+    """
+    errors = []
+    add(errors, isinstance(value, dict),
+        "a successor binding (handoff dispatch or hold) is required; "
+        "a bare acceptance cannot exist")
+    if not isinstance(value, dict):
+        return errors
+    kinds = duty.get("successorKinds", [])
+    kind = value.get("kind")
+    add(errors, kind in kinds,
+        "acceptance successor kind must be one of: %s" % ", ".join(kinds))
+    if kind == "handoff-dispatch":
+        add(errors, nonempty(value.get("threadId")),
+            "handoff dispatch must record the live thread id")
+        issue_number = str(item.get("issue") or "").rsplit("#", 1)[-1]
+        title = value.get("threadTitle")
+        add(errors, isinstance(title, str) and bool(issue_number) and bool(
+            re.search(r"#%s\b" % re.escape(issue_number), title)),
+            "handoff dispatch thread title must carry #%s" % (issue_number or "?"))
+        dispatched_at = parse_utc(value.get("dispatchedAt"))
+        add(errors, dispatched_at is not None,
+            "handoff dispatch dispatchedAt must be a real UTC instant ending in Z")
+        if dispatched_at is not None and accepted_at is not None:
+            add(errors, dispatched_at <= accepted_at,
+                "handoff dispatch must happen before the verdict is recorded")
+    if kind == "hold":
+        reasons = duty.get("allowedHoldReasons", [])
+        add(errors, value.get("reason") in reasons,
+            "acceptance hold reason must be one of: %s" % ", ".join(reasons))
+        add(errors, parse_utc(value.get("recordedAt")) is not None,
+            "acceptance hold recordedAt must be a real UTC instant ending in Z")
+    return errors
+
+
 def validate_acceptance_receipt(value, item):
     errors = []
     add(errors, isinstance(value, dict), "acceptance receipt must be an object")
     if not isinstance(value, dict):
         return errors
-    add(errors, value.get("schemaVersion") == 2, "acceptance receipt schemaVersion must be 2")
+    duty = CONTRACT.get("successorDuty", {}).get("accepted", {})
+    accepted_at = parse_utc(value.get("acceptedAt"))
+    cutover = parse_utc(duty.get("effectiveFrom")) if duty else None
+    # Malformed acceptedAt or effectiveFrom fails closed onto the
+    # post-cutover requirements.
+    duty_applies = bool(duty) and (
+        accepted_at is None or cutover is None or accepted_at >= cutover)
+    if duty_applies:
+        add(errors, value.get("schemaVersion") == 3,
+            "acceptance receipt schemaVersion must be 3 on or after the "
+            "successor duty cutover")
+        errors.extend(validate_acceptance_successor(
+            value.get("successor"), item, duty, accepted_at=accepted_at))
+    else:
+        add(errors, value.get("schemaVersion") == 2, "acceptance receipt schemaVersion must be 2")
     add(errors, value.get("kind") == "swiftui-acceptance-receipt", "acceptance receipt kind is invalid")
     add(errors, value.get("issue") == item.get("issue"), "acceptance receipt issue must match work item")
     add(errors,
@@ -1049,6 +1314,12 @@ def transition(item, destination, proof_path=None, inspection_path=None,
             errors.extend(validate_acceptance_receipt(acceptance, item))
             if not errors:
                 result["binding"]["acceptanceReceiptSha256"] = sha256(acceptance_receipt_path)
+                successor = acceptance.get("successor")
+                if isinstance(successor, dict):
+                    result["successor"] = deepcopy(successor)
+                    if successor.get("kind") == "hold":
+                        result["hold"] = {"reason": successor["reason"],
+                                          "recordedAt": successor["recordedAt"]}
     if current == "accepted" and destination == "pr-open":
         add(errors, plan_path is not None and receipt_path is not None,
             "pr-open requires generation plan and receipt")
@@ -1060,6 +1331,9 @@ def transition(item, destination, proof_path=None, inspection_path=None,
             errors.extend(validate_transition_generation(plan, item, "candidate"))
             if not errors:
                 result["binding"]["prGenerationReceiptSha256"] = sha256(receipt_path)
+                # The successor obligation is fulfilled by this transition.
+                result.pop("hold", None)
+                result.pop("successor", None)
     if current == "pr-open" and destination == "landed":
         add(errors, landed_receipt_path is not None and receipt_path is not None,
             "landed requires landed and open-pr generation receipts")
@@ -1073,6 +1347,8 @@ def transition(item, destination, proof_path=None, inspection_path=None,
     if destination == "active" and current in ("proof-ready", "phone-test", "accepted", "pr-open"):
         add(errors, verdict in ("reject", "rework"), "return to active requires reject or rework verdict")
         if not errors:
+            result.pop("hold", None)
+            result.pop("successor", None)
             result["binding"].update({
                 "proofSha256": None, "inspectionSha256": None,
                 "phoneGenerationReceiptSha256": None, "acceptanceReceiptSha256": None,
@@ -1101,6 +1377,11 @@ def main(argv=None):
     inspection.add_argument("--proof", required=True)
     plan = sub.add_parser("validate-generation-plan")
     plan.add_argument("path")
+    composition_plan = sub.add_parser("validate-composition-plan")
+    composition_plan.add_argument("path")
+    composition_receipt = sub.add_parser("validate-composition-receipt")
+    composition_receipt.add_argument("path")
+    composition_receipt.add_argument("--plan", required=True)
     receipt = sub.add_parser("validate-generation-receipt")
     receipt.add_argument("path")
     receipt.add_argument("--plan", required=True)
@@ -1131,6 +1412,14 @@ def main(argv=None):
             return print_result(errors)
         if args.command == "validate-generation-plan":
             return print_result(validate_generation_plan(load(args.path)))
+        if args.command == "validate-composition-plan":
+            return print_result(validate_composition_plan(load(args.path)))
+        if args.command == "validate-composition-receipt":
+            plan_value = load(args.plan)
+            errors = validate_composition_plan(plan_value)
+            errors.extend(validate_composition_receipt(
+                load(args.path), plan_value, args.plan))
+            return print_result(errors)
         if args.command == "validate-generation-receipt":
             plan_value = load(args.plan)
             errors = validate_generation_plan(plan_value)

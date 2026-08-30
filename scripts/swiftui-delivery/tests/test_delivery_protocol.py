@@ -1,6 +1,7 @@
 import hashlib
 import importlib.util
 import json
+import shutil
 import tempfile
 import unittest
 from pathlib import Path
@@ -35,6 +36,21 @@ def describe(path):
 
 
 class DeliveryProtocolTests(unittest.TestCase):
+    def test_uat_policy_separates_accepted_and_pending_unchanged_carry(self):
+        policy = delivery.CONTRACT["uatThreads"]["verdictPolicy"]
+
+        self.assertIn("must not trigger", policy["acceptedInstalledCarry"])
+        self.assertIn("first explicit verdict", policy["pendingInstalledCarry"])
+        self.assertIn("never reapproval language", policy["pendingInstalledCarry"])
+        self.assertIn("exact code or behavior change", policy["reapprovalCandidate"])
+        self.assertIn("carry entry never becomes a reapproval request", policy["invariant"])
+
+    def test_parity_backlog_rejects_legacy_sources(self):
+        rule = delivery.CONTRACT["flowPolicy"]["backlog"]["paritySourceRule"]
+
+        self.assertIn("current product path", rule)
+        self.assertIn("Do not extend a legacy", rule)
+
     def work_item(self, issue="saphid/t3code-personal#1", lane="native-ui"):
         return {
             "schemaVersion": 2, "kind": "swiftui-work-item", "issue": issue,
@@ -234,6 +250,37 @@ class DeliveryProtocolTests(unittest.TestCase):
         item["laneId"] = ["one", "two"]
         self.assertTrue(any("laneId" in error for error in delivery.validate_work_item(item)))
 
+    def test_work_item_classification_is_optional_but_strict_when_recorded(self):
+        legacy = self.work_item()
+        self.assertEqual(delivery.validate_work_item(legacy), [])
+
+        classified = self.work_item()
+        classified["classification"] = {
+            "category": "feature",
+            "surface": "ui",
+            "upstream": [{
+                "kind": "pull",
+                "reference": "pingdotgg/t3code#7345",
+            }],
+        }
+        self.assertEqual(delivery.validate_work_item(classified), [])
+
+        classified["classification"] = {
+            "category": "made-up",
+            "surface": "sometimes-ui",
+            "upstream": [{"kind": "change", "reference": "PR 7345"}],
+        }
+        errors = delivery.validate_work_item(classified)
+        self.assertIn("classification.category is invalid", errors)
+        self.assertIn("classification.surface is invalid", errors)
+        self.assertIn("classification.upstream[0].reference is invalid", errors)
+
+        classified["classification"]["upstream"] = 5
+        classified["dependencies"] = 5
+        errors = delivery.validate_work_item(classified)
+        self.assertIn("classification.upstream must be an array", errors)
+        self.assertIn("dependencies must be an array", errors)
+
     def test_malformed_dependency_returns_validation_errors_without_crashing(self):
         item = self.work_item()
         item["dependencies"] = [{
@@ -391,68 +438,104 @@ class DeliveryProtocolTests(unittest.TestCase):
             errors = delivery.validate_generation_plan(plan)
             self.assertTrue(any("requires accepted" in error for error in errors))
 
+    def carry_plan(self, directory):
+        """One valid publish-test plan: a fresh candidate plus one installed carry."""
+        proof, _, proof_d, _, _, inspection_d = self.make_evidence(directory)
+        candidate = self.work_item()
+        candidate["stage"] = "proof-ready"
+        candidate["binding"].update({
+            "baseCommit": proof["baseCommit"], "headCommit": proof["headCommit"],
+            "launchReceiptSha256": "e" * 64, "proofSha256": proof_d["sha256"],
+            "inspectionSha256": inspection_d["sha256"],
+        })
+        candidate_d = write(Path(directory) / "candidate.json", candidate)
+
+        carried = self.work_item("saphid/t3code-personal#2")
+        carried["stage"] = "accepted"
+        carried["successor"] = {
+            "kind": "handoff-dispatch", "threadId": "CARRY-2",
+            "threadTitle": "Worker #2 — upstream handoff",
+            "dispatchedAt": "2026-08-28T00:59:00Z",
+        }
+        carried["binding"].update({
+            "baseCommit": proof["baseCommit"], "headCommit": proof["headCommit"],
+            "launchReceiptSha256": "1" * 64, "proofSha256": proof_d["sha256"],
+            "inspectionSha256": inspection_d["sha256"],
+            "phoneGenerationReceiptSha256": "2" * 64,
+            "acceptanceReceiptSha256": "3" * 64,
+        })
+        carried_d = write(Path(directory) / "carried.json", carried)
+        carried_proof = dict(proof)
+        carried_proof["issue"] = carried["issue"]
+        carried_proof_d = write(Path(directory) / "carried-proof.json", carried_proof)
+        carried["binding"]["proofSha256"] = carried_proof_d["sha256"]
+        carried_inspection = json.loads(Path(inspection_d["path"]).read_text())
+        carried_inspection["issue"] = carried["issue"]
+        carried_inspection["proofSha256"] = carried_proof_d["sha256"]
+        carried_inspection_d = write(
+            Path(directory) / "carried-inspection.json", carried_inspection)
+        carried["binding"]["inspectionSha256"] = carried_inspection_d["sha256"]
+        carried_d = write(Path(directory) / "carried.json", carried)
+        catalog_d = write(Path(directory) / "catalog.json", [candidate, carried])
+
+        prior = write(Path(directory) / "prior-generation-receipt.json", {
+            "schemaVersion": 2, "kind": "swiftui-generation-receipt",
+            "mode": "publish-test", "planSha256": "4" * 64,
+            "completedAt": "2026-08-22T03:00:00Z",
+            "resolvedDestination": "Alex iPhone", "installedArtifactSha256": "5" * 64,
+            "entries": [{"issue": carried["issue"],
+                         "headCommit": carried["binding"]["headCommit"]}],
+        })
+        plan = {
+            "schemaVersion": 2, "kind": "swiftui-generation-plan", "mode": "publish-test",
+            "authority": {"actor": "Alex", "source": "T3 thread message",
+                          "scopeSha256": "d" * 64, "grantedAt": "2026-08-22T03:04:05Z"},
+            "catalog": catalog_d,
+            "carryReceipt": prior,
+            "entries": [
+                {"issue": candidate["issue"], "headCommit": proof["headCommit"],
+                 "role": "candidate", "workItem": candidate_d,
+                 "proof": proof_d, "inspection": inspection_d},
+                {"issue": carried["issue"], "headCommit": carried["binding"]["headCommit"],
+                 "role": "installed-carry", "workItem": carried_d,
+                 "proof": carried_proof_d, "inspection": carried_inspection_d},
+            ],
+        }
+        return plan
+
     def test_publish_test_carry_must_exactly_match_prior_generation(self):
         with tempfile.TemporaryDirectory() as directory:
-            proof, _, proof_d, _, _, inspection_d = self.make_evidence(directory)
-            candidate = self.work_item()
-            candidate["stage"] = "proof-ready"
-            candidate["binding"].update({
-                "baseCommit": proof["baseCommit"], "headCommit": proof["headCommit"],
-                "launchReceiptSha256": "e" * 64, "proofSha256": proof_d["sha256"],
-                "inspectionSha256": inspection_d["sha256"],
-            })
-            candidate_d = write(Path(directory) / "candidate.json", candidate)
-
-            carried = self.work_item("saphid/t3code-personal#2")
-            carried["stage"] = "accepted"
-            carried["binding"].update({
-                "baseCommit": proof["baseCommit"], "headCommit": proof["headCommit"],
-                "launchReceiptSha256": "1" * 64, "proofSha256": proof_d["sha256"],
-                "inspectionSha256": inspection_d["sha256"],
-                "phoneGenerationReceiptSha256": "2" * 64,
-                "acceptanceReceiptSha256": "3" * 64,
-            })
-            carried_d = write(Path(directory) / "carried.json", carried)
-            carried_proof = dict(proof)
-            carried_proof["issue"] = carried["issue"]
-            carried_proof_d = write(Path(directory) / "carried-proof.json", carried_proof)
-            carried["binding"]["proofSha256"] = carried_proof_d["sha256"]
-            carried_inspection = json.loads(Path(inspection_d["path"]).read_text())
-            carried_inspection["issue"] = carried["issue"]
-            carried_inspection["proofSha256"] = carried_proof_d["sha256"]
-            carried_inspection_d = write(
-                Path(directory) / "carried-inspection.json", carried_inspection)
-            carried["binding"]["inspectionSha256"] = carried_inspection_d["sha256"]
-            carried_d = write(Path(directory) / "carried.json", carried)
-            catalog_d = write(Path(directory) / "catalog.json", [candidate, carried])
-
-            prior = write(Path(directory) / "prior-generation-receipt.json", {
-                "schemaVersion": 2, "kind": "swiftui-generation-receipt",
-                "mode": "publish-test", "planSha256": "4" * 64,
-                "completedAt": "2026-08-22T03:00:00Z",
-                "resolvedDestination": "Alex iPhone", "installedArtifactSha256": "5" * 64,
-                "entries": [{"issue": carried["issue"],
-                             "headCommit": carried["binding"]["headCommit"]}],
-            })
-            plan = {
-                "schemaVersion": 2, "kind": "swiftui-generation-plan", "mode": "publish-test",
-                "authority": {"actor": "Alex", "source": "T3 thread message",
-                              "scopeSha256": "d" * 64, "grantedAt": "2026-08-22T03:04:05Z"},
-                "catalog": catalog_d,
-                "carryReceipt": prior,
-                "entries": [
-                    {"issue": candidate["issue"], "headCommit": proof["headCommit"],
-                     "role": "candidate", "workItem": candidate_d,
-                     "proof": proof_d, "inspection": inspection_d},
-                    {"issue": carried["issue"], "headCommit": carried["binding"]["headCommit"],
-                     "role": "installed-carry", "workItem": carried_d,
-                     "proof": carried_proof_d, "inspection": carried_inspection_d},
-                ],
-            }
+            plan = self.carry_plan(directory)
             self.assertEqual(delivery.validate_generation_plan(plan), [])
             plan["entries"][1]["headCommit"] = "c" * 40
             self.assertTrue(any("exactly preserve" in error
                                 for error in delivery.validate_generation_plan(plan)))
+
+    def test_installed_carry_outlives_evicted_retained_builds(self):
+        """Carry is authorized by the prior generation receipt, not a fresh reopen."""
+        with tempfile.TemporaryDirectory() as directory:
+            plan = self.carry_plan(directory)
+            self.assertEqual(delivery.validate_generation_plan(plan), [])
+
+            shutil.rmtree(Path(directory) / "build-store")
+
+            errors = delivery.validate_generation_plan(plan)
+            self.assertEqual(
+                [error for error in errors if error.startswith("entries[1]")], [])
+            self.assertTrue(any(error.startswith("entries[0].proof") for error in errors),
+                            "the candidate must still fail on an evicted retained build")
+
+    def test_installed_carry_still_binds_its_proof_identity(self):
+        """Relaxing retained reopen must not unbind carry proof from its work item."""
+        with tempfile.TemporaryDirectory() as directory:
+            plan = self.carry_plan(directory)
+            shutil.rmtree(Path(directory) / "build-store")
+
+            plan["entries"][1]["proof"] = dict(plan["entries"][1]["proof"],
+                                               sha256="9" * 64)
+            errors = delivery.validate_generation_plan(plan)
+            self.assertTrue(any("proof hash does not match work item" in error
+                                for error in errors))
 
     def test_generation_receipt_repeats_plan_issue_head_order(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -583,6 +666,152 @@ class DeliveryProtocolTests(unittest.TestCase):
         receipt["actor"] = "Saphid"
         errors = delivery.validate_acceptance_receipt(receipt, item)
         self.assertTrue(any("acceptance receipt actor" in e for e in errors))
+
+    def phone_test_item(self):
+        item = self.work_item()
+        item["stage"] = "phone-test"
+        item["binding"] = {
+            "baseCommit": "a" * 40, "headCommit": "b" * 40,
+            "launchReceiptSha256": "c" * 64, "proofSha256": "d" * 64,
+            "inspectionSha256": "e" * 64, "phoneGenerationReceiptSha256": "f" * 64,
+            "acceptanceReceiptSha256": None, "prGenerationReceiptSha256": None,
+            "landedReceiptSha256": None,
+        }
+        return item
+
+    def acceptance_receipt_v3(self, item, successor):
+        return {
+            "schemaVersion": 3, "kind": "swiftui-acceptance-receipt",
+            "issue": item["issue"], "actor": "Alex", "verdict": "accept",
+            "phoneGenerationReceiptSha256": "f" * 64,
+            "acceptedAt": "2026-08-28T01:00:00Z", "successor": successor,
+        }
+
+    def test_post_cutover_acceptance_requires_successor(self):
+        item = self.phone_test_item()
+        receipt = self.acceptance_receipt_v3(item, None)
+        receipt["schemaVersion"] = 2
+        errors = delivery.validate_acceptance_receipt(receipt, item)
+        self.assertTrue(any("schemaVersion must be 3" in e for e in errors))
+        self.assertTrue(any("bare acceptance cannot exist" in e for e in errors))
+
+    def test_pre_cutover_v2_acceptance_remains_valid(self):
+        item = self.phone_test_item()
+        receipt = {
+            "schemaVersion": 2, "kind": "swiftui-acceptance-receipt",
+            "issue": item["issue"], "actor": "Alex", "verdict": "accept",
+            "phoneGenerationReceiptSha256": "f" * 64,
+            "acceptedAt": "2026-08-26T05:06:07Z",
+        }
+        self.assertEqual(delivery.validate_acceptance_receipt(receipt, item), [])
+
+    def test_acceptance_successor_dispatch_binds_live_thread(self):
+        item = self.phone_test_item()
+        receipt = self.acceptance_receipt_v3(item, {
+            "kind": "handoff-dispatch", "threadId": "ABC-123",
+            "threadTitle": "Worker #1 — upstream handoff (Sol high)",
+            "dispatchedAt": "2026-08-28T00:59:00Z",
+        })
+        self.assertEqual(delivery.validate_acceptance_receipt(receipt, item), [])
+        receipt["successor"]["threadTitle"] = "Worker #13 — wrong issue"
+        errors = delivery.validate_acceptance_receipt(receipt, item)
+        self.assertTrue(any("thread title must carry #1" in e for e in errors))
+
+    def test_cutover_compares_instants_not_strings(self):
+        item = self.phone_test_item()
+        receipt = {
+            "schemaVersion": 2, "kind": "swiftui-acceptance-receipt",
+            "issue": item["issue"], "actor": "Alex", "verdict": "accept",
+            "phoneGenerationReceiptSha256": "f" * 64,
+            "acceptedAt": "2026-08-28T00:00:00.1Z",
+        }
+        errors = delivery.validate_acceptance_receipt(receipt, item)
+        self.assertTrue(any("schemaVersion must be 3" in e for e in errors))
+        receipt["acceptedAt"] = "2026-13-01T00:00:00Z"
+        errors = delivery.validate_acceptance_receipt(receipt, item)
+        self.assertTrue(any("schemaVersion must be 3" in e for e in errors))
+
+    def test_dispatch_must_precede_verdict(self):
+        item = self.phone_test_item()
+        receipt = self.acceptance_receipt_v3(item, {
+            "kind": "handoff-dispatch", "threadId": "ABC-123",
+            "threadTitle": "Worker #1 — upstream handoff",
+            "dispatchedAt": "2026-08-28T01:00:01Z",
+        })
+        errors = delivery.validate_acceptance_receipt(receipt, item)
+        self.assertTrue(any("before the verdict" in e for e in errors))
+
+    def test_non_string_thread_title_is_an_error_not_a_crash(self):
+        item = self.phone_test_item()
+        receipt = self.acceptance_receipt_v3(item, {
+            "kind": "handoff-dispatch", "threadId": "ABC-123",
+            "threadTitle": 156, "dispatchedAt": "2026-08-28T00:59:00Z",
+        })
+        errors = delivery.validate_acceptance_receipt(receipt, item)
+        self.assertTrue(any("thread title must carry #1" in e for e in errors))
+
+    def test_bare_accepted_work_item_is_unrepresentable(self):
+        item = self.work_item()
+        item["stage"] = "accepted"
+        errors = delivery.validate_work_item(item)
+        self.assertTrue(any("bare acceptance cannot exist" in e for e in errors))
+        item["successor"] = {
+            "kind": "handoff-dispatch", "threadId": "ABC-123",
+            "threadTitle": "Worker #1 — upstream handoff",
+            "dispatchedAt": "2026-08-28T00:59:00Z",
+        }
+        self.assertFalse(any("successor" in e or "bare acceptance" in e
+                             for e in delivery.validate_work_item(item)))
+
+    def test_pre_duty_accepted_items_are_grandfathered(self):
+        item = self.work_item(issue="saphid/t3code-personal#131")
+        item["stage"] = "accepted"
+        errors = delivery.validate_work_item(item)
+        self.assertFalse(any("bare acceptance" in e for e in errors))
+
+    def test_rework_from_accepted_clears_hold_and_successor(self):
+        item = self.work_item()
+        item["stage"] = "accepted"
+        item["hold"] = {"reason": "awaiting-pr-authority",
+                        "recordedAt": "2026-08-28T00:59:00Z"}
+        item["successor"] = {"kind": "hold", "reason": "awaiting-pr-authority",
+                             "recordedAt": "2026-08-28T00:59:00Z"}
+        item["binding"] = {
+            "baseCommit": "a" * 40, "headCommit": "b" * 40,
+            "launchReceiptSha256": "c" * 64, "proofSha256": "d" * 64,
+            "inspectionSha256": "e" * 64, "phoneGenerationReceiptSha256": "f" * 64,
+            "acceptanceReceiptSha256": "1" * 64, "prGenerationReceiptSha256": None,
+            "landedReceiptSha256": None,
+        }
+        result, errors = delivery.transition(item, "active", verdict="rework")
+        self.assertEqual(errors, [])
+        self.assertNotIn("hold", result)
+        self.assertNotIn("successor", result)
+
+    def test_acceptance_hold_reason_policy(self):
+        item = self.phone_test_item()
+        receipt = self.acceptance_receipt_v3(item, {
+            "kind": "hold", "reason": "waiting-for-vibes",
+            "recordedAt": "2026-08-28T00:59:00Z",
+        })
+        errors = delivery.validate_acceptance_receipt(receipt, item)
+        self.assertTrue(any("hold reason must be one of" in e for e in errors))
+
+    def test_acceptance_hold_transition_writes_item_hold(self):
+        with tempfile.TemporaryDirectory() as directory:
+            item = self.phone_test_item()
+            receipt_path = Path(directory) / "acceptance.json"
+            write(receipt_path, self.acceptance_receipt_v3(item, {
+                "kind": "hold",
+                "reason": "awaiting-pr-authority",
+                "recordedAt": "2026-08-28T00:59:00Z",
+            }))
+            result, errors = delivery.transition(
+                item, "accepted", verdict="accept",
+                acceptance_receipt_path=receipt_path)
+            self.assertEqual(errors, [])
+            self.assertEqual(result["stage"], "accepted")
+            self.assertEqual(result["hold"]["reason"], "awaiting-pr-authority")
 
     def test_pr_open_transition_requires_open_pr_plan(self):
         item = self.work_item()

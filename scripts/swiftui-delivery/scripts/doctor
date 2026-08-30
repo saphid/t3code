@@ -51,7 +51,7 @@ for s in file-swiftui-lane-issue swiftui-orchestrate swiftui-feature-work swiftu
 done
 
 # 4. Canonical tools exist and are executable.
-for t in swiftui-delivery simulator-lane phone-lease audit-package setup doctor status; do
+for t in swiftui-delivery compose-generation simulator-lane phone-lease audit-package setup doctor status controller; do
   if [ -x "$SCRIPT_DIR/$t" ]; then
     ok "tool:$t" executable
   else
@@ -119,7 +119,40 @@ else
   ok phoneWatcher "loaded, source parity, config valid (device + team pinned)"
 fi
 
-# 9. flowPolicy present so orchestrate can enforce WIP limits.
+# 9. Deterministic coordinator controller: exact source/plist parity, valid
+#    runtime configuration, and a loaded LaunchAgent. It is infrastructure and
+#    must not rely on a model turn already being alive.
+DEPLOYED_CONTROLLER="$HOME/.local/libexec/t3-swiftui-delivery/controller.py"
+CONTROLLER_PLIST="com.saphid.t3-swiftui-delivery-controller.plist"
+DEPLOYED_CONTROLLER_PLIST="$HOME/Library/LaunchAgents/$CONTROLLER_PLIST"
+CONTROLLER_CONFIG="$HOME/.local/state/t3/swiftui-delivery/controller/config.json"
+if ! launchctl print \
+  "gui/$(id -u)/com.saphid.t3-swiftui-delivery-controller" >/dev/null 2>&1; then
+  broken controller "not loaded; run scripts/setup --install"
+elif [ ! -f "$DEPLOYED_CONTROLLER" ] || \
+     ! cmp -s "$DEPLOYED_CONTROLLER" "$PKG_DIR/controller.py"; then
+  broken controller "deployed controller missing or differs from vendored source"
+elif [ ! -f "$DEPLOYED_CONTROLLER_PLIST" ] || \
+     ! cmp -s "$DEPLOYED_CONTROLLER_PLIST" \
+       "$PKG_DIR/controller/$CONTROLLER_PLIST"; then
+  broken controller "deployed LaunchAgent differs from vendored source"
+elif ! python3 -c "
+import json, os, shutil, sys
+d=json.load(open('$CONTROLLER_CONFIG'))
+ok=(d.get('schemaVersion') == 1 and
+    os.path.isdir(d.get('checkout', '')) and
+    os.path.isfile(d.get('t3Command', '')) and
+    os.access(d.get('t3Command', ''), os.X_OK) and
+    os.path.isdir(d.get('t3Home', '')) and
+    os.path.isfile(d.get('headroomReporter', '')) and
+    shutil.which('gh', path=d.get('path', '')) is not None)
+sys.exit(0 if ok else 1)" 2>/dev/null; then
+  broken controller "config missing/invalid at $CONTROLLER_CONFIG"
+else
+  ok controller "loaded, source parity, config valid"
+fi
+
+# 10. flowPolicy present so orchestrate can enforce WIP limits.
 if python3 -c "
 import json,sys
 sys.exit(0 if 'flowPolicy' in json.load(open('$CONTRACT')) else 1)" 2>/dev/null; then

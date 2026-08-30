@@ -10,10 +10,7 @@
   "stateRoot": "~/.local/state/t3/swiftui-delivery",
   "buildStore": "~/.local/share/t3/swiftui-delivery/builds",
   "phonePublicationLease": "~/.local/state/t3/swiftui-delivery/phone-publication.lock",
-  "humanActors": [
-    "Alex",
-    "Saphid"
-  ],
+  "humanActors": ["Alex", "Saphid"],
   "laneSemantics": {
     "lane": "A named work stream that may contain multiple issues.",
     "workItem": "The delivery state and proof for exactly one issue.",
@@ -31,66 +28,48 @@
     "superseded"
   ],
   "transitions": {
-    "queued": [
-      "active",
-      "cancelled",
-      "superseded"
-    ],
-    "active": [
-      "proof-ready",
-      "landed",
-      "cancelled",
-      "superseded"
-    ],
-    "proof-ready": [
-      "phone-test",
-      "active",
-      "cancelled",
-      "superseded"
-    ],
-    "phone-test": [
-      "accepted",
-      "active",
-      "cancelled",
-      "superseded"
-    ],
-    "accepted": [
-      "pr-open",
-      "active",
-      "cancelled",
-      "superseded"
-    ],
-    "pr-open": [
-      "landed",
-      "active",
-      "cancelled",
-      "superseded"
-    ],
+    "queued": ["active", "cancelled", "superseded"],
+    "active": ["proof-ready", "queued", "landed", "cancelled", "superseded"],
+    "proof-ready": ["phone-test", "active", "cancelled", "superseded"],
+    "phone-test": ["accepted", "active", "cancelled", "superseded"],
+    "accepted": ["pr-open", "active", "cancelled", "superseded"],
+    "pr-open": ["landed", "active", "cancelled", "superseded"],
     "landed": [],
     "cancelled": [],
     "superseded": []
   },
-  "dependencyKinds": [
-    "stacked-on",
-    "ordered-after",
-    "collision"
-  ],
-  "generationModes": [
-    "publish-test",
-    "publish-dev",
-    "open-pr"
-  ],
-  "generationRoles": {
-    "publish-test": [
-      "candidate",
-      "installed-carry"
-    ],
-    "publish-dev": [
-      "accepted"
-    ],
-    "open-pr": [
-      "candidate"
+  "dependencyKinds": ["stacked-on", "ordered-after", "collision"],
+  "workItemClassification": {
+    "categories": ["defect", "feature", "parity", "process", "infrastructure"],
+    "surfaces": ["ui", "non-ui"],
+    "upstreamFormat": {
+      "kind": "issue or pull",
+      "reference": "owner/repository#number"
+    },
+    "intakeSources": [
+      "alex-priority",
+      "swiftui-product",
+      "electron-product",
+      "upstream-contribution",
+      "react-native-parity",
+      "legacy-unclassified"
     ]
+  },
+  "generationModes": ["publish-test", "publish-dev", "open-pr"],
+  "generationRoles": {
+    "publish-test": ["candidate", "installed-carry"],
+    "publish-dev": ["accepted"],
+    "open-pr": ["candidate"]
+  },
+  "buildComposition": {
+    "effectiveFrom": "2026-08-30T00:00:00Z",
+    "strategy": "fresh-theo-base-plus-explicit-overlays",
+    "sourceRepository": "pingdotgg/t3code",
+    "sourceRemote": "origin",
+    "sourceRef": "refs/heads/t3code/rebuild-mobile-app-swift",
+    "rule": "Every new Test or Dev build is materialized in a new detached worktree at the exact live Theo SwiftUI branch commit. Apply each selected issue's base-to-head patch once, in plan order. A prior combined build may define logical carry membership but is never an ancestor or source base.",
+    "receiptKind": "swiftui-build-composition-receipt",
+    "composer": "scripts/swiftui-delivery/scripts/compose-generation"
   },
   "externalLanding": {
     "transitionFrom": "active",
@@ -119,6 +98,20 @@
     "specification": "references/evidence.md",
     "completion": "validate-proof and validate-inspection both pass; generation-plan validation reopens the exact bound artifacts"
   },
+  "issueEvidence": {
+    "purpose": "Alex must be able to judge whether a feature is good from its issue ticket alone, without opening the PR, the board, or a worktree.",
+    "rule": "Every user-visible work item's GitHub issue embeds the same media its PR will need: full-size before and after screenshots under separate Before and After headings, light and dark appearances, the animated GIF, and the interaction video when the change is motion, scrolling, focus, timing, or gesture-driven - the upstream PR evidence-format bar from CONTRIBUTING_VOUCHED 'Show UI changes in the real app'.",
+    "source": "The work item's validated proof is the only media source. Never recapture for the issue, never fabricate, and never commit issue media to the product diff.",
+    "timing": "Embed when proof and inspection validate, and refresh the embed whenever proof is replaced. The embed must be current before the item enters a phone-test generation or an open-pr plan.",
+    "format": "Upload as GitHub issue attachments so media renders inline - never bare local paths - under headings that name the exact base and head commits and the appearance. Keep the swiftui-work-item-v2 block byte-identical when editing the body.",
+    "exceptions": "Non-user-visible work embeds the proof's recorded no-media reason instead of media.",
+    "owner": "swiftui-orchestrate coordinator duty"
+  },
+  "backlogDemotion": {
+    "transition": "active -> queued",
+    "rule": "Alex may return an active item to the backlog. Record the decision as an issue comment naming the decision-maker and date, restate the acceptance points that changed, and leave the launch binding intact so the existing branch and worktree stay attributable. A demoted item re-enters delivery through the ordinary queued pull and re-materializes against the current base.",
+    "notFor": "Rejection or rework still returns to active with a verdict; demotion is a scope or priority decision, not a quality verdict."
+  },
   "repoOwnedSpecialists": [
     ".agents/skills/ios-build-hygiene/SKILL.md",
     ".agents/skills/share-video-evidence/SKILL.md"
@@ -146,10 +139,14 @@
     "backlog": {
       "minQueuedReady": 6,
       "sources": [
-        "upstream contribution queue issues",
-        "React Native mobile app parity gap"
+        "Alex's explicit SwiftUI or Electron priorities",
+        "SwiftUI defects and desired features observed in the native client",
+        "Electron defects and desired features explicitly requested by Alex"
       ],
-      "rule": "While any approved worker provider has usable token capacity, keep implementation lanes at their WIP limit: dispatch already-ready queued work into open slots first, then replenish the backlog. A simulator, signing, or phone blocker never idles implementation, test, or review lanes."
+      "rule": "While any approved worker provider has usable token capacity, keep implementation lanes at their WIP limit: dispatch already-ready eligible queued work into open slots first, then replenish only from Alex's SwiftUI and Electron product priorities. A simulator, signing, or phone blocker never idles implementation, test, or review lanes.",
+      "upstreamContributionRule": "The upstream contribution queue is discovery and provenance only. Never auto-file, rank, dispatch, or include one of its items in a build. It becomes eligible only after Alex explicitly promotes the concrete behavior as a SwiftUI or Electron product priority.",
+      "reactNativeParityRule": "React Native parity is not a backlog source by itself. File or dispatch it only when Alex has asked for that concrete behavior in SwiftUI or Electron and the source behavior still belongs to the current product path.",
+      "paritySourceRule": "Before filing parity work, prove the source behavior belongs to the current product path. Do not extend a legacy, deprecated, beta-replaced, or disabled path when a successor path intentionally removed that behavior; target the successor design or do not file the parity item."
     },
     "bufferStaleness": {
       "revalidateImplementedAfterDays": 7,
@@ -157,11 +154,19 @@
     }
   },
   "workItemRepository": "saphid/t3code-personal",
+  "orchestraLedgerIssue": "saphid/t3code-personal#104",
   "upstreamHandoffReference": "scripts/swiftui-delivery/references/upstream-handoff.md",
   "upstreamContributingGuide": "CONTRIBUTING_VOUCHED.md",
-  "phoneAcceptanceActors": [
-    "Alex"
-  ],
+  "phoneAcceptanceActors": ["Alex"],
+  "successorDuty": {
+    "accepted": {
+      "effectiveFrom": "2026-08-28T00:00:00Z",
+      "successorKinds": ["handoff-dispatch", "hold"],
+      "allowedHoldReasons": ["awaiting-pr-authority"],
+      "preDutyAccepted": [131, 140],
+      "rule": "phone-test -> accepted is valid only when the acceptance receipt (schemaVersion 3) binds its successor: a live upstream-handoff dispatch (threadId, thread title carrying #issue, dispatchedAt) created before the verdict is recorded, or an explicit allowed hold that the transition writes into the work item. A bare acceptance cannot exist."
+    }
+  },
   "testPublication": {
     "mode": "continuous",
     "standingAuthorization": "Alex, 2026-08-26: Test builds for the phone are generated, published, and pushed automatically. As soon as proof-ready work exists that is not in the latest published Test generation, build a new combined Test generation and publish it. No human or agent approval is required for Test generation, publication, or phone installation. Phone ACCEPTANCE verdicts remain Alex's alone.",
@@ -182,10 +187,94 @@
     "content": [
       "FIRST LINE: which app to open on the phone - 'SwiftUI Test' or 'SwiftUI Dev' (the installed display name) - plus the build number and channel",
       "every included feature/fix: what it is, WHY we need it (from the owning issue's problem statement), and HOW Alex should test it (from the acceptance points, as concrete phone steps)",
-      "carried items listed separately from new candidates",
-      "an explicit request for accept/reject verdicts per item"
+      "every entry ties its links to its numbers: the owning issue number with the issue URL, and, when the change came back from an upstream PR, that PR's number with the PR URL - label an unlanded PR as unlanded",
+      "every visual change embeds its evidence in the thread itself: full-size dark-mode before and after screenshots under separate headings plus the animated GIF, and a video as well when the change is motion, scrolling, focus, timing, or gesture-driven - the evidence-format bar only, not the PR-time state-capture checklist; never bare local paths",
+      "new candidates, pending initial-acceptance carry, reapproval candidates, and accepted unchanged carry listed separately",
+      "an explicit accept/reject request only for each new candidate, pending initial-acceptance carry, or reapproval candidate",
+      "accepted unchanged installed-carry entries are informational composition context only: identify them as unchanged, request no spot-check, and request no verdict",
+      "unchanged installed-carry entries without a prior acceptance receipt remain pending initial acceptance: repeat their original acceptance steps and request a first verdict without calling it a regression or reapproval",
+      "for every reapproval candidate, name the exact new head, proof, inspection, replacement, or behavior change; state that prior acceptance does not cover the changed artifact; repeat the current acceptance points as concrete phone steps; and directly ask for reapproval"
     ],
+    "verdictPolicy": {
+      "candidate": "Requires an explicit accept/reject verdict when the generation introduces behavior that has no acceptance receipt bound to this exact artifact.",
+      "reapprovalCandidate": "A candidate whose previously accepted behavior changed. It must disclose the exact code or behavior change and directly request renewed acceptance.",
+      "acceptedInstalledCarry": "Unchanged composition inherited from the prior installed generation with an acceptance receipt already recorded. It must not trigger a spot-check request, accept/reject request, or renewed acceptance.",
+      "pendingInstalledCarry": "Unchanged composition inherited from the prior installed generation without an acceptance receipt. It still requires its first explicit verdict, using its original acceptance steps and never reapproval language.",
+      "invariant": "Generation role is not human-verdict state. A carry entry never becomes a reapproval request merely because a new Test build includes it; acceptance-receipt state decides whether unchanged carry is accepted context or pending its first verdict, and changed accepted behavior must be represented as a candidate and explained explicitly."
+    },
+    "buildReport": {
+      "issueLinks": "Every build-composition entry names its owning issue number and links the issue URL, so any line of the report reaches its issue in one click.",
+      "upstreamPrLinks": "When an entry's change came back from an upstream PR, the entry also names that PR's number and links the PR URL, taken from the work item's recorded upstream references or its landed PR; when the upstream PR is not yet landed, link it too and label it unlanded.",
+      "visualEvidence": "A visual change embeds its evidence in the thread itself, to the upstream PR evidence-format bar (full-size, separate headings, never narrow side-by-side tables) with dark captures only: full-size before and after screenshots under separate headings plus the animated GIF, and a video as well when the change is motion, scrolling, focus, timing, or gesture-driven. The PR-time state-capture checklist is not required in the thread. Simulator proof is unchanged and still records light and dark; only the thread embed is dark-only. Deliver per share-video-evidence: an inline playable attachment or a Tailnet-only URL - never a bare local path.",
+      "invariant": "Alex reads the UAT thread alone to learn what changed, where it came from, and what to check. Any entry that forces opening GitHub, the board, or a worktree to understand the build breaks this contract."
+    },
     "owner": "swiftui-orchestrate coordinator duty; verdicts recorded as acceptance receipts",
     "pinned": "Pin the thread on creation so it stays at the top of the project. Use the typed client RPC for pinning (probe the websocket RPC contract first per established practice); NEVER write state.sqlite directly. If no typed surface supports pinning, report the gap on the ledger instead."
+  },
+  "coordinatorController": {
+    "kind": "deterministic local controller",
+    "boardMembership": "infrastructure only; never represented by a delivery work item and never counted in station WIP",
+    "source": "scripts/swiftui-delivery/controller.py",
+    "launchAgent": "com.saphid.t3-swiftui-delivery-controller",
+    "intervalSeconds": 120,
+    "authority": "read canonical GitHub, receipt, device, and T3 projections; create or wake one dedicated coordinator thread through T3's typed orchestration API; never transition work items or write GitHub directly",
+    "tokenIndependence": "the controller is ordinary Python and always runs without model quota; before dispatch it selects from sanitized provider headroom, creates a new model-bound thread on failover, and records no-model-capacity without dispatch when no candidate safely qualifies",
+    "duplicateProtection": "one nonblocking local lock, one live coordinator turn at a time, and a minimum dispatch interval",
+    "receipts": "~/.local/state/t3/swiftui-delivery/controller/runs",
+    "modelFailover": {
+      "minimumRemainingPercent": 10,
+      "errorCooldownSeconds": 900,
+      "allowUnknownLaneProbe": true,
+      "unknownLaneRule": "A candidate with one unreported required lane may run only as a lower-priority probe when every reported required lane is fresh and at least 10% remains. Two unknown required lanes never qualify. Stale is unknown, never available.",
+      "selectionRule": "Choose the first fully eligible candidate in order. If none is fully eligible, choose the first allowed probe. Exclude a model for 15 minutes after its controller turn errors. A model change or prior controller error always creates a new thread; never rewrite a thread's model.",
+      "candidates": [
+        {
+          "id": "opus",
+          "modelSelection": {
+            "instanceId": "claudeAgent",
+            "model": "claude-opus-5",
+            "options": [
+              {
+                "id": "effort",
+                "value": "high"
+              }
+            ]
+          },
+          "requiredHeadroomLanes": ["claude-fiveHour", "claude-weekly"]
+        },
+        {
+          "id": "fable",
+          "modelSelection": {
+            "instanceId": "claudeAgent",
+            "model": "claude-fable-5",
+            "options": [
+              {
+                "id": "effort",
+                "value": "high"
+              }
+            ]
+          },
+          "requiredHeadroomLanes": ["claude-fable", "claude-weekly"]
+        },
+        {
+          "id": "sol",
+          "modelSelection": {
+            "instanceId": "codex",
+            "model": "gpt-5.6-sol",
+            "options": [
+              {
+                "id": "reasoningEffort",
+                "value": "high"
+              },
+              {
+                "id": "serviceTier",
+                "value": "default"
+              }
+            ]
+          },
+          "requiredHeadroomLanes": ["codex-fiveHour", "codex-weekly"]
+        }
+      ]
+    }
   }
 }

@@ -18,6 +18,14 @@ description: Show the exact state of the T3 SwiftUI delivery pipeline - every OP
    station occupancy against `flowPolicy` WIP limits; buffer depths; backlog
    floor state; and DRIFT rows (label/block disagreement or legacy issues
    without a work-item block).
+   When priority or queue origin is asked about, show the complete queued list
+   and separately identify items sourced from upstream-contribution intake;
+   upstream references alone are provenance and do not prove intake source.
+   For the expandable visual board, run
+   `<checkout>/scripts/swiftui-delivery/scripts/status --html <output.html>`.
+   It adds issue, upstream, receipt, UAT, and T3 thread links; created and
+   updated times; the newest progress note; UI classification; and the actor
+   currently responsible for movement. It is still a read-only snapshot.
 3. Report to Alex, ordered by what needs him: phone-test items first
    (installed ON his phone, awaiting his acceptance verdict), then
    proof-ready items (simulator-proven, awaiting the next automatic Test

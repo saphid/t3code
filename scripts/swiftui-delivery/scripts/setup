@@ -23,7 +23,7 @@ for a in "$@"; do
       echo "usage: setup [--json] [--bootstrap] [--install]"
       echo "  --json       machine-readable readiness receipt on stdout"
       echo "  --bootstrap  also run CI=true dependency install in the repo"
-      echo "  --install    deploy front-door skills, watcher, and LaunchAgent"
+      echo "  --install    deploy front doors, watcher, controller, and LaunchAgents"
       exit 0 ;;
   esac
 done
@@ -187,6 +187,42 @@ if [ "$INSTALL" -eq 1 ]; then
   fi
   if [ ! -f "$HOME/.t3/swiftui-stream/watcher-config.json" ]; then
     check watcherConfig fail "create ~/.t3/swiftui-stream/watcher-config.json with deviceId and teamIdentifier"
+  fi
+  C_OK=1
+  CONTROLLER_HOME="$HOME/.local/libexec/t3-swiftui-delivery"
+  CONTROLLER_PLIST="com.saphid.t3-swiftui-delivery-controller.plist"
+  T3_COMMAND=$(command -v t3 2>/dev/null || true)
+  mkdir -p "$CONTROLLER_HOME" "$HOME/Library/LaunchAgents" \
+    && cp "$PKG_DIR/controller.py" "$CONTROLLER_HOME/controller.py" \
+    && chmod 755 "$CONTROLLER_HOME/controller.py" \
+    && cp "$PKG_DIR/controller/$CONTROLLER_PLIST" \
+      "$HOME/Library/LaunchAgents/$CONTROLLER_PLIST" || C_OK=0
+  if [ "$C_OK" -eq 1 ] && [ -n "$T3_COMMAND" ]; then
+    if ! "$CONTROLLER_HOME/controller.py" --configure \
+      --checkout "$REPO_ROOT" --t3-command "$T3_COMMAND" >/dev/null 2>&1; then
+      C_OK=0
+    fi
+  else
+    C_OK=0
+  fi
+  if [ "$C_OK" -eq 1 ]; then
+    launchctl bootout "gui/$(id -u)/com.saphid.t3-swiftui-delivery-controller" \
+      >/dev/null 2>&1 || true
+    launchctl enable "gui/$(id -u)/com.saphid.t3-swiftui-delivery-controller" \
+      2>/dev/null
+    launchctl bootstrap "gui/$(id -u)" \
+      "$HOME/Library/LaunchAgents/$CONTROLLER_PLIST" 2>/dev/null \
+      || launchctl kickstart \
+        "gui/$(id -u)/com.saphid.t3-swiftui-delivery-controller" 2>/dev/null
+    if launchctl print \
+      "gui/$(id -u)/com.saphid.t3-swiftui-delivery-controller" \
+      >/dev/null 2>&1; then
+      check controllerInstall ok "deployed, configured, and loaded"
+    else
+      check controllerInstall fail "deployed but not loaded; check launchctl"
+    fi
+  else
+    check controllerInstall fail "could not deploy/configure controller (t3 command required)"
   fi
 fi
 

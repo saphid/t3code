@@ -39,12 +39,34 @@ Never break a live lease owned by another operation. Release it with
 failure. An unreadable or abandoned lease requires human review; the tool has
 no force option.
 
+For every `publish-test` or `publish-dev`, create and validate a
+`swiftui-build-composition-plan` bound to the exact generation-plan bytes.
+Resolve `origin/t3code/rebuild-mobile-app-swift` live and record its exact
+commit as `sourceBase`. Every overlay's `baseCommit` must equal that commit.
+Then materialize a brand-new detached worktree:
+
+```sh
+scripts/swiftui-delivery validate-composition-plan composition-plan.json
+scripts/compose-generation composition-plan.json --repository "$PRODUCT_REPO" \
+  --worktree "$NEW_BUILD_WORKTREE" --receipt composition-receipt.json
+scripts/swiftui-delivery validate-composition-receipt composition-receipt.json \
+  --plan composition-plan.json
+```
+
+Build only the receipt's `resultingCommit`. Never start from Test, Dev, a UAT
+branch, or any prior combined build. A prior Test receipt carries only the
+logical issue/head selection; each selected overlay is reapplied from the
+fresh Theo base. If Theo's ref moved, an overlay was proved from another base,
+or overlays collide, stop and return the affected item to re-materialization.
+New phone generation receipts use schemaVersion 3 and bind both composition
+artifacts; `resultingCommit` must match the composition receipt.
+
 ## Execute exactly one mode
 
 - `publish-test`: build and PUBLISH exactly the required generation set:
   every proof-ready and published-pending item not explicitly replaced,
   plus the prior installed carry. No unreviewed head enters the
-  generation. Installation is the deterministic watcher's job, never this
+  generation, freshly composed from Theo base as described above. Installation is the deterministic watcher's job, never this
   skill's.
 - `publish-dev`: require accepted or landed entries and a fresh resolved base.
 - `open-pr`: re-resolve the maintainer base. If it moved, return the item to
@@ -93,7 +115,6 @@ checklist must pass and be recorded in the open-pr generation receipt as
 `vouchedHandoffChecklist: pass` with stated gaps. Authoritative source: the vendored
 `../../../scripts/swiftui-delivery/references/CONTRIBUTING_VOUCHED.md`
 (prefer the product repository root copy once it lands upstream).
-
 
 ## Continuous Test publication (standing authorization)
 

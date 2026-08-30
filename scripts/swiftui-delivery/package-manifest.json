@@ -13,13 +13,22 @@
   "requiredFiles": [
     "scripts/swiftui-delivery/contract.json",
     "scripts/swiftui-delivery/swiftui_delivery.py",
+    "scripts/swiftui-delivery/compose_generation.py",
     "scripts/swiftui-delivery/artifact_store.py",
     "scripts/swiftui-delivery/annotate_video.py",
     "scripts/swiftui-delivery/phone_lease.py",
     "scripts/swiftui-delivery/simulator_lane.py",
     "scripts/swiftui-delivery/audit_package.py",
     "scripts/swiftui-delivery/audit_environment.py",
+    "scripts/swiftui-delivery/board_server.py",
+    "scripts/swiftui-delivery/scripts/board",
+    "scripts/swiftui-delivery/tests/test_board_server.py",
+    "scripts/swiftui-delivery/controller.py",
+    "scripts/swiftui-delivery/scripts/controller",
+    "scripts/swiftui-delivery/controller/com.saphid.t3-swiftui-delivery-controller.plist",
+    "scripts/swiftui-delivery/tests/test_controller.py",
     "scripts/swiftui-delivery/scripts/swiftui-delivery",
+    "scripts/swiftui-delivery/scripts/compose-generation",
     "scripts/swiftui-delivery/scripts/preserve-build",
     "scripts/swiftui-delivery/scripts/annotate-video",
     "scripts/swiftui-delivery/scripts/phone-lease",
@@ -31,6 +40,7 @@
     "scripts/swiftui-delivery/references/environment-inventory.md",
     "scripts/swiftui-delivery/references/video-edit-plan.example.json",
     "scripts/swiftui-delivery/tests/test_delivery_protocol.py",
+    "scripts/swiftui-delivery/tests/test_compose_generation.py",
     "scripts/swiftui-delivery/tests/test_artifact_store.py",
     "scripts/swiftui-delivery/tests/test_video_plan.py",
     "scripts/swiftui-delivery/tests/test_phone_lease.py",
@@ -83,9 +93,7 @@
     "docs/operations/swiftui-delivery-system.html",
     "docs/operations/swiftui-local-archive-manifest.md"
   ],
-  "absolutePathAllowlist": [
-    "docs/operations/swiftui-local-archive-manifest.md"
-  ],
+  "absolutePathAllowlist": ["docs/operations/swiftui-local-archive-manifest.md"],
   "forbiddenPackagePaths": [
     "scripts/swiftui-delivery/orchestration_supervisor.py",
     "scripts/swiftui-delivery/dispatch_worker.py",

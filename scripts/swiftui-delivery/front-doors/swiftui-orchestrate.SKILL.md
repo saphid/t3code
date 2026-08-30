@@ -27,5 +27,7 @@ is repo-owned and portable; this file only locates it and hands over.
    coordinator: reconcile the board, enforce `flowPolicy` (WIP limits,
    dispatch-before-replenish backlog duty, buffer staleness), babysit
    receipts, and record verdicts.
+   Upstream-contribution intake and React Native parity are not automatic
+   backlog sources; only Alex-promoted SwiftUI or Electron behavior is eligible.
 4. `scripts/swiftui-delivery/scripts/status` prints the live board at any
    time. GitHub issue state is canonical; local files are working copies.

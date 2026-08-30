@@ -69,6 +69,20 @@ why images and video add no evidence; the inspector independently accepts or
 rejects that reason. Convenience, build cost, or simulator trouble are not
 valid exceptions.
 
+## Issue embed
+
+The GitHub issue is Alex's review surface, so a user-visible work item's issue
+embeds the same media its PR will need (contract `issueEvidence`): full-size
+before and after screenshots under separate Before and After headings, light
+and dark appearances, the animated GIF, and the interaction video when the
+change is motion, scrolling, focus, timing, or gesture-driven. Upload the
+proof's artifacts as GitHub issue attachments so they render inline - never
+bare local paths - under headings naming the exact base and head commits.
+The embed is refreshed whenever proof is replaced and must be current before
+the item enters a Test generation or an open-pr plan. Editing the body never
+alters the `swiftui-work-item-v2` block's bytes. Non-user-visible work embeds
+the recorded no-media reason instead.
+
 The generation-plan validator reopens and validates all of these files. It also
 checks candidate eligibility and the exact carry-forward set from the prior
 Test receipt. This prevents a Test or phone queue, build, lease, or deployment

@@ -1,0 +1,4 @@
+#!/bin/bash
+set -u
+SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd -P)
+exec python3 "$(dirname "$SCRIPT_DIR")/controller.py" "$@"

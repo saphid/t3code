@@ -61,6 +61,10 @@ Evidence format:
   side-by-side tables. Light and dark when appearance can differ. Platform
   chrome and nearby layout when relevant. Video for motion, scrolling,
   focus, timing, or gestures.
+- For a port of a web or React Native feature, the description also shows
+  the source versions — full-size web and React Native captures under
+  separate headings — so the PR compares the web original, the React Native
+  app, and the SwiftUI result.
 - Show loading, empty, stale, error, disabled, retry, and reconnecting
   states when affected.
 - Upload evidence to GitHub; never commit PR-only screenshots, videos, or
@@ -69,12 +73,12 @@ Evidence format:
 Description (keep current with the head at all times):
 
 1. what users observed and how to reproduce; 2. the cause; 3. what changed
-and why this boundary; 4. what is intentionally unchanged or deferred;
-5. affected clients/providers/platforms/contracts/connection modes;
-6. exact validation commands and results; 7. known risks and anything not
-tested; 8. before/after evidence (+ video for interaction); 9. the owning
-issue, discussion, or stacked PR. No internal Discord links or routing
-details. Confirm co-authorship before crediting.
+   and why this boundary; 4. what is intentionally unchanged or deferred;
+2. affected clients/providers/platforms/contracts/connection modes;
+3. exact validation commands and results; 7. known risks and anything not
+   tested; 8. before/after evidence (+ video for interaction); 9. the owning
+   issue, discussion, or stacked PR. No internal Discord links or routing
+   details. Confirm co-authorship before crediting.
 
 Branch hygiene before requesting review:
 
@@ -106,14 +110,14 @@ checklist to pass, recorded in the open-pr generation receipt as
 twelve items, restated so this package stands alone:
 
 1. one clear problem, no unrelated work; 2. description explains observed
-problem, cause, change, and non-goals; 3. existing ownership boundaries and
-shared components reused; 4. affected clients/providers/platforms/
-contracts/connection modes named; 5. focused tests cover behavior and
-failure paths where automated coverage adds value, otherwise direct proof
-recorded; 6. targeted lint/format/type/build checks pass where applicable;
-7. runtime, platform, and performance claims have direct evidence; 8. UI
-changes have real before/after images, video when needed; 9. missing proof
-and known limitations stated plainly; 10. branch current, mergeable, free
-of temporary or unrelated files; 11. description and review replies match
-the current head; 12. a human can tell whether the PR is ready without
-repeating the investigation.
+   problem, cause, change, and non-goals; 3. existing ownership boundaries and
+   shared components reused; 4. affected clients/providers/platforms/
+   contracts/connection modes named; 5. focused tests cover behavior and
+   failure paths where automated coverage adds value, otherwise direct proof
+   recorded; 6. targeted lint/format/type/build checks pass where applicable;
+2. runtime, platform, and performance claims have direct evidence; 8. UI
+   changes have real before/after images, video when needed; 9. missing proof
+   and known limitations stated plainly; 10. branch current, mergeable, free
+   of temporary or unrelated files; 11. description and review replies match
+   the current head; 12. a human can tell whether the PR is ready without
+   repeating the investigation.
