@@ -7,6 +7,8 @@
   "canonicalTool": "scripts/swiftui-delivery/scripts/swiftui-delivery",
   "simulatorLaneTool": "scripts/swiftui-delivery/scripts/simulator-lane",
   "xcodeBuildMcpVersion": "2.7.0",
+  "axeVersion": "1.8.0",
+  "simulatorDriverReceiptKind": "swiftui-simulator-driver-receipt",
   "stateRoot": "~/.local/state/t3/swiftui-delivery",
   "buildStore": "~/.local/share/t3/swiftui-delivery/builds",
   "phonePublicationLease": "~/.local/state/t3/swiftui-delivery/phone-publication.lock",

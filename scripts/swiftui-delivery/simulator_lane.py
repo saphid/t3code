@@ -21,6 +21,8 @@ UDID_PATTERN = re.compile(r"^[0-9A-Fa-f]{8}(?:-[0-9A-Fa-f]{4}){3}-[0-9A-Fa-f]{12
 LANE_PATTERN = re.compile(r"^[a-z0-9]+(?:[._-][a-z0-9]+)*$")
 XCODEBUILDMCP_VERSION = "2.7.0"
 AXE_VERSION = "1.8.0"
+STALE_AXE_DRAG_ERROR = b"FBSimulatorHIDEvent does not support touch move events."
+DRAG_CAPABILITY_TEXT = "explicit touch move events"
 POOL_SCHEMA_VERSION = 1
 POOL_KIND = "swiftui-simulator-pool"
 DEFAULT_POOL_SIZE = 3
@@ -315,6 +317,63 @@ def sha256_bytes(value):
     return hashlib.sha256(value).hexdigest()
 
 
+def inspect_driver(package_root, command_runner=subprocess.run):
+    package_root = Path(package_root).resolve()
+    package_json = package_root / "package.json"
+    axe = package_root / "bundled" / "axe"
+    framework_root = (package_root / "bundled" / "Frameworks" /
+                      "FBSimulatorControl.framework")
+    framework_candidates = (
+        framework_root / "FBSimulatorControl",
+        framework_root / "Versions" / "Current" / "FBSimulatorControl",
+        framework_root / "Versions" / "A" / "FBSimulatorControl",
+    )
+    framework = next((path for path in framework_candidates if path.is_file()), None)
+    try:
+        package = json.loads(package_json.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as error:
+        raise RuntimeError("cannot read pinned XcodeBuildMCP package identity") from error
+    if package.get("version") != XCODEBUILDMCP_VERSION:
+        raise RuntimeError(
+            "resolved XcodeBuildMCP version is not " + XCODEBUILDMCP_VERSION
+        )
+    if not axe.is_file() or not os.access(axe, os.X_OK):
+        raise RuntimeError("pinned XcodeBuildMCP has no executable bundled AXe")
+    axe_bytes = axe.read_bytes()
+    if STALE_AXE_DRAG_ERROR in axe_bytes:
+        raise RuntimeError("bundled AXe contains the stale touch-move implementation")
+    if framework is None:
+        raise RuntimeError("pinned XcodeBuildMCP has no bundled FBSimulatorControl framework")
+    version = command_runner(
+        [str(axe), "--version"], check=False, stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE, text=True,
+    )
+    version_tokens = (version.stdout + "\n" + version.stderr).split()
+    if version.returncode != 0 or AXE_VERSION not in version_tokens:
+        raise RuntimeError("bundled AXe version is not " + AXE_VERSION)
+    drag_help = command_runner(
+        [str(axe), "drag", "--help"], check=False, stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE, text=True,
+    )
+    drag_help_text = " ".join((drag_help.stdout + " " + drag_help.stderr).split())
+    if (drag_help.returncode != 0 or
+            DRAG_CAPABILITY_TEXT not in drag_help_text):
+        raise RuntimeError("bundled AXe does not expose composite native drag")
+    return {
+        "schemaVersion": 1,
+        "kind": "swiftui-simulator-driver-identity",
+        "recordedAt": utc_now(),
+        "xcodeBuildMcpVersion": XCODEBUILDMCP_VERSION,
+        "packagePath": str(package_root),
+        "axeVersion": AXE_VERSION,
+        "axePath": str(axe),
+        "axeSha256": sha256_bytes(axe_bytes),
+        "frameworkPath": str(framework),
+        "frameworkSha256": sha256_bytes(framework.read_bytes()),
+        "supportsCompositeDrag": True,
+    }
+
+
 def acquire_lease(lane_id, udid, receipt_path, catalog=None, root=None):
     lane_id = validate_lane_id(lane_id)
     udid = validate_udid(udid)
@@ -584,7 +643,7 @@ def run_xcodebuildmcp(receipt_path, arguments, root=None):
         return subprocess.run(command, check=False).returncode
 
 
-def locate_axe():
+def locate_driver_package():
     completed = subprocess.run(
         ["npm", "exec", "--yes", "--package=xcodebuildmcp@" + XCODEBUILDMCP_VERSION,
          "--", "sh", "-c", "command -v xcodebuildmcp"],
@@ -593,26 +652,34 @@ def locate_axe():
     if completed.returncode != 0 or not completed.stdout.strip():
         raise RuntimeError("cannot locate pinned XcodeBuildMCP package")
     binary = Path(completed.stdout.strip()).resolve()
-    axe = binary.parent.parent / "bundled" / "axe"
-    if not axe.is_file() or not os.access(axe, os.X_OK):
-        raise RuntimeError("pinned XcodeBuildMCP has no executable bundled AXe")
-    version = subprocess.run(
-        [str(axe), "--version"], check=False, stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE, text=True,
-    )
-    if version.returncode != 0 or AXE_VERSION not in (version.stdout + version.stderr):
-        raise RuntimeError("bundled AXe version is not " + AXE_VERSION)
-    return axe
+    return binary.parent.parent
 
 
-def run_axe(receipt_path, arguments, root=None, axe_path=None):
+def locate_axe():
+    identity = inspect_driver(locate_driver_package())
+    return Path(identity["axePath"])
+
+
+def write_driver_receipt(receipt_path, output_path, root=None):
+    receipt = verify_lease(receipt_path, root)
+    identity = inspect_driver(locate_driver_package())
+    payload = dict(identity)
+    payload["kind"] = "swiftui-simulator-driver-receipt"
+    payload["laneId"] = receipt["laneId"]
+    payload["simulatorUdid"] = receipt["simulator"]["udid"]
+    payload["leaseSha256"] = sha256_bytes(Path(receipt_path).read_bytes())
+    atomic_json(output_path, payload)
+    return payload
+
+
+def run_axe(receipt_path, arguments, root=None):
     receipt = verify_lease(receipt_path, root)
     udid = receipt["simulator"]["udid"]
     if not arguments:
         raise ValueError("axe requires a subcommand after --")
     if any(value == "--udid" or value.startswith("--udid=") for value in arguments):
         raise ValueError("the lane supplies the exact AXe UDID")
-    axe = Path(axe_path) if axe_path else locate_axe()
+    axe = locate_axe()
     lock_name = "recording.lock" if arguments[0] in ("record-video", "stream-video") \
         else "action.lock"
     with lane_operation(receipt_path, lock_name, root):
@@ -654,6 +721,9 @@ def parser():
     snapshot = subparsers.add_parser("validate-snapshot")
     snapshot.add_argument("--receipt", required=True, type=Path)
     snapshot.add_argument("--snapshot", required=True, type=Path)
+    driver = subparsers.add_parser("driver-receipt")
+    driver.add_argument("--receipt", required=True, type=Path)
+    driver.add_argument("--output", required=True, type=Path)
     xcb = subparsers.add_parser("xcb")
     xcb.add_argument("--receipt", required=True, type=Path)
     xcb.add_argument("arguments", nargs=argparse.REMAINDER)
@@ -696,6 +766,8 @@ def main(argv=None):
             payload = snapshot_binding(
                 arguments.snapshot, verify_lease(arguments.receipt)
             )
+        elif arguments.command == "driver-receipt":
+            payload = write_driver_receipt(arguments.receipt, arguments.output)
         else:
             command_arguments = arguments.arguments
             if command_arguments and command_arguments[0] == "--":

@@ -63,6 +63,18 @@ scripts/simulator-lane axe --receipt lane-simulator.json -- \
   tap --label "General" --element-type Button
 ```
 
+Before the first action, bind the actual driver bytes to a receipt:
+
+```sh
+scripts/simulator-lane driver-receipt --receipt lane-simulator.json \
+  --output simulator-driver.json
+```
+
+This guard checks the package and AXe versions, hashes AXe and its adjacent
+FBSimulatorControl framework, rejects the obsolete AXe drag implementation,
+and requires the composite `drag` command. Keep the output with proof. A
+project MCP process started against an older package is not a lane driver.
+
 The validator requires both structured-output UDIDs and the screen hash.
 Element references are process-local and must never be copied from a snapshot
 into a new driver process. The runner therefore refuses XcodeBuildMCP element-

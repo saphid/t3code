@@ -20,6 +20,17 @@ Verify the issue, `laneId`, launch receipt, base, branch, worktree, T3
 environment, project, and thread. Refuse a shared or mismatched worktree.
 Acquire the lane's exact simulator through `scripts/simulator-lane`; bind its
 receipt hash and use the explicit-UDID runner for concurrent lane work.
+Before the first interaction, record the matched driver payload:
+
+```sh
+scripts/simulator-lane driver-receipt --receipt lane-simulator.json \
+  --output simulator-driver.json
+```
+
+The command fails before touching the simulator if the resolved package is not
+XcodeBuildMCP 2.7.0 with AXe 1.8.0, if AXe contains the obsolete
+`touchMoveAtX:y:` implementation, or if its composite native drag command is
+missing. Keep this receipt with the proof artifacts.
 
 Before code changes, build and run the exact base. Preserve the `.app` so the
 same build can be reused later:
@@ -53,6 +64,21 @@ needs a checked-in edit plan and a receipt that binds its raw and edited bytes.
 The repo-owned fallback uses SF Rounded cards, modern gesture overlays,
 ImageMagick, and FFmpeg; it does not depend on FFmpeg's optional `drawtext`
 filter.
+
+For native finger movement, send one complete down, interpolated movement, and
+up stream through the lane runner:
+
+```sh
+scripts/simulator-lane axe --receipt lane-simulator.json -- \
+  drag --start-x 320 --start-y 240 --end-x 320 --end-y 420 \
+  --duration 0.8 --steps 80
+```
+
+Do not split coordinates across AXe processes. Do not substitute an
+accessibility `Move up` or `Move down` action for drag proof. If the installed
+AXe release cannot hold long enough to engage the app's gesture recognizer,
+record that exact blocker and use an XCTest coordinate drag with explicit
+press duration; `--pre-delay` waits before touch-down and is not a long press.
 
 ## Implement and test
 

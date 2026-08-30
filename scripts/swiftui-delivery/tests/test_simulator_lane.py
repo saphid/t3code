@@ -1,4 +1,5 @@
 import importlib.util
+import hashlib
 import json
 import tempfile
 import threading
@@ -57,6 +58,91 @@ def write_pool(path):
 
 
 class SimulatorLaneTests(unittest.TestCase):
+    def test_driver_identity_rejects_the_stale_touch_move_implementation(self):
+        with tempfile.TemporaryDirectory() as directory:
+            package = Path(directory) / "xcodebuildmcp"
+            axe = package / "bundled" / "axe"
+            framework = (package / "bundled" / "Frameworks" /
+                         "FBSimulatorControl.framework" / "Versions" / "A" /
+                         "FBSimulatorControl")
+            axe.parent.mkdir(parents=True)
+            framework.parent.mkdir(parents=True)
+            (package / "package.json").write_text(
+                json.dumps({"version": MODULE.XCODEBUILDMCP_VERSION}))
+            axe.write_bytes(
+                b"axe 1.8.0\x00FBSimulatorHIDEvent does not support touch move events."
+            )
+            axe.chmod(0o755)
+            framework.write_bytes(b"framework")
+
+            with self.assertRaisesRegex(RuntimeError, "stale touch-move"):
+                MODULE.inspect_driver(package, command_runner=mock.Mock())
+
+    def test_driver_identity_records_the_matched_release_payload(self):
+        with tempfile.TemporaryDirectory() as directory:
+            package = Path(directory) / "xcodebuildmcp"
+            axe = package / "bundled" / "axe"
+            framework = (package / "bundled" / "Frameworks" /
+                         "FBSimulatorControl.framework" / "Versions" / "A" /
+                         "FBSimulatorControl")
+            axe.parent.mkdir(parents=True)
+            framework.parent.mkdir(parents=True)
+            (package / "package.json").write_text(
+                json.dumps({"version": MODULE.XCODEBUILDMCP_VERSION}))
+            axe.write_bytes(b"current-axe")
+            axe.chmod(0o755)
+            framework.write_bytes(b"current-framework")
+
+            def runner(command, **_kwargs):
+                if command[-1] == "--version":
+                    return mock.Mock(returncode=0, stdout="1.8.0\n", stderr="")
+                self.assertEqual(command[-2:], ["drag", "--help"])
+                return mock.Mock(
+                    returncode=0,
+                    stdout="Perform a low-level point-to-point drag using explicit touch move events.\n",
+                    stderr="",
+                )
+
+            identity = MODULE.inspect_driver(package, command_runner=runner)
+
+        self.assertEqual(identity["kind"], "swiftui-simulator-driver-identity")
+        self.assertEqual(identity["xcodeBuildMcpVersion"], "2.7.0")
+        self.assertEqual(identity["axeVersion"], "1.8.0")
+        self.assertEqual(identity["axeSha256"], hashlib.sha256(b"current-axe").hexdigest())
+        self.assertEqual(
+            identity["frameworkSha256"],
+            hashlib.sha256(b"current-framework").hexdigest(),
+        )
+        self.assertTrue(identity["supportsCompositeDrag"])
+
+    @mock.patch.object(MODULE, "locate_driver_package")
+    @mock.patch.object(MODULE, "inspect_driver")
+    def test_driver_receipt_binds_identity_to_the_active_lease(
+            self, inspect_driver, locate_driver_package):
+        inspect_driver.return_value = {
+            "schemaVersion": 1,
+            "kind": "swiftui-simulator-driver-identity",
+            "xcodeBuildMcpVersion": "2.7.0",
+            "axeVersion": "1.8.0",
+            "axeSha256": "a" * 64,
+            "frameworkSha256": "b" * 64,
+            "supportsCompositeDrag": True,
+        }
+        locate_driver_package.return_value = Path("/tmp/package")
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "leases"
+            receipt = Path(directory) / "lease.json"
+            output = Path(directory) / "driver.json"
+            MODULE.acquire_lease("lane-a", UDID_A, receipt, catalog(), root)
+            payload = MODULE.write_driver_receipt(receipt, output, root)
+
+        self.assertEqual(payload["kind"], "swiftui-simulator-driver-receipt")
+        self.assertEqual(payload["laneId"], "lane-a")
+        self.assertEqual(payload["simulatorUdid"], UDID_A)
+        self.assertEqual(payload["axeSha256"], "a" * 64)
+        self.assertRegex(payload["leaseSha256"], r"^[0-9a-f]{64}$")
+        self.assertNotIn("token", payload)
+
     def test_ensure_pool_reuses_matching_device_and_creates_missing_slots(self):
         created = []
 
@@ -338,15 +424,16 @@ class SimulatorLaneTests(unittest.TestCase):
                 )
         run.assert_not_called()
 
+    @mock.patch.object(MODULE, "locate_axe", return_value=Path("/tmp/axe"))
     @mock.patch.object(MODULE.subprocess, "run")
-    def test_axe_action_injects_exact_udid(self, run):
+    def test_axe_action_injects_exact_udid(self, run, _locate_axe):
         run.return_value.returncode = 0
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory) / "leases"
             receipt = Path(directory) / "receipt.json"
             MODULE.acquire_lease("lane-a", UDID_A, receipt, catalog(), root)
             status = MODULE.run_axe(
-                receipt, ["tap", "--label", "Accessibility"], root, "/tmp/axe"
+                receipt, ["tap", "--label", "Accessibility"], root
             )
         self.assertEqual(status, 0)
         self.assertEqual(run.call_args.args[0][-2:], ["--udid", UDID_A])

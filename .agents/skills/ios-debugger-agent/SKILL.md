@@ -22,7 +22,7 @@ If the tools are missing:
 
 1. Confirm the repository is trusted and its project MCP server was approved.
 2. Restart or recreate the agent session after approving configuration.
-3. Run `npx --yes xcodebuildmcp@2.6.2 doctor` when the server starts but simulator or UI-automation tools are unavailable. Follow its actionable Xcode or AXe setup guidance.
+3. Run `npx --yes xcodebuildmcp@2.7.0 doctor` when the server starts but simulator or UI-automation tools are unavailable. Follow its actionable Xcode or AXe setup guidance.
 4. Fall back to the pinned XcodeBuildMCP CLI or native Apple CLIs only when the current agent client cannot expose project MCP tools.
 
 Do not ask contributors to install the OpenAI `build-ios-apps` plugin globally.
@@ -49,12 +49,14 @@ After launch, call `snapshot_ui` or `screenshot` before interacting. An open Sim
 ## Drive the UI semantically
 
 1. Call `snapshot_ui` to obtain the current accessibility hierarchy and element references.
-2. Use only current `elementRef` values whose snapshot entries list the intended action. XcodeBuildMCP `2.6.2` does not accept coordinates for `tap`; when the app exposes no actionable reference, prefer a registered deep link or another app-supported route and otherwise report the accessibility blocker.
+2. Use only current `elementRef` values whose snapshot entries list the intended action. XcodeBuildMCP `2.7.0` does not accept coordinates for `tap`; when the app exposes no actionable reference, prefer a registered deep link or another app-supported route and otherwise report the accessibility blocker.
 3. Refresh with `snapshot_ui` after navigation or layout changes. Element references are snapshot-specific.
 4. Use `wait_for_ui` for asynchronous transitions when available rather than fixed sleeps.
 5. Capture a final `screenshot` for the state that proves the affected flow.
 
 Use `gesture` or scoped swipe actions when needed. If a gesture is unreliable, return to a known route or relaunch rather than switching to generic desktop automation.
+
+For a SwiftUI delivery lane, the lease runner is authoritative. Run `simulator-lane axe` for semantic actions and raw coordinate drags. It resolves the AXe binary bundled with XcodeBuildMCP 2.7.0, rejects the stale AXe touch-move implementation, and injects the leased UDID. Do not use a long-running project MCP process for lane drag proof because that process may have resolved an older cached AXe binary when it started.
 
 ## Capture logs and debug
 
@@ -68,4 +70,4 @@ Stop only log captures, debugger sessions, apps, or simulators started for the c
 
 ## Upstream
 
-Adapted from OpenAI's [`build-ios-apps`](https://github.com/openai/plugins/tree/main/plugins/build-ios-apps) plugin version `0.1.2` (`ios-debugger-agent`, MIT) and aligned with XcodeBuildMCP `2.6.2` tool names.
+Adapted from OpenAI's [`build-ios-apps`](https://github.com/openai/plugins/tree/main/plugins/build-ios-apps) plugin version `0.1.2` (`ios-debugger-agent`, MIT) and aligned with XcodeBuildMCP `2.7.0` tool names.
