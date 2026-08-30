@@ -97,6 +97,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
     }
 
     private var terminalSnapshots: [TerminalKey: FeatureTerminalSnapshot] = [:]
+    private var terminalScrollbacks: [TerminalKey: TerminalScrollback.Accumulator] = [:]
     private var pollingTask: Task<Void, Never>?
     private var fallbackPollingTask: Task<Void, Never>?
     private var configurationTask: Task<Void, Never>?
@@ -766,6 +767,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         approvalRoutes.removeAll()
         inputRoutes.removeAll()
         terminalSnapshots.removeAll()
+        terminalScrollbacks.removeAll()
     }
 
     private func isCurrentSession(client: T3Client, generation: Int) -> Bool {
@@ -2413,8 +2415,11 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         let mapped = NativeWorkspaceMapper.terminal(snapshot)
         var scoped = mapped
         scoped.threadID = route.uiID
-        scoped.buffer = Self.cappedTerminalBuffer(scoped.buffer)
-        terminalSnapshots[TerminalKey(threadID: route.uiID, terminalID: terminalID)] = scoped
+        let key = TerminalKey(threadID: route.uiID, terminalID: terminalID)
+        let scrollback = TerminalScrollback.Accumulator(scoped.buffer)
+        scoped.buffer = scrollback.text
+        terminalScrollbacks[key] = scrollback
+        terminalSnapshots[key] = scoped
     }
 
     func writeTerminal(threadID: String, terminalID: String, data: String) async throws {
@@ -2459,7 +2464,9 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
             throw CancellationError()
         }
         let context = try workspaceContext(route: route)
-        terminalSnapshots[TerminalKey(threadID: route.uiID, terminalID: terminalID)] =
+        let key = TerminalKey(threadID: route.uiID, terminalID: terminalID)
+        terminalScrollbacks[key] = TerminalScrollback.Accumulator()
+        terminalSnapshots[key] =
             FeatureTerminalSnapshot(
                 threadID: route.uiID,
                 terminalID: terminalID,
@@ -2685,7 +2692,9 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         if let coreSnapshot = event.snapshot {
             var snapshot = NativeWorkspaceMapper.terminal(coreSnapshot)
             snapshot.threadID = threadID
-            snapshot.buffer = Self.cappedTerminalBuffer(snapshot.buffer)
+            let scrollback = TerminalScrollback.Accumulator(snapshot.buffer)
+            snapshot.buffer = scrollback.text
+            terminalScrollbacks[key] = scrollback
             terminalSnapshots[key] = snapshot
             return snapshot
         }
@@ -2694,8 +2703,11 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
             ?? FeatureTerminalSnapshot(threadID: threadID, terminalID: terminalID)
         switch event.type {
         case "output":
-            snapshot.buffer.append(event.data ?? "")
-            snapshot.buffer = Self.cappedTerminalBuffer(snapshot.buffer)
+            var scrollback = terminalScrollbacks[key]
+                ?? TerminalScrollback.Accumulator(snapshot.buffer)
+            scrollback.append(event.data ?? "")
+            snapshot.buffer = scrollback.text
+            terminalScrollbacks[key] = scrollback
         case "exited":
             snapshot.state = .exited
             snapshot.exitCode = event.exitCode
@@ -2706,6 +2718,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
             snapshot.error = event.message
         case "cleared":
             snapshot.buffer = ""
+            terminalScrollbacks[key] = TerminalScrollback.Accumulator()
         case "activity":
             snapshot.title = event.label ?? snapshot.title
             snapshot.hasRunningSubprocess = event.hasRunningSubprocess
@@ -2730,34 +2743,6 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         }
         terminalSnapshots[key] = snapshot
         return snapshot
-    }
-
-    /// A verbose command can stream megabytes; the viewer only ever shows the
-    /// tail, so cap retained history to keep layout and memory bounded.
-    private static let terminalBufferLimit = 512 * 1024
-
-    private static func cappedTerminalBuffer(_ buffer: String) -> String {
-        let utf8 = buffer.utf8
-        guard utf8.count > terminalBufferLimit else { return buffer }
-        // Slice in UTF-8 bytes (the unit the limit is defined in), then snap
-        // forward to a character boundary so multibyte output cannot blow
-        // past the cap or tear a scalar.
-        let byteStart = utf8.index(utf8.endIndex, offsetBy: -terminalBufferLimit)
-        var start = byteStart.samePosition(in: buffer)
-        if start == nil {
-            var probe = byteStart
-            while probe < utf8.endIndex, start == nil {
-                probe = utf8.index(after: probe)
-                start = probe.samePosition(in: buffer)
-            }
-        }
-        guard let start else { return buffer }
-        let tail = buffer[start...]
-        // Trim to the next line boundary so the top of the view isn't a torn line.
-        if let newline = tail.firstIndex(of: "\n") {
-            return String(tail[tail.index(after: newline)...])
-        }
-        return String(tail)
     }
 
     private func startPolling(_ activeClient: T3Client) {
@@ -4476,6 +4461,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
             latestDetails[threadID] = nil
             detailRenderCaches[threadID] = nil
             terminalSnapshots = terminalSnapshots.filter { $0.key.threadID != threadID }
+            terminalScrollbacks = terminalScrollbacks.filter { $0.key.threadID != threadID }
             if let hydration = attachmentHydrationTasks.removeValue(forKey: threadID) {
                 hydration.task.cancel()
             }

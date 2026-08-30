@@ -452,6 +452,7 @@ final class GhosttyTerminalView: UIView, UITextFieldDelegate, UIContextMenuInter
     cursor-color = #009fff
     cursor-text = #0a0a0a
     cursor-style-blink = false
+    scrollback-limit = \(TerminalScrollback.byteLimit)
     palette = 0=#141415
     palette = 1=#ff2e3f
     palette = 2=#0dbe4e
@@ -475,6 +476,7 @@ final class GhosttyTerminalView: UIView, UITextFieldDelegate, UIContextMenuInter
     cursor-color = #009fff
     cursor-text = #f2f2f7
     cursor-style-blink = false
+    scrollback-limit = \(TerminalScrollback.byteLimit)
     palette = 0=#1f1f21
     palette = 1=#ff2e3f
     palette = 2=#0dbe4e
