@@ -348,7 +348,9 @@ function fillMetadata(agent: MutableAgent, payload: Record<string, unknown>): vo
       agent.error = null;
       agent.completedAt = null;
     }
-    agent.attempt = attempt;
+    if (agent.attempt === null || attempt >= agent.attempt) {
+      agent.attempt = attempt;
+    }
   }
   const outputFile = asString(payload.outputFile);
   if (outputFile) agent.outputFile = outputFile;
@@ -417,6 +419,22 @@ function applyStatus(agent: MutableAgent, status: RuntimeSubagentStatus, at: str
     agent.completedAt = at;
   }
   agent.status = status;
+}
+
+function isStaleWorkflowMemberReactivation(
+  agent: MutableAgent,
+  status: RuntimeSubagentStatus,
+  incomingAttempt: number | undefined,
+  previousAttempt: number | null,
+): boolean {
+  return (
+    agent.parentAgentId !== null &&
+    isTerminalSubagentStatus(agent.status) &&
+    isActiveSubagentStatus(status) &&
+    incomingAttempt !== undefined &&
+    previousAttempt !== null &&
+    incomingAttempt <= previousAttempt
+  );
 }
 
 // Map, not object literal: payloads aren't schema-validated on the read
@@ -507,10 +525,19 @@ export function foldSubagentActivities(
         const existed = agents.has(taskId);
         if (!existed && isBackgroundTaskActivity(payload)) break;
         const agent = getOrCreate(agents, taskId, payload, at);
+        const previousAttempt = agent.attempt;
         fillMetadata(agent, payload);
         if (agent.activationCount === 0) agent.activationCount = 1;
         const explicitStatus = asRuntimeStatus(payload.status);
-        if (explicitStatus) {
+        if (
+          explicitStatus &&
+          !isStaleWorkflowMemberReactivation(
+            agent,
+            explicitStatus,
+            asCount(payload.attempt),
+            previousAttempt,
+          )
+        ) {
           applyStatus(agent, explicitStatus, at);
         } else if (
           (payload.usageSnapshot !== true || !existed) &&
@@ -545,6 +572,7 @@ export function foldSubagentActivities(
         // first row's classification instead of being re-judged.
         if (!agents.has(taskId) && isBackgroundTaskActivity(payload)) break;
         const agent = getOrCreate(agents, taskId, payload, at);
+        const previousAttempt = agent.attempt;
         fillMetadata(agent, payload);
         // A task first seen via task.updated (start row aged out) has run at
         // least once — zero activations would misreport "run 0" and let a
@@ -552,7 +580,17 @@ export function foldSubagentActivities(
         if (agent.activationCount === 0) agent.activationCount = 1;
         const wasTerminal = isTerminalSubagentStatus(agent.status);
         const status = asRuntimeStatus(payload.status);
-        if (status) applyStatus(agent, status, at);
+        if (
+          status &&
+          !isStaleWorkflowMemberReactivation(
+            agent,
+            status,
+            asCount(payload.attempt),
+            previousAttempt,
+          )
+        ) {
+          applyStatus(agent, status, at);
+        }
         const error = asString(payload.error);
         if (error) agent.error = bounded(error);
         // Provider end time beats ingestion time for the transition that
@@ -741,9 +779,15 @@ export function deriveAgentPanelModel({
     .sort((a, b) => a.firstSeenAt.localeCompare(b.firstSeenAt) || a.id.localeCompare(b.id));
   const workflowIds = new Set(workflows.map((workflow) => workflow.id));
   const members = new Map<string, RuntimeSubagent[]>();
+  const workflowChildren = new Map<string, RuntimeSubagent[]>();
   const direct: RuntimeSubagent[] = [];
 
   for (const agent of source) {
+    if (agent.parentAgentId !== null && workflowIds.has(agent.parentAgentId)) {
+      const children = workflowChildren.get(agent.parentAgentId) ?? [];
+      children.push(agent);
+      workflowChildren.set(agent.parentAgentId, children);
+    }
     if (agent.kind === "workflow") {
       continue;
     }
@@ -826,16 +870,25 @@ export function deriveAgentPanelModel({
   let settledCount = 0;
   let totalTokens = 0;
   for (const agent of source) {
-    // A workflow coordinator with members is a container for those members, not
-    // work of its own: it reports running for the whole run and aggregates their
-    // usage upstream in some providers. Counting it would report one more agent
-    // working than there are, and double count tokens.
-    if (agent.kind === "workflow" && (members.get(agent.id) ?? []).length > 0) continue;
+    const workflowMembers = agent.kind === "workflow" ? (workflowChildren.get(agent.id) ?? []) : [];
+    const coordinatorRepresentsLiveWorkflow =
+      agent.kind === "workflow" &&
+      isActiveSubagentStatus(agent.status) &&
+      !workflowMembers.some((member) => isActiveSubagentStatus(member.status));
+    // While members run, the coordinator is their container. Between phases it
+    // is the one live unit, so keep it in the status buckets until it settles.
+    const coordinatorStandsInForMembers =
+      agent.kind === "workflow" && workflowMembers.length > 0 && !coordinatorRepresentsLiveWorkflow;
+    if (coordinatorStandsInForMembers) continue;
     if (agent.status === "running" || agent.status === "pending") runningCount += 1;
     else if (agent.status === "waiting") waitingCount += 1;
     else if (agent.status === "idle") idleCount += 1;
     else settledCount += 1;
-    totalTokens += agent.usage?.totalTokens ?? 0;
+    // Providers may aggregate member usage onto the coordinator. It never
+    // contributes tokens once members exist, even when it carries liveness.
+    if (workflowMembers.length === 0) {
+      totalTokens += agent.usage?.totalTokens ?? 0;
+    }
   }
 
   return {

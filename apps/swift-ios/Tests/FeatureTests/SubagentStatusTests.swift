@@ -45,6 +45,188 @@ struct SubagentStatusTests {
     }
 
     @Test
+    func workflowCountsMembersWhileTheyRunAndCoordinatorBetweenPhases() {
+        var tracker = FeatureActiveSubagentTracker()
+        tracker.apply(activity(
+            id: "workflow-start",
+            kind: "task.started",
+            payload: [
+                "taskId": .string("workflow-1"),
+                "taskType": .string("local_workflow"),
+                "agentKind": .string("agent"),
+            ]
+        ))
+        tracker.apply(activity(
+            id: "member-start",
+            kind: "task.started",
+            payload: [
+                "taskId": .string("member-1"),
+                "parentAgentId": .string("workflow-1"),
+                "agentKind": .string("agent"),
+            ]
+        ))
+
+        #expect(tracker.activeCount == 1)
+
+        tracker.apply(activity(
+            id: "member-complete",
+            kind: "task.completed",
+            payload: [
+                "taskId": .string("member-1"),
+                "parentAgentId": .string("workflow-1"),
+                "status": .string("completed"),
+            ]
+        ))
+
+        #expect(tracker.activeCount == 1)
+
+        tracker.apply(activity(
+            id: "workflow-complete",
+            kind: "task.completed",
+            payload: [
+                "taskId": .string("workflow-1"),
+                "taskType": .string("local_workflow"),
+                "status": .string("completed"),
+            ]
+        ))
+
+        #expect(tracker.activeCount == 0)
+    }
+
+    @Test
+    func reconnectReplayAndLateTerminalEventsConvergeOnBetweenPhaseLiveness() {
+        let activities = [
+            activity(
+                id: "workflow-start",
+                kind: "task.started",
+                payload: [
+                    "taskId": .string("workflow-1"),
+                    "taskType": .string("local_workflow"),
+                    "agentKind": .string("agent"),
+                ]
+            ),
+            activity(
+                id: "member-start",
+                kind: "task.started",
+                payload: [
+                    "taskId": .string("member-1"),
+                    "parentAgentId": .string("workflow-1"),
+                    "agentKind": .string("agent"),
+                ]
+            ),
+            activity(
+                id: "member-complete",
+                kind: "task.completed",
+                payload: [
+                    "taskId": .string("member-1"),
+                    "parentAgentId": .string("workflow-1"),
+                    "status": .string("completed"),
+                ]
+            ),
+        ]
+        var tracker = FeatureActiveSubagentTracker()
+
+        tracker.reset(with: activities)
+        tracker.apply(activity(
+            id: "late-member-complete",
+            kind: "task.completed",
+            payload: [
+                "taskId": .string("member-1"),
+                "parentAgentId": .string("workflow-1"),
+                "status": .string("completed"),
+            ]
+        ))
+
+        #expect(tracker.activeCount == 1)
+    }
+
+    @Test
+    func nestedWorkflowCountsOnlyItsDeepestLiveUnit() {
+        var tracker = FeatureActiveSubagentTracker()
+        tracker.apply(activity(
+            id: "root-start",
+            kind: "task.started",
+            payload: [
+                "taskId": .string("workflow-root"),
+                "taskType": .string("local_workflow"),
+                "agentKind": .string("agent"),
+            ]
+        ))
+        tracker.apply(activity(
+            id: "nested-start",
+            kind: "task.started",
+            payload: [
+                "taskId": .string("workflow-nested"),
+                "taskType": .string("local_workflow"),
+                "parentAgentId": .string("workflow-root"),
+                "agentKind": .string("agent"),
+            ]
+        ))
+        tracker.apply(activity(
+            id: "member-start",
+            kind: "task.started",
+            payload: [
+                "taskId": .string("member-nested"),
+                "parentAgentId": .string("workflow-nested"),
+                "agentKind": .string("agent"),
+            ]
+        ))
+
+        #expect(tracker.activeCount == 1)
+    }
+
+    @Test
+    func staleWorkflowMemberAttemptDoesNotReopenAfterFailure() {
+        var tracker = FeatureActiveSubagentTracker()
+        tracker.apply(activity(
+            id: "member-running",
+            kind: "task.progress",
+            payload: [
+                "taskId": .string("member-1"),
+                "parentAgentId": .string("workflow-1"),
+                "agentKind": .string("agent"),
+                "status": .string("running"),
+                "attempt": .number(1),
+            ]
+        ))
+        tracker.apply(activity(
+            id: "member-failed",
+            kind: "task.progress",
+            payload: [
+                "taskId": .string("member-1"),
+                "parentAgentId": .string("workflow-1"),
+                "status": .string("failed"),
+                "attempt": .number(1),
+            ]
+        ))
+        tracker.apply(activity(
+            id: "stale-member-running",
+            kind: "task.progress",
+            payload: [
+                "taskId": .string("member-1"),
+                "parentAgentId": .string("workflow-1"),
+                "status": .string("running"),
+                "attempt": .number(1),
+            ]
+        ))
+
+        #expect(tracker.activeCount == 0)
+
+        tracker.apply(activity(
+            id: "member-retry",
+            kind: "task.progress",
+            payload: [
+                "taskId": .string("member-1"),
+                "parentAgentId": .string("workflow-1"),
+                "status": .string("running"),
+                "attempt": .number(2),
+            ]
+        ))
+
+        #expect(tracker.activeCount == 1)
+    }
+
+    @Test
     func idleAgentsCanStartAgainButTerminalAgentsDoNotReopenFromLateStarts() {
         var tracker = FeatureActiveSubagentTracker()
         tracker.apply(activity(

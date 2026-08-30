@@ -196,4 +196,41 @@ describe("ThreadBackgroundLiveness", () => {
     a.clearThreadLiveness("t");
     expect(a.getThreadBackgroundLiveness("t")).toBeNull();
   });
+
+  it("keeps a workflow working between member phases until the coordinator settles", () => {
+    const liveness = ThreadBackgroundLiveness.make();
+    const threadId = "t-workflow-phases";
+    liveness.recordTaskLiveness({
+      threadId,
+      taskId: "workflow",
+      taskType: "local_workflow",
+      status: "running",
+      kind: "started",
+    });
+    liveness.recordTaskLiveness({
+      threadId,
+      taskId: "member-1",
+      taskType: "local_agent",
+      status: "running",
+      kind: "started",
+    });
+    liveness.recordTaskLiveness({
+      threadId,
+      taskId: "member-1",
+      taskType: "local_agent",
+      status: "completed",
+      kind: "completed",
+    });
+
+    expect(liveness.getThreadBackgroundLiveness(threadId)).toBe("working");
+
+    liveness.recordTaskLiveness({
+      threadId,
+      taskId: "workflow",
+      taskType: "local_workflow",
+      status: "completed",
+      kind: "completed",
+    });
+    expect(liveness.getThreadBackgroundLiveness(threadId)).toBeNull();
+  });
 });

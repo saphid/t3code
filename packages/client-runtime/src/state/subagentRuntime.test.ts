@@ -325,6 +325,31 @@ describe("foldSubagentActivities", () => {
     expect(member.status).toBe("running");
   });
 
+  it("does not reopen a terminal workflow member from its stale attempt", () => {
+    const [member] = fold([
+      activity("task.progress", {
+        taskId: "wf-stale:wf:0",
+        parentAgentId: "wf-stale",
+        status: "running",
+        attempt: 1,
+      }),
+      activity("task.progress", {
+        taskId: "wf-stale:wf:0",
+        parentAgentId: "wf-stale",
+        status: "failed",
+        attempt: 1,
+      }),
+      activity("task.progress", {
+        taskId: "wf-stale:wf:0",
+        parentAgentId: "wf-stale",
+        status: "running",
+        attempt: 1,
+      }),
+    ]);
+
+    expect(member?.status).toBe("failed");
+  });
+
   it("drops non-http(s) session urls at the fold boundary", () => {
     const agents = fold([
       activity("task.started", {
@@ -397,6 +422,51 @@ describe("deriveAgentPanelModel", () => {
     // One member still running plus one idle direct spawn. The coordinator
     // reports running for the whole workflow and must not inflate the banner.
     expect(model.liveCount).toBe(1);
+  });
+
+  it("counts a live workflow once between phases", () => {
+    const betweenPhases = fold([
+      activity("task.started", {
+        taskId: "wf-between",
+        taskType: "local_workflow",
+        title: "review",
+      }),
+      activity("task.progress", {
+        taskId: "wf-between:wf:0",
+        status: "completed",
+        parentAgentId: "wf-between",
+        agentIndex: 0,
+        phaseIndex: 0,
+      }),
+      activity("task.completed", {
+        taskId: "wf-between:wf:0",
+        status: "completed",
+        parentAgentId: "wf-between",
+      }),
+    ]);
+
+    const model = deriveAgentPanelModel({ agents: betweenPhases });
+
+    expect(model.runningCount).toBe(1);
+    expect(model.liveCount).toBe(1);
+    expect(model.settledCount).toBe(1);
+  });
+
+  it("counts nested workflows as one live unit", () => {
+    const nested = fold([
+      activity("task.started", { taskId: "wf-root", taskType: "local_workflow" }),
+      activity("task.started", {
+        taskId: "wf-nested",
+        taskType: "local_workflow",
+        parentAgentId: "wf-root",
+      }),
+      activity("task.started", {
+        taskId: "nested-member",
+        parentAgentId: "wf-nested",
+      }),
+    ]);
+
+    expect(deriveAgentPanelModel({ agents: nested }).liveCount).toBe(1);
   });
 
   it("omits a finished workflow coordinator from the settled count", () => {
