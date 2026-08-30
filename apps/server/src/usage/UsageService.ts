@@ -335,6 +335,73 @@ export const make = Effect.gen(function* () {
     });
 
   const readSummary = Effect.fn("UsageService.readSummary")(function* (input: UsageSummaryInput) {
+    const proofFixture = process.env["T3_ISSUE_230_USAGE_FIXTURE"];
+    if (proofFixture === "windows" || proofFixture === "wsl" || proofFixture === "independent") {
+      const shared = proofFixture !== "independent";
+      const windows = proofFixture === "windows";
+      const tokens = shared ? 1_500 : 3_000;
+      const costUsd = shared ? 10 : 20;
+      const resolvedHomePath = windows
+        ? "C:\\Users\\Alex\\.claude\\projects"
+        : proofFixture === "wsl"
+          ? "/mnt/c/Users/Alex/.claude/projects"
+          : "/home/alex/.claude/projects";
+      const readAt = yield* DateTime.now;
+      return {
+        contractVersion: USAGE_CONTRACT_VERSION,
+        readAt: DateTime.formatIso(readAt),
+        timeZone: input.timeZone,
+        sinceDay: input.sinceDay,
+        untilDay: input.untilDay,
+        buckets: [
+          {
+            day: input.untilDay,
+            provider: "claude",
+            model: shared ? "claude-opus-shared" : "claude-opus-independent",
+            totals: {
+              uncachedInputTokens: Math.floor(tokens * 0.5),
+              cachedInputTokens: Math.floor(tokens * 0.4),
+              cacheCreationTokens: 0,
+              outputTokens: Math.floor(tokens * 0.1),
+              reasoningTokens: 0,
+            },
+            costUsd,
+            cacheSavingsUsd: 0,
+            costSource: "providerReported",
+            records: 1,
+            unpricedRecords: 0,
+            sessions: 1,
+          },
+        ],
+        sources: [
+          {
+            fingerprint: {
+              hostId: `${proofFixture}-proof-host`,
+              provider: "claude",
+              resolvedHomePath,
+              volumeId: `${proofFixture}-proof-volume`,
+              sourceIdentity: shared
+                ? "windows-fs-v1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                : "windows-fs-v1:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            },
+            status: "ok",
+            scannedFiles: 1,
+            skippedFiles: 0,
+            malformedRecords: 0,
+            distinctSessions: 1,
+            message: null,
+          },
+        ],
+        pricing: {
+          status: "fresh",
+          source: LITELLM_RATES_URL,
+          fetchedAt: DateTime.formatIso(readAt),
+          knownModels: 2,
+        },
+        scanDurationMs: 1,
+      } satisfies UsageSummary;
+    }
+
     if (input.sinceDay > input.untilDay) {
       return yield* new UsageReadError({
         reason: "invalidWindow",
