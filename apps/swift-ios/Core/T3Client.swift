@@ -678,15 +678,31 @@ public actor T3Client {
     public func writeProjectFile(
         cwd: String,
         relativePath: String,
-        contents: String
+        contents: String,
+        expectation: ProjectWriteFileExpectation? = nil,
+        encoding: ProjectTextEncoding? = nil,
+        lineEnding: ProjectLineEnding? = nil,
+        mode: Int? = nil
     ) async throws -> ProjectWriteFileResult {
-        try await rpc.request(
+        var payload: [String: JSONValue] = [
+            "cwd": .string(cwd),
+            "relativePath": .string(relativePath),
+            "contents": .string(contents),
+        ]
+        switch expectation {
+        case let .version(version):
+            payload["expectedVersion"] = .string(version)
+        case .missing:
+            payload["expectedVersion"] = .null
+        case nil:
+            break
+        }
+        if let encoding { payload["encoding"] = .string(encoding.rawValue) }
+        if let lineEnding { payload["lineEnding"] = .string(lineEnding.rawValue) }
+        if let mode { payload["mode"] = .number(Double(mode)) }
+        return try await rpc.request(
             RPCMethod.projectsWriteFile.rawValue,
-            payload: .object([
-                "cwd": .string(cwd),
-                "relativePath": .string(relativePath),
-                "contents": .string(contents),
-            ]),
+            payload: .object(payload),
             as: ProjectWriteFileResult.self
         )
     }

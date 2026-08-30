@@ -4943,12 +4943,16 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       );
 
       assert.isTrue(response.listing.entries.some((entry) => entry.path === "src/index.ts"));
-      assert.deepEqual(response.file, {
+      assert.include(response.file, {
         relativePath: "src/index.ts",
         contents: "export const answer = 42;\n",
         byteLength: 26,
         truncated: false,
+        encoding: "utf8",
+        lineEnding: "lf",
+        mode: 0o644,
       });
+      assert.match(response.file.version ?? "", /^v1-[a-f0-9]{64}$/);
     }).pipe(Effect.provide(NodeHttpServer.layerTest), TestClock.withLive),
   );
 
@@ -5172,9 +5176,54 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         ),
       );
 
+      assert.equal(response.status, "written");
       assert.equal(response.relativePath, "nested/created.txt");
+      if (response.status === "written") {
+        assert.match(response.version, /^v1-[a-f0-9]{64}$/);
+      }
       const persisted = yield* fs.readFileString(path.join(workspaceDir, "nested", "created.txt"));
       assert.equal(persisted, "written-by-rpc");
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("routes websocket file version conflicts without writing stale contents", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const workspaceDir = yield* fs.makeTempDirectoryScoped({
+        prefix: "t3-ws-project-conflict-",
+      });
+      const filePath = path.join(workspaceDir, "shared.txt");
+      yield* fs.writeFileString(filePath, "loaded\n");
+      yield* buildAppUnderTest();
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const response = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          Effect.gen(function* () {
+            const loaded = yield* client[WS_METHODS.projectsReadFile]({
+              cwd: workspaceDir,
+              relativePath: "shared.txt",
+            });
+            yield* fs.writeFileString(filePath, "newer client\n");
+            return yield* client[WS_METHODS.projectsWriteFile]({
+              cwd: workspaceDir,
+              relativePath: "shared.txt",
+              contents: "stale editor\n",
+              expectedVersion: loaded.version,
+              encoding: loaded.encoding,
+              lineEnding: loaded.lineEnding,
+              mode: loaded.mode,
+            });
+          }),
+        ),
+      );
+
+      assert.equal(response.status, "conflict");
+      if (response.status === "conflict") {
+        assert.equal(response.current?.contents, "newer client\n");
+      }
+      assert.equal(yield* fs.readFileString(filePath), "newer client\n");
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 

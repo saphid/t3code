@@ -2039,8 +2039,69 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
             text: result.contents,
             language: NativeWorkspaceMapper.language(for: result.relativePath),
             isTruncated: result.truncated,
-            totalBytes: result.byteLength
+            totalBytes: result.byteLength,
+            version: result.version,
+            encoding: result.encoding,
+            lineEnding: result.lineEnding,
+            mode: result.mode
         )
+    }
+
+    func writeFile(
+        threadID: String,
+        path: String,
+        contents: String,
+        expectation: FeatureFileWriteExpectation,
+        metadata: FeatureFileContent
+    ) async throws -> FeatureFileWriteResult {
+        let route = try threadRoute(for: threadID)
+        let context = try workspaceContext(route: route)
+        let generation = environmentGeneration
+        let coreExpectation: ProjectWriteFileExpectation = switch expectation {
+        case let .version(version): .version(version)
+        case .missing: .missing
+        }
+        let result = try await route.client.writeProjectFile(
+            cwd: context.cwd,
+            relativePath: path,
+            contents: contents,
+            expectation: coreExpectation,
+            encoding: metadata.encoding,
+            lineEnding: metadata.lineEnding,
+            mode: metadata.mode
+        )
+        guard isKnownClient(
+            route.client,
+            environmentID: route.environmentID,
+            generation: generation
+        ) else {
+            throw CancellationError()
+        }
+        guard let status = result.status else {
+            throw FeatureCapabilityUnavailable("Versioned file editing")
+        }
+        switch status {
+        case .written:
+            guard let version = result.version else {
+                throw FeatureCapabilityUnavailable("Versioned file editing")
+            }
+            return .written(path: result.relativePath, version: version)
+        case .conflict:
+            let current = result.current.map {
+                FeatureFileContent(
+                    path: result.relativePath,
+                    text: $0.contents,
+                    language: NativeWorkspaceMapper.language(for: result.relativePath),
+                    isTruncated: $0.truncated,
+                    totalBytes: $0.byteLength,
+                    version: $0.version,
+                    encoding: $0.encoding,
+                    lineEnding: $0.lineEnding,
+                    mode: $0.mode
+                )
+            }
+            return .conflict(path: result.relativePath, current: current)
+        }
     }
 
     func loadReview(threadID: String) async throws -> FeatureReview {

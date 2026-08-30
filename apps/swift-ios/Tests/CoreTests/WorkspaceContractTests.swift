@@ -112,17 +112,44 @@ final class WorkspaceContractTests: XCTestCase {
               "relativePath": "README.md",
               "contents": "# T3",
               "byteLength": 4,
-              "truncated": false
+              "truncated": false,
+              "version": "v1-abc123",
+              "encoding": "utf8-bom",
+              "lineEnding": "crlf",
+              "mode": 416
+            }
+            """.utf8
+        )
+        let conflictData = Data(
+            """
+            {
+              "status": "conflict",
+              "relativePath": "README.md",
+              "current": {
+                "contents": "# Newer",
+                "byteLength": 7,
+                "truncated": false,
+                "version": "v1-newer",
+                "encoding": "utf8",
+                "lineEnding": "lf",
+                "mode": 420
+              }
             }
             """.utf8
         )
 
         let review = try JSONDecoder.t3.decode(ReviewDiffPreview.self, from: reviewData)
         let file = try JSONDecoder.t3.decode(ProjectReadFileResult.self, from: fileData)
+        let conflict = try JSONDecoder.t3.decode(ProjectWriteFileResult.self, from: conflictData)
         XCTAssertEqual(review.sources.first?.kind, "working-tree")
         XCTAssertEqual(review.sources.first?.diffHash, "abc123")
         XCTAssertEqual(file.relativePath, "README.md")
         XCTAssertFalse(file.truncated)
+        XCTAssertEqual(file.encoding, .utf8BOM)
+        XCTAssertEqual(file.lineEnding, .carriageReturnLineFeed)
+        XCTAssertEqual(file.mode, 0o640)
+        XCTAssertEqual(conflict.status, .conflict)
+        XCTAssertEqual(conflict.current?.contents, "# Newer")
     }
 
     func testWorkspaceRPCMethodNamesMatchContractConstants() {

@@ -10,6 +10,7 @@ const PROJECT_SEARCH_ENTRIES_MAX_LIMIT = 200;
 const PROJECT_SEARCH_CONTENTS_MAX_LIMIT = 500;
 const PROJECT_WRITE_FILE_PATH_MAX_LENGTH = 512;
 const PROJECT_READ_FILE_PATH_MAX_LENGTH = 512;
+const PROJECT_FILE_VERSION_MAX_LENGTH = 128;
 
 export const ProjectEntryKind = Schema.Literals(["file", "directory"]);
 export type ProjectEntryKind = typeof ProjectEntryKind.Type;
@@ -197,11 +198,38 @@ export const ProjectReadFileInput = Schema.Struct({
 });
 export type ProjectReadFileInput = typeof ProjectReadFileInput.Type;
 
+export const ProjectFileVersion = TrimmedNonEmptyString.check(
+  Schema.isMaxLength(PROJECT_FILE_VERSION_MAX_LENGTH),
+);
+export type ProjectFileVersion = typeof ProjectFileVersion.Type;
+
+export const ProjectTextEncoding = Schema.Literals(["utf8", "utf8-bom", "utf16-le", "utf16-be"]);
+export type ProjectTextEncoding = typeof ProjectTextEncoding.Type;
+
+export const ProjectLineEnding = Schema.Literals(["none", "lf", "crlf", "cr", "mixed"]);
+export type ProjectLineEnding = typeof ProjectLineEnding.Type;
+
+export const ProjectFileSnapshot = Schema.Struct({
+  contents: Schema.String,
+  byteLength: NonNegativeInt,
+  truncated: Schema.Boolean,
+  version: ProjectFileVersion,
+  encoding: ProjectTextEncoding,
+  lineEnding: ProjectLineEnding,
+  mode: NonNegativeInt,
+});
+export type ProjectFileSnapshot = typeof ProjectFileSnapshot.Type;
+
 export const ProjectReadFileResult = Schema.Struct({
   relativePath: TrimmedNonEmptyString,
   contents: Schema.String,
   byteLength: NonNegativeInt,
   truncated: Schema.Boolean,
+  // Optional for rolling compatibility with servers predating guarded file writes.
+  version: Schema.optional(ProjectFileVersion),
+  encoding: Schema.optional(ProjectTextEncoding),
+  lineEnding: Schema.optional(ProjectLineEnding),
+  mode: Schema.optional(NonNegativeInt),
 });
 export type ProjectReadFileResult = typeof ProjectReadFileResult.Type;
 
@@ -223,6 +251,7 @@ export const ProjectFileOperation = Schema.Literals([
   "close",
   "make-directory",
   "write-file",
+  "chmod",
 ]);
 export type ProjectFileOperation = typeof ProjectFileOperation.Type;
 
@@ -266,12 +295,33 @@ export const ProjectWriteFileInput = Schema.Struct({
   cwd: TrimmedNonEmptyString,
   relativePath: TrimmedNonEmptyString.check(Schema.isMaxLength(PROJECT_WRITE_FILE_PATH_MAX_LENGTH)),
   contents: Schema.String,
+  // Missing preserves legacy unconditional writes during rolling upgrades. A version performs a
+  // compare-and-swap; null requires the target path to remain absent (used by Save Copy).
+  expectedVersion: Schema.optional(Schema.NullOr(ProjectFileVersion)),
+  encoding: Schema.optional(ProjectTextEncoding),
+  lineEnding: Schema.optional(ProjectLineEnding),
+  mode: Schema.optional(NonNegativeInt),
 });
 export type ProjectWriteFileInput = typeof ProjectWriteFileInput.Type;
 
-export const ProjectWriteFileResult = Schema.Struct({
+export const ProjectWriteFileWrittenResult = Schema.Struct({
+  status: Schema.Literal("written"),
   relativePath: TrimmedNonEmptyString,
+  version: ProjectFileVersion,
 });
+export type ProjectWriteFileWrittenResult = typeof ProjectWriteFileWrittenResult.Type;
+
+export const ProjectWriteFileConflictResult = Schema.Struct({
+  status: Schema.Literal("conflict"),
+  relativePath: TrimmedNonEmptyString,
+  current: Schema.NullOr(ProjectFileSnapshot),
+});
+export type ProjectWriteFileConflictResult = typeof ProjectWriteFileConflictResult.Type;
+
+export const ProjectWriteFileResult = Schema.Union([
+  ProjectWriteFileWrittenResult,
+  ProjectWriteFileConflictResult,
+]);
 export type ProjectWriteFileResult = typeof ProjectWriteFileResult.Type;
 
 export class ProjectWriteFileError extends Schema.TaggedErrorClass<ProjectWriteFileError>()(

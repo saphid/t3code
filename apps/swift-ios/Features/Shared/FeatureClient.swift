@@ -163,6 +163,13 @@ public protocol FeatureClient: AnyObject {
         limit: Int
     ) async throws -> [FeatureFileEntry]
     func readFile(threadID: String, path: String) async throws -> FeatureFileContent
+    func writeFile(
+        threadID: String,
+        path: String,
+        contents: String,
+        expectation: FeatureFileWriteExpectation,
+        metadata: FeatureFileContent
+    ) async throws -> FeatureFileWriteResult
     func loadReview(threadID: String) async throws -> FeatureReview
     func loadReviewFileContents(
         threadID: String,
@@ -450,6 +457,16 @@ public extension FeatureClient {
 
     func readFile(threadID: String, path: String) async throws -> FeatureFileContent {
         throw FeatureCapabilityUnavailable("File preview")
+    }
+
+    func writeFile(
+        threadID: String,
+        path: String,
+        contents: String,
+        expectation: FeatureFileWriteExpectation,
+        metadata: FeatureFileContent
+    ) async throws -> FeatureFileWriteResult {
+        throw FeatureCapabilityUnavailable("File editing")
     }
 
     func loadReview(threadID: String) async throws -> FeatureReview {

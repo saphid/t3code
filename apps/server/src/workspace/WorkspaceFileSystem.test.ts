@@ -64,12 +64,16 @@ it.layer(TestLayer, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
           relativePath: "src/index.ts",
         });
 
-        expect(result).toEqual({
+        expect(result).toMatchObject({
           relativePath: "src/index.ts",
           contents: "export const answer = 42;\n",
           byteLength: 26,
           truncated: false,
+          encoding: "utf8",
+          lineEnding: "lf",
+          mode: 0o644,
         });
+        expect(result.version).toMatch(/^v1-[a-f0-9]{64}$/);
       }),
     );
 
@@ -207,8 +211,178 @@ it.layer(TestLayer, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
           .readFileString(path.join(cwd, "plans/effect-rpc.md"))
           .pipe(Effect.orDie);
 
-        expect(result).toEqual({ relativePath: "plans/effect-rpc.md" });
+        expect(result).toMatchObject({
+          status: "written",
+          relativePath: "plans/effect-rpc.md",
+        });
+        expect(result.status === "written" ? result.version : "").toMatch(/^v1-[a-f0-9]{64}$/);
         expect(saved).toBe("# Plan\n");
+      }),
+    );
+
+    it.effect("rejects a stale observed version without overwriting newer contents", () =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const cwd = yield* makeTempDir;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        yield* writeTextFile(cwd, "notes.md", "loaded\n");
+        const loaded = yield* workspaceFileSystem.readFile({ cwd, relativePath: "notes.md" });
+        yield* fileSystem.writeFileString(path.join(cwd, "notes.md"), "agent update\n");
+
+        const result = yield* workspaceFileSystem.writeFile({
+          cwd,
+          relativePath: "notes.md",
+          contents: "mine\n",
+          expectedVersion: loaded.version,
+          encoding: loaded.encoding,
+          lineEnding: loaded.lineEnding,
+          mode: loaded.mode,
+        });
+
+        expect(result).toMatchObject({
+          status: "conflict",
+          relativePath: "notes.md",
+          current: { contents: "agent update\n" },
+        });
+        expect(yield* fileSystem.readFileString(path.join(cwd, "notes.md"))).toBe("agent update\n");
+      }),
+    );
+
+    it.effect("reports deletion or rename as a conflict instead of recreating the old path", () =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const cwd = yield* makeTempDir;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const originalPath = path.join(cwd, "draft.md");
+        const renamedPath = path.join(cwd, "renamed.md");
+        yield* writeTextFile(cwd, "draft.md", "loaded\n");
+        const loaded = yield* workspaceFileSystem.readFile({ cwd, relativePath: "draft.md" });
+        yield* fileSystem.rename(originalPath, renamedPath);
+
+        const result = yield* workspaceFileSystem.writeFile({
+          cwd,
+          relativePath: "draft.md",
+          contents: "mine\n",
+          expectedVersion: loaded.version,
+        });
+
+        expect(result).toEqual({
+          status: "conflict",
+          relativePath: "draft.md",
+          current: null,
+        });
+        expect(yield* fileSystem.readFileString(renamedPath)).toBe("loaded\n");
+        expect(yield* fileSystem.exists(originalPath)).toBe(false);
+      }),
+    );
+
+    it.effect("allows only one concurrent client to write an observed version", () =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const cwd = yield* makeTempDir;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        yield* writeTextFile(cwd, "shared.md", "loaded\n");
+        const loaded = yield* workspaceFileSystem.readFile({ cwd, relativePath: "shared.md" });
+        const write = (contents: string) =>
+          workspaceFileSystem.writeFile({
+            cwd,
+            relativePath: "shared.md",
+            contents,
+            expectedVersion: loaded.version,
+          });
+
+        const results = yield* Effect.all([write("client one\n"), write("client two\n")], {
+          concurrency: "unbounded",
+        });
+        const written = results.filter((result) => result.status === "written");
+        const conflicts = results.filter((result) => result.status === "conflict");
+        const saved = yield* fileSystem.readFileString(path.join(cwd, "shared.md"));
+
+        expect(written).toHaveLength(1);
+        expect(conflicts).toHaveLength(1);
+        expect(["client one\n", "client two\n"]).toContain(saved);
+        expect(conflicts[0]).toMatchObject({ current: { contents: saved } });
+      }),
+    );
+
+    it.effect("creates a Save Copy target only while it is absent", () =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const cwd = yield* makeTempDir;
+        const first = yield* workspaceFileSystem.writeFile({
+          cwd,
+          relativePath: "notes conflict copy.md",
+          contents: "mine\n",
+          expectedVersion: null,
+        });
+        const second = yield* workspaceFileSystem.writeFile({
+          cwd,
+          relativePath: "notes conflict copy.md",
+          contents: "other\n",
+          expectedVersion: null,
+        });
+
+        expect(first.status).toBe("written");
+        expect(second).toMatchObject({
+          status: "conflict",
+          current: { contents: "mine\n" },
+        });
+      }),
+    );
+
+    it.effect("preserves UTF-16, CRLF, and permissions on normal saves and copies", () =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const cwd = yield* makeTempDir;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const sourcePath = path.join(cwd, "script.txt");
+        const encoded = Buffer.concat([
+          Buffer.from([0xff, 0xfe]),
+          Buffer.from("one\r\ntwo\r\n", "utf16le"),
+        ]);
+        yield* fileSystem.writeFile(sourcePath, encoded);
+        yield* fileSystem.chmod(sourcePath, 0o640);
+        const loaded = yield* workspaceFileSystem.readFile({ cwd, relativePath: "script.txt" });
+
+        const saved = yield* workspaceFileSystem.writeFile({
+          cwd,
+          relativePath: "script.txt",
+          contents: "one\ntwo\nthree\n",
+          expectedVersion: loaded.version,
+          encoding: loaded.encoding,
+          lineEnding: loaded.lineEnding,
+          mode: loaded.mode,
+        });
+        const copied = yield* workspaceFileSystem.writeFile({
+          cwd,
+          relativePath: "script conflict copy.txt",
+          contents: "mine\n",
+          expectedVersion: null,
+          encoding: loaded.encoding,
+          lineEnding: loaded.lineEnding,
+          mode: loaded.mode,
+        });
+        const savedBytes = Buffer.from(yield* fileSystem.readFile(sourcePath));
+        const copiedPath = path.join(cwd, "script conflict copy.txt");
+        const copiedBytes = Buffer.from(yield* fileSystem.readFile(copiedPath));
+
+        expect(loaded).toMatchObject({
+          contents: "one\r\ntwo\r\n",
+          encoding: "utf16-le",
+          lineEnding: "crlf",
+          mode: 0o640,
+        });
+        expect(saved.status).toBe("written");
+        expect(copied.status).toBe("written");
+        expect(savedBytes.subarray(0, 2)).toEqual(Buffer.from([0xff, 0xfe]));
+        expect(savedBytes.subarray(2).toString("utf16le")).toBe("one\r\ntwo\r\nthree\r\n");
+        expect(copiedBytes.subarray(2).toString("utf16le")).toBe("mine\r\n");
+        expect((yield* fileSystem.stat(sourcePath)).mode & 0o777).toBe(0o640);
+        expect((yield* fileSystem.stat(copiedPath)).mode & 0o777).toBe(0o640);
       }),
     );
 

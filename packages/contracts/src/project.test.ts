@@ -3,15 +3,21 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   ProjectReadFileError,
+  ProjectReadFileResult,
   ProjectSearchContentsError,
   ProjectSearchContentsInput,
   ProjectSearchEntriesError,
   ProjectSearchEntriesInput,
   ProjectWriteFileError,
+  ProjectWriteFileInput,
+  ProjectWriteFileResult,
 } from "./project.ts";
 
 const decodeSearchEntriesInput = Schema.decodeUnknownSync(ProjectSearchEntriesInput);
 const decodeSearchContentsInput = Schema.decodeUnknownSync(ProjectSearchContentsInput);
+const decodeReadFileResult = Schema.decodeUnknownSync(ProjectReadFileResult);
+const decodeWriteFileInput = Schema.decodeUnknownSync(ProjectWriteFileInput);
+const decodeWriteFileResult = Schema.decodeUnknownSync(ProjectWriteFileResult);
 
 describe("project search inputs", () => {
   it("allows an empty entries query for bounded frecency browsing", () => {
@@ -34,6 +40,52 @@ describe("project search inputs", () => {
       useRegex: false,
     });
     expect(decoded.query).toBe(" foo ");
+  });
+});
+
+describe("project file version contracts", () => {
+  it("decodes a canonical read snapshot and guarded write", () => {
+    const snapshot = decodeReadFileResult({
+      relativePath: "src/App.swift",
+      contents: 'print("hello")\r\n',
+      byteLength: 16,
+      truncated: false,
+      version: `v1-${"a".repeat(64)}`,
+      encoding: "utf8-bom",
+      lineEnding: "crlf",
+      mode: 0o640,
+    });
+    const write = decodeWriteFileInput({
+      cwd: "/workspace",
+      relativePath: snapshot.relativePath,
+      contents: snapshot.contents,
+      expectedVersion: snapshot.version,
+      encoding: snapshot.encoding,
+      lineEnding: snapshot.lineEnding,
+      mode: snapshot.mode,
+    });
+
+    expect(write.expectedVersion).toBe(snapshot.version);
+    expect(write.encoding).toBe("utf8-bom");
+    expect(write.lineEnding).toBe("crlf");
+    expect(write.mode).toBe(0o640);
+  });
+
+  it("distinguishes a missing-file expectation and conflict result", () => {
+    const write = decodeWriteFileInput({
+      cwd: "/workspace",
+      relativePath: "notes copy.md",
+      contents: "mine\n",
+      expectedVersion: null,
+    });
+    const result = decodeWriteFileResult({
+      status: "conflict",
+      relativePath: "notes copy.md",
+      current: null,
+    });
+
+    expect(write.expectedVersion).toBeNull();
+    expect(result.status).toBe("conflict");
   });
 });
 

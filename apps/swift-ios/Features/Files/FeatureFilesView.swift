@@ -176,6 +176,7 @@ private struct FeatureFilePreviewView: View {
     @State private var assetURL: URL?
     @State private var errorMessage: String?
     @State private var isLoading = true
+    @State private var isEditorPresented = false
 
     private var previewKind: FeatureFilePreviewKind {
         FeatureFilePreviewKind.infer(path: entry.path, language: content?.language)
@@ -240,14 +241,53 @@ private struct FeatureFilePreviewView: View {
                 }
             } else if let content {
                 ToolbarItem(placement: .topBarTrailing) {
-                    ShareLink(item: content.text) {
-                        Image(systemName: "square.and.arrow.up")
+                    HStack {
+                        if content.isTruncated == false, content.version != nil {
+                            Button("Edit", systemImage: "pencil", action: presentEditor)
+                        }
+                        ShareLink(item: content.text) {
+                            Image(systemName: "square.and.arrow.up")
+                        }
+                        .accessibilityLabel("Share file contents")
                     }
-                    .accessibilityLabel("Share file contents")
                 }
             }
         }
         .task { await load() }
+        .fullScreenCover(isPresented: $isEditorPresented) {
+            if let content {
+                FeatureFileEditorView(
+                    client: client,
+                    threadID: threadID,
+                    content: content,
+                    onSaved: applySavedContent
+                )
+            }
+        }
+    }
+
+    private func presentEditor() {
+        isEditorPresented = true
+    }
+
+    private func applySavedContent(_ saved: FeatureFileContent) {
+        guard saved.path == entry.path else { return }
+        content = saved
+        Task {
+            let kind = FeatureFilePreviewKind.infer(path: saved.path, language: saved.language)
+            switch kind {
+            case .source:
+                sourceLines = await Task.detached(priority: .userInitiated) {
+                    FeatureSourceHighlighter.lines(text: saved.text, language: saved.language)
+                }.value
+            case .plainText:
+                sourceLines = await Task.detached(priority: .userInitiated) {
+                    FeatureSourceHighlighter.lines(text: saved.text, language: "plain")
+                }.value
+            case .markdown, .image:
+                sourceLines = []
+            }
+        }
     }
 
     private func load() async {

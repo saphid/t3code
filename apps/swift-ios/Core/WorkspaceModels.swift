@@ -22,10 +22,52 @@ public struct ProjectReadFileResult: Codable, Equatable, Sendable {
     public let contents: String
     public let byteLength: Int
     public let truncated: Bool
+    public let version: String?
+    public let encoding: ProjectTextEncoding?
+    public let lineEnding: ProjectLineEnding?
+    public let mode: Int?
+}
+
+public enum ProjectTextEncoding: String, Codable, Equatable, Sendable {
+    case utf8
+    case utf8BOM = "utf8-bom"
+    case utf16LittleEndian = "utf16-le"
+    case utf16BigEndian = "utf16-be"
+}
+
+public enum ProjectLineEnding: String, Codable, Equatable, Sendable {
+    case none
+    case lineFeed = "lf"
+    case carriageReturnLineFeed = "crlf"
+    case carriageReturn = "cr"
+    case mixed
+}
+
+public struct ProjectFileSnapshot: Codable, Equatable, Sendable {
+    public let contents: String
+    public let byteLength: Int
+    public let truncated: Bool
+    public let version: String
+    public let encoding: ProjectTextEncoding
+    public let lineEnding: ProjectLineEnding
+    public let mode: Int
+}
+
+public enum ProjectWriteFileStatus: String, Codable, Equatable, Sendable {
+    case written
+    case conflict
+}
+
+public enum ProjectWriteFileExpectation: Equatable, Sendable {
+    case version(String)
+    case missing
 }
 
 public struct ProjectWriteFileResult: Codable, Equatable, Sendable {
     public let relativePath: String
+    public let status: ProjectWriteFileStatus?
+    public let version: String?
+    public let current: ProjectFileSnapshot?
 }
 
 public struct ThreadWorktreePreparation: Equatable, Sendable {

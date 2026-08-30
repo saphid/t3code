@@ -76,20 +76,42 @@ public struct FeatureFileContent: Sendable, Equatable, Codable {
     public var language: String?
     public var isTruncated: Bool
     public var totalBytes: Int?
+    public var version: String?
+    public var encoding: ProjectTextEncoding?
+    public var lineEnding: ProjectLineEnding?
+    public var mode: Int?
 
     public init(
         path: String,
         text: String,
         language: String? = nil,
         isTruncated: Bool = false,
-        totalBytes: Int? = nil
+        totalBytes: Int? = nil,
+        version: String? = nil,
+        encoding: ProjectTextEncoding? = nil,
+        lineEnding: ProjectLineEnding? = nil,
+        mode: Int? = nil
     ) {
         self.path = path
         self.text = text
         self.language = language
         self.isTruncated = isTruncated
         self.totalBytes = totalBytes
+        self.version = version
+        self.encoding = encoding
+        self.lineEnding = lineEnding
+        self.mode = mode
     }
+}
+
+public enum FeatureFileWriteExpectation: Sendable, Equatable {
+    case version(String)
+    case missing
+}
+
+public enum FeatureFileWriteResult: Sendable, Equatable {
+    case written(path: String, version: String)
+    case conflict(path: String, current: FeatureFileContent?)
 }
 
 public enum FeatureFilePreviewKind: Sendable, Equatable {
