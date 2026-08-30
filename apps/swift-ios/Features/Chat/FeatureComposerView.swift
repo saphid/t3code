@@ -24,6 +24,7 @@ struct FeatureComposerView: View {
     @Binding private var focused: Bool
     private let contextUsage: Double?
     private let forceExpanded: Bool
+    private let hasAttachedBanner: Bool
     private let pendingApprovals: [FeatureApproval]
     private let pendingUserInputs: [FeatureUserInput]
     private let isResolvingRequest: Bool
@@ -48,6 +49,7 @@ struct FeatureComposerView: View {
         onStop: @escaping () -> Void,
         contextUsage: Double? = nil,
         forceExpanded: Bool = false,
+        hasAttachedBanner: Bool = false,
         pendingApprovals: [FeatureApproval] = [],
         pendingUserInputs: [FeatureUserInput] = [],
         isResolvingRequest: Bool = false,
@@ -69,6 +71,7 @@ struct FeatureComposerView: View {
         self.onStop = onStop
         self.contextUsage = contextUsage
         self.forceExpanded = forceExpanded
+        self.hasAttachedBanner = hasAttachedBanner
         self.pendingApprovals = pendingApprovals
         self.pendingUserInputs = pendingUserInputs
         self.isResolvingRequest = isResolvingRequest
@@ -103,7 +106,7 @@ struct FeatureComposerView: View {
                 }
             }
             .padding(.horizontal, 12)
-            .padding(.top, 12)
+            .padding(.top, hasAttachedBanner ? 0 : 12)
             .padding(.bottom, 10)
             .background {
                 LinearGradient(

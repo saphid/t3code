@@ -457,31 +457,6 @@ public struct ThreadDetailView: View {
         )
     }
 
-    @ViewBuilder
-    private var refreshStatus: some View {
-        if let refreshPresentation {
-            HStack(spacing: 8) {
-                Label(refreshPresentation.title, systemImage: refreshPresentation.systemImage)
-                    .font(T3Typography.supporting)
-                    .foregroundStyle(T3Colors.textSecondary)
-                Spacer(minLength: 4)
-                if refreshPresentation.canRetry {
-                    Button(action: reloadThread) {
-                        Label("Retry", systemImage: "arrow.clockwise")
-                            .font(T3Typography.control)
-                    }
-                    .buttonStyle(.plain)
-                    .foregroundStyle(T3Colors.accent)
-                    .frame(minHeight: T3Metrics.minimumTapTarget)
-                    .accessibilityIdentifier("thread-refresh-retry")
-                }
-            }
-            .padding(.horizontal, 18)
-            .padding(.top, 8)
-            .accessibilityIdentifier("thread-refresh-status")
-        }
-    }
-
     private var headerBranch: String {
         if let branch = currentThread.branch?.trimmingCharacters(in: .whitespacesAndNewlines),
            !branch.isEmpty {
@@ -540,7 +515,12 @@ public struct ThreadDetailView: View {
         }
         .safeAreaInset(edge: .bottom, spacing: 0) {
             VStack(spacing: 0) {
-                refreshStatus
+                if let refreshPresentation {
+                    FeatureThreadRefreshBanner(
+                        presentation: refreshPresentation,
+                        onRetry: reloadThread
+                    )
+                }
                 FeatureComposerView(
                     text: $draft,
                     selection: $selection,
@@ -555,6 +535,7 @@ public struct ThreadDetailView: View {
                     onStop: {
                         Task { await model.cancelTurn(threadID: thread.id) }
                     },
+                    hasAttachedBanner: refreshPresentation != nil,
                     pendingApprovals: detail.approvals,
                     pendingUserInputs: detail.userInputs,
                     isResolvingRequest: model.isPerformingAction,
@@ -567,6 +548,7 @@ public struct ThreadDetailView: View {
                         Task { await model.resolveUserInput(id, answers: answers) }
                     }
                 )
+                .zIndex(1)
             }
             .background(T3Colors.background)
         }
