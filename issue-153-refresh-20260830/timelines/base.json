@@ -1,0 +1,84 @@
+{
+  "version": 1,
+  "coordinate_space": "normalized",
+  "events": [
+    {
+      "kind": "caption",
+      "start": 41.0,
+      "end": 44.0,
+      "caption": "Before: empty composer",
+      "caption_position": "top"
+    },
+    {
+      "kind": "caption",
+      "start": 49.0,
+      "end": 53.0,
+      "caption": "First paste: Image 1.jpg",
+      "caption_position": "top"
+    },
+    {
+      "kind": "caption",
+      "start": 65.0,
+      "end": 69.0,
+      "caption": "Second paste: Image 2.jpg",
+      "caption_position": "top"
+    },
+    {
+      "kind": "tap",
+      "at": 78.0,
+      "action_id": "base-remove-image-1",
+      "x": 0.16,
+      "y": 0.7,
+      "label": "Remove Image 1",
+      "expect": "Image 1 disappears while Image 2 remains"
+    },
+    {
+      "kind": "caption",
+      "start": 79.2,
+      "end": 83.2,
+      "caption": "Image 2 remains",
+      "caption_position": "top"
+    },
+    {
+      "kind": "caption",
+      "start": 90.0,
+      "end": 94.0,
+      "caption": "Paste again after removal",
+      "caption_position": "top"
+    },
+    {
+      "kind": "caption",
+      "start": 101.0,
+      "end": 106.5,
+      "caption": "Bug: both are Image 2.jpg",
+      "caption_position": "top"
+    }
+  ],
+  "title": "Issue 153 exact-base attachment ordinal collision",
+  "cuts": [
+    {
+      "start": 40.6,
+      "end": 44.5
+    },
+    {
+      "start": 48.6,
+      "end": 53.5
+    },
+    {
+      "start": 64.6,
+      "end": 69.5
+    },
+    {
+      "start": 77.6,
+      "end": 83.7
+    },
+    {
+      "start": 89.6,
+      "end": 94.5
+    },
+    {
+      "start": 100.6,
+      "end": 107.0
+    }
+  ]
+}

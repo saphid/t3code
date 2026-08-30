@@ -1,0 +1,48 @@
+{
+  "version": 1,
+  "title": "Issue 153 exact-base attachment ordinal collision",
+  "source": {
+    "path": "/Users/saphid/.local/state/t3/swiftui-delivery/issues/153/evidence/base/light-04-reattached.png",
+    "bytes": 229808,
+    "sha256": "e697a34b23019e476f534fbf748f8b233082decf2b911a6fa7fa3c00eb42b525"
+  },
+  "timeline": {
+    "path": "/Users/saphid/.local/state/t3/swiftui-delivery/issues/153/media-refresh-20260830/timelines/base.json",
+    "sha256": "e617140cd575dd826b694855fec98d0719c1e0d439358633ed0ee52075f4cda9"
+  },
+  "event": {
+    "index": 6,
+    "kind": "caption",
+    "caption": "Bug: both are Image 2.jpg"
+  },
+  "artifacts": {
+    "clean_image": {
+      "path": "/Users/saphid/.local/state/t3/swiftui-delivery/issues/153/media-refresh-20260830/images/before-light-image-clean.png",
+      "bytes": 162946,
+      "sha256": "fa2a7894ef37cded247e1f555bd3255f73a2ecd5ac4d47f8b71cfb9f63e9358a"
+    },
+    "annotated_image": {
+      "path": "/Users/saphid/.local/state/t3/swiftui-delivery/issues/153/media-refresh-20260830/images/before-light-image-annotated.png",
+      "bytes": 173429,
+      "sha256": "b43a33256ba4fc5df19fb932d1cf0224809cc1299c46115a9f38466af67abedd"
+    }
+  },
+  "source_dimensions": {
+    "width": 1206,
+    "height": 2622
+  },
+  "dimensions": {
+    "width": 1206,
+    "height": 2622
+  },
+  "parameters": {
+    "event": 6,
+    "deny_secret_patterns": []
+  },
+  "tools": {
+    "ffmpeg": "ffmpeg version 8.1.2 Copyright (c) 2000-2026 the FFmpeg developers",
+    "ffprobe": "ffprobe version 8.1.2 Copyright (c) 2007-2026 the FFmpeg developers",
+    "magick": "Version: ImageMagick 7.1.2-25 Q16-HDRI aarch64 037e46295:20260604 https://imagemagick.org"
+  },
+  "font": "/System/Library/Fonts/Supplemental/Verdana.ttf"
+}

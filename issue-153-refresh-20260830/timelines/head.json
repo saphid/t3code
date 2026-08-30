@@ -1,0 +1,97 @@
+{
+  "version": 1,
+  "coordinate_space": "normalized",
+  "events": [
+    {
+      "kind": "caption",
+      "start": 40.0,
+      "end": 43.0,
+      "caption": "After: empty composer",
+      "caption_position": "top"
+    },
+    {
+      "kind": "caption",
+      "start": 48.0,
+      "end": 52.0,
+      "caption": "First paste reserves Image 1.jpg",
+      "caption_position": "top"
+    },
+    {
+      "kind": "caption",
+      "start": 64.0,
+      "end": 68.0,
+      "caption": "Second paste reserves Image 2.jpg",
+      "caption_position": "top"
+    },
+    {
+      "kind": "tap",
+      "at": 70.0,
+      "action_id": "head-remove-image-1",
+      "x": 0.16,
+      "y": 0.7,
+      "label": "Remove Image 1",
+      "expect": "Image 1 disappears while Image 2 remains"
+    },
+    {
+      "kind": "caption",
+      "start": 71.2,
+      "end": 75.2,
+      "caption": "Image 2 remains",
+      "caption_position": "top"
+    },
+    {
+      "kind": "caption",
+      "start": 84.0,
+      "end": 89.0,
+      "caption": "Next paste reserves Image 3",
+      "caption_position": "top"
+    },
+    {
+      "kind": "tap",
+      "at": 100.0,
+      "action_id": "head-send-message",
+      "x": 0.91,
+      "y": 0.92,
+      "label": "Send",
+      "expect": "The submitted turn shows Image 2.jpg and Image 3.jpg"
+    },
+    {
+      "kind": "caption",
+      "start": 104.0,
+      "end": 110.0,
+      "caption": "Submitted: Image 2.jpg + Image 3.jpg",
+      "caption_position": "top"
+    }
+  ],
+  "title": "Issue 153 exact-head attachment ordinal reservation",
+  "cuts": [
+    {
+      "start": 39.6,
+      "end": 43.5
+    },
+    {
+      "start": 47.6,
+      "end": 52.5
+    },
+    {
+      "start": 63.6,
+      "end": 68.5
+    },
+    {
+      "start": 69.6,
+      "end": 75.7
+    },
+    {
+      "start": 83.6,
+      "end": 89.5
+    },
+    {
+      "start": 99.6,
+      "end": 101.6
+    },
+    {
+      "start": 103.6,
+      "end": 111.0
+    }
+  ]
+}

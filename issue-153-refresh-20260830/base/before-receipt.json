@@ -1,0 +1,192 @@
+{
+  "version": 1,
+  "title": "Issue 153 exact-base attachment ordinal collision",
+  "source": {
+    "path": "/Users/saphid/.local/state/t3/swiftui-delivery/issues/153/evidence/base/base-raw.mp4",
+    "bytes": 3672496,
+    "sha256": "e144787c8d9a220991782abbe8480e16124a901bfc9c6707c6f1055970ae17af",
+    "duration": 107.101667,
+    "width": 602,
+    "height": 1310,
+    "frame_rate": "115/12",
+    "frame_count": 1017,
+    "has_audio": false
+  },
+  "timeline": {
+    "path": "/Users/saphid/.local/state/t3/swiftui-delivery/issues/153/media-refresh-20260830/timelines/base.json",
+    "sha256": "8e8e3a8980284d87497623654336948ed1b0d2f66a2a9c4a4fee26d0936310f1"
+  },
+  "edit": {
+    "source_duration": 107.101667,
+    "output_duration": 31.1,
+    "requested_output_duration": 31.100000000000023,
+    "removed_duration": 76.001667,
+    "cuts": [
+      {
+        "start": 40.6,
+        "end": 44.5
+      },
+      {
+        "start": 48.6,
+        "end": 53.5
+      },
+      {
+        "start": 64.6,
+        "end": 69.5
+      },
+      {
+        "start": 77.6,
+        "end": 83.7
+      },
+      {
+        "start": 89.6,
+        "end": 94.5
+      },
+      {
+        "start": 100.6,
+        "end": 107.0
+      }
+    ],
+    "removed": [],
+    "auto_trim": false,
+    "no_auto_trim": false,
+    "freeze_minimum": 2.5,
+    "max_freeze": 2.0,
+    "freeze_noise": 0.002,
+    "silence_noise": "-45dB",
+    "poster_at": 105.0,
+    "timeline_poster_at": null,
+    "effective_poster_source_at": 105.0,
+    "deny_secret_patterns": [],
+    "digest": "04184064eee3a8ee4da0a9a4aef6adc5637adc483dd9ec83d7c652d67547c10f"
+  },
+  "events": [
+    {
+      "index": 0,
+      "kind": "caption",
+      "source_at": 41.0,
+      "output_at": 0.3999999999999986,
+      "caption": "Before: empty composer",
+      "caption_output": [
+        0.3999999999999986,
+        3.8999999999999986
+      ]
+    },
+    {
+      "index": 1,
+      "kind": "caption",
+      "source_at": 49.0,
+      "output_at": 4.299999999999997,
+      "caption": "First paste: Image 1.jpg",
+      "caption_output": [
+        4.299999999999997,
+        8.799999999999997
+      ]
+    },
+    {
+      "index": 2,
+      "kind": "caption",
+      "source_at": 65.0,
+      "output_at": 9.200000000000003,
+      "caption": "Second paste: Image 2.jpg",
+      "caption_output": [
+        9.200000000000003,
+        13.700000000000003
+      ]
+    },
+    {
+      "index": 3,
+      "kind": "tap",
+      "source_at": 78.0,
+      "output_at": 14.100000000000009,
+      "action_id": "base-remove-image-1",
+      "point": [
+        96,
+        916
+      ],
+      "caption": "Next: tap Remove Image 1\nExpected: Image 1 disappears while Image 2 remains",
+      "caption_output": [
+        13.750000000000014,
+        15.200000000000003
+      ]
+    },
+    {
+      "index": 4,
+      "kind": "caption",
+      "source_at": 79.2,
+      "output_at": 15.300000000000011,
+      "caption": "Image 2 remains",
+      "caption_output": [
+        15.300000000000011,
+        19.80000000000001
+      ]
+    },
+    {
+      "index": 5,
+      "kind": "caption",
+      "source_at": 90.0,
+      "output_at": 20.200000000000017,
+      "caption": "Paste again after removal",
+      "caption_output": [
+        20.200000000000017,
+        24.700000000000017
+      ]
+    },
+    {
+      "index": 6,
+      "kind": "caption",
+      "source_at": 101.0,
+      "output_at": 25.100000000000023,
+      "caption": "Bug: both are Image 2.jpg",
+      "caption_output": [
+        25.100000000000023,
+        31.1
+      ]
+    }
+  ],
+  "artifacts": {
+    "clean_video": {
+      "path": "/Users/saphid/.local/state/t3/swiftui-delivery/issues/153/media-refresh-20260830/base/before-clean.mp4",
+      "bytes": 723465,
+      "sha256": "52cef93b2f8047bd289d60a0a91d3e6f880e3ffe9f2c6b969feaa9ee9a365485",
+      "duration": 31.1,
+      "width": 602,
+      "height": 1310,
+      "frame_rate": "30/1",
+      "frame_count": 933,
+      "has_audio": false
+    },
+    "annotated_video": {
+      "path": "/Users/saphid/.local/state/t3/swiftui-delivery/issues/153/media-refresh-20260830/base/before-annotated.mp4",
+      "bytes": 844282,
+      "sha256": "be79dedc764c629e0fe648a6df4697de565027005a3d563d269d1bcd708dde89",
+      "duration": 31.1,
+      "width": 602,
+      "height": 1310,
+      "frame_rate": "30/1",
+      "frame_count": 933,
+      "has_audio": false
+    },
+    "clean_poster": {
+      "path": "/Users/saphid/.local/state/t3/swiftui-delivery/issues/153/media-refresh-20260830/base/before-clean.png",
+      "bytes": 84935,
+      "sha256": "ec5710f411305928acc2e85b44db94384e2fb9dcb7687feae77cf4c68d324466"
+    },
+    "annotated_poster": {
+      "path": "/Users/saphid/.local/state/t3/swiftui-delivery/issues/153/media-refresh-20260830/base/before-annotated.png",
+      "bytes": 96105,
+      "sha256": "6c75334a254000e2212e486f5106b6d8000611a03fd4cae1fc0bb2667707f455"
+    },
+    "contact_sheet": {
+      "path": "/Users/saphid/.local/state/t3/swiftui-delivery/issues/153/media-refresh-20260830/base/before-contact-sheet.png",
+      "bytes": 365878,
+      "sha256": "03b7b0146116bd05f35a529050a6abc54445951ef47d5fc059513a71bd0f2226"
+    }
+  },
+  "tools": {
+    "ffmpeg": "ffmpeg version 8.1.2 Copyright (c) 2000-2026 the FFmpeg developers",
+    "ffprobe": "ffprobe version 8.1.2 Copyright (c) 2007-2026 the FFmpeg developers",
+    "magick": "Version: ImageMagick 7.1.2-25 Q16-HDRI aarch64 037e46295:20260604 https://imagemagick.org"
+  },
+  "font": "/System/Library/Fonts/Supplemental/Verdana.ttf"
+}

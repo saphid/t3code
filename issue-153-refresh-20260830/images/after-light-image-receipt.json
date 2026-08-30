@@ -1,0 +1,48 @@
+{
+  "version": 1,
+  "title": "Issue 153 exact-head attachment ordinal reservation",
+  "source": {
+    "path": "/Users/saphid/.local/state/t3/swiftui-delivery/issues/153/evidence/head/light-06-sent.png",
+    "bytes": 318690,
+    "sha256": "36ee8535ac528b337cb9fcb65bc5d541b225fce213ddd35fe0bda9e80ce86e63"
+  },
+  "timeline": {
+    "path": "/Users/saphid/.local/state/t3/swiftui-delivery/issues/153/media-refresh-20260830/timelines/head.json",
+    "sha256": "dfbd1f5b8babe717309d5dd9a92b0265626ea71861d49f207060028bbd330f44"
+  },
+  "event": {
+    "index": 7,
+    "kind": "caption",
+    "caption": "Submitted: Image 2.jpg + Image 3.jpg"
+  },
+  "artifacts": {
+    "clean_image": {
+      "path": "/Users/saphid/.local/state/t3/swiftui-delivery/issues/153/media-refresh-20260830/images/after-light-image-clean.png",
+      "bytes": 239210,
+      "sha256": "43aa8ef04142afaa586642e72d131992b6435602ffe252177fede378e695b3ce"
+    },
+    "annotated_image": {
+      "path": "/Users/saphid/.local/state/t3/swiftui-delivery/issues/153/media-refresh-20260830/images/after-light-image-annotated.png",
+      "bytes": 246545,
+      "sha256": "f4ef3547399ba195ccdb9ad2a1f0ed39b96f84bdb394b1c84af52bfb14a20d00"
+    }
+  },
+  "source_dimensions": {
+    "width": 1206,
+    "height": 2622
+  },
+  "dimensions": {
+    "width": 1206,
+    "height": 2622
+  },
+  "parameters": {
+    "event": 7,
+    "deny_secret_patterns": []
+  },
+  "tools": {
+    "ffmpeg": "ffmpeg version 8.1.2 Copyright (c) 2000-2026 the FFmpeg developers",
+    "ffprobe": "ffprobe version 8.1.2 Copyright (c) 2007-2026 the FFmpeg developers",
+    "magick": "Version: ImageMagick 7.1.2-25 Q16-HDRI aarch64 037e46295:20260604 https://imagemagick.org"
+  },
+  "font": "/System/Library/Fonts/Supplemental/Verdana.ttf"
+}

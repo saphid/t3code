@@ -1,0 +1,212 @@
+{
+  "version": 1,
+  "title": "Issue 153 exact-head attachment ordinal reservation",
+  "source": {
+    "path": "/Users/saphid/.local/state/t3/swiftui-delivery/issues/153/evidence/head/head-raw.mp4",
+    "bytes": 3868913,
+    "sha256": "818fa8d40a610e66aadc8029ef7388ca520ec94eeb30c4232cd2cac1e4a867b1",
+    "duration": 114.315,
+    "width": 602,
+    "height": 1310,
+    "frame_rate": "115/12",
+    "frame_count": 1093,
+    "has_audio": false
+  },
+  "timeline": {
+    "path": "/Users/saphid/.local/state/t3/swiftui-delivery/issues/153/media-refresh-20260830/timelines/head.json",
+    "sha256": "4dc9a819e93e18e91559b06d7661cee6445d462afdc2b3190a48227883a5a09a"
+  },
+  "edit": {
+    "source_duration": 114.315,
+    "output_duration": 35.2,
+    "requested_output_duration": 35.100000000000016,
+    "removed_duration": 79.115,
+    "cuts": [
+      {
+        "start": 39.6,
+        "end": 43.5
+      },
+      {
+        "start": 47.6,
+        "end": 52.5
+      },
+      {
+        "start": 63.6,
+        "end": 68.5
+      },
+      {
+        "start": 69.6,
+        "end": 75.7
+      },
+      {
+        "start": 83.6,
+        "end": 89.5
+      },
+      {
+        "start": 99.6,
+        "end": 101.6
+      },
+      {
+        "start": 103.6,
+        "end": 111.0
+      }
+    ],
+    "removed": [],
+    "auto_trim": false,
+    "no_auto_trim": false,
+    "freeze_minimum": 2.5,
+    "max_freeze": 2.0,
+    "freeze_noise": 0.002,
+    "silence_noise": "-45dB",
+    "poster_at": 106.0,
+    "timeline_poster_at": null,
+    "effective_poster_source_at": 106.0,
+    "deny_secret_patterns": [],
+    "digest": "d48ac7a3a45074c48771f2cfe365a48a979182cef452363c7e4d585180f88bf7"
+  },
+  "events": [
+    {
+      "index": 0,
+      "kind": "caption",
+      "source_at": 40.0,
+      "output_at": 0.3999999999999986,
+      "caption": "After: empty composer",
+      "caption_output": [
+        0.3999999999999986,
+        3.8999999999999986
+      ]
+    },
+    {
+      "index": 1,
+      "kind": "caption",
+      "source_at": 48.0,
+      "output_at": 4.299999999999997,
+      "caption": "First paste reserves Image 1.jpg",
+      "caption_output": [
+        4.299999999999997,
+        8.799999999999997
+      ]
+    },
+    {
+      "index": 2,
+      "kind": "caption",
+      "source_at": 64.0,
+      "output_at": 9.199999999999996,
+      "caption": "Second paste reserves Image 2.jpg",
+      "caption_output": [
+        9.199999999999996,
+        13.699999999999996
+      ]
+    },
+    {
+      "index": 3,
+      "kind": "tap",
+      "source_at": 70.0,
+      "output_at": 14.099999999999994,
+      "action_id": "head-remove-image-1",
+      "point": [
+        96,
+        916
+      ],
+      "caption": "Next: tap Remove Image 1\nExpected: Image 1 disappears while Image 2 remains",
+      "caption_output": [
+        13.75,
+        15.199999999999989
+      ]
+    },
+    {
+      "index": 4,
+      "kind": "caption",
+      "source_at": 71.2,
+      "output_at": 15.300000000000011,
+      "caption": "Image 2 remains",
+      "caption_output": [
+        15.300000000000011,
+        19.800000000000004
+      ]
+    },
+    {
+      "index": 5,
+      "kind": "caption",
+      "source_at": 84.0,
+      "output_at": 20.200000000000017,
+      "caption": "Next paste reserves Image 3",
+      "caption_output": [
+        20.200000000000017,
+        25.70000000000001
+      ]
+    },
+    {
+      "index": 6,
+      "kind": "tap",
+      "source_at": 100.0,
+      "output_at": 26.100000000000023,
+      "action_id": "head-send-message",
+      "point": [
+        547,
+        1204
+      ],
+      "caption": "Next: tap Send\nExpected: The submitted turn shows Image 2.jpg and Image 3.jpg",
+      "caption_output": [
+        25.75000000000003,
+        27.200000000000017
+      ]
+    },
+    {
+      "index": 7,
+      "kind": "caption",
+      "source_at": 104.0,
+      "output_at": 28.100000000000023,
+      "caption": "Submitted: Image 2.jpg + Image 3.jpg",
+      "caption_output": [
+        28.100000000000023,
+        35.100000000000016
+      ]
+    }
+  ],
+  "artifacts": {
+    "clean_video": {
+      "path": "/Users/saphid/.local/state/t3/swiftui-delivery/issues/153/media-refresh-20260830/head/after-clean.mp4",
+      "bytes": 916067,
+      "sha256": "5b8f54b0b6c45f91c4e70489d6f2540456042e3bca7e7211d9c177651855e7bc",
+      "duration": 35.2,
+      "width": 602,
+      "height": 1310,
+      "frame_rate": "30/1",
+      "frame_count": 1056,
+      "has_audio": false
+    },
+    "annotated_video": {
+      "path": "/Users/saphid/.local/state/t3/swiftui-delivery/issues/153/media-refresh-20260830/head/after-annotated.mp4",
+      "bytes": 1069482,
+      "sha256": "60c5f9620131bde807598e26dca76e89f2e3b6ff22fb8da1f70e20f5f2bb2f5b",
+      "duration": 35.2,
+      "width": 602,
+      "height": 1310,
+      "frame_rate": "30/1",
+      "frame_count": 1056,
+      "has_audio": false
+    },
+    "clean_poster": {
+      "path": "/Users/saphid/.local/state/t3/swiftui-delivery/issues/153/media-refresh-20260830/head/after-clean.png",
+      "bytes": 115415,
+      "sha256": "b85ea6c5e28d1b4be736ea45cce532c1e6d7d732e19f7096dea765e0b830b580"
+    },
+    "annotated_poster": {
+      "path": "/Users/saphid/.local/state/t3/swiftui-delivery/issues/153/media-refresh-20260830/head/after-annotated.png",
+      "bytes": 125411,
+      "sha256": "f1665f1843d270795e8b5c5c9423377932bdd94ca7c82ae9f882c3d9b473b258"
+    },
+    "contact_sheet": {
+      "path": "/Users/saphid/.local/state/t3/swiftui-delivery/issues/153/media-refresh-20260830/head/after-contact-sheet.png",
+      "bytes": 564723,
+      "sha256": "204d15d2a5fa3f31fe6a9edaad1df2517c45f19957d83af2f69efa427b1c1bf0"
+    }
+  },
+  "tools": {
+    "ffmpeg": "ffmpeg version 8.1.2 Copyright (c) 2000-2026 the FFmpeg developers",
+    "ffprobe": "ffprobe version 8.1.2 Copyright (c) 2007-2026 the FFmpeg developers",
+    "magick": "Version: ImageMagick 7.1.2-25 Q16-HDRI aarch64 037e46295:20260604 https://imagemagick.org"
+  },
+  "font": "/System/Library/Fonts/Supplemental/Verdana.ttf"
+}

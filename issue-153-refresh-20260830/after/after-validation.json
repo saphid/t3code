@@ -1,0 +1,275 @@
+{
+  "version": 1,
+  "kind": "proof-packet-validation",
+  "verdict": "passed",
+  "packet_receipt": {
+    "path": "/Users/saphid/.local/state/t3/swiftui-delivery/issues/153/media-refresh-20260830/head/after-receipt.json",
+    "sha256": "6a71a81f20022871487b728e0118ee3e908d0b398f990b78434a3976596a188f"
+  },
+  "timeline": {
+    "path": "/Users/saphid/.local/state/t3/swiftui-delivery/issues/153/media-refresh-20260830/timelines/head.json",
+    "sha256": "4dc9a819e93e18e91559b06d7661cee6445d462afdc2b3190a48227883a5a09a"
+  },
+  "ledger": {
+    "kind": "proof-timeline",
+    "path": "/Users/saphid/.local/state/t3/swiftui-delivery/issues/153/media-refresh-20260830/timelines/head.json",
+    "sha256": "4dc9a819e93e18e91559b06d7661cee6445d462afdc2b3190a48227883a5a09a"
+  },
+  "source": {
+    "path": "/Users/saphid/.local/state/t3/swiftui-delivery/issues/153/evidence/head/head-raw.mp4",
+    "bytes": 3868913,
+    "sha256": "818fa8d40a610e66aadc8029ef7388ca520ec94eeb30c4232cd2cac1e4a867b1",
+    "duration": 114.315,
+    "width": 602,
+    "height": 1310,
+    "frame_rate": "115/12",
+    "frame_count": 1093,
+    "has_audio": false
+  },
+  "artifacts": {
+    "clean_video": {
+      "path": "/Users/saphid/.local/state/t3/swiftui-delivery/issues/153/media-refresh-20260830/head/after-clean.mp4",
+      "bytes": 916067,
+      "sha256": "5b8f54b0b6c45f91c4e70489d6f2540456042e3bca7e7211d9c177651855e7bc"
+    },
+    "annotated_video": {
+      "path": "/Users/saphid/.local/state/t3/swiftui-delivery/issues/153/media-refresh-20260830/head/after-annotated.mp4",
+      "bytes": 1069482,
+      "sha256": "60c5f9620131bde807598e26dca76e89f2e3b6ff22fb8da1f70e20f5f2bb2f5b"
+    },
+    "clean_poster": {
+      "path": "/Users/saphid/.local/state/t3/swiftui-delivery/issues/153/media-refresh-20260830/head/after-clean.png",
+      "bytes": 115415,
+      "sha256": "b85ea6c5e28d1b4be736ea45cce532c1e6d7d732e19f7096dea765e0b830b580"
+    },
+    "annotated_poster": {
+      "path": "/Users/saphid/.local/state/t3/swiftui-delivery/issues/153/media-refresh-20260830/head/after-annotated.png",
+      "bytes": 125411,
+      "sha256": "f1665f1843d270795e8b5c5c9423377932bdd94ca7c82ae9f882c3d9b473b258"
+    },
+    "contact_sheet": {
+      "path": "/Users/saphid/.local/state/t3/swiftui-delivery/issues/153/media-refresh-20260830/head/after-contact-sheet.png",
+      "bytes": 564723,
+      "sha256": "204d15d2a5fa3f31fe6a9edaad1df2517c45f19957d83af2f69efa427b1c1bf0"
+    }
+  },
+  "actions": [
+    {
+      "action_id": "head-remove-image-1",
+      "kind": "tap",
+      "source_at": 70.0,
+      "output_at": 14.099999999999994,
+      "expect": "Image 1 disappears while Image 2 remains",
+      "caption_sha256": "2194a4dce0388bd926f2fc8169cad38eaf4d4572ab438568fb2282af6ad87983",
+      "point": [
+        96,
+        916
+      ]
+    },
+    {
+      "action_id": "head-send-message",
+      "kind": "tap",
+      "source_at": 100.0,
+      "output_at": 26.100000000000023,
+      "expect": "The submitted turn shows Image 2.jpg and Image 3.jpg",
+      "caption_sha256": "54f6e9d578391a6f28cefac93dc2f58830d3f9163198723d0e15ffe0ded6ace5",
+      "point": [
+        547,
+        1204
+      ]
+    }
+  ],
+  "actionCount": 2,
+  "overlayWindows": [
+    {
+      "kind": "caption",
+      "id": "event-0",
+      "start": 0.3999999999999986,
+      "end": 3.8999999999999986,
+      "sample": 2.1499999999999986,
+      "crop": [
+        30,
+        0,
+        542,
+        524
+      ],
+      "cleanFrameSha256": "373410104101eaf1fc5bbeb4144e3c4588675f495ce9bbe6d157243e2449be44",
+      "annotatedFrameSha256": "66ecff9695d77a2ff900f39a966a726a15ce6e0820de5fdf03a59a1eea9ee76d",
+      "localVideoSsim": 0.6422122147132134,
+      "maximumLocalVideoSsim": 0.973743
+    },
+    {
+      "kind": "caption",
+      "id": "event-1",
+      "start": 4.299999999999997,
+      "end": 8.799999999999997,
+      "sample": 6.549999999999997,
+      "crop": [
+        30,
+        0,
+        542,
+        524
+      ],
+      "cleanFrameSha256": "76a4649cac57e5ae74287a8b17cf81885c5c8b82c7abe472188fa125e79b6120",
+      "annotatedFrameSha256": "fd5dcf870057908f37a37ae6e60fc67ace6b5225242f92d2a6dcedb1f1eb1129",
+      "localVideoSsim": 0.6454281829480162,
+      "maximumLocalVideoSsim": 0.973743
+    },
+    {
+      "kind": "caption",
+      "id": "event-2",
+      "start": 9.199999999999996,
+      "end": 13.699999999999996,
+      "sample": 11.449999999999996,
+      "crop": [
+        30,
+        0,
+        542,
+        524
+      ],
+      "cleanFrameSha256": "cf36a5168cbeee1790fe617ceea6e09e1c8d667b351e7caba74160b76094018b",
+      "annotatedFrameSha256": "3d2f106d51d4ffbdb5104e3fa770bf6a1dc61126816558c8d738ff9302abf681",
+      "localVideoSsim": 0.646113107743629,
+      "maximumLocalVideoSsim": 0.973743
+    },
+    {
+      "kind": "action",
+      "id": "head-remove-image-1",
+      "start": 14.019999999999994,
+      "end": 14.464999999999995,
+      "sample": 14.199999999999994,
+      "crop": [
+        64,
+        884,
+        64,
+        64
+      ],
+      "cleanFrameSha256": "163ef7cbc5a0efec3150e36856fec1a9db41c84b8b0a9ea81a673fc139becc6e",
+      "annotatedFrameSha256": "9b848846996701809115cbf81ce598a0cb2a2cd54fadade888d0f74e0e79d3b7",
+      "localVideoSsim": 0.7209344788236024,
+      "maximumLocalVideoSsim": 0.973743
+    },
+    {
+      "kind": "caption",
+      "id": "head-remove-image-1",
+      "start": 13.75,
+      "end": 15.199999999999989,
+      "sample": 14.474999999999994,
+      "crop": [
+        30,
+        786,
+        542,
+        524
+      ],
+      "cleanFrameSha256": "64b5b4eb8521e21d9deb554a0b80caddf890a2c3f83ae72dde8a8b3d4241b86d",
+      "annotatedFrameSha256": "3777b1833b0ce80214dcee09d37ef0b59140d5b8b7f06041444f429ca94528ef",
+      "localVideoSsim": 0.2718520610324331,
+      "maximumLocalVideoSsim": 0.973743
+    },
+    {
+      "kind": "caption",
+      "id": "event-4",
+      "start": 15.300000000000011,
+      "end": 19.800000000000004,
+      "sample": 17.550000000000008,
+      "crop": [
+        30,
+        0,
+        542,
+        524
+      ],
+      "cleanFrameSha256": "dd6e1ef3871d3dd8aac01d7587c06ecb2c4b55fc9ced932b29d5d7fb1bcdb6d9",
+      "annotatedFrameSha256": "6a0b3157d18fcb39f776c6f3963b5c355b19b3eddbf865fc786bc2000b82070d",
+      "localVideoSsim": 0.6400202753796723,
+      "maximumLocalVideoSsim": 0.973743
+    },
+    {
+      "kind": "caption",
+      "id": "event-5",
+      "start": 20.200000000000017,
+      "end": 25.70000000000001,
+      "sample": 22.950000000000014,
+      "crop": [
+        30,
+        0,
+        542,
+        524
+      ],
+      "cleanFrameSha256": "3d3d3b12864b484d8a2ddcc5debb2c8a2a41b20875f0c36bef7f2848d787469c",
+      "annotatedFrameSha256": "1973ad9779310959129c537da4d3bddf34975f749c91bab1663519d53f564692",
+      "localVideoSsim": 0.6436922945159064,
+      "maximumLocalVideoSsim": 0.973743
+    },
+    {
+      "kind": "action",
+      "id": "head-send-message",
+      "start": 26.020000000000024,
+      "end": 26.46500000000002,
+      "sample": 26.200000000000024,
+      "crop": [
+        514,
+        1172,
+        64,
+        64
+      ],
+      "cleanFrameSha256": "62c79267b53063136fb042dbd85e798925edb34e81eeeb67e64c62917832f401",
+      "annotatedFrameSha256": "d7a1101bcf6a88811c54ac165e3c3ead55d9bce032ee60da813eb61689b88b66",
+      "localVideoSsim": 0.21668370714286517,
+      "maximumLocalVideoSsim": 0.973743
+    },
+    {
+      "kind": "caption",
+      "id": "head-send-message",
+      "start": 25.75000000000003,
+      "end": 27.200000000000017,
+      "sample": 26.475000000000023,
+      "crop": [
+        30,
+        786,
+        542,
+        524
+      ],
+      "cleanFrameSha256": "6eea5dfdc5eb613110a9c0d99933748be92c22877d37d84358321bccd0bbaaeb",
+      "annotatedFrameSha256": "98b3c19485a5e952162a69ae761e51ddcbf35c93d42e5a442a0ea581537d8eaa",
+      "localVideoSsim": 0.25874537220176375,
+      "maximumLocalVideoSsim": 0.973743
+    },
+    {
+      "kind": "caption",
+      "id": "event-7",
+      "start": 28.100000000000023,
+      "end": 35.100000000000016,
+      "sample": 31.60000000000002,
+      "crop": [
+        30,
+        0,
+        542,
+        524
+      ],
+      "cleanFrameSha256": "eebe090f036bb6efeb3652c12b3a3d718b73b02016fbc925a7204bea31392f1e",
+      "annotatedFrameSha256": "9eedd43fa2043f7b64f381b49e411ed3f1b0fac31caa4eece17e8e990ef2c69c",
+      "localVideoSsim": 0.7593238025098596,
+      "maximumLocalVideoSsim": 0.973743
+    }
+  ],
+  "pairing": {
+    "width": 602,
+    "height": 1310,
+    "frameRate": "30/1",
+    "frameCount": 1056,
+    "cleanDuration": 35.2,
+    "annotatedDuration": 35.2,
+    "durationDelta": 0.0,
+    "videoSsim": 0.974743,
+    "minimumVideoSsim": 0.75,
+    "decodedAudioSha256": null
+  },
+  "tools": {
+    "ffmpeg": "ffmpeg version 8.1.2 Copyright (c) 2000-2026 the FFmpeg developers",
+    "ffprobe": "ffprobe version 8.1.2 Copyright (c) 2007-2026 the FFmpeg developers"
+  },
+  "seal": {
+    "algorithm": "sha256",
+    "canonicalPayloadSha256": "ba7fba19a7044dbcff645c63d7eb89ee08e5d9618410d1d5dfe0e72fedd47fc2"
+  }
+}
