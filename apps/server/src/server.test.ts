@@ -7766,6 +7766,268 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
+  it.effect("uses the exact local commit when origin lacks the selected bootstrap branch", () =>
+    Effect.gen(function* () {
+      const dispatchedCommands: Array<OrchestrationCommand> = [];
+      const bootstrapGitOperations: string[] = [];
+      const localCommit = "fedcba9876543210fedcba9876543210fedcba98";
+      const remoteExists = vi.fn(
+        (_: Parameters<GitVcsDriver.GitVcsDriver["Service"]["remoteExists"]>[0]) =>
+          Effect.sync(() => {
+            bootstrapGitOperations.push("remote-exists");
+            return true;
+          }),
+      );
+      const fetchRemote = vi.fn(
+        (_: Parameters<GitVcsDriver.GitVcsDriver["Service"]["fetchRemote"]>[0]) =>
+          Effect.sync(() => {
+            bootstrapGitOperations.push("fetch");
+          }),
+      );
+      const resolveRemoteTrackingCommit = vi.fn(
+        (_: Parameters<GitVcsDriver.GitVcsDriver["Service"]["resolveRemoteTrackingCommit"]>[0]) =>
+          Effect.sync(() => {
+            bootstrapGitOperations.push("resolve-remote-commit");
+            return null;
+          }),
+      );
+      const resolveCommit = vi.fn(
+        (_: Parameters<GitVcsDriver.GitVcsDriver["Service"]["resolveCommit"]>[0]) =>
+          Effect.sync(() => {
+            bootstrapGitOperations.push("resolve-local-commit");
+            return { commitSha: localCommit };
+          }),
+      );
+      const createWorktree = vi.fn(
+        (_: Parameters<GitVcsDriver.GitVcsDriver["Service"]["createWorktree"]>[0]) =>
+          Effect.sync(() => {
+            bootstrapGitOperations.push("create-worktree");
+            return {
+              worktree: {
+                refName: "t3code/bootstrap-local-ref",
+                path: "/tmp/bootstrap-local-worktree",
+              },
+            };
+          }),
+      );
+
+      yield* buildAppUnderTest({
+        layers: {
+          gitVcsDriver: {
+            remoteExists,
+            fetchRemote,
+            resolveRemoteTrackingCommit,
+            resolveCommit,
+            createWorktree,
+          },
+          orchestrationEngine: {
+            dispatch: (command) =>
+              Effect.sync(() => {
+                dispatchedCommands.push(command);
+                return { sequence: dispatchedCommands.length };
+              }),
+            readEvents: () => Stream.empty,
+          },
+        },
+      });
+
+      const createdAt = "2026-01-01T00:00:00.000Z";
+      const wsUrl = yield* getWsServerUrl("/ws");
+      yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[ORCHESTRATION_WS_METHODS.dispatchCommand]({
+            type: "thread.turn.start",
+            commandId: CommandId.make("cmd-bootstrap-local-fallback"),
+            threadId: ThreadId.make("thread-bootstrap-local-fallback"),
+            message: {
+              messageId: MessageId.make("msg-bootstrap-local-fallback"),
+              role: "user",
+              text: "hello",
+              attachments: [],
+            },
+            modelSelection: defaultModelSelection,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            bootstrap: {
+              createThread: {
+                projectId: defaultProjectId,
+                title: "Bootstrap Thread",
+                modelSelection: defaultModelSelection,
+                runtimeMode: "full-access",
+                interactionMode: "default",
+                branch: "local-only",
+                worktreePath: null,
+                createdAt,
+              },
+              prepareWorktree: {
+                projectCwd: "/tmp/project",
+                baseBranch: "local-only",
+                branch: "t3code/bootstrap-local-ref",
+                startFromOrigin: true,
+              },
+            },
+            createdAt,
+          }),
+        ),
+      );
+
+      assert.deepEqual(resolveCommit.mock.calls[0]?.[0], {
+        cwd: "/tmp/project",
+        revision: "local-only",
+      });
+      assert.deepEqual(createWorktree.mock.calls[0]?.[0], {
+        cwd: "/tmp/project",
+        refName: localCommit,
+        newRefName: "t3code/bootstrap-local-ref",
+        baseRefName: "local-only",
+        path: null,
+      });
+      assert.deepEqual(bootstrapGitOperations, [
+        "remote-exists",
+        "fetch",
+        "resolve-remote-commit",
+        "resolve-local-commit",
+        "create-worktree",
+      ]);
+      assert.deepEqual(
+        dispatchedCommands.map((command) => command.type),
+        ["thread.create", "thread.meta.update", "thread.turn.start"],
+      );
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect(
+    "cleans up a missing local and remote base before retrying with a fresh thread identity",
+    () =>
+      Effect.gen(function* () {
+        const dispatchedCommands: Array<OrchestrationCommand> = [];
+        const retryCommit = "abcdef0123456789abcdef0123456789abcdef01";
+        const resolveCommit = vi.fn(
+          (input: Parameters<GitVcsDriver.GitVcsDriver["Service"]["resolveCommit"]>[0]) =>
+            input.revision === "missing"
+              ? Effect.fail(
+                  new GitCommandError({
+                    operation: "GitVcsDriver.resolveCommit",
+                    command: "git rev-parse --verify",
+                    cwd: input.cwd,
+                    exitCode: 128,
+                    detail: "git could not resolve 'missing' to a commit",
+                  }),
+                )
+              : Effect.succeed({ commitSha: retryCommit }),
+        );
+        const createWorktree = vi.fn(
+          (input: Parameters<GitVcsDriver.GitVcsDriver["Service"]["createWorktree"]>[0]) =>
+            Effect.succeed({
+              worktree: {
+                refName: input.newRefName ?? input.refName,
+                path: "/tmp/bootstrap-retry-worktree",
+              },
+            }),
+        );
+
+        yield* buildAppUnderTest({
+          layers: {
+            gitVcsDriver: {
+              remoteExists: () => Effect.succeed(true),
+              fetchRemote: () => Effect.void,
+              resolveRemoteTrackingCommit: () => Effect.succeed(null),
+              resolveCommit,
+              createWorktree,
+            },
+            orchestrationEngine: {
+              dispatch: (command) =>
+                Effect.sync(() => {
+                  dispatchedCommands.push(command);
+                  return { sequence: dispatchedCommands.length };
+                }),
+              readEvents: () => Stream.empty,
+            },
+          },
+        });
+
+        const createdAt = "2026-01-01T00:00:00.000Z";
+        const wsUrl = yield* getWsServerUrl("/ws");
+        const dispatchBootstrap = (
+          threadId: ThreadId,
+          commandId: CommandId,
+          messageId: MessageId,
+          baseBranch: string,
+        ) =>
+          Effect.scoped(
+            withWsRpcClient(wsUrl, (client) =>
+              client[ORCHESTRATION_WS_METHODS.dispatchCommand]({
+                type: "thread.turn.start",
+                commandId,
+                threadId,
+                message: { messageId, role: "user", text: "hello", attachments: [] },
+                modelSelection: defaultModelSelection,
+                runtimeMode: "full-access",
+                interactionMode: "default",
+                bootstrap: {
+                  createThread: {
+                    projectId: defaultProjectId,
+                    title: "Bootstrap Thread",
+                    modelSelection: defaultModelSelection,
+                    runtimeMode: "full-access",
+                    interactionMode: "default",
+                    branch: baseBranch,
+                    worktreePath: null,
+                    createdAt,
+                  },
+                  prepareWorktree: {
+                    projectCwd: "/tmp/project",
+                    baseBranch,
+                    branch: `t3code/${baseBranch}`,
+                    startFromOrigin: true,
+                  },
+                },
+                createdAt,
+              }),
+            ),
+          );
+
+        const failed = yield* dispatchBootstrap(
+          ThreadId.make("thread-bootstrap-missing"),
+          CommandId.make("cmd-bootstrap-missing"),
+          MessageId.make("msg-bootstrap-missing"),
+          "missing",
+        ).pipe(Effect.result);
+        assertTrue(failed._tag === "Failure");
+        assertTrue(failed.failure._tag === "OrchestrationDispatchCommandError");
+        assert.include(failed.failure.message, "git could not resolve 'missing' to a commit");
+        assert.strictEqual(failed.failure.bootstrapThreadDisposition, "deleted");
+
+        yield* dispatchBootstrap(
+          ThreadId.make("thread-bootstrap-retry"),
+          CommandId.make("cmd-bootstrap-retry"),
+          MessageId.make("msg-bootstrap-retry"),
+          "local-only",
+        );
+
+        assert.deepEqual(
+          dispatchedCommands.map((command) => ({
+            type: command.type,
+            threadId: "threadId" in command ? command.threadId : null,
+          })),
+          [
+            { type: "thread.create", threadId: ThreadId.make("thread-bootstrap-missing") },
+            { type: "thread.delete", threadId: ThreadId.make("thread-bootstrap-missing") },
+            { type: "thread.create", threadId: ThreadId.make("thread-bootstrap-retry") },
+            { type: "thread.meta.update", threadId: ThreadId.make("thread-bootstrap-retry") },
+            { type: "thread.turn.start", threadId: ThreadId.make("thread-bootstrap-retry") },
+          ],
+        );
+        assert.deepEqual(createWorktree.mock.calls[0]?.[0], {
+          cwd: "/tmp/project",
+          refName: retryCommit,
+          newRefName: "t3code/local-only",
+          baseRefName: "local-only",
+          path: null,
+        });
+      }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
   it.effect(
     "falls back to the local base branch when startFromOrigin is set but no origin remote exists",
     () =>

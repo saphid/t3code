@@ -1533,7 +1533,7 @@ export const make = Effect.gen(function* () {
         fallbackRemoteName: remoteName,
       })
       .pipe(
-        Effect.map((resolved) => resolved.commitSha),
+        Effect.map((resolved) => resolved?.commitSha ?? baseBranch),
         Effect.orElseSucceed(() => baseBranch),
       );
   });

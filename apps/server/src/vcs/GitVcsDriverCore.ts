@@ -3013,6 +3013,11 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       );
       const remoteRefName =
         parsedRemoteRef?.remoteRef ?? `${input.fallbackRemoteName}/${input.refName}`;
+      const remoteName = parsedRemoteRef?.remoteName ?? input.fallbackRemoteName;
+      const branchName = parsedRemoteRef?.branchName ?? input.refName;
+      if (!(yield* remoteBranchExists(input.cwd, remoteName, branchName))) {
+        return null;
+      }
       const commitSha = yield* runGitStdout("GitVcsDriver.resolveRemoteTrackingCommit", input.cwd, [
         "rev-parse",
         "--verify",
