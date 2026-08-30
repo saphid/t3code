@@ -5416,7 +5416,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         }
     }
 
-    private func mapOptionSelections(
+    static func mapOptionSelections(
         _ selections: [ModelSelection.OptionSelection]?
     ) -> [FeatureModelOptionSelection] {
         (selections ?? []).compactMap { selection in
@@ -5431,6 +5431,12 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
             }
             return FeatureModelOptionSelection(id: selection.id, value: value)
         }
+    }
+
+    private func mapOptionSelections(
+        _ selections: [ModelSelection.OptionSelection]?
+    ) -> [FeatureModelOptionSelection] {
+        Self.mapOptionSelections(selections)
     }
 
     private func mapOptionDescriptor(

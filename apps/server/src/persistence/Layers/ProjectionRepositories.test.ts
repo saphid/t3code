@@ -3,6 +3,7 @@ import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import { SqlitePersistenceMemory } from "./Sqlite.ts";
@@ -18,6 +19,7 @@ const projectionRepositoriesLayer = it.layer(
     SqlitePersistenceMemory,
   ),
 );
+const encodeUnknownJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 
 projectionRepositoriesLayer("Projection repositories", (it) => {
   it.effect("stores SQL NULL for missing project model options", () =>
@@ -133,6 +135,73 @@ projectionRepositoriesLayer("Projection repositories", (it) => {
         instanceId: ProviderInstanceId.make("claudeAgent"),
         model: "claude-opus-4-6",
       });
+    }),
+  );
+
+  it.effect("repairs terminal-polluted OpenCode selections on read without rewriting storage", () =>
+    Effect.gen(function* () {
+      const threads = yield* ProjectionThreadRepository;
+      const sql = yield* SqlClient.SqlClient;
+      const threadId = ThreadId.make("thread-polluted-opencode-options");
+      const pollutedSelection = {
+        instanceId: "opencode",
+        model: "\u001b]0;/tmp: ready\u0007openrouter/模型:v2",
+        options: [
+          { id: "agent", value: "\u001b]0;/tmp: ready\u001b\\编译-β" },
+          { id: "variant", value: "\u001b[36mxhigh/v2\u001b[0m" },
+        ],
+      };
+
+      yield* threads.upsert({
+        threadId,
+        projectId: ProjectId.make("project-polluted-options"),
+        title: "Polluted OpenCode thread",
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("opencode"),
+          model: "openrouter/模型:v2",
+        },
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+        latestTurnId: null,
+        createdAt: "2026-08-30T00:00:00.000Z",
+        updatedAt: "2026-08-30T00:00:00.000Z",
+        archivedAt: null,
+        settledOverride: null,
+        settledAt: null,
+        unsettledAt: null,
+        snoozedUntil: null,
+        snoozedAt: null,
+        pinnedAt: null,
+        latestUserMessageAt: null,
+        pendingApprovalCount: 0,
+        pendingUserInputCount: 0,
+        hasActionableProposedPlan: 0,
+        deletedAt: null,
+      });
+      const pollutedJson = encodeUnknownJson(pollutedSelection);
+      yield* sql`
+        UPDATE projection_threads
+        SET model_selection_json = ${pollutedJson}
+        WHERE thread_id = ${threadId}
+      `;
+
+      const persisted = Option.getOrNull(yield* threads.getById({ threadId }));
+      assert.deepStrictEqual(persisted?.modelSelection, {
+        instanceId: ProviderInstanceId.make("opencode"),
+        model: "openrouter/模型:v2",
+        options: [
+          { id: "agent", value: "编译-β" },
+          { id: "variant", value: "xhigh/v2" },
+        ],
+      });
+      const rows = yield* sql<{ readonly modelSelection: string }>`
+        SELECT model_selection_json AS "modelSelection"
+        FROM projection_threads
+        WHERE thread_id = ${threadId}
+      `;
+      assert.strictEqual(rows[0]?.modelSelection, pollutedJson);
     }),
   );
 

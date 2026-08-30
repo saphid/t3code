@@ -1,8 +1,10 @@
 import {
   type ModelCapabilities,
   type OpenCodeSettings,
+  sanitizeTerminalValue,
   type ServerProviderModel,
   type ServerProviderSkill,
+  stripTerminalControls,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Data from "effect/Data";
@@ -174,14 +176,23 @@ function openCodeCapabilitiesForModel(input: {
   readonly model: ProviderListResponse["all"][number]["models"][string];
   readonly agents: ReadonlyArray<Agent>;
 }): ModelCapabilities {
-  const variantValues = Object.keys(input.model.variants ?? {});
+  const variantValues = [
+    ...new Set(
+      Object.keys(input.model.variants ?? {})
+        .map(sanitizeTerminalValue)
+        .filter((value) => value.length > 0),
+    ),
+  ];
   const defaultVariant = inferDefaultVariant(input.providerID, variantValues);
   const variantOptions = variantValues.map((value) =>
     defaultVariant === value
       ? { id: value, label: titleCaseSlug(value), isDefault: true as const }
       : { id: value, label: titleCaseSlug(value) },
   );
-  const primaryAgents = input.agents.filter(
+  const sanitizedAgents = input.agents
+    .map((agent) => ({ ...agent, name: sanitizeTerminalValue(agent.name) }))
+    .filter((agent) => agent.name.length > 0);
+  const primaryAgents = sanitizedAgents.filter(
     (agent) => !agent.hidden && (agent.mode === "primary" || agent.mode === "all"),
   );
   const defaultAgent = inferDefaultAgent(primaryAgents);
@@ -219,28 +230,30 @@ function openCodeCapabilitiesForModel(input: {
 }
 
 function flattenOpenCodeModels(input: OpenCodeInventory): ReadonlyArray<ServerProviderModel> {
-  const connected = new Set(input.providerList.connected);
+  const connected = new Set(input.providerList.connected.map(sanitizeTerminalValue));
   const models: Array<ServerProviderModel> = [];
 
   for (const provider of input.providerList.all) {
-    if (!connected.has(provider.id)) {
+    const providerID = sanitizeTerminalValue(provider.id);
+    if (!providerID || !connected.has(providerID)) {
       continue;
     }
 
     for (const model of Object.values(provider.models)) {
-      const name = nonEmptyTrimmed(model.name);
-      if (!name) {
+      const modelID = sanitizeTerminalValue(model.id);
+      const name = nonEmptyTrimmed(sanitizeTerminalValue(model.name));
+      if (!modelID || !name) {
         continue;
       }
 
-      const subProvider = nonEmptyTrimmed(provider.name);
+      const subProvider = nonEmptyTrimmed(sanitizeTerminalValue(provider.name));
       models.push({
-        slug: `${provider.id}/${model.id}`,
+        slug: `${providerID}/${modelID}`,
         name,
         ...(subProvider ? { subProvider } : {}),
         isCustom: false,
         capabilities: openCodeCapabilitiesForModel({
-          providerID: provider.id,
+          providerID,
           model,
           agents: input.agents,
         }),
@@ -252,7 +265,7 @@ function flattenOpenCodeModels(input: OpenCodeInventory): ReadonlyArray<ServerPr
 }
 
 function trimOptional(value: string | null | undefined): string | undefined {
-  const trimmed = value?.trim();
+  const trimmed = typeof value === "string" ? sanitizeTerminalValue(value) : undefined;
   return trimmed && trimmed.length > 0 ? trimmed : undefined;
 }
 
@@ -390,7 +403,7 @@ export const checkOpenCodeProviderStatus = Effect.fn("checkOpenCodeProviderStatu
     if (versionExit._tag === "Failure") {
       return fallback(Cause.squash(versionExit.cause));
     }
-    version = parseGenericCliVersion(versionExit.value.stdout) ?? null;
+    version = parseGenericCliVersion(stripTerminalControls(versionExit.value.stdout)) ?? null;
 
     if (!version) {
       return fallback(

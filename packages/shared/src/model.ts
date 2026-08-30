@@ -6,6 +6,7 @@ import {
   type ModelSelection,
   ProviderDriverKind,
   ProviderInstanceId,
+  sanitizeTerminalValue,
   type ProviderOptionDescriptor,
   type ProviderOptionSelection,
 } from "@t3tools/contracts";
@@ -45,7 +46,9 @@ export function getProviderOptionStringSelectionValue(
   id: string,
 ): string | undefined {
   const value = getProviderOptionSelectionValue(selections, id);
-  return typeof value === "string" ? value : undefined;
+  if (typeof value !== "string") return undefined;
+  const sanitized = sanitizeTerminalValue(value);
+  return sanitized.length > 0 ? sanitized : undefined;
 }
 
 export function getProviderOptionBooleanSelectionValue(
@@ -254,7 +257,7 @@ export function normalizeCustomModelSlug(model: string | null | undefined): stri
     return null;
   }
 
-  return model.trim() || null;
+  return sanitizeTerminalValue(model) || null;
 }
 
 export function resolveSelectableModel(

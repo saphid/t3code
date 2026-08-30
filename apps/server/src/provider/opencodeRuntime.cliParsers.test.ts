@@ -154,6 +154,30 @@ describe("parseModelsCliOutput", () => {
     NodeAssert.equal(model.id, "qwen/qwen3-coder");
     NodeAssert.equal(model.providerID, "openrouter");
   });
+
+  it("removes terminal titles and CSI without changing Unicode model identifiers", () => {
+    const stdout = [
+      "\u001b]0;/tmp: ready\u0007openrouter/模型:v2",
+      JSON.stringify({ id: "模型:v2", providerID: "openrouter", name: "模型 β" }),
+      "\u001b]2;title\u001b\\\u001b[32mopenai/gpt-5\u001b[0m",
+      JSON.stringify({ id: "gpt-5", providerID: "openai", name: "GPT-5" }),
+    ].join("\n");
+
+    const result = parseModelsCliOutput(stdout);
+    NodeAssert.ok(result.providers.get("openrouter")!.models["模型:v2"]);
+    NodeAssert.ok(result.providers.get("openai")!.models["gpt-5"]);
+  });
+
+  it("drops an unterminated title line without swallowing the next model", () => {
+    const stdout = [
+      "\u001b]0;unterminated title",
+      "openai/gpt-5",
+      JSON.stringify({ id: "gpt-5", providerID: "openai", name: "GPT-5" }),
+    ].join("\n");
+
+    const result = parseModelsCliOutput(stdout);
+    NodeAssert.ok(result.providers.get("openai")!.models["gpt-5"]);
+  });
 });
 
 describe("parseAgentListCliOutput", () => {
@@ -255,9 +279,27 @@ describe("parseAgentListCliOutput", () => {
     NodeAssert.equal(result[0]!.hidden, true);
     NodeAssert.equal(result[1]!.hidden, false);
   });
+
+  it("removes OSC and CSI while preserving a Unicode agent identifier", () => {
+    const stdout = [
+      "\u001b]0;/tmp: ready\u001b\\\u001b[34m编译-β (primary)\u001b[0m",
+      "  " + JSON.stringify([{ permission: "*", action: "allow", pattern: "*" }]),
+    ].join("\n");
+
+    const result = parseAgentListCliOutput(stdout);
+    NodeAssert.equal(result[0]!.name, "编译-β");
+  });
 });
 
 describe("parseSkillsCliOutput", () => {
+  it("removes an OSC title before parsing skill JSON", () => {
+    const result = parseSkillsCliOutput(
+      "\u001b]0;/tmp: ready\u0007" +
+        JSON.stringify([{ name: "审查-β", location: "/tmp/审查/SKILL.md" }]),
+    );
+
+    NodeAssert.equal(result[0]!.name, "审查-β");
+  });
   it("parses only skill metadata from the CLI JSON output", () => {
     const result = parseSkillsCliOutput(
       JSON.stringify([

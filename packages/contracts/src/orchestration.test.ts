@@ -941,6 +941,25 @@ it.effect("ModelSelection accepts an explicit instanceId routing key", () =>
   }),
 );
 
+it.effect("ModelSelection repairs terminal-polluted persisted OpenCode values", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeModelSelection({
+      instanceId: "opencode",
+      model: "\u001b]0;/tmp: ready\u0007openrouter/模型:v2",
+      options: [
+        { id: "agent", value: "\u001b]0;/tmp: ready\u001b\\编译-β" },
+        { id: "variant", value: "\u001b[35mxhigh/v2\u001b[0m" },
+      ],
+    });
+
+    assert.strictEqual(parsed.model, "openrouter/模型:v2");
+    assert.deepStrictEqual(parsed.options, [
+      { id: "agent", value: "编译-β" },
+      { id: "variant", value: "xhigh/v2" },
+    ]);
+  }),
+);
+
 it.effect("ModelSelection prefers explicit instanceId over legacy provider", () =>
   Effect.gen(function* () {
     const parsed = yield* decodeModelSelection({

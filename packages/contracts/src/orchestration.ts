@@ -23,6 +23,7 @@ import {
   TurnId,
 } from "./baseSchemas.ts";
 import { ProviderInstanceId } from "./providerInstance.ts";
+import { sanitizeTerminalValue } from "./terminal.ts";
 
 export const ORCHESTRATION_WS_METHODS = {
   dispatchCommand: "orchestration.dispatchCommand",
@@ -99,7 +100,7 @@ export const ModelSelection = ModelSelectionSource.pipe(
               : undefined;
         const base: Record<string, unknown> = {
           instanceId: instanceIdSource,
-          model: raw.model,
+          model: typeof raw.model === "string" ? sanitizeTerminalValue(raw.model) : raw.model,
         };
         if (raw.options !== undefined) base.options = raw.options;
         return Effect.succeed(base as typeof ModelSelectionWire.Encoded);

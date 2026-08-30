@@ -12,6 +12,8 @@ import {
   TerminalSessionSnapshot,
   TerminalThreadInput,
   TerminalWriteInput,
+  sanitizeTerminalValue,
+  stripTerminalControls,
 } from "./terminal.ts";
 
 function decodeSync<S extends Schema.Top>(schema: S, input: unknown): Schema.Schema.Type<S> {
@@ -26,6 +28,28 @@ function decodes<S extends Schema.Top>(schema: S, input: unknown): boolean {
     return false;
   }
 }
+
+describe("terminal control sanitization", () => {
+  it("removes OSC BEL and ST titles plus CSI formatting", () => {
+    expect(
+      stripTerminalControls(
+        "\u001b]0;/tmp: ready\u0007\u001b[31mbuild\u001b[0m\n\u001b]2;title\u001b\\编译-β",
+      ),
+    ).toBe("build\n编译-β");
+  });
+
+  it("bounds malformed control strings at a line break", () => {
+    expect(stripTerminalControls("\u001b]0;unterminated title\nopenai/gpt-5")).toBe(
+      "\nopenai/gpt-5",
+    );
+  });
+
+  it("preserves printable Unicode and distinct clean identifiers", () => {
+    const identifiers = ["编译-β", "编译-γ", "mistral/模型:v2", "agent_éclair"];
+    expect(identifiers.map(sanitizeTerminalValue)).toEqual(identifiers);
+    expect(new Set(identifiers.map(sanitizeTerminalValue)).size).toBe(identifiers.length);
+  });
+});
 
 describe("TerminalOpenInput", () => {
   it("accepts valid open input", () => {

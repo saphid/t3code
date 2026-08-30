@@ -856,6 +856,39 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
     }).pipe(Effect.provide(adapterLayer));
   });
 
+  it.effect("repairs persisted terminal controls before sending an OpenCode turn", () =>
+    Effect.gen(function* () {
+      const adapter = yield* OpenCodeAdapter;
+      const threadId = asThreadId("thread-polluted-options");
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("opencode"),
+        threadId,
+        runtimeMode: "full-access",
+      });
+
+      yield* adapter.sendTurn({
+        threadId,
+        input: "Continue",
+        modelSelection: createModelSelection(
+          ProviderInstanceId.make("opencode"),
+          "\u001b]0;/tmp: ready\u0007openrouter/模型:v2",
+          [
+            { id: "agent", value: "\u001b]0;/tmp: ready\u0007编译-β" },
+            { id: "variant", value: "\u001b[35mxhigh/v2\u001b[0m" },
+          ],
+        ),
+      });
+
+      NodeAssert.deepEqual(runtimeMock.state.promptCalls.at(-1), {
+        sessionID: "http://127.0.0.1:9999/session",
+        model: { providerID: "openrouter", modelID: "模型:v2" },
+        agent: "编译-β",
+        variant: "xhigh/v2",
+        parts: [{ type: "text", text: "Continue" }],
+      });
+    }),
+  );
+
   it.effect("uses the bound custom instance id for fallback sendTurn model selection", () => {
     const instanceId = ProviderInstanceId.make("opencode_zen");
     const adapterLayer = Layer.effect(

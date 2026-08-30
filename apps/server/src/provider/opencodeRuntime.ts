@@ -1,6 +1,12 @@
 import * as NodeURL from "node:url";
 
-import type { ChatAttachment, ProviderApprovalDecision, RuntimeMode } from "@t3tools/contracts";
+import {
+  sanitizeTerminalValue,
+  stripTerminalControls,
+  type ChatAttachment,
+  type ProviderApprovalDecision,
+  type RuntimeMode,
+} from "@t3tools/contracts";
 import {
   createOpencodeClient,
   type Agent,
@@ -216,7 +222,7 @@ export function parseModelsCliOutput(stdout: string): {
     string,
     { id: string; name: string; models: { [key: string]: Model } }
   >();
-  const lines = stdout.split("\n");
+  const lines = stripTerminalControls(stdout).split("\n");
   let currentSlug: string | null = null;
   const jsonLines: Array<string> = [];
 
@@ -269,7 +275,7 @@ export function parseModelsCliOutput(stdout: string): {
 /** @internal */
 export function parseAgentListCliOutput(stdout: string): ReadonlyArray<Agent> {
   const agents: Array<Agent> = [];
-  const lines = stdout.split("\n");
+  const lines = stripTerminalControls(stdout).split("\n");
   let currentHeader: { name: string; mode: string } | null = null;
   const blockLines: Array<string> = [];
 
@@ -311,7 +317,7 @@ export function parseAgentListCliOutput(stdout: string): ReadonlyArray<Agent> {
 
 /** @internal */
 export function parseSkillsCliOutput(stdout: string): ReadonlyArray<OpenCodeSkill> {
-  const result = decodeOpenCodeSkillsCliOutputExit(stdout);
+  const result = decodeOpenCodeSkillsCliOutputExit(stripTerminalControls(stdout));
   return Exit.isSuccess(result) ? result.value : [];
 }
 
@@ -322,7 +328,7 @@ export function parseOpenCodeModelSlug(
     return null;
   }
 
-  const trimmed = slug.trim();
+  const trimmed = sanitizeTerminalValue(slug);
   const separator = trimmed.indexOf("/");
   if (separator <= 0 || separator === trimmed.length - 1) {
     return null;

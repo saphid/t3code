@@ -280,6 +280,56 @@ it.layer(testLayer)("checkOpenCodeProviderStatus", (it) => {
     }),
   );
 
+  it.effect("sanitizes CLI and SDK inventory fields at the OpenCode boundary", () =>
+    Effect.gen(function* () {
+      runtimeMock.state.versionStdout = "\u001b]0;/tmp: ready\u0007opencode 1.18.2\n";
+      runtimeMock.state.inventory = {
+        providerList: {
+          connected: ["\u001b]0;title\u0007openrouter"],
+          all: [
+            {
+              id: "\u001b[32mopenrouter\u001b[0m",
+              name: "\u001b]2;title\u001b\\OpenRouter 模型",
+              models: {
+                polluted: {
+                  id: "\u001b]0;title\u0007模型:v2",
+                  name: "\u001b[35m模型 β\u001b[0m",
+                  variants: { "\u001b]0;title\u0007xhigh/v2": {} },
+                },
+              },
+            },
+          ],
+          default: {},
+        },
+        agents: [{ name: "\u001b]0;title\u0007编译-β", hidden: false, mode: "primary" }],
+        skills: [
+          {
+            name: "\u001b[31m审查-β\u001b[0m",
+            description: "\u001b]2;title\u0007审查代码",
+            location: "\u001b]0;title\u001b\\/tmp/审查/SKILL.md",
+          },
+        ],
+      };
+
+      const snapshot = yield* checkOpenCodeProviderStatus(makeOpenCodeSettings(), process.cwd());
+      NodeAssert.equal(snapshot.version, "1.18.2");
+      NodeAssert.equal(snapshot.models[0]?.slug, "openrouter/模型:v2");
+      NodeAssert.equal(snapshot.models[0]?.name, "模型 β");
+      NodeAssert.equal(snapshot.models[0]?.subProvider, "OpenRouter 模型");
+      NodeAssert.deepEqual(
+        snapshot.skills.map((skill) => skill.name),
+        ["审查-β"],
+      );
+      const descriptors = snapshot.models[0]?.capabilities?.optionDescriptors ?? [];
+      NodeAssert.deepEqual(
+        descriptors.flatMap((descriptor) =>
+          descriptor.type === "select" ? descriptor.options.map((option) => option.id) : [],
+        ),
+        ["xhigh/v2", "编译-β"],
+      );
+    }),
+  );
+
   it.effect("does not spawn a local server for health check (uses CLI instead)", () =>
     Effect.gen(function* () {
       yield* checkOpenCodeProviderStatus(makeOpenCodeSettings(), process.cwd());

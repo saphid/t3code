@@ -146,6 +146,16 @@ describe("descriptor helpers", () => {
     expect(getModelSelectionStringOptionValue(selection, "reasoningEffort")).toBe("high");
     expect(getModelSelectionBooleanOptionValue(selection, "fastMode")).toBe(true);
   });
+
+  it("repairs terminal-polluted string options without changing Unicode identifiers", () => {
+    const options = [
+      { id: "agent", value: "\u001b]0;/tmp: ready\u0007编译-β" },
+      { id: "variant", value: "\u001b[32mxhigh/v2\u001b[0m" },
+    ];
+
+    expect(getProviderOptionStringSelectionValue(options, "agent")).toBe("编译-β");
+    expect(getProviderOptionStringSelectionValue(options, "variant")).toBe("xhigh/v2");
+  });
 });
 
 describe("model slug normalization", () => {

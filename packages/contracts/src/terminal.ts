@@ -1,6 +1,93 @@
 import * as Schema from "effect/Schema";
 import { TrimmedNonEmptyString } from "./baseSchemas.ts";
 
+const ESC = 0x1b;
+const BEL = 0x07;
+const C1_CSI = 0x9b;
+const C1_ST = 0x9c;
+const C1_OSC = 0x9d;
+
+function consumeControlString(input: string, start: number): number {
+  for (let index = start; index < input.length; index += 1) {
+    const code = input.charCodeAt(index);
+    if (code === BEL || code === C1_ST) return index + 1;
+    if (code === ESC && input.charCodeAt(index + 1) === 0x5c) return index + 2;
+    if (code === 0x0a || code === 0x0d) return index;
+  }
+  return input.length;
+}
+
+function consumeCsi(input: string, start: number): number {
+  for (let index = start; index < input.length; index += 1) {
+    const code = input.charCodeAt(index);
+    if (code >= 0x40 && code <= 0x7e) return index + 1;
+    if ((code >= 0x20 && code <= 0x3f) || code === 0x7f) continue;
+    return index;
+  }
+  return input.length;
+}
+
+function consumeEscape(input: string, start: number): number {
+  let index = start;
+  while (index < input.length) {
+    const code = input.charCodeAt(index);
+    if (code >= 0x30 && code <= 0x7e) return index + 1;
+    if (code >= 0x20 && code <= 0x2f) {
+      index += 1;
+      continue;
+    }
+    return start;
+  }
+  return input.length;
+}
+
+/**
+ * Removes terminal protocol bytes while leaving printable Unicode untouched.
+ * Line breaks and tabs remain so callers can still parse line-oriented CLI output.
+ */
+export function stripTerminalControls(input: string): string {
+  let output = "";
+
+  for (let index = 0; index < input.length; ) {
+    const code = input.charCodeAt(index);
+    if (code === ESC) {
+      const next = input.charCodeAt(index + 1);
+      if (next === 0x5d || next === 0x50 || next === 0x58 || next === 0x5e || next === 0x5f) {
+        index = consumeControlString(input, index + 2);
+      } else if (next === 0x5b) {
+        index = consumeCsi(input, index + 2);
+      } else {
+        index = consumeEscape(input, index + 1);
+      }
+      continue;
+    }
+    if (code === C1_OSC || code === 0x90 || code === 0x98 || code === 0x9e || code === 0x9f) {
+      index = consumeControlString(input, index + 1);
+      continue;
+    }
+    if (code === C1_CSI) {
+      index = consumeCsi(input, index + 1);
+      continue;
+    }
+    if (
+      (code < 0x20 && code !== 0x09 && code !== 0x0a && code !== 0x0d) ||
+      (code >= 0x7f && code <= 0x9f)
+    ) {
+      index += 1;
+      continue;
+    }
+    output += input[index];
+    index += 1;
+  }
+
+  return output;
+}
+
+/** Removes terminal controls and surrounding whitespace from one identifier or label. */
+export function sanitizeTerminalValue(input: string): string {
+  return stripTerminalControls(input).trim();
+}
+
 /**
  * Client-side id for the first shell opened on a thread. Ids are uniformly
  * `term-N`; there's no "default" intrinsic. Kept as a named constant so callers
