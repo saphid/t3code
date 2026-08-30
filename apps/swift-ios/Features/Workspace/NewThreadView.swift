@@ -282,25 +282,10 @@ public struct NewThreadView: View {
                     }
                 }
             } label: {
-                HStack(spacing: 6) {
-                    Image(systemName: "server.rack")
-                        .font(.system(size: 11, weight: .medium))
-                    Text(environmentName)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                    if let environmentStatus {
-                        Text(environmentStatus)
-                            .foregroundStyle(T3Colors.warning)
-                    }
-                    if creationEnvironments.count > 1 {
-                        Image(systemName: "chevron.down")
-                            .font(.system(size: 8, weight: .bold))
-                    }
-                }
-                .font(T3Typography.supporting)
-                .foregroundStyle(T3Colors.textSecondary)
-                .frame(minHeight: 44)
-                .contentShape(Rectangle())
+                EnvironmentBadgeView(
+                    presentation: selectedEnvironmentBadge,
+                    showsDisclosure: creationEnvironments.count > 1
+                )
             }
             .buttonStyle(.plain)
             .disabled(isSubmitting || creationEnvironments.count < 2)
@@ -486,6 +471,28 @@ public struct NewThreadView: View {
     private var environmentAccessibilityValue: String {
         guard let environmentStatus else { return environmentName }
         return "\(environmentName), \(environmentStatus)"
+    }
+
+    private var selectedEnvironmentBadge: EnvironmentBadgePresentation {
+        guard let selectedEnvironment else {
+            return .environment(name: environmentName, status: .connected)
+        }
+        return .environment(
+            name: selectedEnvironment.name,
+            status: environmentBadgeStatus(selectedEnvironment)
+        )
+    }
+
+    private func environmentBadgeStatus(
+        _ environment: FeatureEnvironment
+    ) -> EnvironmentBadgePresentation.Status {
+        guard environment.isEnabled else { return .disabled }
+        switch environment.connectionState {
+        case .connecting: .connecting
+        case .reconnecting: .reconnecting
+        case .disconnected: .disconnected
+        case .connected, nil: .connected
+        }
     }
 
     private func environmentLabel(_ environment: FeatureEnvironment) -> String {

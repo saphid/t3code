@@ -214,10 +214,14 @@ public struct ThreadDetailView: View {
                     Image(systemName: "arrow.triangle.branch")
                     Text(headerBranch)
                         .lineLimit(1)
+                        .truncationMode(.middle)
+                        .layoutPriority(1)
                     if let environmentName = currentThread.homeEnvironmentLabel(in: model.snapshot) {
                         Text("·")
                         Text(environmentName)
                             .lineLimit(1)
+                            .truncationMode(.middle)
+                            .layoutPriority(-1)
                     }
                 }
                 .lineLimit(1)
@@ -245,6 +249,7 @@ public struct ThreadDetailView: View {
         // Leave compact-width clearance for the trailing thread menu.
         .padding(.trailing, horizontalSizeClass == .compact ? 10 : 0)
         .frame(maxWidth: horizontalSizeClass == .compact ? 260 : 460, alignment: .leading)
+        .clipped()
         .accessibilityElement(children: .combine)
         .accessibilityAddTraits(.isHeader)
         .accessibilityAddTraits(

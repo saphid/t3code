@@ -353,9 +353,10 @@ public struct WorkspaceView: View {
     }
 
     private var homeBar: some View {
-        HStack(spacing: 2) {
+        HStack(spacing: EnvironmentBadgeLayout.headerSpacing) {
             connectionBrand
                 .frame(maxWidth: .infinity, alignment: .leading)
+                .layoutPriority(-1)
 
             Button {
                 withAnimation(.easeOut(duration: 0.16)) {
@@ -373,90 +374,47 @@ public struct WorkspaceView: View {
             } label: {
                 Image(systemName: isSearching ? "xmark" : "magnifyingglass")
                     .font(.system(size: 17, weight: .medium))
-                    .frame(width: 40, height: T3Metrics.minimumTapTarget)
+                    .frame(
+                        width: EnvironmentBadgeLayout.trailingActionWidth,
+                        height: T3Metrics.minimumTapTarget
+                    )
             }
             .buttonStyle(.plain)
             .foregroundStyle(T3Colors.textSecondary)
             .accessibilityLabel(isSearching ? "Close search" : "Search tasks")
             .accessibilityIdentifier("sidebar-search-button")
+            .layoutPriority(1)
 
             Button { showingSettings = true } label: {
                 Image(systemName: "slider.horizontal.3")
                     .font(.system(size: 17, weight: .medium))
-                    .frame(width: 40, height: T3Metrics.minimumTapTarget)
+                    .frame(
+                        width: EnvironmentBadgeLayout.trailingActionWidth,
+                        height: T3Metrics.minimumTapTarget
+                    )
             }
             .buttonStyle(.plain)
             .foregroundStyle(T3Colors.textSecondary)
             .accessibilityLabel("Settings")
             .accessibilityIdentifier("sidebar-settings-button")
+            .layoutPriority(1)
         }
-        .padding(.leading, 15)
-        .padding(.trailing, 8)
+        .padding(.leading, EnvironmentBadgeLayout.headerLeadingInset)
+        .padding(.trailing, EnvironmentBadgeLayout.headerTrailingInset)
         .frame(height: 49)
         .background(T3Colors.background)
     }
 
-    @ViewBuilder
     private var connectionBrand: some View {
-        if !unreachableEnvironments.isEmpty {
-            Button { showingEnvironments = true } label: {
-                HStack(spacing: 7) {
-                    Image(systemName: "network.slash")
-                        .font(.system(size: 13, weight: .semibold))
-                    Text(unreachableBrandLabel)
-                        .lineLimit(1)
-                        .font(.system(size: 13, weight: .semibold))
-                    Image(systemName: "chevron.right")
-                        .font(.system(size: 10, weight: .semibold))
-                }
-                .frame(minHeight: T3Metrics.minimumTapTarget)
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .foregroundStyle(T3Colors.danger)
-            .accessibilityLabel("\(unreachableBrandLabel). Manage environments")
-            .accessibilityIdentifier("sidebar-environments-button")
-        } else if let reconnecting = reconnectingEnvironments.first {
-            Button { showingEnvironments = true } label: {
-                HStack(spacing: 7) {
-                    Image(systemName: "wifi.exclamationmark")
-                        .font(.system(size: 13, weight: .semibold))
-                    Text(reconnecting.name)
-                        .lineLimit(1)
-                    Text("reconnecting")
-                        .fontWeight(.medium)
-                        .opacity(0.76)
-                }
-                .font(.system(size: 14, weight: .semibold))
-                .foregroundStyle(T3Colors.warning)
-                .frame(minHeight: T3Metrics.minimumTapTarget)
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("\(reconnecting.name) reconnecting. Manage environments")
-            .accessibilityIdentifier("sidebar-environments-button")
-        } else {
-            Button { showingEnvironments = true } label: {
-                HStack(alignment: .firstTextBaseline, spacing: 4) {
-                    Text("T3")
-                        .fontWeight(.bold)
-                        .foregroundStyle(T3Colors.textPrimary)
-                    Text("Code")
-                        .fontWeight(.medium)
-                        .foregroundStyle(T3Colors.textSecondary)
-                    Image(systemName: "chevron.down")
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundStyle(T3Colors.textTertiary)
-                        .padding(.leading, 2)
-                }
-                .font(.system(size: 16))
-                .frame(minHeight: T3Metrics.minimumTapTarget)
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("T3 Code. Manage environments")
-            .accessibilityIdentifier("sidebar-environments-button")
+        Button { showingEnvironments = true } label: {
+            EnvironmentBadgeView(
+                presentation: sidebarEnvironmentBadge,
+                showsDisclosure: true
+            )
         }
+        .buttonStyle(.plain)
+        .accessibilityHint("Manage environments")
+        .accessibilityIdentifier("sidebar-environments-button")
     }
 
     private var searchBar: some View {
@@ -594,11 +552,19 @@ public struct WorkspaceView: View {
         }
     }
 
-    private var unreachableBrandLabel: String {
-        if unreachableEnvironments.count == 1 {
-            return "\(unreachableEnvironments[0].name) offline"
+    private var sidebarEnvironmentBadge: EnvironmentBadgePresentation {
+        if !unreachableEnvironments.isEmpty {
+            let name = unreachableEnvironments.count == 1
+                ? unreachableEnvironments[0].name
+                : "\(unreachableEnvironments.count) environments"
+            return .environment(name: name, status: .disconnected)
         }
-        return "\(unreachableEnvironments.count) environments offline"
+        if let reconnecting = reconnectingEnvironments.first {
+            let status: EnvironmentBadgePresentation.Status =
+                reconnecting.connectionState == .connecting ? .connecting : .reconnecting
+            return .environment(name: reconnecting.name, status: status)
+        }
+        return .brand()
     }
 
     private var nextSidebarBoundary: Date? {
