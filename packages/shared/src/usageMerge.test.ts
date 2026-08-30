@@ -172,7 +172,7 @@ describe("mergeUsage", () => {
     expect(merged.staleEnvironments).toEqual(["env-b"]);
   });
 
-  it("keeps the previous compatible contract version so additive provider expansions still merge", () => {
+  it("excludes the previous contract version because it cannot prove source identity", () => {
     const merged = mergeUsage(
       [
         environment(
@@ -194,8 +194,8 @@ describe("mergeUsage", () => {
       USAGE_CONTRACT_VERSION,
     );
 
-    expect(merged.costUsd).toBe(14);
-    expect(merged.staleEnvironments).toEqual([]);
+    expect(merged.costUsd).toBe(10);
+    expect(merged.staleEnvironments).toEqual(["env-b"]);
   });
 
   it("derives provider shares and cost quality", () => {

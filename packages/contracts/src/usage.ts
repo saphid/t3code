@@ -26,11 +26,11 @@ export const USAGE_CONTRACT_VERSION = 5 as const;
 /**
  * Oldest {@link UsageSummary} version a current client will still merge.
  *
- * v5 only adds `grok` to {@link UsageProviderKind}; v4 Claude/Codex buckets
- * remain valid, so mixed-version environments keep those totals instead of
- * treating every older server as stale.
+ * v5 carries the trusted source identity needed for cross-boundary
+ * deduplication. Older summaries remain decodable, but excluding them avoids
+ * doubling totals during a rolling Windows/WSL server update.
  */
-export const USAGE_MERGE_COMPATIBLE_SINCE = 4 as const;
+export const USAGE_MERGE_COMPATIBLE_SINCE = 5 as const;
 
 export const UsageProviderKind = Schema.Literals(["claude", "codex", "grok"]);
 export type UsageProviderKind = typeof UsageProviderKind.Type;
