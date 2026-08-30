@@ -1,0 +1,146 @@
+{
+  "version": 1,
+  "title": "Select a Codex reasoning level in the SwiftUI composer",
+  "source": {
+    "path": "/Users/saphid/projects/T3 Code/.worktrees/reasoning-selector-110/.t3/evidence/issue110-current-head/raw/current/current-dark-interaction.mp4",
+    "bytes": 3112616,
+    "sha256": "0540d7183148f80250bd3f822098a5857e40c1a1606bf087176d593461e9328f",
+    "duration": 56.538333,
+    "width": 1206,
+    "height": 2622,
+    "frame_rate": "600/1",
+    "frame_count": 1088,
+    "has_audio": false
+  },
+  "timeline": {
+    "path": "/Users/saphid/projects/T3 Code/.worktrees/reasoning-selector-110/.t3/evidence/issue110-current-head/interaction-timeline.json",
+    "sha256": "5662569262405b4f39a4a2c0550dd8fa05ecd34195b728dfdf4e09ff0e424651"
+  },
+  "edit": {
+    "source_duration": 56.538333,
+    "output_duration": 23.0,
+    "requested_output_duration": 23.0,
+    "removed_duration": 33.538333,
+    "cuts": [
+      {
+        "start": 1.0,
+        "end": 9.5
+      },
+      {
+        "start": 20.0,
+        "end": 26.0
+      },
+      {
+        "start": 39.0,
+        "end": 47.5
+      }
+    ],
+    "removed": [],
+    "auto_trim": false,
+    "no_auto_trim": false,
+    "freeze_minimum": 2.5,
+    "max_freeze": 2.0,
+    "freeze_noise": 0.002,
+    "silence_noise": "-45dB",
+    "poster_at": null,
+    "timeline_poster_at": 43.5,
+    "effective_poster_source_at": 43.5,
+    "deny_secret_patterns": [],
+    "digest": "2d27333f0b66385f029a9d6a26b4b9807835daf07807cb86a1172d46dbbfff93"
+  },
+  "events": [
+    {
+      "index": 0,
+      "kind": "tap",
+      "source_at": 5.6,
+      "output_at": 4.6,
+      "action_id": "open-reasoning-menu",
+      "point": [
+        927,
+        2398
+      ],
+      "caption": "Next: tap Open reasoning\nExpected: The descriptor-backed reasoning menu opens with Low checked",
+      "caption_output": [
+        4.25,
+        5.699999999999999
+      ]
+    },
+    {
+      "index": 1,
+      "kind": "tap",
+      "source_at": 22.5,
+      "output_at": 11.0,
+      "action_id": "choose-high",
+      "point": [
+        617,
+        1995
+      ],
+      "caption": "Next: tap Choose High\nExpected: The composer and model summary both update to High",
+      "caption_output": [
+        10.649999999999999,
+        12.100000000000001
+      ]
+    },
+    {
+      "index": 2,
+      "kind": "tap",
+      "source_at": 41.7,
+      "output_at": 17.200000000000003,
+      "action_id": "reopen-reasoning-menu",
+      "point": [
+        927,
+        2398
+      ],
+      "caption": "Next: tap Reopen reasoning\nExpected: The menu reopens with High checked",
+      "caption_output": [
+        16.85,
+        18.300000000000004
+      ]
+    }
+  ],
+  "artifacts": {
+    "clean_video": {
+      "path": "/Users/saphid/projects/T3 Code/.worktrees/reasoning-selector-110/.t3/evidence/issue110-current-head/packet/pr7344-reasoning-selector-clean.mp4",
+      "bytes": 1328875,
+      "sha256": "5e7d8e94465732449e14cb93d798beeba4b56fe749a8996b790131d76089ef72",
+      "duration": 23.0,
+      "width": 1206,
+      "height": 2622,
+      "frame_rate": "30/1",
+      "frame_count": 690,
+      "has_audio": false
+    },
+    "annotated_video": {
+      "path": "/Users/saphid/projects/T3 Code/.worktrees/reasoning-selector-110/.t3/evidence/issue110-current-head/packet/pr7344-reasoning-selector-annotated.mp4",
+      "bytes": 1458751,
+      "sha256": "5d9e60bd18ba88201a8e8a653872fa6be2d7ce5316ab8169b67d1d5cea121a93",
+      "duration": 23.0,
+      "width": 1206,
+      "height": 2622,
+      "frame_rate": "30/1",
+      "frame_count": 690,
+      "has_audio": false
+    },
+    "clean_poster": {
+      "path": "/Users/saphid/projects/T3 Code/.worktrees/reasoning-selector-110/.t3/evidence/issue110-current-head/packet/pr7344-reasoning-selector-clean.png",
+      "bytes": 173935,
+      "sha256": "ff7ed9bb5a881d9e88a465a0f15e25cb3477c5aa626545e9952de9b03dc00454"
+    },
+    "annotated_poster": {
+      "path": "/Users/saphid/projects/T3 Code/.worktrees/reasoning-selector-110/.t3/evidence/issue110-current-head/packet/pr7344-reasoning-selector-annotated.png",
+      "bytes": 175290,
+      "sha256": "37e4d8c400d4412a1bd01a5257705dea8027a06a17524087db85c4dc42dd9b7c"
+    },
+    "contact_sheet": {
+      "path": "/Users/saphid/projects/T3 Code/.worktrees/reasoning-selector-110/.t3/evidence/issue110-current-head/packet/pr7344-reasoning-selector-contact-sheet.png",
+      "bytes": 363374,
+      "sha256": "1363ea2deed09fd5eff0fcf15df25e220467add977706d4666fc5df2d63cb065"
+    }
+  },
+  "tools": {
+    "ffmpeg": "ffmpeg version 8.1.2 Copyright (c) 2000-2026 the FFmpeg developers",
+    "ffprobe": "ffprobe version 8.1.2 Copyright (c) 2007-2026 the FFmpeg developers",
+    "magick": "Version: ImageMagick 7.1.2-25 Q16-HDRI aarch64 037e46295:20260604 https://imagemagick.org"
+  },
+  "font": "/System/Library/Fonts/Supplemental/Verdana.ttf"
+}

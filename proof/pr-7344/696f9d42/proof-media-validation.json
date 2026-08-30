@@ -1,0 +1,219 @@
+{
+  "version": 1,
+  "kind": "proof-packet-validation",
+  "verdict": "passed",
+  "packet_receipt": {
+    "path": "/Users/saphid/projects/T3 Code/.worktrees/reasoning-selector-110/.t3/evidence/issue110-current-head/packet/pr7344-reasoning-selector-receipt.json",
+    "sha256": "bc33ca839319acb98ca9fa0147ae9ef4d35e19a027a4284b1e8d1e9a811eccb6"
+  },
+  "timeline": {
+    "path": "/Users/saphid/projects/T3 Code/.worktrees/reasoning-selector-110/.t3/evidence/issue110-current-head/interaction-timeline.json",
+    "sha256": "5662569262405b4f39a4a2c0550dd8fa05ecd34195b728dfdf4e09ff0e424651"
+  },
+  "ledger": {
+    "kind": "proof-timeline",
+    "path": "/Users/saphid/projects/T3 Code/.worktrees/reasoning-selector-110/.t3/evidence/issue110-current-head/interaction-timeline.json",
+    "sha256": "5662569262405b4f39a4a2c0550dd8fa05ecd34195b728dfdf4e09ff0e424651"
+  },
+  "source": {
+    "path": "/Users/saphid/projects/T3 Code/.worktrees/reasoning-selector-110/.t3/evidence/issue110-current-head/raw/current/current-dark-interaction.mp4",
+    "bytes": 3112616,
+    "sha256": "0540d7183148f80250bd3f822098a5857e40c1a1606bf087176d593461e9328f",
+    "duration": 56.538333,
+    "width": 1206,
+    "height": 2622,
+    "frame_rate": "600/1",
+    "frame_count": 1088,
+    "has_audio": false
+  },
+  "artifacts": {
+    "clean_video": {
+      "path": "/Users/saphid/projects/T3 Code/.worktrees/reasoning-selector-110/.t3/evidence/issue110-current-head/packet/pr7344-reasoning-selector-clean.mp4",
+      "bytes": 1328875,
+      "sha256": "5e7d8e94465732449e14cb93d798beeba4b56fe749a8996b790131d76089ef72"
+    },
+    "annotated_video": {
+      "path": "/Users/saphid/projects/T3 Code/.worktrees/reasoning-selector-110/.t3/evidence/issue110-current-head/packet/pr7344-reasoning-selector-annotated.mp4",
+      "bytes": 1458751,
+      "sha256": "5d9e60bd18ba88201a8e8a653872fa6be2d7ce5316ab8169b67d1d5cea121a93"
+    },
+    "clean_poster": {
+      "path": "/Users/saphid/projects/T3 Code/.worktrees/reasoning-selector-110/.t3/evidence/issue110-current-head/packet/pr7344-reasoning-selector-clean.png",
+      "bytes": 173935,
+      "sha256": "ff7ed9bb5a881d9e88a465a0f15e25cb3477c5aa626545e9952de9b03dc00454"
+    },
+    "annotated_poster": {
+      "path": "/Users/saphid/projects/T3 Code/.worktrees/reasoning-selector-110/.t3/evidence/issue110-current-head/packet/pr7344-reasoning-selector-annotated.png",
+      "bytes": 175290,
+      "sha256": "37e4d8c400d4412a1bd01a5257705dea8027a06a17524087db85c4dc42dd9b7c"
+    },
+    "contact_sheet": {
+      "path": "/Users/saphid/projects/T3 Code/.worktrees/reasoning-selector-110/.t3/evidence/issue110-current-head/packet/pr7344-reasoning-selector-contact-sheet.png",
+      "bytes": 363374,
+      "sha256": "1363ea2deed09fd5eff0fcf15df25e220467add977706d4666fc5df2d63cb065"
+    }
+  },
+  "actions": [
+    {
+      "action_id": "open-reasoning-menu",
+      "kind": "tap",
+      "source_at": 5.6,
+      "output_at": 4.6,
+      "expect": "The descriptor-backed reasoning menu opens with Low checked",
+      "caption_sha256": "8d9c8a5899ee44fb0db8e9b11170f95082e5fcfc9dab9fe5330dee20dd443145",
+      "point": [
+        927,
+        2398
+      ]
+    },
+    {
+      "action_id": "choose-high",
+      "kind": "tap",
+      "source_at": 22.5,
+      "output_at": 11.0,
+      "expect": "The composer and model summary both update to High",
+      "caption_sha256": "141389a3bad576c33db651280ff7e4761f87d26d5225fbc475d9d245a1ac57c6",
+      "point": [
+        617,
+        1995
+      ]
+    },
+    {
+      "action_id": "reopen-reasoning-menu",
+      "kind": "tap",
+      "source_at": 41.7,
+      "output_at": 17.200000000000003,
+      "expect": "The menu reopens with High checked",
+      "caption_sha256": "bc961e1344dc1f2a313de1c6102748ce3d35c15f599abfe56e9739161e978912",
+      "point": [
+        927,
+        2398
+      ]
+    }
+  ],
+  "actionCount": 3,
+  "overlayWindows": [
+    {
+      "kind": "action",
+      "id": "open-reasoning-menu",
+      "start": 4.52,
+      "end": 4.965,
+      "sample": 4.699999999999999,
+      "crop": [
+        876,
+        2348,
+        102,
+        102
+      ],
+      "cleanFrameSha256": "24110259a58738b1edb403effbd5cb5852ddbf2f3b97ddf85f5277fe7d923648",
+      "annotatedFrameSha256": "e0e4429875b10899af0347ef996e61e130424238cff45ac25515fe98af2f02f7",
+      "localVideoSsim": 0.005457859422151687,
+      "maximumLocalVideoSsim": 0.98
+    },
+    {
+      "kind": "caption",
+      "id": "open-reasoning-menu",
+      "start": 4.25,
+      "end": 5.699999999999999,
+      "sample": 4.975,
+      "crop": [
+        60,
+        0,
+        1086,
+        1050
+      ],
+      "cleanFrameSha256": "9114c6deb6c5c1b7322c2508e5450cb764808cc5f340243c85fbe03b63b75b70",
+      "annotatedFrameSha256": "e69eb6e938ba1878a1d7f09433b1d616c31fad7fe80d4e65c2d3376c4f09eb48",
+      "localVideoSsim": 0.505738079410913,
+      "maximumLocalVideoSsim": 0.98
+    },
+    {
+      "kind": "action",
+      "id": "choose-high",
+      "start": 10.92,
+      "end": 11.365,
+      "sample": 11.1,
+      "crop": [
+        566,
+        1944,
+        102,
+        102
+      ],
+      "cleanFrameSha256": "e495f4cbe5c6fa873d889b229e90a9a3daa95180d32b33f43ddf49d3c5637be7",
+      "annotatedFrameSha256": "c41e9b99859c0a3b01e10d89ed61aa013f976a41fcc909150d02b6a52e761834",
+      "localVideoSsim": 0.005039962840651864,
+      "maximumLocalVideoSsim": 0.98
+    },
+    {
+      "kind": "caption",
+      "id": "choose-high",
+      "start": 10.649999999999999,
+      "end": 12.100000000000001,
+      "sample": 11.375,
+      "crop": [
+        60,
+        0,
+        1086,
+        1050
+      ],
+      "cleanFrameSha256": "2c32f3da1002b49ffb6a244619cf113e60fce541e7b40729be0c071d3ff792e7",
+      "annotatedFrameSha256": "95031d244413912a9cb33b682e08000ce386f310f563262fa6294d56cd6c8e0f",
+      "localVideoSsim": 0.5315958920967646,
+      "maximumLocalVideoSsim": 0.98
+    },
+    {
+      "kind": "action",
+      "id": "reopen-reasoning-menu",
+      "start": 17.120000000000005,
+      "end": 17.565,
+      "sample": 17.300000000000004,
+      "crop": [
+        876,
+        2348,
+        102,
+        102
+      ],
+      "cleanFrameSha256": "9fb56019ceec78645704e1fc110aab6e04dd6019d9bd6d1d2359a84ad57addd8",
+      "annotatedFrameSha256": "558e178ec7027b40fbdf8601895e325045e6d8d57a4cc8762f5d892ed70146c6",
+      "localVideoSsim": 0.20523011691889498,
+      "maximumLocalVideoSsim": 0.98
+    },
+    {
+      "kind": "caption",
+      "id": "reopen-reasoning-menu",
+      "start": 16.85,
+      "end": 18.300000000000004,
+      "sample": 17.575000000000003,
+      "crop": [
+        60,
+        0,
+        1086,
+        1050
+      ],
+      "cleanFrameSha256": "fc84e77a9180e83bde4fdfc19a72da22af64e8346754e11fc0ac09b88cff933a",
+      "annotatedFrameSha256": "d9fb315eb854c9613d156d57ccbd7d62829107ba8d8021e5bc3b5eb48161b011",
+      "localVideoSsim": 0.5917819582090785,
+      "maximumLocalVideoSsim": 0.98
+    }
+  ],
+  "pairing": {
+    "width": 1206,
+    "height": 2622,
+    "frameRate": "30/1",
+    "frameCount": 690,
+    "cleanDuration": 23.0,
+    "annotatedDuration": 23.0,
+    "durationDelta": 0.0,
+    "videoSsim": 0.995276,
+    "minimumVideoSsim": 0.75,
+    "decodedAudioSha256": null
+  },
+  "tools": {
+    "ffmpeg": "ffmpeg version 8.1.2 Copyright (c) 2000-2026 the FFmpeg developers",
+    "ffprobe": "ffprobe version 8.1.2 Copyright (c) 2007-2026 the FFmpeg developers"
+  },
+  "seal": {
+    "algorithm": "sha256",
+    "canonicalPayloadSha256": "30e52682bc119a3dedd5e8232336d3337d9224350ffe2e97b2a34182e13273c4"
+  }
+}

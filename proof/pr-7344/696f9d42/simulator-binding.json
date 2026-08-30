@@ -1,0 +1,13 @@
+{
+  "boundAt": "2026-08-30T03:57:58.622301Z",
+  "kind": "swiftui-simulator-lease-binding",
+  "laneId": "pr-7344-proof-refresh-1fca1a90",
+  "leaseSha256": "9a09d114b35f776ea8823d64c3da16e0c4b5cb113cb932b176317b81d146fc42",
+  "schemaVersion": 1,
+  "simulator": {
+    "name": "T3 SwiftUI iPhone 16 Pro Lane 3",
+    "runtime": "com.apple.CoreSimulator.SimRuntime.iOS-26-5",
+    "stateAtAcquire": "Booted",
+    "udid": "D42A7B6E-2567-4AFC-8FE5-3AA8670EE55D"
+  }
+}

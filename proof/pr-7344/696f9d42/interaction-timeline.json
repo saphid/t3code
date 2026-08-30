@@ -1,0 +1,48 @@
+{
+  "version": 1,
+  "coordinate_space": "normalized",
+  "poster_at": 43.5,
+  "keep": [
+    { "start": 1.0, "end": 9.5 },
+    { "start": 20.0, "end": 26.0 },
+    { "start": 39.0, "end": 47.5 }
+  ],
+  "cuts": [
+    { "start": 1.0, "end": 9.5 },
+    { "start": 20.0, "end": 26.0 },
+    { "start": 39.0, "end": 47.5 }
+  ],
+  "events": [
+    {
+      "kind": "tap",
+      "at": 5.6,
+      "action_id": "open-reasoning-menu",
+      "x": 0.769,
+      "y": 0.915,
+      "label": "Open reasoning",
+      "expect": "The descriptor-backed reasoning menu opens with Low checked",
+      "caption_position": "top"
+    },
+    {
+      "kind": "tap",
+      "at": 22.5,
+      "action_id": "choose-high",
+      "x": 0.512,
+      "y": 0.761,
+      "label": "Choose High",
+      "expect": "The composer and model summary both update to High",
+      "caption_position": "top"
+    },
+    {
+      "kind": "tap",
+      "at": 41.7,
+      "action_id": "reopen-reasoning-menu",
+      "x": 0.769,
+      "y": 0.915,
+      "label": "Reopen reasoning",
+      "expect": "The menu reopens with High checked",
+      "caption_position": "top"
+    }
+  ],
+  "title": "Select a Codex reasoning level in the SwiftUI composer"
+}
