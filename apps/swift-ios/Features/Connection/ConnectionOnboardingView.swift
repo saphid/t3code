@@ -20,6 +20,7 @@ public struct ConnectionOnboardingView: View {
     @State private var connectionReturnStage = ConnectionStage.details
     @State private var connectionTask: Task<Void, Never>?
     @State private var connectionAttemptID: UUID?
+    @State private var permissionRecovery = LocalNetworkPermissionRecovery<ConnectionAction>()
     @FocusState private var focusedField: ConnectionField?
 
     public init(
@@ -109,9 +110,17 @@ public struct ConnectionOnboardingView: View {
             applyConnectionString(url.absoluteString, heading: "Confirm connection")
         }
         .onChange(of: scenePhase) { _, newPhase in
-            if newPhase == .active, showsPermissionAction {
-                showsPermissionAction = false
-                errorMessage = nil
+            switch newPhase {
+            case .inactive, .background:
+                permissionRecovery.applicationBecameInactive()
+            case .active:
+                if let action = permissionRecovery.applicationBecameActive() {
+                    showsPermissionAction = false
+                    errorMessage = nil
+                    connect(action)
+                }
+            @unknown default:
+                break
             }
         }
         .interactiveDismissDisabled(stage == .checking || stage == .connecting)
@@ -585,6 +594,7 @@ public struct ConnectionOnboardingView: View {
     @MainActor
     private func connect(_ action: ConnectionAction) {
         cancelConnectionAttempt()
+        permissionRecovery.begin(action)
         let attemptID = UUID()
         connectionAttemptID = attemptID
         switch action {
@@ -605,6 +615,12 @@ public struct ConnectionOnboardingView: View {
             case .ready:
                 stage = .connecting
             case .localNetworkDenied:
+                if let retry = permissionRecovery.permissionWasDenied() {
+                    connectionAttemptID = nil
+                    connectionTask = nil
+                    connect(retry)
+                    return
+                }
                 errorMessage = "Allow Local Network access to connect to this environment."
                 showsPermissionAction = true
                 connectionAttemptID = nil
@@ -612,6 +628,7 @@ public struct ConnectionOnboardingView: View {
                 stage = connectionReturnStage
                 return
             case .unreachable:
+                permissionRecovery.finish()
                 errorMessage = "Cannot reach this environment. Check the address and network connection."
                 connectionAttemptID = nil
                 connectionTask = nil
@@ -630,11 +647,13 @@ public struct ConnectionOnboardingView: View {
             guard !Task.isCancelled, connectionAttemptID == attemptID else { return }
 
             if didConnect {
+                permissionRecovery.finish()
                 connectionAttemptID = nil
                 connectionTask = nil
                 stage = .success
                 onConnected()
             } else {
+                permissionRecovery.finish()
                 let rawError = model.errorMessage
                 model.errorMessage = nil
                 errorMessage = ConnectionErrorCopy.message(for: rawError)
@@ -650,6 +669,7 @@ public struct ConnectionOnboardingView: View {
         connectionTask?.cancel()
         connectionTask = nil
         connectionAttemptID = nil
+        permissionRecovery.cancel()
     }
 }
 
