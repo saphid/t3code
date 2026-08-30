@@ -946,6 +946,51 @@ struct FeatureRootModelTests {
     }
 
     @Test
+    func acceptedFollowUpStaysDurableUntilTheAuthoritativeMessageArrives() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("t3-root-accepted-follow-up-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = FeatureOutboxStore(fileURL: directory.appendingPathComponent("outbox.json"))
+        let thread = FeatureThread(
+            id: "environment-1::thread::thread-1",
+            wireID: "thread-1",
+            projectID: "project-1",
+            environmentID: "environment-1",
+            title: "Working thread",
+            state: .working
+        )
+        let client = FeatureClientStub()
+        client.snapshot = FeatureSnapshot(
+            connection: .init(state: .connected),
+            environments: [
+                .init(
+                    id: "environment-1",
+                    name: "Studio",
+                    endpoint: "https://studio.example",
+                    isActive: true,
+                    connectionState: .connected
+                ),
+            ],
+            threads: [thread]
+        )
+        client.threadDetail = FeatureThreadDetail(thread: thread)
+        let model = FeatureRootModel(client: client, outboxStore: store)
+        await model.reload()
+        _ = await model.detail(for: thread.id)
+
+        let sent = await model.sendMessage(
+            threadID: thread.id,
+            text: "Run this after the active turn",
+            selection: nil
+        )
+
+        #expect(sent)
+        #expect(client.sendMessageCallCount == 1)
+        #expect(try await store.submissions().count == 1)
+        #expect(model.details[thread.id]?.messages.last?.state == .queued)
+    }
+
+    @Test
     func loadingEarlierTurnsPrependsHistoryAndClearsTheCursor() async {
         let client = FeatureClientStub()
         let thread = FeatureThread(
