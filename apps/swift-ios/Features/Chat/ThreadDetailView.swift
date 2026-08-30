@@ -110,9 +110,18 @@ public struct ThreadDetailView: View {
                 Group {
                     switch surface {
                     case .files:
-                        FeatureFilesView(client: model.client, threadID: thread.id)
+                        FeatureFilesView(
+                            client: model.client,
+                            threadID: thread.id,
+                            connectionState: threadConnectionState
+                        )
                     case let .file(path):
-                        FeatureFilesView(client: model.client, threadID: thread.id, initialPath: path)
+                        FeatureFilesView(
+                            client: model.client,
+                            threadID: thread.id,
+                            initialPath: path,
+                            connectionState: threadConnectionState
+                        )
                     case .review:
                         FeatureReviewView(client: model.client, threadID: thread.id)
                     case .sourceControl:

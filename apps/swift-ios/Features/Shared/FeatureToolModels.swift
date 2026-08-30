@@ -141,41 +141,262 @@ public struct FeatureSourceSpan: Sendable, Equatable, Hashable, Codable {
 public struct FeatureSourceLine: Identifiable, Sendable, Equatable, Hashable, Codable {
     public let id: Int
     public var spans: [FeatureSourceSpan]
+    public var sourceLineNumber: Int?
 
-    public init(id: Int, spans: [FeatureSourceSpan]) {
+    public init(id: Int, spans: [FeatureSourceSpan], sourceLineNumber: Int? = nil) {
         self.id = id
         self.spans = spans
+        self.sourceLineNumber = sourceLineNumber
     }
 
-    public var number: Int { id + 1 }
+    public var number: Int { sourceLineNumber ?? id + 1 }
     public var text: String { spans.map(\.text).joined() }
+}
+
+public enum FeatureSourcePreviewFallbackReason: Sendable, Equatable {
+    case byteCount(limit: Int)
+    case lineCount(limit: Int)
+    case longLine(limit: Int)
+}
+
+public struct FeatureSourcePreviewPlan: Sendable, Equatable {
+    public static let highlightedByteLimit = 384 * 1_024
+    public static let highlightedLineLimit = 8_000
+    public static let highlightedLineByteLimit = 32 * 1_024
+    public static let excerptByteLimit = 128 * 1_024
+    public static let plainTextChunkByteLimit = 4 * 1_024
+
+    public var lines: [FeatureSourceLine]
+    public var fallbackReason: FeatureSourcePreviewFallbackReason?
+    public var isShowingFullLoadedContent: Bool
+    public var representedByteCount: Int
+
+    public init(
+        lines: [FeatureSourceLine],
+        fallbackReason: FeatureSourcePreviewFallbackReason?,
+        isShowingFullLoadedContent: Bool,
+        representedByteCount: Int
+    ) {
+        self.lines = lines
+        self.fallbackReason = fallbackReason
+        self.isShowingFullLoadedContent = isShowingFullLoadedContent
+        self.representedByteCount = representedByteCount
+    }
+
+    public static func prepare(
+        text: String,
+        language: String?,
+        opensFullPlainText: Bool = false
+    ) async throws -> Self {
+        try Task.checkCancellation()
+        let byteCount = text.utf8.count
+        let fallbackReason = fallbackReason(for: text, byteCount: byteCount)
+
+        if fallbackReason == nil {
+            let lines = try await cancellableDetached {
+                try FeatureSourceHighlighter.cancellableLines(text: text, language: language)
+            }
+            try Task.checkCancellation()
+            return FeatureSourcePreviewPlan(
+                lines: lines,
+                fallbackReason: nil,
+                isShowingFullLoadedContent: true,
+                representedByteCount: byteCount
+            )
+        }
+
+        let limit = opensFullPlainText ? byteCount : min(byteCount, excerptByteLimit)
+        let lines = try await cancellableDetached {
+            try plainTextLines(text: text, byteLimit: limit)
+        }
+        try Task.checkCancellation()
+        return FeatureSourcePreviewPlan(
+            lines: lines,
+            fallbackReason: fallbackReason,
+            isShowingFullLoadedContent: limit == byteCount,
+            representedByteCount: limit
+        )
+    }
+
+    private static func fallbackReason(
+        for text: String,
+        byteCount: Int
+    ) -> FeatureSourcePreviewFallbackReason? {
+        guard byteCount <= highlightedByteLimit else {
+            return .byteCount(limit: highlightedByteLimit)
+        }
+
+        var lineCount = 1
+        var currentLineBytes = 0
+        for byte in text.utf8 {
+            if byte == 0x0A {
+                lineCount += 1
+                currentLineBytes = 0
+                if lineCount > highlightedLineLimit {
+                    return .lineCount(limit: highlightedLineLimit)
+                }
+            } else {
+                currentLineBytes += 1
+                if currentLineBytes > highlightedLineByteLimit {
+                    return .longLine(limit: highlightedLineByteLimit)
+                }
+            }
+        }
+        return nil
+    }
+
+    private static func plainTextLines(
+        text: String,
+        byteLimit: Int
+    ) throws -> [FeatureSourceLine] {
+        let utf8 = text.utf8
+        var prefixEnd = utf8.index(
+            utf8.startIndex,
+            offsetBy: min(byteLimit, utf8.count)
+        )
+        while prefixEnd > utf8.startIndex,
+              prefixEnd < utf8.endIndex,
+              utf8[prefixEnd] & 0xC0 == 0x80 {
+            prefixEnd = utf8.index(before: prefixEnd)
+        }
+        let bytes = Array(utf8[..<prefixEnd])
+        var output: [FeatureSourceLine] = []
+        output.reserveCapacity(bytes.count / plainTextChunkByteLimit + 1)
+        var offset = 0
+        var sourceLineNumber = 1
+
+        while offset < bytes.count {
+            if output.count.isMultiple(of: 128) {
+                try Task.checkCancellation()
+            }
+
+            let remainingEnd = min(offset + plainTextChunkByteLimit, bytes.count)
+            let newline = bytes[offset ..< remainingEnd].lastIndex(of: 0x0A)
+            var end = newline ?? remainingEnd
+            if newline == nil, end < bytes.count {
+                while end > offset, bytes[end] & 0xC0 == 0x80 {
+                    end -= 1
+                }
+                if end == offset {
+                    end = remainingEnd
+                }
+            }
+
+            let chunk = String(decoding: bytes[offset ..< end], as: UTF8.self)
+            output.append(FeatureSourceLine(
+                id: output.count,
+                spans: chunk.isEmpty ? [] : [FeatureSourceSpan(text: chunk, kind: .plain)],
+                sourceLineNumber: sourceLineNumber
+            ))
+            sourceLineNumber += bytes[offset ..< end].lazy.filter { $0 == 0x0A }.count
+            if newline != nil {
+                sourceLineNumber += 1
+            }
+            offset = newline.map { $0 + 1 } ?? end
+        }
+
+        if bytes.isEmpty || bytes.last == 0x0A {
+            output.append(FeatureSourceLine(id: output.count, spans: []))
+        }
+        return output
+    }
+
+    private static func cancellableDetached<Value: Sendable>(
+        operation: @escaping @Sendable () throws -> Value
+    ) async throws -> Value {
+        let task = Task.detached(priority: .userInitiated, operation: operation)
+        return try await withTaskCancellationHandler {
+            try await task.value
+        } onCancel: {
+            task.cancel()
+        }
+    }
+}
+
+public struct FeatureFilePreviewRequestIdentity: Sendable, Equatable, Hashable {
+    public var threadID: String
+    public var path: String
+    public var generation: Int
+
+    public init(threadID: String, path: String, generation: Int) {
+        self.threadID = threadID
+        self.path = path
+        self.generation = generation
+    }
+}
+
+@MainActor
+public final class FeatureFilePreviewRequestTracker {
+    public private(set) var current: FeatureFilePreviewRequestIdentity?
+    private var generation = 0
+
+    public init() {}
+
+    @discardableResult
+    public func begin(threadID: String, path: String) -> FeatureFilePreviewRequestIdentity {
+        generation += 1
+        let request = FeatureFilePreviewRequestIdentity(
+            threadID: threadID,
+            path: path,
+            generation: generation
+        )
+        current = request
+        return request
+    }
+
+    public func accepts(_ request: FeatureFilePreviewRequestIdentity) -> Bool {
+        current == request
+    }
+
+    public func cancel() {
+        current = nil
+    }
 }
 
 /// A bounded, language-aware lexer for file previews. It runs once when a file loads;
 /// SwiftUI receives immutable line plans and performs no regex or token work while scrolling.
 public enum FeatureSourceHighlighter {
     public static func lines(text: String, language: String?) -> [FeatureSourceLine] {
+        (try? makeLines(text: text, language: language, checksCancellation: false)) ?? []
+    }
+
+    static func cancellableLines(text: String, language: String?) throws -> [FeatureSourceLine] {
+        try makeLines(text: text, language: language, checksCancellation: true)
+    }
+
+    private static func makeLines(
+        text: String,
+        language: String?,
+        checksCancellation: Bool
+    ) throws -> [FeatureSourceLine] {
         let sourceLines = text.split(separator: "\n", omittingEmptySubsequences: false)
         let highlightsContent = text.utf8.count <= 512 * 1_024
         var isInsideBlockComment = false
-        return sourceLines.enumerated().map { index, line in
+        var output: [FeatureSourceLine] = []
+        output.reserveCapacity(sourceLines.count)
+        for (index, line) in sourceLines.enumerated() {
+            if checksCancellation, index.isMultiple(of: 128) {
+                try Task.checkCancellation()
+            }
             guard highlightsContent, line.utf8.count <= 32 * 1_024 else {
-                return FeatureSourceLine(
+                output.append(FeatureSourceLine(
                     id: index,
                     spans: line.isEmpty
                         ? []
                         : [FeatureSourceSpan(text: String(line), kind: .plain)]
-                )
+                ))
+                continue
             }
-            return FeatureSourceLine(
+            output.append(FeatureSourceLine(
                 id: index,
                 spans: spans(
                     in: String(line),
                     language: language?.lowercased(),
                     isInsideBlockComment: &isInsideBlockComment
                 )
-            )
+            ))
         }
+        return output
     }
 
     private static func spans(

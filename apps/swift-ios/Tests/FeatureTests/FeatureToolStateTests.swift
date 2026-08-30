@@ -67,6 +67,118 @@ struct FeatureToolStateTests {
         #expect(line.spans == [FeatureSourceSpan(text: source, kind: .plain)])
     }
 
+    @Test("Source preview threshold boundaries", .bug("https://github.com/saphid/t3code-personal/issues/247"))
+    func sourcePreviewThresholdBoundaries() async throws {
+        let completeLines = String(repeating: String(repeating: "a", count: 64) + "\n", count: 6_000)
+        let remainder = FeatureSourcePreviewPlan.highlightedByteLimit - completeLines.utf8.count
+        let atLimit = completeLines + String(repeating: "a", count: remainder)
+        let aboveLimit = atLimit + "a"
+
+        let highlighted = try await FeatureSourcePreviewPlan.prepare(text: atLimit, language: "swift")
+        let fallback = try await FeatureSourcePreviewPlan.prepare(text: aboveLimit, language: "swift")
+
+        #expect(highlighted.fallbackReason == nil)
+        #expect(fallback.fallbackReason == .byteCount(limit: FeatureSourcePreviewPlan.highlightedByteLimit))
+        #expect(fallback.isShowingFullLoadedContent == false)
+    }
+
+    @Test("Source preview line threshold boundaries", .bug("https://github.com/saphid/t3code-personal/issues/247"))
+    func sourcePreviewLineThresholdBoundaries() async throws {
+        let atLimit = String(repeating: "x\n", count: FeatureSourcePreviewPlan.highlightedLineLimit - 1) + "x"
+        let aboveLimit = atLimit + "\nx"
+
+        let highlighted = try await FeatureSourcePreviewPlan.prepare(text: atLimit, language: "swift")
+        let fallback = try await FeatureSourcePreviewPlan.prepare(text: aboveLimit, language: "swift")
+
+        #expect(highlighted.fallbackReason == nil)
+        #expect(fallback.fallbackReason == .lineCount(limit: FeatureSourcePreviewPlan.highlightedLineLimit))
+    }
+
+    @Test("Multi-megabyte source uses a memory-bounded excerpt", .bug("https://github.com/saphid/t3code-personal/issues/247"))
+    func multiMegabyteSourceUsesBoundedExcerpt() async throws {
+        let source = String(repeating: "let value = 42\n", count: 200_000)
+        let plan = try await FeatureSourcePreviewPlan.prepare(text: source, language: "swift")
+
+        #expect(plan.representedByteCount == FeatureSourcePreviewPlan.excerptByteLimit)
+        #expect(plan.lines.count <= FeatureSourcePreviewPlan.excerptByteLimit / FeatureSourcePreviewPlan.plainTextChunkByteLimit + 2)
+        #expect(plan.lines.allSatisfy { $0.text.utf8.count <= FeatureSourcePreviewPlan.plainTextChunkByteLimit })
+    }
+
+    @Test("A long single line is chunked without highlighting", .bug("https://github.com/saphid/t3code-personal/issues/247"))
+    func longSingleLineIsChunked() async throws {
+        let source = String(repeating: "x", count: FeatureSourcePreviewPlan.highlightedLineByteLimit + 1)
+        let plan = try await FeatureSourcePreviewPlan.prepare(text: source, language: "swift")
+
+        #expect(plan.fallbackReason == .longLine(limit: FeatureSourcePreviewPlan.highlightedLineByteLimit))
+        #expect(plan.lines.count > 1)
+        #expect(plan.lines.allSatisfy { $0.text.utf8.count <= FeatureSourcePreviewPlan.plainTextChunkByteLimit })
+    }
+
+    @Test("Open as plain text uses the loaded content without another read", .bug("https://github.com/saphid/t3code-personal/issues/247"))
+    func openAsPlainTextShowsAllLoadedContent() async throws {
+        let source = String(repeating: "value\n", count: 100_000)
+        let plan = try await FeatureSourcePreviewPlan.prepare(
+            text: source,
+            language: "swift",
+            opensFullPlainText: true
+        )
+
+        #expect(plan.isShowingFullLoadedContent)
+        #expect(plan.representedByteCount == source.utf8.count)
+    }
+
+    @Test("Cancelled preview preparation does not finish", .bug("https://github.com/saphid/t3code-personal/issues/247"))
+    func cancelledPreviewPreparationThrowsCancellation() async {
+        let source = String(repeating: "value\n", count: 200_000)
+        let task = Task {
+            try await FeatureSourcePreviewPlan.prepare(
+                text: source,
+                language: "swift",
+                opensFullPlainText: true
+            )
+        }
+        task.cancel()
+
+        await #expect(throws: CancellationError.self) {
+            _ = try await task.value
+        }
+    }
+
+    @MainActor
+    @Test("Restoration, reconnect, and stale results use the latest identity", .bug("https://github.com/saphid/t3code-personal/issues/247"))
+    func previewRequestIdentityRejectsStaleResults() {
+        let tracker = FeatureFilePreviewRequestTracker()
+        let restored = tracker.begin(threadID: "environment-a::thread", path: "large.swift")
+        let reconnected = tracker.begin(threadID: "environment-a::thread", path: "large.swift")
+
+        #expect(tracker.accepts(restored) == false)
+        #expect(tracker.accepts(reconnected))
+
+        let switchedEnvironment = tracker.begin(
+            threadID: "environment-b::thread",
+            path: "large.swift"
+        )
+        #expect(tracker.accepts(reconnected) == false)
+        #expect(tracker.accepts(switchedEnvironment))
+
+        tracker.cancel()
+        #expect(tracker.accepts(switchedEnvironment) == false)
+
+        let retried = tracker.begin(threadID: "environment-b::thread", path: "large.swift")
+        #expect(tracker.accepts(switchedEnvironment) == false)
+        #expect(retried.generation > switchedEnvironment.generation)
+    }
+
+    @Test("Normal source remains highlighted", .bug("https://github.com/saphid/t3code-personal/issues/247"))
+    func normalSourceRemainsHighlighted() async throws {
+        let source = "let answer = 42"
+        let plan = try await FeatureSourcePreviewPlan.prepare(text: source, language: "swift")
+
+        #expect(plan.fallbackReason == nil)
+        #expect(plan.isShowingFullLoadedContent)
+        #expect(plan.lines[0].spans.contains { $0.text == "let" && $0.kind == .keyword })
+    }
+
     @Test
     func reviewTotalsAggregateAcrossFiles() {
         let review = FeatureReview(files: [

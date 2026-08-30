@@ -6,11 +6,18 @@ public struct FeatureFilesView: View {
     let client: any FeatureClient
     let threadID: String
     let initialPath: String?
+    let connectionState: FeatureConnection.State?
 
-    public init(client: any FeatureClient, threadID: String, initialPath: String? = nil) {
+    public init(
+        client: any FeatureClient,
+        threadID: String,
+        initialPath: String? = nil,
+        connectionState: FeatureConnection.State? = nil
+    ) {
         self.client = client
         self.threadID = threadID
         self.initialPath = initialPath
+        self.connectionState = connectionState
     }
 
     public var body: some View {
@@ -19,6 +26,7 @@ public struct FeatureFilesView: View {
                 FeatureFilePreviewView(
                     client: client,
                     threadID: threadID,
+                    connectionState: connectionState,
                     entry: FeatureFileEntry(
                         path: initialPath,
                         name: URL(fileURLWithPath: initialPath).lastPathComponent,
@@ -26,7 +34,13 @@ public struct FeatureFilesView: View {
                     )
                 )
             } else {
-                FeatureFileDirectoryView(client: client, threadID: threadID, path: nil, title: "Files")
+                FeatureFileDirectoryView(
+                    client: client,
+                    threadID: threadID,
+                    connectionState: connectionState,
+                    path: nil,
+                    title: "Files"
+                )
             }
         }
         .background(T3Colors.background)
@@ -36,6 +50,7 @@ public struct FeatureFilesView: View {
 private struct FeatureFileDirectoryView: View {
     let client: any FeatureClient
     let threadID: String
+    let connectionState: FeatureConnection.State?
     let path: String?
     let title: String
 
@@ -103,11 +118,17 @@ private struct FeatureFileDirectoryView: View {
             FeatureFileDirectoryView(
                 client: client,
                 threadID: threadID,
+                connectionState: connectionState,
                 path: entry.path,
                 title: entry.name
             )
         } else {
-            FeatureFilePreviewView(client: client, threadID: threadID, entry: entry)
+            FeatureFilePreviewView(
+                client: client,
+                threadID: threadID,
+                connectionState: connectionState,
+                entry: entry
+            )
         }
     }
 
@@ -168,14 +189,20 @@ private struct FeatureFileRow: View {
 private struct FeatureFilePreviewView: View {
     let client: any FeatureClient
     let threadID: String
+    let connectionState: FeatureConnection.State?
     let entry: FeatureFileEntry
 
     @State private var content: FeatureFileContent?
-    @State private var sourceLines: [FeatureSourceLine] = []
+    @State private var sourcePlan: FeatureSourcePreviewPlan?
     @State private var image: UIImage?
     @State private var assetURL: URL?
     @State private var errorMessage: String?
     @State private var isLoading = true
+    @State private var isOpeningPlainText = false
+    @State private var retryGeneration = 0
+    @State private var requestTracker = FeatureFilePreviewRequestTracker()
+    @State private var plainTextTask: Task<Void, Never>?
+    @State private var connectionGeneration = 0
 
     private var previewKind: FeatureFilePreviewKind {
         FeatureFilePreviewKind.infer(path: entry.path, language: content?.language)
@@ -191,15 +218,12 @@ private struct FeatureFilePreviewView: View {
                     .background(Color.black)
             } else if let content {
                 VStack(spacing: 0) {
-                    if content.isTruncated {
-                        Label("Partial preview", systemImage: "exclamationmark.triangle")
-                            .font(T3Typography.supportingStrong)
-                            .foregroundStyle(.orange)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 8)
-                            .background(Color.orange.opacity(0.09))
-                    }
+                    FeatureFilePreviewNotices(
+                        content: content,
+                        sourcePlan: sourcePlan,
+                        isOpeningPlainText: isOpeningPlainText,
+                        openAsPlainText: openAsPlainText
+                    )
                     switch previewKind {
                     case .markdown:
                         ScrollView {
@@ -214,17 +238,26 @@ private struct FeatureFilePreviewView: View {
                         }
                         .scrollDismissesKeyboard(.interactively)
                     case .source, .plainText:
-                        FeatureSourceTextView(lines: sourceLines)
+                        if let sourcePlan {
+                            FeatureSourceTextView(lines: sourcePlan.lines)
+                        } else {
+                            ProgressView("Preparing preview…")
+                                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        }
                     case .image:
                         EmptyView()
                     }
                 }
             } else {
-                ContentUnavailableView(
-                    previewKind == .image ? "Image unavailable" : "File unavailable",
-                    systemImage: previewKind == .image ? "photo.badge.exclamationmark" : "doc.badge.ellipsis",
-                    description: Text(errorMessage ?? "The file could not be read.")
-                )
+                VStack(spacing: 16) {
+                    ContentUnavailableView(
+                        previewKind == .image ? "Image unavailable" : "File unavailable",
+                        systemImage: previewKind == .image ? "photo.badge.exclamationmark" : "doc.badge.ellipsis",
+                        description: Text(errorMessage ?? "The file could not be read.")
+                    )
+                    Button("Retry") { retryGeneration += 1 }
+                        .buttonStyle(.borderedProminent)
+                }
             }
         }
         .background(T3Colors.background)
@@ -247,12 +280,42 @@ private struct FeatureFilePreviewView: View {
                 }
             }
         }
-        .task { await load() }
+        .task(id: FeatureFilePreviewRequestIdentity(
+            threadID: threadID,
+            path: entry.path,
+            generation: retryGeneration + connectionGeneration
+        )) {
+            guard connectionState == nil || connectionState == .connected else {
+                isLoading = false
+                if content == nil, image == nil {
+                    errorMessage = "Reconnect to load this file."
+                }
+                return
+            }
+            await load()
+        }
+        .onChange(of: connectionState) { _, state in
+            requestTracker.cancel()
+            plainTextTask?.cancel()
+            plainTextTask = nil
+            isOpeningPlainText = false
+            connectionGeneration += 1
+            if state != .connected, content == nil, image == nil {
+                isLoading = false
+                errorMessage = "Reconnect to load this file."
+            }
+        }
+        .onDisappear {
+            requestTracker.cancel()
+            plainTextTask?.cancel()
+            plainTextTask = nil
+        }
     }
 
     private func load() async {
+        let request = requestTracker.begin(threadID: threadID, path: entry.path)
         isLoading = true
-        defer { isLoading = false }
+        errorMessage = nil
         do {
             if previewKind == .image {
                 guard let resolver = client as? any FeatureWorkspaceAssetResolving else {
@@ -275,49 +338,158 @@ private struct FeatureFilePreviewView: View {
                 }).value else {
                     throw FeatureImagePreviewError.invalidImage
                 }
-                guard !Task.isCancelled else { return }
+                guard !Task.isCancelled, requestTracker.accepts(request) else { return }
                 assetURL = resolvedURL
                 image = decoded
                 content = nil
-                sourceLines = []
+                sourcePlan = nil
             } else {
                 let loaded = try await client.readFile(threadID: threadID, path: entry.path)
+                guard !Task.isCancelled, requestTracker.accepts(request) else { return }
                 let loadedKind = FeatureFilePreviewKind.infer(
                     path: entry.path,
                     language: loaded.language
                 )
-                let lines: [FeatureSourceLine]
+                let plan: FeatureSourcePreviewPlan?
                 switch loadedKind {
                 case .source:
-                    lines = await Task.detached(priority: .userInitiated) {
-                        FeatureSourceHighlighter.lines(
-                            text: loaded.text,
-                            language: loaded.language
-                        )
-                    }.value
+                    plan = try await FeatureSourcePreviewPlan.prepare(
+                        text: loaded.text,
+                        language: loaded.language
+                    )
                 case .plainText:
-                    lines = await Task.detached(priority: .userInitiated) {
-                        FeatureSourceHighlighter.lines(text: loaded.text, language: "plain")
-                    }.value
+                    plan = try await FeatureSourcePreviewPlan.prepare(
+                        text: loaded.text,
+                        language: "plain"
+                    )
                 case .markdown:
                     _ = await MarkdownRenderCache.shared.document(
                         for: MarkdownContentRevision(loaded.text)
                     )
-                    lines = []
+                    plan = nil
                 case .image:
-                    lines = []
+                    plan = nil
                 }
-                guard !Task.isCancelled else { return }
+                guard !Task.isCancelled, requestTracker.accepts(request) else { return }
                 content = loaded
-                sourceLines = lines
+                sourcePlan = plan
                 image = nil
                 assetURL = nil
             }
             errorMessage = nil
         } catch {
-            guard !Task.isCancelled else { return }
+            guard !Task.isCancelled, requestTracker.accepts(request) else { return }
             errorMessage = error.localizedDescription
         }
+        guard requestTracker.accepts(request) else { return }
+        isLoading = false
+    }
+
+    private func openAsPlainText() {
+        guard let content, isOpeningPlainText == false else { return }
+        requestTracker.cancel()
+        plainTextTask?.cancel()
+        isOpeningPlainText = true
+        plainTextTask = Task {
+            defer {
+                isOpeningPlainText = false
+                plainTextTask = nil
+            }
+            do {
+                let plan = try await FeatureSourcePreviewPlan.prepare(
+                    text: content.text,
+                    language: "plain",
+                    opensFullPlainText: true
+                )
+                guard !Task.isCancelled else { return }
+                sourcePlan = plan
+            } catch is CancellationError {
+                return
+            } catch {
+                errorMessage = error.localizedDescription
+            }
+        }
+    }
+}
+
+private struct FeatureFilePreviewNotices: View {
+    let content: FeatureFileContent
+    let sourcePlan: FeatureSourcePreviewPlan?
+    let isOpeningPlainText: Bool
+    let openAsPlainText: () -> Void
+
+    var body: some View {
+        if content.isTruncated {
+            notice(
+                "Partial file",
+                detail: "The environment returned only the first \(loadedSizeLabel).",
+                systemImage: "exclamationmark.triangle"
+            )
+        }
+        if let sourcePlan, let reason = sourcePlan.fallbackReason {
+            VStack(alignment: .leading, spacing: 8) {
+                Label("Highlighting omitted", systemImage: "text.page")
+                    .font(T3Typography.supportingStrong)
+                Text(fallbackMessage(reason, plan: sourcePlan))
+                    .font(T3Typography.supporting)
+                if sourcePlan.isShowingFullLoadedContent == false {
+                    Button("Open as Plain Text", action: openAsPlainText)
+                        .buttonStyle(.bordered)
+                        .disabled(isOpeningPlainText)
+                }
+            }
+            .foregroundStyle(.orange)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .background(Color.orange.opacity(0.09))
+        }
+    }
+
+    private var loadedSizeLabel: String {
+        let loaded = ByteCountFormatter.string(
+            fromByteCount: Int64(content.text.utf8.count),
+            countStyle: .file
+        )
+        guard let totalBytes = content.totalBytes else { return loaded }
+        let total = ByteCountFormatter.string(
+            fromByteCount: Int64(totalBytes),
+            countStyle: .file
+        )
+        return "\(loaded) of \(total)"
+    }
+
+    private func fallbackMessage(
+        _ reason: FeatureSourcePreviewFallbackReason,
+        plan: FeatureSourcePreviewPlan
+    ) -> String {
+        let reasonText = switch reason {
+        case .byteCount: "This file is too large to highlight safely."
+        case .lineCount: "This file has too many lines to highlight safely."
+        case .longLine: "This file contains a line that is too long to highlight safely."
+        }
+        if plan.isShowingFullLoadedContent {
+            return "\(reasonText) The available content is shown as plain text."
+        }
+        let size = ByteCountFormatter.string(
+            fromByteCount: Int64(plan.representedByteCount),
+            countStyle: .file
+        )
+        return "\(reasonText) Showing a \(size) excerpt."
+    }
+
+    private func notice(_ title: String, detail: String, systemImage: String) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Label(title, systemImage: systemImage)
+                .font(T3Typography.supportingStrong)
+            Text(detail)
+                .font(T3Typography.supporting)
+        }
+        .foregroundStyle(.orange)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(Color.orange.opacity(0.09))
     }
 }
 
