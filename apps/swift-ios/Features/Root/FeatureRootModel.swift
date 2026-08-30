@@ -826,6 +826,22 @@ public final class FeatureRootModel {
         }
     }
 
+    @discardableResult
+    public func saveAutomaticTitleSettings(
+        environmentID: String,
+        settings: FeatureAutomaticTitleSettings
+    ) async -> Bool {
+        await perform {
+            try await client.updateAutomaticTitleSettings(
+                environmentID: environmentID,
+                settings: settings
+            )
+            var byEnvironment = snapshot.automaticTitleSettingsByEnvironment ?? [:]
+            byEnvironment[environmentID] = settings
+            snapshot.automaticTitleSettingsByEnvironment = byEnvironment
+        }
+    }
+
     /// Applies appearance optimistically so selecting a theme updates every
     /// surface immediately, then persists just that preference in the current
     /// settings snapshot. Other unsaved Settings edits remain drafts.

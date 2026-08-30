@@ -350,6 +350,43 @@ describe("ServerSettingsPatch.providerInstances", () => {
   });
 });
 
+describe("ServerSettings title generation fallback", () => {
+  it("defaults to primary-only title generation", () => {
+    expect(decodeServerSettings({}).textGenerationFallbackModelSelection).toBeNull();
+  });
+
+  it("round-trips a fallback model with its provider options", () => {
+    const fallback = {
+      instanceId: ProviderInstanceId.make("claude_personal"),
+      model: "claude-haiku-4-5",
+      options: [{ id: "effort", value: "low" }],
+    };
+    const decoded = decodeServerSettings({
+      textGenerationFallbackModelSelection: fallback,
+    });
+
+    expect(decoded.textGenerationFallbackModelSelection).toEqual(fallback);
+    expect(encodeServerSettings(decoded).textGenerationFallbackModelSelection).toEqual(fallback);
+  });
+
+  it("accepts selecting or disabling the fallback atomically", () => {
+    const fallback = {
+      instanceId: ProviderInstanceId.make("claude_personal"),
+      model: "claude-haiku-4-5",
+      options: [{ id: "effort", value: "low" }],
+    };
+
+    expect(
+      decodeServerSettingsPatch({ textGenerationFallbackModelSelection: fallback })
+        .textGenerationFallbackModelSelection,
+    ).toEqual(fallback);
+    expect(
+      decodeServerSettingsPatch({ textGenerationFallbackModelSelection: null })
+        .textGenerationFallbackModelSelection,
+    ).toBeNull();
+  });
+});
+
 describe("ServerSettingsPatch string normalization", () => {
   it("trims string settings while decoding patches", () => {
     const patch = decodeServerSettingsPatch({

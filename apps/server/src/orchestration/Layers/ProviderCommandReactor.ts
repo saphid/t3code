@@ -10,6 +10,7 @@ import {
   ThreadId,
   type ProviderSession,
   type RuntimeMode,
+  TextGenerationError,
   type TurnId,
 } from "@t3tools/contracts";
 import { isTemporaryWorktreeBranch, WORKTREE_BRANCH_PREFIX } from "@t3tools/shared/git";
@@ -49,6 +50,30 @@ import { VcsStatusBroadcaster } from "../../vcs/VcsStatusBroadcaster.ts";
 import { GitWorkflowService } from "../../git/GitWorkflowService.ts";
 const isProviderAdapterRequestError = Schema.is(ProviderAdapterRequestError);
 const isProviderDriverKind = Schema.is(ProviderDriverKind);
+const isTextGenerationError = Schema.is(TextGenerationError);
+
+const INELIGIBLE_TITLE_FALLBACK_DETAILS = [
+  "cancelled",
+  "canceled",
+  "unsupported model",
+  "unknown model",
+  "model selection must",
+  "invalid structured output",
+  "unexpected output format",
+  "returned empty output",
+  "failed to encode structured output schema",
+  "failed to write temp file",
+  "failed to materialize",
+  "failed to read attachment",
+] as const;
+
+export function isTitleGenerationFallbackEligible(error: TextGenerationError): boolean {
+  const detail = error.detail.toLowerCase();
+  if (INELIGIBLE_TITLE_FALLBACK_DETAILS.some((value) => detail.includes(value))) {
+    return false;
+  }
+  return true;
+}
 
 type ProviderIntentEvent = Extract<
   OrchestrationEvent,
@@ -329,6 +354,59 @@ const make = Effect.gen(function* () {
     );
 
   const threadModelSelections = new Map<string, ModelSelection>();
+
+  const generateThreadTitleWithFallback = Effect.fn("generateThreadTitleWithFallback")(
+    function* (input: {
+      readonly cwd: string;
+      readonly message: string;
+      readonly previousTitle?: string;
+      readonly attachments?: ReadonlyArray<ChatAttachment>;
+    }) {
+      const settings = yield* serverSettingsService.getSettings;
+      const primary = settings.textGenerationModelSelection;
+      const fallback = settings.textGenerationFallbackModelSelection;
+      const primaryEffect = textGeneration.generateThreadTitle({
+        ...input,
+        modelSelection: primary,
+      });
+
+      return yield* primaryEffect.pipe(
+        Effect.catchIf(isTextGenerationError, (error) => {
+          if (
+            !fallback ||
+            fallback.instanceId === primary.instanceId ||
+            !isTitleGenerationFallbackEligible(error)
+          ) {
+            return Effect.fail(error);
+          }
+
+          return Effect.logWarning("primary thread title provider failed; trying fallback once", {
+            primaryInstanceId: primary.instanceId,
+            fallbackInstanceId: fallback.instanceId,
+            cause: error.message,
+          }).pipe(
+            Effect.andThen(
+              textGeneration
+                .generateThreadTitle({
+                  ...input,
+                  modelSelection: fallback,
+                })
+                .pipe(
+                  Effect.tapError((fallbackError) =>
+                    Effect.logWarning("fallback thread title provider failed", {
+                      primaryInstanceId: primary.instanceId,
+                      fallbackInstanceId: fallback.instanceId,
+                      primaryCause: error.message,
+                      fallbackCause: fallbackError.message,
+                    }),
+                  ),
+                ),
+            ),
+          );
+        }),
+      );
+    },
+  );
 
   const appendProviderFailureActivity = (input: {
     readonly threadId: ThreadId;
@@ -902,14 +980,10 @@ const make = Effect.gen(function* () {
     }) {
       const attachments = input.attachments ?? [];
       yield* Effect.gen(function* () {
-        const { textGenerationModelSelection: modelSelection } =
-          yield* serverSettingsService.getSettings;
-
-        const generated = yield* textGeneration.generateThreadTitle({
+        const generated = yield* generateThreadTitleWithFallback({
           cwd: input.cwd,
           message: input.messageText,
           ...(attachments.length > 0 ? { attachments } : {}),
-          modelSelection,
         });
         if (!generated) return;
 
@@ -965,14 +1039,11 @@ const make = Effect.gen(function* () {
         thread,
         projects: project ? [project] : [],
       }) ?? process.cwd();
-    const { textGenerationModelSelection: modelSelection } =
-      yield* serverSettingsService.getSettings;
-    const generated = yield* textGeneration.generateThreadTitle({
+    const generated = yield* generateThreadTitleWithFallback({
       cwd,
       message,
       previousTitle,
       ...(attachments.length > 0 ? { attachments } : {}),
-      modelSelection,
     });
     if (generated.title === DEFAULT_THREAD_TITLE || generated.title === previousTitle) {
       return { _tag: "Completed", title: undefined } as const;

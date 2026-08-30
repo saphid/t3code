@@ -530,6 +530,29 @@ private struct ConnectionDetailView: View {
                     LabeledContent("Projects", value: "\(projectCount)")
                 }
 
+                Section("Automatic titles") {
+                    if let automaticTitleSettings {
+                        NavigationLink {
+                            AutomaticTitleSettingsView(
+                                model: model,
+                                environmentID: environmentID,
+                                providers: providers,
+                                settings: automaticTitleSettings
+                            )
+                        } label: {
+                            LabeledContent(
+                                "Backup model",
+                                value: automaticTitleSettings.fallback == nil
+                                    ? "Off"
+                                    : "Configured"
+                            )
+                        }
+                    } else {
+                        LabeledContent("Model settings", value: "Unavailable")
+                            .foregroundStyle(T3Colors.textSecondary)
+                    }
+                }
+
                 Section {
                     Button("Remove connection", role: .destructive) {
                         showingRemoval = true
@@ -566,6 +589,14 @@ private struct ConnectionDetailView: View {
 
     private var projectCount: Int {
         model.snapshot.projects.count { $0.environmentID == environmentID }
+    }
+
+    private var providers: [FeatureProvider] {
+        model.snapshot.providersByEnvironment?[environmentID] ?? []
+    }
+
+    private var automaticTitleSettings: FeatureAutomaticTitleSettings? {
+        model.snapshot.automaticTitleSettingsByEnvironment?[environmentID]
     }
 
     private var removalMessage: String {

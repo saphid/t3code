@@ -145,17 +145,23 @@ public struct ServerSettingsSnapshot: Codable, Equatable, Sendable {
     public let newWorktreesStartFromOrigin: Bool
     public let sidebarProjectGroupingMode: ServerProjectGroupingMode?
     public let sidebarProjectGroupingOverrides: [String: ServerProjectGroupingMode]?
+    public let textGenerationModelSelection: ModelSelection?
+    public let textGenerationFallbackModelSelection: ModelSelection?
 
     public init(
         defaultThreadEnvMode: ServerThreadEnvironmentMode = .local,
         newWorktreesStartFromOrigin: Bool = true,
         sidebarProjectGroupingMode: ServerProjectGroupingMode? = nil,
-        sidebarProjectGroupingOverrides: [String: ServerProjectGroupingMode]? = nil
+        sidebarProjectGroupingOverrides: [String: ServerProjectGroupingMode]? = nil,
+        textGenerationModelSelection: ModelSelection? = nil,
+        textGenerationFallbackModelSelection: ModelSelection? = nil
     ) {
         self.defaultThreadEnvMode = defaultThreadEnvMode
         self.newWorktreesStartFromOrigin = newWorktreesStartFromOrigin
         self.sidebarProjectGroupingMode = sidebarProjectGroupingMode
         self.sidebarProjectGroupingOverrides = sidebarProjectGroupingOverrides
+        self.textGenerationModelSelection = textGenerationModelSelection
+        self.textGenerationFallbackModelSelection = textGenerationFallbackModelSelection
     }
 }
 

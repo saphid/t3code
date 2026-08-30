@@ -18,6 +18,42 @@ import {
 } from "./serverSettings.ts";
 
 describe("serverSettings helpers", () => {
+  it("replaces and clears the title generation fallback without merging model options", () => {
+    const first = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
+      textGenerationFallbackModelSelection: {
+        instanceId: ProviderInstanceId.make("claude_personal"),
+        model: "claude-haiku-4-5",
+        options: [{ id: "effort", value: "low" }],
+      },
+    });
+    const replaced = applyServerSettingsPatch(first, {
+      textGenerationFallbackModelSelection: {
+        instanceId: ProviderInstanceId.make("grok_backup"),
+        model: "grok-code-fast-1",
+      },
+    });
+    const cleared = applyServerSettingsPatch(replaced, {
+      textGenerationFallbackModelSelection: null,
+    });
+
+    expect(replaced.textGenerationFallbackModelSelection).toEqual({
+      instanceId: ProviderInstanceId.make("grok_backup"),
+      model: "grok-code-fast-1",
+    });
+    expect(cleared.textGenerationFallbackModelSelection).toBeNull();
+  });
+
+  it("clears a title fallback from the primary provider instance", () => {
+    const next = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
+      textGenerationFallbackModelSelection: {
+        instanceId: DEFAULT_SERVER_SETTINGS.textGenerationModelSelection.instanceId,
+        model: "another-model",
+      },
+    });
+
+    expect(next.textGenerationFallbackModelSelection).toBeNull();
+  });
+
   it("normalizes optional persisted strings", () => {
     expect(normalizePersistedServerSettingString(undefined)).toBeUndefined();
     expect(normalizePersistedServerSettingString("   ")).toBeUndefined();

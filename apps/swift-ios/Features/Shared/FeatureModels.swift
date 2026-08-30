@@ -876,6 +876,16 @@ public struct FeatureSelection: Sendable, Equatable, Hashable, Codable {
     }
 }
 
+public struct FeatureAutomaticTitleSettings: Sendable, Equatable, Codable {
+    public var primary: FeatureSelection
+    public var fallback: FeatureSelection?
+
+    public init(primary: FeatureSelection, fallback: FeatureSelection? = nil) {
+        self.primary = primary
+        self.fallback = fallback
+    }
+}
+
 public enum FeatureAppearance: String, CaseIterable, Sendable, Codable {
     case system
     case light
@@ -1042,6 +1052,8 @@ public struct FeatureSnapshot: Sendable, Equatable, Codable {
     public var providersByEnvironment: [String: [FeatureProvider]]?
     /// Server-authoritative new-thread defaults keyed by saved environment.
     public var preferencesByEnvironment: [String: FeatureEnvironmentPreferences]?
+    /// Environment-owned automatic title model choices keyed by saved environment.
+    public var automaticTitleSettingsByEnvironment: [String: FeatureAutomaticTitleSettings]?
     public var settings: FeatureSettings
 
     public init(
@@ -1052,6 +1064,7 @@ public struct FeatureSnapshot: Sendable, Equatable, Codable {
         providers: [FeatureProvider] = [],
         providersByEnvironment: [String: [FeatureProvider]]? = nil,
         preferencesByEnvironment: [String: FeatureEnvironmentPreferences]? = nil,
+        automaticTitleSettingsByEnvironment: [String: FeatureAutomaticTitleSettings]? = nil,
         settings: FeatureSettings = .init()
     ) {
         self.connection = connection
@@ -1061,6 +1074,7 @@ public struct FeatureSnapshot: Sendable, Equatable, Codable {
         self.providers = providers
         self.providersByEnvironment = providersByEnvironment
         self.preferencesByEnvironment = preferencesByEnvironment
+        self.automaticTitleSettingsByEnvironment = automaticTitleSettingsByEnvironment
         self.settings = settings
     }
 }

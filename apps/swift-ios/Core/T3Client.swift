@@ -135,6 +135,23 @@ public actor T3Client {
         )
     }
 
+    public func updateTitleGenerationModels(
+        primary: ModelSelection,
+        fallback: ModelSelection?
+    ) async throws -> ServerSettingsSnapshot {
+        let fallbackValue = try fallback.map(JSONValue.encode) ?? .null
+        return try await rpc.request(
+            RPCMethod.serverUpdateSettings.rawValue,
+            payload: .object([
+                "patch": .object([
+                    "textGenerationModelSelection": try JSONValue.encode(primary),
+                    "textGenerationFallbackModelSelection": fallbackValue,
+                ]),
+            ]),
+            as: ServerSettingsSnapshot.self
+        )
+    }
+
     public func usageSummary(_ input: UsageSummaryInput) async throws -> UsageSummary {
         try await rpc.request(
             RPCMethod.serverGetUsageSummary.rawValue,
@@ -1550,6 +1567,7 @@ public actor EnvironmentRuntime {
 public enum RPCMethod: String, Sendable {
     case serverProbe = "server.probe"
     case serverGetConfig = "server.getConfig"
+    case serverUpdateSettings = "server.updateSettings"
     case serverGetUsageSummary = "server.getUsageSummary"
     case pullRequestsList = "pullRequests.list"
     case pullRequestsDetail = "pullRequests.detail"

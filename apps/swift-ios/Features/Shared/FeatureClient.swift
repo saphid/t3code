@@ -86,6 +86,10 @@ public protocol FeatureClient: AnyObject {
     func resolveUserInput(id: String, answers: [String: FeatureInputAnswer]) async throws
 
     func saveSettings(_ settings: FeatureSettings) async throws
+    func updateAutomaticTitleSettings(
+        environmentID: String,
+        settings: FeatureAutomaticTitleSettings
+    ) async throws
 
     func usageSummaries(_ input: UsageSummaryInput) async throws -> [FeatureEnvironmentUsage]
     func pullRequestLists(_ input: PullRequestListInput) async throws
@@ -213,6 +217,12 @@ public extension FeatureClient {
 
     func setEnvironmentEnabled(id: String, enabled: Bool) async throws {}
     func removeEnvironment(id: String) async throws {}
+    func updateAutomaticTitleSettings(
+        environmentID _: String,
+        settings _: FeatureAutomaticTitleSettings
+    ) async throws {
+        throw FeatureCapabilityUnavailable("Automatic title settings")
+    }
     func disconnect() async {}
     func addProject(path: String) async throws {}
     func usageSummaries(_ input: UsageSummaryInput) async throws -> [FeatureEnvironmentUsage] {

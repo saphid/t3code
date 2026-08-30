@@ -122,6 +122,13 @@ function mergeModelSelectionOptionsById(input: {
   return [...merged.entries()].map(([id, value]) => ({ id, value }));
 }
 
+function enforceCrossProviderTitleFallback(settings: ServerSettings): ServerSettings {
+  return settings.textGenerationFallbackModelSelection?.instanceId ===
+    settings.textGenerationModelSelection.instanceId
+    ? { ...settings, textGenerationFallbackModelSelection: null }
+    : settings;
+}
+
 export function applyServerSettingsPatch(
   current: ServerSettings,
   patch: ServerSettingsPatch,
@@ -191,6 +198,9 @@ export function applyServerSettingsPatch(
     ...(patch.sourceControlWriterModelSelection !== undefined
       ? { sourceControlWriterModelSelection: patch.sourceControlWriterModelSelection }
       : {}),
+    ...(patch.textGenerationFallbackModelSelection !== undefined
+      ? { textGenerationFallbackModelSelection: patch.textGenerationFallbackModelSelection }
+      : {}),
     ...(automaticGitFetchInterval !== undefined ? { automaticGitFetchInterval } : {}),
     ...(providerHealthRefreshInterval !== undefined ? { providerHealthRefreshInterval } : {}),
   };
@@ -208,7 +218,7 @@ export function applyServerSettingsPatch(
     backgroundActivityProfile: resolvedBackgroundActivity.profile,
   };
   if (!selectionPatch) {
-    return nextWithReplacements;
+    return enforceCrossProviderTitleFallback(nextWithReplacements);
   }
 
   const instanceId = selectionPatch.instanceId ?? current.textGenerationModelSelection.instanceId;
@@ -220,8 +230,8 @@ export function applyServerSettingsPatch(
         patch: selectionPatch.options,
       });
 
-  return {
+  return enforceCrossProviderTitleFallback({
     ...nextWithReplacements,
     textGenerationModelSelection: createModelSelection(instanceId, model, options),
-  };
+  });
 }

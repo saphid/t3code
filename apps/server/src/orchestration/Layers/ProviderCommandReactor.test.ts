@@ -93,7 +93,10 @@ async function waitFor(
 
 describe("ProviderCommandReactor", () => {
   let runtime: ManagedRuntime.ManagedRuntime<
-    OrchestrationEngineService | ProviderCommandReactor | ProjectionSnapshotQuery,
+    | OrchestrationEngineService
+    | ProviderCommandReactor
+    | ProjectionSnapshotQuery
+    | ServerSettingsService,
     unknown
   > | null = null;
   let scope: Scope.Closeable | null = null;
@@ -150,6 +153,7 @@ describe("ProviderCommandReactor", () => {
     readonly requiresNewThreadForModelChange?: boolean;
     readonly titleRegenerationCompletionDispatchFailures?: number;
     readonly titleRegenerationBeforeStart?: "one" | "two";
+    readonly titleGenerationFallbackModelSelection?: ModelSelection | null;
     readonly interruptTurnEffect?: () => Effect.Effect<void, ProviderAdapterRequestError>;
     readonly stopSessionEffect?: () => Effect.Effect<void, ProviderAdapterRequestError>;
     readonly startSessionEffect?: (
@@ -316,6 +320,9 @@ describe("ProviderCommandReactor", () => {
           ? { requiresNewThreadForModelChange: true }
           : {}),
       },
+      ...(input?.titleGenerationFallbackModelSelection
+        ? [{ instanceId: input.titleGenerationFallbackModelSelection.instanceId }]
+        : []),
     ];
 
     const unsupported = () => Effect.die(new Error("Unsupported provider call in test")) as never;
@@ -426,7 +433,13 @@ describe("ProviderCommandReactor", () => {
           generateThreadTitle,
         }),
       ),
-      Layer.provideMerge(ServerSettingsService.layerTest()),
+      Layer.provideMerge(
+        ServerSettingsService.layerTest({
+          textGenerationModelSelection: modelSelection,
+          textGenerationFallbackModelSelection:
+            input?.titleGenerationFallbackModelSelection ?? null,
+        }),
+      ),
       Layer.provideMerge(ServerConfig.layerTest(process.cwd(), baseDir)),
       Layer.provideMerge(NodeServices.layer),
     );
@@ -435,6 +448,7 @@ describe("ProviderCommandReactor", () => {
     const engine = await runtime.runPromise(Effect.service(OrchestrationEngineService));
     const snapshotQuery = await runtime.runPromise(Effect.service(ProjectionSnapshotQuery));
     const reactor = await runtime.runPromise(Effect.service(ProviderCommandReactor));
+    const serverSettings = await runtime.runPromise(Effect.service(ServerSettingsService));
     const runEffect = <A, E>(effect: Effect.Effect<A, E>) => runtime!.runPromise(effect);
 
     await Effect.runPromise(
@@ -518,6 +532,7 @@ describe("ProviderCommandReactor", () => {
       refreshStatus,
       generateBranchName,
       generateThreadTitle,
+      serverSettings,
       runtimeSessions,
       stateDir,
       drain,
@@ -679,7 +694,12 @@ describe("ProviderCommandReactor", () => {
   );
 
   it("generates a thread title on the first turn", async () => {
-    const harness = await createHarness();
+    const harness = await createHarness({
+      titleGenerationFallbackModelSelection: createModelSelection(
+        ProviderInstanceId.make("claude_personal"),
+        "claude-haiku-4-5",
+      ),
+    });
     const now = "2026-01-01T00:00:00.000Z";
     const seededTitle = "Please investigate reconnect failures after restar...";
     harness.generateThreadTitle.mockReturnValue(Effect.succeed({ title: "Generated title" }));
@@ -726,6 +746,231 @@ describe("ProviderCommandReactor", () => {
     const readModel = await harness.readModel();
     const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
     expect(thread?.title).toBe("Generated title");
+    expect(harness.generateThreadTitle).toHaveBeenCalledTimes(1);
+    expect(harness.generateThreadTitle.mock.calls[0]?.[0].modelSelection.instanceId).toBe("codex");
+  });
+
+  it.each([
+    "Authentication failed.",
+    "Quota exceeded.",
+    "Rate limit exceeded.",
+    "Provider temporarily unavailable.",
+    "Claude CLI command failed: provider error.",
+  ])("attempts one cross-provider fallback for an eligible title failure: %s", async (detail) => {
+    const fallback = createModelSelection(
+      ProviderInstanceId.make("claude_personal"),
+      "claude-haiku-4-5",
+      [{ id: "effort", value: "low" }],
+    );
+    const harness = await createHarness({
+      titleGenerationFallbackModelSelection: fallback,
+    });
+    const seededTitle = "Investigate title fallback";
+    harness.generateThreadTitle
+      .mockReturnValueOnce(
+        Effect.fail(new TextGenerationError({ operation: "generateThreadTitle", detail })),
+      )
+      .mockReturnValueOnce(Effect.succeed({ title: "Fallback generated title" }));
+
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.meta.update",
+        commandId: CommandId.make(`cmd-title-fallback-seed-${detail}`),
+        threadId: ThreadId.make("thread-1"),
+        title: seededTitle,
+      }),
+    );
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make(`cmd-title-fallback-start-${detail}`),
+        threadId: ThreadId.make("thread-1"),
+        message: {
+          messageId: asMessageId(`message-title-fallback-${detail}`),
+          role: "user",
+          text: "Investigate title fallback failures.",
+          attachments: [],
+        },
+        titleSeed: seededTitle,
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: "2026-01-01T00:00:00.000Z",
+      }),
+    );
+
+    await waitFor(() => harness.generateThreadTitle.mock.calls.length === 2);
+    expect(harness.generateThreadTitle.mock.calls[0]?.[0].modelSelection.instanceId).toBe("codex");
+    expect(harness.generateThreadTitle.mock.calls[1]?.[0].modelSelection).toEqual(fallback);
+    await waitFor(async () =>
+      (await harness.readModel()).threads.some(
+        (thread) =>
+          thread.id === ThreadId.make("thread-1") && thread.title === "Fallback generated title",
+      ),
+    );
+    expect(harness.generateThreadTitle).toHaveBeenCalledTimes(2);
+  });
+
+  it.each([
+    "Title request was cancelled.",
+    "Unsupported model selection.",
+    "Provider returned invalid structured output.",
+  ])("does not fall back for an ineligible title failure: %s", async (detail) => {
+    const fallback = createModelSelection(
+      ProviderInstanceId.make("claude_personal"),
+      "claude-haiku-4-5",
+    );
+    const harness = await createHarness({
+      titleGenerationFallbackModelSelection: fallback,
+    });
+    harness.generateThreadTitle.mockReturnValue(
+      Effect.fail(new TextGenerationError({ operation: "generateThreadTitle", detail })),
+    );
+    const seededTitle = "Keep the current title";
+
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.meta.update",
+        commandId: CommandId.make(`cmd-ineligible-title-seed-${detail}`),
+        threadId: ThreadId.make("thread-1"),
+        title: seededTitle,
+      }),
+    );
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make(`cmd-ineligible-title-fallback-${detail}`),
+        threadId: ThreadId.make("thread-1"),
+        message: {
+          messageId: asMessageId(`message-ineligible-title-fallback-${detail}`),
+          role: "user",
+          text: "Keep the current title.",
+          attachments: [],
+        },
+        titleSeed: seededTitle,
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: "2026-01-01T00:00:00.000Z",
+      }),
+    );
+
+    await waitFor(() => harness.generateThreadTitle.mock.calls.length === 1);
+    await harness.drain();
+    expect(harness.generateThreadTitle).toHaveBeenCalledTimes(1);
+  });
+
+  it("stops after the fallback title attempt fails", async () => {
+    const fallback = createModelSelection(
+      ProviderInstanceId.make("claude_personal"),
+      "claude-haiku-4-5",
+    );
+    const harness = await createHarness({
+      titleGenerationFallbackModelSelection: fallback,
+    });
+    harness.generateThreadTitle.mockReturnValue(
+      Effect.fail(
+        new TextGenerationError({
+          operation: "generateThreadTitle",
+          detail: "Provider temporarily unavailable.",
+        }),
+      ),
+    );
+    const seededTitle = "Keep the thread usable";
+
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.meta.update",
+        commandId: CommandId.make("cmd-both-title-providers-fail-seed"),
+        threadId: ThreadId.make("thread-1"),
+        title: seededTitle,
+      }),
+    );
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-both-title-providers-fail"),
+        threadId: ThreadId.make("thread-1"),
+        message: {
+          messageId: asMessageId("message-both-title-providers-fail"),
+          role: "user",
+          text: "Keep the thread usable.",
+          attachments: [],
+        },
+        titleSeed: seededTitle,
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: "2026-01-01T00:00:00.000Z",
+      }),
+    );
+
+    await waitFor(() => harness.generateThreadTitle.mock.calls.length === 2);
+    await harness.drain();
+    expect(harness.generateThreadTitle).toHaveBeenCalledTimes(2);
+  });
+
+  it("uses one settings snapshot when the fallback changes during generation", async () => {
+    const originalFallback = createModelSelection(
+      ProviderInstanceId.make("claude_personal"),
+      "claude-haiku-4-5",
+    );
+    const harness = await createHarness({
+      titleGenerationFallbackModelSelection: originalFallback,
+    });
+    const primaryResult = await harness.runEffect(
+      Deferred.make<{ readonly title: string }, TextGenerationError>(),
+    );
+    const seededTitle = "Keep one title job";
+    harness.generateThreadTitle
+      .mockReturnValueOnce(Deferred.await(primaryResult))
+      .mockReturnValueOnce(Effect.succeed({ title: "Original fallback title" }));
+
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.meta.update",
+        commandId: CommandId.make("cmd-settings-change-title-seed"),
+        threadId: ThreadId.make("thread-1"),
+        title: seededTitle,
+      }),
+    );
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-settings-change-title-start"),
+        threadId: ThreadId.make("thread-1"),
+        message: {
+          messageId: asMessageId("message-settings-change-title"),
+          role: "user",
+          text: "Keep this title job deterministic.",
+          attachments: [],
+        },
+        titleSeed: seededTitle,
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: "2026-01-01T00:00:00.000Z",
+      }),
+    );
+    await waitFor(() => harness.generateThreadTitle.mock.calls.length === 1);
+
+    await harness.runEffect(
+      harness.serverSettings.updateSettings({
+        textGenerationFallbackModelSelection: createModelSelection(
+          ProviderInstanceId.make("grok_backup"),
+          "grok-code-fast-1",
+        ),
+      }),
+    );
+    await harness.runEffect(
+      Deferred.fail(
+        primaryResult,
+        new TextGenerationError({
+          operation: "generateThreadTitle",
+          detail: "Provider temporarily unavailable.",
+        }),
+      ),
+    );
+
+    await waitFor(() => harness.generateThreadTitle.mock.calls.length === 2);
+    expect(harness.generateThreadTitle.mock.calls[1]?.[0].modelSelection).toEqual(originalFallback);
+    expect(harness.generateThreadTitle).toHaveBeenCalledTimes(2);
   });
 
   it("regenerates a thread title from the current conversation", async () => {

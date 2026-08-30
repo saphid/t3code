@@ -1912,6 +1912,28 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         settingsStore.set(data, forKey: Self.settingsKey)
     }
 
+    func updateAutomaticTitleSettings(
+        environmentID: String,
+        settings: FeatureAutomaticTitleSettings
+    ) async throws {
+        let client = try await projectCreationClient(environmentID: environmentID)
+        let generation = environmentGeneration
+        let serverSettings = try await client.updateTitleGenerationModels(
+            primary: coreModelSelection(settings.primary),
+            fallback: settings.fallback.map(coreModelSelection)
+        )
+        guard isKnownClient(client, environmentID: environmentID, generation: generation) else {
+            throw CancellationError()
+        }
+        let current = serverConfigsByEnvironmentID[environmentID]
+        let config = ServerConfigSnapshot(
+            providers: current?.providers ?? [],
+            settings: serverSettings,
+            threadSnapshotPagination: current?.threadSnapshotPagination
+        )
+        setServerConfig(config, environmentID: environmentID)
+    }
+
     var managesServerSessions: Bool {
         !t3ConnectDeviceManager.hasActiveAccount
     }
@@ -4171,6 +4193,18 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
                 projectGroupingOverrides: groupingOverrides
             )
         }
+        let automaticTitleSettingsByEnvironment = enabledEnvironments.reduce(
+            into: [String: FeatureAutomaticTitleSettings]()
+        ) { titleSettings, environment in
+            guard let serverSettings = serverConfigsByEnvironmentID[environment.id]?.settings,
+                  let primary = serverSettings.textGenerationModelSelection else {
+                return
+            }
+            titleSettings[environment.id] = FeatureAutomaticTitleSettings(
+                primary: mapSelection(primary),
+                fallback: serverSettings.textGenerationFallbackModelSelection.map(mapSelection)
+            )
+        }
         return FeatureSnapshot(
             connection: FeatureConnection(
                 state: connectionState,
@@ -4186,6 +4220,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
             providers: providersByEnvironment[activeEnvironment.id] ?? [],
             providersByEnvironment: providersByEnvironment,
             preferencesByEnvironment: preferencesByEnvironment,
+            automaticTitleSettingsByEnvironment: automaticTitleSettingsByEnvironment,
             settings: loadSettings()
         )
     }
