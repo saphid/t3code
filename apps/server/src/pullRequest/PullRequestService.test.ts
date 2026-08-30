@@ -2829,6 +2829,61 @@ it.effect(
     }),
 );
 
+it.effect("returns changed detail on the first read after its cache expires", () =>
+  Effect.gen(function* () {
+    let coreCalls = 0;
+    const reference = { projectId: "p1" as ProjectId, repository: "acme/web", number: 1 };
+    const service = yield* makeService({
+      projects: [project({ id: "p1", title: "web", workspaceRoot: "/a", repository: "acme/web" })],
+      providers: [
+        fakeProvider("github", {
+          getChangeRequest: () => {
+            coreCalls += 1;
+            return Effect.succeed({
+              ...changeRequest(1, `2026-07-02T00:00:${String(coreCalls).padStart(2, "0")}Z`),
+              title: coreCalls === 1 ? "Waiting for checks" : "Checks passed",
+              body: "",
+              changedFiles: coreCalls,
+              mergedAt: null,
+              closedAt: null,
+              reviewers: [],
+              checks: [
+                {
+                  name: "test",
+                  status: coreCalls === 1 ? ("pending" as const) : ("success" as const),
+                  description: null,
+                  url: null,
+                },
+              ],
+              mergeCapabilities: { merge: true, squash: true, rebase: true },
+              viewerPermissions: {
+                actions: ["merge"],
+                comment: true,
+                resolve: true,
+                verdicts: ["comment", "approve", "request-changes"],
+                requestReviewers: true,
+              },
+            });
+          },
+        }),
+      ],
+    });
+
+    const first = yield* service.detail(reference);
+    assert.strictEqual(first.title, "Waiting for checks");
+    assert.strictEqual((yield* service.detail(reference)).title, "Waiting for checks");
+    assert.strictEqual(coreCalls, 1);
+
+    yield* TestClock.adjust("16 seconds");
+    const refreshed = yield* service.detail(reference);
+
+    assert.strictEqual(coreCalls, 2);
+    assert.strictEqual(refreshed.title, "Checks passed");
+    assert.strictEqual(refreshed.checks[0]?.status, "success");
+    assert.strictEqual(refreshed.changedFiles, 2);
+  }),
+);
+
 it.effect("carries an armed auto-merge through to the detail, and silence as silence", () =>
   Effect.gen(function* () {
     const detailWith = (autoMergeEnabled: boolean | undefined) =>

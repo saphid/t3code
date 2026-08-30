@@ -494,7 +494,7 @@ private struct PullRequestRowView: View {
 
 @MainActor
 @Observable
-private final class PullRequestDetailModel {
+final class PullRequestDetailModel {
     var detail: PullRequestDetail?
     var activity: PullRequestActivity?
     var diffFiles: [PullRequestDiffFile] = []
@@ -509,23 +509,59 @@ private final class PullRequestDetailModel {
 
     private let client: any FeatureClient
     let target: FeaturePullRequestTarget
+    private var loadGeneration: UInt64 = 0
 
     init(client: any FeatureClient, target: FeaturePullRequestTarget) {
         self.client = client
         self.target = target
     }
 
-    func load(invalidate: Bool = false) async {
-        isLoading = true
+    func load(invalidate: Bool = false, showLoading: Bool = true) async {
+        loadGeneration &+= 1
+        let generation = loadGeneration
+        if showLoading { isLoading = true }
         errorMessage = nil
+        defer {
+            if loadGeneration == generation, showLoading { isLoading = false }
+        }
         do {
             if invalidate { try await client.invalidatePullRequests(target) }
-            detail = try await client.pullRequestDetail(target)
-            activity = try? await client.pullRequestActivity(target)
+            let nextDetail = try await client.pullRequestDetail(target)
+            guard !Task.isCancelled, loadGeneration == generation else { return }
+            detail = nextDetail
+
+            do {
+                let nextActivity = try await client.pullRequestActivity(target)
+                guard !Task.isCancelled, loadGeneration == generation else { return }
+                activity = nextActivity
+            } catch {
+                guard loadGeneration == generation, !(error is CancellationError) else { return }
+                errorMessage = error.localizedDescription
+            }
         } catch {
+            guard loadGeneration == generation, !(error is CancellationError) else { return }
             errorMessage = error.localizedDescription
         }
-        isLoading = false
+    }
+
+    func observe(refreshes: AsyncStream<Void>? = nil) async {
+        await load()
+        let refreshes = refreshes ?? Self.refreshTicks()
+        for await _ in refreshes {
+            guard !Task.isCancelled else { return }
+            await load(showLoading: false)
+        }
+    }
+
+    private static func refreshTicks() -> AsyncStream<Void> {
+        AsyncStream(unfolding: {
+            do {
+                try await Task.sleep(for: .seconds(30))
+                return Task.isCancelled ? nil : ()
+            } catch {
+                return nil
+            }
+        })
     }
 
     func loadDiff() async {
@@ -653,6 +689,8 @@ private enum PullRequestDetailTab: String, CaseIterable {
 }
 
 struct PullRequestDetailView: View {
+    @SwiftUI.Environment(\.scenePhase) private var scenePhase
+
     private struct PendingAction: Identifiable {
         let id = UUID()
         let action: PullRequestAction
@@ -712,7 +750,10 @@ struct PullRequestDetailView: View {
             ToolbarItem(placement: .topBarTrailing) { actionMenu }
         }
         .t3NavigationChrome()
-        .task { await model.load() }
+        .task(id: scenePhase) {
+            guard scenePhase == .active else { return }
+            await model.observe()
+        }
         .onChange(of: tab) { _, value in
             if value == .files { Task { await model.loadDiff() } }
         }
@@ -816,6 +857,10 @@ struct PullRequestDetailView: View {
     private var actionMenu: some View {
         if let detail = model.detail {
             Menu {
+                Button("Refresh", systemImage: "arrow.clockwise") {
+                    Task { await model.load(invalidate: true) }
+                }
+                Divider()
                 if detail.capabilities.edit?.changeRequest == true {
                     Button("Edit title", systemImage: "pencil") {
                         editor = PullRequestEditor(kind: .title, value: detail.title)
