@@ -65,6 +65,22 @@ copied or edited here.
    it would make publication depend on retaining every simulator build forever,
    and one reviewed eviction would permanently block the pipeline.
 
+   A legacy Test build that has a real device receipt and Alex verdict but no
+   generation receipt is never repaired by inventing that missing receipt. A
+   freshly rematerialized overlay may instead enter one Test generation as
+   `accepted-recovery`. Its recovery receipt binds the original verdict
+   marker, installed zip, installed-and-launched device receipt, and the new
+   base/head patch. The work item remains accepted on an explicit successor
+   hold, and UAT lists it as informational with no new verdict request.
+
+   When Theo's branch moves but a proved product change does not, schema-4
+   proof may bind a schema-3 source proof through a proof-equivalence receipt.
+   Both target commits still need retained builds. The repository comparator
+   emits context-free added/removed product lines for an explicit SwiftUI path
+   set and the validator requires the source and target artifacts to be
+   byte-identical. Test-only or unrelated contextual changes cannot silently
+   expand the proof.
+
 Every generation plan also binds a dependency-closure catalog. The validator
 reopens it, rejects missing or duplicate issues and cycles, requires each plan
 work item to match its catalog entry exactly, and checks every dependency's
@@ -125,7 +141,14 @@ required path for this work item's own contribution.
 
 ## Returning active work to the backlog
 
-`active -> queued` is a deliberate demotion path (contract `backlogDemotion`).
+`active -> queued`, `proof-ready -> queued`, and `phone-test -> queued` are
+deliberate priority demotions, not rejection or rework. `cancelled -> queued`
+and `superseded -> queued` are explicit restorations. Every one requires a
+`swiftui-priority-decision-receipt` bound to Alex's authority source, the exact
+issue and stages, the decision time, and a specific reason. The transition
+clears derived head/proof/generation/verdict bindings, preserves the prior
+launch receipt for attribution, and re-enters through current-base
+materialization.
 Alex may send an active item back to the backlog as a scope or priority
 decision - it is not a quality verdict, so no reject or rework wording is
 recorded and no proof is invalidated. Record the decision as an issue comment

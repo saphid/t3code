@@ -197,9 +197,11 @@ class ControllerRunTests(unittest.TestCase):
 
     def runner(self, command, timeout=120):
         self.commands.append(command)
-        if command[-1] == "--json" and command[0].endswith("status"):
+        if command[-1] == "--controller-json" and command[0].endswith("status"):
+            value = report([completed_active()])
+            value["projection"] = "controller-liveness"
             return subprocess.CompletedProcess(
-                command, 0, json.dumps(report([completed_active()])), "")
+                command, 0, json.dumps(value), "")
         if (len(command) == 3 and command[0] == sys.executable and
                 command[1] == self.config["headroomReporter"] and
                 command[2] == "--json"):
@@ -357,8 +359,9 @@ class ControllerRunTests(unittest.TestCase):
     def test_idle_pass_does_not_issue_an_api_session(self):
         def idle_runner(command, timeout=120):
             self.commands.append(command)
-            return subprocess.CompletedProcess(
-                command, 0, json.dumps(report()), "")
+            value = report()
+            value["projection"] = "controller-liveness"
+            return subprocess.CompletedProcess(command, 0, json.dumps(value), "")
 
         value = controller.run_once(
             self.config, runner=idle_runner, opener=self.opener, now=NOW)

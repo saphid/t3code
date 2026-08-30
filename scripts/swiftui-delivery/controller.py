@@ -57,16 +57,23 @@ def reconciliation_reasons(report):
         reasons.append("proof-ready issues: %s" %
                        ", ".join("#%s" % value for value in proof_ready))
 
-    stalled = []
-    for row in rows:
-        if row.get("stage") != "active" or row.get("waiting"):
-            continue
-        worker = row.get("workerThread") or {}
-        if worker.get("state") not in ACTIVE_TURN_STATES:
-            stalled.append(row["issue"])
-    if stalled:
-        reasons.append("active issues without a live worker: %s" %
-                       ", ".join("#%s" % value for value in sorted(stalled)))
+    if report.get("projection") == "controller-liveness":
+        active = sorted(row["issue"] for row in rows
+                        if row.get("stage") == "active" and not row.get("hold"))
+        if active:
+            reasons.append("active issues require liveness reconciliation: %s" %
+                           ", ".join("#%s" % value for value in active))
+    else:
+        stalled = []
+        for row in rows:
+            if row.get("stage") != "active" or row.get("waiting"):
+                continue
+            worker = row.get("workerThread") or {}
+            if worker.get("state") not in ACTIVE_TURN_STATES:
+                stalled.append(row["issue"])
+        if stalled:
+            reasons.append("active issues without a live worker: %s" %
+                           ", ".join("#%s" % value for value in sorted(stalled)))
 
     station = (report.get("stations") or {}).get("activeImplementation") or {}
     occupied, limit = station.get("occupied"), station.get("limit")
@@ -81,11 +88,18 @@ def reconciliation_reasons(report):
     if report.get("backlogNeedsReplenish"):
         reasons.append("ready backlog is below its configured floor")
 
-    missing_uat = sorted(row["issue"] for row in rows
-                         if row.get("stage") == "phone-test" and not row.get("uat"))
-    if missing_uat:
-        reasons.append("phone-test issues lack a UAT binding: %s" %
-                       ", ".join("#%s" % value for value in missing_uat))
+    phone_test = sorted(row["issue"] for row in rows
+                        if row.get("stage") == "phone-test")
+    if report.get("projection") == "controller-liveness":
+        if phone_test:
+            reasons.append("phone-test issues require device and UAT reconciliation: %s" %
+                           ", ".join("#%s" % value for value in phone_test))
+    else:
+        missing_uat = sorted(row["issue"] for row in rows
+                             if row.get("stage") == "phone-test" and not row.get("uat"))
+        if missing_uat:
+            reasons.append("phone-test issues lack a UAT binding: %s" %
+                           ", ".join("#%s" % value for value in missing_uat))
     return reasons
 
 
@@ -95,8 +109,8 @@ def run_command(command, timeout=120):
 
 def load_status(config, runner=run_command):
     status = Path(config["checkout"]) / "scripts/swiftui-delivery/scripts/status"
-    result = runner([str(status), "--json"])
-    if result.returncode not in (0, 1):
+    result = runner([str(status), "--controller-json"])
+    if result.returncode != 0:
         raise RuntimeError("status exited %d: %s" %
                            (result.returncode, result.stderr.strip()[:500]))
     try:

@@ -32,13 +32,13 @@
   "transitions": {
     "queued": ["active", "cancelled", "superseded"],
     "active": ["proof-ready", "queued", "landed", "cancelled", "superseded"],
-    "proof-ready": ["phone-test", "active", "cancelled", "superseded"],
-    "phone-test": ["accepted", "active", "cancelled", "superseded"],
+    "proof-ready": ["phone-test", "active", "queued", "cancelled", "superseded"],
+    "phone-test": ["accepted", "active", "queued", "cancelled", "superseded"],
     "accepted": ["pr-open", "active", "cancelled", "superseded"],
     "pr-open": ["landed", "active", "cancelled", "superseded"],
     "landed": [],
-    "cancelled": [],
-    "superseded": []
+    "cancelled": ["queued"],
+    "superseded": ["queued"]
   },
   "dependencyKinds": ["stacked-on", "ordered-after", "collision"],
   "workItemClassification": {
@@ -59,7 +59,7 @@
   },
   "generationModes": ["publish-test", "publish-dev", "open-pr"],
   "generationRoles": {
-    "publish-test": ["candidate", "installed-carry"],
+    "publish-test": ["candidate", "installed-carry", "accepted-recovery"],
     "publish-dev": ["accepted"],
     "open-pr": ["candidate"]
   },
@@ -110,9 +110,15 @@
     "owner": "swiftui-orchestrate coordinator duty"
   },
   "backlogDemotion": {
-    "transition": "active -> queued",
-    "rule": "Alex may return an active item to the backlog. Record the decision as an issue comment naming the decision-maker and date, restate the acceptance points that changed, and leave the launch binding intact so the existing branch and worktree stay attributable. A demoted item re-enters delivery through the ordinary queued pull and re-materializes against the current base.",
+    "transitions": ["active -> queued", "proof-ready -> queued", "phone-test -> queued"],
+    "receiptKind": "swiftui-priority-decision-receipt",
+    "rule": "Alex may return an in-flight item to the backlog without inventing a quality verdict. The transition requires an immutable priority decision receipt bound to the exact issue, source stage, queued destination, decision-maker, authority source, timestamp, and specific reason. Clear derived head/proof/generation/acceptance bindings but retain the launch binding so the old branch remains attributable. Re-entry uses the ordinary queued pull and re-materializes against the current Theo base.",
     "notFor": "Rejection or rework still returns to active with a verdict; demotion is a scope or priority decision, not a quality verdict."
+  },
+  "backlogRestoration": {
+    "transitions": ["cancelled -> queued", "superseded -> queued"],
+    "receiptKind": "swiftui-priority-decision-receipt",
+    "rule": "Alex may restore a terminal work item when new product evidence or a later priority decision makes it relevant again. The same exact priority receipt is mandatory. Restore to queued, clear derived implementation and verdict bindings, preserve the prior launch receipt for attribution, then re-materialize from the live Theo base through the ordinary queued pull."
   },
   "repoOwnedSpecialists": [
     ".agents/skills/ios-build-hygiene/SKILL.md",
@@ -179,7 +185,7 @@
       "script": "~/.local/libexec/t3-swiftui-stream/phone-watch.py",
       "vendoredSource": "scripts/swiftui-delivery/watcher/phone-watch.py",
       "config": "~/.t3/swiftui-stream/watcher-config.json",
-      "behavior": "Deterministic, no LLM. Every 60s: verify pointer artifact (sha256, codesign, Info.plist identity), compare installed CFBundleVersion via devicectl, install when the phone is reachable and older, never downgrade, launch, write a device receipt; notify once per build when the phone is locked or absent."
+      "behavior": "Deterministic, no LLM. Every 60s: require a schema-2 pointer that reopens and hashes the generation plan and schema-3 generation receipt, verifies that receipt binds the artifact hash and composed commit, then verify the artifact (sha256, codesign, Info.plist identity), compare installed CFBundleVersion via devicectl, install when the phone is reachable and older, never downgrade, launch, and write a device receipt carrying the generation receipt hash; notify once per build when the phone is locked or absent."
     }
   },
   "uatThreads": {
@@ -199,6 +205,7 @@
     ],
     "verdictPolicy": {
       "candidate": "Requires an explicit accept/reject verdict when the generation introduces behavior that has no acceptance receipt bound to this exact artifact.",
+      "acceptedRecovery": "A one-time migration of behavior Alex already accepted from a historically installed build whose generation receipt is unavailable. It must bind the real verdict source, installed artifact and device receipt, plus the freshly rematerialized overlay; it is informational and requests no new verdict.",
       "reapprovalCandidate": "A candidate whose previously accepted behavior changed. It must disclose the exact code or behavior change and directly request renewed acceptance.",
       "acceptedInstalledCarry": "Unchanged composition inherited from the prior installed generation with an acceptance receipt already recorded. It must not trigger a spot-check request, accept/reject request, or renewed acceptance.",
       "pendingInstalledCarry": "Unchanged composition inherited from the prior installed generation without an acceptance receipt. It still requires its first explicit verdict, using its original acceptance steps and never reapproval language.",

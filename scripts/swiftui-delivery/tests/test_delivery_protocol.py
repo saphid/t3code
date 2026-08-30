@@ -36,6 +36,49 @@ def describe(path):
 
 
 class DeliveryProtocolTests(unittest.TestCase):
+    def priority_receipt(self, directory, item, source, destination):
+        return write(Path(directory) / "priority-receipt.json", {
+            "schemaVersion": 1,
+            "kind": "swiftui-priority-decision-receipt",
+            "issue": item["issue"],
+            "fromStage": source,
+            "toStage": destination,
+            "decisionMaker": "Alex",
+            "recordedAt": "2026-08-30T13:15:00Z",
+            "authoritySource": "t3-thread:durable-priority-thread",
+            "reason": "Live upstream evidence makes this fix a current product priority.",
+        })
+
+    def test_phone_test_can_be_demoted_without_a_fake_rejection(self):
+        with tempfile.TemporaryDirectory() as directory:
+            item = self.active_work_item()
+            item["stage"] = "phone-test"
+            item["binding"].update({
+                "headCommit": "c" * 40,
+                "proofSha256": "d" * 64,
+                "inspectionSha256": "e" * 64,
+                "phoneGenerationReceiptSha256": "f" * 64,
+            })
+            receipt = self.priority_receipt(directory, item, "phone-test", "queued")
+            result, errors = delivery.transition(
+                item, "queued", priority_receipt_path=receipt["path"])
+            self.assertEqual(errors, [])
+            self.assertEqual(result["stage"], "queued")
+            self.assertIsNone(result["binding"]["headCommit"])
+            self.assertEqual(
+                result["binding"]["priorityDecisionReceiptSha256"], receipt["sha256"])
+
+    def test_cancelled_item_can_be_restored_only_with_alex_receipt(self):
+        with tempfile.TemporaryDirectory() as directory:
+            item = self.work_item()
+            item["stage"] = "cancelled"
+            result, errors = delivery.transition(item, "queued")
+            self.assertTrue(any("priority decision receipt" in error for error in errors))
+            receipt = self.priority_receipt(directory, item, "cancelled", "queued")
+            result, errors = delivery.transition(
+                item, "queued", priority_receipt_path=receipt["path"])
+            self.assertEqual(errors, [])
+            self.assertEqual(result["stage"], "queued")
     def test_uat_policy_separates_accepted_and_pending_unchanged_carry(self):
         policy = delivery.CONTRACT["uatThreads"]["verdictPolicy"]
 
@@ -1057,6 +1100,63 @@ class DeliveryProtocolTests(unittest.TestCase):
                 landed_receipt_path=landed_path)
             self.assertIn(
                 "landed receipt pull request must match the open-pr generation", errors)
+
+    def test_recovered_acceptance_has_one_explicit_receipt_binding(self):
+        item = self.work_item()
+        item["stage"] = "accepted"
+        item["binding"].update({
+            "baseCommit": "a" * 40,
+            "headCommit": "b" * 40,
+            "recoveryReceiptSha256": "c" * 64,
+        })
+        item["successor"] = {
+            "kind": "hold",
+            "reason": "awaiting-pr-authority",
+            "recordedAt": "2026-08-30T13:00:00Z",
+        }
+        self.assertEqual(delivery.validate_work_item(item), [])
+        item["binding"]["proofSha256"] = "d" * 64
+        self.assertIn(
+            "binding.proofSha256 must be absent for recovered acceptance",
+            delivery.validate_work_item(item),
+        )
+
+    def test_proof_equivalence_requires_identical_normalized_product_bytes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source_patch = write(Path(directory) / "source.patch", b"-old\n+new\n")
+            target_patch = write(Path(directory) / "target.patch", b"-old\n+new\n")
+            source_descriptor = {"path": "/tmp/source-proof.json", "sha256": "1" * 64}
+            source_proof = {
+                "baseCommit": "a" * 40,
+                "headCommit": "b" * 40,
+            }
+            proof = {
+                "issue": "saphid/t3code-personal#1",
+                "baseCommit": "c" * 40,
+                "headCommit": "d" * 40,
+            }
+            receipt = {
+                "schemaVersion": 1,
+                "kind": "swiftui-proof-equivalence-receipt",
+                "issue": proof["issue"],
+                "sourceProofSha256": source_descriptor["sha256"],
+                "sourceBaseCommit": source_proof["baseCommit"],
+                "sourceHeadCommit": source_proof["headCommit"],
+                "targetBaseCommit": proof["baseCommit"],
+                "targetHeadCommit": proof["headCommit"],
+                "repositoryPath": directory,
+                "productPaths": ["apps/swift-ios/Features"],
+                "sourceProductPatch": source_patch,
+                "targetProductPatch": target_patch,
+                "reason": "The product changes are identical and all unrelated context is excluded.",
+                "verifiedAt": "2026-08-30T13:00:00Z",
+            }
+            self.assertEqual(delivery.validate_proof_equivalence(
+                receipt, proof, source_proof, source_descriptor, True), [])
+            receipt["targetProductPatch"]["sha256"] = "e" * 64
+            errors = delivery.validate_proof_equivalence(
+                receipt, proof, source_proof, source_descriptor, False)
+            self.assertTrue(any("byte-identical" in error for error in errors))
 
 
 if __name__ == "__main__":

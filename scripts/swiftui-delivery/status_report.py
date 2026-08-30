@@ -45,6 +45,19 @@ query($owner:String!,$name:String!,$first:Int!,$cursor:String) {
   }
 }
 """
+GRAPHQL_CONTROLLER_ISSUES = """
+query($owner:String!,$name:String!,$first:Int!,$cursor:String) {
+  repository(owner:$owner,name:$name) {
+    issues(first:$first,after:$cursor,states:OPEN,orderBy:{field:CREATED_AT,direction:ASC}) {
+      nodes {
+        number title url body createdAt updatedAt state
+        labels(first:50) { nodes { name color description } }
+      }
+      pageInfo { hasNextPage endCursor }
+    }
+  }
+}
+"""
 RECEIPT_KINDS = {
     "swiftui-launch-receipt",
     "swiftui-coordinator-dispatch-receipt",
@@ -73,7 +86,7 @@ def load_contract(path=None):
     return json.loads(contract_path.read_text())
 
 
-def fetch_issues(repository, limit=1000, gh_runner=None):
+def fetch_issues(repository, limit=1000, gh_runner=None, include_comments=True):
     run = gh_runner or (lambda cmd: subprocess.run(
         cmd, capture_output=True, text=True, timeout=120))
     parts = repository.split("/", 1)
@@ -86,7 +99,8 @@ def fetch_issues(repository, limit=1000, gh_runner=None):
             raise RuntimeError(
                 "issue list hit the internal %d-item safety cap" % limit)
         cmd = [
-            "gh", "api", "graphql", "-f", "query=%s" % GRAPHQL_ISSUES,
+            "gh", "api", "graphql", "-f", "query=%s" % (
+                GRAPHQL_ISSUES if include_comments else GRAPHQL_CONTROLLER_ISSUES),
             "-f", "owner=%s" % parts[0], "-f", "name=%s" % parts[1],
             "-F", "first=%d" % min(100, remaining),
         ]
@@ -1054,6 +1068,9 @@ def main(argv=None):
     output.add_argument("--json", action="store_true", dest="as_json")
     output.add_argument("--html", metavar="PATH",
                         help="write a self-contained visual board")
+    output.add_argument(
+        "--controller-json", action="store_true",
+        help="write the bounded machine liveness projection (no comments, receipts, or board)")
     parser.add_argument("--repo", default=None,
                         help="override workItemRepository")
     parser.add_argument("--contract", default=None)
@@ -1061,28 +1078,35 @@ def main(argv=None):
     contract = load_contract(args.contract)
     repository = args.repo or contract.get(
         "workItemRepository", "saphid/t3code-personal")
-    issues = fetch_issues(repository)
-    roots = [contract.get("stateRoot"), contract.get("buildStore")]
-    receipt_index = scan_receipts([root for root in roots if root])
-    runtime_origin = read_runtime_origin()
-    runtime_environment = read_runtime_environment(runtime_origin)
-    evidence = build_evidence(
-        issues, contract, receipt_index, t3_origin=runtime_origin,
-        t3_environment_id=runtime_environment)
-    runtime_diagnostics = []
-    thread_states = read_thread_states(
-        evidence, diagnostics=runtime_diagnostics)
-    report = build_report(
-        issues, contract, evidence=evidence, thread_states=thread_states,
-        runtime_diagnostics=runtime_diagnostics)
-    if args.as_json:
+    issues = fetch_issues(repository, include_comments=not args.controller_json)
+    if args.controller_json:
+        report = build_report(issues, contract)
+        report["projection"] = "controller-liveness"
+    else:
+        roots = [contract.get("stateRoot"), contract.get("buildStore")]
+        receipt_index = scan_receipts([root for root in roots if root])
+        runtime_origin = read_runtime_origin()
+        runtime_environment = read_runtime_environment(runtime_origin)
+        evidence = build_evidence(
+            issues, contract, receipt_index, t3_origin=runtime_origin,
+            t3_environment_id=runtime_environment)
+        runtime_diagnostics = []
+        thread_states = read_thread_states(
+            evidence, diagnostics=runtime_diagnostics)
+        report = build_report(
+            issues, contract, evidence=evidence, thread_states=thread_states,
+            runtime_diagnostics=runtime_diagnostics)
+    if args.as_json or args.controller_json:
         print(json.dumps(report, indent=2))
     elif args.html:
         target = write_html(args.html, report, repository).resolve()
         print("SwiftUI delivery dashboard: %s" % target)
     else:
         print(render_text(report, repository))
-    return 1 if report["drift"] else 0
+    # Drift belongs to the human audit projection. The controller projection
+    # reports it as data but must remain a usable heartbeat while cleanup work
+    # is pending.
+    return 1 if report["drift"] and not args.controller_json else 0
 
 
 if __name__ == "__main__":

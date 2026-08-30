@@ -184,25 +184,32 @@ def validate_work_item(value):
         receipt_fields = (
             "launchReceiptSha256", "proofSha256", "inspectionSha256",
             "phoneGenerationReceiptSha256", "acceptanceReceiptSha256",
-            "prGenerationReceiptSha256", "landedReceiptSha256")
+            "prGenerationReceiptSha256", "landedReceiptSha256",
+            "priorityDecisionReceiptSha256", "recoveryReceiptSha256")
         for name in receipt_fields:
             item = binding.get(name)
             if item is not None:
                 add(errors, matches(SHA_RE, item),
                     "binding.%s must be a lowercase SHA-256" % name)
-        if stage in ("active", "proof-ready", "phone-test", "accepted", "pr-open", "landed"):
+        recovered_acceptance = stage == "accepted" and \
+            binding.get("recoveryReceiptSha256") is not None
+        if stage in ("active", "proof-ready", "phone-test", "accepted", "pr-open", "landed") \
+                and not recovered_acceptance:
             add(errors, binding.get("launchReceiptSha256") is not None,
                 "binding.launchReceiptSha256 is required at %s" % stage)
-        if stage in ("proof-ready", "phone-test", "accepted", "pr-open") or \
+        if (stage in ("proof-ready", "phone-test", "accepted", "pr-open") and
+                not recovered_acceptance) or \
                 stage == "landed" and not externally_landed:
             for name in ("baseCommit", "headCommit", "proofSha256", "inspectionSha256"):
                 add(errors, binding.get(name) is not None,
                     "binding.%s is required at %s" % (name, stage))
-        if stage in ("phone-test", "accepted", "pr-open") or \
+        if (stage in ("phone-test", "accepted", "pr-open") and
+                not recovered_acceptance) or \
                 stage == "landed" and not externally_landed:
             add(errors, binding.get("phoneGenerationReceiptSha256") is not None,
                 "binding.phoneGenerationReceiptSha256 is required at %s" % stage)
-        if stage in ("accepted", "pr-open") or stage == "landed" and not externally_landed:
+        if (stage in ("accepted", "pr-open") and not recovered_acceptance) or \
+                stage == "landed" and not externally_landed:
             add(errors, binding.get("acceptanceReceiptSha256") is not None,
                 "binding.acceptanceReceiptSha256 is required at %s" % stage)
         if stage == "pr-open" or stage == "landed" and not externally_landed:
@@ -218,7 +225,15 @@ def validate_work_item(value):
                          "phoneGenerationReceiptSha256", "acceptanceReceiptSha256",
                          "prGenerationReceiptSha256"):
                 add(errors, binding.get(name) is None,
-                    "binding.%s must be absent at externally landed" % name)
+                "binding.%s must be absent at externally landed" % name)
+        if recovered_acceptance:
+            for name in ("baseCommit", "headCommit", "recoveryReceiptSha256"):
+                add(errors, binding.get(name) is not None,
+                    "binding.%s is required for recovered acceptance" % name)
+            for name in ("launchReceiptSha256", "proofSha256", "inspectionSha256",
+                         "phoneGenerationReceiptSha256", "acceptanceReceiptSha256"):
+                add(errors, binding.get(name) is None,
+                    "binding.%s must be absent for recovered acceptance" % name)
     return errors
 
 
@@ -451,6 +466,47 @@ def validate_capture(capture, prefix, phase, commit, proof_schema, expected_lane
     return errors
 
 
+def validate_proof_equivalence(value, proof, source_proof, source_descriptor, check_files):
+    errors = []
+    add(errors, isinstance(value, dict), "proof equivalence receipt must be an object")
+    if not isinstance(value, dict):
+        return errors
+    add(errors, value.get("schemaVersion") == 1,
+        "proof equivalence schemaVersion must be 1")
+    add(errors, value.get("kind") == "swiftui-proof-equivalence-receipt",
+        "proof equivalence kind is invalid")
+    add(errors, value.get("issue") == proof.get("issue"),
+        "proof equivalence issue mismatch")
+    add(errors, value.get("sourceProofSha256") == source_descriptor.get("sha256"),
+        "proof equivalence must bind the source proof bytes")
+    add(errors, value.get("sourceBaseCommit") == source_proof.get("baseCommit"),
+        "proof equivalence source base mismatch")
+    add(errors, value.get("sourceHeadCommit") == source_proof.get("headCommit"),
+        "proof equivalence source head mismatch")
+    add(errors, value.get("targetBaseCommit") == proof.get("baseCommit"),
+        "proof equivalence target base mismatch")
+    add(errors, value.get("targetHeadCommit") == proof.get("headCommit"),
+        "proof equivalence target head mismatch")
+    paths = value.get("productPaths")
+    add(errors, isinstance(paths, list) and bool(paths) and all(
+        isinstance(path, str) and path.startswith("apps/swift-ios/") for path in paths),
+        "proof equivalence productPaths must be nonempty SwiftUI paths")
+    source_patch = value.get("sourceProductPatch")
+    target_patch = value.get("targetProductPatch")
+    errors.extend(artifact_errors(source_patch, "sourceProductPatch", check_files))
+    errors.extend(artifact_errors(target_patch, "targetProductPatch", check_files))
+    if isinstance(source_patch, dict) and isinstance(target_patch, dict):
+        add(errors, source_patch.get("sha256") == target_patch.get("sha256"),
+            "proof equivalence normalized product patches must be byte-identical")
+    add(errors, nonempty(value.get("repositoryPath")),
+        "proof equivalence repositoryPath is required")
+    add(errors, nonempty(value.get("reason")) and len(value.get("reason", "").strip()) >= 40,
+        "proof equivalence reason must be specific")
+    add(errors, parse_utc(value.get("verifiedAt")) is not None,
+        "proof equivalence verifiedAt must be a real UTC timestamp")
+    return errors
+
+
 def validate_proof(value, check_files=True, require_retained=True):
     """Validate a proof.
 
@@ -463,10 +519,10 @@ def validate_proof(value, check_files=True, require_retained=True):
     if not isinstance(value, dict):
         return errors
     proof_schema = value.get("schemaVersion")
-    add(errors, proof_schema in (2, 3), "proof schemaVersion must be 2 or 3")
+    add(errors, proof_schema in (2, 3, 4), "proof schemaVersion must be 2, 3, or 4")
     add(errors, value.get("kind") == "swiftui-proof", "proof kind must be swiftui-proof")
     expected_lane = value.get("laneId")
-    if proof_schema == 3:
+    if proof_schema in (3, 4):
         add(errors, matches(LANE_RE, expected_lane), "proof laneId is required for schema 3")
     add(errors, matches(ISSUE_RE, value.get("issue")), "proof issue is invalid")
     base, head = value.get("baseCommit"), value.get("headCommit")
@@ -482,19 +538,61 @@ def validate_proof(value, check_files=True, require_retained=True):
         value.get("headBuildReceipt"), "headBuildReceipt", head, retained_files)
     errors.extend(base_errors)
     errors.extend(head_errors)
+    capture_base, capture_head = base, head
+    capture_base_receipt, capture_head_receipt = base_receipt, head_receipt
+    if proof_schema == 4:
+        source_descriptor = value.get("sourceProof")
+        source_proof = read_validated_artifact(
+            source_descriptor,
+            lambda item: validate_proof(item, check_files, require_retained),
+            "sourceProof", errors)
+        equivalence_descriptor = value.get("equivalenceReceipt")
+        errors.extend(artifact_errors(
+            equivalence_descriptor, "equivalenceReceipt", check_files))
+        if isinstance(source_proof, dict):
+            add(errors, source_proof.get("schemaVersion") == 3,
+                "schema 4 sourceProof must be schema 3")
+            add(errors, source_proof.get("issue") == value.get("issue"),
+                "sourceProof issue mismatch")
+            add(errors, source_proof.get("laneId") == value.get("laneId"),
+                "sourceProof lane mismatch")
+            add(errors, source_proof.get("userVisible") == value.get("userVisible") and
+                source_proof.get("visualChange") == value.get("visualChange"),
+                "sourceProof visibility flags must match")
+            capture_base = source_proof.get("baseCommit")
+            capture_head = source_proof.get("headCommit")
+            capture_base_receipt, _ = validate_build_receipt(
+                source_proof.get("baseBuildReceipt"), "sourceProof.baseBuildReceipt",
+                capture_base, check_files and require_retained)
+            capture_head_receipt, _ = validate_build_receipt(
+                source_proof.get("headBuildReceipt"), "sourceProof.headBuildReceipt",
+                capture_head, check_files and require_retained)
+            add(errors, value.get("captures") == source_proof.get("captures"),
+                "schema 4 captures must exactly preserve the source proof")
+            if isinstance(equivalence_descriptor, dict) and nonempty(
+                    equivalence_descriptor.get("path")):
+                try:
+                    equivalence = load(Path(equivalence_descriptor["path"]).expanduser())
+                    errors.extend(validate_proof_equivalence(
+                        equivalence, value, source_proof, source_descriptor, check_files))
+                except (OSError, ValueError, json.JSONDecodeError) as exc:
+                    errors.append("equivalenceReceipt cannot be read: %s" % exc)
     captures = value.get("captures")
     add(errors, isinstance(captures, list), "captures must be an array")
     ids = set()
     for index, capture in enumerate(captures or []):
         prefix = "captures[%d]" % index
         phase = capture.get("phase") if isinstance(capture, dict) else None
-        commit = base if phase == "before" else head if phase == "after" else None
+        commit = capture_base if phase == "before" else capture_head if phase == "after" else None
         add(errors, phase in ("before", "after"), "%s.phase is invalid" % prefix)
         errors.extend(validate_capture(
-            capture, prefix, phase, commit, proof_schema, expected_lane, check_files
+            capture, prefix, phase, commit, 3 if proof_schema == 4 else proof_schema,
+            expected_lane, check_files
         ))
-        expected_binary = base_receipt.get("binarySha256") if phase == "before" and isinstance(base_receipt, dict) \
-            else head_receipt.get("binarySha256") if phase == "after" and isinstance(head_receipt, dict) else None
+        expected_binary = capture_base_receipt.get("binarySha256") \
+            if phase == "before" and isinstance(capture_base_receipt, dict) \
+            else capture_head_receipt.get("binarySha256") \
+            if phase == "after" and isinstance(capture_head_receipt, dict) else None
         if expected_binary is not None or require_retained:
             add(errors, capture.get("installedBinarySha256") == expected_binary
                 if isinstance(capture, dict) and expected_binary is not None else False,
@@ -735,6 +833,85 @@ def validate_composition_receipt(value, plan, plan_path):
     return errors
 
 
+def validate_accepted_recovery(value):
+    """Validate a one-time migration of a real verdict from a legacy build."""
+    errors = []
+    add(errors, isinstance(value, dict), "accepted recovery must be an object")
+    if not isinstance(value, dict):
+        return errors
+    add(errors, value.get("schemaVersion") == 1,
+        "accepted recovery schemaVersion must be 1")
+    add(errors, value.get("kind") == "swiftui-accepted-recovery-receipt",
+        "accepted recovery kind is invalid")
+    add(errors, matches(ISSUE_RE, value.get("issue")),
+        "accepted recovery issue is invalid")
+    add(errors, value.get("decisionMaker") in CONTRACT["humanActors"],
+        "accepted recovery decisionMaker must be an authorized human")
+    add(errors, value.get("verdict") == "accepted",
+        "accepted recovery verdict must be accepted")
+    add(errors, parse_utc(value.get("recordedAt")) is not None,
+        "accepted recovery recordedAt must be a real UTC timestamp")
+    authority = value.get("authority")
+    add(errors, isinstance(authority, dict), "accepted recovery authority is required")
+    if isinstance(authority, dict):
+        add(errors, nonempty(authority.get("source")),
+            "accepted recovery authority.source is required")
+        add(errors, nonempty(authority.get("verdictMarker")),
+            "accepted recovery authority.verdictMarker is required")
+    installed = value.get("installedBuild")
+    add(errors, isinstance(installed, dict), "accepted recovery installedBuild is required")
+    if isinstance(installed, dict):
+        add(errors, isinstance(installed.get("build"), int) and installed.get("build") > 0,
+            "accepted recovery installed build is invalid")
+        add(errors, matches(COMMIT_RE, installed.get("commit")),
+            "accepted recovery installed commit is invalid")
+        zip_descriptor = installed.get("artifactZip")
+        device_descriptor = installed.get("deviceReceipt")
+        errors.extend(artifact_errors(zip_descriptor, "accepted recovery artifactZip", True))
+        errors.extend(artifact_errors(device_descriptor, "accepted recovery deviceReceipt", True))
+        if isinstance(device_descriptor, dict) and nonempty(device_descriptor.get("path")):
+            try:
+                device = load(Path(device_descriptor["path"]).expanduser())
+                add(errors, device.get("build") == installed.get("build"),
+                    "accepted recovery device receipt build mismatch")
+                add(errors, device.get("commit") == installed.get("commit"),
+                    "accepted recovery device receipt commit mismatch")
+                add(errors, device.get("status") == "installed-and-launched",
+                    "accepted recovery device receipt must prove install and launch")
+                add(errors, device.get("channel") == "test",
+                    "accepted recovery device receipt must be from Test")
+            except (OSError, ValueError, json.JSONDecodeError) as exc:
+                errors.append("accepted recovery device receipt cannot be read: %s" % exc)
+    rematerialized = value.get("rematerializedOverlay")
+    add(errors, isinstance(rematerialized, dict),
+        "accepted recovery rematerializedOverlay is required")
+    if isinstance(rematerialized, dict):
+        add(errors, matches(COMMIT_RE, rematerialized.get("baseCommit")),
+            "accepted recovery rematerialized base is invalid")
+        add(errors, matches(COMMIT_RE, rematerialized.get("headCommit")),
+            "accepted recovery rematerialized head is invalid")
+        paths = rematerialized.get("changedPaths")
+        add(errors, isinstance(paths, list) and bool(paths) and all(
+            isinstance(path, str) and path.startswith("apps/swift-ios/") for path in paths),
+            "accepted recovery changedPaths must be nonempty SwiftUI paths")
+        errors.extend(artifact_errors(
+            rematerialized.get("patch"), "accepted recovery rematerialized patch", True))
+        repository = rematerialized.get("repositoryPath")
+        add(errors, nonempty(repository),
+            "accepted recovery rematerialized repositoryPath is required")
+    if isinstance(authority, dict) and isinstance(installed, dict):
+        issue_number = str(value.get("issue") or "").rsplit("#", 1)[-1]
+        source = authority.get("source", "")
+        marker = authority.get("verdictMarker")
+        add(errors, isinstance(source, str) and
+            ("/issues/%s#issuecomment-" % issue_number) in source,
+            "accepted recovery authority must link the matching issue verdict comment")
+        add(errors, marker == "swiftui-verdict:%s:build%s:accepted" % (
+            issue_number, installed.get("build")),
+            "accepted recovery verdict marker must match issue, build, and verdict")
+    return errors
+
+
 def validate_generation_plan(value):
     errors = []
     add(errors, isinstance(value, dict), "generation plan must be an object")
@@ -791,12 +968,22 @@ def validate_generation_plan(value):
         # not re-reopen retained simulator builds that reviewed eviction may have
         # since removed. Candidates keep the full retained-artifact gate.
         require_retained = not (mode == "publish-test" and role == "installed-carry")
-        proof = read_validated_artifact(
-            entry.get("proof"),
-            lambda item, retained=require_retained: validate_proof(item, True, retained),
-            "%s.proof" % prefix, errors)
+        proof = None
+        recovery = None
+        if mode == "publish-test" and role == "accepted-recovery":
+            recovery = read_validated_artifact(
+                entry.get("acceptedRecovery"), validate_accepted_recovery,
+                "%s.acceptedRecovery" % prefix, errors)
+            add(errors, entry.get("proof") is None and entry.get("inspection") is None,
+                "%s accepted-recovery must not claim fresh proof or inspection" % prefix)
+        else:
+            proof = read_validated_artifact(
+                entry.get("proof"),
+                lambda item, retained=require_retained: validate_proof(item, True, retained),
+                "%s.proof" % prefix, errors)
         inspection_descriptor = entry.get("inspection")
-        errors.extend(artifact_errors(inspection_descriptor, "%s.inspection" % prefix, True))
+        if role != "accepted-recovery":
+            errors.extend(artifact_errors(inspection_descriptor, "%s.inspection" % prefix, True))
         inspection = None
         if isinstance(inspection_descriptor, dict) and nonempty(inspection_descriptor.get("path")):
             inspection_path = Path(inspection_descriptor["path"]).expanduser()
@@ -818,23 +1005,39 @@ def validate_generation_plan(value):
                     "%s work item does not match the dependency catalog" % prefix)
             add(errors, work_item.get("binding", {}).get("headCommit") == entry.get("headCommit"),
                 "%s head does not match work item" % prefix)
-            add(errors, work_item.get("binding", {}).get("proofSha256") ==
-                entry.get("proof", {}).get("sha256"), "%s proof hash does not match work item" % prefix)
-            add(errors, work_item.get("binding", {}).get("inspectionSha256") ==
-                inspection_descriptor.get("sha256") if isinstance(inspection_descriptor, dict) else False,
-                "%s inspection hash does not match work item" % prefix)
+            if role != "accepted-recovery":
+                add(errors, work_item.get("binding", {}).get("proofSha256") ==
+                    entry.get("proof", {}).get("sha256"),
+                    "%s proof hash does not match work item" % prefix)
+                add(errors, work_item.get("binding", {}).get("inspectionSha256") ==
+                    inspection_descriptor.get("sha256")
+                    if isinstance(inspection_descriptor, dict) else False,
+                    "%s inspection hash does not match work item" % prefix)
             if mode == "publish-test" and role == "candidate":
                 allowed = ("proof-ready",)
             elif mode == "publish-test" and role == "installed-carry":
                 allowed = ("phone-test", "accepted", "pr-open", "landed")
+            elif mode == "publish-test" and role == "accepted-recovery":
+                allowed = ("accepted",)
             else:
                 allowed = ("accepted", "pr-open", "landed")
             add(errors, work_item.get("stage") in allowed,
                 "%s work item stage is not eligible for %s" % (prefix, mode))
+            if role == "accepted-recovery" and isinstance(recovery, dict):
+                add(errors, recovery.get("issue") == issue,
+                    "%s accepted recovery issue mismatch" % prefix)
+                add(errors, recovery.get("rematerializedOverlay", {}).get("baseCommit") ==
+                    work_item.get("binding", {}).get("baseCommit"),
+                    "%s accepted recovery base mismatch" % prefix)
+                add(errors, recovery.get("rematerializedOverlay", {}).get("headCommit") ==
+                    entry.get("headCommit"), "%s accepted recovery head mismatch" % prefix)
+                add(errors, work_item.get("binding", {}).get("recoveryReceiptSha256") ==
+                    entry.get("acceptedRecovery", {}).get("sha256"),
+                    "%s work item does not bind accepted recovery" % prefix)
         if isinstance(proof, dict):
             add(errors, proof.get("issue") == issue, "%s proof issue mismatch" % prefix)
             add(errors, proof.get("headCommit") == entry.get("headCommit"), "%s proof head mismatch" % prefix)
-            if proof.get("schemaVersion") == 3 and isinstance(work_item, dict):
+            if proof.get("schemaVersion") in (3, 4) and isinstance(work_item, dict):
                 add(errors, proof.get("laneId") == work_item.get("laneId"),
                     "%s proof lane mismatch" % prefix)
     for issue, item in catalog_by_issue.items():
@@ -1006,6 +1209,34 @@ def validate_launch_receipt(value, item):
         add(errors, nonempty(value.get(field)), "launch receipt %s is required" % field)
     add(errors, matches(UTC_RE, value.get("launchedAt")),
         "launch receipt launchedAt must be UTC ending in Z")
+    return errors
+
+
+def validate_priority_decision_receipt(value, item, current, destination):
+    errors = []
+    add(errors, isinstance(value, dict), "priority decision receipt must be an object")
+    if not isinstance(value, dict):
+        return errors
+    add(errors, value.get("schemaVersion") == 1,
+        "priority decision receipt schemaVersion must be 1")
+    add(errors, value.get("kind") == "swiftui-priority-decision-receipt",
+        "priority decision receipt kind is invalid")
+    add(errors, value.get("issue") == item.get("issue"),
+        "priority decision receipt issue must match work item")
+    add(errors, value.get("fromStage") == current,
+        "priority decision receipt fromStage must match work item")
+    add(errors, value.get("toStage") == destination,
+        "priority decision receipt toStage must match destination")
+    add(errors, value.get("decisionMaker") in CONTRACT["phoneAcceptanceActors"],
+        "priority decision receipt decisionMaker must be Alex")
+    add(errors, matches(UTC_RE, value.get("recordedAt")) and
+        parse_utc(value.get("recordedAt")) is not None,
+        "priority decision receipt recordedAt must be a real UTC timestamp")
+    add(errors, nonempty(value.get("authoritySource")),
+        "priority decision receipt authoritySource is required")
+    reason = value.get("reason")
+    add(errors, nonempty(reason) and len(reason.strip()) >= 20,
+        "priority decision receipt requires a specific reason")
     return errors
 
 
@@ -1243,12 +1474,34 @@ def transition(item, destination, proof_path=None, inspection_path=None,
                plan_path=None, receipt_path=None, verdict=None,
                launch_receipt_path=None, acceptance_receipt_path=None,
                landed_receipt_path=None, external_landing_receipt_path=None,
-               source_root=None):
+               source_root=None, priority_receipt_path=None):
     errors = validate_work_item(item)
     current = item.get("stage") if isinstance(item, dict) else None
     add(errors, destination in CONTRACT["transitions"].get(current, []),
         "transition %s -> %s is not allowed" % (current, destination))
     result = deepcopy(item)
+    priority_pairs = set()
+    for policy_name in ("backlogDemotion", "backlogRestoration"):
+        for pair in CONTRACT.get(policy_name, {}).get("transitions", []):
+            source, target = (part.strip() for part in pair.split("->", 1))
+            priority_pairs.add((source, target))
+    if (current, destination) in priority_pairs:
+        add(errors, priority_receipt_path is not None,
+            "%s -> %s requires a priority decision receipt" % (current, destination))
+        if priority_receipt_path:
+            priority = load(priority_receipt_path)
+            errors.extend(validate_priority_decision_receipt(
+                priority, item, current, destination))
+            if not errors:
+                result["binding"]["priorityDecisionReceiptSha256"] = \
+                    sha256(priority_receipt_path)
+                for name in (
+                    "headCommit", "proofSha256", "inspectionSha256",
+                    "phoneGenerationReceiptSha256", "acceptanceReceiptSha256",
+                    "prGenerationReceiptSha256", "landedReceiptSha256"):
+                    result["binding"][name] = None
+                result.pop("hold", None)
+                result.pop("successor", None)
     if current == "queued" and destination == "active":
         add(errors, launch_receipt_path is not None, "active requires a launch receipt")
         if launch_receipt_path:
@@ -1397,6 +1650,7 @@ def main(argv=None):
     move.add_argument("--acceptance-receipt")
     move.add_argument("--landed-receipt")
     move.add_argument("--external-landing-receipt")
+    move.add_argument("--priority-receipt")
     args = parser.parse_args(argv)
     try:
         if args.command == "validate-work-item":
@@ -1429,7 +1683,8 @@ def main(argv=None):
             value, errors = transition(load(args.path), args.to, args.proof, args.inspection,
                                        args.generation_plan, args.generation_receipt, args.verdict,
                                        args.launch_receipt, args.acceptance_receipt,
-                                       args.landed_receipt, args.external_landing_receipt)
+                                       args.landed_receipt, args.external_landing_receipt,
+                                       priority_receipt_path=args.priority_receipt)
             return print_result(errors, value)
     except (OSError, ValueError, json.JSONDecodeError) as exc:
         return print_result([str(exc)])

@@ -32,6 +32,17 @@ def load(path: Path) -> dict[str, Any]:
     return json.loads(path.read_text())
 
 
+def sha256_file(path: Path) -> str | None:
+    digest = hashlib.sha256()
+    try:
+        with path.open("rb") as file:
+            for chunk in iter(lambda: file.read(1024 * 1024), b""):
+                digest.update(chunk)
+    except OSError:
+        return None
+    return digest.hexdigest()
+
+
 def atomic_json(path: Path, value: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.NamedTemporaryFile("w", dir=path.parent, delete=False) as file:
@@ -159,10 +170,10 @@ def _valid_pointer_without_profile_expiry(
 ) -> bool:
     required = (
         "channel", "build", "sequence", "commit", "bundleId", "appPath",
-        "zipPath", "sha256", "deviceId",
+        "zipPath", "sha256", "deviceId", "generationPlan", "generationReceipt",
     )
     schema = pointer.get("schemaVersion")
-    if isinstance(schema, bool) or schema != 1:
+    if isinstance(schema, bool) or schema != 2:
         return False
     if any(key not in pointer for key in required):
         return False
@@ -184,6 +195,11 @@ def _valid_pointer_without_profile_expiry(
     if not (_under_allowed_root(path) and _under_allowed_root(archive)
             and path.parent == archive.parent):
         return False
+    plan_descriptor = pointer.get("generationPlan")
+    receipt_descriptor = pointer.get("generationReceipt")
+    if not generation_provenance_matches(
+            pointer, path.parent, plan_descriptor, receipt_descriptor):
+        return False
     expected_team = config.get("teamIdentifier")
     if not isinstance(expected_team, str) or not expected_team:
         return False  # The team pin is mandatory; unpinned configs install nothing.
@@ -204,6 +220,53 @@ def _valid_pointer_without_profile_expiry(
     metadata_matches = app_metadata_matches(path, pointer)
     signature = run("codesign", "--verify", "--deep", "--strict", str(path))
     return metadata_matches and signature.returncode == 0
+
+
+def generation_provenance_matches(
+    pointer: dict[str, Any],
+    generation_directory: Path,
+    plan_descriptor: Any,
+    receipt_descriptor: Any,
+) -> bool:
+    descriptors = (plan_descriptor, receipt_descriptor)
+    if not all(isinstance(value, dict) for value in descriptors):
+        return False
+    resolved = []
+    for descriptor in descriptors:
+        raw_path = descriptor.get("path")
+        expected = descriptor.get("sha256")
+        if not isinstance(raw_path, str) or not isinstance(expected, str):
+            return False
+        if len(expected) != 64 or any(ch not in "0123456789abcdef" for ch in expected):
+            return False
+        candidate = Path(raw_path)
+        try:
+            if candidate.resolve().parent != generation_directory.resolve():
+                return False
+        except OSError:
+            return False
+        if not candidate.is_file() or sha256_file(candidate) != expected:
+            return False
+        resolved.append(candidate)
+    try:
+        plan = load(resolved[0])
+        receipt_value = load(resolved[1])
+    except (OSError, ValueError, json.JSONDecodeError):
+        return False
+    expected_mode = "publish-test" if pointer.get("channel") == "test" else "publish-dev"
+    entries = receipt_value.get("entries")
+    return (
+        isinstance(plan, dict)
+        and plan.get("mode") == expected_mode
+        and receipt_value.get("schemaVersion") == 3
+        and receipt_value.get("kind") == "swiftui-generation-receipt"
+        and receipt_value.get("mode") == expected_mode
+        and receipt_value.get("planSha256") == plan_descriptor.get("sha256")
+        and receipt_value.get("installedArtifactSha256") == pointer.get("sha256")
+        and receipt_value.get("resultingCommit") == pointer.get("commit")
+        and isinstance(entries, list)
+        and bool(entries)
+    )
 
 
 def valid_pointer(pointer: dict[str, Any], channel_name: str,
@@ -272,13 +335,14 @@ def receipt(
     launch_pending: bool,
 ) -> dict[str, Any]:
     return {
-        "schemaVersion": 1,
+        "schemaVersion": 2,
         "channel": pointer["channel"],
         "build": pointer["build"],
         "sequence": pointer["sequence"],
         "commit": pointer["commit"],
         "bundleId": pointer["bundleId"],
         "deviceId": device,
+        "generationReceiptSha256": pointer["generationReceipt"]["sha256"],
         "status": status,
         "launchPending": launch_pending,
     }
