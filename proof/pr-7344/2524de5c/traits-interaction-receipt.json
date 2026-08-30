@@ -1,0 +1,52 @@
+{
+  "version": 1,
+  "kind": "proof-media-gif",
+  "mode": "video",
+  "crop_decision": {
+    "path": "/Users/saphid/Projects/T3 Code/.worktrees/reasoning-selector-110/.t3/evidence/issue110-traits-2524de5c/derived/crop-fixed/pr7344-traits-crop-decision.json",
+    "sha256": "334b29fdfaf078ffd8b908546d82ddb753b836fa5786e41587b0e0a5adc15269"
+  },
+  "crop": {
+    "normalized": [
+      0.0,
+      0.23,
+      1.0,
+      0.74
+    ],
+    "pixels": [
+      0,
+      603,
+      1206,
+      1940
+    ]
+  },
+  "sources": [
+    {
+      "path": "/Users/saphid/Projects/T3 Code/.worktrees/reasoning-selector-110/.t3/evidence/issue110-traits-2524de5c/packet/pr7344-traits-picker-clean.mp4",
+      "bytes": 1179058,
+      "sha256": "9fccba6a92c1dd63671b494752648fc8a83540fff19d8a585fc4449f896a2fff",
+      "duration": 13.633333,
+      "width": 1206,
+      "height": 2622,
+      "frame_rate": "30/1",
+      "frame_count": 409,
+      "has_audio": false
+    }
+  ],
+  "artifact": {
+    "path": "/Users/saphid/Projects/T3 Code/.worktrees/reasoning-selector-110/.t3/evidence/issue110-traits-2524de5c/derived/crop-fixed/pr7344-traits-interaction.gif",
+    "bytes": 1541708,
+    "sha256": "26b7f12f04644d6f0504f4db67f9e3e9e96a6f7521979903cac2a13530253fdb",
+    "width": 720,
+    "height": 1158
+  },
+  "parameters": {
+    "fps": 10.0,
+    "width": 720
+  },
+  "tools": {
+    "ffmpeg": "ffmpeg version 8.1.2 Copyright (c) 2000-2026 the FFmpeg developers",
+    "ffprobe": "ffprobe version 8.1.2 Copyright (c) 2007-2026 the FFmpeg developers",
+    "magick": "Version: ImageMagick 7.1.2-25 Q16-HDRI aarch64 037e46295:20260604 https://imagemagick.org"
+  }
+}

@@ -1,0 +1,65 @@
+{
+  "version": 1,
+  "kind": "proof-media-crop-decision",
+  "coordinate_space": "normalized",
+  "crop": [
+    0.0,
+    0.23,
+    1.0,
+    0.74
+  ],
+  "pixel_crop": [
+    0,
+    603,
+    1206,
+    1940
+  ],
+  "rationale": "A full-width lower-screen crop keeps both descriptor sections, their current/default treatment, the Fast description, and the composer trigger readable together.",
+  "must_include": [
+    "the complete Reasoning section from its heading through Ultra",
+    "the complete Service Tier section with Standard Default and the Fast description",
+    "the popover anchor and composer traits trigger"
+  ],
+  "sources": [
+    {
+      "path": "/Users/saphid/Projects/T3 Code/.worktrees/reasoning-selector-110/.t3/evidence/issue110-traits-2524de5c/raw/base/base-dark-full.png",
+      "sha256": "1afc82f6102de794fb19526418de1f3356a44fca9ad2f56f31d67bd74cdf1b70",
+      "bytes": 179567,
+      "kind": "image",
+      "width": 1206,
+      "height": 2622
+    },
+    {
+      "path": "/Users/saphid/Projects/T3 Code/.worktrees/reasoning-selector-110/.t3/evidence/issue110-traits-2524de5c/raw/head/head-dark-high-fast-menu-full.png",
+      "sha256": "efe1de86b9666a335e607c21c5082769471e928da67da72257a129232510efa6",
+      "bytes": 254130,
+      "kind": "image",
+      "width": 1206,
+      "height": 2622
+    },
+    {
+      "path": "/Users/saphid/Projects/T3 Code/.worktrees/reasoning-selector-110/.t3/evidence/issue110-traits-2524de5c/raw/base/base-light-full.png",
+      "sha256": "dbbe73bd1289d7a8145efcbc6dc9104e9003929e0537d2a3b60bc624acebe887",
+      "bytes": 184571,
+      "kind": "image",
+      "width": 1206,
+      "height": 2622
+    },
+    {
+      "path": "/Users/saphid/Projects/T3 Code/.worktrees/reasoning-selector-110/.t3/evidence/issue110-traits-2524de5c/raw/head/head-light-high-fast-menu-full.png",
+      "sha256": "7339853a82f35c110534714e0e031cdd2f27ebbaf80c1ac76fb92a5e1ef43d4b",
+      "bytes": 313833,
+      "kind": "image",
+      "width": 1206,
+      "height": 2622
+    },
+    {
+      "path": "/Users/saphid/Projects/T3 Code/.worktrees/reasoning-selector-110/.t3/evidence/issue110-traits-2524de5c/packet/pr7344-traits-picker-clean.mp4",
+      "sha256": "9fccba6a92c1dd63671b494752648fc8a83540fff19d8a585fc4449f896a2fff",
+      "bytes": 1179058,
+      "kind": "video",
+      "width": 1206,
+      "height": 2622
+    }
+  ]
+}
