@@ -215,6 +215,36 @@ struct MarkdownDocumentTests {
     }
 
     @Test
+    func tableInsideMixedMarkdownKeepsSurroundingBlocksIndependent() {
+        let document = MarkdownDocument(
+            parsing: """
+            Read the [guide](https://example.com) before the table.
+
+            Name | Status | Notes
+            --- | --- | ---
+            Parser | `ready` | **Fast**
+
+            - Follow up
+
+            ```swift
+            let value = 1
+            ```
+            """
+        )
+
+        #expect(document.blocks.count == 4)
+        guard case .paragraph = document.blocks[0],
+              case let .table(table) = document.blocks[1],
+              case .unorderedList = document.blocks[2],
+              case .codeBlock = document.blocks[3] else {
+            Issue.record("Expected paragraph, table, list, and code block")
+            return
+        }
+        #expect(table.header == ["Name", "Status", "Notes"])
+        #expect(table.rows == [["Parser", "`ready`", "**Fast**"]])
+    }
+
+    @Test
     func unmatchedBacktickDoesNotHideLaterTableSeparators() {
         let document = MarkdownDocument(
             parsing: """

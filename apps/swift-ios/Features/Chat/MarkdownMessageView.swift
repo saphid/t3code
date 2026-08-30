@@ -342,36 +342,113 @@ private struct MarkdownTableView: View {
     let table: MarkdownRenderedTable
     let selectionContext: MarkdownSelectionContext
     let textColor: MarkdownTextColor
+    @State private var viewportWidth: CGFloat = 0
+    @State private var currentColumn = 0
 
-    private var columnWidths: [CGFloat] { table.columnWidths }
+    private var layout: MarkdownTableLayout {
+        MarkdownTableLayout(
+            naturalColumnWidths: table.columnWidths,
+            viewportWidth: viewportWidth
+        )
+    }
 
     var body: some View {
-        ScrollView(.horizontal) {
-            Grid(horizontalSpacing: 0, verticalSpacing: 0) {
-                tableRow(table.header, isHeader: true)
-                ForEach(table.rows.indices, id: \.self) { rowIndex in
-                    tableRow(table.rows[rowIndex], isHeader: false)
+        let layout = layout
+        ScrollViewReader { scrollProxy in
+            VStack(alignment: .leading, spacing: 6) {
+                ScrollView(.horizontal) {
+                    Grid(horizontalSpacing: 0, verticalSpacing: 0) {
+                        tableRow(
+                            table.header,
+                            rowIndex: nil,
+                            columnWidths: layout.columnWidths
+                        )
+                        ForEach(table.rows.indices, id: \.self) { rowIndex in
+                            tableRow(
+                                table.rows[rowIndex],
+                                rowIndex: rowIndex,
+                                columnWidths: layout.columnWidths
+                            )
+                        }
+                    }
+                    // A horizontal ScrollView still proposes the viewport width to its child.
+                    // Preserve readable column widths so genuinely wide tables overflow and
+                    // scroll instead of compressing prose into narrow slivers.
+                    .fixedSize(horizontal: true, vertical: true)
+                    .background(T3Colors.surface)
+                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .stroke(T3Colors.border, lineWidth: 1)
+                    }
+                }
+                .scrollIndicators(.visible)
+
+                if layout.overflows {
+                    HStack(spacing: 4) {
+                        Label("More table columns", systemImage: "arrow.left.and.right")
+                            .font(T3Typography.supporting)
+                            .foregroundStyle(T3Colors.textSecondary)
+
+                        Spacer(minLength: 8)
+
+                        Button {
+                            navigate(.previous, using: scrollProxy)
+                        } label: {
+                            Label("Previous column", systemImage: "chevron.left")
+                                .labelStyle(.iconOnly)
+                                .frame(width: 44, height: 44)
+                        }
+                        .buttonStyle(.plain)
+                        .foregroundStyle(T3Colors.textSecondary)
+                        .disabled(currentColumn == 0)
+                        .accessibilityHint("Moves the table toward its first column")
+
+                        Button {
+                            navigate(.next, using: scrollProxy)
+                        } label: {
+                            Label("Next column", systemImage: "chevron.right")
+                                .labelStyle(.iconOnly)
+                                .frame(width: 44, height: 44)
+                        }
+                        .buttonStyle(.plain)
+                        .foregroundStyle(T3Colors.textSecondary)
+                        .disabled(currentColumn >= table.header.count - 1)
+                        .accessibilityHint("Moves the table toward its final column")
+                    }
+                    .frame(minHeight: 44)
+                    .accessibilityElement(children: .contain)
                 }
             }
-            // A horizontal ScrollView still proposes the viewport width to its child.
-            // Preserve the grid's measured column widths so it overflows and scrolls
-            // instead of compressing prose columns into unreadable slivers.
-            .fixedSize(horizontal: true, vertical: true)
-            .background(T3Colors.surface)
-            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-            .overlay {
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .stroke(T3Colors.border, lineWidth: 1)
+            .onChange(of: table.header.count) { _, columnCount in
+                currentColumn = MarkdownTableLayout.reconciledColumn(
+                    currentColumn,
+                    columnCount: columnCount
+                )
+                scrollProxy.scrollTo(columnID(currentColumn), anchor: .leading)
+            }
+            .onChange(of: layout.columnWidths) {
+                scrollProxy.scrollTo(columnID(currentColumn), anchor: .leading)
             }
         }
-        .scrollIndicators(.visible)
+        .onGeometryChange(for: CGFloat.self) { proxy in
+            proxy.size.width
+        } action: { width in
+            viewportWidth = width
+        }
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Table with \(table.header.count) columns and \(table.rows.count) rows")
+        .accessibilityHint(
+            layout.overflows
+                ? "More columns are available horizontally"
+                : "All columns are visible"
+        )
     }
 
     private func tableRow(
         _ cells: [MarkdownRenderedInline],
-        isHeader: Bool
+        rowIndex: Int?,
+        columnWidths: [CGFloat]
     ) -> some View {
         GridRow(alignment: .top) {
             ForEach(cells.indices, id: \.self) { columnIndex in
@@ -399,9 +476,13 @@ private struct MarkdownTableView: View {
                                 .frame(width: 1)
                         }
                     }
+                    .id(
+                        rowIndex.map { "row-\($0)-\(columnIndex)" }
+                            ?? columnID(columnIndex)
+                    )
             }
         }
-        .background(isHeader ? T3Colors.surfaceRaised : T3Colors.surface)
+        .background(rowIndex == nil ? T3Colors.surfaceRaised : T3Colors.surface)
         .overlay(alignment: .bottom) {
             Rectangle()
                 .fill(T3Colors.separator)
@@ -416,6 +497,32 @@ private struct MarkdownTableView: View {
         case .center: .center
         case .trailing: .trailing
         }
+    }
+
+    private func navigate(
+        _ direction: MarkdownTableLayout.Direction,
+        using scrollProxy: ScrollViewProxy
+    ) {
+        currentColumn = MarkdownTableLayout.column(
+            after: currentColumn,
+            moving: direction,
+            columnCount: table.header.count
+        )
+        let anchor: UnitPoint
+        switch direction {
+        case .previous:
+            anchor = .leading
+        case .next:
+            anchor = .trailing
+        }
+        scrollProxy.scrollTo(
+            columnID(currentColumn),
+            anchor: anchor
+        )
+    }
+
+    private func columnID(_ columnIndex: Int) -> String {
+        "header-\(columnIndex)"
     }
 
 }
