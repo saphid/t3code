@@ -3,22 +3,24 @@ import WidgetKit
 
 private struct T3TaskWidgetEntry: TimelineEntry {
     var date: Date
-    var snapshot: T3TaskWidgetSnapshot
+    var state: T3TaskWidgetState
 }
 
 private struct T3TaskWidgetProvider: TimelineProvider {
     func placeholder(in _: Context) -> T3TaskWidgetEntry {
-        T3TaskWidgetEntry(date: Date(), snapshot: .preview)
+        T3TaskWidgetEntry(date: Date(), state: .tasks(.preview))
     }
 
     func getSnapshot(in context: Context, completion: @escaping (T3TaskWidgetEntry) -> Void) {
-        let snapshot = context.isPreview ? T3TaskWidgetSnapshot.preview : T3TaskWidgetSnapshotStore.load()
-        completion(T3TaskWidgetEntry(date: Date(), snapshot: snapshot))
+        let state: T3TaskWidgetState = context.isPreview
+            ? .tasks(.preview)
+            : T3TaskWidgetSnapshotStore.load()
+        completion(T3TaskWidgetEntry(date: Date(), state: state))
     }
 
     func getTimeline(in _: Context, completion: @escaping (Timeline<T3TaskWidgetEntry>) -> Void) {
         let now = Date()
-        let entry = T3TaskWidgetEntry(date: now, snapshot: T3TaskWidgetSnapshotStore.load())
+        let entry = T3TaskWidgetEntry(date: now, state: T3TaskWidgetSnapshotStore.load())
         completion(Timeline(entries: [entry], policy: .after(now.addingTimeInterval(15 * 60))))
     }
 }
@@ -53,7 +55,7 @@ private struct T3TaskWidgetView: View {
     }
 
     private var orderedTasks: [T3RelayAgentActivityAggregateRow] {
-        entry.snapshot.tasks.sorted { left, right in
+        (entry.state.snapshot?.tasks ?? []).sorted { left, right in
             let leftPriority = left.phase.widgetPriority
             let rightPriority = right.phase.widgetPriority
             return leftPriority == rightPriority
@@ -84,10 +86,10 @@ private struct T3TaskWidgetView: View {
                     }
                 }
             } else {
-                emptyState
+                fallbackState(for: .small)
             }
         }
-        .widgetURL(orderedTasks.first?.nativeDeepLinkURL ?? T3WidgetURLs.newTask)
+        .widgetURL(orderedTasks.first?.nativeDeepLinkURL ?? entry.state.fallback(for: .small).destination)
     }
 
     private var mediumView: some View {
@@ -95,7 +97,7 @@ private struct T3TaskWidgetView: View {
             header
             if orderedTasks.isEmpty {
                 Spacer(minLength: 0)
-                emptyState
+                fallbackState(for: .medium)
                 Spacer(minLength: 0)
             } else {
                 ForEach(Array(orderedTasks.prefix(3).enumerated()), id: \.element.id) { index, task in
@@ -128,6 +130,7 @@ private struct T3TaskWidgetView: View {
                 }
             }
         }
+        .widgetURL(orderedTasks.isEmpty ? entry.state.fallback(for: .medium).destination : nil)
     }
 
     private var accessoryView: some View {
@@ -141,11 +144,12 @@ private struct T3TaskWidgetView: View {
                         .lineLimit(1)
                 }
             } else {
-                Label("New task", systemImage: "square.and.pencil")
+                let fallback = entry.state.fallback(for: .accessory)
+                Label(fallback.title, systemImage: fallback.systemImage)
                     .font(.caption.weight(.semibold))
             }
         }
-        .widgetURL(orderedTasks.first?.nativeDeepLinkURL ?? T3WidgetURLs.newTask)
+        .widgetURL(orderedTasks.first?.nativeDeepLinkURL ?? entry.state.fallback(for: .accessory).destination)
     }
 
     private var header: some View {
@@ -166,14 +170,17 @@ private struct T3TaskWidgetView: View {
         }
     }
 
-    private var emptyState: some View {
+    private func fallbackState(for family: T3TaskWidgetFamily) -> some View {
+        let fallback = entry.state.fallback(for: family)
         VStack(alignment: .leading, spacing: 4) {
-            Text("Ready for a task")
+            Label(fallback.title, systemImage: fallback.systemImage)
                 .font(.system(size: 14, weight: .semibold))
                 .foregroundStyle(.primary)
-            Text("Tap to start in T3 Code")
-                .font(.system(size: 11, weight: .medium))
-                .foregroundStyle(.secondary)
+            if let detail = fallback.detail {
+                Text(detail)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(.secondary)
+            }
         }
     }
 }
