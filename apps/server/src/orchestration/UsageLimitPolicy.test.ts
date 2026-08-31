@@ -3,6 +3,7 @@ import { describe, expect, it } from "@effect/vitest";
 
 import {
   evaluateTurnStartLimits,
+  evaluateHandoverStartLimits,
   MAX_CONCURRENT_PROVIDER_TURNS,
   DEFAULT_THREAD_CONTEXT_TOKEN_LIMIT,
 } from "./UsageLimitPolicy.ts";
@@ -37,6 +38,21 @@ describe("evaluateTurnStartLimits", () => {
     });
 
     expect(violation?.code).toBe("context-limit");
+  });
+
+  it("allows handover generation at the context ceiling", () => {
+    expect(evaluateHandoverStartLimits({ sessions: [] })).toBeUndefined();
+  });
+
+  it("counts each active thread once across sessions and reservations", () => {
+    const violation = evaluateTurnStartLimits({
+      threadId: "new-thread" as ThreadId,
+      activities: [],
+      sessions: [session(1), session(1), session(2)],
+      reservedTurnThreadIds: ["thread-1" as ThreadId, "thread-3" as ThreadId],
+    });
+
+    expect(violation).toBeUndefined();
   });
 
   it("uses the latest context snapshot", () => {

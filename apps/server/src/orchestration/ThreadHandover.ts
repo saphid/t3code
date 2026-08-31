@@ -13,10 +13,6 @@ export function makeHandoverModelSelection(instanceId: ProviderInstanceId): Mode
   };
 }
 
-export const HANDOVER_MODEL_SELECTION = makeHandoverModelSelection(
-  ProviderInstanceId.make("codex"),
-);
-
 export function formatThreadForHandover(thread: OrchestrationThread): string {
   const metadata = [
     `Title: ${thread.title}`,

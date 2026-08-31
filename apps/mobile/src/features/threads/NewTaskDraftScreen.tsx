@@ -72,6 +72,7 @@ import {
   mergeComposerDraftContent,
   restoreComposerDraftSnapshot,
   scheduleUnusedComposerAttachmentCleanup,
+  updateComposerDraftSettings,
   type ComposerDraft,
 } from "../../state/use-composer-drafts";
 import { useEnvironmentServerConfig, useProjects } from "../../state/entities";
@@ -133,6 +134,11 @@ export function NewTaskDraftScreen(props: {
   readonly initialProjectRef?: {
     readonly environmentId?: string;
     readonly projectId?: string;
+  };
+  /** Checkout context copied from the source thread for a handover draft. */
+  readonly initialWorkspaceRef?: {
+    readonly branch: string | null;
+    readonly worktreePath: string | null;
   };
   /** Queued outbox message id when editing an existing pending task. */
   readonly pendingTaskId?: string;
@@ -260,20 +266,42 @@ export function NewTaskDraftScreen(props: {
   const latestDraftKeyRef = useRef(flow.draftKey);
   const latestIncomingShareIdRef = useRef(props.incomingShareId);
   const appliedInitialPromptRef = useRef<string | null>(null);
+  const appliedInitialWorkspaceRef = useRef<string | null>(null);
   latestDraftKeyRef.current = flow.draftKey;
   latestIncomingShareIdRef.current = props.incomingShareId;
   useEffect(() => {
     if (
       !props.initialPrompt ||
       !flow.draftKey ||
-      flow.prompt.trim().length > 0 ||
-      appliedInitialPromptRef.current === props.initialPrompt
+      appliedInitialPromptRef.current === `${flow.draftKey}:${props.initialPrompt}`
     ) {
       return;
     }
-    appliedInitialPromptRef.current = props.initialPrompt;
+    // A handover is an explicit replacement for the destination project's
+    // unsent prompt. This keeps the generated continuation from being lost
+    // when that project already has a saved draft.
+    appliedInitialPromptRef.current = `${flow.draftKey}:${props.initialPrompt}`;
     flow.setPrompt(props.initialPrompt);
   }, [flow.draftKey, flow.prompt, flow.setPrompt, props.initialPrompt]);
+  useEffect(() => {
+    const workspace = props.initialWorkspaceRef;
+    if (!workspace || !flow.draftKey) {
+      return;
+    }
+    const workspaceKey = `${flow.draftKey}:${workspace.branch ?? ""}:${workspace.worktreePath ?? ""}`;
+    if (appliedInitialWorkspaceRef.current === workspaceKey) {
+      return;
+    }
+    appliedInitialWorkspaceRef.current = workspaceKey;
+    updateComposerDraftSettings(flow.draftKey, {
+      workspaceSelection: {
+        mode: "local",
+        branch: workspace.branch,
+        worktreePath: workspace.worktreePath,
+        startFromOrigin: false,
+      },
+    });
+  }, [flow.draftKey, props.initialWorkspaceRef]);
   const isImportingShare = importingShareKey !== null;
   const alertedUnavailableIncomingShareIdRef = useRef<string | null>(null);
   const incomingShare = props.incomingShareId ? getShare(props.incomingShareId) : null;

@@ -1,5 +1,4 @@
 import * as Cause from "effect/Cause";
-import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
@@ -515,18 +514,8 @@ const makeWsRpcLayer = (
       const portDiscovery = yield* PortScanner.PortDiscovery;
       const providerRegistry = yield* ProviderRegistry.ProviderRegistry;
       const providerService = yield* ProviderService.ProviderService;
-      const optionalServices = yield* Effect.context<never>().pipe(
-        Effect.map((context) => ({
-          providerInstanceRegistry: Context.getOption(
-            context as Context.Context<never>,
-            ProviderInstanceRegistry.ProviderInstanceRegistry,
-          ),
-          textGeneration: Context.getOption(
-            context as Context.Context<never>,
-            TextGeneration.TextGeneration,
-          ),
-        })),
-      );
+      const providerInstanceRegistry = yield* ProviderInstanceRegistry.ProviderInstanceRegistry;
+      const textGeneration = yield* TextGeneration.TextGeneration;
       const providerMaintenanceRunner = yield* ProviderMaintenanceRunner.ProviderMaintenanceRunner;
       const serverSelfUpdate = yield* ServerSelfUpdate.ServerSelfUpdate;
       const config = yield* ServerConfig.ServerConfig;
@@ -1370,10 +1359,7 @@ const makeWsRpcLayer = (
                     }),
                   ),
                 );
-              const settings = yield* serverSettings.getSettings;
               const usageLimitViolation = evaluateHandoverStartLimits({
-                contextTokenLimit: settings.threadContextTokenLimit,
-                activities: thread.activities,
                 sessions: yield* providerService.listSessions(),
               });
               if (usageLimitViolation) {
@@ -1383,12 +1369,8 @@ const makeWsRpcLayer = (
                   }),
                 );
               }
-              const providerInstances = Option.match(optionalServices.providerInstanceRegistry, {
-                onNone: () => Effect.succeed([]),
-                onSome: (registry) => registry.listInstances,
-              });
               const codexInstance = TextGeneration.findAvailableCodexInstance(
-                yield* providerInstances,
+                yield* providerInstanceRegistry.listInstances,
               );
               if (!codexInstance) {
                 return yield* Effect.fail(
@@ -1397,14 +1379,7 @@ const makeWsRpcLayer = (
                   }),
                 );
               }
-              if (Option.isNone(optionalServices.textGeneration)) {
-                return yield* Effect.fail(
-                  new OrchestrationGenerateHandoverError({
-                    message: "Handover generation is not available on this server.",
-                  }),
-                );
-              }
-              return yield* optionalServices.textGeneration.value.generateHandover({
+              return yield* textGeneration.generateHandover({
                 cwd: thread.worktreePath ?? project.workspaceRoot,
                 threadContents: formatThreadForHandover(thread),
                 modelSelection: makeHandoverModelSelection(codexInstance.instanceId),

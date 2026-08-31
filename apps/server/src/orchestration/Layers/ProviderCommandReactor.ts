@@ -355,6 +355,16 @@ const make = Effect.gen(function* () {
         if (violation) {
           return [violation, reservations] as const;
         }
+        if (
+          sessions.some(
+            (session) =>
+              session.threadId === input.threadId &&
+              (session.status === "connecting" || session.status === "running"),
+          ) ||
+          [...reservations.values()].includes(input.threadId)
+        ) {
+          return [undefined, reservations] as const;
+        }
         const next = new Map(reservations);
         next.set(input.key, input.threadId);
         return [undefined, next] as const;
