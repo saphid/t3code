@@ -5,7 +5,15 @@ import {
   useNavigation,
   type StaticScreenProps,
 } from "@react-navigation/native";
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type ReactNode,
+} from "react";
 import * as Option from "effect/Option";
 import { EnvironmentId, ThreadId, type ProjectScript } from "@t3tools/contracts";
 import {
@@ -61,10 +69,8 @@ import { useSelectedThreadGitActions } from "../../state/use-selected-thread-git
 import { useSelectedThreadGitState } from "../../state/use-selected-thread-git-state";
 import { useSelectedThreadRequests } from "../../state/use-selected-thread-requests";
 import { useSelectedThreadWorktree } from "../../state/use-selected-thread-worktree";
-import {
-  threadContextReachedLimit,
-  useThreadComposerState,
-} from "../../state/use-thread-composer-state";
+import { useThreadComposerState } from "../../state/use-thread-composer-state";
+import { threadContextReachedLimit } from "../../state/contextLimit";
 import { threadEnvironment } from "../../state/threads";
 import { projectThreadContentPresentation } from "./threadContentPresentation";
 import {
@@ -88,6 +94,23 @@ type NativeHeaderItems = ReadonlyArray<Record<string, unknown>>;
 
 const pendingMobileHandovers = new Map<string, string>();
 const generatingMobileHandovers = new Set<string>();
+const mobileHandoverListeners = new Set<() => void>();
+
+function notifyMobileHandoverListeners(): void {
+  for (const listener of mobileHandoverListeners) {
+    listener();
+  }
+}
+
+function subscribeMobileHandoverState(listener: () => void): () => void {
+  mobileHandoverListeners.add(listener);
+  return () => mobileHandoverListeners.delete(listener);
+}
+
+function mobileHandoverStateSnapshot(threadKey: string | null): string {
+  if (threadKey === null) return "";
+  return `${generatingMobileHandovers.has(threadKey)}:${pendingMobileHandovers.has(threadKey)}`;
+}
 
 function InspectorPaneRoleActivation() {
   useAdaptiveWorkspacePaneRole("inspector");
@@ -774,13 +797,15 @@ function ThreadRouteContent(
   selectedThreadKeyRef.current = selectedThread
     ? scopedThreadKey(selectedThread.environmentId, selectedThread.id)
     : null;
-  const [, setHandoverStateVersion] = useState(0);
   const currentThreadKey = selectedThread
     ? scopedThreadKey(selectedThread.environmentId, selectedThread.id)
     : null;
-  const isGeneratingHandover = currentThreadKey
-    ? generatingMobileHandovers.has(currentThreadKey)
-    : false;
+  const handoverState = useSyncExternalStore(
+    subscribeMobileHandoverState,
+    () => mobileHandoverStateSnapshot(currentThreadKey),
+    () => mobileHandoverStateSnapshot(currentThreadKey),
+  );
+  const isGeneratingHandover = handoverState.startsWith("true:");
   const handleGenerateHandover = useCallback(async () => {
     if (
       !selectedThread ||
@@ -794,7 +819,7 @@ function ThreadRouteContent(
     const sourceThreadKey = currentThreadKey;
     if (generatingMobileHandovers.has(sourceThreadKey)) return;
     generatingMobileHandovers.add(sourceThreadKey);
-    setHandoverStateVersion((version) => version + 1);
+    notifyMobileHandoverListeners();
     try {
       let handover = pendingMobileHandovers.get(sourceThreadKey);
       if (handover === undefined) {
@@ -808,6 +833,7 @@ function ThreadRouteContent(
         }
         handover = result.value.handover;
         pendingMobileHandovers.set(sourceThreadKey, handover);
+        notifyMobileHandoverListeners();
       }
       if (selectedThreadKeyRef.current !== sourceThreadKey) return;
       navigation.navigate("NewTaskSheet", {
@@ -817,12 +843,15 @@ function ThreadRouteContent(
           projectId: String(selectedThread.projectId),
           title: selectedThreadProject.title,
           initialPrompt: handover,
+          branch: selectedThread.branch,
+          worktreePath: selectedThread.worktreePath,
         },
       });
       pendingMobileHandovers.delete(sourceThreadKey);
+      notifyMobileHandoverListeners();
     } finally {
       generatingMobileHandovers.delete(sourceThreadKey);
-      setHandoverStateVersion((version) => version + 1);
+      notifyMobileHandoverListeners();
     }
   }, [
     currentThreadKey,
@@ -834,6 +863,7 @@ function ThreadRouteContent(
     serverConfig?.environment.capabilities.threadHandoverGeneration,
   ]);
   const contextLimitReached =
+    serverConfig !== null &&
     selectedThreadDetail !== null &&
     threadContextReachedLimit(
       selectedThreadDetail.activities,
@@ -880,7 +910,11 @@ function ThreadRouteContent(
           serverConfig={serverConfig}
           contextLimitReached={contextLimitReached}
           isGeneratingHandover={isGeneratingHandover}
-          onGenerateHandover={handleGenerateHandover}
+          onGenerateHandover={
+            serverConfig?.environment.capabilities.threadHandoverGeneration === true
+              ? handleGenerateHandover
+              : undefined
+          }
           onStopThread={handleStopThread}
           onSendMessage={composer.onSendMessage}
           onReconnectEnvironment={handleReconnectEnvironment}

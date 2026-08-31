@@ -188,7 +188,7 @@ import { resolveShortcutCommand, shortcutLabelForCommand } from "../keybindings"
 import ThreadTerminalDrawer from "./ThreadTerminalDrawer";
 import {
   AlarmClockIcon,
-  AlertTriangleIcon,
+  CircleAlertIcon,
   CheckCircle2Icon,
   ChevronDownIcon,
   GitBranchIcon,
@@ -5064,32 +5064,35 @@ function ChatViewContent(props: ChatViewProps) {
       serverConfig?.environment.capabilities.threadHandoverGeneration === true;
     return {
       id: `context-limit:${activeThread.id}`,
-      variant: "warning",
+      variant: "info",
       priority: "urgent",
-      icon: <AlertTriangleIcon />,
+      icon: <CircleAlertIcon />,
       title: `This thread has reached ${settings.threadContextTokenLimit.toLocaleString("en-US")} tokens`,
       description: supportsGeneration
         ? "T3 will not start another turn here. Create a compact handover, then review it in a new draft before choosing the next model and reasoning level."
         : "T3 will not start another turn here. Update the connected server to create an automatic handover, or start a new thread manually.",
       actions: (
         <>
-          <Button
-            size="icon-xs"
-            variant="ghost-muted"
-            aria-label="Change thread token limit"
-            onClick={() =>
-              void navigate({
-                to: "/settings/general",
-                hash: "thread-context-token-limit",
-                hashScrollIntoView: false,
-              })
-            }
-          >
-            <SettingsIcon className="size-3.5" />
-          </Button>
+          {primaryEnvironment?.environmentId === environmentId ? (
+            <Button
+              size="icon-xs"
+              variant="outline"
+              aria-label="Change thread token limit"
+              onClick={() =>
+                void navigate({
+                  to: "/settings/general",
+                  hash: "thread-context-token-limit",
+                  hashScrollIntoView: false,
+                })
+              }
+            >
+              <SettingsIcon className="size-3.5" />
+            </Button>
+          ) : null}
           {supportsGeneration ? (
             <Button
               size="xs"
+              variant="outline"
               disabled={isGeneratingHandover}
               onClick={() => void handleGenerateHandover()}
             >
@@ -5106,10 +5109,12 @@ function ChatViewContent(props: ChatViewProps) {
   }, [
     activeThread,
     activeThreadReachedContextLimit,
+    environmentId,
     handleGenerateHandover,
     isGeneratingHandover,
     pendingHandover,
     navigate,
+    primaryEnvironment?.environmentId,
     serverConfig?.environment.capabilities.threadHandoverGeneration,
     settings.threadContextTokenLimit,
   ]);
@@ -5183,6 +5188,7 @@ function ChatViewContent(props: ChatViewProps) {
       : null;
   const compactDisabled =
     !activeThread ||
+    activeThreadReachedContextLimit ||
     !activeProject ||
     !isServerThread ||
     selectedProvider !== "claudeAgent" ||
@@ -5197,13 +5203,15 @@ function ChatViewContent(props: ChatViewProps) {
     showPlanFollowUpPrompt ||
     composerHasUnsentContent;
   const compactDisabledReason = compactDisabled
-    ? composerHasUnsentContent
-      ? "Send or clear your draft before compacting"
-      : !activeProject
-        ? "Choose a project before compacting"
-        : !compactionProviderAvailable
-          ? "Enable a Claude provider before compacting"
-          : "Compacting is unavailable right now"
+    ? activeThreadReachedContextLimit
+      ? "Thread token limit reached. Hand over to a new thread"
+      : composerHasUnsentContent
+        ? "Send or clear your draft before compacting"
+        : !activeProject
+          ? "Choose a project before compacting"
+          : !compactionProviderAvailable
+            ? "Enable a Claude provider before compacting"
+            : "Compacting is unavailable right now"
     : null;
   const resumeCompactionBannerItem = useMemo<ComposerBannerStackItem | null>(() => {
     if (
