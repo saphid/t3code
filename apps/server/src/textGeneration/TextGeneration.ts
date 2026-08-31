@@ -73,6 +73,17 @@ export interface ThreadTitleGenerationResult {
   title: string;
 }
 
+export interface HandoverGenerationInput {
+  cwd: string;
+  threadContents: string;
+  /** The handover action supplies GPT-5.6 Luna with high reasoning explicitly. */
+  modelSelection: ModelSelection;
+}
+
+export interface HandoverGenerationResult {
+  handover: string;
+}
+
 export interface TextGenerationService {
   generateCommitMessage(
     input: CommitMessageGenerationInput,
@@ -80,6 +91,7 @@ export interface TextGenerationService {
   generatePrContent(input: PrContentGenerationInput): Promise<PrContentGenerationResult>;
   generateBranchName(input: BranchNameGenerationInput): Promise<BranchNameGenerationResult>;
   generateThreadTitle(input: ThreadTitleGenerationInput): Promise<ThreadTitleGenerationResult>;
+  generateHandover(input: HandoverGenerationInput): Promise<HandoverGenerationResult>;
 }
 
 /**
@@ -113,6 +125,11 @@ export class TextGeneration extends Context.Service<
     readonly generateThreadTitle: (
       input: ThreadTitleGenerationInput,
     ) => Effect.Effect<ThreadTitleGenerationResult, TextGenerationError>;
+
+    /** Generate the compact continuation document for an oversized thread. */
+    readonly generateHandover: (
+      input: HandoverGenerationInput,
+    ) => Effect.Effect<HandoverGenerationResult, TextGenerationError>;
   }
 >()("t3/textGeneration/TextGeneration") {}
 
@@ -123,7 +140,8 @@ type TextGenerationOp =
   | "generateCommitMessage"
   | "generatePrContent"
   | "generateBranchName"
-  | "generateThreadTitle";
+  | "generateThreadTitle"
+  | "generateHandover";
 
 const resolveInstance = (
   registry: ProviderInstanceRegistry.ProviderInstanceRegistry["Service"],
@@ -163,6 +181,20 @@ export const makeTextGenerationFromRegistry = (
       resolveInstance(registry, "generateThreadTitle", input.modelSelection.instanceId).pipe(
         Effect.flatMap((textGeneration) => textGeneration.generateThreadTitle(input)),
       ),
+    generateHandover: (input) =>
+      resolveInstance(registry, "generateHandover", input.modelSelection.instanceId).pipe(
+        Effect.flatMap((textGeneration) => textGeneration.generateHandover(input)),
+      ),
+  });
+
+export const unsupportedHandoverGeneration = (
+  provider: TextGenerationProvider,
+): TextGeneration["Service"]["generateHandover"] =>
+  Effect.fn(`${provider}.generateHandover.unsupported`)(function* () {
+    return yield* new TextGenerationError({
+      operation: "generateHandover",
+      detail: `${provider} does not support handover generation.`,
+    });
   });
 
 export const make = Effect.gen(function* () {
