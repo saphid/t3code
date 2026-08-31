@@ -30,6 +30,7 @@ import {
   type GitActionProgressEvent,
   type GitManagerServiceError,
   OrchestrationDispatchCommandError,
+  OrchestrationGenerateHandoverError,
   type OrchestrationEvent,
   type OrchestrationShellStreamEvent,
   type OrchestrationShellStreamItem,
@@ -139,9 +140,14 @@ import * as VcsProjectConfig from "./vcs/VcsProjectConfig.ts";
 import * as VcsProcess from "./vcs/VcsProcess.ts";
 import * as PairingGrantStore from "./auth/PairingGrantStore.ts";
 import * as SessionStore from "./auth/SessionStore.ts";
+import {
+  formatThreadForHandover,
+  HANDOVER_MODEL_SELECTION,
+} from "./orchestration/ThreadHandover.ts";
 import { failEnvironmentAuthInvalid, failEnvironmentInternal } from "./auth/http.ts";
 import * as RelayClient from "@t3tools/shared/relayClient";
 const isOrchestrationDispatchCommandError = Schema.is(OrchestrationDispatchCommandError);
+const isOrchestrationGenerateHandoverError = Schema.is(OrchestrationGenerateHandoverError);
 
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
 const CONFIG_DISCOVERY_TIMEOUT = Duration.seconds(5);
@@ -1310,6 +1316,58 @@ const makeWsRpcLayer = (
                   ? cause
                   : new OrchestrationDispatchCommandError({
                       message: "Failed to dispatch orchestration command",
+                      cause,
+                    }),
+              ),
+            ),
+            { "rpc.aggregate": "orchestration" },
+          ),
+        [ORCHESTRATION_WS_METHODS.generateHandover]: ({ threadId }) =>
+          observeRpcEffect(
+            ORCHESTRATION_WS_METHODS.generateHandover,
+            Effect.gen(function* () {
+              const thread = yield* projectionSnapshotQuery.getThreadDetailById(threadId).pipe(
+                Effect.flatMap(
+                  Option.match({
+                    onNone: () =>
+                      Effect.fail(
+                        new OrchestrationGenerateHandoverError({
+                          message: `Thread '${threadId}' was not found.`,
+                        }),
+                      ),
+                    onSome: Effect.succeed,
+                  }),
+                ),
+              );
+              const project = yield* projectionSnapshotQuery
+                .getProjectShellById(thread.projectId)
+                .pipe(
+                  Effect.flatMap(
+                    Option.match({
+                      onNone: () =>
+                        Effect.fail(
+                          new OrchestrationGenerateHandoverError({
+                            message: `Project '${thread.projectId}' was not found.`,
+                          }),
+                        ),
+                      onSome: Effect.succeed,
+                    }),
+                  ),
+                );
+              return yield* providerRegistry.generateHandover({
+                cwd: thread.worktreePath ?? project.workspaceRoot,
+                threadContents: formatThreadForHandover(thread),
+                modelSelection: HANDOVER_MODEL_SELECTION,
+              });
+            }).pipe(
+              Effect.mapError((cause) =>
+                isOrchestrationGenerateHandoverError(cause)
+                  ? cause
+                  : new OrchestrationGenerateHandoverError({
+                      message:
+                        cause instanceof Error
+                          ? cause.message
+                          : "Failed to generate a thread handover.",
                       cause,
                     }),
               ),

@@ -19,6 +19,7 @@ import {
   type KeybindingCommand,
   OrchestrationThreadActivity,
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
+  MAX_CONTEXT_TOKENS_PER_THREAD,
   ProviderInteractionMode,
   ProviderDriverKind,
   RuntimeMode,
@@ -188,6 +189,7 @@ import { resolveShortcutCommand, shortcutLabelForCommand } from "../keybindings"
 import ThreadTerminalDrawer from "./ThreadTerminalDrawer";
 import {
   AlarmClockIcon,
+  AlertTriangleIcon,
   CheckCircle2Icon,
   ChevronDownIcon,
   GitBranchIcon,
@@ -220,6 +222,7 @@ import {
   useEnvironmentSettings,
 } from "../hooks/useSettings";
 import { useNowMinute } from "../hooks/useNowMinute";
+import { contextWindowReachedThreadLimit } from "../lib/contextWindow";
 import { useNewThreadHandler } from "../hooks/useHandleNewThread";
 import { useThreadActions } from "../hooks/useThreadActions";
 import { resolveAppModelSelectionForInstance } from "../modelSelection";
@@ -1315,6 +1318,9 @@ function ChatViewContent(props: ChatViewProps) {
   const writeTerminal = useAtomCommand(terminalEnvironment.write, "terminal write");
   const closeTerminalMutation = useAtomCommand(terminalEnvironment.close, "terminal close");
   const createThread = useAtomCommand(threadEnvironment.create, { reportFailure: false });
+  const generateThreadHandover = useAtomCommand(threadEnvironment.generateHandover, {
+    reportFailure: false,
+  });
   const deleteThread = useAtomCommand(threadEnvironment.delete, { reportFailure: false });
   const updateThreadMetadata = useAtomCommand(threadEnvironment.updateMetadata, {
     reportFailure: false,
@@ -2371,6 +2377,7 @@ function ChatViewContent(props: ChatViewProps) {
     () => deriveLatestContextWindowSnapshot(threadActivities),
     [threadActivities],
   );
+  const activeThreadReachedContextLimit = contextWindowReachedThreadLimit(activeContextWindow);
   const workLogEntries = useMemo(() => deriveWorkLogEntries(threadActivities), [threadActivities]);
   // Native subagent fold: memoized by activity-list identity, shared by the
   // Agents surface, live strip, and workflow cards. v2Projection is null
@@ -4940,6 +4947,104 @@ function ChatViewContent(props: ChatViewProps) {
     handleStopBackgroundWork,
     isStoppingBackgroundWork,
   ]);
+  const [isGeneratingHandover, setIsGeneratingHandover] = useState(false);
+  useEffect(() => setIsGeneratingHandover(false), [activeThreadId]);
+  const handleGenerateHandover = useCallback(async () => {
+    if (
+      !activeThread ||
+      !activeProject ||
+      !isServerThread ||
+      !activeThreadReachedContextLimit ||
+      isGeneratingHandover
+    ) {
+      return;
+    }
+    setIsGeneratingHandover(true);
+    try {
+      const result = await generateThreadHandover({
+        environmentId: activeThread.environmentId,
+        input: { threadId: activeThread.id },
+      });
+      if (result._tag === "Failure") {
+        if (!isAtomCommandInterrupted(result)) {
+          const error = squashAtomCommandFailure(result);
+          toastManager.add(
+            stackedThreadToast({
+              type: "error",
+              title: "Could not create handover",
+              description: error instanceof Error ? error.message : "Handover generation failed.",
+            }),
+          );
+        }
+        return;
+      }
+
+      const opened = await handleNewThread(
+        scopeProjectRef(activeThread.environmentId, activeProject.id),
+        {
+          branch: activeThread.branch,
+          worktreePath: activeThread.worktreePath,
+          envMode: activeThread.worktreePath ? "worktree" : "local",
+          startFromOrigin: false,
+        },
+      );
+      if (opened === null) {
+        throw new Error("The replacement draft could not be opened.");
+      }
+      useComposerDraftStore.getState().setPrompt(opened.draftId, result.value.handover);
+    } catch (error) {
+      toastManager.add(
+        stackedThreadToast({
+          type: "error",
+          title: "Could not create handover",
+          description: error instanceof Error ? error.message : "Handover generation failed.",
+        }),
+      );
+    } finally {
+      setIsGeneratingHandover(false);
+    }
+  }, [
+    activeProject,
+    activeThread,
+    activeThreadReachedContextLimit,
+    generateThreadHandover,
+    handleNewThread,
+    isGeneratingHandover,
+    isServerThread,
+  ]);
+  const contextLimitBannerItem = useMemo<ComposerBannerStackItem | null>(() => {
+    if (!activeThreadReachedContextLimit || !activeThread) return null;
+    const supportsGeneration =
+      serverConfig?.environment.capabilities.threadHandoverGeneration === true;
+    return {
+      id: `context-limit:${activeThread.id}`,
+      variant: "warning",
+      urgent: true,
+      icon: <AlertTriangleIcon />,
+      title: `This thread has reached ${MAX_CONTEXT_TOKENS_PER_THREAD.toLocaleString("en-US")} tokens`,
+      description: supportsGeneration
+        ? "T3 will not start another turn here. Create a compact handover, then review it in a new draft before choosing the next model and reasoning level."
+        : "T3 will not start another turn here. Update the connected server to create an automatic handover, or start a new thread manually.",
+      className:
+        "py-4 text-base [&_[data-slot=alert-title]]:text-lg [&_[data-slot=alert-title]]:leading-6 [&_[data-slot=alert-description]]:text-sm [&_[data-slot=alert-description]]:leading-5",
+      actionClassName: "self-start",
+      actions: supportsGeneration ? (
+        <Button
+          size="sm"
+          disabled={isGeneratingHandover}
+          onClick={() => void handleGenerateHandover()}
+        >
+          {isGeneratingHandover ? "Creating handover..." : "Create handover with Luna High"}
+        </Button>
+      ) : null,
+    };
+  }, [
+    activeThread,
+    activeThreadReachedContextLimit,
+    handleGenerateHandover,
+    isGeneratingHandover,
+    serverConfig?.environment.capabilities.threadHandoverGeneration,
+  ]);
   // A woken thread announces itself in the open view, not just the sidebar
   // pill. Dismissing marks the wake as seen (same acknowledgment as the
   // pill); sending a message clears it as a side effect of the send path.
@@ -5113,8 +5218,10 @@ function ChatViewContent(props: ChatViewProps) {
       resumeCompactionBannerItem === null ? [] : [resumeCompactionBannerItem];
     const wokeThreadItems = wokeThreadBannerItem === null ? [] : [wokeThreadBannerItem];
     const parkedThreadItems = parkedThreadBannerItem === null ? [] : [parkedThreadBannerItem];
+    const contextLimitItems = contextLimitBannerItem === null ? [] : [contextLimitBannerItem];
     if (!localCheckoutBranchMismatch || !showBranchMismatchBanner || !activeBranchMismatchKey) {
       return [
+        ...contextLimitItems,
         ...systemComposerBannerItems,
         ...backgroundLivenessItems,
         ...resumeCompactionItems,
@@ -5123,6 +5230,7 @@ function ChatViewContent(props: ChatViewProps) {
       ];
     }
     return [
+      ...contextLimitItems,
       ...systemComposerBannerItems,
       ...backgroundLivenessItems,
       ...resumeCompactionItems,
@@ -5171,6 +5279,7 @@ function ChatViewContent(props: ChatViewProps) {
   }, [
     activeBranchMismatchKey,
     backgroundLivenessBannerItem,
+    contextLimitBannerItem,
     handleRestoreThreadBranch,
     isRestoringThreadBranch,
     localCheckoutBranchMismatch,
@@ -7348,9 +7457,11 @@ function ChatViewContent(props: ChatViewProps) {
                             sendDisabledReason={
                               feedbackUploading
                                 ? "Sending feedback"
-                                : threadDetailLoading
-                                  ? "Messages loading"
-                                  : null
+                                : activeThreadReachedContextLimit
+                                  ? "Thread token limit reached"
+                                  : threadDetailLoading
+                                    ? "Messages loading"
+                                    : null
                             }
                             isPreparingWorktree={isPreparingWorktree}
                             bannerItems={composerBannerItems}

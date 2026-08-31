@@ -16,10 +16,13 @@ import * as Context from "effect/Context";
 import type * as Effect from "effect/Effect";
 import type * as Stream from "effect/Stream";
 import type { ProviderMaintenanceCapabilities } from "../providerMaintenance.ts";
+import type * as TextGeneration from "../../textGeneration/TextGeneration.ts";
 
 export type ProviderMaintenanceActionKind = "update";
 
 export interface ProviderRegistryShape {
+  /** Run handover text generation through the selected provider instance. */
+  readonly generateHandover: TextGeneration.TextGeneration["Service"]["generateHandover"];
   /**
    * Read the latest provider snapshots for every configured instance.
    * Multiple snapshots may share the same `provider` kind (multiple

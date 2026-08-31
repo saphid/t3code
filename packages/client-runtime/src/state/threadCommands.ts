@@ -31,6 +31,7 @@ import {
   archiveThread,
   createThread,
   deleteThread,
+  generateThreadHandover,
   interruptThreadTurn,
   respondToThreadApproval,
   respondToThreadUserInput,
@@ -84,6 +85,12 @@ export function createThreadEnvironmentAtoms<R, E>(
       JSON.stringify([environmentId, input.threadId]),
   };
   return {
+    generateHandover: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:thread:generate-handover",
+      execute: generateThreadHandover,
+      scheduler,
+      concurrency,
+    }),
     create: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:thread:create",
       execute: (input: CreateThreadInput) => createThread(input),

@@ -21,6 +21,7 @@ const makeStubTextGeneration = (
     generatePrContent: () => Effect.die("generatePrContent stub not configured for this test"),
     generateBranchName: () => Effect.die("generateBranchName stub not configured for this test"),
     generateThreadTitle: () => Effect.die("generateThreadTitle stub not configured for this test"),
+    generateHandover: () => Effect.die("generateHandover stub not configured for this test"),
     ...overrides,
   });
 
@@ -92,6 +93,39 @@ describe("makeTextGenerationFromRegistry", () => {
 
       expect(result.branch).toBe("personal-branch");
       expect(personalCalls).toEqual(["Refactor the routing layer"]);
+    }),
+  );
+
+  it.effect("delegates handover generation with its exact model selection", () =>
+    Effect.gen(function* () {
+      const instanceId = ProviderInstanceId.make("codex");
+      const selections: Array<{ readonly model: string; readonly effort: unknown }> = [];
+      const instance = makeStubInstance(
+        instanceId,
+        makeStubTextGeneration({
+          generateHandover: (input) => {
+            selections.push({
+              model: input.modelSelection.model,
+              effort: input.modelSelection.options?.find(
+                (option) => option.id === "reasoningEffort",
+              )?.value,
+            });
+            return Effect.succeed({ handover: "# Goal\n\nContinue the migration." });
+          },
+        }),
+      );
+
+      const tg = TextGeneration.makeTextGenerationFromRegistry(makeStubRegistry([instance]));
+      const result = yield* tg.generateHandover({
+        cwd: process.cwd(),
+        threadContents: "User: Continue the migration",
+        modelSelection: createModelSelection(instanceId, "gpt-5.6-luna", [
+          { id: "reasoningEffort", value: "high" },
+        ]),
+      });
+
+      expect(result.handover).toContain("Continue the migration");
+      expect(selections).toEqual([{ model: "gpt-5.6-luna", effort: "high" }]);
     }),
   );
 
