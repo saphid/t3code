@@ -112,10 +112,11 @@ class ReasonTests(unittest.TestCase):
             "issue": 137,
             "actor": "Alex",
             "capability": "github-issue-attachment-upload",
+            "requiredAction": "Authorize browser/UI use for evidence upload",
         }]
         self.assertEqual(controller.reconciliation_reasons(value), [
-            "ACTION REQUIRED FROM ALEX: #137 needs "
-            "github-issue-attachment-upload authorization",
+            "ACTION REQUIRED FROM ALEX: #137 - "
+            "Authorize browser/UI use for evidence upload",
         ])
 
     def test_flow_control_reasons_are_mechanical(self):
