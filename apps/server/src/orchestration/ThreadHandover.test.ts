@@ -1,7 +1,11 @@
 import { describe, expect, it } from "@effect/vitest";
-import { DEFAULT_TEXT_GENERATION_MODEL } from "@t3tools/contracts";
+import { DEFAULT_TEXT_GENERATION_MODEL, ProviderInstanceId } from "@t3tools/contracts";
 
-import { formatThreadForHandover, HANDOVER_MODEL_SELECTION } from "./ThreadHandover.ts";
+import {
+  formatThreadForHandover,
+  HANDOVER_MODEL_SELECTION,
+  makeHandoverModelSelection,
+} from "./ThreadHandover.ts";
 
 describe("thread handover", () => {
   it("pins handover generation to Luna with high reasoning", () => {
@@ -9,6 +13,10 @@ describe("thread handover", () => {
       instanceId: "codex",
       model: DEFAULT_TEXT_GENERATION_MODEL,
       options: [{ id: "reasoningEffort", value: "high" }],
+    });
+    expect(makeHandoverModelSelection(ProviderInstanceId.make("codex-renamed"))).toMatchObject({
+      instanceId: "codex-renamed",
+      model: DEFAULT_TEXT_GENERATION_MODEL,
     });
   });
 
@@ -18,6 +26,7 @@ describe("thread handover", () => {
       branch: "feature/migrate",
       worktreePath: "/tmp/migrate",
       messages: [
+        { role: "system", text: "System instructions must stay private." },
         { role: "user", text: "Move the worker." },
         { role: "assistant", text: "The worker moved and tests passed." },
       ],
@@ -27,5 +36,6 @@ describe("thread handover", () => {
     expect(contents).toContain("Branch: feature/migrate");
     expect(contents).toContain("## User\n\nMove the worker.");
     expect(contents).toContain("## Assistant\n\nThe worker moved and tests passed.");
+    expect(contents).not.toContain("System instructions must stay private.");
   });
 });

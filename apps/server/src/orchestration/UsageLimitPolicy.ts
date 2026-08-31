@@ -8,19 +8,44 @@
  * @module UsageLimitPolicy
  */
 import {
-  MAX_CONTEXT_TOKENS_PER_THREAD,
+  DEFAULT_THREAD_CONTEXT_TOKEN_LIMIT,
   type OrchestrationThreadActivity,
   type ProviderSession,
   type ThreadId,
 } from "@t3tools/contracts";
 
-export { MAX_CONTEXT_TOKENS_PER_THREAD };
+export { DEFAULT_THREAD_CONTEXT_TOKEN_LIMIT };
 export const MAX_CONCURRENT_PROVIDER_TURNS = 8;
 
 export type UsageLimitViolation = {
   readonly code: "context-limit" | "concurrent-turn-limit";
   readonly detail: string;
 };
+
+function contextLimitViolation(input: {
+  readonly activities: ReadonlyArray<OrchestrationThreadActivity>;
+  readonly contextTokenLimit?: number;
+}): UsageLimitViolation | undefined {
+  const usedTokens = latestContextTokens(input.activities);
+  const contextTokenLimit = input.contextTokenLimit ?? DEFAULT_THREAD_CONTEXT_TOKEN_LIMIT;
+  if (usedTokens !== undefined && usedTokens >= contextTokenLimit) {
+    return {
+      code: "context-limit",
+      detail: `T3 usage limit: this thread has used ${usedTokens.toLocaleString("en-US")} context tokens. The hard limit is ${contextTokenLimit.toLocaleString("en-US")}. Start a new thread so the old conversation is not sent to the provider again.`,
+    };
+  }
+  return undefined;
+}
+
+function concurrentTurnLimitViolation(runningTurnCount: number): UsageLimitViolation | undefined {
+  if (runningTurnCount < MAX_CONCURRENT_PROVIDER_TURNS) {
+    return undefined;
+  }
+  return {
+    code: "concurrent-turn-limit",
+    detail: `T3 usage limit: ${runningTurnCount} provider turns are already running. The hard limit is ${MAX_CONCURRENT_PROVIDER_TURNS}. Wait for one to finish or interrupt it before starting more work.`,
+  };
+}
 
 function latestContextTokens(
   activities: ReadonlyArray<OrchestrationThreadActivity>,
@@ -43,27 +68,29 @@ function isRunningSession(session: ProviderSession): boolean {
 
 export function evaluateTurnStartLimits(input: {
   readonly threadId: ThreadId;
+  readonly contextTokenLimit?: number;
+  readonly activities: ReadonlyArray<OrchestrationThreadActivity>;
+  readonly sessions: ReadonlyArray<ProviderSession>;
+  readonly reservedTurnThreadIds?: ReadonlyArray<ThreadId>;
+}): UsageLimitViolation | undefined {
+  const contextViolation = contextLimitViolation(input);
+  if (contextViolation) return contextViolation;
+
+  const currentThreadIsRunning =
+    input.sessions.some(
+      (session) => session.threadId === input.threadId && isRunningSession(session),
+    ) || input.reservedTurnThreadIds?.includes(input.threadId) === true;
+  const runningTurnCount =
+    input.sessions.filter(isRunningSession).length + (input.reservedTurnThreadIds?.length ?? 0);
+  return currentThreadIsRunning ? undefined : concurrentTurnLimitViolation(runningTurnCount);
+}
+
+export function evaluateHandoverStartLimits(input: {
+  readonly contextTokenLimit?: number;
   readonly activities: ReadonlyArray<OrchestrationThreadActivity>;
   readonly sessions: ReadonlyArray<ProviderSession>;
 }): UsageLimitViolation | undefined {
-  const usedTokens = latestContextTokens(input.activities);
-  if (usedTokens !== undefined && usedTokens >= MAX_CONTEXT_TOKENS_PER_THREAD) {
-    return {
-      code: "context-limit",
-      detail: `T3 usage limit: this thread has used ${usedTokens.toLocaleString("en-US")} context tokens. The hard limit is ${MAX_CONTEXT_TOKENS_PER_THREAD.toLocaleString("en-US")}. Start a new thread so the old conversation is not sent to the provider again.`,
-    };
-  }
-
-  const currentThreadIsRunning = input.sessions.some(
-    (session) => session.threadId === input.threadId && isRunningSession(session),
-  );
-  const runningTurnCount = input.sessions.filter(isRunningSession).length;
-  if (!currentThreadIsRunning && runningTurnCount >= MAX_CONCURRENT_PROVIDER_TURNS) {
-    return {
-      code: "concurrent-turn-limit",
-      detail: `T3 usage limit: ${runningTurnCount} provider turns are already running. The hard limit is ${MAX_CONCURRENT_PROVIDER_TURNS}. Wait for one to finish or interrupt it before starting more work.`,
-    };
-  }
-
-  return undefined;
+  const contextViolation = contextLimitViolation(input);
+  if (contextViolation) return contextViolation;
+  return concurrentTurnLimitViolation(input.sessions.filter(isRunningSession).length);
 }

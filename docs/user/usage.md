@@ -19,9 +19,10 @@ $1,000 or $1,500. The pause level is $2,000 for either measure.
 
 T3 also applies two hard limits before it sends a new turn to any provider:
 
-- A thread cannot continue after its latest reported context usage reaches 250,000 tokens. Start a
-  new thread instead of paying to resend the same long conversation. When this happens, the chat
-  shows a prominent warning with a **Create handover with Luna High** button. The button uses GPT
+- A thread cannot continue after its latest reported context usage reaches the configured token
+  limit, which defaults to 250,000 tokens and can be changed in General settings. Start a new thread
+  instead of paying to resend the same long conversation. When this happens, the chat shows a
+  warning with a **Handover to new thread** button. The button uses GPT
   5.6 Luna with high reasoning to summarize the thread, opens a new draft in the same checkout, and
   places the handover in its composer. It does not start the new thread, so you can choose its model
   and reasoning level before sending.

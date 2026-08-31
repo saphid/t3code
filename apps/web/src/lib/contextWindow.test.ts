@@ -97,5 +97,6 @@ describe("contextWindow", () => {
     ]);
 
     expect(contextWindowReachedThreadLimit(snapshot)).toBe(true);
+    expect(contextWindowReachedThreadLimit(snapshot, 300_000)).toBe(false);
   });
 });

@@ -1,12 +1,27 @@
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import type { ChatAttachment, ModelSelection, ProviderInstanceId } from "@t3tools/contracts";
+import {
+  ProviderDriverKind,
+  type ChatAttachment,
+  type ModelSelection,
+  type ProviderInstanceId,
+} from "@t3tools/contracts";
 import { TextGenerationError } from "@t3tools/contracts";
 
 import * as ProviderInstanceRegistry from "../provider/Services/ProviderInstanceRegistry.ts";
 import type { ProviderInstance } from "../provider/ProviderDriver.ts";
 import type { TextGenerationPolicy } from "./TextGenerationPolicy.ts";
+
+const CODEX_DRIVER_KIND = ProviderDriverKind.make("codex");
+
+export function findAvailableCodexInstance(
+  instances: ReadonlyArray<ProviderInstance>,
+): ProviderInstance | undefined {
+  return instances.find(
+    (instance) => instance.enabled && instance.driverKind === CODEX_DRIVER_KIND,
+  );
+}
 
 export type TextGenerationProvider = "codex" | "claudeAgent" | "cursor" | "grok" | "opencode";
 
