@@ -12,6 +12,20 @@ allocating, reusing, recovering, or releasing simulator capacity. GitHub
 issues hold canonical work-item state. Local files are working copies and
 content-addressed receipts. Use `scripts/swiftui-delivery` for every gate.
 
+## Human action escalation duty (before every normal report)
+
+Run status and inspect `humanActionRequired` before reporting or reconciling
+ordinary work. A browser, Computer Use, credential, approval, or other
+human-authorization dependency is not routine waiting. Put the literal heading
+`ACTION REQUIRED FROM ALEX` first and name every affected issue, the exact
+capability or authorization Alex can grant, why it is blocked, and what cannot
+happen until he does. Never hide it in a buffer, parked-work list, or generic
+progress wording, and never assign it to the SwiftUI orchestra when only Alex
+can clear it. Record new gates as structured `authorization-required` waiting
+entries under contract `issueEvidence.authorizationEscalation`. Once Alex
+authorizes the named action, perform or dispatch it immediately within that
+scope and replace the stale waiting receipt.
+
 ## Reconcile
 
 1. Extract every `swiftui-work-item-v2` block and validate the full JSON array:

@@ -102,6 +102,22 @@ class ReasonTests(unittest.TestCase):
         }]
         self.assertEqual(controller.reconciliation_reasons(report(rows)), [])
 
+    def test_human_authorization_gate_always_wakes_coordinator(self):
+        value = report([{
+            "issue": 137, "stage": "active",
+            "waiting": {"kind": "authorization-required"},
+            "workerThread": None,
+        }])
+        value["humanActionRequired"] = [{
+            "issue": 137,
+            "actor": "Alex",
+            "capability": "github-issue-attachment-upload",
+        }]
+        self.assertEqual(controller.reconciliation_reasons(value), [
+            "ACTION REQUIRED FROM ALEX: #137 needs "
+            "github-issue-attachment-upload authorization",
+        ])
+
     def test_flow_control_reasons_are_mechanical(self):
         self.assertEqual(
             controller.reconciliation_reasons(report(occupied=5, limit=4)),

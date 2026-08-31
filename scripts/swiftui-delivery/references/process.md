@@ -39,6 +39,24 @@ copied or edited here.
    animated GIF, and the interaction video when interaction changed - so Alex
    can judge the feature from the ticket alone. Refresh the embed whenever
    proof is replaced.
+
+## Human authorization gates
+
+A browser, Computer Use, credential, approval, or other human-authorization
+dependency is not an ordinary queue wait. On the first occurrence, record a
+structured `authorization-required` waiting entry with the affected issue,
+actor, capability, required action, and reason. The coordinator and every
+status surface must put `ACTION REQUIRED FROM ALEX` before the normal board,
+phone, station, or backlog report. State exactly what Alex can authorize and
+what remains blocked until he does. Never bury this condition in a buffer,
+parked-work list, euphemistic progress wording, or a generic orchestra-owned
+wait.
+
+Status also promotes legacy GitHub issue-attachment and browser-prohibition
+reasons, so older receipts cannot remain silent. Once Alex gives the named
+authorization, the coordinator acts immediately within that scope and writes
+a replacement dispatch receipt that clears the stale gate.
+
 7. **phone-test**: Test publication is CONTINUOUS under Alex's standing
    authorization (contract `testPublication`, 2026-08-26): whenever the
    proof-ready set is not fully contained in the latest published Test

@@ -50,6 +50,10 @@ def read_json(path):
 
 def reconciliation_reasons(report):
     reasons = []
+    for gate in report.get("humanActionRequired") or []:
+        reasons.append("ACTION REQUIRED FROM %s: #%s needs %s authorization" % (
+            str(gate.get("actor") or "Alex").upper(), gate.get("issue"),
+            gate.get("capability") or "coordinator action"))
     rows = report.get("workItems") or []
     proof_ready = sorted(row["issue"] for row in rows
                          if row.get("stage") == "proof-ready")

@@ -547,6 +547,55 @@ class ReceiptResolution(unittest.TestCase):
                 report["workItems"][0]["responsibility"]["reason"],
                 "implementation WIP is full")
 
+    def test_issue_attachment_permission_gate_is_loud_and_owned_by_alex(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "dispatch-receipt.json").write_text(json.dumps({
+                "kind": "swiftui-coordinator-dispatch-receipt",
+                "recordedAt": "2026-08-31T09:53:56Z",
+                "waiting": [{
+                    "issue": "example/repo#44",
+                    "reason": (
+                        "GitHub issue-attachment gate: proof is valid but "
+                        "browser UI was prohibited"),
+                }],
+            }))
+            block = {
+                "schemaVersion": 2, "kind": "swiftui-work-item",
+                "issue": "example/repo#44", "laneId": "picker",
+                "rank": 10, "stage": "active", "acceptance": ["Visible"],
+                "dependencies": [], "binding": {},
+            }
+            work_issue = issue(
+                44, "Needs upload", body="```swiftui-work-item-v2\n%s\n```" %
+                json.dumps(block), labels=["lane:active"])
+            evidence = status_report.build_evidence(
+                [work_issue], CONTRACT, status_report.scan_receipts([root]),
+                t3_origin="http://t3.test")
+            report = status_report.build_report(
+                [work_issue], CONTRACT, evidence=evidence)
+
+            self.assertEqual(report["workItems"][0]["responsibility"]["owner"],
+                             "Alex")
+            self.assertEqual(report["humanActionRequired"], [{
+                "issue": 44,
+                "actor": "Alex",
+                "capability": "github-issue-attachment-upload",
+                "requiredAction": (
+                    "Authorize browser/UI use to upload the validated proof "
+                    "media to the owning GitHub issue"),
+                "reason": (
+                    "GitHub issue-attachment gate: proof is valid but "
+                    "browser UI was prohibited"),
+            }])
+            text = status_report.render_text(report, "example/repo")
+            self.assertLess(text.index("!!! ACTION REQUIRED FROM ALEX !!!"),
+                            text.index("#44"))
+            self.assertIn("github-issue-attachment-upload", text)
+            html = status_report.render_html(report, "example/repo")
+            self.assertLess(html.index("ACTION REQUIRED FROM ALEX"),
+                            html.index("SwiftUI delivery orchestra"))
+
     def test_newer_worker_dispatch_clears_the_old_waiting_reason(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

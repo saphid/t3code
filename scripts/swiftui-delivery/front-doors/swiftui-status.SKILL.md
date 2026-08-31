@@ -26,8 +26,12 @@ description: Show the exact state of the T3 SwiftUI delivery pipeline - every OP
    It adds issue, upstream, receipt, UAT, and T3 thread links; created and
    updated times; the newest progress note; UI classification; and the actor
    currently responsible for movement. It is still a read-only snapshot.
-3. Report to Alex, ordered by what needs him: phone-test items first
-   (installed ON his phone, awaiting his acceptance verdict), then
+3. Report to Alex, ordered by what needs him. If `humanActionRequired` is
+   non-empty, put the literal heading `ACTION REQUIRED FROM ALEX` first and
+   state every affected issue, the exact capability or authorization he can
+   grant, why it is blocked, and what cannot happen until he does. Never hide
+   a human-authorization gate in a buffer or routine waiting summary. Then show
+   phone-test items (installed ON his phone, awaiting his acceptance verdict), then
    proof-ready items (simulator-proven, awaiting the next automatic Test
    generation - NOT on the phone), then holds, then station/backlog health, then
    drift worth fixing. Do not mutate anything from this skill.

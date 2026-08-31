@@ -30,4 +30,7 @@ is repo-owned and portable; this file only locates it and hands over.
    Upstream-contribution intake and React Native parity are not automatic
    backlog sources; only Alex-promoted SwiftUI or Electron behavior is eligible.
 4. `scripts/swiftui-delivery/scripts/status` prints the live board at any
-   time. GitHub issue state is canonical; local files are working copies.
+   time. If `humanActionRequired` is non-empty, put `ACTION REQUIRED FROM ALEX`
+   before all normal coordinator reporting and follow the repo-owned skill's
+   escalation duty. GitHub issue state is canonical; local files are working
+   copies.

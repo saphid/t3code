@@ -79,6 +79,18 @@ SCAN_PRUNE = {
     "build-products", "test-products", "xcb-derived", "xcresult",
     "Pods", "node_modules",
 }
+AUTHORIZATION_GATE_MARKERS = (
+    "github issue-attachment gate",
+    "github issue attachment gate",
+    "browser ui was prohibited",
+    "browser authorization",
+    "issue-attachment upload",
+    "issue attachment upload",
+)
+ISSUE_ATTACHMENT_ACTION = (
+    "Authorize browser/UI use to upload the validated proof media to the "
+    "owning GitHub issue"
+)
 
 
 def load_contract(path=None):
@@ -253,11 +265,39 @@ def issue_identity_url(value):
     return "https://github.com/%s/%s/issues/%s" % match.groups()
 
 
+def human_authorization_gate(waiting, issue=None):
+    if not isinstance(waiting, dict):
+        return None
+    reason = str(waiting.get("reason") or "")
+    explicit = waiting.get("kind") == "authorization-required"
+    legacy = any(marker in reason.lower()
+                 for marker in AUTHORIZATION_GATE_MARKERS)
+    if not explicit and not legacy:
+        return None
+    capability = (waiting.get("capability") or
+                  "github-issue-attachment-upload")
+    required_action = waiting.get("requiredAction")
+    if not required_action and capability == "github-issue-attachment-upload":
+        required_action = ISSUE_ATTACHMENT_ACTION
+    return {
+        "issue": issue,
+        "actor": waiting.get("actor") or "Alex",
+        "capability": capability,
+        "requiredAction": (required_action or
+                           "Authorize the blocked coordinator action"),
+        "reason": reason,
+    }
+
+
 def responsibility(stage, hold, thread_state=None, waiting=None):
     if hold:
         return {"owner": "SwiftUI orchestra", "reason": "Resolve hold: %s" % hold}
+    authorization = human_authorization_gate(waiting)
+    if authorization:
+        return {"owner": authorization["actor"],
+                "reason": authorization["requiredAction"]}
     if waiting and stage in ("queued", "active"):
-        return {"owner": "SwiftUI orchestra", "reason": waiting}
+        return {"owner": "SwiftUI orchestra", "reason": waiting.get("reason")}
     if stage == "active":
         if thread_state and thread_state.get("state") == "running":
             return {
@@ -419,7 +459,7 @@ def build_report(issues, contract, evidence=None, thread_states=None,
                    and raw_surface in surfaces else "?")
         raw_hold = item.get("hold")
         hold = raw_hold.get("reason") if isinstance(raw_hold, dict) else None
-        waiting = (item_evidence.get("waiting") or {}).get("reason")
+        waiting = item_evidence.get("waiting")
         row = {
             "issue": issue["number"],
             "title": issue["title"],
@@ -505,8 +545,14 @@ def build_report(issues, contract, evidence=None, thread_states=None,
     backlog_floor = flow.get("backlog", {}).get("minQueuedReady")
     queued_unheld = sum(1 for r in rows
                         if r["stage"] == "queued" and not r["hold"])
+    human_action_required = []
+    for row in rows:
+        gate = human_authorization_gate(row.get("waiting"), row["issue"])
+        if gate:
+            human_action_required.append(gate)
     return {
         "workItems": rows,
+        "humanActionRequired": human_action_required,
         "legacyItems": sorted(legacy, key=lambda row: row["issue"]),
         "stageCounts": counts,
         "stations": stations,
@@ -685,6 +731,9 @@ def build_evidence(issues, _contract, receipt_index, t3_origin=None,
                     "reason": waiting.get("reason"),
                     "recordedAt": value.get("recordedAt"),
                 }
+                for field in ("kind", "actor", "capability", "requiredAction"):
+                    if waiting.get(field) is not None:
+                        result["waiting"][field] = waiting[field]
         for record in uat_receipts:
             value = record["value"]
             entries = value.get("entries") or {}
@@ -779,6 +828,16 @@ def render_text(report, repository):
     out = []
     out.append("SwiftUI delivery board - %s" % repository)
     out.append("")
+    required = report.get("humanActionRequired") or []
+    if required:
+        out.append("!!! ACTION REQUIRED FROM ALEX !!!")
+        for gate in required:
+            out.append("  #%s [%s] %s" % (
+                gate.get("issue"), gate.get("capability"),
+                gate.get("requiredAction")))
+            if gate.get("reason"):
+                out.append("    Blocked because: %s" % gate["reason"])
+        out.append("")
     if report["workItems"]:
         width = max(len(r["title"]) for r in report["workItems"])
         width = min(width, 52)
@@ -1005,6 +1064,17 @@ def render_html(report, repository):
     runtime_warning = ("<aside class=\"runtime-warning\">%s</aside>" %
                        escape(" · ".join(runtime_diagnostics))
                        if runtime_diagnostics else "")
+    action_required = report.get("humanActionRequired") or []
+    action_required_html = ""
+    if action_required:
+        entries = "".join(
+            "<li><strong>#%s · %s</strong><br>%s<br><small>%s</small></li>" % (
+                escape(gate.get("issue")), escape(gate.get("capability")),
+                escape(gate.get("requiredAction")), escape(gate.get("reason")))
+            for gate in action_required)
+        action_required_html = (
+            '<aside class="action-required"><h2>ACTION REQUIRED FROM ALEX</h2>'
+            '<ul>%s</ul></aside>' % entries)
     station = report.get("stations", {}).get("activeImplementation", {})
     phone = report.get("stations", {}).get("phoneVerification", {})
     return """<!doctype html>
@@ -1015,12 +1085,13 @@ def render_html(report, repository):
 <title>SwiftUI delivery control</title>
 <style>
 :root{--ink:#f2f0e7;--muted:#9aa4a8;--panel:#161d20;--panel2:#202a2e;--line:#344247;--blue:#69a7d1;--amber:#e3a34f;--red:#db6b60;--green:#73b18a;--paper:#0c1113;--shadow:0 12px 32px #0008}
-*{box-sizing:border-box}html{color-scheme:dark}body{margin:0;background:var(--paper);color:var(--ink);font-family:"Avenir Next","IBM Plex Sans","Helvetica Neue",sans-serif;background-image:linear-gradient(#ffffff05 1px,transparent 1px),linear-gradient(90deg,#ffffff04 1px,transparent 1px);background-size:32px 32px}a{color:var(--blue);text-decoration:none}a:hover{text-decoration:underline}button,input,select{font:inherit}.shell{min-height:100vh}.masthead{padding:34px 40px 24px;border-bottom:1px solid var(--line);background:#0c1113;position:sticky;top:0;z-index:10}.eyebrow{font:700 11px/1.2 "SFMono-Regular",monospace;letter-spacing:.18em;color:var(--amber);text-transform:uppercase}.mast-row{display:flex;align-items:end;justify-content:space-between;gap:24px}.masthead h1{font-size:clamp(30px,4vw,58px);line-height:.96;margin:10px 0 0;letter-spacing:-.045em;max-width:750px}.generated{color:var(--muted);font:12px/1.5 "SFMono-Regular",monospace;text-align:right}.control-grid{display:grid;grid-template-columns:minmax(300px,1.5fr) repeat(4,minmax(130px,1fr));gap:12px;padding:18px 40px}.orchestra,.metric{background:var(--panel);border:1px solid var(--line);min-height:118px;padding:17px;box-shadow:var(--shadow);min-width:0;overflow-wrap:anywhere}.orchestra{border-left:4px solid var(--amber)}.orchestra h2{font-size:17px;margin:4px 0 7px;overflow-wrap:anywhere}.orchestra p{color:var(--muted);font-size:13px;margin:0;max-width:70ch}.metric span{display:block;color:var(--muted);font:700 10px/1.2 "SFMono-Regular",monospace;letter-spacing:.1em;text-transform:uppercase}.metric strong{display:block;font:700 30px/1.2 "SFMono-Regular",monospace;margin-top:12px}.toolbar{display:flex;gap:10px;padding:0 40px 18px}.toolbar input,.toolbar select{background:var(--panel);color:var(--ink);border:1px solid var(--line);padding:10px 12px;min-height:42px}.toolbar input{flex:1;min-width:220px}.toolbar select{min-width:150px}.runtime-warning{margin:0 40px 18px;border:1px solid var(--red);color:var(--red);padding:10px 12px;font:12px/1.4 "SFMono-Regular",monospace}.board{display:flex;gap:13px;overflow-x:auto;padding:0 40px 40px;scroll-snap-type:x proximity}.column{flex:0 0 310px;scroll-snap-align:start}.column>header{position:sticky;top:0;z-index:5;display:flex;justify-content:space-between;align-items:center;background:#101719;border:1px solid var(--line);border-bottom:3px solid var(--blue);padding:12px 14px;text-transform:uppercase;font:700 11px/1 "SFMono-Regular",monospace;letter-spacing:.1em}.column>header strong{border:1px solid var(--line);padding:5px 8px}.column-cards{display:grid;gap:10px;padding-top:10px}.card{background:var(--panel);border:1px solid var(--line);border-top:3px solid var(--blue);padding:14px;box-shadow:0 7px 20px #0005}.card[hidden]{display:none}.stage-active{border-top-color:var(--amber)}.stage-phone-test{border-top-color:var(--red)}.stage-landed{border-top-color:var(--green)}.card-top{display:flex;justify-content:space-between;align-items:center;font:700 11px/1.2 "SFMono-Regular",monospace}.issue-number{font-size:14px}.stage-mark{color:var(--muted);text-transform:uppercase}.card h3{font-size:17px;line-height:1.2;letter-spacing:-.01em;margin:13px 0 10px}.chips{display:flex;gap:5px;flex-wrap:wrap}.chip{font:700 9px/1 "SFMono-Regular",monospace;letter-spacing:.08em;text-transform:uppercase;border:1px solid var(--line);padding:5px 7px;color:var(--muted)}.surface-ui{color:var(--green)}.surface-non-ui{color:var(--amber)}.lane{margin:14px 0 10px;font:12px/1.4 "SFMono-Regular",monospace;overflow-wrap:anywhere}.lane span,.owner>span{color:var(--muted);font-size:9px;letter-spacing:.12em;margin-right:6px}.owner{border-left:2px solid var(--amber);padding:8px 9px;background:var(--panel2)}.owner strong{display:block;font-size:13px;margin:4px 0}.owner small{display:block;color:var(--muted);line-height:1.3}.progress-wrap{margin-top:12px}.progress{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:3;overflow:hidden;color:var(--ink);font-size:13px;line-height:1.45}.progress-wrap time{display:block;color:var(--muted);font:10px/1.3 "SFMono-Regular",monospace;margin-top:7px}details{border-top:1px solid var(--line);margin-top:13px;padding-top:10px}summary{cursor:pointer;color:var(--blue);font:700 11px/1.3 "SFMono-Regular",monospace;text-transform:uppercase;letter-spacing:.08em}dl{margin:12px 0}.detail-row{display:grid;grid-template-columns:90px minmax(0,1fr);gap:8px;border-top:1px solid #ffffff0c;padding:8px 0}.detail-row dt{color:var(--muted);font-size:11px}.detail-row dd{margin:0;font-size:12px;overflow-wrap:anywhere}.detail-row small{display:block;color:var(--muted);margin-top:4px}.thread-state{font:700 9px/1 "SFMono-Regular",monospace;text-transform:uppercase;padding:3px 5px;border:1px solid var(--line);margin-left:4px}.state-running{color:var(--green)}.details-list h4{font-size:11px;text-transform:uppercase;letter-spacing:.08em}.details-list li{font-size:12px;line-height:1.4;margin:5px 0}.warning{color:var(--amber)}.muted{color:var(--muted)}code{font-family:"SFMono-Regular",monospace}.empty{color:var(--muted);padding:20px}.stage-column-phone-test>header{border-bottom-color:var(--red)}.stage-column-active>header{border-bottom-color:var(--amber)}.stage-column-landed>header{border-bottom-color:var(--green)}.stage-column-legacy>header{border-bottom-color:var(--red)}
+*{box-sizing:border-box}html{color-scheme:dark}body{margin:0;background:var(--paper);color:var(--ink);font-family:"Avenir Next","IBM Plex Sans","Helvetica Neue",sans-serif;background-image:linear-gradient(#ffffff05 1px,transparent 1px),linear-gradient(90deg,#ffffff04 1px,transparent 1px);background-size:32px 32px}a{color:var(--blue);text-decoration:none}a:hover{text-decoration:underline}button,input,select{font:inherit}.shell{min-height:100vh}.masthead{padding:34px 40px 24px;border-bottom:1px solid var(--line);background:#0c1113;position:sticky;top:0;z-index:10}.eyebrow{font:700 11px/1.2 "SFMono-Regular",monospace;letter-spacing:.18em;color:var(--amber);text-transform:uppercase}.mast-row{display:flex;align-items:end;justify-content:space-between;gap:24px}.masthead h1{font-size:clamp(30px,4vw,58px);line-height:.96;margin:10px 0 0;letter-spacing:-.045em;max-width:750px}.generated{color:var(--muted);font:12px/1.5 "SFMono-Regular",monospace;text-align:right}.action-required{margin:18px 40px 0;border:4px solid var(--red);background:#401b1bcc;padding:18px 22px}.action-required h2{margin:0;color:#fff;font:800 22px/1.2 "SFMono-Regular",monospace;letter-spacing:.06em}.action-required li{margin-top:10px;line-height:1.45}.action-required small{color:#f5b8b2}.control-grid{display:grid;grid-template-columns:minmax(300px,1.5fr) repeat(4,minmax(130px,1fr));gap:12px;padding:18px 40px}.orchestra,.metric{background:var(--panel);border:1px solid var(--line);min-height:118px;padding:17px;box-shadow:var(--shadow);min-width:0;overflow-wrap:anywhere}.orchestra{border-left:4px solid var(--amber)}.orchestra h2{font-size:17px;margin:4px 0 7px;overflow-wrap:anywhere}.orchestra p{color:var(--muted);font-size:13px;margin:0;max-width:70ch}.metric span{display:block;color:var(--muted);font:700 10px/1.2 "SFMono-Regular",monospace;letter-spacing:.1em;text-transform:uppercase}.metric strong{display:block;font:700 30px/1.2 "SFMono-Regular",monospace;margin-top:12px}.toolbar{display:flex;gap:10px;padding:0 40px 18px}.toolbar input,.toolbar select{background:var(--panel);color:var(--ink);border:1px solid var(--line);padding:10px 12px;min-height:42px}.toolbar input{flex:1;min-width:220px}.toolbar select{min-width:150px}.runtime-warning{margin:0 40px 18px;border:1px solid var(--red);color:var(--red);padding:10px 12px;font:12px/1.4 "SFMono-Regular",monospace}.board{display:flex;gap:13px;overflow-x:auto;padding:0 40px 40px;scroll-snap-type:x proximity}.column{flex:0 0 310px;scroll-snap-align:start}.column>header{position:sticky;top:0;z-index:5;display:flex;justify-content:space-between;align-items:center;background:#101719;border:1px solid var(--line);border-bottom:3px solid var(--blue);padding:12px 14px;text-transform:uppercase;font:700 11px/1 "SFMono-Regular",monospace;letter-spacing:.1em}.column>header strong{border:1px solid var(--line);padding:5px 8px}.column-cards{display:grid;gap:10px;padding-top:10px}.card{background:var(--panel);border:1px solid var(--line);border-top:3px solid var(--blue);padding:14px;box-shadow:0 7px 20px #0005}.card[hidden]{display:none}.stage-active{border-top-color:var(--amber)}.stage-phone-test{border-top-color:var(--red)}.stage-landed{border-top-color:var(--green)}.card-top{display:flex;justify-content:space-between;align-items:center;font:700 11px/1.2 "SFMono-Regular",monospace}.issue-number{font-size:14px}.stage-mark{color:var(--muted);text-transform:uppercase}.card h3{font-size:17px;line-height:1.2;letter-spacing:-.01em;margin:13px 0 10px}.chips{display:flex;gap:5px;flex-wrap:wrap}.chip{font:700 9px/1 "SFMono-Regular",monospace;letter-spacing:.08em;text-transform:uppercase;border:1px solid var(--line);padding:5px 7px;color:var(--muted)}.surface-ui{color:var(--green)}.surface-non-ui{color:var(--amber)}.lane{margin:14px 0 10px;font:12px/1.4 "SFMono-Regular",monospace;overflow-wrap:anywhere}.lane span,.owner>span{color:var(--muted);font-size:9px;letter-spacing:.12em;margin-right:6px}.owner{border-left:2px solid var(--amber);padding:8px 9px;background:var(--panel2)}.owner strong{display:block;font-size:13px;margin:4px 0}.owner small{display:block;color:var(--muted);line-height:1.3}.progress-wrap{margin-top:12px}.progress{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:3;overflow:hidden;color:var(--ink);font-size:13px;line-height:1.45}.progress-wrap time{display:block;color:var(--muted);font:10px/1.3 "SFMono-Regular",monospace;margin-top:7px}details{border-top:1px solid var(--line);margin-top:13px;padding-top:10px}summary{cursor:pointer;color:var(--blue);font:700 11px/1.3 "SFMono-Regular",monospace;text-transform:uppercase;letter-spacing:.08em}dl{margin:12px 0}.detail-row{display:grid;grid-template-columns:90px minmax(0,1fr);gap:8px;border-top:1px solid #ffffff0c;padding:8px 0}.detail-row dt{color:var(--muted);font-size:11px}.detail-row dd{margin:0;font-size:12px;overflow-wrap:anywhere}.detail-row small{display:block;color:var(--muted);margin-top:4px}.thread-state{font:700 9px/1 "SFMono-Regular",monospace;text-transform:uppercase;padding:3px 5px;border:1px solid var(--line);margin-left:4px}.state-running{color:var(--green)}.details-list h4{font-size:11px;text-transform:uppercase;letter-spacing:.08em}.details-list li{font-size:12px;line-height:1.4;margin:5px 0}.warning{color:var(--amber)}.muted{color:var(--muted)}code{font-family:"SFMono-Regular",monospace}.empty{color:var(--muted);padding:20px}.stage-column-phone-test>header{border-bottom-color:var(--red)}.stage-column-active>header{border-bottom-color:var(--amber)}.stage-column-landed>header{border-bottom-color:var(--green)}.stage-column-legacy>header{border-bottom-color:var(--red)}
 @media(max-width:900px){.masthead{padding:24px 18px 18px;position:static}.mast-row{display:block}.generated{text-align:left;margin-top:12px}.control-grid{grid-template-columns:1fr 1fr;padding:14px 18px}.orchestra{grid-column:1/-1}.toolbar{padding:0 18px 14px;flex-wrap:wrap}.toolbar input{flex-basis:100%%}.board{padding:0 18px 28px}.column>header{top:0}.column{flex-basis:290px}}
 </style>
 </head>
 <body><div class="shell">
 <header class="masthead"><div class="eyebrow">T3 Code · native delivery</div><div class="mast-row"><h1>SwiftUI delivery control</h1><div class="generated">%(repository)s<br>Snapshot %(generated)s</div></div></header>
+%(action_required)s
 <section class="control-grid">
   <article class="orchestra"><div class="eyebrow">Who keeps this moving</div><h2>%(orchestra_link)s</h2><p>%(orchestra_owner)s. %(orchestra_progress)s</p></article>
   <article class="metric"><span>Open items</span><strong>%(open_count)s</strong></article>
@@ -1039,6 +1110,7 @@ function filter(){const q=search.value.trim().toLowerCase();document.querySelect
 </script></body></html>""" % {
         "repository": escape(repository),
         "generated": escape(timestamp(report.get("generatedAt"))),
+        "action_required": action_required_html,
         "orchestra_link": anchor(orchestra.get("title") or "Orchestra ledger", orchestra.get("url")),
         "orchestra_owner": escape(orchestra.get("responsible")),
         "orchestra_progress": escape(orchestra_update.get("text") or "Owns station liveness, publication, and handoff."),
@@ -1080,7 +1152,10 @@ def main(argv=None):
         "workItemRepository", "saphid/t3code-personal")
     issues = fetch_issues(repository, include_comments=not args.controller_json)
     if args.controller_json:
-        report = build_report(issues, contract)
+        receipt_index = scan_receipts(
+            [root for root in [contract.get("stateRoot")] if root])
+        evidence = build_evidence(issues, contract, receipt_index)
+        report = build_report(issues, contract, evidence=evidence)
         report["projection"] = "controller-liveness"
     else:
         roots = [contract.get("stateRoot"), contract.get("buildStore")]

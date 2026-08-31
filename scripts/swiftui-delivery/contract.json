@@ -107,7 +107,15 @@
     "timing": "Embed when proof and inspection validate, and refresh the embed whenever proof is replaced. The embed must be current before the item enters a phone-test generation or an open-pr plan.",
     "format": "Upload as GitHub issue attachments so media renders inline - never bare local paths - under headings that name the exact base and head commits and the appearance. Keep the swiftui-work-item-v2 block byte-identical when editing the body.",
     "exceptions": "Non-user-visible work embeds the proof's recorded no-media reason instead of media.",
-    "owner": "swiftui-orchestrate coordinator duty"
+    "owner": "swiftui-orchestrate coordinator duty",
+    "authorizationEscalation": {
+      "receiptKind": "swiftui-coordinator-dispatch-receipt",
+      "waitingKind": "authorization-required",
+      "requiredFields": ["issue", "kind", "actor", "capability", "requiredAction", "reason"],
+      "rule": "A browser, Computer Use, credential, approval, or other human-authorization dependency is not ordinary waiting. Record it as kind authorization-required, immediately wake the coordinator, and put ACTION REQUIRED FROM ALEX before every normal status section. Name every affected issue, the exact capability or authorization needed, why it is blocked, and what the block prevents. Never hide it in a buffer, parked-work list, or routine progress wording.",
+      "legacyCompatibility": "Status promotes known legacy GitHub issue-attachment and browser-prohibition waiting reasons to authorization-required so existing gates cannot stay silent.",
+      "afterAuthorization": "Once Alex authorizes the named action, the coordinator performs or dispatches it immediately within that scope and records a replacement dispatch receipt that clears the stale waiting gate."
+    }
   },
   "backlogDemotion": {
     "transitions": ["active -> queued", "proof-ready -> queued", "phone-test -> queued"],
