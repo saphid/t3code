@@ -51,7 +51,7 @@ for s in file-swiftui-lane-issue swiftui-orchestrate swiftui-feature-work swiftu
 done
 
 # 4. Canonical tools exist and are executable.
-for t in swiftui-delivery compose-generation simulator-lane phone-lease audit-package setup doctor status controller; do
+for t in swiftui-delivery compose-generation simulator-lane phone-lease audit-package publish-issue-evidence setup doctor status controller; do
   if [ -x "$SCRIPT_DIR/$t" ]; then
     ok "tool:$t" executable
   else

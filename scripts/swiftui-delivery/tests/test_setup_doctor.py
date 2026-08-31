@@ -28,6 +28,7 @@ TOOL_NAMES = (
     "simulator-lane",
     "phone-lease",
     "audit-package",
+    "publish-issue-evidence",
     "setup",
     "doctor",
     "status",

@@ -80,6 +80,14 @@ interaction video - keeping the fenced work-item block byte-identical, and
 refresh that embed whenever proof is replaced. Alex must be able to judge the
 feature from the ticket alone.
 
+Use `scripts/swiftui-delivery/scripts/publish-issue-evidence` with the exact
+proof, inspection, GIF, and receipt paths. It validates the artifacts, uploads
+images and video through GitHub's token-authenticated `user-attachments`
+endpoint, edits the issue, and rereads it to prove the work-item block is
+byte-identical and every URL is embedded. Treat browser or credential access as
+a human gate only when this command demonstrates that bearer publication is
+unavailable for the exact repository or media.
+
 An after-code commit invalidates proof and inspection. A change after Test also
 invalidates the generation receipt. Return the work item to `active` with an
 explicit reject or rework verdict.

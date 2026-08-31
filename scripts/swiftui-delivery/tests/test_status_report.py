@@ -629,6 +629,53 @@ class ReceiptResolution(unittest.TestCase):
             self.assertEqual(evidence[45]["currentThread"]["threadId"],
                              "live-thread")
 
+    def test_newer_evidence_publication_clears_old_attachment_waiting(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "dispatch-receipt-old.json").write_text(json.dumps({
+                "kind": "swiftui-coordinator-dispatch-receipt",
+                "recordedAt": "2026-08-20T01:00:00Z",
+                "waiting": [{
+                    "issue": "example/repo#46",
+                    "reason": "GitHub issue-attachment gate",
+                }],
+            }))
+            publication_path = root / "issue-publication-receipt.json"
+            publication_path.write_text(json.dumps({
+                "kind": "swiftui-issue-evidence-publication-receipt",
+                "issue": "example/repo#46",
+                "issueUrl": "https://github.com/example/repo/issues/46",
+                "publishedAt": "2026-08-21T00:59:00Z",
+            }))
+            publication_hash = hashlib.sha256(
+                publication_path.read_bytes()).hexdigest()
+            (root / "dispatch-receipt-new.json").write_text(json.dumps({
+                "kind": "swiftui-coordinator-dispatch-receipt",
+                "recordedAt": "2026-08-21T01:00:00Z",
+                "evidencePublication": [{
+                    "issue": "example/repo#46",
+                    "receipt": str(publication_path),
+                    "sha256": publication_hash,
+                    "issueUrl": "https://github.com/example/repo/issues/46",
+                }],
+            }))
+            block = {
+                "schemaVersion": 2, "kind": "swiftui-work-item",
+                "issue": "example/repo#46", "laneId": "picker",
+                "rank": 10, "stage": "active", "acceptance": ["Visible"],
+                "dependencies": [], "binding": {},
+            }
+            work_issue = issue(
+                46, "Published", body="```swiftui-work-item-v2\n%s\n```" %
+                json.dumps(block), labels=["lane:active"])
+            evidence = status_report.build_evidence(
+                [work_issue], CONTRACT, status_report.scan_receipts([root]),
+                t3_origin="http://t3.test")
+            self.assertNotIn("waiting", evidence[46])
+            self.assertEqual(
+                evidence[46]["issueEvidencePublication"]["sha256"],
+                publication_hash)
+
     def test_parked_active_work_does_not_occupy_the_implementation_station(self):
         """A waiting reason means buffered work, not a worker holding a slot."""
         with tempfile.TemporaryDirectory() as directory:

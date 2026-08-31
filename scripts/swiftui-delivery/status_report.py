@@ -68,11 +68,12 @@ RECEIPT_KINDS = {
     "swiftui-proof",
     "swiftui-evidence-inspection",
     "swiftui-phone-acceptance-receipt",
+    "swiftui-issue-evidence-publication-receipt",
 }
 RECEIPT_NAME_HINTS = (
     "launch-receipt", "dispatch-receipt", "worker-summary",
     "generation-receipt", "landing-receipt", "uat-thread",
-    "proof", "inspection", "acceptance",
+    "proof", "inspection", "acceptance", "issue-publication",
 )
 SCAN_PRUNE = {
     ".git", ".build", "Build", "DerivedData", "SourcePackages",
@@ -712,6 +713,17 @@ def build_evidence(issues, _contract, receipt_index, t3_origin=None,
                          if slot.get("issue") == identity), None)
             waiting = next((entry for entry in value.get("waiting") or []
                             if entry.get("issue") == identity), None)
+            publication = next(
+                (entry for entry in value.get("evidencePublication") or []
+                 if entry.get("issue") == identity), None)
+            publication_record = by_hash.get(
+                publication.get("sha256")) if publication else None
+            publication_value = publication_record.get("value") \
+                if publication_record else None
+            publication_valid = publication_value and \
+                publication_value.get("kind") == \
+                "swiftui-issue-evidence-publication-receipt" and \
+                publication_value.get("issue") == identity
             if slot:
                 result.pop("waiting", None)
                 bound = result.get("boundThread") or {}
@@ -724,6 +736,14 @@ def build_evidence(issues, _contract, receipt_index, t3_origin=None,
                     "url": t3_thread_url(
                         origin, value.get("environmentId") or bound.get("environmentId"),
                         slot.get("threadId")),
+                }
+            elif publication_valid:
+                result.pop("waiting", None)
+                result["issueEvidencePublication"] = {
+                    "path": publication_record["path"],
+                    "sha256": publication.get("sha256"),
+                    "issueUrl": publication_value.get("issueUrl"),
+                    "publishedAt": publication_value.get("publishedAt"),
                 }
             elif waiting:
                 result.pop("currentThread", None)

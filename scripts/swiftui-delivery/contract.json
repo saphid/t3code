@@ -108,6 +108,13 @@
     "format": "Upload as GitHub issue attachments so media renders inline - never bare local paths - under headings that name the exact base and head commits and the appearance. Keep the swiftui-work-item-v2 block byte-identical when editing the body.",
     "exceptions": "Non-user-visible work embeds the proof's recorded no-media reason instead of media.",
     "owner": "swiftui-orchestrate coordinator duty",
+    "publication": {
+      "tool": "scripts/swiftui-delivery/scripts/publish-issue-evidence",
+      "receiptKind": "swiftui-issue-evidence-publication-receipt",
+      "endpoint": "POST https://uploads.github.com/user-attachments/assets",
+      "authentication": "Use the active gh OAuth bearer token first. The endpoint accepts image and video uploads for a repository the token can push to and returns the final user-attachments URL with HTTP 201.",
+      "rule": "Validate proof and inspection, publish with the repo-owned tool, preserve the swiftui-work-item-v2 block byte-for-byte, and verify every returned URL from the reread GitHub issue body. Escalate browser or credential authorization only after the tool demonstrates that bearer publication is unavailable for the exact repository or media."
+    },
     "authorizationEscalation": {
       "receiptKind": "swiftui-coordinator-dispatch-receipt",
       "waitingKind": "authorization-required",

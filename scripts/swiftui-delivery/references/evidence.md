@@ -83,6 +83,20 @@ the item enters a Test generation or an open-pr plan. Editing the body never
 alters the `swiftui-work-item-v2` block's bytes. Non-user-visible work embeds
 the recorded no-media reason instead.
 
+Publish with `scripts/publish-issue-evidence --proof PROOF --inspection
+INSPECTION --gif GIF --receipt RECEIPT`. The tool validates both receipts,
+then sends each image or video as a raw-body `POST` to
+`https://uploads.github.com/user-attachments/assets` with the active `gh` OAuth
+bearer token, file metadata, and the repository ID. GitHub returns the final
+`user-attachments` URL with HTTP 201. The tool manages one marked evidence
+section, preserves the work-item fence byte-for-byte, rereads the issue after
+editing, and writes a content-bound publication receipt. Browser authorization
+is a fallback gate only after this exact token path is proved unavailable for
+the target repository or media. Publication receipts are write-once. To reuse
+already uploaded URLs after a safe retry, pass the old receipt with
+`--reuse-receipt` and write the new result to a different receipt path; the tool
+reopens and hashes every local asset before accepting those URL bindings.
+
 The generation-plan validator reopens and validates all of these files. It also
 checks candidate eligibility and the exact carry-forward set from the prior
 Test receipt. This prevents a Test or phone queue, build, lease, or deployment

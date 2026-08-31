@@ -36,6 +36,8 @@ a clone plus `scripts/swiftui-delivery/scripts/setup`.
   creates/wakes one model-bound coordinator thread
   through typed T3 commands (never a board item, never
   direct GitHub)
+- issue_evidence.py validates proof, publishes media through GitHub's bearer
+  attachment endpoint, preserves the work-item fence, and writes a receipt
 - simulator_lane.py per-UDID leases; phone_lease.py; artifact_store.py;
   annotate_video.py; audit_package.py (+ audit_environment.py)
 - package-manifest.json required-file list audit-package enforces
@@ -49,6 +51,7 @@ a clone plus `scripts/swiftui-delivery/scripts/setup`.
 - status every work item by stage, WIP occupancy, backlog, drift
 - board serve the visual kanban board read-only (default port 4012)
 - controller run/configure one deterministic coordinator liveness pass
+- publish-issue-evidence upload validated proof and verify its issue embed
 - swiftui-delivery / compose-generation / simulator-lane / phone-lease / audit-package /
   annotate-video / preserve-build
 

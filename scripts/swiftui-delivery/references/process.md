@@ -57,6 +57,12 @@ reasons, so older receipts cannot remain silent. Once Alex gives the named
 authorization, the coordinator acts immediately within that scope and writes
 a replacement dispatch receipt that clears the stale gate.
 
+Issue evidence publication is token-first. Run the repo-owned
+`scripts/publish-issue-evidence` command, which uses the active `gh` OAuth token
+against GitHub's `user-attachments` endpoint and verifies the resulting issue
+body. A browser or credential gate exists only after that command demonstrates
+the bearer path is unavailable for the exact repository or media.
+
 7. **phone-test**: Test publication is CONTINUOUS under Alex's standing
    authorization (contract `testPublication`, 2026-08-26): whenever the
    proof-ready set is not fully contained in the latest published Test
