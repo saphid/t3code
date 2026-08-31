@@ -1,15 +1,11 @@
 import { describe, expect, it } from "@effect/vitest";
 import { DEFAULT_TEXT_GENERATION_MODEL, ProviderInstanceId } from "@t3tools/contracts";
 
-import {
-  formatThreadForHandover,
-  HANDOVER_MODEL_SELECTION,
-  makeHandoverModelSelection,
-} from "./ThreadHandover.ts";
+import { formatThreadForHandover, makeHandoverModelSelection } from "./ThreadHandover.ts";
 
 describe("thread handover", () => {
   it("pins handover generation to Luna with high reasoning", () => {
-    expect(HANDOVER_MODEL_SELECTION).toEqual({
+    expect(makeHandoverModelSelection(ProviderInstanceId.make("codex"))).toEqual({
       instanceId: "codex",
       model: DEFAULT_TEXT_GENERATION_MODEL,
       options: [{ id: "reasoningEffort", value: "high" }],

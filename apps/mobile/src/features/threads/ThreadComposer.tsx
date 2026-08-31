@@ -398,7 +398,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
   const isExpanded = isFocused || settingsSheetPresentation.isActive;
   const showsCompactDictation = isVoiceInputPresented && !isExpanded;
   const isToolbarVisible = isExpanded || isVoiceInputPresented;
-  const canSend = hasContent && !voiceInput.blocksSubmission;
+  const canSend = hasContent && !voiceInput.blocksSubmission && !props.contextLimitReached;
 
   // Keep the feed inset aligned with the card or compact dictation strip.
   useEffect(() => {
@@ -450,7 +450,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
   const { onSendMessage } = props;
 
   const handleSend = useCallback(async () => {
-    if (voiceInput.blocksSubmission) return;
+    if (voiceInput.blocksSubmission || props.contextLimitReached) return;
     const threadKey = scopedThreadKey(props.environmentId, props.selectedThread.id);
     if (inFlightThreadIdsRef.current.has(threadKey)) return;
     inFlightThreadIdsRef.current.add(threadKey);
@@ -477,6 +477,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
     props.environmentLabel,
     props.selectedThread.id,
     props.selectedThread.title,
+    props.contextLimitReached,
     voiceInput.blocksSubmission,
   ]);
 
@@ -752,7 +753,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
                     accessibilityLabel={sendLabel}
                     icon="arrow.up"
                     variant="primary"
-                    disabled={!hasContent}
+                    disabled={!hasContent || props.contextLimitReached}
                     onPress={handleSend}
                   />
                 )}

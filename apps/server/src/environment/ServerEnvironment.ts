@@ -1,6 +1,5 @@
 import {
   EnvironmentId,
-  ProviderDriverKind,
   PROVIDER_SEND_TURN_MAX_FILE_BYTES,
   type ExecutionEnvironmentDescriptor,
 } from "@t3tools/contracts";
@@ -23,6 +22,7 @@ import * as ServerConfig from "../config.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import * as ProviderInstanceRegistry from "../provider/Services/ProviderInstanceRegistry.ts";
 import type { ProviderInstance } from "../provider/ProviderDriver.ts";
+import * as TextGeneration from "../textGeneration/TextGeneration.ts";
 import { resolveServerEnvironmentLabel } from "./ServerEnvironmentLabel.ts";
 
 export class ServerEnvironmentIdPersistenceError extends Schema.TaggedErrorClass<ServerEnvironmentIdPersistenceError>()(
@@ -80,13 +80,11 @@ export const make = Effect.gen(function* () {
   const crypto = yield* Crypto.Crypto;
   const hostPlatform = yield* HostProcessPlatform;
   const hostArchitecture = yield* HostProcessArchitecture;
-  const providerInstanceRegistry = yield* Effect.context<never>().pipe(
-    Effect.map((context) =>
-      Context.getOption(
-        context as Context.Context<never>,
-        ProviderInstanceRegistry.ProviderInstanceRegistry,
-      ),
-    ),
+  // Connect-only commands intentionally do not boot provider drivers. Use
+  // Effect's typed optional-service lookup so that this degraded capability is
+  // explicit without hiding a required dependency behind an ambient cast.
+  const providerInstanceRegistry = yield* Effect.serviceOption(
+    ProviderInstanceRegistry.ProviderInstanceRegistry,
   );
 
   const readPersistedEnvironmentId = Effect.gen(function* () {
@@ -188,9 +186,8 @@ export const make = Effect.gen(function* () {
         onNone: () => Effect.succeed<ReadonlyArray<ProviderInstance>>([]),
         onSome: (registry) => registry.listInstances,
       });
-      const threadHandoverGeneration = (yield* instances).some(
-        (instance) => instance.enabled && instance.driverKind === ProviderDriverKind.make("codex"),
-      );
+      const threadHandoverGeneration =
+        TextGeneration.findAvailableCodexInstance(yield* instances) !== undefined;
       return {
         ...descriptor,
         capabilities: {
