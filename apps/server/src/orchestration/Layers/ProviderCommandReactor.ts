@@ -48,6 +48,7 @@ import {
 } from "../../serverSettings.ts";
 import { VcsStatusBroadcaster } from "../../vcs/VcsStatusBroadcaster.ts";
 import { GitWorkflowService } from "../../git/GitWorkflowService.ts";
+import { evaluateTurnStartLimits } from "../UsageLimitPolicy.ts";
 const isProviderAdapterRequestError = Schema.is(ProviderAdapterRequestError);
 const isProviderDriverKind = Schema.is(ProviderDriverKind);
 
@@ -1135,6 +1136,23 @@ const make = Effect.gen(function* () {
         kind: "provider.turn.start.failed",
         summary: "Provider turn start failed",
         detail: `User message '${event.payload.messageId}' was not found for turn start request.`,
+        turnId: null,
+        createdAt: event.payload.createdAt,
+      });
+      return;
+    }
+
+    const usageLimitViolation = evaluateTurnStartLimits({
+      threadId: event.payload.threadId,
+      activities: thread.activities,
+      sessions: yield* providerService.listSessions(),
+    });
+    if (usageLimitViolation) {
+      yield* appendProviderFailureActivity({
+        threadId: event.payload.threadId,
+        kind: "provider.turn.start.failed",
+        summary: "T3 usage limit stopped provider work",
+        detail: usageLimitViolation.detail,
         turnId: null,
         createdAt: event.payload.createdAt,
       });

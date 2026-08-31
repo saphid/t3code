@@ -1,0 +1,71 @@
+import type { OrchestrationThreadActivity, ProviderSession, ThreadId } from "@t3tools/contracts";
+import { describe, expect, it } from "@effect/vitest";
+
+import {
+  evaluateTurnStartLimits,
+  MAX_CONCURRENT_PROVIDER_TURNS,
+  MAX_CONTEXT_TOKENS_PER_THREAD,
+} from "./UsageLimitPolicy.ts";
+
+const threadId = "thread-limited" as ThreadId;
+
+function contextActivity(usedTokens: number): OrchestrationThreadActivity {
+  return {
+    id: `usage-${usedTokens}`,
+    createdAt: "2026-08-31T00:00:00.000Z",
+    tone: "info",
+    kind: "context-window.updated",
+    summary: "Context window updated",
+    payload: { usedTokens, maxTokens: 400_000 },
+    turnId: null,
+  } as OrchestrationThreadActivity;
+}
+
+function session(index: number, status: ProviderSession["status"] = "running"): ProviderSession {
+  return {
+    threadId: `thread-${index}` as ThreadId,
+    status,
+  } as ProviderSession;
+}
+
+describe("evaluateTurnStartLimits", () => {
+  it("blocks a thread at the context ceiling", () => {
+    const violation = evaluateTurnStartLimits({
+      threadId,
+      activities: [contextActivity(MAX_CONTEXT_TOKENS_PER_THREAD)],
+      sessions: [],
+    });
+
+    expect(violation?.code).toBe("context-limit");
+  });
+
+  it("uses the latest context snapshot", () => {
+    const violation = evaluateTurnStartLimits({
+      threadId,
+      activities: [contextActivity(MAX_CONTEXT_TOKENS_PER_THREAD), contextActivity(20_000)],
+      sessions: [],
+    });
+
+    expect(violation).toBeUndefined();
+  });
+
+  it("blocks a new turn when the global concurrency ceiling is full", () => {
+    const violation = evaluateTurnStartLimits({
+      threadId,
+      activities: [],
+      sessions: Array.from({ length: MAX_CONCURRENT_PROVIDER_TURNS }, (_, index) => session(index)),
+    });
+
+    expect(violation?.code).toBe("concurrent-turn-limit");
+  });
+
+  it("does not count ready sessions and permits an already-running thread", () => {
+    const sessions = [
+      ...Array.from({ length: MAX_CONCURRENT_PROVIDER_TURNS }, (_, index) => session(index)),
+      { ...session(99), threadId, status: "running" as const },
+      session(100, "ready"),
+    ];
+
+    expect(evaluateTurnStartLimits({ threadId, activities: [], sessions })).toBeUndefined();
+  });
+});
