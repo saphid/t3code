@@ -237,8 +237,8 @@ export function UsagePage() {
                     </AlertTitle>
                     <AlertDescription>
                       {budgetAlert.kind === "claude"
-                        ? `Claude reached ${formatUsd(budgetAlert.valueUsd)} on ${formatDayShort(budgetAlert.day)}, above the ${formatUsd(budgetAlert.thresholdUsd)} ${budgetAlert.level} level.`
-                        : `API-equivalent usage reached ${formatUsd(budgetAlert.valueUsd)} on ${formatDayShort(budgetAlert.day)}, above the ${formatUsd(budgetAlert.thresholdUsd)} ${budgetAlert.level} level. This includes hypothetical subscription usage.`}
+                        ? `Claude reached ${formatUsd(budgetAlert.valueUsd)} on ${formatDayShort(budgetAlert.day)}, at or above the ${formatUsd(budgetAlert.thresholdUsd)} ${budgetAlert.level} level.`
+                        : `API-equivalent usage reached ${formatUsd(budgetAlert.valueUsd)} on ${formatDayShort(budgetAlert.day)}, at or above the ${formatUsd(budgetAlert.thresholdUsd)} ${budgetAlert.level} level. This includes hypothetical subscription usage.`}
                       {budgetAlert.level === "pause"
                         ? " Pause new agent work and review the usage breakdown."
                         : budgetAlert.level === "approval"

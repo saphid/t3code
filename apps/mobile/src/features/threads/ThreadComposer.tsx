@@ -109,6 +109,9 @@ export interface ThreadComposerProps {
   readonly threadSyncPhase?: "loading" | "syncing" | null;
   readonly selectedThread: OrchestrationThreadShell;
   readonly serverConfig: T3ServerConfig | null;
+  readonly contextLimitReached: boolean;
+  readonly isGeneratingHandover: boolean;
+  readonly onGenerateHandover?: () => void;
   readonly queueCount: number;
   readonly environmentId: EnvironmentId;
   readonly projectCwd: string | null;
@@ -268,7 +271,7 @@ const ComposerConnectionStatusPill = memo(function ComposerConnectionStatusPill(
   const isReconnecting = props.status.kind !== "unavailable";
   return (
     <Animated.View
-      className="absolute inset-x-0 bottom-full items-center pb-2"
+      className="items-center"
       entering={FadeInDown.duration(180)}
       exiting={FadeOutDown.duration(140)}
       pointerEvents="box-none"
@@ -290,6 +293,36 @@ const ComposerConnectionStatusPill = memo(function ComposerConnectionStatusPill(
           {props.status.label}
         </Text>
       </Pressable>
+    </Animated.View>
+  );
+});
+
+const ComposerContextLimitPill = memo(function ComposerContextLimitPill(props: {
+  readonly isGenerating: boolean;
+  readonly onGenerate?: () => void;
+}) {
+  return (
+    <Animated.View
+      className="max-w-full flex-row items-center gap-2 rounded-full bg-card px-3 py-2 shadow-sm"
+      entering={FadeInDown.duration(180)}
+      exiting={FadeOutDown.duration(140)}
+    >
+      <SymbolView name="exclamationmark.triangle" size={15} tintColor="#f59e0b" type="monochrome" />
+      <Text className="text-sm font-t3-bold leading-snug text-foreground">
+        Context limit reached
+      </Text>
+      {props.onGenerate ? (
+        <Pressable
+          accessibilityRole="button"
+          disabled={props.isGenerating}
+          onPress={props.onGenerate}
+          className="rounded-full bg-accent px-2.5 py-1 active:opacity-70"
+        >
+          <Text className="text-xs font-t3-bold text-white">
+            {props.isGenerating ? "Creating..." : "New draft"}
+          </Text>
+        </Pressable>
+      ) : null}
     </Animated.View>
   );
 });
@@ -570,11 +603,24 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
           </View>
         ) : null}
 
-        {connectionStatus ? (
-          <ComposerConnectionStatusPill
-            status={connectionStatus}
-            onPress={props.onReconnectEnvironment}
-          />
+        {connectionStatus || props.contextLimitReached ? (
+          <View
+            className="absolute inset-x-0 bottom-full items-center gap-2 pb-2"
+            pointerEvents="box-none"
+          >
+            {props.contextLimitReached ? (
+              <ComposerContextLimitPill
+                isGenerating={props.isGeneratingHandover}
+                onGenerate={props.onGenerateHandover}
+              />
+            ) : null}
+            {connectionStatus ? (
+              <ComposerConnectionStatusPill
+                status={connectionStatus}
+                onPress={props.onReconnectEnvironment}
+              />
+            ) : null}
+          </View>
         ) : null}
 
         <ComposerSurface

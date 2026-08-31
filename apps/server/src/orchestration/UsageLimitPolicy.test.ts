@@ -4,7 +4,7 @@ import { describe, expect, it } from "@effect/vitest";
 import {
   evaluateTurnStartLimits,
   MAX_CONCURRENT_PROVIDER_TURNS,
-  MAX_CONTEXT_TOKENS_PER_THREAD,
+  DEFAULT_THREAD_CONTEXT_TOKEN_LIMIT,
 } from "./UsageLimitPolicy.ts";
 
 const threadId = "thread-limited" as ThreadId;
@@ -32,7 +32,7 @@ describe("evaluateTurnStartLimits", () => {
   it("blocks a thread at the context ceiling", () => {
     const violation = evaluateTurnStartLimits({
       threadId,
-      activities: [contextActivity(MAX_CONTEXT_TOKENS_PER_THREAD)],
+      activities: [contextActivity(DEFAULT_THREAD_CONTEXT_TOKEN_LIMIT)],
       sessions: [],
     });
 
@@ -42,11 +42,23 @@ describe("evaluateTurnStartLimits", () => {
   it("uses the latest context snapshot", () => {
     const violation = evaluateTurnStartLimits({
       threadId,
-      activities: [contextActivity(MAX_CONTEXT_TOKENS_PER_THREAD), contextActivity(20_000)],
+      activities: [contextActivity(DEFAULT_THREAD_CONTEXT_TOKEN_LIMIT), contextActivity(20_000)],
       sessions: [],
     });
 
     expect(violation).toBeUndefined();
+  });
+
+  it("uses the configured context ceiling", () => {
+    const violation = evaluateTurnStartLimits({
+      threadId,
+      contextTokenLimit: 100_000,
+      activities: [contextActivity(100_000)],
+      sessions: [],
+    });
+
+    expect(violation?.code).toBe("context-limit");
+    expect(violation?.detail).toContain("100,000");
   });
 
   it("blocks a new turn when the global concurrency ceiling is full", () => {
@@ -54,6 +66,19 @@ describe("evaluateTurnStartLimits", () => {
       threadId,
       activities: [],
       sessions: Array.from({ length: MAX_CONCURRENT_PROVIDER_TURNS }, (_, index) => session(index)),
+    });
+
+    expect(violation?.code).toBe("concurrent-turn-limit");
+  });
+
+  it("counts a turn reservation before the provider reports it as running", () => {
+    const violation = evaluateTurnStartLimits({
+      threadId,
+      activities: [],
+      sessions: Array.from({ length: MAX_CONCURRENT_PROVIDER_TURNS - 1 }, (_, index) =>
+        session(index),
+      ),
+      reservedTurnThreadIds: ["reserved-thread" as ThreadId],
     });
 
     expect(violation?.code).toBe("concurrent-turn-limit");

@@ -28,7 +28,6 @@ import {
   type ProviderInstanceId,
   type ServerProvider,
   type ServerProviderUpdateState,
-  TextGenerationError,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
@@ -720,19 +719,6 @@ export const ProviderRegistryLive = Layer.effect(
     });
 
     return {
-      generateHandover: (input) =>
-        instanceRegistry.getInstance(input.modelSelection.instanceId).pipe(
-          Effect.flatMap((instance) =>
-            instance
-              ? instance.textGeneration.generateHandover(input)
-              : Effect.fail(
-                  new TextGenerationError({
-                    operation: "generateHandover",
-                    detail: `No provider instance registered for id '${input.modelSelection.instanceId}'.`,
-                  }),
-                ),
-          ),
-        ),
       getProviders: Ref.get(providersRef),
       refresh: (provider?: ProviderDriverKind) =>
         refresh(provider).pipe(Effect.catchCause(recoverRefreshFailure)),

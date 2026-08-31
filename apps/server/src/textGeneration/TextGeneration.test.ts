@@ -5,7 +5,7 @@ import * as Result from "effect/Result";
 import * as Stream from "effect/Stream";
 import { describe, expect } from "vite-plus/test";
 
-import { ProviderInstanceId } from "@t3tools/contracts";
+import { ProviderDriverKind, ProviderInstanceId } from "@t3tools/contracts";
 import { createModelSelection } from "@t3tools/shared/model";
 
 import type { ProviderInstance } from "../provider/ProviderDriver.ts";
@@ -28,12 +28,13 @@ const makeStubTextGeneration = (
 const makeStubInstance = (
   instanceId: ProviderInstanceId,
   textGeneration: TextGeneration.TextGeneration["Service"],
+  driverKind: ProviderInstance["driverKind"] = instanceId as unknown as ProviderInstance["driverKind"],
 ): ProviderInstance =>
   ({
     instanceId,
-    driverKind: instanceId as unknown as ProviderInstance["driverKind"],
+    driverKind,
     continuationIdentity: {
-      driverKind: instanceId as unknown as ProviderInstance["driverKind"],
+      driverKind,
       continuationKey: `${instanceId}:test`,
     },
     displayName: undefined,
@@ -128,6 +129,23 @@ describe("makeTextGenerationFromRegistry", () => {
       expect(selections).toEqual([{ model: "gpt-5.6-luna", effort: "high" }]);
     }),
   );
+
+  it("finds an enabled Codex driver without assuming its instance id", () => {
+    const renamedCodex = makeStubInstance(
+      ProviderInstanceId.make("codex_work"),
+      makeStubTextGeneration({}),
+      ProviderDriverKind.make("codex"),
+    );
+    const disabledCodex = {
+      ...renamedCodex,
+      instanceId: ProviderInstanceId.make("codex_disabled"),
+      enabled: false,
+    };
+
+    expect(
+      TextGeneration.findAvailableCodexInstance([disabledCodex, renamedCodex])?.instanceId,
+    ).toBe("codex_work");
+  });
 
   it.effect("fails with TextGenerationError when the instance is unknown", () =>
     Effect.gen(function* () {

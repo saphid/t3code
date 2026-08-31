@@ -5,9 +5,11 @@ import * as Cause from "effect/Cause";
 
 import {
   CommandId,
+  DEFAULT_THREAD_CONTEXT_TOKEN_LIMIT,
   MessageId,
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   type EnvironmentId,
+  type OrchestrationThreadActivity,
   type ModelSelection,
   type ProviderInteractionMode,
   type RuntimeMode,
@@ -56,6 +58,22 @@ import { enqueueThreadOutboxMessage } from "./thread-outbox";
 import { useThreadOutboxMessages } from "./use-thread-outbox";
 import { threadEnvironment } from "./threads";
 import { useAtomCommand } from "./use-atom-command";
+
+export function threadContextReachedLimit(
+  activities: ReadonlyArray<OrchestrationThreadActivity>,
+  contextTokenLimit = DEFAULT_THREAD_CONTEXT_TOKEN_LIMIT,
+): boolean {
+  for (let index = activities.length - 1; index >= 0; index -= 1) {
+    const activity = activities[index];
+    if (activity?.kind !== "context-window.updated") continue;
+    const payload = activity.payload as Record<string, unknown> | undefined;
+    const usedTokens = payload?.usedTokens;
+    if (typeof usedTokens === "number" && Number.isFinite(usedTokens) && usedTokens >= 0) {
+      return usedTokens >= contextTokenLimit;
+    }
+  }
+  return false;
+}
 
 export function appendReviewCommentToDraft(input: {
   readonly environmentId: EnvironmentId;
@@ -179,6 +197,19 @@ export function useThreadComposerState() {
     const text = draft.text.trim();
     const attachments = draft.attachments;
     if (text.length === 0 && attachments.length === 0) {
+      return null;
+    }
+    if (
+      selectedThreadDetail &&
+      threadContextReachedLimit(
+        selectedThreadDetail.activities,
+        selectedEnvironmentRuntime?.serverConfig?.settings.threadContextTokenLimit,
+      )
+    ) {
+      Alert.alert(
+        "Thread context limit reached",
+        "Start a new thread before sending more work to this conversation.",
+      );
       return null;
     }
     // A send-failure restore appends with allowOverflow so it never drops the

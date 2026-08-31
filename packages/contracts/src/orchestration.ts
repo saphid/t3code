@@ -36,8 +36,6 @@ export const ORCHESTRATION_WS_METHODS = {
   subscribeThread: "orchestration.subscribeThread",
 } as const;
 
-export const MAX_CONTEXT_TOKENS_PER_THREAD = 250_000;
-
 export const ProviderApprovalPolicy = Schema.Literals([
   "untrusted",
   "on-failure",
