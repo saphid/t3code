@@ -1,4 +1,5 @@
 import * as Cause from "effect/Cause";
+import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
@@ -142,8 +143,11 @@ import * as PairingGrantStore from "./auth/PairingGrantStore.ts";
 import * as SessionStore from "./auth/SessionStore.ts";
 import {
   formatThreadForHandover,
-  HANDOVER_MODEL_SELECTION,
+  makeHandoverModelSelection,
 } from "./orchestration/ThreadHandover.ts";
+import { evaluateHandoverStartLimits } from "./orchestration/UsageLimitPolicy.ts";
+import * as ProviderInstanceRegistry from "./provider/Services/ProviderInstanceRegistry.ts";
+import * as TextGeneration from "./textGeneration/TextGeneration.ts";
 import { failEnvironmentAuthInvalid, failEnvironmentInternal } from "./auth/http.ts";
 import * as RelayClient from "@t3tools/shared/relayClient";
 const isOrchestrationDispatchCommandError = Schema.is(OrchestrationDispatchCommandError);
@@ -511,6 +515,18 @@ const makeWsRpcLayer = (
       const portDiscovery = yield* PortScanner.PortDiscovery;
       const providerRegistry = yield* ProviderRegistry.ProviderRegistry;
       const providerService = yield* ProviderService.ProviderService;
+      const optionalServices = yield* Effect.context<never>().pipe(
+        Effect.map((context) => ({
+          providerInstanceRegistry: Context.getOption(
+            context as Context.Context<never>,
+            ProviderInstanceRegistry.ProviderInstanceRegistry,
+          ),
+          textGeneration: Context.getOption(
+            context as Context.Context<never>,
+            TextGeneration.TextGeneration,
+          ),
+        })),
+      );
       const providerMaintenanceRunner = yield* ProviderMaintenanceRunner.ProviderMaintenanceRunner;
       const serverSelfUpdate = yield* ServerSelfUpdate.ServerSelfUpdate;
       const config = yield* ServerConfig.ServerConfig;
@@ -1354,20 +1370,51 @@ const makeWsRpcLayer = (
                     }),
                   ),
                 );
-              return yield* providerRegistry.generateHandover({
+              const settings = yield* serverSettings.getSettings;
+              const usageLimitViolation = evaluateHandoverStartLimits({
+                contextTokenLimit: settings.threadContextTokenLimit,
+                activities: thread.activities,
+                sessions: yield* providerService.listSessions(),
+              });
+              if (usageLimitViolation) {
+                return yield* Effect.fail(
+                  new OrchestrationGenerateHandoverError({
+                    message: usageLimitViolation.detail,
+                  }),
+                );
+              }
+              const providerInstances = Option.match(optionalServices.providerInstanceRegistry, {
+                onNone: () => Effect.succeed([]),
+                onSome: (registry) => registry.listInstances,
+              });
+              const codexInstance = TextGeneration.findAvailableCodexInstance(
+                yield* providerInstances,
+              );
+              if (!codexInstance) {
+                return yield* Effect.fail(
+                  new OrchestrationGenerateHandoverError({
+                    message: "No enabled Codex provider is available for handover generation.",
+                  }),
+                );
+              }
+              if (Option.isNone(optionalServices.textGeneration)) {
+                return yield* Effect.fail(
+                  new OrchestrationGenerateHandoverError({
+                    message: "Handover generation is not available on this server.",
+                  }),
+                );
+              }
+              return yield* optionalServices.textGeneration.value.generateHandover({
                 cwd: thread.worktreePath ?? project.workspaceRoot,
                 threadContents: formatThreadForHandover(thread),
-                modelSelection: HANDOVER_MODEL_SELECTION,
+                modelSelection: makeHandoverModelSelection(codexInstance.instanceId),
               });
             }).pipe(
               Effect.mapError((cause) =>
                 isOrchestrationGenerateHandoverError(cause)
                   ? cause
                   : new OrchestrationGenerateHandoverError({
-                      message:
-                        cause instanceof Error
-                          ? cause.message
-                          : "Failed to generate a thread handover.",
+                      message: "Failed to generate a thread handover.",
                       cause,
                     }),
               ),

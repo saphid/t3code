@@ -5,11 +5,17 @@ import {
   type OrchestrationThread,
 } from "@t3tools/contracts";
 
-export const HANDOVER_MODEL_SELECTION: ModelSelection = {
-  instanceId: ProviderInstanceId.make("codex"),
-  model: DEFAULT_TEXT_GENERATION_MODEL,
-  options: [{ id: "reasoningEffort", value: "high" }],
-};
+export function makeHandoverModelSelection(instanceId: ProviderInstanceId): ModelSelection {
+  return {
+    instanceId,
+    model: DEFAULT_TEXT_GENERATION_MODEL,
+    options: [{ id: "reasoningEffort", value: "high" }],
+  };
+}
+
+export const HANDOVER_MODEL_SELECTION = makeHandoverModelSelection(
+  ProviderInstanceId.make("codex"),
+);
 
 export function formatThreadForHandover(thread: OrchestrationThread): string {
   const metadata = [
@@ -17,8 +23,8 @@ export function formatThreadForHandover(thread: OrchestrationThread): string {
     `Branch: ${thread.branch ?? "none"}`,
     `Worktree: ${thread.worktreePath ?? "project checkout"}`,
   ];
-  const messages = thread.messages.map(
-    (message) => `## ${message.role === "user" ? "User" : "Assistant"}\n\n${message.text}`,
-  );
+  const messages = thread.messages
+    .filter((message) => message.role !== "system")
+    .map((message) => `## ${message.role === "user" ? "User" : "Assistant"}\n\n${message.text}`);
   return ["# Thread metadata", ...metadata, "", "# Conversation", ...messages].join("\n");
 }

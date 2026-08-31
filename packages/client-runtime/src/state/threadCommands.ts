@@ -79,6 +79,7 @@ export function createThreadEnvironmentAtoms<R, E>(
   runtime: Atom.AtomRuntime<EnvironmentRegistry | Crypto.Crypto | R, E>,
 ) {
   const scheduler = createAtomCommandScheduler();
+  const handoverScheduler = createAtomCommandScheduler();
   const concurrency = {
     mode: "serial" as const,
     key: ({ environmentId, input }: { environmentId: string; input: { threadId: string } }) =>
@@ -88,7 +89,7 @@ export function createThreadEnvironmentAtoms<R, E>(
     generateHandover: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:thread:generate-handover",
       execute: generateThreadHandover,
-      scheduler,
+      scheduler: handoverScheduler,
       concurrency,
     }),
     create: createEnvironmentCommand(runtime, {

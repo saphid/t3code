@@ -1,6 +1,5 @@
 import { ProviderRegistry, type ProviderRegistryShape } from "../Services/ProviderRegistry.ts";
 import type { ServerProvider } from "@t3tools/contracts";
-import { TextGenerationError } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
@@ -9,13 +8,6 @@ import { makeManualOnlyProviderMaintenanceCapabilities } from "../providerMainte
 export const makeProviderRegistryMock = (
   providers: ReadonlyArray<ServerProvider> = [],
 ): ProviderRegistryShape => ({
-  generateHandover: () =>
-    Effect.fail(
-      new TextGenerationError({
-        operation: "generateHandover",
-        detail: "Handover generation is not configured in this test.",
-      }),
-    ),
   getProviders: Effect.succeed(providers),
   refresh: () => Effect.succeed(providers),
   refreshInstance: () => Effect.succeed(providers),

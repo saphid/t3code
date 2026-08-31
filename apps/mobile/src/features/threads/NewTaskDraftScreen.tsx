@@ -138,6 +138,8 @@ export function NewTaskDraftScreen(props: {
   readonly pendingTaskId?: string;
   /** Durable native share inbox item to merge into this project draft. */
   readonly incomingShareId?: string;
+  /** Prompt generated from an oversized source thread. */
+  readonly initialPrompt?: string;
 }) {
   const projects = useProjects();
   const createProjectThread = useCreateProjectThread();
@@ -257,8 +259,21 @@ export function NewTaskDraftScreen(props: {
   const shareImportMountedRef = useRef(true);
   const latestDraftKeyRef = useRef(flow.draftKey);
   const latestIncomingShareIdRef = useRef(props.incomingShareId);
+  const appliedInitialPromptRef = useRef<string | null>(null);
   latestDraftKeyRef.current = flow.draftKey;
   latestIncomingShareIdRef.current = props.incomingShareId;
+  useEffect(() => {
+    if (
+      !props.initialPrompt ||
+      !flow.draftKey ||
+      flow.prompt.trim().length > 0 ||
+      appliedInitialPromptRef.current === props.initialPrompt
+    ) {
+      return;
+    }
+    appliedInitialPromptRef.current = props.initialPrompt;
+    flow.setPrompt(props.initialPrompt);
+  }, [flow.draftKey, flow.prompt, flow.setPrompt, props.initialPrompt]);
   const isImportingShare = importingShareKey !== null;
   const alertedUnavailableIncomingShareIdRef = useRef<string | null>(null);
   const incomingShare = props.incomingShareId ? getShare(props.incomingShareId) : null;

@@ -1,5 +1,5 @@
 import {
-  MAX_CONTEXT_TOKENS_PER_THREAD,
+  DEFAULT_THREAD_CONTEXT_TOKEN_LIMIT,
   type OrchestrationThreadActivity,
   type ThreadTokenUsageSnapshot,
 } from "@t3tools/contracts";
@@ -116,6 +116,9 @@ export function formatContextWindowTokens(value: number | null): string {
   return `${(value / 1_000_000).toFixed(1).replace(/\.0$/, "")}m`;
 }
 
-export function contextWindowReachedThreadLimit(snapshot: ContextWindowSnapshot | null): boolean {
-  return snapshot !== null && snapshot.usedTokens >= MAX_CONTEXT_TOKENS_PER_THREAD;
+export function contextWindowReachedThreadLimit(
+  snapshot: ContextWindowSnapshot | null,
+  tokenLimit = DEFAULT_THREAD_CONTEXT_TOKEN_LIMIT,
+): boolean {
+  return snapshot !== null && snapshot.usedTokens >= tokenLimit;
 }

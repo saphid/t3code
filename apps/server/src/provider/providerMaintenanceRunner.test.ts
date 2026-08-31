@@ -2,7 +2,6 @@ import { describe, it, assert } from "@effect/vitest";
 import {
   ProviderDriverKind,
   ProviderInstanceId,
-  TextGenerationError,
   type ServerProvider,
   type ServerProviderUpdateState,
 } from "@t3tools/contracts";
@@ -187,13 +186,6 @@ function makeRegistry(
     });
 
     const registry: ProviderRegistryShape = {
-      generateHandover: () =>
-        Effect.fail(
-          new TextGenerationError({
-            operation: "generateHandover",
-            detail: "Handover generation is not configured in this test.",
-          }),
-        ),
       getProviders: Ref.get(providersRef),
       refresh: () => Ref.get(providersRef),
       refreshInstance: () => Ref.get(providersRef),
