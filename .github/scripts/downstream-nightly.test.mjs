@@ -127,6 +127,55 @@ describe("Downstream Nightly release selection", () => {
     );
   });
 
+  it("increments past the newest fork rebuild of the same upstream Nightly", () => {
+    const upstreamTag = "v0.0.38-nightly.20260831.1241";
+    const previousVersion = "0.0.38-nightly.20260831.1241999998";
+    const version = resolveCustomNightlyVersion(upstreamTag, "0".repeat(64), [
+      {
+        tag_name: `v${previousVersion}`,
+        body: releaseMarker(upstreamTag, "f".repeat(64)),
+      },
+    ]);
+
+    assert.equal(version, "0.0.38-nightly.20260831.1241999999");
+  });
+
+  it("reuses the newest release when it already has the selected patch stack", () => {
+    const upstreamTag = "v0.0.38-nightly.20260831.1241";
+    const fingerprint = "1".repeat(64);
+    const existingVersion = "0.0.38-nightly.20260831.1241583174";
+
+    assert.equal(
+      resolveCustomNightlyVersion(upstreamTag, fingerprint, [
+        {
+          tag_name: `v${existingVersion}`,
+          body: releaseMarker(upstreamTag, fingerprint),
+        },
+      ]),
+      existingVersion,
+    );
+  });
+
+  it("publishes a newer version when another stack superseded a matching release", () => {
+    const upstreamTag = "v0.0.38-nightly.20260831.1241";
+    const fingerprint = "2".repeat(64);
+    const marker = releaseMarker(upstreamTag, fingerprint);
+
+    assert.equal(
+      resolveCustomNightlyVersion(upstreamTag, fingerprint, [
+        {
+          tag_name: "v0.0.38-nightly.20260831.1241999997",
+          body: marker,
+        },
+        {
+          tag_name: "v0.0.38-nightly.20260831.1241999998",
+          body: releaseMarker(upstreamTag, "3".repeat(64)),
+        },
+      ]),
+      "0.0.38-nightly.20260831.1241999999",
+    );
+  });
+
   it("changes the fingerprint when patch order changes", () => {
     const first = [{ commits: ["a"] }, { commits: ["b"] }];
     const second = [...first].reverse();
