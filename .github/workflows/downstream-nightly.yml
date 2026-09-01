@@ -6,6 +6,12 @@ on:
   repository_dispatch:
     types: [upstream-nightly-published]
   workflow_dispatch:
+    inputs:
+      force_rebuild:
+        description: Rebuild and replace artifacts even when this stack already has a release
+        required: false
+        default: false
+        type: boolean
   pull_request:
     paths:
       - ".github/DOWNSTREAM_NIGHTLY.md"
@@ -82,10 +88,12 @@ jobs:
         name: Resolve upstream Nightly and patch stack
         env:
           GITHUB_TOKEN: ${{ github.token }}
+          FORCE_REBUILD: ${{ github.event_name == 'workflow_dispatch' && inputs.force_rebuild || false }}
         run: |
           node automation/.github/scripts/downstream-nightly.mjs resolve \
             --manifest automation/.github/downstream-nightly.json \
-            --output "$RUNNER_TEMP/downstream-nightly-plan.json"
+            --output "$RUNNER_TEMP/downstream-nightly-plan.json" \
+            --force "$FORCE_REBUILD"
 
       - name: Checkout exact upstream Nightly
         if: steps.plan.outputs.should_build == 'true'

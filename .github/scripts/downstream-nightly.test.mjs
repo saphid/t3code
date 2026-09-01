@@ -80,6 +80,16 @@ describe("Downstream Nightly workflow", () => {
     assert.match(checkout, /git -C source sparse-checkout set --no-cone/);
     assert.match(checkout, /!\/\.repos\//);
   });
+
+  it("exposes an explicit manual repair path", () => {
+    const workflow = readFileSync(
+      join(process.cwd(), ".github/workflows/downstream-nightly.yml"),
+      "utf8",
+    );
+
+    assert.match(workflow, /force_rebuild:/);
+    assert.match(workflow, /--force "\$FORCE_REBUILD"/);
+  });
 });
 
 describe("Downstream Nightly release selection", () => {
