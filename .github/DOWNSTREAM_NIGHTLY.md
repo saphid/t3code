@@ -31,7 +31,8 @@ When Apple signing settings are absent, macOS artifacts receive a valid ad hoc s
 The generated source is pushed to `automation/downstream-nightly`. The GitHub release points at that exact commit and its body records the upstream tag, resolved patch SHAs, and stack fingerprint.
 
 Fork artifacts set `T3CODE_DESKTOP_DISTRIBUTION=Fork`. This gives them the product name
-`T3 Code (Fork Nightly)`, bundle ID `com.t3tools.t3code.fork`, and updater cache package name
-`t3code-fork`. The macOS build job extracts every update archive and verifies those values plus
+`T3 Code (Fork Nightly)`, bundle ID `com.t3tools.t3code.fork-466f726b`, and updater cache package
+name `t3code-fork-466f726b`. The encoded suffix prevents distinct distribution labels from sharing
+an update identity. The macOS build job extracts every update archive and verifies those values plus
 the code signature before uploading it. Keep this distribution name stable and never rename the
 installed `.app` bundle.

@@ -444,7 +444,7 @@ jobs:
 
           bundle_id=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$plist_path")
           executable=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$plist_path")
-          if [[ "$bundle_id" != "com.t3tools.t3code.fork" ]]; then
+          if [[ "$bundle_id" != "com.t3tools.t3code.fork-466f726b" ]]; then
             echo "Unexpected fork bundle identifier: $bundle_id" >&2
             exit 1
           fi
@@ -460,7 +460,7 @@ jobs:
           const packageJson = JSON.parse(
             extractFile(process.env.ASAR_PATH, "package.json").toString(),
           );
-          if (packageJson.name !== "t3code-fork") {
+          if (packageJson.name !== "t3code-fork-466f726b") {
             throw new Error(`Unexpected fork package name: ${String(packageJson.name)}`);
           }
           if (packageJson.productName !== "T3 Code (Fork Nightly)") {
