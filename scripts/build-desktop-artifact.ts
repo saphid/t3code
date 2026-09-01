@@ -2485,6 +2485,12 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
       target: target === "dmg" ? [target, "zip"] : [target],
       icon: "icon.icns",
       category: "public.app-category.developer-tools",
+      // A completely unsigned Electron bundle inherits linker signatures on
+      // its nested binaries but has no sealed resource envelope, so macOS
+      // rejects it as malformed. Ad hoc signing gives credential-free builds
+      // a valid local signature. Disable hardened runtime because ad hoc
+      // identities have no stable team ID for Electron's bundled frameworks.
+      ...(!signed ? { identity: "-", hardenedRuntime: false } : {}),
       protocols: [
         {
           name: "T3 Code",
