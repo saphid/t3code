@@ -244,7 +244,7 @@ async function resolvePatch(patch, token) {
   };
 }
 
-export async function resolvePlan(manifest, token) {
+export async function resolvePlan(manifest, token, options = {}) {
   const upstreamReleases = await githubPaginate(
     `/repos/${manifest.upstreamRepository}/releases`,
     token,
@@ -274,7 +274,9 @@ export async function resolvePlan(manifest, token) {
   }
 
   return {
-    shouldBuild: !isCompleteMatchingRelease(matchingRelease, upstreamRelease.tag_name, fingerprint),
+    shouldBuild:
+      options.forceBuild === true ||
+      !isCompleteMatchingRelease(matchingRelease, upstreamRelease.tag_name, fingerprint),
     upstreamRepository: manifest.upstreamRepository,
     upstreamTag: upstreamRelease.tag_name,
     upstreamUrl: upstreamRelease.html_url,
@@ -405,8 +407,12 @@ async function main() {
     const outputPath = requireArgument(values, "output");
     const token = process.env.GITHUB_TOKEN;
     if (!token) fail("GITHUB_TOKEN is required to resolve a Downstream Nightly plan.");
+    const forceValue = values.get("force") ?? "false";
+    if (forceValue !== "true" && forceValue !== "false") {
+      fail("--force must be true or false.");
+    }
     const manifest = parseManifest(readFileSync(manifestPath, "utf8"));
-    const plan = await resolvePlan(manifest, token);
+    const plan = await resolvePlan(manifest, token, { forceBuild: forceValue === "true" });
     writeFileSync(outputPath, `${JSON.stringify(plan, null, 2)}\n`);
     appendGithubOutput({
       should_build: String(plan.shouldBuild),

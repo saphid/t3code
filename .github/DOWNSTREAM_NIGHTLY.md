@@ -16,6 +16,8 @@ PR heads and refs are pinned on purpose. If one moves, the workflow stops before
 
 If a selected commit is already part of the upstream Nightly, the assembler skips it. A real cherry-pick conflict stops the release and leaves the previous fork Nightly available.
 
+Normal scheduled and dispatch-triggered runs are idempotent. To repair artifacts without changing the upstream tag or patch stack, run the workflow manually with `force_rebuild` enabled. The workflow rebuilds every gate and replaces the matching release assets.
+
 ## Point the app at the fork
 
 Select the Nightly update track and set Custom release source to `saphid/t3code`. Fork-built installers also embed `saphid/t3code` as their default update repository, so later updates stay on the fork even when the custom field is empty.
