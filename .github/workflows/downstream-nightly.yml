@@ -89,17 +89,17 @@ jobs:
 
       - name: Checkout exact upstream Nightly
         if: steps.plan.outputs.should_build == 'true'
-        uses: actions/checkout@v6
-        with:
-          repository: ${{ steps.plan.outputs.upstream_repository }}
-          ref: ${{ steps.plan.outputs.upstream_tag }}
-          fetch-depth: 0
-          persist-credentials: false
-          sparse-checkout: |
-            /*
-            !/.repos/
-          sparse-checkout-cone-mode: false
-          path: source
+        shell: bash
+        env:
+          UPSTREAM_REPOSITORY: ${{ steps.plan.outputs.upstream_repository }}
+          UPSTREAM_TAG: ${{ steps.plan.outputs.upstream_tag }}
+        run: |
+          set -euo pipefail
+          git init -q source
+          git -C source remote add upstream "https://github.com/${UPSTREAM_REPOSITORY}.git"
+          git -C source sparse-checkout set --no-cone '/*' '!/.repos/'
+          git -C source fetch --no-tags --depth=1 upstream "refs/tags/${UPSTREAM_TAG}"
+          git -C source checkout --detach FETCH_HEAD
 
       - id: apply
         name: Apply selected patches
