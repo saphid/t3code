@@ -398,7 +398,7 @@ jobs:
               export T3CODE_MACOS_PROVISIONING_PROFILE="$profile_path"
               args+=(--signed)
             else
-              echo "Building unsigned macOS artifact."
+              echo "Building ad hoc-signed macOS artifact."
             fi
           elif [[ "${{ matrix.platform }}" == "win" ]]; then
             args+=(--wsl-prebuild "$GITHUB_WORKSPACE/wsl-prebuild/pty.node")
