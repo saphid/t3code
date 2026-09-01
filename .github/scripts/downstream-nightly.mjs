@@ -331,6 +331,14 @@ function updatePackageVersions(sourceDir, version) {
   }
 }
 
+function stringifyBuildMetadata(metadata) {
+  const json = JSON.stringify(metadata, null, 2).replace(
+    /"commits": \[\n\s+("[0-9a-f]{40}")\n\s+\]/g,
+    '"commits": [$1]',
+  );
+  return `${json}\n`;
+}
+
 export function applyPlan(plan, sourceDir) {
   runGit(sourceDir, ["config", "user.name", "github-actions[bot]"]);
   runGit(sourceDir, [
@@ -349,20 +357,16 @@ export function applyPlan(plan, sourceDir) {
   const metadataPath = resolve(sourceDir, ".github/downstream-nightly-build.json");
   writeFileSync(
     metadataPath,
-    `${JSON.stringify(
-      {
-        upstreamRepository: plan.upstreamRepository,
-        upstreamTag: plan.upstreamTag,
-        upstreamUrl: plan.upstreamUrl,
-        releaseRepository: plan.releaseRepository,
-        fingerprint: plan.fingerprint,
-        version: plan.version,
-        tag: plan.tag,
-        patches: plan.patches.map(({ label, commits }) => ({ label, commits })),
-      },
-      null,
-      2,
-    )}\n`,
+    stringifyBuildMetadata({
+      upstreamRepository: plan.upstreamRepository,
+      upstreamTag: plan.upstreamTag,
+      upstreamUrl: plan.upstreamUrl,
+      releaseRepository: plan.releaseRepository,
+      fingerprint: plan.fingerprint,
+      version: plan.version,
+      tag: plan.tag,
+      patches: plan.patches.map(({ label, commits }) => ({ label, commits })),
+    }),
   );
   runGit(sourceDir, ["add", ...RELEASE_PACKAGE_FILES, ".github/downstream-nightly-build.json"]);
   runGit(sourceDir, ["commit", "-m", `build: assemble ${plan.tag}`]);
