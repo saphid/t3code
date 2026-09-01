@@ -204,6 +204,10 @@ describe("Downstream Nightly assembly", () => {
       JSON.parse(readFileSync(join(source, "apps/desktop/package.json"), "utf8")).version,
       plan.version,
     );
+    assert.match(
+      readFileSync(join(source, ".github/downstream-nightly-build.json"), "utf8"),
+      new RegExp(`"commits": \\["${patchSha}"\\]`),
+    );
     assert.deepEqual(git(source, "status", "--porcelain"), "");
   });
 });
