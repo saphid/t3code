@@ -886,10 +886,9 @@ export const make = Effect.gen(function* () {
         cached.provider === provider
       ) {
         return {
-          records:
-            cached.tailRecords.length === 0
-              ? cached.records
-              : [...cached.records, ...cached.tailRecords],
+          records: cached.tailRecords.length === 0
+            ? cached.records
+            : dedupeWithinFile([...cached.records, ...cached.tailRecords]),
           issue: null,
         };
       }
@@ -909,13 +908,11 @@ export const make = Effect.gen(function* () {
       if (parsed.status !== "ok") return { records: [], issue: parsed.status };
 
       // Stored already de-duplicated within the file, which is 99% of all
-      // duplicates. The aggregator still runs the cross-file dedupe pass. One
-      // seen set spans the cached base, the new lines, and the tail so a
-      // resumed parse dedupes exactly like a full one.
+      // duplicates. The final snapshot wins so a resumed Claude parse can
+      // replace an earlier progressive snapshot from the cached base.
       const base = parsed.result.resumed && cached !== undefined ? cached.records : [];
-      const seen = new Set<string>();
-      const records = dedupeWithinFile([...base, ...parsed.result.records], seen);
-      const tailRecords = dedupeWithinFile(parsed.result.tailRecords, seen);
+      const records = dedupeWithinFile([...base, ...parsed.result.records]);
+      const tailRecords = dedupeWithinFile(parsed.result.tailRecords);
 
       fileCache.set(filePath, {
         size,
@@ -927,7 +924,10 @@ export const make = Effect.gen(function* () {
       });
       cacheDirty = true;
       return {
-        records: tailRecords.length === 0 ? records : [...records, ...tailRecords],
+        records:
+          tailRecords.length === 0
+            ? records
+            : dedupeWithinFile([...records, ...tailRecords]),
         issue: null,
       };
     });
@@ -1091,14 +1091,6 @@ export const make = Effect.gen(function* () {
       walkedRoots.push(dir);
       let scannedFiles = 0;
       let skippedFiles = 0;
-      // Distinct per directory. Buckets carry per-cell session counts, but a
-      // session spans days and models, so clients total this figure instead.
-      const sessionIds = new Set<string>();
-      // Dedupe keys are scoped to each transcript directory. Keep one bare-key
-      // set per directory so identical keys in another provider/project
-      // directory remain distinct without allocating a long composite key.
-      const ledgerSeenByDirectory = new Map<string, Set<string>>();
-
       for (const file of files) {
         livePaths.add(file.path);
         if (file.records.length === 0) {
@@ -1106,30 +1098,13 @@ export const make = Effect.gen(function* () {
           continue;
         }
         scannedFiles += 1;
-        const directory = path.dirname(file.path);
-        let ledgerSeen = ledgerSeenByDirectory.get(directory);
-        if (ledgerSeen === undefined) {
-          ledgerSeen = new Set<string>();
-          ledgerSeenByDirectory.set(directory, ledgerSeen);
-        }
         for (const record of file.records) {
           // The scan-start instant is the upper bound for both the summary and
           // the durable ledger. Records appended while the walk is in flight
           // belong to the next refresh.
           if (record.timestampMs >= startedAtMs) continue;
-          const dedupeKey = record.dedupeKey;
-          if (dedupeKey !== null) {
-            if (ledgerSeen.has(dedupeKey)) continue;
-            ledgerSeen.add(dedupeKey);
-          }
 
-          // The viewer aggregate and canonical ledger share the same
-          // directory-scoped dedupe decision above. Only sessions that
-          // contributed in-window count: the mtime slack admits boundary files
-          // whose records fall outside the range.
-          if (aggregator.add(record) && record.sessionId.length > 0) {
-            sessionIds.add(record.sessionId);
-          }
+          aggregator.add(record);
 
           // The canonical ledger is normalized independently of the requested
           // viewer zone. Keep quarter-hour cells so IANA offsets at :30/:45
@@ -1167,7 +1142,9 @@ export const make = Effect.gen(function* () {
         scannedFiles,
         skippedFiles,
         malformedRecords: 0,
-        distinctSessions: sessionIds.size,
+        // Read from the settled records so a progressive snapshot replacement
+        // cannot leave the source count attached to the superseded session.
+        distinctSessions: aggregator.distinctSessions(provider),
         message: null,
       });
     }

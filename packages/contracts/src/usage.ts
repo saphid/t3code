@@ -21,7 +21,7 @@ import { NonNegativeInt, ProjectId, ThreadId, TrimmedNonEmptyString } from "./ba
  * client renders partial coverage when an environment reports an older version
  * rather than failing the whole page.
  */
-export const USAGE_CONTRACT_VERSION = 11 as const;
+export const USAGE_CONTRACT_VERSION = 12 as const;
 
 /**
  * Oldest {@link UsageSummary} version a current client will still merge.
@@ -29,10 +29,10 @@ export const USAGE_CONTRACT_VERSION = 11 as const;
  * v6 adds explicit coverage metadata, v7 adds the optional bucket `project`,
  * v8 adds its optional stable `projectId`, and v9 distinguishes outside
  * projects from unknown attribution, and v10 adds the separate thread-breakdown
- * request. v11 adds optional cache-write costs. v4/v5 summaries remain
- * decodable for mixed-version clients, but
- * summaries without coverage are not merged because the client cannot treat
- * them as bounded snapshots.
+ * request. v11 adds optional cache-write costs, and v12 adds optional
+ * cache-write TTL counters. v4/v5 summaries remain decodable for mixed-version
+ * clients, but summaries without coverage are not merged because the client
+ * cannot treat them as bounded snapshots.
  */
 export const USAGE_MERGE_COMPATIBLE_SINCE = 4 as const;
 /** First contract version that explicitly distinguishes outside from unknown attribution. */
@@ -82,6 +82,10 @@ export const UsageTokenTotals = Schema.Struct({
   uncachedInputTokens: NonNegativeInt,
   cachedInputTokens: NonNegativeInt,
   cacheCreationTokens: NonNegativeInt,
+  /** Anthropic five-minute cache writes, when the transcript reports the TTL. */
+  cacheCreation5mTokens: Schema.optional(NonNegativeInt),
+  /** Anthropic one-hour cache writes, when the transcript reports the TTL. */
+  cacheCreation1hTokens: Schema.optional(NonNegativeInt),
   outputTokens: NonNegativeInt,
   reasoningTokens: NonNegativeInt,
 });
@@ -126,9 +130,9 @@ export const UsageBucket = Schema.Struct({
    */
   cacheSavingsUsd: Schema.Number,
   /**
-   * Estimated cost of the cache-creation tokens in this bucket at the model's
-   * cache-write rate. A subset of `costUsd` when the bucket is model-priced.
-   * Absent from summaries written before this field existed.
+   * Estimated cache-write cost at the model and TTL-specific rates. Cache
+   * creation is a billing category, not proof of expiry. A subset of `costUsd`
+   * when the bucket is model-priced. Absent from older summaries.
    */
   cacheWriteUsd: Schema.optional(Schema.Number),
   costSource: UsageCostSource,

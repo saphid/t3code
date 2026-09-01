@@ -13,6 +13,7 @@ const rates: RateTable = new Map([
       outputCostPerToken: 5e-5,
       cacheReadCostPerToken: 1e-6,
       cacheCreationCostPerToken: 1.25e-5,
+      cacheCreation1hCostPerToken: 2e-5,
     },
   ],
 ]);
@@ -86,6 +87,22 @@ describe("UsageAggregator", () => {
     expect(result.buckets[0]?.records).toBe(3);
     expect(result.buckets[0]?.totals.outputTokens).toBe(150);
     expect(result.buckets).toHaveLength(1);
+  });
+
+  it("uses the final complete snapshot for a repeated dedupe key", () => {
+    const result = aggregate([
+      record({
+        dedupeKey: "msg_partial:",
+        totals: { ...record().totals, outputTokens: 1 },
+      }),
+      record({
+        dedupeKey: "msg_partial:",
+        totals: { ...record().totals, outputTokens: 310 },
+      }),
+    ]);
+
+    expect(result.buckets[0]?.records).toBe(1);
+    expect(result.buckets[0]?.totals.outputTokens).toBe(310);
   });
 
   it("still sums records that carry no dedupe key", () => {
@@ -188,6 +205,21 @@ describe("UsageAggregator", () => {
     expect(result.buckets[0]?.costSource).toBe("modelPriced");
     // Cache writes priced at the cache-write rate: 10 * 1.25e-5.
     expect(result.buckets[0]?.cacheWriteUsd).toBeCloseTo(1.25e-4, 12);
+  });
+
+  it("prices one-hour cache writes at their separate rate", () => {
+    const result = aggregate([
+      record({
+        totals: {
+          ...record().totals,
+          cacheCreationTokens: 30,
+          cacheCreation5mTokens: 10,
+          cacheCreation1hTokens: 20,
+        },
+      }),
+    ]);
+
+    expect(result.buckets[0]?.cacheWriteUsd).toBeCloseTo(10 * 1.25e-5 + 20 * 2e-5, 12);
   });
 
   it("distinguishes unavailable cache-write cost from write-free usage", () => {
@@ -319,7 +351,7 @@ describe("UsageAggregator", () => {
     expect(result.buckets).toHaveLength(0);
   });
 
-  it("reports whether a record contributed", () => {
+  it("reports whether a record falls in the window", () => {
     const aggregator = new UsageAggregator({
       timeZone: "UTC",
       sinceDay: "2026-08-01",
@@ -330,6 +362,37 @@ describe("UsageAggregator", () => {
     expect(aggregator.add(record({ dedupeKey: "msg_1:" }))).toBe(true);
     expect(aggregator.add(record({ dedupeKey: "msg_1:" }))).toBe(true);
     expect(aggregator.add(record({ timestampMs: Date.parse("2026-07-01T12:00:00Z") }))).toBe(false);
+  });
+
+  it("counts sessions from the final progressive snapshot", () => {
+    const aggregator = new UsageAggregator({
+      timeZone: "UTC",
+      sinceDay: "2026-08-01",
+      untilDay: "2026-08-31",
+      rates,
+    });
+
+    aggregator.add(record({ dedupeKey: "msg_1:", sessionId: "partial-session" }));
+    aggregator.add(record({ dedupeKey: "msg_1:", sessionId: "final-session" }));
+
+    expect(aggregator.distinctSessions("claude")).toBe(1);
+    expect(aggregator.finish().buckets[0]?.sessions).toBe(1);
+  });
+
+  it("applies the window to the final progressive snapshot", () => {
+    const aggregator = new UsageAggregator({
+      timeZone: "UTC",
+      sinceDay: "2026-08-01",
+      untilDay: "2026-08-31",
+      rates,
+    });
+
+    aggregator.add(record({ dedupeKey: "msg_1:" }));
+    aggregator.add(
+      record({ dedupeKey: "msg_1:", timestampMs: Date.parse("2026-09-01T00:00:00Z") }),
+    );
+
+    expect(aggregator.finish()).toMatchObject({ buckets: [], outOfWindow: 1 });
   });
 
   it("separates providers and models into their own buckets", () => {

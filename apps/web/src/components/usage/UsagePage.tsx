@@ -423,7 +423,7 @@ export function UsagePage() {
                     />
                     <Metric label="Output" value={formatTokens(merged.outputTokens)} />
                     <Metric
-                      label="Estimated cache writes"
+                      label="Cache writes, estimated"
                       value={
                         merged.costQuality.cacheWriteUsd === null
                           ? "Unavailable"
@@ -431,7 +431,7 @@ export function UsagePage() {
                       }
                       {...(merged.costUsd > 0 && merged.costQuality.cacheWriteUsd !== null
                         ? {
-                            detail: `${formatPercent(merged.costQuality.cacheWriteUsd / merged.costUsd, 0)} of cost`,
+                            detail: `${formatPercent(merged.costQuality.cacheWriteUsd / merged.costUsd, 0)} of estimate · not an expiry measure`,
                           }
                         : {})}
                     />
@@ -507,7 +507,7 @@ export function UsagePage() {
                               <td className="py-2 text-right text-foreground tabular-nums">
                                 {formatUsd(model.costUsd)}
                               </td>
-                              <CacheWriteCell
+                              <UsageCacheWriteCell
                                 cacheWriteTokens={model.cacheWriteTokens}
                                 cacheWriteUsd={model.cacheWriteUsd}
                               />
@@ -827,7 +827,7 @@ function UsageSkeleton() {
             "Cached input",
             "Uncached input",
             "Output",
-            "Estimated cache writes",
+            "Cache writes, estimated",
             "Cache savings",
           ].map((label) => (
               <div key={label} className="flex flex-col gap-0.5">
