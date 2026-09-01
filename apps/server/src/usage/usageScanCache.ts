@@ -22,7 +22,8 @@ import type { UsageRecord } from "./usageTranscripts.ts";
 // entries would keep serving double-counted records forever.
 // v3: records carry the session's cwd for project attribution; v2 entries
 // would pin every cached file to "no project" forever.
-export const USAGE_SCAN_CACHE_VERSION = 3 as const;
+// v4: Claude records retain cache TTLs and expanded fallback iterations.
+export const USAGE_SCAN_CACHE_VERSION = 4 as const;
 
 export interface CachedFile {
   readonly size: number;
@@ -50,6 +51,8 @@ type SerializedRecord = readonly [
   dedupeKey: string | null,
   reportedCostUsd: number | null,
   cwdIndex: number,
+  cacheCreation5mTokens: number,
+  cacheCreation1hTokens: number,
 ];
 
 interface SerializedFile {
@@ -103,6 +106,8 @@ export function encodeScanCache(cache: ScanCache): SerializedCache {
         record.dedupeKey,
         record.reportedCostUsd,
         intern(cwds, cwdIndex, record.cwd),
+        record.totals.cacheCreation5mTokens ?? 0,
+        record.totals.cacheCreation1hTokens ?? 0,
       ]),
     };
   }
@@ -155,7 +160,7 @@ export function decodeScanCache(document: unknown): ScanCache {
     // file would never be re-parsed, silently losing the dropped rows' usage.
     let corrupt = false;
     for (const row of entry.r) {
-      if (!isRecordArray(row) || row.length < 11) {
+      if (!isRecordArray(row) || row.length < 13) {
         corrupt = true;
         break;
       }
@@ -171,6 +176,8 @@ export function decodeScanCache(document: unknown): ScanCache {
         dedupeKey,
         reportedCostUsd,
         cwdIndex,
+        cacheCreation5m,
+        cacheCreation1h,
       ] = row as SerializedRecord;
 
       const model = typeof modelIndex === "number" ? models[modelIndex] : undefined;
@@ -181,6 +188,8 @@ export function decodeScanCache(document: unknown): ScanCache {
         !Number.isFinite(uncached) ||
         !Number.isFinite(cached) ||
         !Number.isFinite(cacheCreation) ||
+        !Number.isFinite(cacheCreation5m) ||
+        !Number.isFinite(cacheCreation1h) ||
         !Number.isFinite(output) ||
         !Number.isFinite(reasoning)
       ) {
@@ -198,6 +207,8 @@ export function decodeScanCache(document: unknown): ScanCache {
           uncachedInputTokens: uncached,
           cachedInputTokens: cached,
           cacheCreationTokens: cacheCreation,
+          ...(cacheCreation5m === 0 ? {} : { cacheCreation5mTokens: cacheCreation5m }),
+          ...(cacheCreation1h === 0 ? {} : { cacheCreation1hTokens: cacheCreation1h }),
           outputTokens: output,
           reasoningTokens: reasoning,
         },
@@ -253,14 +264,18 @@ export function pruneScanCache(cache: ScanCache, options: PruneOptions): number 
   return removed;
 }
 
-/** Within-file de-duplication, applied before an entry is cached. */
+/** Within-file de-duplication, retaining the final complete Claude snapshot. */
 export function dedupeWithinFile(records: readonly UsageRecord[]): readonly UsageRecord[] {
-  const seen = new Set<string>();
+  const indexByKey = new Map<string, number>();
   const kept: UsageRecord[] = [];
   for (const record of records) {
     if (record.dedupeKey !== null) {
-      if (seen.has(record.dedupeKey)) continue;
-      seen.add(record.dedupeKey);
+      const existing = indexByKey.get(record.dedupeKey);
+      if (existing !== undefined) {
+        kept[existing] = record;
+        continue;
+      }
+      indexByKey.set(record.dedupeKey, kept.length);
     }
     kept.push(record);
   }

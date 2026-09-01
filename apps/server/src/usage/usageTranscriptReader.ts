@@ -20,7 +20,7 @@ import type { UsageProviderKind } from "@t3tools/contracts";
 import {
   initialCodexScanState,
   mightCarryUsage,
-  parseClaudeLine,
+  parseClaudeLineRecords,
   parseCodexLine,
   parseGrokLine,
   type UsageRecord,
@@ -147,8 +147,7 @@ export async function readTranscriptRecords(
       }
 
       if (!mightCarryUsage(line, provider)) continue;
-      const record = parseClaudeLine(line);
-      if (record !== null) records.push(record);
+      for (const record of parseClaudeLineRecords(line)) records.push(record);
     }
   } catch {
     return null;

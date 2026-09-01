@@ -84,8 +84,14 @@ export interface ThreadUsageOptions {
  * share of the summary.
  */
 export class ThreadUsageAccumulator {
-  readonly #groups = new Map<string, MutableSessionGroup>();
-  readonly #seen = new Set<string>();
+  readonly #recordsByKey = new Map<
+    string,
+    { readonly record: UsageRecord; readonly context: ThreadRecordContext }
+  >();
+  readonly #unkeyedRecords: {
+    readonly record: UsageRecord;
+    readonly context: ThreadRecordContext;
+  }[] = [];
   readonly #toDay: (timestampMs: number) => string;
   readonly #options: ThreadUsageOptions;
 
@@ -95,15 +101,28 @@ export class ThreadUsageAccumulator {
   }
 
   add(record: UsageRecord, context: ThreadRecordContext): boolean {
-    if (record.dedupeKey !== null) {
-      if (this.#seen.has(record.dedupeKey)) return false;
-      this.#seen.add(record.dedupeKey);
-    }
-
     const day = this.#toDay(record.timestampMs);
     if (day < this.#options.sinceDay || day > this.#options.untilDay) return false;
 
-    let group = this.#groups.get(context.sessionKey);
+    if (record.dedupeKey === null) {
+      this.#unkeyedRecords.push({ record, context });
+      return true;
+    }
+    if (this.#recordsByKey.has(record.dedupeKey)) {
+      this.#recordsByKey.set(record.dedupeKey, { record, context });
+      return false;
+    }
+    this.#recordsByKey.set(record.dedupeKey, { record, context });
+    return true;
+  }
+
+  #foldRecord(
+    record: UsageRecord,
+    context: ThreadRecordContext,
+    groups: Map<string, MutableSessionGroup>,
+  ): void {
+    const day = this.#toDay(record.timestampMs);
+    let group = groups.get(context.sessionKey);
     if (group === undefined) {
       group = {
         provider: record.provider,
@@ -115,7 +134,7 @@ export class ThreadUsageAccumulator {
         daily: new Map(),
         agents: new Map(),
       };
-      this.#groups.set(context.sessionKey, group);
+      groups.set(context.sessionKey, group);
     }
 
     if (group.cwd.length === 0 && record.cwd.length > 0) group.cwd = record.cwd;
@@ -151,12 +170,18 @@ export class ThreadUsageAccumulator {
       agent.costUsd += priced.costUsd;
       agent.cacheWriteUsd += writeUsd;
     }
-    return true;
   }
 
   finish(): readonly SessionUsageGroup[] {
+    const groups = new Map<string, MutableSessionGroup>();
+    for (const { record, context } of this.#unkeyedRecords) {
+      this.#foldRecord(record, context, groups);
+    }
+    for (const { record, context } of this.#recordsByKey.values()) {
+      this.#foldRecord(record, context, groups);
+    }
     const resolve = this.#options.resolveProject;
-    return [...this.#groups.entries()].map(([sessionKey, group]) => ({
+    return [...groups.entries()].map(([sessionKey, group]) => ({
       sessionKey,
       provider: group.provider,
       sessionId: group.sessionId,
