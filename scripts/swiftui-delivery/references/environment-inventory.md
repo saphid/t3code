@@ -8,8 +8,9 @@ The current T3 Code checkout owns the entire delivery package:
 
 - `scripts/swiftui-delivery` contains the contract, validators, retained-build
   store, evidence renderer, tests, and reference documents.
-- `.agents/skills` contains the four role skills plus the two small helper
-  skills they use for Xcode hygiene and private video handoff.
+- `.agents/skills` contains the four role skills plus the helper skills they
+  use for Xcode hygiene, private video handoff, upstream contribution policy,
+  and PR monitoring.
 - `docs/operations` contains the human review plan and interactive explainer.
 
 These are normal project files. They are not installed, copied, or symlinked
@@ -19,11 +20,12 @@ process behind.
 
 ## Protected external specialists
 
-The delivery skills may invoke `swiftui-pro`, `swift-testing-pro`,
-`swift-concurrency-pro`, `t3code-land-contribution`, and `babysit-pr` by
-capability name when relevant. They are upstream or shared specialists. This
-package does not edit, vendor, pin, audit, or require a particular filesystem
-copy of them.
+The delivery skills may invoke `swiftui-pro`, `swift-testing-pro`, and
+`swift-concurrency-pro` by capability name when relevant. They are upstream
+specialists. This package does not edit, vendor, pin, audit, or require a
+particular filesystem copy of them. The T3-specific
+`t3code-land-contribution` and `babysit-pr` skills are repository-owned so a
+fresh checkout resolves every T3 workflow caller without a global bridge.
 
 ## Retired personal artifacts
 

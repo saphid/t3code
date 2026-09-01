@@ -15,6 +15,8 @@ PROJECT_SKILLS = (
     "swiftui-deliver",
     "ios-build-hygiene",
     "share-video-evidence",
+    "babysit-pr",
+    "t3code-land-contribution",
 )
 
 

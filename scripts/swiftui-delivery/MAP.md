@@ -12,8 +12,9 @@ a clone plus `scripts/swiftui-delivery/scripts/setup`.
 - swiftui-feature-work/ one worker, one issue: implement + prove
 - swiftui-deliver/ publication: Test/Dev generations, upstream PRs
   Supporting vendored skills: ios-build-hygiene/ (build isolation + simulator
-  session cleanup), share-video-evidence/; product-owned: ios-debugger-agent,
-  ios-simulator-browser, test-t3-app, test-t3-mobile.
+  session cleanup), share-video-evidence/, t3code-land-contribution/, and
+  babysit-pr/; product-owned: ios-debugger-agent, ios-simulator-browser,
+  test-t3-app, test-t3-mobile.
 
 ## The runtime (scripts/swiftui-delivery/)
 

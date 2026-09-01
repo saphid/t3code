@@ -1,0 +1,4 @@
+interface:
+  display_name: "Land T3 Code Contributions"
+  short_description: "Prepare T3 Code changes maintainers can merge"
+  default_prompt: "Use $t3code-land-contribution to turn this T3 Code change into a reviewable, merge-ready contribution."
