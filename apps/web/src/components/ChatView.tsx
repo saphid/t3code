@@ -2379,10 +2379,9 @@ function ChatViewContent(props: ChatViewProps) {
     () => deriveLatestContextWindowSnapshot(threadActivities),
     [threadActivities],
   );
-  const activeThreadReachedContextLimit = contextWindowReachedThreadLimit(
-    activeContextWindow,
-    settings.threadContextTokenLimit,
-  );
+  const activeThreadReachedContextLimit =
+    serverConfig !== null &&
+    contextWindowReachedThreadLimit(activeContextWindow, settings.threadContextTokenLimit);
   const workLogEntries = useMemo(() => deriveWorkLogEntries(threadActivities), [threadActivities]);
   // Native subagent fold: memoized by activity-list identity, shared by the
   // Agents surface, live strip, and workflow cards. v2Projection is null
@@ -7533,7 +7532,7 @@ function ChatViewContent(props: ChatViewProps) {
                             sendDisabledReason={
                               feedbackUploading
                                 ? "Sending feedback"
-                                : activeThreadReachedContextLimit
+                                : activeThreadReachedContextLimit && activePendingProgress === null
                                   ? "Thread token limit reached"
                                   : threadDetailLoading
                                     ? "Messages loading"

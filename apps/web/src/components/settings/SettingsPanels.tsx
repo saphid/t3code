@@ -2168,9 +2168,16 @@ export function GeneralSettingsPanel() {
                 step={10}
                 size="sm"
                 className="w-28"
-                onValueChange={(value) => {
+                onValueCommitted={(value) => {
                   if (value === null) return;
-                  updateSettings({ threadContextTokenLimit: Math.round(value) * 1_000 });
+                  const nextLimit = Math.round(value) * 1_000;
+                  if (
+                    nextLimit < MIN_THREAD_CONTEXT_TOKEN_LIMIT ||
+                    nextLimit > MAX_THREAD_CONTEXT_TOKEN_LIMIT
+                  ) {
+                    return;
+                  }
+                  updateSettings({ threadContextTokenLimit: nextLimit });
                 }}
               >
                 <NumberFieldGroup>
