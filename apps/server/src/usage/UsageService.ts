@@ -695,15 +695,28 @@ export const make = Effect.gen(function* () {
     const projects = yield* projectRepository
       .listAll()
       .pipe(Effect.catchCause(() => Effect.succeed<readonly never[]>([])));
-    return makeProjectResolver(
-      projects.map((project) => ({
-        projectId: project.projectId,
-        workspaceRoot: project.workspaceRoot,
-        title: project.title,
-        deleted: project.deletedAt !== null,
-      })),
-      path.sep,
+    const projectRoots = yield* Effect.forEach(
+      projects,
+      Effect.fnUntraced(function* (project) {
+        const threads = yield* threadRepository
+          .listByProjectId({ projectId: project.projectId })
+          .pipe(Effect.catchCause(() => Effect.succeed<readonly never[]>([])));
+        const root = {
+          projectId: project.projectId,
+          workspaceRoot: project.workspaceRoot,
+          title: project.title,
+          deleted: project.deletedAt !== null,
+        };
+        return [
+          root,
+          ...threads.flatMap((thread) =>
+            thread.worktreePath === null ? [] : [{ ...root, workspaceRoot: thread.worktreePath }],
+          ),
+        ];
+      }),
+      { concurrency: 8 },
     );
+    return makeProjectResolver(projectRoots.flat(), path.sep);
   });
 
   /**
@@ -1660,10 +1673,11 @@ export const make = Effect.gen(function* () {
       }
       const sinceTimeMs = DateTime.toEpochMillis(sinceTime.value);
       const untilTimeMs = DateTime.toEpochMillis(untilTime.value);
-      if (untilTimeMs <= sinceTimeMs) {
+      const durationMs = untilTimeMs - sinceTimeMs;
+      if (durationMs <= 0 || durationMs > MAX_HOURLY_WINDOW_MS) {
         return yield* new UsageReadError({
           reason: "invalidWindow",
-          detail: "Thread usage untilTime must be after sinceTime",
+          detail: "Thread usage exact window must be greater than zero and at most 24 hours",
         });
       }
       exactWindow = { sinceTimeMs, untilTimeMs };
@@ -1692,6 +1706,8 @@ export const make = Effect.gen(function* () {
       string,
       { readonly path: string; readonly provider: UsageProviderKind }
     >();
+    const livePaths = new Set<string>();
+    const walkedRoots: string[] = [];
 
     for (const { provider, dir, fileName } of dirs) {
       if (input.providers !== undefined && !input.providers.includes(provider)) continue;
@@ -1699,6 +1715,7 @@ export const make = Effect.gen(function* () {
         .exists(dir)
         .pipe(Effect.catchCause(() => Effect.succeed(false)));
       if (!exists) continue;
+      walkedRoots.push(dir);
 
       const walk = yield* Effect.promise(() =>
         listTranscriptFilesDetailed(
@@ -1708,6 +1725,7 @@ export const make = Effect.gen(function* () {
         ),
       );
       for (const file of walk.files) {
+        livePaths.add(file.path);
         const records = yield* readFileRecords(file.path, file.size, file.mtimeMs, provider);
         if (records.length === 0) continue;
         const isSubagent =
@@ -1726,8 +1744,15 @@ export const make = Effect.gen(function* () {
       }
     }
 
-    // A thread-only client must warm the same durable cache as the summary
-    // RPC, otherwise every server restart repeats the full transcript parse.
+    const pruned = pruneScanCache(fileCache, {
+      livePaths,
+      walkedRoots,
+      windowStartMs,
+      retentionCutoffMs: startedAtMs - CACHE_RETENTION_DAYS * 24 * 60 * 60 * 1000,
+    });
+    if (pruned > 0) cacheDirty = true;
+    // A thread-only client must warm and bound the same durable cache as the
+    // summary RPC, otherwise restarts repeat parsing and stale entries grow.
     yield* persistScanCache();
 
     const attribution = yield* loadThreadAttribution();

@@ -92,10 +92,22 @@ export interface UsageView {
   readonly refresh: (requestedInput?: UsageSummaryInput) => void;
 }
 
+export function filterUsageEnvironmentsForProject<
+  T extends { readonly environmentId: EnvironmentId },
+>(environments: readonly T[], projectFilter: string | null | undefined): readonly T[] {
+  return environments.filter(
+    (environment) =>
+      projectFilterForEnvironment(projectFilter, environment.environmentId) !==
+      "environment-mismatch:",
+  );
+}
+
 export function useUsage(
   input: UsageSummaryInput,
   /** A namespaced project key, `null` for outside-projects buckets, `undefined` for no filter. */
   projectFilter?: string | null,
+  /** Refresh the deferred thread query only while its table is mounted. */
+  refreshThreads = false,
 ): UsageView {
   const windowKey = useMemo(
     () =>
@@ -228,24 +240,32 @@ export function useUsage(
         serverEnvironment.usageSummary({ environmentId: environment.environmentId, input }),
       );
     }
-    for (const contribution of merged.providerContributions) {
-      if (contribution.contractVersion < USAGE_THREAD_BREAKDOWN_SINCE) continue;
-      appAtomRegistry.refresh(
-        serverEnvironment.usageThreadBreakdown({
-          environmentId: contribution.environmentId,
-          input: makeThreadBreakdownInput(
-            input,
-            projectFilter,
-            contribution.providers,
-            contribution.environmentId,
-          ),
-        }),
-      );
+    if (refreshThreads) {
+      for (const contribution of filterProviderContributionsForProject(
+        projectFilter,
+        merged.providerContributions,
+      )) {
+        if (contribution.contractVersion < USAGE_THREAD_BREAKDOWN_SINCE) continue;
+        appAtomRegistry.refresh(
+          serverEnvironment.usageThreadBreakdown({
+            environmentId: contribution.environmentId,
+            input: makeThreadBreakdownInput(
+              input,
+              projectFilter,
+              contribution.providers,
+              contribution.environmentId,
+            ),
+          }),
+        );
+      }
     }
-  }, [environments, merged.providerContributions, projectFilter, windowKey]);
+  }, [environments, merged.providerContributions, projectFilter, refreshThreads, windowKey]);
 
-  const answeredCount = environments.filter((environment) => environment.summary !== null).length;
-  const stillReporting = environments.filter(
+  const relevantEnvironments = filterUsageEnvironmentsForProject(environments, projectFilter);
+  const answeredCount = relevantEnvironments.filter(
+    (environment) => environment.summary !== null,
+  ).length;
+  const stillReporting = relevantEnvironments.filter(
     (environment) => environment.summary === null && environment.error === null,
   ).length;
   const isRefreshing =
@@ -330,6 +350,19 @@ export function mergeUsageThreadBreakdowns(
   return { rows, truncatedRows };
 }
 
+/** Excludes environments that cannot own a namespaced project selection. */
+export function filterProviderContributionsForProject(
+  projectKey: string | null | undefined,
+  providerContributions: readonly EnvironmentProviderContribution[],
+): readonly EnvironmentProviderContribution[] {
+  if (projectKey === undefined || projectKey === null) return providerContributions;
+  return providerContributions.filter(
+    (contribution) =>
+      projectFilterForEnvironment(projectKey, contribution.environmentId) !==
+      "environment-mismatch:",
+  );
+}
+
 const usageThreadsAtom = Atom.family((requestKey: string) =>
   Atom.make((get): UsageThreadsView => {
     const { input, providerContributions } = JSON.parse(requestKey) as {
@@ -337,12 +370,16 @@ const usageThreadsAtom = Atom.family((requestKey: string) =>
       providerContributions: readonly EnvironmentProviderContribution[];
     };
 
+    const relevantContributions = filterProviderContributionsForProject(
+      input.projectKey,
+      providerContributions,
+    );
     const breakdowns: EnvironmentUsageThreadBreakdown[] = [];
     let pending = 0;
-    let failed = providerContributions.filter(
+    let failed = relevantContributions.filter(
       (contribution) => contribution.contractVersion < USAGE_THREAD_BREAKDOWN_SINCE,
     ).length;
-    for (const contribution of providerContributions) {
+    for (const contribution of relevantContributions) {
       if (contribution.contractVersion < USAGE_THREAD_BREAKDOWN_SINCE) continue;
       const { environmentId } = contribution;
       const environmentInput =
@@ -364,7 +401,7 @@ const usageThreadsAtom = Atom.family((requestKey: string) =>
       if (breakdown === null) continue;
       breakdowns.push({ environmentId, breakdown });
     }
-    const merged = mergeUsageThreadBreakdowns(breakdowns, providerContributions);
+    const merged = mergeUsageThreadBreakdowns(breakdowns, relevantContributions);
 
     return { ...merged, isPending: pending > 0, failedEnvironments: failed };
   }).pipe(Atom.withLabel(`web-usage:threads:${requestKey}`)),
