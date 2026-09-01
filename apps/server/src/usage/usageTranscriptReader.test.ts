@@ -7,7 +7,11 @@ import * as NodePath from "node:path";
 
 import { afterEach, assert, beforeEach, describe, it } from "@effect/vitest";
 
-import { listTranscriptFilesDetailed, readTranscriptRecords } from "./usageTranscriptReader.ts";
+import {
+  listTranscriptFilesDetailed,
+  readTranscriptRecords,
+  readTranscriptTitle,
+} from "./usageTranscriptReader.ts";
 
 let dir: string;
 
@@ -234,5 +238,35 @@ describe("readTranscriptRecords resume", () => {
       result.files.map((file) => NodePath.basename(file.path)),
       ["sibling.jsonl"],
     );
+  });
+});
+
+describe("readTranscriptTitle", () => {
+  it("keeps a real prompt that begins with an angle bracket", async () => {
+    const file = NodePath.join(dir, "session.jsonl");
+    await NodeFSP.writeFile(
+      file,
+      JSON.stringify({ type: "user", message: { content: "<3 ship this today" } }),
+    );
+
+    assert.strictEqual(await readTranscriptTitle(file, "claude"), "<3 ship this today");
+  });
+
+  it("skips a known injected preamble and reads the next user prompt", async () => {
+    const file = NodePath.join(dir, "session.jsonl");
+    await NodeFSP.writeFile(
+      file,
+      [
+        {
+          type: "user",
+          message: { content: "<system-reminder>generated context</system-reminder>" },
+        },
+        { type: "user", message: { content: "Fix the real bug" } },
+      ]
+        .map((line) => JSON.stringify(line))
+        .join("\n"),
+    );
+
+    assert.strictEqual(await readTranscriptTitle(file, "claude"), "Fix the real bug");
   });
 });
