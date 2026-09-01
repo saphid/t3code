@@ -135,12 +135,45 @@ export function fingerprintPlan(upstreamTag, patches) {
   return createHash("sha256").update(JSON.stringify({ upstreamTag, patches })).digest("hex");
 }
 
-export function resolveCustomNightlyVersion(upstreamTag, fingerprint) {
+export function resolveCustomNightlyVersion(upstreamTag, fingerprint, downstreamReleases = []) {
   const match = NIGHTLY_TAG_PATTERN.exec(upstreamTag);
   if (!match) fail(`Upstream release tag '${upstreamTag}' is not a supported Nightly tag.`);
   const [, major, minor, patch, date, upstreamSerial] = match;
+  const serialFloor = BigInt(upstreamSerial) * 1_000_000n;
+  const serialCeiling = (BigInt(upstreamSerial) + 1n) * 1_000_000n;
+  const marker = releaseMarker(upstreamTag, fingerprint);
+  const priorVersions = downstreamReleases
+    .flatMap((release) => {
+      const releaseMatch = NIGHTLY_TAG_PATTERN.exec(release?.tag_name ?? "");
+      if (!releaseMatch) return [];
+      const [, releaseMajor, releaseMinor, releasePatch, releaseDate, releaseSerial] = releaseMatch;
+      const serial = BigInt(releaseSerial);
+      if (
+        releaseMajor !== major ||
+        releaseMinor !== minor ||
+        releasePatch !== patch ||
+        releaseDate !== date ||
+        serial < serialFloor ||
+        serial >= serialCeiling
+      ) {
+        return [];
+      }
+      return [{ release, serial, version: release.tag_name.replace(/^v/u, "") }];
+    })
+    .sort((left, right) => (left.serial > right.serial ? -1 : left.serial < right.serial ? 1 : 0));
+
+  const latestVersion = priorVersions[0];
+  if (latestVersion?.release.body?.includes(marker)) return latestVersion.version;
+
   const suffix = (BigInt(`0x${fingerprint.slice(0, 12)}`) % 900_000n) + 100_000n;
-  const serial = BigInt(upstreamSerial) * 1_000_000n + suffix;
+  const deterministicSerial = serialFloor + suffix;
+  const serial =
+    latestVersion && latestVersion.serial >= deterministicSerial
+      ? latestVersion.serial + 1n
+      : deterministicSerial;
+  if (serial >= serialCeiling) {
+    fail(`Custom Nightly version range for ${upstreamTag} is exhausted.`);
+  }
   return `${major}.${minor}.${patch}-nightly.${date}.${serial}`;
 }
 
@@ -259,12 +292,16 @@ export async function resolvePlan(manifest, token, options = {}) {
   }
 
   const fingerprint = fingerprintPlan(upstreamRelease.tag_name, patches);
-  const version = resolveCustomNightlyVersion(upstreamRelease.tag_name, fingerprint);
-  const tag = `v${version}`;
   const downstreamReleases = await githubPaginate(
     `/repos/${manifest.releaseRepository}/releases`,
     token,
   );
+  const version = resolveCustomNightlyVersion(
+    upstreamRelease.tag_name,
+    fingerprint,
+    downstreamReleases,
+  );
+  const tag = `v${version}`;
   const matchingRelease = downstreamReleases.find((release) => release.tag_name === tag);
   if (
     matchingRelease &&
