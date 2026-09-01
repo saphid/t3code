@@ -90,6 +90,20 @@ describe("Downstream Nightly workflow", () => {
     assert.match(workflow, /force_rebuild:/);
     assert.match(workflow, /--force "\$FORCE_REBUILD"/);
   });
+
+  it("builds and verifies an isolated fork updater identity", () => {
+    const workflow = readFileSync(
+      join(process.cwd(), ".github/workflows/downstream-nightly.yml"),
+      "utf8",
+    );
+
+    assert.match(workflow, /T3CODE_DESKTOP_DISTRIBUTION: Fork/);
+    assert.match(workflow, /Verify fork macOS update identity/);
+    assert.match(workflow, /com\.t3tools\.t3code\.fork/);
+    assert.match(workflow, /T3 Code \(Fork Nightly\)\.app/);
+    assert.match(workflow, /packageJson\.name !== "t3code-fork"/);
+    assert.match(workflow, /codesign --verify --deep --strict/);
+  });
 });
 
 describe("Downstream Nightly release selection", () => {

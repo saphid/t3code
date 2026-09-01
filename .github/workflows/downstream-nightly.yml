@@ -356,6 +356,7 @@ jobs:
         shell: bash
         env:
           T3CODE_DESKTOP_UPDATE_REPOSITORY: ${{ needs.prepare.outputs.release_repository }}
+          T3CODE_DESKTOP_DISTRIBUTION: Fork
           T3CODE_DESKTOP_REUSE_RESOURCE_MONITOR: ${{ steps.resource_monitor_cache.outputs.cache-hit == 'true' }}
           CSC_LINK: ${{ secrets.CSC_LINK }}
           CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
@@ -418,6 +419,56 @@ jobs:
           fi
 
           vp run dist:desktop:artifact "${args[@]}"
+
+      - name: Verify fork macOS update identity
+        if: matrix.platform == 'mac'
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          archives=(release/*-${{ matrix.arch }}.zip)
+          if (( ${#archives[@]} != 1 )); then
+            echo "Expected one macOS zip for ${{ matrix.arch }}, found ${#archives[@]}." >&2
+            exit 1
+          fi
+
+          extract_dir="$RUNNER_TEMP/fork-macos-${{ matrix.arch }}"
+          mkdir -p "$extract_dir"
+          ditto -x -k "${archives[0]}" "$extract_dir"
+          app_path="$extract_dir/T3 Code (Fork Nightly).app"
+          plist_path="$app_path/Contents/Info.plist"
+          if [[ ! -f "$plist_path" ]]; then
+            echo "The update archive does not contain T3 Code (Fork Nightly).app." >&2
+            exit 1
+          fi
+
+          bundle_id=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$plist_path")
+          executable=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$plist_path")
+          if [[ "$bundle_id" != "com.t3tools.t3code.fork" ]]; then
+            echo "Unexpected fork bundle identifier: $bundle_id" >&2
+            exit 1
+          fi
+          if [[ "$executable" != "T3 Code (Fork Nightly)" ]]; then
+            echo "Unexpected fork executable name: $executable" >&2
+            exit 1
+          fi
+
+          ASAR_PATH="$app_path/Contents/Resources/app.asar" \
+            vp exec --filter @t3tools/scripts -- node --input-type=module <<'NODE'
+          import { extractFile } from "@electron/asar";
+
+          const packageJson = JSON.parse(
+            extractFile(process.env.ASAR_PATH, "package.json").toString(),
+          );
+          if (packageJson.name !== "t3code-fork") {
+            throw new Error(`Unexpected fork package name: ${String(packageJson.name)}`);
+          }
+          if (packageJson.productName !== "T3 Code (Fork Nightly)") {
+            throw new Error(`Unexpected fork product name: ${String(packageJson.productName)}`);
+          }
+          NODE
+
+          codesign --verify --deep --strict "$app_path"
 
       - name: Collect release assets
         shell: bash
