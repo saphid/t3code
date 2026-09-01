@@ -103,8 +103,8 @@ describe("mergeUsage", () => {
     expect(merged.duplicateSources).toHaveLength(0);
     expect(merged.availableThroughDay).toBe("2026-08-31");
     expect(merged.providerContributions).toEqual([
-      { environmentId: "env-a", providers: ["claude"] },
-      { environmentId: "env-b", providers: ["claude"] },
+      { environmentId: "env-a", contractVersion: USAGE_CONTRACT_VERSION, providers: ["claude"] },
+      { environmentId: "env-b", contractVersion: USAGE_CONTRACT_VERSION, providers: ["claude"] },
     ]);
   });
 
@@ -238,7 +238,7 @@ describe("mergeUsage", () => {
     expect(merged.duplicateSources).toHaveLength(1);
     expect(merged.contributingEnvironments).toEqual(["env-a"]);
     expect(merged.providerContributions).toEqual([
-      { environmentId: "env-a", providers: ["claude"] },
+      { environmentId: "env-a", contractVersion: USAGE_CONTRACT_VERSION, providers: ["claude"] },
     ]);
   });
 
@@ -275,8 +275,8 @@ describe("mergeUsage", () => {
       ),
     ).toEqual({ claude: 1, codex: 1 });
     expect(merged.providerContributions).toEqual([
-      { environmentId: "env-a", providers: ["claude"] },
-      { environmentId: "env-b", providers: ["codex"] },
+      { environmentId: "env-a", contractVersion: USAGE_CONTRACT_VERSION, providers: ["claude"] },
+      { environmentId: "env-b", contractVersion: USAGE_CONTRACT_VERSION, providers: ["codex"] },
     ]);
   });
 

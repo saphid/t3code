@@ -78,6 +78,7 @@ export interface CostQuality {
 
 export interface EnvironmentProviderContribution {
   readonly environmentId: EnvironmentId;
+  readonly contractVersion: number;
   readonly providers: readonly UsageProviderKind[];
 }
 
@@ -453,6 +454,7 @@ export function mergeUsage(
       contributingEnvironments.push(environment.environmentId);
       providerContributions.push({
         environmentId: environment.environmentId,
+        contractVersion: environment.summary.contractVersion,
         providers: [...new Set(buckets.map((bucket) => bucket.provider))].sort(),
       });
     }

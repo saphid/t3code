@@ -36,6 +36,8 @@ export const USAGE_CONTRACT_VERSION = 10 as const;
 export const USAGE_MERGE_COMPATIBLE_SINCE = 4 as const;
 /** First contract version that explicitly distinguishes outside from unknown attribution. */
 export const USAGE_PROJECT_ATTRIBUTION_SINCE = 9 as const;
+/** First contract version that exposes the thread-breakdown RPC. */
+export const USAGE_THREAD_BREAKDOWN_SINCE = 10 as const;
 
 export const UsageProviderKind = Schema.Literals(["claude", "codex", "grok"]);
 export type UsageProviderKind = typeof UsageProviderKind.Type;
