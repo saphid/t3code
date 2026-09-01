@@ -131,7 +131,6 @@ import {
   planPinnedReorder,
   pruneDisabledEnvironmentIds,
   resolveAdjacentThreadId,
-  resolveSidebarProjectMenuLabel,
   resolveSettledTimestamp,
   resolveSidebarThreadStatus,
   searchSidebarThreadsByTitle,
@@ -1949,15 +1948,6 @@ export default function Sidebar() {
     [configuredDisabledEnvironmentIds, connectedEnvironmentIds],
   );
   const isEnvironmentFilterActive = disabledEnvironmentIds.size > 0;
-  const enabledEnvironmentIds = useMemo(
-    () =>
-      new Set(
-        environments
-          .filter((environment) => !disabledEnvironmentIds.has(environment.environmentId))
-          .map((environment) => environment.environmentId),
-      ),
-    [disabledEnvironmentIds, environments],
-  );
   // An environment that leaves the catalog must not keep filtering from
   // beyond the grave: prune it so its threads reappear if it reconnects.
   useEffect(() => {
@@ -3636,25 +3626,32 @@ export default function Sidebar() {
                 </Menu>
                 {environments.length > 1 ? (
                   <Menu>
-                    <MenuTrigger
-                      render={
-                        <SidebarMenuButton
-                          size="icon"
-                          type="button"
-                          aria-label="Filter threads by environment"
-                          className="relative shrink-0 focus-visible:ring-offset-2 focus-visible:ring-offset-sidebar"
-                        />
-                      }
-                    >
-                      <ServerIcon />
-                      {isEnvironmentFilterActive ? (
-                        <span
-                          aria-hidden
-                          data-testid="sidebar-environment-filter-active"
-                          className="absolute right-0.5 top-0.5 size-1.5 rounded-full bg-primary"
-                        />
-                      ) : null}
-                    </MenuTrigger>
+                    <Tooltip>
+                      <TooltipTrigger
+                        render={
+                          <MenuTrigger
+                            render={
+                              <SidebarMenuButton
+                                size="icon"
+                                type="button"
+                                aria-label="Filter threads by environment"
+                                className="relative shrink-0 focus-visible:ring-offset-2 focus-visible:ring-offset-sidebar"
+                              />
+                            }
+                          />
+                        }
+                      >
+                        <ServerIcon />
+                        {isEnvironmentFilterActive ? (
+                          <span
+                            aria-hidden
+                            data-testid="sidebar-environment-filter-active"
+                            className="absolute right-0.5 top-0.5 size-1.5 rounded-full bg-primary"
+                          />
+                        ) : null}
+                      </TooltipTrigger>
+                      <TooltipPopup>Environments</TooltipPopup>
+                    </Tooltip>
                     <MenuPopup align="end" className="w-64 max-w-(--available-width)">
                       <MenuCheckboxItem
                         checked={!isEnvironmentFilterActive}
@@ -3669,6 +3666,8 @@ export default function Sidebar() {
                       </MenuCheckboxItem>
                       {environments.map((environment) => {
                         const isEnabled = !disabledEnvironmentIds.has(environment.environmentId);
+                        const isLastEnabled =
+                          isEnabled && environments.length - disabledEnvironmentIds.size === 1;
                         return (
                           <MenuCheckboxItem
                             key={environment.environmentId}
@@ -3678,8 +3677,11 @@ export default function Sidebar() {
                             // data loss); disabling the item communicates the
                             // at-least-one constraint instead of a checkbox
                             // that silently snaps back.
-                            disabled={
-                              isEnabled && environments.length - disabledEnvironmentIds.size === 1
+                            disabled={isLastEnabled}
+                            title={
+                              isLastEnabled
+                                ? "At least one environment must remain selected"
+                                : undefined
                             }
                             onCheckedChange={(checked) =>
                               handleToggleEnvironment(environment.environmentId, checked)
@@ -3687,8 +3689,10 @@ export default function Sidebar() {
                             className={cn(
                               "[&>span:last-child]:min-w-0",
                               isEnabled
-                                ? "text-foreground data-disabled:opacity-100"
-                                : "text-muted-foreground",
+                                ? "text-foreground data-highlighted:text-foreground"
+                                : "text-muted-foreground data-highlighted:text-muted-foreground",
+                              isLastEnabled &&
+                                "data-disabled:pointer-events-auto data-disabled:bg-accent/40 data-disabled:opacity-100",
                             )}
                           >
                             <span className="flex min-w-0 flex-col">
