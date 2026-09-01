@@ -7,6 +7,7 @@ import {
   getSidebarThreadIdsToPrewarm,
   getVisibleSidebarThreadIds,
   pruneDisabledEnvironmentIds,
+  resolveSidebarProjectMenuLabel,
   resolveAdjacentThreadId,
   getFallbackThreadIdAfterDelete,
   getVisibleThreadsForProject,
@@ -1750,13 +1751,15 @@ describe("pruneDisabledEnvironmentIds", () => {
     ).toBe(current);
   });
 
-  it("resets to all-enabled when a catalog change leaves nothing enabled", () => {
+  it("returns all-enabled for the render where the last enabled environment disconnects", () => {
     // envB (the only enabled environment) disconnected; keeping envA disabled
     // would hide every thread while the filter button no longer renders.
+    const current = new Set<EnvironmentId>([envA]);
     const next = pruneDisabledEnvironmentIds({
-      disabledIds: new Set([envA]),
+      disabledIds: current,
       connectedEnvironmentIds: new Set([envA]),
     });
+    expect(next).not.toBe(current);
     expect(next.size).toBe(0);
   });
 
@@ -1766,5 +1769,44 @@ describe("pruneDisabledEnvironmentIds", () => {
       connectedEnvironmentIds: new Set(),
     });
     expect(next.size).toBe(0);
+  });
+});
+
+describe("resolveSidebarProjectMenuLabel", () => {
+  const envA = EnvironmentId.make("env-a");
+  const envB = EnvironmentId.make("env-b");
+  const memberProjects = [
+    { environmentId: envA, title: "Project on A" },
+    { environmentId: envB, title: "Project on B" },
+  ];
+
+  it("keeps the cross-environment label when multiple environments are enabled", () => {
+    expect(
+      resolveSidebarProjectMenuLabel({
+        displayName: "Shared project",
+        memberProjects,
+        enabledEnvironmentIds: new Set([envA, envB]),
+      }),
+    ).toBe("Shared project");
+  });
+
+  it("uses the physical project title when one environment is enabled", () => {
+    expect(
+      resolveSidebarProjectMenuLabel({
+        displayName: "Shared project",
+        memberProjects,
+        enabledEnvironmentIds: new Set([envB]),
+      }),
+    ).toBe("Project on B");
+  });
+
+  it("falls back to the display name while an environment catalog update settles", () => {
+    expect(
+      resolveSidebarProjectMenuLabel({
+        displayName: "Shared project",
+        memberProjects,
+        enabledEnvironmentIds: new Set([EnvironmentId.make("env-c")]),
+      }),
+    ).toBe("Shared project");
   });
 });
