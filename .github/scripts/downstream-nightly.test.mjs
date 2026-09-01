@@ -64,6 +64,22 @@ describe("Downstream Nightly manifest", () => {
   });
 });
 
+describe("Downstream Nightly workflow", () => {
+  it("excludes vendored repositories from the upstream source checkout", () => {
+    const workflow = readFileSync(
+      join(process.cwd(), ".github/workflows/downstream-nightly.yml"),
+      "utf8",
+    );
+    const checkoutStart = workflow.indexOf("      - name: Checkout exact upstream Nightly\n");
+    const checkoutEnd = workflow.indexOf("\n      - ", checkoutStart + 1);
+    const checkout = workflow.slice(checkoutStart, checkoutEnd);
+
+    assert.notEqual(checkoutStart, -1);
+    assert.match(checkout, /sparse-checkout: \|\n\s+\/\*\s*\n\s+!\/\.repos\//);
+    assert.match(checkout, /sparse-checkout-cone-mode: false/);
+  });
+});
+
 describe("Downstream Nightly release selection", () => {
   it("selects the newest published upstream prerelease with a Nightly tag", () => {
     const selected = selectLatestNightlyRelease([

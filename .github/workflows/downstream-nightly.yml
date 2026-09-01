@@ -95,6 +95,10 @@ jobs:
           ref: ${{ steps.plan.outputs.upstream_tag }}
           fetch-depth: 0
           persist-credentials: false
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
           path: source
 
       - id: apply
