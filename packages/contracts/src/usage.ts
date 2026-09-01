@@ -14,22 +14,22 @@
  */
 import * as Schema from "effect/Schema";
 
-import { NonNegativeInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { NonNegativeInt, ProjectId, TrimmedNonEmptyString } from "./baseSchemas.ts";
 
 /**
  * Bumped whenever the shape of {@link UsageSummary} changes incompatibly. The
  * client renders partial coverage when an environment reports an older version
  * rather than failing the whole page.
  */
-export const USAGE_CONTRACT_VERSION = 7 as const;
+export const USAGE_CONTRACT_VERSION = 8 as const;
 
 /**
  * Oldest {@link UsageSummary} version a current client will still merge.
  *
- * v6 adds explicit coverage metadata; v7 adds the optional bucket `project`.
- * v4/v5 summaries remain decodable for mixed-version clients, but summaries
- * without coverage are not merged because the client cannot treat them as
- * bounded snapshots.
+ * v6 adds explicit coverage metadata, v7 adds the optional bucket `project`,
+ * and v8 adds its optional stable `projectId`. v4/v5 summaries remain
+ * decodable for mixed-version clients, but summaries without coverage are not
+ * merged because the client cannot treat them as bounded snapshots.
  */
 export const USAGE_MERGE_COMPATIBLE_SINCE = 4 as const;
 
@@ -101,6 +101,8 @@ export const UsageBucket = Schema.Struct({
    * predating this field).
    */
   project: Schema.optional(TrimmedNonEmptyString),
+  /** Stable identity for `project`; absent on summaries from pre-v7 servers. */
+  projectId: Schema.optional(ProjectId),
   provider: UsageProviderKind,
   model: TrimmedNonEmptyString,
   totals: UsageTokenTotals,
