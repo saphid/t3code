@@ -65,7 +65,8 @@ node --input-type=module -e 'import fs from "node:fs"; import { parseManifest } 
 Inspect the final diff and use `git diff --check`. Commit and push through a
 reviewable branch. Before activation, replay the complete ordered manifest on
 the exact upstream Nightly tag and run focused tests and typechecks on the
-assembled tree. Merge the manifest change to fork `main` to activate it,
+assembled tree. Run the repository formatter on every file resolved manually
+during that replay. Merge the manifest change to fork `main` to activate it,
 then dispatch `downstream-nightly.yml` or wait for its schedule. Use Bugler for
 bounded waits instead of polling when a webhook event can signal completion.
 
