@@ -307,7 +307,9 @@ const ComposerContextLimitPill = memo(function ComposerContextLimitPill(props: {
       entering={FadeInDown.duration(180)}
       exiting={FadeOutDown.duration(140)}
     >
-      <SymbolView name="exclamationmark.triangle" size={15} tintColor="#f59e0b" type="monochrome" />
+      <View className="h-4 w-4 items-center justify-center rounded-full bg-amber-500">
+        <Text className="text-xs font-t3-bold leading-none text-white">!</Text>
+      </View>
       <Text className="text-sm font-t3-bold leading-snug text-foreground">
         Context limit reached
       </Text>
