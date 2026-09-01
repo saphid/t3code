@@ -32,7 +32,16 @@ function record(overrides: Partial<UsageRecord> = {}): UsageRecord {
 function cacheWith(entries: readonly [string, number, readonly UsageRecord[]][]): ScanCache {
   const cache: ScanCache = new Map();
   for (const [path, mtimeMs, records] of entries) {
-    cache.set(path, { size: records.length * 10, mtimeMs, provider: "claude", records });
+    cache.set(path, {
+      size: records.length * 10,
+      mtimeMs,
+      mtimeNs: `${mtimeMs}000000`,
+      device: "1",
+      inode: path,
+      fingerprint: `sha256:${path}`,
+      provider: "claude",
+      records,
+    });
   }
   return cache;
 }
@@ -46,6 +55,10 @@ describe("scan cache round trip", () => {
     original.set("/grok.jsonl", {
       size: 40,
       mtimeMs: 300,
+      mtimeNs: "300000000",
+      device: "1",
+      inode: "grok",
+      fingerprint: "sha256:grok",
       provider: "grok",
       records: [
         record({ provider: "grok", model: "grok-4.5-build", dedupeKey: "s:p:grok-4.5-build" }),

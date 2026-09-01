@@ -6,8 +6,9 @@
  * turns driven outside T3 Code too. This is the approach `ccusage` takes.
  *
  * Transcripts are append-only, so parsed records are memoised per file by
- * `(size, mtime)`. A cold 30-day scan of ~1.4 GB lands around 2-3 seconds; warm
- * scans only reparse files that changed.
+ * filesystem identity, nanosecond mtime, size, and a sampled content hash. A
+ * cold 30-day scan of ~1.4 GB lands around 2-3 seconds; warm scans only reparse
+ * files that changed.
  *
  * @module UsageService
  */
@@ -35,8 +36,10 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
+import * as Semaphore from "effect/Semaphore";
 import { HttpClient, HttpClientResponse } from "effect/unstable/http";
 
+import { writeFileStringAtomically } from "../atomicWrite.ts";
 import { ServerConfig } from "../config.ts";
 import { expandHomePath } from "../pathExpansion.ts";
 import { ProjectionProjectRepository } from "../persistence/Services/ProjectionProjects.ts";
@@ -50,8 +53,10 @@ import { parseRateTable, type RateTable } from "./usagePricing.ts";
 import {
   listTranscriptFiles,
   readDirectoryVolumeId,
+  readTranscriptFingerprint,
   readTranscriptRecords,
   readTranscriptTitle,
+  type TranscriptFile,
 } from "./usageTranscriptReader.ts";
 import { foldThreadRows, ThreadUsageAccumulator, type ThreadRef } from "./usageThreads.ts";
 import {
@@ -84,6 +89,7 @@ const CACHE_RETENTION_DAYS = 90;
  * of sessions; lower-cost rows fold into provider/project remainders.
  */
 const THREAD_ROW_CAP = 40;
+const FINGERPRINT_CONCURRENCY = 32;
 
 /** On-disk shape of the rate snapshot. */
 const RatesCacheFile = Schema.Struct({
@@ -159,6 +165,7 @@ export const make = Effect.gen(function* () {
 
   const fileCache: ScanCache = new Map();
   let cacheDirty = false;
+  const scanSemaphore = yield* Semaphore.make(1);
 
   const ratesCachePath = path.join(config.stateDir, "usage-model-rates.json");
   const scanCachePath = path.join(config.stateDir, "usage-scan-cache.json");
@@ -314,7 +321,12 @@ export const make = Effect.gen(function* () {
     // Cleared only after the write lands, so a failed persist is retried on
     // the next scan instead of leaving disk permanently stale.
     yield* encodeScanCacheFile(encodeScanCache(fileCache)).pipe(
-      Effect.flatMap((serialized) => fileSystem.writeFileString(scanCachePath, serialized)),
+      Effect.flatMap((serialized) =>
+        writeFileStringAtomically({ filePath: scanCachePath, contents: serialized }).pipe(
+          Effect.provideService(FileSystem.FileSystem, fileSystem),
+          Effect.provideService(Path.Path, path),
+        ),
+      ),
       Effect.map(() => {
         cacheDirty = false;
       }),
@@ -325,25 +337,31 @@ export const make = Effect.gen(function* () {
 
   /** Parses one transcript, reusing the cached result when it is unchanged. */
   const readFileRecords = (
-    filePath: string,
-    size: number,
-    mtimeMs: number,
+    file: TranscriptFile,
+    fingerprint: string | null,
     provider: UsageProviderKind,
   ): Effect.Effect<readonly UsageRecord[]> =>
     Effect.gen(function* () {
-      const cached = fileCache.get(filePath);
+      if (fingerprint === null) return [];
+
+      const cached = fileCache.get(file.path);
       // Provider is part of the identity: if both providers were ever pointed
       // at one directory, a hit parsed by the other parser must not be reused.
       if (
         cached &&
-        cached.size === size &&
-        cached.mtimeMs === mtimeMs &&
+        cached.size === file.size &&
+        cached.mtimeNs === file.mtimeNs &&
+        cached.device === file.device &&
+        cached.inode === file.inode &&
+        cached.fingerprint === fingerprint &&
         cached.provider === provider
       ) {
         return cached.records;
       }
 
-      const parsed = yield* Effect.promise(() => readTranscriptRecords(filePath, provider));
+      const parsed = yield* Effect.promise(() =>
+        readTranscriptRecords(file.path, provider, file.size),
+      );
       // A read failure is not an empty transcript: caching it under this
       // (size, mtime) would silently drop the file's usage until it changes.
       if (parsed === null) return [];
@@ -351,12 +369,31 @@ export const make = Effect.gen(function* () {
       // duplicates. The aggregator still runs the cross-file dedupe pass.
       const records = dedupeWithinFile(parsed);
 
-      fileCache.set(filePath, { size, mtimeMs, provider, records });
+      fileCache.set(file.path, {
+        size: file.size,
+        mtimeMs: file.mtimeMs,
+        mtimeNs: file.mtimeNs,
+        device: file.device,
+        inode: file.inode,
+        fingerprint,
+        provider,
+        records,
+      });
       cacheDirty = true;
       return records;
     });
 
-  const readSummary = Effect.fn("UsageService.readSummary")(function* (input: UsageSummaryInput) {
+  /** Samples warm candidates concurrently while retaining the sorted file order. */
+  const fingerprintFiles = (files: readonly TranscriptFile[]) =>
+    Effect.forEach(
+      files,
+      (file) => Effect.promise(() => readTranscriptFingerprint(file.path, file.size)),
+      { concurrency: FINGERPRINT_CONCURRENCY },
+    );
+
+  const readSummaryUnlocked = Effect.fn("UsageService.readSummary")(function* (
+    input: UsageSummaryInput,
+  ) {
     if (input.sinceDay > input.untilDay) {
       return yield* new UsageReadError({
         reason: "invalidWindow",
@@ -412,6 +449,7 @@ export const make = Effect.gen(function* () {
       untilDay: input.untilDay,
       resolution: input.resolution ?? "day",
       ...hourlyWindow,
+      cutoffTimeMs: startedAtMs,
       rates,
       resolveProject: yield* resolveProjects(),
     });
@@ -443,15 +481,16 @@ export const make = Effect.gen(function* () {
       const files = yield* Effect.promise(() =>
         listTranscriptFiles(dir, windowStartMs, fileName === undefined ? undefined : { fileName }),
       );
+      const fingerprints = yield* fingerprintFiles(files);
       let scannedFiles = 0;
       let skippedFiles = 0;
       // Distinct per directory. Buckets carry per-cell session counts, but a
       // session spans days and models, so clients total this figure instead.
       const sessionIds = new Set<string>();
 
-      for (const file of files) {
+      for (const [index, file] of files.entries()) {
         livePaths.add(file.path);
-        const records = yield* readFileRecords(file.path, file.size, file.mtimeMs, provider);
+        const records = yield* readFileRecords(file, fingerprints[index] ?? null, provider);
         if (records.length === 0) {
           skippedFiles += 1;
           continue;
@@ -487,12 +526,11 @@ export const make = Effect.gen(function* () {
     yield* persistScanCache();
 
     const aggregated = aggregator.finish();
-    const readAt = yield* DateTime.now;
     const finishedAtMs = yield* Clock.currentTimeMillis;
 
     return {
       contractVersion: USAGE_CONTRACT_VERSION,
-      readAt: DateTime.formatIso(readAt),
+      readAt: DateTime.formatIso(DateTime.makeUnsafe(startedAtMs)),
       timeZone: input.timeZone,
       sinceDay: input.sinceDay,
       untilDay: input.untilDay,
@@ -574,7 +612,7 @@ export const make = Effect.gen(function* () {
     return { sessionToThread, worktreeToThread };
   });
 
-  const readThreadBreakdown = Effect.fn("UsageService.readThreadBreakdown")(function* (
+  const readThreadBreakdownUnlocked = Effect.fn("UsageService.readThreadBreakdown")(function* (
     input: UsageThreadBreakdownInput,
   ) {
     if (input.sinceDay > input.untilDay) {
@@ -602,6 +640,7 @@ export const make = Effect.gen(function* () {
       timeZone: input.timeZone,
       sinceDay: input.sinceDay,
       untilDay: input.untilDay,
+      cutoffTimeMs: startedAtMs,
       rates,
       resolveProject: yield* resolveProjects(),
     });
@@ -622,8 +661,9 @@ export const make = Effect.gen(function* () {
       const files = yield* Effect.promise(() =>
         listTranscriptFiles(dir, windowStartMs, fileName === undefined ? undefined : { fileName }),
       );
-      for (const file of files) {
-        const records = yield* readFileRecords(file.path, file.size, file.mtimeMs, provider);
+      const fingerprints = yield* fingerprintFiles(files);
+      for (const [index, file] of files.entries()) {
+        const records = yield* readFileRecords(file, fingerprints[index] ?? null, provider);
         if (records.length === 0) continue;
         const isSubagent =
           provider === "claude" && path.basename(path.dirname(file.path)) === "subagents";
@@ -641,6 +681,8 @@ export const make = Effect.gen(function* () {
         }
       }
     }
+
+    yield* persistScanCache();
 
     const attribution = yield* loadThreadAttribution();
     const folded = foldThreadRows(accumulator.finish(), attribution, {
@@ -665,11 +707,10 @@ export const make = Effect.gen(function* () {
       { concurrency: 8 },
     );
 
-    const readAt = yield* DateTime.now;
     const finishedAtMs = yield* Clock.currentTimeMillis;
     return {
       contractVersion: USAGE_CONTRACT_VERSION,
-      readAt: DateTime.formatIso(readAt),
+      readAt: DateTime.formatIso(DateTime.makeUnsafe(startedAtMs)),
       sinceDay: input.sinceDay,
       untilDay: input.untilDay,
       rows,
@@ -677,6 +718,14 @@ export const make = Effect.gen(function* () {
       scanDurationMs: Math.max(0, finishedAtMs - startedAtMs),
     } satisfies UsageThreadBreakdown;
   });
+
+  // Summary and thread scans share one mutable per-file cache. Serialising them
+  // also folds a burst of page requests into warm follow-up reads rather than
+  // racing two cold parses and two cache writes.
+  const readSummary = (input: UsageSummaryInput) =>
+    scanSemaphore.withPermits(1)(readSummaryUnlocked(input));
+  const readThreadBreakdown = (input: UsageThreadBreakdownInput) =>
+    scanSemaphore.withPermits(1)(readThreadBreakdownUnlocked(input));
 
   return { readSummary, readThreadBreakdown } as const;
 });
