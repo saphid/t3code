@@ -24,6 +24,6 @@ Select the Nightly update track and set Custom release source to `saphid/t3code`
 
 The workflow uses GitHub-hosted runners and the repository `GITHUB_TOKEN`. It publishes desktop assets only. It does not publish the `t3` CLI package to npm, deploy the web app, or update AUR.
 
-Unsigned builds are produced when signing settings are absent. For normal macOS and Windows auto-updates, configure the same signing secret and variable names used by the upstream release workflow. A custom build signed by a different identity cannot replace an installed upstream-signed app through the normal updater. Install the first fork build manually, then keep the fork signing identity stable.
+When Apple signing settings are absent, macOS artifacts receive a valid ad hoc signature and Windows artifacts remain unsigned. For normal signed macOS and Windows auto-updates, configure the same signing secret and variable names used by the upstream release workflow. A custom build signed by a different identity cannot replace an installed upstream-signed app through the normal updater. Install the first fork build manually, then keep the fork signing identity stable.
 
 The generated source is pushed to `automation/downstream-nightly`. The GitHub release points at that exact commit and its body records the upstream tag, resolved patch SHAs, and stack fingerprint.
