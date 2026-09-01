@@ -27,6 +27,8 @@ truth.
 - Use `pull_request` when the complete ordered commit series from a GitHub PR is
   required. Record the repository, PR number, and current full `headSha`.
 - Use `commit` for one immutable commit. Record the repository and full SHA.
+  When a patch overlaps an earlier stack entry, prepare one compatibility
+  commit on top of the exact accumulated stack and pin that commit.
 - Use `ref` only when the pinned tip commit contains the complete patch. Record
   the repository, ref name, and full `expectedSha`.
 
@@ -40,11 +42,15 @@ shorthand for a multi-commit branch. Publish or refresh a PR and use
    first.
 2. Resolve every pin to a 40-character SHA through GitHub. Do not silently
    follow a moved PR head or ref.
-3. Refresh stale branches onto the current fork base if the patch conflicts
-   with current Nightly. Preserve current upstream UI and composer behavior.
-4. Avoid draft, media, evidence, and generated branches unless the user asks
+3. Reproduce the exact published upstream Nightly tag and replay all preceding
+   manifest entries before refreshing a conflicting patch. Do not assume fork
+   `main` has the same source shape as the selected Nightly stack.
+4. Preserve current upstream UI and composer behavior while resolving overlap.
+   Prefer a single stack-compatible commit when a source PR's internal commit
+   boundaries conflict even though its final feature is compatible.
+5. Avoid draft, media, evidence, and generated branches unless the user asks
    for them explicitly.
-5. Edit only the manifest and any directly related tests or documentation.
+6. Edit only the manifest and any directly related tests or documentation.
    Never edit `automation/downstream-nightly` by hand.
 
 ## Verify and activate
@@ -57,7 +63,9 @@ node --input-type=module -e 'import fs from "node:fs"; import { parseManifest } 
 ```
 
 Inspect the final diff and use `git diff --check`. Commit and push through a
-reviewable branch. Merge the manifest change to fork `main` to activate it,
+reviewable branch. Before activation, replay the complete ordered manifest on
+the exact upstream Nightly tag and run focused tests and typechecks on the
+assembled tree. Merge the manifest change to fork `main` to activate it,
 then dispatch `downstream-nightly.yml` or wait for its schedule. Use Bugler for
 bounded waits instead of polling when a webhook event can signal completion.
 
