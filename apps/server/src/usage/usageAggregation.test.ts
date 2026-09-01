@@ -190,9 +190,9 @@ describe("UsageAggregator", () => {
     expect(result.buckets[0]?.cacheWriteUsd).toBeCloseTo(1.25e-4, 12);
   });
 
-  it("reports zero cache-write cost for unpriced models and write-free usage", () => {
+  it("distinguishes unavailable cache-write cost from write-free usage", () => {
     const unpriced = aggregate([record({ model: "kimi-k3" })]);
-    expect(unpriced.buckets[0]?.cacheWriteUsd).toBe(0);
+    expect(unpriced.buckets[0]?.cacheWriteUsd).toBeUndefined();
 
     const writeFree = aggregate([
       record({
@@ -222,6 +222,7 @@ describe("UsageAggregator", () => {
 
     expect(result.buckets[0]?.costUsd).toBe(1.25);
     expect(result.buckets[0]?.costSource).toBe("providerReported");
+    expect(result.buckets[0]?.cacheWriteUsd).toBeUndefined();
   });
 
   it("keeps cache savings for provider-reported aggregate cells", () => {

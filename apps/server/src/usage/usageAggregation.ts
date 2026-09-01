@@ -115,6 +115,7 @@ interface MutableBucket {
   costUsd: number;
   cacheSavingsUsd: number;
   cacheWriteUsd: number;
+  cacheWriteComplete: boolean;
   records: number;
   unpricedRecords: number;
   providerReportedRecords: number;
@@ -240,6 +241,7 @@ export class UsageAggregator {
         costUsd: 0,
         cacheSavingsUsd: 0,
         cacheWriteUsd: 0,
+        cacheWriteComplete: true,
         records: 0,
         unpricedRecords: 0,
         providerReportedRecords: 0,
@@ -258,7 +260,11 @@ export class UsageAggregator {
     bucket.totals = addTotals(bucket.totals, record.totals);
     bucket.costUsd += priced.costUsd;
     bucket.cacheSavingsUsd += cacheSavingsUsd(this.#options.rates, record.model, record.totals);
-    bucket.cacheWriteUsd += cacheWriteUsd(this.#options.rates, record.model, record.totals);
+    if (priced.costSource === "modelPriced") {
+      bucket.cacheWriteUsd += cacheWriteUsd(this.#options.rates, record.model, record.totals);
+    } else if (record.totals.cacheCreationTokens > 0) {
+      bucket.cacheWriteComplete = false;
+    }
     bucket.records += 1;
     if (priced.costSource === "unpriced") bucket.unpricedRecords += 1;
     if (priced.costSource === "providerReported") bucket.providerReportedRecords += 1;
@@ -372,7 +378,7 @@ export class UsageAggregator {
         totals: bucket.totals,
         costUsd: bucket.costUsd,
         cacheSavingsUsd: bucket.cacheSavingsUsd,
-        cacheWriteUsd: bucket.cacheWriteUsd,
+        ...(bucket.cacheWriteComplete ? { cacheWriteUsd: bucket.cacheWriteUsd } : {}),
         costSource: resolveCostSource(bucket),
         records: bucket.records,
         unpricedRecords: bucket.unpricedRecords,
