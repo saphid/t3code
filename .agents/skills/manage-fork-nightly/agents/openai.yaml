@@ -1,0 +1,4 @@
+interface:
+  display_name: "Manage fork Nightly"
+  short_description: "Maintain the downstream Nightly patch stack"
+  default_prompt: "Add this PR, commit, or branch to the fork Nightly stack and verify it."
