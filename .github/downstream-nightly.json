@@ -1,0 +1,24 @@
+{
+  "upstreamRepository": "pingdotgg/t3code",
+  "releaseRepository": "saphid/t3code",
+  "generatedBranch": "automation/downstream-nightly",
+  "patches": [
+    {
+      "type": "commit",
+      "repository": "saphid/t3code",
+      "sha": "ee16efeab47b8f62d28465afcd90402bfdec9961"
+    },
+    {
+      "type": "pull_request",
+      "repository": "pingdotgg/t3code",
+      "number": 8857,
+      "headSha": "9fd45859aa5c8d8839855697f4c779f26075f5c9"
+    },
+    {
+      "type": "pull_request",
+      "repository": "pingdotgg/t3code",
+      "number": 8976,
+      "headSha": "a3eaa16d32bd154f5d5fcce89bd607d1bbf4a81d"
+    }
+  ]
+}
