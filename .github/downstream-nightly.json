@@ -17,7 +17,7 @@
       "type": "pull_request",
       "repository": "pingdotgg/t3code",
       "number": 8857,
-      "headSha": "7b6d207c50fe9f68bafd871a92d7b0b708056769"
+      "headSha": "bb8eab3217659643dad66ec47f3888ae73409184"
     },
     {
       "type": "pull_request",
@@ -26,10 +26,9 @@
       "headSha": "b3f6d4a3a5c02d688a140d780aa648a3d217913d"
     },
     {
-      "type": "pull_request",
+      "type": "commit",
       "repository": "saphid/t3code",
-      "number": 22,
-      "headSha": "8b586beba3181e936669674f70d8ac8a0adf35d7"
+      "sha": "d0d13a8191d7800fbafdb802bffbe47a8ebc0321"
     }
   ]
 }
