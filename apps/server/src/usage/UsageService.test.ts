@@ -24,6 +24,8 @@ import * as TestClock from "effect/testing/TestClock";
 import { HttpClient, HttpClientResponse } from "effect/unstable/http";
 
 import * as ServerConfig from "../config.ts";
+import { ProjectionProjectRepositoryLive } from "../persistence/Layers/ProjectionProjects.ts";
+import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as UsageService from "./UsageService.ts";
 
@@ -109,6 +111,12 @@ const serviceLayers = (input: {
     ),
     Layer.provideMerge(
       Layer.succeed(HostProcessEnvironment, { GROK_HOME: NodePath.join(input.home, "grok") }),
+    ),
+    Layer.provideMerge(
+      Layer.mergeAll(
+        ProjectionProjectRepositoryLive.pipe(Layer.provideMerge(SqlitePersistenceMemory)),
+        SqlitePersistenceMemory,
+      ),
     ),
   );
 
