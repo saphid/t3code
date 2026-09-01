@@ -10,6 +10,11 @@ Current repository policy and current maintainer direction outrank this skill.
 
 ## Establish the live state
 
+For a self-contained assessment that explicitly supplies the relevant facts,
+answer from those facts and label them as supplied rather than reaching for
+tools. Inspect live state when planning or acting on a real checkout, issue, or
+pull request, or when a missing fact would change the decision.
+
 Before planning or changing code:
 
 1. Resolve the checkout, branch, dirty state, remotes, target branch, linked
