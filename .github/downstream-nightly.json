@@ -12,13 +12,13 @@
       "type": "pull_request",
       "repository": "pingdotgg/t3code",
       "number": 8857,
-      "headSha": "b5725d4297dd3e763182c957e0cb3aff508a5029"
+      "headSha": "9fd45859aa5c8d8839855697f4c779f26075f5c9"
     },
     {
       "type": "pull_request",
       "repository": "pingdotgg/t3code",
       "number": 8976,
-      "headSha": "b361eaeddaf737c404f763ea8baa41418b757b12"
+      "headSha": "a3eaa16d32bd154f5d5fcce89bd607d1bbf4a81d"
     }
   ]
 }
