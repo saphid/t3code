@@ -6,7 +6,7 @@
     {
       "type": "commit",
       "repository": "saphid/t3code",
-      "sha": "ee16efeab47b8f62d28465afcd90402bfdec9961"
+      "sha": "413106d2c7844051a1ba6232611567031572336f"
     },
     {
       "type": "commit",
@@ -23,7 +23,7 @@
       "type": "pull_request",
       "repository": "pingdotgg/t3code",
       "number": 8976,
-      "headSha": "abadc9c553b5124ac784839c906fd5960f125e93"
+      "headSha": "21cf6edeb868a0dd11602729dce63c9940d0f547"
     },
     {
       "type": "commit",
