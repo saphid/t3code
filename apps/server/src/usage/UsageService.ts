@@ -857,7 +857,6 @@ export const make = Effect.gen(function* () {
       Effect.catchCause(() => Effect.void),
     );
   });
-
   /**
    * Parses one transcript, reusing the cached result when it is unchanged.
    *
@@ -1163,7 +1162,7 @@ export const make = Effect.gen(function* () {
       windowStartMs,
       retentionCutoffMs: startedAtMs - CACHE_RETENTION_DAYS * 24 * 60 * 60 * 1000,
     });
-    if (pruned > 0) cacheDirty = true;
+    if (pruned > 0) cacheRevision += 1;
     yield* persistScanCache();
 
     const aggregated = aggregator.finish();
@@ -1727,7 +1726,7 @@ export const make = Effect.gen(function* () {
       windowStartMs,
       retentionCutoffMs: startedAtMs - CACHE_RETENTION_DAYS * 24 * 60 * 60 * 1000,
     });
-    if (pruned > 0) cacheDirty = true;
+    if (pruned > 0) cacheRevision += 1;
     // A thread-only client must warm and bound the same durable cache as the
     // summary RPC, otherwise restarts repeat parsing and stale entries grow.
     yield* persistScanCache();
