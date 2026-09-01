@@ -137,14 +137,14 @@
   },
   "repoOwnedSpecialists": [
     ".agents/skills/ios-build-hygiene/SKILL.md",
-    ".agents/skills/share-video-evidence/SKILL.md"
+    ".agents/skills/share-video-evidence/SKILL.md",
+    ".agents/skills/t3code-land-contribution/SKILL.md",
+    ".agents/skills/babysit-pr/SKILL.md"
   ],
   "protectedExternalSpecialists": [
     "swiftui-pro",
     "swift-testing-pro",
-    "swift-concurrency-pro",
-    "t3code-land-contribution",
-    "babysit-pr"
+    "swift-concurrency-pro"
   ],
   "flowPolicy": {
     "model": "Stations have WIP limits; buffers between stations are unbounded.",

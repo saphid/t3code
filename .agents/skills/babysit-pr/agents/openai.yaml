@@ -1,0 +1,4 @@
+interface:
+  display_name: "Babysit PR"
+  short_description: "Shepherd a PR until it is merge-ready"
+  default_prompt: "Use $babysit-pr to shepherd this pull request until it is merge-ready."

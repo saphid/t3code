@@ -39,9 +39,10 @@ the final two small historical archives at the dated archive root.
 ## Intentionally not touched
 
 - The current worktree and its parent repository.
-- Shared/upstream `swiftui-pro`, `swift-testing-pro`,
-  `swift-concurrency-pro`, `t3code`, `start-t3-issue`, and
-  `t3code-land-contribution` skills.
+- Shared/upstream `swiftui-pro`, `swift-testing-pro`, and
+  `swift-concurrency-pro` skills, plus personal-only `t3code` and retired
+  `start-t3-issue` skills. The T3 contribution and PR-monitoring skills are now
+  vendored with the delivery package.
 - Other T3 Code projects that did not identify themselves as native SwiftUI
   delivery checkouts in the scoped inventory.
 

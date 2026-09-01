@@ -13,7 +13,9 @@ tar -czf "$OUT" -C "$REPO_ROOT" \
   .agents/skills/swiftui-feature-work \
   .agents/skills/swiftui-deliver \
   .agents/skills/ios-build-hygiene \
-  .agents/skills/share-video-evidence
+  .agents/skills/share-video-evidence \
+  .agents/skills/babysit-pr \
+  .agents/skills/t3code-land-contribution
 rc=$?
 if [ "$rc" -eq 0 ]; then
   echo "bundle: $OUT ($(du -h "$OUT" | cut -f1)) @ $HEAD"
