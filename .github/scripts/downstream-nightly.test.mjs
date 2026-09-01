@@ -99,9 +99,9 @@ describe("Downstream Nightly workflow", () => {
 
     assert.match(workflow, /T3CODE_DESKTOP_DISTRIBUTION: Fork/);
     assert.match(workflow, /Verify fork macOS update identity/);
-    assert.match(workflow, /com\.t3tools\.t3code\.fork/);
+    assert.match(workflow, /com\.t3tools\.t3code\.fork-466f726b/);
     assert.match(workflow, /T3 Code \(Fork Nightly\)\.app/);
-    assert.match(workflow, /packageJson\.name !== "t3code-fork"/);
+    assert.match(workflow, /packageJson\.name !== "t3code-fork-466f726b"/);
     assert.match(workflow, /codesign --verify --deep --strict/);
   });
 });
