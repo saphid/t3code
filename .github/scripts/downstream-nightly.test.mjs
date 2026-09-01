@@ -65,7 +65,7 @@ describe("Downstream Nightly manifest", () => {
 });
 
 describe("Downstream Nightly workflow", () => {
-  it("excludes vendored repositories from the upstream source checkout", () => {
+  it("fetches public upstream source without checkout action credential cleanup", () => {
     const workflow = readFileSync(
       join(process.cwd(), ".github/workflows/downstream-nightly.yml"),
       "utf8",
@@ -75,8 +75,10 @@ describe("Downstream Nightly workflow", () => {
     const checkout = workflow.slice(checkoutStart, checkoutEnd);
 
     assert.notEqual(checkoutStart, -1);
-    assert.match(checkout, /sparse-checkout: \|\n\s+\/\*\s*\n\s+!\/\.repos\//);
-    assert.match(checkout, /sparse-checkout-cone-mode: false/);
+    assert.doesNotMatch(checkout, /uses: actions\/checkout/);
+    assert.match(checkout, /git -C source fetch --no-tags --depth=1 upstream/);
+    assert.match(checkout, /git -C source sparse-checkout set --no-cone/);
+    assert.match(checkout, /!\/\.repos\//);
   });
 });
 
