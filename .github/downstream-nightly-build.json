@@ -1,0 +1,36 @@
+{
+  "upstreamRepository": "pingdotgg/t3code",
+  "upstreamTag": "v0.0.38-nightly.20260901.1243",
+  "upstreamUrl": "https://github.com/pingdotgg/t3code/releases/tag/v0.0.38-nightly.20260901.1243",
+  "releaseRepository": "saphid/t3code",
+  "fingerprint": "869803d8a916eb84240c54892249dd80f4d67bacb1cedf4e042ace789d8aa78e",
+  "version": "0.0.38-nightly.20260901.1243581686",
+  "tag": "v0.0.38-nightly.20260901.1243581686",
+  "patches": [
+    {
+      "label": "saphid/t3code@ee16efeab47b",
+      "commits": ["ee16efeab47b8f62d28465afcd90402bfdec9961"]
+    },
+    {
+      "label": "saphid/t3code@7583790eba13",
+      "commits": ["7583790eba13c2191610ad5bbaf9ed748d499f5c"]
+    },
+    {
+      "label": "pingdotgg/t3code#8857",
+      "commits": ["bb8eab3217659643dad66ec47f3888ae73409184"]
+    },
+    {
+      "label": "pingdotgg/t3code#8976",
+      "commits": [
+        "b361eaeddaf737c404f763ea8baa41418b757b12",
+        "a3eaa16d32bd154f5d5fcce89bd607d1bbf4a81d",
+        "04ff639bdfe73ae03866e47dddd0106a431fbe54",
+        "b3f6d4a3a5c02d688a140d780aa648a3d217913d"
+      ]
+    },
+    {
+      "label": "saphid/t3code@e2b70eee4270",
+      "commits": ["e2b70eee427017f02b10368606adbdfa4f9a625e"]
+    }
+  ]
+}
