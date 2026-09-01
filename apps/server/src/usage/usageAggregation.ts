@@ -137,8 +137,8 @@ export interface AggregateResult {
  * the same `dedupeKey` legitimately appears in several transcripts.
  */
 export class UsageAggregator {
-  readonly #buckets = new Map<string, MutableBucket>();
-  readonly #seen = new Set<string>();
+  readonly #recordsByKey = new Map<string, UsageRecord>();
+  readonly #unkeyedRecords: UsageRecord[] = [];
   readonly #toDay: (timestampMs: number) => string;
   readonly #hourlyWindow: { readonly sinceTimeMs: number; readonly untilTimeMs: number } | null;
   readonly #options: AggregateOptions;
@@ -167,14 +167,6 @@ export class UsageAggregator {
    * that landed rather than everything the mtime prefilter happened to admit.
    */
   add(record: UsageRecord): boolean {
-    if (record.dedupeKey !== null) {
-      if (this.#seen.has(record.dedupeKey)) {
-        this.#duplicatesDropped += 1;
-        return false;
-      }
-      this.#seen.add(record.dedupeKey);
-    }
-
     if (
       this.#hourlyWindow !== null &&
       (record.timestampMs < this.#hourlyWindow.sinceTimeMs ||
@@ -193,6 +185,24 @@ export class UsageAggregator {
       return false;
     }
 
+    if (record.dedupeKey === null) {
+      this.#unkeyedRecords.push(record);
+      return true;
+    }
+    if (this.#recordsByKey.has(record.dedupeKey)) {
+      // Claude writes progressive snapshots for one response. The final copy
+      // is complete, so replace the earlier one without counting it twice.
+      this.#recordsByKey.set(record.dedupeKey, record);
+      this.#duplicatesDropped += 1;
+      return false;
+    }
+    this.#recordsByKey.set(record.dedupeKey, record);
+    return true;
+  }
+
+  #foldRecord(record: UsageRecord, buckets: Map<string, MutableBucket>): void {
+    const day = this.#toDay(record.timestampMs);
+
     const hourStart =
       this.#hourlyWindow === null
         ? ""
@@ -206,7 +216,7 @@ export class UsageAggregator {
         ? ""
         : this.#options.resolveProject(record.cwd).replaceAll("\u0000", "");
     const key = `${day}\u0000${hourStart}\u0000${project}\u0000${record.provider}\u0000${record.model}`;
-    let bucket = this.#buckets.get(key);
+    let bucket = buckets.get(key);
     if (bucket === undefined) {
       bucket = {
         totals: EMPTY_TOTALS,
@@ -218,7 +228,7 @@ export class UsageAggregator {
         providerReportedRecords: 0,
         sessions: new Set<string>(),
       };
-      this.#buckets.set(key, bucket);
+      buckets.set(key, bucket);
     }
 
     const priced = priceUsage(
@@ -236,12 +246,14 @@ export class UsageAggregator {
     if (priced.costSource === "unpriced") bucket.unpricedRecords += 1;
     if (priced.costSource === "providerReported") bucket.providerReportedRecords += 1;
     if (record.sessionId.length > 0) bucket.sessions.add(record.sessionId);
-    return true;
   }
 
   finish(): AggregateResult {
+    const bucketsByKey = new Map<string, MutableBucket>();
+    for (const record of this.#unkeyedRecords) this.#foldRecord(record, bucketsByKey);
+    for (const record of this.#recordsByKey.values()) this.#foldRecord(record, bucketsByKey);
     const buckets: UsageBucket[] = [];
-    for (const [key, bucket] of this.#buckets) {
+    for (const [key, bucket] of bucketsByKey) {
       const [day = "", hourStart = "", project = "", provider = "", model = ""] =
         key.split("\u0000");
       buckets.push({

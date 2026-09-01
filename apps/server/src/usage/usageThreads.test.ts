@@ -14,6 +14,7 @@ const rates: RateTable = new Map([
       outputCostPerToken: 5e-5,
       cacheReadCostPerToken: 1e-6,
       cacheCreationCostPerToken: 1.25e-5,
+      cacheCreation1hCostPerToken: 2e-5,
     },
   ],
 ]);
@@ -80,6 +81,22 @@ describe("ThreadUsageAccumulator", () => {
     ]);
 
     expect(groups[0]?.totals.outputTokens).toBe(50);
+  });
+
+  it("uses the final complete snapshot across files", () => {
+    const context = { sessionKey: "claude:session-a", agentId: null };
+    const groups = accumulate([
+      [
+        record({ dedupeKey: "msg_partial:", totals: { ...record().totals, outputTokens: 1 } }),
+        context,
+      ],
+      [
+        record({ dedupeKey: "msg_partial:", totals: { ...record().totals, outputTokens: 310 } }),
+        context,
+      ],
+    ]);
+
+    expect(groups[0]?.totals.outputTokens).toBe(310);
   });
 
   it("splits each day's cost into cache write, cache read, and fresh components", () => {

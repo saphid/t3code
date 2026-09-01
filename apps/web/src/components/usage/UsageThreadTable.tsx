@@ -69,7 +69,7 @@ export function UsageThreadTable({
         <tr className="border-b border-border text-left text-xs text-muted-foreground">
           <th className="py-2 font-normal">Thread</th>
           <th className="py-2 text-right font-normal">Cost</th>
-          <th className="py-2 text-right font-normal">Re-chunk</th>
+          <th className="py-2 text-right font-normal">Cache writes</th>
           <th className="py-2 text-right font-normal">Share</th>
           <th className="py-2 text-right font-normal">Tokens</th>
         </tr>
@@ -235,9 +235,9 @@ const CHART_WIDTH = 760;
 const CHART_HEIGHT = 96;
 
 /**
- * One thread's daily cost stacked by component: cache writes (re-priming
- * context after expiry), cache reads, and fresh input plus output. Static
- * SVG, no animation.
+ * One thread's daily cost stacked by component: cache writes, cache reads,
+ * and fresh input plus output. Cache writes are a billing category, not an
+ * inferred cause. Static SVG, no animation.
  */
 export function UsageThreadDailyChart({
   daily,
