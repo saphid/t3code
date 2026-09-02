@@ -1,4 +1,11 @@
-import { ArchiveIcon, ArchiveX, ChevronRightIcon, LoaderIcon, SettingsIcon } from "lucide-react";
+import {
+  ArchiveIcon,
+  ArchiveX,
+  ChevronRightIcon,
+  ExternalLinkIcon,
+  LoaderIcon,
+  SettingsIcon,
+} from "lucide-react";
 import { Link, useNavigate } from "@tanstack/react-router";
 import type { CSSProperties, ReactNode } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -49,6 +56,11 @@ import * as Duration from "effect/Duration";
 import * as Equal from "effect/Equal";
 import * as Schema from "effect/Schema";
 import { APP_VERSION, HOSTED_APP_CHANNEL, HOSTED_APP_CHANNEL_LABEL } from "../../branding";
+import {
+  DOWNSTREAM_BUILD_METADATA,
+  resolveDownstreamCommitUrl,
+  resolveDownstreamPatchUrl,
+} from "../../downstreamBuild";
 import {
   canCheckForUpdate,
   getDesktopUpdateButtonTooltip,
@@ -255,6 +267,87 @@ function AboutVersionTitle() {
       <span>Version</span>
       <code className="text-[11px] font-medium text-muted-foreground">{APP_VERSION}</code>
     </span>
+  );
+}
+
+function ForkBuildDetails() {
+  const [open, setOpen] = useState(false);
+  const build = DOWNSTREAM_BUILD_METADATA;
+  if (!build) return null;
+
+  const selectedChangeLabel = `${build.patches.length} selected ${
+    build.patches.length === 1 ? "change" : "changes"
+  }`;
+
+  return (
+    <>
+      <SettingsRow
+        title="Fork build"
+        description={`Built from ${build.upstreamTag} with ${selectedChangeLabel}.`}
+        control={
+          <Button size="xs" variant="outline" onClick={() => setOpen(true)}>
+            View changes
+          </Button>
+        }
+      />
+      <Dialog open={open} onOpenChange={setOpen}>
+        <DialogPopup className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>Included fork changes</DialogTitle>
+            <DialogDescription>
+              Fork Nightly {build.version} is based on{" "}
+              <a
+                className="font-medium text-foreground underline-offset-2 hover:underline"
+                href={build.upstreamUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                {build.upstreamTag}
+              </a>
+              .
+            </DialogDescription>
+          </DialogHeader>
+          <DialogPanel className="max-h-[min(60vh,36rem)] overflow-y-auto px-6 pb-5">
+            <div className="space-y-2">
+              {build.patches.map((patch) => (
+                <div key={patch.label} className="rounded-xl border bg-card px-4 py-3">
+                  <a
+                    className="inline-flex items-center gap-1.5 text-sm font-medium text-foreground underline-offset-2 hover:underline"
+                    href={resolveDownstreamPatchUrl(patch)}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    <span>{patch.name ?? patch.label}</span>
+                    <ExternalLinkIcon className="size-3.5 shrink-0" aria-hidden />
+                  </a>
+                  <div className="mt-1 text-[11px] text-muted-foreground">{patch.label}</div>
+                  <div className="mt-2 flex flex-wrap gap-x-2 gap-y-1">
+                    {patch.commits.map((commit) => (
+                      <a
+                        key={commit}
+                        className="font-mono text-[11px] text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+                        href={resolveDownstreamCommitUrl(patch, commit)}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        title={commit}
+                      >
+                        {commit.slice(0, 12)}
+                      </a>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+            <div className="mt-4 text-[11px] leading-relaxed text-muted-foreground">
+              Stack fingerprint <code>{build.fingerprint.slice(0, 16)}</code>
+            </div>
+          </DialogPanel>
+          <DialogFooter>
+            <Button onClick={() => setOpen(false)}>Done</Button>
+          </DialogFooter>
+        </DialogPopup>
+      </Dialog>
+    </>
   );
 }
 
@@ -3033,6 +3126,7 @@ export function GeneralSettingsPanel() {
             description="Current version of the application."
           />
         )}
+        <ForkBuildDetails />
         <SettingsRow
           {...searchableSetting("diagnostics")}
           description={diagnosticsDescription}
