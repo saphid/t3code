@@ -114,6 +114,22 @@ describe("Downstream Nightly workflow", () => {
     assert.match(workflow, /Unexpected fork designated requirement/);
     assert.match(workflow, /--test-requirement==identifier/);
   });
+
+  it("keeps the release path macOS-only", () => {
+    const workflow = readFileSync(
+      join(process.cwd(), ".github/workflows/downstream-nightly.yml"),
+      "utf8",
+    );
+    const matrixStart = workflow.indexOf("      matrix:\n");
+    const stepsStart = workflow.indexOf("    steps:\n", matrixStart);
+    const matrix = workflow.slice(matrixStart, stepsStart);
+
+    assert.match(matrix, /label: macOS arm64/);
+    assert.match(matrix, /label: macOS x64/);
+    assert.doesNotMatch(matrix, /label: Linux/);
+    assert.doesNotMatch(matrix, /label: Windows/);
+    assert.match(workflow, /Build WSL node-pty[\s\S]*if: needs\.prepare\.outputs\.should_build == 'true' && false/);
+  });
 });
 
 describe("Downstream Nightly release selection", () => {
@@ -217,17 +233,17 @@ describe("Downstream Nightly release selection", () => {
     );
   });
 
-  it("only treats a release as complete when all updater manifests exist", () => {
+  it("treats the macOS updater manifest as the current release boundary", () => {
     const upstreamTag = "v1.0.0-nightly.20260901.1";
     const fingerprint = "f".repeat(64);
     const complete = {
       body: releaseMarker(upstreamTag, fingerprint),
-      assets: [{ name: "nightly-linux.yml" }, { name: "nightly-mac.yml" }, { name: "nightly.yml" }],
+      assets: [{ name: "nightly-mac.yml" }],
     };
     assert.equal(isCompleteMatchingRelease(complete, upstreamTag, fingerprint), true);
     assert.equal(
       isCompleteMatchingRelease(
-        { ...complete, assets: complete.assets.filter((asset) => asset.name !== "nightly.yml") },
+        { ...complete, assets: [] },
         upstreamTag,
         fingerprint,
       ),

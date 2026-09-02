@@ -10,7 +10,7 @@ const REPOSITORY_PATTERN = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u;
 const SHA_PATTERN = /^[0-9a-f]{40}$/u;
 const NIGHTLY_TAG_PATTERN = /^v?(\d+)\.(\d+)\.(\d+)-nightly\.(\d{8})\.(\d+)$/u;
 const RELEASE_MARKER_PREFIX = "<!-- downstream-nightly-source: ";
-const REQUIRED_UPDATE_MANIFESTS = ["nightly-linux.yml", "nightly-mac.yml", "nightly.yml"];
+const REQUIRED_UPDATE_MANIFESTS = ["nightly-mac.yml"];
 const RELEASE_PACKAGE_FILES = [
   "apps/server/package.json",
   "apps/desktop/package.json",
