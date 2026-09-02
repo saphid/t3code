@@ -26,7 +26,7 @@ import * as TextGeneration from "../textGeneration/TextGeneration.ts";
 import { resolveServerEnvironmentLabel } from "./ServerEnvironmentLabel.ts";
 import { detectServerEnvironmentMachineKind } from "./ServerEnvironmentMachine.ts";
 
-export class ServerEnvironmentIdPersistenceError extends Schema.TaggedError<ServerEnvironmentIdPersistenceError>()(
+export class ServerEnvironmentIdPersistenceError extends Schema.TaggedErrorClass<ServerEnvironmentIdPersistenceError>()(
   "ServerEnvironmentIdPersistenceError",
   {
     operation: Schema.Literals(["check", "read", "write", "initialize"]),
@@ -183,105 +183,102 @@ const makeIdentity = Effect.gen(function* () {
   });
 });
 
-/** @public Service construction is part of the canonical Effect module API. */
+const makeWithProviderRegistry = (
+  providerInstanceRegistry: Option.Option<ProviderInstanceRegistry.ProviderInstanceRegistryShape>,
+) =>
+  Effect.gen(function* () {
+    const path = yield* Path.Path;
+    const serverConfig = yield* ServerConfig.ServerConfig;
+    const secrets = yield* ServerSecretStore.ServerSecretStore;
+    const identity = yield* ServerEnvironmentIdentity;
+    const hostPlatform = yield* HostProcessPlatform;
+    const hostArchitecture = yield* HostProcessArchitecture;
+    const environmentId = yield* identity.getEnvironmentId;
+    const cwdBaseName = path.basename(serverConfig.cwd).trim();
+    const label = yield* resolveServerEnvironmentLabel({ cwdBaseName });
+    const machine = yield* detectServerEnvironmentMachineKind();
+    const launcher = yield* resolveServiceLauncherMode();
+    const serverSelfUpdate = resolveServerSelfUpdateCapability({
+      desktopManaged: serverConfig.mode === "desktop",
+      launcherManaged: launcher.managed,
+    });
+    const desktopAppUpdate =
+      serverSelfUpdate === "desktop-managed" &&
+      serverConfig.desktopTelemetryControlFd !== undefined;
+
+    const descriptor: ExecutionEnvironmentDescriptor = {
+      environmentId,
+      label,
+      platform: {
+        os: platformOs(hostPlatform),
+        arch: platformArch(hostArchitecture),
+        ...(machine === null ? {} : { machine }),
+      },
+      serverVersion: packageJson.version,
+      capabilities: {
+        repositoryIdentity: true,
+        connectionProbe: true,
+        attachmentUploads: true,
+        questionAttachments: true,
+        fileAttachments: { maxUploadBytes: PROVIDER_SEND_TURN_MAX_FILE_BYTES },
+        pullRequests: true,
+        inlineMessageContext: true,
+        threadSettlement: true,
+        threadAutoSettlement: true,
+        threadRestartContinuation: true,
+        projectSettingsOverrides: true,
+        threadSnooze: true,
+        environmentThemes: true,
+        usageLimitSources: true,
+        usagePriceOverrides: true,
+        threadPinning: true,
+        threadPinReorder: true,
+        threadActiveReorder: true,
+        threadTitleRegeneration: true,
+        threadPullRequests: true,
+        pullRequestStackActions: true,
+        threadPullRequestLinking: true,
+        environmentIcon: true,
+        projectCloneTracking: true,
+        ...(serverSelfUpdate === null ? {} : { serverSelfUpdate }),
+        ...(serverSelfUpdate === "boot-service" || desktopAppUpdate
+          ? { serverSelfUpdateProgress: true, serverUpdateThreadContinuation: true }
+          : {}),
+        ...(desktopAppUpdate ? { desktopAppUpdate: true } : {}),
+      },
+    };
+
+    return ServerEnvironment.of({
+      getEnvironmentId: Effect.succeed(environmentId),
+      // The publish opt-in and relay link change at runtime (`t3 connect
+      // publish`, the client settings toggle), so the capability is read per
+      // descriptor request rather than baked in at startup.
+      getDescriptor: Effect.gen(function* () {
+        const agentActivityPublishing = yield* readAgentActivityPublishingActive(secrets);
+        const instances = Option.match(providerInstanceRegistry, {
+          onNone: () => Effect.succeed<ReadonlyArray<ProviderInstance>>([]),
+          onSome: (registry) => registry.listInstances,
+        });
+        const threadHandoverGeneration =
+          TextGeneration.findAvailableCodexInstance(yield* instances) !== undefined;
+        return {
+          ...descriptor,
+          capabilities: {
+            ...descriptor.capabilities,
+            agentActivityPublishing,
+            threadHandoverGeneration,
+          },
+        };
+      }),
+    });
+  });
+
 export const make = Effect.gen(function* () {
-  const path = yield* Path.Path;
-  const serverConfig = yield* ServerConfig.ServerConfig;
-  const secrets = yield* ServerSecretStore.ServerSecretStore;
-  const identity = yield* ServerEnvironmentIdentity;
-  const hostPlatform = yield* HostProcessPlatform;
-  const hostArchitecture = yield* HostProcessArchitecture;
-  // Connect-only commands intentionally do not boot provider drivers. Use
-  // Effect's typed optional-service lookup so that this degraded capability is
-  // explicit without hiding a required dependency behind an ambient cast.
-  const providerInstanceRegistry = yield* Effect.serviceOption(
-    ProviderInstanceRegistry.ProviderInstanceRegistry,
-  );
-  const environmentId = yield* identity.getEnvironmentId;
-  const cwdBaseName = path.basename(serverConfig.cwd).trim();
-  const label = yield* resolveServerEnvironmentLabel({ cwdBaseName });
-  const machine = yield* detectServerEnvironmentMachineKind();
-  const launcher = yield* resolveServiceLauncherMode();
-  const serverSelfUpdate = resolveServerSelfUpdateCapability({
-    desktopManaged: serverConfig.mode === "desktop",
-    launcherManaged: launcher.managed,
-  });
-  // Static is correct: the control fd is known at bootstrap, and the desktop
-  // app and its bundled server ship in one artifact, so a present fd means
-  // the app speaks the requestDesktopUpdate protocol. WSL backends never get
-  // the fd and correctly do not advertise.
-  const desktopAppUpdate =
-    serverSelfUpdate === "desktop-managed" && serverConfig.desktopTelemetryControlFd !== undefined;
-
-  const descriptor: ExecutionEnvironmentDescriptor = {
-    environmentId,
-    label,
-    platform: {
-      os: platformOs(hostPlatform),
-      arch: platformArch(hostArchitecture),
-      ...(machine === null ? {} : { machine }),
-    },
-    serverVersion: packageJson.version,
-    capabilities: {
-      repositoryIdentity: true,
-      connectionProbe: true,
-      attachmentUploads: true,
-      questionAttachments: true,
-      fileAttachments: { maxUploadBytes: PROVIDER_SEND_TURN_MAX_FILE_BYTES },
-      pullRequests: true,
-      inlineMessageContext: true,
-      threadSettlement: true,
-      threadAutoSettlement: true,
-      threadRestartContinuation: true,
-      projectSettingsOverrides: true,
-      threadSnooze: true,
-      environmentThemes: true,
-      usageLimitSources: true,
-      usagePriceOverrides: true,
-      threadPinning: true,
-      threadPinReorder: true,
-      threadActiveReorder: true,
-      threadTitleRegeneration: true,
-      threadPullRequests: true,
-      pullRequestStackActions: true,
-      threadPullRequestLinking: true,
-      environmentIcon: true,
-      projectCloneTracking: true,
-      ...(serverSelfUpdate === null ? {} : { serverSelfUpdate }),
-      ...(serverSelfUpdate === "boot-service" || desktopAppUpdate
-        ? {
-            serverSelfUpdateProgress: true,
-            serverUpdateThreadContinuation: true,
-          }
-        : {}),
-      ...(desktopAppUpdate ? { desktopAppUpdate: true } : {}),
-    },
-  };
-
-  return ServerEnvironment.of({
-    getEnvironmentId: Effect.succeed(environmentId),
-    // The publish opt-in and relay link change at runtime (`t3 connect
-    // publish`, the client settings toggle), so the capability is read per
-    // descriptor request rather than baked in at startup.
-    getDescriptor: Effect.gen(function* () {
-      const agentActivityPublishing = yield* readAgentActivityPublishingActive(secrets);
-      const instances = Option.match(providerInstanceRegistry, {
-        onNone: () => Effect.succeed<ReadonlyArray<ProviderInstance>>([]),
-        onSome: (registry) => registry.listInstances,
-      });
-      const threadHandoverGeneration =
-        TextGeneration.findAvailableCodexInstance(yield* instances) !== undefined;
-      return {
-        ...descriptor,
-        capabilities: {
-          ...descriptor.capabilities,
-          agentActivityPublishing,
-          threadHandoverGeneration,
-        },
-      };
-    }),
-  });
+  const providerInstanceRegistry = yield* ProviderInstanceRegistry.ProviderInstanceRegistry;
+  return yield* makeWithProviderRegistry(Option.some(providerInstanceRegistry));
 });
+
+const makeConnectOnly = makeWithProviderRegistry(Option.none());
 
 export const identityLayer = Layer.effect(ServerEnvironmentIdentity, makeIdentity);
 
@@ -291,7 +288,13 @@ export const identityLayer = Layer.effect(ServerEnvironmentIdentity, makeIdentit
  * provide the external platform services, a ServerConfig, and the
  * ServerSecretStore backing the descriptor's publishing capability.
  */
-export const layer = Layer.effect(ServerEnvironment, make).pipe(
+export const layer = Layer.effect(ServerEnvironment, makeConnectOnly).pipe(
+  Layer.provideMerge(identityLayer),
+  Layer.provide(ProcessRunner.layer),
+);
+
+/** Normal server runtime, where provider-backed capabilities must not degrade silently. */
+export const providerRuntimeLayer = Layer.effect(ServerEnvironment, make).pipe(
   Layer.provideMerge(identityLayer),
   Layer.provide(ProcessRunner.layer),
 );
