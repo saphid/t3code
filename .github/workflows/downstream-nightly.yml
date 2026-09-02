@@ -131,7 +131,8 @@ jobs:
   build_wsl_node_pty:
     name: Build WSL node-pty
     needs: prepare
-    if: needs.prepare.outputs.should_build == 'true'
+    # Disabled while Fork Nightly publishes macOS-only artifacts.
+    if: needs.prepare.outputs.should_build == 'true' && false
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
@@ -209,8 +210,8 @@ jobs:
 
   build:
     name: Build ${{ matrix.label }}
-    needs: [prepare, build_wsl_node_pty]
-    if: needs.prepare.outputs.should_build == 'true' && needs.build_wsl_node_pty.result == 'success'
+    needs: prepare
+    if: needs.prepare.outputs.should_build == 'true'
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 45
     strategy:
@@ -229,18 +230,6 @@ jobs:
             target: dmg
             arch: x64
             rust_target: x86_64-apple-darwin
-          - label: Linux x64
-            runner: ubuntu-24.04
-            platform: linux
-            target: AppImage
-            arch: x64
-            rust_target: x86_64-unknown-linux-gnu
-          - label: Windows x64
-            runner: windows-2025
-            platform: win
-            target: nsis
-            arch: x64
-            rust_target: x86_64-pc-windows-msvc
     steps:
       - name: Checkout generated source
         uses: actions/checkout@v6

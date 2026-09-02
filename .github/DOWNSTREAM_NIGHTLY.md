@@ -18,6 +18,8 @@ If a selected commit is already part of the upstream Nightly, the assembler skip
 
 Normal scheduled and dispatch-triggered runs are idempotent. To repair artifacts without changing the upstream tag or patch stack, run the workflow manually with `force_rebuild` enabled. The workflow rebuilds every gate and replaces the matching release assets.
 
+Fork Nightly currently publishes macOS arm64 and macOS x64 artifacts only. The Linux, Windows, and WSL platform-specific steps remain available for later restoration, but they are not on the current release path. A release is complete when its merged macOS updater manifest is present.
+
 ## Point the app at the fork
 
 Select the Nightly update track and set Custom release source to `saphid/t3code`. Fork-built installers also embed `saphid/t3code` as their default update repository, so later updates stay on the fork even when the custom field is empty.
