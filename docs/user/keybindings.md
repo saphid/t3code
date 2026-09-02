@@ -60,6 +60,9 @@ shortcut; assign one in **Settings → Keybindings**.
 `chat.newLocal` skips that chooser. Both use your
 [new-thread defaults](./thread-sidebar.md#start-a-thread).
 
+`navigation.back` and `navigation.forward` move through locations you visited in T3 Code. Their
+default shortcuts are `mod+[` and `mod+]`.
+
 ## Reserved shortcuts
 
 In the desktop app, `mod+w` closes the focused terminal or the active right-panel
