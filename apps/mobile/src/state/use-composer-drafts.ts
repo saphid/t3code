@@ -818,6 +818,30 @@ export function setComposerDraftText(draftKey: string, value: string): void {
   });
 }
 
+/** Replaces one prompt after hydration and persists it before returning. */
+export async function replaceComposerDraftText(draftKey: string, value: string): Promise<void> {
+  ensureComposerDraftsLoaded();
+  if (loadPromise !== null) {
+    await loadPromise;
+  }
+  if (persistTimer !== null) {
+    clearTimeout(persistTimer);
+    persistTimer = null;
+  }
+  const current = appAtomRegistry.get(composerDraftsAtom);
+  const next = {
+    ...current,
+    [draftKey]: {
+      ...normalizeDraft(current[draftKey]),
+      text: value,
+    },
+  };
+  appAtomRegistry.set(composerDraftsAtom, next);
+  await persistenceQueue.run(() =>
+    writePersistedComposerState(next, appAtomRegistry.get(stickyComposerModelSelectionAtom)),
+  );
+}
+
 export function appendComposerDraftText(draftKey: string, value: string): void {
   updateComposerDrafts((current) => {
     const existing = normalizeDraft(current[draftKey]);
