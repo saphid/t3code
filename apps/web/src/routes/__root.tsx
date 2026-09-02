@@ -141,6 +141,7 @@ function RootRouteView() {
         <EnvironmentThemeSync />
         <GlassAppearanceSync />
         <FontAppearanceSync />
+        <DesktopDeepLinkNavigation />
         {primaryEnvironmentAuthenticated ? <AuthenticatedTracingBootstrap /> : null}
         {primaryEnvironmentAuthenticated ? <DesktopAppActivationCoordinator /> : null}
         <RelayClientInstallDialog />
@@ -218,6 +219,39 @@ function FontAppearanceSync() {
     fontSizePrompt,
     fontSmoothing,
   ]);
+
+  return null;
+}
+
+// Thread deep links (t3code://app/<environmentId>/<threadId>) forwarded by
+// the desktop main process. Lives at the root so a link opens the thread from
+// any screen, including settings. A no-op on web and mobile, where no
+// desktopBridge exists.
+function DesktopDeepLinkNavigation() {
+  const navigate = useNavigate();
+  const pathname = useLocation({ select: (location) => location.pathname });
+  const readPathname = useEffectEvent(() => pathname);
+
+  useEffect(() => {
+    const onDeepLink = window.desktopBridge?.onDeepLink;
+    if (typeof onDeepLink !== "function") {
+      return;
+    }
+
+    const unsubscribe = onDeepLink(({ environmentId, threadId }) => {
+      if (readPathname() === `/${environmentId}/${threadId}`) {
+        return;
+      }
+      void navigate({
+        to: "/$environmentId/$threadId",
+        params: { environmentId, threadId },
+      });
+    });
+
+    return () => {
+      unsubscribe?.();
+    };
+  }, [navigate]);
 
   return null;
 }
