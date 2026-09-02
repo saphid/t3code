@@ -117,6 +117,9 @@ export interface ThreadDetailScreenProps {
   readonly threadCwd: string | null;
   readonly selectedThreadQueueCount: number;
   readonly serverConfig: T3ServerConfig | null;
+  readonly contextLimitReached: boolean;
+  readonly isGeneratingHandover: boolean;
+  readonly onGenerateHandover?: () => void;
   readonly layoutVariant?: LayoutVariant;
   readonly usesAutomaticContentInsets?: boolean;
   readonly onHeaderMaterialVisibilityChange?: (visible: boolean) => void;
@@ -810,6 +813,9 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
                   threadSyncPhase={threadSyncPhase}
                   selectedThread={props.selectedThread}
                   serverConfig={props.serverConfig}
+                  contextLimitReached={props.contextLimitReached}
+                  isGeneratingHandover={props.isGeneratingHandover}
+                  onGenerateHandover={props.onGenerateHandover}
                   queueCount={props.selectedThreadQueueCount}
                   environmentId={props.environmentId}
                   projectCwd={props.threadCwd ?? props.projectWorkspaceRoot}

@@ -112,8 +112,10 @@ import { SqlitePersistenceMemory } from "./persistence/Layers/Sqlite.ts";
 import { PersistenceSqlError } from "./persistence/Errors.ts";
 import * as ProviderRegistry from "./provider/Services/ProviderRegistry.ts";
 import * as ProviderService from "./provider/Services/ProviderService.ts";
+import * as ProviderInstanceRegistry from "./provider/Services/ProviderInstanceRegistry.ts";
 import { ProviderAdapterRequestError } from "./provider/Errors.ts";
 import { makeManualOnlyProviderMaintenanceCapabilities } from "./provider/providerMaintenance.ts";
+import * as TextGeneration from "./textGeneration/TextGeneration.ts";
 import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
 import * as ServerRuntimeStartup from "./serverRuntimeStartup.ts";
 import * as ServiceLauncherClient from "./cloud/serviceLauncherClient.ts";
@@ -705,6 +707,20 @@ const buildAppUnderTest = (options?: {
           Layer.mock(ProviderService.ProviderService)({
             uploadFeedback: () => Effect.die("Provider feedback is not stubbed in this test"),
             ...options?.layers?.providerService,
+          }),
+          Layer.mock(ProviderInstanceRegistry.ProviderInstanceRegistry)({
+            getInstance: () => Effect.succeed(undefined),
+            listInstances: Effect.succeed([]),
+            listUnavailable: Effect.succeed([]),
+            streamChanges: Stream.empty,
+            subscribeChanges: Effect.never,
+          }),
+          Layer.mock(TextGeneration.TextGeneration)({
+            generateCommitMessage: () => Effect.die("Text generation is not stubbed in this test"),
+            generatePrContent: () => Effect.die("Text generation is not stubbed in this test"),
+            generateBranchName: () => Effect.die("Text generation is not stubbed in this test"),
+            generateThreadTitle: () => Effect.die("Text generation is not stubbed in this test"),
+            generateHandover: () => Effect.die("Text generation is not stubbed in this test"),
           }),
         ),
       ),
