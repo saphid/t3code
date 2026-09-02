@@ -1174,7 +1174,7 @@ export const make = Effect.gen(function* () {
       const activeAction = yield* tryStartSettingsChange("repository");
       if (Option.isSome(activeAction)) {
         return yield* new DesktopUpdateRepositoryChangeInProgressError({
-          action: activeAction.value,
+          action: activeAction.value === "install-recovery" ? "install" : activeAction.value,
           requestedRepository: normalizedRepository,
         });
       }
