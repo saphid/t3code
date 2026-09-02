@@ -407,7 +407,8 @@ jobs:
               export T3CODE_MACOS_PROVISIONING_PROFILE="$profile_path"
               args+=(--signed)
             else
-              echo "Building ad hoc-signed macOS artifact."
+              echo "Building macOS artifact with a stable ad hoc update requirement."
+              args+=(--stable-mac-adhoc-signature)
             fi
           elif [[ "${{ matrix.platform }}" == "win" ]]; then
             args+=(--wsl-prebuild "$GITHUB_WORKSPACE/wsl-prebuild/pty.node")
@@ -469,6 +470,14 @@ jobs:
           NODE
 
           codesign --verify --deep --strict "$app_path"
+          designated_requirement=$(codesign -d -r- "$app_path" 2>&1 | sed -n 's/^designated => //p')
+          if [[ "$designated_requirement" != *'identifier "com.t3tools.t3code.fork-466f726b"'* || "$designated_requirement" == *cdhash* ]]; then
+            echo "Unexpected fork designated requirement: $designated_requirement" >&2
+            exit 1
+          fi
+          codesign --verify --strict \
+            '--test-requirement==identifier "com.t3tools.t3code.fork-466f726b"' \
+            "$app_path"
 
       - name: Collect release assets
         shell: bash
