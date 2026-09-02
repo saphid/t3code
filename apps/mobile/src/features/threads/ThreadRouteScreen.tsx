@@ -38,6 +38,8 @@ import { LoadingScreen } from "../../components/LoadingScreen";
 import { scopedThreadKey } from "../../lib/scopedEntities";
 import { NATIVE_LIQUID_GLASS_SUPPORTED } from "../../native/native-glass";
 import { connectionTone } from "../connection/connectionTone";
+import { useMobileNavigationHistory } from "../navigation/MobileNavigationHistoryProvider";
+import { createNativeNavigationHistoryItems } from "../navigation/native-navigation-history-items";
 
 import {
   useRemoteConnections,
@@ -265,6 +267,7 @@ function ThreadRouteContent(
   });
   const navigation = useNavigation();
   const isFocused = useIsFocused();
+  const navigationHistory = useMobileNavigationHistory();
   const params = props.route.params;
   const environmentIdRaw = firstRouteParam(params.environmentId);
   const environmentId = environmentIdRaw ? EnvironmentId.make(environmentIdRaw) : null;
@@ -799,6 +802,17 @@ function ThreadRouteContent(
   };
   const threadCenterHeaderItems = useThreadGitCenterHeaderItems(threadGitControlProps);
   const compactRightHeaderItems = useThreadGitRightHeaderItems(threadGitControlProps);
+  const compactNavigationHeaderItems = useMemo(
+    () =>
+      createNativeNavigationHistoryItems({
+        canGoBack: navigationHistory.canGoBack,
+        canGoForward: navigationHistory.canGoForward,
+        identifierPrefix: "thread-navigation",
+        onBack: navigationHistory.back,
+        onForward: navigationHistory.forward,
+      }),
+    [navigationHistory],
+  );
   const splitLeftHeaderItems = useMemo<NativeHeaderItems>(
     () => [
       {
@@ -844,6 +858,13 @@ function ThreadRouteContent(
     if (Platform.OS !== "android") return [];
 
     const actions: AndroidHeaderAction[] = [];
+    if (!navigationHistory.canGoBack) {
+      actions.push({
+        accessibilityLabel: "Go to threads list",
+        icon: "list.bullet",
+        onPress: () => navigation.dispatch(StackActions.replace("Home")),
+      });
+    }
     if (props.onReturnToThread) {
       actions.push({
         accessibilityLabel: "Return to chat",
@@ -884,6 +905,8 @@ function ThreadRouteContent(
     handleOpenTerminal,
     handleOpenGitInspector,
     handleToggleInspector,
+    navigationHistory,
+    navigation,
     props.onReturnToThread,
     selectedThreadCwd,
     selectedThreadProject?.workspaceRoot,
@@ -892,7 +915,6 @@ function ThreadRouteContent(
   // Deep links / cold starts land with Thread as the ONLY route, where the
   // native back button does not render. Provide an explicit Home escape for
   // that case; when history exists the native back button is used instead.
-  const canGoBack = navigation.canGoBack();
   const compactHomeHeaderItems = useMemo<NativeHeaderItems>(
     () => [
       withNativeGlassHeaderItem({
@@ -992,6 +1014,10 @@ function ThreadRouteContent(
     <>
       {activeInspectorRenderer ? <InspectorPaneRoleActivation /> : null}
       <NativeStackScreenOptions
+        optionsVersion={{
+          canGoBack: navigationHistory.canGoBack,
+          canGoForward: navigationHistory.canGoForward,
+        }}
         options={{
           // Android draws its own in-flow header (AndroidScreenHeader below);
           // the native stack header stays iOS-only.
@@ -1004,17 +1030,22 @@ function ThreadRouteContent(
               }
             : undefined,
           title: selectedThread.title,
-          headerBackVisible: !layout.usesSplitView,
-          // Compact uses the NATIVE back button when a previous route exists;
-          // deep links / cold starts get an explicit Home button instead.
-          // Split view always uses its custom left items.
+          headerBackVisible: false,
+          // These screens supply native toolbar items below; suppress the
+          // shared React headerLeft so the history pair is rendered once.
+          headerLeft: () => null,
+          // Compact uses the app history pair so Back and Forward share one
+          // cursor. Deep links also get an explicit Home escape. Split view
+          // keeps its workspace-specific left items because the sidebar owns
+          // the history pair there.
           unstable_headerLeftItems:
             Platform.OS === "ios"
               ? layout.usesSplitView
                 ? () => splitLeftHeaderItems
-                : canGoBack
-                  ? undefined
-                  : () => compactHomeHeaderItems
+                : () => [
+                    ...compactNavigationHeaderItems,
+                    ...(navigationHistory.canGoBack ? [] : compactHomeHeaderItems),
+                  ]
               : undefined,
           // Search lives in the persistent sidebar, so the split header keeps
           // the git controls on the RIGHT (no center items — center space is
@@ -1031,8 +1062,8 @@ function ThreadRouteContent(
         <AndroidScreenHeader
           title={selectedThread.title}
           subtitle={headerSubtitle}
-          onBack={layout.usesSplitView ? undefined : () => navigation.goBack()}
           actions={androidHeaderActions}
+          showNavigationHistory={!layout.usesSplitView}
         />
       ) : null}
 
