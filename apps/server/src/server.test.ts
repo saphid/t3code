@@ -8575,122 +8575,153 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
-  it.effect.each([
-    { caseName: "the origin remote is missing", hasOrigin: false },
-    { caseName: "the base branch exists only locally", hasOrigin: true },
-  ])("falls back to the local base branch when $caseName", ({ hasOrigin }) =>
-    Effect.gen(function* () {
-      const dispatchedCommands: Array<OrchestrationCommand> = [];
-      const remoteExists = vi.fn(
-        (_: Parameters<GitVcsDriver.GitVcsDriver["Service"]["remoteExists"]>[0]) =>
-          Effect.succeed(hasOrigin),
-      );
-      const fetchRemote = vi.fn(
-        (_: Parameters<GitVcsDriver.GitVcsDriver["Service"]["fetchRemote"]>[0]) => Effect.void,
-      );
-      const resolveRemoteTrackingCommit = vi.fn(
-        (_: Parameters<GitVcsDriver.GitVcsDriver["Service"]["resolveRemoteTrackingCommit"]>[0]) =>
-          Effect.succeed({
-            commitSha: "0123456789abcdef0123456789abcdef01234567",
-            remoteRefName: "origin/main",
-          }),
-      );
-      const remoteBranchExists = vi.fn(
-        (_: Parameters<GitVcsDriver.GitVcsDriver["Service"]["remoteBranchExists"]>[0]) =>
-          Effect.succeed(false),
-      );
-      const createWorktree = vi.fn(
-        (_: Parameters<GitVcsDriver.GitVcsDriver["Service"]["createWorktree"]>[0]) =>
-          Effect.succeed({
-            worktree: {
-              refName: "t3code/bootstrap-refName",
-              path: "/tmp/bootstrap-worktree",
-            },
-          }),
-      );
-
-      yield* buildAppUnderTest({
-        layers: {
-          gitVcsDriver: {
-            remoteExists,
-            fetchRemote,
-            remoteBranchExists,
-            resolveRemoteTrackingCommit,
-            createWorktree,
-          },
-          orchestrationEngine: {
-            dispatch: (command) =>
-              Effect.sync(() => {
-                dispatchedCommands.push(command);
-                return { sequence: dispatchedCommands.length };
-              }),
-            readEvents: () => Stream.empty,
-          },
-        },
-      });
-
-      const createdAt = "2026-01-01T00:00:00.000Z";
-      const wsUrl = yield* getWsServerUrl("/ws");
-      yield* Effect.scoped(
-        withWsRpcClient(wsUrl, (client) =>
-          client[ORCHESTRATION_WS_METHODS.dispatchCommand]({
-            type: "thread.turn.start",
-            commandId: CommandId.make("cmd-bootstrap-turn-start-no-origin"),
-            threadId: ThreadId.make("thread-bootstrap-no-origin"),
-            message: {
-              messageId: MessageId.make("msg-bootstrap-no-origin"),
-              role: "user",
-              text: "hello",
-              attachments: [],
-            },
-            modelSelection: defaultModelSelection,
-            runtimeMode: "full-access",
-            interactionMode: "default",
-            bootstrap: {
-              createThread: {
-                projectId: defaultProjectId,
-                title: "Bootstrap Thread",
-                modelSelection: defaultModelSelection,
-                runtimeMode: "full-access",
-                interactionMode: "default",
-                branch: "main",
-                worktreePath: null,
-                createdAt,
+  it.effect.each(["unavailable", "check", "fetch", "resolve"] as const)(
+    "falls back to the local base branch when origin is $0",
+    (failureStage) =>
+      Effect.gen(function* () {
+        const dispatchedCommands: Array<OrchestrationCommand> = [];
+        const remoteExists = vi.fn(
+          (_: Parameters<GitVcsDriver.GitVcsDriver["Service"]["remoteExists"]>[0]) =>
+            failureStage === "check"
+              ? Effect.fail(
+                  new GitCommandError({
+                    operation: "GitVcsDriver.remoteExists",
+                    command: "git remote get-url origin",
+                    cwd: "/tmp/project",
+                    detail: "origin check failed",
+                  }),
+                )
+              : Effect.succeed(failureStage !== "unavailable"),
+        );
+        const fetchRemote = vi.fn(
+          (_: Parameters<GitVcsDriver.GitVcsDriver["Service"]["fetchRemote"]>[0]) =>
+            failureStage === "fetch"
+              ? Effect.fail(
+                  new GitCommandError({
+                    operation: "GitVcsDriver.fetchRemote",
+                    command: "git fetch --quiet origin",
+                    cwd: "/tmp/project",
+                    detail: "origin fetch failed",
+                  }),
+                )
+              : Effect.void,
+        );
+        const resolveRemoteTrackingCommit = vi.fn(
+          (_: Parameters<GitVcsDriver.GitVcsDriver["Service"]["resolveRemoteTrackingCommit"]>[0]) =>
+            failureStage === "resolve"
+              ? Effect.fail(
+                  new GitCommandError({
+                    operation: "GitVcsDriver.resolveRemoteTrackingCommit",
+                    command: "git rev-parse --verify refs/remotes/origin/personal/test^{commit}",
+                    cwd: "/tmp/project",
+                    detail: "remote tracking ref does not exist",
+                  }),
+                )
+              : Effect.succeed({
+                  commitSha: "0123456789abcdef0123456789abcdef01234567",
+                  remoteRefName: "origin/personal/test",
+                }),
+        );
+        const remoteBranchExists = vi.fn(
+          (_: Parameters<GitVcsDriver.GitVcsDriver["Service"]["remoteBranchExists"]>[0]) =>
+            Effect.succeed(failureStage === "resolve"),
+        );
+        const createWorktree = vi.fn(
+          (_: Parameters<GitVcsDriver.GitVcsDriver["Service"]["createWorktree"]>[0]) =>
+            Effect.succeed({
+              worktree: {
+                refName: "t3code/bootstrap-refName",
+                path: "/tmp/bootstrap-worktree",
               },
-              prepareWorktree: {
-                projectCwd: "/tmp/project",
-                baseBranch: "main",
-                branch: "t3code/bootstrap-refName",
-                startFromOrigin: true,
-              },
-            },
-            createdAt,
-          }),
-        ),
-      );
+            }),
+        );
 
-      assert.deepEqual(remoteExists.mock.calls[0]?.[0], {
-        cwd: "/tmp/project",
-        remoteName: "origin",
-      });
-      assert.equal(fetchRemote.mock.calls.length, hasOrigin ? 1 : 0);
-      assert.equal(remoteBranchExists.mock.calls.length, hasOrigin ? 1 : 0);
-      if (hasOrigin) {
-        assert.deepEqual(remoteBranchExists.mock.calls[0]?.[0], {
+        yield* buildAppUnderTest({
+          layers: {
+            gitVcsDriver: {
+              remoteExists,
+              fetchRemote,
+              remoteBranchExists,
+              resolveRemoteTrackingCommit,
+              createWorktree,
+            },
+            orchestrationEngine: {
+              dispatch: (command) =>
+                Effect.sync(() => {
+                  dispatchedCommands.push(command);
+                  return { sequence: dispatchedCommands.length };
+                }),
+              readEvents: () => Stream.empty,
+            },
+          },
+        });
+
+        const createdAt = "2026-01-01T00:00:00.000Z";
+        const wsUrl = yield* getWsServerUrl("/ws");
+        const response = yield* Effect.scoped(
+          withWsRpcClient(wsUrl, (client) =>
+            client[ORCHESTRATION_WS_METHODS.dispatchCommand]({
+              type: "thread.turn.start",
+              commandId: CommandId.make("cmd-bootstrap-turn-start-no-origin"),
+              threadId: ThreadId.make("thread-bootstrap-no-origin"),
+              message: {
+                messageId: MessageId.make("msg-bootstrap-no-origin"),
+                role: "user",
+                text: "hello",
+                attachments: [],
+              },
+              modelSelection: defaultModelSelection,
+              runtimeMode: "full-access",
+              interactionMode: "default",
+              bootstrap: {
+                createThread: {
+                  projectId: defaultProjectId,
+                  title: "Bootstrap Thread",
+                  modelSelection: defaultModelSelection,
+                  runtimeMode: "full-access",
+                  interactionMode: "default",
+                  branch: "personal/test",
+                  worktreePath: null,
+                  createdAt,
+                },
+                prepareWorktree: {
+                  projectCwd: "/tmp/project",
+                  baseBranch: "personal/test",
+                  branch: "t3code/bootstrap-refName",
+                  startFromOrigin: true,
+                },
+              },
+              createdAt,
+            }),
+          ),
+        );
+
+        assert.equal(response.sequence, 3);
+        assert.deepEqual(remoteExists.mock.calls[0]?.[0], {
           cwd: "/tmp/project",
           remoteName: "origin",
-          refName: "main",
         });
-      }
-      assert.equal(resolveRemoteTrackingCommit.mock.calls.length, 0);
-      assert.deepEqual(createWorktree.mock.calls[0]?.[0], {
-        cwd: "/tmp/project",
-        refName: "main",
-        newRefName: "t3code/bootstrap-refName",
-        baseRefName: "main",
-        path: null,
-      });
-    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+        assert.equal(
+          fetchRemote.mock.calls.length,
+          ["fetch", "resolve"].includes(failureStage) ? 1 : 0,
+        );
+        assert.equal(
+          remoteBranchExists.mock.calls.length,
+          ["fetch", "resolve"].includes(failureStage) ? 1 : 0,
+        );
+        assert.equal(
+          resolveRemoteTrackingCommit.mock.calls.length,
+          failureStage === "resolve" ? 1 : 0,
+        );
+        assert.deepEqual(createWorktree.mock.calls[0]?.[0], {
+          cwd: "/tmp/project",
+          refName: "personal/test",
+          newRefName: "t3code/bootstrap-refName",
+          baseRefName: "personal/test",
+          path: null,
+        });
+        assertTrue(dispatchedCommands.every((command) => command.type !== "thread.delete"));
+      }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
   it.effect("records setup-script failures without aborting bootstrap turn start", () =>
