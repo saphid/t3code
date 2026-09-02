@@ -185,13 +185,11 @@ import { resolveShortcutCommand, shortcutLabelForCommand } from "../keybindings"
 import ThreadTerminalDrawer from "./ThreadTerminalDrawer";
 import {
   AlarmClockIcon,
-  CircleAlertIcon,
   CheckCircle2Icon,
   ChevronDownIcon,
   GitBranchIcon,
   Minimize2Icon,
   PaperclipIcon,
-  SettingsIcon,
   WifiOffIcon,
 } from "lucide-react";
 import { cn, randomHex } from "~/lib/utils";
@@ -331,6 +329,7 @@ import {
   useLinkedThreadPullRequest,
 } from "./ThreadStatusIndicators";
 import type { ComposerBannerStackItem } from "./chat/ComposerBannerStack";
+import { buildContextLimitBannerItem } from "./chat/ContextLimitBanner";
 import { ComposerSurface } from "./chat/ComposerSurface";
 import {
   hasAvailableClaudeCompactionProvider,
@@ -440,7 +439,8 @@ import {
   supportsDesktopAppUpdate,
   supportsServerUpdateThreadContinuation,
 } from "../versionSkew";
-import { useAssetUrls } from "../assets/assetUrls";
+import { resolveAssetUrl, useAssetUrls } from "../assets/assetUrls";
+import { createPendingHandoverStore } from "../pendingHandoverStore";
 
 const ATTACHMENT_ONLY_BOOTSTRAP_PROMPT =
   "[User attached one or more files without additional text. Respond using the conversation context and the attached files.]";
@@ -448,7 +448,7 @@ const EMPTY_ACTIVITIES: OrchestrationThreadActivity[] = [];
 const EMPTY_PROVIDERS: ServerProvider[] = [];
 const EMPTY_PROVIDER_SKILLS: ServerProvider["skills"] = [];
 const EMPTY_PENDING_USER_INPUT_ANSWERS: Record<string, PendingUserInputDraftAnswer> = {};
-const pendingThreadHandovers = new Map<string, string>();
+const pendingThreadHandovers = createPendingHandoverStore();
 const generatingThreadHandovers = new Set<string>();
 function useDraftHeroLayoutTransition(isDraftHeroState: boolean) {
   const transitionGroupRef = useRef<HTMLDivElement | null>(null);
@@ -5367,7 +5367,7 @@ function ChatViewContent(props: ChatViewProps) {
           return;
         }
         handover = result.value.handover;
-        pendingThreadHandovers.set(sourceThreadKey, handover);
+        pendingThreadHandovers.save(sourceThreadKey, handover);
         setHandoverStateVersion((version) => version + 1);
       }
 
@@ -5433,50 +5433,22 @@ function ChatViewContent(props: ChatViewProps) {
     if (!activeThreadReachedContextLimit || !activeThread) return null;
     const supportsGeneration =
       serverConfig?.environment.capabilities.threadHandoverGeneration === true;
-    return {
-      id: `context-limit:${activeThread.id}`,
-      variant: "info",
-      priority: "urgent",
-      icon: <CircleAlertIcon />,
-      title: `This thread has reached ${settings.threadContextTokenLimit.toLocaleString("en-US")} tokens`,
-      description: supportsGeneration
-        ? "T3 will not start another turn here. Create a compact handover, then review it in a new draft before choosing the next model and reasoning level."
-        : "T3 will not start another turn here. Update the connected server to create an automatic handover, or start a new thread manually.",
-      actions: (
-        <>
-          {primaryEnvironment?.environmentId === environmentId ? (
-            <Button
-              size="icon-xs"
-              variant="outline"
-              aria-label="Change thread token limit"
-              onClick={() =>
-                void navigate({
-                  to: "/settings/general",
-                  hash: "thread-context-token-limit",
-                  hashScrollIntoView: false,
-                })
-              }
-            >
-              <SettingsIcon className="size-3.5" />
-            </Button>
-          ) : null}
-          {supportsGeneration ? (
-            <Button
-              size="xs"
-              variant="outline"
-              disabled={isGeneratingHandover}
-              onClick={() => void handleGenerateHandover()}
-            >
-              {isGeneratingHandover
-                ? "Creating handover..."
-                : pendingHandover === undefined
-                  ? "Handover to new thread"
-                  : "Open saved handover"}
-            </Button>
-          ) : null}
-        </>
-      ),
-    };
+    return buildContextLimitBannerItem({
+      threadId: activeThread.id,
+      tokenLimit: settings.threadContextTokenLimit,
+      canChangeTokenLimit: primaryEnvironment?.environmentId === environmentId,
+      supportsGeneration,
+      isGeneratingHandover,
+      hasSavedHandover: pendingHandover !== undefined,
+      onChangeTokenLimit: () => {
+        void navigate({
+          to: "/settings/general",
+          hash: "thread-context-token-limit",
+          hashScrollIntoView: false,
+        });
+      },
+      onGenerateHandover: () => void handleGenerateHandover(),
+    });
   }, [
     activeThread,
     activeThreadReachedContextLimit,
