@@ -100,6 +100,19 @@ describe("evaluateTurnStartLimits", () => {
     expect(violation?.code).toBe("concurrent-turn-limit");
   });
 
+  it("counts handover reservations against the shared provider-work ceiling", () => {
+    const violation = evaluateTurnStartLimits({
+      threadId,
+      activities: [],
+      sessions: Array.from({ length: MAX_CONCURRENT_PROVIDER_TURNS - 1 }, (_, index) =>
+        session(index),
+      ),
+      reservedHandoverCount: 1,
+    });
+
+    expect(violation?.code).toBe("concurrent-turn-limit");
+  });
+
   it("does not count ready sessions and permits an already-running thread", () => {
     const sessions = [
       ...Array.from({ length: MAX_CONCURRENT_PROVIDER_TURNS }, (_, index) => session(index)),
