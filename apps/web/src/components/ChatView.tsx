@@ -371,6 +371,7 @@ import {
   ThreadErrorBanner,
 } from "./chat/ThreadErrorBanner";
 import type { ComposerBannerStackItem } from "./chat/ComposerBannerStack";
+import { buildContextLimitBannerItem } from "./chat/ContextLimitBanner";
 import { ComposerSurface } from "./chat/ComposerSurface";
 import {
   hasAvailableCompactionProvider,
@@ -498,17 +499,20 @@ import {
   supportsDesktopAppUpdate,
   supportsServerUpdateThreadContinuation,
 } from "../versionSkew";
-import { useAssetUrls } from "../assets/assetUrls";
+import { resolveAssetUrl, useAssetUrls } from "../assets/assetUrls";
 import {
   ATTACHMENT_ONLY_BOOTSTRAP_PROMPT,
   recallableComposerPrompt,
 } from "./chat/composerPromptHistory";
+import { createPendingHandoverStore } from "../pendingHandoverStore";
 
 const EMPTY_ACTIVITIES: OrchestrationThreadActivity[] = [];
 const EMPTY_PROVIDERS: ServerProvider[] = [];
 const EMPTY_USAGE_LIMIT_SOURCES: UsageLimitSourceSnapshots = [];
 const EMPTY_PROVIDER_SKILLS: ServerProvider["skills"] = [];
 const EMPTY_PENDING_USER_INPUT_ANSWERS: Record<string, PendingUserInputDraftAnswer> = {};
+const pendingThreadHandovers = createPendingHandoverStore();
+const generatingThreadHandovers = new Set<string>();
 function useDraftHeroLayoutTransition(isDraftHeroState: boolean) {
   const transitionGroupRef = useRef<HTMLDivElement | null>(null);
   const composerAnchorRef = useRef<HTMLDivElement | null>(null);
@@ -6057,6 +6061,144 @@ export default function ChatView(props: ChatViewProps) {
     agentPanelModel.liveCount,
     handleStopBackgroundWork,
     isStoppingBackgroundWork,
+  ]);
+  const [, setHandoverStateVersion] = useState(0);
+  const activeThreadHandoverKey = activeThread ? routeThreadKey : null;
+  const isGeneratingHandover = activeThreadHandoverKey
+    ? generatingThreadHandovers.has(activeThreadHandoverKey)
+    : false;
+  const pendingHandover = activeThreadHandoverKey
+    ? pendingThreadHandovers.get(activeThreadHandoverKey)
+    : undefined;
+  const handleGenerateHandover = useCallback(async () => {
+    if (
+      !activeThread ||
+      !activeProject ||
+      !isServerThread ||
+      !activeThreadReachedContextLimit ||
+      isGeneratingHandover ||
+      activeThreadHandoverKey === null
+    ) {
+      return;
+    }
+    const sourceThreadKey = activeThreadHandoverKey;
+    if (generatingThreadHandovers.has(sourceThreadKey)) return;
+    generatingThreadHandovers.add(sourceThreadKey);
+    setHandoverStateVersion((version) => version + 1);
+    try {
+      let handover = pendingThreadHandovers.get(sourceThreadKey);
+      if (handover === undefined) {
+        const result = await generateThreadHandover({
+          environmentId: activeThread.environmentId,
+          input: { threadId: activeThread.id },
+        });
+        if (result._tag === "Failure") {
+          if (!isAtomCommandInterrupted(result)) {
+            const error = squashAtomCommandFailure(result);
+            toastManager.add(
+              stackedThreadToast({
+                type: "error",
+                title: "Could not create handover",
+                description: error instanceof Error ? error.message : "Handover generation failed.",
+              }),
+            );
+          }
+          return;
+        }
+        handover = result.value.handover;
+        pendingThreadHandovers.save(sourceThreadKey, handover);
+        setHandoverStateVersion((version) => version + 1);
+      }
+
+      if (routeThreadKeyRef.current !== sourceThreadKey) {
+        return;
+      }
+
+      const opened = await handleNewThread(
+        scopeProjectRef(activeThread.environmentId, activeProject.id),
+        {
+          branch: activeThread.branch,
+          worktreePath: activeThread.worktreePath,
+          envMode: activeThread.worktreePath ? "worktree" : "local",
+          startFromOrigin: false,
+        },
+      );
+      if (opened === null) {
+        try {
+          await writeTextToClipboard(handover, "thread handover");
+          toastManager.add(
+            stackedThreadToast({
+              type: "info",
+              title: "Handover saved",
+              description:
+                "The draft could not be opened, so the handover was copied to your clipboard. Try again from this thread.",
+            }),
+          );
+        } catch (error) {
+          throw new Error(
+            "The replacement draft could not be opened and the handover could not be copied.",
+            {
+              cause: error,
+            },
+          );
+        }
+        return;
+      }
+      useComposerDraftStore.getState().setPrompt(opened.draftId, handover);
+      pendingThreadHandovers.delete(sourceThreadKey);
+    } catch (error) {
+      toastManager.add(
+        stackedThreadToast({
+          type: "error",
+          title: "Could not create handover",
+          description: error instanceof Error ? error.message : "Handover generation failed.",
+        }),
+      );
+    } finally {
+      generatingThreadHandovers.delete(sourceThreadKey);
+      setHandoverStateVersion((version) => version + 1);
+    }
+  }, [
+    activeProject,
+    activeThread,
+    activeThreadReachedContextLimit,
+    activeThreadHandoverKey,
+    generateThreadHandover,
+    handleNewThread,
+    isGeneratingHandover,
+    isServerThread,
+  ]);
+  const contextLimitBannerItem = useMemo<ComposerBannerStackItem | null>(() => {
+    if (!activeThreadReachedContextLimit || !activeThread) return null;
+    const supportsGeneration =
+      serverConfig?.environment.capabilities.threadHandoverGeneration === true;
+    return buildContextLimitBannerItem({
+      threadId: activeThread.id,
+      tokenLimit: settings.threadContextTokenLimit,
+      canChangeTokenLimit: primaryEnvironment?.environmentId === environmentId,
+      supportsGeneration,
+      isGeneratingHandover,
+      hasSavedHandover: pendingHandover !== undefined,
+      onChangeTokenLimit: () => {
+        void navigate({
+          to: "/settings/general",
+          hash: "thread-context-token-limit",
+          hashScrollIntoView: false,
+        });
+      },
+      onGenerateHandover: () => void handleGenerateHandover(),
+    });
+  }, [
+    activeThread,
+    activeThreadReachedContextLimit,
+    environmentId,
+    handleGenerateHandover,
+    isGeneratingHandover,
+    pendingHandover,
+    navigate,
+    primaryEnvironment?.environmentId,
+    serverConfig?.environment.capabilities.threadHandoverGeneration,
+    settings.threadContextTokenLimit,
   ]);
   // A woken thread announces itself in the open view, not just the sidebar
   // pill. Dismissing marks the wake as seen (same acknowledgment as the

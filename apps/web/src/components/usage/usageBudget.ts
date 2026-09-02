@@ -29,17 +29,14 @@ function crossed(
   return result;
 }
 
-/** Returns the strongest deterministic budget crossing on the latest reported day. */
-export function evaluateDailyUsageBudget(daily: readonly DailyTotals[]): UsageBudgetAlert | null {
-  const latestDay = daily.reduce<string | null>(
-    (latest, period) => (latest === null || period.day > latest ? period.day : latest),
-    null,
-  );
-  if (latestDay === null) return null;
-
+/** Returns the strongest deterministic budget crossing on the requested day. */
+export function evaluateDailyUsageBudget(
+  daily: readonly DailyTotals[],
+  requestedDay: string,
+): UsageBudgetAlert | null {
   const alerts: UsageBudgetAlert[] = [];
   for (const period of daily) {
-    if (period.day !== latestDay) continue;
+    if (period.day !== requestedDay) continue;
     const claudeUsd = period.byProvider.get("claude")?.costUsd ?? 0;
     const claude = crossed(claudeUsd, DAILY_USAGE_BUDGET.claudeUsd);
     if (claude !== null) {
