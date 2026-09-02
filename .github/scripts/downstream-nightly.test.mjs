@@ -102,7 +102,10 @@ describe("Downstream Nightly workflow", () => {
     assert.match(workflow, /com\.t3tools\.t3code\.fork-466f726b/);
     assert.match(workflow, /T3 Code \(Fork Nightly\)\.app/);
     assert.match(workflow, /packageJson\.name !== "t3code-fork-466f726b"/);
+    assert.match(workflow, /--stable-mac-adhoc-signature/);
     assert.match(workflow, /codesign --verify --deep --strict/);
+    assert.match(workflow, /Unexpected fork designated requirement/);
+    assert.match(workflow, /--test-requirement==identifier/);
   });
 });
 
