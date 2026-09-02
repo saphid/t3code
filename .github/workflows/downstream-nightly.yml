@@ -574,7 +574,7 @@ jobs:
             fingerprint: metadata.fingerprint,
           })} -->`;
           const patches = metadata.patches.flatMap((patch) => [
-            `- ${patch.label}`,
+            `- ${patch.name ?? patch.label} (${patch.label})`,
             ...patch.commits.map((sha) => `  - \`${sha}\``),
           ]);
           const notes = [

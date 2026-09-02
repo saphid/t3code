@@ -27,6 +27,11 @@
     {
       "type": "commit",
       "repository": "saphid/t3code",
+      "sha": "51f4a491b45b48735393742a3329bf514147f9ad"
+    },
+    {
+      "type": "commit",
+      "repository": "saphid/t3code",
       "sha": "6fccbec76527ef7b4ee02c525053b129c685f40e"
     }
   ]

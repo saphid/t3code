@@ -29,6 +29,7 @@ const manifest = {
       repository: "pingdotgg/t3code",
       number: 8857,
       headSha: "a".repeat(40),
+      name: "Context-limit handovers",
     },
     {
       type: "commit",
@@ -61,6 +62,12 @@ describe("Downstream Nightly manifest", () => {
         parseManifest(JSON.stringify({ ...manifest, releaseRepository: "https://github.com/x/y" })),
       /owner\/repository/,
     );
+  });
+
+  it("rejects an empty patch name", () => {
+    const unnamed = structuredClone(manifest);
+    unnamed.patches[0].name = " ";
+    assert.throws(() => parseManifest(JSON.stringify(unnamed)), /non-empty string/);
   });
 });
 
@@ -202,6 +209,14 @@ describe("Downstream Nightly release selection", () => {
     );
   });
 
+  it("does not rebuild when only a display name changes", () => {
+    const patch = { commits: ["a"], name: "Original title" };
+    assert.equal(
+      fingerprintPlan("v1.0.0-nightly.20260901.1", [patch]),
+      fingerprintPlan("v1.0.0-nightly.20260901.1", [{ ...patch, name: "Edited title" }]),
+    );
+  });
+
   it("only treats a release as complete when all updater manifests exist", () => {
     const upstreamTag = "v1.0.0-nightly.20260901.1";
     const fingerprint = "f".repeat(64);
@@ -269,6 +284,7 @@ describe("Downstream Nightly assembly", () => {
           fetchRef: patchSha,
           commits: [patchSha],
           label: "local patch",
+          name: "Selected patch",
         },
       ],
     };
@@ -283,6 +299,10 @@ describe("Downstream Nightly assembly", () => {
     assert.match(
       readFileSync(join(source, ".github/downstream-nightly-build.json"), "utf8"),
       new RegExp(`"commits": \\["${patchSha}"\\]`),
+    );
+    assert.match(
+      readFileSync(join(source, ".github/downstream-nightly-build.json"), "utf8"),
+      /"name": "Selected patch"/,
     );
     assert.deepEqual(git(source, "status", "--porcelain"), "");
   });
