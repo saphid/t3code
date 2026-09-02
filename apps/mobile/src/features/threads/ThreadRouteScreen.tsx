@@ -5,7 +5,15 @@ import {
   useNavigation,
   type StaticScreenProps,
 } from "@react-navigation/native";
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type ReactNode,
+} from "react";
 import * as Option from "effect/Option";
 import { EnvironmentId, ThreadId, type ProjectScript } from "@t3tools/contracts";
 import {
@@ -13,7 +21,7 @@ import {
   threadHasOlderTurns,
 } from "@t3tools/client-runtime/state/threads";
 import { projectScriptCwd, projectScriptRuntimeEnv } from "@t3tools/shared/projectScripts";
-import { Platform, ScrollView, View } from "react-native";
+import { Alert, Platform, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useWorkspaceState } from "../../state/workspace";
 import { useEnvironmentQuery } from "../../state/query";
@@ -62,6 +70,7 @@ import { useSelectedThreadGitState } from "../../state/use-selected-thread-git-s
 import { useSelectedThreadRequests } from "../../state/use-selected-thread-requests";
 import { useSelectedThreadWorktree } from "../../state/use-selected-thread-worktree";
 import { useThreadComposerState } from "../../state/use-thread-composer-state";
+import { threadContextReachedLimit } from "../../state/contextLimit";
 import { threadEnvironment } from "../../state/threads";
 import { projectThreadContentPresentation } from "./threadContentPresentation";
 import {
@@ -82,6 +91,26 @@ interface ThreadInspectorSelection {
 }
 
 type NativeHeaderItems = ReadonlyArray<Record<string, unknown>>;
+
+const pendingMobileHandovers = new Map<string, string>();
+const generatingMobileHandovers = new Set<string>();
+const mobileHandoverListeners = new Set<() => void>();
+
+function notifyMobileHandoverListeners(): void {
+  for (const listener of mobileHandoverListeners) {
+    listener();
+  }
+}
+
+function subscribeMobileHandoverState(listener: () => void): () => void {
+  mobileHandoverListeners.add(listener);
+  return () => mobileHandoverListeners.delete(listener);
+}
+
+function mobileHandoverStateSnapshot(threadKey: string | null): string {
+  if (threadKey === null) return "";
+  return `${generatingMobileHandovers.has(threadKey)}:${pendingMobileHandovers.has(threadKey)}`;
+}
 
 function InspectorPaneRoleActivation() {
   useAdaptiveWorkspacePaneRole("inspector");
@@ -215,6 +244,9 @@ function ThreadRouteContent(
   const gitActions = useSelectedThreadGitActions();
   const requests = useSelectedThreadRequests();
   const interruptThreadTurn = useAtomCommand(threadEnvironment.interruptTurn, "thread interrupt");
+  const generateThreadHandover = useAtomCommand(threadEnvironment.generateHandover, {
+    reportFailure: false,
+  });
   const navigation = useNavigation();
   const params = props.route.params;
   const environmentIdRaw = firstRouteParam(params.environmentId);
@@ -760,6 +792,84 @@ function ThreadRouteContent(
     connectionState: routeConnectionState,
   });
   const serverConfig = routeEnvironmentRuntime?.serverConfig ?? null;
+  const selectedThreadKeyRef = useRef(
+    selectedThread ? scopedThreadKey(selectedThread.environmentId, selectedThread.id) : null,
+  );
+  selectedThreadKeyRef.current = selectedThread
+    ? scopedThreadKey(selectedThread.environmentId, selectedThread.id)
+    : null;
+  const currentThreadKey = selectedThread
+    ? scopedThreadKey(selectedThread.environmentId, selectedThread.id)
+    : null;
+  const handoverState = useSyncExternalStore(
+    subscribeMobileHandoverState,
+    () => mobileHandoverStateSnapshot(currentThreadKey),
+    () => mobileHandoverStateSnapshot(currentThreadKey),
+  );
+  const isGeneratingHandover = handoverState.startsWith("true:");
+  const handleGenerateHandover = useCallback(async () => {
+    if (
+      !selectedThread ||
+      !selectedThreadProject ||
+      !selectedThreadDetail ||
+      serverConfig?.environment.capabilities.threadHandoverGeneration !== true ||
+      currentThreadKey === null
+    ) {
+      return;
+    }
+    const sourceThreadKey = currentThreadKey;
+    if (generatingMobileHandovers.has(sourceThreadKey)) return;
+    generatingMobileHandovers.add(sourceThreadKey);
+    notifyMobileHandoverListeners();
+    try {
+      let handover = pendingMobileHandovers.get(sourceThreadKey);
+      if (handover === undefined) {
+        const result = await generateThreadHandover({
+          environmentId: selectedThread.environmentId,
+          input: { threadId: selectedThread.id },
+        });
+        if (result._tag === "Failure") {
+          Alert.alert("Could not create handover", "Handover generation failed. Try again.");
+          return;
+        }
+        handover = result.value.handover;
+        pendingMobileHandovers.set(sourceThreadKey, handover);
+        notifyMobileHandoverListeners();
+      }
+      if (selectedThreadKeyRef.current !== sourceThreadKey) return;
+      navigation.navigate("NewTaskSheet", {
+        screen: "NewTaskDraft",
+        params: {
+          environmentId: String(selectedThread.environmentId),
+          projectId: String(selectedThread.projectId),
+          title: selectedThreadProject.title,
+          initialPrompt: handover,
+          branch: selectedThread.branch,
+          worktreePath: selectedThread.worktreePath,
+        },
+      });
+      pendingMobileHandovers.delete(sourceThreadKey);
+      notifyMobileHandoverListeners();
+    } finally {
+      generatingMobileHandovers.delete(sourceThreadKey);
+      notifyMobileHandoverListeners();
+    }
+  }, [
+    currentThreadKey,
+    generateThreadHandover,
+    navigation,
+    selectedThread,
+    selectedThreadDetail,
+    selectedThreadProject,
+    serverConfig?.environment.capabilities.threadHandoverGeneration,
+  ]);
+  const contextLimitReached =
+    serverConfig !== null &&
+    selectedThreadDetail !== null &&
+    threadContextReachedLimit(
+      selectedThreadDetail.activities,
+      serverConfig?.settings.threadContextTokenLimit,
+    );
   const renderThreadRouteBody = (showActionControls: boolean) => (
     <>
       <ThreadGitControls {...threadGitControlProps} showActionControls={showActionControls} />
@@ -799,6 +909,13 @@ function ThreadRouteContent(
           onNativePasteImages={composer.onNativePasteImages}
           onRemoveDraftImage={composer.onRemoveDraftImage}
           serverConfig={serverConfig}
+          contextLimitReached={contextLimitReached}
+          isGeneratingHandover={isGeneratingHandover}
+          onGenerateHandover={
+            serverConfig?.environment.capabilities.threadHandoverGeneration === true
+              ? handleGenerateHandover
+              : undefined
+          }
           onStopThread={handleStopThread}
           onSendMessage={composer.onSendMessage}
           onReconnectEnvironment={handleReconnectEnvironment}
