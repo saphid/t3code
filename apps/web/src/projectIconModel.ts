@@ -211,11 +211,10 @@ export function selectProjectIcon(
 
   const iconName =
     bestIcon ?? GENERIC_PROJECT_ICONS[stableIndex(cacheKey, GENERIC_PROJECT_ICONS.length)]!;
-  const icon: ProjectIconSelection = {
-    kind: "emoji",
-    icon: iconName,
-    emoji: PROJECT_ICON_EMOJIS[iconName],
-  };
+  const icon: ProjectIconSelection =
+    stableIndex(`${cacheKey}:variant3`, 3) === 0
+      ? { kind: "emoji", icon: iconName, emoji: PROJECT_ICON_EMOJIS[iconName] }
+      : { kind: "lucide", icon: iconName };
   projectIconCache.set(cacheKey, icon);
   return icon;
 }
