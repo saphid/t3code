@@ -18,7 +18,7 @@ export { DEFAULT_THREAD_CONTEXT_TOKEN_LIMIT };
 export const MAX_CONCURRENT_PROVIDER_TURNS = 8;
 
 export type UsageLimitViolation = {
-  readonly code: "context-limit" | "concurrent-turn-limit";
+  readonly code: "context-limit" | "concurrent-turn-limit" | "handover-in-progress";
   readonly detail: string;
 };
 
@@ -82,6 +82,7 @@ export function evaluateTurnStartLimits(input: {
   readonly activities: ReadonlyArray<OrchestrationThreadActivity>;
   readonly sessions: ReadonlyArray<ProviderSession>;
   readonly reservedTurnThreadIds?: ReadonlyArray<ThreadId>;
+  readonly reservedHandoverCount?: number;
 }): UsageLimitViolation | undefined {
   const contextViolation = contextLimitViolation(input);
   if (contextViolation) return contextViolation;
@@ -90,15 +91,19 @@ export function evaluateTurnStartLimits(input: {
     input.sessions.some(
       (session) => session.threadId === input.threadId && isRunningSession(session),
     ) || input.reservedTurnThreadIds?.includes(input.threadId) === true;
-  const runningTurnCount = runningTurnThreadIds(
-    input.sessions,
-    input.reservedTurnThreadIds ?? [],
-  ).size;
+  const runningTurnCount =
+    runningTurnThreadIds(input.sessions, input.reservedTurnThreadIds ?? []).size +
+    (input.reservedHandoverCount ?? 0);
   return currentThreadIsRunning ? undefined : concurrentTurnLimitViolation(runningTurnCount);
 }
 
 export function evaluateHandoverStartLimits(input: {
   readonly sessions: ReadonlyArray<ProviderSession>;
+  readonly reservedTurnThreadIds?: ReadonlyArray<ThreadId>;
+  readonly reservedHandoverCount?: number;
 }): UsageLimitViolation | undefined {
-  return concurrentTurnLimitViolation(runningTurnThreadIds(input.sessions, []).size);
+  return concurrentTurnLimitViolation(
+    runningTurnThreadIds(input.sessions, input.reservedTurnThreadIds ?? []).size +
+      (input.reservedHandoverCount ?? 0),
+  );
 }
