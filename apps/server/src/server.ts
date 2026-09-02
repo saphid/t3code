@@ -393,7 +393,13 @@ const ProjectFaviconResolverLayerLive = ProjectFaviconResolver.layer.pipe(
   Layer.provide(T3ProjectFileLoader.layer),
 );
 
-const ServerEnvironmentLayerLive = ServerEnvironment.layer.pipe(
+const ProviderInstanceRegistryLayerLive = ProviderInstanceRegistryHydrationLive.pipe(
+  Layer.provideMerge(Layer.mergeAll(ProviderEventLoggers.layer, ModelManifest.layer)),
+  Layer.provideMerge(OpenCodeRuntime.OpenCodeRuntimeLive),
+);
+
+const ServerEnvironmentLayerLive = ServerEnvironment.providerRuntimeLayer.pipe(
+  Layer.provide(ProviderInstanceRegistryLayerLive),
   Layer.provide(ServerSecretStore.layer),
 );
 
