@@ -32,6 +32,9 @@ export interface UpdatesHarnessOptions {
   readonly stopBackend?: Effect.Effect<void>;
   readonly startBackend?: Effect.Effect<void>;
   readonly env?: Record<string, string | undefined>;
+  readonly updateRepository?: string | null;
+  readonly appPath?: string;
+  readonly appName?: string;
 }
 
 export function makeHarness(options: UpdatesHarnessOptions = {}) {
@@ -147,7 +150,8 @@ export function makeHarness(options: UpdatesHarnessOptions = {}) {
     platform: "darwin",
     processArch: "x64",
     appVersion: "1.2.3",
-    appPath: "/repo",
+    ...(options.appName === undefined ? {} : { appName: options.appName }),
+    appPath: options.appPath ?? "/repo",
     isPackaged: true,
     resourcesPath: "/missing/resources",
     runningUnderArm64Translation: false,
@@ -167,10 +171,20 @@ export function makeHarness(options: UpdatesHarnessOptions = {}) {
 
   let testSettings: DesktopAppSettings.DesktopSettings = {
     ...DesktopAppSettings.DEFAULT_DESKTOP_SETTINGS,
+    ...(options.updateRepository !== undefined
+      ? {
+          updateRepository: options.updateRepository,
+          ...(options.updateRepository === null
+            ? {}
+            : { updateChannel: "nightly" as const, updateChannelConfiguredByUser: true }),
+        }
+      : {}),
   };
   const setUpdateChannelError = options.setUpdateChannelError;
   const settingsLayer =
-    setUpdateChannelError || options.beforeSetUpdateChannel
+    setUpdateChannelError ||
+    options.beforeSetUpdateChannel ||
+    options.updateRepository !== undefined
       ? Layer.succeed(DesktopAppSettings.DesktopAppSettings, {
           get: Effect.sync(() => testSettings),
           load: Effect.sync(() => testSettings),
@@ -183,16 +197,34 @@ export function makeHarness(options: UpdatesHarnessOptions = {}) {
               : (options.beforeSetUpdateChannel ?? Effect.void).pipe(
                   Effect.andThen(
                     Effect.sync(() => {
-                      const changed = testSettings.updateChannel !== channel;
+                      const changed =
+                        testSettings.updateChannel !== channel ||
+                        testSettings.updateRepository !== null;
                       testSettings = {
                         ...testSettings,
                         updateChannel: channel,
                         updateChannelConfiguredByUser: true,
+                        updateRepository: null,
                       };
                       return { settings: testSettings, changed };
                     }),
                   ),
                 ),
+          setUpdateRepository: (repository) =>
+            Effect.sync(() => {
+              const updateChannel = repository === null ? testSettings.updateChannel : "nightly";
+              const changed =
+                testSettings.updateRepository !== repository ||
+                testSettings.updateChannel !== updateChannel;
+              testSettings = {
+                ...testSettings,
+                updateRepository: repository,
+                updateChannel,
+                updateChannelConfiguredByUser:
+                  repository === null ? testSettings.updateChannelConfiguredByUser : true,
+              };
+              return { settings: testSettings, changed };
+            }),
           setWslBackendEnabled: () => Effect.die("unexpected WSL backend toggle"),
           setWslDistro: () => Effect.die("unexpected WSL distro change"),
           setWslOnly: () => Effect.die("unexpected WSL-only toggle"),
