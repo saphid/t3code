@@ -322,16 +322,21 @@ function ForkBuildDetails() {
                   <div className="mt-1 text-[11px] text-muted-foreground">{patch.label}</div>
                   <div className="mt-2 flex flex-wrap gap-x-2 gap-y-1">
                     {patch.commits.map((commit) => (
-                      <a
-                        key={commit}
-                        className="font-mono text-[11px] text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
-                        href={resolveDownstreamCommitUrl(patch, commit)}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        title={commit}
-                      >
-                        {commit.slice(0, 12)}
-                      </a>
+                      <Tooltip key={commit}>
+                        <TooltipTrigger
+                          render={
+                            <a
+                              className="font-mono text-[11px] text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+                              href={resolveDownstreamCommitUrl(patch, commit)}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                            >
+                              {commit.slice(0, 12)}
+                            </a>
+                          }
+                        />
+                        <TooltipPopup>{commit}</TooltipPopup>
+                      </Tooltip>
                     ))}
                   </div>
                 </div>
