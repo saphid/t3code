@@ -1,0 +1,91 @@
+{
+  "upstreamRepository": "pingdotgg/t3code",
+  "upstreamTag": "v0.0.39-nightly.20260902.1253",
+  "upstreamUrl": "https://github.com/pingdotgg/t3code/releases/tag/v0.0.39-nightly.20260902.1253",
+  "releaseRepository": "saphid/t3code",
+  "fingerprint": "09babf877780163f5c8487b1eee9eddfd0fc6dd093b7fa69f75b9ac214f30996",
+  "version": "0.0.39-nightly.20260902.1253293248",
+  "tag": "v0.0.39-nightly.20260902.1253293248",
+  "patches": [
+    {
+      "label": "saphid/t3code@413106d2c784",
+      "name": "feat(search): rank threads by natural-language terms",
+      "commits": ["413106d2c7844051a1ba6232611567031572336f"]
+    },
+    {
+      "label": "saphid/t3code@7583790eba13",
+      "name": "fix(release): ad hoc sign credential-free macOS builds",
+      "commits": ["7583790eba13c2191610ad5bbaf9ed748d499f5c"]
+    },
+    {
+      "label": "saphid/t3code@ce740950ba33",
+      "name": "feat(orchestration): add context-limit handovers",
+      "commits": ["ce740950ba33dafd2a2b3b0bc86b39e1a6d77885"]
+    },
+    {
+      "label": "saphid/t3code@fb8fdf8ff856",
+      "name": "feat(desktop): support durable custom update sources",
+      "commits": ["fb8fdf8ff8569d7a8eac93e246d261e33421052c"]
+    },
+    {
+      "label": "saphid/t3code@3f1b598fabf8",
+      "name": "feat(settings): show included fork changes",
+      "commits": ["3f1b598fabf896f4c1327d56b5064874dc0de1dd"]
+    },
+    {
+      "label": "saphid/t3code@9dbe79ad5005",
+      "name": "feat(web): filter sidebar threads by environment",
+      "commits": ["9dbe79ad5005e40c228d3f2114e1c2c9920896fa"]
+    },
+    {
+      "label": "saphid/t3code@70e360eaf17a",
+      "name": "fix(orchestration): make context handovers recoverable",
+      "commits": ["70e360eaf17a3e2c6b9a87215cc5f8eebf9572d0"]
+    },
+    {
+      "label": "saphid/t3code@8f19895d0e28",
+      "name": "feat(usage): add complete usage insights stack",
+      "commits": ["8f19895d0e284489ca1bdaa8c6ca6597570d38e1"]
+    },
+    {
+      "label": "saphid/t3code@78f24097f2ca",
+      "name": "fix(desktop): make hold-to-quit reliable",
+      "commits": ["78f24097f2ca1eb11afa2dcfa0a34b313170da96"]
+    },
+    {
+      "label": "saphid/t3code@f5d22c167a0a",
+      "name": "feat(web): add automatic project icons",
+      "commits": ["f5d22c167a0a9615070680bd426f865764354c15"]
+    },
+    {
+      "label": "saphid/t3code@1ab653dc56aa",
+      "name": "fix(server): recover worktree base without origin",
+      "commits": ["1ab653dc56aa2fb6df674ccce10876c7c79ac523"]
+    },
+    {
+      "label": "saphid/t3code@74707bbd403b",
+      "name": "feat(navigation): add back and forward history",
+      "commits": ["74707bbd403b9b3310c1bb56c92eb2d9af62111a"]
+    },
+    {
+      "label": "saphid/t3code@f624845b6736",
+      "name": "feat(desktop): add thread deep links",
+      "commits": ["f624845b673609c184d4d7e8bca2c525ed6760e4"]
+    },
+    {
+      "label": "saphid/t3code@2ad2bb38b63c",
+      "name": "feat(web): open file links externally",
+      "commits": ["2ad2bb38b63c4eeeacfbe9b9081fdf862b47e399"]
+    },
+    {
+      "label": "saphid/t3code@3b20c2970ae2",
+      "name": "fix(build): identify Windows native probes exactly",
+      "commits": ["3b20c2970ae281ed2ef834084afd080f8f5c051f"]
+    },
+    {
+      "label": "saphid/t3code@fdfa158685ce",
+      "name": "fix(updates): align custom source with current nightly",
+      "commits": ["fdfa158685ce5e97e25fb460674153bd681058e5"]
+    }
+  ]
+}
