@@ -16,13 +16,12 @@
     {
       "type": "commit",
       "repository": "saphid/t3code",
-      "sha": "a47282d9e2787f1c408f096cae7334e6308abcf0"
+      "sha": "6f08a4abf291ead89d1584c83e57bddecf99cab0"
     },
     {
-      "type": "pull_request",
-      "repository": "pingdotgg/t3code",
-      "number": 8976,
-      "headSha": "e03e1d0f1d0210dafa2288107210b30755c6a8e5"
+      "type": "commit",
+      "repository": "saphid/t3code",
+      "sha": "1171c19a16af56dd12745bc3365cb86fc0a095c8"
     },
     {
       "type": "commit",
