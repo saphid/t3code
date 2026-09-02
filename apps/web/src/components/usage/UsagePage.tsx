@@ -143,7 +143,10 @@ export function UsagePage() {
     () => (isPast24Hours ? merged.hourly : merged.daily).toReversed(),
     [isPast24Hours, merged.daily, merged.hourly],
   );
-  const budgetAlert = useMemo(() => evaluateDailyUsageBudget(merged.daily), [merged.daily]);
+  const budgetAlert = useMemo(
+    () => evaluateDailyUsageBudget(merged.daily, window.untilDay),
+    [merged.daily, window.untilDay],
+  );
 
   const breakdownModels = useMemo(
     () =>
