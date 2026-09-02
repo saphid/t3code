@@ -21,6 +21,7 @@ import { usePanelAnimationSettings } from "../panelAnimations";
 import LegacyThreadSidebar from "./LegacySidebar";
 import ThreadSidebar from "./Sidebar";
 import { SidebarChromeHeader } from "./sidebar/SidebarChrome";
+import { NavigationHistoryControls } from "./NavigationHistoryControls";
 import {
   resolveSidebarStageFocusRingOffsetClass,
   useSidebarStageBackdropVariant,
@@ -74,7 +75,7 @@ function readInitialThreadSidebarWidth(): number {
   }
 }
 
-function SidebarControl() {
+function WorkspaceChromeControls() {
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const { toggleSidebar } = useSidebar();
   const isSidebarVisible = useSidebarVisibility();
@@ -83,6 +84,13 @@ function SidebarControl() {
     environmentIdentificationMode === "artwork",
   );
   const shortcutLabel = shortcutLabelForCommand(keybindings, "sidebar.toggle");
+  const backdropControlClass =
+    isSidebarVisible && stageBackdropVariant
+      ? cn(
+          "focus-visible:ring-white/90 [&_svg]:stroke-white/90! [&_svg]:opacity-100! not-aria-disabled:hover:[&_svg]:stroke-white! not-aria-disabled:[:hover,[data-pressed]]:bg-white/15",
+          resolveSidebarStageFocusRingOffsetClass(stageBackdropVariant),
+        )
+      : undefined;
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -117,15 +125,7 @@ function SidebarControl() {
         <TooltipTrigger
           render={
             <SidebarTrigger
-              className={cn(
-                "pointer-events-auto",
-                isSidebarVisible &&
-                  stageBackdropVariant &&
-                  "focus-visible:ring-white/90 [&_svg]:stroke-white/90! [&_svg]:opacity-100! [&_svg]:hover:stroke-white! [:hover,[data-pressed]]:bg-white/15",
-                isSidebarVisible &&
-                  stageBackdropVariant &&
-                  resolveSidebarStageFocusRingOffsetClass(stageBackdropVariant),
-              )}
+              className={cn("pointer-events-auto", backdropControlClass)}
               aria-label="Toggle main sidebar"
             />
           }
@@ -134,6 +134,11 @@ function SidebarControl() {
           Toggle main sidebar{shortcutLabel ? ` (${shortcutLabel})` : ""}
         </TooltipPopup>
       </Tooltip>
+      <div className="pointer-events-auto ml-0.5">
+        <NavigationHistoryControls
+          {...(backdropControlClass ? { buttonClassName: backdropControlClass } : {})}
+        />
+      </div>
     </div>
   );
 }
@@ -179,6 +184,8 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
   const sidebarProviderStyle = {
     "--sidebar-width": `${sidebarWidth}px`,
     "--panel-animation-duration": `${panelAnimationDurationMs}ms`,
+    "--workspace-titlebar-content-left":
+      "calc(var(--workspace-controls-left) + var(--workspace-titlebar-control-size) + var(--workspace-titlebar-control-size) + var(--workspace-titlebar-control-size) + 0.25rem + var(--workspace-titlebar-control-gap))",
     ...(isMacosDesktop && !isWindowFullscreen
       ? { "--workspace-controls-left": MACOS_TRAFFIC_LIGHTS_LEFT_INSET }
       : {}),
@@ -259,7 +266,7 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
         <SidebarRail onDoubleClick={resetSidebarWidth} />
       </Sidebar>
       {children}
-      <SidebarControl />
+      <WorkspaceChromeControls />
     </SidebarProvider>
   );
 }
