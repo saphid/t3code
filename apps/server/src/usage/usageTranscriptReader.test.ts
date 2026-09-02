@@ -1,13 +1,19 @@
 // @effect-diagnostics nodeBuiltinImport:off - resume coverage writes, appends
 // to, and truncates real transcript files byte-exactly, mirroring the reader's
 // own deliberate node:fs usage.
+import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
-import { afterEach, assert, beforeEach, describe, it } from "@effect/vitest";
+import { afterEach, assert, beforeEach, describe, expect, it } from "@effect/vitest";
 
-import { readTranscriptRecords } from "./usageTranscriptReader.ts";
+import {
+  listTranscriptFiles,
+  readTranscriptFingerprint,
+  readTranscriptRecords,
+  readTranscriptTitle,
+} from "./usageTranscriptReader.ts";
 
 let dir: string;
 
@@ -206,5 +212,180 @@ describe("readTranscriptRecords resume", () => {
 
   it("returns null for an unreadable file", async () => {
     assert.isNull(await readTranscriptRecords(NodePath.join(dir, "missing.jsonl"), "claude"));
+  });
+});
+
+describe("readTranscriptTitle", () => {
+  it("keeps a real prompt that begins with an angle bracket", async () => {
+    const file = NodePath.join(dir, "session.jsonl");
+    await NodeFSP.writeFile(
+      file,
+      JSON.stringify({ type: "user", message: { content: "<3 ship this today" } }),
+    );
+
+    assert.strictEqual(await readTranscriptTitle(file, "claude"), "<3 ship this today");
+  });
+
+  it("skips a known injected preamble and reads the next user prompt", async () => {
+    const file = NodePath.join(dir, "session.jsonl");
+    await NodeFSP.writeFile(
+      file,
+      [
+        {
+          type: "user",
+          message: { content: "<system-reminder>generated context</system-reminder>" },
+        },
+        { type: "user", message: { content: "Fix the real bug" } },
+      ]
+        .map((line) => JSON.stringify(line))
+        .join("\n"),
+    );
+
+    assert.strictEqual(await readTranscriptTitle(file, "claude"), "Fix the real bug");
+  });
+
+  it("skips a user shell command wrapper", async () => {
+    const file = NodePath.join(dir, "session.jsonl");
+    await NodeFSP.writeFile(
+      file,
+      [
+        {
+          type: "user",
+          message: { content: "<user_shell_command>git status</user_shell_command>" },
+        },
+        { type: "user", message: { content: "Explain the failing check" } },
+      ]
+        .map((line) => JSON.stringify(line))
+        .join("\n"),
+    );
+
+    assert.strictEqual(await readTranscriptTitle(file, "claude"), "Explain the failing check");
+  });
+
+  it("uses the child prompt instead of copied parent history for a forked Codex rollout", async () => {
+    const file = NodePath.join(dir, "session.jsonl");
+    const message = (ordinal: number, timestamp: string, text: string) => ({
+      ordinal,
+      type: "event_msg",
+      timestamp,
+      payload: { type: "message", role: "user", content: [{ type: "input_text", text }] },
+    });
+    await NodeFSP.writeFile(
+      file,
+      [
+        {
+          type: "session_meta",
+          ordinal: 0,
+          timestamp: "2026-08-01T05:00:00.000Z",
+          payload: {
+            type: "session_meta",
+            id: "child",
+            forked_from_id: "parent",
+            subagent_history_start_ordinal: 3,
+          },
+        },
+        message(1, "2026-08-01T05:00:00.600Z", "First copied parent prompt"),
+        message(2, "2026-08-01T05:00:01.100Z", "Second copied parent prompt"),
+        message(3, "2026-08-01T05:00:01.200Z", "Investigate the child task"),
+      ]
+        .map((line) => JSON.stringify(line))
+        .join("\n"),
+    );
+
+    assert.strictEqual(await readTranscriptTitle(file, "codex"), "Investigate the child task");
+  });
+
+  it("does not guess a fork title from timing when no history boundary is present", async () => {
+    const file = NodePath.join(dir, "session.jsonl");
+    await NodeFSP.writeFile(
+      file,
+      [
+        {
+          type: "session_meta",
+          timestamp: "2026-08-01T05:00:00.000Z",
+          payload: { type: "session_meta", id: "child", forked_from_id: "parent" },
+        },
+        {
+          ordinal: 1,
+          type: "session_meta",
+          timestamp: "2026-08-01T05:00:00.100Z",
+          payload: {
+            type: "session_meta",
+            id: "parent",
+            subagent_history_start_ordinal: 1,
+          },
+        },
+        {
+          ordinal: 2,
+          type: "event_msg",
+          timestamp: "2026-08-01T05:00:05.000Z",
+          payload: {
+            type: "message",
+            role: "user",
+            content: [{ type: "input_text", text: "Ambiguous prompt" }],
+          },
+        },
+      ]
+        .map((line) => JSON.stringify(line))
+        .join("\n"),
+    );
+
+    assert.isNull(await readTranscriptTitle(file, "codex"));
+  });
+
+  it("truncates titles without splitting a Unicode code point", async () => {
+    const file = NodePath.join(dir, "session.jsonl");
+    await NodeFSP.writeFile(
+      file,
+      JSON.stringify({ type: "user", message: { content: `${"a".repeat(78)}🙂more` } }),
+    );
+
+    assert.strictEqual(await readTranscriptTitle(file, "claude"), `${"a".repeat(78)}🙂…`);
+  });
+
+  it("returns null when the title stream cannot be read", async () => {
+    assert.isNull(await readTranscriptTitle(NodePath.join(dir, "missing.jsonl"), "claude"));
+  });
+});
+
+describe("listTranscriptFiles", () => {
+  it("returns stable path ordering and exact file identity", async () => {
+    NodeFS.writeFileSync(NodePath.join(dir, "z.jsonl"), "z\n");
+    NodeFS.writeFileSync(NodePath.join(dir, "a.jsonl"), "a\n");
+
+    const files = await listTranscriptFiles(dir, 0);
+
+    expect(files.map((file) => NodePath.basename(file.path))).toEqual(["a.jsonl", "z.jsonl"]);
+    expect(files.every((file) => file.mtimeNs.length > 0)).toBe(true);
+    expect(files.every((file) => file.device.length > 0 && file.inode.length > 0)).toBe(true);
+  });
+});
+
+describe("transcript snapshots", () => {
+  it("changes the fingerprint for a same-size rewrite with restored mtime", async () => {
+    const filePath = NodePath.join(dir, "session.jsonl");
+    NodeFS.writeFileSync(filePath, "a".repeat(10_000));
+    const originalStats = NodeFS.statSync(filePath);
+    const first = await readTranscriptFingerprint(filePath, 10_000);
+
+    NodeFS.writeFileSync(filePath, `${"a".repeat(5_000)}b${"a".repeat(4_999)}`);
+    NodeFS.utimesSync(filePath, originalStats.atime, originalStats.mtime);
+    const second = await readTranscriptFingerprint(filePath, 10_000);
+
+    expect(NodeFS.statSync(filePath).size).toBe(originalStats.size);
+    expect(first).not.toBeNull();
+    expect(second).not.toBe(first);
+  });
+
+  it("does not read bytes appended after the observed size", async () => {
+    const filePath = NodePath.join(dir, "session.jsonl");
+    const firstLine = claudeLine(1, 10);
+    NodeFS.writeFileSync(filePath, firstLine);
+    const observedSize = NodeFS.statSync(filePath).size;
+    NodeFS.appendFileSync(filePath, claudeLine(2, 20));
+
+    const parsed = await readTranscriptRecords(filePath, "claude", undefined, observedSize);
+
+    expect(parsed?.records.map((record) => record.totals.outputTokens)).toEqual([10]);
   });
 });

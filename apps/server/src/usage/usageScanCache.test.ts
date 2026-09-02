@@ -16,10 +16,12 @@ function record(overrides: Partial<UsageRecord> = {}): UsageRecord {
     timestampMs: 1_786_000_000_000,
     model: "claude-fable-5",
     sessionId: "session-a",
+    cwd: "/home/theo/project",
     totals: {
       uncachedInputTokens: 2,
       cachedInputTokens: 1000,
       cacheCreationTokens: 10,
+      cacheCreation5mTokens: 10,
       outputTokens: 50,
       reasoningTokens: 0,
     },
@@ -43,8 +45,12 @@ function cacheWith(entries: readonly [string, number, readonly UsageRecord[]][])
   const cache: ScanCache = new Map();
   for (const [path, mtimeMs, records] of entries) {
     cache.set(path, {
-      size: records.length * 10,
+      size: 200 + records.length * 10,
       mtimeMs,
+      mtimeNs: `${mtimeMs}000000`,
+      device: "1",
+      inode: path,
+      fingerprint: `sha256:${path}`,
       provider: "claude",
       records,
       tailRecords: [],
@@ -63,6 +69,10 @@ describe("scan cache round trip", () => {
     original.set("/grok.jsonl", {
       size: 40,
       mtimeMs: 300,
+      mtimeNs: "300000000",
+      device: "1",
+      inode: "grok",
+      fingerprint: "sha256:grok",
       provider: "grok",
       records: [
         record({ provider: "grok", model: "grok-4.5-build", dedupeKey: "s:p:grok-4.5-build" }),
@@ -71,8 +81,12 @@ describe("scan cache round trip", () => {
       position: position({ resumeOffset: 30, guardLength: 30, guardHash: 123 }),
     });
     original.set("/codex.jsonl", {
-      size: 80,
+      size: 200,
       mtimeMs: 400,
+      mtimeNs: "400000000",
+      device: "1",
+      inode: "codex",
+      fingerprint: "sha256:codex",
       provider: "codex",
       records: [record({ provider: "codex", model: "gpt-5.2-codex", dedupeKey: null })],
       tailRecords: [],
@@ -80,6 +94,7 @@ describe("scan cache round trip", () => {
         codexState: {
           model: "gpt-5.2-codex",
           sessionId: "session-c",
+          cwd: "/home/theo/codex-project",
           lastUsageSignature: '{"input_tokens":1}',
           sawSessionMeta: true,
           suppressingForkCopies: false,
@@ -186,6 +201,42 @@ describe("scan cache round trip", () => {
     const restored = decodeScanCache(JSON.parse(JSON.stringify(poisoned)));
     expect(restored.has("/a.jsonl")).toBe(false);
   });
+
+  it.each([0.5, 99])("drops an entry with invalid cwd index %s", (cwdIndex) => {
+    const encoded = encodeScanCache(cacheWith([["/a.jsonl", 100, [record()]]]));
+    const row = encoded.files["/a.jsonl"]!.r[0]!;
+    const poisoned = {
+      ...encoded,
+      files: {
+        "/a.jsonl": {
+          ...encoded.files["/a.jsonl"]!,
+          r: [[...row.slice(0, 10), cwdIndex, ...row.slice(11)]],
+        },
+      },
+    };
+
+    expect(decodeScanCache(JSON.parse(JSON.stringify(poisoned))).has("/a.jsonl")).toBe(false);
+  });
+
+  it.each([
+    [20, 0],
+    [-1, 11],
+    [5.5, 4.5],
+  ])("drops an entry with invalid cache TTL counters %s + %s", (fiveMinute, oneHour) => {
+    const encoded = encodeScanCache(cacheWith([["/a.jsonl", 100, [record()]]]));
+    const row = encoded.files["/a.jsonl"]!.r[0]!;
+    const poisoned = {
+      ...encoded,
+      files: {
+        "/a.jsonl": {
+          ...encoded.files["/a.jsonl"]!,
+          r: [[...row.slice(0, 11), fiveMinute, oneHour]],
+        },
+      },
+    };
+
+    expect(decodeScanCache(JSON.parse(JSON.stringify(poisoned))).has("/a.jsonl")).toBe(false);
+  });
 });
 
 describe("pruneScanCache", () => {
@@ -281,7 +332,7 @@ describe("pruneScanCache with an unwalked root", () => {
 });
 
 describe("dedupeWithinFile", () => {
-  it("keeps the first record per dedupe key", () => {
+  it("keeps the final record per dedupe key", () => {
     const kept = dedupeWithinFile([
       record({ totals: { ...record().totals, outputTokens: 1 } }),
       record({ totals: { ...record().totals, outputTokens: 999 } }),
@@ -289,7 +340,7 @@ describe("dedupeWithinFile", () => {
     ]);
 
     expect(kept).toHaveLength(2);
-    expect(kept[0]?.totals.outputTokens).toBe(1);
+    expect(kept[0]?.totals.outputTokens).toBe(999);
   });
 
   it("keeps every record that has no dedupe key", () => {

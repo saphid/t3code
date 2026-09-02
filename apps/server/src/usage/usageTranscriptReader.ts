@@ -1,4 +1,4 @@
-// @effect-diagnostics nodeBuiltinImport:off
+// @effect-diagnostics nodeBuiltinImport:off - streaming and hashing multi-gigabyte local transcripts requires Node filesystem primitives.
 /**
  * Raw filesystem access for transcript scanning.
  *
@@ -15,15 +15,17 @@
  *
  * @module usageTranscriptReader
  */
+import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
+import * as NodeCrypto from "node:crypto";
 
 import type { UsageProviderKind } from "@t3tools/contracts";
 
 import {
   initialCodexScanState,
   mightCarryUsage,
-  parseClaudeLine,
+  parseClaudeLineRecords,
   parseCodexLine,
   parseGrokLine,
   type CodexScanState,
@@ -34,7 +36,12 @@ export interface TranscriptFile {
   readonly path: string;
   readonly size: number;
   readonly mtimeMs: number;
+  readonly mtimeNs: string;
+  readonly device: string;
+  readonly inode: string;
 }
+
+const FINGERPRINT_CHUNK_BYTES = 64 * 1024;
 
 /**
  * Where a parse stopped, with enough state to continue from there.
@@ -124,9 +131,17 @@ export async function listTranscriptFiles(
         continue;
       }
       try {
-        const stats = await NodeFSP.stat(child);
-        if (stats.mtimeMs >= sinceMs) {
-          found.push({ path: child, size: stats.size, mtimeMs: stats.mtimeMs });
+        const stats = await NodeFSP.stat(child, { bigint: true });
+        const mtimeMs = Number(stats.mtimeNs) / 1_000_000;
+        if (mtimeMs >= sinceMs) {
+          found.push({
+            path: child,
+            size: Number(stats.size),
+            mtimeMs,
+            mtimeNs: String(stats.mtimeNs),
+            device: String(stats.dev),
+            inode: String(stats.ino),
+          });
         }
       } catch {
         // Vanished between readdir and stat.
@@ -135,7 +150,41 @@ export async function listTranscriptFiles(
   };
 
   await walk(root);
-  return found;
+  return found.sort((a, b) => a.path.localeCompare(b.path));
+}
+
+/**
+ * SHA-256 of every byte in the observed snapshot. Metadata remains part of
+ * cache identity, while the full content hash catches same-size rewrites even
+ * when a filesystem timestamp is preserved.
+ */
+export async function readTranscriptFingerprint(
+  filePath: string,
+  observedSize: number,
+): Promise<string | null> {
+  let handle: NodeFSP.FileHandle | null = null;
+  try {
+    handle = await NodeFSP.open(filePath, "r");
+    const hash = NodeCrypto.createHash("sha256");
+    hash.update(String(observedSize));
+    hash.update("\0");
+
+    const chunk = Buffer.allocUnsafe(Math.min(observedSize, FINGERPRINT_CHUNK_BYTES));
+    let offset = 0;
+    while (offset < observedSize) {
+      const length = Math.min(chunk.length, observedSize - offset);
+      const read = await handle.read(chunk, 0, length, offset);
+      if (read.bytesRead === 0) return null;
+      hash.update(chunk.subarray(0, read.bytesRead));
+      offset += read.bytesRead;
+    }
+
+    return hash.digest("hex");
+  } catch {
+    return null;
+  } finally {
+    await handle?.close().catch(() => undefined);
+  }
 }
 
 /**
@@ -179,7 +228,7 @@ async function guardMatches(
  *
  * The distinction matters to the caller's cache: a genuinely empty transcript
  * is a stable fact worth memoising, while a transient read failure memoised
- * under the same `(size, mtime)` key would silently drop that file's usage
+ * under the same content fingerprint would silently drop that file's usage
  * until the file next changes.
  *
  * With `resumeFrom`, parsing continues from that position when its guard bytes
@@ -194,6 +243,7 @@ export async function readTranscriptRecords(
   filePath: string,
   provider: UsageProviderKind,
   resumeFrom?: TranscriptParsePosition,
+  observedSize?: number,
 ): Promise<TranscriptParseResult | null> {
   let handle: NodeFSP.FileHandle;
   try {
@@ -217,6 +267,20 @@ export async function readTranscriptRecords(
       resumed = true;
     }
 
+    if (observedSize !== undefined && observedSize <= start) {
+      return {
+        records: [],
+        tailRecords: [],
+        position: {
+          resumeOffset: start,
+          guardLength: resumeFrom?.guardLength ?? 0,
+          guardHash: resumeFrom?.guardHash ?? 0,
+          codexState: provider === "codex" ? codexState : null,
+        },
+        resumed,
+      };
+    }
+
     const parseLine = (line: string, state: CodexScanState, out: UsageRecord[]): void => {
       if (provider === "codex") {
         if (
@@ -235,8 +299,7 @@ export async function readTranscriptRecords(
         for (const grokRecord of parseGrokLine(line)) out.push(grokRecord);
         return;
       }
-      const record = parseClaudeLine(line);
-      if (record !== null) out.push(record);
+      for (const record of parseClaudeLineRecords(line)) out.push(record);
     };
 
     const toLineString = (lineBuffer: Buffer): string => {
@@ -256,6 +319,7 @@ export async function readTranscriptRecords(
     let pendingChunks: Buffer[] = [];
     const stream = handle.createReadStream({
       start,
+      ...(observedSize === undefined ? {} : { end: observedSize - 1 }),
       autoClose: false,
     }) as AsyncIterable<Buffer>;
     for await (const chunk of stream) {
@@ -310,4 +374,177 @@ export async function readTranscriptRecords(
   } finally {
     await handle.close().catch(() => undefined);
   }
+}
+
+/** Prefixes that mark an injected preamble, not something the user typed. */
+const NOT_TITLE_PREFIXES = [
+  "<system-reminder>",
+  "<command-message>",
+  "<command-name>",
+  "<local-command-caveat>",
+  "<user_shell_command>",
+  "<environment_context>",
+  "<INSTRUCTIONS>",
+  "# AGENTS.md instructions",
+  "Caveat: the messages below",
+];
+
+const TITLE_MAX_LENGTH = 80;
+const TITLE_MAX_LINES = 400;
+const TITLE_MAX_BYTES = 1024 * 1024;
+
+function cleanTitle(text: unknown): string | null {
+  if (typeof text !== "string") return null;
+  const collapsed = text.split(/\s+/).join(" ").trim();
+  if (collapsed.length === 0) return null;
+  if (NOT_TITLE_PREFIXES.some((prefix) => collapsed.startsWith(prefix))) return null;
+  const characters = Array.from(collapsed);
+  return characters.length > TITLE_MAX_LENGTH
+    ? `${characters.slice(0, TITLE_MAX_LENGTH - 1).join("")}\u2026`
+    : collapsed;
+}
+
+function claudeTitleFromLine(line: string): string | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(line);
+  } catch {
+    return null;
+  }
+  if (typeof parsed !== "object" || parsed === null) return null;
+  const record = parsed as Record<string, unknown>;
+  if (record["type"] !== "user") return null;
+  const message = record["message"];
+  if (typeof message !== "object" || message === null) return null;
+  const content = (message as Record<string, unknown>)["content"];
+  if (typeof content === "string") return cleanTitle(content);
+  if (!Array.isArray(content)) return null;
+  for (const block of content) {
+    if (typeof block !== "object" || block === null) continue;
+    const entry = block as Record<string, unknown>;
+    if (entry["type"] !== "text") continue;
+    const title = cleanTitle(entry["text"]);
+    if (title !== null) return title;
+  }
+  return null;
+}
+
+function codexTitleFromLine(
+  line: string,
+): { readonly title: string; readonly ordinal: number | null } | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(line);
+  } catch {
+    return null;
+  }
+  if (typeof parsed !== "object" || parsed === null) return null;
+  const payload = (parsed as Record<string, unknown>)["payload"];
+  if (typeof payload !== "object" || payload === null) return null;
+  const record = payload as Record<string, unknown>;
+  if (record["type"] !== "message" || record["role"] !== "user") return null;
+  const content = record["content"];
+  if (!Array.isArray(content)) return null;
+  const ordinalValue = (parsed as Record<string, unknown>)["ordinal"];
+  const ordinal =
+    typeof ordinalValue === "number" && Number.isInteger(ordinalValue) ? ordinalValue : null;
+  for (const block of content) {
+    if (typeof block !== "object" || block === null) continue;
+    const title = cleanTitle((block as Record<string, unknown>)["text"]);
+    if (title !== null) return { title, ordinal };
+  }
+  return null;
+}
+
+function codexForkHistoryEndOrdinal(line: string): number | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(line);
+  } catch {
+    return null;
+  }
+  if (typeof parsed !== "object" || parsed === null) return null;
+  const record = parsed as Record<string, unknown>;
+  if (record["type"] !== "session_meta") return null;
+  const payload = record["payload"];
+  if (typeof payload !== "object" || payload === null) return null;
+  const ordinal = (payload as Record<string, unknown>)["subagent_history_start_ordinal"];
+  return typeof ordinal === "number" && Number.isInteger(ordinal) ? ordinal : null;
+}
+
+/**
+ * First thing the user actually typed in a session, as a display title.
+ *
+ * Only called for the handful of unattributed rows that survived the response
+ * cap, so a second bounded read per row is fine. Returns null when the file
+ * cannot be read, holds no user text (Grok logs carry none we trust), or only
+ * injected preambles appear early on.
+ */
+export async function readTranscriptTitle(
+  filePath: string,
+  provider: UsageProviderKind,
+): Promise<string | null> {
+  if (provider === "grok") return null;
+  const codexState = provider === "codex" ? initialCodexScanState() : null;
+  let codexForkBoundary: number | null = null;
+  let stream: NodeFS.ReadStream | null = null;
+  try {
+    stream = NodeFS.createReadStream(filePath, { encoding: "utf8" });
+    let pending = "";
+    let seen = 0;
+    let bytesRead = 0;
+    for await (const chunk of stream) {
+      const text = String(chunk);
+      bytesRead += Buffer.byteLength(text);
+      pending += text;
+      for (;;) {
+        const newline = pending.indexOf("\n");
+        if (newline === -1) break;
+        const line = pending.slice(0, newline).replace(/\r$/, "");
+        pending = pending.slice(newline + 1);
+        seen += 1;
+        if (seen > TITLE_MAX_LINES) return null;
+        if (provider === "claude") {
+          if (!line.includes('"user"')) continue;
+          const title = claudeTitleFromLine(line);
+          if (title !== null) return title;
+          continue;
+        }
+        if (seen === 1) codexForkBoundary = codexForkHistoryEndOrdinal(line);
+        const title = codexTitleFromLine(line);
+        parseCodexLine(line, codexState!);
+        if (title === null) continue;
+        if (!codexState!.suppressingForkCopies) return title.title;
+        if (
+          codexForkBoundary !== null &&
+          title.ordinal !== null &&
+          title.ordinal >= codexForkBoundary
+        ) {
+          return title.title;
+        }
+      }
+      if (bytesRead >= TITLE_MAX_BYTES) return null;
+    }
+    if (pending.length > 0 && seen < TITLE_MAX_LINES) {
+      if (provider === "claude") return claudeTitleFromLine(pending);
+      if (seen === 0) codexForkBoundary = codexForkHistoryEndOrdinal(pending);
+      const title = codexTitleFromLine(pending);
+      parseCodexLine(pending, codexState!);
+      if (title === null) return null;
+      if (!codexState!.suppressingForkCopies) return title.title;
+      if (
+        codexForkBoundary !== null &&
+        title.ordinal !== null &&
+        title.ordinal >= codexForkBoundary
+      ) {
+        return title.title;
+      }
+      return null;
+    }
+  } catch {
+    return null;
+  } finally {
+    stream?.destroy();
+  }
+  return null;
 }
