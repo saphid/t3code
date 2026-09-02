@@ -9,6 +9,7 @@ import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 
@@ -19,6 +20,9 @@ import { resolveServerSelfUpdateCapability } from "../cloud/selfUpdate.ts";
 import { resolveServiceLauncherMode } from "../cloud/serviceLauncherClient.ts";
 import * as ServerConfig from "../config.ts";
 import * as ProcessRunner from "../processRunner.ts";
+import * as ProviderInstanceRegistry from "../provider/Services/ProviderInstanceRegistry.ts";
+import type { ProviderInstance } from "../provider/ProviderDriver.ts";
+import * as TextGeneration from "../textGeneration/TextGeneration.ts";
 import { resolveServerEnvironmentLabel } from "./ServerEnvironmentLabel.ts";
 import { detectServerEnvironmentMachineKind } from "./ServerEnvironmentMachine.ts";
 
@@ -186,6 +190,12 @@ export const make = Effect.gen(function* () {
   const identity = yield* ServerEnvironmentIdentity;
   const hostPlatform = yield* HostProcessPlatform;
   const hostArchitecture = yield* HostProcessArchitecture;
+  // Connect-only commands intentionally do not boot provider drivers. Use
+  // Effect's typed optional-service lookup so that this degraded capability is
+  // explicit without hiding a required dependency behind an ambient cast.
+  const providerInstanceRegistry = yield* Effect.serviceOption(
+    ProviderInstanceRegistry.ProviderInstanceRegistry,
+  );
   const environmentId = yield* identity.getEnvironmentId;
   const cwdBaseName = path.basename(serverConfig.cwd).trim();
   const label = yield* resolveServerEnvironmentLabel({ cwdBaseName });
@@ -242,12 +252,23 @@ export const make = Effect.gen(function* () {
     // The publish opt-in and relay link change at runtime (`t3 connect
     // publish`, the client settings toggle), so the capability is read per
     // descriptor request rather than baked in at startup.
-    getDescriptor: readAgentActivityPublishingActive(secrets).pipe(
-      Effect.map((agentActivityPublishing) => ({
+    getDescriptor: Effect.gen(function* () {
+      const agentActivityPublishing = yield* readAgentActivityPublishingActive(secrets);
+      const instances = Option.match(providerInstanceRegistry, {
+        onNone: () => Effect.succeed<ReadonlyArray<ProviderInstance>>([]),
+        onSome: (registry) => registry.listInstances,
+      });
+      const threadHandoverGeneration =
+        TextGeneration.findAvailableCodexInstance(yield* instances) !== undefined;
+      return {
         ...descriptor,
-        capabilities: { ...descriptor.capabilities, agentActivityPublishing },
-      })),
-    ),
+        capabilities: {
+          ...descriptor.capabilities,
+          agentActivityPublishing,
+          threadHandoverGeneration,
+        },
+      };
+    }),
   });
 });
 

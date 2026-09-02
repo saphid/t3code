@@ -1,5 +1,5 @@
 import type { UsageProviderKind } from "@t3tools/contracts";
-import { CheckIcon, RefreshCwIcon, XIcon } from "lucide-react";
+import { AlertTriangleIcon, CheckIcon, RefreshCwIcon, XIcon } from "lucide-react";
 import { useMemo, useState } from "react";
 
 import type { DailyTotals, HourlyTotals } from "@t3tools/shared/usageMerge";
@@ -19,6 +19,7 @@ import {
   formatUsd,
   makeWindow,
 } from "@t3tools/shared/usageFormat";
+import { Alert, AlertDescription, AlertTitle } from "../ui/alert";
 import { Button } from "../ui/button";
 import { ScrollArea } from "../ui/scroll-area";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
@@ -34,6 +35,7 @@ import { WorkspacePageContainer } from "../WorkspacePageContainer";
 import { WorkspacePageHeader } from "../WorkspacePageHeader";
 import { UsageProviderChart, type UsageChartMetric } from "./UsageProviderChart";
 import { PROVIDER_ORDER, PROVIDER_PRESENTATION, providersWithUsage } from "./usageProviders";
+import { evaluateDailyUsageBudget } from "./usageBudget";
 
 const WINDOW_OPTIONS = [
   { days: 1, label: "Past 24h" },
@@ -75,6 +77,8 @@ export function UsagePage() {
     () => (isPast24Hours ? merged.hourly : merged.daily).toReversed(),
     [isPast24Hours, merged.daily, merged.hourly],
   );
+  const budgetAlert = useMemo(() => evaluateDailyUsageBudget(merged.daily), [merged.daily]);
+
   const breakdownModels = useMemo(
     () =>
       breakdown === "model" && metric === "tokens"
@@ -221,6 +225,29 @@ export function UsagePage() {
                   duplicateSources={merged.duplicateSources}
                   staleEnvironments={merged.staleEnvironments}
                 />
+
+                {budgetAlert !== null ? (
+                  <Alert variant="warning" controlAlignment="first-line">
+                    <AlertTriangleIcon aria-hidden />
+                    <AlertTitle>
+                      {budgetAlert.level === "pause"
+                        ? "Usage pause level reached"
+                        : budgetAlert.level === "approval"
+                          ? "Usage approval level reached"
+                          : "Usage warning level reached"}
+                    </AlertTitle>
+                    <AlertDescription>
+                      {budgetAlert.kind === "claude"
+                        ? `Claude reached ${formatUsd(budgetAlert.valueUsd)} on ${formatDayShort(budgetAlert.day)}, at or above the ${formatUsd(budgetAlert.thresholdUsd)} ${budgetAlert.level} level.`
+                        : `API-equivalent usage reached ${formatUsd(budgetAlert.valueUsd)} on ${formatDayShort(budgetAlert.day)}, at or above the ${formatUsd(budgetAlert.thresholdUsd)} ${budgetAlert.level} level. This includes hypothetical subscription usage.`}
+                      {budgetAlert.level === "pause"
+                        ? " Pause new agent work and review the usage breakdown."
+                        : budgetAlert.level === "approval"
+                          ? " Get approval before launching more work."
+                          : " Review the usage breakdown before expanding the workload."}
+                    </AlertDescription>
+                  </Alert>
+                ) : null}
 
                 <section className="grid gap-6 lg:grid-cols-[minmax(0,18rem)_minmax(0,1fr)]">
                   <div className="flex min-w-0 flex-col gap-5">
