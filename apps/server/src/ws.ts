@@ -1143,30 +1143,42 @@ const makeWsRpcLayer = (
             if (prepareWorktree && shouldPrepareWorktree) {
               // "Start from origin" is a stored default; repos without the
               // requested remote branch fall back to the local base branch.
-              const startFromOrigin =
-                prepareWorktree.startFromOrigin === true &&
-                (yield* gitWorkflow.remoteExists({
-                  cwd: prepareWorktree.projectCwd,
-                  remoteName: "origin",
-                }));
-              if (startFromOrigin) {
-                yield* gitWorkflow.fetchRemote({
-                  cwd: prepareWorktree.projectCwd,
-                  remoteName: "origin",
-                });
-                const remoteBaseExists = yield* gitWorkflow.remoteBranchExists({
-                  cwd: prepareWorktree.projectCwd,
-                  refName: prepareWorktree.baseBranch,
-                  remoteName: "origin",
-                });
-                if (remoteBaseExists) {
+              if (prepareWorktree.startFromOrigin === true) {
+                worktreeBaseRef = yield* Effect.gen(function* () {
+                  const originAvailable = yield* gitWorkflow.remoteExists({
+                    cwd: prepareWorktree.projectCwd,
+                    remoteName: "origin",
+                  });
+                  if (!originAvailable) return prepareWorktree.baseBranch;
+                  yield* gitWorkflow.fetchRemote({
+                    cwd: prepareWorktree.projectCwd,
+                    remoteName: "origin",
+                  });
+                  const remoteBaseExists = yield* gitWorkflow.remoteBranchExists({
+                    cwd: prepareWorktree.projectCwd,
+                    refName: prepareWorktree.baseBranch,
+                    remoteName: "origin",
+                  });
+                  if (!remoteBaseExists) return prepareWorktree.baseBranch;
                   const resolvedRemoteBase = yield* gitWorkflow.resolveRemoteTrackingCommit({
                     cwd: prepareWorktree.projectCwd,
                     refName: prepareWorktree.baseBranch,
                     fallbackRemoteName: "origin",
                   });
-                  worktreeBaseRef = resolvedRemoteBase.commitSha;
-                }
+                  return resolvedRemoteBase.commitSha;
+                }).pipe(
+                  Effect.catch((error) =>
+                    Effect.logWarning("could not prepare worktree base from origin", {
+                      threadId: command.threadId,
+                      baseBranch: prepareWorktree.baseBranch,
+                      remoteName: "origin",
+                      operation: error.operation,
+                      exitCode: error.exitCode ?? null,
+                      stdoutLength: error.stdoutLength ?? null,
+                      stderrLength: error.stderrLength ?? null,
+                    }).pipe(Effect.as(prepareWorktree.baseBranch)),
+                  ),
+                );
               }
 
               const resolvedWorktreeBaseRef = worktreeBaseRef ?? prepareWorktree.baseBranch;
