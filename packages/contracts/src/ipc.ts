@@ -1243,6 +1243,11 @@ export const DesktopPreviewAutomationWaitForInputSchema = Schema.Struct({
 export const SystemSettingsPaneSchema = Schema.Literals(["full-disk-access"]);
 export type SystemSettingsPane = typeof SystemSettingsPaneSchema.Type;
 
+export interface DesktopThreadDeepLinkPayload {
+  readonly environmentId: string;
+  readonly threadId: string;
+}
+
 export interface DesktopBridge {
   getAppBranding: () => DesktopAppBranding | null;
   /** The desktop client's OS platform, read from Electron's preload process. */
@@ -1348,6 +1353,12 @@ export interface DesktopBridge {
   pasteAsText?: () => Promise<void>;
   onMenuAction: (listener: (action: string) => void) => () => void;
   onSnapShotEvent?: (listener: (event: DesktopSnapShotEvent) => void) => () => void;
+  /**
+   * Thread deep links (`t3code://app/<environmentId>/<threadId>`) forwarded
+   * from the OS by the main process. Optional: older desktop builds never
+   * emit it.
+   */
+  onDeepLink?: (listener: (payload: DesktopThreadDeepLinkPayload) => void) => () => void;
   /**
    * Quit-confirmation hint pushes. Optional: older desktop builds never emit
    * them.
