@@ -143,7 +143,7 @@ import {
   formatThreadForHandover,
   makeHandoverModelSelection,
 } from "./orchestration/ThreadHandover.ts";
-import { evaluateHandoverStartLimits } from "./orchestration/UsageLimitPolicy.ts";
+import * as UsageLimitReservations from "./orchestration/UsageLimitReservations.ts";
 import * as ProviderInstanceRegistry from "./provider/Services/ProviderInstanceRegistry.ts";
 import * as TextGeneration from "./textGeneration/TextGeneration.ts";
 import { failEnvironmentAuthInvalid, failEnvironmentInternal } from "./auth/http.ts";
@@ -519,6 +519,7 @@ const makeWsRpcLayer = (
       const providerService = yield* ProviderService.ProviderService;
       const providerInstanceRegistry = yield* ProviderInstanceRegistry.ProviderInstanceRegistry;
       const textGeneration = yield* TextGeneration.TextGeneration;
+      const usageLimitReservations = UsageLimitReservations.forProviderService(providerService);
       const providerMaintenanceRunner = yield* ProviderMaintenanceRunner.ProviderMaintenanceRunner;
       const serverUpdate = yield* ServerSelfUpdate.ServerSelfUpdate;
       const config = yield* ServerConfig.ServerConfig;
@@ -1387,16 +1388,6 @@ const makeWsRpcLayer = (
                     }),
                   ),
                 );
-              const usageLimitViolation = evaluateHandoverStartLimits({
-                sessions: yield* providerService.listSessions(),
-              });
-              if (usageLimitViolation) {
-                return yield* Effect.fail(
-                  new OrchestrationGenerateHandoverError({
-                    message: usageLimitViolation.detail,
-                  }),
-                );
-              }
               const codexInstance = TextGeneration.findAvailableCodexInstance(
                 yield* providerInstanceRegistry.listInstances,
               );
@@ -1407,11 +1398,25 @@ const makeWsRpcLayer = (
                   }),
                 );
               }
-              return yield* textGeneration.generateHandover({
-                cwd: thread.worktreePath ?? project.workspaceRoot,
-                threadContents: formatThreadForHandover(thread),
-                modelSelection: makeHandoverModelSelection(codexInstance.instanceId),
+              const reservationKey = `handover:${threadId}`;
+              const usageLimitViolation = yield* usageLimitReservations.reserveHandover({
+                key: reservationKey,
+                threadId,
               });
+              if (usageLimitViolation) {
+                return yield* Effect.fail(
+                  new OrchestrationGenerateHandoverError({
+                    message: usageLimitViolation.detail,
+                  }),
+                );
+              }
+              return yield* textGeneration
+                .generateHandover({
+                  cwd: thread.worktreePath ?? project.workspaceRoot,
+                  threadContents: formatThreadForHandover(thread),
+                  modelSelection: makeHandoverModelSelection(codexInstance.instanceId),
+                })
+                .pipe(Effect.ensuring(usageLimitReservations.release(reservationKey)));
             }).pipe(
               Effect.mapError((cause) =>
                 isOrchestrationGenerateHandoverError(cause)
