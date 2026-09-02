@@ -135,6 +135,7 @@ import {
   mergeComposerDraftContentState,
   releaseUnusedComposerAttachmentFiles,
   removeComposerDraftsForEnvironment,
+  replaceComposerDraftText,
   resetComposerDraftsLoadState,
   retainComposerAttachmentFileForPreview,
   restoreComposerDraftSnapshotState,
@@ -1040,6 +1041,37 @@ describe("mobile composer drafts", () => {
     expect(written.stickyModelSelection).toEqual({
       instanceId: "codex",
       model: "gpt-5.6-sol",
+    });
+  });
+
+  it("replaces a destination prompt only after its persisted draft hydrates", async () => {
+    const draftKey = "new-task:environment-1:project-1";
+    composerDraftFileMocks.setDocument({
+      schemaVersion: 1,
+      drafts: {
+        [draftKey]: {
+          text: "Old unsent prompt",
+          attachments: [],
+          runtimeMode: "full-access",
+        },
+      },
+    });
+    composerDraftFileMocks.blockRead();
+
+    const replacement = replaceComposerDraftText(draftKey, "Generated handover");
+    await Promise.resolve();
+    expect(composerDraftFileMocks.getWrites()).toHaveLength(0);
+
+    composerDraftFileMocks.releaseRead();
+    await replacement;
+
+    expect(getComposerDraftSnapshot(draftKey)).toMatchObject({
+      text: "Generated handover",
+      runtimeMode: "full-access",
+    });
+    expect(JSON.parse(composerDraftFileMocks.getDocument()).drafts[draftKey]).toMatchObject({
+      text: "Generated handover",
+      runtimeMode: "full-access",
     });
   });
 
