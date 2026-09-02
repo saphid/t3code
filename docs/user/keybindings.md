@@ -62,6 +62,12 @@ shortcut the browser leaves alone, such as `alt+w`.
 request is available. Its default shortcut is `mod+shift+c`, and it does not replace terminal copy
 while the terminal has focus.
 
+`navigation.back` and `navigation.forward` move through the locations you visited in T3 Code. The
+defaults are `mod+[` and `mod+]`. On web and desktop, the same actions are available from the arrow
+buttons beside the sidebar toggle and from the command palette. Mobile shows the buttons in thread
+navigation and supports `cmd+[` and `cmd+]` on an attached keyboard. The web and desktop defaults do
+not run while a terminal or browser preview has focus.
+
 `thread.settle` settles the active thread or restores it when it is already settled. Its default
 shortcut is `mod+shift+s`, and it does not run while the terminal has focus.
 
