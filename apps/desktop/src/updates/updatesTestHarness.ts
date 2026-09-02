@@ -183,7 +183,9 @@ export function makeHarness(options: UpdatesHarnessOptions = {}) {
   };
   const setUpdateChannelError = options.setUpdateChannelError;
   const settingsLayer =
-    setUpdateChannelError || options.beforeSetUpdateChannel || options.updateRepository !== undefined
+    setUpdateChannelError ||
+    options.beforeSetUpdateChannel ||
+    options.updateRepository !== undefined
       ? Layer.succeed(DesktopAppSettings.DesktopAppSettings, {
           get: Effect.sync(() => testSettings),
           load: Effect.sync(() => testSettings),
