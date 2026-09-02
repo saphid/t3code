@@ -36,6 +36,14 @@ function assertSha(value, field) {
   return value;
 }
 
+function optionalPatchName(value, field) {
+  if (value === undefined) return undefined;
+  if (typeof value !== "string" || value.trim().length === 0) {
+    fail(`${field} must be a non-empty string when provided.`);
+  }
+  return value.trim();
+}
+
 export function parseManifest(raw) {
   let input;
   try {
@@ -70,6 +78,7 @@ export function parseManifest(raw) {
       fail(`${field} must be an object.`);
     }
     const repository = assertRepository(patch.repository, `${field}.repository`);
+    const name = optionalPatchName(patch.name, `${field}.name`);
 
     if (patch.type === "pull_request") {
       if (!Number.isSafeInteger(patch.number) || patch.number <= 0) {
@@ -80,6 +89,7 @@ export function parseManifest(raw) {
         repository,
         number: patch.number,
         headSha: assertSha(patch.headSha, `${field}.headSha`),
+        ...(name === undefined ? {} : { name }),
       };
     }
 
@@ -88,6 +98,7 @@ export function parseManifest(raw) {
         type: patch.type,
         repository,
         sha: assertSha(patch.sha, `${field}.sha`),
+        ...(name === undefined ? {} : { name }),
       };
     }
 
@@ -100,6 +111,7 @@ export function parseManifest(raw) {
         repository,
         ref: patch.ref,
         expectedSha: assertSha(patch.expectedSha, `${field}.expectedSha`),
+        ...(name === undefined ? {} : { name }),
       };
     }
 
@@ -132,7 +144,10 @@ export function selectLatestNightlyRelease(releases) {
 }
 
 export function fingerprintPlan(upstreamTag, patches) {
-  return createHash("sha256").update(JSON.stringify({ upstreamTag, patches })).digest("hex");
+  const codeIdentity = patches.map(({ name: _, ...patch }) => patch);
+  return createHash("sha256")
+    .update(JSON.stringify({ upstreamTag, patches: codeIdentity }))
+    .digest("hex");
 }
 
 export function resolveCustomNightlyVersion(upstreamTag, fingerprint, downstreamReleases = []) {
@@ -225,6 +240,7 @@ async function resolvePatch(patch, token) {
       fail(`Commit ${patch.repository}@${patch.sha} did not resolve exactly.`);
     return {
       ...patch,
+      name: patch.name ?? commit.commit?.message?.split("\n", 1)[0] ?? patch.sha.slice(0, 12),
       fetchUrl: `https://github.com/${patch.repository}.git`,
       fetchRef: patch.sha,
       commits: [patch.sha],
@@ -244,6 +260,10 @@ async function resolvePatch(patch, token) {
     }
     return {
       ...patch,
+      name:
+        patch.name ??
+        commit.commit?.message?.split("\n", 1)[0] ??
+        `${patch.repository}@${patch.ref}`,
       fetchUrl: `https://github.com/${patch.repository}.git`,
       fetchRef: patch.ref,
       commits: [patch.expectedSha],
@@ -270,6 +290,7 @@ async function resolvePatch(patch, token) {
   }
   return {
     ...patch,
+    name: patch.name ?? pullRequest.title ?? `${patch.repository}#${patch.number}`,
     fetchUrl: `https://github.com/${patch.repository}.git`,
     fetchRef: `refs/pull/${patch.number}/head`,
     commits: shas,
@@ -404,7 +425,7 @@ export function applyPlan(plan, sourceDir) {
       fingerprint: plan.fingerprint,
       version: plan.version,
       tag: plan.tag,
-      patches: plan.patches.map(({ label, commits }) => ({ label, commits })),
+      patches: plan.patches.map(({ label, name, commits }) => ({ label, name, commits })),
     }),
   );
   runGit(sourceDir, ["add", ...RELEASE_PACKAGE_FILES, ".github/downstream-nightly-build.json"]);
