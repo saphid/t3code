@@ -29,6 +29,7 @@ import {
   scopedThreadKey,
 } from "@t3tools/client-runtime/environment";
 import {
+  type EnvironmentId,
   resolveEnvironmentMachineKind,
   type EnvironmentMachineKind,
   type ProjectIconOverride,
@@ -55,6 +56,7 @@ import {
   SettingsIcon,
   ShieldQuestionIcon,
   SquarePenIcon,
+  ServerIcon,
   TerminalIcon,
   Undo2Icon,
   XIcon,
@@ -161,6 +163,7 @@ import {
   orderItemsByPreferredIds,
   planSidebarThreadDrop,
   reduceSidebarProjectScopeMenuState,
+  pruneDisabledEnvironmentIds,
   resolveAdjacentThreadId,
   resolveSidebarDropTarget,
   resolveSidebarDropVerb,
@@ -182,6 +185,7 @@ import {
   type SidebarListItem,
   type SidebarListMarker,
   type SidebarSection,
+  toggleDisabledEnvironmentId,
 } from "./Sidebar.logic";
 import { resolveLocalCheckoutBranchMismatch } from "./BranchToolbar.logic";
 import {
@@ -229,6 +233,7 @@ import {
   ComboboxTrigger,
   useComboboxFilter,
 } from "./ui/combobox";
+import { Menu, MenuCheckboxItem, MenuPopup, MenuTrigger } from "./ui/menu";
 import { SidebarContent, SidebarGroup, useSidebar } from "./ui/sidebar";
 import { SidebarChromeFooter, SidebarChromeHeader } from "./sidebar/SidebarChrome";
 import { SidebarHeaderIconButton, SidebarThreadHeader } from "./sidebar/SidebarThreadHeader";
@@ -804,6 +809,7 @@ const SidebarDraftBlock = memo(function SidebarDraftBlock(props: {
   projectByKey: ReadonlyMap<string, EnvironmentProject>;
   projectDisplayNameByKey: ReadonlyMap<string, string>;
   scopedProjectKeys: ReadonlySet<string> | null;
+  disabledEnvironmentIds: ReadonlySet<EnvironmentId>;
   routeDraftId: string | null;
   onNavigateToDraft: (draftId: DraftId) => void;
 }) {
@@ -849,6 +855,9 @@ const SidebarDraftBlock = memo(function SidebarDraftBlock(props: {
       ) {
         continue;
       }
+      if (props.disabledEnvironmentIds.has(session.environmentId)) {
+        continue;
+      }
       if (draftKey === props.routeDraftId) {
         // Open draft: render the frozen entry snapshot, or nothing for a
         // draft that has never been left. Gated on the LIVE session above so
@@ -870,6 +879,7 @@ const SidebarDraftBlock = memo(function SidebarDraftBlock(props: {
     draftThreadsByThreadKey,
     draftsByThreadKey,
     frozenActive,
+    props.disabledEnvironmentIds,
     props.routeDraftId,
     props.scopedProjectKeys,
   ]);
@@ -2328,6 +2338,43 @@ export default function Sidebar() {
   // fresh clock whenever it recomputes.
   const [snoozeWakeTick, bumpSnoozeWakeTick] = useState(0);
 
+  // Store disabled environments so newly connected ones remain visible by default.
+  const [configuredDisabledEnvironmentIds, setConfiguredDisabledEnvironmentIds] = useState<
+    ReadonlySet<EnvironmentId>
+  >(() => new Set());
+  const connectedEnvironmentIds = useMemo(
+    () => new Set(environmentLabelById.keys()),
+    [environmentLabelById],
+  );
+  const disabledEnvironmentIds = useMemo(
+    () =>
+      pruneDisabledEnvironmentIds({
+        disabledIds: configuredDisabledEnvironmentIds,
+        connectedEnvironmentIds,
+      }),
+    [configuredDisabledEnvironmentIds, connectedEnvironmentIds],
+  );
+  const isEnvironmentFilterActive = disabledEnvironmentIds.size > 0;
+  useEffect(() => {
+    setConfiguredDisabledEnvironmentIds(disabledEnvironmentIds);
+  }, [disabledEnvironmentIds]);
+  const handleToggleEnvironment = useCallback(
+    (environmentId: EnvironmentId, checked: boolean) => {
+      setConfiguredDisabledEnvironmentIds((current) =>
+        toggleDisabledEnvironmentId({
+          disabledIds: current,
+          environmentId,
+          enabled: checked,
+          allEnvironmentIds: environments.map((environment) => environment.environmentId),
+        }),
+      );
+    },
+    [environments],
+  );
+  const handleEnableAllEnvironments = useCallback(() => {
+    setConfiguredDisabledEnvironmentIds((current) => (current.size === 0 ? current : new Set()));
+  }, []);
+
   // Project scope: one menu above the list. Scoping filters the list without
   // making the header width depend on the number or length of project names.
   // The selection lives in the persisted UI store next to the other sidebar
@@ -2335,17 +2382,30 @@ export default function Sidebar() {
   // app restarts keep it.
   const projectScopeKey = useUiStateStore((store) => store.sidebarProjectScopeKey);
   const setProjectScopeKey = useUiStateStore((store) => store.setSidebarProjectScopeKey);
+  // The project picker only offers projects with a presence in an enabled
+  // environment; the full group list keeps driving everything else.
+  const menuProjectGroups = useMemo(
+    () =>
+      disabledEnvironmentIds.size === 0
+        ? projectGroups
+        : projectGroups.filter((group) =>
+            group.memberProjectRefs.some(
+              (projectRef) => !disabledEnvironmentIds.has(projectRef.environmentId),
+            ),
+          ),
+    [disabledEnvironmentIds, projectGroups],
+  );
   // {value, label} items let Base UI drive the combobox selection contract
   // while the popup search filters the same collection.
   const projectScopeItems = useMemo(
     () => [
       { value: "all", label: "All projects" },
-      ...projectGroups.map((project) => ({
+      ...menuProjectGroups.map((project) => ({
         value: project.projectKey,
         label: project.displayName,
       })),
     ],
-    [projectGroups],
+    [menuProjectGroups],
   );
   // Same-named projects on two machines are only told apart by where they
   // live, so rows on another machine carry its icon once the catalog spans
@@ -2412,6 +2472,19 @@ export default function Sidebar() {
       setProjectScopeKey(null);
     }
   }, [allProjectSnapshotsReady, projectScopeKey, scopedProjectGroup, setProjectScopeKey]);
+  // Disabling every environment the scoped project lives in would pin the
+  // list empty with no visible reason; widen back to all projects.
+  useEffect(() => {
+    if (
+      isEnvironmentFilterActive &&
+      scopedProjectGroup !== null &&
+      !scopedProjectGroup.memberProjectRefs.some(
+        (projectRef) => !disabledEnvironmentIds.has(projectRef.environmentId),
+      )
+    ) {
+      setProjectScopeKey(null);
+    }
+  }, [disabledEnvironmentIds, isEnvironmentFilterActive, scopedProjectGroup, setProjectScopeKey]);
   // Count-only subscription: the parent needs "are there draft rows" for the
   // empty state, while SidebarDraftBlock owns the per-keystroke content
   // subscription. Selecting a number keeps typing in a draft composer from
@@ -2434,6 +2507,9 @@ export default function Sidebar() {
       ) {
         continue;
       }
+      if (disabledEnvironmentIds.has(session.environmentId)) {
+        continue;
+      }
       count += 1;
     }
     return count;
@@ -2442,7 +2518,7 @@ export default function Sidebar() {
   // hidden now, and bulk actions must never count or touch invisible rows.
   useEffect(() => {
     clearSelection();
-  }, [clearSelection, projectScopeKey]);
+  }, [clearSelection, disabledEnvironmentIds, projectScopeKey]);
 
   const openProjectSettings = useCallback(
     (projectGroup: SidebarProjectSnapshot) => {
@@ -2511,6 +2587,7 @@ export default function Sidebar() {
     const visible = threads.filter(
       (thread) =>
         thread.archivedAt === null &&
+        !disabledEnvironmentIds.has(thread.environmentId) &&
         (scopedProjectKeys === null ||
           scopedProjectKeys.has(`${thread.environmentId}:${thread.projectId}`)),
     );
@@ -2598,7 +2675,15 @@ export default function Sidebar() {
       settledThreads: sortSettledThreadsForSidebar(settled),
       snoozeNow: preciseNow,
     };
-  }, [nowMinute, optimisticDrop, scopedProjectKeys, serverConfigs, snoozeWakeTick, threads]);
+  }, [
+    disabledEnvironmentIds,
+    nowMinute,
+    optimisticDrop,
+    scopedProjectKeys,
+    serverConfigs,
+    snoozeWakeTick,
+    threads,
+  ]);
 
   const threadSearchInputRef = useRef<HTMLInputElement>(null);
   const [threadSearchQuery, setThreadSearchQuery] = useState("");
@@ -2650,7 +2735,7 @@ export default function Sidebar() {
   // filter context changes so a scope/search flip never inherits a deep
   // page state.
   const [settledVisibleCount, setSettledVisibleCount] = useState(SETTLED_TAIL_INITIAL_COUNT);
-  const settledResetKey = projectScopeKey ?? "all";
+  const settledResetKey = `${[...disabledEnvironmentIds].sort().join(",")}\0${projectScopeKey ?? "all"}`;
   const lastSettledResetKeyRef = useRef(settledResetKey);
   if (lastSettledResetKeyRef.current !== settledResetKey) {
     lastSettledResetKeyRef.current = settledResetKey;
@@ -4330,6 +4415,80 @@ export default function Sidebar() {
             <SidebarThreadHeader
               searchFieldRef={headerSearchRef}
               hasProjects={projectGroups.length > 0}
+              environmentFilter={
+                environments.length > 1 ? (
+                  <Menu>
+                    <MenuTrigger
+                      render={
+                        <SidebarHeaderIconButton
+                          label="Filter threads by environment"
+                          className="relative"
+                        />
+                      }
+                    >
+                      <ServerIcon />
+                      {isEnvironmentFilterActive ? (
+                        <span
+                          aria-hidden
+                          data-testid="sidebar-environment-filter-active"
+                          className="absolute right-0.5 top-0.5 size-1.5 rounded-full bg-primary"
+                        />
+                      ) : null}
+                    </MenuTrigger>
+                    <MenuPopup align="end" className="w-64 max-w-(--available-width)">
+                      <MenuCheckboxItem
+                        checked={!isEnvironmentFilterActive}
+                        disabled={!isEnvironmentFilterActive}
+                        onCheckedChange={handleEnableAllEnvironments}
+                        className="font-medium"
+                      >
+                        All environments
+                      </MenuCheckboxItem>
+                      {environments.map((environment) => {
+                        const isEnabled = !disabledEnvironmentIds.has(environment.environmentId);
+                        const isLastEnabled =
+                          isEnabled && environments.length - disabledEnvironmentIds.size === 1;
+                        const item = (
+                          <MenuCheckboxItem
+                            key={environment.environmentId}
+                            checked={isEnabled}
+                            disabled={isLastEnabled}
+                            onCheckedChange={(checked) =>
+                              handleToggleEnvironment(environment.environmentId, checked)
+                            }
+                            className={cn(
+                              "[&>span:last-child]:min-w-0",
+                              isEnabled
+                                ? "text-foreground"
+                                : "text-muted-foreground data-highlighted:text-accent-foreground/70",
+                              isLastEnabled &&
+                                "data-disabled:pointer-events-auto data-disabled:bg-accent/40 data-disabled:opacity-100",
+                            )}
+                          >
+                            <span className="flex min-w-0 flex-col">
+                              <span className="truncate">{environment.label}</span>
+                              {environment.displayUrl ? (
+                                <span className="truncate text-xs text-muted-foreground">
+                                  {environment.displayUrl}
+                                </span>
+                              ) : null}
+                            </span>
+                          </MenuCheckboxItem>
+                        );
+                        if (!isLastEnabled) return item;
+                        return (
+                          <Tooltip key={environment.environmentId}>
+                            <TooltipTrigger render={item} />
+                            <TooltipPopup side="top" className="max-w-80">
+                              At least one environment must remain selected
+                            </TooltipPopup>
+                          </Tooltip>
+                        );
+                      })}
+                    </MenuPopup>
+                  </Menu>
+                ) : null
+              }
               projectScope={
                 <Combobox
                   items={projectScopeItems}
@@ -4708,6 +4867,7 @@ export default function Sidebar() {
                           projectByKey={projectByKey}
                           projectDisplayNameByKey={projectDisplayNameByKey}
                           scopedProjectKeys={scopedProjectKeys}
+                          disabledEnvironmentIds={disabledEnvironmentIds}
                           routeDraftId={routeDraftIdForRows}
                           onNavigateToDraft={navigateToDraft}
                         />,
@@ -4857,6 +5017,8 @@ export default function Sidebar() {
                 </>
               ) : scopedProjectGroup ? (
                 `No threads in ${scopedProjectGroup.displayName} yet`
+              ) : isEnvironmentFilterActive ? (
+                "No threads in the enabled environments yet"
               ) : (
                 "No threads yet"
               )}
