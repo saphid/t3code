@@ -1,6 +1,7 @@
 import type { ComponentType, Dispatch, ReactElement, SetStateAction } from "react";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import type { EnvironmentId } from "@t3tools/contracts";
+import { DatabaseIcon } from "lucide-react";
 import { PROJECT_FAVICON_FALLBACK_MARKER } from "@t3tools/shared/projectFavicon";
 
 const testState = vi.hoisted(() => ({
@@ -115,19 +116,23 @@ describe("ProjectFavicon", () => {
     testState.faviconUrl = "https://environment.test/api/assets/token-a/v1-20-favicon.svg";
   });
 
-  it("shows a project-name emoji when no favicon exists", () => {
+  it("shows a project-name icon when no favicon exists", () => {
     testState.faviconUrl = `https://environment.test/api/assets/token/${PROJECT_FAVICON_FALLBACK_MARKER}`;
 
     const element = ProjectFavicon({
       environmentId: "environment-test" as EnvironmentId,
       cwd: "/workspace/analytics-db",
       projectName: "analytics-db",
-    }) as ReactElement<{ readonly emoji?: string }>;
+    }) as ReactElement<{
+      readonly colorClassName: string;
+      readonly icon: ComponentType<{ className?: string }>;
+    }>;
 
-    expect(element.props.emoji).toBe("🗄️");
+    expect(element.props.icon).toBe(DatabaseIcon);
+    expect(element.props.colorClassName).toBe("text-cyan-600 dark:text-cyan-400");
   });
 
-  it("chooses a deterministic semantic emoji", () => {
+  it("renders a deterministic emoji when the emoji pool wins", () => {
     testState.faviconUrl = `https://environment.test/api/assets/token/${PROJECT_FAVICON_FALLBACK_MARKER}`;
 
     const element = ProjectFavicon({
