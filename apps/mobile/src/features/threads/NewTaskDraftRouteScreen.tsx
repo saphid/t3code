@@ -10,9 +10,6 @@ type NewTaskDraftRouteParams = {
   readonly title?: string | string[];
   readonly pendingTaskId?: string | string[];
   readonly incomingShareId?: string | string[];
-  readonly initialPrompt?: string | string[];
-  readonly branch?: string | string[] | null;
-  readonly worktreePath?: string | string[] | null;
 };
 
 export function NewTaskDraftRouteScreen({ route }: StaticScreenProps<NewTaskDraftRouteParams>) {
@@ -45,21 +42,6 @@ export function NewTaskDraftRouteScreen({ route }: StaticScreenProps<NewTaskDraf
         }
         pendingTaskId={
           Array.isArray(params.pendingTaskId) ? params.pendingTaskId[0] : params.pendingTaskId
-        }
-        initialPrompt={
-          Array.isArray(params.initialPrompt) ? params.initialPrompt[0] : params.initialPrompt
-        }
-        initialWorkspaceRef={
-          params.branch !== undefined || params.worktreePath !== undefined
-            ? {
-                branch: Array.isArray(params.branch)
-                  ? (params.branch[0] ?? null)
-                  : (params.branch ?? null),
-                worktreePath: Array.isArray(params.worktreePath)
-                  ? (params.worktreePath[0] ?? null)
-                  : (params.worktreePath ?? null),
-              }
-            : undefined
         }
       />
     </>
