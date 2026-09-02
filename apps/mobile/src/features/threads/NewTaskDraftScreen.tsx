@@ -98,7 +98,6 @@ import {
   mergeComposerDraftContent,
   restoreComposerDraftSnapshot,
   scheduleUnusedComposerAttachmentCleanup,
-  updateComposerDraftSettings,
   type ComposerDraft,
   waitForComposerDraftsLoaded,
 } from "../../state/use-composer-drafts";
@@ -172,8 +171,6 @@ export function NewTaskDraftScreen(props: {
   readonly draftId?: string;
   /** Durable native share inbox item to merge into this project draft. */
   readonly incomingShareId?: string;
-  /** Prompt generated from an oversized source thread. */
-  readonly initialPrompt?: string;
 }) {
   const projects = useProjects();
   const flow = useNewTaskFlow();
@@ -321,23 +318,8 @@ export function NewTaskDraftScreen(props: {
   });
   const latestDraftKeyRef = useRef(flow.draftKey);
   const latestIncomingShareIdRef = useRef(props.incomingShareId);
-  const appliedInitialPromptRef = useRef<string | null>(null);
   latestDraftKeyRef.current = flow.draftKey;
   latestIncomingShareIdRef.current = props.incomingShareId;
-  useEffect(() => {
-    if (
-      !props.initialPrompt ||
-      !flow.draftKey ||
-      appliedInitialPromptRef.current === `${flow.draftKey}:${props.initialPrompt}`
-    ) {
-      return;
-    }
-    // A handover is an explicit replacement for the destination project's
-    // unsent prompt. This keeps the generated continuation from being lost
-    // when that project already has a saved draft.
-    appliedInitialPromptRef.current = `${flow.draftKey}:${props.initialPrompt}`;
-    flow.setPrompt(props.initialPrompt);
-  }, [flow.draftKey, flow.prompt, flow.setPrompt, props.initialPrompt]);
   const isImportingShare = importingShareKey !== null;
   const alertedUnavailableIncomingShareIdRef = useRef<string | null>(null);
   // The share this screen already moved into its draft. Sending clears the

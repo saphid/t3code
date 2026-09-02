@@ -58,6 +58,7 @@ import {
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import { VcsStatusBroadcaster } from "../../vcs/VcsStatusBroadcaster.ts";
 import { GitWorkflowService } from "../../git/GitWorkflowService.ts";
+import * as UsageLimitReservations from "../UsageLimitReservations.ts";
 const isProviderAdapterRequestError = Schema.is(ProviderAdapterRequestError);
 const isProviderAdapterValidationError = Schema.is(ProviderAdapterValidationError);
 const isProviderWorkspaceMissingError = Schema.is(ProviderWorkspaceMissingError);
@@ -331,6 +332,7 @@ const make = Effect.gen(function* () {
   const vcsStatusBroadcaster = yield* VcsStatusBroadcaster;
   const textGeneration = yield* TextGeneration;
   const serverSettingsService = yield* ServerSettingsService;
+  const usageLimitReservations = UsageLimitReservations.forProviderService(providerService);
   /** Environment settings with the thread's project overrides applied. */
   const projectSettingsForThread = Effect.fnUntraced(function* (threadId: ThreadId) {
     const settings = yield* serverSettingsService.getSettings;
@@ -1401,7 +1403,37 @@ const make = Effect.gen(function* () {
       return;
     }
 
-    yield* ensureThreadWorktree(thread);
+    let reservationAcquired = false;
+    let reservationHandedOff = false;
+    yield* Effect.gen(function* () {
+      yield* ensureThreadWorktree(thread);
+
+      const usageLimitSettings = yield* projectSettingsForThread(event.payload.threadId);
+      const latestThread = yield* resolveThreadDetail(event.payload.threadId);
+      if (!latestThread) {
+        return yield* appendTurnStartFailure(
+          "Provider turn start failed",
+          "The thread disappeared before its provider turn could start.",
+        );
+      }
+      const usageLimitViolation = yield* usageLimitReservations.reserveTurn({
+        key,
+        threadId: event.payload.threadId,
+        contextTokenLimit: usageLimitSettings.threadContextTokenLimit,
+        activities: latestThread.activities,
+      });
+      if (usageLimitViolation) {
+        yield* appendProviderFailureActivity({
+          threadId: event.payload.threadId,
+          kind: "provider.turn.start.failed",
+          summary: "T3 usage limit stopped provider work",
+          detail: usageLimitViolation.detail,
+          turnId: null,
+          createdAt: event.payload.createdAt,
+        });
+        return;
+      }
+      reservationAcquired = true;
 
     const isCompactCommand = isCompactCommandMessage(message);
     if (!hasOtherUserMessages && !isCompactCommand) {
@@ -1570,13 +1602,24 @@ const make = Effect.gen(function* () {
       .pipe(
         Effect.asVoid,
         Effect.catchCause(recoverTurnStartFailure),
-        Effect.ensuring(releaseTurnReservation(key)),
+        Effect.ensuring(usageLimitReservations.release(key)),
       );
     // The forked send settles `sent` from here on, so drop the entry the post-processing hook uses.
     if (resumed && event.commandId !== null) resumedTurnStarts.delete(event.commandId);
     yield* send.pipe(
       Effect.ensuring(resumed ? Deferred.succeed(resumed.sent, undefined) : Effect.void),
       Effect.forkScoped,
+    );
+      reservationHandedOff = true;
+    }).pipe(
+      Effect.catchCause(recoverTurnStartFailure),
+      Effect.ensuring(
+        Effect.suspend(() =>
+          reservationAcquired && !reservationHandedOff
+            ? usageLimitReservations.release(key)
+            : Effect.void,
+        ),
+      ),
     );
   });
 
