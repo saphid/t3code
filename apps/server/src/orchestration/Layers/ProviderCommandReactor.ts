@@ -4,6 +4,7 @@ import {
   EventId,
   type ModelSelection,
   type OrchestrationEvent,
+  type OrchestrationThreadActivity,
   ProviderDriverKind,
   type ProjectId,
   type OrchestrationSession,
@@ -23,6 +24,7 @@ import * as Equal from "effect/Equal";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Ref from "effect/Ref";
 import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
@@ -49,6 +51,7 @@ import {
 } from "../../serverSettings.ts";
 import { VcsStatusBroadcaster } from "../../vcs/VcsStatusBroadcaster.ts";
 import { GitWorkflowService } from "../../git/GitWorkflowService.ts";
+import { evaluateTurnStartLimits } from "../UsageLimitPolicy.ts";
 const isProviderAdapterRequestError = Schema.is(ProviderAdapterRequestError);
 const isProviderDriverKind = Schema.is(ProviderDriverKind);
 
@@ -323,6 +326,52 @@ const make = Effect.gen(function* () {
     timeToLive: HANDLED_TURN_START_KEY_TTL,
     lookup: () => Effect.succeed(true),
   });
+  const turnReservations = yield* Ref.make(new Map<string, ThreadId>());
+
+  const releaseTurnReservation = (key: string) =>
+    Ref.update(turnReservations, (reservations) => {
+      if (!reservations.has(key)) return reservations;
+      const next = new Map(reservations);
+      next.delete(key);
+      return next;
+    });
+
+  const reserveTurnStart = (input: {
+    readonly key: string;
+    readonly threadId: ThreadId;
+    readonly contextTokenLimit?: number;
+    readonly activities: ReadonlyArray<OrchestrationThreadActivity>;
+  }) =>
+    Effect.gen(function* () {
+      const sessions = yield* providerService.listSessions();
+      return yield* Ref.modify(turnReservations, (reservations) => {
+        const violation = evaluateTurnStartLimits({
+          threadId: input.threadId,
+          ...(input.contextTokenLimit === undefined
+            ? {}
+            : { contextTokenLimit: input.contextTokenLimit }),
+          activities: input.activities,
+          sessions,
+          reservedTurnThreadIds: [...reservations.values()],
+        });
+        if (violation) {
+          return [violation, reservations] as const;
+        }
+        if (
+          sessions.some(
+            (session) =>
+              session.threadId === input.threadId &&
+              (session.status === "connecting" || session.status === "running"),
+          ) ||
+          [...reservations.values()].includes(input.threadId)
+        ) {
+          return [undefined, reservations] as const;
+        }
+        const next = new Map(reservations);
+        next.set(input.key, input.threadId);
+        return [undefined, next] as const;
+      });
+    });
 
   const hasHandledTurnStartRecently = (key: string) =>
     Cache.getOption(handledTurnStartKeys, key).pipe(
@@ -1153,6 +1202,25 @@ const make = Effect.gen(function* () {
 
     yield* ensureThreadWorktree(thread);
 
+    const usageLimitSettings = yield* serverSettingsService.getSettings;
+    const usageLimitViolation = yield* reserveTurnStart({
+      key,
+      threadId: event.payload.threadId,
+      contextTokenLimit: usageLimitSettings.threadContextTokenLimit,
+      activities: thread.activities,
+    });
+    if (usageLimitViolation) {
+      yield* appendProviderFailureActivity({
+        threadId: event.payload.threadId,
+        kind: "provider.turn.start.failed",
+        summary: "T3 usage limit stopped provider work",
+        detail: usageLimitViolation.detail,
+        turnId: null,
+        createdAt: event.payload.createdAt,
+      });
+      return;
+    }
+
     const isFirstUserMessageTurn =
       thread.messages.filter((entry) => entry.role === "user").length === 1;
     if (isFirstUserMessageTurn) {
@@ -1231,7 +1299,11 @@ const make = Effect.gen(function* () {
       createdAt: event.payload.createdAt,
     }).pipe(
       Effect.map(Option.some),
-      Effect.catchCause((cause) => handleTurnStartFailure(cause).pipe(Effect.as(Option.none()))),
+      Effect.catchCause((cause) =>
+        releaseTurnReservation(key).pipe(
+          Effect.andThen(handleTurnStartFailure(cause).pipe(Effect.as(Option.none()))),
+        ),
+      ),
     );
 
     if (Option.isNone(sendTurnRequest)) {
@@ -1240,7 +1312,11 @@ const make = Effect.gen(function* () {
 
     yield* providerService
       .sendTurn(sendTurnRequest.value)
-      .pipe(Effect.catchCause(recoverTurnStartFailure), Effect.forkScoped);
+      .pipe(
+        Effect.catchCause(recoverTurnStartFailure),
+        Effect.ensuring(releaseTurnReservation(key)),
+        Effect.forkScoped,
+      );
   });
 
   const processTurnInterruptRequested = Effect.fn("processTurnInterruptRequested")(function* (
