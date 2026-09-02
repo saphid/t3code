@@ -32,6 +32,8 @@ export interface SidebarThreadHeaderProps {
   hasProjects: boolean;
   /** The project scope combobox, rendered as the first icon of the group. */
   projectScope: ReactNode;
+  /** Optional environment filter, rendered before project scope. */
+  environmentFilter?: ReactNode;
   onNewProject: () => void;
   /** Receives the click so Shift+click can skip the project picker. */
   onNewThread: (event: ReactMouseEvent) => void;
@@ -54,6 +56,7 @@ export function SidebarThreadHeader({
   searchFieldRef,
   hasProjects,
   projectScope,
+  environmentFilter,
   onNewProject,
   onNewThread,
   newThreadDisabled,
@@ -127,6 +130,7 @@ export function SidebarThreadHeader({
       <div className="flex shrink-0 items-center rounded-md bg-sidebar-control-surface/60 p-px">
         {hasProjects ? (
           <>
+            {environmentFilter}
             {projectScope}
             <SidebarHeaderIconButton label="New project" onClick={onNewProject}>
               <FolderPlusIcon />
