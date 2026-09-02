@@ -421,6 +421,31 @@ it.layer(CodexTextGenerationTestLayer)("CodexTextGeneration", (it) => {
     ),
   );
 
+  it.effect("generates handovers with Luna High", () =>
+    withFakeCodexEnv(
+      {
+        output: JSON.stringify({
+          handover: "\n# Goal\n\nContinue the migration.\n",
+        }),
+        requireArg: "gpt-5.6-luna",
+        requireReasoningEffort: "high",
+        stdinMustContain: "Thread contents:",
+      },
+      (textGeneration) =>
+        Effect.gen(function* () {
+          const generated = yield* textGeneration.generateHandover({
+            cwd: process.cwd(),
+            threadContents: "User: Continue the migration",
+            modelSelection: createModelSelection(ProviderInstanceId.make("codex"), "gpt-5.6-luna", [
+              { id: "reasoningEffort", value: "high" },
+            ]),
+          });
+
+          expect(generated.handover).toBe("# Goal\n\nContinue the migration.");
+        }),
+    ),
+  );
+
   it.effect("falls back when thread title normalization becomes whitespace-only", () =>
     withFakeCodexEnv(
       {
