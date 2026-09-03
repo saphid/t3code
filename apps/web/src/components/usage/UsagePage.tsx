@@ -53,11 +53,10 @@ export function UsagePage() {
   const [breakdown, setBreakdown] = useState<"model" | "time">("model");
   const { days: windowDays, window } = windowSelection;
   const isPast24Hours = windowDays === 1;
-  const { merged, environments, isPending, isRefreshing, refresh } = useUsage(window);
+  const { merged, environments, isPending, isPartial, isRefreshing, refresh } = useUsage(window);
 
-  // Hold the content until every environment is terminal. Rendering merged
-  // totals while devices are still answering makes every number on the page
-  // jump as each one lands.
+  // A bounded last-good snapshot may stay visible while another environment
+  // answers. Only the first load, with no usable coverage, needs a skeleton.
   const settling = isPending && merged.availableThroughDay === null;
 
   const days = useMemo(
@@ -237,6 +236,7 @@ export function UsagePage() {
                   availableThroughDay={merged.availableThroughDay}
                   availableThroughTime={merged.availableThroughTime}
                   lastUpdatedAt={merged.lastUpdatedAt}
+                  isPartial={isPartial}
                   isRefreshing={isRefreshing}
                   timeZone={window.timeZone}
                 />
@@ -529,10 +529,9 @@ function Metric({ label, value }: { readonly label: string; readonly value: stri
 }
 
 /**
- * Says plainly when the totals are incomplete: an environment that failed, or
- * one whose transcripts another environment already reported. Environments
- * that are still answering never reach this notice; the page shows the
- * loading skeleton until every one is terminal.
+ * Says plainly when the totals are bounded or incomplete: an environment that
+ * failed, one still answering, or one whose transcripts another environment
+ * already reported.
  */
 function UsageCoverageNotice({
   environments,
@@ -541,7 +540,9 @@ function UsageCoverageNotice({
   availableThroughDay,
   availableThroughTime,
   lastUpdatedAt,
+  isPartial,
   isRefreshing,
+  timeZone,
 }: {
   readonly environments: readonly EnvironmentUsageStatus[];
   readonly duplicateSources: readonly string[];
@@ -549,6 +550,7 @@ function UsageCoverageNotice({
   readonly availableThroughDay: string | null;
   readonly availableThroughTime: string | null;
   readonly lastUpdatedAt: string | null;
+  readonly isPartial: boolean;
   readonly isRefreshing: boolean;
   readonly timeZone: string;
 }) {
@@ -561,6 +563,7 @@ function UsageCoverageNotice({
     stale.length === 0 &&
     duplicateSources.length === 0 &&
     availableThroughDay === null &&
+    !isPartial &&
     !isRefreshing
   ) {
     return null;
@@ -573,6 +576,7 @@ function UsageCoverageNotice({
       ) : availableThroughDay !== null ? (
         <span>Data available through {formatDayShort(availableThroughDay)}.</span>
       ) : null}
+      {isPartial ? <span>Some environments are still reporting. Totals are partial.</span> : null}
       {isRefreshing ? <span>Refreshing usage in the background.</span> : null}
       {lastUpdatedAt !== null ? (
         <span>Last updated {formatDateTimeShort(lastUpdatedAt)}.</span>
