@@ -50,6 +50,7 @@ import {
   PinOffIcon,
   PlusIcon,
   SearchIcon,
+  ServerIcon,
   SettingsIcon,
   SquarePenIcon,
   TerminalIcon,
