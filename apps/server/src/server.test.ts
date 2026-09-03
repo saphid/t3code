@@ -10636,7 +10636,9 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
               : Effect.void,
         );
         const resolveRemoteTrackingCommit = vi.fn(
-          (_: Parameters<GitVcsDriver.GitVcsDriver["Service"]["resolveRemoteTrackingCommit"]>[0]) =>
+          (
+            _: Parameters<GitVcsDriver.GitVcsDriver["Service"]["resolveRemoteTrackingCommit"]>[0],
+          ) =>
             failureStage === "resolve"
               ? Effect.fail(
                   new GitCommandError({
@@ -10734,10 +10736,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
           fetchRemote.mock.calls.length,
           ["fetch", "resolve"].includes(failureStage) ? 1 : 0,
         );
-        assert.equal(
-          remoteBranchExists.mock.calls.length,
-          ["fetch", "resolve"].includes(failureStage) ? 1 : 0,
-        );
+        assert.equal(remoteBranchExists.mock.calls.length, failureStage === "resolve" ? 1 : 0);
         assert.equal(
           resolveRemoteTrackingCommit.mock.calls.length,
           failureStage === "resolve" ? 1 : 0,
