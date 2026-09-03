@@ -9,8 +9,11 @@ Grok Build totals come from persisted session updates. Interactive turns that ne
 completed-turn record will not appear.
 
 Use **Past 24h** for an hourly chart covering the exact rolling 24-hour period. The **7 days**,
-**30 days**, and **90 days** ranges use daily resolution. Cost and token toggles update both the
-headline and chart, and refreshing rescans every connected environment.
+**30 days**, and **90 days** ranges use daily resolution and end at the last complete calendar day.
+The page labels the latest day or time represented by the data. Usage refreshes in the background
+when the server starts and every 30 minutes, so opening the page can use the last successful
+snapshot without waiting for a transcript scan. Cost and token toggles update both the headline and
+chart, and manually refreshing rescans every connected environment.
 
 The page warns when the latest calendar day's usage crosses the built-in budget levels. Claude
 warnings use its API-rate estimate. API-equivalent warnings include subscription traffic such as
