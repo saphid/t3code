@@ -315,6 +315,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         undefined,
         undefined,
         false,
+        undefined,
         identity,
       );
 
@@ -339,6 +340,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         undefined,
         undefined,
         false,
+        undefined,
         identity,
         true,
       );
