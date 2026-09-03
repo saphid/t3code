@@ -1391,6 +1391,8 @@ export default function ChatView(props: ChatViewProps) {
     [environmentId, threadId],
   );
   const routeThreadKey = useMemo(() => scopedThreadKey(routeThreadRef), [routeThreadRef]);
+  const routeThreadKeyRef = useRef(routeThreadKey);
+  routeThreadKeyRef.current = routeThreadKey;
   const updateProjectScriptSettings = useAtomCommand(serverEnvironment.updateSettings, {
     reportFailure: false,
   });
