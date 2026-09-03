@@ -54,6 +54,7 @@ import {
   PinIcon,
   PinOffIcon,
   PlusIcon,
+  SearchIcon,
   SettingsIcon,
   ShieldQuestionIcon,
   SquarePenIcon,
