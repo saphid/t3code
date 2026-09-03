@@ -1,0 +1,174 @@
+{
+  "upstreamRepository": "pingdotgg/t3code",
+  "upstreamTag": "v0.0.39-nightly.20260903.1267",
+  "upstreamUrl": "https://github.com/pingdotgg/t3code/releases/tag/v0.0.39-nightly.20260903.1267",
+  "releaseRepository": "saphid/t3code",
+  "fingerprint": "603f8f82812ee7ae5b6769299b040cb1f43eb4a9873a36fd01a0c6d1ea517957",
+  "version": "0.0.39-nightly.20260903.1267300782",
+  "tag": "v0.0.39-nightly.20260903.1267300782",
+  "patches": [
+    {
+      "label": "saphid/t3code@1e3ec021e380",
+      "name": "feat(search): rank threads by natural-language terms",
+      "commits": ["1e3ec021e3804bd509ef65e275c3236258e74daa"]
+    },
+    {
+      "label": "saphid/t3code@cc08cd3f43f1",
+      "name": "fix(release): ad hoc sign credential-free macOS builds",
+      "commits": ["cc08cd3f43f16fc7815e96a7a1d4ea04bb179772"]
+    },
+    {
+      "label": "saphid/t3code@2fb33de69204",
+      "name": "feat(orchestration): add context-limit handovers",
+      "commits": ["2fb33de69204a8ccb835e4a7dfaaf704d6a55383"]
+    },
+    {
+      "label": "saphid/t3code@b52491de539a",
+      "name": "feat(desktop): support durable custom update sources",
+      "commits": ["b52491de539a58a279a10a6c072ae479f51f6ba9"]
+    },
+    {
+      "label": "saphid/t3code@122c9f4e47c5",
+      "name": "feat(settings): show included fork changes",
+      "commits": ["122c9f4e47c5171976aeb2b640113b80279d77a6"]
+    },
+    {
+      "label": "saphid/t3code@dcf0faa708f7",
+      "name": "feat(web): filter sidebar threads by environment",
+      "commits": ["dcf0faa708f7612e1ec4e74de33a94a69c8eadf1"]
+    },
+    {
+      "label": "saphid/t3code@4cba4203deaf",
+      "name": "fix(orchestration): make context handovers recoverable",
+      "commits": ["4cba4203deafca2fe543effdd02f2a514b168475"]
+    },
+    {
+      "label": "saphid/t3code@660a2e4e45e9",
+      "name": "chore(usage): prepare Nightly baseline for PR 9308",
+      "commits": ["660a2e4e45e9d658b26ad4dc3c35d2a7419aae69"]
+    },
+    {
+      "label": "saphid/t3code@88f760dc2c6f",
+      "name": "chore(usage): seed historical PR 9308 objects for Nightly replay",
+      "commits": ["88f760dc2c6f87ceb4f64a1cef1b42b18c2832e5"]
+    },
+    {
+      "label": "pingdotgg/t3code#9308",
+      "name": "perf(usage): serve truthful background snapshots",
+      "commits": [
+        "a774936a7e199b7869551570399f5f38b5ef947c",
+        "9188be3fec3f9e03f0c8520be26e329e685227b2",
+        "fd5fe8dfadd4ddf97fe2e93e377f1ea7c416bd41",
+        "d0f0e04fac63f633b672d186bb834f04344a1ef2",
+        "55228f4d8ecc26db00f88dfb1103be344eab0bb0",
+        "e505a9561a914e9d4e97d950e8f2e6cba3f26d7a",
+        "7b709a4668982216e41ee39a06e7104f399cb910",
+        "d5892940ad8f916cd7c4ec08ff45d27b19c9e267",
+        "a55bcf64891914a4193d27a91ec0c68c6fdf34e0",
+        "0a55a67eb1989347c6eefd9de4411bcbc6b1dcbc",
+        "ec1f4e2bad2ea3aa351954f4d5261375315ff93a",
+        "b853acace1737ad358ac0e679b9ec115f52d6e2a",
+        "475ade721e7af07e3cdd9d53a7fa8a0aa5c92c4c",
+        "27461f5bd07f002e2a0dd93f2aa9cb5e063b18d3",
+        "a2ad671fbe79d586957758cf02b3dd70d3d7cf9a",
+        "91b0fe9377fc57acd2d1c127aba3b7cdaab8eae7",
+        "055e709ec2de043761826b54e8f898c15915058c",
+        "420f706a7444505f5432b54ba0bde623f004461d",
+        "bd9a29e4a7b24de5b0a54ffbc30fd7bb8c4c5e07",
+        "46d8c8bd347bd471b83c16cb139422628947ac0d",
+        "b0c4acace7d3589cddd4df71b6a680582c2a1d1f",
+        "c1d6954cc4ea913e0bf46c5db7cbf94abdf2ba35",
+        "1b9903863bcfd445139a18534c95eaecf4378a02",
+        "2411613e1972f2fc89cba9e9de32420b9db4a123",
+        "8bd371fe154db2f2daf427ac596a55317fb385f8",
+        "3befe056aace5bb498d6250cf12cbf1670f859d9",
+        "91b25a761573e0950a5a73be68e8f93bb6da7825",
+        "b1b7c715c182eac964078aecebd489c2b072960d",
+        "5a35b6ba001c97365cfcf1f1985b77d4e53f8304",
+        "702afd01a3d4e3bd7bb3e55db8ff81350e5bc071",
+        "4e3490bbd95809659cea06f5a5649ac9402fbb94",
+        "4058700e512fa8342235a54daabaf51aa41595be",
+        "8abf80c21573fab836f1bd7b4799319e692484e6",
+        "1de80f7b0f4af2aa193e3321b5d6e3a279a10eb0",
+        "b42981af6ff784f3c786d0fd9da2f1439b7a46d7",
+        "d70c091d7939fc20b01a4fe7a26ac2a7e5e549d9",
+        "73b07277c05c19d19727e3c2955b89927125a973"
+      ]
+    },
+    {
+      "label": "saphid/t3code@d228918cfdfa",
+      "name": "fix(usage): reconcile Nightly docs after PR 9308",
+      "commits": ["d228918cfdfa4749ef340528b0801e6e01029922"]
+    },
+    {
+      "label": "saphid/t3code@78f24097f2ca",
+      "name": "fix(desktop): make hold-to-quit reliable",
+      "commits": ["78f24097f2ca1eb11afa2dcfa0a34b313170da96"]
+    },
+    {
+      "label": "saphid/t3code@38105fcf57b9",
+      "name": "feat(web): add automatic project icons",
+      "commits": ["38105fcf57b904ea8bc5fc2bc46ed0b232f6ee17"]
+    },
+    {
+      "label": "saphid/t3code@c8ea3cbeb8ab",
+      "name": "fix(server): recover worktree base without origin",
+      "commits": ["c8ea3cbeb8abdd4aa985a4488233b8b3e598c058"]
+    },
+    {
+      "label": "saphid/t3code@a1ddf52a52fb",
+      "name": "feat(navigation): add back and forward history",
+      "commits": ["a1ddf52a52fb5e4582964f8d4470185a1c6ef265"]
+    },
+    {
+      "label": "saphid/t3code@438e02ed6c92",
+      "name": "feat(desktop): add thread deep links",
+      "commits": ["438e02ed6c92a2a562ad430fd1be8f40737884ba"]
+    },
+    {
+      "label": "saphid/t3code@fe695b8cc360",
+      "name": "feat(web): open file links externally",
+      "commits": ["fe695b8cc360ab07039440adf2de01d93b2ee6df"]
+    },
+    {
+      "label": "saphid/t3code@63b2dae13eb7",
+      "name": "fix(build): identify Windows native probes exactly",
+      "commits": ["63b2dae13eb754eb550381c31611e8708253fb49"]
+    },
+    {
+      "label": "saphid/t3code@cbf53917a879",
+      "name": "fix(updates): align custom source with current nightly",
+      "commits": ["cbf53917a879a668be2e1db2aa792a16654df350"]
+    },
+    {
+      "label": "saphid/t3code@d10ef0099f50",
+      "name": "style(updates): format current nightly harness",
+      "commits": ["d10ef0099f509e37f18b1ca7a1ca76659721f9c3"]
+    },
+    {
+      "label": "saphid/t3code@a9e4aa9a8946",
+      "name": "fix(release): use accessible build metadata tooltips",
+      "commits": ["a9e4aa9a894638584432243c6b32432e6f8dfb98"]
+    },
+    {
+      "label": "saphid/t3code@926c2d42fe32",
+      "name": "fix(replay): preserve baseline usage and navigation seams",
+      "commits": ["926c2d42fe32b9466f9b9a97e295f3875e65addc"]
+    },
+    {
+      "label": "saphid/t3code@7b7d7c69fe62",
+      "name": "feat(usage): consolidate fork usage replay on Nightly 1267",
+      "commits": ["7b7d7c69fe62969a73e2eca88008fe4c68863b0c"]
+    },
+    {
+      "label": "saphid/t3code@89d3acdea391",
+      "name": "fix(replay): pass arch before desktop build identity",
+      "commits": ["89d3acdea391794b62a738433e1d0aa299c8e912"]
+    },
+    {
+      "label": "saphid/t3code@7ac4a036fb96",
+      "name": "fix(replay): redact assistant citations from generation",
+      "commits": ["7ac4a036fb96b14542105db5740befac959c40d5"]
+    }
+  ]
+}
