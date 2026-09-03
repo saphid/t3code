@@ -20,9 +20,15 @@ Use **Past 24h** for an hourly chart covering the exact rolling 24-hour period. 
 **30 days**, and **90 days** ranges use daily resolution and end at the last complete calendar day.
 The page labels the latest day or time represented by the data. Usage refreshes in the background
 when the server starts and every 30 minutes, so opening the page can use the last successful
-snapshot without waiting for a transcript scan. Refreshing rescans every connected environment
-and refetches model pricing on each of them, so a newly released model that showed $0.00 gets a
-price without waiting for the daily pricing update.
+snapshot without waiting for a transcript scan. Cost and token toggles update both the headline and
+chart. Manually refreshing rescans every connected environment and refetches model pricing on each
+of them, so a newly released model that showed $0.00 gets a price without waiting for the daily
+pricing update.
+
+The page warns when the latest calendar day's usage crosses the built-in budget levels. Claude
+warnings use its API-rate estimate. API-equivalent warnings include subscription traffic such as
+Codex. The warning level starts at $500 of Claude usage or $1,000 API-equivalent. Approval starts at
+$1,000 or $1,500. The pause level is $2,000 for either measure.
 
 ## Set custom model prices
 
