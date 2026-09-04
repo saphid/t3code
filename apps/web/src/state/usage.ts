@@ -35,7 +35,6 @@ import {
   type EnvironmentUsage,
   type MergedUsage,
 } from "@t3tools/shared/usageMerge";
-import { appAtomRegistry } from "../rpc/atomRegistry";
 import { environmentPresentations } from "./presentation";
 import { serverEnvironment } from "./server";
 import { useAtomCommand } from "./use-atom-command";
@@ -106,8 +105,6 @@ export function useUsage(
   input: UsageSummaryInput,
   /** A namespaced project key, `null` for outside-projects buckets, `undefined` for no filter. */
   projectFilter?: string | null,
-  /** Refresh the deferred thread query only while its table is mounted. */
-  refreshThreads = false,
 ): UsageView {
   const windowKey = useMemo(
     () =>
@@ -140,7 +137,9 @@ export function useUsage(
     error: null as string | null,
   });
   const currentWindowKey = useRef(windowKey);
-  currentWindowKey.current = windowKey;
+  useEffect(() => {
+    currentWindowKey.current = windowKey;
+  }, [windowKey]);
   const currentRefreshId = useRef(0);
   const pendingRefreshWindowKey = useRef(windowKey);
   useEffect(() => {
@@ -229,37 +228,6 @@ export function useUsage(
       projectFilter === undefined ? undefined : { projectFilter },
     );
   }, [environments, projectFilter]);
-
-  // Refresh the source queries, not just their derived atoms. When the thread
-  // table is mounted, refresh its provider-owned query at the same time so the
-  // two views cannot show different scans.
-  const refresh = useCallback(() => {
-    const input = JSON.parse(windowKey) as UsageSummaryInput;
-    for (const environment of environments) {
-      appAtomRegistry.refresh(
-        serverEnvironment.usageSummary({ environmentId: environment.environmentId, input }),
-      );
-    }
-    if (refreshThreads) {
-      for (const contribution of filterProviderContributionsForProject(
-        projectFilter,
-        merged.providerContributions,
-      )) {
-        if (contribution.contractVersion < USAGE_THREAD_BREAKDOWN_SINCE) continue;
-        appAtomRegistry.refresh(
-          serverEnvironment.usageThreadBreakdown({
-            environmentId: contribution.environmentId,
-            input: makeThreadBreakdownInput(
-              input,
-              projectFilter,
-              contribution.providers,
-              contribution.environmentId,
-            ),
-          }),
-        );
-      }
-    }
-  }, [environments, merged.providerContributions, projectFilter, refreshThreads, windowKey]);
 
   const relevantEnvironments = filterUsageEnvironmentsForProject(environments, projectFilter);
   const answeredCount = relevantEnvironments.filter(

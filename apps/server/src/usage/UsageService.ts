@@ -19,10 +19,10 @@ import * as NodeOS from "node:os";
 
 import {
   USAGE_CONTRACT_VERSION,
+  ProjectId,
   UsageDay,
   UsageSummary as UsageSummarySchema,
   UsageSource as UsageSourceSchema,
-  type ThreadId,
   type UsageProviderKind,
   type UsageSource,
   type UsagePricing,
@@ -92,6 +92,7 @@ const RATES_REFRESH_FLOOR_MS = 60 * 1000;
 // skew when a remote viewer's calendar day differs from the server's.
 const MTIME_SLACK_MS = 72 * 60 * 60 * 1000;
 const MAX_HOURLY_WINDOW_MS = 24 * 60 * 60 * 1000;
+const MAX_HALF_HOUR_WINDOW_MS = 90 * 24 * 60 * 60 * 1000;
 
 /** Longest window the UI offers, plus slack. Older entries are pruned. */
 const CACHE_RETENTION_DAYS = 90;
@@ -142,6 +143,8 @@ const UsageLedgerRecord = Schema.Struct({
       uncachedInputTokens: Schema.Number,
       cachedInputTokens: Schema.Number,
       cacheCreationTokens: Schema.Number,
+      cacheCreation5mTokens: Schema.optional(Schema.Number),
+      cacheCreation1hTokens: Schema.optional(Schema.Number),
       outputTokens: Schema.Number,
       reasoningTokens: Schema.Number,
     }),
@@ -157,10 +160,15 @@ const UsageLedgerAggregate = Schema.Struct({
   /** UTC quarter-hour containing the source records. */
   bucketStartMs: Schema.Number,
   model: Schema.String,
+  projectAttribution: Schema.optional(Schema.Literals(["project", "outside", "unknown"])),
+  projectId: Schema.optional(ProjectId),
+  project: Schema.optional(Schema.String),
   totals: Schema.Struct({
     uncachedInputTokens: Schema.Number,
     cachedInputTokens: Schema.Number,
     cacheCreationTokens: Schema.Number,
+    cacheCreation5mTokens: Schema.optional(Schema.Number),
+    cacheCreation1hTokens: Schema.optional(Schema.Number),
     outputTokens: Schema.Number,
     reasoningTokens: Schema.Number,
   }),
@@ -168,6 +176,8 @@ const UsageLedgerAggregate = Schema.Struct({
     uncachedInputTokens: Schema.Number,
     cachedInputTokens: Schema.Number,
     cacheCreationTokens: Schema.Number,
+    cacheCreation5mTokens: Schema.optional(Schema.Number),
+    cacheCreation1hTokens: Schema.optional(Schema.Number),
     outputTokens: Schema.Number,
     reasoningTokens: Schema.Number,
   }),
@@ -177,6 +187,8 @@ const UsageLedgerAggregate = Schema.Struct({
       uncachedInputTokens: Schema.Number,
       cachedInputTokens: Schema.Number,
       cacheCreationTokens: Schema.Number,
+      cacheCreation5mTokens: Schema.optional(Schema.Number),
+      cacheCreation1hTokens: Schema.optional(Schema.Number),
       outputTokens: Schema.Number,
       reasoningTokens: Schema.Number,
     }),
@@ -272,17 +284,20 @@ function snapshotKey(input: UsageSummaryInput): string {
 }
 
 function isCommonPreset(input: UsageSummaryInput): boolean {
-  if (input.resolution === "hour") {
+  if (input.resolution === "hour" || input.resolution === "halfHour") {
     if (input.sinceTime === undefined || input.untilTime === undefined) return false;
     const sinceTimeMs = Date.parse(input.sinceTime);
     const untilTimeMs = Date.parse(input.untilTime);
     const quarterHour = 15 * 60 * 1000;
+    const durationDays = (untilTimeMs - sinceTimeMs) / DAY_MS;
     return (
       Number.isFinite(sinceTimeMs) &&
       Number.isFinite(untilTimeMs) &&
       sinceTimeMs % quarterHour === 0 &&
       untilTimeMs % quarterHour === 0 &&
-      untilTimeMs - sinceTimeMs === DAY_MS
+      (input.resolution === "hour"
+        ? durationDays === 1
+        : durationDays === 1 || durationDays === 7 || durationDays === 30 || durationDays === 90)
     );
   }
   const days =
@@ -326,14 +341,14 @@ function localStartOfDayMs(timeZone: string, day: string): number {
 
 function isWithinLedgerRetention(input: UsageSummaryInput, nowMs: number): boolean {
   const sinceMs =
-    input.resolution === "hour" && input.sinceTime !== undefined
+    input.resolution !== "day" && input.sinceTime !== undefined
       ? Date.parse(input.sinceTime)
       : localStartOfDayMs(input.timeZone, input.sinceDay);
   return Number.isFinite(sinceMs) && sinceMs >= nowMs - USAGE_LEDGER_RETENTION_MS;
 }
 
 function isCanonicalLedgerInput(input: UsageSummaryInput): boolean {
-  if (input.resolution === "hour") return false;
+  if (input.resolution === "hour" || input.resolution === "halfHour") return false;
   const days =
     (Date.parse(`${input.untilDay}T00:00:00Z`) - Date.parse(`${input.sinceDay}T00:00:00Z`)) /
       DAY_MS +
@@ -358,6 +373,9 @@ function ledgerAggregateKey(aggregate: {
   readonly resolvedHomePath: string;
   readonly volumeId: string;
   readonly bucketStartMs: number;
+  readonly projectAttribution?: UsageSummary["buckets"][number]["projectAttribution"];
+  readonly projectId?: ProjectId;
+  readonly project?: string;
   readonly model: string;
 }): string {
   return JSON.stringify([
@@ -366,6 +384,9 @@ function ledgerAggregateKey(aggregate: {
     aggregate.resolvedHomePath,
     aggregate.volumeId,
     aggregate.bucketStartMs,
+    aggregate.projectAttribution ?? "unknown",
+    aggregate.projectId ?? "",
+    aggregate.project ?? "",
     aggregate.model,
   ]);
 }
@@ -375,7 +396,7 @@ function ledgerAggregateFromRecord(entry: {
   readonly provider: UsageProviderKind;
   readonly resolvedHomePath: string;
   readonly volumeId: string;
-  readonly record: UsageRecord;
+  readonly record: Omit<UsageRecord, "cwd"> & { readonly cwd?: string };
 }): LedgerAggregate {
   const { record } = entry;
   const reported = record.reportedCostUsd === null ? 0 : record.reportedCostUsd;
@@ -437,6 +458,9 @@ interface LedgerAggregate {
   readonly volumeId: string;
   readonly bucketStartMs: number;
   readonly model: string;
+  readonly projectAttribution?: UsageSummary["buckets"][number]["projectAttribution"];
+  readonly projectId?: ProjectId;
+  readonly project?: string;
   readonly totals: UsageRecord["totals"];
   readonly pricedTotals: UsageRecord["totals"];
   readonly savingsTotals: UsageRecord["totals"];
@@ -495,6 +519,7 @@ export const layerTest = Layer.succeed(
         timeZone: input.timeZone,
         sinceDay: input.sinceDay,
         untilDay: input.untilDay,
+        resolution: input.resolution ?? "day",
         buckets: [],
         sources: [],
         pricing: EMPTY_PRICING,
@@ -549,6 +574,7 @@ export const make = Effect.gen(function* () {
   const usageLedger = new Map<string, LedgerAggregate>();
   const usageLedgerSources = new Map<string, UsageSummary["sources"][number]>();
   let usageLedgerGeneratedAtMs = 0;
+  let usageLedgerSupportsProjects = true;
   let usageLedgerDirty = false;
   let rates: RateTable = new Map();
   let ratesFetchedAtMs: number | null = null;
@@ -769,21 +795,30 @@ export const make = Effect.gen(function* () {
       if (document === null) return;
       usageLedgerGeneratedAtMs = document.generatedAtMs;
       if (document.version === 2) {
+        usageLedgerSupportsProjects = document.aggregates.every(
+          (entry) => entry.projectAttribution !== undefined,
+        );
         for (const source of document.sources) {
           usageLedgerSources.set(sourceKey(source.fingerprint), source);
         }
         for (const entry of document.aggregates) {
-          usageLedger.set(ledgerAggregateKey(entry), {
-            ...entry,
+          const { projectAttribution, projectId, project, ...rest } = entry;
+          const aggregate: LedgerAggregate = {
+            ...rest,
+            ...(projectAttribution === undefined ? {} : { projectAttribution }),
+            ...(projectId === undefined ? {} : { projectId }),
+            ...(project === undefined ? {} : { project }),
             savingsTotals: entry.savingsTotals ?? entry.totals,
             legacyPricing: entry.legacyPricing ?? false,
             legacyPricingRecords: entry.legacyPricingRecords ?? 0,
-          });
+          };
+          usageLedger.set(ledgerAggregateKey(aggregate), aggregate);
         }
         return;
       }
       // Migrate the pre-v2 raw record ledger in memory. It is rewritten in
       // compact form after the next successful canonical refresh.
+      usageLedgerSupportsProjects = false;
       for (const entry of document.records) {
         const aggregate = ledgerAggregateFromRecord(entry);
         mergeLedgerAggregate(usageLedger, aggregate);
@@ -885,9 +920,10 @@ export const make = Effect.gen(function* () {
         cached.provider === provider
       ) {
         return {
-          records: cached.tailRecords.length === 0
-            ? cached.records
-            : dedupeWithinFile([...cached.records, ...cached.tailRecords]),
+          records:
+            cached.tailRecords.length === 0
+              ? cached.records
+              : dedupeWithinFile([...cached.records, ...cached.tailRecords]),
           issue: null,
         };
       }
@@ -924,9 +960,7 @@ export const make = Effect.gen(function* () {
       cacheDirty = true;
       return {
         records:
-          tailRecords.length === 0
-            ? records
-            : dedupeWithinFile([...records, ...tailRecords]),
+          tailRecords.length === 0 ? records : dedupeWithinFile([...records, ...tailRecords]),
         issue: null,
       };
     });
@@ -1006,7 +1040,7 @@ export const make = Effect.gen(function* () {
     }
 
     let hourlyWindow: { readonly sinceTimeMs: number; readonly untilTimeMs: number } | null = null;
-    if (input.resolution === "hour") {
+    if (input.resolution === "hour" || input.resolution === "halfHour") {
       const sinceTime =
         input.sinceTime === undefined ? Option.none() : DateTime.make(input.sinceTime);
       const untilTime =
@@ -1020,10 +1054,12 @@ export const make = Effect.gen(function* () {
       const sinceTimeMs = DateTime.toEpochMillis(sinceTime.value);
       const untilTimeMs = DateTime.toEpochMillis(untilTime.value);
       const durationMs = untilTimeMs - sinceTimeMs;
-      if (durationMs <= 0 || durationMs > MAX_HOURLY_WINDOW_MS) {
+      const maxWindowMs =
+        input.resolution === "halfHour" ? MAX_HALF_HOUR_WINDOW_MS : MAX_HOURLY_WINDOW_MS;
+      if (durationMs <= 0 || durationMs > maxWindowMs) {
         return yield* new UsageReadError({
           reason: "invalidWindow",
-          detail: "Hourly usage window must be greater than zero and at most 24 hours",
+          detail: `Usage timeline must be greater than zero and at most ${input.resolution === "halfHour" ? "90 days" : "24 hours"}`,
         });
       }
       hourlyWindow = { sinceTimeMs, untilTimeMs };
@@ -1052,21 +1088,33 @@ export const make = Effect.gen(function* () {
       { concurrency: 2 },
     );
 
+    const projectResolver = yield* resolveProjects();
     const aggregator = new UsageAggregator({
       timeZone: input.timeZone,
       sinceDay: input.sinceDay,
       untilDay:
-        input.resolution === "hour" || input.untilDay < completeThroughDay
+        input.resolution !== "day" || input.untilDay < completeThroughDay
           ? input.untilDay
           : UsageDay.make(completeThroughDay),
       resolution: input.resolution ?? "day",
       ...hourlyWindow,
       rates,
-      resolveProject: yield* resolveProjects(),
+      resolveProject: projectResolver,
     });
 
     const sources: UsageSource[] = [];
     const ledgerAggregates = new Map<string, LedgerAggregate>();
+    type PendingLedgerRecord = {
+      readonly provider: UsageProviderKind;
+      readonly dir: string;
+      readonly dedupeScope: string;
+      readonly volumeId: string;
+      readonly record: UsageRecord;
+    };
+    const summaryRecordsByKey = new Map<string, PendingLedgerRecord>();
+    const unkeyedSummaryRecords: PendingLedgerRecord[] = [];
+    const ledgerRecordsByKey = new Map<string, PendingLedgerRecord>();
+    const unkeyedLedgerRecords: PendingLedgerRecord[] = [];
     const ledgerStartMs = startedAtMs - USAGE_LEDGER_RETENTION_MS;
     const livePaths = new Set<string>();
     const walkedRoots: string[] = [];
@@ -1103,7 +1151,15 @@ export const make = Effect.gen(function* () {
           // belong to the next refresh.
           if (record.timestampMs >= startedAtMs) continue;
 
-          aggregator.add(record);
+          const pending = { provider, dir, dedupeScope: path.dirname(file.path), volumeId, record };
+          if (record.dedupeKey === null) {
+            unkeyedSummaryRecords.push(pending);
+          } else {
+            summaryRecordsByKey.set(
+              `${hostId}\u0000${provider}\u0000${pending.dedupeScope}\u0000${volumeId}\u0000${record.dedupeKey}`,
+              pending,
+            );
+          }
 
           // The canonical ledger is normalized independently of the requested
           // viewer zone. Keep quarter-hour cells so IANA offsets at :30/:45
@@ -1111,27 +1167,14 @@ export const make = Effect.gen(function* () {
           // without retaining every transcript record.
           if (record.timestampMs < ledgerStartMs || record.timestampMs >= startedAtMs) continue;
 
-          const priced = priceUsage(rates, record.model, record.totals, record.reportedCostUsd);
-          const aggregate: LedgerAggregate = {
-            hostId,
-            provider,
-            resolvedHomePath: dir,
-            volumeId,
-            bucketStartMs: Math.floor(record.timestampMs / (15 * 60 * 1000)) * (15 * 60 * 1000),
-            model: record.model,
-            totals: record.totals,
-            pricedTotals: priced.costSource === "modelPriced" ? record.totals : EMPTY_TOTALS,
-            savingsTotals: record.totals,
-            legacyPricing: false,
-            legacyPricingRecords: 0,
-            reportedCostUsd:
-              priced.costSource === "providerReported" ? (record.reportedCostUsd ?? 0) : 0,
-            records: 1,
-            unpricedRecords: priced.costSource === "unpriced" ? 1 : 0,
-            providerReportedRecords: priced.costSource === "providerReported" ? 1 : 0,
-            sessions: record.sessionId.length === 0 ? [] : [record.sessionId],
-          };
-          mergeLedgerAggregate(ledgerAggregates, aggregate);
+          if (record.dedupeKey === null) {
+            unkeyedLedgerRecords.push(pending);
+          } else {
+            ledgerRecordsByKey.set(
+              `${hostId}\u0000${provider}\u0000${pending.dedupeScope}\u0000${volumeId}\u0000${record.dedupeKey}`,
+              pending,
+            );
+          }
         }
       }
 
@@ -1141,9 +1184,7 @@ export const make = Effect.gen(function* () {
         scannedFiles,
         skippedFiles,
         malformedRecords: 0,
-        // Read from the settled records so a progressive snapshot replacement
-        // cannot leave the source count attached to the superseded session.
-        distinctSessions: aggregator.distinctSessions(provider),
+        distinctSessions: 0,
         message: null,
       });
     }
@@ -1156,13 +1197,69 @@ export const make = Effect.gen(function* () {
       });
     }
 
+    const sessionsBySource = new Map<string, Set<string>>();
+    for (const { provider, dir, volumeId, record } of [
+      ...unkeyedSummaryRecords,
+      ...summaryRecordsByKey.values(),
+    ]) {
+      if (!aggregator.add(record) || record.sessionId.length === 0) continue;
+      const key = sourceKey({ hostId, provider, resolvedHomePath: dir, volumeId });
+      const sessions = sessionsBySource.get(key) ?? new Set<string>();
+      sessions.add(record.sessionId);
+      sessionsBySource.set(key, sessions);
+    }
+    for (let index = 0; index < sources.length; index += 1) {
+      const source = sources[index];
+      if (source === undefined) continue;
+      sources[index] = {
+        ...source,
+        distinctSessions: sessionsBySource.get(sourceKey(source.fingerprint))?.size ?? 0,
+      };
+    }
+
+    // Settle copied and progressive snapshots before writing the normalized
+    // ledger. This keeps snapshot-derived project totals identical to the
+    // direct scan rather than preserving the first, incomplete Claude copy.
+    for (const { provider, dir, volumeId, record } of [
+      ...unkeyedLedgerRecords,
+      ...ledgerRecordsByKey.values(),
+    ]) {
+      const priced = priceUsage(rates, record.model, record.totals, record.reportedCostUsd);
+      const resolvedProject = projectResolver(record.cwd);
+      const aggregate: LedgerAggregate = {
+        hostId,
+        provider,
+        resolvedHomePath: dir,
+        volumeId,
+        bucketStartMs: Math.floor(record.timestampMs / (15 * 60 * 1000)) * (15 * 60 * 1000),
+        model: record.model,
+        projectAttribution:
+          resolvedProject !== null ? "project" : record.cwd.length === 0 ? "unknown" : "outside",
+        ...(resolvedProject === null
+          ? {}
+          : { projectId: resolvedProject.projectId, project: resolvedProject.title }),
+        totals: record.totals,
+        pricedTotals: priced.costSource === "modelPriced" ? record.totals : EMPTY_TOTALS,
+        savingsTotals: record.totals,
+        legacyPricing: false,
+        legacyPricingRecords: 0,
+        reportedCostUsd:
+          priced.costSource === "providerReported" ? (record.reportedCostUsd ?? 0) : 0,
+        records: 1,
+        unpricedRecords: priced.costSource === "unpriced" ? 1 : 0,
+        providerReportedRecords: priced.costSource === "providerReported" ? 1 : 0,
+        sessions: record.sessionId.length === 0 ? [] : [record.sessionId],
+      };
+      mergeLedgerAggregate(ledgerAggregates, aggregate);
+    }
+
     const pruned = pruneScanCache(fileCache, {
       livePaths,
       walkedRoots,
       windowStartMs,
       retentionCutoffMs: startedAtMs - CACHE_RETENTION_DAYS * 24 * 60 * 60 * 1000,
     });
-    if (pruned > 0) cacheRevision += 1;
+    if (pruned > 0) cacheDirty = true;
     yield* persistScanCache();
 
     const aggregated = aggregator.finish();
@@ -1188,6 +1285,7 @@ export const make = Effect.gen(function* () {
         timeZone: input.timeZone,
         sinceDay: input.sinceDay,
         untilDay: input.untilDay,
+        resolution: input.resolution ?? "day",
         buckets: aggregated.buckets,
         sources,
         pricing: pricing(),
@@ -1250,6 +1348,7 @@ export const make = Effect.gen(function* () {
               usageLedgerSources.set(sourceKey(source.fingerprint), source);
             }
             usageLedgerGeneratedAtMs = result.scanStartedAtMs;
+            usageLedgerSupportsProjects = true;
             usageLedgerDirty = true;
           }
         }).pipe(Effect.andThen(persistUsageSnapshots), Effect.andThen(persistUsageLedger)),
@@ -1362,19 +1461,20 @@ export const make = Effect.gen(function* () {
     const generatedAtMs = usageLedgerGeneratedAtMs;
     const completeThroughDay = previousCalendarDay(input.timeZone, generatedAtMs);
     let hourlyWindow: { readonly sinceTimeMs: number; readonly untilTimeMs: number } | null = null;
-    if (input.resolution === "hour") {
+    if (input.resolution === "hour" || input.resolution === "halfHour") {
       if (input.sinceTime === undefined || input.untilTime === undefined) return null;
       const sinceTimeMs = Date.parse(input.sinceTime);
       const observedUntilMs = Math.min(Date.parse(input.untilTime), generatedAtMs);
       if (!Number.isFinite(sinceTimeMs) || observedUntilMs <= sinceTimeMs) return null;
-      const completeHours = Math.floor((observedUntilMs - sinceTimeMs) / (60 * 60 * 1000));
-      const untilTimeMs = sinceTimeMs + completeHours * 60 * 60 * 1000;
+      const periodMs = input.resolution === "halfHour" ? 30 * 60 * 1000 : 60 * 60 * 1000;
+      const completePeriods = Math.floor((observedUntilMs - sinceTimeMs) / periodMs);
+      const untilTimeMs = sinceTimeMs + completePeriods * periodMs;
       if (untilTimeMs <= sinceTimeMs) return null;
       hourlyWindow = { sinceTimeMs, untilTimeMs };
     }
 
     const effectiveUntil =
-      input.resolution === "hour"
+      input.resolution !== "day"
         ? input.untilDay
         : input.untilDay < completeThroughDay
           ? input.untilDay
@@ -1384,7 +1484,7 @@ export const make = Effect.gen(function* () {
       sinceDay: input.sinceDay,
       untilDay: effectiveUntil,
       resolution: input.resolution ?? "day",
-      ...(hourlyWindow ?? {}),
+      ...hourlyWindow,
       rates,
     });
     const sessions = new Map<string, Set<string>>();
@@ -1432,6 +1532,7 @@ export const make = Effect.gen(function* () {
       timeZone: input.timeZone,
       sinceDay: input.sinceDay,
       untilDay: input.untilDay,
+      resolution: input.resolution ?? "day",
       buckets: aggregated.buckets,
       sources: [...sourceEntries.values()],
       pricing: {
@@ -1442,7 +1543,7 @@ export const make = Effect.gen(function* () {
       },
       coverage: {
         availableThroughDay:
-          input.resolution === "hour"
+          input.resolution !== "day"
             ? UsageDay.make(makeDayFormatter(input.timeZone)(hourlyWindow!.untilTimeMs - 1))
             : effectiveUntil,
         availableThroughTime,
@@ -1457,6 +1558,12 @@ export const make = Effect.gen(function* () {
     if (isCommonPreset(input)) {
       const normalized = yield* readPresetFromLedger(input);
       if (normalized !== null) return normalized;
+      // The project dimension was added after the compact ledger. Rebuild an
+      // older ledger before serving a half-hour request, otherwise its totals
+      // are correct but every historical bucket is labelled unknown.
+      if (input.resolution === "halfHour" && !usageLedgerSupportsProjects) {
+        return yield* runBackgroundRefresh(input);
+      }
       // Older servers may have persisted a common snapshot without a ledger.
       // It is still a useful last-good fallback, but never wins over current
       // canonical ledger data above.
@@ -1660,7 +1767,7 @@ export const make = Effect.gen(function* () {
     }
 
     const startedAtMs = yield* Clock.currentTimeMillis;
-    yield* ensureRates();
+    yield* ensureRates({ allowNetwork: false, force: false });
     yield* ensureScanCacheLoaded;
 
     const dirs = yield* resolveTranscriptDirs().pipe(Effect.provideService(Path.Path, path));
@@ -1702,7 +1809,7 @@ export const make = Effect.gen(function* () {
       );
       for (const file of walk.files) {
         livePaths.add(file.path);
-        const records = yield* readFileRecords(file.path, file.size, file.mtimeMs, provider);
+        const { records } = yield* readFileRecords(file.path, file.size, file.mtimeMs, provider);
         if (records.length === 0) continue;
         const isSubagent =
           provider === "claude" && path.basename(path.dirname(file.path)) === "subagents";
@@ -1726,7 +1833,7 @@ export const make = Effect.gen(function* () {
       windowStartMs,
       retentionCutoffMs: startedAtMs - CACHE_RETENTION_DAYS * 24 * 60 * 60 * 1000,
     });
-    if (pruned > 0) cacheRevision += 1;
+    if (pruned > 0) cacheDirty = true;
     // A thread-only client must warm and bound the same durable cache as the
     // summary RPC, otherwise restarts repeat parsing and stale entries grow.
     yield* persistScanCache();

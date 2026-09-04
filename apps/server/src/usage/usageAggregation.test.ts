@@ -77,6 +77,25 @@ describe("UsageAggregator", () => {
     ).toThrow("requires exact time bounds");
   });
 
+  it("keeps adjacent half-hours as separate timeline buckets", () => {
+    const aggregator = new UsageAggregator({
+      timeZone: "UTC",
+      sinceDay: "2026-08-01",
+      untilDay: "2026-08-01",
+      resolution: "halfHour",
+      sinceTimeMs: Date.parse("2026-08-01T00:00:00Z"),
+      untilTimeMs: Date.parse("2026-08-01T01:00:00Z"),
+      rates,
+    });
+    aggregator.add(record({ timestampMs: Date.parse("2026-08-01T00:05:00Z") }));
+    aggregator.add(record({ timestampMs: Date.parse("2026-08-01T00:35:00Z") }));
+
+    expect(aggregator.finish().buckets.map((bucket) => bucket.hourStart)).toEqual([
+      "2026-08-01T00:00:00.000Z",
+      "2026-08-01T00:30:00.000Z",
+    ]);
+  });
+
   it("keeps repeated keys because callers own source-scoped dedupe", () => {
     const result = aggregate([
       record({ dedupeKey: "msg_1:" }),
@@ -87,22 +106,6 @@ describe("UsageAggregator", () => {
     expect(result.buckets[0]?.records).toBe(3);
     expect(result.buckets[0]?.totals.outputTokens).toBe(150);
     expect(result.buckets).toHaveLength(1);
-  });
-
-  it("uses the final complete snapshot for a repeated dedupe key", () => {
-    const result = aggregate([
-      record({
-        dedupeKey: "msg_partial:",
-        totals: { ...record().totals, outputTokens: 1 },
-      }),
-      record({
-        dedupeKey: "msg_partial:",
-        totals: { ...record().totals, outputTokens: 310 },
-      }),
-    ]);
-
-    expect(result.buckets[0]?.records).toBe(1);
-    expect(result.buckets[0]?.totals.outputTokens).toBe(310);
   });
 
   it("still sums records that carry no dedupe key", () => {
@@ -362,37 +365,6 @@ describe("UsageAggregator", () => {
     expect(aggregator.add(record({ dedupeKey: "msg_1:" }))).toBe(true);
     expect(aggregator.add(record({ dedupeKey: "msg_1:" }))).toBe(true);
     expect(aggregator.add(record({ timestampMs: Date.parse("2026-07-01T12:00:00Z") }))).toBe(false);
-  });
-
-  it("counts sessions from the final progressive snapshot", () => {
-    const aggregator = new UsageAggregator({
-      timeZone: "UTC",
-      sinceDay: "2026-08-01",
-      untilDay: "2026-08-31",
-      rates,
-    });
-
-    aggregator.add(record({ dedupeKey: "msg_1:", sessionId: "partial-session" }));
-    aggregator.add(record({ dedupeKey: "msg_1:", sessionId: "final-session" }));
-
-    expect(aggregator.distinctSessions("claude")).toBe(1);
-    expect(aggregator.finish().buckets[0]?.sessions).toBe(1);
-  });
-
-  it("applies the window to the final progressive snapshot", () => {
-    const aggregator = new UsageAggregator({
-      timeZone: "UTC",
-      sinceDay: "2026-08-01",
-      untilDay: "2026-08-31",
-      rates,
-    });
-
-    aggregator.add(record({ dedupeKey: "msg_1:" }));
-    aggregator.add(
-      record({ dedupeKey: "msg_1:", timestampMs: Date.parse("2026-09-01T00:00:00Z") }),
-    );
-
-    expect(aggregator.finish()).toMatchObject({ buckets: [], outOfWindow: 1 });
   });
 
   it("separates providers and models into their own buckets", () => {

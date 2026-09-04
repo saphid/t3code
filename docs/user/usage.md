@@ -28,12 +28,13 @@ every account the hub manages, each marked _via CLIProxyAPI_ so it is not mistak
 signed in on this machine. Enter the hub's URL and management key; the key is stored on the server
 and never sent back to a client. Emails are blurred until clicked, as in provider settings.
 
-Use **Past 24h** for an hourly chart covering the exact rolling 24-hour period. The **7 days**,
-**30 days**, and **90 days** ranges use daily resolution and end at the last complete calendar day.
-The page labels the latest day or time represented by the data. Usage refreshes in the background
+The usage chart defaults to **7 days**, **Projects**, and **12h** grouping. Every preset retains
+half-hour source buckets, including **24 hours**, **30 days**, and **90 days**. Use **30m**, **1h**,
+**6h**, **12h**, or **1d** to change only the visual grouping; the hover cursor still advances in
+30-minute increments. The page labels the latest time represented by the data. Usage refreshes in the background
 when the server starts and every 30 minutes, so opening the page can use the last successful
-snapshot without waiting for a transcript scan. Cost and token toggles update both the headline and
-chart. Manually refreshing rescans every connected environment and refetches model pricing on each
+snapshot without waiting for a transcript scan. The Cost and Tokens switch sits with the graph.
+Manually refreshing rescans every connected environment and refetches model pricing on each
 of them, so a newly released model that showed $0.00 gets a price without waiting for the daily
 pricing update.
 
@@ -58,8 +59,8 @@ These limits cover work T3 launches directly for every provider and client. A pr
 its own internal subagents, so T3 cannot reject those before the provider starts them. Use the
 agent-instruction fan-out limits and the independent usage watcher for that layer.
 
-Any daily chart zooms: drag across it to make the selection the new date window, and double-click
-to return to the preset. The date fields beside the presets accept custom ranges up to 90 days.
+The presets and custom date fields share one date-selection row. Custom ranges can span up to 90
+days.
 
 The breakdown's **Thread** view drills into where the spend went: sessions group into the T3 Code
 thread they belong to, with sessions that never ran through T3 Code listed under the first thing
@@ -78,7 +79,12 @@ writes show a dash; incomplete or unavailable pricing is labeled **Unavailable**
 Cache creation is a billing category, not evidence that a cache entry expired.
 
 Usage is attributed to the project whose folder a session ran in, including sessions driven
-outside T3 Code. The breakdown's **Project** view ranks projects by spend, and the project picker
-narrows the whole page to one project; work that ran outside every project is grouped under
-"Outside projects". Grok Build sessions record no folder, so they remain in overall totals but are
-omitted from the project breakdown and project filters.
+outside T3 Code. Each project has the same color in the stacked graph, its legend, and the project
+breakdown. Hovering any of those locations highlights the same project everywhere. Click projects
+to show or hide several at once, or use **Select all** and **Deselect all**. Work outside every
+project and usage whose transcript has no trusted folder remain separate groups.
+
+The left side lists providers and their models. Click a provider to show or hide all of its models,
+expand it to control individual models, and use the **Providers** graph when a provider-level view
+is more useful. Grok Build remains present in provider totals and model controls even when its
+sessions have unknown project attribution.

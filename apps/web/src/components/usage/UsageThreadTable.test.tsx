@@ -53,7 +53,7 @@ describe("UsageThreadTable", () => {
       <UsageThreadTable input={input} providerContributions={[]} summaryFailedEnvironments={0} />,
     );
 
-    expect(markup).toContain("after:animate-skeleton");
+    expect(markup).toContain("motion-safe:animate-skeleton");
   });
 
   it("reports an unavailable breakdown when every query failed", () => {

@@ -21,7 +21,7 @@ import { NonNegativeInt, ProjectId, ThreadId, TrimmedNonEmptyString } from "./ba
  * client renders partial coverage when an environment reports an older version
  * rather than failing the whole page.
  */
-export const USAGE_CONTRACT_VERSION = 12 as const;
+export const USAGE_CONTRACT_VERSION = 13 as const;
 
 /**
  * Oldest {@link UsageSummary} version a current client will still merge.
@@ -30,7 +30,8 @@ export const USAGE_CONTRACT_VERSION = 12 as const;
  * v8 adds its optional stable `projectId`, and v9 distinguishes outside
  * projects from unknown attribution, and v10 adds the separate thread-breakdown
  * request. v11 adds optional cache-write costs, and v12 adds optional
- * cache-write TTL counters. v4/v5 summaries remain decodable for mixed-version
+ * cache-write TTL counters. v13 adds half-hour timeline buckets. v4/v5
+ * summaries remain decodable for mixed-version
  * clients, but summaries without coverage are not merged because the client
  * cannot treat them as bounded snapshots.
  */
@@ -56,7 +57,7 @@ export const UsageDay = TrimmedNonEmptyString.check(Schema.isPattern(USAGE_DAY_P
 );
 export type UsageDay = typeof UsageDay.Type;
 
-export const UsageResolution = Schema.Literals(["day", "hour"]);
+export const UsageResolution = Schema.Literals(["day", "hour", "halfHour"]);
 export type UsageResolution = typeof UsageResolution.Type;
 
 /**
@@ -93,8 +94,8 @@ export type UsageTokenTotals = typeof UsageTokenTotals.Type;
 
 /**
  * One `(day, hourStart?, project, provider, model)` cell. `hourStart` is the
- * UTC start instant of a rolling bucket and is present only for hourly
- * requests.
+ * UTC start instant of a rolling bucket and is present for hourly and
+ * half-hour requests.
  *
  * `costUsd` is the raw API-equivalent cost of these tokens. It is not money
  * spent: subscription plans bill separately. `unpricedRecords` counts records
@@ -243,6 +244,8 @@ export const UsageSummary = Schema.Struct({
   timeZone: TrimmedNonEmptyString,
   sinceDay: UsageDay,
   untilDay: UsageDay,
+  /** Bucket resolution used by this result. Absent means daily on older servers. */
+  resolution: Schema.optional(UsageResolution),
   buckets: Schema.Array(UsageBucket),
   sources: Schema.Array(UsageSource),
   pricing: UsagePricing,

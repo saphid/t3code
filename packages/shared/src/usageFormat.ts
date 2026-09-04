@@ -264,11 +264,11 @@ export function makeWindow(
     });
   }
   const today = format.format(now);
-  if (resolution === "hour") {
+  if (resolution === "hour" || resolution === "halfHour") {
     // Half-hour-aligned bounds keep the common rolling window stable long
     // enough for the server's background snapshot to answer it immediately.
     const untilTimeMs = Math.floor(now.getTime() / (30 * 60_000)) * (30 * 60_000);
-    const sinceTimeMs = untilTimeMs - 24 * HOUR_MS;
+    const sinceTimeMs = untilTimeMs - days * 24 * HOUR_MS;
     const sinceTime = new Date(sinceTimeMs);
     const untilTime = new Date(untilTimeMs);
     return {

@@ -52,6 +52,7 @@ export function makeDayFormatter(timeZone: string): (timestampMs: number) => str
 }
 
 const HOUR_MS = 60 * 60 * 1000;
+const HALF_HOUR_MS = 30 * 60 * 1000;
 
 export interface ProjectRoot {
   readonly projectId: ProjectId;
@@ -150,6 +151,9 @@ export interface NormalizedUsageAggregate {
   readonly bucketStartMs: number;
   readonly provider: UsageRecord["provider"];
   readonly model: string;
+  readonly projectAttribution?: UsageBucket["projectAttribution"];
+  readonly projectId?: ProjectId;
+  readonly project?: string;
   readonly totals: UsageTokenTotals;
   /** Tokens from records priced by the model table, excluding reported costs. */
   readonly pricedTotals: UsageTokenTotals;
@@ -173,18 +177,17 @@ export interface NormalizedUsageAggregate {
  */
 export class UsageAggregator {
   readonly #buckets = new Map<string, MutableBucket>();
-  readonly #recordsByKey = new Map<string, UsageRecord>();
-  readonly #unkeyedRecords: UsageRecord[] = [];
   readonly #toDay: (timestampMs: number) => string;
   readonly #hourlyWindow: { readonly sinceTimeMs: number; readonly untilTimeMs: number } | null;
+  readonly #periodMs: number;
   readonly #options: AggregateOptions;
   #outOfWindow = 0;
-  #duplicatesDropped = 0;
 
   constructor(options: AggregateOptions) {
     this.#options = options;
     this.#toDay = makeDayFormatter(options.timeZone);
-    if (options.resolution === "hour") {
+    this.#periodMs = options.resolution === "halfHour" ? HALF_HOUR_MS : HOUR_MS;
+    if (options.resolution === "hour" || options.resolution === "halfHour") {
       if (options.sinceTimeMs === undefined || options.untilTimeMs === undefined) {
         throw new Error("Hourly usage aggregation requires exact time bounds");
       }
@@ -197,22 +200,14 @@ export class UsageAggregator {
     }
   }
 
-  /** Retains one record and reports whether it falls in the requested window. */
+  /** Folds one already source-deduplicated record into the requested window. */
   add(record: UsageRecord): boolean {
-    const inWindow = this.#isInWindow(record);
-    if (record.dedupeKey === null) {
-      this.#unkeyedRecords.push(record);
-      return inWindow;
+    if (!this.#isInWindow(record)) {
+      this.#outOfWindow += 1;
+      return false;
     }
-    if (this.#recordsByKey.has(record.dedupeKey)) {
-      // Claude writes progressive snapshots for one response. The final copy
-      // is complete, so replace the earlier one without counting it twice.
-      this.#recordsByKey.set(record.dedupeKey, record);
-      this.#duplicatesDropped += 1;
-      return inWindow;
-    }
-    this.#recordsByKey.set(record.dedupeKey, record);
-    return inWindow;
+    this.#foldRecord(record, this.#buckets);
+    return true;
   }
 
   #isInWindow(record: UsageRecord): boolean {
@@ -234,19 +229,6 @@ export class UsageAggregator {
     return true;
   }
 
-  /** Distinct in-window sessions retained after progressive snapshots settle. */
-  distinctSessions(provider: UsageRecord["provider"]): number {
-    const sessionIds = new Set<string>();
-    const addSession = (record: UsageRecord): void => {
-      if (this.#isInWindow(record) && record.provider === provider && record.sessionId.length > 0) {
-        sessionIds.add(record.sessionId);
-      }
-    };
-    for (const record of this.#unkeyedRecords) addSession(record);
-    for (const record of this.#recordsByKey.values()) addSession(record);
-    return sessionIds.size;
-  }
-
   #foldRecord(record: UsageRecord, buckets: Map<string, MutableBucket>): void {
     const day = this.#toDay(record.timestampMs);
 
@@ -255,7 +237,8 @@ export class UsageAggregator {
         ? ""
         : new Date(
             this.#hourlyWindow.sinceTimeMs +
-              Math.floor((record.timestampMs - this.#hourlyWindow.sinceTimeMs) / HOUR_MS) * HOUR_MS,
+              Math.floor((record.timestampMs - this.#hourlyWindow.sinceTimeMs) / this.#periodMs) *
+                this.#periodMs,
           ).toISOString();
     // The key is parsed back apart on NUL, which project fields must not carry.
     const resolvedProject = this.#options.resolveProject?.(record.cwd) ?? null;
@@ -334,16 +317,23 @@ export class UsageAggregator {
         ? ""
         : new Date(
             this.#hourlyWindow.sinceTimeMs +
-              Math.floor((aggregate.bucketStartMs - this.#hourlyWindow.sinceTimeMs) / HOUR_MS) *
-                HOUR_MS,
+              Math.floor(
+                (aggregate.bucketStartMs - this.#hourlyWindow.sinceTimeMs) / this.#periodMs,
+              ) *
+                this.#periodMs,
           ).toISOString();
-    const key = `${day}\u0000${hourStart}\u0000${aggregate.provider}\u0000${aggregate.model}`;
+    const projectAttribution = aggregate.projectAttribution ?? "unknown";
+    const projectId = aggregate.projectId?.replaceAll("\u0000", "") ?? "";
+    const project = aggregate.project?.replaceAll("\u0000", "") ?? "";
+    const key = `${day}\u0000${hourStart}\u0000${projectAttribution}\u0000${projectId}\u0000${project}\u0000${aggregate.provider}\u0000${aggregate.model}`;
     let bucket = this.#buckets.get(key);
     if (bucket === undefined) {
       bucket = {
         totals: EMPTY_TOTALS,
         costUsd: 0,
         cacheSavingsUsd: 0,
+        cacheWriteUsd: 0,
+        cacheWriteComplete: true,
         records: 0,
         unpricedRecords: 0,
         providerReportedRecords: 0,
@@ -381,6 +371,18 @@ export class UsageAggregator {
       aggregate.model,
       aggregate.savingsTotals,
     );
+    if (
+      aggregate.totals.cacheCreationTokens === 0 ||
+      aggregate.pricedTotals.cacheCreationTokens === aggregate.totals.cacheCreationTokens
+    ) {
+      bucket.cacheWriteUsd += cacheWriteUsd(
+        this.#options.rates,
+        aggregate.model,
+        aggregate.pricedTotals,
+      );
+    } else {
+      bucket.cacheWriteComplete = false;
+    }
     bucket.records += aggregate.records;
     bucket.unpricedRecords += unpricedRecords;
     bucket.providerReportedRecords += aggregate.providerReportedRecords;
@@ -389,15 +391,6 @@ export class UsageAggregator {
   }
 
   finish(): AggregateResult {
-    const foldIfInWindow = (record: UsageRecord): void => {
-      if (this.#isInWindow(record)) {
-        this.#foldRecord(record, this.#buckets);
-      } else {
-        this.#outOfWindow += 1;
-      }
-    };
-    for (const record of this.#unkeyedRecords) foldIfInWindow(record);
-    for (const record of this.#recordsByKey.values()) foldIfInWindow(record);
     const buckets: UsageBucket[] = [];
     for (const [key, bucket] of this.#buckets) {
       const [
@@ -440,7 +433,7 @@ export class UsageAggregator {
 
     return {
       buckets,
-      duplicatesDropped: this.#duplicatesDropped,
+      duplicatesDropped: 0,
       outOfWindow: this.#outOfWindow,
     };
   }

@@ -73,6 +73,17 @@ export interface HourlyTotals {
   readonly byProvider: ReadonlyMap<UsageProviderKind, { costUsd: number; totalTokens: number }>;
 }
 
+/** One sparse timeline cell retaining the dimensions needed by chart filters. */
+export interface UsageTimelineCell {
+  readonly periodStart: string;
+  readonly projectKey: string | null | undefined;
+  readonly project: string | null;
+  readonly provider: UsageProviderKind;
+  readonly model: string;
+  readonly costUsd: number;
+  readonly totalTokens: number;
+}
+
 export interface CostQuality {
   readonly providerReportedShare: number;
   readonly modelPricedShare: number;
@@ -109,6 +120,7 @@ export interface MergedUsage {
   readonly projects: readonly ProjectTotals[];
   readonly daily: readonly DailyTotals[];
   readonly hourly: readonly HourlyTotals[];
+  readonly timeline: readonly UsageTimelineCell[];
   readonly costQuality: CostQuality;
   /** Environments whose data was dropped as a duplicate of another's. */
   readonly duplicateSources: readonly string[];
@@ -211,14 +223,17 @@ function ownedContribution(
     }
   }
   return {
-    buckets: environment.summary.buckets.filter(
-      (bucket) =>
+    buckets: environment.summary.buckets.filter((bucket) => {
+      const periodMs =
+        environment.summary.resolution === "halfHour" ? 30 * 60 * 1000 : 60 * 60 * 1000;
+      return (
         ownedProviders.has(bucket.provider) &&
         (availableThroughTime !== null
           ? bucket.hourStart !== undefined &&
-            Date.parse(bucket.hourStart) + 60 * 60 * 1000 <= Date.parse(availableThroughTime)
-          : availableThroughDay === null || bucket.day <= availableThroughDay),
-    ),
+            Date.parse(bucket.hourStart) + periodMs <= Date.parse(availableThroughTime)
+          : availableThroughDay === null || bucket.day <= availableThroughDay)
+      );
+    }),
     sessionsByProvider,
   };
 }
@@ -253,6 +268,7 @@ const EMPTY_MERGED: MergedUsage = {
   projects: [],
   daily: [],
   hourly: [],
+  timeline: [],
   costQuality: {
     providerReportedShare: 0,
     modelPricedShare: 0,
@@ -460,6 +476,7 @@ export function mergeUsage(
       byProvider: Map<UsageProviderKind, { costUsd: number; totalTokens: number }>;
     }
   >();
+  const timeline: UsageTimelineCell[] = [];
   const contributingEnvironments: EnvironmentId[] = [];
   const providerContributions: EnvironmentProviderContribution[] = [];
 
@@ -508,6 +525,17 @@ export function mergeUsage(
         typeof localProjectKey === "string"
           ? namespacedProjectKey(environment.environmentId, localProjectKey)
           : localProjectKey;
+      if (bucket.hourStart !== undefined) {
+        timeline.push({
+          periodStart: bucket.hourStart,
+          projectKey,
+          project: bucket.project ?? null,
+          provider: bucket.provider,
+          model: bucket.model,
+          costUsd: bucket.costUsd,
+          totalTokens: tokens,
+        });
+      }
       // Unknown attribution stays in unfiltered totals but never claims to be
       // part of the explicit Outside projects slice.
       if (projectKey === undefined) {
@@ -683,6 +711,7 @@ export function mergeUsage(
     projects,
     daily,
     hourly,
+    timeline: timeline.sort((a, b) => a.periodStart.localeCompare(b.periodStart)),
     costQuality: {
       providerReportedShare: records === 0 ? 0 : providerReportedRecords / records,
       unpricedShare: records === 0 ? 0 : unpricedRecords / records,
