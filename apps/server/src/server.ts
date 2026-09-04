@@ -394,6 +394,7 @@ const ProjectFaviconResolverLayerLive = ProjectFaviconResolver.layer.pipe(
 const ProviderInstanceRegistryLayerLive = ProviderInstanceRegistryHydrationLive.pipe(
   Layer.provideMerge(Layer.mergeAll(ProviderEventLoggers.layer, ModelManifest.layer)),
   Layer.provideMerge(OpenCodeRuntime.OpenCodeRuntimeLive),
+  Layer.provide(AntigravityInstallation.layer),
 );
 
 const ServerEnvironmentLayerLive = ServerEnvironment.providerRuntimeLayer.pipe(
