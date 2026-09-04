@@ -1,4 +1,9 @@
-import type { OrchestrationThreadActivity, ProviderSession, ThreadId } from "@t3tools/contracts";
+import type {
+  OrchestrationThreadActivity,
+  ProviderInstanceId,
+  ProviderSession,
+  ThreadId,
+} from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 
 import {
@@ -28,6 +33,8 @@ function session(index: number, status: ProviderSession["status"] = "running"): 
     status,
   } as ProviderSession;
 }
+
+const aiEnablers = "ai-enablers" as ProviderInstanceId;
 
 describe("evaluateTurnStartLimits", () => {
   it("blocks a thread at the context ceiling", () => {
@@ -85,6 +92,38 @@ describe("evaluateTurnStartLimits", () => {
     });
 
     expect(violation?.code).toBe("concurrent-turn-limit");
+  });
+
+  it("does not count running AI Enablers threads toward the concurrency ceiling", () => {
+    const sessions = [
+      ...Array.from({ length: MAX_CONCURRENT_PROVIDER_TURNS - 1 }, (_, index) => session(index)),
+      { ...session(99), providerInstanceId: aiEnablers },
+    ];
+
+    expect(
+      evaluateTurnStartLimits({
+        threadId,
+        activities: [],
+        sessions,
+        excludedProviderInstanceIds: new Set([aiEnablers]),
+      }),
+    ).toBeUndefined();
+  });
+
+  it("allows AI Enablers turns when the concurrency ceiling is full", () => {
+    const sessions = Array.from({ length: MAX_CONCURRENT_PROVIDER_TURNS }, (_, index) =>
+      session(index),
+    );
+
+    expect(
+      evaluateTurnStartLimits({
+        threadId,
+        providerInstanceId: aiEnablers,
+        activities: [],
+        sessions,
+        excludedProviderInstanceIds: new Set([aiEnablers]),
+      }),
+    ).toBeUndefined();
   });
 
   it("counts a turn reservation before the provider reports it as running", () => {
