@@ -65,6 +65,11 @@ function summary(
       message: null,
     })),
     pricing: { status: "fresh", source: "litellm", fetchedAt: null, knownModels: 10 },
+    coverage: {
+      availableThroughDay: "2026-08-31" as UsageDay,
+      availableThroughTime: null,
+      generatedAt: "2026-08-31T00:00:00.000Z",
+    },
     scanDurationMs: 1,
   };
 }
@@ -92,6 +97,120 @@ describe("mergeUsage", () => {
     expect(merged.costUsd).toBe(20);
     expect(merged.records).toBe(10);
     expect(merged.duplicateSources).toHaveLength(0);
+    expect(merged.availableThroughDay).toBe("2026-08-31");
+  });
+
+  it("uses the earliest coverage boundary across environments", () => {
+    const earlier = summary([], [{ provider: "claude", hostId: "linux", homePath: "/b" }]);
+    const merged = mergeUsage(
+      [
+        environment("env-a", summary([], [{ provider: "claude", hostId: "mac", homePath: "/a" }])),
+        environment("env-b", {
+          ...earlier,
+          coverage: {
+            ...earlier.coverage!,
+            availableThroughDay: "2026-08-29" as UsageDay,
+          },
+        }),
+      ],
+      USAGE_CONTRACT_VERSION,
+    );
+
+    expect(merged.availableThroughDay).toBe("2026-08-29");
+  });
+
+  it("keeps coverage for an all-missing complete zero summary", () => {
+    const empty = summary([], []);
+    const merged = mergeUsage(
+      [
+        environment("env-empty", {
+          ...empty,
+          sources: [
+            {
+              fingerprint: {
+                hostId: "mac",
+                provider: "claude",
+                resolvedHomePath: "/missing",
+                volumeId: "vol-missing",
+              },
+              status: "missing",
+              scannedFiles: 0,
+              skippedFiles: 0,
+              malformedRecords: 0,
+              distinctSessions: 0,
+              message: "No transcript directory.",
+            },
+          ],
+        }),
+      ],
+      USAGE_CONTRACT_VERSION,
+    );
+
+    expect(merged.availableThroughDay).toBe("2026-08-31");
+  });
+
+  it("ignores duplicate-owner coverage when choosing the shared boundary", () => {
+    const owner = summary([bucket()], [{ provider: "claude", hostId: "mac", homePath: "/a" }]);
+    const duplicate = {
+      ...owner,
+      coverage: {
+        ...owner.coverage!,
+        availableThroughDay: "2026-08-01" as UsageDay,
+      },
+    };
+    const merged = mergeUsage(
+      [environment("env-a-owner", owner), environment("env-b-duplicate", duplicate)],
+      USAGE_CONTRACT_VERSION,
+    );
+
+    expect(merged.availableThroughDay).toBe("2026-08-31");
+  });
+
+  it("filters every aggregate to the shared cutoff and reports the oldest snapshot", () => {
+    const first = summary(
+      [
+        bucket({ day: "2026-08-28" as UsageDay, costUsd: 3, model: "old-model" }),
+        bucket({ day: "2026-08-29" as UsageDay, costUsd: 4, model: "old-model" }),
+      ],
+      [{ provider: "claude", hostId: "mac", homePath: "/a", distinctSessions: 1 }],
+    );
+    const second = summary(
+      [
+        bucket({ day: "2026-08-28" as UsageDay, costUsd: 5, model: "other-model" }),
+        bucket({ day: "2026-08-31" as UsageDay, costUsd: 99, model: "future-model" }),
+      ],
+      [{ provider: "claude", hostId: "linux", homePath: "/b", distinctSessions: 2 }],
+    );
+    const merged = mergeUsage(
+      [
+        environment("env-a", {
+          ...first,
+          coverage: {
+            ...first.coverage!,
+            availableThroughDay: "2026-08-29" as UsageDay,
+            generatedAt: "2026-08-28T12:00:00.000Z",
+          },
+        }),
+        environment("env-b", second),
+      ],
+      USAGE_CONTRACT_VERSION,
+    );
+
+    expect(merged.costUsd).toBe(12);
+    expect(merged.models.map((model) => model.model)).not.toContain("future-model");
+    expect(merged.daily.map((day) => day.day)).toEqual(["2026-08-28", "2026-08-29"]);
+    expect(merged.sessions).toBe(0);
+    expect(merged.sessionsExact).toBe(false);
+    expect(merged.lastUpdatedAt).toBe("2026-08-28T12:00:00.000Z");
+  });
+
+  it("excludes an unbounded legacy summary instead of guessing its coverage", () => {
+    const legacy = summary([], [{ provider: "claude", hostId: "mac", homePath: "/a" }]);
+    const { coverage: _coverage, ...withoutCoverage } = legacy;
+    const merged = mergeUsage([environment("legacy", withoutCoverage)], USAGE_CONTRACT_VERSION);
+
+    expect(merged.costUsd).toBe(0);
+    expect(merged.staleEnvironments).toEqual(["legacy"]);
   });
 
   it("counts a shared transcript directory once", () => {
@@ -158,7 +277,7 @@ describe("mergeUsage", () => {
           summary(
             [bucket()],
             [{ provider: "claude", hostId: "linux", homePath: "/b" }],
-            USAGE_CONTRACT_VERSION - 2,
+            USAGE_CONTRACT_VERSION - 3,
           ),
         ),
       ],
@@ -169,7 +288,13 @@ describe("mergeUsage", () => {
     expect(merged.staleEnvironments).toEqual(["env-b"]);
   });
 
-  it("keeps the previous compatible contract version so additive provider expansions still merge", () => {
+  it("excludes a v5 summary because it has no bounded coverage", () => {
+    const v5 = summary(
+      [bucket({ costUsd: 4, provider: "codex", model: "gpt-5.6-sol" })],
+      [{ provider: "codex", hostId: "linux", homePath: "/b" }],
+      USAGE_CONTRACT_VERSION - 1,
+    );
+    const { coverage: _coverage, ...withoutCoverage } = v5;
     const merged = mergeUsage(
       [
         environment(
@@ -179,20 +304,13 @@ describe("mergeUsage", () => {
             [{ provider: "claude", hostId: "mac", homePath: "/a" }],
           ),
         ),
-        environment(
-          "env-b",
-          summary(
-            [bucket({ costUsd: 4, provider: "codex", model: "gpt-5.6-sol" })],
-            [{ provider: "codex", hostId: "linux", homePath: "/b" }],
-            USAGE_CONTRACT_VERSION - 1,
-          ),
-        ),
+        environment("env-b", withoutCoverage),
       ],
       USAGE_CONTRACT_VERSION,
     );
 
-    expect(merged.costUsd).toBe(14);
-    expect(merged.staleEnvironments).toEqual([]);
+    expect(merged.costUsd).toBe(10);
+    expect(merged.staleEnvironments).toEqual(["env-b"]);
   });
 
   it("derives provider shares and cost quality", () => {
@@ -337,5 +455,32 @@ describe("mergeUsage", () => {
     ]);
     expect(merged.daily).toHaveLength(1);
     expect(merged.daily[0]?.costUsd).toBe(10);
+  });
+
+  it("keeps the final half-hour-aligned bucket at an exact cutoff", () => {
+    const base = summary(
+      [
+        bucket({ hourStart: "2026-08-07T23:30:00.000Z", costUsd: 3 }),
+        bucket({ hourStart: "2026-08-08T00:30:00.000Z", costUsd: 7 }),
+      ],
+      [{ provider: "claude", hostId: "mac", homePath: "/a/.claude" }],
+    );
+    const merged = mergeUsage(
+      [
+        environment("env-a", {
+          ...base,
+          coverage: {
+            ...base.coverage!,
+            availableThroughDay: "2026-08-08" as UsageDay,
+            availableThroughTime: "2026-08-08T00:30:00.000Z",
+          },
+        }),
+      ],
+      USAGE_CONTRACT_VERSION,
+    );
+
+    expect(merged.availableThroughTime).toBe("2026-08-08T00:30:00.000Z");
+    expect(merged.hourly.map((hour) => hour.hourStart)).toEqual(["2026-08-07T23:30:00.000Z"]);
+    expect(merged.costUsd).toBe(3);
   });
 });

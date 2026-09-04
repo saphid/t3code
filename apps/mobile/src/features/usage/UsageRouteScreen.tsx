@@ -9,6 +9,8 @@ import {
   enumerateDays,
   enumerateHourStarts,
   formatCount,
+  formatCoverageTime,
+  formatDateTimeShort,
   formatDayShort,
   formatHourShort,
   formatPercent,
@@ -16,7 +18,7 @@ import {
   formatUsd,
   makeWindow,
 } from "@t3tools/shared/usageFormat";
-import { useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useLayoutEffect, useMemo, useState } from "react";
 import { Platform, Pressable, RefreshControl, ScrollView, View } from "react-native";
 import Animated, { Easing, FadeIn, LinearTransition, ReduceMotion } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -76,23 +78,44 @@ export function UsageRouteScreen() {
   const isPast24Hours = windowDays === 1;
   const [selectedEnvironmentIds, setSelectedEnvironmentIds] =
     useState<ReadonlySet<EnvironmentId> | null>(null);
-  const { merged, environments, selectedEnvironments, isPending, refresh } = useUsage(
-    window,
-    selectedEnvironmentIds,
-  );
+  const {
+    merged,
+    environments,
+    selectedEnvironments,
+    isPending,
+    isPartial,
+    isRefreshing,
+    refreshError,
+    refresh,
+  } = useUsage(window, selectedEnvironmentIds);
   const limits = useRefreshLimits(selectedEnvironmentIds);
 
   const days = useMemo(
     () => enumerateDays(window.sinceDay, window.untilDay),
     [window.sinceDay, window.untilDay],
   );
-  const chartDays = useMemo(
-    () =>
-      isPast24Hours && window.sinceTime !== undefined && window.untilTime !== undefined
-        ? enumerateHourStarts(window.sinceTime, window.untilTime)
-        : days,
-    [days, isPast24Hours, window.sinceTime, window.untilTime],
-  );
+  const chartDays = useMemo(() => {
+    if (isPast24Hours && window.sinceTime !== undefined && window.untilTime !== undefined) {
+      const untilTime =
+        merged.availableThroughTime !== null && merged.availableThroughTime < window.untilTime
+          ? merged.availableThroughTime
+          : window.untilTime;
+      return enumerateHourStarts(window.sinceTime, untilTime);
+    }
+    if (merged.availableThroughDay !== null && merged.availableThroughDay < window.untilDay) {
+      return enumerateDays(window.sinceDay, merged.availableThroughDay);
+    }
+    return days;
+  }, [
+    days,
+    isPast24Hours,
+    merged.availableThroughDay,
+    merged.availableThroughTime,
+    window.sinceDay,
+    window.sinceTime,
+    window.untilDay,
+    window.untilTime,
+  ]);
   const chartTotals = useMemo(
     (): readonly DailyTotals[] =>
       isPast24Hours
@@ -106,8 +129,6 @@ export function UsageRouteScreen() {
     [isPast24Hours, merged.daily, merged.hourly],
   );
 
-  const [refreshingUsage, setRefreshingUsage] = useState(false);
-  const refreshingRef = useRef(false);
   const showingLimits = tab === "limits";
   const selectWindow = (days: number) => {
     setWindowSelection({
@@ -116,22 +137,18 @@ export function UsageRouteScreen() {
     });
   };
   const refreshWindow = () => {
-    if (refreshingRef.current) return;
     const nextWindow = makeWindow(windowDays, undefined, isPast24Hours ? "hour" : "day");
     if (
-      nextWindow.sinceDay !== window.sinceDay ||
-      nextWindow.untilDay !== window.untilDay ||
-      nextWindow.sinceTime !== window.sinceTime ||
-      nextWindow.untilTime !== window.untilTime
+      nextWindow.sinceDay === window.sinceDay &&
+      nextWindow.untilDay === window.untilDay &&
+      nextWindow.sinceTime === window.sinceTime &&
+      nextWindow.untilTime === window.untilTime
     ) {
+      refresh();
+    } else {
       setWindowSelection({ days: windowDays, window: nextWindow });
+      refresh(nextWindow);
     }
-    refreshingRef.current = true;
-    setRefreshingUsage(true);
-    void refresh(nextWindow).finally(() => {
-      refreshingRef.current = false;
-      setRefreshingUsage(false);
-    });
   };
 
   const showEnvironmentFilter = environments.length > 0 || selectedEnvironmentIds !== null;
@@ -239,7 +256,7 @@ export function UsageRouteScreen() {
         contentContainerStyle={{ paddingBottom: Math.max(insets.bottom, 18) + 18 }}
         refreshControl={
           <RefreshControl
-            refreshing={showingLimits ? limits.refreshing : refreshingUsage}
+            refreshing={showingLimits ? limits.refreshing : isRefreshing}
             onRefresh={showingLimits ? () => void limits.refresh() : refreshWindow}
           />
         }
@@ -277,12 +294,14 @@ export function UsageRouteScreen() {
                   className="w-36"
                 />
               </View>
-              {merged.duplicateSources.length > 0 ? (
-                <Text className="text-sm text-foreground-muted">
-                  Counted once across environments sharing a transcript directory:{" "}
-                  {merged.duplicateSources.join(", ")}
-                </Text>
-              ) : null}
+              <UsageCoverageNotice
+                environments={selectedEnvironments}
+                merged={merged}
+                isPartial={isPartial}
+                isRefreshing={isRefreshing}
+                refreshError={refreshError}
+                timeZone={window.timeZone}
+              />
               {isPending ? (
                 <Text className="py-16 text-center text-base text-foreground-muted">
                   Scanning provider transcripts…
@@ -622,6 +641,85 @@ function ModelsSection(props: { readonly merged: MergedUsage }) {
  * one that failed, or one whose transcripts another environment already
  * reported.
  */
+function UsageCoverageNotice(props: {
+  readonly environments: readonly EnvironmentUsageStatus[];
+  readonly merged: MergedUsage;
+  readonly isPartial: boolean;
+  readonly isRefreshing: boolean;
+  readonly refreshError: string | null | undefined;
+  readonly timeZone: string;
+}) {
+  const failed = props.environments.filter((environment) => environment.error !== null);
+  const stale = props.environments.filter((environment) =>
+    props.merged.staleEnvironments.includes(environment.environmentId),
+  );
+  const duplicateSources = props.merged.duplicateSources;
+  const hasCoverage =
+    props.merged.availableThroughDay !== null || props.merged.availableThroughTime !== null;
+  if (
+    failed.length === 0 &&
+    stale.length === 0 &&
+    duplicateSources.length === 0 &&
+    !props.isPartial &&
+    !props.isRefreshing &&
+    !hasCoverage
+  ) {
+    return null;
+  }
+
+  return (
+    <View className="gap-1 rounded-[16px] border-continuous bg-card px-4 py-3">
+      {props.merged.availableThroughTime !== null ? (
+        <Text className="text-sm text-foreground-muted">
+          Data available through{" "}
+          {formatCoverageTime(props.merged.availableThroughTime, props.timeZone)}.
+        </Text>
+      ) : props.merged.availableThroughDay !== null ? (
+        <Text className="text-sm text-foreground-muted">
+          Data available through {formatDayShort(props.merged.availableThroughDay)}.
+        </Text>
+      ) : null}
+      {props.isPartial ? (
+        <Text className="text-sm text-foreground-muted">
+          Some environments are still reporting. Totals are partial.
+        </Text>
+      ) : null}
+      {props.isRefreshing ? (
+        <Text className="text-sm text-foreground-muted">Refreshing usage in the background.</Text>
+      ) : null}
+      {props.refreshError ? (
+        <Text className="text-sm text-foreground-muted">{props.refreshError}</Text>
+      ) : null}
+      {props.merged.lastUpdatedAt !== null ? (
+        <Text className="text-sm text-foreground-muted">
+          Last updated {formatDateTimeShort(props.merged.lastUpdatedAt, props.timeZone)}.
+        </Text>
+      ) : null}
+      {!props.merged.sessionsExact ? (
+        <Text className="text-sm text-foreground-muted">
+          Sessions are unavailable until all environments share a cutoff.
+        </Text>
+      ) : null}
+      {failed.map((environment) => (
+        <Text key={environment.environmentId} className="text-sm text-foreground-muted">
+          {environment.label} could not report usage.
+        </Text>
+      ))}
+      {stale.map((environment) => (
+        <Text key={environment.environmentId} className="text-sm text-foreground-muted">
+          {environment.label} runs an older server version and is excluded from totals.
+        </Text>
+      ))}
+      {duplicateSources.length > 0 ? (
+        <Text className="text-sm text-foreground-muted">
+          Counted once across environments sharing a transcript directory:{" "}
+          {duplicateSources.join(", ")}
+        </Text>
+      ) : null}
+    </View>
+  );
+}
+
 function isUsageLoading(environment: EnvironmentUsageStatus) {
   return environment.isPending || (environment.summary === null && environment.error === null);
 }
