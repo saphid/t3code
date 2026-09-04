@@ -16,21 +16,25 @@ import {
   type UsageSummary,
   type UsageSummaryInput,
 } from "@t3tools/contracts";
-import { refreshUsage } from "@t3tools/client-runtime/state/usage";
 import { mergeUsage, type EnvironmentUsage, type MergedUsage } from "@t3tools/shared/usageMerge";
+import {
+  completeUsageRefresh,
+  refreshStateForWindowChange,
+  startUsageRefresh,
+  type UsageRefreshState,
+} from "@t3tools/shared/usageRefreshState";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/unstable/reactivity";
-import { useCallback, useMemo } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import { appAtomRegistry } from "./atom-registry";
 import { environmentPresentations } from "./presentation";
 import { serverEnvironment } from "./server";
+import { useAtomCommand } from "./use-atom-command";
 
 export interface EnvironmentUsageStatus {
   readonly environmentId: EnvironmentId;
   readonly label: string;
   readonly isPending: boolean;
-  readonly isConnected: boolean;
   readonly error: string | null;
   readonly summary: UsageSummary | null;
 }
@@ -54,7 +58,6 @@ const usageByWindowAtom = Atom.family((windowKey: string) =>
         environmentId,
         label: presentation.entry.target.label,
         isPending: result.waiting,
-        isConnected: presentation.connection.phase === "connected",
         error: result._tag === "Failure" ? "This environment could not report usage." : null,
         summary: Option.getOrNull(AsyncResult.value(result)),
       });
@@ -66,22 +69,21 @@ const usageByWindowAtom = Atom.family((windowKey: string) =>
 export interface UsageView {
   readonly merged: MergedUsage;
   readonly environments: readonly EnvironmentUsageStatus[];
-  readonly selectedEnvironments: readonly EnvironmentUsageStatus[];
   /** True until at least one environment has answered. */
   readonly isPending: boolean;
   /**
    * True while environments that have not failed are still answering. Failed
-   * environments are reported in the environment menu: totals will not
+   * environments are reported through their own error rows: totals will not
    * improve by waiting on them, so they must not read as "still reporting".
    */
   readonly isPartial: boolean;
-  readonly refresh: (input?: UsageSummaryInput) => Promise<void>;
+  /** True while a previously loaded snapshot is being refreshed. */
+  readonly isRefreshing: boolean;
+  readonly refreshError?: string | null;
+  readonly refresh: (requestedInput?: UsageSummaryInput) => void;
 }
 
-export function useUsage(
-  input: UsageSummaryInput,
-  selectedEnvironmentIds: ReadonlySet<EnvironmentId> | null = null,
-): UsageView {
+export function useUsage(input: UsageSummaryInput): UsageView {
   const windowKey = useMemo(
     () =>
       JSON.stringify({
@@ -110,21 +112,90 @@ export function useUsage(
         : environments.filter(({ environmentId }) => selectedEnvironmentIds.has(environmentId)),
     [environments, selectedEnvironmentIds],
   );
+  const refreshUsageSummary = useAtomCommand(serverEnvironment.refreshUsageSummary, {
+    reportFailure: false,
+  });
+  const [manualRefreshState, setManualRefreshState] = useState<UsageRefreshState>({
+    windowKey,
+    requestId: 0,
+    refreshing: false,
+    error: null as string | null,
+  });
+  const currentWindowKey = useRef(windowKey);
+  currentWindowKey.current = windowKey;
+  const currentRefreshId = useRef(0);
+  const pendingRefreshWindowKey = useRef(windowKey);
+  useEffect(() => {
+    // A refresh started while selecting the next window already targets this
+    // committed key. Keep its request id and state so the completion can settle
+    // after React commits the selection.
+    const nextState = refreshStateForWindowChange(
+      manualRefreshState,
+      windowKey,
+      pendingRefreshWindowKey.current,
+    );
+    if (nextState === manualRefreshState) return;
+    // A refresh belongs to one window. Invalidate its completion and clear the
+    // state so switching away and back cannot resurrect an old spinner/error.
+    currentRefreshId.current = nextState.requestId;
+    pendingRefreshWindowKey.current = windowKey;
+    setManualRefreshState(nextState);
+  }, [manualRefreshState, windowKey]);
 
+  // Explicit refresh is a server command, so it really rescans and publishes
+  // a new last-good snapshot. The normal query remains snapshot-only.
   const refresh = useCallback(
-    (nextInput?: UsageSummaryInput) =>
-      refreshUsage({
-        registry: appAtomRegistry,
-        server: serverEnvironment,
-        presentations: environmentPresentations,
-        environmentIds: selectedEnvironments.map(({ environmentId }) => environmentId),
-        input: nextInput ?? (JSON.parse(windowKey) as UsageSummaryInput),
-      }),
-    [selectedEnvironments, windowKey],
+    (requestedInput?: UsageSummaryInput) => {
+      const input = requestedInput ?? (JSON.parse(windowKey) as UsageSummaryInput);
+      const requestWindowKey =
+        requestedInput === undefined
+          ? windowKey
+          : JSON.stringify({
+              sinceDay: input.sinceDay,
+              untilDay: input.untilDay,
+              timeZone: input.timeZone,
+              resolution: input.resolution,
+              sinceTime: input.sinceTime,
+              untilTime: input.untilTime,
+            });
+      const nextRefreshState = startUsageRefresh(currentRefreshId.current, requestWindowKey);
+      const requestId = nextRefreshState.requestId;
+      currentRefreshId.current = requestId;
+      pendingRefreshWindowKey.current = requestWindowKey;
+      setManualRefreshState(nextRefreshState);
+      void Promise.all(
+        selectedEnvironments.map((environment) =>
+          refreshUsageSummary({ environmentId: environment.environmentId, input }),
+        ),
+      )
+        .then((results) => {
+          const nextState = completeUsageRefresh(
+            currentWindowKey.current,
+            currentRefreshId.current,
+            requestWindowKey,
+            requestId,
+            results.some((result) => result._tag === "Failure")
+              ? "Refresh failed. Showing the last successful usage snapshot."
+              : null,
+          );
+          if (nextState !== null) setManualRefreshState(nextState);
+        })
+        .catch(() => {
+          const nextState = completeUsageRefresh(
+            currentWindowKey.current,
+            currentRefreshId.current,
+            requestWindowKey,
+            requestId,
+            "Refresh failed. Showing the last successful usage snapshot.",
+          );
+          if (nextState !== null) setManualRefreshState(nextState);
+        });
+    },
+    [refreshUsageSummary, selectedEnvironments, windowKey],
   );
 
   const merged = useMemo(() => {
-    const answered: EnvironmentUsage[] = selectedEnvironments.flatMap((environment) =>
+    const answered: EnvironmentUsage[] = environments.flatMap((environment) =>
       environment.summary === null
         ? []
         : [
@@ -136,14 +207,15 @@ export function useUsage(
           ],
     );
     return mergeUsage(answered, USAGE_CONTRACT_VERSION);
-  }, [selectedEnvironments]);
+  }, [environments]);
 
-  const answeredCount = selectedEnvironments.filter(
-    (environment) => environment.summary !== null,
-  ).length;
-  const stillReporting = selectedEnvironments.filter(
+  const answeredCount = environments.filter((environment) => environment.summary !== null).length;
+  const stillReporting = environments.filter(
     (environment) => environment.summary === null && environment.error === null,
   ).length;
+  const isRefreshing =
+    environments.some((environment) => environment.isPending && environment.summary !== null) ||
+    (manualRefreshState.windowKey === windowKey && manualRefreshState.refreshing);
 
   return {
     merged,
@@ -151,6 +223,8 @@ export function useUsage(
     selectedEnvironments,
     isPending: answeredCount === 0 && stillReporting > 0,
     isPartial: answeredCount > 0 && stillReporting > 0,
+    isRefreshing,
+    refreshError: manualRefreshState.windowKey === windowKey ? manualRefreshState.error : null,
     refresh,
   };
 }
