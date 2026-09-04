@@ -1,0 +1,28 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "grafana-invite-gate",
+  "main": "src/index.js",
+  "compatibility_date": "2026-08-25",
+  "compatibility_flags": ["nodejs_compat"],
+  "routes": [
+    {
+      "pattern": "stats.t3play.dev/join*",
+      "zone_name": "t3play.dev"
+    },
+    {
+      "pattern": "stats.t3play.dev/enroll*",
+      "zone_name": "t3play.dev"
+    }
+  ],
+  "vars": {
+    "CF_ACCOUNT_ID": "9803821a7c6a638a2e69b8ffe8286cb5",
+    "GRAFANA_APP_ID": "4b83b365-557f-4f4c-bfbc-876f041dcda8",
+    "OTP_IDP_ID": "e9d33d7c-cd12-47e9-9535-fa025a9bb9fe",
+    "CLOUDFLARE_IDP_ID": "051b28e2-68b3-4f64-a9e5-3a732ac628db"
+  },
+  "observability": {
+    "enabled": true,
+    "logs": { "head_sampling_rate": 1 },
+    "traces": { "enabled": true, "head_sampling_rate": 0.01 }
+  }
+}
