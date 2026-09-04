@@ -9,9 +9,14 @@
 import { useAtomValue } from "@effect/atom-react";
 import {
   USAGE_CONTRACT_VERSION,
+  USAGE_THREAD_BREAKDOWN_SINCE,
   type EnvironmentId,
   type UsageSummary,
   type UsageSummaryInput,
+  type UsageProviderKind,
+  type UsageThreadBreakdown,
+  type UsageThreadBreakdownInput,
+  type UsageThreadRow,
 } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/unstable/reactivity";
@@ -23,7 +28,13 @@ import {
   startUsageRefresh,
   type UsageRefreshState,
 } from "@t3tools/shared/usageRefreshState";
-import { mergeUsage, type EnvironmentUsage, type MergedUsage } from "@t3tools/shared/usageMerge";
+import {
+  mergeUsage,
+  projectFilterForEnvironment,
+  type EnvironmentProviderContribution,
+  type EnvironmentUsage,
+  type MergedUsage,
+} from "@t3tools/shared/usageMerge";
 import { environmentPresentations } from "./presentation";
 import { serverEnvironment } from "./server";
 import { useAtomCommand } from "./use-atom-command";
@@ -80,7 +91,21 @@ export interface UsageView {
   readonly refresh: (requestedInput?: UsageSummaryInput) => void;
 }
 
-export function useUsage(input: UsageSummaryInput): UsageView {
+export function filterUsageEnvironmentsForProject<
+  T extends { readonly environmentId: EnvironmentId },
+>(environments: readonly T[], projectFilter: string | null | undefined): readonly T[] {
+  return environments.filter(
+    (environment) =>
+      projectFilterForEnvironment(projectFilter, environment.environmentId) !==
+      "environment-mismatch:",
+  );
+}
+
+export function useUsage(
+  input: UsageSummaryInput,
+  /** A namespaced project key, `null` for outside-projects buckets, `undefined` for no filter. */
+  projectFilter?: string | null,
+): UsageView {
   const windowKey = useMemo(
     () =>
       JSON.stringify({
@@ -112,7 +137,9 @@ export function useUsage(input: UsageSummaryInput): UsageView {
     error: null as string | null,
   });
   const currentWindowKey = useRef(windowKey);
-  currentWindowKey.current = windowKey;
+  useEffect(() => {
+    currentWindowKey.current = windowKey;
+  }, [windowKey]);
   const currentRefreshId = useRef(0);
   const pendingRefreshWindowKey = useRef(windowKey);
   useEffect(() => {
@@ -183,7 +210,6 @@ export function useUsage(input: UsageSummaryInput): UsageView {
     },
     [environments, refreshUsageSummary, windowKey],
   );
-
   const merged = useMemo(() => {
     const answered: EnvironmentUsage[] = environments.flatMap((environment) =>
       environment.summary === null
@@ -196,11 +222,18 @@ export function useUsage(input: UsageSummaryInput): UsageView {
             },
           ],
     );
-    return mergeUsage(answered, USAGE_CONTRACT_VERSION);
-  }, [environments]);
+    return mergeUsage(
+      answered,
+      USAGE_CONTRACT_VERSION,
+      projectFilter === undefined ? undefined : { projectFilter },
+    );
+  }, [environments, projectFilter]);
 
-  const answeredCount = environments.filter((environment) => environment.summary !== null).length;
-  const stillReporting = environments.filter(
+  const relevantEnvironments = filterUsageEnvironmentsForProject(environments, projectFilter);
+  const answeredCount = relevantEnvironments.filter(
+    (environment) => environment.summary !== null,
+  ).length;
+  const stillReporting = relevantEnvironments.filter(
     (environment) => environment.summary === null && environment.error === null,
   ).length;
   const isRefreshing =
@@ -216,4 +249,145 @@ export function useUsage(input: UsageSummaryInput): UsageView {
     refreshError: manualRefreshState.windowKey === windowKey ? manualRefreshState.error : null,
     refresh,
   };
+}
+
+export interface UsageThreadRowWithEnvironment extends UsageThreadRow {
+  /** Environment that reported the row; thread deep links are environment-scoped. */
+  readonly environmentId: EnvironmentId;
+}
+
+export interface UsageThreadsView {
+  readonly rows: readonly UsageThreadRowWithEnvironment[];
+  readonly truncatedRows: number;
+  /** True until every listed environment answered or failed. */
+  readonly isPending: boolean;
+  readonly failedEnvironments: number;
+}
+
+export interface EnvironmentUsageThreadBreakdown {
+  readonly environmentId: EnvironmentId;
+  readonly breakdown: UsageThreadBreakdown;
+}
+
+export function makeThreadBreakdownInput(
+  input: UsageSummaryInput,
+  projectFilter: string | null | undefined,
+  providers: readonly UsageProviderKind[],
+  environmentId: EnvironmentId,
+): UsageThreadBreakdownInput {
+  return {
+    sinceDay: input.sinceDay,
+    untilDay: input.untilDay,
+    timeZone: input.timeZone,
+    ...(input.sinceTime === undefined ? {} : { sinceTime: input.sinceTime }),
+    ...(input.untilTime === undefined ? {} : { untilTime: input.untilTime }),
+    ...(projectFilter === undefined
+      ? {}
+      : { projectKey: projectFilterForEnvironment(projectFilter, environmentId) }),
+    providers: [...providers],
+  };
+}
+
+function withOwnedProviders(
+  input: UsageThreadBreakdownInput,
+  providers: readonly UsageProviderKind[],
+): UsageThreadBreakdownInput {
+  return { ...input, providers: [...providers] };
+}
+
+/** Applies the summary's physical-source ownership to thread rows. */
+export function mergeUsageThreadBreakdowns(
+  environments: readonly EnvironmentUsageThreadBreakdown[],
+  providerContributions: readonly EnvironmentProviderContribution[],
+): Pick<UsageThreadsView, "rows" | "truncatedRows"> {
+  const providersByEnvironment = new Map(
+    providerContributions.map((entry) => [entry.environmentId, new Set(entry.providers)]),
+  );
+  const rows: UsageThreadRowWithEnvironment[] = [];
+  let truncatedRows = 0;
+
+  for (const environment of environments) {
+    const ownedProviders = providersByEnvironment.get(environment.environmentId);
+    if (ownedProviders === undefined) continue;
+    for (const row of environment.breakdown.rows) {
+      if (!ownedProviders.has(row.provider)) continue;
+      rows.push({ ...row, environmentId: environment.environmentId });
+      truncatedRows += row.groupedRows ?? 0;
+    }
+  }
+  rows.sort((a, b) => b.costUsd - a.costUsd);
+  return { rows, truncatedRows };
+}
+
+/** Excludes environments that cannot own a namespaced project selection. */
+export function filterProviderContributionsForProject(
+  projectKey: string | null | undefined,
+  providerContributions: readonly EnvironmentProviderContribution[],
+): readonly EnvironmentProviderContribution[] {
+  if (projectKey === undefined || projectKey === null) return providerContributions;
+  return providerContributions.filter(
+    (contribution) =>
+      projectFilterForEnvironment(projectKey, contribution.environmentId) !==
+      "environment-mismatch:",
+  );
+}
+
+const usageThreadsAtom = Atom.family((requestKey: string) =>
+  Atom.make((get): UsageThreadsView => {
+    const { input, providerContributions } = JSON.parse(requestKey) as {
+      input: UsageThreadBreakdownInput;
+      providerContributions: readonly EnvironmentProviderContribution[];
+    };
+
+    const relevantContributions = filterProviderContributionsForProject(
+      input.projectKey,
+      providerContributions,
+    );
+    const breakdowns: EnvironmentUsageThreadBreakdown[] = [];
+    let pending = 0;
+    let failed = relevantContributions.filter(
+      (contribution) => contribution.contractVersion < USAGE_THREAD_BREAKDOWN_SINCE,
+    ).length;
+    for (const contribution of relevantContributions) {
+      if (contribution.contractVersion < USAGE_THREAD_BREAKDOWN_SINCE) continue;
+      const { environmentId } = contribution;
+      const environmentInput =
+        input.projectKey === undefined
+          ? input
+          : {
+              ...input,
+              projectKey: projectFilterForEnvironment(input.projectKey, environmentId),
+            };
+      const result = get(
+        serverEnvironment.usageThreadBreakdown({
+          environmentId,
+          input: withOwnedProviders(environmentInput, contribution.providers),
+        }),
+      );
+      if (result.waiting) pending += 1;
+      if (result._tag === "Failure") failed += 1;
+      const breakdown = Option.getOrNull(AsyncResult.value(result));
+      if (breakdown === null) continue;
+      breakdowns.push({ environmentId, breakdown });
+    }
+    const merged = mergeUsageThreadBreakdowns(breakdowns, relevantContributions);
+
+    return { ...merged, isPending: pending > 0, failedEnvironments: failed };
+  }).pipe(Atom.withLabel(`web-usage:threads:${requestKey}`)),
+);
+
+/**
+ * Thread drill-down across the environments that contributed to the summary.
+ * Mount the consuming component only while the thread view is open; fetching
+ * starts on first read.
+ */
+export function useUsageThreads(
+  input: UsageThreadBreakdownInput,
+  providerContributions: readonly EnvironmentProviderContribution[],
+): UsageThreadsView {
+  const requestKey = useMemo(
+    () => JSON.stringify({ input, providerContributions }),
+    [input, providerContributions],
+  );
+  return useAtomValue(usageThreadsAtom(requestKey));
 }
