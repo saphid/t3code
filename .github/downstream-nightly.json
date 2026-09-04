@@ -128,6 +128,12 @@
       "repository": "saphid/t3code",
       "sha": "249a71b55ee9e377c529fceb27ccb47f1f22d961",
       "name": "Project spend usage dashboard"
+    },
+    {
+      "type": "commit",
+      "repository": "saphid/t3code",
+      "sha": "cfd9574dc0e20e346dd32ceb1a7db21a5db4da5f",
+      "name": "Nightly reset-credit layer compatibility"
     }
   ]
 }
