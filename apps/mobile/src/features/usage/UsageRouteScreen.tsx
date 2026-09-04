@@ -426,7 +426,7 @@ function ChartCard(props: {
     <View className="gap-4 rounded-[24px] border-continuous bg-card p-4">
       <View className="gap-0.5">
         <Text className="text-sm text-foreground-muted">
-          {metric === "cost" ? "Raw token cost" : "Processed tokens"}
+          {metric === "cost" ? "Local public-list estimate" : "Processed tokens"}
         </Text>
         <Text className="text-4xl font-t3-bold tabular-nums text-foreground">
           {metric === "cost" ? `${formatUsd(merged.costUsd)}*` : formatTokens(merged.totalTokens)}
@@ -434,7 +434,9 @@ function ChartCard(props: {
         <Text className="text-sm text-foreground-muted">
           {metric === "cost"
             ? "* if billed at full API rate"
-            : `Across ${formatCount(merged.sessions)} sessions`}
+            : merged.sessionsExact
+              ? `Across ${formatCount(merged.sessions)} sessions`
+              : "Session count unavailable until all environments share a cutoff"}
         </Text>
       </View>
 
