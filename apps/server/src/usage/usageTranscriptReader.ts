@@ -36,6 +36,16 @@ export interface TranscriptFile {
   readonly mtimeMs: number;
 }
 
+export interface TranscriptWalkResult {
+  readonly files: readonly TranscriptFile[];
+  /** False when a directory could not be enumerated. */
+  readonly complete: boolean;
+  /** Files or subdirectories removed while the walk was in progress. */
+  readonly missingFiles: number;
+  /** Entries whose metadata could not be read for a persistent reason. */
+  readonly failedFiles: number;
+}
+
 /**
  * Where a parse stopped, with enough state to continue from there.
  *
@@ -72,6 +82,10 @@ export interface TranscriptParseResult {
   readonly resumed: boolean;
 }
 
+export type TranscriptReadOutcome =
+  | { readonly status: "ok"; readonly result: TranscriptParseResult }
+  | { readonly status: "missing" | "failed" };
+
 /** 64 bytes of JSONL tail is ample to distinguish a replaced file. */
 export const GUARD_LENGTH = 64;
 const NEWLINE = 0x0a;
@@ -86,35 +100,56 @@ function fnv1a(buffer: Buffer): number {
   return hash >>> 0;
 }
 
+function isNotFoundError(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    (error as { readonly code?: unknown }).code === "ENOENT"
+  );
+}
+
 /**
  * Lists `.jsonl` transcripts under `root` last modified at or after `sinceMs`.
  *
- * Errors on individual entries are swallowed: session files rotate and get
- * removed while the walk is in flight, and a partial listing is far better than
- * failing the page.
+ * Any enumeration or entry metadata failure makes the walk incomplete. A
+ * session file may rotate or become unreadable while the walk is in flight,
+ * but publishing sibling files without it would make their totals look
+ * complete when they are not.
  *
  * `fileName` restricts the walk to a single basename (Grok's `updates.jsonl`).
  * Grok sessions also ship multi-megabyte `chat_history` and `events` logs that
  * never carry usage, so the basename filter keeps a cold scan off those files.
  */
-export async function listTranscriptFiles(
+export async function listTranscriptFilesDetailed(
   root: string,
   sinceMs: number,
-  options?: { readonly fileName?: string },
-): Promise<readonly TranscriptFile[]> {
+  options?: {
+    readonly fileName?: string;
+    /** Test seam for a directory disappearing after its parent is listed. */
+    readonly beforeDirectoryRead?: (path: string) => Promise<void>;
+  },
+): Promise<TranscriptWalkResult> {
   const found: TranscriptFile[] = [];
+  let complete = true;
+  let missingFiles = 0;
+  let failedFiles = 0;
   const fileName = options?.fileName;
 
   const walk = async (dir: string): Promise<void> => {
     let entries;
     try {
       entries = await NodeFSP.readdir(dir, { withFileTypes: true });
-    } catch {
+    } catch (error) {
+      complete = false;
+      if (isNotFoundError(error)) missingFiles += 1;
+      else failedFiles += 1;
       return;
     }
     for (const entry of entries) {
       const child = NodePath.join(dir, entry.name);
       if (entry.isDirectory()) {
+        await options?.beforeDirectoryRead?.(child);
         await walk(child);
         continue;
       }
@@ -128,14 +163,19 @@ export async function listTranscriptFiles(
         if (stats.mtimeMs >= sinceMs) {
           found.push({ path: child, size: stats.size, mtimeMs: stats.mtimeMs });
         }
-      } catch {
-        // Vanished between readdir and stat.
+      } catch (error) {
+        // A vanished file is a concurrent corpus change, not an empty
+        // transcript. Omit it from this attempt, but retain the last-good
+        // snapshot rather than publishing incomplete sibling totals.
+        complete = false;
+        if (isNotFoundError(error)) missingFiles += 1;
+        else failedFiles += 1;
       }
     }
   };
 
   await walk(root);
-  return found;
+  return { files: found, complete, missingFiles, failedFiles };
 }
 
 /**
@@ -145,12 +185,21 @@ export async function listTranscriptFiles(
  * "two machines whose hostname and home path happen to match". Returns an empty
  * string when the directory cannot be stat'd.
  */
-export async function readDirectoryVolumeId(path: string): Promise<string> {
+export async function readDirectoryVolumeIdDetailed(path: string): Promise<{
+  readonly volumeId: string;
+  readonly status: "ok" | "missing" | "failed";
+}> {
   try {
     const stats = await NodeFSP.stat(path);
-    return `${stats.dev}:${stats.ino}`;
-  } catch {
-    return "";
+    return { volumeId: `${stats.dev}:${stats.ino}`, status: "ok" };
+  } catch (error) {
+    return {
+      volumeId: "",
+      status:
+        typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT"
+          ? "missing"
+          : "failed",
+    };
   }
 }
 
@@ -174,8 +223,8 @@ async function guardMatches(
 }
 
 /**
- * Streams one transcript and returns the usage records it contains, or `null`
- * when the file could not be read.
+ * Streams one transcript and classifies read failures so callers can
+ * distinguish a concurrent ENOENT from a persistent unreadable entry.
  *
  * The distinction matters to the caller's cache: a genuinely empty transcript
  * is a stable fact worth memoising, while a transient read failure memoised
@@ -190,16 +239,16 @@ async function guardMatches(
  * their own, so those still have to pass through the reducer to keep model
  * attribution correct.
  */
-export async function readTranscriptRecords(
+export async function readTranscriptRecordsDetailed(
   filePath: string,
   provider: UsageProviderKind,
   resumeFrom?: TranscriptParsePosition,
-): Promise<TranscriptParseResult | null> {
+): Promise<TranscriptReadOutcome> {
   let handle: NodeFSP.FileHandle;
   try {
     handle = await NodeFSP.open(filePath, "r");
-  } catch {
-    return null;
+  } catch (error) {
+    return { status: isNotFoundError(error) ? "missing" : "failed" };
   }
 
   try {
@@ -295,19 +344,31 @@ export async function readTranscriptRecords(
     }
 
     return {
-      records,
-      tailRecords,
-      position: {
-        resumeOffset,
-        guardLength,
-        guardHash,
-        codexState: provider === "codex" ? codexState : null,
+      status: "ok",
+      result: {
+        records,
+        tailRecords,
+        position: {
+          resumeOffset,
+          guardLength,
+          guardHash,
+          codexState: provider === "codex" ? codexState : null,
+        },
+        resumed,
       },
-      resumed,
     };
   } catch {
-    return null;
+    return { status: "failed" };
   } finally {
     await handle.close().catch(() => undefined);
   }
+}
+
+export async function readTranscriptRecords(
+  filePath: string,
+  provider: UsageProviderKind,
+  resumeFrom?: TranscriptParsePosition,
+): Promise<TranscriptParseResult | null> {
+  const outcome = await readTranscriptRecordsDetailed(filePath, provider, resumeFrom);
+  return outcome.status === "ok" ? outcome.result : null;
 }

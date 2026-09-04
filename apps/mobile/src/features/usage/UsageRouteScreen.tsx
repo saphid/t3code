@@ -4,6 +4,8 @@ import {
   enumerateDays,
   enumerateHourStarts,
   formatCount,
+  formatCoverageTime,
+  formatDateTimeShort,
   formatDayShort,
   formatHourShort,
   formatPercent,
@@ -43,19 +45,35 @@ export function UsageRouteScreen() {
   const [metric, setMetric] = useState<UsageChartMetric>("cost");
   const { days: windowDays, window } = windowSelection;
   const isPast24Hours = windowDays === 1;
-  const { merged, environments, isPending, isPartial, refresh } = useUsage(window);
+  const { merged, environments, isPending, isPartial, isRefreshing, refreshError, refresh } =
+    useUsage(window);
 
   const days = useMemo(
     () => enumerateDays(window.sinceDay, window.untilDay),
     [window.sinceDay, window.untilDay],
   );
-  const chartDays = useMemo(
-    () =>
-      isPast24Hours && window.sinceTime !== undefined && window.untilTime !== undefined
-        ? enumerateHourStarts(window.sinceTime, window.untilTime)
-        : days,
-    [days, isPast24Hours, window.sinceTime, window.untilTime],
-  );
+  const chartDays = useMemo(() => {
+    if (isPast24Hours && window.sinceTime !== undefined && window.untilTime !== undefined) {
+      const untilTime =
+        merged.availableThroughTime !== null && merged.availableThroughTime < window.untilTime
+          ? merged.availableThroughTime
+          : window.untilTime;
+      return enumerateHourStarts(window.sinceTime, untilTime);
+    }
+    if (merged.availableThroughDay !== null && merged.availableThroughDay < window.untilDay) {
+      return enumerateDays(window.sinceDay, merged.availableThroughDay);
+    }
+    return days;
+  }, [
+    days,
+    isPast24Hours,
+    merged.availableThroughDay,
+    merged.availableThroughTime,
+    window.sinceDay,
+    window.sinceTime,
+    window.untilDay,
+    window.untilTime,
+  ]);
   const chartTotals = useMemo(
     (): readonly DailyTotals[] =>
       isPast24Hours
@@ -69,10 +87,6 @@ export function UsageRouteScreen() {
     [isPast24Hours, merged.daily, merged.hourly],
   );
 
-  // The pull spinner tracks re-scans of environments that have answered
-  // before. The initial scan renders its own placeholder, and an unreachable
-  // environment stays pending forever — neither may pin the spinner on.
-  const refreshing = environments.some((entry) => entry.isPending && entry.summary !== null);
   const selectWindow = (days: number) => {
     setWindowSelection({
       days,
@@ -90,6 +104,7 @@ export function UsageRouteScreen() {
       refresh();
     } else {
       setWindowSelection({ days: windowDays, window: nextWindow });
+      refresh(nextWindow);
     }
   };
 
@@ -107,7 +122,7 @@ export function UsageRouteScreen() {
         className="flex-1"
         contentContainerClassName="gap-6 px-5 pt-4"
         contentContainerStyle={{ paddingBottom: Math.max(insets.bottom, 18) + 18 }}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refreshWindow} />}
+        refreshControl={<RefreshControl refreshing={isRefreshing} onRefresh={refreshWindow} />}
       >
         <SegmentedControl
           options={WINDOW_OPTIONS.map((option) => ({ value: option.days, label: option.label }))}
@@ -115,7 +130,14 @@ export function UsageRouteScreen() {
           onSelect={selectWindow}
         />
 
-        <UsageCoverageNotice environments={environments} merged={merged} isPartial={isPartial} />
+        <UsageCoverageNotice
+          environments={environments}
+          merged={merged}
+          isPartial={isPartial}
+          isRefreshing={isRefreshing}
+          refreshError={refreshError}
+          timeZone={window.timeZone}
+        />
 
         {isPending ? (
           <Text className="py-16 text-center text-base text-foreground-muted">
@@ -212,7 +234,9 @@ function ChartCard(props: {
           <Text className="text-sm text-foreground-muted">
             {metric === "cost"
               ? "* if billed at full API rate"
-              : `Across ${formatCount(merged.sessions)} sessions`}
+              : merged.sessionsExact
+                ? `Across ${formatCount(merged.sessions)} sessions`
+                : "Session count unavailable until all environments share a cutoff"}
           </Text>
         </View>
         <MetricToggle metric={metric} onChange={props.onMetricChange} />
@@ -253,7 +277,7 @@ function ChartCard(props: {
         <Text className="text-xs text-foreground-tertiary">
           {props.isPast24Hours
             ? formatHourShort(props.days[props.days.length - 1] ?? "", props.timeZone)
-            : formatDayShort(props.untilDay)}
+            : formatDayShort(props.days[props.days.length - 1] ?? props.untilDay)}
         </Text>
       </View>
     </View>
@@ -457,26 +481,59 @@ function UsageCoverageNotice(props: {
   readonly environments: readonly EnvironmentUsageStatus[];
   readonly merged: MergedUsage;
   readonly isPartial: boolean;
+  readonly isRefreshing: boolean;
+  readonly refreshError: string | null | undefined;
+  readonly timeZone: string;
 }) {
   const failed = props.environments.filter((environment) => environment.error !== null);
   const stale = props.environments.filter((environment) =>
     props.merged.staleEnvironments.includes(environment.environmentId),
   );
   const duplicateSources = props.merged.duplicateSources;
+  const hasCoverage =
+    props.merged.availableThroughDay !== null || props.merged.availableThroughTime !== null;
   if (
     failed.length === 0 &&
     stale.length === 0 &&
     duplicateSources.length === 0 &&
-    !props.isPartial
+    !props.isPartial &&
+    !props.isRefreshing &&
+    !hasCoverage
   ) {
     return null;
   }
 
   return (
     <View className="gap-1 rounded-[16px] border-continuous bg-card px-4 py-3">
+      {props.merged.availableThroughTime !== null ? (
+        <Text className="text-sm text-foreground-muted">
+          Data available through{" "}
+          {formatCoverageTime(props.merged.availableThroughTime, props.timeZone)}.
+        </Text>
+      ) : props.merged.availableThroughDay !== null ? (
+        <Text className="text-sm text-foreground-muted">
+          Data available through {formatDayShort(props.merged.availableThroughDay)}.
+        </Text>
+      ) : null}
       {props.isPartial ? (
         <Text className="text-sm text-foreground-muted">
           Some environments are still reporting. Totals are partial.
+        </Text>
+      ) : null}
+      {props.isRefreshing ? (
+        <Text className="text-sm text-foreground-muted">Refreshing usage in the background.</Text>
+      ) : null}
+      {props.refreshError ? (
+        <Text className="text-sm text-foreground-muted">{props.refreshError}</Text>
+      ) : null}
+      {props.merged.lastUpdatedAt !== null ? (
+        <Text className="text-sm text-foreground-muted">
+          Last updated {formatDateTimeShort(props.merged.lastUpdatedAt, props.timeZone)}.
+        </Text>
+      ) : null}
+      {!props.merged.sessionsExact ? (
+        <Text className="text-sm text-foreground-muted">
+          Sessions are unavailable until all environments share a cutoff.
         </Text>
       ) : null}
       {failed.map((environment) => (

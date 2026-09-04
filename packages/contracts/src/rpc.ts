@@ -317,6 +317,7 @@ export const WS_METHODS = {
   serverGetBackgroundPolicy: "server.getBackgroundPolicy",
   serverGetUsageSummary: "server.getUsageSummary",
   serverRefreshUsageRates: "server.refreshUsageRates",
+  serverRefreshUsageSummary: "server.refreshUsageSummary",
 
   // Cloud environment methods
   cloudGetRelayClientStatus: "cloud.getRelayClientStatus",
@@ -557,6 +558,12 @@ export const WsServerRefreshUsageRatesRpc = Rpc.make(WS_METHODS.serverRefreshUsa
   payload: Schema.Struct({}),
   success: UsagePricing,
   error: EnvironmentAuthorizationError,
+});
+
+export const WsServerRefreshUsageSummaryRpc = Rpc.make(WS_METHODS.serverRefreshUsageSummary, {
+  payload: UsageSummaryInput,
+  success: UsageSummary,
+  error: Schema.Union([EnvironmentAuthorizationError, UsageReadError]),
 });
 
 export const WsServerSignalProcessRpc = Rpc.make(WS_METHODS.serverSignalProcess, {
@@ -1189,6 +1196,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerRetryResourceTelemetryRpc,
   WsServerGetUsageSummaryRpc,
   WsServerRefreshUsageRatesRpc,
+  WsServerRefreshUsageSummaryRpc,
   WsServerSignalProcessRpc,
   WsServerReportClientActivityRpc,
   WsServerReportHostPowerStateRpc,

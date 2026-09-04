@@ -7,8 +7,9 @@
  * an arbitrary IANA zone, and it takes a `Date`. That is why the raw `Date`
  * construction is allowed here; nothing in this module reads the clock.
  *
- * Pure, so the bucketing and de-duplication rules are testable without touching
- * the filesystem or the network.
+ * Pure, so the bucketing and accumulation rules are testable without touching
+ * the filesystem or the network. Callers apply any source-scoped deduplication
+ * before adding transcript records.
  *
  * @module usageAggregation
  */
@@ -68,26 +69,41 @@ export interface AggregateOptions {
 
 export interface AggregateResult {
   readonly buckets: readonly UsageBucket[];
-  /** Records dropped because an earlier record carried the same dedupe key. */
-  readonly duplicatesDropped: number;
   /** Records whose day fell outside the requested window. */
   readonly outOfWindow: number;
 }
 
+/** A pre-aggregated UTC quarter-hour cell read from the durable ledger. */
+export interface NormalizedUsageAggregate {
+  readonly bucketStartMs: number;
+  readonly provider: UsageRecord["provider"];
+  readonly model: string;
+  readonly totals: UsageTokenTotals;
+  /** Tokens from records priced by the model table, excluding reported costs. */
+  readonly pricedTotals: UsageTokenTotals;
+  /** Cache tokens remain savings-eligible for provider-reported records. */
+  readonly savingsTotals: UsageTokenTotals;
+  /** v1 rows need the current rate table to determine whether they are priced. */
+  readonly legacyPricing?: boolean;
+  /** Number of null-cost v1 rows represented by this aggregate. */
+  readonly legacyPricingRecords?: number;
+  readonly reportedCostUsd: number;
+  readonly records: number;
+  readonly unpricedRecords: number;
+  readonly providerReportedRecords: number;
+  readonly sessions: readonly string[];
+}
+
 /**
- * Accumulates records across many files.
- *
- * De-duplication is global across the whole scan, not per file: Claude Code
- * copies a message's records forward when a session is resumed or forked, so
- * the same `dedupeKey` legitimately appears in several transcripts.
+ * Accumulates records across many files. Callers own transcript identity and
+ * must deduplicate records before adding them when their source format has a
+ * stable dedupe key.
  */
 export class UsageAggregator {
   readonly #buckets = new Map<string, MutableBucket>();
-  readonly #seen = new Set<string>();
   readonly #toDay: (timestampMs: number) => string;
   readonly #hourlyWindow: { readonly sinceTimeMs: number; readonly untilTimeMs: number } | null;
   readonly #options: AggregateOptions;
-  #duplicatesDropped = 0;
   #outOfWindow = 0;
 
   constructor(options: AggregateOptions) {
@@ -112,14 +128,6 @@ export class UsageAggregator {
    * that landed rather than everything the mtime prefilter happened to admit.
    */
   add(record: UsageRecord): boolean {
-    if (record.dedupeKey !== null) {
-      if (this.#seen.has(record.dedupeKey)) {
-        this.#duplicatesDropped += 1;
-        return false;
-      }
-      this.#seen.add(record.dedupeKey);
-    }
-
     if (
       this.#hourlyWindow !== null &&
       (record.timestampMs < this.#hourlyWindow.sinceTimeMs ||
@@ -177,6 +185,89 @@ export class UsageAggregator {
     return true;
   }
 
+  /**
+   * Folds one normalized UTC cell into a requested view. The caller has already
+   * deduplicated ledger cells within each transcript-directory scope, so this
+   * updates the counters in one step without a synthetic record per event.
+   */
+  addAggregate(aggregate: NormalizedUsageAggregate): boolean {
+    if (
+      this.#hourlyWindow !== null &&
+      (aggregate.bucketStartMs < this.#hourlyWindow.sinceTimeMs ||
+        aggregate.bucketStartMs >= this.#hourlyWindow.untilTimeMs)
+    ) {
+      this.#outOfWindow += aggregate.records;
+      return false;
+    }
+
+    const day = this.#toDay(aggregate.bucketStartMs);
+    if (
+      this.#hourlyWindow === null &&
+      (day < this.#options.sinceDay || day > this.#options.untilDay)
+    ) {
+      this.#outOfWindow += aggregate.records;
+      return false;
+    }
+
+    const hourStart =
+      this.#hourlyWindow === null
+        ? ""
+        : new Date(
+            this.#hourlyWindow.sinceTimeMs +
+              Math.floor((aggregate.bucketStartMs - this.#hourlyWindow.sinceTimeMs) / HOUR_MS) *
+                HOUR_MS,
+          ).toISOString();
+    const key = `${day}\u0000${hourStart}\u0000${aggregate.provider}\u0000${aggregate.model}`;
+    let bucket = this.#buckets.get(key);
+    if (bucket === undefined) {
+      bucket = {
+        totals: EMPTY_TOTALS,
+        costUsd: 0,
+        cacheSavingsUsd: 0,
+        records: 0,
+        unpricedRecords: 0,
+        providerReportedRecords: 0,
+        sessions: new Set<string>(),
+      };
+      this.#buckets.set(key, bucket);
+    }
+
+    const priced = priceUsage(this.#options.rates, aggregate.model, aggregate.pricedTotals, null);
+    // v1 cells did not persist pricing provenance, so their null-cost rows
+    // are recovered through `legacyPricingRecords`. v2 cells do persist it,
+    // but a missing or corrupt rate cache can still make a previously priced
+    // cell unpriced on read. Count the records not already accounted for by
+    // stored unpriced/provider-reported provenance in that case.
+    const unpricedByMissingRates =
+      priced.costSource === "unpriced"
+        ? Math.max(
+            0,
+            aggregate.records - aggregate.unpricedRecords - aggregate.providerReportedRecords,
+          )
+        : 0;
+    const legacyUnpriced = aggregate.legacyPricing === true && priced.costSource === "unpriced";
+    const legacyUnpricedRecords =
+      aggregate.legacyPricing === true && priced.costSource === "unpriced"
+        ? (aggregate.legacyPricingRecords ?? unpricedByMissingRates)
+        : 0;
+    const unpricedRecords =
+      aggregate.legacyPricing === true
+        ? legacyUnpricedRecords
+        : aggregate.unpricedRecords + unpricedByMissingRates;
+    bucket.totals = addTotals(bucket.totals, aggregate.totals);
+    bucket.costUsd += aggregate.reportedCostUsd + (legacyUnpriced ? 0 : priced.costUsd);
+    bucket.cacheSavingsUsd += cacheSavingsUsd(
+      this.#options.rates,
+      aggregate.model,
+      aggregate.savingsTotals,
+    );
+    bucket.records += aggregate.records;
+    bucket.unpricedRecords += unpricedRecords;
+    bucket.providerReportedRecords += aggregate.providerReportedRecords;
+    for (const session of aggregate.sessions) bucket.sessions.add(session);
+    return true;
+  }
+
   finish(): AggregateResult {
     const buckets: UsageBucket[] = [];
     for (const [key, bucket] of this.#buckets) {
@@ -206,7 +297,6 @@ export class UsageAggregator {
 
     return {
       buckets,
-      duplicatesDropped: this.#duplicatesDropped,
       outOfWindow: this.#outOfWindow,
     };
   }
