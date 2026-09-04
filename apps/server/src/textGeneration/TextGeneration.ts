@@ -23,7 +23,13 @@ export function findAvailableCodexInstance(
   );
 }
 
-export type TextGenerationProvider = "codex" | "claudeAgent" | "cursor" | "grok" | "opencode";
+export type TextGenerationProvider =
+  | "antigravity"
+  | "codex"
+  | "claudeAgent"
+  | "cursor"
+  | "grok"
+  | "opencode";
 
 export interface CommitMessageGenerationInput {
   cwd: string;

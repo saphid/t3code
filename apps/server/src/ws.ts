@@ -149,7 +149,6 @@ import {
   makeHandoverModelSelection,
 } from "./orchestration/ThreadHandover.ts";
 import * as UsageLimitReservations from "./orchestration/UsageLimitReservations.ts";
-import * as ProviderInstanceRegistry from "./provider/Services/ProviderInstanceRegistry.ts";
 import * as TextGeneration from "./textGeneration/TextGeneration.ts";
 import { failEnvironmentAuthInvalid, failEnvironmentInternal } from "./auth/http.ts";
 import * as RelayClient from "@t3tools/shared/relayClient";
@@ -523,12 +522,11 @@ const makeWsRpcLayer = (
       const portDiscovery = yield* PortScanner.PortDiscovery;
       const providerRegistry = yield* ProviderRegistry.ProviderRegistry;
       const providerService = yield* ProviderService.ProviderService;
-      const providerInstanceRegistry = yield* ProviderInstanceRegistry.ProviderInstanceRegistry;
+      const providerInstanceRegistry = yield* ProviderInstanceRegistry;
       const textGeneration = yield* TextGeneration.TextGeneration;
       const usageLimitReservations = UsageLimitReservations.forProviderService(providerService);
       const providerMaintenanceRunner = yield* ProviderMaintenanceRunner.ProviderMaintenanceRunner;
       const providerAuth = yield* ProviderAuthService;
-      const providerInstances = yield* ProviderInstanceRegistry;
       const providerInstallation = yield* makeProviderInstallation();
       const serverUpdate = yield* ServerSelfUpdate.ServerSelfUpdate;
       const config = yield* ServerConfig.ServerConfig;
@@ -1796,7 +1794,7 @@ const makeWsRpcLayer = (
                   ? providerRegistry.refreshInstance(input.instanceId)
                   : providerRegistry.refresh();
               if (input.refreshModels) {
-                const instances = yield* providerInstances.listInstances;
+                const instances = yield* providerInstanceRegistry.listInstances;
                 for (const instance of instances) {
                   if (
                     !instance.refreshModels ||
