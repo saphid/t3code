@@ -1757,10 +1757,10 @@ export const make = Effect.gen(function* () {
       const sinceTimeMs = DateTime.toEpochMillis(sinceTime.value);
       const untilTimeMs = DateTime.toEpochMillis(untilTime.value);
       const durationMs = untilTimeMs - sinceTimeMs;
-      if (durationMs <= 0 || durationMs > MAX_HOURLY_WINDOW_MS) {
+      if (durationMs <= 0 || durationMs > MAX_HALF_HOUR_WINDOW_MS) {
         return yield* new UsageReadError({
           reason: "invalidWindow",
-          detail: "Thread usage exact window must be greater than zero and at most 24 hours",
+          detail: "Thread usage exact window must be greater than zero and at most 90 days",
         });
       }
       exactWindow = { sinceTimeMs, untilTimeMs };

@@ -546,6 +546,8 @@ export function UsagePage() {
                         sinceDay: window.sinceDay,
                         untilDay: window.untilDay,
                         timeZone: window.timeZone,
+                        ...(window.sinceTime === undefined ? {} : { sinceTime: window.sinceTime }),
+                        ...(window.untilTime === undefined ? {} : { untilTime: window.untilTime }),
                       }}
                       providerContributions={merged.providerContributions}
                       summaryFailedEnvironments={

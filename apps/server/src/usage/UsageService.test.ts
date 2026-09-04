@@ -1545,7 +1545,7 @@ describe("UsageService", () => {
     }).pipe(Effect.scoped),
   );
 
-  it.live("rejects exact thread windows longer than 24 hours", () =>
+  it.live("rejects exact thread windows longer than 90 days", () =>
     Effect.gen(function* () {
       const { settings, home } = yield* setup;
       const service = yield* UsageService.make.pipe(
@@ -1557,9 +1557,9 @@ describe("UsageService", () => {
         .readThreadBreakdown({
           timeZone: "UTC",
           sinceDay: UsageDay.make("2026-08-01"),
-          untilDay: UsageDay.make("2026-08-02"),
+          untilDay: UsageDay.make("2026-11-01"),
           sinceTime: "2026-08-01T00:00:00.000Z",
-          untilTime: "2026-08-02T01:00:00.000Z",
+          untilTime: "2026-11-01T00:00:00.000Z",
         })
         .pipe(
           Effect.match({
