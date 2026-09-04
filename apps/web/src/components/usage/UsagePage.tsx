@@ -14,6 +14,7 @@ import {
   enumerateDays,
   enumerateHourStarts,
   formatCount,
+  formatCoverageTime,
   formatDateTimeShort,
   formatDayShort,
   formatHourShort,
@@ -69,28 +70,35 @@ export function UsagePage() {
   const [breakdown, setBreakdown] = useState<"model" | "time">("model");
   const { days: windowDays, window } = windowSelection;
   const isPast24Hours = windowDays === 1;
-  const { merged, environments, isPending, isPartial, refresh } = useUsage(window);
+  const { merged, environments, isPending, isPartial, isRefreshing, refreshError, refresh } =
+    useUsage(window);
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const refreshProviders = useAtomCommand(serverEnvironment.refreshProviders, {
     reportFailure: false,
   });
 
-  // Hold the content until every environment is terminal. Rendering merged
-  // totals while devices are still answering makes every number on the page
-  // jump as each one lands.
-  const settling = isPending || isPartial;
+  // A bounded last-good snapshot may stay visible while another environment
+  // answers. Only the first load, with no usable coverage, needs a skeleton.
+  const settling = isPending && merged.availableThroughDay === null;
 
   const days = useMemo(
-    () => enumerateDays(window.sinceDay, window.untilDay),
-    [window.sinceDay, window.untilDay],
-  );
-  const hours = useMemo(
     () =>
-      window.sinceTime === undefined || window.untilTime === undefined
-        ? []
-        : enumerateHourStarts(window.sinceTime, window.untilTime),
-    [window.sinceTime, window.untilTime],
+      enumerateDays(
+        window.sinceDay,
+        merged.availableThroughDay !== null && merged.availableThroughDay < window.untilDay
+          ? merged.availableThroughDay
+          : window.untilDay,
+      ),
+    [merged.availableThroughDay, window.sinceDay, window.untilDay],
   );
+  const hours = useMemo(() => {
+    if (window.sinceTime === undefined || window.untilTime === undefined) return [];
+    const untilTime =
+      merged.availableThroughTime !== null && merged.availableThroughTime < window.untilTime
+        ? merged.availableThroughTime
+        : window.untilTime;
+    return enumerateHourStarts(window.sinceTime, untilTime);
+  }, [merged.availableThroughTime, window.sinceTime, window.untilTime]);
   // Newest first: the window can run 90 periods, so the interesting end
   // belongs at the top of the table.
   const breakdownPeriods = useMemo<readonly (DailyTotals | HourlyTotals)[]>(
@@ -140,6 +148,7 @@ export function UsagePage() {
       refresh();
     } else {
       setWindowSelection({ days: windowDays, window: nextWindow });
+      refresh(nextWindow);
     }
   };
   const windowLabel =
@@ -197,11 +206,13 @@ export function UsagePage() {
         </ToggleGroup>
         <Button
           onClick={refreshWindow}
-          aria-label={showingLimits ? "Refresh limits" : "Refresh usage"}
+          aria-label={
+            showingLimits ? "Refresh limits" : isRefreshing ? "Refreshing usage" : "Refresh usage"
+          }
           size="icon-sm"
           variant="ghost"
         >
-          <RefreshCwIcon className="size-3.5" />
+          <RefreshCwIcon className={cn("size-3.5", isRefreshing && "opacity-50")} />
         </Button>
       </div>
       <div className="ms-auto flex min-w-0 items-center justify-end gap-1 lg:hidden">
@@ -254,11 +265,13 @@ export function UsagePage() {
         </Select>
         <Button
           onClick={refreshWindow}
-          aria-label={showingLimits ? "Refresh limits" : "Refresh usage"}
+          aria-label={
+            showingLimits ? "Refresh limits" : isRefreshing ? "Refreshing usage" : "Refresh usage"
+          }
           size="icon-sm"
           variant="ghost"
         >
-          <RefreshCwIcon className="size-3.5" />
+          <RefreshCwIcon className={cn("size-3.5", isRefreshing && "opacity-50")} />
         </Button>
       </div>
     </div>
@@ -284,6 +297,13 @@ export function UsagePage() {
                   environments={environments}
                   duplicateSources={merged.duplicateSources}
                   staleEnvironments={merged.staleEnvironments}
+                  availableThroughDay={merged.availableThroughDay}
+                  availableThroughTime={merged.availableThroughTime}
+                  lastUpdatedAt={merged.lastUpdatedAt}
+                  isPartial={isPartial}
+                  isRefreshing={isRefreshing}
+                  refreshError={refreshError}
+                  timeZone={window.timeZone}
                 />
 
                 {budgetAlert !== null ? (
@@ -319,8 +339,12 @@ export function UsagePage() {
                       </span>
                       <span className="text-xs text-muted-foreground">
                         {metric === "cost"
-                          ? `${formatCount(merged.sessions)} sessions · API estimate`
-                          : `${formatCount(merged.sessions)} sessions`}
+                          ? merged.sessionsExact
+                            ? `${formatCount(merged.sessions)} sessions · API estimate`
+                            : "Sessions unavailable until all environments share a cutoff"
+                          : merged.sessionsExact
+                            ? `${formatCount(merged.sessions)} sessions`
+                            : "Sessions unavailable until all environments share a cutoff"}
                       </span>
                     </div>
 
@@ -574,30 +598,62 @@ function Metric({ label, value }: { readonly label: string; readonly value: stri
 }
 
 /**
- * Says plainly when the totals are incomplete: an environment that failed, or
- * one whose transcripts another environment already reported. Environments
- * that are still answering never reach this notice; the page shows the
- * loading skeleton until every one is terminal.
+ * Says plainly when the totals are bounded or incomplete: an environment that
+ * failed, one still answering, or one whose transcripts another environment
+ * already reported.
  */
 function UsageCoverageNotice({
   environments,
   duplicateSources,
   staleEnvironments,
+  availableThroughDay,
+  availableThroughTime,
+  lastUpdatedAt,
+  isPartial,
+  isRefreshing,
+  refreshError,
+  timeZone,
 }: {
   readonly environments: readonly EnvironmentUsageStatus[];
   readonly duplicateSources: readonly string[];
   readonly staleEnvironments: readonly string[];
+  readonly availableThroughDay: string | null;
+  readonly availableThroughTime: string | null;
+  readonly lastUpdatedAt: string | null;
+  readonly isPartial: boolean;
+  readonly isRefreshing: boolean;
+  readonly refreshError: string | null | undefined;
+  readonly timeZone: string;
 }) {
   const failed = environments.filter((environment) => environment.error !== null);
   const stale = environments.filter((environment) =>
     staleEnvironments.includes(environment.environmentId),
   );
-  if (failed.length === 0 && stale.length === 0 && duplicateSources.length === 0) {
+  if (
+    failed.length === 0 &&
+    stale.length === 0 &&
+    duplicateSources.length === 0 &&
+    availableThroughDay === null &&
+    !isPartial &&
+    refreshError == null &&
+    !isRefreshing
+  ) {
     return null;
   }
 
   return (
     <div className="flex flex-col gap-1 border border-border px-3 py-2 text-xs text-muted-foreground">
+      {availableThroughTime !== null ? (
+        <span>Data available through {formatCoverageTime(availableThroughTime, timeZone)}.</span>
+      ) : availableThroughDay !== null ? (
+        <span>Data available through {formatDayShort(availableThroughDay)}.</span>
+      ) : null}
+      {isPartial ? <span>Some environments are still reporting. Totals are partial.</span> : null}
+      {isRefreshing ? <span>Refreshing usage in the background.</span> : null}
+      {refreshError ? <span>{refreshError}</span> : null}
+      {lastUpdatedAt !== null ? (
+        <span>Last updated {formatDateTimeShort(lastUpdatedAt, timeZone)}.</span>
+      ) : null}
       {failed.map((environment) => (
         <span key={environment.label}>{environment.label} could not report usage.</span>
       ))}
