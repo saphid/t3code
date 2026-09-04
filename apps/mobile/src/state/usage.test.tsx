@@ -14,7 +14,6 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock("@effect/atom-react", () => ({ useAtomValue: () => mocks.statuses }));
-vi.mock("../rpc/atomRegistry", () => ({ appAtomRegistry: { refresh: vi.fn() } }));
 vi.mock("./presentation", () => ({ presentationsAtom: {} }));
 vi.mock("./server", () => ({ serverEnvironment: { usageSummary: {}, refreshUsageSummary: {} } }));
 vi.mock("./use-atom-command", () => ({
@@ -118,13 +117,16 @@ function Harness({
 
 async function renderHarness(input: UsageSummaryInput, onView: (view: UsageView) => void) {
   const document = installTestDom();
+  // The mobile app does not ship react-dom types, but the lightweight host
+  // renderer keeps this hook test independent from a native runtime.
+  // @ts-expect-error react-dom is only used by this test harness.
   const { createRoot } = await import("react-dom/client");
   const root = createRoot(document.createElement("div") as unknown as Element);
   await act(() => root.render(createElement(Harness, { input, onView })));
   return root;
 }
 
-describe("web useUsage boundary refresh", () => {
+describe("mobile useUsage boundary refresh", () => {
   beforeEach(() => {
     mocks.statuses = [
       { environmentId: "env-1", label: "Local", isPending: false, error: null, summary: null },
