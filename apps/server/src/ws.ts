@@ -1949,7 +1949,7 @@ const makeWsRpcLayer = (
           observeRpcEffect(
             WS_METHODS.providerConsumeResetCredit,
             Effect.gen(function* () {
-              const instance = yield* providerInstances.getInstance(input.instanceId);
+              const instance = yield* providerInstanceRegistry.getInstance(input.instanceId);
               // A disabled instance must not spend anything on its account.
               if (instance === undefined || !instance.enabled) {
                 return yield* new ProviderSetupError({
@@ -2156,6 +2156,14 @@ const makeWsRpcLayer = (
           observeRpcEffect(WS_METHODS.serverRefreshUsageSummary, usage.refreshSummary(input), {
             "rpc.aggregate": "server",
           }),
+        [WS_METHODS.serverGetUsageThreadBreakdown]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.serverGetUsageThreadBreakdown,
+            usage.readThreadBreakdown(input),
+            {
+              "rpc.aggregate": "server",
+            },
+          ),
         [WS_METHODS.serverRetryResourceTelemetry]: (_input) =>
           observeRpcEffect(WS_METHODS.serverRetryResourceTelemetry, resourceTelemetry.retry, {
             "rpc.aggregate": "server",
