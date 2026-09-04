@@ -1,3 +1,4 @@
+// @effect-diagnostics globalDate:off -- Pure coverage-cutoff logic compares instants without reading the clock.
 /**
  * Merges per-environment usage summaries into the single view the page renders.
  *
@@ -72,6 +73,8 @@ export interface MergedUsage {
   readonly totalTokens: number;
   readonly records: number;
   readonly sessions: number;
+  /** False when source-level distinct session counts cannot be bounded. */
+  readonly sessionsExact: boolean;
   readonly providers: readonly ProviderTotals[];
   readonly models: readonly ModelTotals[];
   readonly daily: readonly DailyTotals[];
@@ -81,6 +84,12 @@ export interface MergedUsage {
   readonly duplicateSources: readonly string[];
   readonly contributingEnvironments: readonly EnvironmentId[];
   readonly staleEnvironments: readonly EnvironmentId[];
+  /** Earliest complete boundary shared by all contributing environments. */
+  readonly availableThroughDay: string | null;
+  /** Exact boundary for hourly summaries, when present. */
+  readonly availableThroughTime: string | null;
+  /** Oldest successful snapshot generation represented in the merge. */
+  readonly lastUpdatedAt: string | null;
 }
 
 /**
@@ -137,6 +146,8 @@ function claimSources(environments: readonly EnvironmentUsage[]): {
 function ownedContribution(
   environment: EnvironmentUsage,
   ownerByFingerprint: ReadonlyMap<string, EnvironmentId>,
+  availableThroughDay: string | null,
+  availableThroughTime: string | null,
 ): {
   readonly buckets: readonly UsageBucket[];
   readonly sessionsByProvider: ReadonlyMap<UsageProviderKind, number>;
@@ -149,16 +160,33 @@ function ownedContribution(
     if (ownerByFingerprint.get(key) === environment.environmentId) {
       const provider = source.fingerprint.provider;
       ownedProviders.add(provider);
-      // Distinct within a directory. Summing per-bucket session counts instead
-      // would count a session once per day and model it spans.
-      sessionsByProvider.set(
-        provider,
-        (sessionsByProvider.get(provider) ?? 0) + source.distinctSessions,
-      );
+      // Distinct within a directory. A source count from a newer snapshot also
+      // includes records beyond the common cutoff, so only use it when this
+      // snapshot itself ends at that cutoff. Mixed-boundary merges keep the
+      // bounded bucket totals truthful rather than claiming a wider session
+      // count than the shared boundary proves.
+      const coverage = environment.summary.coverage;
+      const atCommonBoundary =
+        coverage !== undefined &&
+        coverage.availableThroughDay === availableThroughDay &&
+        coverage.availableThroughTime === availableThroughTime;
+      if (atCommonBoundary) {
+        sessionsByProvider.set(
+          provider,
+          (sessionsByProvider.get(provider) ?? 0) + source.distinctSessions,
+        );
+      }
     }
   }
   return {
-    buckets: environment.summary.buckets.filter((bucket) => ownedProviders.has(bucket.provider)),
+    buckets: environment.summary.buckets.filter(
+      (bucket) =>
+        ownedProviders.has(bucket.provider) &&
+        (availableThroughTime !== null
+          ? bucket.hourStart !== undefined &&
+            Date.parse(bucket.hourStart) + 60 * 60 * 1000 <= Date.parse(availableThroughTime)
+          : availableThroughDay === null || bucket.day <= availableThroughDay),
+    ),
     sessionsByProvider,
   };
 }
@@ -187,6 +215,7 @@ const EMPTY_MERGED: MergedUsage = {
   totalTokens: 0,
   records: 0,
   sessions: 0,
+  sessionsExact: true,
   providers: [],
   models: [],
   daily: [],
@@ -200,6 +229,9 @@ const EMPTY_MERGED: MergedUsage = {
   duplicateSources: [],
   contributingEnvironments: [],
   staleEnvironments: [],
+  availableThroughDay: null,
+  availableThroughTime: null,
+  lastUpdatedAt: null,
 };
 
 /**
@@ -208,8 +240,10 @@ const EMPTY_MERGED: MergedUsage = {
  * `expectedContractVersion` guards against an environment running older server
  * code: rather than blocking the page, incompatible data is excluded and its
  * id is reported so the UI can say coverage is partial. Versions in
- * [{@link USAGE_MERGE_COMPATIBLE_SINCE}, expected] still merge, so an additive
- * provider expansion does not drop Claude/Codex totals from older servers.
+ * [{@link USAGE_MERGE_COMPATIBLE_SINCE}, expected] with bounded coverage still
+ * merge, so an additive provider expansion does not drop known totals from
+ * older servers. Unbounded legacy summaries are excluded instead of guessing
+ * their coverage.
  */
 export function mergeUsage(
   environments: readonly EnvironmentUsage[],
@@ -220,7 +254,10 @@ export function mergeUsage(
   const current: EnvironmentUsage[] = [];
   const staleEnvironments: EnvironmentId[] = [];
   for (const environment of environments) {
-    if (isCompatibleContractVersion(environment.summary.contractVersion, expectedContractVersion)) {
+    if (
+      isCompatibleContractVersion(environment.summary.contractVersion, expectedContractVersion) &&
+      environment.summary.coverage !== undefined
+    ) {
       current.push(environment);
     } else {
       staleEnvironments.push(environment.environmentId);
@@ -228,6 +265,54 @@ export function mergeUsage(
   }
 
   const { ownerByFingerprint, duplicates } = claimSources(current);
+
+  // A duplicate environment contributes no buckets. Its older coverage must
+  // not truncate the physical source owner that will actually be rendered.
+  const contributing = current.filter((environment) =>
+    environment.summary.sources.some((source) => {
+      if (source.status === "missing") return false;
+      return (
+        ownerByFingerprint.get(fingerprintKey(source.fingerprint)) === environment.environmentId
+      );
+    }),
+  );
+  const coverageEnvironments = contributing.length === 0 ? current : contributing;
+  const coverage = coverageEnvironments.flatMap((environment) =>
+    environment.summary.coverage === undefined ? [] : [environment.summary.coverage],
+  );
+  const availableThroughDay =
+    coverage.length === 0
+      ? null
+      : coverage.reduce(
+          (earliest, entry) =>
+            entry.availableThroughDay < earliest ? entry.availableThroughDay : earliest,
+          coverage[0]!.availableThroughDay,
+        );
+  const availableThroughTimeRaw =
+    coverage.length === 0 || coverage.some((entry) => entry.availableThroughTime === null)
+      ? null
+      : coverage.reduce(
+          (earliest, entry) =>
+            entry.availableThroughTime! < earliest ? entry.availableThroughTime! : earliest,
+          coverage[0]!.availableThroughTime!,
+        );
+  // Preserve the exact scan cutoff. Hourly buckets are aligned to the
+  // requested half-hour window, so a :30 cutoff can fully contain the final
+  // bucket. Partial buckets are filtered below rather than rounding the
+  // displayed boundary and hiding valid data.
+  const availableThroughTime = availableThroughTimeRaw;
+  const sessionsExact = coverage.every(
+    (entry) =>
+      entry.availableThroughDay === availableThroughDay &&
+      entry.availableThroughTime === availableThroughTimeRaw,
+  );
+  const lastUpdatedAt =
+    coverage.length === 0
+      ? null
+      : coverage.reduce(
+          (oldest, entry) => (entry.generatedAt < oldest ? entry.generatedAt : oldest),
+          coverage[0]!.generatedAt,
+        );
 
   let costUsd = 0;
   let uncachedInputTokens = 0;
@@ -270,10 +355,16 @@ export function mergeUsage(
   const contributingEnvironments: EnvironmentId[] = [];
 
   for (const environment of current) {
-    const { buckets, sessionsByProvider } = ownedContribution(environment, ownerByFingerprint);
+    const { buckets, sessionsByProvider } = ownedContribution(
+      environment,
+      ownerByFingerprint,
+      availableThroughDay,
+      availableThroughTime,
+    );
     if (buckets.length > 0) contributingEnvironments.push(environment.environmentId);
 
     for (const [providerKind, providerSessions] of sessionsByProvider) {
+      if (!sessionsExact) continue;
       sessions += providerSessions;
       if (providerSessions === 0) continue;
       const provider = providerAccumulator.get(providerKind) ?? {
@@ -406,6 +497,7 @@ export function mergeUsage(
     totalTokens,
     records,
     sessions,
+    sessionsExact,
     providers,
     models,
     daily,
@@ -420,5 +512,8 @@ export function mergeUsage(
     duplicateSources: duplicates,
     contributingEnvironments,
     staleEnvironments,
+    availableThroughDay,
+    availableThroughTime,
+    lastUpdatedAt,
   };
 }
