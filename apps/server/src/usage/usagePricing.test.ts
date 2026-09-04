@@ -1,12 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
 
-import {
-  cacheSavingsUsd,
-  createOverrideRateTable,
-  lookupRate,
-  parseRateTable,
-  priceUsage,
-} from "./usagePricing.ts";
+import { cacheWriteUsd, lookupRate, normalizeModelName, parseRateTable } from "./usagePricing.ts";
 
 const rate = (input: number, cacheRead?: number) => ({
   input_cost_per_token: input,
@@ -15,71 +9,8 @@ const rate = (input: number, cacheRead?: number) => ({
 });
 
 describe("usage pricing", () => {
-  const totals = {
-    uncachedInputTokens: 1_000_000,
-    cachedInputTokens: 1_000_000,
-    cacheCreationTokens: 1_000_000,
-    outputTokens: 1_000_000,
-    reasoningTokens: 500_000,
-  };
-
-  it("uses custom token rates ahead of public and provider-reported costs", () => {
-    const table = parseRateTable({ "example-model": rate(1) });
-    const overrides = createOverrideRateTable({
-      "example-model": {
-        inputCostPerMillionTokens: 2,
-        outputCostPerMillionTokens: 8,
-        cacheReadCostPerMillionTokens: 0.5,
-        cacheWriteCostPerMillionTokens: 3,
-      },
-    });
-
-    for (const reportedCostUsd of [null, 99]) {
-      expect(priceUsage(table, "example-model", totals, reportedCostUsd, overrides)).toEqual({
-        costUsd: 13.5,
-        costSource: "modelPriced",
-      });
-    }
-    expect(cacheSavingsUsd(table, "example-model", totals, overrides)).toBe(1.5);
-  });
-
-  it("prices unknown models offline and uses input prices for omitted cache rates", () => {
-    const table = parseRateTable({});
-    const overrides = createOverrideRateTable({
-      "example-model": { inputCostPerMillionTokens: 2, outputCostPerMillionTokens: 8 },
-    });
-
-    expect(priceUsage(table, "example-model", totals, null, overrides)).toEqual({
-      costUsd: 14,
-      costSource: "modelPriced",
-    });
-    expect(cacheSavingsUsd(table, "example-model", totals, overrides)).toBe(0);
-  });
-
-  it("preserves explicit zero rates and matches only the exact trimmed model ID", () => {
-    const table = parseRateTable({});
-    const overrides = createOverrideRateTable({
-      " vendor/example-model[1m] ": {
-        inputCostPerMillionTokens: 0,
-        outputCostPerMillionTokens: 0,
-      },
-    });
-    expect(priceUsage(table, " vendor/example-model[1m] ", totals, 99, overrides)).toEqual({
-      costUsd: 0,
-      costSource: "modelPriced",
-    });
-    for (const model of [
-      "example-model[1m]",
-      "vendor/example-model",
-      "vendor/Example-model[1m]",
-      "other/example-model[1m]",
-    ]) {
-      expect(priceUsage(table, model, totals, null, overrides).costSource).toBe("unpriced");
-      expect(priceUsage(table, model, totals, 99, overrides)).toEqual({
-        costUsd: 99,
-        costSource: "providerReported",
-      });
-    }
+  it("keeps the existing model-name normalization contract", () => {
+    expect(normalizeModelName(" Anthropic/Claude-Opus-5 ")).toBe("claude-opus-5");
   });
 
   it("keeps the canonical Fable rate separate from DeepInfra in either order", () => {
@@ -129,5 +60,49 @@ describe("usage pricing", () => {
     expect(lookupRate(table, "provider-a/example-model")?.inputCostPerToken).toBe(1);
     expect(lookupRate(table, "provider-b/example-model")?.inputCostPerToken).toBe(3);
     expect(lookupRate(table, "example-model")).toBeNull();
+  });
+
+  it("keeps a bare name ambiguous when only the one-hour cache rate differs", () => {
+    const common = {
+      input_cost_per_token: 1,
+      output_cost_per_token: 5,
+      cache_read_input_token_cost: 0.1,
+      cache_creation_input_token_cost: 1.25,
+    };
+    const table = parseRateTable({
+      "provider-a/example-model": {
+        ...common,
+        cache_creation_input_token_cost_above_1hr: 2,
+      },
+      "provider-b/example-model": {
+        ...common,
+        cache_creation_input_token_cost_above_1hr: 3,
+      },
+    });
+
+    expect(lookupRate(table, "example-model")).toBeNull();
+  });
+
+  it("cannot price more TTL-specific tokens than total cache creation", () => {
+    const table = parseRateTable({
+      "example-model": {
+        input_cost_per_token: 1,
+        output_cost_per_token: 5,
+        cache_creation_input_token_cost: 1.25,
+        cache_creation_input_token_cost_above_1hr: 2,
+      },
+    });
+
+    expect(
+      cacheWriteUsd(table, "example-model", {
+        uncachedInputTokens: 0,
+        cachedInputTokens: 0,
+        cacheCreationTokens: 10,
+        cacheCreation5mTokens: 20,
+        cacheCreation1hTokens: 20,
+        outputTokens: 0,
+        reasoningTokens: 0,
+      }),
+    ).toBe(20);
   });
 });
