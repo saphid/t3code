@@ -1,6 +1,13 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { buildPeriodColumns, niceScale } from "./UsageProviderChart";
+import {
+  brushSelection,
+  buildDayColumns,
+  chartLabelIndices,
+  periodIndexAt,
+  niceScale,
+  spanSinglePeriodPoints,
+} from "./UsageProviderChart";
 import { providersWithUsage } from "./usageProviders";
 
 describe("niceScale", () => {
@@ -41,7 +48,7 @@ describe("niceScale", () => {
   });
 });
 
-describe("buildPeriodColumns", () => {
+describe("buildDayColumns", () => {
   const days = ["2026-08-01", "2026-08-02", "2026-08-03"];
   const byDay = new Map([
     [
@@ -69,13 +76,11 @@ describe("buildPeriodColumns", () => {
   ]);
 
   it("plots each day on its own", () => {
-    expect(buildPeriodColumns(days, byDay, "cost").map((column) => column.total)).toEqual([
-      30, 0, 5,
-    ]);
+    expect(buildDayColumns(days, byDay, "cost").map((column) => column.total)).toEqual([30, 0, 5]);
   });
 
   it("reads the requested metric", () => {
-    expect(buildPeriodColumns(days, byDay, "tokens").map((column) => column.total)).toEqual([
+    expect(buildDayColumns(days, byDay, "tokens").map((column) => column.total)).toEqual([
       300, 0, 50,
     ]);
   });
@@ -83,7 +88,7 @@ describe("buildPeriodColumns", () => {
   it("keeps band values absolute rather than cumulative", () => {
     // Regression: the bands were once stack offsets, which drew Claude Code
     // permanently above Codex regardless of which provider spent more.
-    const [first] = buildPeriodColumns(days, byDay, "cost");
+    const [first] = buildDayColumns(days, byDay, "cost");
 
     expect(first?.bands).toEqual([
       { provider: "codex", value: 10 },
@@ -93,7 +98,7 @@ describe("buildPeriodColumns", () => {
   });
 
   it("reports the total as the sum of its bands", () => {
-    for (const column of buildPeriodColumns(days, byDay, "cost")) {
+    for (const column of buildDayColumns(days, byDay, "cost")) {
       const sum = column.bands.reduce((running, band) => running + band.value, 0);
       expect(column.total).toBeCloseTo(sum, 9);
     }
@@ -127,11 +132,73 @@ describe("hourly chart columns", () => {
     ]);
 
     expect(
-      buildPeriodColumns(
+      buildDayColumns(
         ["2026-08-11T08:37:00.000Z", "2026-08-11T09:37:00.000Z", "2026-08-11T10:37:00.000Z"],
         byHour,
         "cost",
       ).map((column) => column.total),
     ).toEqual([0, 4, 0]);
+  });
+});
+
+describe("brushSelection", () => {
+  const days = ["2026-08-01", "2026-08-02", "2026-08-03", "2026-08-04"];
+
+  it("returns inclusive bounds for a forward drag", () => {
+    expect(brushSelection(days, 1, 3)).toEqual({
+      sinceDay: "2026-08-02",
+      untilDay: "2026-08-04",
+    });
+  });
+
+  it("normalises a backward drag", () => {
+    expect(brushSelection(days, 3, 1)).toEqual({
+      sinceDay: "2026-08-02",
+      untilDay: "2026-08-04",
+    });
+  });
+
+  it("treats a plain click as no selection", () => {
+    expect(brushSelection(days, 2, 2)).toBeNull();
+  });
+
+  it("rejects endpoints outside the day list", () => {
+    expect(brushSelection(days, 0, 9)).toBeNull();
+  });
+});
+
+describe("periodIndexAt", () => {
+  it("clamps a captured pointer to either chart edge", () => {
+    expect(periodIndexAt(-50, 100, 400, 5)).toBe(0);
+    expect(periodIndexAt(750, 100, 400, 5)).toBe(4);
+  });
+});
+
+describe("spanSinglePeriodPoints", () => {
+  it("repeats one point across the chart width", () => {
+    expect(spanSinglePeriodPoints([{ x: 0, y: 42 }])).toEqual([
+      { x: 0, y: 42 },
+      { x: 960, y: 42 },
+    ]);
+  });
+
+  it("leaves multi-period points unchanged", () => {
+    const points = [
+      { x: 0, y: 42 },
+      { x: 960, y: 12 },
+    ];
+
+    expect(spanSinglePeriodPoints(points)).toBe(points);
+  });
+});
+
+describe("chartLabelIndices", () => {
+  it("deduplicates labels for one- and two-period windows", () => {
+    expect(chartLabelIndices(1)).toEqual([0]);
+    expect(chartLabelIndices(2)).toEqual([0, 1]);
+  });
+
+  it("keeps left, middle, and right labels for wider windows", () => {
+    expect(chartLabelIndices(5)).toEqual([0, 2, 4]);
   });
 });
