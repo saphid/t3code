@@ -1,9 +1,14 @@
 # Review usage
 
 The Usage page combines Codex, Claude Code, and Grok Build activity from your connected
-environments. It reads the providers' local session history and shows API-equivalent token cost,
+environments. It reads the providers' local session history and shows a public-list-rate estimate,
 processed tokens, cache savings, provider shares, and model breakdowns. Subscription billing is
-separate from the raw token cost shown here.
+separate from this local estimate.
+
+Claude Code accounting keeps the final progressive snapshot for each response and prices every
+attempt in a model-fallback sequence. Five-minute and one-hour cache writes use their distinct
+public rates when the transcript provides the TTL. Thinking tokens remain part of output rather
+than being charged twice.
 
 Grok Build totals come from persisted session updates. Interactive turns that never wrote a
 completed-turn record will not appear.
@@ -26,12 +31,13 @@ if the connected provider cannot report limits. Enter the hub's URL and manageme
 is stored on the server and never sent back to a client. Emails are blurred until clicked, as in
 provider settings.
 
-Use **Past 24h** for an hourly chart covering the exact rolling 24-hour period. The **7 days**,
-**30 days**, and **90 days** ranges use daily resolution and end at the last complete calendar day.
-The page labels the latest day or time represented by the data. Usage refreshes in the background
+The usage chart defaults to **7 days**, **Projects**, and **12h** grouping. Every preset retains
+half-hour source buckets, including **24 hours**, **30 days**, and **90 days**. Use **30m**, **1h**,
+**6h**, **12h**, or **1d** to change only the visual grouping; the hover cursor still advances in
+30-minute increments. The page labels the latest time represented by the data. Usage refreshes in the background
 when the server starts and every 30 minutes, so opening the page can use the last successful
-snapshot without waiting for a transcript scan. Cost and token toggles update both the headline and
-chart. Manually refreshing rescans every connected environment and refetches model pricing on each
+snapshot without waiting for a transcript scan. The Cost and Tokens switch sits with the graph.
+Manually refreshing rescans every connected environment and refetches model pricing on each
 of them, so a newly released model that showed $0.00 gets a price without waiting for the daily
 pricing update.
 
@@ -55,3 +61,33 @@ T3 also applies two hard limits before it sends a new turn to any provider:
 These limits cover work T3 launches directly for every provider and client. A provider CLI creates
 its own internal subagents, so T3 cannot reject those before the provider starts them. Use the
 agent-instruction fan-out limits and the independent usage watcher for that layer.
+
+The presets and custom date fields share one date-selection row. Custom ranges can span up to 90
+days.
+
+The breakdown's **Thread** view drills into where the spend went: sessions group into the T3 Code
+thread they belong to, with sessions that never ran through T3 Code listed under the first thing
+you asked in them. Grok Build has no trusted prompt title, so its rows use a short session label.
+Expanding a row splits its daily model-priced cost into cache writes, cache
+reads, and fresh input plus output, alongside any Claude subagents the thread spawned.
+Provider-reported totals are not split into estimated components.
+Each connected environment contributes at most 40 rows, reserving room to group lower-cost rows
+under **Other threads** by provider and project. Those grouped rows stay in the totals, so the
+thread view still adds up to the selected project or full summary.
+Rows that map to a thread carry a link that opens it.
+
+The **Cache writes, estimated** total prices cache-creation tokens at each model's cache-write rate.
+It only applies to model-priced records that report cache-creation tokens. Rows without cache
+writes show a dash; incomplete or unavailable pricing is labeled **Unavailable** instead of zero.
+Cache creation is a billing category, not evidence that a cache entry expired.
+
+Usage is attributed to the project whose folder a session ran in, including sessions driven
+outside T3 Code. Each project has the same color in the stacked graph, its legend, and the project
+breakdown. Hovering any of those locations highlights the same project everywhere. Click projects
+to show or hide several at once, or use **Select all** and **Deselect all**. Work outside every
+project and usage whose transcript has no trusted folder remain separate groups.
+
+The left side lists providers and their models. Click a provider to show or hide all of its models,
+expand it to control individual models, and use the **Providers** graph when a provider-level view
+is more useful. Grok Build remains present in provider totals and model controls even when its
+sessions have unknown project attribution.

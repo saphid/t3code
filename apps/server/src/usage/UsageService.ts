@@ -19,6 +19,7 @@ import * as NodeOS from "node:os";
 
 import {
   USAGE_CONTRACT_VERSION,
+  ProjectId,
   UsageDay,
   UsageSummary as UsageSummarySchema,
   UsageSource as UsageSourceSchema,
@@ -27,6 +28,8 @@ import {
   type UsagePricing,
   type UsageSummary,
   type UsageSummaryInput,
+  type UsageThreadBreakdown,
+  type UsageThreadBreakdownInput,
   UsageReadError,
 } from "@t3tools/contracts";
 import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
@@ -48,18 +51,22 @@ import { HttpClient, HttpClientResponse } from "effect/unstable/http";
 import { ServerConfig } from "../config.ts";
 import { writeFileStringAtomically } from "../atomicWrite.ts";
 import { expandHomePath } from "../pathExpansion.ts";
+import { ProjectionProjectRepository } from "../persistence/Services/ProjectionProjects.ts";
+import { ProjectionThreadRepository } from "../persistence/Services/ProjectionThreads.ts";
+import * as ProviderSessionRuntime from "../persistence/ProviderSessionRuntime.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { resolveClaudeHomePath } from "../provider/Drivers/ClaudeHome.ts";
 import { resolveCodexHomeLayout } from "../provider/Drivers/CodexHomeLayout.ts";
-import { UsageAggregator } from "./usageAggregation.ts";
-import { makeDayFormatter } from "./usageAggregation.ts";
+import { makeDayFormatter, makeProjectResolver, UsageAggregator } from "./usageAggregation.ts";
 import { addTotals, EMPTY_TOTALS, type UsageRecord } from "./usageTranscripts.ts";
 import { parseRateTable, priceUsage, type RateTable } from "./usagePricing.ts";
 import {
   listTranscriptFilesDetailed,
   readDirectoryVolumeIdDetailed,
   readTranscriptRecordsDetailed,
+  readTranscriptTitle,
 } from "./usageTranscriptReader.ts";
+import { foldThreadRows, ThreadUsageAccumulator, type ThreadRef } from "./usageThreads.ts";
 import {
   decodeScanCache,
   dedupeWithinFile,
@@ -85,9 +92,16 @@ const RATES_REFRESH_FLOOR_MS = 60 * 1000;
 // skew when a remote viewer's calendar day differs from the server's.
 const MTIME_SLACK_MS = 72 * 60 * 60 * 1000;
 const MAX_HOURLY_WINDOW_MS = 24 * 60 * 60 * 1000;
+const MAX_HALF_HOUR_WINDOW_MS = 90 * 24 * 60 * 60 * 1000;
 
 /** Longest window the UI offers, plus slack. Older entries are pruned. */
 const CACHE_RETENTION_DAYS = 90;
+
+/**
+ * Maximum rows sent per breakdown request, including grouped remainders. A
+ * window can hold thousands of sessions, so lower-cost rows fold together.
+ */
+const THREAD_ROW_CAP = 40;
 
 /** On-disk shape of the rate snapshot. */
 const RatesCacheFile = Schema.Struct({
@@ -129,6 +143,8 @@ const UsageLedgerRecord = Schema.Struct({
       uncachedInputTokens: Schema.Number,
       cachedInputTokens: Schema.Number,
       cacheCreationTokens: Schema.Number,
+      cacheCreation5mTokens: Schema.optional(Schema.Number),
+      cacheCreation1hTokens: Schema.optional(Schema.Number),
       outputTokens: Schema.Number,
       reasoningTokens: Schema.Number,
     }),
@@ -144,10 +160,15 @@ const UsageLedgerAggregate = Schema.Struct({
   /** UTC quarter-hour containing the source records. */
   bucketStartMs: Schema.Number,
   model: Schema.String,
+  projectAttribution: Schema.optional(Schema.Literals(["project", "outside", "unknown"])),
+  projectId: Schema.optional(ProjectId),
+  project: Schema.optional(Schema.String),
   totals: Schema.Struct({
     uncachedInputTokens: Schema.Number,
     cachedInputTokens: Schema.Number,
     cacheCreationTokens: Schema.Number,
+    cacheCreation5mTokens: Schema.optional(Schema.Number),
+    cacheCreation1hTokens: Schema.optional(Schema.Number),
     outputTokens: Schema.Number,
     reasoningTokens: Schema.Number,
   }),
@@ -155,6 +176,8 @@ const UsageLedgerAggregate = Schema.Struct({
     uncachedInputTokens: Schema.Number,
     cachedInputTokens: Schema.Number,
     cacheCreationTokens: Schema.Number,
+    cacheCreation5mTokens: Schema.optional(Schema.Number),
+    cacheCreation1hTokens: Schema.optional(Schema.Number),
     outputTokens: Schema.Number,
     reasoningTokens: Schema.Number,
   }),
@@ -164,6 +187,8 @@ const UsageLedgerAggregate = Schema.Struct({
       uncachedInputTokens: Schema.Number,
       cachedInputTokens: Schema.Number,
       cacheCreationTokens: Schema.Number,
+      cacheCreation5mTokens: Schema.optional(Schema.Number),
+      cacheCreation1hTokens: Schema.optional(Schema.Number),
       outputTokens: Schema.Number,
       reasoningTokens: Schema.Number,
     }),
@@ -259,17 +284,20 @@ function snapshotKey(input: UsageSummaryInput): string {
 }
 
 function isCommonPreset(input: UsageSummaryInput): boolean {
-  if (input.resolution === "hour") {
+  if (input.resolution === "hour" || input.resolution === "halfHour") {
     if (input.sinceTime === undefined || input.untilTime === undefined) return false;
     const sinceTimeMs = Date.parse(input.sinceTime);
     const untilTimeMs = Date.parse(input.untilTime);
     const quarterHour = 15 * 60 * 1000;
+    const durationDays = (untilTimeMs - sinceTimeMs) / DAY_MS;
     return (
       Number.isFinite(sinceTimeMs) &&
       Number.isFinite(untilTimeMs) &&
       sinceTimeMs % quarterHour === 0 &&
       untilTimeMs % quarterHour === 0 &&
-      untilTimeMs - sinceTimeMs === DAY_MS
+      (input.resolution === "hour"
+        ? durationDays === 1
+        : durationDays === 1 || durationDays === 7 || durationDays === 30 || durationDays === 90)
     );
   }
   const days =
@@ -313,14 +341,14 @@ function localStartOfDayMs(timeZone: string, day: string): number {
 
 function isWithinLedgerRetention(input: UsageSummaryInput, nowMs: number): boolean {
   const sinceMs =
-    input.resolution === "hour" && input.sinceTime !== undefined
+    input.resolution !== "day" && input.sinceTime !== undefined
       ? Date.parse(input.sinceTime)
       : localStartOfDayMs(input.timeZone, input.sinceDay);
   return Number.isFinite(sinceMs) && sinceMs >= nowMs - USAGE_LEDGER_RETENTION_MS;
 }
 
 function isCanonicalLedgerInput(input: UsageSummaryInput): boolean {
-  if (input.resolution === "hour") return false;
+  if (input.resolution === "hour" || input.resolution === "halfHour") return false;
   const days =
     (Date.parse(`${input.untilDay}T00:00:00Z`) - Date.parse(`${input.sinceDay}T00:00:00Z`)) /
       DAY_MS +
@@ -345,6 +373,9 @@ function ledgerAggregateKey(aggregate: {
   readonly resolvedHomePath: string;
   readonly volumeId: string;
   readonly bucketStartMs: number;
+  readonly projectAttribution?: UsageSummary["buckets"][number]["projectAttribution"];
+  readonly projectId?: ProjectId;
+  readonly project?: string;
   readonly model: string;
 }): string {
   return JSON.stringify([
@@ -353,6 +384,9 @@ function ledgerAggregateKey(aggregate: {
     aggregate.resolvedHomePath,
     aggregate.volumeId,
     aggregate.bucketStartMs,
+    aggregate.projectAttribution ?? "unknown",
+    aggregate.projectId ?? "",
+    aggregate.project ?? "",
     aggregate.model,
   ]);
 }
@@ -362,7 +396,7 @@ function ledgerAggregateFromRecord(entry: {
   readonly provider: UsageProviderKind;
   readonly resolvedHomePath: string;
   readonly volumeId: string;
-  readonly record: UsageRecord;
+  readonly record: Omit<UsageRecord, "cwd"> & { readonly cwd?: string };
 }): LedgerAggregate {
   const { record } = entry;
   const reported = record.reportedCostUsd === null ? 0 : record.reportedCostUsd;
@@ -424,6 +458,9 @@ interface LedgerAggregate {
   readonly volumeId: string;
   readonly bucketStartMs: number;
   readonly model: string;
+  readonly projectAttribution?: UsageSummary["buckets"][number]["projectAttribution"];
+  readonly projectId?: ProjectId;
+  readonly project?: string;
   readonly totals: UsageRecord["totals"];
   readonly pricedTotals: UsageRecord["totals"];
   readonly savingsTotals: UsageRecord["totals"];
@@ -443,6 +480,11 @@ interface ScanResult {
   readonly scanStartedAtMs: number;
 }
 
+export function isValidUsageDay(day: string): boolean {
+  const parsed = DateTime.make(`${day}T00:00:00Z`);
+  return Option.isSome(parsed) && DateTime.formatIso(parsed.value).slice(0, 10) === day;
+}
+
 export class UsageService extends Context.Service<
   UsageService,
   {
@@ -453,6 +495,9 @@ export class UsageService extends Context.Service<
       input: UsageSummaryInput,
     ) => Effect.Effect<UsageSummary, UsageReadError>;
     readonly startBackgroundRefresh: Effect.Effect<void>;
+    readonly readThreadBreakdown: (
+      input: UsageThreadBreakdownInput,
+    ) => Effect.Effect<UsageThreadBreakdown, UsageReadError>;
   }
 >()("t3/usage/UsageService") {}
 
@@ -474,6 +519,7 @@ export const layerTest = Layer.succeed(
         timeZone: input.timeZone,
         sinceDay: input.sinceDay,
         untilDay: input.untilDay,
+        resolution: input.resolution ?? "day",
         buckets: [],
         sources: [],
         pricing: EMPTY_PRICING,
@@ -490,6 +536,16 @@ export const layerTest = Layer.succeed(
       Effect.fail(
         new UsageReadError({ reason: "scanFailed", detail: "Usage refresh is unavailable." }),
       ),
+    readThreadBreakdown: (input) =>
+      Effect.succeed({
+        contractVersion: USAGE_CONTRACT_VERSION,
+        readAt: "1970-01-01T00:00:00.000Z",
+        sinceDay: input.sinceDay,
+        untilDay: input.untilDay,
+        rows: [],
+        truncatedRows: 0,
+        scanDurationMs: 0,
+      }),
   }),
 );
 
@@ -501,6 +557,9 @@ export const make = Effect.gen(function* () {
   const settingsService = yield* ServerSettings.ServerSettingsService;
   const httpClient = yield* HttpClient.HttpClient;
   const hostEnvironment = yield* HostProcessEnvironment;
+  const projectRepository = yield* ProjectionProjectRepository;
+  const threadRepository = yield* ProjectionThreadRepository;
+  const runtimeRepository = yield* ProviderSessionRuntime.ProviderSessionRuntimeRepository;
 
   const fileCache: ScanCache = new Map();
   let cacheDirty = false;
@@ -515,6 +574,7 @@ export const make = Effect.gen(function* () {
   const usageLedger = new Map<string, LedgerAggregate>();
   const usageLedgerSources = new Map<string, UsageSummary["sources"][number]>();
   let usageLedgerGeneratedAtMs = 0;
+  let usageLedgerSupportsProjects = true;
   let usageLedgerDirty = false;
   let rates: RateTable = new Map();
   let ratesFetchedAtMs: number | null = null;
@@ -651,6 +711,41 @@ export const make = Effect.gen(function* () {
   });
 
   /**
+   * Builds the cwd → project-title resolver for one scan.
+   *
+   * Projects are re-read every scan so a project created or renamed since the
+   * last refresh attributes correctly. A repository failure degrades to "no
+   * attribution" rather than failing the page.
+   */
+  const resolveProjects = Effect.fn("UsageService.resolveProjects")(function* () {
+    const projects = yield* projectRepository
+      .listAll()
+      .pipe(Effect.catchCause(() => Effect.succeed<readonly never[]>([])));
+    const projectRoots = yield* Effect.forEach(
+      projects,
+      Effect.fnUntraced(function* (project) {
+        const threads = yield* threadRepository
+          .listByProjectId({ projectId: project.projectId })
+          .pipe(Effect.catchCause(() => Effect.succeed<readonly never[]>([])));
+        const root = {
+          projectId: project.projectId,
+          workspaceRoot: project.workspaceRoot,
+          title: project.title,
+          deleted: project.deletedAt !== null,
+        };
+        return [
+          root,
+          ...threads.flatMap((thread) =>
+            thread.worktreePath === null ? [] : [{ ...root, workspaceRoot: thread.worktreePath }],
+          ),
+        ];
+      }),
+      { concurrency: 8 },
+    );
+    return makeProjectResolver(projectRoots.flat(), path.sep);
+  });
+
+  /**
    * Loads the persisted scan cache exactly once per process.
    *
    * `Effect.cached` makes concurrent first readers await the same load rather
@@ -700,21 +795,30 @@ export const make = Effect.gen(function* () {
       if (document === null) return;
       usageLedgerGeneratedAtMs = document.generatedAtMs;
       if (document.version === 2) {
+        usageLedgerSupportsProjects = document.aggregates.every(
+          (entry) => entry.projectAttribution !== undefined,
+        );
         for (const source of document.sources) {
           usageLedgerSources.set(sourceKey(source.fingerprint), source);
         }
         for (const entry of document.aggregates) {
-          usageLedger.set(ledgerAggregateKey(entry), {
-            ...entry,
+          const { projectAttribution, projectId, project, ...rest } = entry;
+          const aggregate: LedgerAggregate = {
+            ...rest,
+            ...(projectAttribution === undefined ? {} : { projectAttribution }),
+            ...(projectId === undefined ? {} : { projectId }),
+            ...(project === undefined ? {} : { project }),
             savingsTotals: entry.savingsTotals ?? entry.totals,
             legacyPricing: entry.legacyPricing ?? false,
             legacyPricingRecords: entry.legacyPricingRecords ?? 0,
-          });
+          };
+          usageLedger.set(ledgerAggregateKey(aggregate), aggregate);
         }
         return;
       }
       // Migrate the pre-v2 raw record ledger in memory. It is rewritten in
       // compact form after the next successful canonical refresh.
+      usageLedgerSupportsProjects = false;
       for (const entry of document.records) {
         const aggregate = ledgerAggregateFromRecord(entry);
         mergeLedgerAggregate(usageLedger, aggregate);
@@ -788,7 +892,6 @@ export const make = Effect.gen(function* () {
       Effect.catchCause(() => Effect.void),
     );
   });
-
   /**
    * Parses one transcript, reusing the cached result when it is unchanged.
    *
@@ -820,7 +923,7 @@ export const make = Effect.gen(function* () {
           records:
             cached.tailRecords.length === 0
               ? cached.records
-              : [...cached.records, ...cached.tailRecords],
+              : dedupeWithinFile([...cached.records, ...cached.tailRecords]),
           issue: null,
         };
       }
@@ -840,13 +943,11 @@ export const make = Effect.gen(function* () {
       if (parsed.status !== "ok") return { records: [], issue: parsed.status };
 
       // Stored already de-duplicated within the file, which is 99% of all
-      // duplicates. The aggregator still runs the cross-file dedupe pass. One
-      // seen set spans the cached base, the new lines, and the tail so a
-      // resumed parse dedupes exactly like a full one.
+      // duplicates. The final snapshot wins so a resumed Claude parse can
+      // replace an earlier progressive snapshot from the cached base.
       const base = parsed.result.resumed && cached !== undefined ? cached.records : [];
-      const seen = new Set<string>();
-      const records = dedupeWithinFile([...base, ...parsed.result.records], seen);
-      const tailRecords = dedupeWithinFile(parsed.result.tailRecords, seen);
+      const records = dedupeWithinFile([...base, ...parsed.result.records]);
+      const tailRecords = dedupeWithinFile(parsed.result.tailRecords);
 
       fileCache.set(filePath, {
         size,
@@ -858,7 +959,8 @@ export const make = Effect.gen(function* () {
       });
       cacheDirty = true;
       return {
-        records: tailRecords.length === 0 ? records : [...records, ...tailRecords],
+        records:
+          tailRecords.length === 0 ? records : dedupeWithinFile([...records, ...tailRecords]),
         issue: null,
       };
     });
@@ -938,7 +1040,7 @@ export const make = Effect.gen(function* () {
     }
 
     let hourlyWindow: { readonly sinceTimeMs: number; readonly untilTimeMs: number } | null = null;
-    if (input.resolution === "hour") {
+    if (input.resolution === "hour" || input.resolution === "halfHour") {
       const sinceTime =
         input.sinceTime === undefined ? Option.none() : DateTime.make(input.sinceTime);
       const untilTime =
@@ -952,10 +1054,12 @@ export const make = Effect.gen(function* () {
       const sinceTimeMs = DateTime.toEpochMillis(sinceTime.value);
       const untilTimeMs = DateTime.toEpochMillis(untilTime.value);
       const durationMs = untilTimeMs - sinceTimeMs;
-      if (durationMs <= 0 || durationMs > MAX_HOURLY_WINDOW_MS) {
+      const maxWindowMs =
+        input.resolution === "halfHour" ? MAX_HALF_HOUR_WINDOW_MS : MAX_HOURLY_WINDOW_MS;
+      if (durationMs <= 0 || durationMs > maxWindowMs) {
         return yield* new UsageReadError({
           reason: "invalidWindow",
-          detail: "Hourly usage window must be greater than zero and at most 24 hours",
+          detail: `Usage timeline must be greater than zero and at most ${input.resolution === "halfHour" ? "90 days" : "24 hours"}`,
         });
       }
       hourlyWindow = { sinceTimeMs, untilTimeMs };
@@ -984,20 +1088,33 @@ export const make = Effect.gen(function* () {
       { concurrency: 2 },
     );
 
+    const projectResolver = yield* resolveProjects();
     const aggregator = new UsageAggregator({
       timeZone: input.timeZone,
       sinceDay: input.sinceDay,
       untilDay:
-        input.resolution === "hour" || input.untilDay < completeThroughDay
+        input.resolution !== "day" || input.untilDay < completeThroughDay
           ? input.untilDay
           : UsageDay.make(completeThroughDay),
       resolution: input.resolution ?? "day",
       ...hourlyWindow,
       rates,
+      resolveProject: projectResolver,
     });
 
     const sources: UsageSource[] = [];
     const ledgerAggregates = new Map<string, LedgerAggregate>();
+    type PendingLedgerRecord = {
+      readonly provider: UsageProviderKind;
+      readonly dir: string;
+      readonly dedupeScope: string;
+      readonly volumeId: string;
+      readonly record: UsageRecord;
+    };
+    const summaryRecordsByKey = new Map<string, PendingLedgerRecord>();
+    const unkeyedSummaryRecords: PendingLedgerRecord[] = [];
+    const ledgerRecordsByKey = new Map<string, PendingLedgerRecord>();
+    const unkeyedLedgerRecords: PendingLedgerRecord[] = [];
     const ledgerStartMs = startedAtMs - USAGE_LEDGER_RETENTION_MS;
     const livePaths = new Set<string>();
     const walkedRoots: string[] = [];
@@ -1021,14 +1138,6 @@ export const make = Effect.gen(function* () {
       walkedRoots.push(dir);
       let scannedFiles = 0;
       let skippedFiles = 0;
-      // Distinct per directory. Buckets carry per-cell session counts, but a
-      // session spans days and models, so clients total this figure instead.
-      const sessionIds = new Set<string>();
-      // Dedupe keys are scoped to each transcript directory. Keep one bare-key
-      // set per directory so identical keys in another provider/project
-      // directory remain distinct without allocating a long composite key.
-      const ledgerSeenByDirectory = new Map<string, Set<string>>();
-
       for (const file of files) {
         livePaths.add(file.path);
         if (file.records.length === 0) {
@@ -1036,29 +1145,20 @@ export const make = Effect.gen(function* () {
           continue;
         }
         scannedFiles += 1;
-        const directory = path.dirname(file.path);
-        let ledgerSeen = ledgerSeenByDirectory.get(directory);
-        if (ledgerSeen === undefined) {
-          ledgerSeen = new Set<string>();
-          ledgerSeenByDirectory.set(directory, ledgerSeen);
-        }
         for (const record of file.records) {
           // The scan-start instant is the upper bound for both the summary and
           // the durable ledger. Records appended while the walk is in flight
           // belong to the next refresh.
           if (record.timestampMs >= startedAtMs) continue;
-          const dedupeKey = record.dedupeKey;
-          if (dedupeKey !== null) {
-            if (ledgerSeen.has(dedupeKey)) continue;
-            ledgerSeen.add(dedupeKey);
-          }
 
-          // The viewer aggregate and canonical ledger share the same
-          // directory-scoped dedupe decision above. Only sessions that
-          // contributed in-window count: the mtime slack admits boundary files
-          // whose records fall outside the range.
-          if (aggregator.add(record) && record.sessionId.length > 0) {
-            sessionIds.add(record.sessionId);
+          const pending = { provider, dir, dedupeScope: path.dirname(file.path), volumeId, record };
+          if (record.dedupeKey === null) {
+            unkeyedSummaryRecords.push(pending);
+          } else {
+            summaryRecordsByKey.set(
+              `${hostId}\u0000${provider}\u0000${pending.dedupeScope}\u0000${volumeId}\u0000${record.dedupeKey}`,
+              pending,
+            );
           }
 
           // The canonical ledger is normalized independently of the requested
@@ -1067,27 +1167,14 @@ export const make = Effect.gen(function* () {
           // without retaining every transcript record.
           if (record.timestampMs < ledgerStartMs || record.timestampMs >= startedAtMs) continue;
 
-          const priced = priceUsage(rates, record.model, record.totals, record.reportedCostUsd);
-          const aggregate: LedgerAggregate = {
-            hostId,
-            provider,
-            resolvedHomePath: dir,
-            volumeId,
-            bucketStartMs: Math.floor(record.timestampMs / (15 * 60 * 1000)) * (15 * 60 * 1000),
-            model: record.model,
-            totals: record.totals,
-            pricedTotals: priced.costSource === "modelPriced" ? record.totals : EMPTY_TOTALS,
-            savingsTotals: record.totals,
-            legacyPricing: false,
-            legacyPricingRecords: 0,
-            reportedCostUsd:
-              priced.costSource === "providerReported" ? (record.reportedCostUsd ?? 0) : 0,
-            records: 1,
-            unpricedRecords: priced.costSource === "unpriced" ? 1 : 0,
-            providerReportedRecords: priced.costSource === "providerReported" ? 1 : 0,
-            sessions: record.sessionId.length === 0 ? [] : [record.sessionId],
-          };
-          mergeLedgerAggregate(ledgerAggregates, aggregate);
+          if (record.dedupeKey === null) {
+            unkeyedLedgerRecords.push(pending);
+          } else {
+            ledgerRecordsByKey.set(
+              `${hostId}\u0000${provider}\u0000${pending.dedupeScope}\u0000${volumeId}\u0000${record.dedupeKey}`,
+              pending,
+            );
+          }
         }
       }
 
@@ -1097,7 +1184,7 @@ export const make = Effect.gen(function* () {
         scannedFiles,
         skippedFiles,
         malformedRecords: 0,
-        distinctSessions: sessionIds.size,
+        distinctSessions: 0,
         message: null,
       });
     }
@@ -1108,6 +1195,62 @@ export const make = Effect.gen(function* () {
         detail:
           "Usage refresh could not read every transcript file; the last-good snapshot remains active.",
       });
+    }
+
+    const sessionsBySource = new Map<string, Set<string>>();
+    for (const { provider, dir, volumeId, record } of [
+      ...unkeyedSummaryRecords,
+      ...summaryRecordsByKey.values(),
+    ]) {
+      if (!aggregator.add(record) || record.sessionId.length === 0) continue;
+      const key = sourceKey({ hostId, provider, resolvedHomePath: dir, volumeId });
+      const sessions = sessionsBySource.get(key) ?? new Set<string>();
+      sessions.add(record.sessionId);
+      sessionsBySource.set(key, sessions);
+    }
+    for (let index = 0; index < sources.length; index += 1) {
+      const source = sources[index];
+      if (source === undefined) continue;
+      sources[index] = {
+        ...source,
+        distinctSessions: sessionsBySource.get(sourceKey(source.fingerprint))?.size ?? 0,
+      };
+    }
+
+    // Settle copied and progressive snapshots before writing the normalized
+    // ledger. This keeps snapshot-derived project totals identical to the
+    // direct scan rather than preserving the first, incomplete Claude copy.
+    for (const { provider, dir, volumeId, record } of [
+      ...unkeyedLedgerRecords,
+      ...ledgerRecordsByKey.values(),
+    ]) {
+      const priced = priceUsage(rates, record.model, record.totals, record.reportedCostUsd);
+      const resolvedProject = projectResolver(record.cwd);
+      const aggregate: LedgerAggregate = {
+        hostId,
+        provider,
+        resolvedHomePath: dir,
+        volumeId,
+        bucketStartMs: Math.floor(record.timestampMs / (15 * 60 * 1000)) * (15 * 60 * 1000),
+        model: record.model,
+        projectAttribution:
+          resolvedProject !== null ? "project" : record.cwd.length === 0 ? "unknown" : "outside",
+        ...(resolvedProject === null
+          ? {}
+          : { projectId: resolvedProject.projectId, project: resolvedProject.title }),
+        totals: record.totals,
+        pricedTotals: priced.costSource === "modelPriced" ? record.totals : EMPTY_TOTALS,
+        savingsTotals: record.totals,
+        legacyPricing: false,
+        legacyPricingRecords: 0,
+        reportedCostUsd:
+          priced.costSource === "providerReported" ? (record.reportedCostUsd ?? 0) : 0,
+        records: 1,
+        unpricedRecords: priced.costSource === "unpriced" ? 1 : 0,
+        providerReportedRecords: priced.costSource === "providerReported" ? 1 : 0,
+        sessions: record.sessionId.length === 0 ? [] : [record.sessionId],
+      };
+      mergeLedgerAggregate(ledgerAggregates, aggregate);
     }
 
     const pruned = pruneScanCache(fileCache, {
@@ -1142,6 +1285,7 @@ export const make = Effect.gen(function* () {
         timeZone: input.timeZone,
         sinceDay: input.sinceDay,
         untilDay: input.untilDay,
+        resolution: input.resolution ?? "day",
         buckets: aggregated.buckets,
         sources,
         pricing: pricing(),
@@ -1204,6 +1348,7 @@ export const make = Effect.gen(function* () {
               usageLedgerSources.set(sourceKey(source.fingerprint), source);
             }
             usageLedgerGeneratedAtMs = result.scanStartedAtMs;
+            usageLedgerSupportsProjects = true;
             usageLedgerDirty = true;
           }
         }).pipe(Effect.andThen(persistUsageSnapshots), Effect.andThen(persistUsageLedger)),
@@ -1316,19 +1461,20 @@ export const make = Effect.gen(function* () {
     const generatedAtMs = usageLedgerGeneratedAtMs;
     const completeThroughDay = previousCalendarDay(input.timeZone, generatedAtMs);
     let hourlyWindow: { readonly sinceTimeMs: number; readonly untilTimeMs: number } | null = null;
-    if (input.resolution === "hour") {
+    if (input.resolution === "hour" || input.resolution === "halfHour") {
       if (input.sinceTime === undefined || input.untilTime === undefined) return null;
       const sinceTimeMs = Date.parse(input.sinceTime);
       const observedUntilMs = Math.min(Date.parse(input.untilTime), generatedAtMs);
       if (!Number.isFinite(sinceTimeMs) || observedUntilMs <= sinceTimeMs) return null;
-      const completeHours = Math.floor((observedUntilMs - sinceTimeMs) / (60 * 60 * 1000));
-      const untilTimeMs = sinceTimeMs + completeHours * 60 * 60 * 1000;
+      const periodMs = input.resolution === "halfHour" ? 30 * 60 * 1000 : 60 * 60 * 1000;
+      const completePeriods = Math.floor((observedUntilMs - sinceTimeMs) / periodMs);
+      const untilTimeMs = sinceTimeMs + completePeriods * periodMs;
       if (untilTimeMs <= sinceTimeMs) return null;
       hourlyWindow = { sinceTimeMs, untilTimeMs };
     }
 
     const effectiveUntil =
-      input.resolution === "hour"
+      input.resolution !== "day"
         ? input.untilDay
         : input.untilDay < completeThroughDay
           ? input.untilDay
@@ -1338,7 +1484,7 @@ export const make = Effect.gen(function* () {
       sinceDay: input.sinceDay,
       untilDay: effectiveUntil,
       resolution: input.resolution ?? "day",
-      ...(hourlyWindow ?? {}),
+      ...hourlyWindow,
       rates,
     });
     const sessions = new Map<string, Set<string>>();
@@ -1386,6 +1532,7 @@ export const make = Effect.gen(function* () {
       timeZone: input.timeZone,
       sinceDay: input.sinceDay,
       untilDay: input.untilDay,
+      resolution: input.resolution ?? "day",
       buckets: aggregated.buckets,
       sources: [...sourceEntries.values()],
       pricing: {
@@ -1396,7 +1543,7 @@ export const make = Effect.gen(function* () {
       },
       coverage: {
         availableThroughDay:
-          input.resolution === "hour"
+          input.resolution !== "day"
             ? UsageDay.make(makeDayFormatter(input.timeZone)(hourlyWindow!.untilTimeMs - 1))
             : effectiveUntil,
         availableThroughTime,
@@ -1411,6 +1558,12 @@ export const make = Effect.gen(function* () {
     if (isCommonPreset(input)) {
       const normalized = yield* readPresetFromLedger(input);
       if (normalized !== null) return normalized;
+      // The project dimension was added after the compact ledger. Rebuild an
+      // older ledger before serving a half-hour request, otherwise its totals
+      // are correct but every historical bucket is labelled unknown.
+      if (input.resolution === "halfHour" && !usageLedgerSupportsProjects) {
+        return yield* runBackgroundRefresh(input);
+      }
       // Older servers may have persisted a common snapshot without a ledger.
       // It is still a useful last-good fallback, but never wins over current
       // canonical ledger data above.
@@ -1502,7 +1655,241 @@ export const make = Effect.gen(function* () {
   });
 
   yield* Effect.uninterruptible(ensureUsageSnapshotsLoaded);
-  return { readSummary, refreshRates, refreshSummary, startBackgroundRefresh } as const;
+
+  /**
+   * Maps each thread's current provider session to the thread, from resume
+   * cursors. Historic sessions of the same thread attribute through the
+   * worktree map instead; sessions that never ran through T3 Code stay
+   * session-granular.
+   */
+  const loadThreadAttribution = Effect.fn("UsageService.loadThreadAttribution")(function* () {
+    const sessionToThread = new Map<string, ThreadRef>();
+    const worktreeToThread = new Map<string, ThreadRef>();
+    const titles = new Map<string, string>();
+
+    const projects = yield* projectRepository
+      .listAll()
+      .pipe(Effect.catchCause(() => Effect.succeed<readonly never[]>([])));
+    const worktreeClaims = new Map<string, { ref: ThreadRef; shared: boolean }>();
+    for (const project of projects) {
+      const threads = yield* threadRepository
+        .listByProjectId({ projectId: project.projectId })
+        .pipe(Effect.catchCause(() => Effect.succeed<readonly never[]>([])));
+      for (const thread of threads) {
+        const title = thread.title.trim();
+        if (title.length > 0) titles.set(thread.threadId, title);
+        const worktree = thread.worktreePath?.trim() ?? "";
+        // The project root is not a dedicated worktree: interactive sessions
+        // run there too, and several threads usually share it.
+        if (worktree.length === 0 || worktree === project.workspaceRoot) continue;
+        const ref: ThreadRef = { threadId: thread.threadId, title: title || thread.threadId };
+        const claim = worktreeClaims.get(worktree);
+        if (claim === undefined) worktreeClaims.set(worktree, { ref, shared: false });
+        else claim.shared = true;
+      }
+    }
+    for (const [worktree, claim] of worktreeClaims) {
+      if (!claim.shared) worktreeToThread.set(worktree, claim.ref);
+    }
+
+    const runtimes = yield* runtimeRepository
+      .list()
+      .pipe(Effect.catchCause(() => Effect.succeed<readonly never[]>([])));
+    for (const runtime of runtimes) {
+      const cursor = runtime.resumeCursor;
+      if (typeof cursor !== "object" || cursor === null) continue;
+      const cursorRecord = cursor as Record<string, unknown>;
+      // Claude cursors carry the transcript uuid as `resume`; Codex cursors
+      // carry the rollout uuid as `threadId`. Other providers do not surface
+      // usage transcripts, so their cursors are irrelevant here.
+      const sessionId =
+        runtime.providerName === "claudeAgent"
+          ? cursorRecord["resume"]
+          : runtime.providerName === "codex"
+            ? cursorRecord["threadId"]
+            : undefined;
+      if (typeof sessionId !== "string" || sessionId.length === 0) continue;
+      const provider = runtime.providerName === "claudeAgent" ? "claude" : "codex";
+      sessionToThread.set(`${provider}:${sessionId}`, {
+        threadId: runtime.threadId,
+        title: titles.get(runtime.threadId) ?? runtime.threadId,
+      });
+    }
+
+    return { sessionToThread, worktreeToThread };
+  });
+
+  const readThreadBreakdown = Effect.fn("UsageService.readThreadBreakdown")(function* (
+    input: UsageThreadBreakdownInput,
+  ) {
+    if (input.sinceDay > input.untilDay) {
+      return yield* new UsageReadError({
+        reason: "invalidWindow",
+        detail: `sinceDay '${input.sinceDay}' is after untilDay '${input.untilDay}'`,
+      });
+    }
+    const windowStart = DateTime.make(`${input.sinceDay}T00:00:00Z`);
+    const windowEnd = DateTime.make(`${input.untilDay}T00:00:00Z`);
+    if (
+      Option.isNone(windowStart) ||
+      Option.isNone(windowEnd) ||
+      !isValidUsageDay(input.sinceDay) ||
+      !isValidUsageDay(input.untilDay)
+    ) {
+      return yield* new UsageReadError({
+        reason: "invalidWindow",
+        detail: "Thread usage requires valid sinceDay and untilDay dates",
+      });
+    }
+
+    let exactWindow: { readonly sinceTimeMs: number; readonly untilTimeMs: number } | null = null;
+    if (input.sinceTime !== undefined || input.untilTime !== undefined) {
+      const sinceTime =
+        input.sinceTime === undefined ? Option.none() : DateTime.make(input.sinceTime);
+      const untilTime =
+        input.untilTime === undefined ? Option.none() : DateTime.make(input.untilTime);
+      if (Option.isNone(sinceTime) || Option.isNone(untilTime)) {
+        return yield* new UsageReadError({
+          reason: "invalidWindow",
+          detail: "Thread usage requires both valid sinceTime and untilTime instants",
+        });
+      }
+      const sinceTimeMs = DateTime.toEpochMillis(sinceTime.value);
+      const untilTimeMs = DateTime.toEpochMillis(untilTime.value);
+      const durationMs = untilTimeMs - sinceTimeMs;
+      if (durationMs <= 0 || durationMs > MAX_HALF_HOUR_WINDOW_MS) {
+        return yield* new UsageReadError({
+          reason: "invalidWindow",
+          detail: "Thread usage exact window must be greater than zero and at most 90 days",
+        });
+      }
+      exactWindow = { sinceTimeMs, untilTimeMs };
+    }
+
+    const startedAtMs = yield* Clock.currentTimeMillis;
+    yield* ensureRates({ allowNetwork: false, force: false });
+    yield* ensureScanCacheLoaded;
+
+    const dirs = yield* resolveTranscriptDirs().pipe(Effect.provideService(Path.Path, path));
+    const windowStartMs =
+      (exactWindow?.sinceTimeMs ?? DateTime.toEpochMillis(windowStart.value)) - MTIME_SLACK_MS;
+
+    const accumulator = new ThreadUsageAccumulator({
+      timeZone: input.timeZone,
+      sinceDay: input.sinceDay,
+      untilDay: input.untilDay,
+      ...exactWindow,
+      rates,
+      resolveProject: yield* resolveProjects(),
+    });
+
+    // Preferred transcript per session for title extraction: the main file,
+    // never a subagent's.
+    const titleFiles = new Map<
+      string,
+      { readonly path: string; readonly provider: UsageProviderKind }
+    >();
+    const livePaths = new Set<string>();
+    const walkedRoots: string[] = [];
+
+    for (const { provider, dir, fileName } of dirs) {
+      if (input.providers !== undefined && !input.providers.includes(provider)) continue;
+      const exists = yield* fileSystem
+        .exists(dir)
+        .pipe(Effect.catchCause(() => Effect.succeed(false)));
+      if (!exists) continue;
+      walkedRoots.push(dir);
+
+      const walk = yield* Effect.promise(() =>
+        listTranscriptFilesDetailed(
+          dir,
+          windowStartMs,
+          fileName === undefined ? undefined : { fileName },
+        ),
+      );
+      for (const file of walk.files) {
+        livePaths.add(file.path);
+        const { records } = yield* readFileRecords(file.path, file.size, file.mtimeMs, provider);
+        if (records.length === 0) continue;
+        const isSubagent =
+          provider === "claude" && path.basename(path.dirname(file.path)) === "subagents";
+        const agentId = isSubagent ? path.basename(file.path, ".jsonl") : null;
+        for (const record of records) {
+          const sessionKey =
+            record.sessionId.length > 0
+              ? `${provider}:${record.sessionId}`
+              : `${provider}:file:${path.basename(path.dirname(file.path))}:${path.basename(file.path, ".jsonl")}`;
+          accumulator.add(record, { sessionKey, agentId });
+          if (!isSubagent && !titleFiles.has(sessionKey)) {
+            titleFiles.set(sessionKey, { path: file.path, provider });
+          }
+        }
+      }
+    }
+
+    const pruned = pruneScanCache(fileCache, {
+      livePaths,
+      walkedRoots,
+      windowStartMs,
+      retentionCutoffMs: startedAtMs - CACHE_RETENTION_DAYS * 24 * 60 * 60 * 1000,
+    });
+    if (pruned > 0) cacheDirty = true;
+    // A thread-only client must warm and bound the same durable cache as the
+    // summary RPC, otherwise restarts repeat parsing and stale entries grow.
+    yield* persistScanCache();
+
+    const attribution = yield* loadThreadAttribution();
+    const folded = foldThreadRows(accumulator.finish(), attribution, {
+      cap: THREAD_ROW_CAP,
+      ...(input.projectKey === undefined ? {} : { projectFilter: input.projectKey }),
+    });
+
+    // Transcript titles only for retained unattributed rows. Grouped remainder
+    // rows already carry a generated title.
+    const rows = yield* Effect.forEach(
+      folded.rows,
+      Effect.fnUntraced(function* ({ titleSessionKey, ...row }) {
+        if (row.title !== null) return { ...row, title: row.title };
+        const source = titleFiles.get(titleSessionKey);
+        const transcriptTitle =
+          source === undefined
+            ? null
+            : yield* Effect.promise(() => readTranscriptTitle(source.path, source.provider));
+        const fallback = row.key.startsWith("remainder:")
+          ? row.key
+          : shortSessionLabel(titleSessionKey);
+        return { ...row, title: transcriptTitle ?? fallback };
+      }),
+      { concurrency: 8 },
+    );
+
+    const readAt = yield* DateTime.now;
+    const finishedAtMs = yield* Clock.currentTimeMillis;
+    return {
+      contractVersion: USAGE_CONTRACT_VERSION,
+      readAt: DateTime.formatIso(readAt),
+      sinceDay: input.sinceDay,
+      untilDay: input.untilDay,
+      rows,
+      truncatedRows: folded.truncatedRows,
+      scanDurationMs: Math.max(0, finishedAtMs - startedAtMs),
+    } satisfies UsageThreadBreakdown;
+  });
+
+  return {
+    readSummary,
+    refreshRates,
+    refreshSummary,
+    startBackgroundRefresh,
+    readThreadBreakdown,
+  } as const;
 });
+
+/** `claude:8f14e45f-...` reads as `Session 8f14e45f`. */
+export function shortSessionLabel(sessionKey: string): string {
+  if (sessionKey.includes(":file:")) return "Untitled session";
+  const sessionId = sessionKey.slice(sessionKey.lastIndexOf(":") + 1);
+  return sessionId.length > 8 ? `Session ${sessionId.slice(0, 8)}` : `Session ${sessionId}`;
+}
 
 export const layer = Layer.effect(UsageService, make);
