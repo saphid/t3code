@@ -7,7 +7,7 @@ import * as NodePath from "node:path";
 
 import { afterEach, assert, beforeEach, describe, it } from "@effect/vitest";
 
-import { readTranscriptRecords } from "./usageTranscriptReader.ts";
+import { listTranscriptFilesDetailed, readTranscriptRecords } from "./usageTranscriptReader.ts";
 
 let dir: string;
 
@@ -206,5 +206,33 @@ describe("readTranscriptRecords resume", () => {
 
   it("returns null for an unreadable file", async () => {
     assert.isNull(await readTranscriptRecords(NodePath.join(dir, "missing.jsonl"), "claude"));
+  });
+
+  it("marks a directory enumeration failure incomplete", async () => {
+    const notADirectory = NodePath.join(dir, "not-a-directory");
+    await NodeFSP.writeFile(notADirectory, "not a directory");
+
+    const result = await listTranscriptFilesDetailed(notADirectory, 0);
+    assert.isFalse(result.complete);
+    assert.strictEqual(result.failedFiles, 1);
+  });
+
+  it("keeps a readable sibling visible when a nested directory disappears", async () => {
+    const sibling = NodePath.join(dir, "sibling.jsonl");
+    const nested = NodePath.join(dir, "vanishing");
+    await NodeFSP.writeFile(sibling, claudeLine(1, 5));
+    await NodeFSP.mkdir(nested);
+    await NodeFSP.writeFile(NodePath.join(nested, "nested.jsonl"), claudeLine(2, 7));
+    const result = await listTranscriptFilesDetailed(dir, 0, {
+      beforeDirectoryRead: async (path) => {
+        if (path === nested) await NodeFSP.rm(nested, { recursive: true, force: true });
+      },
+    });
+    assert.isFalse(result.complete);
+    assert.strictEqual(result.missingFiles, 1);
+    assert.deepStrictEqual(
+      result.files.map((file) => NodePath.basename(file.path)),
+      ["sibling.jsonl"],
+    );
   });
 });
