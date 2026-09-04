@@ -175,7 +175,9 @@ describe("UsageService", () => {
 
       // A later request is fresh work again, not a stale cached answer.
       yield* service.refreshSummary(WINDOW);
-      assert.strictEqual(ratesFetches, 2);
+      // The explicit pricing refresh fails against this suite's invalid rate
+      // document, then the summary scan performs its normal fallback retry.
+      assert.strictEqual(ratesFetches, 3);
     }).pipe(Effect.scoped),
   );
 
