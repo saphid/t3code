@@ -1262,6 +1262,7 @@ const make = Effect.gen(function* () {
       const usageLimitViolation = yield* usageLimitReservations.reserveTurn({
         key,
         threadId: event.payload.threadId,
+        providerInstanceId: latestThread.modelSelection.instanceId,
         contextTokenLimit: usageLimitSettings.threadContextTokenLimit,
         activities: latestThread.activities,
       });
