@@ -813,6 +813,16 @@ export function createServerEnvironmentAtoms<R, E>(
     ),
   );
 
+  const usageSummary = createEnvironmentRpcQueryAtomFamily(runtime, {
+    label: "environment-data:server:usage-summary",
+    tag: WS_METHODS.serverGetUsageSummary,
+    staleTimeMs: 60_000,
+    // Retry only a typed not-ready/failure result. Preset retries are
+    // ledger-only, while successful summaries are owned by server background
+    // refreshes and explicit manual refreshes.
+    refreshOnFailureMs: 5_000,
+  });
+
   return {
     configValueAtom,
     updateStateAtom,
@@ -888,10 +898,16 @@ export function createServerEnvironmentAtoms<R, E>(
     }),
     // A cold transcript scan is measured in seconds, so keep the result around
     // long enough that switching windows or re-rendering does not rescan.
-    usageSummary: createEnvironmentRpcQueryAtomFamily(runtime, {
-      label: "environment-data:server:usage-summary",
-      tag: WS_METHODS.serverGetUsageSummary,
-      staleTimeMs: 60_000,
+    usageSummary,
+    refreshUsageSummary: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:refresh-usage-summary",
+      tag: WS_METHODS.serverRefreshUsageSummary,
+      concurrency: {
+        mode: "singleFlight",
+        key: ({ environmentId, input }) => JSON.stringify([environmentId, input]),
+      },
+      onSuccess: ({ environmentId, input }, registry) =>
+        Effect.sync(() => registry.refresh(usageSummary({ environmentId, input }))),
     }),
     configProjection,
     welcome: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
