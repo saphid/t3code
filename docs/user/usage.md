@@ -24,7 +24,9 @@ signed in on this machine. Enter the hub's URL and management key; the key is st
 and never sent back to a client. Emails are blurred until clicked, as in provider settings.
 
 Use **Past 24h** for an hourly chart covering the exact rolling 24-hour period. The **7 days**,
-**30 days**, and **90 days** ranges use daily resolution. Cost and token toggles update both the
-headline and chart. Refreshing rescans every connected environment and refetches model pricing on
-each of them, so a newly released model that showed $0.00 gets a price without waiting for the daily
-pricing update.
+**30 days**, and **90 days** ranges use daily resolution and end at the last complete calendar day.
+The page labels the latest day or time represented by the data. Usage refreshes in the background
+when the server starts and every 30 minutes, so opening the page can use the last successful
+snapshot without waiting for a transcript scan.
+Refreshing rescans every connected environment and refetches model pricing on each of them, so a
+newly released model that showed $0.00 gets a price without waiting for the daily pricing update.
