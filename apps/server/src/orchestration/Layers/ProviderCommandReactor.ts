@@ -1307,6 +1307,7 @@ const make = Effect.gen(function* () {
         threadId: event.payload.threadId,
         providerInstanceId: latestThread.modelSelection.instanceId,
         contextTokenLimit: usageLimitSettings.threadContextTokenLimit,
+        maxConcurrentThreads: usageLimitSettings.maxConcurrentThreads,
         activities: latestThread.activities,
       });
       if (usageLimitViolation) {
