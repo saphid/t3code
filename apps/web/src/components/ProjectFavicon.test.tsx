@@ -1,6 +1,8 @@
 import type { ComponentType, Dispatch, ReactElement, SetStateAction } from "react";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import type { EnvironmentId } from "@t3tools/contracts";
+import { PROJECT_FAVICON_FALLBACK_MARKER } from "@t3tools/shared/projectFavicon";
+import { FolderIcon } from "lucide-react";
 
 const testState = vi.hoisted(() => ({
   faviconUrl: "https://environment.test/api/assets/token-a/v1-20-favicon.svg",
@@ -60,12 +62,15 @@ vi.mock("../assets/assetUrls", () => ({
 }));
 
 import { ProjectFavicon } from "./ProjectFavicon";
+import { ProjectFallbackMark } from "./ProjectFallbackMark";
 
 type ProjectFaviconImageProps = {
   readonly cacheKey: string;
   readonly src: string;
   readonly className?: string | undefined;
-  readonly fallbackIcon: ComponentType<{ className?: string }>;
+  readonly environmentId: EnvironmentId;
+  readonly cwd: string;
+  readonly fallbackIcon?: ComponentType<{ className?: string }> | undefined;
 };
 
 type ImageElement = ReactElement<{
@@ -106,6 +111,7 @@ function renderImage(
 describe("ProjectFavicon", () => {
   beforeEach(() => {
     hooks.reset();
+    testState.faviconUrl = "https://environment.test/api/assets/token-a/v1-20-favicon.svg";
   });
 
   it("falls back when the displayed favicon fails without discarding a valid older image early", () => {
@@ -128,6 +134,45 @@ describe("ProjectFavicon", () => {
     const afterDisplayedError = renderImage(Component, refreshedProps).props.children;
     expect(afterDisplayedError[0]).not.toBeNull();
     expect(afterDisplayedError[1]).toBeNull();
+
+    const fallback = afterDisplayedError[0];
+    if (!fallback) throw new Error("Expected the project fallback to render");
+    const fallbackProps = fallback.props;
+    const renderedFallback = (fallback.type as (props: typeof fallbackProps) => ReactElement)(
+      fallbackProps,
+    );
+    expect(renderedFallback.type).toBe(ProjectFallbackMark);
+  });
+
+  it("keeps a caller-supplied fallback for a missing custom favicon", () => {
+    const CustomFallback = () => null;
+    testState.faviconUrl = `https://environment.test/api/assets/token/${PROJECT_FAVICON_FALLBACK_MARKER}`;
+
+    const fallback = ProjectFavicon({
+      environmentId: "environment-test" as EnvironmentId,
+      cwd: "/workspace-test",
+      fallbackIcon: CustomFallback,
+    }) as ReactElement;
+    const renderedFallback = (fallback.type as (props: typeof fallback.props) => ReactElement)(
+      fallback.props,
+    );
+
+    expect(renderedFallback.type).toBe(CustomFallback);
+  });
+
+  it("keeps the existing folder fallback when the project path is empty", () => {
+    testState.faviconUrl = `https://environment.test/api/assets/token/${PROJECT_FAVICON_FALLBACK_MARKER}`;
+
+    const fallback = ProjectFavicon({
+      environmentId: "environment-test" as EnvironmentId,
+      cwd: "",
+    }) as ReactElement;
+    const fallbackProps = fallback.props;
+    const renderedFallback = (fallback.type as (props: typeof fallbackProps) => ReactElement)(
+      fallbackProps,
+    );
+
+    expect(renderedFallback.type).toBe(FolderIcon);
   });
 
   it("requests a saved favicon path when one is set", () => {
