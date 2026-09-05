@@ -1,0 +1,410 @@
+[
+  {
+    "title": "Happy Mac",
+    "era": "1984",
+    "category": "Character",
+    "behavior": "A smiling computer greeted people during a successful Macintosh startup.",
+    "lesson": "A tiny face can make a system state feel welcoming.",
+    "source": "https://kareprints.com/collections/classic-kare-prints/classic-macintosh"
+  },
+  {
+    "title": "Clarus the dogcow",
+    "era": "Classic Mac OS era",
+    "category": "Character",
+    "behavior": "A spotted dogcow demonstrated page orientation in print dialogs and answered with “Moof.”",
+    "lesson": "Give a useful state preview a memorable character.",
+    "source": "https://512pixels.net/dogcow/"
+  },
+  {
+    "title": "Clarus returns",
+    "era": "2022",
+    "category": "Character",
+    "behavior": "macOS Ventura restored Clarus to the Page Setup orientation preview.",
+    "lesson": "A restrained callback can connect redesigns across decades.",
+    "source": "https://www.macworld.com/article/788250/macos-ventura-clarus-dogcow-page-setup.html"
+  },
+  {
+    "title": "Snoopy watch face",
+    "era": "2023",
+    "category": "Character",
+    "behavior": "Snoopy and Woodstock play with watch hands and react to weather and workouts.",
+    "lesson": "Contextual reactions feel authored instead of random.",
+    "source": "https://www.apple.com/newsroom/2023/09/watchos-10-is-available-today/"
+  },
+  {
+    "title": "Toy Story watch faces",
+    "era": "2017",
+    "category": "Character",
+    "behavior": "Woody, Jessie, and Buzz Lightyear come alive on Apple Watch faces.",
+    "lesson": "Familiar characters can turn repeated glances into small encounters.",
+    "source": "https://www.apple.com/newsroom/2017/06/watchos-4-brings-more-intelligence-and-fitness-features-to-apple-watch/"
+  },
+  {
+    "title": "Genie minimization",
+    "era": "2000",
+    "category": "Physics",
+    "behavior": "A window visibly funnels toward its destination in the Dock.",
+    "lesson": "Motion can explain where an object went.",
+    "source": "https://arstechnica.com/gadgets/2000/01/macos-x-gui/"
+  },
+  {
+    "title": "Dashboard ripple and flip",
+    "era": "Mac OS X Tiger era",
+    "category": "Physics",
+    "behavior": "Widgets arrived with a ripple and flipped over to reveal settings.",
+    "lesson": "Keep an object’s spatial identity coherent across states.",
+    "source": "https://www.macrumors.com/2004/06/28/dashboard-exposed/"
+  },
+  {
+    "title": "Rubber-band scrolling",
+    "era": "2007",
+    "category": "Physics",
+    "behavior": "Content stretches past an edge and springs back when released.",
+    "lesson": "Pleasant feedback can also explain a boundary.",
+    "source": "https://www.cultofmac.com/news/bas-ording-rubber-band-effect-iphone"
+  },
+  {
+    "title": "Passbook shredder",
+    "era": "2012",
+    "category": "Physics",
+    "behavior": "Deleting a pass fed it through a miniature on-screen shredder.",
+    "lesson": "An ending can feel satisfying while remaining unmistakable.",
+    "source": "https://www.wired.com/2012/06/ios-6-10-features/"
+  },
+  {
+    "title": "Home Screen jiggle",
+    "era": "iPhone era",
+    "category": "Physics",
+    "behavior": "Apps and widgets jiggle together while the Home Screen is editable.",
+    "lesson": "Shared motion can make a temporary mode obvious.",
+    "source": "https://support.apple.com/guide/iphone/move-apps-and-widgets-on-the-home-screen-iphd2fc8ce30/ios"
+  },
+  {
+    "title": "Aqua controls",
+    "era": "2000",
+    "category": "Materials",
+    "behavior": "Mac OS X introduced luminous, translucent controls with a gel-like surface.",
+    "lesson": "Material character can invite use when readability stays intact.",
+    "source": "https://www.apple.com/newsroom/2000/01/05Apple-Unveils-Mac-OS-X/"
+  },
+  {
+    "title": "Cover Flow albums",
+    "era": "2006",
+    "category": "Materials",
+    "behavior": "Album covers became glossy objects browsed like records in a bin.",
+    "lesson": "A familiar material metaphor can make browsing more direct.",
+    "source": "https://512pixels.net/2023/10/the-history-of-cover-flow/"
+  },
+  {
+    "title": "Leather Calendar",
+    "era": "iOS 6 era",
+    "category": "Materials",
+    "behavior": "Calendar resembled a stitched leather desk book with torn paper details.",
+    "lesson": "Texture creates atmosphere, but it should serve the task.",
+    "source": "https://9to5mac.com/2020/01/07/a-decade-in-apple/"
+  },
+  {
+    "title": "Newsstand shelves",
+    "era": "iOS 5–6 era",
+    "category": "Materials",
+    "behavior": "Digital publications sat on a wood-grain bookshelf.",
+    "lesson": "A container can make an unfamiliar collection instantly legible.",
+    "source": "https://appleinsider.com/articles/22/08/23/what-apple-learned-from-skeuomorphism-and-why-it-still-matters"
+  },
+  {
+    "title": "Liquid Glass",
+    "era": "2025",
+    "category": "Materials",
+    "behavior": "Translucent controls reflect, refract, and adapt to surrounding content and light.",
+    "lesson": "A dynamic material still needs hierarchy and reliable contrast.",
+    "source": "https://www.apple.com/newsroom/2025/06/apple-elevates-the-iphone-experience-with-ios-26/"
+  },
+  {
+    "title": "Working Clock icon",
+    "era": "iOS 7 onward",
+    "category": "Useful details",
+    "behavior": "The Clock app icon shows the current time with a moving second hand.",
+    "lesson": "Let a decorative surface carry live, useful information.",
+    "source": "https://ios.gadgethacks.com/how-to/7-things-hiding-your-iphones-app-icons-you-probably-havent-noticed-yet-0385392/"
+  },
+  {
+    "title": "Working Calendar icon",
+    "era": "iPhone era",
+    "category": "Useful details",
+    "behavior": "The Calendar icon displays today’s weekday and date.",
+    "lesson": "A familiar icon can quietly answer a common question.",
+    "source": "https://ios.gadgethacks.com/how-to/7-things-hiding-your-iphones-app-icons-you-probably-havent-noticed-yet-0385392/"
+  },
+  {
+    "title": "Flashlight switch",
+    "era": "iOS era",
+    "category": "Useful details",
+    "behavior": "The tiny switch inside the Flashlight control moves between off and on.",
+    "lesson": "Mirror real state in the smallest available detail.",
+    "source": "https://ios.gadgethacks.com/how-to/7-things-hiding-your-iphones-app-icons-you-probably-havent-noticed-yet-0385392/"
+  },
+  {
+    "title": "Maps icon landmarks",
+    "era": "2007–present",
+    "category": "Useful details",
+    "behavior": "Successive Maps icons depict roads and landmarks around Apple’s Cupertino campuses.",
+    "lesson": "Specific local detail can give a generic tool identity.",
+    "source": "https://ios.gadgethacks.com/how-to/7-things-hiding-your-iphones-app-icons-you-probably-havent-noticed-yet-0385392/"
+  },
+  {
+    "title": "TestFlight development stages",
+    "era": "2020",
+    "category": "Useful details",
+    "behavior": "TestFlight’s propeller blades depict app icons at different stages of construction.",
+    "lesson": "An icon can explain a product’s role through its own construction.",
+    "source": "https://ios.gadgethacks.com/how-to/7-things-hiding-your-iphones-app-icons-you-probably-havent-noticed-yet-0385392/"
+  },
+  {
+    "title": "Mac startup chord",
+    "era": "1991 onward",
+    "category": "Sound & touch",
+    "behavior": "A warm chord confirms that a Mac has begun a successful startup.",
+    "lesson": "Use sound to reassure, not merely announce.",
+    "source": "https://www.macrumors.com/2018/03/24/former-apple-sound-designer-history/"
+  },
+  {
+    "title": "Sosumi alert",
+    "era": "1991",
+    "category": "Sound & touch",
+    "behavior": "A system alert sound carried the mischievous name “Sosumi.”",
+    "lesson": "Private wit works best when the cue remains clear.",
+    "source": "https://www.macrumors.com/2018/03/24/former-apple-sound-designer-history/"
+  },
+  {
+    "title": "Watch turn taps",
+    "era": "Apple Watch era",
+    "category": "Sound & touch",
+    "behavior": "Maps uses distinct tick-tock patterns for left and right turns, then vibrates on arrival.",
+    "lesson": "Tactile patterns can communicate direction without demanding sight.",
+    "source": "https://support.apple.com/en-ie/guide/watch/apdea7480950/watchos"
+  },
+  {
+    "title": "Keyboard haptics",
+    "era": "iOS 16 onward",
+    "category": "Sound & touch",
+    "behavior": "The iPhone keyboard can provide a small sound or haptic response for each keypress.",
+    "lesson": "Subtle feedback can make glass controls feel definite.",
+    "source": "https://support.apple.com/en-euro/102463"
+  },
+  {
+    "title": "Apple Pencil Pro pulse",
+    "era": "2024",
+    "category": "Sound & touch",
+    "behavior": "A light haptic pulse confirms a squeeze, double tap, or snap to shape.",
+    "lesson": "Confirm invisible mode changes at the point of action.",
+    "source": "https://support.apple.com/en-la/120123"
+  },
+  {
+    "title": "Macintosh Puzzle",
+    "era": "1984",
+    "category": "Play",
+    "behavior": "A compact sliding-tile game shipped as a Macintosh desk accessory.",
+    "lesson": "Play can belong in a tool when its resource cost stays modest.",
+    "source": "https://www.folklore.org/Puzzle.html"
+  },
+  {
+    "title": "Desktop pattern editor",
+    "era": "Classic Macintosh era",
+    "category": "Play",
+    "behavior": "People could draw an 8-by-8 pixel pattern and tile it across the desktop.",
+    "lesson": "Small creative tools can make a shared environment feel personal.",
+    "source": "https://folklore.org/Desk_Ornaments.html"
+  },
+  {
+    "title": "Photo Booth effects",
+    "era": "2005",
+    "category": "Play",
+    "behavior": "Built-in camera effects invited people to experiment with the new iMac camera.",
+    "lesson": "Introduce capability through a safe, enjoyable trial.",
+    "source": "https://www.apple.com/ie/newsroom/2005/10/12Apple-Introduces-the-New-iMac-G5/"
+  },
+  {
+    "title": "Kaleidoscope watch face",
+    "era": "2017",
+    "category": "Play",
+    "behavior": "A watch face turns chosen static images into shifting kaleidoscopic patterns.",
+    "lesson": "A simple input can support many playful outcomes.",
+    "source": "https://www.apple.com/newsroom/2017/06/watchos-4-brings-more-intelligence-and-fitness-features-to-apple-watch/"
+  },
+  {
+    "title": "Activity celebrations",
+    "era": "2017 onward",
+    "category": "Play",
+    "behavior": "Apple Watch presents visual celebrations when everyday activity achievements are earned.",
+    "lesson": "Reserve spectacle for a clear, earned milestone.",
+    "source": "https://www.apple.com/newsroom/2017/06/watchos-4-brings-more-intelligence-and-fitness-features-to-apple-watch/"
+  },
+  {
+    "title": "Messages celebrations",
+    "era": "2016",
+    "category": "Expression",
+    "behavior": "Balloons, confetti, and fireworks can take over the screen for a message.",
+    "lesson": "Match expressive intensity to deliberate user intent.",
+    "source": "https://www.apple.com/newsroom/2016/06/apple-previews-ios-10-biggest-ios-release-ever/"
+  },
+  {
+    "title": "Invisible Ink",
+    "era": "2016",
+    "category": "Expression",
+    "behavior": "A message stays obscured until its recipient swipes across it.",
+    "lesson": "A reveal can carry tone while preserving recipient control.",
+    "source": "https://www.apple.com/newsroom/2016/06/apple-previews-ios-10-biggest-ios-release-ever/"
+  },
+  {
+    "title": "Handwritten messages",
+    "era": "2016",
+    "category": "Expression",
+    "behavior": "Messages can send handwriting as a personal animated note.",
+    "lesson": "Preserve traces of the person when polish would erase them.",
+    "source": "https://www.apple.com/newsroom/2016/06/apple-previews-ios-10-biggest-ios-release-ever/"
+  },
+  {
+    "title": "Memoji",
+    "era": "2018 onward",
+    "category": "Expression",
+    "behavior": "A custom avatar can mirror a person’s voice and facial expressions.",
+    "lesson": "Offer expressive tools as editable choices, not fixed identities.",
+    "source": "https://support.apple.com/en-us/111115"
+  },
+  {
+    "title": "FaceTime reactions",
+    "era": "2023",
+    "category": "Expression",
+    "behavior": "Gestures can trigger hearts, balloons, fireworks, lasers, or rain during calls.",
+    "lesson": "Give live expression a clear trigger and social context.",
+    "source": "https://www.apple.com/newsroom/2023/06/ios-17-makes-iphone-more-personal-and-intuitive/"
+  },
+  {
+    "title": "Dynamic Desktop",
+    "era": "2018",
+    "category": "Little worlds",
+    "behavior": "Mojave’s desert desktop shifts its lighting from dawn through evening.",
+    "lesson": "A quiet environment can acknowledge time without interruption.",
+    "source": "https://www.apple.com/newsroom/2018/09/macos-mojave-is-available-today/"
+  },
+  {
+    "title": "Animated Weather scenes",
+    "era": "2021",
+    "category": "Little worlds",
+    "behavior": "Weather backgrounds animate sun position, clouds, and precipitation for current conditions.",
+    "lesson": "Ambient motion can explain live data when it stays calm.",
+    "source": "https://www.apple.com/newsroom/2021/09/ios-15-is-available-today/"
+  },
+  {
+    "title": "Astronomy watch face",
+    "era": "Apple Watch era",
+    "category": "Little worlds",
+    "behavior": "A continuously updated 3D Earth, Moon, or solar system can move through time with the crown.",
+    "lesson": "Make a data model explorable at the scale of its display.",
+    "source": "https://support.apple.com/en-am/guide/watch/apde9218b440/watchos"
+  },
+  {
+    "title": "Solar Analog",
+    "era": "2023",
+    "category": "Little worlds",
+    "behavior": "A luminous watch dial changes light and shadow with the Sun’s daily position.",
+    "lesson": "Let environmental data shape atmosphere as well as labels.",
+    "source": "https://www.apple.com/newsroom/2023/09/watchos-10-is-available-today/"
+  },
+  {
+    "title": "Macintosh landscape",
+    "era": "2024",
+    "category": "Little worlds",
+    "behavior": "macOS Sequoia turns classic Macintosh iconography into an animated screen landscape.",
+    "lesson": "Historical fragments can become a coherent new setting.",
+    "source": "https://basicappleguy.com/haberdashery/macintoshwallpapers"
+  },
+  {
+    "title": "Apple I bare board",
+    "era": "1976",
+    "category": "Physical identity",
+    "behavior": "Apple’s first computer presented its construction as a bare circuit board rather than a finished appliance.",
+    "lesson": "An honest construction can become a product’s identity.",
+    "source": "https://americanhistory.si.edu/collections/object/nmah_1692121"
+  },
+  {
+    "title": "Rainbow Apple",
+    "era": "1977",
+    "category": "Physical identity",
+    "behavior": "Six colored stripes made the bitten-apple silhouette approachable and advertised color capability.",
+    "lesson": "A simple mark can carry both warmth and product meaning.",
+    "source": "https://www.robjanoff.com/applelogo"
+  },
+  {
+    "title": "Colorful translucent iMac",
+    "era": "1998–2001",
+    "category": "Physical identity",
+    "behavior": "The iMac wrapped computer parts in curved translucent shells offered in vivid colors and patterns.",
+    "lesson": "Let personal choice extend to the whole physical object.",
+    "source": "https://9to5mac.com/2018/05/02/imac-design-20-years/"
+  },
+  {
+    "title": "iPod Socks",
+    "era": "2004",
+    "category": "Physical identity",
+    "behavior": "Six knitted sleeves protected an iPod while giving it a changeable wardrobe.",
+    "lesson": "A useful accessory can carry low-stakes personality.",
+    "source": "https://www.macworld.com/article/173204/ipodsocks.html"
+  },
+  {
+    "title": "Anodized iPod mini",
+    "era": "2004",
+    "category": "Physical identity",
+    "behavior": "The aluminum iPod mini arrived in silver, gold, pink, blue, and green.",
+    "lesson": "Color can make a technical object feel personally chosen.",
+    "source": "https://www.apple.com/ie/newsroom/2004/01/06Apple-Introduces-iPod-mini/"
+  },
+  {
+    "title": "Color-coordinated iMac",
+    "era": "2021",
+    "category": "Physical identity",
+    "behavior": "The iMac’s keyboard, mouse, trackpad, cable, and interface accents coordinate with its chosen color.",
+    "lesson": "Carry identity through the complete product family.",
+    "source": "https://www.apple.com/newsroom/2021/04/imac-features-all-new-design-in-vibrant-colors-m1-chip-and-45k-retina-display/"
+  },
+  {
+    "title": "Macintosh case signatures",
+    "era": "1984",
+    "category": "Authorship",
+    "behavior": "The original Macintosh team’s signatures were molded inside the computer case.",
+    "lesson": "Optional discovery can reward long-term affection without interrupting use.",
+    "source": "https://www.folklore.org/Signing_Party.html"
+  },
+  {
+    "title": "Named About boxes",
+    "era": "Original Macintosh era",
+    "category": "Authorship",
+    "behavior": "Early Mac applications could name their author in the About box and window title.",
+    "lesson": "Visible credit can connect a polished tool to its makers.",
+    "source": "https://www.folklore.org/Credit_Where_Due.html"
+  },
+  {
+    "title": "Swedish campground Command key",
+    "era": "1984",
+    "category": "Authorship",
+    "behavior": "Susan Kare adapted a Swedish attraction symbol into the Mac’s 16-pixel Command glyph.",
+    "lesson": "A borrowed symbol gains meaning through consistent, careful use.",
+    "source": "https://folklore.org/Swedish_Campground.html"
+  },
+  {
+    "title": "Designed by Apple in California",
+    "era": "2016",
+    "category": "Authorship",
+    "behavior": "Apple published a 450-photo design archive on custom paper with gilded matte-silver edges.",
+    "lesson": "Treat a record of the work as a designed object too.",
+    "source": "https://www.apple.com/newsroom/2016/11/designed-by-apple-in-california-chronicles-20-years-of-apple-design/"
+  },
+  {
+    "title": "Calendar’s July 17",
+    "era": "2002 onward",
+    "category": "Authorship",
+    "behavior": "The original fixed iCal date commemorated its introduction; the 17 remains in Apple calendar emoji.",
+    "lesson": "A date can preserve product history without adding interface chrome.",
+    "source": "https://ios.gadgethacks.com/how-to/7-things-hiding-your-iphones-app-icons-you-probably-havent-noticed-yet-0385392/"
+  }
+]

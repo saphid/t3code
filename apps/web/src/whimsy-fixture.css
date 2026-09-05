@@ -1,0 +1,807 @@
+body {
+  margin: 0;
+  background: color-mix(in srgb, var(--background) 94%, var(--foreground));
+}
+
+.whimsy-fixture-root {
+  min-height: 100vh;
+  padding: 1rem;
+  color: var(--foreground);
+  font-family: var(--font-sans);
+}
+
+.whimsy-fixture-toolbar,
+.whimsy-fixture-controls {
+  width: min(640px, calc(100vw - 2rem));
+  margin-inline: auto;
+}
+
+.whimsy-fixture-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 0.75rem;
+}
+
+.whimsy-fixture-tabs {
+  display: flex;
+  gap: 0.25rem;
+  padding: 0.25rem;
+  border: 1px solid var(--border);
+  border-radius: 0.625rem;
+  background: var(--card);
+}
+
+.whimsy-fixture-tabs a,
+.whimsy-fixture-theme-toggle,
+.whimsy-fixture-controls button {
+  min-height: 2rem;
+  border: 1px solid transparent;
+  border-radius: 0.45rem;
+  color: var(--muted-foreground);
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+.whimsy-fixture-tabs a {
+  display: inline-flex;
+  align-items: center;
+  padding: 0 0.625rem;
+  text-decoration: none;
+}
+
+.whimsy-fixture-tabs a[aria-current="page"],
+.whimsy-fixture-controls button[aria-pressed="true"] {
+  border-color: var(--border);
+  background: var(--accent);
+  color: var(--accent-foreground);
+}
+
+.whimsy-fixture-theme-toggle,
+.whimsy-fixture-controls button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.375rem;
+  padding: 0 0.625rem;
+  border-color: var(--border);
+  background: var(--card);
+  cursor: pointer;
+}
+
+.whimsy-fixture-theme-toggle svg {
+  width: 0.875rem;
+  height: 0.875rem;
+}
+
+.whimsy-fixture-tabs a:focus-visible,
+.whimsy-fixture-theme-toggle:focus-visible,
+.whimsy-fixture-controls button:focus-visible,
+.whimsy-fixture-controls textarea:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+
+.whimsy-fixture-controls button:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+#capture {
+  width: min(640px, calc(100vw - 2rem));
+  min-height: 360px;
+  aspect-ratio: 16 / 9;
+  margin-inline: auto;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 0.875rem;
+  background: var(--background);
+  box-shadow: 0 18px 55px rgb(0 0 0 / 18%);
+}
+
+.whimsy-fixture-canvas-bar {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  height: 2rem;
+  padding: 0 0.75rem;
+  border-bottom: 1px solid var(--border);
+  background: var(--card);
+  color: var(--muted-foreground);
+  font-size: 0.625rem;
+}
+
+.whimsy-fixture-wordmark {
+  color: var(--foreground);
+  font-weight: 700;
+}
+
+.whimsy-fixture-synthetic-label {
+  letter-spacing: 0.035em;
+}
+
+.whimsy-fixture-version {
+  justify-self: end;
+  padding: 0.15rem 0.4rem;
+  border-radius: 999px;
+  background: var(--muted);
+}
+
+.whimsy-fixture-canvas-body {
+  height: calc(100% - 2rem);
+}
+
+.whimsy-fixture-controls {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 0.75rem;
+}
+
+.whimsy-fixture-controls p {
+  flex: 1 1 18rem;
+  margin: 0;
+  color: var(--muted-foreground);
+  font-size: 0.6875rem;
+  line-height: 1.4;
+}
+
+.whimsy-projects-shell {
+  display: grid;
+  grid-template-columns: minmax(240px, 48%) 1fr;
+  height: 100%;
+}
+
+.whimsy-projects-sidebar {
+  padding: 1rem;
+  border-right: 1px solid var(--sidebar-border);
+  background: var(--sidebar);
+}
+
+.whimsy-projects-heading {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  margin-bottom: 0.75rem;
+  padding: 0 0.375rem;
+}
+
+.whimsy-projects-heading p,
+.whimsy-projects-heading h1 {
+  margin: 0;
+}
+
+.whimsy-projects-heading p {
+  color: var(--sidebar-muted-foreground);
+  font-size: 0.625rem;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+}
+
+.whimsy-projects-heading h1 {
+  margin-top: 0.125rem;
+  font-size: 1rem;
+}
+
+.whimsy-projects-heading > span {
+  color: var(--sidebar-muted-foreground);
+  font: 0.6875rem var(--font-mono);
+}
+
+.whimsy-project-list {
+  display: grid;
+  gap: 0.3rem;
+}
+
+.whimsy-project-row {
+  display: grid;
+  grid-template-columns: 1.5rem minmax(0, 1fr) auto;
+  align-items: center;
+  min-height: 3rem;
+  padding: 0.35rem 0.5rem;
+  border: 1px solid transparent;
+  border-radius: 0.55rem;
+}
+
+.whimsy-project-row.is-active {
+  border-color: var(--sidebar-border);
+  background: var(--sidebar-row-selected);
+}
+
+.whimsy-project-mark {
+  display: grid;
+  width: 1.5rem;
+  height: 1.5rem;
+  place-items: center;
+  border-radius: 0.4rem;
+  background: var(--sidebar-control-surface);
+  color: var(--muted-foreground);
+}
+
+.whimsy-project-mark svg {
+  width: 1rem;
+  height: 1rem;
+}
+
+.whimsy-project-copy {
+  display: grid;
+  min-width: 0;
+}
+
+.whimsy-project-copy strong {
+  overflow: hidden;
+  color: var(--sidebar-foreground);
+  font-size: 0.75rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.whimsy-project-copy small {
+  overflow: hidden;
+  color: var(--sidebar-muted-foreground);
+  font-size: 0.625rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.whimsy-project-state {
+  color: var(--sidebar-muted-foreground);
+  font: 0.5625rem var(--font-mono);
+}
+
+.whimsy-project-detail {
+  display: grid;
+  align-content: center;
+  justify-items: center;
+  padding: 2rem;
+  color: var(--muted-foreground);
+  text-align: center;
+}
+
+.whimsy-project-detail svg {
+  width: 2rem;
+  height: 2rem;
+  margin-bottom: 0.5rem;
+  opacity: 0.5;
+}
+
+.whimsy-project-detail p,
+.whimsy-project-detail strong {
+  margin: 0;
+}
+
+.whimsy-project-detail p {
+  font-size: 0.6875rem;
+}
+
+.whimsy-project-detail strong {
+  max-width: 14rem;
+  margin-top: 0.25rem;
+  color: var(--foreground);
+  font-size: 0.875rem;
+}
+
+.whimsy-pairing-backdrop {
+  display: grid;
+  height: 100%;
+  padding: 1.5rem;
+  place-items: center;
+  background:
+    radial-gradient(
+      circle at top,
+      color-mix(in srgb, var(--success) 10%, transparent),
+      transparent 48%
+    ),
+    var(--background);
+}
+
+.whimsy-pairing-card {
+  width: min(30rem, 100%);
+  padding: 1.25rem;
+  border: 1px solid var(--border);
+  border-radius: 0.875rem;
+  background: color-mix(in srgb, var(--card) 94%, transparent);
+  box-shadow: 0 12px 35px rgb(0 0 0 / 16%);
+}
+
+.whimsy-pairing-card p,
+.whimsy-pairing-card h1 {
+  margin: 0;
+}
+
+.whimsy-pairing-eyebrow {
+  color: var(--muted-foreground);
+  font-size: 0.625rem;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+
+.whimsy-pairing-heading {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-top: 0.625rem;
+}
+
+.whimsy-pairing-heading h1 {
+  font-size: 1.35rem;
+  letter-spacing: -0.025em;
+}
+
+.whimsy-pairing-heading + p {
+  margin-top: 0.35rem;
+  color: var(--muted-foreground);
+  font-size: 0.75rem;
+}
+
+.whimsy-pairing-host,
+.whimsy-pairing-error {
+  margin-top: 0.75rem;
+  padding: 0.5rem 0.625rem;
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+  background: color-mix(in srgb, var(--background) 75%, transparent);
+  color: var(--muted-foreground);
+  font-size: 0.6875rem;
+}
+
+.whimsy-pairing-host code {
+  color: var(--foreground);
+  font-size: inherit;
+}
+
+.whimsy-pairing-error {
+  border-color: color-mix(in srgb, var(--destructive) 30%, transparent);
+  color: var(--destructive);
+}
+
+.whimsy-pairing-action {
+  display: inline-flex;
+  margin-top: 0.75rem;
+  padding: 0.35rem 0.55rem;
+  border: 1px solid var(--border);
+  border-radius: 0.4rem;
+  font-size: 0.6875rem;
+  font-weight: 600;
+}
+
+.whimsy-chat-shell {
+  display: flex;
+  height: 100%;
+  padding: 0.875rem 1rem 1rem;
+  flex-direction: column;
+  background: var(--background);
+}
+
+.whimsy-chat-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-bottom: 0.625rem;
+  border-bottom: 1px solid var(--border);
+  font-size: 0.6875rem;
+}
+
+.whimsy-chat-header > div {
+  display: grid;
+}
+
+.whimsy-chat-header span {
+  color: var(--muted-foreground);
+  font-size: 0.625rem;
+}
+
+.whimsy-chat-context {
+  width: min(25rem, 82%);
+  margin-top: 1.25rem;
+  margin-left: auto;
+  padding: 0.625rem 0.75rem;
+  border-radius: 0.75rem 0.75rem 0.25rem 0.75rem;
+  background: var(--muted);
+}
+
+.whimsy-chat-context span {
+  color: var(--muted-foreground);
+  font-size: 0.5625rem;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.whimsy-chat-context p {
+  margin: 0.2rem 0 0;
+  font-size: 0.75rem;
+}
+
+.whimsy-composer-frame {
+  margin-top: auto;
+  border-radius: 0.8rem;
+}
+
+.whimsy-composer-surface {
+  min-height: 5.25rem;
+  padding: 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: inherit;
+  background: var(--card);
+  box-shadow: 0 8px 24px rgb(0 0 0 / 12%);
+}
+
+.whimsy-composer-surface > p {
+  margin: 0;
+  color: var(--foreground);
+  font-size: 0.75rem;
+}
+
+.whimsy-composer-surface > div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 1rem;
+}
+
+.whimsy-composer-surface span {
+  color: var(--muted-foreground);
+  font-size: 0.625rem;
+  font-weight: 600;
+}
+
+.whimsy-composer-surface svg {
+  width: 1.5rem;
+  height: 1.5rem;
+  padding: 0.35rem;
+  border-radius: 0.4rem;
+  background: var(--primary);
+  color: var(--primary-foreground);
+}
+
+.whimsy-spectrum-controls {
+  display: grid;
+  grid-template-columns: auto minmax(12rem, 1fr) auto;
+}
+
+.whimsy-spectrum-controls label {
+  color: var(--muted-foreground);
+  font-size: 0.6875rem;
+  font-weight: 600;
+}
+
+.whimsy-spectrum-controls textarea {
+  min-height: 3.5rem;
+  resize: vertical;
+  padding: 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: 0.45rem;
+  background: var(--card);
+  color: var(--foreground);
+  font: 0.75rem/1.4 var(--font-sans);
+}
+
+.whimsy-spectrum-controls > div {
+  display: flex;
+  gap: 0.4rem;
+}
+
+.whimsy-completion-shell {
+  display: grid;
+  height: 100%;
+  padding: clamp(0.65rem, 3vw, 1.15rem);
+  place-items: center;
+  background:
+    radial-gradient(
+      circle at 75% 5%,
+      color-mix(in srgb, var(--success) 8%, transparent),
+      transparent 44%
+    ),
+    var(--background);
+}
+
+.whimsy-completion-card {
+  display: grid;
+  width: min(32rem, 100%);
+  gap: 0.7rem;
+  padding: 0.9rem;
+  border: 1px solid var(--border);
+  border-radius: 0.8rem;
+  background: color-mix(in srgb, var(--card) 96%, transparent);
+  box-shadow: 0 12px 32px rgb(0 0 0 / 14%);
+}
+
+.whimsy-completion-heading {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.whimsy-completion-heading p,
+.whimsy-completion-heading h1 {
+  margin: 0;
+}
+
+.whimsy-completion-heading p {
+  color: var(--muted-foreground);
+  font-size: 0.5625rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.whimsy-completion-heading h1 {
+  margin-top: 0.1rem;
+  font-size: 1rem;
+  letter-spacing: -0.02em;
+}
+
+.whimsy-completion-heading > span {
+  flex: none;
+  padding: 0.18rem 0.42rem;
+  border-radius: 999px;
+  background: var(--muted);
+  color: var(--muted-foreground);
+  font: 0.5625rem var(--font-mono);
+}
+
+.whimsy-completion-thread-row {
+  display: grid;
+  grid-template-columns: 2rem minmax(0, 1fr) auto;
+  align-items: center;
+  min-width: 0;
+  gap: 0.55rem;
+  padding: 0.65rem;
+  border: 1px solid var(--border);
+  border-radius: 0.6rem;
+  background: var(--background);
+}
+
+.whimsy-completion-avatar {
+  display: grid;
+  width: 2rem;
+  height: 2rem;
+  place-items: center;
+  border-radius: 0.55rem;
+  background: var(--sidebar-control-surface);
+  color: var(--foreground);
+  font-size: 0.625rem;
+  font-weight: 800;
+}
+
+.whimsy-completion-copy {
+  display: grid;
+  min-width: 0;
+}
+
+.whimsy-completion-copy strong,
+.whimsy-completion-copy small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.whimsy-completion-copy strong {
+  font-size: 0.75rem;
+}
+
+.whimsy-completion-copy small {
+  color: var(--muted-foreground);
+  font-size: 0.5625rem;
+}
+
+.whimsy-completion-status {
+  display: inline-flex;
+  align-items: center;
+  min-width: 4.75rem;
+  justify-content: flex-end;
+  gap: 0.3rem;
+  color: var(--muted-foreground);
+  font-size: 0.625rem;
+  font-weight: 700;
+}
+
+.whimsy-completion-status.is-running {
+  color: var(--color-sky-600);
+}
+
+.dark .whimsy-completion-status.is-running {
+  color: var(--color-sky-300);
+}
+
+.whimsy-completion-status.is-completed {
+  color: var(--color-emerald-600);
+}
+
+.dark .whimsy-completion-status.is-completed {
+  color: var(--color-emerald-300);
+}
+
+.whimsy-completion-status.is-error {
+  color: var(--destructive);
+}
+
+.whimsy-completion-status-dot {
+  width: 0.4rem;
+  height: 0.4rem;
+  flex: none;
+  border-radius: 999px;
+  background: currentColor;
+}
+
+.whimsy-completion-tick {
+  width: 0.9rem;
+  height: 0.9rem;
+}
+
+.whimsy-completion-evidence {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  color: var(--muted-foreground);
+  font-size: 0.5625rem;
+}
+
+.whimsy-completion-evidence code {
+  color: var(--foreground);
+  font-size: inherit;
+}
+
+.whimsy-completion-evidence small {
+  overflow: hidden;
+  min-width: 0;
+  color: var(--muted-foreground);
+  font: 0.5375rem var(--font-mono);
+  text-align: right;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@keyframes whimsy-fixture-ultrathink-rainbow {
+  from {
+    background-position: 0% 50%;
+  }
+
+  to {
+    background-position: 200% 50%;
+  }
+}
+
+@keyframes whimsy-fixture-ultrathink-chroma-shift {
+  from {
+    filter: hue-rotate(0deg) saturate(1.2);
+  }
+
+  to {
+    filter: hue-rotate(360deg) saturate(1.2);
+  }
+}
+
+.whimsy-fixture-before .ultrathink-frame::before {
+  animation: whimsy-fixture-ultrathink-rainbow 10s linear infinite;
+}
+
+.whimsy-fixture-before .ultrathink-chroma {
+  animation: whimsy-fixture-ultrathink-chroma-shift 10s linear infinite;
+}
+
+@media (max-width: 400px) {
+  .whimsy-fixture-root {
+    padding: 0.625rem;
+  }
+
+  .whimsy-fixture-toolbar,
+  .whimsy-fixture-controls,
+  #capture {
+    width: calc(100vw - 1.25rem);
+  }
+
+  #capture {
+    height: 360px;
+    aspect-ratio: auto;
+  }
+
+  .whimsy-fixture-toolbar {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .whimsy-fixture-tabs,
+  .whimsy-fixture-tabs a {
+    flex: 1;
+  }
+
+  .whimsy-fixture-tabs a {
+    justify-content: center;
+  }
+
+  .whimsy-fixture-theme-toggle {
+    align-self: end;
+  }
+
+  .whimsy-fixture-synthetic-label {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .whimsy-projects-shell {
+    grid-template-columns: 1fr;
+  }
+
+  .whimsy-projects-sidebar {
+    padding: 0.6rem;
+    border-right: 0;
+  }
+
+  .whimsy-project-detail {
+    display: none;
+  }
+
+  .whimsy-project-row {
+    min-height: 2.35rem;
+    padding-block: 0.2rem;
+  }
+
+  .whimsy-project-copy small {
+    display: none;
+  }
+
+  .whimsy-pairing-backdrop {
+    padding: 0.75rem;
+  }
+
+  .whimsy-pairing-card {
+    padding: 0.875rem;
+  }
+
+  .whimsy-pairing-heading h1 {
+    font-size: 1.05rem;
+  }
+
+  .whimsy-chat-context {
+    margin-top: 0.65rem;
+  }
+
+  .whimsy-spectrum-controls {
+    grid-template-columns: 1fr;
+  }
+
+  .whimsy-spectrum-controls > div {
+    flex-wrap: wrap;
+  }
+
+  .whimsy-completion-card {
+    gap: 0.6rem;
+    padding: 0.75rem;
+  }
+
+  .whimsy-completion-thread-row {
+    grid-template-columns: 1.75rem minmax(0, 1fr) auto;
+    gap: 0.4rem;
+    padding: 0.55rem;
+  }
+
+  .whimsy-completion-avatar {
+    width: 1.75rem;
+    height: 1.75rem;
+  }
+
+  .whimsy-completion-copy small {
+    display: none;
+  }
+
+  .whimsy-completion-status {
+    min-width: 4.25rem;
+  }
+
+  .whimsy-completion-evidence {
+    display: grid;
+    gap: 0.2rem;
+  }
+
+  .whimsy-completion-evidence small {
+    text-align: left;
+  }
+}

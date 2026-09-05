@@ -1,0 +1,299 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>A little more human · T3 Whimsy Atlas</title>
+    <link rel="stylesheet" href="./style.css" />
+  </head>
+  <body>
+    <header class="masthead">
+      <a href="#">T3 / FIELD NOTES</a>
+      <nav aria-label="Page">
+        <a href="#studies">Side by side</a><a href="#atlas">The atlas</a
+        ><a href="#principles">The guide</a>
+      </nav>
+    </header>
+    <main>
+      <section class="intro">
+        <p class="eyebrow">APPLE → T3 CODE · A WORKING DESIGN STUDY</p>
+        <h1>A little more<br /><em>human.</em></h1>
+        <div class="intro-bottom">
+          <p>
+            Small details. Real character. An atlas of Apple’s playful side—and a workbench for
+            bringing that care into T3 Code.
+          </p>
+          <div class="stamp">
+            <span>01—04</span>FIRST ELECTRON STUDIES<br />SOURCE → PRINCIPLE → INTERACTION
+          </div>
+        </div>
+        <div class="spectrum" aria-hidden="true"></div>
+      </section>
+      <section id="studies">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">OBSERVE / TRANSLATE / TRY</p>
+            <h2>From Apple to the workbench.</h2>
+          </div>
+          <p>
+            Recordings show the reference. Live component fixtures show the T3 treatment. Each has a
+            specific job.
+          </p>
+        </div>
+        <div class="column-labels">
+          <span>THE APPLE REFERENCE</span><span>THE T3 INTERPRETATION</span>
+        </div>
+        <article class="study" id="study-projects">
+          <div class="reference">
+            <p class="index">01 / USEFUL LITTLE DETAILS</p>
+            <h3>An icon that does a little work.</h3>
+            <p>
+              The Clock icon quietly tells the actual time. Its personality comes from being a
+              miniature working object.
+            </p>
+            <div class="media" data-media="clock">
+              <img
+                src="./media/clock.png"
+                alt="iPhone Clock icon with hour, minute and second hands"
+              /><button class="play" type="button">▶ Play Apple GIF</button>
+            </div>
+            <p class="credit">
+              Actual iPhone recording · Justin Meyers / Gadget Hacks ·
+              <a
+                href="https://ios.gadgethacks.com/how-to/7-things-hiding-your-iphones-app-icons-you-probably-havent-noticed-yet-0385392/"
+                >source & context ↗</a
+              >
+            </p>
+          </div>
+          <div class="translation">
+            <span class="tag">IMPLEMENTED · SHARED ELECTRON RENDERER</span>
+            <h3>A tiny workshop for each project.</h3>
+            <p>
+              Stable shelves, drawers, pegboards and steps make otherwise identical project folders
+              easier to scan. Identity is static; your custom icon still wins.
+            </p>
+            <iframe
+              title="Interactive project mark component fixture"
+              src="/whimsy-fixture.html?demo=projects"
+              loading="lazy"
+            ></iframe>
+            <div class="evidence" data-evidence="projects"></div>
+            <p class="rule">
+              <b>The rule</b> Detail should help recognition. Four variants are a family, not unique
+              identifiers.
+            </p>
+          </div>
+        </article>
+        <article class="study" id="study-clasp">
+          <div class="reference">
+            <p class="index">02 / PHYSICAL CONFIRMATION</p>
+            <h3>The switch inside the switch.</h3>
+            <p>
+              Turning on the iPhone flashlight moves the tiny switch drawn on its icon. The detail
+              agrees with the action you just took.
+            </p>
+            <div class="media" data-media="flashlight">
+              <img
+                src="./media/flashlight.png"
+                alt="iPhone flashlight control before its miniature switch moves"
+              /><button class="play" type="button">▶ Play Apple GIF</button>
+            </div>
+            <p class="credit">
+              Actual iPhone recording · Justin Meyers / Gadget Hacks ·
+              <a
+                href="https://ios.gadgethacks.com/how-to/7-things-hiding-your-iphones-app-icons-you-probably-havent-noticed-yet-0385392/"
+                >source & context ↗</a
+              >
+            </p>
+          </div>
+          <div class="translation">
+            <span class="tag">IMPLEMENTED · HOSTED PAIRING</span>
+            <h3>Two ends. One connection.</h3>
+            <p>
+              A pair of small endpoints join once when hosted pairing succeeds. The existing success
+              message and Open app action appear immediately.
+            </p>
+            <iframe
+              title="Interactive connection clasp component fixture"
+              src="/whimsy-fixture.html?demo=clasp"
+              loading="lazy"
+            ></iframe>
+            <div class="evidence" data-evidence="clasp"></div>
+            <p class="rule">
+              <b>The rule</b> Celebrate a confirmed action. Never add a delay to make an animation
+              visible.
+            </p>
+          </div>
+        </article>
+        <article class="study" id="study-completion">
+          <div class="reference">
+            <p class="index">03 / CONTEXT, THEN RESPONSE</p>
+            <h3>A little world that knows what happened.</h3>
+            <p>
+              Apple Watch’s Smart Stack responds to context. The neighboring Snoopy face takes that
+              further: characters respond to the hands, weather and workouts.
+            </p>
+            <div class="media" data-media="smart-stack">
+              <img
+                src="./media/smart-stack.png"
+                alt="Apple Watch showing the Smart Stack transition"
+              /><button class="play" type="button">▶ Play Apple GIF</button>
+            </div>
+            <p class="credit">
+              Actual Smart Stack demonstration · Apple ·
+              <a href="https://www.apple.com/newsroom/2023/09/watchos-10-is-available-today/"
+                >Smart Stack & Snoopy source ↗</a
+              ><br />This recording shows Smart Stack, not Snoopy.
+            </p>
+          </div>
+          <div class="translation">
+            <span class="tag">IMPLEMENTED · THREAD STATUS</span>
+            <h3>A quiet “done.”</h3>
+            <p>
+              A small tick acknowledges a turn that finishes while you are watching. Old history and
+              reconnect catch-up should stay quiet.
+            </p>
+            <iframe
+              title="Interactive completion tick component fixture"
+              src="/whimsy-fixture.html?demo=completion"
+              loading="lazy"
+            ></iframe>
+            <div class="evidence" data-evidence="completion"></div>
+            <p class="rule">
+              <b>The rule</b> A completed turn is not a promise that its code passes tests. Keep the
+              meaning precise.
+            </p>
+          </div>
+        </article>
+        <article class="study" id="study-spectrum">
+          <div class="reference">
+            <p class="index">04 / PERSONALITY AT REST</p>
+            <h3>Color doesn’t need to spin.</h3>
+            <div
+              class="color-objects"
+              aria-label="Illustrative color study, not an Apple product image"
+            >
+              <i></i><i></i><i></i><i></i><i></i><i></i>
+            </div>
+            <p>
+              The rainbow identity and colorful iMac family make the object feel approachable even
+              when nothing is moving.
+            </p>
+            <p class="credit">
+              Original color study above, not an Apple recording.<br /><a
+                href="https://www.robjanoff.com/applelogo"
+                >Rob Janoff on the Apple logo ↗</a
+              >
+              ·
+              <a
+                href="https://www.apple.com/newsroom/2021/04/imac-features-all-new-design-in-vibrant-colors-m1-chip-and-45k-retina-display/"
+                >Apple’s colorful iMac ↗</a
+              >
+            </p>
+          </div>
+          <div class="translation">
+            <span class="tag">IMPLEMENTED · COMPOSER</span>
+            <h3>A spectrum that settles.</h3>
+            <p>
+              Ultrathink keeps its distinctive color. Removing the endless hue rotation leaves the
+              composer recognizable and still while you work.
+            </p>
+            <iframe
+              title="Interactive calm ultrathink spectrum component fixture"
+              src="/whimsy-fixture.html?demo=spectrum"
+              loading="lazy"
+            ></iframe>
+            <div class="evidence" data-evidence="spectrum"></div>
+            <p class="rule">
+              <b>The rule</b> Character can be a material, a shape or a color. Continuous repainting
+              is not a personality.
+            </p>
+          </div>
+        </article>
+      </section>
+      <section id="atlas">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">A HISTORY OF SMALL PLEASURES</p>
+            <h2>The reference atlas.</h2>
+          </div>
+          <p>
+            A curated historical survey, not a claim to every Easter egg Apple ever shipped. Sources
+            document the examples; the lessons are our interpretation.
+          </p>
+        </div>
+        <div class="filters">
+          <label
+            >Find a detail<input
+              id="search"
+              type="search"
+              placeholder="Try Clarus, iMac, texture…" /></label
+          ><label
+            >Explore a family<select id="category">
+              <option value="">Every category</option>
+            </select></label
+          ><span id="count" aria-live="polite"></span>
+        </div>
+        <div id="catalogue" class="catalogue"><p>Loading the source catalogue…</p></div>
+      </section>
+      <section id="principles">
+        <p class="eyebrow">A GUIDE FOR THE NEXT AGENT</p>
+        <h2>Make the useful thing<br /><em>a little more lovable.</em></h2>
+        <div class="principles">
+          <div>
+            <b>01 / Start with a real moment.</b>
+            <p>
+              Name the exact action and its true state. Pairing accepted. Project recognized. Turn
+              finished. Write the reverse and failure states first.
+            </p>
+          </div>
+          <div>
+            <b>02 / Give the detail a job.</b>
+            <p>
+              Recognition, explanation, reassurance or expression. If the only purpose is “make it
+              fun,” sharpen the idea.
+            </p>
+          </div>
+          <div>
+            <b>03 / Respond once. Then rest.</b>
+            <p>
+              Use a short bounded motion. No idle loops, confetti for routine work, fake progress,
+              added waiting or sound by default.
+            </p>
+          </div>
+          <div>
+            <b>04 / Keep a quiet version.</b>
+            <p>
+              Reduced motion gets the final static state. Preserve contrast, focus, keyboard access
+              and text meaning. Never rely on color alone.
+            </p>
+          </div>
+          <div>
+            <b>05 / Follow the whole feature.</b>
+            <p>
+              Check every entry point, client and connection mode. Hydration, reconnection and
+              background recovery must not replay old celebrations.
+            </p>
+          </div>
+          <div>
+            <b>06 / Show the complete behavior.</b>
+            <p>
+              Capture the trigger, transition, settled state and reversal. Crop to include the
+              relevant context. Test the real client; label fixtures honestly.
+            </p>
+          </div>
+        </div>
+      </section>
+    </main>
+    <footer>
+      <span>T3 CODE / WHIMSY ATLAS</span>
+      <p>
+        Apple references are credited to their original authors. T3 studies are original
+        interpretations. Inline GIF previews play only when requested and stop after a short
+        preview. The application itself stays still at rest.
+      </p>
+      <a href="#">Back to the beginning ↑</a>
+    </footer>
+    <script type="module" src="./gallery.js"></script>
+  </body>
+</html>

@@ -27,6 +27,7 @@ policy in [CONTRIBUTING.md](../CONTRIBUTING.md); agent rules in [AGENTS.md](../A
 - [Architecture overview](./internals/overview.md)
 - [Workspace layout](./internals/workspace-layout.md)
 - [Glossary](./internals/glossary.md)
+- [Whimsy guide for app reviews](./internals/whimsy-guide.md) — review warmth, character, motion, and opportunities for delight; [Apple references](./internals/whimsy-references.md).
 - [Scripts](./internals/scripts.md)
 - [Connection runtime](./internals/connection-runtime.md)
 - [Providers](./internals/providers.md)

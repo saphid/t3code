@@ -1,0 +1,30 @@
+{
+  "projects": {
+    "Before PNG": "./media/projects-before.png",
+    "After PNG": "./media/projects-after.png",
+    "Animated GIF": "./media/projects-after.gif",
+    "Video": "./media/projects-after.mp4",
+    "Draft PR": "https://github.com/saphid/t3code/pull/53"
+  },
+  "clasp": {
+    "Before PNG": "./media/clasp-before.png",
+    "After PNG": "./media/clasp-after.png",
+    "Animated GIF": "./media/clasp-after.gif",
+    "Video": "./media/clasp-after.mp4",
+    "Draft PR": "https://github.com/saphid/t3code/pull/54"
+  },
+  "spectrum": {
+    "Before PNG": "./media/spectrum-before.png",
+    "After PNG": "./media/spectrum-after.png",
+    "Animated GIF": "./media/spectrum-after.gif",
+    "Video": "./media/spectrum-after.mp4",
+    "Draft PR": "https://github.com/saphid/t3code/pull/56"
+  },
+  "completion": {
+    "Before PNG": "./media/completion-before.png",
+    "After PNG": "./media/completion-after.png",
+    "Animated GIF": "./media/completion-after.gif",
+    "Video": "./media/completion-after.mp4",
+    "Draft PR": "https://github.com/saphid/t3code/pull/55"
+  }
+}
