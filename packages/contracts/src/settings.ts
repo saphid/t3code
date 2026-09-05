@@ -805,6 +805,11 @@ export type SourceControlWritingStyleSettings = typeof SourceControlWritingStyle
 export const DEFAULT_AUTOMATIC_GIT_FETCH_INTERVAL = Duration.seconds(30);
 export const DEFAULT_PROVIDER_HEALTH_REFRESH_INTERVAL = Duration.minutes(5);
 
+export const DEFAULT_MAX_CONCURRENT_THREADS = 8;
+export const MaxConcurrentThreads = Schema.Int.check(
+  Schema.isBetween({ minimum: 1, maximum: Number.MAX_SAFE_INTEGER }),
+);
+
 export const MIN_THREAD_CONTEXT_TOKEN_LIMIT = 50_000;
 export const MAX_THREAD_CONTEXT_TOKEN_LIMIT = 1_000_000;
 export const DEFAULT_THREAD_CONTEXT_TOKEN_LIMIT = 250_000;
@@ -866,6 +871,9 @@ export const ServerSettings = Schema.Struct({
   // Retain the update-era key; recovery now needs an environment-owned opt-in.
   continueThreadsAfterServerUpdate: Schema.Boolean.pipe(
     Schema.withDecodingDefault(Effect.succeed(false)),
+  ),
+  maxConcurrentThreads: MaxConcurrentThreads.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_MAX_CONCURRENT_THREADS)),
   ),
   threadContextTokenLimit: ThreadContextTokenLimit.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_THREAD_CONTEXT_TOKEN_LIMIT)),
@@ -1157,6 +1165,7 @@ export const ServerSettingsPatch = Schema.Struct({
   enableLegacyTokenStreaming: Schema.optionalKey(Schema.Boolean),
   enableProviderUpdateChecks: Schema.optionalKey(Schema.Boolean),
   continueThreadsAfterServerUpdate: Schema.optionalKey(Schema.Boolean),
+  maxConcurrentThreads: Schema.optionalKey(MaxConcurrentThreads),
   threadContextTokenLimit: Schema.optionalKey(ThreadContextTokenLimit),
   enableAgentBrowserAccess: Schema.optionalKey(Schema.Boolean),
   projectAgentBrowserAccessOverrides: Schema.optionalKey(
