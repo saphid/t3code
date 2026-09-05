@@ -77,7 +77,6 @@ import {
   flushComposerDrafts,
   getComposerDraftSnapshot,
   mergeComposerDraftContent,
-  updateComposerDraftSettings,
   waitForComposerDraftsLoaded,
 } from "../../state/use-composer-drafts";
 import { threadHandoverDraftImportId } from "../../state/threadHandoverDraft";
@@ -432,13 +431,14 @@ function ThreadRouteContent(
         destinationDraftKey,
       ).importedShareIds?.includes(attempt.draftImportId);
       if (!attempt.draftWritten || !draftAlreadyImported) {
-        if (!draftAlreadyImported) {
-          await mergeComposerDraftContent(destinationDraftKey, {
+        await mergeComposerDraftContent(
+          destinationDraftKey,
+          {
             text: attempt.handover,
             attachments: [],
             sourceShareId: attempt.draftImportId,
-          });
-          updateComposerDraftSettings(destinationDraftKey, {
+          },
+          {
             workspaceSelection: {
               // Local mode continues the selected checkout; worktree mode creates a new one.
               mode: "local",
@@ -446,8 +446,8 @@ function ThreadRouteContent(
               worktreePath: selectedThreadWorktreePath,
               startFromOrigin: false,
             },
-          });
-        }
+          },
+        );
         await flushComposerDrafts();
         attempt = { ...attempt, draftWritten: true };
         saveMobileHandoverAttempt(sourceThreadKey, attempt);

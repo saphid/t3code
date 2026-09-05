@@ -174,6 +174,7 @@ import {
   restoreCloudComposerDrafts,
   setComposerDraftText,
   setComposerDraftAttachmentUpload,
+  updateComposerDraftSettings,
   waitForComposerDraftsLoaded,
   setStickyComposerModelSelection,
   stickyComposerModelSelectionAtom,
@@ -1258,6 +1259,99 @@ describe("mobile composer drafts", () => {
       attachments: [attachment],
       runtimeMode: "full-access",
     });
+  });
+
+  it("persists handover content, receipt, and workspace as one restart-safe draft", async () => {
+    const draftKey = "new-task:environment-1:project-1";
+    const content = {
+      text: "Generated handover",
+      attachments: [],
+      sourceShareId: "handover:source-thread",
+    };
+    const sourceWorkspace = {
+      mode: "local" as const,
+      branch: "source-branch",
+      worktreePath: "/worktrees/source",
+      startFromOrigin: false,
+    };
+
+    await mergeComposerDraftContent(draftKey, content, {
+      workspaceSelection: sourceWorkspace,
+    });
+
+    expect(JSON.parse(composerDraftFileMocks.getDocument()).drafts[draftKey]).toMatchObject({
+      text: "Generated handover",
+      importedShareIds: ["handover:source-thread"],
+      workspaceSelection: sourceWorkspace,
+    });
+
+    appAtomRegistry.set(composerDraftsAtom, {});
+    resetComposerDraftsLoadState();
+    await waitForComposerDraftsLoaded();
+    expect(getComposerDraftSnapshot(draftKey)).toMatchObject({
+      text: "Generated handover",
+      importedShareIds: ["handover:source-thread"],
+      workspaceSelection: sourceWorkspace,
+    });
+
+    const editedWorkspace = {
+      ...sourceWorkspace,
+      branch: "user-edited",
+      worktreePath: "/worktrees/edited",
+    };
+    updateComposerDraftSettings(draftKey, { workspaceSelection: editedWorkspace });
+    await mergeComposerDraftContent(draftKey, content, {
+      workspaceSelection: sourceWorkspace,
+    });
+
+    expect(getComposerDraftSnapshot(draftKey).workspaceSelection).toEqual(editedWorkspace);
+    expect(
+      JSON.parse(composerDraftFileMocks.getDocument()).drafts[draftKey].workspaceSelection,
+    ).toEqual(editedWorkspace);
+  });
+
+  it("retries a failed handover write without replacing workspace edits", async () => {
+    const draftKey = "new-task:environment-1:project-1";
+    const content = {
+      text: "Generated handover",
+      attachments: [],
+      sourceShareId: "handover:source-thread",
+    };
+    const sourceWorkspace = {
+      mode: "local" as const,
+      branch: "source-branch",
+      worktreePath: "/worktrees/source",
+      startFromOrigin: false,
+    };
+    composerDraftFileMocks.setWriteError(new Error("storage unavailable"));
+
+    await expect(
+      mergeComposerDraftContent(draftKey, content, {
+        workspaceSelection: sourceWorkspace,
+      }),
+    ).rejects.toBeInstanceOf(ComposerDraftPersistenceError);
+
+    expect(getComposerDraftSnapshot(draftKey)).toMatchObject({
+      importedShareIds: ["handover:source-thread"],
+      workspaceSelection: sourceWorkspace,
+    });
+    const editedWorkspace = {
+      ...sourceWorkspace,
+      branch: "user-edited",
+      worktreePath: "/worktrees/edited",
+    };
+    updateComposerDraftSettings(draftKey, { workspaceSelection: editedWorkspace });
+    composerDraftFileMocks.setWriteError(null);
+
+    await mergeComposerDraftContent(draftKey, content, {
+      workspaceSelection: sourceWorkspace,
+    });
+    await flushComposerDrafts();
+
+    expect(getComposerDraftSnapshot(draftKey).workspaceSelection).toEqual(editedWorkspace);
+    expect(
+      JSON.parse(composerDraftFileMocks.getDocument()).drafts[draftKey].workspaceSelection,
+    ).toEqual(editedWorkspace);
   });
 
   it.each(["read", "decode"] as const)(
