@@ -1294,7 +1294,9 @@ const make = Effect.gen(function* () {
     let reservationHandedOff = false;
     yield* Effect.gen(function* () {
       const usageLimitSettings = yield* serverSettingsService.getSettings;
-      const latestThread = yield* resolveThreadDetail(event.payload.threadId);
+      const latestThread = yield* projectionSnapshotQuery
+        .getThreadDetailById(event.payload.threadId, { activityKinds: ["context-window.updated"] })
+        .pipe(Effect.map(Option.getOrUndefined));
       if (!latestThread) {
         return yield* appendTurnStartFailure(
           "Provider turn start failed",
