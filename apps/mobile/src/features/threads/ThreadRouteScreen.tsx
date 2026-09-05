@@ -263,7 +263,7 @@ function ThreadRouteContent(
       },
     };
   }, [selectedThread, selectedThreadDetailState]);
-  const { selectedThreadCwd } = useSelectedThreadWorktree();
+  const { selectedThreadCwd, selectedThreadWorktreePath } = useSelectedThreadWorktree();
   const composer = useThreadComposerState();
   const gitState = useSelectedThreadGitState();
   const gitActions = useSelectedThreadGitActions();
@@ -439,7 +439,7 @@ function ThreadRouteContent(
               // Local mode continues the selected checkout; worktree mode creates a new one.
               mode: "local",
               branch: selectedThread.branch,
-              worktreePath: selectedThread.worktreePath,
+              worktreePath: selectedThreadWorktreePath,
               startFromOrigin: false,
             },
           });
@@ -487,6 +487,7 @@ function ThreadRouteContent(
     selectedThreadDetail,
     selectedThreadProject,
     serverConfig?.environment.capabilities.threadHandoverGeneration,
+    selectedThreadWorktreePath,
   ]);
 
   /* ─── Native header theming ──────────────────────────────────────── */
