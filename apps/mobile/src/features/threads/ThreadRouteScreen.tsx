@@ -98,18 +98,23 @@ interface ThreadInspectorSelection {
 
 type NativeHeaderItems = ReadonlyArray<Record<string, unknown>>;
 
-const pendingMobileHandovers = new Map<string, string>();
+interface MobileHandoverAttempt {
+  readonly handover: string;
+  readonly draftWritten: boolean;
+}
+
+const mobileHandoverAttempts = new Map<string, MobileHandoverAttempt>();
 const generatingMobileHandovers = new Set<string>();
 const mobileHandoverListeners = new Set<() => void>();
 const MAX_PENDING_MOBILE_HANDOVERS = 8;
 
-function savePendingMobileHandover(sourceThreadKey: string, handover: string): void {
-  pendingMobileHandovers.delete(sourceThreadKey);
-  pendingMobileHandovers.set(sourceThreadKey, handover);
-  while (pendingMobileHandovers.size > MAX_PENDING_MOBILE_HANDOVERS) {
-    const oldestKey = pendingMobileHandovers.keys().next().value;
+function saveMobileHandoverAttempt(sourceThreadKey: string, attempt: MobileHandoverAttempt): void {
+  mobileHandoverAttempts.delete(sourceThreadKey);
+  mobileHandoverAttempts.set(sourceThreadKey, attempt);
+  while (mobileHandoverAttempts.size > MAX_PENDING_MOBILE_HANDOVERS) {
+    const oldestKey = mobileHandoverAttempts.keys().next().value;
     if (oldestKey === undefined) break;
-    pendingMobileHandovers.delete(oldestKey);
+    mobileHandoverAttempts.delete(oldestKey);
   }
 }
 
@@ -126,7 +131,7 @@ function subscribeMobileHandoverState(listener: () => void): () => void {
 
 function mobileHandoverStateSnapshot(threadKey: string | null): string {
   if (threadKey === null) return "";
-  return `${generatingMobileHandovers.has(threadKey)}:${pendingMobileHandovers.has(threadKey)}`;
+  return `${generatingMobileHandovers.has(threadKey)}:${mobileHandoverAttempts.has(threadKey)}`;
 }
 
 function InspectorPaneRoleActivation() {
@@ -386,8 +391,8 @@ function ThreadRouteContent(
     generatingMobileHandovers.add(sourceThreadKey);
     notifyMobileHandoverListeners();
     try {
-      let handover = pendingMobileHandovers.get(sourceThreadKey);
-      if (handover === undefined) {
+      let attempt = mobileHandoverAttempts.get(sourceThreadKey);
+      if (attempt === undefined) {
         const result = await generateThreadHandover({
           environmentId: selectedThread.environmentId,
           input: { threadId: selectedThread.id },
@@ -396,8 +401,11 @@ function ThreadRouteContent(
           Alert.alert("Could not create handover", "Handover generation failed. Try again.");
           return;
         }
-        handover = result.value.handover;
-        savePendingMobileHandover(sourceThreadKey, handover);
+        attempt = {
+          handover: result.value.handover,
+          draftWritten: false,
+        };
+        saveMobileHandoverAttempt(sourceThreadKey, attempt);
         notifyMobileHandoverListeners();
       }
       if (
@@ -408,21 +416,26 @@ function ThreadRouteContent(
         return;
       }
 
-      const destinationDraftKey = `new-task:${selectedThread.environmentId}:${selectedThread.projectId}`;
-      await mergeComposerDraftContent(destinationDraftKey, {
-        text: handover,
-        attachments: [],
-      });
-      updateComposerDraftSettings(destinationDraftKey, {
-        workspaceSelection: {
-          // Local mode continues the selected checkout; worktree mode creates a new one.
-          mode: "local",
-          branch: selectedThread.branch,
-          worktreePath: selectedThread.worktreePath,
-          startFromOrigin: false,
-        },
-      });
-      await flushComposerDrafts();
+      if (!attempt.draftWritten) {
+        const destinationDraftKey = `new-task:${selectedThread.environmentId}:${selectedThread.projectId}`;
+        await mergeComposerDraftContent(destinationDraftKey, {
+          text: attempt.handover,
+          attachments: [],
+        });
+        updateComposerDraftSettings(destinationDraftKey, {
+          workspaceSelection: {
+            // Local mode continues the selected checkout; worktree mode creates a new one.
+            mode: "local",
+            branch: selectedThread.branch,
+            worktreePath: selectedThread.worktreePath,
+            startFromOrigin: false,
+          },
+        });
+        await flushComposerDrafts();
+        attempt = { ...attempt, draftWritten: true };
+        saveMobileHandoverAttempt(sourceThreadKey, attempt);
+        notifyMobileHandoverListeners();
+      }
 
       if (
         !mountedRef.current ||
@@ -439,7 +452,7 @@ function ThreadRouteContent(
           title: selectedThreadProject.title,
         },
       });
-      pendingMobileHandovers.delete(sourceThreadKey);
+      mobileHandoverAttempts.delete(sourceThreadKey);
       notifyMobileHandoverListeners();
     } catch (error) {
       Alert.alert(
