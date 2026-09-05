@@ -20,8 +20,8 @@ import type {
   UsageTokenTotals,
 } from "@t3tools/contracts";
 
-import { addTotals, EMPTY_TOTALS, type UsageRecord } from "./usageTranscripts.ts";
 import { normalizeUsagePath } from "./usagePaths.ts";
+import { addTotals, EMPTY_TOTALS, type UsageRecord } from "./usageTranscripts.ts";
 import { cacheSavingsUsd, cacheWriteUsd, priceUsage, type RateTable } from "./usagePricing.ts";
 
 /**
@@ -80,7 +80,7 @@ export function makeProjectResolver(
   const roots = projects
     .map((project) => ({
       projectId: project.projectId,
-      root: normalizeUsagePath(project.workspaceRoot),
+      root: project.workspaceRoot.length === 0 ? "" : normalizeUsagePath(project.workspaceRoot),
       title: project.title.trim(),
       deleted: project.deleted,
     }))
@@ -90,8 +90,8 @@ export function makeProjectResolver(
   const byCwd = new Map<string, ProjectAttribution | null>();
   return (cwd) => {
     if (cwd.length === 0) return null;
-    if (byCwd.has(cwd)) return byCwd.get(cwd) ?? null;
     const normalizedCwd = normalizeUsagePath(cwd);
+    if (byCwd.has(normalizedCwd)) return byCwd.get(normalizedCwd) ?? null;
     let resolved: ProjectAttribution | null = null;
     for (const { projectId, root, title } of roots) {
       if (
@@ -102,7 +102,7 @@ export function makeProjectResolver(
         break;
       }
     }
-    byCwd.set(cwd, resolved);
+    byCwd.set(normalizedCwd, resolved);
     return resolved;
   };
 }
@@ -182,6 +182,8 @@ export class UsageAggregator {
       return inWindow;
     }
     if (this.#recordsByKey.has(record.dedupeKey)) {
+      // Claude writes progressive snapshots for one response. The final copy
+      // is complete, so replace the earlier one without counting it twice.
       this.#recordsByKey.set(record.dedupeKey, record);
       this.#duplicatesDropped += 1;
       return inWindow;

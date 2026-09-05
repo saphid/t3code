@@ -24,7 +24,7 @@ import type { UsageProviderKind } from "@t3tools/contracts";
 import {
   initialCodexScanState,
   mightCarryUsage,
-  parseClaudeLine,
+  parseClaudeLineRecords,
   parseCodexLine,
   parseGrokLine,
   type CodexScanState,
@@ -35,6 +35,11 @@ export interface TranscriptFile {
   readonly path: string;
   readonly size: number;
   readonly mtimeMs: number;
+}
+
+export interface TranscriptFileIdentity {
+  readonly sessionId: string;
+  readonly cwd: string;
 }
 
 /**
@@ -101,7 +106,10 @@ function fnv1a(buffer: Buffer): number {
 export async function listTranscriptFiles(
   root: string,
   sinceMs: number,
-  options?: { readonly fileName?: string },
+  options?: {
+    readonly fileName?: string;
+    readonly onFile?: (path: string) => void;
+  },
 ): Promise<readonly TranscriptFile[]> {
   const found: TranscriptFile[] = [];
   const fileName = options?.fileName;
@@ -124,6 +132,7 @@ export async function listTranscriptFiles(
       } else if (!entry.name.endsWith(".jsonl")) {
         continue;
       }
+      options?.onFile?.(child);
       try {
         const stats = await NodeFSP.stat(child);
         if (stats.mtimeMs >= sinceMs) {
@@ -137,6 +146,59 @@ export async function listTranscriptFiles(
 
   await walk(root);
   return found;
+}
+
+const IDENTITY_MAX_BYTES = 256 * 1024;
+const IDENTITY_MAX_LINES = 100;
+
+/** Reads only the bounded Codex preamble needed to identify a rollout. */
+export async function readCodexTranscriptIdentity(
+  filePath: string,
+): Promise<TranscriptFileIdentity | null> {
+  let stream: NodeFS.ReadStream | null = null;
+  try {
+    stream = NodeFS.createReadStream(filePath, {
+      encoding: "utf8",
+      highWaterMark: 16 * 1024,
+    });
+    let pending = "";
+    let bytesRead = 0;
+    let linesRead = 0;
+    for await (const chunk of stream) {
+      const text = String(chunk);
+      bytesRead += Buffer.byteLength(text);
+      if (bytesRead > IDENTITY_MAX_BYTES) return null;
+      pending += text;
+      for (;;) {
+        const newline = pending.indexOf("\n");
+        if (newline === -1) break;
+        const line = pending.slice(0, newline).replace(/\r$/, "");
+        pending = pending.slice(newline + 1);
+        linesRead += 1;
+        if (linesRead > IDENTITY_MAX_LINES) return null;
+        let parsed: unknown;
+        try {
+          parsed = JSON.parse(line);
+        } catch {
+          continue;
+        }
+        if (typeof parsed !== "object" || parsed === null) continue;
+        const record = parsed as Record<string, unknown>;
+        if (record["type"] !== "session_meta") continue;
+        const payload = record["payload"];
+        if (typeof payload !== "object" || payload === null) return null;
+        const meta = payload as Record<string, unknown>;
+        const sessionId = meta["id"] ?? meta["session_id"];
+        return {
+          sessionId: typeof sessionId === "string" ? sessionId : "",
+          cwd: typeof meta["cwd"] === "string" ? meta["cwd"] : "",
+        };
+      }
+    }
+    return null;
+  } finally {
+    stream?.destroy();
+  }
 }
 
 /**
@@ -236,8 +298,7 @@ export async function readTranscriptRecords(
         for (const grokRecord of parseGrokLine(line)) out.push(grokRecord);
         return;
       }
-      const record = parseClaudeLine(line);
-      if (record !== null) out.push(record);
+      for (const record of parseClaudeLineRecords(line)) out.push(record);
     };
 
     const toLineString = (lineBuffer: Buffer): string => {

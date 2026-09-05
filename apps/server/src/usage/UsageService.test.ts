@@ -7,23 +7,24 @@ import * as NodePath from "node:path";
 import { assert, describe, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
-import { UsageDay, type UsageSummaryInput } from "@t3tools/contracts";
-import * as Cause from "effect/Cause";
+import { ThreadId, UsageDay, type UsageSummaryInput } from "@t3tools/contracts";
 import * as Duration from "effect/Duration";
+import * as Cause from "effect/Cause";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Scheduler from "effect/Scheduler";
+import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
 import { HttpClient, HttpClientResponse } from "effect/unstable/http";
 
 import * as ServerConfig from "../config.ts";
 import { ProjectionProjectRepositoryLive } from "../persistence/Layers/ProjectionProjects.ts";
 import { ProjectionThreadRepositoryLive } from "../persistence/Layers/ProjectionThreads.ts";
-import { PersistenceSqlError } from "../persistence/Errors.ts";
 import { ProjectionProjectRepository } from "../persistence/Services/ProjectionProjects.ts";
+import { PersistenceSqlError } from "../persistence/Errors.ts";
 import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
 import * as ProviderSessionRuntime from "../persistence/ProviderSessionRuntime.ts";
 import * as ServerSettings from "../serverSettings.ts";
@@ -47,6 +48,31 @@ function claudeLine(
       usage: { input_tokens: 10, output_tokens: outputTokens },
     },
   })}\n`;
+}
+
+function codexRollout(sessionId: string, cwd: string, outputTokens: number): string {
+  return [
+    {
+      type: "session_meta",
+      timestamp: "2026-08-01T10:00:00Z",
+      payload: { type: "session_meta", id: sessionId, cwd },
+    },
+    {
+      type: "turn_context",
+      timestamp: "2026-08-01T10:00:01Z",
+      payload: { type: "turn_context", model: "gpt-5.2-codex" },
+    },
+    {
+      type: "event_msg",
+      timestamp: "2026-08-01T10:00:05Z",
+      payload: {
+        type: "token_count",
+        info: { last_token_usage: { input_tokens: 100, output_tokens: outputTokens } },
+      },
+    },
+  ]
+    .map((line) => JSON.stringify(line))
+    .join("\n");
 }
 
 const WINDOW: UsageSummaryInput = {
@@ -133,33 +159,120 @@ function totalOutputTokens(summary: { buckets: readonly { totals: { outputTokens
 }
 
 describe("UsageService", () => {
-  it.live("does not hide a project repository defect as unknown attribution", () =>
+  it.live("does not parse unrelated Codex token content for a targeted thread read", () =>
     Effect.gen(function* () {
-      const { transcript, settings, home } = yield* setup;
-      yield* Effect.promise(() => NodeFSP.writeFile(transcript, claudeLine(1, 5)));
-      const defect = new Error("project repository defect");
-      const repositoryDefect = Effect.die(defect);
-      const defectRepository: ProjectionProjectRepository["Service"] = {
-        upsert: () => repositoryDefect,
-        getById: () => repositoryDefect,
-        listAll: () => repositoryDefect,
-        deleteById: () => repositoryDefect,
-      };
-      const exit = yield* Effect.gen(function* () {
+      const { settings, home } = yield* setup;
+      const sessionsDir = NodePath.join(home, "codex", "sessions", "2026", "08", "01");
+      yield* Effect.promise(() => NodeFSP.mkdir(sessionsDir, { recursive: true }));
+      const targetPath = NodePath.join(
+        sessionsDir,
+        "rollout-2026-08-01T10-00-00-target-session.jsonl",
+      );
+      const unrelatedPath = NodePath.join(
+        sessionsDir,
+        "rollout-2026-08-01T10-00-00-unrelated-session.jsonl",
+      );
+      yield* Effect.promise(() =>
+        Promise.all([
+          NodeFSP.writeFile(targetPath, codexRollout("target-session", "/work/target", 7)),
+          NodeFSP.writeFile(unrelatedPath, codexRollout("unrelated-session", "/work/other", 999)),
+        ]),
+      );
+
+      yield* Effect.gen(function* () {
+        const config = yield* ServerConfig.ServerConfig;
+        const runtimeRepository = yield* ProviderSessionRuntime.ProviderSessionRuntimeRepository;
+        yield* runtimeRepository.upsert({
+          threadId: ThreadId.make("target-thread"),
+          providerName: "codex",
+          providerInstanceId: null,
+          adapterKey: "codex",
+          runtimeMode: "full-access",
+          status: "running",
+          lastSeenAt: "2026-08-01T10:00:00.000Z",
+          resumeCursor: { threadId: "target-session" },
+          runtimePayload: null,
+        });
         const service = yield* UsageService.make;
-        return yield* Effect.exit(service.readSummary(WINDOW));
+        const breakdown = yield* service.readThreadBreakdown({
+          ...WINDOW,
+          threadId: ThreadId.make("target-thread"),
+        });
+        assert.strictEqual(breakdown.rows.length, 1);
+        assert.strictEqual(breakdown.rows[0]?.totals.outputTokens, 7);
+
+        const persisted = (yield* Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Unknown))(
+          yield* Effect.promise(() =>
+            NodeFSP.readFile(NodePath.join(config.stateDir, "usage-scan-cache.json"), "utf8"),
+          ),
+        )) as { files: Record<string, unknown>; identities: Record<string, unknown> };
+        assert.deepStrictEqual(Object.keys(persisted.files), [targetPath]);
+        assert.deepStrictEqual(
+          Object.keys(persisted.identities).sort(),
+          [targetPath, unrelatedPath].sort(),
+        );
       }).pipe(
         Effect.provide(
-          serviceLayers({
-            prefix: "usage-service-project-defect-test",
-            home,
-            settings,
-            projectRepository: defectRepository,
-          }),
+          serviceLayers({ prefix: "usage-service-target-prefilter-test", home, settings }),
         ),
       );
-      assert.isTrue(Exit.isFailure(exit));
-      if (Exit.isFailure(exit)) assert.strictEqual(Cause.squash(exit.cause), defect);
+    }).pipe(Effect.scoped),
+  );
+
+  it.live("filters a targeted thread from the summary's cached source snapshot", () =>
+    Effect.gen(function* () {
+      const { settings, home } = yield* setup;
+      const sessionsDir = NodePath.join(home, "codex", "sessions", "2026", "08", "01");
+      yield* Effect.promise(() => NodeFSP.mkdir(sessionsDir, { recursive: true }));
+      const targetPath = NodePath.join(sessionsDir, "rollout-opaque-target.jsonl");
+      const unrelatedPath = NodePath.join(sessionsDir, "rollout-opaque-unrelated.jsonl");
+      yield* Effect.promise(() =>
+        Promise.all([
+          NodeFSP.writeFile(targetPath, codexRollout("target-session", "/work/target", 7)),
+          NodeFSP.writeFile(unrelatedPath, codexRollout("unrelated-session", "/work/other", 999)),
+        ]),
+      );
+
+      yield* Effect.gen(function* () {
+        const runtimeRepository = yield* ProviderSessionRuntime.ProviderSessionRuntimeRepository;
+        yield* runtimeRepository.upsert({
+          threadId: ThreadId.make("target-thread"),
+          providerName: "codex",
+          providerInstanceId: null,
+          adapterKey: "codex",
+          runtimeMode: "full-access",
+          status: "running",
+          lastSeenAt: "2026-08-01T10:00:00.000Z",
+          resumeCursor: { threadId: "target-session" },
+          runtimePayload: null,
+        });
+        const service = yield* UsageService.make;
+        const summary = yield* service.readSummary(WINDOW);
+        yield* Effect.promise(() =>
+          Promise.all([
+            NodeFSP.appendFile(
+              targetPath,
+              `\n${codexRollout("target-session", "/work/target", 70)}`,
+            ),
+            NodeFSP.appendFile(
+              unrelatedPath,
+              `\n${codexRollout("unrelated-session", "/work/other", 9_999)}`,
+            ),
+          ]),
+        );
+        const breakdown = yield* service.readThreadBreakdown({
+          ...WINDOW,
+          threadId: ThreadId.make("target-thread"),
+        });
+
+        assert.strictEqual(breakdown.rows.length, 1);
+        assert.strictEqual(breakdown.rows[0]?.totals.outputTokens, 7);
+        assert.strictEqual(breakdown.readAt, summary.readAt);
+      }).pipe(
+        Effect.provide(
+          serviceLayers({ prefix: "usage-service-target-cached-snapshot-test", home, settings }),
+        ),
+      );
     }).pipe(Effect.scoped),
   );
 
@@ -272,6 +385,38 @@ describe("UsageService", () => {
 
       const summary = yield* service.readSummary(WINDOW);
       assert.strictEqual(summary.buckets[0]?.projectAttribution, "unknown");
+    }).pipe(Effect.scoped),
+  );
+
+  it.live("does not hide a project repository defect as unknown attribution", () =>
+    Effect.gen(function* () {
+      const { transcript, settings, home } = yield* setup;
+      yield* Effect.promise(() => NodeFSP.writeFile(transcript, claudeLine(1, 5)));
+      const defect = new Error("project repository defect");
+      const repositoryDefect = Effect.die(defect);
+      const projectRepository: ProjectionProjectRepository["Service"] = {
+        upsert: () => repositoryDefect,
+        getById: () => repositoryDefect,
+        listAll: () => repositoryDefect,
+        deleteById: () => repositoryDefect,
+      };
+
+      const exit = yield* Effect.gen(function* () {
+        const service = yield* UsageService.make;
+        return yield* Effect.exit(service.readSummary(WINDOW));
+      }).pipe(
+        Effect.provide(
+          serviceLayers({
+            prefix: "usage-service-project-defect-test",
+            home,
+            settings,
+            projectRepository,
+          }),
+        ),
+      );
+
+      assert.isTrue(Exit.isFailure(exit));
+      if (Exit.isFailure(exit)) assert.strictEqual(Cause.squash(exit.cause), defect);
     }).pipe(Effect.scoped),
   );
 
@@ -628,6 +773,141 @@ describe("shortSessionLabel", () => {
     assert.strictEqual(
       UsageService.shortSessionLabel("claude:file:session-dir:updates"),
       "Untitled session",
+    );
+  });
+});
+
+describe("runtimeUsageSessionKey", () => {
+  it("maps every provider with usage transcripts to its persisted session cursor", () => {
+    assert.strictEqual(
+      UsageService.runtimeUsageSessionKey("claudeAgent", { resume: "claude-session" }),
+      "claude:claude-session",
+    );
+    assert.strictEqual(
+      UsageService.runtimeUsageSessionKey("codex", { threadId: "codex-session" }),
+      "codex:codex-session",
+    );
+    assert.strictEqual(
+      UsageService.runtimeUsageSessionKey("grok", { schemaVersion: 1, sessionId: "grok-session" }),
+      "grok:grok-session",
+    );
+  });
+
+  it("includes provider sessions replaced by later model switches", () => {
+    assert.deepEqual(
+      UsageService.runtimeUsageSessionKeys(
+        "codex",
+        { threadId: "current-session" },
+        {
+          _t3PreviousResumeCursors: [
+            { providerName: "codex", resumeCursor: { threadId: "previous-session" } },
+          ],
+        },
+      ),
+      ["codex:current-session", "codex:previous-session"],
+    );
+  });
+
+  it("ignores providers and cursors without a usage transcript session", () => {
+    assert.isNull(UsageService.runtimeUsageSessionKey("opencode", { sessionId: "session" }));
+    assert.isNull(UsageService.runtimeUsageSessionKey("grok", { sessionId: "" }));
+    assert.isNull(UsageService.runtimeUsageSessionKey("grok", null));
+  });
+});
+
+describe("transcriptFileMayMatchThread", () => {
+  const target: UsageService.ThreadTranscriptTarget = {
+    sessionIds: new Map([
+      ["claude", new Set(["claude-session"])],
+      ["codex", new Set(["codex-session"])],
+      ["grok", new Set(["grok-session"])],
+    ]),
+    worktrees: new Set(["/work/app/.wt/thread-1"]),
+  };
+
+  const matches = (
+    provider: "claude" | "codex" | "grok",
+    filePath: string,
+    root: string,
+    options?: {
+      readonly cached?: { readonly size: number; readonly mtimeMs: number };
+      readonly identity?: { readonly sessionId: string; readonly cwd: string };
+    },
+  ) =>
+    UsageService.transcriptFileMayMatchThread({
+      path: NodePath,
+      provider,
+      filePath,
+      root,
+      target,
+      ...(options?.cached === undefined
+        ? {}
+        : { cached: { ...options.cached, records: [], tailRecords: [] } }),
+      ...(options?.identity === undefined ? {} : { identity: options.identity }),
+    });
+
+  it("selects provider files from current and historic session ids", () => {
+    assert.isTrue(matches("claude", "/claude/project/claude-session.jsonl", "/claude"));
+    assert.isTrue(
+      matches("claude", "/claude/project/claude-session/subagents/agent-a.jsonl", "/claude"),
+    );
+    assert.isTrue(
+      matches("codex", "/codex/2026/09/rollout-2026-09-05T12-00-00-codex-session.jsonl", "/codex"),
+    );
+    assert.isTrue(matches("grok", "/grok/cwd/grok-session/updates.jsonl", "/grok"));
+    assert.isFalse(matches("claude", "/claude/project/other-session.jsonl", "/claude"));
+  });
+
+  it("selects Claude and Grok files by their encoded dedicated worktree", () => {
+    assert.isTrue(
+      matches("claude", "/claude/-work-app--wt-thread-1/legacy-session.jsonl", "/claude"),
+    );
+    assert.isTrue(
+      matches("grok", "/grok/%2Fwork%2Fapp%2F.wt%2Fthread-1/legacy-session/updates.jsonl", "/grok"),
+    );
+  });
+
+  it("matches encoded Claude worktrees case-insensitively only for Windows paths", () => {
+    const windowsTarget: UsageService.ThreadTranscriptTarget = {
+      sessionIds: new Map(),
+      worktrees: new Set(["C:/Users/Alex/App/.wt/Thread-1"]),
+    };
+    const matchesTarget = (filePath: string, target: UsageService.ThreadTranscriptTarget) =>
+      UsageService.transcriptFileMayMatchThread({
+        path: NodePath,
+        provider: "claude",
+        filePath,
+        root: "/claude",
+        target,
+      });
+
+    assert.isTrue(
+      matchesTarget("/claude/C--Users-Alex-App--wt-Thread-1/legacy-session.jsonl", windowsTarget),
+    );
+    assert.isTrue(
+      matchesTarget("/claude/c--users-alex-app--wt-thread-1/legacy-session.jsonl", windowsTarget),
+    );
+    assert.isTrue(
+      matchesTarget("/claude/C--Users-Alex-App--wt-Thread-1/legacy-session.jsonl", {
+        ...windowsTarget,
+        worktrees: new Set(["c:/users/alex/app/.wt/thread-1"]),
+      }),
+    );
+    assert.isFalse(matchesTarget("/claude/-Work-App--wt-thread-1/legacy-session.jsonl", target));
+  });
+
+  it("selects Codex rollouts from their bounded session metadata", () => {
+    const path = "/codex/2026/09/rollout-2026-09-05T12-00-00-other-session.jsonl";
+    assert.isFalse(matches("codex", path, "/codex"));
+    assert.isTrue(
+      matches("codex", path, "/codex", {
+        identity: { sessionId: "other-session", cwd: "/work/app/.wt/thread-1" },
+      }),
+    );
+    assert.isFalse(
+      matches("codex", path, "/codex", {
+        identity: { sessionId: "other-session", cwd: "/work/app/.wt/thread-2" },
+      }),
     );
   });
 });
