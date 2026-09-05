@@ -159,7 +159,6 @@ import {
   copyComposerDraftContentIfEmpty,
   copyComposerDraftContentState,
   decodePersistedComposerState,
-  decodePersistedComposerDrafts,
   ensureComposerDraftsLoaded,
   type ComposerDraft,
   flushComposerDrafts,
@@ -254,12 +253,12 @@ describe("mobile composer drafts", () => {
     };
 
     expect(
-      decodePersistedComposerDrafts({
+      decodePersistedComposerState({
         schemaVersion: 1,
         drafts: {
           "environment-1:thread-1": { text: "Review this file", attachments: [file] },
         },
-      }),
+      }).drafts,
     ).toEqual({
       "environment-1:thread-1": { text: "Review this file", attachments: [file] },
     });
@@ -989,7 +988,7 @@ describe("mobile composer drafts", () => {
 
   it("rejects persisted images without image bytes or a file URI", () => {
     expect(() =>
-      decodePersistedComposerDrafts({
+      decodePersistedComposerState({
         schemaVersion: 1,
         drafts: {
           "environment-1:thread-1": {
@@ -1012,7 +1011,7 @@ describe("mobile composer drafts", () => {
 
   it("hydrates selector state even when the message content is empty", () => {
     expect(
-      decodePersistedComposerDrafts({
+      decodePersistedComposerState({
         schemaVersion: 1,
         drafts: {
           "new-task:environment-1:project-1": {
@@ -1032,7 +1031,7 @@ describe("mobile composer drafts", () => {
             },
           },
         },
-      }),
+      }).drafts,
     ).toEqual({
       "new-task:environment-1:project-1": {
         text: "",
@@ -1055,18 +1054,18 @@ describe("mobile composer drafts", () => {
 
   it("keeps legacy content-only drafts and rejects invalid selector state", () => {
     expect(
-      decodePersistedComposerDrafts({
+      decodePersistedComposerState({
         schemaVersion: 1,
         drafts: {
           "environment-1:thread-1": DRAFT,
         },
-      }),
+      }).drafts,
     ).toEqual({
       "environment-1:thread-1": DRAFT,
     });
 
     expect(() =>
-      decodePersistedComposerDrafts({
+      decodePersistedComposerState({
         schemaVersion: 1,
         drafts: {
           "environment-1:thread-1": {
