@@ -70,6 +70,7 @@ import {
   useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
 } from "react";
 import { flushSync } from "react-dom";
 import { useLocation, useNavigate } from "@tanstack/react-router";
@@ -459,7 +460,6 @@ const EMPTY_PROVIDERS: ServerProvider[] = [];
 const EMPTY_PROVIDER_SKILLS: ServerProvider["skills"] = [];
 const EMPTY_PENDING_USER_INPUT_ANSWERS: Record<string, PendingUserInputDraftAnswer> = {};
 const pendingThreadHandovers = createPendingHandoverStore();
-const generatingThreadHandovers = new Set<string>();
 function useDraftHeroLayoutTransition(isDraftHeroState: boolean) {
   const transitionGroupRef = useRef<HTMLDivElement | null>(null);
   const composerAnchorRef = useRef<HTMLDivElement | null>(null);
@@ -5466,12 +5466,16 @@ export default function ChatView(props: ChatViewProps) {
     handleStopBackgroundWork,
     isStoppingBackgroundWork,
   ]);
-  const [, setHandoverStateVersion] = useState(0);
+  useSyncExternalStore(
+    pendingThreadHandovers.subscribe,
+    pendingThreadHandovers.getVersion,
+    pendingThreadHandovers.getVersion,
+  );
   const activeThreadHandoverKey = activeThread
     ? threadHandoverSourceKey(activeThread.environmentId, activeThread.id)
     : null;
   const isGeneratingHandover = activeThreadHandoverKey
-    ? generatingThreadHandovers.has(activeThreadHandoverKey)
+    ? pendingThreadHandovers.isGenerating(activeThreadHandoverKey)
     : false;
   const pendingHandoverAttempt = activeThreadHandoverKey
     ? pendingThreadHandovers.get(activeThreadHandoverKey)
@@ -5488,9 +5492,8 @@ export default function ChatView(props: ChatViewProps) {
       return;
     }
     const sourceThreadKey = activeThreadHandoverKey;
-    if (generatingThreadHandovers.has(sourceThreadKey)) return;
-    generatingThreadHandovers.add(sourceThreadKey);
-    setHandoverStateVersion((version) => version + 1);
+    if (pendingThreadHandovers.isGenerating(sourceThreadKey)) return;
+    pendingThreadHandovers.setGenerating(sourceThreadKey, true);
     try {
       let attempt = pendingThreadHandovers.get(sourceThreadKey);
       if (attempt === undefined) {
@@ -5513,7 +5516,6 @@ export default function ChatView(props: ChatViewProps) {
         }
         attempt = { handover: result.value.handover };
         pendingThreadHandovers.save(sourceThreadKey, attempt);
-        setHandoverStateVersion((version) => version + 1);
       }
       const handoverAttempt = attempt;
       const handover = handoverAttempt.handover;
@@ -5535,7 +5537,6 @@ export default function ChatView(props: ChatViewProps) {
             : { reopenDraftId: handoverAttempt.draftId }),
           onDraftReady: (draftId) => {
             pendingThreadHandovers.save(sourceThreadKey, { ...handoverAttempt, draftId });
-            setHandoverStateVersion((version) => version + 1);
           },
         },
       );
@@ -5570,8 +5571,7 @@ export default function ChatView(props: ChatViewProps) {
         }),
       );
     } finally {
-      generatingThreadHandovers.delete(sourceThreadKey);
-      setHandoverStateVersion((version) => version + 1);
+      pendingThreadHandovers.setGenerating(sourceThreadKey, false);
     }
   }, [
     activeProject,

@@ -61,7 +61,7 @@ settings section when you no longer need it.
 
 Use **Past 24h** for an hourly chart covering the exact rolling 24-hour period. The **7 days**,
 **30 days**, and **90 days** ranges use daily resolution. Cost and token toggles update both the
-headline and chart, and refreshing rescans every connected environment.
+headline and chart, and refreshing rescans the selected environments.
 
 The page warns when the latest calendar day's usage crosses the built-in budget levels. Claude
 warnings use its API-rate estimate. API-equivalent warnings include subscription traffic such as

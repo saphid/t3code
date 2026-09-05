@@ -8,6 +8,10 @@ export interface PendingHandover {
 }
 
 export interface PendingHandoverStore {
+  readonly subscribe: (listener: () => void) => () => void;
+  readonly getVersion: () => number;
+  readonly isGenerating: (sourceThreadKey: string) => boolean;
+  readonly setGenerating: (sourceThreadKey: string, generating: boolean) => void;
   readonly get: (sourceThreadKey: string) => PendingHandover | undefined;
   readonly has: (sourceThreadKey: string) => boolean;
   readonly save: (sourceThreadKey: string, handover: PendingHandover) => void;
@@ -20,7 +24,29 @@ export function createPendingHandoverStore(
 ): PendingHandoverStore {
   const entries = new Map<string, PendingHandover>();
 
+  const generating = new Set<string>();
+  const listeners = new Set<() => void>();
+  let version = 0;
+  const notify = () => {
+    version += 1;
+    for (const listener of listeners) listener();
+  };
+
   return {
+    subscribe: (listener) => {
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
+      };
+    },
+    getVersion: () => version,
+    isGenerating: (key) => generating.has(key),
+    setGenerating: (key, value) => {
+      if (generating.has(key) === value) return;
+      if (value) generating.add(key);
+      else generating.delete(key);
+      notify();
+    },
     get: (sourceThreadKey) => entries.get(sourceThreadKey),
     has: (sourceThreadKey) => entries.has(sourceThreadKey),
     save: (sourceThreadKey, handover) => {
@@ -31,9 +57,10 @@ export function createPendingHandoverStore(
         if (oldestKey === undefined) break;
         entries.delete(oldestKey);
       }
+      notify();
     },
     delete: (sourceThreadKey) => {
-      entries.delete(sourceThreadKey);
+      if (entries.delete(sourceThreadKey)) notify();
     },
     size: () => entries.size,
   };

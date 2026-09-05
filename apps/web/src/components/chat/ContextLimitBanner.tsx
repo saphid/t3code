@@ -45,22 +45,25 @@ export function buildContextLimitBannerItem({
         ) : null}
       </span>
     ),
-    description: supportsGeneration
-      ? "T3 will not start another turn here. Create a compact handover, then review it in a new draft before choosing the next model and reasoning level."
-      : "T3 will not start another turn here. Update the connected server to create an automatic handover, or start a new thread manually.",
-    actions: supportsGeneration ? (
-      <Button
-        size="xs"
-        variant="outline"
-        disabled={isGeneratingHandover}
-        onClick={onGenerateHandover}
-      >
-        {isGeneratingHandover
-          ? "Creating handover..."
-          : hasSavedHandover
-            ? "Open saved handover"
-            : "Handover to new thread"}
-      </Button>
-    ) : undefined,
+    description: hasSavedHandover
+      ? "Your saved handover is ready. Open it in a new draft to review it before choosing the next model and reasoning level."
+      : supportsGeneration
+        ? "T3 will not start another turn here. Create a compact handover, then review it in a new draft before choosing the next model and reasoning level."
+        : "T3 will not start another turn here. Update the connected server to create an automatic handover, or start a new thread manually.",
+    actions:
+      supportsGeneration || hasSavedHandover ? (
+        <Button
+          size="xs"
+          variant="outline"
+          disabled={isGeneratingHandover}
+          onClick={onGenerateHandover}
+        >
+          {isGeneratingHandover
+            ? "Creating handover..."
+            : hasSavedHandover
+              ? "Open saved handover"
+              : "Handover to new thread"}
+        </Button>
+      ) : undefined,
   };
 }
