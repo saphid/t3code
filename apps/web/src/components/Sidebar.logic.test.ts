@@ -4,6 +4,7 @@ import {
   buildBulkTitleRegenerationContextMenuItem,
   buildMultiSelectThreadContextMenuItems,
   createThreadJumpHintVisibilityController,
+  EMPTY_TURN_COMPLETION_TICK_STATE,
   getSidebarThreadIdsToPrewarm,
   getVisibleSidebarThreadIds,
   resolveAdjacentThreadId,
@@ -19,6 +20,7 @@ import {
   resolveSidebarStageBadgeLabel,
   resolveThreadRowClassName,
   resolveSidebarThreadStatus,
+  reduceTurnCompletionTick,
   resolveThreadStatusPill,
   resolveWorkingStartedAt,
   searchSidebarThreadsByTitle,
@@ -244,19 +246,15 @@ describe("resolveSidebarStageBadgeLabel", () => {
   });
 });
 
-function makeLatestTurn(overrides?: {
-  completedAt?: string | null;
-  startedAt?: string | null;
-}): OrchestrationLatestTurn {
+function makeLatestTurn(overrides: Partial<OrchestrationLatestTurn> = {}): OrchestrationLatestTurn {
   return {
     turnId: "turn-1" as never,
     state: "completed",
     assistantMessageId: null,
     requestedAt: "2026-03-09T10:00:00.000Z",
-    startedAt:
-      overrides?.startedAt !== undefined ? overrides.startedAt : "2026-03-09T10:00:00.000Z",
-    completedAt:
-      overrides?.completedAt !== undefined ? overrides.completedAt : "2026-03-09T10:05:00.000Z",
+    startedAt: "2026-03-09T10:00:00.000Z",
+    completedAt: "2026-03-09T10:05:00.000Z",
+    ...overrides,
   };
 }
 
@@ -732,6 +730,159 @@ describe("resolveSidebarThreadStatus", () => {
 
   it("defaults to ready with no session", () => {
     expect(resolveSidebarThreadStatus({ ...idle, session: null })).toBe("ready");
+  });
+});
+
+describe("reduceTurnCompletionTick", () => {
+  const runningSession = {
+    threadId: ThreadId.make("thread-1"),
+    status: "running" as const,
+    providerName: "Codex",
+    providerInstanceId: ProviderInstanceId.make("codex"),
+    runtimeMode: DEFAULT_RUNTIME_MODE,
+    activeTurnId: "turn-1" as never,
+    lastError: null,
+    updatedAt: "2026-03-09T10:00:00.000Z",
+  };
+  const observe = (
+    state: typeof EMPTY_TURN_COMPLETION_TICK_STATE,
+    overrides: Partial<Parameters<typeof reduceTurnCompletionTick>[1]> = {},
+  ) =>
+    reduceTurnCompletionTick(state, {
+      latestTurn: makeLatestTurn({ state: "running", completedAt: null }),
+      latestUserMessageAt: "2026-03-09T10:00:00.000Z",
+      session: runningSession,
+      canObserveLiveTransitions: true,
+      isForeground: true,
+      ...overrides,
+    });
+
+  it("starts once for a live same-turn running to completed transition", () => {
+    const running = observe(EMPTY_TURN_COMPLETION_TICK_STATE);
+    expect(running.action).toBe("none");
+    expect(running.state.phase).toBe("running");
+
+    const completed = observe(running.state, {
+      latestTurn: makeLatestTurn(),
+      session: { ...runningSession, status: "ready", activeTurnId: null },
+    });
+    expect(completed.action).toBe("start");
+    expect(completed.state.phase).toBe("terminal");
+
+    expect(
+      observe(completed.state, {
+        latestTurn: makeLatestTurn(),
+        session: { ...runningSession, status: "ready", activeTurnId: null },
+      }).action,
+    ).toBe("none");
+    expect(observe(completed.state).action).toBe("none");
+
+    const correctedToError = observe(completed.state, {
+      latestTurn: makeLatestTurn({ state: "error" }),
+      session: {
+        ...runningSession,
+        status: "error",
+        activeTurnId: null,
+        lastError: "late failure",
+      },
+    });
+    expect(correctedToError.action).toBe("cancel");
+  });
+
+  it("does not start from completed hydration or remount state", () => {
+    const completed = observe(EMPTY_TURN_COMPLETION_TICK_STATE, {
+      latestTurn: makeLatestTurn(),
+      session: { ...runningSession, status: "ready", activeTurnId: null },
+    });
+
+    expect(completed.action).toBe("none");
+    expect(completed.state.phase).toBe("terminal");
+  });
+
+  it.each([
+    ["error", "error"],
+    ["interrupted", "interrupted"],
+    ["interrupted", "stopped"],
+  ] as const)("cancels for %s turn / %s session", (turnState, sessionStatus) => {
+    const running = observe(EMPTY_TURN_COMPLETION_TICK_STATE);
+    const ended = observe(running.state, {
+      latestTurn: makeLatestTurn({ state: turnState }),
+      session: {
+        ...runningSession,
+        status: sessionStatus,
+        activeTurnId: null,
+        lastError: turnState === "error" ? "boom" : null,
+      },
+    });
+
+    expect(ended.action).toBe("cancel");
+    expect(ended.state.phase).toBe("terminal");
+  });
+
+  it.each([
+    { canObserveLiveTransitions: false, isForeground: true },
+    { canObserveLiveTransitions: true, isForeground: false },
+  ])("does not replay a completion after the live foreground gate resets", (gate) => {
+    const running = observe(EMPTY_TURN_COMPLETION_TICK_STATE);
+    const reset = observe(running.state, gate);
+    expect(reset.action).toBe("cancel");
+    expect(reset.state).toBe(EMPTY_TURN_COMPLETION_TICK_STATE);
+
+    const completed = observe(reset.state, {
+      latestTurn: makeLatestTurn(),
+      session: { ...runningSession, status: "ready", activeTurnId: null },
+    });
+    expect(completed.action).toBe("none");
+  });
+
+  it("cancels an old tick for a new turn and ignores an older replay", () => {
+    const running = observe(EMPTY_TURN_COMPLETION_TICK_STATE);
+    const completed = observe(running.state, {
+      latestTurn: makeLatestTurn(),
+      session: { ...runningSession, status: "ready", activeTurnId: null },
+    });
+    expect(completed.action).toBe("start");
+
+    const nextRunning = observe(completed.state, {
+      latestTurn: makeLatestTurn({
+        turnId: "turn-2" as never,
+        state: "running",
+        requestedAt: "2026-03-09T11:00:00.000Z",
+        startedAt: "2026-03-09T11:00:00.000Z",
+        completedAt: null,
+      }),
+      session: {
+        ...runningSession,
+        activeTurnId: "turn-2" as never,
+        updatedAt: "2026-03-09T11:00:00.000Z",
+      },
+    });
+    expect(nextRunning.action).toBe("cancel");
+    expect(nextRunning.state).toMatchObject({ turnId: "turn-2", phase: "running" });
+
+    const staleCompletion = observe(nextRunning.state, {
+      latestTurn: makeLatestTurn(),
+      session: { ...runningSession, status: "ready", activeTurnId: null },
+    });
+    expect(staleCompletion.action).toBe("none");
+    expect(staleCompletion.state).toBe(nextRunning.state);
+  });
+
+  it("cancels as soon as a newer user message queues the next turn", () => {
+    const running = observe(EMPTY_TURN_COMPLETION_TICK_STATE);
+    const completed = observe(running.state, {
+      latestTurn: makeLatestTurn(),
+      session: { ...runningSession, status: "ready", activeTurnId: null },
+    });
+    expect(completed.action).toBe("start");
+
+    const queued = observe(completed.state, {
+      latestTurn: makeLatestTurn(),
+      latestUserMessageAt: "2026-03-09T11:00:00.000Z",
+      session: { ...runningSession, status: "ready", activeTurnId: null },
+    });
+    expect(queued.action).toBe("cancel");
+    expect(queued.state).toBe(EMPTY_TURN_COMPLETION_TICK_STATE);
   });
 });
 
