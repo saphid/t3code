@@ -14,3 +14,11 @@ GIFs and MP4s include the trigger controls, transition, settled state, failure/r
 Validation: 178 focused tests passed, web package typecheck, targeted lint/format, Electron fixture capture, reduced-motion and forced-color inspection. Fresh GPT-5.6 Sol read-only source review found no actionable findings. Direct Claude Opus 5 high review launch exited 1 before any model execution because its OAuth session could not refresh.
 
 Limitations: no live provider turn or end-to-end hosted pairing was run; fixture recordings demonstrate presentation and deterministic transition handling. Mobile was not changed or tested. No packaged Nightly build was installed.
+
+## Expanded atlas
+
+The `apple-N` GIF/PNG pairs are original animated mechanism diagrams, explicitly labeled as diagrams rather than original Apple footage. `idea-EX-01` through `idea-EX-24` illustrate proposed T3 interactions; none establishes implemented application behavior. Each proposal has its own trigger, transition and settled stage. Apple and publisher recordings remain local attributed references and are not distributed here.
+
+`atlas-inline-after.png` and `.mp4` show the expanded private development gallery with two proposal GIFs visible inline and playing by default. The recording contains no personal thread content.
+
+Copy these GIF/PNG files into `apps/web/whimsy/media/` alongside the existing feature recordings. The main branch manifests choose the media. Expanded asset hashes are in `expanded-sha256.txt`.
