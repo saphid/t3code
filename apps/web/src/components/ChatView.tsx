@@ -5433,7 +5433,7 @@ export default function ChatView(props: ChatViewProps) {
   const isGeneratingHandover = activeThreadHandoverKey
     ? generatingThreadHandovers.has(activeThreadHandoverKey)
     : false;
-  const pendingHandover = activeThreadHandoverKey
+  const pendingHandoverAttempt = activeThreadHandoverKey
     ? pendingThreadHandovers.get(activeThreadHandoverKey)
     : undefined;
   const handleGenerateHandover = useCallback(async () => {
@@ -5452,8 +5452,8 @@ export default function ChatView(props: ChatViewProps) {
     generatingThreadHandovers.add(sourceThreadKey);
     setHandoverStateVersion((version) => version + 1);
     try {
-      let handover = pendingThreadHandovers.get(sourceThreadKey);
-      if (handover === undefined) {
+      let attempt = pendingThreadHandovers.get(sourceThreadKey);
+      if (attempt === undefined) {
         const result = await generateThreadHandover({
           environmentId: activeThread.environmentId,
           input: { threadId: activeThread.id },
@@ -5471,10 +5471,12 @@ export default function ChatView(props: ChatViewProps) {
           }
           return;
         }
-        handover = result.value.handover;
-        pendingThreadHandovers.save(sourceThreadKey, handover);
+        attempt = { handover: result.value.handover };
+        pendingThreadHandovers.save(sourceThreadKey, attempt);
         setHandoverStateVersion((version) => version + 1);
       }
+      const handoverAttempt = attempt;
+      const handover = handoverAttempt.handover;
 
       if (routeThreadKeyRef.current !== sourceThreadKey) {
         return;
@@ -5487,6 +5489,14 @@ export default function ChatView(props: ChatViewProps) {
           worktreePath: activeThread.worktreePath,
           envMode: activeThread.worktreePath ? "worktree" : "local",
           startFromOrigin: false,
+          initialPrompt: handover,
+          ...(handoverAttempt.draftId === undefined
+            ? {}
+            : { reopenDraftId: handoverAttempt.draftId }),
+          onDraftReady: (draftId) => {
+            pendingThreadHandovers.save(sourceThreadKey, { ...handoverAttempt, draftId });
+            setHandoverStateVersion((version) => version + 1);
+          },
         },
       );
       if (opened === null) {
@@ -5510,7 +5520,6 @@ export default function ChatView(props: ChatViewProps) {
         }
         return;
       }
-      useComposerDraftStore.getState().setPrompt(opened.draftId, handover);
       pendingThreadHandovers.delete(sourceThreadKey);
     } catch (error) {
       toastManager.add(
@@ -5544,7 +5553,7 @@ export default function ChatView(props: ChatViewProps) {
       canChangeTokenLimit: primaryEnvironment?.environmentId === environmentId,
       supportsGeneration,
       isGeneratingHandover,
-      hasSavedHandover: pendingHandover !== undefined,
+      hasSavedHandover: pendingHandoverAttempt !== undefined,
       onChangeTokenLimit: () => {
         void navigate({
           to: "/settings/general",
@@ -5560,7 +5569,7 @@ export default function ChatView(props: ChatViewProps) {
     environmentId,
     handleGenerateHandover,
     isGeneratingHandover,
-    pendingHandover,
+    pendingHandoverAttempt,
     navigate,
     primaryEnvironment?.environmentId,
     serverConfig?.environment.capabilities.threadHandoverGeneration,

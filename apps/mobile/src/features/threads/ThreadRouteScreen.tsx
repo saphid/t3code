@@ -79,7 +79,7 @@ import {
   mergeComposerDraftContent,
   updateComposerDraftSettings,
 } from "../../state/use-composer-drafts";
-import { uuidv4 } from "../../lib/uuid";
+import { threadHandoverDraftImportId } from "../../state/threadHandoverDraft";
 import { projectThreadContentPresentation } from "./threadContentPresentation";
 import {
   useAdaptiveWorkspaceLayout,
@@ -406,7 +406,10 @@ function ThreadRouteContent(
         }
         attempt = {
           handover: result.value.handover,
-          draftImportId: `handover:${uuidv4()}`,
+          draftImportId: threadHandoverDraftImportId(
+            selectedThread.environmentId,
+            selectedThread.id,
+          ),
           draftWritten: false,
         };
         saveMobileHandoverAttempt(sourceThreadKey, attempt);
@@ -421,26 +424,26 @@ function ThreadRouteContent(
       }
 
       const destinationDraftKey = `new-task:${selectedThread.environmentId}:${selectedThread.projectId}`;
-      if (
-        !attempt.draftWritten ||
-        !getComposerDraftSnapshot(destinationDraftKey).importedShareIds?.includes(
-          attempt.draftImportId,
-        )
-      ) {
-        await mergeComposerDraftContent(destinationDraftKey, {
-          text: attempt.handover,
-          attachments: [],
-          sourceShareId: attempt.draftImportId,
-        });
-        updateComposerDraftSettings(destinationDraftKey, {
-          workspaceSelection: {
-            // Local mode continues the selected checkout; worktree mode creates a new one.
-            mode: "local",
-            branch: selectedThread.branch,
-            worktreePath: selectedThread.worktreePath,
-            startFromOrigin: false,
-          },
-        });
+      const draftAlreadyImported = getComposerDraftSnapshot(
+        destinationDraftKey,
+      ).importedShareIds?.includes(attempt.draftImportId);
+      if (!attempt.draftWritten || !draftAlreadyImported) {
+        if (!draftAlreadyImported) {
+          await mergeComposerDraftContent(destinationDraftKey, {
+            text: attempt.handover,
+            attachments: [],
+            sourceShareId: attempt.draftImportId,
+          });
+          updateComposerDraftSettings(destinationDraftKey, {
+            workspaceSelection: {
+              // Local mode continues the selected checkout; worktree mode creates a new one.
+              mode: "local",
+              branch: selectedThread.branch,
+              worktreePath: selectedThread.worktreePath,
+              startFromOrigin: false,
+            },
+          });
+        }
         await flushComposerDrafts();
         attempt = { ...attempt, draftWritten: true };
         saveMobileHandoverAttempt(sourceThreadKey, attempt);
