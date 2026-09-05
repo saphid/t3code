@@ -9,7 +9,7 @@ import { describe, expect, it } from "@effect/vitest";
 import {
   evaluateTurnStartLimits,
   evaluateHandoverStartLimits,
-  MAX_CONCURRENT_PROVIDER_TURNS,
+  DEFAULT_MAX_CONCURRENT_THREADS,
   DEFAULT_THREAD_CONTEXT_TOKEN_LIMIT,
 } from "./UsageLimitPolicy.ts";
 
@@ -37,6 +37,49 @@ function session(index: number, status: ProviderSession["status"] = "running"): 
 const aiEnablers = "ai-enablers" as ProviderInstanceId;
 
 describe("evaluateTurnStartLimits", () => {
+  it.each([1, 3, 12])(
+    "uses a configured concurrency limit of %s for turns and handovers",
+    (maxConcurrentThreads) => {
+      const sessions = Array.from({ length: maxConcurrentThreads }, (_, index) => session(index));
+      const input = { threadId, activities: [], sessions, maxConcurrentThreads };
+      expect(evaluateTurnStartLimits(input)).toMatchObject({ code: "concurrent-turn-limit" });
+      expect(evaluateTurnStartLimits(input)?.detail).toContain(
+        `hard limit is ${maxConcurrentThreads}`,
+      );
+      expect(evaluateHandoverStartLimits(input)).toMatchObject({ code: "concurrent-turn-limit" });
+      expect(evaluateTurnStartLimits({ ...input, sessions: sessions.slice(1) })).toBeUndefined();
+      expect(
+        evaluateHandoverStartLimits({ ...input, sessions: sessions.slice(1) }),
+      ).toBeUndefined();
+    },
+  );
+
+  it("allows an existing running thread to continue after the limit is lowered", () => {
+    const input = {
+      threadId: "thread-0" as ThreadId,
+      activities: [],
+      sessions: [session(0), session(1)],
+      maxConcurrentThreads: 1,
+    };
+    expect(evaluateTurnStartLimits(input)).toBeUndefined();
+    expect(evaluateTurnStartLimits({ ...input, threadId })).toMatchObject({
+      code: "concurrent-turn-limit",
+    });
+  });
+
+  it("keeps AI Enablers exempt at a custom limit", () => {
+    expect(
+      evaluateTurnStartLimits({
+        threadId,
+        activities: [],
+        sessions: [session(0)],
+        maxConcurrentThreads: 1,
+        providerInstanceId: aiEnablers,
+        excludedProviderInstanceIds: new Set([aiEnablers]),
+      }),
+    ).toBeUndefined();
+  });
+
   it("blocks a thread at the context ceiling", () => {
     const violation = evaluateTurnStartLimits({
       threadId,
@@ -88,7 +131,9 @@ describe("evaluateTurnStartLimits", () => {
     const violation = evaluateTurnStartLimits({
       threadId,
       activities: [],
-      sessions: Array.from({ length: MAX_CONCURRENT_PROVIDER_TURNS }, (_, index) => session(index)),
+      sessions: Array.from({ length: DEFAULT_MAX_CONCURRENT_THREADS }, (_, index) =>
+        session(index),
+      ),
     });
 
     expect(violation?.code).toBe("concurrent-turn-limit");
@@ -96,7 +141,7 @@ describe("evaluateTurnStartLimits", () => {
 
   it("does not count running AI Enablers threads toward the concurrency ceiling", () => {
     const sessions = [
-      ...Array.from({ length: MAX_CONCURRENT_PROVIDER_TURNS - 1 }, (_, index) => session(index)),
+      ...Array.from({ length: DEFAULT_MAX_CONCURRENT_THREADS - 1 }, (_, index) => session(index)),
       { ...session(99), providerInstanceId: aiEnablers },
     ];
 
@@ -111,7 +156,7 @@ describe("evaluateTurnStartLimits", () => {
   });
 
   it("allows AI Enablers turns when the concurrency ceiling is full", () => {
-    const sessions = Array.from({ length: MAX_CONCURRENT_PROVIDER_TURNS }, (_, index) =>
+    const sessions = Array.from({ length: DEFAULT_MAX_CONCURRENT_THREADS }, (_, index) =>
       session(index),
     );
 
@@ -130,7 +175,7 @@ describe("evaluateTurnStartLimits", () => {
     const violation = evaluateTurnStartLimits({
       threadId,
       activities: [],
-      sessions: Array.from({ length: MAX_CONCURRENT_PROVIDER_TURNS - 1 }, (_, index) =>
+      sessions: Array.from({ length: DEFAULT_MAX_CONCURRENT_THREADS - 1 }, (_, index) =>
         session(index),
       ),
       reservedTurnThreadIds: ["reserved-thread" as ThreadId],
@@ -143,7 +188,7 @@ describe("evaluateTurnStartLimits", () => {
     const violation = evaluateTurnStartLimits({
       threadId,
       activities: [],
-      sessions: Array.from({ length: MAX_CONCURRENT_PROVIDER_TURNS - 1 }, (_, index) =>
+      sessions: Array.from({ length: DEFAULT_MAX_CONCURRENT_THREADS - 1 }, (_, index) =>
         session(index),
       ),
       reservedHandoverCount: 1,
@@ -154,7 +199,7 @@ describe("evaluateTurnStartLimits", () => {
 
   it("does not count ready sessions and permits an already-running thread", () => {
     const sessions = [
-      ...Array.from({ length: MAX_CONCURRENT_PROVIDER_TURNS }, (_, index) => session(index)),
+      ...Array.from({ length: DEFAULT_MAX_CONCURRENT_THREADS }, (_, index) => session(index)),
       { ...session(99), threadId, status: "running" as const },
       session(100, "ready"),
     ];
