@@ -1,9 +1,11 @@
 # Whimsy atlas workbench
 
 Open `/whimsy/index.html` on this worktree's shared development origin. The
-page has 51 sourced historical examples in ten categories, three authentic
-Apple GIF references, and four interactive T3 component studies with cropped
-Electron recordings. It is a curated survey, not an exhaustive inventory of
+page has 51 sourced historical examples in ten categories, 24 additional T3
+proposals, and four implemented component studies with cropped Electron recordings.
+Every example has an inline GIF playing by default. A system reduced-motion
+preference starts with still frames and an explicit Play all override. Authentic recordings have
+source credits; animated diagrams and proposed treatments are explicitly labeled. It is a curated survey, not an exhaustive inventory of
 everything Apple has shipped.
 
 This directory and `../whimsy-fixture.html` are development entries. They are
@@ -26,6 +28,9 @@ The T3 captures are available on the public
 [evidence branch](https://github.com/saphid/t3code/tree/whimsy/electron-evidence),
 with exact feature commits, provenance and file hashes. Copy its PNG, GIF and
 MP4 files into `media/` to reproduce the recorded examples in another checkout.
+That branch also carries the original `apple-N` diagram pairs, the 24
+`idea-EX-N` proposal pairs, and a desktop recording of the expanded gallery.
+Downloaded publisher footage remains a local attributed reference.
 
 ## Review inputs
 
@@ -40,6 +45,11 @@ The feature PRs are independent patches against the reviewed baseline:
 [completion tick](https://github.com/saphid/t3code/pull/55), and
 [calm spectrum](https://github.com/saphid/t3code/pull/56).
 
-`evidence.json` supplies their image, GIF, video and PR links. Inline GIF
-previews start only on request and stop after eight seconds or when the page
-is hidden. Direct GIF downloads retain their normal looping behavior.
+`evidence.json` supplies the implemented studies’ image, GIF, video and PR links.
+`opportunities.json` supplies the 24 proposals and their agent briefs;
+`illustrations.json` maps every historical entry to a recording or a labeled
+diagram. GIFs play inline by default. Pause all swaps them for still frames;
+hiding the page also pauses them, and returning resumes unless manually paused.
+The gallery’s repeating demonstrations do not authorize idle animation in the app.
+
+The expanded implementation handoff is [whimsy-opportunities.md](../../../docs/internals/whimsy-opportunities.md).

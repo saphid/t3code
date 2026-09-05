@@ -10,24 +10,48 @@
     <header class="masthead">
       <a href="#">T3 / FIELD NOTES</a>
       <nav aria-label="Page">
-        <a href="#studies">Side by side</a><a href="#atlas">The atlas</a
-        ><a href="#principles">The guide</a>
+        <a href="#opportunities">24 new ideas</a><a href="#studies">Built studies</a
+        ><a href="#atlas">The atlas</a><a href="#principles">The guide</a>
       </nav>
     </header>
+    <div class="motion-controls">
+      <span>Every example, in motion.</span
+      ><button id="pause-all" type="button" aria-pressed="false">Pause all GIFs</button>
+    </div>
     <main>
       <section class="intro">
         <p class="eyebrow">APPLE → T3 CODE · A WORKING DESIGN STUDY</p>
-        <h1>A little more<br /><em>human.</em></h1>
+        <h1>A little more <em>human.</em></h1>
         <div class="intro-bottom">
           <p>
             Small details. Real character. An atlas of Apple’s playful side—and a workbench for
             bringing that care into T3 Code.
           </p>
           <div class="stamp">
-            <span>01—04</span>FIRST ELECTRON STUDIES<br />SOURCE → PRINCIPLE → INTERACTION
+            <span>28 ideas</span>AN ELECTRON WHIMSY WORKBENCH<br />SOURCE → PRINCIPLE → INTERACTION
           </div>
         </div>
         <div class="spectrum" aria-hidden="true"></div>
+      </section>
+      <section id="opportunities">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">24 MORE PLACES TO BRING BACK CHARACTER</p>
+            <h2>A much bigger workbench.</h2>
+          </div>
+          <p>
+            Concrete opportunities found in T3’s source. Each GIF illustrates a proposal—not an
+            implemented feature. The four implemented studies follow below.
+          </p>
+        </div>
+        <div class="filters">
+          <label
+            >Explore an app area<select id="opportunity-area">
+              <option value="">Every area</option>
+            </select></label
+          ><span id="opportunity-count" aria-live="polite"></span>
+        </div>
+        <div id="opportunities-grid" class="opportunities-grid"></div>
       </section>
       <section id="studies">
         <div class="section-heading">
@@ -36,8 +60,8 @@
             <h2>From Apple to the workbench.</h2>
           </div>
           <p>
-            Recordings show the reference. Live component fixtures show the T3 treatment. Each has a
-            specific job.
+            GIFs demonstrate every treatment directly. The four studies below are implemented; the
+            expanded ideas above are proposed.
           </p>
         </div>
         <div class="column-labels">
@@ -53,9 +77,9 @@
             </p>
             <div class="media" data-media="clock">
               <img
-                src="./media/clock.png"
+                src="./media/clock.gif"
                 alt="iPhone Clock icon with hour, minute and second hands"
-              /><button class="play" type="button">▶ Play Apple GIF</button>
+              />
             </div>
             <p class="credit">
               Actual iPhone recording · Justin Meyers / Gadget Hacks ·
@@ -72,11 +96,9 @@
               Stable shelves, drawers, pegboards and steps make otherwise identical project folders
               easier to scan. Identity is static; your custom icon still wins.
             </p>
-            <iframe
-              title="Interactive project mark component fixture"
-              src="/whimsy-fixture.html?demo=projects"
-              loading="lazy"
-            ></iframe>
+            <a class="fixture-link" href="/whimsy-fixture.html?demo=projects"
+              >Try the interactive fixture ↗</a
+            >
             <div class="evidence" data-evidence="projects"></div>
             <p class="rule">
               <b>The rule</b> Detail should help recognition. Four variants are a family, not unique
@@ -94,9 +116,9 @@
             </p>
             <div class="media" data-media="flashlight">
               <img
-                src="./media/flashlight.png"
+                src="./media/flashlight.gif"
                 alt="iPhone flashlight control before its miniature switch moves"
-              /><button class="play" type="button">▶ Play Apple GIF</button>
+              />
             </div>
             <p class="credit">
               Actual iPhone recording · Justin Meyers / Gadget Hacks ·
@@ -113,11 +135,9 @@
               A pair of small endpoints join once when hosted pairing succeeds. The existing success
               message and Open app action appear immediately.
             </p>
-            <iframe
-              title="Interactive connection clasp component fixture"
-              src="/whimsy-fixture.html?demo=clasp"
-              loading="lazy"
-            ></iframe>
+            <a class="fixture-link" href="/whimsy-fixture.html?demo=clasp"
+              >Try the interactive fixture ↗</a
+            >
             <div class="evidence" data-evidence="clasp"></div>
             <p class="rule">
               <b>The rule</b> Celebrate a confirmed action. Never add a delay to make an animation
@@ -128,22 +148,23 @@
         <article class="study" id="study-completion">
           <div class="reference">
             <p class="index">03 / CONTEXT, THEN RESPONSE</p>
-            <h3>A little world that knows what happened.</h3>
+            <h3>A celebration that knows what happened.</h3>
             <p>
-              Apple Watch’s Smart Stack responds to context. The neighboring Snoopy face takes that
-              further: characters respond to the hands, weather and workouts.
+              Apple Watch turns a completed Activity achievement into a tiny celebratory
+              performance. The visual response follows a real accomplishment.
             </p>
-            <div class="media" data-media="smart-stack">
+            <div class="media" data-media="apple-activity">
               <img
-                src="./media/smart-stack.png"
-                alt="Apple Watch showing the Smart Stack transition"
-              /><button class="play" type="button">▶ Play Apple GIF</button>
+                src="./media/apple-activity.gif"
+                alt="Apple Watch Activity achievement celebration"
+              />
             </div>
             <p class="credit">
-              Actual Smart Stack demonstration · Apple ·
-              <a href="https://www.apple.com/newsroom/2023/09/watchos-10-is-available-today/"
-                >Smart Stack & Snoopy source ↗</a
-              ><br />This recording shows Smart Stack, not Snoopy.
+              Actual Activity achievement demonstration · Apple ·
+              <a
+                href="https://www.apple.com/newsroom/2017/06/watchos-4-brings-more-intelligence-and-fitness-features-to-apple-watch/"
+                >Activity celebration source ↗</a
+              ><br />
             </p>
           </div>
           <div class="translation">
@@ -153,11 +174,9 @@
               A small tick acknowledges a turn that finishes while you are watching. Old history and
               reconnect catch-up should stay quiet.
             </p>
-            <iframe
-              title="Interactive completion tick component fixture"
-              src="/whimsy-fixture.html?demo=completion"
-              loading="lazy"
-            ></iframe>
+            <a class="fixture-link" href="/whimsy-fixture.html?demo=completion"
+              >Try the interactive fixture ↗</a
+            >
             <div class="evidence" data-evidence="completion"></div>
             <p class="rule">
               <b>The rule</b> A completed turn is not a promise that its code passes tests. Keep the
@@ -169,18 +188,18 @@
           <div class="reference">
             <p class="index">04 / PERSONALITY AT REST</p>
             <h3>Color doesn’t need to spin.</h3>
-            <div
-              class="color-objects"
-              aria-label="Illustrative color study, not an Apple product image"
-            >
-              <i></i><i></i><i></i><i></i><i></i><i></i>
+            <div class="media" data-media="apple-41">
+              <img
+                src="./media/apple-41.gif"
+                alt="Animated diagram of a striped color identity, not Apple footage"
+              />
             </div>
             <p>
               The rainbow identity and colorful iMac family make the object feel approachable even
               when nothing is moving.
             </p>
             <p class="credit">
-              Original color study above, not an Apple recording.<br /><a
+              Animated color study above, not an Apple recording.<br /><a
                 href="https://www.robjanoff.com/applelogo"
                 >Rob Janoff on the Apple logo ↗</a
               >
@@ -198,11 +217,9 @@
               Ultrathink keeps its distinctive color. Removing the endless hue rotation leaves the
               composer recognizable and still while you work.
             </p>
-            <iframe
-              title="Interactive calm ultrathink spectrum component fixture"
-              src="/whimsy-fixture.html?demo=spectrum"
-              loading="lazy"
-            ></iframe>
+            <a class="fixture-link" href="/whimsy-fixture.html?demo=spectrum"
+              >Try the interactive fixture ↗</a
+            >
             <div class="evidence" data-evidence="spectrum"></div>
             <p class="rule">
               <b>The rule</b> Character can be a material, a shape or a color. Continuous repainting
@@ -289,8 +306,9 @@
       <span>T3 CODE / WHIMSY ATLAS</span>
       <p>
         Apple references are credited to their original authors. T3 studies are original
-        interpretations. Inline GIF previews play only when requested and stop after a short
-        preview. The application itself stays still at rest.
+        interpretations. GIFs play inline by default. Use Pause all to view still frames. Repeating
+        demonstrations show bounded app interactions; proposed treatments are not implemented
+        features.
       </p>
       <a href="#">Back to the beginning ↑</a>
     </footer>

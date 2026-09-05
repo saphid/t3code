@@ -576,3 +576,150 @@ footer > a {
   height: auto;
   aspect-ratio: 4 / 3;
 }
+
+/* The atlas is a motion reference: GIFs are the primary content. */
+.motion-controls {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 24px;
+  padding: 12px 20px;
+  background: #f6f5eff5;
+  border-bottom: 1px solid #d5d7ca;
+  font-size: 12px;
+}
+.motion-controls button {
+  border: 1px solid #bac6ad;
+  border-radius: 24px;
+  background: #fffefa;
+  padding: 8px 16px;
+  cursor: pointer;
+  color: #35452c;
+}
+.intro {
+  padding-top: 34px;
+}
+.intro h1 {
+  font-size: clamp(50px, 7vw, 90px);
+  margin-bottom: 26px;
+  line-height: 1.05;
+}
+.intro-bottom {
+  margin-bottom: 26px;
+}
+.intro-bottom > p {
+  font-size: 15px;
+  max-width: 590px;
+}
+.stamp span {
+  font-size: 34px;
+}
+.opportunities-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 24px;
+}
+.opportunity {
+  padding: 24px;
+  background: #fffefa;
+  border: 1px solid #d6d9cd;
+  border-radius: 5px;
+}
+.opportunity .meta {
+  font-size: 10px;
+  color: #607456;
+  letter-spacing: 0.06em;
+  margin-bottom: 14px;
+}
+.opportunity > p {
+  font-size: 13px;
+  line-height: 1.65;
+  color: #616b59;
+}
+.opportunity .trigger {
+  color: #33462c;
+  border-top: 1px solid #dce0d2;
+  padding-top: 12px;
+}
+.motion-figure {
+  margin: 18px 0;
+  width: 100%;
+}
+.motion-figure img {
+  display: block;
+  width: 100%;
+  height: auto;
+  object-fit: contain;
+  background: #121a20;
+  border-radius: 4px;
+}
+.motion-figure figcaption {
+  font-size: 10px;
+  color: #75806b;
+  margin-top: 8px;
+  line-height: 1.45;
+}
+.implementation-note {
+  font-size: 11px;
+  color: #58694c;
+  line-height: 1.6;
+}
+.implementation-note summary {
+  cursor: pointer;
+  padding: 8px 0;
+}
+.implementation-note p {
+  margin: 10px 0;
+}
+.fixture-link {
+  display: block;
+  font-size: 11px;
+  color: #5c704d;
+  margin: 16px 0 0;
+}
+.evidence .motion-figure {
+  order: -1;
+  margin-top: 0;
+}
+.evidence {
+  display: flex;
+}
+.recording-credit {
+  display: block;
+  margin-top: 10px;
+}
+.catalogue {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+.entry .motion-figure {
+  margin: 15px 0;
+}
+#opportunities {
+  scroll-margin-top: 70px;
+}
+@media (max-width: 620px) {
+  .opportunities-grid,
+  .catalogue {
+    grid-template-columns: 1fr;
+  }
+  .opportunity {
+    padding: 20px;
+  }
+  .motion-controls {
+    gap: 12px;
+    font-size: 11px;
+  }
+  .masthead nav {
+    gap: 10px;
+    font-size: 9px;
+  }
+  .intro-bottom .stamp {
+    margin-top: 18px;
+  }
+  .intro h1 {
+    font-size: 58px;
+  }
+}

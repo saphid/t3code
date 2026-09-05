@@ -1,5 +1,42 @@
 # First Electron whimsy batch
 
+## Atlas expansion, 5 September 2026
+
+The expanded page now contains 24 additional proposals alongside the four
+implemented studies, plus the 51 historical Apple entries. These proposals
+are visual briefs, not additional implemented app features. The handoff is
+[whimsy-opportunities.md](./whimsy-opportunities.md).
+
+Every example has a visible inline GIF by default: 83 placements, 79 distinct
+media files, and zero GIFs inside disclosure panels. This supersedes the older
+gallery's poster/replay behavior described below. Original footage, explanatory
+diagrams, and proposed T3 treatments have separate provenance captions.
+
+Verification on the retained Tailscale page:
+
+- All 79 GIF URLs returned successful HTTP responses. Every selected GIF has
+  multiple frames; all corresponding PNG files decoded successfully.
+- Pause all changed every placement to PNG. Filtering while paused kept still
+  frames; Play all resumed GIFs. A same-origin isolated preview frame with an
+  emulated reduced-motion preference started paused and allowed explicit Play.
+- The attached preview showed no horizontal overflow at 1280px and 390px.
+  Desktop and phone inspection confirmed the proposal GIFs are visible at card
+  size. A short desktop recording captured the default animated cards.
+- All 24 proposal schematics were visually inspected. Each contains its own
+  mechanism, a trigger/transition/settled sequence, and a proposed/schematic
+  label. The gallery loops demonstrate motion; app implementations must retain
+  the guide's bounded motion and static resting states.
+
+The direct Claude Opus 5 high launcher shown in the review section was attempted
+again and exited 1 before model execution because OAuth could not refresh.
+No Claude review occurred for the expansion. A fresh GPT-5.6 Sol source review
+identified reduced-motion handling and three inaccurate source/state boundaries;
+those were corrected before publication.
+The final follow-up found no actionable findings in EX-18's saved-target scope;
+the preceding pass confirmed the other three corrections and found no gallery
+motion regression. Scoped gallery lint, JavaScript syntax, formatting, and
+`git diff --check` passed.
+
 Source baseline: `d7462d29c3681b1dfd550096d7b31defb8e88e87`.
 The fork's main branch had diverged, so each independent draft PR targets
 `whimsy/electron-base-20260905` at that revision.
