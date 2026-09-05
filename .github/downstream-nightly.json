@@ -134,6 +134,12 @@
       "repository": "saphid/t3code",
       "sha": "cfd9574dc0e20e346dd32ceb1a7db21a5db4da5f",
       "name": "Nightly reset-credit layer compatibility"
+    },
+    {
+      "type": "commit",
+      "repository": "saphid/t3code",
+      "sha": "0c39791ac395d8bb540ff3bd61e6922985c93b43",
+      "name": "Configurable concurrent thread limit"
     }
   ]
 }
