@@ -786,6 +786,9 @@ export function useSettingsRestore(onRestored?: () => void) {
       ...(settings.responseStreamingMode !== DEFAULT_UNIFIED_SETTINGS.responseStreamingMode
         ? ["Response streaming"]
         : []),
+      ...(settings.maxConcurrentThreads !== DEFAULT_UNIFIED_SETTINGS.maxConcurrentThreads
+        ? ["Maximum concurrent threads"]
+        : []),
       ...(settings.enableProviderUpdateChecks !==
       DEFAULT_UNIFIED_SETTINGS.enableProviderUpdateChecks
         ? ["Provider update checks"]
@@ -859,6 +862,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.panelAnimationDurationMs,
       settings.responseStreamingMode,
       settings.enableProviderUpdateChecks,
+      settings.maxConcurrentThreads,
       settings.continueThreadsAfterServerUpdate,
       settings.sidebarAutoSettleAfterDays,
       settings.sidebarAutoSettleOnMerge,
@@ -960,6 +964,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       sidebarAutoSettleOnMerge: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleOnMerge,
       responseStreamingMode: DEFAULT_UNIFIED_SETTINGS.responseStreamingMode,
       enableProviderUpdateChecks: DEFAULT_UNIFIED_SETTINGS.enableProviderUpdateChecks,
+      maxConcurrentThreads: DEFAULT_UNIFIED_SETTINGS.maxConcurrentThreads,
       continueThreadsAfterServerUpdate: DEFAULT_UNIFIED_SETTINGS.continueThreadsAfterServerUpdate,
       backgroundActivity: DEFAULT_UNIFIED_SETTINGS.backgroundActivity,
       backgroundActivityProfile: DEFAULT_UNIFIED_SETTINGS.backgroundActivityProfile,
@@ -2788,6 +2793,44 @@ export function GeneralSettingsPanel() {
               }
               aria-label="Collapse composer on scroll"
             />
+          }
+        />
+
+        <SettingsRow
+          serverScoped
+          {...searchableSetting("max-concurrent-threads")}
+          description="Limit threads running at once on this server. Handovers count toward the limit; AI Enablers providers are exempt. Running work can finish when you lower it."
+          resetAction={
+            settings.maxConcurrentThreads !== DEFAULT_UNIFIED_SETTINGS.maxConcurrentThreads ? (
+              <SettingResetButton
+                label="maximum concurrent threads"
+                onClick={() =>
+                  updateSettings({
+                    maxConcurrentThreads: DEFAULT_UNIFIED_SETTINGS.maxConcurrentThreads,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <NumberField
+              value={settings.maxConcurrentThreads}
+              min={1}
+              max={Number.MAX_SAFE_INTEGER}
+              step={1}
+              size="sm"
+              className="w-28"
+              onValueCommitted={(value) => {
+                if (value === null || !Number.isSafeInteger(value) || value < 1) return;
+                updateSettings({ maxConcurrentThreads: value });
+              }}
+            >
+              <NumberFieldGroup>
+                <NumberFieldDecrement aria-label="Decrease maximum concurrent threads" />
+                <NumberFieldInput aria-label="Maximum concurrent threads" />
+                <NumberFieldIncrement aria-label="Increase maximum concurrent threads" />
+              </NumberFieldGroup>
+            </NumberField>
           }
         />
 
