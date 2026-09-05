@@ -1,9 +1,14 @@
 import type { ProviderSession, ThreadId } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
+import * as Layer from "effect/Layer";
+import { ProviderService } from "../provider/Services/ProviderService.ts";
 import * as Effect from "effect/Effect";
 
 import { MAX_CONCURRENT_PROVIDER_TURNS } from "./UsageLimitPolicy.ts";
-import { make } from "./UsageLimitReservations.ts";
+import { make as makeService, layer, UsageLimitReservations } from "./UsageLimitReservations.ts";
+
+const make = (listSessions: ProviderService["Service"]["listSessions"]) =>
+  makeService.pipe(Effect.provide(Layer.mock(ProviderService)({ listSessions })));
 
 function session(index: number): ProviderSession {
   return {
@@ -13,9 +18,51 @@ function session(index: number): ProviderSession {
 }
 
 describe("UsageLimitReservations", () => {
+  it.effect("shares admission capacity between runtime consumers", () =>
+    Effect.gen(function* () {
+      const turnConsumer = yield* UsageLimitReservations;
+      const handoverConsumer = yield* UsageLimitReservations;
+      expect(
+        yield* turnConsumer.reserveTurn({
+          key: "turn:one",
+          threadId: "thread-one" as ThreadId,
+          activities: [],
+        }),
+      ).toBeUndefined();
+      expect(
+        yield* handoverConsumer.reserveHandover({
+          key: "handover:two",
+          threadId: "thread-two" as ThreadId,
+        }),
+      ).toMatchObject({ code: "concurrent-turn-limit" });
+      yield* turnConsumer.release("turn:one");
+      expect(
+        yield* handoverConsumer.reserveHandover({
+          key: "handover:two",
+          threadId: "thread-two" as ThreadId,
+        }),
+      ).toBeUndefined();
+    }).pipe(
+      Effect.provide(
+        layer.pipe(
+          Layer.provide(
+            Layer.mock(ProviderService)({
+              listSessions: () =>
+                Effect.succeed(
+                  Array.from({ length: MAX_CONCURRENT_PROVIDER_TURNS - 1 }, (_, index) =>
+                    session(index),
+                  ),
+                ),
+            }),
+          ),
+        ),
+      ),
+    ),
+  );
+
   it.effect("atomically reserves the final provider-work slot", () =>
     Effect.gen(function* () {
-      const reservations = make(() =>
+      const reservations = yield* make(() =>
         Effect.succeed(
           Array.from({ length: MAX_CONCURRENT_PROVIDER_TURNS - 1 }, (_, index) => session(index)),
         ),
@@ -42,7 +89,7 @@ describe("UsageLimitReservations", () => {
 
   it.effect("releases a handover slot after completion", () =>
     Effect.gen(function* () {
-      const reservations = make(() =>
+      const reservations = yield* make(() =>
         Effect.succeed(
           Array.from({ length: MAX_CONCURRENT_PROVIDER_TURNS - 1 }, (_, index) => session(index)),
         ),
@@ -66,7 +113,7 @@ describe("UsageLimitReservations", () => {
 
   it.effect("rejects duplicate generation for one source thread", () =>
     Effect.gen(function* () {
-      const reservations = make(() => Effect.succeed([]));
+      const reservations = yield* make(() => Effect.succeed([]));
       const threadId = "thread-source" as ThreadId;
 
       expect(

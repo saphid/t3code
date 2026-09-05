@@ -203,8 +203,9 @@ export function ThreadRouteScreen(props: ThreadRouteScreenProps) {
 
   // Render the full thread chrome (header, feed, composer) as soon as the
   // thread SHELL is known — no blocking on message detail. The feed shows a
-  // loading placeholder while messages fetch, and the composer's connection
-  // pill reports connecting/reconnecting/syncing status.
+  // loading placeholder while messages fetch, the floating pill above the
+  // composer reports loading/syncing, and the composer's connection pill
+  // reports connecting/reconnecting status.
   if (selectedThread !== null && selectedThreadKey === routeThreadKey) {
     return <ThreadRouteContent {...props} selectedThreadDetailState={selectedThreadDetailState} />;
   }
@@ -411,7 +412,8 @@ function ThreadRouteContent(
       await replaceComposerDraftText(destinationDraftKey, handover);
       updateComposerDraftSettings(destinationDraftKey, {
         workspaceSelection: {
-          mode: selectedThread.worktreePath ? "worktree" : "local",
+          // Local mode continues the selected checkout; worktree mode creates a new one.
+          mode: "local",
           branch: selectedThread.branch,
           worktreePath: selectedThread.worktreePath,
           startFromOrigin: false,
@@ -942,6 +944,7 @@ function ThreadRouteContent(
           environmentLabel={selectedEnvironmentConnection?.environmentLabel ?? null}
           selectedThreadFeed={composer.selectedThreadFeed}
           activeWorkStartedAt={composer.activeWorkStartedAt}
+          isCompacting={composer.isCompacting}
           activePendingApproval={requests.activePendingApproval}
           respondingApprovalId={requests.respondingApprovalId}
           activePendingUserInput={requests.activePendingUserInput}

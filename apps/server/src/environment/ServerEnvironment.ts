@@ -24,6 +24,7 @@ import * as ProviderInstanceRegistry from "../provider/Services/ProviderInstance
 import type { ProviderInstance } from "../provider/ProviderDriver.ts";
 import * as TextGeneration from "../textGeneration/TextGeneration.ts";
 import { resolveServerEnvironmentLabel } from "./ServerEnvironmentLabel.ts";
+import { detectServerEnvironmentMachineKind } from "./ServerEnvironmentMachine.ts";
 
 export class ServerEnvironmentIdPersistenceError extends Schema.TaggedErrorClass<ServerEnvironmentIdPersistenceError>()(
   "ServerEnvironmentIdPersistenceError",
@@ -183,7 +184,9 @@ const makeIdentity = Effect.gen(function* () {
 });
 
 const makeWithProviderRegistry = (
-  providerInstanceRegistry: Option.Option<ProviderInstanceRegistry.ProviderInstanceRegistryShape>,
+  providerInstanceRegistry: Option.Option<
+    ProviderInstanceRegistry.ProviderInstanceRegistry["Service"]
+  >,
 ) =>
   Effect.gen(function* () {
     const path = yield* Path.Path;
@@ -195,11 +198,19 @@ const makeWithProviderRegistry = (
     const environmentId = yield* identity.getEnvironmentId;
     const cwdBaseName = path.basename(serverConfig.cwd).trim();
     const label = yield* resolveServerEnvironmentLabel({ cwdBaseName });
+    const machine = yield* detectServerEnvironmentMachineKind();
     const launcher = yield* resolveServiceLauncherMode();
     const serverSelfUpdate = resolveServerSelfUpdateCapability({
       desktopManaged: serverConfig.mode === "desktop",
       launcherManaged: launcher.managed,
     });
+    // Static is correct: the control fd is known at bootstrap, and the desktop
+    // app and its bundled server ship in one artifact, so a present fd means
+    // the app speaks the requestDesktopUpdate protocol. WSL backends never get
+    // the fd and correctly do not advertise.
+    const desktopAppUpdate =
+      serverSelfUpdate === "desktop-managed" &&
+      serverConfig.desktopTelemetryControlFd !== undefined;
 
     const descriptor: ExecutionEnvironmentDescriptor = {
       environmentId,
@@ -207,6 +218,7 @@ const makeWithProviderRegistry = (
       platform: {
         os: platformOs(hostPlatform),
         arch: platformArch(hostArchitecture),
+        ...(machine === null ? {} : { machine }),
       },
       serverVersion: packageJson.version,
       capabilities: {
@@ -216,14 +228,24 @@ const makeWithProviderRegistry = (
         fileAttachments: { maxUploadBytes: PROVIDER_SEND_TURN_MAX_FILE_BYTES },
         pullRequests: true,
         threadSettlement: true,
+        threadAutoSettlement: true,
         threadSnooze: true,
         environmentThemes: true,
+        usageLimitSources: true,
+        usagePriceOverrides: true,
         threadPinning: true,
         threadPinReorder: true,
         threadTitleRegeneration: true,
         threadPullRequestLinking: true,
+        environmentIcon: true,
         ...(serverSelfUpdate === null ? {} : { serverSelfUpdate }),
-        ...(serverSelfUpdate === "boot-service" ? { serverSelfUpdateProgress: true } : {}),
+        ...(serverSelfUpdate === "boot-service" || desktopAppUpdate
+          ? {
+              serverSelfUpdateProgress: true,
+              serverUpdateThreadContinuation: true,
+            }
+          : {}),
+        ...(desktopAppUpdate ? { desktopAppUpdate: true } : {}),
       },
     };
 

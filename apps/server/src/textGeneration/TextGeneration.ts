@@ -99,16 +99,6 @@ export interface HandoverGenerationResult {
   handover: string;
 }
 
-export interface TextGenerationService {
-  generateCommitMessage(
-    input: CommitMessageGenerationInput,
-  ): Promise<CommitMessageGenerationResult>;
-  generatePrContent(input: PrContentGenerationInput): Promise<PrContentGenerationResult>;
-  generateBranchName(input: BranchNameGenerationInput): Promise<BranchNameGenerationResult>;
-  generateThreadTitle(input: ThreadTitleGenerationInput): Promise<ThreadTitleGenerationResult>;
-  generateHandover(input: HandoverGenerationInput): Promise<HandoverGenerationResult>;
-}
-
 /**
  * TextGeneration - Service tag for commit and change request text generation.
  */
@@ -147,9 +137,6 @@ export class TextGeneration extends Context.Service<
     ) => Effect.Effect<HandoverGenerationResult, TextGenerationError>;
   }
 >()("t3/textGeneration/TextGeneration") {}
-
-/** @deprecated Use `TextGeneration["Service"]`. */
-export type TextGenerationShape = TextGeneration["Service"];
 
 type TextGenerationOp =
   | "generateCommitMessage"
@@ -203,7 +190,7 @@ export const makeTextGenerationFromRegistry = (
   });
 
 export const unsupportedHandoverGeneration = (
-  provider: TextGenerationProvider,
+  provider: TextGenerationProvider | "antigravity",
 ): TextGeneration["Service"]["generateHandover"] =>
   Effect.fn(`${provider}.generateHandover.unsupported`)(function* () {
     return yield* new TextGenerationError({
