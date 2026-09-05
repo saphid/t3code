@@ -25,6 +25,7 @@ type Reservation =
 
 export interface UsageLimitReservations {
   readonly reserveTurn: (input: {
+    readonly maxConcurrentThreads?: number;
     readonly key: string;
     readonly threadId: ThreadId;
     readonly providerInstanceId: ProviderInstanceId;
@@ -32,6 +33,7 @@ export interface UsageLimitReservations {
     readonly activities: ReadonlyArray<OrchestrationThreadActivity>;
   }) => Effect.Effect<UsageLimitViolation | undefined, ProviderServiceError>;
   readonly reserveHandover: (input: {
+    readonly maxConcurrentThreads?: number;
     readonly key: string;
     readonly threadId: ThreadId;
   }) => Effect.Effect<UsageLimitViolation | undefined, ProviderServiceError>;
@@ -89,6 +91,9 @@ export function make(
     return yield* Effect.sync(() => {
       const values = [...reservations.values()];
       const violation = evaluateTurnStartLimits({
+        ...(input.maxConcurrentThreads === undefined
+          ? {}
+          : { maxConcurrentThreads: input.maxConcurrentThreads }),
         threadId: input.threadId,
         ...(input.contextTokenLimit === undefined
           ? {}
@@ -135,6 +140,9 @@ export function make(
       }
 
       const violation = evaluateHandoverStartLimits({
+        ...(input.maxConcurrentThreads === undefined
+          ? {}
+          : { maxConcurrentThreads: input.maxConcurrentThreads }),
         sessions,
         excludedProviderInstanceIds,
         reservedTurnThreadIds: values

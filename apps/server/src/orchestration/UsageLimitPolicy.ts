@@ -8,6 +8,7 @@
  * @module UsageLimitPolicy
  */
 import {
+  DEFAULT_MAX_CONCURRENT_THREADS,
   DEFAULT_THREAD_CONTEXT_TOKEN_LIMIT,
   type OrchestrationThreadActivity,
   type ProviderInstanceId,
@@ -15,8 +16,7 @@ import {
   type ThreadId,
 } from "@t3tools/contracts";
 
-export { DEFAULT_THREAD_CONTEXT_TOKEN_LIMIT };
-export const MAX_CONCURRENT_PROVIDER_TURNS = 8;
+export { DEFAULT_THREAD_CONTEXT_TOKEN_LIMIT, DEFAULT_MAX_CONCURRENT_THREADS };
 
 export type UsageLimitViolation = {
   readonly code: "context-limit" | "concurrent-turn-limit" | "handover-in-progress";
@@ -38,13 +38,16 @@ function contextLimitViolation(input: {
   return undefined;
 }
 
-function concurrentTurnLimitViolation(runningTurnCount: number): UsageLimitViolation | undefined {
-  if (runningTurnCount < MAX_CONCURRENT_PROVIDER_TURNS) {
+function concurrentTurnLimitViolation(
+  runningTurnCount: number,
+  maxConcurrentThreads = DEFAULT_MAX_CONCURRENT_THREADS,
+): UsageLimitViolation | undefined {
+  if (runningTurnCount < maxConcurrentThreads) {
     return undefined;
   }
   return {
     code: "concurrent-turn-limit",
-    detail: `T3 usage limit: ${runningTurnCount} provider turns are already running. The hard limit is ${MAX_CONCURRENT_PROVIDER_TURNS}. Wait for one to finish or interrupt it before starting more work.`,
+    detail: `T3 usage limit: ${runningTurnCount} provider turns are already running. The hard limit is ${maxConcurrentThreads}. Wait for one to finish or interrupt it before starting more work.`,
   };
 }
 
@@ -86,6 +89,7 @@ function runningTurnThreadIds(
 }
 
 export function evaluateTurnStartLimits(input: {
+  readonly maxConcurrentThreads?: number;
   readonly threadId: ThreadId;
   readonly contextTokenLimit?: number;
   readonly activities: ReadonlyArray<OrchestrationThreadActivity>;
@@ -115,10 +119,13 @@ export function evaluateTurnStartLimits(input: {
       input.reservedTurnThreadIds ?? [],
       excludedProviderInstanceIds,
     ).size + (input.reservedHandoverCount ?? 0);
-  return currentThreadIsRunning ? undefined : concurrentTurnLimitViolation(runningTurnCount);
+  return currentThreadIsRunning
+    ? undefined
+    : concurrentTurnLimitViolation(runningTurnCount, input.maxConcurrentThreads);
 }
 
 export function evaluateHandoverStartLimits(input: {
+  readonly maxConcurrentThreads?: number;
   readonly sessions: ReadonlyArray<ProviderSession>;
   readonly excludedProviderInstanceIds?: ReadonlySet<ProviderInstanceId>;
   readonly reservedTurnThreadIds?: ReadonlyArray<ThreadId>;
@@ -130,5 +137,6 @@ export function evaluateHandoverStartLimits(input: {
       input.reservedTurnThreadIds ?? [],
       input.excludedProviderInstanceIds ?? new Set(),
     ).size + (input.reservedHandoverCount ?? 0),
+    input.maxConcurrentThreads,
   );
 }
