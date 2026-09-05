@@ -2297,24 +2297,6 @@ code {
   color: var(--code-foreground) !important;
 }
 
-@keyframes ultrathink-rainbow {
-  0% {
-    background-position: 0% 50%;
-  }
-  100% {
-    background-position: 200% 50%;
-  }
-}
-
-@keyframes ultrathink-chroma-shift {
-  0% {
-    filter: hue-rotate(0deg) saturate(1.2);
-  }
-  100% {
-    filter: hue-rotate(360deg) saturate(1.2);
-  }
-}
-
 .ultrathink-frame {
   --ultrathink-spectrum: linear-gradient(
     120deg,
@@ -2347,7 +2329,6 @@ code {
     linear-gradient(#000 0 0) content-box,
     linear-gradient(#000 0 0);
   mask-composite: exclude;
-  animation: ultrathink-rainbow 10s linear infinite;
 }
 
 .ultrathink-frame > * {
@@ -2355,5 +2336,19 @@ code {
 }
 
 .ultrathink-chroma {
-  animation: ultrathink-chroma-shift 10s linear infinite;
+  filter: saturate(1.2);
+}
+
+@media (forced-colors: active) {
+  .ultrathink-frame {
+    outline: 1px solid Highlight;
+  }
+
+  .ultrathink-frame::before {
+    display: none;
+  }
+
+  .ultrathink-chroma {
+    filter: none;
+  }
 }
