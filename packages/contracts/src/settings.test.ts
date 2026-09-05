@@ -22,6 +22,28 @@ const decodeServerSettingsPatch = Schema.decodeUnknownSync(ServerSettingsPatch);
 const encodeServerSettings = Schema.encodeSync(ServerSettings);
 const decodeClaudeSettings = Schema.decodeUnknownSync(ClaudeSettings);
 
+describe("ServerSettings maximum concurrent threads", () => {
+  it("keeps the existing eight-thread default for older settings", () => {
+    expect(decodeServerSettings({}).maxConcurrentThreads).toBe(8);
+  });
+
+  it.each([1, 4, 12, 100])("round-trips a custom limit of %s", (maxConcurrentThreads) => {
+    const patch = decodeServerSettingsPatch({ maxConcurrentThreads });
+    expect(patch).toEqual({ maxConcurrentThreads });
+    expect(
+      decodeServerSettings(encodeServerSettings(decodeServerSettings(patch))).maxConcurrentThreads,
+    ).toBe(maxConcurrentThreads);
+  });
+
+  it.each([0, -1, 1.5, NaN, Infinity, Number.MAX_SAFE_INTEGER + 1, "8", null])(
+    "rejects invalid limit %s",
+    (maxConcurrentThreads) => {
+      expect(() => decodeServerSettingsPatch({ maxConcurrentThreads })).toThrow();
+      expect(() => decodeServerSettings({ maxConcurrentThreads })).toThrow();
+    },
+  );
+});
+
 describe("ServerSettings thread context token limit", () => {
   it("defaults to the standard handover threshold", () => {
     expect(decodeServerSettings({}).threadContextTokenLimit).toBe(

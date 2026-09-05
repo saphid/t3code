@@ -272,6 +272,28 @@ it.layer(NodeServices.layer)("server settings", (it) => {
     ).pipe(Effect.provide(makeServerSettingsLayer())),
   );
 
+  it.effect("persists and broadcasts the concurrency limit and resets it to eight", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const serverConfig = yield* ServerConfig.ServerConfig;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+        const changes = yield* serverSettings.subscribeChanges;
+        const next = yield* serverSettings.updateSettings({ maxConcurrentThreads: 12 });
+        const change = Option.getOrUndefined(yield* Stream.runHead(changes));
+        const raw = yield* fileSystem.readFileString(serverConfig.settingsPath);
+        // @effect-diagnostics-next-line preferSchemaOverJson:off
+        const persisted = JSON.parse(raw) as Record<string, unknown>;
+        assert.strictEqual(next.maxConcurrentThreads, 12);
+        assert.strictEqual(change?.maxConcurrentThreads, 12);
+        assert.strictEqual(persisted.maxConcurrentThreads, 12);
+        assert.strictEqual((yield* serverSettings.getSettings).maxConcurrentThreads, 12);
+        yield* serverSettings.updateSettings({ maxConcurrentThreads: 8 });
+        assert.strictEqual((yield* serverSettings.getSettings).maxConcurrentThreads, 8);
+      }),
+    ).pipe(Effect.provide(makeServerSettingsLayer())),
+  );
+
   it.effect("persists and broadcasts thread settlement settings", () =>
     Effect.scoped(
       Effect.gen(function* () {
