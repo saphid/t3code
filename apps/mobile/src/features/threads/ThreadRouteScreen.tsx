@@ -75,9 +75,11 @@ import { threadContextReachedLimit } from "../../state/contextLimit";
 import { threadEnvironment } from "../../state/threads";
 import {
   flushComposerDrafts,
+  getComposerDraftSnapshot,
   mergeComposerDraftContent,
   updateComposerDraftSettings,
 } from "../../state/use-composer-drafts";
+import { uuidv4 } from "../../lib/uuid";
 import { projectThreadContentPresentation } from "./threadContentPresentation";
 import {
   useAdaptiveWorkspaceLayout,
@@ -100,6 +102,7 @@ type NativeHeaderItems = ReadonlyArray<Record<string, unknown>>;
 
 interface MobileHandoverAttempt {
   readonly handover: string;
+  readonly draftImportId: string;
   readonly draftWritten: boolean;
 }
 
@@ -403,6 +406,7 @@ function ThreadRouteContent(
         }
         attempt = {
           handover: result.value.handover,
+          draftImportId: `handover:${uuidv4()}`,
           draftWritten: false,
         };
         saveMobileHandoverAttempt(sourceThreadKey, attempt);
@@ -416,11 +420,17 @@ function ThreadRouteContent(
         return;
       }
 
-      if (!attempt.draftWritten) {
-        const destinationDraftKey = `new-task:${selectedThread.environmentId}:${selectedThread.projectId}`;
+      const destinationDraftKey = `new-task:${selectedThread.environmentId}:${selectedThread.projectId}`;
+      if (
+        !attempt.draftWritten ||
+        !getComposerDraftSnapshot(destinationDraftKey).importedShareIds?.includes(
+          attempt.draftImportId,
+        )
+      ) {
         await mergeComposerDraftContent(destinationDraftKey, {
           text: attempt.handover,
           attachments: [],
+          sourceShareId: attempt.draftImportId,
         });
         updateComposerDraftSettings(destinationDraftKey, {
           workspaceSelection: {

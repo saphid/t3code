@@ -1514,6 +1514,27 @@ describe("mobile composer drafts", () => {
     expect(mergeComposerDraftContentState(edited, draftKey, content)).toBe(edited);
   });
 
+  it("allows a handover retry after its previously imported draft was cleared or sent", () => {
+    const draftKey = "new-task:environment-1:project-1";
+    const content = {
+      text: "Handover context",
+      attachments: [],
+      sourceShareId: "handover:attempt-1",
+    };
+    const written = mergeComposerDraftContentState({}, draftKey, content);
+    const edited = { [draftKey]: { ...written[draftKey]!, text: "Edited handover" } };
+    expect(mergeComposerDraftContentState(edited, draftKey, content)).toBe(edited);
+
+    const cleared = clearComposerDraftContentState(edited, draftKey);
+    expect(cleared[draftKey]?.importedShareIds).toBeUndefined();
+    const retried = mergeComposerDraftContentState(cleared, draftKey, content);
+    expect(retried[draftKey]).toMatchObject({
+      text: "Handover context",
+      importedShareIds: ["handover:attempt-1"],
+    });
+    expect(mergeComposerDraftContentState(retried, draftKey, content)).toBe(retried);
+  });
+
   it("preserves existing images when shared content exceeds the draft attachment limit", () => {
     const draftKey = "new-task:environment-1:project-1";
     const image = (id: string) => ({
