@@ -164,10 +164,10 @@ import {
   type ComposerDraft,
   flushComposerDrafts,
   getComposerDraftSnapshot,
+  mergeComposerDraftContent,
   mergeComposerDraftContentState,
   releaseUnusedComposerAttachmentFiles,
   removeComposerDraftsForEnvironment,
-  replaceComposerDraftText,
   resetComposerDraftsLoadState,
   retainComposerAttachmentFileForPreview,
   restoreComposerDraftSnapshotState,
@@ -1216,33 +1216,46 @@ describe("mobile composer drafts", () => {
     });
   });
 
-  it("replaces a destination prompt only after its persisted draft hydrates", async () => {
+  it("merges a handover only after hydration without replacing the saved draft", async () => {
     const draftKey = "new-task:environment-1:project-1";
+    const attachment = {
+      id: "saved-file",
+      type: "file" as const,
+      name: "report.pdf",
+      mimeType: "application/pdf",
+      sizeBytes: 42,
+      fileUri: "file:///documents/t3-composer-attachments/report.pdf",
+    };
     composerDraftFileMocks.setDocument({
       schemaVersion: 1,
       drafts: {
         [draftKey]: {
           text: "Old unsent prompt",
-          attachments: [],
+          attachments: [attachment],
           runtimeMode: "full-access",
         },
       },
     });
     composerDraftFileMocks.blockRead();
 
-    const replacement = replaceComposerDraftText(draftKey, "Generated handover");
+    const merge = mergeComposerDraftContent(draftKey, {
+      text: "Generated handover",
+      attachments: [],
+    });
     await Promise.resolve();
     expect(composerDraftFileMocks.getWrites()).toHaveLength(0);
 
     composerDraftFileMocks.releaseRead();
-    await replacement;
+    await merge;
 
     expect(getComposerDraftSnapshot(draftKey)).toMatchObject({
-      text: "Generated handover",
+      text: "Old unsent prompt\n\nGenerated handover",
+      attachments: [attachment],
       runtimeMode: "full-access",
     });
     expect(JSON.parse(composerDraftFileMocks.getDocument()).drafts[draftKey]).toMatchObject({
-      text: "Generated handover",
+      text: "Old unsent prompt\n\nGenerated handover",
+      attachments: [attachment],
       runtimeMode: "full-access",
     });
   });

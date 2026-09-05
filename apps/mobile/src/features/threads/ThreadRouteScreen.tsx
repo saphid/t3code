@@ -75,7 +75,7 @@ import { threadContextReachedLimit } from "../../state/contextLimit";
 import { threadEnvironment } from "../../state/threads";
 import {
   flushComposerDrafts,
-  replaceComposerDraftText,
+  mergeComposerDraftContent,
   updateComposerDraftSettings,
 } from "../../state/use-composer-drafts";
 import { projectThreadContentPresentation } from "./threadContentPresentation";
@@ -409,7 +409,10 @@ function ThreadRouteContent(
       }
 
       const destinationDraftKey = `new-task:${selectedThread.environmentId}:${selectedThread.projectId}`;
-      await replaceComposerDraftText(destinationDraftKey, handover);
+      await mergeComposerDraftContent(destinationDraftKey, {
+        text: handover,
+        attachments: [],
+      });
       updateComposerDraftSettings(destinationDraftKey, {
         workspaceSelection: {
           // Local mode continues the selected checkout; worktree mode creates a new one.
