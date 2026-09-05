@@ -231,6 +231,14 @@ export const SETTINGS_SEARCH_ITEMS = [
     ],
   },
   {
+    id: "max-concurrent-threads",
+    title: "Maximum concurrent threads",
+    to: "/settings/general",
+    searchTerms: [
+      "concurrency simultaneous running conversations provider turns usage limit slots",
+    ],
+  },
+  {
     id: "thread-context-token-limit",
     title: "Thread token limit",
     to: "/settings/general",

@@ -57,8 +57,12 @@ T3 also applies two hard limits before it sends a new turn to any provider:
   5.6 Luna with high reasoning to summarize the thread, opens a new draft in the same checkout, and
   places the handover in its composer. It does not start the new thread, so you can choose its model
   and reasoning level before sending.
-- At most eight top-level provider turns can run at once across T3. Ready, idle sessions do not
-  count. Wait for a running turn to finish or interrupt it before starting another.
+- **Settings → General → Maximum concurrent threads** controls how many threads can run at once
+  on each server. The default is eight; choose a positive whole number or reset it to eight.
+  Changes apply to new work immediately, including work started from other connected clients.
+  Lowering the limit lets running work finish. Ready, idle sessions do not count; handover
+  generation does. AI Enablers providers remain exempt from this concurrency limit.
+  At the limit, wait for a running turn to finish or interrupt it, then retry the new turn.
 
 These limits cover work T3 launches directly for every provider and client. A provider CLI creates
 its own internal subagents, so T3 cannot reject those before the provider starts them. Use the

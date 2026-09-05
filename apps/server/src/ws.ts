@@ -1422,10 +1422,12 @@ const makeWsRpcLayer = (
                   }),
                 );
               }
+              const usageLimitSettings = yield* serverSettings.getSettings;
               const reservationKey = `handover:${threadId}`;
               const usageLimitViolation = yield* usageLimitReservations.reserveHandover({
                 key: reservationKey,
                 threadId,
+                maxConcurrentThreads: usageLimitSettings.maxConcurrentThreads,
               });
               if (usageLimitViolation) {
                 return yield* Effect.fail(
