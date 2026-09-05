@@ -78,6 +78,7 @@ import {
   getComposerDraftSnapshot,
   mergeComposerDraftContent,
   updateComposerDraftSettings,
+  waitForComposerDraftsLoaded,
 } from "../../state/use-composer-drafts";
 import { threadHandoverDraftImportId } from "../../state/threadHandoverDraft";
 import { projectThreadContentPresentation } from "./threadContentPresentation";
@@ -415,6 +416,7 @@ function ThreadRouteContent(
         saveMobileHandoverAttempt(sourceThreadKey, attempt);
         notifyMobileHandoverListeners();
       }
+      await waitForComposerDraftsLoaded();
       if (
         !mountedRef.current ||
         !isFocusedRef.current ||
