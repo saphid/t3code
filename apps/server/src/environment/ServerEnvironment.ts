@@ -229,6 +229,7 @@ const makeWithProviderRegistry = (
         pullRequests: true,
         threadSettlement: true,
         threadAutoSettlement: true,
+        threadRestartContinuation: true,
         threadSnooze: true,
         environmentThemes: true,
         usageLimitSources: true,

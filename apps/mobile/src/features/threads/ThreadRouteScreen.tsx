@@ -356,19 +356,21 @@ function ThreadRouteContent(
     [composer.interactionMode, composer.modelSelection, composer.runtimeMode, selectedThread],
   );
   const serverConfig = routeEnvironmentRuntime?.serverConfig ?? null;
-  const selectedThreadKeyRef = useRef(
-    selectedThread ? scopedThreadKey(selectedThread.environmentId, selectedThread.id) : null,
+  const selectedHandoverKeyRef = useRef(
+    selectedThread
+      ? threadHandoverDraftImportId(selectedThread.environmentId, selectedThread.id)
+      : null,
   );
-  selectedThreadKeyRef.current = selectedThread
-    ? scopedThreadKey(selectedThread.environmentId, selectedThread.id)
+  selectedHandoverKeyRef.current = selectedThread
+    ? threadHandoverDraftImportId(selectedThread.environmentId, selectedThread.id)
     : null;
-  const currentThreadKey = selectedThread
-    ? scopedThreadKey(selectedThread.environmentId, selectedThread.id)
+  const currentHandoverKey = selectedThread
+    ? threadHandoverDraftImportId(selectedThread.environmentId, selectedThread.id)
     : null;
   const handoverState = useSyncExternalStore(
     subscribeMobileHandoverState,
-    () => mobileHandoverStateSnapshot(currentThreadKey),
-    () => mobileHandoverStateSnapshot(currentThreadKey),
+    () => mobileHandoverStateSnapshot(currentHandoverKey),
+    () => mobileHandoverStateSnapshot(currentHandoverKey),
   );
   const isGeneratingHandover = handoverState.startsWith("true:");
   const mountedRef = useRef(true);
@@ -386,11 +388,11 @@ function ThreadRouteContent(
       !selectedThreadProject ||
       !selectedThreadDetail ||
       serverConfig?.environment.capabilities.threadHandoverGeneration !== true ||
-      currentThreadKey === null
+      currentHandoverKey === null
     ) {
       return;
     }
-    const sourceThreadKey = currentThreadKey;
+    const sourceThreadKey = currentHandoverKey;
     if (generatingMobileHandovers.has(sourceThreadKey)) return;
     generatingMobileHandovers.add(sourceThreadKey);
     notifyMobileHandoverListeners();
@@ -420,7 +422,7 @@ function ThreadRouteContent(
       if (
         !mountedRef.current ||
         !isFocusedRef.current ||
-        selectedThreadKeyRef.current !== sourceThreadKey
+        selectedHandoverKeyRef.current !== sourceThreadKey
       ) {
         return;
       }
@@ -455,7 +457,7 @@ function ThreadRouteContent(
       if (
         !mountedRef.current ||
         !isFocusedRef.current ||
-        selectedThreadKeyRef.current !== sourceThreadKey
+        selectedHandoverKeyRef.current !== sourceThreadKey
       ) {
         return;
       }
@@ -481,7 +483,7 @@ function ThreadRouteContent(
       notifyMobileHandoverListeners();
     }
   }, [
-    currentThreadKey,
+    currentHandoverKey,
     generateThreadHandover,
     isFocused,
     navigation,

@@ -424,6 +424,13 @@ export function useNewThreadHandler() {
           racedDraft.draftId !== storedDraftThread?.draftId &&
           readThreadShell(scopeThreadRef(racedDraft.environmentId, racedDraft.threadId)) === null
         ) {
+          // A caller-specific prompt belongs to this invocation, not to the
+          // winner that registered while defaults were loading. Report the
+          // collision so the caller can retain/recover its payload instead of
+          // treating an untouched winner as a successful delivery.
+          if (options?.initialPrompt !== undefined) {
+            return null;
+          }
           // Same remap the reuse paths above perform: point the draft at the
           // caller's project member and apply explicit workspace options if
           // the caller passed any. Without explicit options the winner's
@@ -439,7 +446,6 @@ export function useNewThreadHandler() {
             interactionMode: racedDraft.interactionMode,
             ...pickExplicitWorkspaceOptions(options),
           });
-          prepareDraft(racedDraft.draftId);
           await router.navigate({
             to: "/draft/$draftId",
             params: { draftId: racedDraft.draftId },

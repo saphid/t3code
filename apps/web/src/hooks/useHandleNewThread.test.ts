@@ -1,3 +1,4 @@
+import { EnvironmentId, ProjectId, type ScopedProjectRef } from "@t3tools/contracts";
 import { describe, expect, it, vi } from "vite-plus/test";
 
 const testState = vi.hoisted(() => {
@@ -13,6 +14,7 @@ const testState = vi.hoisted(() => {
   let storedDraft: StoredDraft | null = null;
   let prompts: Record<string, string> = {};
   let navigationFailure: Error | null = null;
+  let completeNavigation: (() => void) | null = null;
   const router = {
     state: {
       location: { href: "/" },
@@ -20,6 +22,11 @@ const testState = vi.hoisted(() => {
     },
     navigate: vi.fn(async (request: { readonly params: { readonly draftId: string } }) => {
       if (navigationFailure !== null) throw navigationFailure;
+      if (completeNavigation !== null) {
+        await new Promise<void>((resolve) => {
+          completeNavigation = resolve;
+        });
+      }
       router.state.location.href = `/draft/${request.params.draftId}`;
     }),
   };
@@ -73,6 +80,7 @@ const testState = vi.hoisted(() => {
           : { ...nextStoredDraft, logicalProjectKey: "remote-project" };
       prompts = {};
       navigationFailure = null;
+      completeNavigation = null;
       router.state.location.href = "/";
       router.navigate.mockClear();
       draftStore.setLogicalProjectDraftThreadId.mockClear();
@@ -82,6 +90,13 @@ const testState = vi.hoisted(() => {
       });
     },
     router,
+    holdNavigation() {
+      completeNavigation = () => undefined;
+    },
+    releaseNavigation() {
+      completeNavigation?.();
+      completeNavigation = null;
+    },
     setNavigationFailure(error: Error | null) {
       navigationFailure = error;
     },
@@ -96,7 +111,11 @@ vi.mock("@t3tools/client-runtime/environment", () => ({
   scopeProjectRef: (environmentId: string, projectId: string) => ({ environmentId, projectId }),
   scopeThreadRef: (environmentId: string, threadId: string) => ({ environmentId, threadId }),
 }));
-vi.mock("@t3tools/contracts", () => ({ DEFAULT_RUNTIME_MODE: "default" }));
+vi.mock("@t3tools/contracts", () => ({
+  DEFAULT_RUNTIME_MODE: "default",
+  EnvironmentId: { make: (value: string) => value },
+  ProjectId: { make: (value: string) => value },
+}));
 vi.mock("@t3tools/shared/threadEnvMode", () => ({
   resolveDefaultThreadEnvMode: (input: {
     readonly projectFile: "local" | "worktree" | null;
@@ -251,5 +270,31 @@ describe("useNewThreadHandler", () => {
     expect(testState.prompt("draft-delayed")).toBe("Edited handover");
     expect(testState.draftStore.setPrompt).toHaveBeenCalledOnce();
     expect(testState.router.navigate).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not deliver a raced handover into another invocation's draft", async () => {
+    testState.reset(null);
+    testState.holdNavigation();
+    const openThread = useNewThreadHandler();
+    const projectRef = {
+      environmentId: EnvironmentId.make("environment-ssh"),
+      projectId: ProjectId.make("project-remote"),
+    } satisfies ScopedProjectRef;
+    const ordinaryOpen = openThread(projectRef);
+    const onHandoverDraftReady = vi.fn();
+    const handoverOpen = openThread(projectRef, {
+      initialPrompt: "Generated handover",
+      onDraftReady: onHandoverDraftReady,
+    });
+
+    testState.completeProjectFileRead(null);
+
+    await expect(handoverOpen).resolves.toBeNull();
+    expect(testState.draftStore.setPrompt).not.toHaveBeenCalled();
+    expect(onHandoverDraftReady).not.toHaveBeenCalled();
+    expect(testState.router.navigate).toHaveBeenCalledOnce();
+
+    testState.releaseNavigation();
+    await expect(ordinaryOpen).resolves.toMatchObject({ draftId: "draft-delayed" });
   });
 });

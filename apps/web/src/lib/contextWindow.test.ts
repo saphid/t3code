@@ -7,7 +7,12 @@ import {
   formatContextWindowTokens,
 } from "./contextWindow";
 
-function makeActivity(id: string, kind: string, payload: unknown): OrchestrationThreadActivity {
+function makeActivity(
+  id: string,
+  kind: string,
+  payload: unknown,
+  options: { readonly sequence?: number; readonly createdAt?: string } = {},
+): OrchestrationThreadActivity {
   return {
     id: EventId.make(id),
     tone: "info",
@@ -15,7 +20,8 @@ function makeActivity(id: string, kind: string, payload: unknown): Orchestration
     summary: kind,
     payload,
     turnId: TurnId.make("turn-1"),
-    createdAt: "2026-03-23T00:00:00.000Z",
+    ...(options.sequence === undefined ? {} : { sequence: options.sequence }),
+    createdAt: options.createdAt ?? "2026-03-23T00:00:00.000Z",
   };
 }
 
@@ -65,6 +71,26 @@ describe("contextWindow", () => {
       usedPercentage: 0,
       remainingPercentage: 100,
     });
+  });
+
+  it("uses canonical activity order after compaction instead of array order", () => {
+    const snapshot = deriveLatestContextWindowSnapshot([
+      makeActivity(
+        "activity-current",
+        "context-window.updated",
+        { usedTokens: 20_000, maxTokens: 250_000 },
+        { sequence: 12, createdAt: "2026-03-23T00:02:00.000Z" },
+      ),
+      makeActivity(
+        "activity-stale",
+        "context-window.updated",
+        { usedTokens: 250_000, maxTokens: 250_000 },
+        { sequence: 11, createdAt: "2026-03-23T00:01:00.000Z" },
+      ),
+    ]);
+
+    expect(snapshot?.usedTokens).toBe(20_000);
+    expect(contextWindowReachedThreadLimit(snapshot)).toBe(false);
   });
 
   it("formats compact token counts", () => {

@@ -48,7 +48,10 @@ import {
 } from "@t3tools/shared/model";
 import { projectScriptCwd, projectScriptRuntimeEnv } from "@t3tools/shared/projectScripts";
 import { truncate } from "@t3tools/shared/String";
-import { resolveThreadReferenceCopyTarget } from "@t3tools/shared/threadReference";
+import {
+  resolveThreadReferenceCopyTarget,
+  threadHandoverSourceKey,
+} from "@t3tools/shared/threadReference";
 import {
   getTerminalLabel,
   nextTerminalId,
@@ -1381,8 +1384,18 @@ export default function ChatView(props: ChatViewProps) {
     [environmentId, threadId],
   );
   const routeThreadKey = useMemo(() => scopedThreadKey(routeThreadRef), [routeThreadRef]);
-  const routeThreadKeyRef = useRef(routeThreadKey);
-  routeThreadKeyRef.current = routeThreadKey;
+  const routeHandoverKey = useMemo(
+    () => threadHandoverSourceKey(routeThreadRef.environmentId, routeThreadRef.threadId),
+    [routeThreadRef],
+  );
+  const routeHandoverKeyRef = useRef<string | null>(routeHandoverKey);
+  routeHandoverKeyRef.current = routeHandoverKey;
+  useEffect(() => {
+    routeHandoverKeyRef.current = routeHandoverKey;
+    return () => {
+      routeHandoverKeyRef.current = null;
+    };
+  }, [routeHandoverKey]);
   const updateProject = useAtomCommand(projectEnvironment.update, { reportFailure: false });
   const upsertKeybinding = useAtomCommand(serverEnvironment.upsertKeybinding, {
     reportFailure: false,
@@ -5437,7 +5450,9 @@ export default function ChatView(props: ChatViewProps) {
     isStoppingBackgroundWork,
   ]);
   const [, setHandoverStateVersion] = useState(0);
-  const activeThreadHandoverKey = activeThread ? routeThreadKey : null;
+  const activeThreadHandoverKey = activeThread
+    ? threadHandoverSourceKey(activeThread.environmentId, activeThread.id)
+    : null;
   const isGeneratingHandover = activeThreadHandoverKey
     ? generatingThreadHandovers.has(activeThreadHandoverKey)
     : false;
@@ -5486,7 +5501,7 @@ export default function ChatView(props: ChatViewProps) {
       const handoverAttempt = attempt;
       const handover = handoverAttempt.handover;
 
-      if (routeThreadKeyRef.current !== sourceThreadKey) {
+      if (routeHandoverKeyRef.current !== sourceThreadKey) {
         return;
       }
 
@@ -5554,6 +5569,7 @@ export default function ChatView(props: ChatViewProps) {
   const contextLimitBannerItem = useMemo<ComposerBannerStackItem | null>(() => {
     if (!activeThreadReachedContextLimit || !activeThread) return null;
     const supportsGeneration =
+      activeProject !== null &&
       serverConfig?.environment.capabilities.threadHandoverGeneration === true;
     return buildContextLimitBannerItem({
       threadId: activeThread.id,
@@ -5574,6 +5590,7 @@ export default function ChatView(props: ChatViewProps) {
   }, [
     activeThread,
     activeThreadReachedContextLimit,
+    activeProject,
     environmentId,
     handleGenerateHandover,
     isGeneratingHandover,
