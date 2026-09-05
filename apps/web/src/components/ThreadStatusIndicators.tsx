@@ -4,21 +4,181 @@ import {
   scopeThreadRef,
 } from "@t3tools/client-runtime/environment";
 import type { VcsStatusResult } from "@t3tools/contracts";
+import { useAtomValue } from "@effect/atom-react";
 import { Atom } from "effect/unstable/reactivity";
-import { CloudIcon, FolderGit2Icon, GitPullRequestIcon, TerminalIcon } from "lucide-react";
-import { useMemo } from "react";
+import {
+  CircleCheckIcon,
+  CloudIcon,
+  FolderGit2Icon,
+  GitPullRequestIcon,
+  TerminalIcon,
+} from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { appAtomRegistry } from "../rpc/atomRegistry";
-import { useEnvironment, usePrimaryEnvironmentId } from "../state/environments";
+import {
+  useEnvironment,
+  useEnvironmentConnectionState,
+  usePrimaryEnvironmentId,
+} from "../state/environments";
 import { useProject } from "../state/entities";
 import { useEnvironmentQuery } from "../state/query";
+import { serverEnvironment } from "../state/server";
+import { environmentShell } from "../state/shell";
 import { useThreadRunningTerminalIds } from "../state/terminalSessions";
 import { vcsEnvironment } from "../state/vcs";
 import { useUiStateStore } from "../uiStateStore";
 import { resolveChangeRequestPresentation } from "../sourceControlPresentation";
-import { resolveThreadStatusPill, type ThreadStatusPill } from "./Sidebar.logic";
+import {
+  EMPTY_TURN_COMPLETION_TICK_STATE,
+  reduceTurnCompletionTick,
+  resolveThreadStatusPill,
+  type ThreadStatusPill,
+  type TurnCompletionTickState,
+} from "./Sidebar.logic";
 import type { SidebarThreadSummary } from "../types";
 import { formatWorktreePathForDisplay } from "../worktreeCleanup";
+import { cn } from "../lib/utils";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
+import styles from "./ThreadStatusIndicators.module.css";
+
+export const TURN_COMPLETION_TICK_VISIBLE_MS = 900;
+
+type ForegroundListener = (isForeground: boolean) => void;
+
+const foregroundListeners = new Set<ForegroundListener>();
+let foregroundListenersAttached = false;
+let lastForegroundValue = false;
+
+function documentIsForeground(): boolean {
+  return (
+    typeof document !== "undefined" && document.visibilityState === "visible" && document.hasFocus()
+  );
+}
+
+function publishForegroundState(): void {
+  const next = documentIsForeground();
+  if (next === lastForegroundValue) return;
+  lastForegroundValue = next;
+  for (const listener of foregroundListeners) listener(next);
+}
+
+function subscribeToForegroundState(listener: ForegroundListener): () => void {
+  foregroundListeners.add(listener);
+  if (!foregroundListenersAttached && typeof window !== "undefined") {
+    foregroundListenersAttached = true;
+    lastForegroundValue = documentIsForeground();
+    document.addEventListener("visibilitychange", publishForegroundState);
+    window.addEventListener("focus", publishForegroundState);
+    window.addEventListener("blur", publishForegroundState);
+  }
+  listener(documentIsForeground());
+  return () => {
+    foregroundListeners.delete(listener);
+    if (foregroundListeners.size > 0 || !foregroundListenersAttached) return;
+    foregroundListenersAttached = false;
+    document.removeEventListener("visibilitychange", publishForegroundState);
+    window.removeEventListener("focus", publishForegroundState);
+    window.removeEventListener("blur", publishForegroundState);
+  };
+}
+
+export function useTurnCompletionTick(
+  thread: Pick<
+    SidebarThreadSummary,
+    "environmentId" | "latestTurn" | "latestUserMessageAt" | "session"
+  >,
+): boolean {
+  const shellState = useAtomValue(environmentShell.stateValueAtom(thread.environmentId));
+  const serverConfig = useAtomValue(serverEnvironment.configValueAtom(thread.environmentId));
+  const connectionState = useEnvironmentConnectionState(thread.environmentId);
+  const supportsSynchronizedShell = serverConfig?.shellResumeCompletionMarker === true;
+  const [isForeground, setIsForeground] = useState(documentIsForeground);
+  const [tickTurnId, setTickTurnId] = useState<string | null>(null);
+  const observationRef = useRef<TurnCompletionTickState>(EMPTY_TURN_COMPLETION_TICK_STATE);
+  const connectionGenerationRef = useRef<number | null>(null);
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const clearTick = () => {
+    if (timerRef.current !== null) {
+      clearTimeout(timerRef.current);
+      timerRef.current = null;
+    }
+    setTickTurnId(null);
+  };
+
+  useEffect(
+    () =>
+      subscribeToForegroundState((foreground) => {
+        if (!foreground) {
+          observationRef.current = EMPTY_TURN_COMPLETION_TICK_STATE;
+          clearTick();
+        }
+        setIsForeground(foreground);
+      }),
+    [],
+  );
+
+  useEffect(() => {
+    const connectionGeneration = connectionState.data?.generation ?? null;
+    if (connectionGenerationRef.current !== connectionGeneration) {
+      connectionGenerationRef.current = connectionGeneration;
+      observationRef.current = EMPTY_TURN_COMPLETION_TICK_STATE;
+      clearTick();
+    }
+    const transition = reduceTurnCompletionTick(observationRef.current, {
+      latestTurn: thread.latestTurn,
+      latestUserMessageAt: thread.latestUserMessageAt,
+      session: thread.session,
+      canObserveLiveTransitions:
+        supportsSynchronizedShell &&
+        shellState.status === "live" &&
+        connectionState.data?.phase === "connected",
+      isForeground,
+    });
+    observationRef.current = transition.state;
+    if (transition.action === "cancel") {
+      clearTick();
+      return;
+    }
+    if (transition.action !== "start" || transition.state.turnId === null) return;
+
+    clearTick();
+    setTickTurnId(transition.state.turnId);
+    timerRef.current = setTimeout(() => {
+      timerRef.current = null;
+      setTickTurnId(null);
+    }, TURN_COMPLETION_TICK_VISIBLE_MS);
+  }, [
+    connectionState.data?.generation,
+    connectionState.data?.phase,
+    isForeground,
+    shellState.status,
+    supportsSynchronizedShell,
+    thread.latestTurn,
+    thread.latestUserMessageAt,
+    thread.session,
+  ]);
+
+  useEffect(
+    () => () => {
+      if (timerRef.current !== null) clearTimeout(timerRef.current);
+    },
+    [],
+  );
+
+  return tickTurnId !== null;
+}
+
+export function TurnCompletionTickIcon({ className }: { className?: string }) {
+  return (
+    <CircleCheckIcon
+      aria-hidden="true"
+      focusable="false"
+      data-testid="turn-completion-tick"
+      className={cn("shrink-0 text-emerald-600 dark:text-emerald-300/90", styles.tick, className)}
+    />
+  );
+}
 
 export interface PrStatusIndicator {
   label: string;
@@ -351,9 +511,11 @@ export function ThreadWorktreeIndicator({
 export function ThreadStatusLabel({
   status,
   compact = false,
+  completionTick = false,
 }: {
   status: ThreadStatusPill;
   compact?: boolean;
+  completionTick?: boolean;
 }) {
   if (compact) {
     return (
@@ -366,11 +528,15 @@ export function ThreadStatusLabel({
             />
           }
         >
-          <span
-            className={`size-[9px] rounded-full ${status.dotClass} ${
-              status.pulse ? "animate-status-pulse" : ""
-            }`}
-          />
+          {completionTick ? (
+            <TurnCompletionTickIcon className="size-3.5" />
+          ) : (
+            <span
+              className={`size-[9px] rounded-full ${status.dotClass} ${
+                status.pulse ? "animate-status-pulse" : ""
+              }`}
+            />
+          )}
         </TooltipTrigger>
         <TooltipPopup side="top">{status.label}</TooltipPopup>
       </Tooltip>
@@ -387,11 +553,15 @@ export function ThreadStatusLabel({
           />
         }
       >
-        <span
-          className={`h-1.5 w-1.5 rounded-full ${status.dotClass} ${
-            status.pulse ? "animate-status-pulse" : ""
-          }`}
-        />
+        {completionTick ? (
+          <TurnCompletionTickIcon className="size-3" />
+        ) : (
+          <span
+            className={`h-1.5 w-1.5 rounded-full ${status.dotClass} ${
+              status.pulse ? "animate-status-pulse" : ""
+            }`}
+          />
+        )}
         <span className="hidden md:inline">{status.label}</span>
       </TooltipTrigger>
       <TooltipPopup side="top">{status.label}</TooltipPopup>
