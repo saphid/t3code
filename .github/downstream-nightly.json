@@ -6,7 +6,8 @@
     {
       "type": "commit",
       "repository": "saphid/t3code",
-      "sha": "1e3ec021e3804bd509ef65e275c3236258e74daa"
+      "sha": "41c9e34eeebe2f8565a2020f496cd5a6a4ed0a17",
+      "name": "Natural-language thread search"
     },
     {
       "type": "commit",
@@ -16,37 +17,34 @@
     {
       "type": "commit",
       "repository": "saphid/t3code",
-      "sha": "29b440342d97fff02f6b43622a2477a5ae9bb600"
+      "sha": "1dd3375fd188f15859329de3e7b923d4eb520e66",
+      "name": "Context-limit handovers"
     },
     {
       "type": "commit",
       "repository": "saphid/t3code",
-      "sha": "f8eb427a2ac3b896dc10ea9312f16e9531d3d244"
+      "sha": "129efe901606b9ccbca1c4d7149e3385889fe737",
+      "name": "Durable custom update sources"
     },
     {
       "type": "commit",
       "repository": "saphid/t3code",
-      "sha": "33966a0c426932208e948dd2024da033abed321c"
+      "sha": "dcdca4ef0d69236590b669ea596f276c09a3bdcf"
     },
     {
       "type": "commit",
       "repository": "saphid/t3code",
-      "sha": "dcf0faa708f7612e1ec4e74de33a94a69c8eadf1"
+      "sha": "77e4ea1e702443dc305ef7b2c79c7d537668bc44"
     },
     {
       "type": "commit",
       "repository": "saphid/t3code",
-      "sha": "e10119d48f4f621a247f2a82aa0ebf9c7d8d9419"
+      "sha": "5cf56f4c2170c1645704a07e792c441d836673e2"
     },
     {
       "type": "commit",
       "repository": "saphid/t3code",
-      "sha": "23cda7fb019f5696a856b761ad63172b2c688935"
-    },
-    {
-      "type": "commit",
-      "repository": "saphid/t3code",
-      "sha": "be0ef37aff89ea77115f5f410e79ac3bcbf62ed6"
+      "sha": "ef956b27be031fb3e1a11ff3ef631370c786561c"
     },
     {
       "type": "commit",
@@ -66,17 +64,17 @@
     {
       "type": "commit",
       "repository": "saphid/t3code",
-      "sha": "a1ddf52a52fb5e4582964f8d4470185a1c6ef265"
+      "sha": "c3ed25a77114cfdcba11ac1f7c82e87d6d13e9aa"
     },
     {
       "type": "commit",
       "repository": "saphid/t3code",
-      "sha": "438e02ed6c92a2a562ad430fd1be8f40737884ba"
+      "sha": "71095c163f92c65bf28375175a196c09d38af482"
     },
     {
       "type": "commit",
       "repository": "saphid/t3code",
-      "sha": "fe695b8cc360ab07039440adf2de01d93b2ee6df"
+      "sha": "58f1fcfe4d3ff816ced440953eac46938339d836"
     },
     {
       "type": "commit",
@@ -111,11 +109,6 @@
     {
       "type": "commit",
       "repository": "saphid/t3code",
-      "sha": "ca849e0bc249b5f1c36a540c3b64bbf8774dd48b"
-    },
-    {
-      "type": "commit",
-      "repository": "saphid/t3code",
       "sha": "302dc470c1d3bdd579dc147434847797935dfd7b"
     },
     {
@@ -126,7 +119,7 @@
     {
       "type": "commit",
       "repository": "saphid/t3code",
-      "sha": "249a71b55ee9e377c529fceb27ccb47f1f22d961",
+      "sha": "f45c683a69fd1ec457212348c9b9a60785e1178c",
       "name": "Project spend usage dashboard"
     },
     {
@@ -138,8 +131,20 @@
     {
       "type": "commit",
       "repository": "saphid/t3code",
-      "sha": "0c39791ac395d8bb540ff3bd61e6922985c93b43",
+      "sha": "3e4e731c86769f0c3b819770161b4f9f520902b7",
       "name": "Configurable concurrent thread limit"
+    },
+    {
+      "type": "commit",
+      "repository": "saphid/t3code",
+      "sha": "30c650814f9579706fcaa2278603148abf24da46",
+      "name": "Remove duplicate project legend"
+    },
+    {
+      "type": "commit",
+      "repository": "saphid/t3code",
+      "sha": "474fb0e743910052c3c9bf92f4c056e54c21efb8",
+      "name": "Nightly 1292 integration compatibility"
     }
   ]
 }
