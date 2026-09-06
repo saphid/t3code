@@ -151,6 +151,12 @@
       "repository": "saphid/t3code",
       "sha": "27307fa7a3e7c80ec0aee79e65678aaa7cf231e9",
       "name": "Format assembled sidebar"
+    },
+    {
+      "type": "commit",
+      "repository": "saphid/t3code",
+      "sha": "efddd20306e2471cedaeb9721a592bbb4cf160c3",
+      "name": "Preserve upstream usage and thread seams"
     }
   ]
 }
