@@ -113,9 +113,12 @@ describe("UsagePage", () => {
     expect(markup).toContain("Providers and models · click to hide or show");
   });
 
-  it("uses the same project identity in the chart legend and colorized breakdown", () => {
+  it("uses the colorized project breakdown instead of a duplicate chart legend", () => {
     const markup = renderToStaticMarkup(<UsagePage />);
-    expect(markup.match(/Project One/g)?.length).toBeGreaterThanOrEqual(2);
+    expect(markup.match(/Project One/g)?.length).toBe(1);
+    expect(markup).not.toContain('aria-label="projects visibility"');
+    expect(markup).toContain('aria-label="Project visibility controls"');
+    expect(markup).toContain("Click a project to hide or show it");
     expect(markup).toContain("Select all");
     expect(markup).toContain("Deselect all");
     expect(markup).toContain('aria-label="Project breakdown"');
