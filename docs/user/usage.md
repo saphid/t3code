@@ -87,3 +87,14 @@ settings section when you no longer need it.
 Add **Subscription usage** from your iOS or Android widget gallery to see remaining Codex and
 Claude quotas. Tap it to open **Usage → Limits**. On iOS, use **Edit Widget** to choose Session,
 Weekly, or both for each provider. Reopen T3 to refresh expired readings.
+
+## Context and concurrency limits
+
+T3 stops a thread after its latest reported context usage reaches the configured token limit,
+which defaults to 250,000 tokens and can be changed in General settings. The chat then offers a
+handover to a new thread in the same checkout. It prepares the handover without sending the new
+thread, so you can choose its model and reasoning level first.
+
+T3 also limits concurrent top-level provider turns. Ready, idle sessions do not count. Provider
+CLIs may create their own internal subagents, which T3 cannot reject before the provider starts
+them.
