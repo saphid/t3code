@@ -34,9 +34,10 @@ provider settings.
 The usage chart defaults to **7 days**, **Projects**, and **12h** grouping. Every preset retains
 half-hour source buckets, including **24 hours**, **30 days**, and **90 days**. Use **30m**, **1h**,
 **6h**, **12h**, or **1d** to change only the visual grouping; the hover cursor still advances in
-30-minute increments. The page labels the latest time represented by the data. Usage refreshes in the background
-when the server starts and every 30 minutes, so opening the page can use the last successful
-snapshot without waiting for a transcript scan. The Cost and Tokens switch sits with the graph.
+30-minute increments. The stacked boundaries use shape-preserving curves, while the values remain
+the exact totals for the selected grouping. The page labels the latest time represented by the data.
+Usage refreshes in the background when the server starts and every 30 minutes, so opening the page
+can use the last successful snapshot without waiting for a transcript scan. The Cost and Tokens switch sits with the graph.
 Manually refreshing rescans every connected environment and refetches model pricing on each
 of them, so a newly released model that showed $0.00 gets a price without waiting for the daily
 pricing update.
@@ -86,8 +87,8 @@ writes show a dash; incomplete or unavailable pricing is labeled **Unavailable**
 Cache creation is a billing category, not evidence that a cache entry expired.
 
 Usage is attributed to the project whose folder a session ran in, including sessions driven
-outside T3 Code. Each project has the same color in the stacked graph, its legend, and the project
-breakdown. Hovering any of those locations highlights the same project everywhere. Click projects
+outside T3 Code. Each project has the same color in the stacked graph and the project breakdown.
+Hovering either location highlights the same project everywhere. Click projects in the breakdown
 to show or hide several at once, or use **Select all** and **Deselect all**. Work outside every
 project and usage whose transcript has no trusted folder remain separate groups.
 
