@@ -406,5 +406,11 @@ export const makeAntigravityTextGeneration = Effect.fn("makeAntigravityTextGener
     generatePrContent,
     generateBranchName,
     generateThreadTitle,
+    generateHandover: Effect.fn("antigravity.generateHandover.unsupported")(function* () {
+      return yield* new TextGenerationError({
+        operation: "generateHandover",
+        detail: "Antigravity does not support handover generation.",
+      });
+    }),
   } satisfies TextGeneration.TextGeneration["Service"];
 });
