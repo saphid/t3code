@@ -7,6 +7,11 @@ const WIDTH = 960;
 const HEIGHT = 280;
 const TOP = 12;
 const BOTTOM = 24;
+const SOURCE_MS = {
+  halfHour: 30 * 60_000,
+  hour: 60 * 60_000,
+  day: 24 * 60 * 60_000,
+} as const;
 
 export type UsageGrouping = "30m" | "1h" | "6h" | "12h" | "1d";
 export type UsageSeriesMode = "projects" | "providers";
@@ -38,6 +43,56 @@ interface GroupedPoint {
   readonly startMs: number;
   readonly values: ReadonlyMap<string, number>;
   readonly models: ReadonlyMap<string, ReadonlyMap<string, number>>;
+}
+
+interface Point {
+  readonly x: number;
+  readonly y: number;
+}
+
+/** The source sample beneath the pointer, with its centered chart position. */
+export function hoverSampleAt(
+  clientX: number,
+  plotLeft: number,
+  plotWidth: number,
+  sinceMs: number,
+  untilMs: number,
+  sampleMs: number,
+): { readonly startMs: number; readonly x: number } | null {
+  if (plotWidth <= 0 || untilMs <= sinceMs || sampleMs <= 0) return null;
+  const sampleCount = Math.ceil((untilMs - sinceMs) / sampleMs);
+  if (sampleCount <= 0) return null;
+  const localX = Math.min(plotWidth, Math.max(0, clientX - plotLeft));
+  const index = Math.min(sampleCount - 1, Math.floor((localX / plotWidth) * sampleCount));
+  return {
+    startMs: sinceMs + index * sampleMs,
+    x: ((index + 0.5) / sampleCount) * WIDTH,
+  };
+}
+
+/** The visual aggregate containing a source sample. */
+export function groupedPointIndexAt(
+  sampleStartMs: number,
+  sinceMs: number,
+  grouping: UsageGrouping,
+  pointCount: number,
+): number | null {
+  if (pointCount <= 0 || sampleStartMs < sinceMs) return null;
+  const index = Math.floor((sampleStartMs - sinceMs) / GROUP_MS[grouping]);
+  return index < pointCount ? index : null;
+}
+
+function sampleCenterX(
+  startMs: number,
+  sinceMs: number,
+  untilMs: number,
+  sampleMs: number,
+): number | null {
+  if (untilMs <= sinceMs || sampleMs <= 0) return null;
+  const sampleCount = Math.ceil((untilMs - sinceMs) / sampleMs);
+  const index = Math.floor((startMs - sinceMs) / sampleMs);
+  if (index < 0 || index >= sampleCount) return null;
+  return ((index + 0.5) / sampleCount) * WIDTH;
 }
 
 export function groupTimeline(
@@ -76,7 +131,55 @@ export function groupTimeline(
   return mutable;
 }
 
-function areaPath(
+/** Shape-preserving cubic tangents that cannot overshoot usage peaks. */
+function monotoneTangents(points: readonly Point[]): readonly number[] {
+  if (points.length < 2) return [0];
+  const slopes = points.slice(1).map((point, index) => {
+    const previous = points[index]!;
+    const dx = point.x - previous.x;
+    return dx === 0 ? 0 : (point.y - previous.y) / dx;
+  });
+  const tangents = Array.from({ length: points.length }, () => 0);
+  tangents[0] = slopes[0] ?? 0;
+  tangents[tangents.length - 1] = slopes[slopes.length - 1] ?? 0;
+  for (let index = 1; index < tangents.length - 1; index += 1) {
+    const previous = slopes[index - 1] ?? 0;
+    const next = slopes[index] ?? 0;
+    tangents[index] = previous * next <= 0 ? 0 : (previous + next) / 2;
+  }
+  for (let index = 0; index < slopes.length; index += 1) {
+    const slope = slopes[index] ?? 0;
+    if (slope === 0) {
+      tangents[index] = 0;
+      tangents[index + 1] = 0;
+      continue;
+    }
+    const a = (tangents[index] ?? 0) / slope;
+    const b = (tangents[index + 1] ?? 0) / slope;
+    const magnitude = a * a + b * b;
+    if (magnitude > 9) {
+      const scale = 3 / Math.sqrt(magnitude);
+      tangents[index] = scale * a * slope;
+      tangents[index + 1] = scale * b * slope;
+    }
+  }
+  return tangents;
+}
+
+function curvePath(points: readonly Point[]): string {
+  if (points.length < 2) return "";
+  const tangents = monotoneTangents(points);
+  let path = `M${points[0]!.x.toFixed(2)},${points[0]!.y.toFixed(2)}`;
+  for (let index = 0; index < points.length - 1; index += 1) {
+    const from = points[index]!;
+    const to = points[index + 1]!;
+    const dx = to.x - from.x;
+    path += ` C${(from.x + dx / 3).toFixed(2)},${(from.y + ((tangents[index] ?? 0) * dx) / 3).toFixed(2)} ${(to.x - dx / 3).toFixed(2)},${(to.y - ((tangents[index + 1] ?? 0) * dx) / 3).toFixed(2)} ${to.x.toFixed(2)},${to.y.toFixed(2)}`;
+  }
+  return path;
+}
+
+export function stackedAreaPath(
   points: readonly GroupedPoint[],
   series: readonly UsageChartSeries[],
   seriesIndex: number,
@@ -84,8 +187,8 @@ function areaPath(
 ): string {
   if (points.length === 0 || peak <= 0) return "";
   const plotHeight = HEIGHT - TOP - BOTTOM;
-  const x = (index: number) =>
-    points.length === 1 ? WIDTH / 2 : (index / (points.length - 1)) * WIDTH;
+  const step = WIDTH / points.length;
+  const x = (index: number) => (index + 0.5) * step;
   const valueBefore = (point: GroupedPoint) =>
     series
       .slice(0, seriesIndex)
@@ -93,13 +196,20 @@ function areaPath(
   const valueThrough = (point: GroupedPoint) =>
     valueBefore(point) + (point.values.get(series[seriesIndex]?.key ?? "") ?? 0);
   const y = (value: number) => TOP + plotHeight * (1 - value / peak);
-  const top = points.map(
-    (point, index) => `${x(index).toFixed(2)},${y(valueThrough(point)).toFixed(2)}`,
-  );
-  const bottom = points
-    .map((point, index) => `${x(index).toFixed(2)},${y(valueBefore(point)).toFixed(2)}`)
-    .toReversed();
-  return `M${top.join(" L")} L${bottom.join(" L")} Z`;
+  const paddedPoints = (values: readonly number[]) => {
+    const centers = values.map((value, index) => ({ x: x(index), y: y(value) }));
+    if (centers.length === 0) return [];
+    return [
+      { x: 0, y: centers[0]!.y },
+      ...centers,
+      { x: WIDTH, y: centers[centers.length - 1]!.y },
+    ];
+  };
+  const top = paddedPoints(points.map(valueThrough));
+  const bottom = paddedPoints(points.map(valueBefore)).toReversed();
+  const upper = curvePath(top);
+  const lower = curvePath(bottom);
+  return upper === "" || lower === "" ? "" : `${upper} ${lower.replace(/^M/, "L")} Z`;
 }
 
 export function UsageStackedChart({
@@ -110,6 +220,7 @@ export function UsageStackedChart({
   seriesMode,
   metric,
   grouping,
+  sourceResolution = "day",
   sinceTime,
   untilTime,
   timeZone,
@@ -123,6 +234,7 @@ export function UsageStackedChart({
   readonly seriesMode: UsageSeriesMode;
   readonly metric: UsageStackMetric;
   readonly grouping: UsageGrouping;
+  readonly sourceResolution?: keyof typeof SOURCE_MS;
   readonly sinceTime: string;
   readonly untilTime: string;
   readonly timeZone: string;
@@ -130,6 +242,7 @@ export function UsageStackedChart({
   readonly onActiveSeriesChange: (series: string | null) => void;
 }) {
   const [hoverMs, setHoverMs] = useState<number | null>(null);
+  const sourceMs = SOURCE_MS[sourceResolution];
   const shownSeries = series.filter((entry) => visibleSeries.has(entry.key));
   const points = useMemo(
     () => groupTimeline(cells, seriesMode, metric, grouping, sinceTime, untilTime, visibleModels),
@@ -145,10 +258,7 @@ export function UsageStackedChart({
     hoverMs === null || points.length === 0
       ? null
       : (points[
-          Math.min(
-            points.length - 1,
-            Math.max(0, Math.floor((hoverMs - Date.parse(sinceTime)) / GROUP_MS[grouping])),
-          )
+          groupedPointIndexAt(hoverMs, Date.parse(sinceTime), grouping, points.length) ?? -1
         ] ?? null);
   const active = series.find((entry) => entry.key === activeSeries) ?? null;
   const activeValue =
@@ -170,10 +280,15 @@ export function UsageStackedChart({
           aria-label={`Stacked ${metric} by ${seriesMode}`}
           onPointerMove={(event) => {
             const bounds = event.currentTarget.getBoundingClientRect();
-            const fraction = Math.min(1, Math.max(0, (event.clientX - bounds.left) / bounds.width));
-            const raw =
-              Date.parse(sinceTime) + fraction * (Date.parse(untilTime) - Date.parse(sinceTime));
-            setHoverMs(Math.floor(raw / (30 * 60_000)) * (30 * 60_000));
+            const sample = hoverSampleAt(
+              event.clientX,
+              bounds.left,
+              bounds.width,
+              Date.parse(sinceTime),
+              Date.parse(untilTime),
+              sourceMs,
+            );
+            if (sample !== null) setHoverMs(sample.startMs);
           }}
           onPointerLeave={() => {
             setHoverMs(null);
@@ -195,7 +310,7 @@ export function UsageStackedChart({
           {shownSeries.map((entry, index) => (
             <path
               key={entry.key}
-              d={areaPath(points, shownSeries, index, peak)}
+              d={stackedAreaPath(points, shownSeries, index, peak)}
               fill={entry.color}
               fillOpacity={activeSeries === null || activeSeries === entry.key ? 0.78 : 0.12}
               stroke={entry.color}
@@ -208,14 +323,10 @@ export function UsageStackedChart({
           {hoverMs === null ? null : (
             <line
               x1={
-                ((hoverMs - Date.parse(sinceTime)) /
-                  (Date.parse(untilTime) - Date.parse(sinceTime))) *
-                WIDTH
+                sampleCenterX(hoverMs, Date.parse(sinceTime), Date.parse(untilTime), sourceMs) ?? 0
               }
               x2={
-                ((hoverMs - Date.parse(sinceTime)) /
-                  (Date.parse(untilTime) - Date.parse(sinceTime))) *
-                WIDTH
+                sampleCenterX(hoverMs, Date.parse(sinceTime), Date.parse(untilTime), sourceMs) ?? 0
               }
               y1={TOP}
               y2={HEIGHT - BOTTOM}
