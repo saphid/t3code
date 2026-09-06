@@ -25,6 +25,7 @@ import * as TextGeneration from "./TextGeneration.ts";
 import {
   buildBranchNamePrompt,
   buildCommitMessagePrompt,
+  buildHandoverPrompt,
   buildPrContentPrompt,
   buildThreadTitlePrompt,
 } from "./TextGenerationPrompts.ts";
@@ -103,7 +104,8 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
       | "generateCommitMessage"
       | "generatePrContent"
       | "generateBranchName"
-      | "generateThreadTitle",
+      | "generateThreadTitle"
+      | "generateHandover",
     value: unknown,
   ): Effect.Effect<string, TextGenerationError> =>
     encodeJsonString(value).pipe(
@@ -122,7 +124,8 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
       | "generateCommitMessage"
       | "generatePrContent"
       | "generateBranchName"
-      | "generateThreadTitle",
+      | "generateThreadTitle"
+      | "generateHandover",
     attachments: TextGeneration.BranchNameGenerationInput["attachments"],
   ): Effect.fn.Return<MaterializedImageAttachments, TextGenerationError> {
     if (!attachments || attachments.length === 0) {
@@ -164,7 +167,8 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
       | "generateCommitMessage"
       | "generatePrContent"
       | "generateBranchName"
-      | "generateThreadTitle";
+      | "generateThreadTitle"
+      | "generateHandover";
     cwd: string;
     prompt: string;
     outputSchemaJson: S;
@@ -415,10 +419,34 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
       } satisfies TextGeneration.ThreadTitleGenerationResult;
     });
 
+  const generateHandover: TextGeneration.TextGeneration["Service"]["generateHandover"] = Effect.fn(
+    "CodexTextGeneration.generateHandover",
+  )(function* (input) {
+    const { prompt, outputSchema } = buildHandoverPrompt({
+      threadContents: input.threadContents,
+    });
+    const generated = yield* runCodexJson({
+      operation: "generateHandover",
+      cwd: input.cwd,
+      prompt,
+      outputSchemaJson: outputSchema,
+      modelSelection: input.modelSelection,
+    });
+    const handover = generated.handover.trim();
+    if (handover.length === 0) {
+      return yield* new TextGenerationError({
+        operation: "generateHandover",
+        detail: "Codex returned an empty handover.",
+      });
+    }
+    return { handover };
+  });
+
   return {
     generateCommitMessage,
     generatePrContent,
     generateBranchName,
     generateThreadTitle,
+    generateHandover,
   } satisfies TextGeneration.TextGeneration["Service"];
 });
