@@ -116,6 +116,9 @@ afterEach(async () => {
   pool?.terminate();
   await Promise.all(terminationPromises);
   await disposeHighlighter();
+  // Pierre broadcasts worker-pool state from the requestAnimationFrame shim's
+  // queued immediate. Let that callback drain before removing the shim.
+  await new Promise<void>((resolve) => setImmediate(resolve));
   vi.unstubAllGlobals();
 });
 
