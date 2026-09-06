@@ -7,10 +7,12 @@ function foldAsciiCase(value: string): string {
   return value.replace(/[A-Z]/g, (character) => character.toLowerCase());
 }
 
-function splitHighlightParts(text: string, query: string) {
+function splitHighlightParts(text: string, queries: ReadonlyArray<string>) {
   const normalizedText = foldAsciiCase(text);
-  const normalizedQuery = foldAsciiCase(query.trim());
-  if (normalizedQuery.length === 0) {
+  const normalizedQueries = queries
+    .map((query) => foldAsciiCase(query.trim()))
+    .filter((query) => query.length > 0);
+  if (normalizedQueries.length === 0) {
     return [{ text, highlighted: false, start: 0 }];
   }
 
@@ -21,7 +23,15 @@ function splitHighlightParts(text: string, query: string) {
   }> = [];
   let cursor = 0;
   while (cursor < text.length) {
-    const matchIndex = normalizedText.indexOf(normalizedQuery, cursor);
+    const nextMatch = normalizedQueries.reduce<{
+      readonly index: number;
+      readonly length: number;
+    } | null>((earliest, query) => {
+      const index = normalizedText.indexOf(query, cursor);
+      if (index === -1 || (earliest !== null && earliest.index <= index)) return earliest;
+      return { index, length: query.length };
+    }, null);
+    const matchIndex = nextMatch?.index ?? -1;
     if (matchIndex === -1) {
       parts.push({ text: text.slice(cursor), highlighted: false, start: cursor });
       break;
@@ -34,11 +44,11 @@ function splitHighlightParts(text: string, query: string) {
       });
     }
     parts.push({
-      text: text.slice(matchIndex, matchIndex + normalizedQuery.length),
+      text: text.slice(matchIndex, matchIndex + (nextMatch?.length ?? 0)),
       highlighted: true,
       start: matchIndex,
     });
-    cursor = matchIndex + normalizedQuery.length;
+    cursor = matchIndex + (nextMatch?.length ?? 0);
   }
   return parts;
 }
@@ -50,7 +60,7 @@ export function ThreadSearchMatchExcerpt(props: {
   readonly compact?: boolean;
 }) {
   const isUser = props.match.source === "user";
-  const parts = splitHighlightParts(props.match.snippet, props.query);
+  const parts = splitHighlightParts(props.match.snippet, props.match.matchedTerms ?? [props.query]);
   return (
     <Text
       className={cn(
