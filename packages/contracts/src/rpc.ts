@@ -83,6 +83,7 @@ import {
   ClientOrchestrationCommand,
   ORCHESTRATION_WS_METHODS,
   OrchestrationDispatchCommandError,
+  OrchestrationGenerateHandoverError,
   OrchestrationGetFullThreadDiffError,
   OrchestrationGetFullThreadDiffInput,
   OrchestrationGetSnapshotError,
@@ -1065,6 +1066,15 @@ const WsOrchestrationGetWorkflowScriptRpc = Rpc.make(ORCHESTRATION_WS_METHODS.ge
   error: Schema.Union([OrchestrationGetWorkflowScriptError, EnvironmentAuthorizationError]),
 });
 
+export const WsOrchestrationGenerateHandoverRpc = Rpc.make(
+  ORCHESTRATION_WS_METHODS.generateHandover,
+  {
+    payload: OrchestrationRpcSchemas.generateHandover.input,
+    success: OrchestrationRpcSchemas.generateHandover.output,
+    error: Schema.Union([OrchestrationGenerateHandoverError, EnvironmentAuthorizationError]),
+  },
+);
+
 const WsOrchestrationGetTurnDiffRpc = Rpc.make(ORCHESTRATION_WS_METHODS.getTurnDiff, {
   payload: OrchestrationGetTurnDiffInput,
   success: OrchestrationRpcSchemas.getTurnDiff.output,
@@ -1286,6 +1296,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsSubscribeBackgroundPolicyRpc,
   WsSubscribeResourceTelemetryRpc,
   WsOrchestrationDispatchCommandRpc,
+  WsOrchestrationGenerateHandoverRpc,
   WsOrchestrationGetWorkflowScriptRpc,
   WsOrchestrationGetTurnDiffRpc,
   WsOrchestrationGetFullThreadDiffRpc,

@@ -1,4 +1,8 @@
-import type { OrchestrationThreadActivity, ThreadTokenUsageSnapshot } from "@t3tools/contracts";
+import {
+  DEFAULT_THREAD_CONTEXT_TOKEN_LIMIT,
+  type OrchestrationThreadActivity,
+  type ThreadTokenUsageSnapshot,
+} from "@t3tools/contracts";
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object" ? (value as Record<string, unknown>) : null;
@@ -88,4 +92,11 @@ export function formatContextWindowTokens(value: number | null): string {
     return `${Math.round(value / 1_000)}k`;
   }
   return `${(value / 1_000_000).toFixed(1).replace(/\.0$/, "")}m`;
+}
+
+export function contextWindowReachedThreadLimit(
+  snapshot: ContextWindowSnapshot | null,
+  tokenLimit = DEFAULT_THREAD_CONTEXT_TOKEN_LIMIT,
+): boolean {
+  return snapshot !== null && snapshot.usedTokens >= tokenLimit;
 }
