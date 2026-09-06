@@ -259,7 +259,7 @@ export function UsagePage() {
         <ScrollArea className="min-h-0 flex-1">
           <WorkspacePageContainer width="wide">
             {view === "limits" ? (
-              <UsageLimitsSection />
+              <UsageLimitsSection selectedEnvironmentIds={null} />
             ) : settling ? (
               <UsageSkeleton />
             ) : (
