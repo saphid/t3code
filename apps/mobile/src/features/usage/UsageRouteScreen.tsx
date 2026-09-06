@@ -162,7 +162,7 @@ export function UsageRouteScreen() {
               timeZone={window.timeZone}
             />
             <ProviderSection merged={merged} metric={metric} />
-            <UsageLimitsSection />
+            <UsageLimitsSection now={Date.now()} failedLabels={[]} />
             <TotalsSection merged={merged} isPast24Hours={isPast24Hours} />
             <ModelsSection merged={merged} />
           </>
