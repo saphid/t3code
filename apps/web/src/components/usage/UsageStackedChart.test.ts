@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { groupTimeline, projectSeriesKey } from "./UsageStackedChart";
+import {
+  groupTimeline,
+  groupedPointIndexAt,
+  hoverSampleAt,
+  projectSeriesKey,
+  stackedAreaPath,
+} from "./UsageStackedChart";
 
 const cells = [
   {
@@ -69,5 +75,40 @@ describe("projectSeriesKey", () => {
   it("keeps outside and unknown attribution distinct", () => {
     expect(projectSeriesKey(null)).toBe("outside");
     expect(projectSeriesKey(undefined)).toBe("unknown");
+  });
+});
+
+describe("chart geometry", () => {
+  it("keeps half-hour hover steps inside a twelve-hour display bucket", () => {
+    const sinceMs = Date.parse("2026-09-01T00:00:00.000Z");
+    const untilMs = Date.parse("2026-09-02T00:00:00.000Z");
+
+    const first = hoverSampleAt(245, 0, 960, sinceMs, untilMs, 30 * 60_000);
+    const second = hoverSampleAt(265, 0, 960, sinceMs, untilMs, 30 * 60_000);
+
+    expect(first?.startMs).toBe(Date.parse("2026-09-01T06:00:00.000Z"));
+    expect(first?.x).toBeCloseTo(250);
+    expect(second?.startMs).toBe(Date.parse("2026-09-01T06:30:00.000Z"));
+    expect(second?.x).toBeCloseTo(270);
+    expect(groupedPointIndexAt(first!.startMs, sinceMs, "12h", 2)).toBe(0);
+    expect(groupedPointIndexAt(second!.startMs, sinceMs, "12h", 2)).toBe(0);
+    expect(groupedPointIndexAt(Date.parse("2026-09-01T12:00:00.000Z"), sinceMs, "12h", 2)).toBe(1);
+  });
+
+  it("draws grouped stacked areas with shape-preserving curves", () => {
+    const models = new Set(["codex\u0000gpt-5.6-sol", "claude\u0000claude-fable-5"]);
+    const points = groupTimeline(
+      cells,
+      "projects",
+      "cost",
+      "30m",
+      "2026-09-01T00:00:00.000Z",
+      "2026-09-01T01:00:00.000Z",
+      models,
+    );
+
+    expect(
+      stackedAreaPath(points, [{ key: "project:env:id:one", label: "One", color: "#fff" }], 0, 3),
+    ).toContain(" C");
   });
 });
