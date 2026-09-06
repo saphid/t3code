@@ -484,23 +484,6 @@ export function UsagePage() {
                       timeZone={window.timeZone}
                       activeSeries={activeSeries}
                       onActiveSeriesChange={setActiveSeries}
-                      onToggleSeries={(key) =>
-                        seriesMode === "projects"
-                          ? setHiddenProjects((current) => setToggled(current, key))
-                          : setHiddenProviders((current) =>
-                              setToggled(current, key as UsageProviderKind),
-                            )
-                      }
-                      onSelectAll={() =>
-                        seriesMode === "projects"
-                          ? setHiddenProjects(new Set())
-                          : setHiddenProviders(new Set())
-                      }
-                      onDeselectAll={() =>
-                        seriesMode === "projects"
-                          ? setHiddenProjects(new Set(series.map((entry) => entry.key)))
-                          : setHiddenProviders(new Set(activeProviders))
-                      }
                     />
                   </div>
                 </section>
@@ -560,6 +543,36 @@ export function UsagePage() {
                     />
                   ) : (
                     <div className="flex flex-col" aria-label="Project breakdown">
+                      <div
+                        className="flex items-center justify-between gap-3 border-b border-border/50 px-1 pb-2 text-xs text-muted-foreground"
+                        aria-label="Project visibility controls"
+                      >
+                        <span>Click a project to hide or show it</span>
+                        <span className="flex shrink-0 gap-3">
+                          <button
+                            type="button"
+                            onClick={() => setHiddenProjects(new Set())}
+                            className="hover:text-foreground"
+                          >
+                            Select all
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setHiddenProjects(
+                                new Set(
+                                  projectRows.map((project) =>
+                                    projectSeriesKey(project.projectKey),
+                                  ),
+                                ),
+                              )
+                            }
+                            className="hover:text-foreground"
+                          >
+                            Deselect all
+                          </button>
+                        </span>
+                      </div>
                       {projectRows.map((project) => {
                         const key = projectSeriesKey(project.projectKey);
                         const hidden = hiddenProjects.has(key);
