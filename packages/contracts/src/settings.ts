@@ -804,6 +804,17 @@ export type SourceControlWritingStyleSettings = typeof SourceControlWritingStyle
 export const DEFAULT_AUTOMATIC_GIT_FETCH_INTERVAL = Duration.seconds(30);
 export const DEFAULT_PROVIDER_HEALTH_REFRESH_INTERVAL = Duration.minutes(5);
 
+export const MIN_THREAD_CONTEXT_TOKEN_LIMIT = 50_000;
+export const MAX_THREAD_CONTEXT_TOKEN_LIMIT = 1_000_000;
+export const DEFAULT_THREAD_CONTEXT_TOKEN_LIMIT = 250_000;
+export const ThreadContextTokenLimit = Schema.Int.check(
+  Schema.isBetween({
+    minimum: MIN_THREAD_CONTEXT_TOKEN_LIMIT,
+    maximum: MAX_THREAD_CONTEXT_TOKEN_LIMIT,
+  }),
+);
+export type ThreadContextTokenLimit = typeof ThreadContextTokenLimit.Type;
+
 export const BackgroundActivityProfile = Schema.Literals([
   "balanced",
   "performance",
@@ -854,6 +865,9 @@ export const ServerSettings = Schema.Struct({
   // Retain the update-era key; recovery now needs an environment-owned opt-in.
   continueThreadsAfterServerUpdate: Schema.Boolean.pipe(
     Schema.withDecodingDefault(Effect.succeed(false)),
+  ),
+  threadContextTokenLimit: ThreadContextTokenLimit.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_THREAD_CONTEXT_TOKEN_LIMIT)),
   ),
   /**
    * Whether agents may drive the in-app preview browser. Turning this off
@@ -1142,6 +1156,7 @@ export const ServerSettingsPatch = Schema.Struct({
   enableLegacyTokenStreaming: Schema.optionalKey(Schema.Boolean),
   enableProviderUpdateChecks: Schema.optionalKey(Schema.Boolean),
   continueThreadsAfterServerUpdate: Schema.optionalKey(Schema.Boolean),
+  threadContextTokenLimit: Schema.optionalKey(ThreadContextTokenLimit),
   enableAgentBrowserAccess: Schema.optionalKey(Schema.Boolean),
   projectAgentBrowserAccessOverrides: Schema.optionalKey(
     Schema.Record(ProjectId, Schema.NullOr(Schema.Boolean)),
