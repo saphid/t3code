@@ -479,6 +479,7 @@ export function UsagePage() {
                       seriesMode={seriesMode}
                       metric={metric}
                       grouping={grouping}
+                      sourceResolution={window.resolution ?? "day"}
                       sinceTime={window.sinceTime!}
                       untilTime={merged.availableThroughTime ?? window.untilTime!}
                       timeZone={window.timeZone}
