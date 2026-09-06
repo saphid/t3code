@@ -733,12 +733,7 @@ describe("UsageService", () => {
           ratesFetches += 1;
         },
       });
-      const canonical: UsageSummaryInput = {
-        timeZone: "UTC",
-        sinceDay: UsageDay.make("2026-06-05"),
-        untilDay: UsageDay.make("2026-09-02"),
-        resolution: "day",
-      };
+      const canonical = currentCanonicalWindow();
       const firstService = yield* UsageService.make.pipe(Effect.provide(layers));
       yield* firstService.refreshSummary(canonical);
       const fetchesAfterRefresh = ratesFetches;
