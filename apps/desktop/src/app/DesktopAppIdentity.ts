@@ -48,6 +48,12 @@ const normalizeCommitHash = (value: string): Option.Option<string> => {
 export const resolveUserDataPath = Effect.gen(function* () {
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
   const fileSystem = yield* FileSystem.FileSystem;
+  // Electron locks its internal app name before application code runs. A
+  // branded distribution therefore cannot safely reuse the official app's
+  // live Chromium profile or safeStorage identity by calling app.setName().
+  if (environment.isDownstreamDistribution) {
+    return environment.path.join(environment.appDataDirectory, environment.userDataDirName);
+  }
   const legacyPath = environment.path.join(
     environment.appDataDirectory,
     environment.legacyUserDataDirName,
@@ -119,7 +125,6 @@ export const make = Effect.gen(function* () {
 
   const configure = Effect.gen(function* () {
     const commitHash = yield* resolveAboutCommitHash;
-    yield* electronApp.setName(environment.displayName);
     yield* electronApp.setAboutPanelOptions({
       applicationName: environment.displayName,
       applicationVersion: environment.appVersion,
