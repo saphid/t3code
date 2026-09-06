@@ -7,6 +7,7 @@ import {
   ClientSettingsPatch,
   ClaudeSettings,
   DEFAULT_SERVER_SETTINGS,
+  DEFAULT_THREAD_CONTEXT_TOKEN_LIMIT,
   resolveProviderInstanceEnabled,
   ServerSettings,
   ServerSettingsPatch,
@@ -46,6 +47,22 @@ describe("ServerSettings default permissions", () => {
         projectSettingsOverrides: { project: { defaultRuntimeMode: "unsupported" } },
       }),
     ).toThrow();
+  });
+});
+
+describe("ServerSettings thread context token limit", () => {
+  it("defaults to the standard handover threshold", () => {
+    expect(decodeServerSettings({}).threadContextTokenLimit).toBe(
+      DEFAULT_THREAD_CONTEXT_TOKEN_LIMIT,
+    );
+  });
+
+  it("accepts a custom threshold and rejects values outside the supported range", () => {
+    expect(decodeServerSettingsPatch({ threadContextTokenLimit: 180_000 })).toEqual({
+      threadContextTokenLimit: 180_000,
+    });
+    expect(() => decodeServerSettingsPatch({ threadContextTokenLimit: 49_999 })).toThrow();
+    expect(() => decodeServerSettingsPatch({ threadContextTokenLimit: 1_000_001 })).toThrow();
   });
 });
 
