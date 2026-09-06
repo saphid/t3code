@@ -929,11 +929,53 @@ export function createServerEnvironmentAtoms<R, E>(
       Atom.withLabel(`environment-data:server:settings:${environmentId}`),
     ),
   );
+  const usagePricesAtom = Atom.family((environmentId: EnvironmentId) =>
+    Atom.make((get) => {
+      const overrides = get(settingsValueAtom(environmentId))?.usagePriceOverrides ?? {};
+      // Only changed prices should trigger another transcript scan. Settings
+      // snapshots can recreate the same mapping in a different property order.
+      return JSON.stringify(
+        Object.keys(overrides)
+          .sort()
+          .map((model) => {
+            const price = overrides[model]!;
+            return [
+              model,
+              price.inputCostPerMillionTokens,
+              price.outputCostPerMillionTokens,
+              price.cacheReadCostPerMillionTokens,
+              price.cacheWriteCostPerMillionTokens,
+            ];
+          }),
+      );
+    }).pipe(Atom.withLabel(`environment-data:server:usage-prices:${environmentId}`)),
+  );
   const providersValueAtom = Atom.family((environmentId: EnvironmentId) =>
     Atom.make((get) => get(configValueAtom(environmentId))?.providers ?? null).pipe(
       Atom.withLabel(`environment-data:server:providers:${environmentId}`),
     ),
   );
+  const welcomeStateFamily = Atom.family((environmentId: EnvironmentId) =>
+    runtime
+      .atom(serverWelcomeStateChanges(environmentId), { initialValue: null })
+      .pipe(
+        Atom.setIdleTTL(5 * 60_000),
+        Atom.withLabel(`environment-data:server:welcome-state:${environmentId}`),
+      ),
+  );
+  const welcomeFamily = Atom.family((environmentId: EnvironmentId) =>
+    Atom.make((get) => {
+      const result = get(welcomeStateFamily(environmentId));
+      if (result._tag !== "Success") return result;
+      return result.value === null
+        ? AsyncResult.initial<ServerLifecycleWelcomePayload, never>(result.waiting)
+        : AsyncResult.success(result.value, result);
+    }).pipe(Atom.withLabel(`environment-data:server:welcome:${environmentId}`)),
+  );
+  const welcome = (target: {
+    readonly environmentId: EnvironmentId;
+    readonly input: EnvironmentRpcInput<typeof WS_METHODS.subscribeServerLifecycle>;
+  }) => welcomeFamily(target.environmentId);
 
   const usageSummary = createEnvironmentRpcQueryAtomFamily(runtime, {
     label: "environment-data:server:usage-summary",
@@ -943,6 +985,7 @@ export function createServerEnvironmentAtoms<R, E>(
     // ledger-only, while successful summaries are owned by server background
     // refreshes and explicit manual refreshes.
     refreshOnFailureMs: 5_000,
+    refreshTrigger: ({ environmentId }) => usagePricesAtom(environmentId),
   });
 
   return {
@@ -1046,14 +1089,7 @@ export function createServerEnvironmentAtoms<R, E>(
       staleTimeMs: 60_000,
     }),
     configProjection,
-    welcome: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
-      label: "environment-data:server:welcome",
-      tag: WS_METHODS.subscribeServerLifecycle,
-      transform: (stream) =>
-        stream.pipe(
-          Stream.mapAccum(Option.none<ServerLifecycleWelcomePayload>, projectServerWelcome),
-        ),
-    }),
+    welcome,
     consumeResetCredit: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:consume-reset-credit",
       tag: WS_METHODS.providerConsumeResetCredit,
