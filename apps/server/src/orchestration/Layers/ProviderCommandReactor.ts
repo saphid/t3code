@@ -1567,7 +1567,11 @@ const make = Effect.gen(function* () {
 
     const send = providerService
       .sendTurn(sendTurnRequest.value)
-      .pipe(Effect.asVoid, Effect.catchCause(recoverTurnStartFailure));
+      .pipe(
+        Effect.asVoid,
+        Effect.catchCause(recoverTurnStartFailure),
+        Effect.ensuring(releaseTurnReservation(key)),
+      );
     // The forked send settles `sent` from here on, so drop the entry the post-processing hook uses.
     if (resumed && event.commandId !== null) resumedTurnStarts.delete(event.commandId);
     yield* send.pipe(
