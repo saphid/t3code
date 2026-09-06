@@ -133,6 +133,7 @@ import type { ProviderInstance } from "./provider/ProviderDriver.ts";
 import * as ProviderSessionDirectory from "./provider/Services/ProviderSessionDirectory.ts";
 import { ProviderAdapterRequestError } from "./provider/Errors.ts";
 import { makeManualOnlyProviderMaintenanceCapabilities } from "./provider/providerMaintenance.ts";
+import * as TextGeneration from "./textGeneration/TextGeneration.ts";
 import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
 import * as ServerRuntimeStartup from "./serverRuntimeStartup.ts";
 import * as ServiceLauncherClient from "./cloud/serviceLauncherClient.ts";
@@ -800,6 +801,13 @@ const buildAppUnderTest = (options?: {
             listThreadIds: () => Effect.succeed([]),
             listBindings: () => Effect.succeed([]),
             ...options?.layers?.providerSessionDirectory,
+          }),
+          Layer.mock(TextGeneration.TextGeneration)({
+            generateCommitMessage: () => Effect.die("Text generation is not stubbed in this test"),
+            generatePrContent: () => Effect.die("Text generation is not stubbed in this test"),
+            generateBranchName: () => Effect.die("Text generation is not stubbed in this test"),
+            generateThreadTitle: () => Effect.die("Text generation is not stubbed in this test"),
+            generateHandover: () => Effect.die("Text generation is not stubbed in this test"),
           }),
         ),
       ),
