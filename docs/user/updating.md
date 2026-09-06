@@ -78,3 +78,16 @@ download updates in the background and apply them when you next leave the app.
 It saves drafts and queued messages before restarting. If you keep the app open
 for a long time, it may ask to install immediately; choosing **Later** leaves the
 update queued for the next suitable moment.
+
+## Choose a desktop update track
+
+In Settings → General, find Update track in the About section. Stable follows
+full T3 Code releases. Nightly follows upstream prereleases. Custom follows
+Nightly releases from a public GitHub repository entered under Release source.
+
+Selecting Stable or Nightly clears the custom source. The selected repository
+must publish desktop installers and updater manifests as GitHub release assets.
+A source branch alone cannot provide updates.
+
+On macOS, retain the application name supplied by the installer. Renaming the
+app changes the native updater's replacement target.
