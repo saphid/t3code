@@ -20,12 +20,12 @@ function foldAsciiCase(value: string): string {
   return value.replace(/[A-Z]/g, (character) => character.toLowerCase());
 }
 
-function HighlightedSearchText(props: { text: string; query: string }) {
-  const query = props.query.trim();
-  if (query.length === 0) return props.text;
+function HighlightedSearchText(props: { text: string; queries: ReadonlyArray<string> }) {
+  const queries = props.queries.map((query) => query.trim()).filter((query) => query.length > 0);
+  if (queries.length === 0) return props.text;
 
   const normalizedText = foldAsciiCase(props.text);
-  const normalizedQuery = foldAsciiCase(query);
+  const normalizedQueries = queries.map(foldAsciiCase);
   const parts: Array<{
     readonly text: string;
     readonly highlighted: boolean;
@@ -34,7 +34,15 @@ function HighlightedSearchText(props: { text: string; query: string }) {
   let cursor = 0;
 
   while (cursor < props.text.length) {
-    const matchIndex = normalizedText.indexOf(normalizedQuery, cursor);
+    const nextMatch = normalizedQueries.reduce<{
+      readonly index: number;
+      readonly length: number;
+    } | null>((earliest, query) => {
+      const index = normalizedText.indexOf(query, cursor);
+      if (index === -1 || (earliest !== null && earliest.index <= index)) return earliest;
+      return { index, length: query.length };
+    }, null);
+    const matchIndex = nextMatch?.index ?? -1;
     if (matchIndex === -1) {
       parts.push({ text: props.text.slice(cursor), highlighted: false, start: cursor });
       break;
@@ -47,11 +55,11 @@ function HighlightedSearchText(props: { text: string; query: string }) {
       });
     }
     parts.push({
-      text: props.text.slice(matchIndex, matchIndex + query.length),
+      text: props.text.slice(matchIndex, matchIndex + (nextMatch?.length ?? 0)),
       highlighted: true,
       start: matchIndex,
     });
-    cursor = matchIndex + query.length;
+    cursor = matchIndex + (nextMatch?.length ?? 0);
   }
 
   return parts.map((part) =>
@@ -74,7 +82,10 @@ function ThreadContentMatch(props: {
       <span className={isUser ? "text-blue-400" : "text-emerald-400"}>
         {isUser ? "You:" : "Agent:"}
       </span>{" "}
-      <HighlightedSearchText text={props.match.snippet} query={props.match.query} />
+      <HighlightedSearchText
+        text={props.match.snippet}
+        queries={props.match.matchedTerms ?? [props.match.query]}
+      />
     </span>
   );
 }
