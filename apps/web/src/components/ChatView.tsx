@@ -6144,11 +6144,13 @@ export default function ChatView(props: ChatViewProps) {
     showPlanFollowUpPrompt;
   const compactDisabled = compactThreadUnavailable;
   const compactDisabledReason = compactDisabled
-    ? !activeProject
-      ? "Choose a project before compacting"
-      : !manualCompactionProviderAvailable
-        ? "Compaction is unavailable for this provider"
-        : "Compacting is unavailable right now"
+    ? activeThreadReachedContextLimit
+      ? "Thread token limit reached. Hand over to a new thread"
+      : !activeProject
+        ? "Choose a project before compacting"
+        : !manualCompactionProviderAvailable
+          ? "Compaction is unavailable for this provider"
+          : "Compacting is unavailable right now"
     : null;
   const resumeCompactionBannerItem = useMemo<ComposerBannerStackItem | null>(() => {
     if (
@@ -9160,9 +9162,12 @@ export default function ChatView(props: ChatViewProps) {
                                 ? "Rewinding conversation"
                                 : feedbackUploading
                                   ? "Sending feedback"
-                                  : threadDetailLoading
-                                    ? "Messages loading"
-                                    : null
+                                  : activeThreadReachedContextLimit &&
+                                      activePendingProgress === null
+                                    ? "Thread token limit reached"
+                                    : threadDetailLoading
+                                      ? "Messages loading"
+                                      : null
                             }
                             isPreparingWorktree={isPreparingWorktree}
                             bannerItems={composerBannerItems}
