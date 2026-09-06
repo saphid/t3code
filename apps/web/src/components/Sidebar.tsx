@@ -2264,12 +2264,7 @@ export default function Sidebar() {
     ) {
       setProjectScopeKey(null);
     }
-  }, [
-    disabledEnvironmentIds,
-    isEnvironmentFilterActive,
-    scopedProjectGroup,
-    setProjectScopeKey,
-  ]);
+  }, [disabledEnvironmentIds, isEnvironmentFilterActive, scopedProjectGroup, setProjectScopeKey]);
   // Count-only subscription: the parent needs "are there draft rows" for the
   // empty state, while SidebarDraftBlock owns the per-keystroke content
   // subscription. Selecting a number keeps typing in a draft composer from
