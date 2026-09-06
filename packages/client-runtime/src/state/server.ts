@@ -41,8 +41,10 @@ import {
   request,
   runStream,
   subscribe,
+  subscribeDynamicWithSession,
   type EnvironmentRpcInput,
 } from "../rpc/client.ts";
+import type { RpcSession } from "../rpc/session.ts";
 import { followStreamInEnvironment } from "./runtime.ts";
 import {
   applyServerConfigProjection,
@@ -357,6 +359,7 @@ const cachedConfigSnapshotEvent = (config: ServerConfig): ServerConfigStreamEven
 export interface ServerConfigSubscriptionOptions {
   readonly environmentThemes?: boolean;
   readonly usageLimitSources?: boolean;
+  readonly usageLimitsCommand?: boolean;
 }
 
 export const makeEnvironmentServerConfigState = Effect.fn("EnvironmentServerConfigState.make")(
@@ -424,6 +427,7 @@ export const makeEnvironmentServerConfigState = Effect.fn("EnvironmentServerConf
     yield* subscribe(WS_METHODS.subscribeServerConfig, {
       ...(subscription.environmentThemes === true ? { environmentThemes: true } : {}),
       ...(subscription.usageLimitSources === true ? { usageLimitSources: true } : {}),
+      ...(subscription.usageLimitsCommand === true ? { usageLimitsCommand: true } : {}),
     }).pipe(
       Stream.runForEach((event) =>
         Effect.gen(function* () {
@@ -477,6 +481,121 @@ export function serverConfigStateChanges(
   );
 }
 
+export function applyServerWelcomeEvent(
+  current: EnvironmentServerWelcomeState,
+  session: RpcSession,
+  event: {
+    readonly type: "welcome" | "ready";
+    readonly payload: unknown;
+  },
+): EnvironmentServerWelcomeState {
+  return event.type === "welcome" && current.currentSession === session
+    ? {
+        ...current,
+        welcomeSession: session,
+        welcome: event.payload as ServerLifecycleWelcomePayload,
+      }
+    : current;
+}
+
+export interface EnvironmentServerWelcomeState {
+  readonly currentSession: RpcSession | null;
+  readonly welcomeSession: RpcSession | null;
+  readonly welcome: ServerLifecycleWelcomePayload | null;
+}
+
+export function resolveServerWelcomeState(
+  state: EnvironmentServerWelcomeState,
+): ServerLifecycleWelcomePayload | null {
+  return state.currentSession === state.welcomeSession ? state.welcome : null;
+}
+
+export const makeEnvironmentServerWelcomeState = Effect.fn("EnvironmentServerWelcomeState.make")(
+  function* () {
+    const supervisor = yield* EnvironmentSupervisor;
+    const initialSession = Option.getOrNull(yield* SubscriptionRef.get(supervisor.session));
+    const state = yield* SubscriptionRef.make<EnvironmentServerWelcomeState>({
+      currentSession: initialSession,
+      welcomeSession: null,
+      welcome: null,
+    });
+
+    const updateWithCurrentSession = Effect.fn(
+      "EnvironmentServerWelcomeState.updateWithCurrentSession",
+    )(function* (
+      update: (
+        current: EnvironmentServerWelcomeState,
+        currentSession: RpcSession | null,
+      ) => EnvironmentServerWelcomeState,
+    ) {
+      return yield* SubscriptionRef.modifyEffect(state, (current) =>
+        SubscriptionRef.get(supervisor.session).pipe(
+          Effect.map(
+            (latestSession) =>
+              [undefined, update(current, Option.getOrNull(latestSession))] as const,
+          ),
+        ),
+      );
+    });
+
+    yield* SubscriptionRef.changes(supervisor.session).pipe(
+      Stream.runForEach(() =>
+        updateWithCurrentSession((current, currentSession) => ({
+          ...current,
+          currentSession,
+        })),
+      ),
+      Effect.forkScoped,
+    );
+
+    yield* subscribeDynamicWithSession(
+      WS_METHODS.subscribeServerLifecycle,
+      Effect.fn("EnvironmentServerWelcomeState.makeSubscribeInput")(function* (session) {
+        yield* updateWithCurrentSession((current, currentSession) =>
+          currentSession === session
+            ? {
+                ...current,
+                currentSession,
+                welcomeSession: session,
+                welcome: null,
+              }
+            : { ...current, currentSession },
+        );
+        return {};
+      }),
+    ).pipe(
+      Stream.runForEach(([session, event]) =>
+        updateWithCurrentSession((current, currentSession) =>
+          applyServerWelcomeEvent(
+            {
+              ...current,
+              currentSession,
+            },
+            session,
+            event,
+          ),
+        ),
+      ),
+      Effect.forkScoped,
+    );
+
+    return state;
+  },
+);
+
+function serverWelcomeStateChanges(environmentId: EnvironmentId) {
+  return followStreamInEnvironment(
+    environmentId,
+    Stream.unwrap(
+      makeEnvironmentServerWelcomeState().pipe(
+        Effect.map((state) =>
+          SubscriptionRef.changes(state).pipe(Stream.map(resolveServerWelcomeState)),
+        ),
+      ),
+    ),
+  );
+}
+
 export function projectServerWelcome(
   current: Option.Option<ServerLifecycleWelcomePayload>,
   event: {
@@ -522,6 +641,7 @@ export function createServerEnvironmentAtoms<R, E>(
     readonly environmentThemes?: boolean;
     /** Whether this surface renders quota from configured usage-limit sources. */
     readonly usageLimitSources?: boolean;
+    readonly usageLimitsCommand?: boolean;
   },
 ) {
   const configScheduler = createAtomCommandScheduler();
@@ -537,6 +657,7 @@ export function createServerEnvironmentAtoms<R, E>(
         serverConfigStateChanges(environmentId, {
           ...(options.environmentThemes === true ? { environmentThemes: true } : {}),
           ...(options.usageLimitSources === true ? { usageLimitSources: true } : {}),
+          ...(options.usageLimitsCommand === true ? { usageLimitsCommand: true } : {}),
         }),
       )
       .pipe(
