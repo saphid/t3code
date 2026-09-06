@@ -85,13 +85,17 @@ export const make = Effect.gen(function* () {
     return commitHash;
   });
 
-  const userDataPath = DesktopUserData.resolveUserDataPath(environment).pipe(
-    Effect.provide(userDataContext),
-  );
+  // Electron locks its internal app name before application code runs. A
+  // branded distribution therefore cannot safely share the official V2
+  // Chromium profile or safeStorage identity.
+  const userDataPath = environment.isDownstreamDistribution
+    ? Effect.succeed(
+        environment.path.join(environment.appDataDirectory, environment.userDataDirName),
+      )
+    : DesktopUserData.resolveUserDataPath(environment).pipe(Effect.provide(userDataContext));
 
   const configure = Effect.gen(function* () {
     const commitHash = yield* resolveAboutCommitHash;
-    yield* electronApp.setName(environment.displayName);
     yield* electronApp.setAboutPanelOptions({
       applicationName: environment.displayName,
       applicationVersion: environment.appVersion,
