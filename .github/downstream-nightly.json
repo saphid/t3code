@@ -157,6 +157,12 @@
       "repository": "saphid/t3code",
       "sha": "efddd20306e2471cedaeb9721a592bbb4cf160c3",
       "name": "Preserve upstream usage and thread seams"
+    },
+    {
+      "type": "commit",
+      "repository": "saphid/t3code",
+      "sha": "c6965eeb7457d9f2e788138624c64e26eb98a912",
+      "name": "Drain web worker test cleanup"
     }
   ]
 }
