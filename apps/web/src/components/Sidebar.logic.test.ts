@@ -9,7 +9,6 @@ import {
   createThreadJumpHintVisibilityController,
   filterSidebarProjectScopeItems,
   getSidebarThreadIdsToPrewarm,
-  getVisibleSidebarThreadIds,
   pruneDisabledEnvironmentIds,
   resolveAdjacentThreadId,
   reduceSidebarProjectScopeMenuState,
