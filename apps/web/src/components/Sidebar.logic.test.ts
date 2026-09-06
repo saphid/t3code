@@ -13,7 +13,6 @@ import {
   deleteSelectedThreadEntries,
   filterSidebarProjectScopeItems,
   getSidebarThreadIdsToPrewarm,
-  getVisibleSidebarThreadIds,
   pruneDisabledEnvironmentIds,
   resolveAdjacentThreadId,
   reduceSidebarProjectScopeMenuState,
