@@ -159,7 +159,6 @@ import {
   makeHandoverModelSelection,
 } from "./orchestration/ThreadHandover.ts";
 import * as UsageLimitReservations from "./orchestration/UsageLimitReservations.ts";
-import * as ProviderInstanceRegistry from "./provider/Services/ProviderInstanceRegistry.ts";
 import * as TextGeneration from "./textGeneration/TextGeneration.ts";
 import { failEnvironmentAuthInvalid, failEnvironmentInternal } from "./auth/http.ts";
 import * as RelayClient from "@t3tools/shared/relayClient";
@@ -531,7 +530,7 @@ const makeWsRpcLayer = (
       const providerRegistry = yield* ProviderRegistry.ProviderRegistry;
       const providerService = yield* ProviderService.ProviderService;
       const providerSessionDirectory = yield* ProviderSessionDirectory.ProviderSessionDirectory;
-      const providerInstanceRegistry = yield* ProviderInstanceRegistry.ProviderInstanceRegistry;
+      const providerInstanceRegistry = yield* ProviderInstanceRegistry;
       const textGeneration = yield* TextGeneration.TextGeneration;
       const usageLimitReservations = UsageLimitReservations.forProviderService(providerService);
       const providerMaintenanceRunner = yield* ProviderMaintenanceRunner.ProviderMaintenanceRunner;
