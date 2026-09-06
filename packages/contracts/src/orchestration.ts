@@ -2236,6 +2236,19 @@ export const OrchestrationRpcSchemas = {
   },
 } as const;
 
+export type OrchestrationGenerateHandoverInput =
+  typeof OrchestrationRpcSchemas.generateHandover.input.Type;
+export type OrchestrationGenerateHandoverResult =
+  typeof OrchestrationRpcSchemas.generateHandover.output.Type;
+
+export class OrchestrationGenerateHandoverError extends Schema.TaggedError<OrchestrationGenerateHandoverError>()(
+  "OrchestrationGenerateHandoverError",
+  {
+    message: TrimmedNonEmptyString,
+    cause: Schema.optional(Schema.Defect()),
+  },
+) {}
+
 export class OrchestrationGetSnapshotError extends Schema.TaggedError<OrchestrationGetSnapshotError>()(
   "OrchestrationGetSnapshotError",
   {
