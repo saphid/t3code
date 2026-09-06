@@ -2,7 +2,6 @@ import type { UsageTimelineCell } from "@t3tools/shared/usageMerge";
 import { useMemo, useState } from "react";
 
 import { formatDateTimeShort, formatTokens, formatUsd } from "@t3tools/shared/usageFormat";
-import { cn } from "../../lib/utils";
 
 const WIDTH = 960;
 const HEIGHT = 280;
@@ -116,9 +115,6 @@ export function UsageStackedChart({
   timeZone,
   activeSeries,
   onActiveSeriesChange,
-  onToggleSeries,
-  onSelectAll,
-  onDeselectAll,
 }: {
   readonly cells: readonly UsageTimelineCell[];
   readonly series: readonly UsageChartSeries[];
@@ -132,9 +128,6 @@ export function UsageStackedChart({
   readonly timeZone: string;
   readonly activeSeries: string | null;
   readonly onActiveSeriesChange: (series: string | null) => void;
-  readonly onToggleSeries: (series: string) => void;
-  readonly onSelectAll: () => void;
-  readonly onDeselectAll: () => void;
 }) {
   const [hoverMs, setHoverMs] = useState<number | null>(null);
   const shownSeries = series.filter((entry) => visibleSeries.has(entry.key));
@@ -258,42 +251,6 @@ export function UsageStackedChart({
       <div className="flex items-center justify-between gap-3 text-xs text-muted-foreground">
         <span>{formatDateTimeShort(sinceTime, timeZone)}</span>
         <span>{formatDateTimeShort(untilTime, timeZone)}</span>
-      </div>
-      <div
-        className="flex flex-wrap items-center gap-x-3 gap-y-1.5"
-        aria-label={`${seriesMode} visibility`}
-      >
-        {series.map((entry) => {
-          const visible = visibleSeries.has(entry.key);
-          const highlighted = activeSeries === entry.key;
-          return (
-            <button
-              key={entry.key}
-              type="button"
-              aria-pressed={visible}
-              onClick={() => onToggleSeries(entry.key)}
-              onPointerEnter={() => onActiveSeriesChange(entry.key)}
-              onPointerLeave={() => onActiveSeriesChange(null)}
-              className={cn(
-                "flex items-center gap-1.5 rounded-sm px-1 py-0.5 text-xs transition-opacity",
-                visible ? "text-foreground" : "text-muted-foreground opacity-40 line-through",
-                highlighted && "bg-muted font-medium ring-1 ring-border",
-                activeSeries !== null && !highlighted && "opacity-25",
-              )}
-            >
-              <span className="size-2.5 rounded-[3px]" style={{ backgroundColor: entry.color }} />
-              {entry.label}
-            </button>
-          );
-        })}
-        <span className="ms-auto flex gap-2">
-          <button type="button" onClick={onSelectAll} className="hover:text-foreground">
-            Select all
-          </button>
-          <button type="button" onClick={onDeselectAll} className="hover:text-foreground">
-            Deselect all
-          </button>
-        </span>
       </div>
     </div>
   );
