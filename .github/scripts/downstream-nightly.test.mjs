@@ -12,6 +12,7 @@ import {
   parseManifest,
   releaseMarker,
   resolveCustomNightlyVersion,
+  resolvePlan,
   selectLatestNightlyRelease,
 } from "./downstream-nightly.mjs";
 
@@ -77,7 +78,7 @@ describe("Downstream Nightly workflow", () => {
       join(process.cwd(), ".github/workflows/downstream-nightly.yml"),
       "utf8",
     );
-    const checkoutStart = workflow.indexOf("      - name: Checkout exact upstream Nightly\n");
+    const checkoutStart = workflow.indexOf("      - name: Checkout exact upstream source\n");
     const checkoutEnd = workflow.indexOf("\n      - ", checkoutStart + 1);
     const checkout = workflow.slice(checkoutStart, checkoutEnd);
 
@@ -128,7 +129,10 @@ describe("Downstream Nightly workflow", () => {
     assert.match(matrix, /label: macOS x64/);
     assert.doesNotMatch(matrix, /label: Linux/);
     assert.doesNotMatch(matrix, /label: Windows/);
-    assert.match(workflow, /Build WSL node-pty[\s\S]*if: needs\.prepare\.outputs\.should_build == 'true' && false/);
+    assert.match(
+      workflow,
+      /Build WSL node-pty[\s\S]*if: needs\.prepare\.outputs\.should_build == 'true' && false/,
+    );
   });
 });
 
@@ -242,11 +246,7 @@ describe("Downstream Nightly release selection", () => {
     };
     assert.equal(isCompleteMatchingRelease(complete, upstreamTag, fingerprint), true);
     assert.equal(
-      isCompleteMatchingRelease(
-        { ...complete, assets: [] },
-        upstreamTag,
-        fingerprint,
-      ),
+      isCompleteMatchingRelease({ ...complete, assets: [] }, upstreamTag, fingerprint),
       false,
     );
   });
@@ -321,5 +321,79 @@ describe("Downstream Nightly assembly", () => {
       /"name": "Selected patch"/,
     );
     assert.deepEqual(git(source, "status", "--porcelain"), "");
+  });
+});
+
+describe("Orchestrator v2 release stream", () => {
+  const v2Manifest = {
+    upstreamRepository: "pingdotgg/t3code",
+    upstreamBranch: "t3code/codex-turn-mapping",
+    releaseRepository: "saphid/t3code",
+    releaseChannel: "nightly-v2",
+    generatedBranch: "automation/downstream-nightly-v2",
+    patches: [],
+  };
+
+  it("requires a separate source branch and channel", () => {
+    assert.deepEqual(parseManifest(JSON.stringify(v2Manifest)), v2Manifest);
+    assert.throws(
+      () => parseManifest(JSON.stringify({ ...v2Manifest, releaseChannel: "nightly" })),
+      /requires/,
+    );
+    assert.throws(
+      () => parseManifest(JSON.stringify({ ...v2Manifest, upstreamBranch: undefined })),
+      /requires/,
+    );
+  });
+
+  it("pins branch source, skips a completed build, and rebuilds when the branch moves", async (t) => {
+    let sha = "a".repeat(40);
+    let releases = [];
+    t.mock.method(globalThis, "fetch", async (url) => {
+      const path = new URL(url).pathname;
+      let value;
+      if (path.includes("/commits/"))
+        value = {
+          sha,
+          html_url: `https://github.com/pingdotgg/t3code/commit/${sha}`,
+          commit: { committer: { date: "2026-09-07T01:00:00Z" } },
+        };
+      else if (path.includes("/contents/"))
+        value = { content: Buffer.from('{"version":"0.0.39"}').toString("base64") };
+      else if (path === "/repos/saphid/t3code/releases") value = releases;
+      else throw new Error(`Unexpected API call: ${url}`);
+      return { ok: true, json: async () => value };
+    });
+    const first = await resolvePlan(v2Manifest, "test");
+    assert.equal(first.upstreamCheckoutRef, sha);
+    assert.equal(first.shouldBuild, true);
+    assert.match(first.version, /^0\.0\.39-nightly-v2\.20260907\.\d+$/);
+    releases = [
+      {
+        tag_name: first.tag,
+        body: releaseMarker(first.upstreamTag, first.fingerprint),
+        assets: [{ name: "nightly-v2-mac.yml" }],
+      },
+    ];
+    assert.equal((await resolvePlan(v2Manifest, "test")).shouldBuild, false);
+    assert.equal((await resolvePlan(v2Manifest, "test", { forceBuild: true })).shouldBuild, true);
+    sha = "b".repeat(40);
+    const moved = await resolvePlan(v2Manifest, "test");
+    assert.equal(moved.shouldBuild, true);
+    assert.notEqual(moved.tag, first.tag);
+    assert.notEqual(moved.fingerprint, first.fingerprint);
+    assert.equal(moved.upstreamCheckoutRef, sha);
+  });
+
+  it("does not let one stream's assets satisfy another stream", () => {
+    const fingerprint = "c".repeat(64);
+    const release = {
+      body: releaseMarker("source", fingerprint),
+      assets: [{ name: "nightly-mac.yml" }],
+    };
+    assert.equal(isCompleteMatchingRelease(release, "source", fingerprint, "nightly-v2"), false);
+    release.assets = [{ name: "nightly-v2-mac.yml" }];
+    assert.equal(isCompleteMatchingRelease(release, "source", fingerprint, "nightly-v2"), true);
+    assert.equal(isCompleteMatchingRelease(release, "source", fingerprint), false);
   });
 });

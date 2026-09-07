@@ -1,0 +1,21 @@
+{
+  "upstreamRepository": "pingdotgg/t3code",
+  "upstreamBranch": "t3code/codex-turn-mapping",
+  "releaseRepository": "saphid/t3code",
+  "releaseChannel": "nightly-v2",
+  "generatedBranch": "automation/downstream-nightly-v2",
+  "patches": [
+    {
+      "type": "commit",
+      "repository": "saphid/t3code",
+      "sha": "d14371814b5e571476baf054623f33870f80134d",
+      "name": "Durable fork updater and signing identity"
+    },
+    {
+      "type": "commit",
+      "repository": "saphid/t3code",
+      "sha": "f37d7d7033ade8b5b27b869cf8b7c20fe3c280f2",
+      "name": "Orchestrator v2 fork release selector"
+    }
+  ]
+}

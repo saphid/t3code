@@ -38,3 +38,29 @@ name `t3code-fork-466f726b`. The encoded suffix prevents distinct distribution l
 an update identity. The macOS build job extracts every update archive and verifies those values plus
 the code signature before uploading it. Keep this distribution name stable and never rename the
 installed `.app` bundle.
+
+## Orchestrator v2 stream
+
+`downstream-nightly-v2.yml` checks the upstream `t3code/codex-turn-mapping` branch
+hourly and calls the shared desktop build workflow. It resolves the branch to one
+exact commit before checkout. It builds only when that commit or its own selected
+patches change; manual `force_rebuild` repairs an existing release.
+
+Edit `.github/downstream-nightly-v2.json` to change **only the v2** PR/commit list.
+The existing `.github/downstream-nightly.json` continues to own Fork Nightly's list.
+Both support pinned PR heads, individual commits, and pinned refs. V2 initially
+includes only the fork updater patches. Do not copy the normal stack into v2
+without checking compatibility.
+
+V2 publishes `v<version>-nightly-v2.<date>.<serial>` releases with
+`nightly-v2-mac.yml`, and pushes source to `automation/downstream-nightly-v2`.
+The source commit and separate patch fingerprint appear in each release's notes.
+The desktop build keeps the `Fork` distribution identity used by regular Fork
+Nightly so the updater can switch between channels. The release names and version
+suffixes distinguish them; neither stream overwrites the other's tags or manifests.
+
+In Settings → About, choose Custom, enter `saphid/t3code`, then select
+**Fork Nightly** or **Fork Nightly Orchestrator v2** under **Fork release**.
+The selected channel is persisted with the repository. The updater filters by the
+channel's prerelease identifier and rejects an offered version from the other
+stream. Remote servers and phone apps are separate installations.

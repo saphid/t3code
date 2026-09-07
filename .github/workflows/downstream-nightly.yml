@@ -1,6 +1,14 @@
 name: Fork Nightly
 
 on:
+  workflow_call:
+    inputs:
+      manifest:
+        type: string
+        default: .github/downstream-nightly.json
+      force_rebuild:
+        type: boolean
+        default: false
   schedule:
     - cron: "*/5 * * * *"
   repository_dispatch:
@@ -16,6 +24,8 @@ on:
     paths:
       - ".github/DOWNSTREAM_NIGHTLY.md"
       - ".github/downstream-nightly.json"
+      - ".github/downstream-nightly-v2.json"
+      - ".github/workflows/downstream-nightly-v2.yml"
       - ".github/scripts/downstream-nightly.mjs"
       - ".github/scripts/downstream-nightly.test.mjs"
       - ".github/workflows/downstream-nightly.yml"
@@ -24,8 +34,11 @@ permissions:
   contents: read
 
 concurrency:
-  group: fork-nightly
+  group: fork-nightly-${{ inputs.manifest || 'default' }}
   cancel-in-progress: false
+
+env:
+  NIGHTLY_MANIFEST: ${{ inputs.manifest || '.github/downstream-nightly.json' }}
 
 jobs:
   validate:
@@ -52,7 +65,7 @@ jobs:
           import { readFileSync } from "node:fs";
           import { parseManifest } from "./.github/scripts/downstream-nightly.mjs";
 
-          parseManifest(readFileSync(".github/downstream-nightly.json", "utf8"));
+          parseManifest(readFileSync(process.env.NIGHTLY_MANIFEST, "utf8"));
           NODE
 
   prepare:
@@ -67,6 +80,7 @@ jobs:
       should_build: ${{ steps.plan.outputs.should_build }}
       upstream_repository: ${{ steps.plan.outputs.upstream_repository }}
       upstream_tag: ${{ steps.plan.outputs.upstream_tag }}
+      release_channel: ${{ steps.plan.outputs.release_channel }}
       release_repository: ${{ steps.plan.outputs.release_repository }}
       generated_branch: ${{ steps.plan.outputs.generated_branch }}
       fingerprint: ${{ steps.plan.outputs.fingerprint }}
@@ -88,25 +102,25 @@ jobs:
         name: Resolve upstream Nightly and patch stack
         env:
           GITHUB_TOKEN: ${{ github.token }}
-          FORCE_REBUILD: ${{ github.event_name == 'workflow_dispatch' && inputs.force_rebuild || false }}
+          FORCE_REBUILD: ${{ inputs.force_rebuild || false }}
         run: |
           node automation/.github/scripts/downstream-nightly.mjs resolve \
-            --manifest automation/.github/downstream-nightly.json \
+            --manifest "automation/$NIGHTLY_MANIFEST" \
             --output "$RUNNER_TEMP/downstream-nightly-plan.json" \
             --force "$FORCE_REBUILD"
 
-      - name: Checkout exact upstream Nightly
+      - name: Checkout exact upstream source
         if: steps.plan.outputs.should_build == 'true'
         shell: bash
         env:
           UPSTREAM_REPOSITORY: ${{ steps.plan.outputs.upstream_repository }}
-          UPSTREAM_TAG: ${{ steps.plan.outputs.upstream_tag }}
+          UPSTREAM_CHECKOUT_REF: ${{ steps.plan.outputs.upstream_checkout_ref }}
         run: |
           set -euo pipefail
           git init -q source
           git -C source remote add upstream "https://github.com/${UPSTREAM_REPOSITORY}.git"
           git -C source sparse-checkout set --no-cone '/*' '!/.repos/'
-          git -C source fetch --no-tags --depth=1 upstream "refs/tags/${UPSTREAM_TAG}"
+          git -C source fetch --no-tags --depth=1 upstream "${UPSTREAM_CHECKOUT_REF}"
           git -C source checkout --detach FETCH_HEAD
 
       - id: apply
@@ -568,7 +582,7 @@ jobs:
           ]);
           const notes = [
             marker,
-            `Custom Nightly built from [${metadata.upstreamTag}](${metadata.upstreamUrl}).`,
+            `Custom Nightly built from [${metadata.upstreamBranch ?? metadata.upstreamTag}](${metadata.upstreamUrl}).`,
             "",
             `Generated source: \`${process.env.SOURCE_SHA}\``,
             `Stack fingerprint: \`${metadata.fingerprint}\``,
@@ -587,6 +601,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
           RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
+          RELEASE_CHANNEL: ${{ needs.prepare.outputs.release_channel }}
           SOURCE_SHA: ${{ needs.prepare.outputs.source_sha }}
         run: |
           set -euo pipefail
@@ -598,6 +613,9 @@ jobs:
           fi
 
           title="T3 Code Fork Nightly ${RELEASE_VERSION}"
+          if [[ "$RELEASE_CHANNEL" == "nightly-v2" ]]; then
+            title="T3 Code Fork Nightly Orchestrator v2 ${RELEASE_VERSION}"
+          fi
           if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             gh release edit "$RELEASE_TAG" \
               --repo "$GITHUB_REPOSITORY" \

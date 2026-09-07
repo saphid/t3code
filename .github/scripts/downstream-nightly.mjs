@@ -72,6 +72,21 @@ export function parseManifest(raw) {
     fail("patches must be an array.");
   }
 
+  const upstreamBranch = input.upstreamBranch;
+  if (
+    upstreamBranch !== undefined &&
+    (typeof upstreamBranch !== "string" ||
+      !/^[A-Za-z0-9][A-Za-z0-9_./-]*$/.test(upstreamBranch) ||
+      upstreamBranch.includes(".."))
+  ) {
+    fail("upstreamBranch must be a valid Git branch name.");
+  }
+  const releaseChannel = input.releaseChannel ?? "nightly";
+  if (!["nightly", "nightly-v2"].includes(releaseChannel)) fail("Unsupported releaseChannel.");
+  if ((upstreamBranch !== undefined) !== (releaseChannel === "nightly-v2")) {
+    fail("The nightly-v2 channel requires its own upstreamBranch.");
+  }
+
   const patches = input.patches.map((patch, index) => {
     const field = `patches[${index}]`;
     if (!patch || typeof patch !== "object" || Array.isArray(patch)) {
@@ -122,6 +137,7 @@ export function parseManifest(raw) {
     upstreamRepository,
     releaseRepository,
     generatedBranch: input.generatedBranch,
+    ...(upstreamBranch === undefined ? {} : { upstreamBranch, releaseChannel }),
     patches,
   };
 }
@@ -150,16 +166,27 @@ export function fingerprintPlan(upstreamTag, patches) {
     .digest("hex");
 }
 
-export function resolveCustomNightlyVersion(upstreamTag, fingerprint, downstreamReleases = []) {
+export function resolveCustomNightlyVersion(
+  upstreamTag,
+  fingerprint,
+  downstreamReleases = [],
+  options = {},
+) {
+  const channel = options.channel ?? "nightly";
+  const sourceIdentity = options.sourceIdentity ?? upstreamTag;
   const match = NIGHTLY_TAG_PATTERN.exec(upstreamTag);
   if (!match) fail(`Upstream release tag '${upstreamTag}' is not a supported Nightly tag.`);
   const [, major, minor, patch, date, upstreamSerial] = match;
   const serialFloor = BigInt(upstreamSerial) * 1_000_000n;
   const serialCeiling = (BigInt(upstreamSerial) + 1n) * 1_000_000n;
-  const marker = releaseMarker(upstreamTag, fingerprint);
+  const marker = releaseMarker(sourceIdentity, fingerprint);
   const priorVersions = downstreamReleases
     .flatMap((release) => {
-      const releaseMatch = NIGHTLY_TAG_PATTERN.exec(release?.tag_name ?? "");
+      const releaseTag = release?.tag_name ?? "";
+      if (!releaseTag.includes(`-${channel}.`)) return [];
+      const releaseMatch = NIGHTLY_TAG_PATTERN.exec(
+        releaseTag.replace(`-${channel}.`, "-nightly."),
+      );
       if (!releaseMatch) return [];
       const [, releaseMajor, releaseMinor, releasePatch, releaseDate, releaseSerial] = releaseMatch;
       const serial = BigInt(releaseSerial);
@@ -189,18 +216,20 @@ export function resolveCustomNightlyVersion(upstreamTag, fingerprint, downstream
   if (serial >= serialCeiling) {
     fail(`Custom Nightly version range for ${upstreamTag} is exhausted.`);
   }
-  return `${major}.${minor}.${patch}-nightly.${date}.${serial}`;
+  return `${major}.${minor}.${patch}-${channel}.${date}.${serial}`;
 }
 
 export function releaseMarker(upstreamTag, fingerprint) {
   return `${RELEASE_MARKER_PREFIX}${JSON.stringify({ upstreamTag, fingerprint })} -->`;
 }
 
-export function isCompleteMatchingRelease(release, upstreamTag, fingerprint) {
+export function isCompleteMatchingRelease(release, upstreamTag, fingerprint, channel = "nightly") {
   if (typeof release?.body !== "string") return false;
   if (!release.body.includes(releaseMarker(upstreamTag, fingerprint))) return false;
   const assetNames = new Set((release.assets ?? []).map((asset) => asset?.name));
-  return REQUIRED_UPDATE_MANIFESTS.every((name) => assetNames.has(name));
+  return REQUIRED_UPDATE_MANIFESTS.every((name) =>
+    assetNames.has(name.replace("nightly", channel)),
+  );
 }
 
 async function githubRequest(path, token) {
@@ -299,45 +328,76 @@ async function resolvePatch(patch, token) {
 }
 
 export async function resolvePlan(manifest, token, options = {}) {
-  const upstreamReleases = await githubPaginate(
-    `/repos/${manifest.upstreamRepository}/releases`,
-    token,
-  );
-  const upstreamRelease = selectLatestNightlyRelease(upstreamReleases);
-  if (!upstreamRelease)
-    fail(`No upstream Nightly release found in ${manifest.upstreamRepository}.`);
+  let upstreamTag;
+  let upstreamUrl;
+  let upstreamCheckoutRef;
+  let versionSeed;
+  const channel = manifest.releaseChannel ?? "nightly";
+  if (manifest.upstreamBranch) {
+    const commit = await githubRequest(
+      `/repos/${manifest.upstreamRepository}/commits/${encodeURIComponent(manifest.upstreamBranch)}`,
+      token,
+    );
+    upstreamTag = assertSha(commit.sha, "upstream commit");
+    upstreamCheckoutRef = upstreamTag;
+    upstreamUrl = commit.html_url;
+    const packageFile = await githubRequest(
+      `/repos/${manifest.upstreamRepository}/contents/apps/desktop/package.json?ref=${upstreamTag}`,
+      token,
+    );
+    const packageVersion = JSON.parse(
+      Buffer.from(packageFile.content, "base64").toString("utf8"),
+    ).version;
+    const baseVersion = /^(\d+\.\d+\.\d+)(?:-|$)/.exec(packageVersion)?.[1];
+    const timestamp = Date.parse(commit.commit?.committer?.date ?? "");
+    if (!baseVersion || !Number.isFinite(timestamp))
+      fail("Invalid upstream branch version or commit date.");
+    const date = new Date(timestamp).toISOString().slice(0, 10).replaceAll("-", "");
+    versionSeed = `${baseVersion}-nightly.${date}.${Math.floor(timestamp / 1000)}`;
+  } else {
+    const upstreamReleases = await githubPaginate(
+      `/repos/${manifest.upstreamRepository}/releases`,
+      token,
+    );
+    const upstreamRelease = selectLatestNightlyRelease(upstreamReleases);
+    if (!upstreamRelease)
+      fail(`No upstream Nightly release found in ${manifest.upstreamRepository}.`);
+    upstreamTag = upstreamRelease.tag_name;
+    upstreamCheckoutRef = `refs/tags/${upstreamTag}`;
+    upstreamUrl = upstreamRelease.html_url;
+    versionSeed = upstreamTag;
+  }
 
   const patches = [];
   for (const patch of manifest.patches) {
     patches.push(await resolvePatch(patch, token));
   }
 
-  const fingerprint = fingerprintPlan(upstreamRelease.tag_name, patches);
+  const fingerprint = fingerprintPlan(upstreamTag, patches);
   const downstreamReleases = await githubPaginate(
     `/repos/${manifest.releaseRepository}/releases`,
     token,
   );
-  const version = resolveCustomNightlyVersion(
-    upstreamRelease.tag_name,
-    fingerprint,
-    downstreamReleases,
-  );
+  const version = resolveCustomNightlyVersion(versionSeed, fingerprint, downstreamReleases, {
+    channel,
+    sourceIdentity: upstreamTag,
+  });
   const tag = `v${version}`;
   const matchingRelease = downstreamReleases.find((release) => release.tag_name === tag);
-  if (
-    matchingRelease &&
-    !matchingRelease.body?.includes(releaseMarker(upstreamRelease.tag_name, fingerprint))
-  ) {
+  if (matchingRelease && !matchingRelease.body?.includes(releaseMarker(upstreamTag, fingerprint))) {
     fail(`Release tag ${tag} already exists for a different patch-stack fingerprint.`);
   }
 
   return {
     shouldBuild:
       options.forceBuild === true ||
-      !isCompleteMatchingRelease(matchingRelease, upstreamRelease.tag_name, fingerprint),
+      !isCompleteMatchingRelease(matchingRelease, upstreamTag, fingerprint, channel),
     upstreamRepository: manifest.upstreamRepository,
-    upstreamTag: upstreamRelease.tag_name,
-    upstreamUrl: upstreamRelease.html_url,
+    upstreamTag,
+    upstreamUrl,
+    upstreamCheckoutRef,
+    releaseChannel: channel,
+    upstreamBranch: manifest.upstreamBranch,
     releaseRepository: manifest.releaseRepository,
     generatedBranch: manifest.generatedBranch,
     fingerprint,
@@ -420,6 +480,9 @@ export function applyPlan(plan, sourceDir) {
     stringifyBuildMetadata({
       upstreamRepository: plan.upstreamRepository,
       upstreamTag: plan.upstreamTag,
+      ...(plan.upstreamBranch
+        ? { upstreamBranch: plan.upstreamBranch, releaseChannel: plan.releaseChannel }
+        : {}),
       upstreamUrl: plan.upstreamUrl,
       releaseRepository: plan.releaseRepository,
       fingerprint: plan.fingerprint,
@@ -476,6 +539,8 @@ async function main() {
       should_build: String(plan.shouldBuild),
       upstream_repository: plan.upstreamRepository,
       upstream_tag: plan.upstreamTag,
+      upstream_checkout_ref: plan.upstreamCheckoutRef,
+      release_channel: plan.releaseChannel,
       release_repository: plan.releaseRepository,
       generated_branch: plan.generatedBranch,
       fingerprint: plan.fingerprint,
