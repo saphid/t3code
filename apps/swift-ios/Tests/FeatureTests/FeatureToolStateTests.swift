@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+import UIKit
 @testable import T3Code
 
 @Suite("Thread tool state")
@@ -301,6 +302,16 @@ struct FeatureToolStateTests {
         )
 
         try accumulator.validateEnd()
+    }
+
+    @Test
+    func asyncGenerationRejectsAnOlderCompletionAfterANewerOperationBegins() {
+        var generation = FeatureAsyncGeneration()
+        let staleLoad = generation.begin()
+        let mutation = generation.begin()
+
+        #expect(!generation.accepts(staleLoad))
+        #expect(generation.accepts(mutation))
     }
 
     @Test
@@ -636,6 +647,24 @@ struct FeatureToolStateTests {
     func terminalPlainTextDropsControlSequences() {
         let prompt = "\u{1B}]0;workspace\u{7}\u{1B}[38;5;221mx\u{8}repo\u{1B}[39m ❯ "
         #expect(TerminalText.plainText(from: prompt) == "repo ❯ ")
+    }
+
+    @Test
+    @MainActor
+    func terminalAccessibilityReadsCurrentOutputWithoutDependingOnVoiceOverStartTime() throws {
+        let view = GhosttyTerminalView()
+        view.buffer = "first\n\u{1B}[32msecond\u{1B}[0m"
+        let viewport = try #require(
+            view.subviews.first { $0.accessibilityLabel == "Terminal output" }
+        )
+
+        #expect(viewport.accessibilityValue == "first\nsecond")
+        #expect(
+            TerminalAccessibilityPaging.rowOffset(for: .down, visibleRows: 24) == 23
+        )
+        #expect(
+            TerminalAccessibilityPaging.rowOffset(for: .up, visibleRows: 24) == -23
+        )
     }
 
     @Test

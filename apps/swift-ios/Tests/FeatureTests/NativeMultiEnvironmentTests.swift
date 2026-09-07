@@ -7,6 +7,32 @@ import XCTest
 
 @MainActor
 final class NativeMultiEnvironmentTests: XCTestCase {
+    func testLiveSourceControlPreservesRemoteWindowsWorkingDirectory() async throws {
+        let workingDirectory = #"C:\Users\alex\source\t3 code"#
+        let requests = AsyncStream<JSONValue>.makeStream()
+        let fixture = try await Self.makeFixture(
+            activeWorkspaceRoot: workingDirectory,
+            webSocketConnector: VCSSubscriptionConnector(
+                requests: requests.continuation
+            )
+        )
+        addTeardownBlock {
+            await fixture.client.disconnect()
+            try? FileManager.default.removeItem(at: fixture.directory)
+        }
+        let snapshot = try await fixture.hydratedSnapshot()
+        let threadID = try XCTUnwrap(snapshot.threads.first { $0.environmentID == "one" }?.id)
+        let statuses = fixture.client.sourceControlStatusEvents(threadID: threadID)
+        var requestIterator = requests.stream.makeAsyncIterator()
+        let nextRequest = await requestIterator.next()
+        let request = try XCTUnwrap(nextRequest)
+
+        XCTAssertEqual(request["tag"]?.stringValue, RPCMethod.subscribeVCSStatus.rawValue)
+        XCTAssertEqual(request["payload"]?["cwd"]?.stringValue, workingDirectory)
+        withExtendedLifetime(statuses) {}
+        await fixture.client.disconnect()
+    }
+
     func testProviderCatalogueUsesStableProviderAndModelIdentities() {
         let normalized = NativeFeatureClient.normalizedProviders([
             FeatureProvider(
@@ -865,6 +891,7 @@ final class NativeMultiEnvironmentTests: XCTestCase {
         requireConfiguration: Bool = false,
         passiveSequence: Int = 1,
         includeThirdEnvironment: Bool = false,
+        activeWorkspaceRoot: String? = nil,
         repositoryIdentity: RepositoryIdentity? = nil,
         pullRequestsAvailable: Bool = false,
         webSocketConnector: any WebSocketConnecting = UnavailableMultiEnvironmentWebSocketConnector(),
@@ -942,6 +969,7 @@ final class NativeMultiEnvironmentTests: XCTestCase {
                 projectID: duplicateIDs ? "project-shared" : "project-one",
                 threadID: duplicateIDs ? "thread-shared" : "thread-one",
                 title: "Local work",
+                workspaceRoot: activeWorkspaceRoot,
                 repositoryIdentity: repositoryIdentity
             ),
             "two.example": multiEnvironmentShell(
@@ -1903,6 +1931,64 @@ private actor PullRequestPageWebSocketConnection: WebSocketConnection {
     }
 }
 
+private struct VCSSubscriptionConnector: WebSocketConnecting {
+    let requests: AsyncStream<JSONValue>.Continuation
+
+    func connect(to _: URL) -> any WebSocketConnection {
+        VCSSubscriptionConnection(requests: requests)
+    }
+}
+
+private actor VCSSubscriptionConnection: WebSocketConnection {
+    private let requests: AsyncStream<JSONValue>.Continuation
+    private var responses: [Data] = []
+    private var receiver: CheckedContinuation<Data, any Error>?
+
+    init(requests: AsyncStream<JSONValue>.Continuation) {
+        self.requests = requests
+    }
+
+    func send(_ data: Data) throws {
+        let request = try JSONDecoder.t3.decode(JSONValue.self, from: data)
+        guard request["tag"]?.stringValue == RPCMethod.subscribeVCSStatus.rawValue,
+              case let .number(requestID)? = request["id"] else {
+            return
+        }
+        requests.yield(request)
+        let snapshot = JSONValue.object([
+            "_tag": .string("snapshot"),
+            "local": .object([
+                "isRepo": .bool(true),
+                "hasPrimaryRemote": .bool(false),
+                "isDefaultRef": .bool(false),
+                "hasWorkingTreeChanges": .bool(false),
+            ]),
+            "remote": .null,
+        ])
+        let response = try JSONEncoder.t3.encode(JSONValue.object([
+            "_tag": .string("Chunk"),
+            "requestId": .number(requestID),
+            "values": .array([snapshot]),
+        ]))
+        if let receiver {
+            self.receiver = nil
+            receiver.resume(returning: response)
+        } else {
+            responses.append(response)
+        }
+    }
+
+    func receive() async throws -> Data {
+        if !responses.isEmpty { return responses.removeFirst() }
+        return try await withCheckedThrowingContinuation { receiver = $0 }
+    }
+
+    func close() {
+        receiver?.resume(throwing: CancellationError())
+        receiver = nil
+    }
+}
+
 private func multiEnvironmentDescriptor(
     environmentID: String,
     label: String,
@@ -1931,6 +2017,7 @@ func multiEnvironmentShell(
     title: String,
     providerID: String = "codex",
     modelID: String = "gpt-5.6-sol",
+    workspaceRoot: String? = nil,
     repositoryIdentity: RepositoryIdentity? = nil,
     backgroundLiveness: OrchestrationBackgroundLiveness? = nil,
     snapshotSequence: Int = 1,
@@ -1945,7 +2032,7 @@ func multiEnvironmentShell(
             OrchestrationProject(
                 id: projectID,
                 title: title,
-                workspaceRoot: "/work/\(projectID)",
+                workspaceRoot: workspaceRoot ?? "/work/\(projectID)",
                 repositoryIdentity: repositoryIdentity,
                 defaultModelSelection: model,
                 scripts: [],
