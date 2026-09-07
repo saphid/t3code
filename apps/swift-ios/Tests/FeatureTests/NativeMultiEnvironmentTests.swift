@@ -7,30 +7,41 @@ import XCTest
 
 @MainActor
 final class NativeMultiEnvironmentTests: XCTestCase {
-    func testLiveSourceControlPreservesRemoteWindowsWorkingDirectory() async throws {
-        let workingDirectory = #"C:\Users\alex\source\t3 code"#
-        let requests = AsyncStream<JSONValue>.makeStream()
-        let fixture = try await Self.makeFixture(
-            activeWorkspaceRoot: workingDirectory,
-            webSocketConnector: VCSSubscriptionConnector(
-                requests: requests.continuation
-            )
-        )
-        addTeardownBlock {
-            await fixture.client.disconnect()
-            try? FileManager.default.removeItem(at: fixture.directory)
-        }
-        let snapshot = try await fixture.hydratedSnapshot()
-        let threadID = try XCTUnwrap(snapshot.threads.first { $0.environmentID == "one" }?.id)
-        let statuses = fixture.client.sourceControlStatusEvents(threadID: threadID)
-        var requestIterator = requests.stream.makeAsyncIterator()
-        let nextRequest = await requestIterator.next()
-        let request = try XCTUnwrap(nextRequest)
+    func testLiveSourceControlPreservesRemoteWorkingDirectoryAndEnvironment() async throws {
+        for workingDirectory in [#"C:\Users\alex\source\t3 code"#, #"\\server\share\repo"#, "/srv/my repo"] {
+            for environmentID in ["one", "two"] {
+                let requests = AsyncStream<VCSSubscriptionRequest>.makeStream()
+                let fixture = try await Self.makeFixture(
+                    activeWorkspaceRoot: workingDirectory,
+                    webSocketConnector: VCSSubscriptionConnector(requests: requests.continuation)
+                )
+                addTeardownBlock {
+                    await fixture.client.disconnect()
+                    requests.continuation.finish()
+                    try? FileManager.default.removeItem(at: fixture.directory)
+                }
+                await fixture.transport.setShell(
+                    multiEnvironmentShell(
+                        projectID: "project-two", threadID: "thread-two", title: "Remote work",
+                        workspaceRoot: workingDirectory
+                    ),
+                    host: "two.example"
+                )
+                let snapshot = try await fixture.hydratedSnapshot()
+                let threadID = try XCTUnwrap(snapshot.threads.first { $0.environmentID == environmentID }?.id)
+                let statuses = fixture.client.sourceControlStatusEvents(threadID: threadID)
+                var requestIterator = requests.stream.makeAsyncIterator()
+                let nextRequest = await requestIterator.next()
+                let request = try XCTUnwrap(nextRequest)
 
-        XCTAssertEqual(request["tag"]?.stringValue, RPCMethod.subscribeVCSStatus.rawValue)
-        XCTAssertEqual(request["payload"]?["cwd"]?.stringValue, workingDirectory)
-        withExtendedLifetime(statuses) {}
-        await fixture.client.disconnect()
+                XCTAssertEqual(request.host, "\(environmentID).example")
+                XCTAssertEqual(request.envelope["tag"]?.stringValue, RPCMethod.subscribeVCSStatus.rawValue)
+                XCTAssertEqual(request.envelope["payload"]?["cwd"]?.stringValue, workingDirectory)
+                withExtendedLifetime(statuses) {}
+                await fixture.client.disconnect()
+                requests.continuation.finish()
+            }
+        }
     }
 
     func testProviderCatalogueUsesStableProviderAndModelIdentities() {
@@ -1931,20 +1942,27 @@ private actor PullRequestPageWebSocketConnection: WebSocketConnection {
     }
 }
 
-private struct VCSSubscriptionConnector: WebSocketConnecting {
-    let requests: AsyncStream<JSONValue>.Continuation
+private struct VCSSubscriptionRequest: Sendable {
+    let host: String?
+    let envelope: JSONValue
+}
 
-    func connect(to _: URL) -> any WebSocketConnection {
-        VCSSubscriptionConnection(requests: requests)
+private struct VCSSubscriptionConnector: WebSocketConnecting {
+    let requests: AsyncStream<VCSSubscriptionRequest>.Continuation
+
+    func connect(to url: URL) -> any WebSocketConnection {
+        VCSSubscriptionConnection(host: url.host, requests: requests)
     }
 }
 
 private actor VCSSubscriptionConnection: WebSocketConnection {
-    private let requests: AsyncStream<JSONValue>.Continuation
+    private let host: String?
+    private let requests: AsyncStream<VCSSubscriptionRequest>.Continuation
     private var responses: [Data] = []
     private var receiver: CheckedContinuation<Data, any Error>?
 
-    init(requests: AsyncStream<JSONValue>.Continuation) {
+    init(host: String?, requests: AsyncStream<VCSSubscriptionRequest>.Continuation) {
+        self.host = host
         self.requests = requests
     }
 
@@ -1954,7 +1972,7 @@ private actor VCSSubscriptionConnection: WebSocketConnection {
               case let .number(requestID)? = request["id"] else {
             return
         }
-        requests.yield(request)
+        requests.yield(VCSSubscriptionRequest(host: host, envelope: request))
         let snapshot = JSONValue.object([
             "_tag": .string("snapshot"),
             "local": .object([
