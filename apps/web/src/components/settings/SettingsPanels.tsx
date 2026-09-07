@@ -129,6 +129,7 @@ import {
   NumberFieldIncrement,
   NumberFieldInput,
 } from "../ui/number-field";
+// Reuses the project’s Select primitive: https://ui.shadcn.com/docs/components/base/select
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Switch } from "../ui/switch";
 import { ScopedSwitch } from "./ScopedSwitch";
@@ -327,7 +328,7 @@ function AboutVersionSection() {
   );
 
   const handleUpdateRepositoryChange = useCallback(
-    (value: string) => {
+    (value: string, channel = selectedUpdateChannel) => {
       const bridge = window.desktopBridge;
       if (!bridge || typeof bridge.setUpdateRepository !== "function") return;
 
@@ -342,10 +343,13 @@ function AboutVersionSection() {
         );
         return;
       }
-      if (repository === selectedUpdateRepository) return;
+      if (repository === selectedUpdateRepository && channel === selectedUpdateChannel) return;
 
       setIsChangingUpdateRepository(true);
-      const repositoryChange = bridge.setUpdateRepository(repository);
+      const repositoryChange = bridge.setUpdateRepository(
+        repository,
+        channel === "nightly-v2" ? "nightly-v2" : "nightly",
+      );
       pendingRepositoryChangeRef.current = repositoryChange;
       void repositoryChange
         .then(() => {
@@ -369,7 +373,7 @@ function AboutVersionSection() {
           setIsChangingUpdateRepository(false);
         });
     },
-    [selectedUpdateRepository],
+    [selectedUpdateRepository, selectedUpdateChannel],
   );
 
   const handleButtonClick = useCallback(async () => {
@@ -552,8 +556,41 @@ function AboutVersionSection() {
                   spellCheck={false}
                   value={selectedUpdateRepository ?? ""}
                   disabled={isChangingUpdateRepository || isChangingUpdateChannel}
-                  onCommit={handleUpdateRepositoryChange}
+                  onCommit={(value) => handleUpdateRepositoryChange(value)}
                 />
+              }
+            />
+          ) : null}
+          {selectedUpdateTrack === "custom" &&
+          selectedUpdateRepository?.toLowerCase() === "saphid/t3code" ? (
+            <SettingsRow
+              title="Fork release"
+              description="Follow one release stream. Each stream has its own selected patches."
+              control={
+                <Select
+                  value={selectedUpdateChannel === "nightly-v2" ? "nightly-v2" : "nightly"}
+                  onValueChange={(value) => {
+                    if (value === "nightly" || value === "nightly-v2") {
+                      handleUpdateRepositoryChange(selectedUpdateRepository, value);
+                    }
+                  }}
+                >
+                  <SelectTrigger
+                    className="w-full sm:w-72"
+                    aria-label="Fork release"
+                    disabled={isChangingUpdateChannel || isChangingUpdateRepository}
+                  >
+                    <SelectValue>
+                      {selectedUpdateChannel === "nightly-v2"
+                        ? "Fork Nightly Orchestrator v2"
+                        : "Fork Nightly"}
+                    </SelectValue>
+                  </SelectTrigger>
+                  <SelectPopup align="end" alignItemWithTrigger={false}>
+                    <SelectItem value="nightly">Fork Nightly</SelectItem>
+                    <SelectItem value="nightly-v2">Fork Nightly Orchestrator v2</SelectItem>
+                  </SelectPopup>
+                </Select>
               }
             />
           ) : null}
