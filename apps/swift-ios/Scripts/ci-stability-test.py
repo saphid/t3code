@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import platform
 import plistlib
+import re
 import stat
 import signal
 import subprocess
@@ -76,6 +77,17 @@ def retain_tested_app(root, runner_temp, receipt):
     with (app / "Info.plist").open("rb") as handle:
         info = plistlib.load(handle)
     assert "iPhoneSimulator" in info.get("CFBundleSupportedPlatforms", []), "Not a Simulator app"
+    assert info.get("T3GitCommit") == receipt["gitSha"], "Built commit does not match tested source"
+    if receipt["configuration"] == "Test":
+        assert info.get("T3BuildChannel") == "test", "Built app is not the Test channel"
+        assert not list(app.glob("*.debug.dylib")), "Test app contains a debug dylib"
+        log = (runner_temp / "swiftui-stability-evidence/xcodebuild.log").read_text()
+        compiler_lines = [line for line in log.splitlines()
+                          if "swiftc " in line and " -module-name T3Code " in line]
+        assert compiler_lines, "No app compiler invocation found"
+        assert all(" -O " in line and " -whole-module-optimization " in line
+                   and " -Onone " not in line for line in compiler_lines), "Test app was not fully optimized"
+        receipt["optimizationEvidence"] = compiler_lines
     executable = app / info["CFBundleExecutable"]
     architectures = subprocess.check_output(["lipo", "-archs", str(executable)], text=True, timeout=30).strip()
     assert "arm64" in architectures.split(), "Test host lacks arm64"
@@ -120,14 +132,14 @@ def retain_tested_app(root, runner_temp, receipt):
         "runId": os.environ["GITHUB_RUN_ID"], "runAttempt": os.environ["GITHUB_RUN_ATTEMPT"],
         "runUrl": os.environ["GITHUB_SERVER_URL"] + "/" + os.environ["GITHUB_REPOSITORY"]
             + "/actions/runs/" + os.environ["GITHUB_RUN_ID"],
-        "configuration": "Debug", "platform": "iphonesimulator", "runnerArchitecture": platform.machine(),
+        "scheme": receipt["scheme"], "configuration": receipt["configuration"], "platform": "iphonesimulator", "runnerArchitecture": platform.machine(),
         "xcode": receipt["xcode"], "simulator": receipt["simulator"], "command": receipt["command"],
         "sourceHashes": receipt["sourceHashes"], "configurationAndDependencyHashes": input_hashes,
         "xcodeExit": receipt["xcodeExit"], "executedBySuite": receipt["executedBySuite"],
         "product": app.name, "executable": info["CFBundleExecutable"], "architectures": architectures,
         "builtIdentity": {key: info.get(key) for key in [
             "CFBundleIdentifier", "CFBundleShortVersionString", "CFBundleVersion", "MinimumOSVersion",
-            "CFBundleSupportedPlatforms", "DTSDKName", "DTXcode", "DTXcodeBuild", "T3GitCommit",
+            "CFBundleSupportedPlatforms", "DTSDKName", "DTXcode", "DTXcodeBuild", "T3GitCommit", "T3BuildChannel",
         ]},
         "archive": {"name": archive.name, "bytes": archive.stat().st_size, "sha256": file_sha256(archive)},
         "executableSha256": file_sha256(executable),
@@ -152,6 +164,10 @@ def main():
     receipt = {"startedAt": time.time(), "status": "failed", "suites": SUITES}
     exit_code = 1
     try:
+        scheme = os.environ.get("T3_TEST_SCHEME", "T3Code")
+        configuration = os.environ.get("T3_TEST_CONFIGURATION", "Debug")
+        assert (scheme, configuration) in {("T3Code", "Debug"), ("T3CodeTest", "Test")}, "Unsupported scheme/configuration pair"
+        receipt.update(scheme=scheme, configuration=configuration)
         assert platform.machine() == "arm64", "Ghostty requires an ARM64 simulator runner"
         version = subprocess.check_output(["xcodebuild", "-version"], text=True)
         receipt["xcode"] = version
@@ -161,6 +177,10 @@ def main():
         receipt["gitSha"] = subprocess.check_output(
             ["git", "rev-parse", "HEAD"], cwd=root, text=True
         ).strip()
+        assert re.fullmatch(r"[0-9a-f]{40}", receipt["gitSha"]), "Invalid source SHA"
+        assert receipt["gitSha"] == os.environ["GITHUB_SHA"], "Checkout differs from requested source"
+        with (root / "apps/swift-ios/Resources/Info.plist").open("rb") as handle:
+            assert plistlib.load(handle).get("T3GitCommit") == "$(T3_GIT_COMMIT)", "Commit build key is not declared"
         receipt["sourceHashes"] = {
             str(p.relative_to(root)): hashlib.sha256(p.read_bytes()).hexdigest()
             for p in sorted((root / "apps/swift-ios").rglob("*.swift"))
@@ -172,7 +192,7 @@ def main():
         receipt["simulator"] = device
         command = [
             "xcodebuild", "test", "-project", str(root / "apps/swift-ios/T3Code.xcodeproj"),
-            "-scheme", "T3Code", "-configuration", "Debug", "-jobs", "2",
+            "-scheme", scheme, "-configuration", configuration, "-jobs", "2",
             "-destination", "platform=iOS Simulator,id=" + device["udid"],
             "-derivedDataPath", str(runner_temp / "swiftui-stability-derived-data"),
             "-resultBundlePath", str(result), "-parallel-testing-enabled", "NO",
@@ -181,7 +201,7 @@ def main():
             "-default-test-execution-time-allowance", "30",
             "-maximum-test-execution-time-allowance", "60",
             *["-only-testing:T3CodeTests/" + suite for suite in SUITES],
-            "CODE_SIGNING_ALLOWED=NO",
+            "CODE_SIGNING_ALLOWED=NO", "T3_GIT_COMMIT=" + receipt["gitSha"],
         ]
         receipt["command"] = command
         with (evidence / "xcodebuild.log").open("w") as log:
