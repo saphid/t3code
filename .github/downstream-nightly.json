@@ -162,7 +162,7 @@
     {
       "type": "commit",
       "repository": "saphid/t3code",
-      "sha": "7ef1d26dc76f809452fcf6fdd7d63e42f1a97272",
+      "sha": "00cc38f86f3784f1e99b78ef5a557e676c573b1d",
       "name": "Nightly 1316 usage integration compatibility"
     }
   ]
