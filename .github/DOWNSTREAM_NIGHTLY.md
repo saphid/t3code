@@ -22,7 +22,7 @@ Fork Nightly currently publishes macOS arm64 and macOS x64 artifacts only. The L
 
 ## Point the app at the fork
 
-Select the Nightly update track and set Custom release source to `saphid/t3code`. Fork-built installers also embed `saphid/t3code` as their default update repository, so later updates stay on the fork even when the custom field is empty.
+In Settings → About, select the Custom update track, set Release source to `saphid/t3code`, and choose the desired Fork release. Fork-built installers also embed `saphid/t3code` as their default update repository, so later updates stay on the fork even when the custom field is empty.
 
 ## Fork setup
 
