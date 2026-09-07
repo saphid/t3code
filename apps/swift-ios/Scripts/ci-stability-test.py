@@ -51,8 +51,7 @@ def file_sha256(path):
     return digest.hexdigest()
 
 
-def retain_tested_app(root, runner_temp, receipt):
-    products = runner_temp / "swiftui-stability-derived-data/Build/Products"
+def discover_test_host(products, configuration):
     hosts = set()
 
     def find_hosts(value):
@@ -72,14 +71,24 @@ def retain_tested_app(root, runner_temp, receipt):
     for path in products.glob("*.xctestrun"):
         with path.open("rb") as handle:
             find_hosts(plistlib.load(handle))
+    if not hosts:
+        # The direct `test` action can leave products without an .xctestrun.
+        hosts = {path.resolve() for path in (products / (configuration + "-iphonesimulator")).glob("*.app")
+                 if (path / "PlugIns/T3CodeTests.xctest").is_dir()}
+        assert all(products.resolve() in host.parents for host in hosts), "Test host escaped products"
     assert len(hosts) == 1, "Expected one exact XCTest host app: " + str(hosts)
-    app = hosts.pop()
+    return hosts.pop()
+
+
+def retain_tested_app(root, runner_temp, receipt):
+    products = runner_temp / "swiftui-stability-derived-data/Build/Products"
+    app = discover_test_host(products, receipt["configuration"])
     with (app / "Info.plist").open("rb") as handle:
         info = plistlib.load(handle)
     assert "iPhoneSimulator" in info.get("CFBundleSupportedPlatforms", []), "Not a Simulator app"
     assert info.get("T3GitCommit") == receipt["gitSha"], "Built commit does not match tested source"
     if receipt["configuration"] == "Test":
-        assert info.get("T3BuildChannel") == "test", "Built app is not the Test channel"
+        assert info.get("T3BuildChannel") == receipt["expectedChannel"], "Unexpected built channel"
         assert not list(app.glob("*.debug.dylib")), "Test app contains a debug dylib"
         log = (runner_temp / "swiftui-stability-evidence/xcodebuild.log").read_text()
         compiler_lines = [line for line in log.splitlines()
@@ -88,6 +97,28 @@ def retain_tested_app(root, runner_temp, receipt):
         assert all(" -O " in line and " -whole-module-optimization " in line
                    and " -Onone " not in line for line in compiler_lines), "Test app was not fully optimized"
         receipt["optimizationEvidence"] = compiler_lines
+    if receipt.get("identityContract"):
+        contract = receipt["identityContract"]
+        bundles = [app, *sorted(app.glob("PlugIns/*.appex"))]
+        assert len(bundles) == 3 and len(contract["bundles"]) == 3
+        identities = {}
+        for bundle in bundles:
+            with (bundle / "Info.plist").open("rb") as handle:
+                built = plistlib.load(handle)
+            identifier = built["CFBundleIdentifier"]
+            assert identifier in contract["bundles"] and identifier not in identities
+            for key, value in contract["bundles"][identifier].items():
+                assert built.get(key) == value, (identifier, key, built.get(key), value)
+            assert built["CFBundleVersion"] == contract["build"]
+            assert built["CFBundleShortVersionString"] == contract["version"]
+            assert not list(bundle.glob("*.debug.dylib"))
+            identities[identifier] = built
+        assert set(identities) == set(contract["bundles"])
+        host = identities[contract["hostBundleIdentifier"]]
+        assert host["CFBundleIcons"]["CFBundlePrimaryIcon"]["CFBundleIconName"] == "AppIconDev"
+        assert [scheme for item in host.get("CFBundleURLTypes", [])
+                for scheme in item.get("CFBundleURLSchemes", [])] == [contract["hostURLScheme"]]
+        receipt["builtIdentities"] = identities
     executable = app / info["CFBundleExecutable"]
     architectures = subprocess.check_output(["lipo", "-archs", str(executable)], text=True, timeout=30).strip()
     assert "arm64" in architectures.split(), "Test host lacks arm64"
@@ -168,6 +199,19 @@ def main():
         configuration = os.environ.get("T3_TEST_CONFIGURATION", "Debug")
         assert (scheme, configuration) in {("T3Code", "Debug"), ("T3CodeTest", "Test")}, "Unsupported scheme/configuration pair"
         receipt.update(scheme=scheme, configuration=configuration)
+        channel = os.environ.get("T3_EXPECTED_CHANNEL", "test")
+        assert channel in {"test", "dev"}, "Unsupported expected channel"
+        receipt["expectedChannel"] = channel
+        identity_file = os.environ.get("T3_EXPECTED_IDENTITY_FILE")
+        if channel == "dev":
+            assert (scheme, configuration) == ("T3CodeTest", "Test")
+            assert identity_file == "apps/swift-ios/Scripts/dev-archive-identity.json"
+            contract = json.loads((root / identity_file).read_text())
+            assert contract["hostBundleIdentifier"] == "com.saphid.t3code.swiftui.dev"
+            assert contract["bundles"][contract["hostBundleIdentifier"]]["T3BuildChannel"] == channel
+            receipt["identityContract"] = contract
+        else:
+            assert identity_file is None, "Unexpected identity file for Test channel"
         assert platform.machine() == "arm64", "Ghostty requires an ARM64 simulator runner"
         version = subprocess.check_output(["xcodebuild", "-version"], text=True)
         receipt["xcode"] = version
@@ -203,6 +247,8 @@ def main():
             *["-only-testing:T3CodeTests/" + suite for suite in SUITES],
             "CODE_SIGNING_ALLOWED=NO", "T3_GIT_COMMIT=" + receipt["gitSha"],
         ]
+        if receipt.get("identityContract"):
+            command.append("CURRENT_PROJECT_VERSION=" + receipt["identityContract"]["build"])
         receipt["command"] = command
         with (evidence / "xcodebuild.log").open("w") as log:
             process = subprocess.Popen(command, cwd=root, stdout=log,
