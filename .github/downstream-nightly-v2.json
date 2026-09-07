@@ -22,6 +22,12 @@
       "repository": "saphid/t3code",
       "sha": "d3f9d4a3dcb12d76bd794ac1cf1185171135973c",
       "name": "Nightly DMG artwork and build compatibility"
+    },
+    {
+      "type": "commit",
+      "repository": "saphid/t3code",
+      "sha": "042454cfa9df935835913c4c5ae8383530b918c2",
+      "name": "Deterministic cold highlighter test on hosted runners"
     }
   ]
 }
