@@ -84,7 +84,7 @@ describe("Downstream Nightly workflow", () => {
 
     assert.notEqual(checkoutStart, -1);
     assert.doesNotMatch(checkout, /uses: actions\/checkout/);
-    assert.match(checkout, /git -C source fetch --no-tags --depth=1 upstream/);
+    assert.match(checkout, /git -C source fetch --no-tags upstream/);
     assert.match(checkout, /git -C source sparse-checkout set --no-cone/);
     assert.match(checkout, /!\/\.repos\//);
   });
@@ -321,6 +321,24 @@ describe("Downstream Nightly assembly", () => {
       /"name": "Selected patch"/,
     );
     assert.deepEqual(git(source, "status", "--porcelain"), "");
+
+    git(patchRepository, "checkout", "-b", "side", "HEAD~1");
+    writeFileSync(join(patchRepository, "side.txt"), "side\n");
+    git(patchRepository, "add", "side.txt");
+    git(patchRepository, "commit", "-m", "side patch");
+    git(patchRepository, "checkout", "main");
+    git(patchRepository, "merge", "--no-ff", "side", "-m", "merge patch");
+    const mergeSha = git(patchRepository, "rev-parse", "HEAD");
+    assert.throws(
+      () =>
+        applyPlan(
+          { ...plan, patches: [{ ...plan.patches[0], fetchRef: mergeSha, commits: [mergeSha] }] },
+          source,
+        ),
+      /failed while cherry-picking/,
+    );
+    assert.equal(git(source, "rev-parse", "HEAD"), generatedSha);
+    assert.equal(git(source, "status", "--porcelain"), "");
   });
 });
 
