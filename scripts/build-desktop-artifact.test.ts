@@ -2370,3 +2370,21 @@ it.effect("keeps the fork identity stable across v2 channel switches", () =>
     assert.equal(publish?.releaseType, "prerelease");
   }),
 );
+
+it.effect("uses existing Nightly DMG artwork for the v2 release channel", () =>
+  Effect.gen(function* () {
+    const config = yield* createBuildConfig(
+      "mac",
+      "dmg",
+      "0.0.38-nightly-v2.20260906.1788679427642128",
+      false,
+      false,
+      undefined,
+      undefined,
+    );
+    assert.equal(
+      (config.dmg as { background: string }).background,
+      "dmg/dmg-background-nightly.png",
+    );
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
