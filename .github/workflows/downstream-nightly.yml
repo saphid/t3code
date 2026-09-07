@@ -127,7 +127,7 @@ jobs:
           git init -q source
           git -C source remote add upstream "https://github.com/${UPSTREAM_REPOSITORY}.git"
           git -C source sparse-checkout set --no-cone '/*' '!/.repos/'
-          git -C source fetch --no-tags --depth=1 upstream "${UPSTREAM_CHECKOUT_REF}"
+          git -C source fetch --no-tags upstream "${UPSTREAM_CHECKOUT_REF}"
           git -C source checkout --detach FETCH_HEAD
 
       - id: apply

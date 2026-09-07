@@ -442,14 +442,16 @@ function cherryPick(sourceDir, sha, label) {
   const workingTreeClean =
     spawnSync("git", ["-C", sourceDir, "diff", "--quiet"]).status === 0 &&
     spawnSync("git", ["-C", sourceDir, "diff", "--cached", "--quiet"]).status === 0;
-  if (workingTreeClean) {
+  const pickInProgress =
+    spawnSync("git", ["-C", sourceDir, "rev-parse", "--verify", "CHERRY_PICK_HEAD"]).status === 0;
+  if (workingTreeClean && pickInProgress) {
     console.log(`Skipping ${sha}: its changes are already present.`);
     runGit(sourceDir, ["cherry-pick", "--skip"]);
     return;
   }
 
-  runGit(sourceDir, ["cherry-pick", "--abort"]);
-  fail(`Patch ${label} conflicts while cherry-picking ${sha}.`);
+  if (pickInProgress) runGit(sourceDir, ["cherry-pick", "--abort"]);
+  fail(`Patch ${label} failed while cherry-picking ${sha}; inspect the git error above.`);
 }
 
 function updatePackageVersions(sourceDir, version) {
