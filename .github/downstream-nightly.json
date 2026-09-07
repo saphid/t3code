@@ -164,6 +164,12 @@
       "repository": "saphid/t3code",
       "sha": "00cc38f86f3784f1e99b78ef5a557e676c573b1d",
       "name": "Nightly 1316 usage integration compatibility"
+    },
+    {
+      "type": "commit",
+      "repository": "saphid/t3code",
+      "sha": "59e3164bfdb11e8cff2bc08632038e9acfb37283",
+      "name": "Preserve lightweight turn start reads"
     }
   ]
 }
