@@ -139,6 +139,40 @@ describe("DesktopUpdates", () => {
     ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
   });
 
+  it.effect("switches fork feeds in both directions without mixing release channels", () => {
+    const harness = makeHarness({
+      env: { T3CODE_DESKTOP_MOCK_UPDATES: "false" },
+      updateRepository: "saphid/t3code",
+    });
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const updates = yield* DesktopUpdates.DesktopUpdates;
+        yield* updates.configure;
+        const v2 = yield* updates.setRepository("saphid/t3code", "nightly-v2");
+        assert.equal(v2.channel, "nightly-v2");
+        assert.equal(v2.repository, "saphid/t3code");
+        assert.deepEqual(harness.feedUrls().at(-1), {
+          provider: "github",
+          owner: "saphid",
+          repo: "t3code",
+          releaseType: "prerelease",
+          channel: "nightly-v2",
+        });
+        yield* flushCallbacks;
+        harness.emit("update-available", { version: "1.2.4-nightly.20260907.1" });
+        yield* flushCallbacks;
+        assert.isNull((yield* updates.getState).availableVersion);
+        harness.emit("update-available", { version: "1.2.4-nightly-v2.20260907.1" });
+        yield* flushCallbacks;
+        assert.equal((yield* updates.getState).availableVersion, "1.2.4-nightly-v2.20260907.1");
+        const nightly = yield* updates.setRepository("saphid/t3code", "nightly");
+        assert.equal(nightly.channel, "nightly");
+        assert.isNull(nightly.availableVersion);
+        assert.equal(nightly.repository, "saphid/t3code");
+      }),
+    ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
+  });
+
   it.effect("enables a custom repository after starting without an update feed", () => {
     const harness = makeHarness({
       env: { T3CODE_DESKTOP_MOCK_UPDATES: "false" },
