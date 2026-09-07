@@ -17,7 +17,7 @@
     {
       "type": "commit",
       "repository": "saphid/t3code",
-      "sha": "8c4159627678ce99c5e3dced38096c237eb0767e",
+      "sha": "bdbb1e21a9fc38cd41c5e99db8d45a0d9debe955",
       "name": "Context-limit handovers"
     },
     {
@@ -34,7 +34,7 @@
     {
       "type": "commit",
       "repository": "saphid/t3code",
-      "sha": "95404d097754a5da9d0504a426bf0a057bdf536b"
+      "sha": "2f555ed3141b16d8fac523ce11e978691082b9d8"
     },
     {
       "type": "commit",
@@ -114,7 +114,7 @@
     {
       "type": "commit",
       "repository": "saphid/t3code",
-      "sha": "bf0784cc018773f47f40e8ca2c2f5c0b953b6552",
+      "sha": "ddafee1fca15c1b86575eea25152077ed0d5e270",
       "name": "Project spend usage dashboard"
     },
     {
