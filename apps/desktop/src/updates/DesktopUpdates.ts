@@ -268,6 +268,7 @@ export class DesktopUpdates extends Context.Service<
     ) => Effect.Effect<DesktopUpdateState, DesktopUpdateSetChannelError>;
     readonly setRepository: (
       repository: DesktopUpdateRepository,
+      channel?: DesktopUpdateChannel,
     ) => Effect.Effect<
       DesktopUpdateState,
       | DesktopUpdateRepositoryError
@@ -488,7 +489,7 @@ export const make = Effect.gen(function* () {
     channel: DesktopUpdateChannel,
   ) {
     yield* Effect.annotateCurrentSpan({ channel });
-    const allowsPrerelease = channel === "nightly";
+    const allowsPrerelease = channel !== "latest";
     yield* electronUpdater.setChannel(channel);
     yield* electronUpdater.setAllowPrerelease(allowsPrerelease);
     yield* electronUpdater.setAllowDowngrade(allowsPrerelease);
@@ -513,8 +514,8 @@ export const make = Effect.gen(function* () {
           provider: "github" as const,
           owner,
           repo,
-          releaseType: channel === "nightly" ? ("prerelease" as const) : ("release" as const),
-          ...(channel === "nightly" ? { channel: "nightly" as const } : {}),
+          releaseType: channel !== "latest" ? ("prerelease" as const) : ("release" as const),
+          ...(channel !== "latest" ? { channel } : {}),
         } satisfies ElectronUpdater.ElectronUpdaterFeedUrl;
       },
       onNone: () => Option.getOrUndefined(bundledFeed),
@@ -1165,6 +1166,7 @@ export const make = Effect.gen(function* () {
     }),
     setRepository: Effect.fn("desktop.updates.setRepository")(function* (
       nextRepository: DesktopUpdateRepository,
+      nextChannel?: DesktopUpdateChannel,
     ) {
       const normalizedRepository =
         nextRepository === null ? null : normalizeDesktopUpdateRepository(nextRepository);
@@ -1182,12 +1184,15 @@ export const make = Effect.gen(function* () {
 
       return yield* Effect.gen(function* () {
         const state = yield* Ref.get(updateStateRef);
-        if (state.repository === normalizedRepository) {
+        if (
+          state.repository === normalizedRepository &&
+          (nextChannel === undefined || state.channel === nextChannel)
+        ) {
           return state;
         }
 
         const settingsChange = yield* desktopSettings
-          .setUpdateRepository(normalizedRepository)
+          .setUpdateRepository(normalizedRepository, nextChannel)
           .pipe(
             Effect.mapError(
               (cause) =>
