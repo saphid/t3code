@@ -1189,7 +1189,7 @@ const make = Effect.gen(function* () {
       return;
     }
 
-    const thread = yield* resolveThreadDetail(event.payload.threadId);
+    const thread = yield* resolveThreadShell(event.payload.threadId);
     if (!thread) {
       return;
     }
@@ -1305,7 +1305,7 @@ const make = Effect.gen(function* () {
       yield* ensureThreadWorktree(thread);
 
       const usageLimitSettings = yield* serverSettingsService.getSettings;
-      const latestThread = yield* resolveThreadDetail(event.payload.threadId);
+      const latestThread = yield* resolveThreadShell(event.payload.threadId);
       if (!latestThread) {
         return yield* appendProviderFailureActivity({
           threadId: event.payload.threadId,
@@ -1316,6 +1316,13 @@ const make = Effect.gen(function* () {
           createdAt: event.payload.createdAt,
         });
       }
+      const usageActivities = Option.match(
+        yield* projectionSnapshotQuery.getThreadDetailById(event.payload.threadId, {
+          activityKinds: ["context-window.updated"],
+          includeMessages: false,
+        }),
+        { onNone: () => [], onSome: (value) => value.activities },
+      );
 
       const usageLimitViolation = yield* usageLimitReservations.reserveTurn({
         key,
@@ -1323,7 +1330,7 @@ const make = Effect.gen(function* () {
         providerInstanceId: latestThread.modelSelection.instanceId,
         contextTokenLimit: usageLimitSettings.threadContextTokenLimit,
         maxConcurrentThreads: usageLimitSettings.maxConcurrentThreads,
-        activities: latestThread.activities,
+        activities: usageActivities,
       });
       if (usageLimitViolation) {
         yield* appendProviderFailureActivity({
@@ -1339,10 +1346,7 @@ const make = Effect.gen(function* () {
       reservationAcquired = true;
 
       const isCompactCommand = isCompactCommandMessage(message);
-      const nonCompactUserMessageCount = latestThread.messages.filter(
-        (entry) => entry.role === "user" && !isCompactCommandMessage(entry),
-      ).length;
-      if (nonCompactUserMessageCount === 1 && !isCompactCommand) {
+      if (!hasOtherUserMessages && !isCompactCommand) {
         const project = yield* resolveProject(latestThread.projectId);
         const generationCwd =
           resolveThreadWorkspaceCwd({
@@ -1413,7 +1417,7 @@ const make = Effect.gen(function* () {
           ),
         );
       if (isCompactCommand) {
-        if (nonCompactUserMessageCount === 0) {
+        if (!hasOtherUserMessages) {
           return yield* appendTurnStartFailure(
             "Context compaction failed",
             "Context compaction requires an existing conversation.",
