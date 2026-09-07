@@ -234,6 +234,24 @@ describe("DesktopSettings", () => {
     ),
   );
 
+  it.effect("persists a v2 fork channel across reload and switches back independently", () =>
+    withSettings(
+      Effect.gen(function* () {
+        const settings = yield* DesktopAppSettings.DesktopAppSettings;
+        yield* settings.setUpdateRepository("saphid/t3code", "nightly-v2");
+        const reloaded = yield* settings.load;
+        assert.equal(reloaded.updateRepository, "saphid/t3code");
+        assert.equal(reloaded.updateChannel, "nightly-v2");
+        yield* settings.setUpdateRepository("saphid/t3code", "nightly");
+        assert.equal((yield* settings.load).updateChannel, "nightly");
+        yield* settings.setUpdateRepository("saphid/t3code", "nightly-v2");
+        yield* settings.setUpdateChannel("latest");
+        assert.isNull((yield* settings.load).updateRepository);
+        assert.equal((yield* settings.get).updateChannel, "latest");
+      }),
+    ),
+  );
+
   it.effect("migrates a persisted custom source to the Nightly release channel", () =>
     withSettings(
       Effect.gen(function* () {
