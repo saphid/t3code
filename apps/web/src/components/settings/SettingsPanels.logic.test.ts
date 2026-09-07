@@ -26,6 +26,8 @@ import {
 describe("desktop update track", () => {
   it("shows Custom for persisted and in-progress custom source selection", () => {
     expect(resolveDesktopUpdateTrack("nightly", "saphid/t3code")).toBe("custom");
+    expect(resolveDesktopUpdateTrack("nightly-v2", "saphid/t3code")).toBe("custom");
+    expect(resolveDesktopUpdateTrack("nightly-v2", null)).toBe("custom");
     expect(resolveDesktopUpdateTrack("latest", null, true)).toBe("custom");
   });
 

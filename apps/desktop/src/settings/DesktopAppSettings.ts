@@ -173,6 +173,7 @@ export class DesktopAppSettings extends Context.Service<
     ) => Effect.Effect<DesktopSettingsChange, DesktopSettingsWriteError>;
     readonly setUpdateRepository: (
       repository: DesktopUpdateRepository,
+      channel?: DesktopUpdateChannel,
     ) => Effect.Effect<DesktopSettingsChange, DesktopSettingsWriteError>;
     readonly setWslBackendEnabled: (
       enabled: boolean,
@@ -243,7 +244,9 @@ function normalizeDesktopSettingsDocument(
     tailscaleServePort: normalizeTailscaleServePort(parsed.tailscaleServePort),
     updateChannel:
       updateRepository !== null
-        ? "nightly"
+        ? parsed.updateChannel === "nightly-v2"
+          ? "nightly-v2"
+          : "nightly"
         : updateChannelConfiguredByUser
           ? Option.getOrElse(parsedUpdateChannel, () => defaultSettings.updateChannel)
           : defaultSettings.updateChannel,
@@ -363,9 +366,15 @@ function setUpdateChannel(
 function setUpdateRepository(
   settings: DesktopSettings,
   requestedRepository: DesktopUpdateRepository,
+  requestedChannel?: DesktopUpdateChannel,
 ): DesktopSettings {
   const repository = normalizeDesktopUpdateRepository(requestedRepository);
-  const updateChannel = repository === null ? settings.updateChannel : "nightly";
+  const updateChannel =
+    repository === null
+      ? settings.updateChannel
+      : requestedChannel === "nightly-v2"
+        ? "nightly-v2"
+        : "nightly";
   const updateChannelConfiguredByUser =
     repository === null ? settings.updateChannelConfiguredByUser : true;
   return settings.updateRepository === repository &&
@@ -568,8 +577,8 @@ export const make = Effect.gen(function* () {
       persist((settings) => setUpdateChannel(settings, channel)).pipe(
         Effect.withSpan("desktop.settings.setUpdateChannel", { attributes: { channel } }),
       ),
-    setUpdateRepository: (repository) =>
-      persist((settings) => setUpdateRepository(settings, repository)).pipe(
+    setUpdateRepository: (repository, channel) =>
+      persist((settings) => setUpdateRepository(settings, repository, channel)).pipe(
         Effect.withSpan("desktop.settings.setUpdateRepository", {
           attributes: { repository: repository ?? "bundled" },
         }),
@@ -625,8 +634,8 @@ export const layerTest = (initialSettings: DesktopSettings = DEFAULT_DESKTOP_SET
           update((settings) => setServerExposureMode(settings, mode)),
         setTailscaleServe: (input) => update((settings) => setTailscaleServe(settings, input)),
         setUpdateChannel: (channel) => update((settings) => setUpdateChannel(settings, channel)),
-        setUpdateRepository: (repository) =>
-          update((settings) => setUpdateRepository(settings, repository)),
+        setUpdateRepository: (repository, channel) =>
+          update((settings) => setUpdateRepository(settings, repository, channel)),
         setWslBackendEnabled: (enabled) =>
           update((settings) => setWslBackendEnabled(settings, enabled)),
         setWslDistro: (distro) => update((settings) => setWslDistro(settings, distro)),
