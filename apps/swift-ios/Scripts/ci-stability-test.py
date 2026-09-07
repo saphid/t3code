@@ -5,6 +5,8 @@ import json
 import os
 from pathlib import Path
 import platform
+import plistlib
+import stat
 import signal
 import subprocess
 import time
@@ -37,6 +39,107 @@ def executed_counts(tree):
     for node in tree.get("testNodes", []):
         visit(node)
     return counts
+
+
+def file_sha256(path):
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def retain_tested_app(root, runner_temp, receipt):
+    products = runner_temp / "swiftui-stability-derived-data/Build/Products"
+    hosts = set()
+
+    def find_hosts(value):
+        if isinstance(value, dict):
+            for key, item in value.items():
+                if key == "TestHostPath" and isinstance(item, str):
+                    path = Path(item.replace("__TESTROOT__", str(products))).resolve()
+                    host = next((p for p in [path, *path.parents] if p.suffix == ".app"), None)
+                    if host is not None and products.resolve() in host.parents:
+                        hosts.add(host)
+                else:
+                    find_hosts(item)
+        elif isinstance(value, list):
+            for item in value:
+                find_hosts(item)
+
+    for path in products.glob("*.xctestrun"):
+        with path.open("rb") as handle:
+            find_hosts(plistlib.load(handle))
+    assert len(hosts) == 1, "Expected one exact XCTest host app: " + str(hosts)
+    app = hosts.pop()
+    with (app / "Info.plist").open("rb") as handle:
+        info = plistlib.load(handle)
+    assert "iPhoneSimulator" in info.get("CFBundleSupportedPlatforms", []), "Not a Simulator app"
+    executable = app / info["CFBundleExecutable"]
+    architectures = subprocess.check_output(["lipo", "-archs", str(executable)], text=True, timeout=30).strip()
+    assert "arm64" in architectures.split(), "Test host lacks arm64"
+    dirty = subprocess.check_output(
+        ["git", "status", "--porcelain", "--untracked-files=no"], cwd=root, text=True, timeout=30
+    )
+    assert not dirty, "Tracked source changed during the test run"
+    tracked = subprocess.check_output([
+        "git", "ls-files", "-z", "--", "apps/swift-ios",
+        "apps/mobile/modules/t3-terminal/Vendor/libghostty",
+    ], cwd=root, timeout=30).decode().split("\0")
+    input_hashes = {
+        name: file_sha256(root / name) for name in tracked if name and (root / name).is_file()
+        and ("/Vendor/libghostty/" in name or Path(name).suffix in {
+            ".pbxproj", ".plist", ".entitlements", ".xcscheme", ".xcconfig", ".resolved",
+        })
+    }
+    entries = []
+    for path in [app, *sorted(app.rglob("*"))]:
+        metadata = path.lstat()
+        entry = {"path": str(path.relative_to(app)), "mode": oct(stat.S_IMODE(metadata.st_mode))}
+        if path.is_symlink():
+            entry.update(type="symlink", target=os.readlink(path))
+        elif path.is_file():
+            entry.update(type="file", bytes=metadata.st_size, sha256=file_sha256(path))
+        elif path.is_dir():
+            entry.update(type="directory")
+        else:
+            raise RuntimeError("Unsupported app entry: " + str(path))
+        entries.append(entry)
+    manifest_bytes = json.dumps(entries, sort_keys=True, separators=(",", ":")).encode()
+    destination = runner_temp / "swiftui-stability-simulator-app"
+    destination.mkdir(exist_ok=False)
+    archive = destination / "simulator-app.zip"
+    subprocess.run(
+        ["ditto", "-c", "-k", "--sequesterRsrc", "--keepParent", str(app), str(archive)],
+        check=True, timeout=120,
+    )
+    provenance = {
+        "schemaVersion": 1, "kind": "swiftui-hosted-simulator-build",
+        "repository": os.environ["GITHUB_REPOSITORY"], "commit": receipt["gitSha"],
+        "runId": os.environ["GITHUB_RUN_ID"], "runAttempt": os.environ["GITHUB_RUN_ATTEMPT"],
+        "runUrl": os.environ["GITHUB_SERVER_URL"] + "/" + os.environ["GITHUB_REPOSITORY"]
+            + "/actions/runs/" + os.environ["GITHUB_RUN_ID"],
+        "configuration": "Debug", "platform": "iphonesimulator", "runnerArchitecture": platform.machine(),
+        "xcode": receipt["xcode"], "simulator": receipt["simulator"], "command": receipt["command"],
+        "sourceHashes": receipt["sourceHashes"], "configurationAndDependencyHashes": input_hashes,
+        "xcodeExit": receipt["xcodeExit"], "executedBySuite": receipt["executedBySuite"],
+        "product": app.name, "executable": info["CFBundleExecutable"], "architectures": architectures,
+        "builtIdentity": {key: info.get(key) for key in [
+            "CFBundleIdentifier", "CFBundleShortVersionString", "CFBundleVersion", "MinimumOSVersion",
+            "CFBundleSupportedPlatforms", "DTSDKName", "DTXcode", "DTXcodeBuild", "T3GitCommit",
+        ]},
+        "archive": {"name": archive.name, "bytes": archive.stat().st_size, "sha256": file_sha256(archive)},
+        "executableSha256": file_sha256(executable),
+        "appManifestSha256": hashlib.sha256(manifest_bytes).hexdigest(),
+        "appFileBytes": sum(entry.get("bytes", 0) for entry in entries), "appManifest": entries,
+    }
+    assert provenance["commit"] == os.environ["GITHUB_SHA"], "Artifact commit does not match the run"
+    (destination / "provenance.json").write_text(json.dumps(provenance, indent=2) + "\n")
+    receipt["simulatorArtifact"] = {
+        "path": str(destination), "archive": provenance["archive"],
+        "appFileBytes": provenance["appFileBytes"], "product": app.name,
+        "provenanceSha256": file_sha256(destination / "provenance.json"),
+    }
 
 
 def main():
@@ -113,6 +216,10 @@ def main():
         else:
             raise RuntimeError("No xcresult bundle")
         assert receipt["xcodeExit"] == 0 and not receipt.get("timedOut"), "xcodebuild failed"
+        retain_tested_app(root, runner_temp, receipt)
+        (evidence / "artifact-summary.json").write_text(
+            json.dumps(receipt["simulatorArtifact"], indent=2) + "\n"
+        )
         receipt["status"] = "passed"
         exit_code = 0
     except Exception as error:

@@ -33,3 +33,12 @@ jobs:
           path: ${{ runner.temp }}/swiftui-stability-evidence/
           if-no-files-found: error
           retention-days: 7
+      - name: Preserve exact tested Simulator app
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: swiftui-simulator-app-${{ github.sha }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/swiftui-stability-simulator-app/
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
