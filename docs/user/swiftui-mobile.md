@@ -45,6 +45,12 @@ the content is incomplete or the computer cannot be reached. Use **Retry** if an
 Working indicators return after the thread is current. File previews can finish loading after
 the text is ready. Saved drafts load without waiting for the thread to catch up.
 
+## Queued messages
+
+A message marked **Queued** is waiting for the computer to accept it. The label disappears
+when the message is accepted, even if the agent is still responding. If the connection is
+interrupted, the message can stay queued for retry.
+
 ## Attachments and sharing
 
 One message can contain up to eight photos, videos, or files. Images can be up to 10 MB. Other
