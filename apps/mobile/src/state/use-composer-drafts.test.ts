@@ -2056,7 +2056,7 @@ describe("mobile composer drafts", () => {
   });
 
   it("replaces a destination prompt only after its persisted draft hydrates", async () => {
-    const draftKey = "new-task:environment-1:project-1";
+    const draftKey = "new-task:draft-1";
     composerDraftFileMocks.setDocument({
       schemaVersion: 1,
       drafts: {
@@ -2064,6 +2064,11 @@ describe("mobile composer drafts", () => {
           text: "Old unsent prompt",
           attachments: [],
           runtimeMode: "full-access",
+          project: {
+            environmentId: EnvironmentId.make("environment-1"),
+            projectId: ProjectId.make("project-1"),
+            createdAt: "2026-09-07T00:00:00.000Z",
+          },
         },
       },
     });

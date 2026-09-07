@@ -1,5 +1,11 @@
 import type { UsageProviderKind } from "@t3tools/contracts";
-import { AlertTriangleIcon, ChevronDownIcon, ChevronRightIcon, RefreshCwIcon } from "lucide-react";
+import {
+  AlertTriangleIcon,
+  ChevronDownIcon,
+  ChevronRightIcon,
+  RefreshCwIcon,
+  SlidersHorizontalIcon,
+} from "lucide-react";
 import { useMemo, useState } from "react";
 
 import {
@@ -29,6 +35,7 @@ import { WorkspaceBreadcrumb, WorkspaceBreadcrumbItem } from "../WorkspaceBreadc
 import { WorkspacePageContainer } from "../WorkspacePageContainer";
 import { WorkspacePageHeader } from "../WorkspacePageHeader";
 import { UsageLimitsSection } from "./UsageLimits";
+import { UsagePriceOverrides } from "./UsagePriceOverrides";
 import { UsageThreadTable } from "./UsageThreadTable";
 import { PROVIDER_ORDER, PROVIDER_PRESENTATION, providersWithUsage } from "./usageProviders";
 import { evaluateDailyUsageBudget } from "./usageBudget";
@@ -109,6 +116,7 @@ export function UsagePage() {
   );
   const [activeSeries, setActiveSeries] = useState<string | null>(null);
   const [breakdown, setBreakdown] = useState<"projects" | "threads">("projects");
+  const [modelPricesOpen, setModelPricesOpen] = useState(false);
 
   const { days: windowDays, window } = windowSelection;
   const { merged, environments, isPending, isPartial, isRefreshing, refreshError, refresh } =
@@ -241,6 +249,10 @@ export function UsagePage() {
         <Toggle value="usage">Usage</Toggle>
         <Toggle value="limits">Limits</Toggle>
       </ToggleGroup>
+      <Button onClick={() => setModelPricesOpen(true)} size="sm" variant="ghost">
+        <SlidersHorizontalIcon aria-hidden className="size-3.5" />
+        Model prices
+      </Button>
       <Button
         onClick={refreshWindow}
         aria-label={view === "limits" ? "Refresh limits" : "Refresh usage"}
@@ -625,6 +637,13 @@ export function UsagePage() {
           </WorkspacePageContainer>
         </ScrollArea>
       </div>
+      {modelPricesOpen ? (
+        <UsagePriceOverrides
+          usage={environments}
+          initialSelectedEnvironmentIds={null}
+          onOpenChange={setModelPricesOpen}
+        />
+      ) : null}
     </SidebarInset>
   );
 }
