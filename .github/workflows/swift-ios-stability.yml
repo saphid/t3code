@@ -11,12 +11,18 @@ jobs:
     env:
       DEVELOPER_DIR: /Applications/Xcode_26.6.app/Contents/Developer
     steps:
-      - uses: actions/checkout@v6
-        with:
-          persist-credentials: false
-          sparse-checkout: |
-            apps/swift-ios
-            apps/mobile/modules/t3-terminal/Vendor/libghostty
+      - name: Check out exact public candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$GITHUB_SHA" =~ ^[0-9a-fA-F]{40}$ ]] || exit 64
+          cd "$GITHUB_WORKSPACE"
+          git init
+          git remote add origin https://github.com/saphid/t3code.git
+          git sparse-checkout set --cone apps/swift-ios apps/mobile/modules/t3-terminal/Vendor/libghostty
+          git fetch --no-tags --depth=1 origin "$GITHUB_SHA"
+          git -c submodule.recurse=false checkout --detach "$GITHUB_SHA"
+          [[ "$(git rev-parse HEAD)" == "$GITHUB_SHA" ]]
       - name: Focused native regression tests
         run: python3 apps/swift-ios/Scripts/ci-stability-test.py
       - name: Preserve native evidence
