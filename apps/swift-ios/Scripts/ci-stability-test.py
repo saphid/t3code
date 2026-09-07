@@ -18,6 +18,7 @@ SUITES = [
     "NativeIncrementalBootstrapTests", "NativeBootstrapRootOutboxTests",
     "NativeThreadCatchUpTests", "FeatureRootModelTests", "NativeShellProjectionTests",
     "WebSocketRPCRaceTests", "WebSocketRPCDecodingTests",
+    "AppFlowStagedCredentialsTests",
 ]
 
 

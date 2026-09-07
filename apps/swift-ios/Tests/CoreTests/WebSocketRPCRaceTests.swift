@@ -140,7 +140,7 @@ final class WebSocketRPCRaceTests: XCTestCase {
 
     func testUnansweredKeepaliveReconnectsAHalfOpenSocket() async throws {
         let silent = BlockingReceiveConnection()
-        let recovered = AutoReplyConnection()
+        let recovered = AutoReplyConnection(respondsToPings: true)
         let connector = SequencedConnector(connections: [silent, recovered])
         let client = WebSocketRPCClient(
             connector: connector,
@@ -1514,13 +1514,22 @@ private actor SuspendedSendConnection: WebSocketConnection {
 }
 
 private actor AutoReplyConnection: WebSocketConnection {
+    private let respondsToPings: Bool
     private var sentRequests = 0
     private var queuedResponses: [Data] = []
     private var receiveContinuation: CheckedContinuation<Data, Error>?
 
+    init(respondsToPings: Bool = false) {
+        self.respondsToPings = respondsToPings
+    }
+
     func send(_ data: Data) throws {
         sentRequests += 1
         let request = try JSONDecoder.t3.decode(JSONValue.self, from: data)
+        if respondsToPings, request["_tag"]?.stringValue == "Ping" {
+            enqueue(try JSONEncoder.t3.encode(JSONValue.object(["_tag": .string("Pong")])))
+            return
+        }
         guard case let .number(requestID) = request["id"] else { return }
         let response = JSONValue.object([
             "_tag": .string("Exit"),

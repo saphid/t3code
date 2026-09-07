@@ -118,6 +118,17 @@ public struct ConnectionOnboardingView: View {
         .onDisappear {
             cancelConnectionAttempt()
         }
+        #if DEBUG
+        .onAppear {
+            if let credentials = AppFlowStagedCredentials.consumeIfRequested() {
+                endpoint = credentials.server
+                pairingCode = credentials.token
+                entryHeading = "Confirm connection"
+                errorMessage = nil
+                stage = .details
+            }
+        }
+        #endif
     }
 
     private var welcomeView: some View {
@@ -285,12 +296,18 @@ public struct ConnectionOnboardingView: View {
                         .font(T3Typography.control)
                         .foregroundStyle(T3Colors.textPrimary)
 
-                    TextField(
-                        "Server address",
-                        text: $endpoint,
-                        prompt: Text("http://192.168.1.5:3773")
-                            .foregroundStyle(T3Colors.placeholder)
-                    )
+                    Group {
+                        if hidesStagedAppFlowCredentials {
+                            SecureField("Server address", text: $endpoint)
+                        } else {
+                            TextField(
+                                "Server address",
+                                text: $endpoint,
+                                prompt: Text("http://192.168.1.5:3773")
+                                    .foregroundStyle(T3Colors.placeholder)
+                            )
+                        }
+                    }
                         .textInputAutocapitalization(.never)
                         .keyboardType(.URL)
                         .autocorrectionDisabled()
@@ -310,12 +327,18 @@ public struct ConnectionOnboardingView: View {
                         .font(T3Typography.control)
                         .foregroundStyle(T3Colors.textPrimary)
 
-                    TextField(
-                        "Pairing code",
-                        text: $pairingCode,
-                        prompt: Text("Enter pairing code")
-                            .foregroundStyle(T3Colors.placeholder)
-                    )
+                    Group {
+                        if hidesStagedAppFlowCredentials {
+                            SecureField("Pairing code", text: $pairingCode)
+                        } else {
+                            TextField(
+                                "Pairing code",
+                                text: $pairingCode,
+                                prompt: Text("Enter pairing code")
+                                    .foregroundStyle(T3Colors.placeholder)
+                            )
+                        }
+                    }
                         .textInputAutocapitalization(.never)
                         .textContentType(.oneTimeCode)
                         .autocorrectionDisabled()
@@ -378,6 +401,14 @@ public struct ConnectionOnboardingView: View {
         }
     }
 
+    private var hidesStagedAppFlowCredentials: Bool {
+        #if DEBUG
+        ProcessInfo.processInfo.arguments.contains(AppFlowStagedCredentials.enableArgument)
+        #else
+        false
+        #endif
+    }
+
     private var progressView: some View {
         VStack(alignment: .leading, spacing: 34) {
             Spacer()
@@ -405,7 +436,7 @@ public struct ConnectionOnboardingView: View {
 
             Spacer()
 
-            Text(endpoint)
+            Text(hidesStagedAppFlowCredentials ? "Staged connection" : endpoint)
                 .font(T3Typography.supporting)
                 .foregroundStyle(T3Colors.textSecondary)
                 .lineLimit(1)
