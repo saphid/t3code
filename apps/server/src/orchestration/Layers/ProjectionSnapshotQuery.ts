@@ -3214,17 +3214,19 @@ pending_approval_requests AS (
             ),
           ),
         ),
-        (bounds === undefined
-          ? listThreadMessageRowsByThread({ threadId })
-          : listThreadMessageRowsByThreadWindow({ threadId, ...bounds })
-        ).pipe(
-          Effect.mapError(
-            toPersistenceSqlOrDecodeError(
-              "ProjectionSnapshotQuery.getThreadDetailById:listMessages:query",
-              "ProjectionSnapshotQuery.getThreadDetailById:listMessages:decodeRows",
+        activityRead.mode === "raw" && activityRead.query?.includeMessages === false
+          ? Effect.succeed([])
+          : (bounds === undefined
+              ? listThreadMessageRowsByThread({ threadId })
+              : listThreadMessageRowsByThreadWindow({ threadId, ...bounds })
+            ).pipe(
+              Effect.mapError(
+                toPersistenceSqlOrDecodeError(
+                  "ProjectionSnapshotQuery.getThreadDetailById:listMessages:query",
+                  "ProjectionSnapshotQuery.getThreadDetailById:listMessages:decodeRows",
+                ),
+              ),
             ),
-          ),
-        ),
         listThreadProposedPlanRowsByThread({ threadId }).pipe(
           Effect.mapError(
             toPersistenceSqlOrDecodeError(
