@@ -319,6 +319,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         undefined,
         undefined,
         false,
+        undefined,
         identity,
       );
 
@@ -343,6 +344,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         undefined,
         undefined,
         false,
+        undefined,
         identity,
         true,
       );
@@ -2339,3 +2341,24 @@ it("ignores trailing separators", () => {
     ancestorNodeModulesPaths("C:\\tmp\\probe\\app", "\\"),
   );
 });
+
+it.effect("keeps the fork identity stable across v2 channel switches", () =>
+  Effect.gen(function* () {
+    const version = "0.0.39-nightly-v2.20260907.1788750000100000";
+    assert.equal(resolveDesktopUpdateChannel(version), "nightly-v2");
+    assert.deepEqual(
+      yield* resolveDesktopBuildIdentity(version, "Fork"),
+      yield* resolveDesktopBuildIdentity("0.0.39-nightly.20260907.1332", "Fork"),
+    );
+    const publish = yield* resolveGitHubPublishConfig("nightly-v2").pipe(
+      Effect.provideService(
+        ConfigProvider.ConfigProvider,
+        ConfigProvider.fromUnknown({
+          T3CODE_DESKTOP_UPDATE_REPOSITORY: "saphid/t3code",
+        }),
+      ),
+    );
+    assert.equal(publish?.channel, "nightly-v2");
+    assert.equal(publish?.releaseType, "prerelease");
+  }),
+);
