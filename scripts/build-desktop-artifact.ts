@@ -2794,7 +2794,7 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
       // DMG window backgrounds by volume name, so reusing a generic name can
       // make a newly built background look unchanged during testing.
       title: `${buildIdentity.productName} ${version} Installer`,
-      background: `dmg/dmg-background-${updateChannel}.png`,
+      background: `dmg/dmg-background-${updateChannel === "latest" ? "latest" : "nightly"}.png`,
       window: {
         width: 640,
         // The DMG backend derives bounds from the image, including Finder's
