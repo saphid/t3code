@@ -1,0 +1,33 @@
+{
+  "upstreamRepository": "pingdotgg/t3code",
+  "upstreamTag": "415ed0f73b97f1655b6282492f81d0b2bba3a9cc",
+  "upstreamBranch": "t3code/codex-turn-mapping",
+  "releaseChannel": "nightly-v2",
+  "upstreamUrl": "https://github.com/pingdotgg/t3code/commit/415ed0f73b97f1655b6282492f81d0b2bba3a9cc",
+  "releaseRepository": "saphid/t3code",
+  "fingerprint": "c7713368bb7a8b4903c86833f4a643d25979d53faa62dbfad000aebb80733bce",
+  "version": "0.0.38-nightly-v2.20260906.1788679427133626",
+  "tag": "v0.0.38-nightly-v2.20260906.1788679427133626",
+  "patches": [
+    {
+      "label": "saphid/t3code@d14371814b5e",
+      "name": "Durable fork updater and signing identity",
+      "commits": ["d14371814b5e571476baf054623f33870f80134d"]
+    },
+    {
+      "label": "saphid/t3code@f37d7d7033ad",
+      "name": "Orchestrator v2 fork release selector",
+      "commits": ["f37d7d7033ade8b5b27b869cf8b7c20fe3c280f2"]
+    },
+    {
+      "label": "saphid/t3code@d3f9d4a3dcb1",
+      "name": "Nightly DMG artwork and build compatibility",
+      "commits": ["d3f9d4a3dcb12d76bd794ac1cf1185171135973c"]
+    },
+    {
+      "label": "saphid/t3code@042454cfa9df",
+      "name": "Deterministic cold highlighter test on hosted runners",
+      "commits": ["042454cfa9df935835913c4c5ae8383530b918c2"]
+    }
+  ]
+}
