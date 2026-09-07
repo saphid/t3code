@@ -113,6 +113,10 @@ describe("UsagePage", () => {
     expect(markup).toContain("Providers and models · click to hide or show");
   });
 
+  it("keeps custom model pricing reachable", () => {
+    expect(renderToStaticMarkup(<UsagePage />)).toContain("Model prices");
+  });
+
   it("uses the colorized project breakdown instead of a duplicate chart legend", () => {
     const markup = renderToStaticMarkup(<UsagePage />);
     expect(markup.match(/Project One/g)?.length).toBe(1);
