@@ -28,7 +28,9 @@ export function resolveDesktopUpdateTrack(
   repository: DesktopUpdateRepository,
   isCustomDraftSelected = false,
 ): DesktopUpdateTrack {
-  return repository !== null || isCustomDraftSelected ? "custom" : channel;
+  return repository !== null || isCustomDraftSelected || channel === "nightly-v2"
+    ? "custom"
+    : channel;
 }
 
 export async function setDesktopUpdateChannelAfterPendingRepositoryChange(input: {

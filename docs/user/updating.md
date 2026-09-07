@@ -91,3 +91,18 @@ A source branch alone cannot provide updates.
 
 On macOS, retain the application name supplied by the installer. Renaming the
 app changes the native updater's replacement target.
+
+## Choose a fork release stream
+
+In the desktop app, open **Settings → About**, select **Custom** as the update track,
+and enter **saphid/t3code** as the release source. **Fork release** offers:
+
+- **Fork Nightly**: upstream Nightly with the fork's selected changes.
+- **Fork Nightly Orchestrator v2**: upstream Orchestrator v2 with its own selected changes.
+
+The app remembers your choice after restart and follows only that stream. To switch
+back, choose the other fork release and check for updates. Selecting **Stable** or
+**Nightly** in the main update track selector clears the custom source.
+
+These are desktop releases. Changing the desktop release does not update remote
+servers, React Native mobile, or the native SwiftUI iPhone app.
