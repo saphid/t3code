@@ -1,0 +1,44 @@
+name: SwiftUI unsigned Dev archive
+on:
+  push:
+    branches: [work/swiftui-stability-dev-archive-20260907]
+permissions:
+  contents: read
+jobs:
+  native-tests:
+    runs-on: macos-26
+    timeout-minutes: 25
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.6.app/Contents/Developer
+    steps:
+      - name: Check out exact public candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$GITHUB_SHA" =~ ^[0-9a-fA-F]{40}$ ]] || exit 64
+          cd "$GITHUB_WORKSPACE"
+          git init
+          git remote add origin https://github.com/saphid/t3code.git
+          git sparse-checkout set --cone apps/swift-ios apps/mobile/modules/t3-terminal/Vendor/libghostty
+          git fetch --no-tags --depth=1 origin "$GITHUB_SHA"
+          git -c submodule.recurse=false checkout --detach "$GITHUB_SHA"
+          [[ "$(git rev-parse HEAD)" == "$GITHUB_SHA" ]]
+      - name: Build unsigned Dev archive
+        run: python3 apps/swift-ios/Scripts/archive.py
+      - name: Preserve archive evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: swiftui-dev-archive-evidence-${{ github.sha }}
+          path: ${{ runner.temp }}/swiftui-dev-archive-evidence/
+          retention-days: 7
+          if-no-files-found: error
+      - name: Preserve unsigned archive
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: swiftui-dev-unsigned-${{ github.sha }}
+          path: ${{ runner.temp }}/swiftui-dev-unsigned-product/
+          compression-level: 0
+          retention-days: 7
+          if-no-files-found: error

@@ -1,0 +1,18 @@
+{
+  "hostBundleIdentifier": "com.saphid.t3code.swiftui.dev",
+  "build": "58",
+  "version": "0.1.0",
+  "bundles": {
+    "com.saphid.t3code.swiftui.dev": {
+      "CFBundleDisplayName": "SwiftUI Dev",
+      "T3BuildChannel": "dev"
+    },
+    "com.saphid.t3code.swiftui.dev.widgets": {
+      "CFBundleDisplayName": "SwiftUI Dev Widgets"
+    },
+    "com.saphid.t3code.swiftui.dev.sharing": {
+      "CFBundleDisplayName": "SwiftUI Dev"
+    }
+  },
+  "hostURLScheme": "t3code-swiftui-dev"
+}
