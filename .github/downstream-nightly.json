@@ -17,7 +17,7 @@
     {
       "type": "commit",
       "repository": "saphid/t3code",
-      "sha": "1dd3375fd188f15859329de3e7b923d4eb520e66",
+      "sha": "8c4159627678ce99c5e3dced38096c237eb0767e",
       "name": "Context-limit handovers"
     },
     {
@@ -34,17 +34,17 @@
     {
       "type": "commit",
       "repository": "saphid/t3code",
-      "sha": "77e4ea1e702443dc305ef7b2c79c7d537668bc44"
+      "sha": "95404d097754a5da9d0504a426bf0a057bdf536b"
     },
     {
       "type": "commit",
       "repository": "saphid/t3code",
-      "sha": "5cf56f4c2170c1645704a07e792c441d836673e2"
+      "sha": "0c1ab2ec4dcd28c23cc06a43514b63ceeb251eac"
     },
     {
       "type": "commit",
       "repository": "saphid/t3code",
-      "sha": "ef956b27be031fb3e1a11ff3ef631370c786561c"
+      "sha": "660c7e06a4be16b351b5e0a5e6f023979a9cbd5a"
     },
     {
       "type": "commit",
@@ -54,7 +54,7 @@
     {
       "type": "commit",
       "repository": "saphid/t3code",
-      "sha": "a6594d0aeb9843e2dfb82a20cab3b31f1b4135eb"
+      "sha": "33060f052994be9f25e8b183b48d11e3fa058774"
     },
     {
       "type": "commit",
@@ -64,7 +64,7 @@
     {
       "type": "commit",
       "repository": "saphid/t3code",
-      "sha": "c3ed25a77114cfdcba11ac1f7c82e87d6d13e9aa"
+      "sha": "f80db0e45f9b763094c0507f714a6b0a6c383549"
     },
     {
       "type": "commit",
@@ -89,17 +89,12 @@
     {
       "type": "commit",
       "repository": "saphid/t3code",
-      "sha": "d10ef0099f509e37f18b1ca7a1ca76659721f9c3"
-    },
-    {
-      "type": "commit",
-      "repository": "saphid/t3code",
       "sha": "a9e4aa9a894638584432243c6b32432e6f8dfb98"
     },
     {
       "type": "commit",
       "repository": "saphid/t3code",
-      "sha": "926c2d42fe32b9466f9b9a97e295f3875e65addc"
+      "sha": "1567f76ee5503c1f5f6e8c1a87e4bfb6520ef63e"
     },
     {
       "type": "commit",
@@ -119,7 +114,7 @@
     {
       "type": "commit",
       "repository": "saphid/t3code",
-      "sha": "f45c683a69fd1ec457212348c9b9a60785e1178c",
+      "sha": "bf0784cc018773f47f40e8ca2c2f5c0b953b6552",
       "name": "Project spend usage dashboard"
     },
     {
@@ -143,14 +138,14 @@
     {
       "type": "commit",
       "repository": "saphid/t3code",
-      "sha": "474fb0e743910052c3c9bf92f4c056e54c21efb8",
-      "name": "Nightly 1292 integration compatibility"
+      "sha": "ed59f2fd42c7d50898d86b7a4f3478c4f51b1a19",
+      "name": "Align usage chart curves and hover cadence"
     },
     {
       "type": "commit",
       "repository": "saphid/t3code",
-      "sha": "27307fa7a3e7c80ec0aee79e65678aaa7cf231e9",
-      "name": "Format assembled sidebar"
+      "sha": "6fb8fecb5c4a8d8deca7075d0d040cc8b06305b6",
+      "name": "Nightly 1316 integration compatibility"
     },
     {
       "type": "commit",
@@ -163,6 +158,12 @@
       "repository": "saphid/t3code",
       "sha": "c6965eeb7457d9f2e788138624c64e26eb98a912",
       "name": "Drain web worker test cleanup"
+    },
+    {
+      "type": "commit",
+      "repository": "saphid/t3code",
+      "sha": "7ef1d26dc76f809452fcf6fdd7d63e42f1a97272",
+      "name": "Nightly 1316 usage integration compatibility"
     }
   ]
 }
