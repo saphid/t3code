@@ -13,6 +13,7 @@ import * as Result from "effect/Result";
 import { type ReactNode } from "react";
 import { sortThreads } from "../lib/threadSort";
 import { normalizeSearchText } from "../lib/utils";
+export { normalizeSearchText } from "../lib/utils";
 import { formatRelativeTimeLabel } from "../timestampFormat";
 import { type Project, type SidebarThreadSummary, type Thread } from "../types";
 
