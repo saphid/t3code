@@ -85,9 +85,11 @@ import { useThreadComposerState } from "../../state/use-thread-composer-state";
 import { threadContextReachedLimit } from "../../state/contextLimit";
 import { threadEnvironment } from "../../state/threads";
 import {
+  createNewTaskDraft,
   flushComposerDrafts,
   replaceComposerDraftText,
   updateComposerDraftSettings,
+  waitForComposerDraftsLoaded,
 } from "../../state/use-composer-drafts";
 import { projectThreadContentPresentation } from "./threadContentPresentation";
 import {
@@ -420,7 +422,11 @@ function ThreadRouteContent(
         return;
       }
 
-      const destinationDraftKey = `new-task:${selectedThread.environmentId}:${selectedThread.projectId}`;
+      await waitForComposerDraftsLoaded();
+      const destinationDraftKey = createNewTaskDraft({
+        environmentId: selectedThread.environmentId,
+        projectId: selectedThread.projectId,
+      });
       await replaceComposerDraftText(destinationDraftKey, handover);
       updateComposerDraftSettings(destinationDraftKey, {
         workspaceSelection: {
