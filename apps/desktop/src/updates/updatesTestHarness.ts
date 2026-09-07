@@ -210,9 +210,14 @@ export function makeHarness(options: UpdatesHarnessOptions = {}) {
                     }),
                   ),
                 ),
-          setUpdateRepository: (repository) =>
+          setUpdateRepository: (repository, channel) =>
             Effect.sync(() => {
-              const updateChannel = repository === null ? testSettings.updateChannel : "nightly";
+              const updateChannel =
+                repository === null
+                  ? testSettings.updateChannel
+                  : channel === "nightly-v2"
+                    ? "nightly-v2"
+                    : "nightly";
               const changed =
                 testSettings.updateRepository !== repository ||
                 testSettings.updateChannel !== updateChannel;
