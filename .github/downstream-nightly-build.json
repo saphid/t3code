@@ -1,0 +1,181 @@
+{
+  "upstreamRepository": "pingdotgg/t3code",
+  "upstreamTag": "v0.0.39-nightly.20260907.1332",
+  "upstreamUrl": "https://github.com/pingdotgg/t3code/releases/tag/v0.0.39-nightly.20260907.1332",
+  "releaseRepository": "saphid/t3code",
+  "fingerprint": "1cb7d36ec2ac60df89d994da585ce5028409de5c93635a283ea9fe091386a237",
+  "version": "0.0.39-nightly.20260907.1332844268",
+  "tag": "v0.0.39-nightly.20260907.1332844268",
+  "patches": [
+    {
+      "label": "saphid/t3code@41c9e34eeebe",
+      "name": "Natural-language thread search",
+      "commits": ["41c9e34eeebe2f8565a2020f496cd5a6a4ed0a17"]
+    },
+    {
+      "label": "saphid/t3code@3011abd68573",
+      "name": "fix(release): ad hoc sign credential-free macOS builds",
+      "commits": ["3011abd6857397387d3e7b8e90d6877eec7e1000"]
+    },
+    {
+      "label": "saphid/t3code@bdbb1e21a9fc",
+      "name": "Context-limit handovers",
+      "commits": ["bdbb1e21a9fc38cd41c5e99db8d45a0d9debe955"]
+    },
+    {
+      "label": "saphid/t3code@129efe901606",
+      "name": "Durable custom update sources",
+      "commits": ["129efe901606b9ccbca1c4d7149e3385889fe737"]
+    },
+    {
+      "label": "saphid/t3code@dcdca4ef0d69",
+      "name": "feat(settings): show included fork changes",
+      "commits": ["dcdca4ef0d69236590b669ea596f276c09a3bdcf"]
+    },
+    {
+      "label": "saphid/t3code@2f555ed3141b",
+      "name": "feat(web): filter sidebar threads by environment",
+      "commits": ["2f555ed3141b16d8fac523ce11e978691082b9d8"]
+    },
+    {
+      "label": "saphid/t3code@0c1ab2ec4dcd",
+      "name": "fix(orchestration): make context handovers recoverable",
+      "commits": ["0c1ab2ec4dcd28c23cc06a43514b63ceeb251eac"]
+    },
+    {
+      "label": "saphid/t3code@660c7e06a4be",
+      "name": "perf(usage): port truthful snapshots to Nightly 1273",
+      "commits": ["660c7e06a4be16b351b5e0a5e6f023979a9cbd5a"]
+    },
+    {
+      "label": "saphid/t3code@2ca37d952fc1",
+      "name": "test(usage): cover failed pricing refresh retry",
+      "commits": ["2ca37d952fc1810e05b44f3984aff5b02cb877f0"]
+    },
+    {
+      "label": "saphid/t3code@33060f052994",
+      "name": "fix(usage): reconcile Nightly docs after PR 9308",
+      "commits": ["33060f052994be9f25e8b183b48d11e3fa058774"]
+    },
+    {
+      "label": "saphid/t3code@c8ea3cbeb8ab",
+      "name": "fix(server): recover worktree base without origin",
+      "commits": ["c8ea3cbeb8abdd4aa985a4488233b8b3e598c058"]
+    },
+    {
+      "label": "saphid/t3code@f80db0e45f9b",
+      "name": "feat(navigation): add back and forward history",
+      "commits": ["f80db0e45f9b763094c0507f714a6b0a6c383549"]
+    },
+    {
+      "label": "saphid/t3code@71095c163f92",
+      "name": "feat(desktop): add thread deep links",
+      "commits": ["71095c163f92c65bf28375175a196c09d38af482"]
+    },
+    {
+      "label": "saphid/t3code@58f1fcfe4d3f",
+      "name": "feat(web): open file links externally",
+      "commits": ["58f1fcfe4d3ff816ced440953eac46938339d836"]
+    },
+    {
+      "label": "saphid/t3code@63b2dae13eb7",
+      "name": "fix(build): identify Windows native probes exactly",
+      "commits": ["63b2dae13eb754eb550381c31611e8708253fb49"]
+    },
+    {
+      "label": "saphid/t3code@cbf53917a879",
+      "name": "fix(updates): align custom source with current nightly",
+      "commits": ["cbf53917a879a668be2e1db2aa792a16654df350"]
+    },
+    {
+      "label": "saphid/t3code@a9e4aa9a8946",
+      "name": "fix(release): use accessible build metadata tooltips",
+      "commits": ["a9e4aa9a894638584432243c6b32432e6f8dfb98"]
+    },
+    {
+      "label": "saphid/t3code@1567f76ee550",
+      "name": "fix(replay): preserve baseline usage and navigation seams",
+      "commits": ["1567f76ee5503c1f5f6e8c1a87e4bfb6520ef63e"]
+    },
+    {
+      "label": "saphid/t3code@89d3acdea391",
+      "name": "fix(replay): pass arch before desktop build identity",
+      "commits": ["89d3acdea391794b62a738433e1d0aa299c8e912"]
+    },
+    {
+      "label": "saphid/t3code@302dc470c1d3",
+      "name": "feat(orchestration): exempt AI Enablers from concurrency cap",
+      "commits": ["302dc470c1d3bdd579dc147434847797935dfd7b"]
+    },
+    {
+      "label": "saphid/t3code@3873c4fa37df",
+      "name": "test(desktop): skip unavailable libsecret helper",
+      "commits": ["3873c4fa37df25b7b22f77db6af862e761fe6cc9"]
+    },
+    {
+      "label": "saphid/t3code@ddafee1fca15",
+      "name": "Project spend usage dashboard",
+      "commits": ["ddafee1fca15c1b86575eea25152077ed0d5e270"]
+    },
+    {
+      "label": "saphid/t3code@cfd9574dc0e2",
+      "name": "Nightly reset-credit layer compatibility",
+      "commits": ["cfd9574dc0e20e346dd32ceb1a7db21a5db4da5f"]
+    },
+    {
+      "label": "saphid/t3code@3e4e731c8676",
+      "name": "Configurable concurrent thread limit",
+      "commits": ["3e4e731c86769f0c3b819770161b4f9f520902b7"]
+    },
+    {
+      "label": "saphid/t3code@30c650814f95",
+      "name": "Remove duplicate project legend",
+      "commits": ["30c650814f9579706fcaa2278603148abf24da46"]
+    },
+    {
+      "label": "saphid/t3code@ed59f2fd42c7",
+      "name": "Align usage chart curves and hover cadence",
+      "commits": ["ed59f2fd42c7d50898d86b7a4f3478c4f51b1a19"]
+    },
+    {
+      "label": "saphid/t3code@6fb8fecb5c4a",
+      "name": "Nightly 1316 integration compatibility",
+      "commits": ["6fb8fecb5c4a8d8deca7075d0d040cc8b06305b6"]
+    },
+    {
+      "label": "saphid/t3code@efddd20306e2",
+      "name": "Preserve upstream usage and thread seams",
+      "commits": ["efddd20306e2471cedaeb9721a592bbb4cf160c3"]
+    },
+    {
+      "label": "saphid/t3code@c6965eeb7457",
+      "name": "Drain web worker test cleanup",
+      "commits": ["c6965eeb7457d9f2e788138624c64e26eb98a912"]
+    },
+    {
+      "label": "saphid/t3code@00cc38f86f37",
+      "name": "Nightly 1316 usage integration compatibility",
+      "commits": ["00cc38f86f3784f1e99b78ef5a557e676c573b1d"]
+    },
+    {
+      "label": "saphid/t3code@59e3164bfdb1",
+      "name": "Preserve lightweight turn start reads",
+      "commits": ["59e3164bfdb11e8cff2bc08632038e9acfb37283"]
+    },
+    {
+      "label": "saphid/t3code@606ab34736db",
+      "name": "Separate Fork Nightly release streams",
+      "commits": ["606ab34736dbc5ce7e7eb3e09cc2ede5f3a4143e"]
+    },
+    {
+      "label": "saphid/t3code@b78048df66c9",
+      "name": "Nightly DMG artwork and build compatibility",
+      "commits": ["b78048df66c96ed259e1760528e9270aed1cfd29"]
+    },
+    {
+      "label": "saphid/t3code@3c65e73264c1",
+      "name": "Deterministic cold highlighter test on hosted runners",
+      "commits": ["3c65e73264c1938cc53695a7a0a9977559ff8ed5"]
+    }
+  ]
+}
