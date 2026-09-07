@@ -230,6 +230,7 @@ const makeWithProviderRegistry = (
         usagePriceOverrides: true,
         threadPinning: true,
         threadPinReorder: true,
+        threadActiveReorder: true,
         threadTitleRegeneration: true,
         threadPullRequestLinking: true,
         environmentIcon: true,
