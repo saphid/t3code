@@ -16,6 +16,12 @@
       "repository": "saphid/t3code",
       "sha": "f37d7d7033ade8b5b27b869cf8b7c20fe3c280f2",
       "name": "Orchestrator v2 fork release selector"
+    },
+    {
+      "type": "commit",
+      "repository": "saphid/t3code",
+      "sha": "d3f9d4a3dcb12d76bd794ac1cf1185171135973c",
+      "name": "Nightly DMG artwork and build compatibility"
     }
   ]
 }

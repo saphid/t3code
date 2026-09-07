@@ -176,6 +176,12 @@
       "repository": "saphid/t3code",
       "sha": "606ab34736dbc5ce7e7eb3e09cc2ede5f3a4143e",
       "name": "Separate Fork Nightly release streams"
+    },
+    {
+      "type": "commit",
+      "repository": "saphid/t3code",
+      "sha": "b78048df66c96ed259e1760528e9270aed1cfd29",
+      "name": "Nightly DMG artwork and build compatibility"
     }
   ]
 }

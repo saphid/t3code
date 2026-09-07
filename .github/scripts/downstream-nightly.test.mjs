@@ -397,3 +397,34 @@ describe("Orchestrator v2 release stream", () => {
     assert.equal(isCompleteMatchingRelease(release, "source", fingerprint), false);
   });
 });
+
+it("allows only an exact published Nightly tag for manual compatibility builds", async (t) => {
+  const releases = [
+    {
+      tag_name: "v0.0.39-nightly.20260907.1332",
+      prerelease: true,
+      draft: false,
+      html_url: "https://example.com/old",
+      published_at: "2026-09-07T01:00:00Z",
+    },
+    {
+      tag_name: "v0.0.40-nightly.20260907.1346",
+      prerelease: true,
+      draft: false,
+      html_url: "https://example.com/new",
+      published_at: "2026-09-07T02:00:00Z",
+    },
+  ];
+  t.mock.method(globalThis, "fetch", async (url) => ({
+    ok: true,
+    json: async () => (new URL(url).pathname.startsWith("/repos/pingdotgg/") ? releases : []),
+  }));
+  const input = { ...manifest, patches: [] };
+  assert.equal((await resolvePlan(input, "test")).upstreamTag, releases[1].tag_name);
+  const pinned = await resolvePlan(input, "test", { upstreamTag: releases[0].tag_name });
+  assert.equal(pinned.upstreamCheckoutRef, `refs/tags/${releases[0].tag_name}`);
+  await assert.rejects(
+    resolvePlan(input, "test", { upstreamTag: "arbitrary-branch" }),
+    /No upstream Nightly release/,
+  );
+});

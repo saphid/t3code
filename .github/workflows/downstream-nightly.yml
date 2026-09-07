@@ -15,6 +15,11 @@ on:
     types: [upstream-nightly-published]
   workflow_dispatch:
     inputs:
+      upstream_tag:
+        description: Optional published upstream Nightly tag for a compatibility or repair build
+        required: false
+        default: ""
+        type: string
       force_rebuild:
         description: Rebuild and replace artifacts even when this stack already has a release
         required: false
@@ -103,11 +108,13 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
           FORCE_REBUILD: ${{ inputs.force_rebuild || false }}
+          UPSTREAM_TAG_OVERRIDE: ${{ github.event_name == 'workflow_dispatch' && inputs.upstream_tag || '' }}
         run: |
           node automation/.github/scripts/downstream-nightly.mjs resolve \
             --manifest "automation/$NIGHTLY_MANIFEST" \
             --output "$RUNNER_TEMP/downstream-nightly-plan.json" \
-            --force "$FORCE_REBUILD"
+            --force "$FORCE_REBUILD" \
+            --upstream-tag "$UPSTREAM_TAG_OVERRIDE"
 
       - name: Checkout exact upstream source
         if: steps.plan.outputs.should_build == 'true'

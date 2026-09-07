@@ -333,6 +333,8 @@ export async function resolvePlan(manifest, token, options = {}) {
   let upstreamCheckoutRef;
   let versionSeed;
   const channel = manifest.releaseChannel ?? "nightly";
+  if (manifest.upstreamBranch && options.upstreamTag)
+    fail("An upstream tag override cannot be used for the v2 branch stream.");
   if (manifest.upstreamBranch) {
     const commit = await githubRequest(
       `/repos/${manifest.upstreamRepository}/commits/${encodeURIComponent(manifest.upstreamBranch)}`,
@@ -359,7 +361,15 @@ export async function resolvePlan(manifest, token, options = {}) {
       `/repos/${manifest.upstreamRepository}/releases`,
       token,
     );
-    const upstreamRelease = selectLatestNightlyRelease(upstreamReleases);
+    const upstreamRelease = options.upstreamTag
+      ? upstreamReleases.find(
+          (release) =>
+            release.tag_name === options.upstreamTag &&
+            release.draft !== true &&
+            release.prerelease === true &&
+            NIGHTLY_TAG_PATTERN.test(release.tag_name),
+        )
+      : selectLatestNightlyRelease(upstreamReleases);
     if (!upstreamRelease)
       fail(`No upstream Nightly release found in ${manifest.upstreamRepository}.`);
     upstreamTag = upstreamRelease.tag_name;
@@ -533,7 +543,10 @@ async function main() {
       fail("--force must be true or false.");
     }
     const manifest = parseManifest(readFileSync(manifestPath, "utf8"));
-    const plan = await resolvePlan(manifest, token, { forceBuild: forceValue === "true" });
+    const plan = await resolvePlan(manifest, token, {
+      forceBuild: forceValue === "true",
+      upstreamTag: values.get("upstream-tag") || undefined,
+    });
     writeFileSync(outputPath, `${JSON.stringify(plan, null, 2)}\n`);
     appendGithubOutput({
       should_build: String(plan.shouldBuild),

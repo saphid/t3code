@@ -64,3 +64,8 @@ In Settings → About, choose Custom, enter `saphid/t3code`, then select
 The selected channel is persisted with the repository. The updater filters by the
 channel's prerelease identifier and rejects an offered version from the other
 stream. Remote servers and phone apps are separate installations.
+
+For a manual compatibility build while the latest upstream release conflicts with
+selected patches, the normal workflow's `upstream_tag` input accepts an exact
+published upstream Nightly tag. Leave it empty for normal automatic tracking.
+This override is not available for the branch-based v2 stream.
