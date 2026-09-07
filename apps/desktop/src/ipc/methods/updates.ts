@@ -34,11 +34,19 @@ export const setUpdateChannel = DesktopIpc.makeIpcMethod({
 
 export const setUpdateRepository = DesktopIpc.makeIpcMethod({
   channel: IpcChannels.UPDATE_SET_REPOSITORY_CHANNEL,
-  payload: DesktopUpdateRepositorySchema,
+  payload: Schema.Union([
+    DesktopUpdateRepositorySchema,
+    Schema.Struct({
+      repository: DesktopUpdateRepositorySchema,
+      channel: DesktopUpdateChannelSchema,
+    }),
+  ]),
   result: DesktopUpdateStateSchema,
   handler: Effect.fn("desktop.ipc.updates.setRepository")(function* (repository) {
     const updates = yield* DesktopUpdates.DesktopUpdates;
-    return yield* updates.setRepository(repository);
+    return yield* typeof repository === "object" && repository !== null
+      ? updates.setRepository(repository.repository, repository.channel)
+      : updates.setRepository(repository);
   }),
 });
 
