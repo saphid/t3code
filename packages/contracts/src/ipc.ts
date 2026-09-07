@@ -168,7 +168,7 @@ export type DesktopUpdateStatus =
 
 export type DesktopRuntimeArch = "arm64" | "x64" | "other";
 export type DesktopTheme = "light" | "dark" | "system";
-export type DesktopUpdateChannel = "latest" | "nightly";
+export type DesktopUpdateChannel = "latest" | "nightly" | "nightly-v2";
 export type DesktopUpdateRepository = string | null;
 export type DesktopAppStageLabel = "Alpha" | "Dev" | "Nightly";
 
@@ -184,7 +184,7 @@ export const DesktopUpdateStatusSchema = Schema.Literals([
 ]);
 export const DesktopRuntimeArchSchema = Schema.Literals(["arm64", "x64", "other"]);
 export const DesktopThemeSchema = Schema.Literals(["light", "dark", "system"]);
-export const DesktopUpdateChannelSchema = Schema.Literals(["latest", "nightly"]);
+export const DesktopUpdateChannelSchema = Schema.Literals(["latest", "nightly", "nightly-v2"]);
 export const DesktopUpdateRepositorySchema = Schema.NullOr(Schema.String);
 export const DesktopAppStageLabelSchema = Schema.Literals(["Alpha", "Dev", "Nightly"]);
 
@@ -1193,7 +1193,10 @@ export interface DesktopBridge {
   onWindowFullscreenStateChange: (listener: (fullscreen: boolean) => void) => () => void;
   getUpdateState: () => Promise<DesktopUpdateState>;
   setUpdateChannel: (channel: DesktopUpdateChannel) => Promise<DesktopUpdateState>;
-  setUpdateRepository: (repository: DesktopUpdateRepository) => Promise<DesktopUpdateState>;
+  setUpdateRepository: (
+    repository: DesktopUpdateRepository,
+    channel?: DesktopUpdateChannel,
+  ) => Promise<DesktopUpdateState>;
   checkForUpdate: () => Promise<DesktopUpdateCheckResult>;
   downloadUpdate: () => Promise<DesktopUpdateActionResult>;
   installUpdate: () => Promise<DesktopUpdateActionResult>;

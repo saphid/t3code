@@ -2516,7 +2516,7 @@ export function resolveDesktopRuntimeDependencies(
 }
 
 export const resolveGitHubPublishConfig = Effect.fn("resolveGitHubPublishConfig")(function* (
-  updateChannel: "latest" | "nightly",
+  updateChannel: "latest" | "nightly" | "nightly-v2",
 ) {
   const env = yield* Config.all({
     updateRepository: Config.string("T3CODE_DESKTOP_UPDATE_REPOSITORY").pipe(Config.option),
@@ -2536,12 +2536,13 @@ export const resolveGitHubPublishConfig = Effect.fn("resolveGitHubPublishConfig"
     provider: "github",
     owner,
     repo,
-    releaseType: updateChannel === "nightly" ? "prerelease" : "release",
-    ...(updateChannel === "nightly" ? { channel: "nightly" as const } : {}),
+    releaseType: updateChannel !== "latest" ? "prerelease" : "release",
+    ...(updateChannel !== "latest" ? { channel: updateChannel } : {}),
   };
 });
 
-export function resolveDesktopUpdateChannel(version: string): "latest" | "nightly" {
+export function resolveDesktopUpdateChannel(version: string): "latest" | "nightly" | "nightly-v2" {
+  if (/-nightly-v2\.\d{8}\.\d+$/.test(version)) return "nightly-v2";
   return /-nightly\.\d{8}\.\d+$/.test(version) ? "nightly" : "latest";
 }
 
@@ -2550,11 +2551,13 @@ function isDesktopPreviewVersion(version: string): boolean {
 }
 
 export function resolveDesktopWebAssetBrand(version: string): WebAssetBrand {
-  return resolveWebAssetBrandForChannel(resolveDesktopUpdateChannel(version));
+  return resolveWebAssetBrandForChannel(
+    resolveDesktopUpdateChannel(version) === "latest" ? "latest" : "nightly",
+  );
 }
 
 export function resolveDesktopBuildIconAssets(version: string): DesktopBuildIconAssets {
-  if (resolveDesktopUpdateChannel(version) === "nightly") {
+  if (resolveDesktopUpdateChannel(version) !== "latest") {
     return {
       macIconPng: BRAND_ASSET_PATHS.nightlyMacIconPng,
       linuxIconPng: BRAND_ASSET_PATHS.nightlyLinuxIconPng,
@@ -2587,7 +2590,7 @@ export function resolvePackageManagerUserAgent(packageManager: string): string {
 }
 
 export function resolveDesktopProductName(version: string): string {
-  return resolveDesktopUpdateChannel(version) === "nightly"
+  return resolveDesktopUpdateChannel(version) !== "latest"
     ? "T3 Code (Nightly)"
     : (desktopPackageJson.productName ?? "T3 Code");
 }
@@ -2623,7 +2626,7 @@ export const resolveDesktopBuildIdentity = Effect.fn("resolveDesktopBuildIdentit
     character.charCodeAt(0).toString(16).padStart(2, "0"),
   ).join("");
   const distributionSlug = `${readableDistributionSlug}-${exactDistributionSlug}`;
-  const stageLabel = resolveDesktopUpdateChannel(version) === "nightly" ? "Nightly" : "Alpha";
+  const stageLabel = resolveDesktopUpdateChannel(version) !== "latest" ? "Nightly" : "Alpha";
   return {
     appId: `${DESKTOP_APP_ID}.${distributionSlug}`,
     packageName: `t3code-${distributionSlug}`,
@@ -3639,7 +3642,7 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
   if (options.platform === "mac" && options.target === "dmg") {
     yield* stageDesktopDmgBackground(
       stageResourcesDir,
-      resolveDesktopUpdateChannel(appVersion),
+      resolveDesktopUpdateChannel(appVersion) === "latest" ? "latest" : "nightly",
       options.verbose,
     );
   }
