@@ -22,6 +22,8 @@ SUITES = [
     "AppFlowStagedCredentialsTests",
     "T3ClientServerConfigTests", "FeatureOutboxStoreTests",
     "FeatureToolStateTests", "TranscriptViewportGeometryTests",
+    "FeatureAttachmentUploadCoordinatorTests", "TransportReliabilityTests", "PairingServiceTests",
+    "ConnectionDetailsTests", "LocalEndpointDetectionTests",
 ]
 
 

@@ -778,6 +778,22 @@ final class TransportReliabilityTests: XCTestCase {
         XCTAssertEqual(echoed, payload)
     }
 
+    func testPairingTokensDecodeFragmentExactlyOnce() throws {
+        for token in ["part&second=value", "literal%", "literal%26value", "plus+equals=", "unicode-雪"] {
+            let link = try PairingURL.build(host: "https://studio.example", pairingCode: token)
+            XCTAssertEqual(try PairingURL.resolve(link).credential, token)
+            XCTAssertEqual(try PairingURL.parseFields(link).pairingCode, token)
+
+            var wrapper = URLComponents(string: "t3code://pair")!
+            wrapper.queryItems = [URLQueryItem(name: "pairingUrl", value: link)]
+            XCTAssertEqual(try PairingURL.resolve(wrapper.url!.absoluteString).credential, token)
+        }
+        XCTAssertEqual(
+            try PairingURL.resolve("https://studio.example/pair?token=query#token=first%26second").credential,
+            "first&second"
+        )
+    }
+
     func testPairingInputParsesClipboardQRHostedAndLooseFormats() throws {
         let direct = try PairingURL.parseFields(
             " https://studio.example:3773/pair#token=N735%4BQXJ "
@@ -813,6 +829,38 @@ final class TransportReliabilityTests: XCTestCase {
         XCTAssertEqual(target.credential, "FROM-URL")
         XCTAssertEqual(target.httpBaseURL.absoluteString, "http://192.168.1.7:18773/")
         XCTAssertEqual(target.webSocketBaseURL.absoluteString, "ws://192.168.1.7:18773/")
+    }
+
+    func testLocalNetworkProbeRecognizesAddressesInsteadOfHostnamePrefixes() {
+        for host in [
+            "fc.example.com", "fd.example.com", "fe80.example.com",
+            "10.example.com", "192.168.example.com", "10.999.0.1",
+        ] {
+            XCTAssertFalse(LocalNetworkProbe.isLocalHost(host), host)
+        }
+        for host in [
+            "localhost", "studio.local", "10.0.0.1", "172.16.0.1", "172.31.255.255",
+            "192.168.1.1", "127.0.0.1", "169.254.1.1", "::1", "0:0:0:0:0:0:0:1",
+            "fc00::1", "[fd12::1]", "fe80::1%en0", "febf::1",
+        ] {
+            XCTAssertTrue(LocalNetworkProbe.isLocalHost(host), host)
+        }
+        for host in [
+            "172.15.255.255", "172.32.0.1", "8.8.8.8", "2001:db8::1",
+            "fbff::1", "fe7f::1", "fec0::1",
+        ] {
+            XCTAssertFalse(LocalNetworkProbe.isLocalHost(host), host)
+        }
+        let host = "fc.example.com"
+        let denied = NSError(
+            domain: NSURLErrorDomain,
+            code: URLError.notConnectedToInternet.rawValue,
+            userInfo: [NSUnderlyingErrorKey: NSError(domain: NSPOSIXErrorDomain, code: 13)]
+        )
+        XCTAssertEqual(
+            LocalNetworkProbe.classify(denied, host: host, isLocal: LocalNetworkProbe.isLocalHost(host)),
+            .unavailableHost(host)
+        )
     }
 
     func testLocalNetworkProbeClassificationDistinguishesFailureModes() {

@@ -1,8 +1,25 @@
+import Foundation
 import Testing
 @testable import T3Code
 
 @Suite("Connection details")
 struct ConnectionDetailsTests {
+    @Test(arguments: [
+        "part&second=value", "literal%26value", "part#second",
+        "literal%", "plus+equals=", "unicode-雪",
+    ])
+    func decodesFragmentTokensOnce(_ token: String) throws {
+        let link = try PairingURL.build(host: "https://studio.example", pairingCode: token)
+        let direct = try ConnectionDetailsParser.parse(link)
+        #expect(direct.endpoint == "https://studio.example")
+        #expect(direct.pairingCode == token)
+
+        var wrapper = URLComponents(string: "t3code://pair")!
+        wrapper.queryItems = [URLQueryItem(name: "pairingUrl", value: link)]
+        let wrapped = try ConnectionDetailsParser.parse(wrapper.url!.absoluteString)
+        #expect(wrapped.pairingCode == token)
+    }
+
     @Test
     func parsesRawPairingURL() throws {
         let details = try ConnectionDetailsParser.parse(
@@ -111,6 +128,7 @@ struct LocalEndpointDetectionTests {
         "192.168.213.171",
         "[::1]",
         "::1",
+        "0:0:0:0:0:0:0:1",
         "[fe80::aede:48ff:fe00:1122]:3773",
         "fd12:3456:789a::1",
         "fc00::1",
@@ -124,6 +142,10 @@ struct LocalEndpointDetectionTests {
         "172.32.0.1",
         "example.com",
         "2001:4860:4860::8888",
+        "::fd00",
+        "fc.example.com",
+        "10.example.com",
+        "10.999.0.1",
     ])
     func rejectsPublicHosts(_ host: String) {
         #expect(!EndpointNetworkScope.isLocalHost(host))
