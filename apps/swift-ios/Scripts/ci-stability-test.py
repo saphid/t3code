@@ -24,6 +24,7 @@ SUITES = [
     "FeatureToolStateTests", "TranscriptViewportGeometryTests",
     "FeatureAttachmentUploadCoordinatorTests", "TransportReliabilityTests", "PairingServiceTests",
     "ConnectionDetailsTests", "LocalEndpointDetectionTests",
+    "EnvironmentStoreVersionTests", "LocalNetworkAccessCheckerTests", "PairingTokenPrecedenceTests",
 ]
 
 
@@ -84,6 +85,26 @@ def discover_test_host(products, configuration):
     return hosts.pop()
 
 
+def verify_simulated_entitlements(derived_data, app, info):
+    candidates = sorted((derived_data / "Build/Intermediates.noindex").rglob(app.name + "-Simulated.xcent"))
+    assert len(candidates) == 1, "Expected one generated host Simulator entitlement file"
+    path = candidates[0]
+    assert derived_data.resolve() in path.resolve().parents
+    with path.open("rb") as handle:
+        entitlements = plistlib.load(handle)
+    identifier = entitlements.get("application-identifier")
+    bundle_id = info["CFBundleIdentifier"]
+    assert identifier == "NJZUMEA4BN." + bundle_id, "Unexpected Simulator application identifier"
+    groups = entitlements.get("keychain-access-groups")
+    assert groups is None or (isinstance(groups, list)
+                              and all(isinstance(group, str) and group for group in groups)), "Invalid Simulator Keychain groups"
+    default_group = groups[0] if groups else identifier
+    return {"path": str(path.relative_to(derived_data)), "sha256": file_sha256(path),
+            "applicationIdentifier": identifier, "keychainAccessGroups": groups,
+            "effectiveDefaultKeychainGroup": default_group,
+            "executableSha256": file_sha256(app / info["CFBundleExecutable"])}
+
+
 def retain_tested_app(root, runner_temp, receipt):
     products = runner_temp / "swiftui-stability-derived-data/Build/Products"
     app = discover_test_host(products, receipt["configuration"])
@@ -123,6 +144,9 @@ def retain_tested_app(root, runner_temp, receipt):
         assert [scheme for item in host.get("CFBundleURLTypes", [])
                 for scheme in item.get("CFBundleURLSchemes", [])] == [contract["hostURLScheme"]]
         receipt["builtIdentities"] = identities
+    receipt["simulatedEntitlements"] = verify_simulated_entitlements(
+        runner_temp / "swiftui-stability-derived-data", app, info
+    )
     executable = app / info["CFBundleExecutable"]
     architectures = subprocess.check_output(["lipo", "-archs", str(executable)], text=True, timeout=30).strip()
     assert "arm64" in architectures.split(), "Test host lacks arm64"
@@ -171,6 +195,7 @@ def retain_tested_app(root, runner_temp, receipt):
         "xcode": receipt["xcode"], "simulator": receipt["simulator"], "command": receipt["command"],
         "sourceHashes": receipt["sourceHashes"], "configurationAndDependencyHashes": input_hashes,
         "xcodeExit": receipt["xcodeExit"], "executedBySuite": receipt["executedBySuite"],
+        "simulatedEntitlements": receipt["simulatedEntitlements"],
         "product": app.name, "executable": info["CFBundleExecutable"], "architectures": architectures,
         "builtIdentity": {key: info.get(key) for key in [
             "CFBundleIdentifier", "CFBundleShortVersionString", "CFBundleVersion", "MinimumOSVersion",
@@ -249,7 +274,9 @@ def main():
             "-default-test-execution-time-allowance", "30",
             "-maximum-test-execution-time-allowance", "60",
             *["-only-testing:T3CodeTests/" + suite for suite in SUITES],
-            "CODE_SIGNING_ALLOWED=NO", "T3_GIT_COMMIT=" + receipt["gitSha"],
+            "CODE_SIGNING_ALLOWED=YES", "CODE_SIGN_IDENTITY=-",
+            "DEVELOPMENT_TEAM=NJZUMEA4BN",
+            "T3_GIT_COMMIT=" + receipt["gitSha"],
         ]
         if receipt.get("identityContract"):
             command.append("CURRENT_PROJECT_VERSION=" + receipt["identityContract"]["build"])

@@ -116,7 +116,8 @@ enum ConnectionDetailsParser {
         let fragmentItems = URLComponents(string: "?\(components.percentEncodedFragment ?? "")")?.queryItems ?? []
         let queryItems = components.queryItems ?? []
         let allItems = queryItems + fragmentItems
-        let token = firstValue(named: tokenNames, in: allItems)
+        let token = normalizedCode(firstValue(named: tokenNames, in: fragmentItems))
+            ?? normalizedCode(firstValue(named: tokenNames, in: queryItems))
 
         if ["t3", "t3code", "t3code-swiftui", "t3code-swiftui-dev"].contains(scheme) {
             if let wrappedPairingURL = firstValue(named: wrappedPairingURLNames, in: allItems) {
