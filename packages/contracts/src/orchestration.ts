@@ -185,12 +185,120 @@ const ChatAttachmentId = TrimmedNonEmptyString.check(
 );
 export type ChatAttachmentId = typeof ChatAttachmentId.Type;
 
+export const SNAP_SHOT_ACCESSIBLE_TEXT_MAX_CHARS = 32_000;
+export const SNAP_SHOT_ACCESSIBILITY_MAX_NODES = 10_000;
+export const SNAP_SHOT_ACCESSIBILITY_MAX_SERIALIZED_CHARS = 32_000;
+
+const SnapShotAccessibilityBounds = Schema.Struct({
+  x: NonNegativeInt,
+  y: NonNegativeInt,
+  width: PositiveInt,
+  height: PositiveInt,
+});
+
+const SnapShotAccessibilityState = Schema.Struct({
+  active: Schema.optional(Schema.Boolean),
+  busy: Schema.optional(Schema.Boolean),
+  checked: Schema.optional(Schema.Literals(["on", "off", "mixed"])),
+  editable: Schema.optional(Schema.Boolean),
+  enabled: Schema.optional(Schema.Boolean),
+  expanded: Schema.optional(Schema.Boolean),
+  focused: Schema.optional(Schema.Boolean),
+  selected: Schema.optional(Schema.Boolean),
+  visible: Schema.optional(Schema.Boolean),
+});
+
+export interface SnapShotAccessibilityNode {
+  readonly role: string;
+  readonly name?: string;
+  readonly value?: string;
+  readonly description?: string;
+  readonly bounds: typeof SnapShotAccessibilityBounds.Type | null;
+  readonly state?: typeof SnapShotAccessibilityState.Type;
+  readonly actions?: Array<string>;
+  readonly children: Array<SnapShotAccessibilityNode>;
+}
+
+export const SnapShotAccessibilityNode: Schema.Codec<SnapShotAccessibilityNode> = Schema.Struct({
+  role: TrimmedNonEmptyString.check(Schema.isMaxLength(100)),
+  name: Schema.optionalKey(TrimmedNonEmptyString.check(Schema.isMaxLength(1_000))),
+  value: Schema.optionalKey(TrimmedNonEmptyString.check(Schema.isMaxLength(8_000))),
+  description: Schema.optionalKey(TrimmedNonEmptyString.check(Schema.isMaxLength(2_000))),
+  bounds: Schema.NullOr(SnapShotAccessibilityBounds),
+  state: Schema.optionalKey(SnapShotAccessibilityState),
+  actions: Schema.optionalKey(
+    Schema.mutable(Schema.Array(TrimmedNonEmptyString.check(Schema.isMaxLength(100)))).check(
+      Schema.isMaxLength(32),
+    ),
+  ),
+  children: Schema.mutable(
+    Schema.Array(
+      Schema.suspend((): Schema.Codec<SnapShotAccessibilityNode> => SnapShotAccessibilityNode),
+    ),
+  ).check(Schema.isMaxLength(SNAP_SHOT_ACCESSIBILITY_MAX_NODES)),
+});
+
+const SnapShotAccessibilityWire = Schema.Union([
+  Schema.Struct({
+    format: Schema.Literal("flat-text"),
+    text: TrimmedNonEmptyString.check(Schema.isMaxLength(SNAP_SHOT_ACCESSIBLE_TEXT_MAX_CHARS)),
+    truncated: Schema.Boolean,
+  }),
+  Schema.Struct({
+    format: Schema.Literal("element-tree"),
+    coordinateSpace: Schema.Literal("captured-image"),
+    imageSize: Schema.Struct({ width: PositiveInt, height: PositiveInt }),
+    truncated: Schema.Boolean,
+    root: SnapShotAccessibilityNode,
+  }),
+]);
+export const SnapShotAccessibility = SnapShotAccessibilityWire.check(
+  Schema.makeFilter((accessibility: typeof SnapShotAccessibilityWire.Type) => {
+    if (accessibility.format === "flat-text") return undefined;
+    let nodes = 0;
+    const stack = [accessibility.root];
+    while (stack.length > 0) {
+      const node = stack.pop()!;
+      nodes += 1;
+      if (nodes > SNAP_SHOT_ACCESSIBILITY_MAX_NODES) {
+        return `Accessibility trees must not exceed ${SNAP_SHOT_ACCESSIBILITY_MAX_NODES} nodes.`;
+      }
+      stack.push(...node.children);
+    }
+    return (
+      JSON.stringify(accessibility).length <= SNAP_SHOT_ACCESSIBILITY_MAX_SERIALIZED_CHARS ||
+      `Accessibility trees must not exceed ${SNAP_SHOT_ACCESSIBILITY_MAX_SERIALIZED_CHARS} serialized characters.`
+    );
+  }),
+);
+export type SnapShotAccessibility = typeof SnapShotAccessibility.Type;
+
+export const SnapShotSource = Schema.Struct({
+  kind: Schema.Literal("snap-shot"),
+  capturedAt: IsoDateTime,
+  appName: TrimmedNonEmptyString.check(Schema.isMaxLength(255)),
+  windowTitle: TrimmedString.check(Schema.isMaxLength(1_000)),
+  accessibleText: Schema.optional(
+    TrimmedNonEmptyString.check(Schema.isMaxLength(SNAP_SHOT_ACCESSIBLE_TEXT_MAX_CHARS)),
+  ),
+  accessibility: Schema.optional(SnapShotAccessibility),
+  appIdentifier: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(255))),
+  appIconDataUrl: Schema.optional(
+    TrimmedNonEmptyString.check(
+      Schema.isMaxLength(100_000),
+      Schema.isPattern(/^data:image\/png;base64,/i),
+    ),
+  ),
+});
+export type SnapShotSource = typeof SnapShotSource.Type;
+
 export const ChatImageAttachment = Schema.Struct({
   type: Schema.Literal("image"),
   id: ChatAttachmentId,
   name: TrimmedNonEmptyString.check(Schema.isMaxLength(255)),
   mimeType: TrimmedNonEmptyString.check(Schema.isMaxLength(100), Schema.isPattern(/^image\//i)),
   sizeBytes: NonNegativeInt.check(Schema.isLessThanOrEqualTo(PROVIDER_SEND_TURN_MAX_IMAGE_BYTES)),
+  source: Schema.optional(SnapShotSource),
 });
 export type ChatImageAttachment = typeof ChatImageAttachment.Type;
 
@@ -236,6 +344,7 @@ const UploadChatImageAttachment = Schema.Struct({
   dataUrl: TrimmedNonEmptyString.check(
     Schema.isMaxLength(PROVIDER_SEND_TURN_MAX_IMAGE_DATA_URL_CHARS),
   ),
+  source: Schema.optional(SnapShotSource),
 });
 export type UploadChatImageAttachment = typeof UploadChatImageAttachment.Type;
 
@@ -245,6 +354,22 @@ export const ChatAttachment = Schema.Union([
   ChatUnknownAttachment,
 ]);
 export type ChatAttachment = typeof ChatAttachment.Type;
+
+export const UserInputAttachments = Schema.Record(
+  Schema.String,
+  Schema.Array(Schema.Union([ChatImageAttachment, ChatFileAttachment])).pipe(
+    Schema.check(Schema.isMaxLength(PROVIDER_SEND_TURN_MAX_ATTACHMENTS)),
+  ),
+);
+export type UserInputAttachments = typeof UserInputAttachments.Type;
+
+export const UserInputAttachmentAnswerPayload = Schema.Struct({
+  requestId: ApprovalRequestId,
+  questionTextById: Schema.optional(Schema.Record(Schema.String, Schema.String)),
+  answers: ProviderUserInputAnswers,
+  attachmentsByQuestionId: UserInputAttachments,
+});
+export type UserInputAttachmentAnswerPayload = typeof UserInputAttachmentAnswerPayload.Type;
 const UploadChatAttachment = Schema.Union([UploadChatImageAttachment]);
 export type UploadChatAttachment = typeof UploadChatAttachment.Type;
 
@@ -528,6 +653,42 @@ export const OrchestrationThread = Schema.Struct({
   activeOrderKey: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   // Pending-only state. Optional so older servers remain compatible.
   titleRegeneration: Schema.optional(Schema.NullOr(ThreadTitleRegeneration)),
+  // The accepted user message waiting for a provider turn to adopt it. Kept
+  // explicitly so command admission and revert completion never infer queue
+  // order from clocks on remote clients.
+  pendingTurnStartMessageId: Schema.optional(Schema.NullOr(MessageId)),
+  // Provider-accepted starts that have not yet been matched to a running
+  // lifecycle event. Revert admission keeps these starts quiescent even when
+  // overlapping session events clear the single UI-facing pending identity.
+  submittedTurnStarts: Schema.optional(
+    Schema.Array(
+      Schema.Struct({
+        messageId: MessageId,
+        turnId: TurnId,
+      }),
+    ),
+  ),
+  // Request-scoped rendezvous for provider lifecycles that can race their
+  // durable submission acknowledgement. Legacy event history never enrolls,
+  // so replay cannot accumulate old turn ids in this pending-only state.
+  turnStartSubmissionRendezvous: Schema.optional(
+    Schema.NullOr(
+      Schema.Struct({
+        requests: Schema.Array(
+          Schema.Struct({
+            messageId: MessageId,
+            observedTurnIds: Schema.Array(TurnId),
+          }),
+        ),
+      }),
+    ),
+  ),
+  // User messages accepted after a checkpoint revert begins. The server uses
+  // this pending-only list to preserve every queued start when the revert lands.
+  pendingCheckpointRevertMessageIds: Schema.optional(Schema.NullOr(Schema.Array(MessageId))),
+  // Number of checkpoint reverts still in flight for this thread. Consecutive
+  // requests share the preservation list until their final completion lands.
+  pendingCheckpointRevertCount: Schema.optional(Schema.NullOr(NonNegativeInt)),
   deletedAt: Schema.NullOr(IsoDateTime),
   messages: Schema.Array(OrchestrationMessage),
   proposedPlans: Schema.Array(OrchestrationProposedPlan).pipe(
@@ -1030,6 +1191,7 @@ const ThreadUserInputRespondCommand = Schema.Struct({
   threadId: ThreadId,
   requestId: ApprovalRequestId,
   answers: ProviderUserInputAnswers,
+  attachmentsByQuestionId: Schema.optional(UserInputAttachments),
   createdAt: IsoDateTime,
 });
 
@@ -1203,6 +1365,14 @@ const ThreadRevertCompleteCommand = Schema.Struct({
   createdAt: IsoDateTime,
 });
 
+const ThreadTurnStartAcknowledgeCommand = Schema.Struct({
+  type: Schema.Literal("thread.turn.start.acknowledge"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  messageId: MessageId,
+  turnId: TurnId,
+});
+
 const ThreadTitleRegenerationCompleteCommand = Schema.Struct({
   type: Schema.Literal("thread.title.regeneration.complete"),
   commandId: CommandId,
@@ -1238,6 +1408,7 @@ const InternalOrchestrationCommand = Schema.Union([
   ThreadTurnDiffCompleteCommand,
   ThreadActivityAppendCommand,
   ThreadRevertCompleteCommand,
+  ThreadTurnStartAcknowledgeCommand,
   ThreadTitleRegenerationCompleteCommand,
   ThreadPullRequestSyncCommand,
 ]);
@@ -1412,6 +1583,14 @@ export const ThreadMetaUpdatedPayload = Schema.Struct({
   previousTitle: Schema.optional(TrimmedNonEmptyString),
   /** Pending state shared with clients. Null clears a matching request. */
   titleRegeneration: Schema.optional(Schema.NullOr(ThreadTitleRegeneration)),
+  /** Successful provider submission correlated to both the accepted message and provider turn.
+      Carried on the existing metadata event for compatibility with older clients. */
+  turnStartAcknowledged: Schema.optional(
+    Schema.Struct({
+      messageId: MessageId,
+      turnId: TurnId,
+    }),
+  ),
   modelSelection: Schema.optional(ModelSelection),
   branch: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   worktreePath: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
@@ -1449,6 +1628,9 @@ export const ThreadMessageSentPayload = Schema.Struct({
 export const ThreadTurnStartRequestedPayload = Schema.Struct({
   threadId: ThreadId,
   messageId: MessageId,
+  // Optional for event compatibility. New starts opt into the correlated
+  // acknowledgement rendezvous; historical starts replay without it.
+  expectsTurnStartAcknowledgement: Schema.optional(Schema.Literal(true)),
   modelSelection: Schema.optional(ModelSelection),
   titleSeed: Schema.optional(TrimmedNonEmptyString),
   runtimeMode: RuntimeMode.pipe(Schema.withDecodingDefault(Effect.succeed(DEFAULT_RUNTIME_MODE))),
@@ -1476,6 +1658,7 @@ const ThreadUserInputResponseRequestedPayload = Schema.Struct({
   threadId: ThreadId,
   requestId: ApprovalRequestId,
   answers: ProviderUserInputAnswers,
+  attachmentsByQuestionId: Schema.optional(UserInputAttachments),
   createdAt: IsoDateTime,
 });
 
@@ -1488,6 +1671,7 @@ export const ThreadCheckpointRevertRequestedPayload = Schema.Struct({
 export const ThreadRevertedPayload = Schema.Struct({
   threadId: ThreadId,
   turnCount: NonNegativeInt,
+  preservedMessageIds: Schema.optional(Schema.Array(MessageId)),
 });
 
 export const ThreadSessionStopRequestedPayload = Schema.Struct({
@@ -1857,7 +2041,7 @@ const WORKFLOW_SCRIPT_ERROR_MESSAGES = {
   "read-failed": "Script read failed.",
 } as const;
 
-export class OrchestrationGetWorkflowScriptError extends Schema.TaggedErrorClass<OrchestrationGetWorkflowScriptError>()(
+export class OrchestrationGetWorkflowScriptError extends Schema.TaggedError<OrchestrationGetWorkflowScriptError>()(
   "OrchestrationGetWorkflowScriptError",
   {
     reason: Schema.Literals([
@@ -1914,7 +2098,7 @@ export const OrchestrationRpcSchemas = {
   },
 } as const;
 
-export class OrchestrationGetSnapshotError extends Schema.TaggedErrorClass<OrchestrationGetSnapshotError>()(
+export class OrchestrationGetSnapshotError extends Schema.TaggedError<OrchestrationGetSnapshotError>()(
   "OrchestrationGetSnapshotError",
   {
     message: TrimmedNonEmptyString,
@@ -1922,7 +2106,7 @@ export class OrchestrationGetSnapshotError extends Schema.TaggedErrorClass<Orche
   },
 ) {}
 
-export class OrchestrationDispatchCommandError extends Schema.TaggedErrorClass<OrchestrationDispatchCommandError>()(
+export class OrchestrationDispatchCommandError extends Schema.TaggedError<OrchestrationDispatchCommandError>()(
   "OrchestrationDispatchCommandError",
   {
     message: TrimmedNonEmptyString,
@@ -1931,7 +2115,7 @@ export class OrchestrationDispatchCommandError extends Schema.TaggedErrorClass<O
   },
 ) {}
 
-export class OrchestrationGetTurnDiffError extends Schema.TaggedErrorClass<OrchestrationGetTurnDiffError>()(
+export class OrchestrationGetTurnDiffError extends Schema.TaggedError<OrchestrationGetTurnDiffError>()(
   "OrchestrationGetTurnDiffError",
   {
     message: TrimmedNonEmptyString,
@@ -1939,7 +2123,7 @@ export class OrchestrationGetTurnDiffError extends Schema.TaggedErrorClass<Orche
   },
 ) {}
 
-export class OrchestrationGetFullThreadDiffError extends Schema.TaggedErrorClass<OrchestrationGetFullThreadDiffError>()(
+export class OrchestrationGetFullThreadDiffError extends Schema.TaggedError<OrchestrationGetFullThreadDiffError>()(
   "OrchestrationGetFullThreadDiffError",
   {
     message: TrimmedNonEmptyString,
@@ -1947,7 +2131,7 @@ export class OrchestrationGetFullThreadDiffError extends Schema.TaggedErrorClass
   },
 ) {}
 
-export class OrchestrationSearchThreadsError extends Schema.TaggedErrorClass<OrchestrationSearchThreadsError>()(
+export class OrchestrationSearchThreadsError extends Schema.TaggedError<OrchestrationSearchThreadsError>()(
   "OrchestrationSearchThreadsError",
   {
     message: TrimmedNonEmptyString,

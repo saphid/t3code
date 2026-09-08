@@ -31,6 +31,7 @@ import {
 } from "../../persistence/Layers/Sqlite.ts";
 import { OrchestrationEventStore } from "../../persistence/Services/OrchestrationEventStore.ts";
 import { ProjectionStateRepository } from "../../persistence/Services/ProjectionState.ts";
+import { ProjectionTurnRepository } from "../../persistence/Services/ProjectionTurns.ts";
 import * as RepositoryIdentityResolver from "../../project/RepositoryIdentityResolver.ts";
 import { OrchestrationEngineLive } from "./OrchestrationEngine.ts";
 import {
@@ -411,7 +412,7 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
         FROM projection_state
         ORDER BY projector ASC
       `;
-      assert.equal(stateRows.length, Object.keys(ORCHESTRATION_PROJECTOR_NAMES).length);
+      assert.equal(stateRows.length, Object.keys(ORCHESTRATION_PROJECTOR_NAMES).length + 1);
       for (const row of stateRows) {
         assert.equal(row.lastAppliedSequence, 3);
       }
@@ -1164,14 +1165,18 @@ it.layer(
 
       yield* projectionPipeline.bootstrap;
       yield* projectionPipeline.bootstrap;
-      assert.deepEqual(
-        yield* projectionState.listAll(),
-        cursorsBeforeFailure.map((cursor) => ({
+      assert.deepEqual(yield* projectionState.listAll(), [
+        {
+          projector: "projection.attachment-cleanup",
+          lastAppliedSequence: pendingEvent.sequence,
+          updatedAt: pendingEvent.occurredAt,
+        },
+        ...cursorsBeforeFailure.map((cursor) => ({
           ...cursor,
           lastAppliedSequence: pendingEvent.sequence,
           updatedAt: pendingEvent.occurredAt,
         })),
-      );
+      ]);
       const replayedMessages = yield* sql<{ readonly text: string }>`
         SELECT text FROM projection_thread_messages WHERE message_id = 'message-rollback'
       `;
@@ -1364,10 +1369,53 @@ it.layer(
         },
       });
 
+      const answerKeepId = "thread-revert-files-00000000-0000-4000-8000-000000000006-txt";
+      const answerRemoveId = "thread-revert-files-00000000-0000-4000-8000-000000000007-txt";
+      for (const [id, turnId] of [
+        [answerKeepId, "turn-keep"],
+        [answerRemoveId, "turn-remove"],
+      ] as const) {
+        yield* appendAndProject({
+          type: "thread.activity-appended",
+          eventId: EventId.make(`answer-${id}`),
+          aggregateKind: "thread",
+          aggregateId: threadId,
+          occurredAt: now,
+          commandId: CommandId.make(`answer-${id}`),
+          causationEventId: null,
+          correlationId: CorrelationId.make(`answer-${id}`),
+          metadata: {},
+          payload: {
+            threadId,
+            activity: {
+              id: EventId.make(`answer-${id}`),
+              kind: "user-input.answer-submitted",
+              tone: "info",
+              summary: "Answer with file",
+              createdAt: now,
+              turnId: TurnId.make(turnId),
+              payload: {
+                requestId: ApprovalRequestId.make(id),
+                answers: { q: "See file" },
+                attachmentsByQuestionId: {
+                  q: [
+                    { type: "file", id, name: "answer.txt", mimeType: "text/plain", sizeBytes: 6 },
+                  ],
+                },
+              },
+            },
+          },
+        });
+      }
       const keepPath = path.join(attachmentsDir, `${keepAttachmentId}.png`);
       const keepFilePath = path.join(attachmentsDir, `${keepFileAttachmentId}.pdf`);
       const removePath = path.join(attachmentsDir, `${removeAttachmentId}.png`);
       yield* fileSystem.makeDirectory(attachmentsDir, { recursive: true });
+      yield* fileSystem.writeFileString(path.join(attachmentsDir, `${answerKeepId}.txt`), "answer");
+      yield* fileSystem.writeFileString(
+        path.join(attachmentsDir, `${answerRemoveId}.txt`),
+        "answer",
+      );
       yield* fileSystem.writeFileString(keepPath, "keep");
       yield* fileSystem.writeFileString(keepFilePath, "keep");
       yield* fileSystem.writeFileString(removePath, "remove");
@@ -1460,9 +1508,33 @@ it.layer(
 
       assert.isTrue(yield* exists(keepPath));
       assert.isTrue(yield* exists(keepFilePath));
+      assert.isTrue(yield* exists(path.join(attachmentsDir, `${answerKeepId}.txt`)));
+      assert.isFalse(yield* exists(path.join(attachmentsDir, `${answerRemoveId}.txt`)));
       assert.isFalse(yield* exists(removePath));
       assert.isTrue(yield* exists(laterPath));
       assert.isTrue(yield* exists(otherThreadPath));
+
+      // Replay message and activity history from different cursors, as during a projection rebuild.
+      yield* sql`DELETE FROM projection_thread_messages WHERE thread_id = ${threadId}`;
+      yield* sql`DELETE FROM projection_thread_activities WHERE thread_id = ${threadId}`;
+      yield* sql`UPDATE projection_state SET last_applied_sequence = 0
+        WHERE projector IN ('projection.thread-messages', 'projection.thread-activities', 'projection.threads')`;
+      yield* fileSystem.writeFileString(removePath, "remove");
+      yield* fileSystem.writeFileString(
+        path.join(attachmentsDir, `${answerRemoveId}.txt`),
+        "answer",
+      );
+      yield* sql`CREATE TRIGGER fail_bootstrap_thread BEFORE UPDATE ON projection_threads
+        BEGIN SELECT RAISE(FAIL, 'forced bootstrap failure'); END`;
+      yield* projectionPipeline.bootstrap.pipe(Effect.flip);
+      assert.isTrue(yield* exists(removePath));
+      yield* sql`DROP TRIGGER fail_bootstrap_thread`;
+      yield* projectionPipeline.bootstrap;
+      assert.isTrue(yield* exists(keepPath));
+      assert.isTrue(yield* exists(laterPath));
+      assert.isTrue(yield* exists(path.join(attachmentsDir, `${answerKeepId}.txt`)));
+      assert.isFalse(yield* exists(removePath));
+      assert.isFalse(yield* exists(path.join(attachmentsDir, `${answerRemoveId}.txt`)));
     }),
   );
 });
@@ -1934,6 +2006,15 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
         },
       });
 
+      yield* sql`CREATE TRIGGER fail_later_stream_projector BEFORE UPDATE ON projection_state
+        WHEN NEW.projector = 'projection.threads'
+        BEGIN SELECT RAISE(FAIL, 'forced later projector failure'); END`;
+      yield* projectionPipeline.bootstrap.pipe(Effect.flip);
+      const committedMessage = yield* sql<{ readonly text: string }>`
+        SELECT text FROM projection_thread_messages WHERE message_id = 'message-a'
+      `;
+      assert.deepEqual(committedMessage, [{ text: "hello world" }]);
+      yield* sql`DROP TRIGGER fail_later_stream_projector`;
       yield* projectionPipeline.bootstrap;
       yield* projectionPipeline.bootstrap;
 
@@ -3622,7 +3703,450 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
 it.layer(makeProjectionPipelinePrefixedTestLayer("t3-pending-turn-terminal-test-"))(
   "OrchestrationProjectionPipeline pending turn cleanup",
   (it) => {
-    it.effect("clears pending turn starts when startup reaches a terminal session state", () =>
+    it.effect("preserves queued start order across revert despite skewed timestamps", () =>
+      Effect.gen(function* () {
+        const projectionPipeline = yield* OrchestrationProjectionPipeline;
+        const eventStore = yield* OrchestrationEventStore;
+        const projectionTurnRepository = yield* ProjectionTurnRepository;
+        const threadId = ThreadId.make("thread-revert-queued-order");
+
+        for (const [label, createdAt] of [
+          ["a", "2026-02-26T13:00:02.000Z"],
+          ["b", "2026-02-26T13:00:01.000Z"],
+        ] as const) {
+          yield* eventStore.append({
+            type: "thread.turn-start-requested",
+            eventId: EventId.make(`evt-revert-queued-order-${label}`),
+            aggregateKind: "thread",
+            aggregateId: threadId,
+            occurredAt: `2026-02-26T13:00:0${label === "a" ? "1" : "2"}.000Z`,
+            commandId: CommandId.make(`cmd-revert-queued-order-${label}`),
+            causationEventId: null,
+            correlationId: CorrelationId.make(`cmd-revert-queued-order-${label}`),
+            metadata: {},
+            payload: {
+              threadId,
+              messageId: MessageId.make(`message-revert-queued-order-${label}`),
+              runtimeMode: "approval-required",
+              createdAt,
+            },
+          });
+        }
+        yield* eventStore.append({
+          type: "thread.reverted",
+          eventId: EventId.make("evt-revert-queued-order-complete"),
+          aggregateKind: "thread",
+          aggregateId: threadId,
+          occurredAt: "2026-02-26T13:00:03.000Z",
+          commandId: CommandId.make("cmd-revert-queued-order-complete"),
+          causationEventId: null,
+          correlationId: CorrelationId.make("cmd-revert-queued-order-complete"),
+          metadata: {},
+          payload: { threadId, turnCount: 0 },
+        });
+
+        yield* projectionPipeline.bootstrap;
+
+        const first = yield* projectionTurnRepository.getPendingTurnStartByThreadId({ threadId });
+        assert.isTrue(Option.isSome(first));
+        if (Option.isNone(first)) return;
+        assert.strictEqual(first.value.messageId, "message-revert-queued-order-a");
+
+        yield* projectionTurnRepository.deletePendingTurnStart({
+          threadId,
+          messageId: first.value.messageId,
+        });
+        const second = yield* projectionTurnRepository.getPendingTurnStartByThreadId({ threadId });
+        assert.isTrue(Option.isSome(second));
+        if (Option.isNone(second)) return;
+        assert.strictEqual(second.value.messageId, "message-revert-queued-order-b");
+      }),
+    );
+
+    it.effect("adopts queued pending starts in request order", () =>
+      Effect.gen(function* () {
+        const projectionPipeline = yield* OrchestrationProjectionPipeline;
+        const eventStore = yield* OrchestrationEventStore;
+        const sql = yield* SqlClient.SqlClient;
+        const threadId = ThreadId.make("thread-queued-adoption");
+
+        for (const index of [1, 2]) {
+          const createdAt = index === 1 ? "2026-02-26T13:00:02.000Z" : "2026-02-26T13:00:01.000Z";
+          yield* eventStore.append({
+            type: "thread.turn-start-requested",
+            eventId: EventId.make(`evt-queued-adoption-${index}`),
+            aggregateKind: "thread",
+            aggregateId: threadId,
+            occurredAt: createdAt,
+            commandId: CommandId.make(`cmd-queued-adoption-${index}`),
+            causationEventId: null,
+            correlationId: CorrelationId.make(`cmd-queued-adoption-${index}`),
+            metadata: {},
+            payload: {
+              threadId,
+              messageId: MessageId.make(`message-queued-adoption-${index}`),
+              runtimeMode: "approval-required",
+              createdAt,
+            },
+          });
+        }
+        yield* eventStore.append({
+          type: "thread.meta-updated",
+          eventId: EventId.make("evt-queued-adoption-acknowledged"),
+          aggregateKind: "thread",
+          aggregateId: threadId,
+          occurredAt: "2026-02-26T13:00:02.500Z",
+          commandId: CommandId.make("cmd-queued-adoption-acknowledged"),
+          causationEventId: null,
+          correlationId: CorrelationId.make("cmd-queued-adoption-acknowledged"),
+          metadata: {},
+          payload: {
+            threadId,
+            turnStartAcknowledged: {
+              messageId: MessageId.make("message-queued-adoption-1"),
+              turnId: TurnId.make("turn-queued-adoption-1"),
+            },
+            updatedAt: "2026-02-26T13:00:02.000Z",
+          },
+        });
+        yield* eventStore.append({
+          type: "thread.session-set",
+          eventId: EventId.make("evt-queued-adoption-running"),
+          aggregateKind: "thread",
+          aggregateId: threadId,
+          occurredAt: "2026-02-26T13:00:03.000Z",
+          commandId: CommandId.make("cmd-queued-adoption-running"),
+          causationEventId: null,
+          correlationId: CorrelationId.make("cmd-queued-adoption-running"),
+          metadata: {},
+          payload: {
+            threadId,
+            session: {
+              threadId,
+              status: "running",
+              providerName: "codex",
+              runtimeMode: "approval-required",
+              activeTurnId: TurnId.make("turn-queued-adoption-1"),
+              lastError: null,
+              updatedAt: "2026-02-26T13:00:03.000Z",
+            },
+          },
+        });
+
+        yield* projectionPipeline.bootstrap;
+
+        const rows = yield* sql<{
+          readonly turnId: string | null;
+          readonly messageId: string | null;
+        }>`
+          SELECT turn_id AS "turnId", pending_message_id AS "messageId"
+          FROM projection_turns
+          WHERE thread_id = ${threadId}
+          ORDER BY row_id ASC
+        `;
+        assert.deepEqual(rows, [
+          { turnId: null, messageId: "message-queued-adoption-2" },
+          { turnId: "turn-queued-adoption-1", messageId: "message-queued-adoption-1" },
+        ]);
+      }),
+    );
+
+    it.effect("keeps concurrent starts correlated when acknowledgements race runtime events", () =>
+      Effect.gen(function* () {
+        const projectionPipeline = yield* OrchestrationProjectionPipeline;
+        const eventStore = yield* OrchestrationEventStore;
+        const sql = yield* SqlClient.SqlClient;
+
+        for (const acknowledgeFirst of [true, false]) {
+          const suffix = acknowledgeFirst ? "ack-first" : "runtime-first";
+          const threadId = ThreadId.make(`thread-concurrent-${suffix}`);
+          const targetTurnId = TurnId.make(`turn-concurrent-b-${suffix}`);
+          let sequence = 0;
+          const appendStart = (label: "a" | "b") =>
+            eventStore.append({
+              type: "thread.turn-start-requested",
+              eventId: EventId.make(`evt-concurrent-${suffix}-${++sequence}`),
+              aggregateKind: "thread",
+              aggregateId: threadId,
+              occurredAt: `2026-02-26T13:45:0${sequence}.000Z`,
+              commandId: CommandId.make(`cmd-concurrent-${suffix}-${sequence}`),
+              causationEventId: null,
+              correlationId: CorrelationId.make(`cmd-concurrent-${suffix}-${sequence}`),
+              metadata: {},
+              payload: {
+                threadId,
+                messageId: MessageId.make(`message-concurrent-${label}-${suffix}`),
+                runtimeMode: "approval-required" as const,
+                createdAt: `2026-02-26T13:45:0${sequence}.000Z`,
+              },
+            });
+          const appendAcknowledgement = () =>
+            eventStore.append({
+              type: "thread.meta-updated",
+              eventId: EventId.make(`evt-concurrent-${suffix}-${++sequence}`),
+              aggregateKind: "thread",
+              aggregateId: threadId,
+              occurredAt: `2026-02-26T13:45:0${sequence}.000Z`,
+              commandId: CommandId.make(`cmd-concurrent-${suffix}-${sequence}`),
+              causationEventId: null,
+              correlationId: CorrelationId.make(`cmd-concurrent-${suffix}-${sequence}`),
+              metadata: {},
+              payload: {
+                threadId,
+                turnStartAcknowledged: {
+                  messageId: MessageId.make(`message-concurrent-b-${suffix}`),
+                  turnId: targetTurnId,
+                },
+                updatedAt: `2026-02-26T13:45:0${sequence}.000Z`,
+              },
+            });
+          const appendRunning = () =>
+            eventStore.append({
+              type: "thread.session-set",
+              eventId: EventId.make(`evt-concurrent-${suffix}-${++sequence}`),
+              aggregateKind: "thread",
+              aggregateId: threadId,
+              occurredAt: `2026-02-26T13:45:0${sequence}.000Z`,
+              commandId: CommandId.make(`cmd-concurrent-${suffix}-${sequence}`),
+              causationEventId: null,
+              correlationId: CorrelationId.make(`cmd-concurrent-${suffix}-${sequence}`),
+              metadata: {},
+              payload: {
+                threadId,
+                session: {
+                  threadId,
+                  status: "running" as const,
+                  providerName: "codex",
+                  runtimeMode: "approval-required" as const,
+                  activeTurnId: targetTurnId,
+                  lastError: null,
+                  updatedAt: `2026-02-26T13:45:0${sequence}.000Z`,
+                },
+              },
+            });
+
+          yield* appendStart("a");
+          yield* appendStart("b");
+          if (acknowledgeFirst) yield* appendAcknowledgement();
+          yield* appendRunning();
+          if (!acknowledgeFirst) yield* appendAcknowledgement();
+        }
+
+        yield* projectionPipeline.bootstrap;
+
+        for (const suffix of ["ack-first", "runtime-first"]) {
+          const rows = yield* sql<{
+            readonly turnId: string | null;
+            readonly messageId: string | null;
+            readonly state: string;
+          }>`
+            SELECT
+              turn_id AS "turnId",
+              pending_message_id AS "messageId",
+              state
+            FROM projection_turns
+            WHERE thread_id = ${`thread-concurrent-${suffix}`}
+            ORDER BY row_id ASC
+          `;
+          assert.deepEqual(rows, [
+            {
+              turnId: null,
+              messageId: `message-concurrent-a-${suffix}`,
+              state: "pending",
+            },
+            {
+              turnId: `turn-concurrent-b-${suffix}`,
+              messageId: `message-concurrent-b-${suffix}`,
+              state: "running",
+            },
+          ]);
+        }
+      }),
+    );
+
+    it.effect("adopts a provider acknowledgement only into its correlated turn", () =>
+      Effect.gen(function* () {
+        const projectionPipeline = yield* OrchestrationProjectionPipeline;
+        const eventStore = yield* OrchestrationEventStore;
+        const sql = yield* SqlClient.SqlClient;
+        const threadId = ThreadId.make("thread-correlated-submission");
+        const messageId = MessageId.make("message-correlated-submission");
+        const targetTurnId = TurnId.make("turn-correlated-submission");
+
+        yield* eventStore.append({
+          type: "thread.turn-start-requested",
+          eventId: EventId.make("evt-correlated-submission-requested"),
+          aggregateKind: "thread",
+          aggregateId: threadId,
+          occurredAt: "2026-02-26T13:30:00.000Z",
+          commandId: CommandId.make("cmd-correlated-submission-requested"),
+          causationEventId: null,
+          correlationId: CorrelationId.make("cmd-correlated-submission-requested"),
+          metadata: {},
+          payload: {
+            threadId,
+            messageId,
+            runtimeMode: "approval-required",
+            createdAt: "2026-02-26T13:30:00.000Z",
+          },
+        });
+        yield* eventStore.append({
+          type: "thread.meta-updated",
+          eventId: EventId.make("evt-correlated-submission-acknowledged"),
+          aggregateKind: "thread",
+          aggregateId: threadId,
+          occurredAt: "2026-02-26T13:30:01.000Z",
+          commandId: CommandId.make("cmd-correlated-submission-acknowledged"),
+          causationEventId: null,
+          correlationId: CorrelationId.make("cmd-correlated-submission-acknowledged"),
+          metadata: {},
+          payload: {
+            threadId,
+            turnStartAcknowledged: { messageId, turnId: targetTurnId },
+            updatedAt: "2026-02-26T13:30:00.000Z",
+          },
+        });
+        for (const [index, session] of [
+          {
+            status: "running" as const,
+            activeTurnId: TurnId.make("turn-unrelated"),
+          },
+          { status: "ready" as const, activeTurnId: null },
+          { status: "running" as const, activeTurnId: targetTurnId },
+        ].entries()) {
+          const updatedAt = `2026-02-26T13:30:0${index + 2}.000Z`;
+          yield* eventStore.append({
+            type: "thread.session-set",
+            eventId: EventId.make(`evt-correlated-submission-session-${index}`),
+            aggregateKind: "thread",
+            aggregateId: threadId,
+            occurredAt: updatedAt,
+            commandId: CommandId.make(`cmd-correlated-submission-session-${index}`),
+            causationEventId: null,
+            correlationId: CorrelationId.make(`cmd-correlated-submission-session-${index}`),
+            metadata: {},
+            payload: {
+              threadId,
+              session: {
+                threadId,
+                status: session.status,
+                providerName: "codex",
+                runtimeMode: "approval-required",
+                activeTurnId: session.activeTurnId,
+                lastError: null,
+                updatedAt,
+              },
+            },
+          });
+        }
+
+        yield* projectionPipeline.bootstrap;
+
+        const rows = yield* sql<{
+          readonly turnId: string | null;
+          readonly messageId: string | null;
+          readonly state: string;
+        }>`
+          SELECT
+            turn_id AS "turnId",
+            pending_message_id AS "messageId",
+            state
+          FROM projection_turns
+          WHERE thread_id = ${threadId}
+          ORDER BY row_id ASC
+        `;
+        assert.deepEqual(rows, [
+          { turnId: "turn-unrelated", messageId: null, state: "completed" },
+          {
+            turnId: "turn-correlated-submission",
+            messageId: "message-correlated-submission",
+            state: "running",
+          },
+        ]);
+      }),
+    );
+
+    it.effect("preserves submitted turn correlation across a revert", () =>
+      Effect.gen(function* () {
+        const projectionPipeline = yield* OrchestrationProjectionPipeline;
+        const eventStore = yield* OrchestrationEventStore;
+        const sql = yield* SqlClient.SqlClient;
+        const threadId = ThreadId.make("thread-submitted-revert");
+        const messageId = MessageId.make("message-submitted-revert");
+        const turnId = TurnId.make("turn-submitted-revert");
+        const createdAt = "2026-02-26T13:40:00.000Z";
+
+        yield* eventStore.append({
+          type: "thread.turn-start-requested",
+          eventId: EventId.make("evt-submitted-revert-requested"),
+          aggregateKind: "thread",
+          aggregateId: threadId,
+          occurredAt: createdAt,
+          commandId: CommandId.make("cmd-submitted-revert-requested"),
+          causationEventId: null,
+          correlationId: CorrelationId.make("cmd-submitted-revert-requested"),
+          metadata: {},
+          payload: {
+            threadId,
+            messageId,
+            runtimeMode: "approval-required",
+            createdAt,
+          },
+        });
+        yield* eventStore.append({
+          type: "thread.meta-updated",
+          eventId: EventId.make("evt-submitted-revert-acknowledged"),
+          aggregateKind: "thread",
+          aggregateId: threadId,
+          occurredAt: createdAt,
+          commandId: CommandId.make("cmd-submitted-revert-acknowledged"),
+          causationEventId: null,
+          correlationId: CorrelationId.make("cmd-submitted-revert-acknowledged"),
+          metadata: {},
+          payload: {
+            threadId,
+            turnStartAcknowledged: { messageId, turnId },
+            updatedAt: createdAt,
+          },
+        });
+        yield* eventStore.append({
+          type: "thread.reverted",
+          eventId: EventId.make("evt-submitted-revert-complete"),
+          aggregateKind: "thread",
+          aggregateId: threadId,
+          occurredAt: createdAt,
+          commandId: CommandId.make("cmd-submitted-revert-complete"),
+          causationEventId: null,
+          correlationId: CorrelationId.make("cmd-submitted-revert-complete"),
+          metadata: {},
+          payload: { threadId, turnCount: 0 },
+        });
+
+        yield* projectionPipeline.bootstrap;
+
+        const rows = yield* sql<{
+          readonly messageId: string;
+          readonly state: string;
+          readonly submittedTurnId: string | null;
+        }>`
+          SELECT
+            pending_message_id AS "messageId",
+            state,
+            submitted_turn_id AS "submittedTurnId"
+          FROM projection_turns
+          WHERE thread_id = ${threadId}
+        `;
+        assert.deepEqual(rows, [
+          {
+            messageId: "message-submitted-revert",
+            state: "submitted",
+            submittedTurnId: "turn-submitted-revert",
+          },
+        ]);
+      }),
+    );
+
+    it.effect("keeps newer pending turn starts when a stale session reaches a terminal state", () =>
       Effect.gen(function* () {
         const projectionPipeline = yield* OrchestrationProjectionPipeline;
         const eventStore = yield* OrchestrationEventStore;
@@ -3644,6 +4168,23 @@ it.layer(makeProjectionPipelinePrefixedTestLayer("t3-pending-turn-terminal-test-
             payload: {
               threadId,
               messageId: MessageId.make(`message-terminal-${status}`),
+              runtimeMode: "approval-required",
+              createdAt: requestedAt,
+            },
+          });
+          yield* eventStore.append({
+            type: "thread.turn-start-requested",
+            eventId: EventId.make(`evt-newer-pending-${status}`),
+            aggregateKind: "thread",
+            aggregateId: threadId,
+            occurredAt: requestedAt,
+            commandId: CommandId.make(`cmd-newer-pending-${status}`),
+            causationEventId: null,
+            correlationId: CorrelationId.make(`cmd-newer-pending-${status}`),
+            metadata: {},
+            payload: {
+              threadId,
+              messageId: MessageId.make(`message-newer-${status}`),
               runtimeMode: "approval-required",
               createdAt: requestedAt,
             },
@@ -3675,13 +4216,33 @@ it.layer(makeProjectionPipelinePrefixedTestLayer("t3-pending-turn-terminal-test-
 
         yield* projectionPipeline.bootstrap;
 
-        const pendingRows = yield* sql<{ readonly threadId: string }>`
-          SELECT thread_id AS "threadId"
+        const pendingRows = yield* sql<{
+          readonly threadId: string;
+          readonly messageId: string;
+        }>`
+          SELECT
+            thread_id AS "threadId",
+            pending_message_id AS "messageId"
           FROM projection_turns
           WHERE turn_id IS NULL
             AND state = 'pending'
+            AND thread_id LIKE 'thread-terminal-%'
+          ORDER BY thread_id ASC
         `;
-        assert.deepEqual(pendingRows, []);
+        assert.deepEqual(pendingRows, [
+          { threadId: "thread-terminal-error", messageId: "message-terminal-error" },
+          { threadId: "thread-terminal-error", messageId: "message-newer-error" },
+          {
+            threadId: "thread-terminal-interrupted",
+            messageId: "message-terminal-interrupted",
+          },
+          {
+            threadId: "thread-terminal-interrupted",
+            messageId: "message-newer-interrupted",
+          },
+          { threadId: "thread-terminal-stopped", messageId: "message-terminal-stopped" },
+          { threadId: "thread-terminal-stopped", messageId: "message-newer-stopped" },
+        ]);
       }),
     );
 
@@ -3884,7 +4445,7 @@ const engineLayer = it.layer(
     Layer.provideMerge(OrchestrationProjectionSnapshotQueryLive),
     Layer.provide(ThreadBackgroundLiveness.layer),
     Layer.provide(ThreadPlanProgress.layer),
-    Layer.provide(OrchestrationProjectionPipelineLive),
+    Layer.provideMerge(OrchestrationProjectionPipelineLive),
     Layer.provide(OrchestrationEventStoreLive),
     Layer.provide(OrchestrationCommandReceiptRepositoryLive),
     Layer.provide(RepositoryIdentityResolver.layer),
@@ -4236,7 +4797,10 @@ engineLayer("OrchestrationProjectionPipeline via engine dispatch", (it) => {
         yield* readCursors,
         cursorsBeforeFailure.map((cursor) => ({
           ...cursor,
-          lastAppliedSequence: result.sequence,
+          lastAppliedSequence:
+            cursor.projector === "projection.attachment-cleanup"
+              ? cursor.lastAppliedSequence
+              : result.sequence,
         })),
       );
       assert.isFalse(yield* exists(attachmentPath));
@@ -4266,6 +4830,25 @@ engineLayer("OrchestrationProjectionPipeline via engine dispatch", (it) => {
         WHERE command_id = ${cleanupFailureCommandId}
       `;
       assert.deepEqual(cleanupFailureReceipts, [{ status: "accepted" }]);
+
+      const pipeline = yield* OrchestrationProjectionPipeline;
+      const cleanupCursor = sql<{ readonly lastAppliedSequence: number }>`
+        SELECT last_applied_sequence AS "lastAppliedSequence" FROM projection_state
+        WHERE projector = 'projection.attachment-cleanup'
+      `;
+      const cursorBeforeRetry = yield* cleanupCursor;
+      yield* pipeline.bootstrap;
+      assert.deepEqual(yield* cleanupCursor, cursorBeforeRetry);
+      assert.isTrue(yield* exists(blockedAttachmentPath));
+
+      yield* fileSystem.remove(blockedAttachmentPath, { recursive: true });
+      yield* fileSystem.writeFileString(blockedAttachmentPath, "retry this attachment");
+      yield* pipeline.bootstrap;
+      assert.isFalse(yield* exists(blockedAttachmentPath));
+      assert.isAbove(
+        (yield* cleanupCursor)[0]!.lastAppliedSequence,
+        cursorBeforeRetry[0]!.lastAppliedSequence,
+      );
     }),
   );
 });

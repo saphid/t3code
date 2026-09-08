@@ -96,11 +96,26 @@ function openRequests(thread: Pick<OrchestrationThread, "activities">) {
   return requests;
 }
 
-/** Apply the shared shell-level rule to the detailed command read model. */
+/** Prefer the event-ordered pending identity, with the timestamp rule only as
+ * a compatibility fallback for read models projected before the field existed. */
 function hasQueuedTurnStartForThread(
-  thread: Pick<OrchestrationThread, "messages" | "latestTurn" | "session">,
+  thread: Pick<
+    OrchestrationThread,
+    | "messages"
+    | "latestTurn"
+    | "session"
+    | "pendingTurnStartMessageId"
+    | "submittedTurnStarts"
+    | "turnStartSubmissionRendezvous"
+  >,
   now: string,
 ): boolean {
+  if (
+    thread.pendingTurnStartMessageId != null ||
+    (thread.submittedTurnStarts?.length ?? 0) > 0 ||
+    (thread.turnStartSubmissionRendezvous?.requests.length ?? 0) > 0
+  )
+    return true;
   let latestUserMessageAt: string | null = null;
   let latestUserMessageAtMs = Number.NEGATIVE_INFINITY;
   for (const message of thread.messages) {
@@ -1002,6 +1017,33 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
       };
     }
 
+    case "thread.turn.start.acknowledge": {
+      const thread = yield* requireThread({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      const occurredAt = yield* nowIso;
+      return {
+        ...(yield* withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt,
+          commandId: command.commandId,
+        })),
+        type: "thread.meta-updated",
+        payload: {
+          threadId: command.threadId,
+          turnStartAcknowledged: {
+            messageId: command.messageId,
+            turnId: command.turnId,
+          },
+          // Submission state must not reorder the thread in clients.
+          updatedAt: thread.updatedAt,
+        },
+      };
+    }
+
     case "thread.runtime-mode.set": {
       yield* requireThread({
         readModel,
@@ -1116,6 +1158,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         payload: {
           threadId: command.threadId,
           messageId: command.message.messageId,
+          expectsTurnStartAcknowledgement: true,
           ...(command.modelSelection !== undefined
             ? { modelSelection: command.modelSelection }
             : {}),
@@ -1222,6 +1265,35 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         threadId: command.threadId,
       });
       const request = userInputActivity;
+      const attachments = Object.values(command.attachmentsByQuestionId ?? {}).flat();
+      let questionTextById: Record<string, string> = {};
+      if (attachments.length > 0) {
+        const payload =
+          request?.kind === "user-input.requested"
+            ? decodeUserInputRequestedPayload(request.payload)
+            : Option.none();
+        if (Option.isNone(payload)) {
+          return yield* new OrchestrationCommandInvariantError({
+            commandType: command.type,
+            detail:
+              request?.kind === "user-input.resolved"
+                ? "This question has already been answered."
+                : "This question is no longer pending.",
+          });
+        }
+        questionTextById = Object.fromEntries(
+          payload.value.questions.map((question) => [question.id, question.question]),
+        );
+        for (const questionId of Object.keys(command.attachmentsByQuestionId ?? {})) {
+          const question = payload.value.questions.find((question) => question.id === questionId);
+          if (!question || question.allowCustomAnswer === false) {
+            return yield* new OrchestrationCommandInvariantError({
+              commandType: command.type,
+              detail: "This question does not accept file references.",
+            });
+          }
+        }
+      }
       if (
         request &&
         Predicate.isObject(request.payload) &&
@@ -1237,13 +1309,22 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         const replies: string[] = [];
         for (const question of payload.value.questions) {
           const answer = command.answers[question.id];
-          if (typeof answer !== "string" || answer.trim().length === 0) {
+          if (
+            typeof answer !== "string" ||
+            (answer.trim().length === 0 && !command.attachmentsByQuestionId?.[question.id]?.length)
+          ) {
             return yield* new OrchestrationCommandInvariantError({
               commandType: command.type,
               detail: "Answer each question before sending.",
             });
           }
-          replies.push(`${question.question}\n${answer.trim()}`);
+          const questionAttachments = command.attachmentsByQuestionId?.[question.id] ?? [];
+          const attachmentLabels = questionAttachments
+            .map((attachment) => `Attached file: ${attachment.name} (${attachment.id})`)
+            .join("\n");
+          replies.push(
+            [`${question.question}\n${answer.trim()}`, attachmentLabels].filter(Boolean).join("\n"),
+          );
         }
         // Commit the answer and its message together. The normal turn path
         // steers a running agent or resumes an idle session.
@@ -1266,6 +1347,9 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
                   requestId: command.requestId,
                   responseMode: "message",
                   answers: command.answers,
+                  ...(command.attachmentsByQuestionId
+                    ? { attachmentsByQuestionId: command.attachmentsByQuestionId }
+                    : {}),
                 },
               },
             },
@@ -1280,30 +1364,57 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
                 messageId: MessageId.make(`async-answer:${command.requestId}`),
                 role: "user",
                 text: replies.join("\n\n"),
-                attachments: [],
+                attachments,
               },
             },
           ],
         });
       }
-      return {
+      const responseEvent = {
         ...(yield* withEventBase({
           aggregateKind: "thread",
           aggregateId: command.threadId,
           occurredAt: command.createdAt,
           commandId: command.commandId,
-          metadata: {
-            requestId: command.requestId,
-          },
+          metadata: { requestId: command.requestId },
         })),
-        type: "thread.user-input-response-requested",
+        type: "thread.user-input-response-requested" as const,
         payload: {
           threadId: command.threadId,
           requestId: command.requestId,
           answers: command.answers,
+          ...(command.attachmentsByQuestionId
+            ? { attachmentsByQuestionId: command.attachmentsByQuestionId }
+            : {}),
           createdAt: command.createdAt,
         },
       };
+      if (attachments.length === 0) return responseEvent;
+      const historyEvent = yield* decideOrchestrationCommand({
+        readModel,
+        command: {
+          type: "thread.activity.append",
+          commandId: command.commandId,
+          threadId: command.threadId,
+          createdAt: command.createdAt,
+          activity: {
+            id: EventId.make(`question-answer:${command.commandId}`),
+            kind: "user-input.answer-submitted",
+            summary: "Question answer submitted",
+            tone: "info",
+            turnId: request?.turnId ?? null,
+            createdAt: command.createdAt,
+            payload: {
+              requestId: command.requestId,
+              answers: command.answers,
+              questionTextById,
+              attachmentsByQuestionId: command.attachmentsByQuestionId,
+              detail: attachments.map((attachment) => attachment.name).join("\n"),
+            },
+          },
+        },
+      });
+      return [...(Array.isArray(historyEvent) ? historyEvent : [historyEvent]), responseEvent];
     }
 
     case "thread.user-input.dismiss": {
@@ -1352,11 +1463,26 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
     }
 
     case "thread.checkpoint.revert": {
-      yield* requireThread({
+      const thread = yield* requireThread({
         readModel,
         command,
         threadId: command.threadId,
       });
+      if (
+        thread.session?.status === "starting" ||
+        thread.session?.status === "running" ||
+        thread.latestTurn?.state === "running" ||
+        thread.pendingTurnStartMessageId != null ||
+        (thread.submittedTurnStarts?.length ?? 0) > 0 ||
+        (thread.turnStartSubmissionRendezvous?.requests.length ?? 0) > 0
+      ) {
+        return yield* Effect.fail(
+          new OrchestrationCommandInvariantError({
+            commandType: command.type,
+            detail: "Interrupt the current turn before reverting checkpoints.",
+          }),
+        );
+      }
       return {
         ...(yield* withEventBase({
           aggregateKind: "thread",
@@ -1654,7 +1780,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
     }
 
     case "thread.revert.complete": {
-      yield* requireThread({
+      const thread = yield* requireThread({
         readModel,
         command,
         threadId: command.threadId,
@@ -1670,6 +1796,9 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         payload: {
           threadId: command.threadId,
           turnCount: command.turnCount,
+          preservedMessageIds:
+            thread.pendingCheckpointRevertMessageIds ??
+            (thread.pendingTurnStartMessageId == null ? [] : [thread.pendingTurnStartMessageId]),
         },
       };
     }
