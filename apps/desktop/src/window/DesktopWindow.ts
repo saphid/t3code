@@ -13,6 +13,7 @@ import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts";
 import * as DesktopAssets from "../app/DesktopAssets.ts";
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 import { makeComponentLogger } from "../app/DesktopObservability.ts";
+import * as DesktopState from "../app/DesktopState.ts";
 import * as ElectronMenu from "../electron/ElectronMenu.ts";
 import { getDesktopUrl } from "../electron/ElectronProtocol.ts";
 import * as ElectronShell from "../electron/ElectronShell.ts";
@@ -58,6 +59,7 @@ type WindowTitleBarOptions = Pick<
 
 type DesktopWindowRuntimeServices =
   | DesktopEnvironment.DesktopEnvironment
+  | DesktopState.DesktopState
   | DesktopAssets.DesktopAssets
   | DesktopAppSettings.DesktopAppSettings
   | DesktopClientSettings.DesktopClientSettings
@@ -281,6 +283,7 @@ function bindFirstRevealTrigger(
 /** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
+  const desktopState = yield* DesktopState.DesktopState;
   const assets = yield* DesktopAssets.DesktopAssets;
   const electronMenu = yield* ElectronMenu.ElectronMenu;
   const electronShell = yield* ElectronShell.ElectronShell;
@@ -387,6 +390,7 @@ export const make = Effect.gen(function* () {
         webviewTag: true,
       },
     });
+    yield* Ref.set(desktopState.windowCreated, true);
 
     if (environment.platform === "darwin") {
       window.setAutoHideCursor(false);
@@ -778,6 +782,10 @@ export const make = Effect.gen(function* () {
 
   const createMain = Effect.gen(function* () {
     const window = yield* createWindow();
+    if (yield* Ref.get(desktopState.quitting)) {
+      yield* electronWindow.destroyAll;
+      return window;
+    }
     yield* electronWindow.setMain(window);
     yield* logWindowInfo("main window created");
     return window;
@@ -798,6 +806,7 @@ export const make = Effect.gen(function* () {
   }).pipe(Effect.withSpan("desktop.window.revealOrCreateMain"));
 
   const createMainIfBackendReady = Effect.gen(function* () {
+    if (yield* Ref.get(desktopState.quitting)) return;
     const backendReady = yield* Ref.get(backendReadyRef);
     if (!backendReady) return;
     const existingWindow = yield* currentMainWindow;
@@ -832,6 +841,7 @@ export const make = Effect.gen(function* () {
         sandbox: true,
       },
     });
+    yield* Ref.set(desktopState.windowCreated, true);
     yield* Ref.set(splashWindowRef, Option.some(splash));
     splash.once("closed", () => {
       void runPromise(Ref.set(splashWindowRef, Option.none()));
