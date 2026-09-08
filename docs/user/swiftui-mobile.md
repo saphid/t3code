@@ -45,6 +45,16 @@ the content is incomplete or the computer cannot be reached. Use **Retry** if an
 Working indicators return after the thread is current. File previews can finish loading after
 the text is ready. Saved drafts load without waiting for the thread to catch up.
 
+## Stopping a turn
+
+Tap **Stop** to request cancellation. **Stopping…** remains visible while the app waits for the
+thread to confirm its outcome, including after closing and reopening the thread. Repeated taps
+will not send duplicate requests. Acceptance of the request does not mean the agent has finished.
+
+If the connection fails or the app cannot confirm the outcome, it shows **Stop unconfirmed**.
+**Retry stop** checks the computer’s current thread status before sending another request. Some
+background work does not report a turn outcome, so its stop may remain unconfirmed.
+
 ## Queued messages
 
 A message marked **Queued** is waiting for the computer to accept it. The label disappears
