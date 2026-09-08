@@ -143,7 +143,7 @@ function ThreadRowGroup({
   const threadId = row.threadId;
   return (
     <>
-      <UsageBreakdownRow className="has-aria-expanded:bg-muted/50">
+      <UsageBreakdownRow>
         <td className="py-2 text-foreground">
           <div className="flex min-w-0 items-center gap-1">
             <Tooltip>

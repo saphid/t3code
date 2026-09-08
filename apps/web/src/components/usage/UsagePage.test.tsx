@@ -256,7 +256,7 @@ describe("UsagePage hourly breakdown", () => {
 
   it("keeps recent activity visible first without empty hourly rows", () => {
     const markup = renderToStaticMarkup(<UsagePage />);
-    const body = markup.match(/<tbody>(.*?)<\/tbody>/)?.[1] ?? "";
+    const body = markup.match(/<tbody\b[^>]*>(.*?)<\/tbody>/)?.[1] ?? "";
 
     expect(body.match(/<tr/g)).toHaveLength(2);
     expect(body).toContain("$11.00");
@@ -268,7 +268,7 @@ describe("UsagePage hourly breakdown", () => {
     testState.metric = "tokens";
 
     const markup = renderToStaticMarkup(<UsagePage />);
-    const body = markup.match(/<tbody>(.*?)<\/tbody>/)?.[1] ?? "";
+    const body = markup.match(/<tbody\b[^>]*>(.*?)<\/tbody>/)?.[1] ?? "";
 
     expect(body).toMatch(/\$11\.00.*\$13\.00/);
   });
@@ -313,7 +313,7 @@ describe("UsagePage project breakdown", () => {
     testState.breakdown = "project";
 
     const markup = renderToStaticMarkup(<UsagePage />);
-    const body = markup.match(/<tbody>(.*?)<\/tbody>/)?.[1] ?? "";
+    const body = markup.match(/<tbody\b[^>]*>(.*?)<\/tbody>/)?.[1] ?? "";
 
     expect(body).toMatch(/Expensive Project.*Outside projects/);
     expect(body).toContain("$9.00");
@@ -327,7 +327,7 @@ describe("UsagePage project breakdown", () => {
     testState.breakdown = "project";
 
     const markup = renderToStaticMarkup(<UsagePage />);
-    const body = markup.match(/<tbody>(.*?)<\/tbody>/)?.[1] ?? "";
+    const body = markup.match(/<tbody\b[^>]*>(.*?)<\/tbody>/)?.[1] ?? "";
 
     expect(body).toMatch(/Outside projects.*Expensive Project/);
   });
@@ -337,7 +337,7 @@ describe("UsagePage project breakdown", () => {
     testState.projectFilter = "id:project-expensive";
 
     const markup = renderToStaticMarkup(<UsagePage />);
-    const body = markup.match(/<tbody>(.*?)<\/tbody>/)?.[1] ?? "";
+    const body = markup.match(/<tbody\b[^>]*>(.*?)<\/tbody>/)?.[1] ?? "";
 
     expect(body).toContain("Expensive Project");
     expect(body).not.toContain("Outside projects");
@@ -430,7 +430,7 @@ describe("UsagePage model breakdown", () => {
     testState.breakdown = "model";
 
     const markup = renderToStaticMarkup(<UsagePage />);
-    const body = markup.match(/<tbody>(.*?)<\/tbody>/)?.[1] ?? "";
+    const body = markup.match(/<tbody\b[^>]*>(.*?)<\/tbody>/)?.[1] ?? "";
 
     expect(body).toMatch(/expensive-model.*token-heavy-model.*token-heavy-cheaper-model/);
   });
@@ -439,7 +439,7 @@ describe("UsagePage model breakdown", () => {
     testState.breakdown = "model";
 
     const markup = renderToStaticMarkup(<UsagePage />);
-    const body = markup.match(/<tbody>(.*?)<\/tbody>/)?.[1] ?? "";
+    const body = markup.match(/<tbody\b[^>]*>(.*?)<\/tbody>/)?.[1] ?? "";
 
     // Claude row carries its cache-write dollars; codex rows never bill writes.
     expect(body).toContain("$2.50");
@@ -469,7 +469,7 @@ describe("UsagePage model breakdown", () => {
     testState.breakdown = "model";
 
     const markup = renderToStaticMarkup(<UsagePage />);
-    const body = markup.match(/<tbody>(.*?)<\/tbody>/)?.[1] ?? "";
+    const body = markup.match(/<tbody\b[^>]*>(.*?)<\/tbody>/)?.[1] ?? "";
 
     expect(body).toMatch(/token-heavy-model.*token-heavy-cheaper-model.*expensive-model/);
     expect(modelTotals.map((model) => model.model)).toEqual([
