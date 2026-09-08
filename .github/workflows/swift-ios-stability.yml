@@ -1,7 +1,7 @@
 name: SwiftUI stability candidate
 on:
   push:
-    branches: [work/swiftui-stability-next-prep-20260907]
+    branches: [work/swiftui-visualization-native-20260908]
 permissions:
   contents: read
 jobs:

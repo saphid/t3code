@@ -34,6 +34,7 @@ public struct ThreadDetailView: View {
     @State private var branchPullRequest: FeaturePullRequest?
     @State private var linkedMediaPreview: FeatureLinkedMediaPreview?
     @State private var linkedMediaPreviewError: String?
+    @State private var visualizationOpenTask: Task<Void, Never>?
     // Plain state, not `FocusState`: the composer's UIKit text view owns
     // focus and mirrors it through this binding, because SwiftUI drops
     // writes to a `FocusState` no `.focused()` view registers with.
@@ -123,7 +124,13 @@ public struct ThreadDetailView: View {
             }
         }
         .onDisappear {
+            visualizationOpenTask?.cancel()
+            visualizationOpenTask = nil
             persistDraftBeforeLeaving()
+        }
+        .onChange(of: thread.id) { _, _ in
+            visualizationOpenTask?.cancel()
+            visualizationOpenTask = nil
         }
         .sheet(item: $toolSurface) { surface in
             NavigationStack {
@@ -194,6 +201,7 @@ public struct ThreadDetailView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .environment(\.openURL, OpenURLAction { url in
+            if handleVisualizationURL(url) { return .handled }
             if handleArtifactTemplateURL(url) { return .handled }
             if handleTypedMediaPreviewURL(url) { return .handled }
             if case let .workspaceFile(hostPath) = MarkdownImageSource.classify(
@@ -852,6 +860,32 @@ public struct ThreadDetailView: View {
             ? prompt
             : draft + (draft.last?.isWhitespace == true ? "" : " ") + prompt
         composerFocused = true
+        return true
+    }
+
+    private func handleVisualizationURL(_ url: URL) -> Bool {
+        guard let link = CodexVisualizationLink.parse(url) else { return false }
+        guard let resolver = model.client as? any FeatureWorkspaceAssetResolving else {
+            linkedMediaPreviewError = "This environment cannot open visualization files."
+            return true
+        }
+        visualizationOpenTask?.cancel()
+        let requestedThreadID = currentThread.id
+        visualizationOpenTask = Task {
+            do {
+                let resolved = try await link.resolveBrowserURL(threadID: requestedThreadID) { id, path in
+                    try await resolver.mediaAssetURL(threadID: id, path: path)
+                }
+                guard !Task.isCancelled, currentThread.id == requestedThreadID else { return }
+                // Keep the server's HTML sandbox headers; do not download into a privileged web view.
+                parentOpenURL(resolved)
+            } catch is CancellationError {
+                return
+            } catch {
+                guard !Task.isCancelled, currentThread.id == requestedThreadID else { return }
+                linkedMediaPreviewError = error.localizedDescription
+            }
+        }
         return true
     }
 

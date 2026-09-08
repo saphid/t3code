@@ -13,20 +13,9 @@ import subprocess
 import time
 
 SUITES = [
-    "NativeRetryIdentityTests", "HomeEnvironmentFilterTests", "DailyUXSidebarTests",
-    "HomeThreadSwipeActionTests", "NativePassiveLiveShellTests",
-    "NativePassiveThreadRefreshTests", "NativeMultiEnvironmentTests",
-    "NativeIncrementalBootstrapTests", "NativeBootstrapRootOutboxTests",
-    "NativeThreadCatchUpTests", "FeatureRootModelTests", "NativeShellProjectionTests",
-    "WebSocketRPCRaceTests", "WebSocketRPCDecodingTests",
-    "AppFlowStagedCredentialsTests",
-    "T3ClientServerConfigTests", "FeatureOutboxStoreTests",
-    "FeatureToolStateTests", "TranscriptViewportGeometryTests",
-    "FeatureAttachmentUploadCoordinatorTests", "TransportReliabilityTests", "PairingServiceTests",
-    "ConnectionDetailsTests", "LocalEndpointDetectionTests",
-    "EnvironmentStoreVersionTests", "LocalNetworkAccessCheckerTests", "PairingTokenPrecedenceTests",
+    "CodexVisualizationTests", "MarkdownDocumentTests",
+    "MarkdownRenderCacheTests", "WorkspaceContractTests",
 ]
-
 
 def executed_counts(tree):
     counts = dict.fromkeys(SUITES, 0)
