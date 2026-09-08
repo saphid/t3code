@@ -1281,6 +1281,7 @@ public enum FeatureThreadSyncState: Sendable, Equatable {
 }
 
 public enum FeatureEvent: Sendable {
+    case threadReceipt(FeatureThreadReceipt)
     case snapshot(FeatureSnapshot)
     case connection(FeatureConnection)
     case thread(FeatureThread)

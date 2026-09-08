@@ -45,6 +45,18 @@ the content is incomplete or the computer cannot be reached. Use **Retry** if an
 Working indicators return after the thread is current. File previews can finish loading after
 the text is ready. Saved drafts load without waiting for the thread to catch up.
 
+The thread header shows the last update received on this device, with a local date and time.
+Connection status appears separately: **Connected** does not mean a new message has arrived.
+The receipt time stays unchanged while the thread is quiet. Refreshing cached content does not
+create a new receipt.
+A received thread snapshot is labeled separately from a new update.
+
+## Tool activity
+
+Tool activity stays in transcript order. Consecutive updates to the same tool call share a row;
+an update after text or another tool call starts a new row, preserving the earlier activity.
+Each tool and activity row shows its latest update’s local date and time on the right.
+
 ## Stopping a turn
 
 Tap **Stop** to request cancellation. **Stopping…** remains visible while the app waits for the

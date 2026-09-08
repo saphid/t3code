@@ -1,7 +1,7 @@
 name: SwiftUI unsigned Dev archive
 on:
   push:
-    branches: [work/swiftui-stability-dev64-archive-20260908]
+    branches: [work/swiftui-stability-dev65-archive-20260908]
 permissions:
   contents: read
 jobs:
