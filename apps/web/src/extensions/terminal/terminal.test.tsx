@@ -8,6 +8,7 @@ import type { ViewRecord } from "@t3tools/extension-sdk/contracts";
 import { ExtensionSurface, type SurfaceRenderer } from "@t3tools/extension-sdk/react";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { createTerminalExtension, type TerminalBindings } from "./index";
+import { NativeTerminalDock } from "../nativePanels";
 import {
   PersistentThreadTerminalDrawer,
   PersistentThreadTerminalPanel,
@@ -38,11 +39,22 @@ const fixture = vi.hoisted(() => ({
     }),
   ),
 }));
+vi.mock("../../components/AgentsPanel", () => ({ AgentsPanel: () => null }));
+vi.mock("../../components/pullRequest/PullRequestDetailPanel", () => ({
+  PullRequestDetailPanel: () => null,
+}));
+vi.mock("../../components/pullRequest/PullRequestGhosts", () => ({
+  PullRequestDetailGhost: () => null,
+}));
+vi.mock("../../components/pullRequest/PullRequestsUnavailableState", () => ({
+  PullRequestsUnavailableState: () => null,
+}));
 vi.mock("../../composerDraftStore", () => ({
   useComposerDraftStore: (selector: (value: { getDraftThreadByRef: () => null }) => unknown) =>
     selector({ getDraftThreadByRef: () => null }),
 }));
 vi.mock("../../state/entities", () => ({
+  useThreadShell: () => ({ projectId: "project" }),
   useThread: () => ({ environmentId: "env", projectId: "project", worktreePath: null }),
   useProject: () => fixture.project,
 }));
@@ -342,4 +354,55 @@ describe("registered Terminal lifetime", () => {
     expect(fixture.mounts).toBe(0);
     expect(fixture.open).not.toHaveBeenCalled();
   });
+});
+
+it("hides the real dock SDK view while retaining its thread-owned engine and collapse subtree", async () => {
+  const bindings = drawerBindings();
+  if (bindings.placement !== "bottom-dock") throw new Error("Expected drawer fixture");
+  await act(async () => {
+    renderer = create(<NativeTerminalDock {...bindings.props} />);
+  });
+  const sdkView = renderer!.root.findByType(ExtensionSurface);
+  const snapshot = () => sdkView.props.host.getSnapshot(sdkView.props.viewId);
+  const initialViewport = renderer!.root.findByType(ThreadTerminalDrawer);
+  await click("select");
+  expect(snapshot().status).toBe("ready");
+  await act(async () => {
+    useTerminalUiStateStore.getState().setTerminalOpen(ref, false);
+  });
+  expect(snapshot().status).toBe("hidden");
+  expect(sdkView.props.retainHiddenPresentation).toBe(true);
+  expect(renderer!.root.findByType(ThreadTerminalDrawer)).toBe(initialViewport);
+  expect(viewport().visible).toBe(false);
+  expect(
+    renderer!.root.findByProps({ presentationVisible: false, active: true }).props.threadRef,
+  ).toBe(ref);
+  expect(
+    renderer!.root
+      .findAllByType("div")
+      .some((node) => node.props.className?.includes("grid-rows-[0fr]")),
+  ).toBe(true);
+  expect(renderer!.root.findAllByType("div").some((node) => node.props.inert === true)).toBe(true);
+  await act(async () => {
+    useTerminalUiStateStore.getState().setTerminalOpen(ref, true);
+  });
+  expect(snapshot().status).toBe("ready");
+  expect(viewport().visible).toBe(true);
+  expect(renderer!.root.findByType(ThreadTerminalDrawer)).toBe(initialViewport);
+  await act(async () => {
+    renderer!.update(<NativeTerminalDock {...bindings.props} active={false} />);
+  });
+  expect(snapshot().status).toBe("hidden");
+  expect(viewport().visible).toBe(false);
+  expect(renderer!.root.findByType(ThreadTerminalDrawer)).toBe(initialViewport);
+  await act(async () => {
+    renderer!.update(<NativeTerminalDock {...bindings.props} />);
+  });
+  expect(snapshot().status).toBe("ready");
+  expect(renderer!.root.findByType("output").children).toEqual(["選択 🌈"]);
+  expect(fixture.mounts).toBe(1);
+  expect(fixture.unmounts).toBe(0);
+  expect(fixture.close).not.toHaveBeenCalled();
+  expect(fixture.write).not.toHaveBeenCalled();
+  expect(viewport().terminalIds).toContain("term-1");
 });

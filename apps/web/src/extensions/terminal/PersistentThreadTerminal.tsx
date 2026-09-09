@@ -72,6 +72,8 @@ export interface PersistentThreadTerminalDrawerProps {
   threadRef: { environmentId: EnvironmentId; threadId: ThreadId };
   threadId: ThreadId;
   active: boolean;
+  /** SDK activity may pause while the thread-owned collapse presentation remains mounted. */
+  presentationVisible?: boolean;
   launchContext: PersistentTerminalLaunchContext | null;
   focusRequestId: number;
   splitShortcutLabel: string | undefined;
@@ -86,6 +88,7 @@ export const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerm
   threadRef,
   threadId,
   active,
+  presentationVisible = true,
   launchContext,
   focusRequestId,
   splitShortcutLabel,
@@ -109,7 +112,7 @@ export const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerm
   const terminalUiState = useTerminalUiStateStore((state) =>
     selectThreadTerminalUiState(state.terminalUiStateByThreadKey, threadRef),
   );
-  const visible = active && terminalUiState.terminalOpen;
+  const visible = active && terminalUiState.terminalOpen && presentationVisible;
   const knownTerminalSessions = useKnownTerminalSessions({
     environmentId: threadRef.environmentId,
     threadId,

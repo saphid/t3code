@@ -6,6 +6,7 @@ import { WorkspaceExtensionSurface } from "./workspaceRegistry";
 import { isElectron } from "../env";
 import { useThreadShell } from "../state/entities";
 import { useComposerDraftStore } from "../composerDraftStore";
+import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../terminalUiStateStore";
 import { createNativeSurfaceBridge } from "./nativeBridge";
 import { createBrowserExtension, type BrowserBindings } from "./browser/browserExtension";
 import { createFilesExtension, filesViewRecord, type FilesBindings } from "./files/filesExtension";
@@ -124,6 +125,10 @@ export function NativeTerminalDock(props: PersistentThreadTerminalDrawerProps) {
   const shell = useThreadShell(props.threadRef);
   const draft = useComposerDraftStore((store) => store.getDraftThreadByRef(props.threadRef));
   const projectId = shell?.projectId ?? draft?.projectId;
+  const terminalOpen = useTerminalUiStateStore(
+    (state) =>
+      selectThreadTerminalUiState(state.terminalUiStateByThreadKey, props.threadRef).terminalOpen,
+  );
   if (!projectId) return null;
   const record: ViewRecord = {
     version: 1,
@@ -146,7 +151,8 @@ export function NativeTerminalDock(props: PersistentThreadTerminalDrawerProps) {
   return (
     <terminal.Surface
       record={record}
-      visible={props.active}
+      visible={props.active && terminalOpen}
+      retainHiddenPresentation
       bindings={{ placement: "bottom-dock", props }}
     />
   );

@@ -19,12 +19,7 @@ export function createTerminalExtension(
     const bindings = useBindings();
     const visible = snapshot.status === "ready";
     if (bindings.placement === "bottom-dock") {
-      return (
-        <PersistentThreadTerminalDrawer
-          {...bindings.props}
-          active={visible && bindings.props.active}
-        />
-      );
+      return <PersistentThreadTerminalDrawer {...bindings.props} presentationVisible={visible} />;
     }
     return (
       <PersistentThreadTerminalPanel
