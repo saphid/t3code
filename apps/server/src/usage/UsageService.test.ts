@@ -482,7 +482,7 @@ describe("UsageService", () => {
         listAll: () =>
           Effect.gen(function* () {
             projectReads += 1;
-            if (projectReads === 2) {
+            if (projectReads === 1) {
               yield* Deferred.succeed(threadAggregationStarted, undefined);
               yield* Deferred.await(releaseThreadAggregation);
             }

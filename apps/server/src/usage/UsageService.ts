@@ -2037,9 +2037,12 @@ export const make = Effect.gen(function* () {
     yield* ensureRates(false, input.refreshToken !== undefined);
     yield* ensureScanCacheLoaded;
     const projectSnapshot = yield* Effect.cached(loadProjectThreads);
-    const attribution = yield* loadThreadAttribution(projectSnapshot);
+    const initialAttribution =
+      input.threadId === undefined ? null : yield* loadThreadAttribution(projectSnapshot);
     const target =
-      input.threadId === undefined ? null : threadTranscriptTarget(attribution, input.threadId);
+      input.threadId === undefined || initialAttribution === null
+        ? null
+        : threadTranscriptTarget(initialAttribution, input.threadId);
 
     const windowStartMs =
       (exactWindow?.sinceTimeMs ?? DateTime.toEpochMillis(windowStart.value)) - MTIME_SLACK_MS;
@@ -2205,6 +2208,7 @@ export const make = Effect.gen(function* () {
       yield* persistScanCache();
     }
 
+    const attribution = initialAttribution ?? (yield* loadThreadAttribution(projectSnapshot));
     const folded = foldThreadRows(accumulator.finish(), attribution, {
       cap: THREAD_ROW_CAP,
       ...(input.projectKey === undefined ? {} : { projectFilter: input.projectKey }),
