@@ -503,3 +503,24 @@ describe("UsagePage model breakdown", () => {
     expect(renderToStaticMarkup(<UsagePage />)).toContain("Data available through Aug 10.");
   });
 });
+
+it("excludes deselected environments from thread failure counts", () => {
+  testState.breakdown = "thread";
+  const usage = testState.useUsage();
+  const excluded = {
+    ...environments[0]!,
+    environmentId: EnvironmentId.make("excluded"),
+    label: "Excluded",
+    error: "offline",
+    summary: null,
+  };
+  testState.useUsage.mockReturnValue({
+    ...usage,
+    environments: [...usage.environments, excluded],
+    selectedEnvironments: usage.selectedEnvironments,
+  });
+  renderToStaticMarkup(<UsagePage />);
+  expect(testState.usageThreadTable.mock.calls[0]?.[0]).toMatchObject({
+    summaryFailedEnvironments: 0,
+  });
+});
