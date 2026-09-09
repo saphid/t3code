@@ -23,6 +23,15 @@ pkg.dependencies["@t3tools/extension-sdk"] =
   `file:${NodePath.join(artifact, "t3tools-extension-sdk-0.1.0.tgz")}`;
 NodeFS.writeFileSync(NodePath.join(consumer, "package.json"), JSON.stringify(pkg, null, 2));
 run("npm", ["install", "--ignore-scripts", "--omit=optional", "--no-audit", "--no-fund"], consumer);
+const installedExample = NodePath.join(
+  consumer,
+  "node_modules/@t3tools/extension-sdk/examples/counter/counter.ts",
+);
+NodeFS.copyFileSync(installedExample, NodePath.join(consumer, "packaged-counter.ts"));
+const configPath = NodePath.join(consumer, "tsconfig.json");
+const config = JSON.parse(NodeFS.readFileSync(configPath, "utf8"));
+config.include.push("packaged-counter.ts");
+NodeFS.writeFileSync(configPath, JSON.stringify(config, null, 2));
 run(
   process.env.T3_EXTENSION_TSC ?? NodePath.join(root, "node_modules/.bin/tsc"),
   ["-p", "tsconfig.json"],

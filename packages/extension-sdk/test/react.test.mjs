@@ -61,12 +61,34 @@ NodeTest.test(
     const id = await host.open(record);
     let tree;
     await act(async () => {
-      tree = create(createElement(ExtensionSurface, { host, viewId: id }));
+      tree = create(
+        createElement(ExtensionSurface, {
+          host,
+          viewId: id,
+          className: "host-layout",
+          style: { height: "100%", display: "flex", minHeight: 0 },
+        }),
+      );
     });
     await act(async () => tree.root.findByType("button").props.onClick());
     NodeAssert.deepEqual(tree.root.findByType("button").children, ["1"]);
     await act(async () => host.hide(id));
+    const hiddenWrapper = tree.root.findAllByType("div")[0];
+    NodeAssert.equal(hiddenWrapper.props.hidden, true);
+    NodeAssert.deepEqual(hiddenWrapper.props.style, {
+      height: "100%",
+      display: "none",
+      minHeight: 0,
+    });
+    NodeAssert.deepEqual(tree.root.findByType("button").children, ["1"]);
     await act(async () => host.show(id));
+    const visibleWrapper = tree.root.findAllByType("div")[0];
+    NodeAssert.equal(visibleWrapper.props.hidden, false);
+    NodeAssert.deepEqual(visibleWrapper.props.style, {
+      height: "100%",
+      display: "flex",
+      minHeight: 0,
+    });
     NodeAssert.deepEqual(tree.root.findByType("button").children, ["1"]);
     NodeAssert.equal(mounts, 1);
     NodeAssert.equal(unmounts, 0);
@@ -76,6 +98,7 @@ NodeTest.test(
     NodeAssert.equal(unmounts, 1);
     await act(async () => host.close(id));
     NodeAssert.equal(unmounts, 2);
+    NodeAssert.equal(tree.root.findAllByType("div")[0].props.style.height, "100%");
     await act(async () => tree.unmount());
     NodeAssert.equal(host.diagnostics().listeners, 0);
     host.dispose();

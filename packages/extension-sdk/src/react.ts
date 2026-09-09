@@ -1,5 +1,5 @@
 import { Component, createElement, useCallback, useSyncExternalStore } from "react";
-import type { ComponentType, ErrorInfo, ReactNode } from "react";
+import type { ComponentType, CSSProperties, ErrorInfo, ReactNode } from "react";
 import type { ExtensionHost, ViewSnapshot } from "./host.js";
 
 export interface SurfaceRendererProps {
@@ -27,6 +27,8 @@ class SurfaceBoundary extends Component<BoundaryProps, { failed: boolean }> {
 export function ExtensionSurface(props: {
   readonly host: ExtensionHost<SurfaceRenderer>;
   readonly viewId: string;
+  readonly className?: string;
+  readonly style?: CSSProperties;
   readonly fallback?: (snapshot: ViewSnapshot | null) => ReactNode;
 }) {
   const { host, viewId } = props;
@@ -46,25 +48,26 @@ export function ExtensionSurface(props: {
       { role: "status" },
       snapshot?.reason ?? snapshot?.record.fallback ?? "View closed",
     );
-  if (
-    !snapshot ||
-    snapshot.id !== viewId ||
-    (snapshot.status !== "ready" && snapshot.status !== "hidden")
-  )
-    return fallback;
-  const Renderer = host.renderer(viewId);
-  if (!Renderer) return fallback;
+  const renderable = snapshot && (snapshot.status === "ready" || snapshot.status === "hidden");
+  const Renderer = renderable ? host.renderer(viewId) : undefined;
+  const hidden = snapshot?.status === "hidden";
   return createElement(
     "div",
-    { hidden: snapshot.status === "hidden" },
-    createElement(
-      SurfaceBoundary,
-      {
-        key: `${viewId}:${snapshot.generation}`,
-        fallback,
-        onError: (error) => host.fail(viewId, error),
-      },
-      createElement(Renderer, { snapshot }),
-    ),
+    {
+      className: props.className,
+      style: hidden ? { ...props.style, display: "none" } : props.style,
+      hidden,
+    },
+    Renderer && snapshot
+      ? createElement(
+          SurfaceBoundary,
+          {
+            key: `${viewId}:${snapshot.generation}`,
+            fallback,
+            onError: (error) => host.fail(viewId, error),
+          },
+          createElement(Renderer, { snapshot }),
+        )
+      : fallback,
   );
 }
