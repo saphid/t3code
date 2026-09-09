@@ -1489,6 +1489,21 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     onExpandImage,
     onFileOpen,
   } = props;
+  const threadCostId = activeThread?.id;
+  const threadCostCreatedAt = activeThread?.createdAt;
+  const threadCostRefreshKey = activeContextWindow?.updatedAt ?? null;
+  const threadCost = useMemo(
+    () =>
+      threadCostId === undefined || threadCostCreatedAt === undefined
+        ? null
+        : {
+            environmentId,
+            threadId: threadCostId,
+            createdAt: threadCostCreatedAt,
+            refreshKey: threadCostRefreshKey,
+          },
+    [environmentId, threadCostId, threadCostCreatedAt, threadCostRefreshKey],
+  );
   const activeTasksProgress = props.threadSyncPhase === null ? props.activeTasksProgress : null;
   const activeTaskSteps = props.threadSyncPhase === null ? props.activeTaskSteps : null;
   // ------------------------------------------------------------------
@@ -5855,16 +5870,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                   ) : null}
                   <ComposerFooterPrimaryActions
                     compact={isComposerResting || isComposerPrimaryActionsCompact}
-                    threadCost={
-                      activeThread
-                        ? {
-                            environmentId,
-                            threadId: activeThread.id,
-                            createdAt: activeThread.createdAt,
-                            refreshKey: activeContextWindow?.updatedAt ?? null,
-                          }
-                        : null
-                    }
+                    threadCost={threadCost}
                     activeContextWindow={
                       settings.contextWindowMeterEnabled ? activeContextWindow : null
                     }
