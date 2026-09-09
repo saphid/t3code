@@ -6,8 +6,8 @@ import { EnvironmentId, ProjectId, ThreadId } from "./baseSchemas.ts";
 const Identity = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(160));
 export const ExtensionContentHash = Schema.String.check(Schema.isPattern(/^[a-f0-9]{64}$/));
 export const ExtensionGrants = Schema.Struct({
-  capabilities: Schema.Array(Identity).check(Schema.isMaxLength(64)),
-  projectIds: Schema.Array(ProjectId).check(Schema.isMaxLength(128)),
+  capabilities: Schema.Array(Identity).check(Schema.isMaxLength(16)),
+  projectIds: Schema.Array(ProjectId).check(Schema.isMaxLength(64)),
 });
 /** Portable package metadata is validated against the public SDK at the host boundary. */
 export const ExtensionInstallation = Schema.Struct({
@@ -66,4 +66,12 @@ export class ExtensionOperationError extends Schema.TaggedError<ExtensionOperati
   override get message(): string {
     return this.detail;
   }
+}
+
+/** V1 workspace identity shared by view opening, explicit context capture and server authorization. */
+export function extensionWorkspaceRevision(
+  projectWorkspaceRoot: string,
+  threadWorktreePath: string | null,
+): string {
+  return JSON.stringify([projectWorkspaceRoot, threadWorktreePath]);
 }
