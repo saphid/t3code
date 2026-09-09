@@ -28,7 +28,7 @@ import type { CodexScanState, UsageRecord } from "./usageTranscripts.ts";
 // re-parses only its appended bytes instead of starting over.
 // v4: records carry the session's cwd for project attribution; v3 entries
 // would pin every cached file to "no project" forever.
-export const USAGE_SCAN_CACHE_VERSION = 4 as const;
+const USAGE_SCAN_CACHE_VERSION = 4 as const;
 
 export interface CachedFile {
   readonly size: number;
