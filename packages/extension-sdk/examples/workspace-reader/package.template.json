@@ -1,0 +1,15 @@
+{
+  "name": "@t3tools-example/workspace-reader",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./view": "./workspace-reader.tsx"
+  },
+  "dependencies": {
+    "@t3tools/extension-sdk": "0.1.0"
+  },
+  "peerDependencies": {
+    "react": "^19.0.0"
+  }
+}

@@ -1,6 +1,6 @@
 import { useCallback, useSyncExternalStore } from "react";
 import { validateManifest, type ViewRecord } from "@t3tools/extension-sdk/contracts";
-import { createExtensionHost, type Extension } from "@t3tools/extension-sdk/host";
+import { createExtensionHost, type Extension, type HostOptions } from "@t3tools/extension-sdk/host";
 import type { SurfaceRenderer } from "@t3tools/extension-sdk/react";
 import { createNativeSurfaceBridge } from "./nativeBridge";
 
@@ -27,17 +27,20 @@ function notify() {
 }
 
 /** Trusted application bootstrap registration; installation/isolation are separate host concerns. */
-export function registerWorkspaceExtension(extension: Extension<SurfaceRenderer>) {
+export function registerWorkspaceExtension(
+  extension: Extension<SurfaceRenderer>,
+  hostOptions: HostOptions = { authorize: () => false },
+) {
   extension = {
     ...extension,
     manifest: validateManifest(extension.manifest),
     surfaces: extension.surfaces.map((surface) => ({ ...surface })),
   };
-  const validator = createExtensionHost<SurfaceRenderer>({ authorize: () => false });
+  const validator = createExtensionHost<SurfaceRenderer>(hostOptions);
   validator.register(extension);
   validator.dispose();
   if (extensionIds.has(extension.manifest.id)) throw new Error("Extension already registered");
-  const bridge = createNativeSurfaceBridge<null>(() => extension);
+  const bridge = createNativeSurfaceBridge<null>(() => extension, hostOptions);
   const ids = extension.manifest.surfaces.map((surface) => surface.id);
   if (ids.some((id) => contributions.has(id))) throw new Error("Surface already registered");
   extensionIds.add(extension.manifest.id);

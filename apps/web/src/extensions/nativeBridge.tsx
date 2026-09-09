@@ -12,6 +12,7 @@ import {
   createExtensionHost,
   type Extension,
   type ExtensionHost,
+  type HostOptions,
 } from "@t3tools/extension-sdk/host";
 import { ExtensionSurface, type SurfaceRenderer } from "@t3tools/extension-sdk/react";
 
@@ -24,7 +25,15 @@ interface MountedView {
 /** Trusted bundled bindings stay in React; only the resource record enters the SDK. */
 export function createNativeSurfaceBridge<Bindings>(
   createExtension: (useBindings: () => Bindings) => Extension<SurfaceRenderer>,
+  hostOptions: HostOptions = { authorize: () => false },
 ) {
+  // Copy registration configuration; grants may be revoked through the fixed callback.
+  const options: HostOptions = {
+    ...hostOptions,
+    ...(hostOptions.services
+      ? { services: hostOptions.services.map((service) => ({ ...service })) }
+      : {}),
+  };
   const BindingsContext = createContext<{ value: Bindings } | null>(null);
   const extension = createExtension(() => {
     const bindings = useContext(BindingsContext);
@@ -53,7 +62,7 @@ export function createNativeSurfaceBridge<Bindings>(
     const [mounted, setMounted] = useState<MountedView | null>(null);
     const [failure, setFailure] = useState<{ recordKey: string; text: string } | null>(null);
     useEffect(() => {
-      const host = createExtensionHost<SurfaceRenderer>({ authorize: () => false });
+      const host = createExtensionHost<SurfaceRenderer>(options);
       const persistRecord = onRecordChange.current;
       let closed = false;
       host.register(extension);
