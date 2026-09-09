@@ -142,13 +142,15 @@ export function decorateWorkspaceMessage(
   let remaining = 16;
   for (const host of textHosts.values()) {
     if (cards.length >= 4 || remaining <= 0) break;
+    const compatibleCount = host.messageDecorationCount(client);
+    if (compatibleCount === 0) continue;
     cards.push(
       ...host.decorateMessage(message, client, {
         maxCards: 4 - cards.length,
         maxContributions: remaining,
       }),
     );
-    remaining -= Math.min(remaining, host.messageDecorationCount(client));
+    remaining -= Math.min(remaining, compatibleCount);
   }
   return cards;
 }

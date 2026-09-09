@@ -1,12 +1,16 @@
 import type { SurfaceRenderer } from "@t3tools/extension-sdk/react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { act, create, type ReactTestRenderer } from "react-test-renderer";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { readContextSnapshots } from "@t3tools/extension-sdk/context";
 import { createIssueContextExample } from "../../../../packages/extension-sdk/examples/issue-context/issue-context.mjs";
 import { ComposerExtensionContext } from "./ComposerExtensionContext";
 import { MessageDecorations } from "./MessageDecorations";
-import { registerWorkspaceExtension } from "./workspaceRegistry";
+import {
+  registerWorkspaceExtension,
+  decorateWorkspaceMessage,
+  useWorkspaceTextRevision,
+} from "./workspaceRegistry";
 import { recallableComposerPrompt } from "../components/chat/composerPromptHistory";
 import { parseStandaloneComposerSlashCommand } from "../composer-logic";
 
@@ -279,3 +283,91 @@ it.each([
     }
   },
 );
+
+it("does not read message payloads for unrelated context or other-client hosts", async () => {
+  let revision = -1;
+  let reads = 0;
+  let root!: ReactTestRenderer;
+  const cleanup: Array<() => void> = [];
+  const decorate = vi.fn(() => ({ title: "Card", text: "Captured" }));
+  const desktopDecorate = vi.fn(() => null);
+  function Revision() {
+    const current = useWorkspaceTextRevision();
+    useEffect(() => {
+      revision = current;
+    }, [current]);
+    return null;
+  }
+  const message = {
+    environmentId: "env",
+    threadId: "thread",
+    messageId: "message",
+    get text() {
+      reads += 1;
+      return "body";
+    },
+  };
+  try {
+    cleanup.push(
+      registerWorkspaceExtension({
+        manifest: {
+          id: "copy.active",
+          version: "1.0.0",
+          apiVersion: 1,
+          surfaces: [],
+          messageDecorations: [{ id: "copy.active/card", title: "Card", clients: ["web"] }],
+        },
+        surfaces: [],
+        messageDecorations: [{ id: "copy.active/card", decorate }],
+      }),
+    );
+    await act(async () => {
+      root = create(<Revision />);
+    });
+    expect(decorateWorkspaceMessage(message, "web", revision)).toHaveLength(1);
+    const baselineReads = reads;
+    expect(baselineReads).toBeGreaterThan(0);
+    await act(async () => {
+      cleanup.push(
+        registerWorkspaceExtension({
+          manifest: {
+            id: "copy.context",
+            version: "1.0.0",
+            apiVersion: 1,
+            surfaces: [],
+            composerContexts: [{ id: "copy.context/select", title: "Context", clients: ["web"] }],
+          },
+          surfaces: [],
+          composerContexts: [
+            { id: "copy.context/select", select: () => ({ title: "Context", text: "Body" }) },
+          ],
+        }),
+      );
+      cleanup.push(
+        registerWorkspaceExtension({
+          manifest: {
+            id: "copy.desktop",
+            version: "1.0.0",
+            apiVersion: 1,
+            surfaces: [],
+            messageDecorations: [
+              { id: "copy.desktop/card", title: "Desktop", clients: ["desktop"] },
+            ],
+          },
+          surfaces: [],
+          messageDecorations: [{ id: "copy.desktop/card", decorate: desktopDecorate }],
+        }),
+      );
+    });
+    reads = 0;
+    expect(decorateWorkspaceMessage(message, "web", revision)).toHaveLength(1);
+    expect(reads).toBe(baselineReads);
+    expect(decorate).toHaveBeenCalledTimes(2);
+    expect(desktopDecorate).not.toHaveBeenCalled();
+  } finally {
+    await act(async () => {
+      root?.unmount();
+      cleanup.forEach((unregister) => unregister());
+    });
+  }
+});
