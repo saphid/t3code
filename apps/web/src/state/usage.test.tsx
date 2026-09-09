@@ -1,4 +1,6 @@
 import { EnvironmentId, UsageDay, USAGE_CONTRACT_VERSION } from "@t3tools/contracts";
+import { AsyncResult } from "effect/unstable/reactivity";
+import { serverEnvironment } from "./server";
 import { act, useLayoutEffect } from "react";
 import { create, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
@@ -21,10 +23,11 @@ const testState = vi.hoisted(() => ({
   runAtomCommand: vi.fn(),
   refreshUsage: vi.fn(),
   refreshAtom: vi.fn(),
+  readSummary: vi.fn(),
 }));
 vi.mock("@t3tools/client-runtime/state/usage", () => ({ refreshUsage: testState.refreshUsage }));
 vi.mock("../rpc/atomRegistry", () => ({
-  appAtomRegistry: { refresh: testState.refreshAtom },
+  appAtomRegistry: { refresh: testState.refreshAtom, get: testState.readSummary },
 }));
 vi.mock("@effect/atom-react", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@effect/atom-react")>()),
@@ -122,6 +125,9 @@ beforeEach(async () => {
   testState.runAtomCommand.mockReset();
   testState.refreshUsage.mockReset().mockResolvedValue(undefined);
   testState.refreshAtom.mockReset();
+  testState.readSummary
+    .mockReset()
+    .mockImplementation(() => AsyncResult.success(testState.environments[0]?.summary));
 
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   testState.environments = [environment("a", 10), environment("b", 20), environment("slow", null)];
@@ -222,4 +228,37 @@ describe("thread breakdown refresh", () => {
       expect(testState.refreshAtom).toHaveBeenCalledOnce();
     },
   );
+});
+
+it("refreshes thread keys with the new window and newly published providers", async () => {
+  await act(() =>
+    renderer?.update(<Probe selected={new Set([EnvironmentId.make("a")])} refreshThreads={true} />),
+  );
+  const nextInput = {
+    ...input,
+    sinceDay: UsageDay.make("2026-09-05"),
+    untilDay: UsageDay.make("2026-09-06"),
+  };
+  const changed = environment("a", 50).summary!;
+  testState.readSummary.mockReturnValue(
+    AsyncResult.success({
+      ...changed,
+      ...nextInput,
+      buckets: changed.buckets.map((bucket) => ({ ...bucket, provider: "claude" })),
+      sources: changed.sources.map((source) => ({
+        ...source,
+        fingerprint: { ...source.fingerprint, provider: "claude" },
+      })),
+    }),
+  );
+  const query = vi.spyOn(serverEnvironment, "usageThreadBreakdown");
+  try {
+    await latest.refresh(nextInput);
+    expect(query).toHaveBeenCalledWith({
+      environmentId: EnvironmentId.make("a"),
+      input: expect.objectContaining({ ...nextInput, providers: ["claude"] }),
+    });
+  } finally {
+    query.mockRestore();
+  }
 });
