@@ -24,7 +24,8 @@ test("runner preserves failed driver output, real exit status and incomplete cov
     const driver = join(root, "driver.mjs");
     writeFileSync(driver, 'process.stdout.write(JSON.stringify({status:"failed", error:"observable missing"})); process.stderr.write("retained driver diagnostic"); process.exitCode=7;');
     const target = { webUrl: "http://127.0.0.1:1", electronCdpUrl: "http://127.0.0.1:2", disposableState: join(root, "state") };
-    const plan = join(root, "plan.json"), output = join(root, "attempt");
+    const plan = join(root, "plan.json");
+    let output = join(root, "attempt");
     writeFileSync(plan, JSON.stringify({ seed: 7, timeoutMs: 1000,
       adapterSource: driver, adapterCommand: [process.execPath, driver],
       targets: { baseline: { ...target, worktree: baseTree, sha: baseline },
@@ -43,5 +44,19 @@ test("runner preserves failed driver output, real exit status and incomplete cov
     const before = readFileSync(join(output, "run.json"), "utf8");
     assert.equal(invoke().status, 1);
     assert.equal(readFileSync(join(output, "run.json"), "utf8"), before);
+    writeFileSync(driver, `import { readFileSync } from "node:fs";
+      const request = JSON.parse(readFileSync(0, "utf8"));
+      const timing = request.phase === "timing";
+      process.stdout.write(JSON.stringify({
+        status: timing ? "failed" : "passed", conformanceId: 999,
+      }));
+      process.exitCode = timing ? 7 : 0;`);
+    output = join(root, "timing-attempt");
+    assert.equal(invoke().status, 1);
+    const phased = JSON.parse(readFileSync(join(output, "run.json"), "utf8"));
+    assert.deepEqual(phased.samples.map((row) => row.phase), ["conformance", "conformance", "timing"]);
+    assert.equal(phased.samples[2].exitCode, 7);
+    assert.equal(phased.samples[2].conformanceId, 999);
+    assert.equal(phased.complete, false);
   } finally { rmSync(root, { recursive: true, force: true }); }
 });

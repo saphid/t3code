@@ -20,7 +20,7 @@ if (process.env.T3_COMPARISON_LOCKED !== "1") {
 const output = resolve(outputPath);
 if (existsSync(output)) throw new Error("Output directory exists; never overwrite prior attempts");
 mkdirSync(output, { recursive: true });
-const run = { schema: 1, complete: false, samples: [], startedAt: new Date().toISOString() };
+const run = { schema: 2, complete: false, samples: [], startedAt: new Date().toISOString() };
 const persist = () => writeFileSync(resolve(output, "run.json"), JSON.stringify(run, null, 2) + "\n");
 try {
   const plan = JSON.parse(readFileSync(planPath, "utf8"));
@@ -69,7 +69,9 @@ try {
     try { observation = JSON.parse(result.stdout); }
     catch { observation = { status: "failed", error: "Driver returned invalid/missing JSON" }; }
     // Schedule and process status are runner-owned; drivers cannot rewrite either.
-    run.samples.push({ ...observation, ...item, exitCode: result.status,
+    run.samples.push({ ...observation, ...item,
+      ...(item.phase === "timing" ? { conformanceId: observation.conformanceId } : {}),
+      exitCode: result.status,
       processSignal: result.signal, processError: result.error?.message });
     persist();
     if (result.status !== 0 || observation.status !== "passed") {

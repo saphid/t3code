@@ -9,7 +9,7 @@ export function analyze(run) {
   const problems = [];
   const comparisons = [];
   const fail = (reason) => problems.push(reason);
-  if (run?.schema !== 1 || !Number.isInteger(run?.seed)) fail("invalid run schema/seed");
+  if (run?.schema !== 2 || !Number.isInteger(run?.seed)) fail("invalid run schema/seed");
   if (!sha(run?.builds?.baseline) || !sha(run?.builds?.candidate) ||
       run?.builds?.baseline === run?.builds?.candidate) fail("distinct exact build SHAs required");
   if (!sha(run?.harnessSha) || !/^[a-f0-9]{64}$/.test(run?.adapterHash ?? "")) fail("missing harness/adapter identity");
@@ -21,6 +21,7 @@ export function analyze(run) {
   const rows = Array.isArray(run?.samples) ? run.samples : [];
   if (rows.length !== expected.length) fail("missing or extra samples including warmup");
   const seen = new Set();
+  const conformance = new Map();
   for (let i = 0; i < rows.length; i++) {
     const row = rows[i], target = expected[i];
     if (!row || !target || Object.keys(target).some((key) => row[key] !== target[key])) {
@@ -34,23 +35,33 @@ export function analyze(run) {
     if (row.fixtureHash !== run.fixtureHash || row.servedBuildSha !== build ||
         row.environmentHash !== digest(run.environment) || !row.clientVersion ||
         row.realClient !== journey.client) fail(`sample identity mismatch ${row.id}`);
-    if (!Array.isArray(row.checks) || journey.checks.some((id) =>
-      !row.checks.some((check) => check.id === id && check.passed === true &&
-        typeof check.evidence === "string" && check.evidence.length > 0))) fail(`behavior coverage missing ${row.id}`);
-    if (Object.keys(METRICS).some((name) => !finite(row.metrics?.[name]))) fail(`metric missing/invalid ${row.id}`);
-    const soak = row.soak;
-    if (!soak || !Number.isInteger(soak.cycles) || soak.cycles < 100 ||
-        !finite(soak.durationMs) || soak.durationMs === 0 ||
-        !Number.isInteger(soak.eventCount) || soak.eventCount < 100 ||
-        soak.lostEvents !== 0 || soak.unrelatedSessionAlive !== true ||
-        !Array.isArray(soak.faults) || fixture(run.seed).faults.some((f) => !soak.faults.includes(f)) ||
-        ["listeners", "handles", "resources"].some((key) =>
-          !finite(soak.before?.[key]) || soak.after?.[key] !== soak.before[key]))
-      fail(`reliability proof missing or leaked ${row.id}`);
+    if (row.phase === "conformance") {
+      conformance.set(row.id, row);
+      if (!Array.isArray(row.checks) || journey.checks.some((id) =>
+        !row.checks.some((check) => check?.id === id && check.passed === true &&
+          typeof check.evidence === "string" && check.evidence.length > 0))) fail(`behavior coverage missing ${row.id}`);
+      const soak = row.soak;
+      if (!soak || !Number.isInteger(soak.cycles) || soak.cycles < 100 ||
+          !finite(soak.durationMs) || soak.durationMs === 0 ||
+          !Number.isInteger(soak.eventCount) || soak.eventCount < 100 ||
+          soak.lostEvents !== 0 || soak.unrelatedSessionAlive !== true ||
+          !Array.isArray(soak.faults) || fixture(run.seed).faults.some((f) => !soak.faults.includes(f)) ||
+          ["listeners", "handles", "resources"].some((key) =>
+            !finite(soak.before?.[key]) || soak.after?.[key] !== soak.before[key]))
+        fail(`reliability proof missing or leaked ${row.id}`);
+    } else {
+      if (Object.keys(METRICS).some((name) => !finite(row.metrics?.[name]))) fail(`metric missing/invalid ${row.id}`);
+      const evidence = conformance.get(row.conformanceId);
+      if (!evidence || evidence.status !== "passed" ||
+          evidence.group !== (row.group === "candidate" ? "candidate" : "baseline") ||
+          ["batch", "journey", "client", "fixtureHash", "servedBuildSha",
+            "environmentHash", "clientVersion", "realClient"].some((key) => evidence[key] !== row[key]))
+        fail(`missing or mismatched conformance reference ${row.id}`);
+    }
   }
   if (problems.length) return { status: "failed", problems, comparisons };
   for (const journey of JOURNEYS) {
-    const measured = rows.filter((r) => r.journey === journey.id && !r.warmup);
+    const measured = rows.filter((r) => r.journey === journey.id && r.phase === "timing" && !r.warmup);
     if (new Set(rows.filter((r) => r.journey === journey.id).map((r) => r.clientVersion)).size !== 1)
       fail(`client version mismatch: ${journey.id}`);
     for (const [metric, spec] of Object.entries(METRICS)) {

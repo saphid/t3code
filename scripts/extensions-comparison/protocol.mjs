@@ -87,6 +87,12 @@ export function schedule(seed = 20260909) {
   const rows = [];
   for (let batch = 0; batch < 3; batch++) {
     for (const journey of JOURNEYS) {
+      const conformanceIds = {};
+      for (const group of ["baseline", "candidate"]) {
+        conformanceIds[group] = rows.length;
+        rows.push({ id: rows.length, phase: "conformance", batch,
+          journey: journey.id, client: journey.client, group });
+      }
       for (let iteration = -3; iteration < 10; iteration++) {
         const order = [...GROUPS];
         for (let i = order.length - 1; i > 0; i--) {
@@ -94,8 +100,9 @@ export function schedule(seed = 20260909) {
           [order[i], order[j]] = [order[j], order[i]];
         }
         for (const group of order) rows.push({
-          id: rows.length, batch, journey: journey.id, client: journey.client,
+          id: rows.length, phase: "timing", batch, journey: journey.id, client: journey.client,
           iteration, warmup: iteration < 0, group,
+          conformanceId: conformanceIds[group === "candidate" ? "candidate" : "baseline"],
         });
       }
     }
