@@ -1,7 +1,7 @@
 import { EnvironmentId, ThreadId, UsageDay, type UsageThreadRow } from "@t3tools/contracts";
 import { act, createElement } from "react";
 import { create, type ReactTestRenderer } from "react-test-renderer";
-import { afterEach, describe, expect, it, vi } from "vite-plus/test";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import {
   makeThreadCostInput,
@@ -29,6 +29,10 @@ vi.mock("./server", () => ({
 
 const threadId = ThreadId.make("thread-cost-test");
 let renderer: ReactTestRenderer | undefined;
+
+beforeEach(() => {
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+});
 
 afterEach(async () => {
   await act(() => renderer?.unmount());
