@@ -6,9 +6,17 @@ This runbook covers the trusted resource-view developer preview described in the
 
 Record the exact baseline and candidate commits, package-source hashes, packed SDK hash, tool versions, fixture seed, commands, real exit statuses and retained logs. If validation starts against an uncommitted package snapshot, retain hashes for its source/configuration and label the result as a snapshot result. Pin it to a committed candidate with matching content before calling it a frozen release gate; rerun affected checks if content changed.
 
-Keep fixtures, raw traces, failed attempts and receipts outside the repository. Keep baseline and candidate source/build/state separate. Never point a test server at live T3 userdata. Use supported consistent database snapshots when real test data is needed, copy it into disposable state, and keep data flow one-way.
+Keep seed material, raw traces, failed attempts and receipts outside the repository; runtime fixture copies must also satisfy the server-root requirements below. Keep baseline and candidate source/build/state separate. Never point a test server at live T3 userdata. Use supported consistent database snapshots when real test data is needed, copy it into disposable state, and keep data flow one-way.
 
 On a shared machine, serialize dependency installation, builds and heavyweight tests with the team's agreed lock, set `CI=true`, and bound Node heap usage. Do not run builds during performance measurement. Keep captured process IDs and stop only processes owned by the run. The [development runbook](development.md) covers normal dev environment setup.
+
+## Put review fixtures inside the configured roots
+
+`ReviewService` accepts a diff request's canonical `cwd` only when it is the configured `config.cwd` or `config.worktreesDir`, or a descendant of either. Copy each baseline/candidate fixture into its isolated server's worktrees directory or workspace root. Do not use symlinks: validation resolves real paths, so a link does not bring an outside fixture within the boundary.
+
+Point the disposable project's workspace at that copy through the authorized fixture API's `project.meta.update` command. Confirm the resulting project metadata, then inspect the observed review RPC `cwd` and returned preview `cwd`: both must identify the intended canonical fixture before accepting behavior or timing evidence.
+
+An outside-root fixture produces a workspace-boundary error. `DiffPanel` can then retry at `serverConfig.cwd`, yielding an empty or unrelated diff instead of the seeded comparison. Treat that as a fixture failure even if the panel renders successfully; correct the copy and project mapping, and rerun with the intended RPC path.
 
 ## SDK and fresh-install gate
 
@@ -54,6 +62,8 @@ A real application journey must then establish that a newly registered contribut
 For native surfaces, preserve resource ownership and presentation identity. In particular, verify same-workspace file navigation does not reset the outer preview merely because a thread or selected path changed; attachments still reset by attachment identity. Retained terminal docks must not acquire the foreground project's context.
 
 Follow the [comparison protocol](extensions-comparison.md) for matched baseline/candidate journeys, baseline-noise measurement, fault injection, 100-cycle soaks, raw latency/CPU/memory/wire samples and acceptance analysis. Supply actual web/Electron drivers and service receipts. Synthetic analyzer fixtures are not substitute journey evidence. Record unsupported macOS, React Native, SwiftUI, provider and connection-mode paths explicitly.
+
+The paired `electron-baseline-observation-4.json` and `electron-candidate-observation-4.json` receipts record passing Linux native-browser behavior checks. Their scope is those observed checks; they do not establish full Browser parity, repeated performance measurements, reconnect coverage, a complete shared-viewer soak or other-platform compatibility.
 
 ## Classify failures before changing the candidate
 
