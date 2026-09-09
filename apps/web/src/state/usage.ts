@@ -161,7 +161,9 @@ export function useUsage(
   const currentEnvironments = useAtomValue(atom);
   const settledStatuses = useRef<SettledUsageStatuses<EnvironmentUsageStatus> | null>(null);
   const retained = retainUsageStatuses(rangeKey, currentEnvironments, settledStatuses.current);
-  settledStatuses.current = retained.settled;
+  useEffect(() => {
+    settledStatuses.current = retained.settled;
+  }, [retained.settled]);
   const environments = retained.visible;
   const selectedEnvironments = useMemo(
     () =>
