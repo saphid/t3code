@@ -34,6 +34,14 @@
     "./workspace": {
       "types": "./dist/workspace.d.ts",
       "default": "./dist/workspace.js"
+    },
+    "./capabilities": {
+      "types": "./dist/capabilities.d.ts",
+      "default": "./dist/capabilities.js"
+    },
+    "./catalogue": {
+      "types": "./dist/catalogue.d.ts",
+      "default": "./dist/catalogue.js"
     }
   },
   "scripts": {

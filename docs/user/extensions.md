@@ -25,8 +25,16 @@ An extension can also provide agent tools. Availability depends on its enabled s
 
 Return to **Environment extensions** to choose **Disable**, **Enable** or **Remove**. Disabling makes the package unavailable and revokes its T3-provided operations. Captured context already in drafts or messages remains readable. Saved views can show a fallback until their extension is available again.
 
-To update, enter the replacement package directory, acknowledge trust and choose **Update from package directory** on the package. Updates keep existing grants. To change grants, remove the package and reinstall it with the intended permissions.
+To update, enter the replacement package directory, acknowledge trust and choose **Update from package directory** on the package. Updates keep existing grants. To change permissions, select the intended projects and capabilities, then choose **Apply selected permissions** on the package. This replaces all its existing permissions. An empty selection revokes all T3-provided access without removing the package.
 
-Use **Refresh extensions** after changing packages from another connected client. Changes are not pushed automatically to every client; an old view can remain visible until refresh even though its obsolete tool calls are rejected.
+Changes made from another connected client appear automatically on supported environments. Use **Refresh extensions** with older environments. Calls authorized before a permission change cannot return obsolete results after revocation.
 
-The built-in Files, Diff, Version Control, Browser, Terminal and Agents panels are bundled integrations. They are not separately installed or removed through this package list.
+Choose **Roll back package** to restore the previous installed version after an update. Rollback keeps the current permissions and checks dependencies again; it does not reverse changes the package made to files or other services.
+
+## API providers and dependencies
+
+Packages can provide APIs for other packages and require compatible dependencies. Install required dependencies separately. Missing, disabled or incompatible dependencies make the dependent package unavailable. Installing a package does not grant it permission to control other features.
+
+When a package offers a shared API, choose **Use for** that API to select its provider. Selection does not add permissions. Conflicting providers require an explicit choice; a disabled selected provider shows an unavailable state.
+
+A compatible Files provider can replace the ordinary Files presentation with its own installed view. The current example supports browsing and reading text; it does not provide the full built-in editor. The other built-in panels remain bundled integrations and cannot yet be replaced by independently installed packages.

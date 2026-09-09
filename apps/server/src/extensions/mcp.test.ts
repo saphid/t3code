@@ -35,6 +35,10 @@ function fixture(capabilities: readonly McpCapability[], resolvedContext = conte
   let available = true;
   const service = EnvironmentExtensions.of({
     list: Effect.succeed([]),
+    catalogue: Effect.succeed({ apiSelections: [], apiResolution: [], pluginResolution: [] }),
+    invokeApi: () => Effect.die("unused"),
+    discoverApis: () => Effect.die("unused"),
+    selectApi: () => Effect.die("unused"),
     install: () => Effect.die("unused"),
     manage: () => Effect.die("unused"),
     client: () => Effect.die("unused"),

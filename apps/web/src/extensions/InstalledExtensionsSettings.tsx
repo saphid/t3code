@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useAtomValue } from "@effect/atom-react";
 import { AuthAccessWriteScope, type EnvironmentId, type ProjectId } from "@t3tools/contracts";
+import { GENERIC_API_CATALOGUE } from "@t3tools/extension-sdk/catalogue";
 import { WORKSPACE_READ_TEXT } from "@t3tools/extension-sdk/workspace";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
@@ -11,6 +12,7 @@ import { useEnvironmentSessionState } from "../state/session";
 import { environmentProjects } from "../state/projects";
 import {
   installEnvironmentExtension,
+  selectInstalledApiProvider,
   manageInstalledExtension,
   refreshInstalledExtensions,
   useInstalledExtensions,
@@ -28,6 +30,7 @@ function EnvironmentPackages({ environmentId }: { environmentId: EnvironmentId }
   const [path, setPath] = useState("");
   const [trusted, setTrusted] = useState(false);
   const [readText, setReadText] = useState(false);
+  const [apiGrants, setApiGrants] = useState<readonly string[]>([]);
   const [projectIds, setProjectIds] = useState<readonly ProjectId[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -51,8 +54,9 @@ function EnvironmentPackages({ environmentId }: { environmentId: EnvironmentId }
         </p>
       ) : null}
       <p className="text-sm text-muted-foreground">
-        Packages run trusted code in this environment and client. Use Refresh extensions to see
-        changes made in another client. The package path is on the environment's machine.
+        Packages run trusted code in this environment and client. Changes sync automatically on
+        supported servers; use Refresh extensions with older servers. The package path is on the
+        environment's machine.
       </p>
       <label className="block space-y-1 text-sm">
         Package directory
@@ -85,13 +89,35 @@ function EnvironmentPackages({ environmentId }: { environmentId: EnvironmentId }
         <Checkbox checked={readText} onCheckedChange={(checked) => setReadText(checked === true)} />
         Allow workspace text reads in selected projects
       </label>
+      {[
+        ...new Set(
+          GENERIC_API_CATALOGUE.flatMap((api) =>
+            api.methods.flatMap((method) => method.requiredGrants),
+          ),
+        ),
+      ]
+        .filter((grant) => grant !== WORKSPACE_READ_TEXT)
+        .map((grant) => (
+          <label key={grant} className="flex items-center gap-2 text-sm">
+            <Checkbox
+              checked={apiGrants.includes(grant)}
+              onCheckedChange={(checked) =>
+                setApiGrants((current) =>
+                  checked ? [...current, grant] : current.filter((value) => value !== grant),
+                )
+              }
+            />
+            Allow {grant} in selected projects
+          </label>
+        ))}
       <label className="flex items-start gap-2 text-sm">
         <Checkbox checked={trusted} onCheckedChange={(checked) => setTrusted(checked === true)} />I
         trust this package to run code in this environment and client
       </label>
       <p className="text-sm text-muted-foreground">
-        The permission form applies to new installations. Updates keep existing grants; remove and
-        reinstall to change them.
+        The permission form applies to new installations. Apply selected permissions replaces all
+        permissions and allowed projects for that package; empty selections revoke all grants.
+        Updates and rollback keep existing grants.
       </p>
       <div className="flex gap-2">
         <Button
@@ -101,7 +127,7 @@ function EnvironmentPackages({ environmentId }: { environmentId: EnvironmentId }
               installEnvironmentExtension(environmentId, {
                 sourceDir: path,
                 projectIds,
-                capabilities: readText ? [WORKSPACE_READ_TEXT] : [],
+                capabilities: [...(readText ? [WORKSPACE_READ_TEXT] : []), ...apiGrants],
                 trusted: true,
               }),
             )
@@ -123,6 +149,13 @@ function EnvironmentPackages({ environmentId }: { environmentId: EnvironmentId }
           {error ?? snapshot.error}
         </p>
       ) : null}
+      {snapshot.apiResolution
+        ?.filter((api) => api.reason)
+        .map((api) => (
+          <p key={api.id} role="status">
+            {api.id}: {api.reason?.detail}
+          </p>
+        ))}
       {!snapshot.loading && !snapshot.installations.length ? (
         <p className="text-sm text-muted-foreground">No installed extensions.</p>
       ) : null}
@@ -131,6 +164,20 @@ function EnvironmentPackages({ environmentId }: { environmentId: EnvironmentId }
           <p className="text-sm font-medium">
             {item.id} · {item.package.manifest.version} · {item.enabled ? "Enabled" : "Disabled"}
           </p>
+          {snapshot.pluginResolution?.find((state) => state.id === item.id)?.reason ? (
+            <p role="status" className="text-sm text-muted-foreground">
+              {snapshot.pluginResolution.find((state) => state.id === item.id)?.reason?.detail}
+            </p>
+          ) : null}
+          {snapshot.apiResolution
+            ?.filter(
+              (api) => api.providerId === item.id || api.reason?.relatedIds.includes(item.id),
+            )
+            .map((api) => (
+              <p key={api.id} role="status" className="text-sm text-muted-foreground">
+                {api.reason?.detail ?? "Selected provider for " + api.id}
+              </p>
+            ))}
           <p className="text-sm text-muted-foreground">
             {item.grants.projectIds.length} allowed projects. Open compatible views from Extensions
             in a thread.
@@ -147,7 +194,56 @@ function EnvironmentPackages({ environmentId }: { environmentId: EnvironmentId }
               );
             })}
           </ul>
+          {item.package.format === 2
+            ? item.package.provides.map((api) => (
+                <Button
+                  key={api.id}
+                  variant="outline"
+                  disabled={!canManage || busy || !item.enabled}
+                  onClick={() =>
+                    void act(() =>
+                      selectInstalledApiProvider(environmentId, {
+                        id: api.id,
+                        providerId: item.id,
+                        fallbackProviderIds: [],
+                      }),
+                    )
+                  }
+                >
+                  Use for {api.id}
+                </Button>
+              ))
+            : null}
           <div className="flex flex-wrap gap-2">
+            <Button
+              variant="outline"
+              disabled={!canManage || busy}
+              onClick={() =>
+                void act(() =>
+                  manageInstalledExtension(environmentId, {
+                    id: item.id,
+                    action: "grants",
+                    grants: {
+                      projectIds,
+                      capabilities: [...(readText ? [WORKSPACE_READ_TEXT] : []), ...apiGrants],
+                    },
+                  }),
+                )
+              }
+            >
+              Apply selected permissions
+            </Button>
+            <Button
+              variant="outline"
+              disabled={!canManage || busy}
+              onClick={() =>
+                void act(() =>
+                  manageInstalledExtension(environmentId, { id: item.id, action: "rollback" }),
+                )
+              }
+            >
+              Roll back package
+            </Button>
             <Button
               variant="outline"
               disabled={!canManage || busy}

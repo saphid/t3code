@@ -2,6 +2,9 @@ import {
   AuthAccessWriteScope,
   AuthOrchestrationReadScope,
   EnvironmentHttpApi,
+  type ExtensionApiInvokeInput,
+  type ExtensionApiDiscoverInput,
+  type ExtensionApiSelection,
   type ExtensionClientInput,
   type ExtensionInstallInput,
   type ExtensionInvokeInput,
@@ -15,9 +18,33 @@ import { EnvironmentExtensions } from "./EnvironmentExtensions.ts";
 /** These are the actual authenticated endpoint operations, shared with focused scope tests. */
 export function makeOperations(extensions: EnvironmentExtensions["Service"]) {
   return {
+    invokeApi: Effect.fn("environment.extensions.invokeApi")(function* (
+      input: ExtensionApiInvokeInput,
+    ) {
+      // Until transport grants are method-scoped, API calls require the authenticated app's write authority.
+      yield* requireEnvironmentScope(AuthAccessWriteScope);
+      return { result: yield* extensions.invokeApi(input) };
+    }),
+    discoverApis: Effect.fn("environment.extensions.discoverApis")(function* (
+      input: ExtensionApiDiscoverInput,
+    ) {
+      yield* requireEnvironmentScope(AuthOrchestrationReadScope);
+      return { apis: yield* extensions.discoverApis(input) };
+    }),
+    selectApi: Effect.fn("environment.extensions.selectApi")(function* (
+      input: ExtensionApiSelection,
+    ) {
+      yield* requireEnvironmentScope(AuthAccessWriteScope);
+      yield* extensions.selectApi(input);
+      return { ok: true };
+    }),
     list: Effect.fn("environment.extensions.list")(function* () {
       yield* requireEnvironmentScope(AuthOrchestrationReadScope);
-      return { installations: yield* extensions.list };
+      return {
+        installations: yield* extensions.list,
+        ...(yield* extensions.catalogue),
+        supportsCatalogueChanges: true,
+      };
     }),
     client: Effect.fn("environment.extensions.client")(function* (input: ExtensionClientInput) {
       yield* requireEnvironmentScope(AuthOrchestrationReadScope);
@@ -43,6 +70,21 @@ export const extensionsHttpApiLayer = HttpApiBuilder.group(
   Effect.fnUntraced(function* (handlers) {
     const operations = makeOperations(yield* EnvironmentExtensions);
     return handlers
+      .handle("invokeApi", (args) =>
+        annotateEnvironmentRequest(args.endpoint.name).pipe(
+          Effect.andThen(operations.invokeApi(args.payload)),
+        ),
+      )
+      .handle("discoverApis", (args) =>
+        annotateEnvironmentRequest(args.endpoint.name).pipe(
+          Effect.andThen(operations.discoverApis(args.payload)),
+        ),
+      )
+      .handle("selectApi", (args) =>
+        annotateEnvironmentRequest(args.endpoint.name).pipe(
+          Effect.andThen(operations.selectApi(args.payload)),
+        ),
+      )
       .handle("list", (args) =>
         annotateEnvironmentRequest(args.endpoint.name).pipe(Effect.andThen(operations.list())),
       )

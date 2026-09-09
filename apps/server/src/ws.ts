@@ -1,3 +1,4 @@
+import { ExtensionCatalogueChanges } from "./extensions/catalogueChanges.ts";
 import {
   sameUsageLimitCommandCoverage,
   withUsageLimitsCommands,
@@ -604,6 +605,7 @@ const makeWsRpcLayer = (
       const sourceControlRepositories =
         yield* SourceControlRepositoryService.SourceControlRepositoryService;
       const pullRequests = yield* PullRequestService.PullRequestService;
+      const extensionCatalogueChanges = yield* ExtensionCatalogueChanges;
       const bootstrapCredentials = yield* PairingGrantStore.PairingGrantStore;
       const sessions = yield* SessionStore.SessionStore;
       const processDiagnostics = yield* ProcessDiagnostics.ProcessDiagnostics;
@@ -2824,6 +2826,12 @@ const makeWsRpcLayer = (
             }),
             { "rpc.aggregate": "server" },
           ),
+        [WS_METHODS.subscribeExtensionCatalogue]: (_input) =>
+          observeRpcStream(
+            WS_METHODS.subscribeExtensionCatalogue,
+            extensionCatalogueChanges.changes,
+            { "rpc.aggregate": "extensions" },
+          ),
         [WS_METHODS.subscribeServerLifecycle]: (_input) =>
           observeRpcStreamEffect(
             WS_METHODS.subscribeServerLifecycle,
@@ -2932,6 +2940,7 @@ export const websocketRpcRouteLayer = Layer.unwrap(
         ),
     });
     const pullRequests = yield* PullRequestService.PullRequestService;
+    const extensionCatalogueChanges = yield* ExtensionCatalogueChanges;
     return HttpRouter.add(
       "GET",
       "/ws",
@@ -2972,6 +2981,7 @@ export const websocketRpcRouteLayer = Layer.unwrap(
               // One server-lifetime service means clients share the same PR caches, and a WS
               // mutation invalidates the HTTP diff cache that every client reads from.
               Layer.provide(Layer.succeed(PullRequestService.PullRequestService, pullRequests)),
+              Layer.provide(Layer.succeed(ExtensionCatalogueChanges, extensionCatalogueChanges)),
               Layer.provide(
                 SourceControlDiscovery.layer.pipe(
                   Layer.provide(

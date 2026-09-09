@@ -1,6 +1,11 @@
+import { ExtensionCatalogueChanges } from "./catalogueChanges.ts";
+import { makeWorkspaceApiProvider } from "./workspaceApi.ts";
 import {
   ExtensionInstallation,
   ExtensionOperationError,
+  type ExtensionApiInvokeInput,
+  type ExtensionApiDiscoverInput,
+  type ExtensionApiSelection,
   type ExtensionInstallInput,
   type ExtensionManageInput,
   type ExtensionInvokeInput,
@@ -50,6 +55,8 @@ export const make = Effect.fn("EnvironmentExtensions.make")(function* (
   const projects = yield* ProjectionProjectRepository;
   const threads = yield* ProjectionThreadRepository;
   const workspace = yield* WorkspaceFileSystem;
+  const workspaceApi = yield* makeWorkspaceApiProvider();
+  const catalogueChanges = yield* ExtensionCatalogueChanges;
   const resolve = makeExtensionScopeResolver({ environmentId, projects, threads });
   const read = Effect.fn("EnvironmentExtensions.readWorkspace")(function* (
     input: unknown,
@@ -86,6 +93,18 @@ export const make = Effect.fn("EnvironmentExtensions.make")(function* (
           ...(import.meta.url.endsWith(".mjs")
             ? { workerUrl: new URL("./extension-worker.mjs", import.meta.url) }
             : {}),
+          apiProviders: [workspaceApi],
+          onCatalogueChanged: () => Effect.runSync(catalogueChanges.publish),
+          auditApi: (event) => {
+            Effect.runSync(Effect.logInfo("Extension API invocation", { ...event }));
+          },
+          validateApiScope: (context) =>
+            Effect.runPromise(
+              resolve(context).pipe(
+                Effect.as(true),
+                Effect.catch(() => Effect.succeed(false)),
+              ),
+            ),
           services: [
             {
               capability: WORKSPACE_READ_TEXT,
@@ -95,7 +114,6 @@ export const make = Effect.fn("EnvironmentExtensions.make")(function* (
           ],
           authorize: async (entry, capability, context) => {
             if (
-              capability !== WORKSPACE_READ_TEXT ||
               !entry.enabled ||
               !entry.grants.capabilities.includes(capability) ||
               !context.resource.projectId ||
@@ -136,7 +154,11 @@ export const make = Effect.fn("EnvironmentExtensions.make")(function* (
         operationError("initialize", new Error("Extension runtime unavailable.")),
     );
     return {
+      catalogue: unavailable,
       list: unavailable,
+      invokeApi: (_input: ExtensionApiInvokeInput) => unavailable,
+      discoverApis: (_input: ExtensionApiDiscoverInput) => unavailable,
+      selectApi: (_input: ExtensionApiSelection) => unavailable,
       install: (_input: ExtensionInstallInput) => unavailable,
       manage: (_input: ExtensionManageInput) => unavailable,
       client: (_id: string, _hash: string) => unavailable,
@@ -157,6 +179,53 @@ export const make = Effect.fn("EnvironmentExtensions.make")(function* (
       throw new Error("Extension client is unavailable or its installed content changed.");
   };
   return {
+    catalogue: Effect.sync(() => runtime.catalogue()),
+    invokeApi: Effect.fn("EnvironmentExtensions.invokeApi")(function* (
+      input: ExtensionApiInvokeInput,
+    ) {
+      const scope = yield* resolve(input.request.context);
+      const result = yield* promise("api.invoke", (signal) =>
+        runtime.invokeApi(
+          input.installationId,
+          input.expectedContentHash,
+          {
+            id: input.request.id,
+            method: input.request.method,
+            input: input.request.input,
+            versionRange: input.request.versionRange,
+            context: scope.context,
+            ...(input.request.expectedGeneration !== undefined
+              ? { expectedGeneration: input.request.expectedGeneration }
+              : {}),
+            ...(input.request.requestId !== undefined
+              ? { requestId: input.request.requestId }
+              : {}),
+          },
+          signal,
+        ),
+      );
+      yield* resolve(scope.context);
+      return yield* decodeJson(result).pipe(
+        Effect.mapError((cause) => operationError("api.invoke", cause)),
+      );
+    }),
+    discoverApis: Effect.fn("EnvironmentExtensions.discoverApis")(function* (
+      input: ExtensionApiDiscoverInput,
+    ) {
+      const scope = yield* resolve(input.context);
+      const apis = yield* promise("api.discover", (signal) =>
+        runtime.discoverApis(
+          input.installationId,
+          input.expectedContentHash,
+          scope.context,
+          signal,
+        ),
+      );
+      yield* resolve(scope.context);
+      return apis;
+    }),
+    selectApi: (input: ExtensionApiSelection) =>
+      promise("api.select", () => runtime.selectApi(input)),
     list,
     install: (input: ExtensionInstallInput) =>
       promise("install", async () => {
@@ -170,6 +239,10 @@ export const make = Effect.fn("EnvironmentExtensions.make")(function* (
       }),
     manage: (input: ExtensionManageInput) =>
       promise("manage", async () => {
+        if (input.action === "grants") {
+          if (!input.grants) throw new Error("Permission changes require the complete grant set.");
+          return installation(await runtime.updateGrants(input.id, input.grants));
+        }
         if (input.action === "remove") {
           await runtime.remove(input.id);
           return null;

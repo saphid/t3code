@@ -28,9 +28,25 @@ const installedExample = NodePath.join(
   "node_modules/@t3tools/extension-sdk/examples/counter/counter.ts",
 );
 NodeFS.copyFileSync(installedExample, NodePath.join(consumer, "packaged-counter.ts"));
+NodeFS.writeFileSync(
+  NodePath.join(consumer, "capabilities.ts"),
+  `
+import { bindApi } from "@t3tools/extension-sdk/capabilities";
+import { workspaceFilesApi } from "@t3tools/extension-sdk/catalogue";
+const context = { resource: { namespace: "thirdparty.files", id: "root", environmentId: "env" }, client: "test" };
+const api = bindApi(workspaceFilesApi, { async invokeApi() { return { entries: [], nextCursor: null }; } }, context);
+const result = await api.invoke("listEntries", { relativePath: "" }, new AbortController().signal);
+const kind: "file" | "directory" | undefined = result.entries[0]?.kind;
+void kind;
+// @ts-expect-error unknown method is rejected by public typed binding
+void api.invoke("privateStore", {}, new AbortController().signal);
+// @ts-expect-error required public input cannot be omitted
+void api.invoke("readText", {}, new AbortController().signal);
+`,
+);
 const configPath = NodePath.join(consumer, "tsconfig.json");
 const config = JSON.parse(NodeFS.readFileSync(configPath, "utf8"));
-config.include.push("packaged-counter.ts");
+config.include.push("packaged-counter.ts", "capabilities.ts");
 NodeFS.writeFileSync(configPath, JSON.stringify(config, null, 2));
 run(
   process.env.T3_EXTENSION_TSC ?? NodePath.join(root, "node_modules/.bin/tsc"),

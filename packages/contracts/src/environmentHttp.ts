@@ -4,6 +4,11 @@ import {
   ExtensionInstallInput,
   ExtensionInstallation,
   ExtensionInvokeInput,
+  ExtensionApiInvokeInput,
+  ExtensionApiDiscoverInput,
+  ExtensionApiDiscovery,
+  ExtensionApiSelection,
+  ExtensionApiCatalogue,
   ExtensionManageInput,
   ExtensionOperationError,
 } from "./extensions.ts";
@@ -625,10 +630,55 @@ class EnvironmentConnectHttpApi extends HttpApiGroup.make("connect")
 
 class EnvironmentExtensionsHttpApi extends HttpApiGroup.make("extensions")
   .add(
+    HttpApiEndpoint.post("invokeApi", "/api/extensions/api/invoke", {
+      headers: OptionalBearerHeaders,
+      payload: ExtensionApiInvokeInput,
+      success: Schema.Struct({ result: Schema.Json }),
+      error: [
+        ExtensionOperationError,
+        EnvironmentAuthInvalidError,
+        EnvironmentScopeRequiredError,
+        EnvironmentInternalError,
+      ],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("discoverApis", "/api/extensions/api/discover", {
+      headers: OptionalBearerHeaders,
+      payload: ExtensionApiDiscoverInput,
+      success: Schema.Struct({ apis: Schema.Array(ExtensionApiDiscovery) }),
+      error: [
+        ExtensionOperationError,
+        EnvironmentAuthInvalidError,
+        EnvironmentScopeRequiredError,
+        EnvironmentInternalError,
+      ],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("selectApi", "/api/extensions/api/select", {
+      headers: OptionalBearerHeaders,
+      payload: ExtensionApiSelection,
+      success: Schema.Struct({ ok: Schema.Boolean }),
+      error: [
+        ExtensionOperationError,
+        EnvironmentAuthInvalidError,
+        EnvironmentScopeRequiredError,
+        EnvironmentInternalError,
+      ],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
     HttpApiEndpoint.post("list", "/api/extensions/list", {
       headers: OptionalBearerHeaders,
       payload: Schema.Struct({}),
-      success: Schema.Struct({ installations: Schema.Array(ExtensionInstallation) }),
+      success: Schema.Struct({
+        installations: Schema.Array(ExtensionInstallation),
+        supportsCatalogueChanges: Schema.optional(Schema.Boolean),
+        apiSelections: Schema.optional(ExtensionApiCatalogue.fields.apiSelections),
+        apiResolution: Schema.optional(ExtensionApiCatalogue.fields.apiResolution),
+        pluginResolution: Schema.optional(ExtensionApiCatalogue.fields.pluginResolution),
+      }),
       error: [
         ExtensionOperationError,
         EnvironmentAuthInvalidError,

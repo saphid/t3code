@@ -7456,17 +7456,18 @@ export default function ChatView(props: ChatViewProps) {
         threadRef={activeThreadRef}
         surface={renderedRightPanelSurface}
         visible={rightPanelOpen}
-        context={{
-          client: isElectron ? "desktop" : "web",
-          resource: {
-            namespace: "t3.workspace",
-            id: "right-panel",
-            environmentId: activeThreadRef.environmentId,
-            projectId: activeThread.projectId,
-            threadId: activeThreadRef.threadId,
-          },
-          ...(activeWorkspaceRoot ? { workspaceRevision: activeWorkspaceRoot } : {}),
-        }}
+        context={
+          installedExtensionContext ?? {
+            client: isElectron ? "desktop" : "web",
+            resource: {
+              namespace: "t3.workspace",
+              id: "right-panel",
+              environmentId: activeThreadRef.environmentId,
+              projectId: activeThread.projectId,
+              threadId: activeThreadRef.threadId,
+            },
+          }
+        }
         bindings={{
           browser:
             renderedRightPanelSurface.kind === "preview"

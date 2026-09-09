@@ -117,6 +117,16 @@ export function registerWorkspaceExtension(
     notify();
   };
 }
+/** Resolve only the selected installed owner, without substituting a global first-party surface. */
+export function installedSurfaceDescriptor(
+  environmentId: string,
+  extensionId: string,
+  surfaceId: string,
+) {
+  return registrations
+    .get(JSON.stringify([environmentId, extensionId]))
+    ?.extension.manifest.surfaces.find((surface) => surface.id === surfaceId);
+}
 export function useWorkspaceSurfaceTitles(environmentId?: string) {
   const get = useCallback(
     () =>

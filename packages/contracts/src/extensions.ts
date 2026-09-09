@@ -38,7 +38,8 @@ export const ExtensionInstallInput = Schema.Struct({
 export type ExtensionInstallInput = typeof ExtensionInstallInput.Type;
 export const ExtensionManageInput = Schema.Struct({
   id: Identity,
-  action: Schema.Literals(["enable", "disable", "remove", "update"]),
+  action: Schema.Literals(["enable", "disable", "remove", "update", "rollback", "grants"]),
+  grants: Schema.optional(ExtensionGrants),
   sourceDir: Schema.optional(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(4096))),
   trusted: Schema.optional(Schema.Literal(true)),
 });
@@ -75,3 +76,77 @@ export function extensionWorkspaceRevision(
 ): string {
   return JSON.stringify([projectWorkspaceRoot, threadWorktreePath]);
 }
+
+export const ExtensionApiInvocation = Schema.Struct({
+  id: Identity,
+  versionRange: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200)),
+  method: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(80)),
+  input: Schema.Json,
+  context: ExtensionViewContext,
+  expectedGeneration: Schema.optional(Schema.Int.check(Schema.isGreaterThanOrEqualTo(1))),
+  requestId: Schema.optional(Identity),
+});
+export const ExtensionApiInvokeInput = Schema.Struct({
+  installationId: Identity,
+  expectedContentHash: ExtensionContentHash,
+  request: ExtensionApiInvocation,
+});
+export type ExtensionApiInvokeInput = typeof ExtensionApiInvokeInput.Type;
+export const ExtensionApiDiscoverInput = Schema.Struct({
+  installationId: Identity,
+  expectedContentHash: ExtensionContentHash,
+  context: ExtensionViewContext,
+});
+export type ExtensionApiDiscoverInput = typeof ExtensionApiDiscoverInput.Type;
+export const ExtensionApiSelection = Schema.Struct({
+  id: Identity,
+  providerId: Identity,
+  fallbackProviderIds: Schema.Array(Identity).check(Schema.isMaxLength(32)),
+});
+export type ExtensionApiSelection = typeof ExtensionApiSelection.Type;
+export const ExtensionApiDiscovery = Schema.Struct({
+  id: Identity,
+  version: Identity,
+  providerId: Identity,
+  pluginId: Schema.optional(Identity),
+  generation: Schema.Int,
+  health: Schema.Literals(["starting", "ready", "unavailable", "failed"]),
+  selected: Schema.Boolean,
+  reason: Schema.optional(
+    Schema.Struct({
+      code: Identity,
+      detail: Schema.String,
+      relatedIds: Schema.Array(Identity),
+    }),
+  ),
+});
+
+const ExtensionApiUnavailableReason = Schema.Struct({
+  code: Identity,
+  detail: Schema.String,
+  relatedIds: Schema.Array(Identity),
+});
+export const ExtensionApiCatalogue = Schema.Struct({
+  apiSelections: Schema.Array(ExtensionApiSelection),
+  apiResolution: Schema.Array(
+    Schema.Struct({
+      id: Identity,
+      providerId: Schema.optional(Identity),
+      reason: Schema.optional(ExtensionApiUnavailableReason),
+    }),
+  ),
+  pluginResolution: Schema.Array(
+    Schema.Struct({
+      id: Identity,
+      status: Schema.Literals(["available", "disabled", "unavailable"]),
+      reason: Schema.optional(ExtensionApiUnavailableReason),
+    }),
+  ),
+});
+
+/** A replayed metadata-only catalogue invalidation version. */
+export const ExtensionCatalogueChange = Schema.Struct({
+  epoch: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(64)),
+  revision: Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER })),
+});
+export type ExtensionCatalogueChange = typeof ExtensionCatalogueChange.Type;

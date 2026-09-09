@@ -1,3 +1,14 @@
+import {
+  validateApiDefinition,
+  validateApiRequirement,
+  validateRangeText,
+  type ApiDefinition,
+  type ApiRequirement,
+  type PluginDependency,
+  type ApiInvocation,
+  type ApiDiscovery,
+} from "./capabilities.js";
+import { assertProvidedApiOwner } from "./catalogue.js";
 import type * as React from "react";
 import {
   assertId,
@@ -21,28 +32,52 @@ export interface ToolDescriptor {
   readonly readOnly: true;
   readonly capabilities: readonly string[];
 }
-export interface EnvironmentPackage {
+export interface EnvironmentPackageV1 {
   readonly format: 1;
+  readonly provides?: never;
+  readonly requires?: never;
+  readonly dependencies?: never;
   readonly manifest: ExtensionManifest;
   readonly clientEntry?: string;
   readonly serverEntry?: string;
   readonly tools: readonly ToolDescriptor[];
 }
+export interface EnvironmentPackageV2 extends Omit<
+  EnvironmentPackageV1,
+  "format" | "provides" | "requires" | "dependencies"
+> {
+  readonly format: 2;
+  readonly dependencies: readonly PluginDependency[];
+  readonly provides: readonly ApiDefinition[];
+  readonly requires: readonly ApiRequirement[];
+}
+export type EnvironmentPackage = EnvironmentPackageV1 | EnvironmentPackageV2;
 export interface ToolSession {
   readonly context: ViewContext;
   readonly signal: AbortSignal;
   invoke(capability: string, input: Json): Promise<Json>;
+  invokeApi(request: Omit<ApiInvocation, "context">): Promise<Json>;
 }
 export interface ServerTool {
   readonly id: string;
   invoke(input: Json, session: ToolSession): Json | Promise<Json>;
 }
+export interface ServerApi {
+  readonly id: string;
+  readonly methods: readonly {
+    readonly name: string;
+    invoke(input: Json, session: ToolSession): Json | Promise<Json>;
+  }[];
+}
 export interface ServerExtension {
+  readonly apis?: readonly ServerApi[];
   readonly tools: readonly ServerTool[];
 }
 export interface ClientHost {
   /** Use this React identity; a client entry must not bundle or import another React runtime. */
   readonly React: typeof React;
+  invokeApi(request: ApiInvocation, signal: AbortSignal): Promise<Json>;
+  discoverApis(context: ViewContext, signal: AbortSignal): Promise<readonly ApiDiscovery[]>;
   /** Host resolves installed grants and authenticated scope; supplied context is not authority. */
   invokeTool(toolId: string, input: Json, context: ViewContext, signal: AbortSignal): Promise<Json>;
 }
@@ -78,9 +113,23 @@ export function validateEnvironmentPackage(value: unknown): EnvironmentPackage {
     !pkg ||
     typeof pkg !== "object" ||
     Array.isArray(pkg) ||
-    pkg.format !== 1 ||
+    (pkg.format !== 1 && pkg.format !== 2) ||
     Object.keys(pkg).some(
-      (key) => !["format", "manifest", "clientEntry", "serverEntry", "tools"].includes(key),
+      (key) =>
+        !(
+          pkg.format === 2
+            ? [
+                "format",
+                "manifest",
+                "clientEntry",
+                "serverEntry",
+                "tools",
+                "dependencies",
+                "provides",
+                "requires",
+              ]
+            : ["format", "manifest", "clientEntry", "serverEntry", "tools"]
+        ).includes(key),
     )
   )
     throw new Error("Invalid environment package");
@@ -131,6 +180,42 @@ export function validateEnvironmentPackage(value: unknown): EnvironmentPackage {
     }
     validateSchemaRefs(tool.inputSchema);
   }
+  if (pkg.format === 2) {
+    for (const array of [pkg.dependencies, pkg.provides, pkg.requires])
+      if (!Array.isArray(array) || array.length > 32)
+        throw new Error("Invalid capability declarations");
+    if (pkg.provides.length && !pkg.serverEntry)
+      throw new Error("API providers require a server entry");
+    const dependencies = new Set<string>();
+    for (const dependency of pkg.dependencies) {
+      assertId(dependency.pluginId);
+      if (dependency.pluginId.includes("/") || dependencies.has(dependency.pluginId))
+        throw new Error("Duplicate or invalid dependency");
+      dependencies.add(dependency.pluginId);
+      validateRangeText(dependency.versionRange);
+      if (!Array.isArray(dependency.apis) || dependency.apis.length > 32)
+        throw new Error("Invalid dependency APIs");
+      const ids = new Set<string>();
+      for (const api of dependency.apis) {
+        validateApiRequirement(api);
+        if (ids.has(api.id)) throw new Error("Duplicate dependency API");
+        ids.add(api.id);
+      }
+    }
+    const provided = new Set<string>();
+    for (const api of pkg.provides) {
+      validateApiDefinition(api);
+      assertProvidedApiOwner(manifest.id, api);
+      if (provided.has(api.id)) throw new Error("Duplicate provided API");
+      provided.add(api.id);
+    }
+    const required = new Set<string>();
+    for (const api of pkg.requires) {
+      validateApiRequirement(api);
+      if (required.has(api.id)) throw new Error("Duplicate required API");
+      required.add(api.id);
+    }
+  }
   return { ...pkg, manifest };
 }
 /** Match executable server handlers to the already validated installed tool catalog. */
@@ -156,5 +241,44 @@ export function validateServerExtension(pkg: EnvironmentPackage, value: unknown)
       throw new Error("Duplicate, foreign or invalid server tool");
     ids.add(tool.id);
   }
-  return { tools: definition.tools.map((tool) => ({ id: tool.id, invoke: tool.invoke })) };
+  const expected = safe.format === 2 ? safe.provides : [];
+  const apis = definition.apis ?? [];
+  if (!Array.isArray(apis) || apis.length !== expected.length)
+    throw new Error("Server APIs do not match package");
+  const apiIds = new Set<string>();
+  for (const api of apis) {
+    const descriptor = expected.find((item) => item.id === api.id);
+    if (
+      !descriptor ||
+      apiIds.has(api.id) ||
+      !Array.isArray(api.methods) ||
+      api.methods.length !== descriptor.methods.length
+    )
+      throw new Error("Duplicate, foreign or invalid server API");
+    apiIds.add(api.id);
+    const names = new Set<string>();
+    for (const method of api.methods) {
+      if (
+        names.has(method.name) ||
+        !descriptor.methods.some((item) => item.name === method.name) ||
+        typeof method.invoke !== "function"
+      )
+        throw new Error("Server API methods do not match package");
+      names.add(method.name);
+    }
+  }
+  return {
+    tools: definition.tools.map((tool) => ({ id: tool.id, invoke: tool.invoke })),
+    ...(apis.length
+      ? {
+          apis: apis.map((api) => ({
+            id: api.id,
+            methods: api.methods.map((method: ServerApi["methods"][number]) => ({
+              name: method.name,
+              invoke: method.invoke,
+            })),
+          })),
+        }
+      : {}),
+  };
 }

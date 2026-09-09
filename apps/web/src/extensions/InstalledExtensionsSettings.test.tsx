@@ -1,13 +1,16 @@
 import { act, create, type ReactTestRenderer } from "react-test-renderer";
 import { describe, it, expect, vi } from "vite-plus/test";
 import { AuthAccessWriteScope } from "@t3tools/contracts";
+import type { InstalledPackage } from "./installedController";
+import { filePresentationApi } from "@t3tools/extension-sdk/catalogue";
 import { InstalledExtensionsSettings } from "./InstalledExtensionsSettings";
 const fixture = vi.hoisted(() => ({
   manage: true,
   install: vi.fn(async () => ({})),
   update: vi.fn(async () => ({})),
   refresh: vi.fn(async () => {}),
-  installations: [],
+  installations: [] as readonly InstalledPackage[],
+  select: vi.fn(async () => ({})),
 }));
 vi.mock("@effect/atom-react", () => ({
   useAtomValue: () => [
@@ -38,6 +41,7 @@ vi.mock("./installedEnvironment", () => ({
   installEnvironmentExtension: fixture.install,
   manageInstalledExtension: fixture.update,
   refreshInstalledExtensions: fixture.refresh,
+  selectInstalledApiProvider: fixture.select,
 }));
 vi.mock("../components/ui/button", () => ({
   Button: (props: React.ComponentProps<"button">) => <button {...props} />,
@@ -87,7 +91,10 @@ describe("installed package settings", () => {
       });
       expect(button("Install package").props.disabled).toBe(true);
       await act(async () =>
-        root.root.findAllByType("input")[3]!.props.onChange({ target: { checked: true } }),
+        root.root
+          .findAllByType("input")
+          .at(-1)!
+          .props.onChange({ target: { checked: true } }),
       );
       expect(button("Install package").props.disabled).toBe(false);
       await act(async () => button("Install package").props.onClick());
@@ -116,7 +123,7 @@ describe("installed package settings", () => {
       await act(async () => {
         const inputs = root.root.findAllByType("input");
         inputs[0]!.props.onChange({ target: { value: "/fixture" } });
-        inputs[3]!.props.onChange({ target: { checked: true } });
+        inputs.at(-1)!.props.onChange({ target: { checked: true } });
       });
       expect(
         root.root
@@ -128,4 +135,89 @@ describe("installed package settings", () => {
       fixture.manage = true;
     }
   });
+});
+
+it("selects a package-provided API explicitly without changing installation grants", async () => {
+  fixture.manage = true;
+  fixture.select.mockClear();
+  fixture.install.mockClear();
+  fixture.installations = [
+    {
+      id: "example.files",
+      enabled: true,
+      contentHash: "a".repeat(64),
+      grants: { capabilities: [], projectIds: [] },
+      package: {
+        format: 2,
+        manifest: { id: "example.files", version: "1.0.0", apiVersion: 1, surfaces: [] },
+        serverEntry: "server.mjs",
+        tools: [],
+        requires: [],
+        dependencies: [],
+        provides: [filePresentationApi.definition],
+      },
+    },
+  ];
+  let root!: ReactTestRenderer;
+  try {
+    await act(async () => {
+      root = create(<InstalledExtensionsSettings />);
+    });
+    const select = root.root
+      .findAllByType("button")
+      .find((button) => button.children.join("") === "Use for t3.file/presentation");
+    expect(select).toBeDefined();
+    await act(async () => {
+      select!.props.onClick();
+    });
+    expect(fixture.select).toHaveBeenCalledWith("env-a", {
+      id: "t3.file/presentation",
+      providerId: "example.files",
+      fallbackProviderIds: [],
+    });
+    expect(fixture.install).not.toHaveBeenCalled();
+    const permissions = () =>
+      root.root
+        .findAllByType("button")
+        .find((button) => button.children.join("") === "Apply selected permissions")!;
+    expect(permissions().props.disabled).toBe(false);
+    await act(async () => permissions().props.onClick());
+    expect(fixture.update).toHaveBeenLastCalledWith("env-a", {
+      id: "example.files",
+      action: "grants",
+      grants: { capabilities: [], projectIds: [] },
+    });
+    await act(async () => {
+      const inputs = root.root.findAllByType("input");
+      inputs[1]!.props.onChange({ target: { checked: true } });
+      inputs[2]!.props.onChange({ target: { checked: true } });
+    });
+    await act(async () => permissions().props.onClick());
+    expect(fixture.update).toHaveBeenLastCalledWith("env-a", {
+      id: "example.files",
+      action: "grants",
+      grants: { capabilities: ["t3.workspace/read-text"], projectIds: ["project-a"] },
+    });
+    expect(root.root.findAllByType("input").at(-1)!.props.checked).toBe(false);
+    fixture.update.mockRejectedValueOnce(
+      new Error("No previous package is available for rollback"),
+    );
+    const rollback = root.root
+      .findAllByType("button")
+      .find((button) => button.children.join("") === "Roll back package");
+    expect(rollback).toBeDefined();
+    await act(async () => {
+      rollback!.props.onClick();
+    });
+    expect(fixture.update).toHaveBeenCalledWith("env-a", {
+      id: "example.files",
+      action: "rollback",
+    });
+    expect(JSON.stringify(root.toJSON())).toContain(
+      "No previous package is available for rollback",
+    );
+  } finally {
+    fixture.installations = [];
+    await act(async () => root?.unmount());
+  }
 });

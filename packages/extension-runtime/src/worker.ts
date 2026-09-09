@@ -62,7 +62,11 @@ async function handle(raw: unknown) {
   }
   if (message.type !== "invoke" || !definition) throw new Error("Worker is not ready");
   const callId = String(message.callId);
-  const tool = definition.tools.find((item) => item.id === message.toolId);
+  const tool = message.apiId
+    ? definition.apis
+        ?.find((api) => api.id === message.apiId)
+        ?.methods.find((method) => method.name === message.method)
+    : definition.tools.find((item) => item.id === message.toolId);
   if (!tool || controllers.has(callId)) throw new Error("Invalid tool invocation");
   if (controllers.size >= 8) {
     send({ type: "result", callId, error: "Worker pending tool limit reached" });
@@ -74,6 +78,20 @@ async function handle(raw: unknown) {
     const value = await tool.invoke(copyJson(message.input ?? null), {
       context: validateContext(message.context as unknown as ViewContext),
       signal: controller.signal,
+      invokeApi(request) {
+        if (controller.signal.aborted || services.size >= 8)
+          return Promise.reject(new Error("API call unavailable"));
+        const requestId = String(++nextService);
+        return new Promise((resolve, reject) => {
+          services.set(requestId, { callId, resolve, reject });
+          try {
+            send({ type: "api-service", callId, requestId, request: copyJson(request) });
+          } catch (error) {
+            services.delete(requestId);
+            reject(error);
+          }
+        });
+      },
       invoke(capability, input) {
         if (controller.signal.aborted || services.size >= 8)
           return Promise.reject(new Error("Service call unavailable"));

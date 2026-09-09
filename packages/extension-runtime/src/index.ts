@@ -1,3 +1,15 @@
+import { resolveCapabilities } from "./resolution.js";
+import {
+  createApiBroker,
+  type ApiAuthority,
+  type HostApiProvider,
+  type ApiAudit,
+} from "./broker.js";
+import type {
+  ApiInvocation,
+  ApiDiscovery,
+  ApiSelection,
+} from "@t3tools/extension-sdk/capabilities";
 import { copyEnvelope } from "./ipc.js";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
@@ -46,6 +58,10 @@ export interface RuntimeOptions {
   readonly rootDir: string;
   readonly environmentId: string;
   readonly services: readonly HostService[];
+  readonly apiProviders?: readonly HostApiProvider[];
+  readonly auditApi?: (event: ApiAudit) => void;
+  readonly onCatalogueChanged?: () => void;
+  readonly validateApiScope?: (context: ViewContext) => boolean | Promise<boolean>;
   authorize(
     installation: Installation,
     capability: string,
@@ -57,10 +73,30 @@ export interface RuntimeOptions {
 export interface ExtensionRuntime {
   install(sourceDir: string, grants?: Partial<InstallationGrants>): Promise<Installation>;
   list(): readonly Installation[];
+  catalogue(): {
+    apiSelections: readonly ApiSelection[];
+    apiResolution: ReturnType<typeof resolveCapabilities>["apis"];
+    pluginResolution: ReturnType<typeof resolveCapabilities>["plugins"];
+  };
+  updateGrants(id: string, grants: InstallationGrants): Promise<Installation>;
   enable(id: string): Promise<Installation>;
   disable(id: string): Promise<Installation>;
   remove(id: string): Promise<void>;
   update(id: string, sourceDir: string): Promise<Installation>;
+  rollback(id: string): Promise<Installation>;
+  selectApi(selection: ApiSelection): Promise<void>;
+  invokeApi(
+    id: string,
+    expectedContentHash: string,
+    request: ApiInvocation,
+    signal: AbortSignal,
+  ): Promise<Json>;
+  discoverApis(
+    id: string,
+    expectedContentHash: string,
+    context: ViewContext,
+    signal: AbortSignal,
+  ): Promise<readonly ApiDiscovery[]>;
   readClient(id: string): Promise<{ code: string; contentHash: string }>;
   invoke(
     toolId: string,
@@ -72,6 +108,7 @@ export interface ExtensionRuntime {
   dispose(): Promise<void>;
 }
 interface Pending {
+  readonly authority?: ApiAuthority;
   readonly context: ViewContext;
   readonly tool: ToolDescriptor;
   readonly controller: AbortController;
@@ -120,8 +157,12 @@ export async function createExtensionRuntime(options: RuntimeOptions): Promise<E
   const installations = new Map<string, Installation>();
   const validators = new Map<string, Map<string, ValidateFunction>>();
   const workers = new Map<string, Worker>();
+  const health = new Map<string, "ready" | "starting" | "failed" | "unavailable">();
+  const recovering = new Map<string, Installation>();
   const draining = new Set<Promise<void>>();
   let disposed = false;
+  let selections: readonly ApiSelection[] = [];
+  const previous = new Map<string, Installation>();
   let mutations = Promise.resolve();
   const ajv = new Ajv({ strict: true, allErrors: false, addUsedSchema: false });
   function compile(pkg: EnvironmentPackage): Map<string, ValidateFunction> {
@@ -156,6 +197,8 @@ export async function createExtensionRuntime(options: RuntimeOptions): Promise<E
       version: unknown;
       environmentId: unknown;
       installations: unknown;
+      selections?: readonly ApiSelection[];
+      previous?: readonly Installation[];
     };
     if (
       stored.version !== 1 ||
@@ -164,6 +207,13 @@ export async function createExtensionRuntime(options: RuntimeOptions): Promise<E
       stored.installations.length > 32
     )
       throw new Error("Invalid installation records");
+    selections = stored.selections ?? [];
+    for (const record of stored.previous ?? []) {
+      const pkg = validateEnvironmentPackage(record.package);
+      if (record.id !== pkg.manifest.id || !/^[a-f0-9]{64}$/.test(record.contentHash))
+        throw new Error("Invalid rollback record");
+      previous.set(record.id, { ...record, package: pkg, grants: grants(record.grants) });
+    }
     for (const value of stored.installations) {
       const record = clone(value) as Installation;
       const pkg = validateEnvironmentPackage(record.package);
@@ -194,6 +244,8 @@ export async function createExtensionRuntime(options: RuntimeOptions): Promise<E
     live();
     if (installations.get(record.id) !== record || !record.enabled)
       throw new Error("Installation changed or disabled");
+    const state = broker.resolution().plugins.find((item) => item.id === record.id);
+    if (state?.status !== "available") throw new Error(state?.reason?.code ?? "Plugin unavailable");
   }
   function mutate<T>(action: () => Promise<T>): Promise<T> {
     const next = mutations.then(() => {
@@ -206,8 +258,17 @@ export async function createExtensionRuntime(options: RuntimeOptions): Promise<E
     );
     return next;
   }
-  async function persist(next: Map<string, Installation>) {
-    await atomicJson(root, { version: 1, environmentId, installations: [...next.values()] });
+  async function persist(next: Map<string, Installation>, selected = selections) {
+    await atomicJson(
+      root,
+      clone({
+        version: 1,
+        environmentId,
+        installations: [...next.values()],
+        selections: selected,
+        previous: [...previous.values()],
+      }),
+    );
   }
   async function verify(record: Installation): Promise<PackageSnapshot> {
     await validateModuleScope(root);
@@ -229,7 +290,6 @@ export async function createExtensionRuntime(options: RuntimeOptions): Promise<E
       throw new Error("Resource is outside installation grants");
     if (
       !record.grants.capabilities.includes(capability) ||
-      !services.has(capability) ||
       !(await authorize(clone(record), capability, copyJson(context)))
     )
       throw new Error("Capability denied");
@@ -246,7 +306,90 @@ export async function createExtensionRuntime(options: RuntimeOptions): Promise<E
     for (const capability of tool.capabilities) await allowed(record, capability, context);
     current(record);
   }
-  function stop(worker: Worker, reason: Error) {
+  function publishCatalogueChange() {
+    try {
+      options.onCatalogueChanged?.();
+    } catch {
+      /* A notification sink cannot undo an already committed registry change. */
+    }
+  }
+  function affectedPlugins(
+    changed: readonly string[],
+    before: readonly Installation[] = [],
+    oldResolution = broker.resolution(),
+  ): string[] {
+    const affected = new Set(changed);
+    const now = broker.resolution();
+    const changedApis = new Set(
+      [...oldResolution.apis, ...now.apis]
+        .filter(
+          (api) =>
+            oldResolution.apis.find((item) => item.id === api.id)?.providerId !==
+            now.apis.find((item) => item.id === api.id)?.providerId,
+        )
+        .map((api) => api.id),
+    );
+    for (const state of now.plugins) {
+      const old = oldResolution.plugins.find((item) => item.id === state.id);
+      if (old?.status !== state.status || old?.reason?.code !== state.reason?.code)
+        affected.add(state.id);
+    }
+    const records = [...before, ...installations.values()];
+    let changedGraph = true;
+    while (changedGraph) {
+      changedGraph = false;
+      for (const record of records) {
+        if (affected.has(record.id)) continue;
+        const depends =
+          (record.package.provides ?? []).some((api) => changedApis.has(api.id)) ||
+          (record.package.dependencies ?? []).some((dependency) =>
+            affected.has(dependency.pluginId),
+          ) ||
+          (record.package.requires ?? []).some(
+            (api) =>
+              changedApis.has(api.id) ||
+              records.some(
+                (provider) =>
+                  affected.has(provider.id) &&
+                  provider.package.provides?.some((item) => item.id === api.id),
+              ) ||
+              [...oldResolution.apis, ...now.apis].some(
+                (selected) =>
+                  selected.id === api.id &&
+                  !!selected.providerId &&
+                  affected.has(selected.providerId),
+              ),
+          );
+        if (depends) {
+          affected.add(record.id);
+          changedGraph = true;
+        }
+      }
+    }
+    return [...affected];
+  }
+  async function invalidatePlugins(ids: readonly string[]) {
+    broker.invalidate(ids);
+    const owned = ids.flatMap((id) => {
+      const worker = workers.get(id);
+      return worker ? [worker] : [];
+    });
+    for (const worker of owned)
+      stop(worker, new Error("Installation or dependency changed"), false);
+    for (const id of ids) {
+      health.delete(id);
+      recovering.delete(id);
+    }
+    await Promise.all(owned.map((worker) => worker.exited));
+    publishCatalogueChange();
+  }
+  function stop(worker: Worker, reason: Error, failed = true) {
+    if (failed && workers.get(worker.installation.id) === worker) {
+      recovering.delete(worker.installation.id);
+      health.set(worker.installation.id, "failed");
+      broker.invalidate(affectedPlugins([worker.installation.id]));
+      publishCatalogueChange();
+    }
     if (workers.get(worker.installation.id) === worker) workers.delete(worker.installation.id);
     clearTimeout(worker.startupTimer);
     worker.readyReject(reason);
@@ -272,6 +415,12 @@ export async function createExtensionRuntime(options: RuntimeOptions): Promise<E
     const message = copyEnvelope(raw);
     if (message.type === "ready") {
       clearTimeout(worker.startupTimer);
+      health.set(worker.installation.id, "ready");
+      if (recovering.get(worker.installation.id) === worker.installation) {
+        recovering.delete(worker.installation.id);
+        broker.invalidate(affectedPlugins([worker.installation.id]));
+        publishCatalogueChange();
+      }
       worker.readyResolve();
       return;
     }
@@ -288,6 +437,38 @@ export async function createExtensionRuntime(options: RuntimeOptions): Promise<E
     }
     const pending = worker.calls.get(id);
     if (!pending) return;
+    if (message.type === "api-service") {
+      if (!pending.authority || worker.services >= 8) {
+        send(worker, {
+          type: "service-result",
+          requestId: message.requestId,
+          error: "API authority unavailable",
+        });
+        return;
+      }
+      worker.services++;
+      try {
+        const request = copyJson(message.request) as unknown as Omit<ApiInvocation, "context">;
+        const value = await broker.invoke(
+          worker.installation,
+          { ...request, context: pending.context },
+          pending.controller.signal,
+          pending.authority,
+        );
+        if (worker.calls.get(id) === pending && !pending.controller.signal.aborted)
+          send(worker, { type: "service-result", requestId: message.requestId, value });
+      } catch (error) {
+        if (worker.calls.get(id) === pending && !pending.controller.signal.aborted)
+          send(worker, {
+            type: "service-result",
+            requestId: message.requestId,
+            error: errorMessage(error),
+          });
+      } finally {
+        worker.services--;
+      }
+      return;
+    }
     if (message.type === "service") {
       if (worker.services >= 8) {
         stop(worker, new Error("Worker service limit reached"));
@@ -298,7 +479,9 @@ export async function createExtensionRuntime(options: RuntimeOptions): Promise<E
         const capability = String(message.capability);
         if (!pending.tool.capabilities.includes(capability))
           throw new Error("Tool capability is not declared");
-        await allowed(worker.installation, capability, pending.context);
+        if (!services.has(capability)) throw new Error("Host service unavailable");
+        for (const caller of pending.authority?.callers ?? [worker.installation])
+          await allowed(caller, capability, pending.context);
         if (pending.controller.signal.aborted) throw new Error("Invocation cancelled");
         const value = copyJson(
           await services
@@ -309,7 +492,9 @@ export async function createExtensionRuntime(options: RuntimeOptions): Promise<E
               pending.controller.signal,
             ),
         );
-        await allowed(worker.installation, capability, pending.context);
+        if (!services.has(capability)) throw new Error("Host service unavailable");
+        for (const caller of pending.authority?.callers ?? [worker.installation])
+          await allowed(caller, capability, pending.context);
         if (worker.calls.get(id) !== pending || pending.controller.signal.aborted) return;
         send(worker, { type: "service-result", requestId: message.requestId, value });
       } catch (error) {
@@ -378,6 +563,7 @@ export async function createExtensionRuntime(options: RuntimeOptions): Promise<E
         timeout,
       ),
     };
+    health.set(record.id, "starting");
     workers.set(record.id, worker);
     child.on("error", (error) => stop(worker, error));
     child.on("exit", () => stop(worker, new Error("Extension worker exited")));
@@ -396,17 +582,225 @@ export async function createExtensionRuntime(options: RuntimeOptions): Promise<E
     nextRecord: Installation | null,
     compiled?: Map<string, ValidateFunction>,
   ): Promise<void> {
+    const before = [...installations.values()];
+    const oldResolution = broker.resolution();
     const next = new Map(installations);
     if (nextRecord) next.set(record.id, nextRecord);
     else next.delete(record.id);
     await persist(next);
-    const worker = workers.get(record.id);
-    if (worker) stop(worker, new Error("Installation changed"));
     if (nextRecord) installations.set(record.id, nextRecord);
     else installations.delete(record.id);
     if (compiled) validators.set(record.id, compiled);
-    if (worker) await worker.exited;
+    await invalidatePlugins(affectedPlugins([record.id], before, oldResolution));
   }
+  async function invokeWorker(
+    toolId: string,
+    input: Json,
+    unsafeContext: ViewContext,
+    signal: AbortSignal,
+    expectedContentHash?: string,
+    api?: { record: Installation; request: ApiInvocation; authority: ApiAuthority },
+  ) {
+    live();
+    let worker: Worker | undefined;
+    let callId: string | undefined;
+    let recovery: Installation | undefined;
+    const controller = new AbortController();
+    const cancel = (reason: Error, hard = false) => {
+      controller.abort(reason);
+      if (!worker) return;
+      if (hard) {
+        stop(worker, reason);
+        return;
+      }
+      if (!callId) return;
+      const owned = worker;
+      const pending = owned.calls.get(callId);
+      if (!pending) return;
+      owned.calls.delete(callId);
+      pending.controller.abort(reason);
+      pending.reject(reason);
+      owned.cancelled.set(
+        callId,
+        setTimeout(
+          () => stop(owned, new Error("Cancelled tool did not settle before deadline")),
+          timeout,
+        ),
+      );
+      try {
+        send(owned, { type: "cancel", callId });
+      } catch (error) {
+        stop(owned, new Error(errorMessage(error)));
+      }
+    };
+    const abort = () => cancel(new Error("Invocation cancelled"));
+    const timer = setTimeout(
+      () => cancel(new Error("Invocation deadline exceeded"), true),
+      timeout,
+    );
+    signal.addEventListener("abort", abort, { once: true });
+    if (signal.aborted) abort();
+    const active = () => {
+      if (controller.signal.aborted) throw controller.signal.reason;
+    };
+    let rejectCancelled!: (reason: Error) => void;
+    const cancelled = new Promise<never>((_, reject) => {
+      rejectCancelled = reject;
+    });
+    const onCancel = () => rejectCancelled(controller.signal.reason as Error);
+    controller.signal.addEventListener("abort", onCancel, { once: true });
+    if (controller.signal.aborted) onCancel();
+    const run = async (): Promise<Json> => {
+      active();
+      const context = validateContext(unsafeContext);
+      const record =
+        api?.record ??
+        [...installations.values()].find((value) =>
+          value.package.tools.some((tool) => tool.id === toolId),
+        );
+      if (!record) throw new Error("Tool is not installed");
+      if (expectedContentHash !== undefined && record.contentHash !== expectedContentHash)
+        throw new Error("Installed content changed");
+      const descriptor = api
+        ? record.package.provides
+            ?.find((item) => item.id === api.request.id)
+            ?.methods.find((item) => item.name === api.request.method)
+        : undefined;
+      const tool: ToolDescriptor = api
+        ? {
+            id: api.request.id,
+            title: api.request.method,
+            description: "",
+            readOnly: true,
+            inputSchema: descriptor!.inputSchema,
+            capabilities: descriptor!.requiredGrants,
+          }
+        : record.package.tools.find((value) => value.id === toolId)!;
+      if (!api && record.package.format === 1 && health.get(record.id) === "failed") {
+        recovery = record;
+        recovering.set(record.id, record);
+        health.delete(record.id);
+      }
+      const value = copyJson(input);
+      if (!api && !validators.get(record.id)!.get(toolId)!(value))
+        throw new Error("Tool input does not match schema");
+      await permitted(record, tool, context);
+      active();
+      await verify(record);
+      active();
+      current(record);
+      worker = start(record);
+      await worker.ready;
+      active();
+      current(record);
+      if (worker.calls.size >= 8) throw new Error("Pending tool limit reached");
+      const owned = worker;
+      return new Promise<Json>((resolve, reject) => {
+        callId = NodeCrypto.randomUUID();
+        owned.calls.set(callId, {
+          authority: api?.authority ?? { callers: [record], calls: [], allowWrite: false },
+          context,
+          tool,
+          controller: new AbortController(),
+          resolve,
+          reject,
+          cleanup() {},
+        });
+        try {
+          send(owned, {
+            type: "invoke",
+            callId,
+            toolId,
+            ...(api ? { apiId: api.request.id, method: api.request.method } : {}),
+            input: value,
+            context,
+          });
+        } catch (error) {
+          stop(owned, new Error(errorMessage(error)));
+        }
+      });
+    };
+    try {
+      return await Promise.race([run(), cancelled]);
+    } finally {
+      clearTimeout(timer);
+      signal.removeEventListener("abort", abort);
+      controller.signal.removeEventListener("abort", onCancel);
+      if (
+        !disposed &&
+        recovery &&
+        recovering.get(recovery.id) === recovery &&
+        installations.get(recovery.id) === recovery &&
+        !workers.has(recovery.id)
+      ) {
+        recovering.delete(recovery.id);
+        health.set(recovery.id, "failed");
+      }
+    }
+  }
+
+  const broker = createApiBroker({
+    installations: () => [...installations.values()],
+    providers: options.apiProviders ?? [],
+    selections: () => selections,
+    authorize,
+    environmentId,
+    timeoutMs: timeout,
+    ...(options.auditApi ? { audit: options.auditApi } : {}),
+    ...(options.validateApiScope ? { validateScope: options.validateApiScope } : {}),
+    health: (id) => health.get(id) ?? "starting",
+    invokeWorker: (record, request, signal, authority) =>
+      invokeWorker(request.id, request.input, request.context, signal, record.contentHash, {
+        record,
+        request,
+        authority,
+      }),
+  });
+  for (const record of installations.values()) broker.validatePackage(record);
+  async function stage(record: Installation) {
+    if (!record.package.serverEntry) return;
+    // A separate process verifies the executable contract without receiving grants or service authority.
+    const child = NodeChildProcess.fork(workerUrl, [], {
+      cwd: NodePath.join(root, "packages", record.contentHash),
+      stdio: ["ignore", "ignore", "ignore", "ipc"],
+      execArgv: ["--max-old-space-size=96"],
+      env: { PATH: process.env.PATH ?? "", NODE_ENV: "production", ELECTRON_RUN_AS_NODE: "1" },
+    });
+    await new Promise<void>((resolve, reject) => {
+      let result: Error | undefined;
+      let ready = false;
+      const timer = setTimeout(() => {
+        result = new Error("Candidate handshake deadline exceeded");
+        child.kill("SIGKILL");
+      }, timeout);
+      child.on("error", (error) => {
+        result = error;
+        child.kill("SIGKILL");
+      });
+      child.on("message", (raw) => {
+        try {
+          const message = copyEnvelope(raw);
+          if (message.type === "ready") ready = true;
+          else result = new Error(String(message.error ?? "Invalid candidate handshake"));
+        } catch (error) {
+          result = new Error(errorMessage(error));
+        }
+        child.kill("SIGKILL");
+      });
+      child.once("close", () => {
+        clearTimeout(timer);
+        if (ready && !result) resolve();
+        else reject(result ?? new Error("Candidate exited before handshake"));
+      });
+      child.send({
+        type: "initialize",
+        package: record.package,
+        entry: NodePath.join(root, "packages", record.contentHash, record.package.serverEntry!),
+      });
+    });
+  }
+  const retained = () =>
+    new Set([...installations.values(), ...previous.values()].map((item) => item.contentHash));
   return {
     install(sourceDir, requested = {}) {
       return mutate(async () => {
@@ -422,16 +816,27 @@ export async function createExtensionRuntime(options: RuntimeOptions): Promise<E
           enabled: true,
           grants: grants(requested),
         };
+        broker.validatePackage(record);
         await checkSyntax(snapshot);
-        await prunePackages(
-          root,
-          new Set([...installations.values()].map((item) => item.contentHash)),
-        );
+        await prunePackages(root, retained());
         await storePackage(root, snapshot);
+        await stage(record);
+        const before = [...installations.values()];
+        const oldResolution = broker.resolution();
         await persist(new Map(installations).set(id, record));
         installations.set(id, record);
+        await invalidatePlugins(affectedPlugins([id], before, oldResolution));
         validators.set(id, compiled);
         return clone(record);
+      });
+    },
+    catalogue() {
+      live();
+      const resolved = broker.resolution();
+      return clone({
+        apiSelections: selections,
+        apiResolution: resolved.apis,
+        pluginResolution: resolved.plugins,
       });
     },
     list() {
@@ -443,6 +848,15 @@ export async function createExtensionRuntime(options: RuntimeOptions): Promise<E
         const record = required(id);
         await verify(record);
         const next = { ...record, enabled: true };
+        await stage(next);
+        await replace(record, next);
+        return clone(next);
+      });
+    },
+    updateGrants(id, requested) {
+      return mutate(async () => {
+        const record = required(id);
+        const next = { ...record, grants: grants(requested) };
         await replace(record, next);
         return clone(next);
       });
@@ -458,11 +872,15 @@ export async function createExtensionRuntime(options: RuntimeOptions): Promise<E
     remove(id) {
       return mutate(async () => {
         const record = required(id);
-        await prunePackages(
-          root,
-          new Set([...installations.values()].map((item) => item.contentHash)),
-        );
-        await replace(record, null);
+        await prunePackages(root, retained());
+        const old = previous.get(id);
+        previous.delete(id);
+        try {
+          await replace(record, null);
+        } catch (error) {
+          if (old) previous.set(id, old);
+          throw error;
+        }
         validators.delete(id);
       });
     },
@@ -474,13 +892,20 @@ export async function createExtensionRuntime(options: RuntimeOptions): Promise<E
           throw new Error("Update cannot replace installation identity");
         const compiled = compile(snapshot.package);
         await checkSyntax(snapshot);
-        await prunePackages(
-          root,
-          new Set([...installations.values()].map((item) => item.contentHash)),
-        );
+        await prunePackages(root, retained());
         await storePackage(root, snapshot);
         const next = { ...record, package: snapshot.package, contentHash: snapshot.contentHash };
-        await replace(record, next, compiled);
+        broker.validatePackage(next);
+        await stage(next);
+        const old = previous.get(id);
+        previous.set(id, record);
+        try {
+          await replace(record, next, compiled);
+        } catch (error) {
+          if (old) previous.set(id, old);
+          else previous.delete(id);
+          throw error;
+        }
         return clone(next);
       });
     },
@@ -495,110 +920,91 @@ export async function createExtensionRuntime(options: RuntimeOptions): Promise<E
         contentHash: record.contentHash,
       };
     },
-    async invoke(toolId, input, unsafeContext, signal, expectedContentHash) {
-      live();
-      let worker: Worker | undefined;
-      let callId: string | undefined;
-      const controller = new AbortController();
-      const cancel = (reason: Error, hard = false) => {
-        controller.abort(reason);
-        if (!worker) return;
-        if (hard) {
-          stop(worker, reason);
-          return;
-        }
-        if (!callId) return;
-        const owned = worker;
-        const pending = owned.calls.get(callId);
-        if (!pending) return;
-        owned.calls.delete(callId);
-        pending.controller.abort(reason);
-        pending.reject(reason);
-        owned.cancelled.set(
-          callId,
-          setTimeout(
-            () => stop(owned, new Error("Cancelled tool did not settle before deadline")),
-            timeout,
-          ),
-        );
+    invoke: invokeWorker,
+    invokeApi(id, expectedContentHash, request, signal) {
+      const record = required(id);
+      if (record.contentHash !== expectedContentHash)
+        return Promise.reject(new Error("Installed content changed"));
+      return broker.invoke(record, request, signal);
+    },
+    async discoverApis(id, expectedContentHash, context, signal) {
+      const record = required(id);
+      if (record.contentHash !== expectedContentHash)
+        return Promise.reject(new Error("Installed content changed"));
+      current(record);
+      for (const provider of installations.values()) {
+        if (signal.aborted) throw new Error("Discovery cancelled");
+        if (
+          !provider.package.serverEntry ||
+          broker.resolution().plugins.find((item) => item.id === provider.id)?.status !==
+            "available"
+        )
+          continue;
         try {
-          send(owned, { type: "cancel", callId });
+          await verify(provider);
+          current(provider);
+          await start(provider).ready;
         } catch (error) {
-          stop(owned, new Error(errorMessage(error)));
+          if (disposed || installations.get(provider.id) !== provider)
+            throw new Error("Discovery installation changed");
+          health.set(provider.id, "failed");
+          broker.invalidate(affectedPlugins([provider.id]));
+          publishCatalogueChange();
         }
-      };
-      const abort = () => cancel(new Error("Invocation cancelled"));
-      const timer = setTimeout(
-        () => cancel(new Error("Invocation deadline exceeded"), true),
-        timeout,
-      );
-      signal.addEventListener("abort", abort, { once: true });
-      if (signal.aborted) abort();
-      const active = () => {
-        if (controller.signal.aborted) throw controller.signal.reason;
-      };
-      let rejectCancelled!: (reason: Error) => void;
-      const cancelled = new Promise<never>((_, reject) => {
-        rejectCancelled = reject;
-      });
-      const onCancel = () => rejectCancelled(controller.signal.reason as Error);
-      controller.signal.addEventListener("abort", onCancel, { once: true });
-      if (controller.signal.aborted) onCancel();
-      const run = async (): Promise<Json> => {
-        active();
-        const context = validateContext(unsafeContext);
-        const record = [...installations.values()].find((value) =>
-          value.package.tools.some((tool) => tool.id === toolId),
-        );
-        if (!record) throw new Error("Tool is not installed");
-        if (expectedContentHash !== undefined && record.contentHash !== expectedContentHash)
-          throw new Error("Installed content changed");
-        const tool = record.package.tools.find((value) => value.id === toolId)!;
-        const value = copyJson(input);
-        if (!validators.get(record.id)!.get(toolId)!(value))
-          throw new Error("Tool input does not match schema");
-        await permitted(record, tool, context);
-        active();
-        await verify(record);
-        active();
-        current(record);
-        worker = start(record);
-        await worker.ready;
-        active();
-        current(record);
-        if (worker.calls.size >= 8) throw new Error("Pending tool limit reached");
-        const owned = worker;
-        return new Promise<Json>((resolve, reject) => {
-          callId = NodeCrypto.randomUUID();
-          owned.calls.set(callId, {
-            context,
-            tool,
-            controller: new AbortController(),
-            resolve,
-            reject,
-            cleanup() {},
-          });
-          try {
-            send(owned, { type: "invoke", callId, toolId, input: value, context });
-          } catch (error) {
-            stop(owned, new Error(errorMessage(error)));
-          }
-        });
-      };
-      try {
-        return await Promise.race([run(), cancelled]);
-      } finally {
-        clearTimeout(timer);
-        signal.removeEventListener("abort", abort);
-        controller.signal.removeEventListener("abort", onCancel);
       }
+      return broker.discover(record, context, signal);
+    },
+    selectApi(selection) {
+      return mutate(async () => {
+        assertId(selection.id);
+        assertId(selection.providerId);
+        if (
+          !Array.isArray(selection.fallbackProviderIds) ||
+          selection.fallbackProviderIds.length > 32
+        )
+          throw new Error("Invalid provider fallbacks");
+        selection.fallbackProviderIds.forEach(assertId);
+        const next = [...selections.filter((item) => item.id !== selection.id), clone(selection)];
+        if (next.length > 128) throw new Error("Provider selection limit reached");
+        resolveCapabilities({
+          installations: [...installations.values()],
+          providers: options.apiProviders ?? [],
+          selections: next,
+        });
+        const before = broker.resolution();
+        await persist(installations, next);
+        selections = next;
+        await invalidatePlugins(affectedPlugins([], [...installations.values()], before));
+      });
+    },
+    rollback(id) {
+      return mutate(async () => {
+        const record = required(id);
+        const old = previous.get(id);
+        if (!old) throw new Error("No rollback package available");
+        const next = { ...old, grants: record.grants, enabled: record.enabled };
+        await verify(next);
+        broker.validatePackage(next);
+        await stage(next);
+        previous.set(id, record);
+        try {
+          await replace(record, next, compile(next.package));
+        } catch (error) {
+          previous.set(id, old);
+          throw error;
+        }
+        return clone(next);
+      });
     },
     async dispose() {
       if (disposed) return;
       await mutations;
       disposed = true;
-      for (const worker of workers.values()) stop(worker, new Error("Runtime disposed"));
+      broker.invalidate();
+      for (const worker of workers.values()) stop(worker, new Error("Runtime disposed"), false);
       await Promise.all(draining);
     },
   };
 }
+
+export type { HostApiInvocationMetadata } from "./broker.js";

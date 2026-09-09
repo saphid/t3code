@@ -1,5 +1,12 @@
+import { WS_METHODS } from "@t3tools/contracts";
+import { Atom } from "effect/unstable/reactivity";
+import type { EnvironmentRegistry } from "../connection/registry.ts";
+import { createEnvironmentRpcSubscriptionAtomFamily } from "./runtime.ts";
 import type {
   ExtensionClientInput,
+  ExtensionApiInvokeInput,
+  ExtensionApiDiscoverInput,
+  ExtensionApiSelection,
   ExtensionInstallInput,
   ExtensionInvokeInput,
   ExtensionManageInput,
@@ -40,6 +47,19 @@ function request<A, E, R>(
 
 /** Uses the same cookie, bearer and refreshed request-bound relay authorization as other environment HTTP requests. */
 export const environmentExtensionsHttp = {
+  invokeApi: (prepared: PreparedConnection, payload: ExtensionApiInvokeInput) =>
+    request(prepared, "api/invoke", (client, headers) =>
+      client.extensions.invokeApi({ payload, headers }),
+    ),
+  discoverApis: (prepared: PreparedConnection, payload: ExtensionApiDiscoverInput) =>
+    request(prepared, "api/discover", (client, headers) =>
+      client.extensions.discoverApis({ payload, headers }),
+    ),
+  selectApi: (prepared: PreparedConnection, payload: ExtensionApiSelection) =>
+    request(prepared, "api/select", (client, headers) =>
+      client.extensions.selectApi({ payload, headers }),
+    ),
+
   list: (prepared: PreparedConnection) =>
     request(prepared, "list", (client, headers) =>
       client.extensions.list({ payload: {}, headers }),
@@ -61,3 +81,14 @@ export const environmentExtensionsHttp = {
       client.extensions.manage({ payload, headers }),
     ),
 };
+
+/** Initial receipts replay on each authenticated session, including reconnection. No timer or retries. */
+export function createExtensionCatalogueAtoms<R, E>(
+  runtime: Atom.AtomRuntime<EnvironmentRegistry | R, E>,
+) {
+  return createEnvironmentRpcSubscriptionAtomFamily(runtime, {
+    label: "environment-data:extensions:catalogue",
+    tag: WS_METHODS.subscribeExtensionCatalogue,
+    idleTtlMs: 0,
+  });
+}

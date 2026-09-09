@@ -4,6 +4,7 @@ import { EnvironmentId, ProjectId, type ExtensionInstallation } from "@t3tools/c
 import type { ClientHost } from "@t3tools/extension-sdk/environment";
 import type { Extension } from "@t3tools/extension-sdk/host";
 import type { SurfaceRenderer } from "@t3tools/extension-sdk/react";
+import { createCatalogueRefreshQueue } from "./catalogueRefresh";
 import { createInstalledExtensionController, type InstalledSnapshot } from "./installedController";
 
 const manifest = { id: "test.installed", version: "1.0.0", apiVersion: 1 as const, surfaces: [] };
@@ -60,6 +61,8 @@ function harness(environmentId = "env-a") {
       },
     ),
     invoke: vi.fn(async () => ({ contents: "actual-shaped result" })),
+    invokeApi: vi.fn(async () => ({ contents: "public API result" })),
+    discoverApis: vi.fn(async () => []),
     register,
     changed: (snapshot: InstalledSnapshot) => snapshots.push(snapshot),
   };
@@ -334,5 +337,90 @@ it("times out an async module and activates the next package without retaining a
   } finally {
     h.controller.dispose();
     vi.useRealTimers();
+  }
+});
+
+it("binds public API identity to the installed package and rejects stale results after revocation", async () => {
+  const h = harness();
+  await h.controller.refresh();
+  const request = {
+    id: "t3.workspace/files",
+    versionRange: "^1.0.0",
+    method: "readText",
+    input: { relativePath: "README.md" },
+    context,
+  };
+  await h.getHost().invokeApi(request, new AbortController().signal);
+  expect(h.options.invokeApi).toHaveBeenCalledWith(
+    installation.id,
+    installation.contentHash,
+    request,
+    expect.any(AbortSignal),
+  );
+  await expect(
+    h.getHost().invokeApi(
+      {
+        ...request,
+        context: { ...context, resource: { ...context.resource, projectId: "other" } },
+      },
+      new AbortController().signal,
+    ),
+  ).rejects.toThrow("scope");
+  let finish!: (value: { contents: string }) => void;
+  h.options.invokeApi.mockImplementationOnce(
+    () =>
+      new Promise((resolve) => {
+        finish = resolve;
+      }),
+  );
+  const pending = h.getHost().invokeApi(request, new AbortController().signal);
+  h.setCatalog([{ ...installation, enabled: false }]);
+  await h.controller.refresh();
+  finish({ contents: "stale" });
+  await expect(pending).rejects.toThrow("expired");
+  h.controller.dispose();
+});
+
+it("negotiates catalogue receipts only when the connected host explicitly advertises them", async () => {
+  const h = harness();
+  try {
+    await h.controller.refresh();
+    expect(h.snapshots.at(-1)?.supportsCatalogueChanges).toBe(false);
+    h.options.list.mockImplementation(async () => ({
+      installations: [installation],
+      supportsCatalogueChanges: true,
+    }));
+    await h.controller.refresh();
+    expect(h.snapshots.at(-1)?.supportsCatalogueChanges).toBe(true);
+  } finally {
+    h.controller.dispose();
+  }
+});
+
+it("retains receipt negotiation after a transient list failure so the next receipt can recover", async () => {
+  const h = harness();
+  const receipts = createCatalogueRefreshQueue(() => h.controller.refresh());
+  h.options.list.mockImplementation(async () => ({
+    installations: [installation],
+    supportsCatalogueChanges: true,
+  }));
+  try {
+    await receipts.request();
+    expect(h.snapshots.at(-1)?.supportsCatalogueChanges).toBe(true);
+    h.options.list.mockRejectedValueOnce(new Error("Temporary HTTP failure"));
+    await receipts.request();
+    expect(h.snapshots.at(-1)?.error).toBe("Temporary HTTP failure");
+    expect(h.snapshots.at(-1)?.supportsCatalogueChanges).toBe(true);
+    await receipts.request();
+    expect(h.snapshots.at(-1)?.error).toBeNull();
+    expect(h.snapshots.at(-1)?.installations).toHaveLength(1);
+    expect(h.snapshots.at(-1)?.supportsCatalogueChanges).toBe(true);
+    expect(h.register).toHaveBeenCalledTimes(2);
+    h.options.list.mockImplementation(async () => ({ installations: [installation] }));
+    await receipts.request();
+    expect(h.snapshots.at(-1)?.supportsCatalogueChanges).toBe(false);
+  } finally {
+    receipts.dispose();
+    h.controller.dispose();
   }
 });

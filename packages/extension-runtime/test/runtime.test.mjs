@@ -405,15 +405,15 @@ NodeTest.test(
 );
 
 NodeTest.test(
-  "valid syntax with wrong executable export fails lazily and an explicit update recovers",
+  "valid syntax with wrong executable export is rejected before publication and corrected install succeeds",
   { timeout: 10000 },
   async (t) => {
     const f = await fixture(t);
     await NodeFSP.writeFile(NodePath.join(f.source, "server.mjs"), "export default {}");
-    const installed = await f.runtime.install(f.source, grants);
-    await NodeAssert.rejects(f.invoke(), /definitions/);
+    await NodeAssert.rejects(f.runtime.install(f.source, grants), /definitions/);
+    NodeAssert.deepEqual(f.runtime.list(), []);
     await NodeFSP.writeFile(NodePath.join(f.source, "server.mjs"), server());
-    await f.runtime.update(installed.id, f.source);
+    await f.runtime.install(f.source, grants);
     NodeAssert.equal(typeof (await f.invoke("pid")), "number");
   },
 );
@@ -614,6 +614,9 @@ NodeTest.test(
         .sort();
     NodeAssert.deepEqual(await hashes(), [installed.contentHash, next.contentHash].sort());
     await f.runtime.remove(installed.id);
+    NodeAssert.deepEqual(await hashes(), [installed.contentHash, next.contentHash].sort());
+    // The next mutation prunes both retired snapshots before storing its selected content.
+    await f.runtime.install(f.source, grants);
     NodeAssert.deepEqual(await hashes(), [next.contentHash]);
     NodeAssert.ok((await NodeFSP.lstat(NodePath.join(store, linkName))).isSymbolicLink());
     NodeAssert.ok((await NodeFSP.stat(outside)).isDirectory());
@@ -730,6 +733,30 @@ NodeTest.test(
         name.startsWith(".module-"),
       ),
       false,
+    );
+  },
+);
+
+NodeTest.test(
+  "V1 worker recovery publishes a catalogue receipt after its failure receipt",
+  async (t) => {
+    const receipts = [];
+    let currentCatalogue = () => null;
+    const f = await fixture(t, { onCatalogueChanged: () => receipts.push(currentCatalogue()) });
+    currentCatalogue = () => f.runtime.catalogue();
+    await f.runtime.install(f.source, grants);
+    receipts.length = 0;
+    await NodeAssert.rejects(f.invoke("crash"), /exited/);
+    NodeAssert.equal(
+      receipts.at(-1).pluginResolution.find((item) => item.id === "test.reader").status,
+      "unavailable",
+    );
+    const afterFailure = receipts.length;
+    NodeAssert.equal(typeof (await f.invoke("pid")), "number");
+    NodeAssert.ok(receipts.length > afterFailure);
+    NodeAssert.equal(
+      receipts.at(-1).pluginResolution.find((item) => item.id === "test.reader").status,
+      "available",
     );
   },
 );

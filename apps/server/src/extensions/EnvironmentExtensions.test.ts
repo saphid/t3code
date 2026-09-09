@@ -1,3 +1,4 @@
+import * as ExtensionCatalogueChanges from "./catalogueChanges.ts";
 import { expect, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { EnvironmentId, ExtensionInvokeInput, ProjectId } from "@t3tools/contracts";
@@ -10,6 +11,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
 import * as ServerConfig from "../config.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import {
@@ -20,6 +22,7 @@ import {
   ProjectionThread,
   ProjectionThreadRepository,
 } from "../persistence/Services/ProjectionThreads.ts";
+import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 import { WorkspaceFileSystem } from "../workspace/WorkspaceFileSystem.ts";
 import { toSdkContext } from "./scope.ts";
 import { make } from "./EnvironmentExtensions.ts";
@@ -110,7 +113,22 @@ function fixture() {
   let disposed = false;
   const runtime: Awaited<ReturnType<typeof createExtensionRuntime>> = {
     list: () => [entry],
+    catalogue: () => ({ apiSelections: [], apiResolution: [], pluginResolution: [] }),
+    rollback: async () => entry,
+    selectApi: async () => {},
+    discoverApis: async () => [],
+    invokeApi: async () => {
+      afterInvoke();
+      return { ok: true };
+    },
     install: async () => entry,
+    updateGrants: async (_id, grants) => {
+      entry = {
+        ...entry,
+        grants: { capabilities: [...grants.capabilities], projectIds: [...grants.projectIds] },
+      };
+      return entry;
+    },
     enable: async () => entry,
     disable: async () => {
       entry = { ...entry, enabled: false };
@@ -135,6 +153,8 @@ function fixture() {
     return runtime;
   };
   const services = Layer.mergeAll(
+    ExtensionCatalogueChanges.layer,
+    WorkspacePaths.layer,
     Layer.succeed(ServerEnvironment.ServerEnvironment, {
       getEnvironmentId: Effect.succeed(EnvironmentId.make("env-a")),
       getDescriptor: Effect.die("unused"),
@@ -321,3 +341,97 @@ it.effect("update requires explicit trusted-code confirmation before calling the
     }).pipe(Effect.provide(f.services)),
   );
 });
+
+it.effect(
+  "registers the public host workspace provider and rechecks API scope after dispatch",
+  () => {
+    const f = fixture();
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const service = yield* make(f.factory);
+        const provider = f
+          .getOptions()
+          .apiProviders?.find((item) => item.providerId === "host.workspace");
+        expect(provider?.definition.id).toBe("t3.workspace/files");
+        expect(provider?.definition.methods.map((method) => method.name)).toEqual([
+          "listEntries",
+          "readText",
+        ]);
+        if (!provider) return yield* Effect.die("Missing workspace API provider");
+        const result = yield* Effect.promise(() =>
+          Promise.resolve(
+            provider.invoke(
+              "readText",
+              { relativePath: "new.txt" },
+              toSdkContext(invoke.context),
+              new AbortController().signal,
+              Object.freeze({
+                callId: "host-test",
+                rootCallerId: "test.extension",
+                callerId: "test.extension",
+                providerId: "host.workspace",
+                providerGeneration: 1,
+                callerGenerations: Object.freeze([]),
+              }),
+            ),
+          ),
+        );
+        expect(result).toMatchObject({ contents: "hello", relativePath: "new.txt" });
+        expect(f.calls).toEqual([{ cwd: "/worktree", relativePath: "new.txt" }]);
+        f.afterInvoke(f.changeWorkspace);
+        expect(
+          (yield* Effect.flip(
+            service.invokeApi({
+              installationId: "fixture.reader",
+              expectedContentHash: hash,
+              request: {
+                id: "t3.workspace/files",
+                versionRange: "^1.0.0",
+                method: "readText",
+                input: { relativePath: "new.txt" },
+                context: invoke.context,
+              },
+            }),
+          )).detail,
+        ).toContain("stale");
+      }).pipe(Effect.provide(f.services)),
+    );
+  },
+);
+
+it.effect("runtime catalogue callbacks publish into the shared host change stream", () => {
+  const f = fixture();
+  return Effect.scoped(
+    Effect.gen(function* () {
+      const changes = yield* ExtensionCatalogueChanges.ExtensionCatalogueChanges;
+      yield* make(f.factory);
+      const before = yield* changes.changes.pipe(Stream.take(1), Stream.runCollect);
+      yield* Effect.sync(() => f.getOptions().onCatalogueChanged?.());
+      const after = yield* changes.changes.pipe(Stream.take(1), Stream.runCollect);
+      expect(after).toEqual([{ epoch: before[0]!.epoch, revision: before[0]!.revision + 1 }]);
+    }).pipe(Effect.provide(f.services)),
+  );
+});
+
+it.effect(
+  "permission management replaces the complete grant set and rejects missing grants",
+  () => {
+    const f = fixture();
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const service = yield* make(f.factory);
+        const changed = yield* service.manage({
+          id: "fixture.reader",
+          action: "grants",
+          grants: { capabilities: [], projectIds: [] },
+        });
+        expect(changed?.grants).toEqual({ capabilities: [], projectIds: [] });
+        expect(changed?.contentHash).toBe(hash);
+        const error = yield* Effect.flip(
+          service.manage({ id: "fixture.reader", action: "grants" }),
+        );
+        expect(error.detail).toContain("complete grant set");
+      }).pipe(Effect.provide(f.services)),
+    );
+  },
+);

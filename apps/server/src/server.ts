@@ -1,3 +1,4 @@
+import * as ExtensionCatalogueChanges from "./extensions/catalogueChanges.ts";
 import { ProjectionProjectRepositoryLive } from "./persistence/Layers/ProjectionProjects.ts";
 import { ProjectionThreadRepositoryLive } from "./persistence/Layers/ProjectionThreads.ts";
 import * as EnvironmentExtensions from "./extensions/EnvironmentExtensions.ts";
@@ -568,6 +569,7 @@ export const makeRoutesLayer = Layer.mergeAll(
       Layer.provide([ProjectionProjectRepositoryLive, ProjectionThreadRepositoryLive]),
     ),
   ),
+  Layer.provide(ExtensionCatalogueChanges.layer),
   Layer.provide(ServerSelfUpdate.layer.pipe(Layer.provide(DesktopAppUpdateLayerLive))),
   Layer.provide(commandReadinessLayer),
   Layer.provide(browserApiCorsLayer),

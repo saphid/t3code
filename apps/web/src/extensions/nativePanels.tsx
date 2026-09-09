@@ -1,3 +1,4 @@
+import { SelectedApiPresentation, type PresentationRequest } from "./SelectedApiPresentation";
 import type { ReactNode } from "react";
 import type { ViewContext, ViewRecord } from "@t3tools/extension-sdk/contracts";
 import { useRightPanelStore, type RightPanelSurface } from "../rightPanelStore";
@@ -42,6 +43,7 @@ function entry<Bindings>(
   bridge: ReturnType<typeof createNativeSurfaceBridge<Bindings>>,
   select: (bindings: NativePanelBindings) => Bindings | null,
   makeRecord?: (bindings: Bindings, context: ViewContext) => ViewRecord,
+  presentation?: (bindings: Bindings) => PresentationRequest | null,
 ) {
   const descriptor = bridge.extension.manifest.surfaces[0]!;
   return {
@@ -49,7 +51,7 @@ function entry<Bindings>(
     render({ bindings, context, visible }: PanelProps): ReactNode {
       const selected = select(bindings);
       if (selected === null) return null;
-      return (
+      const fallback = (
         <bridge.Surface
           bindings={selected}
           visible={visible}
@@ -67,10 +69,42 @@ function entry<Bindings>(
           }
         />
       );
+      const request = presentation?.(selected);
+      return request ? (
+        <SelectedApiPresentation
+          request={request}
+          context={context}
+          visible={visible}
+          fallback={fallback}
+        />
+      ) : (
+        fallback
+      );
     },
   };
 }
-const filesEntry = entry(files, (bindings) => bindings.files, filesViewRecord);
+const filesEntry = entry(
+  files,
+  (bindings) => bindings.files,
+  filesViewRecord,
+  (bindings) =>
+    bindings.surface.kind === "file" && bindings.surface.attachment
+      ? null
+      : {
+          apiId: "t3.file/presentation",
+          method: "open",
+          ...(bindings.surface.kind === "file"
+            ? {
+                navigationId:
+                  bindings.surface.presentationRequestId ??
+                  "legacy:" + bindings.surface.revealRequestId,
+              }
+            : {}),
+          input: {
+            relativePath: bindings.surface.kind === "file" ? bindings.surface.relativePath : "",
+          },
+        },
+);
 /** Legacy resource records remain domain-owned; the shell resolves registered presentations. */
 export const nativePanelRegistry = {
   preview: entry(browser, (bindings) => bindings.browser),

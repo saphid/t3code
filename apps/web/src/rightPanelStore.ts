@@ -63,6 +63,8 @@ export type RightPanelSurface =
       relativePath: string;
       revealLine: number | null;
       revealRequestId: number;
+      /** Durable explicit-open identity; a reload preserves it, a new open replaces it. */
+      presentationRequestId?: string;
       /** Present when the file lives in the thread's attachment store rather
           than at a workspace or host path. */
       attachment?: ChatFileAttachment;
@@ -238,12 +240,14 @@ const fileSurface = (
   relativePath: string,
   revealLine: number | null,
   revealRequestId: number,
+  presentationRequestId: string,
 ): RightPanelSurface => ({
   id: `file:${relativePath}`,
   kind: "file",
   relativePath,
   revealLine,
   revealRequestId,
+  presentationRequestId,
 });
 
 const attachmentSurface = (attachment: ChatFileAttachment): RightPanelSurface => ({
@@ -457,7 +461,19 @@ function normalizeLegacyRightPanelState(
                         surface.revealRequestId >= 0
                           ? surface.revealRequestId
                           : 0;
-                      return [{ ...surface, revealLine, revealRequestId }];
+                      const { presentationRequestId, ...restored } = surface;
+                      return [
+                        {
+                          ...restored,
+                          revealLine,
+                          revealRequestId,
+                          ...(typeof presentationRequestId === "string" &&
+                          presentationRequestId.length > 0 &&
+                          presentationRequestId.length <= 160
+                            ? { presentationRequestId }
+                            : {}),
+                        },
+                      ];
                     }
                     if (surface.kind === "pull-request") {
                       if (
@@ -857,6 +873,7 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
               relativePath,
               normalizeRevealLine(line),
               (existing?.revealRequestId ?? 0) + 1,
+              randomUUID(),
             );
             return {
               isOpen: true,

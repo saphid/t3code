@@ -113,7 +113,7 @@ export function validateManifest(value: ExtensionManifest): ExtensionManifest {
     manifest.id.includes("/") ||
     manifest.apiVersion !== API_VERSION ||
     typeof manifest.version !== "string" ||
-    !/^\d+\.\d+\.\d+(?:-[a-zA-Z0-9.-]+)?$/.test(manifest.version)
+    !/^\d+\.\d+\.\d+(?:-[a-zA-Z0-9.-]+)?(?:[+][a-zA-Z0-9.-]+)?$/.test(manifest.version)
   )
     throw new Error("Incompatible extension manifest");
   if (!Array.isArray(manifest.surfaces) || manifest.surfaces.length > 64)

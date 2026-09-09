@@ -8,9 +8,16 @@ import {
 import {
   validateEnvironmentPackage,
   type ClientFactory,
+  type ClientHost,
   type EnvironmentPackage,
 } from "@t3tools/extension-sdk/environment";
 import type { Extension } from "@t3tools/extension-sdk/host";
+import type {
+  ApiDiscovery,
+  ApiInvocation,
+  ApiSelection,
+  ApiUnavailableReason,
+} from "@t3tools/extension-sdk/capabilities";
 import type { SurfaceRenderer } from "@t3tools/extension-sdk/react";
 import type * as React from "react";
 
@@ -18,6 +25,18 @@ export type InstalledPackage = Omit<ExtensionInstallation, "package"> & {
   readonly package: EnvironmentPackage;
 };
 export interface InstalledSnapshot {
+  readonly supportsCatalogueChanges?: boolean;
+  readonly apiSelections?: readonly ApiSelection[];
+  readonly apiResolution?: readonly {
+    id: string;
+    providerId?: string;
+    reason?: ApiUnavailableReason;
+  }[];
+  readonly pluginResolution?: readonly {
+    id: string;
+    status: "available" | "disabled" | "unavailable";
+    reason?: ApiUnavailableReason;
+  }[];
   readonly installations: readonly InstalledPackage[];
   readonly loading: boolean;
   readonly error: string | null;
@@ -79,9 +98,21 @@ function waitForClient(
 export function createInstalledExtensionController(options: {
   readonly environmentId: string;
   readonly React: typeof React;
-  readonly list: (
-    signal: AbortSignal,
-  ) => Promise<{ installations: readonly ExtensionInstallation[] }>;
+  readonly list: (signal: AbortSignal) => Promise<{
+    installations: readonly ExtensionInstallation[];
+    supportsCatalogueChanges?: boolean;
+    apiSelections?: readonly ApiSelection[];
+    apiResolution?: readonly { id: string; providerId?: string; reason?: ApiUnavailableReason }[];
+    pluginResolution?: readonly {
+      id: string;
+      status: "available" | "disabled" | "unavailable";
+      reason?: ApiUnavailableReason;
+    }[];
+  }>;
+  readonly policyChanged?: (policy: {
+    apiSelections: readonly ApiSelection[];
+    apiResolution: readonly { id: string; providerId?: string; reason?: ApiUnavailableReason }[];
+  }) => void;
   readonly client: (
     id: string,
     hash: string,
@@ -94,8 +125,20 @@ export function createInstalledExtensionController(options: {
     hash: string,
     signal: AbortSignal,
   ) => Promise<Json>;
+  readonly invokeApi?: (
+    id: string,
+    hash: string,
+    request: ApiInvocation,
+    signal: AbortSignal,
+  ) => Promise<Json>;
+  readonly discoverApis?: (
+    id: string,
+    hash: string,
+    context: ViewContext,
+    signal: AbortSignal,
+  ) => Promise<readonly ApiDiscovery[]>;
   readonly load: (code: string, signal: AbortSignal) => Promise<unknown>;
-  readonly register: (extension: Extension<SurfaceRenderer>) => () => void;
+  readonly register: (extension: Extension<SurfaceRenderer>, client: ClientHost) => () => void;
   readonly changed: (snapshot: InstalledSnapshot) => void;
 }) {
   const active = new Map<string, { signature: string; stop: () => void }>();
@@ -140,10 +183,24 @@ export function createInstalledExtensionController(options: {
         });
         if (new Set(installations.map((item) => item.id)).size !== installations.length)
           throw new Error("Duplicate installed package");
+        options.policyChanged?.({
+          apiSelections: response.apiSelections ?? [],
+          apiResolution: response.apiResolution ?? [],
+        });
+        const eligible = (item: InstalledPackage) =>
+          item.enabled &&
+          (!response.pluginResolution ||
+            response.pluginResolution.find((state) => state.id === item.id)?.status ===
+              "available");
         const signature = (item: InstalledPackage) => canonical([item.contentHash, item.grants]);
         for (const [id, entry] of active) {
           const item = installations.find((candidate) => candidate.id === id);
-          if (!item?.enabled || !item.package.clientEntry || signature(item) !== entry.signature) {
+          if (
+            !item ||
+            !eligible(item) ||
+            !item.package.clientEntry ||
+            signature(item) !== entry.signature
+          ) {
             entry.stop();
             active.delete(id);
           }
@@ -151,7 +208,7 @@ export function createInstalledExtensionController(options: {
         const errors: string[] = [];
         for (const item of installations) {
           if (!live()) return;
-          if (!item.enabled || !item.package.clientEntry || active.has(item.id)) continue;
+          if (!eligible(item) || !item.package.clientEntry || active.has(item.id)) continue;
           const lifetime = new AbortController();
           let registered = false;
           try {
@@ -170,8 +227,54 @@ export function createInstalledExtensionController(options: {
             if (typeof factory !== "function")
               throw new Error("Installed client must export a factory");
             const identity = signature(item);
-            const extension = (factory as ClientFactory)({
+            const clientHost: ClientHost = {
               React: options.React,
+              async invokeApi(request, callerSignal) {
+                const signal = AbortSignal.any([callerSignal, lifetime.signal]);
+                const context = validateContext(request.context);
+                if (
+                  !registered ||
+                  disposed ||
+                  signal.aborted ||
+                  context.resource.environmentId !== options.environmentId ||
+                  !context.resource.projectId ||
+                  !item.grants.projectIds.some((id) => id === context.resource.projectId) ||
+                  !options.invokeApi
+                )
+                  throw new Error("Installed API is unavailable in this scope");
+                const result = await options.invokeApi(
+                  item.id,
+                  item.contentHash,
+                  { ...request, context },
+                  signal,
+                );
+                if (!registered || disposed || signal.aborted)
+                  throw new Error("Installed API invocation expired");
+                return copyJson(result);
+              },
+              async discoverApis(context, callerSignal) {
+                const signal = AbortSignal.any([callerSignal, lifetime.signal]);
+                const captured = validateContext(context);
+                if (
+                  !registered ||
+                  disposed ||
+                  signal.aborted ||
+                  captured.resource.environmentId !== options.environmentId ||
+                  !captured.resource.projectId ||
+                  !item.grants.projectIds.some((id) => id === captured.resource.projectId) ||
+                  !options.discoverApis
+                )
+                  throw new Error("Installed API discovery is unavailable in this scope");
+                const result = await options.discoverApis(
+                  item.id,
+                  item.contentHash,
+                  captured,
+                  signal,
+                );
+                if (!registered || disposed || signal.aborted)
+                  throw new Error("Installed API discovery expired");
+                return copyJson(result);
+              },
               async invokeTool(toolId, input, context, callerSignal) {
                 const signal = AbortSignal.any([callerSignal, lifetime.signal]);
                 const captured = validateContext(context);
@@ -196,10 +299,11 @@ export function createInstalledExtensionController(options: {
                   throw new Error("Installed tool invocation expired");
                 return copyJson(result);
               },
-            });
+            };
+            const extension = (factory as ClientFactory)(clientHost);
             if (canonical(extension.manifest) !== canonical(item.package.manifest))
               throw new Error("Installed client manifest does not match its package");
-            const unregister = options.register(extension);
+            const unregister = options.register(extension, clientHost);
             active.set(item.id, {
               signature: identity,
               stop: () => {
@@ -220,6 +324,10 @@ export function createInstalledExtensionController(options: {
         if (live())
           publish({
             installations,
+            supportsCatalogueChanges: response.supportsCatalogueChanges === true,
+            apiSelections: response.apiSelections ?? [],
+            apiResolution: response.apiResolution ?? [],
+            pluginResolution: response.pluginResolution ?? [],
             loading: false,
             error: errors.length ? errors.join("; ").slice(0, 2048) : null,
           });
@@ -228,6 +336,7 @@ export function createInstalledExtensionController(options: {
         clear();
         publish({
           installations: [],
+          supportsCatalogueChanges: snapshot.supportsCatalogueChanges === true,
           loading: false,
           error: error instanceof Error ? error.message : "Could not load environment extensions",
         });
