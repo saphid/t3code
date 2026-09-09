@@ -198,14 +198,21 @@ export function formatRelativeHourShort(
     month: "2-digit",
     day: "2-digit",
   });
-  const instantDay = Date.parse(`${dayFormat.format(instant)}T00:00:00Z`);
-  const referenceDay = Date.parse(`${dayFormat.format(reference)}T00:00:00Z`);
+  const instantDay = Date.parse(`${formatUsageDay(dayFormat, instant)}T00:00:00Z`);
+  const referenceDay = Date.parse(`${formatUsageDay(dayFormat, reference)}T00:00:00Z`);
   const calendarDaysAgo = Math.round((referenceDay - instantDay) / (24 * HOUR_MS));
   const hour = formatHourShort(hourStart, timeZone);
 
   if (calendarDaysAgo === 0) return `${hour} today`;
   if (calendarDaysAgo === 1) return `${hour} yesterday`;
   return formatDateTimeShort(hourStart, timeZone);
+}
+
+function formatUsageDay(format: Intl.DateTimeFormat, instant: Date): string {
+  const parts = Object.fromEntries(
+    format.formatToParts(instant).map(({ type, value }) => [type, value]),
+  );
+  return `${parts.year}-${parts.month}-${parts.day}`;
 }
 
 function viewerDayFormat(): { timeZone: string; format: Intl.DateTimeFormat } {
@@ -268,7 +275,7 @@ export function makeWindow(
   resolution: UsageResolution = "day",
 ): UsageSummaryInput {
   const { timeZone, format } = viewerDayFormat();
-  const today = format.format(now);
+  const today = formatUsageDay(format, now);
   if (resolution === "hour") {
     // Half-hour-aligned bounds keep the common rolling window stable long
     // enough for the server's background snapshot to answer it immediately.
@@ -277,8 +284,8 @@ export function makeWindow(
     const sinceTime = new Date(sinceTimeMs);
     const untilTime = new Date(untilTimeMs);
     return {
-      sinceDay: UsageDay.make(format.format(sinceTime)),
-      untilDay: UsageDay.make(format.format(untilTime)),
+      sinceDay: UsageDay.make(formatUsageDay(format, sinceTime)),
+      untilDay: UsageDay.make(formatUsageDay(format, untilTime)),
       timeZone,
       resolution,
       sinceTime: sinceTime.toISOString(),

@@ -112,6 +112,7 @@ export function UsagePage() {
       preferences.windowDays === 1 ? "hour" : "day",
     ),
   }));
+  const preZoomSelection = useRef<typeof windowSelection | null>(null);
   const metric = preferences.metric;
   const showingLimits = metric === "limits";
   const [refreshingLimits, setRefreshingLimits] = useState(false);
@@ -221,6 +222,7 @@ export function UsagePage() {
 
   const selectWindow = (days: number) => {
     if (!isUsageWindowDays(days)) return;
+    preZoomSelection.current = null;
     const nextPreferences = { metric, windowDays: days };
     setPreferences(nextPreferences);
     saveUsagePagePreferences(nextPreferences);
@@ -231,11 +233,26 @@ export function UsagePage() {
     });
   };
   const selectCustomWindow = (sinceDay: string, untilDay: string) => {
+    preZoomSelection.current = null;
     setWindowSelection({
       days: windowDays,
       custom: true,
       window: makeCustomWindow(sinceDay, untilDay),
     });
+  };
+  const zoomToDays = (sinceDay: string, untilDay: string) => {
+    preZoomSelection.current ??= windowSelection;
+    setWindowSelection({
+      days: windowDays,
+      custom: true,
+      window: makeCustomWindow(sinceDay, untilDay),
+    });
+  };
+  const resetZoom = () => {
+    const original = preZoomSelection.current;
+    preZoomSelection.current = null;
+    if (original?.custom) setWindowSelection(original);
+    else selectWindow(original?.days ?? windowDays);
   };
   const selectMetric = (nextMetric: UsageMetric) => {
     const nextPreferences = { metric: nextMetric, windowDays };
@@ -572,8 +589,8 @@ export function UsagePage() {
                       {...(isPast24Hours
                         ? {}
                         : {
-                            onZoomToDays: selectCustomWindow,
-                            onResetZoom: () => selectWindow(windowDays),
+                            onZoomToDays: zoomToDays,
+                            onResetZoom: resetZoom,
                           })}
                     />
                   </div>

@@ -5,6 +5,9 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 const testState = vi.hoisted(() => ({
+  customWindow: false,
+  zoomToDays: undefined as ((since: string, until: string) => void) | undefined,
+  resetZoom: undefined as (() => void) | undefined,
   useUsage: vi.fn(),
   usageThreadTable: vi.fn((_props: unknown) => null),
   metric: "cost" as "cost" | "tokens" | "limits",
@@ -25,7 +28,8 @@ vi.mock("react", async (importOriginal) => {
         ? { metric: testState.metric, windowDays: 30 }
         : typeof initial === "function"
           ? {
-              days: 1,
+              days: testState.customWindow ? 30 : 1,
+              custom: testState.customWindow,
               window: {
                 sinceDay: "2026-08-10",
                 untilDay: "2026-08-11",
@@ -94,7 +98,16 @@ vi.mock("../WorkspaceBreadcrumb", () => ({
 }));
 vi.mock("../WorkspacePageContainer", () => ({ WorkspacePageContainer: "main" }));
 vi.mock("../WorkspacePageHeader", () => ({ WorkspacePageHeader: "header" }));
-vi.mock("./UsageProviderChart", () => ({ UsageProviderChart: "div" }));
+vi.mock("./UsageProviderChart", () => ({
+  UsageProviderChart: (props: {
+    onZoomToDays?: (since: string, until: string) => void;
+    onResetZoom?: () => void;
+  }) => {
+    testState.zoomToDays = props.onZoomToDays;
+    testState.resetZoom = props.onResetZoom;
+    return <div />;
+  },
+}));
 vi.mock("./UsageThreadTable", () => ({ UsageThreadTable: testState.usageThreadTable }));
 vi.mock("./UsagePriceOverrides", () => ({ UsagePriceOverrides: () => null }));
 vi.mock("./usageProviders", async (importOriginal) => {
@@ -201,6 +214,9 @@ const environments = [
 ];
 
 beforeEach(() => {
+  testState.customWindow = false;
+  testState.zoomToDays = undefined;
+  testState.resetZoom = undefined;
   testState.metric = "cost";
   testState.breakdown = "time";
   testState.projectFilter = undefined;
@@ -523,4 +539,19 @@ it("excludes deselected environments from thread failure counts", () => {
   expect(testState.usageThreadTable.mock.calls[0]?.[0]).toMatchObject({
     summaryFailedEnvironments: 0,
   });
+});
+
+it("restores the original custom window after repeated chart zooms", () => {
+  testState.customWindow = true;
+  renderToStaticMarkup(<UsagePage />);
+  expect(testState.zoomToDays).toBeTypeOf("function");
+  testState.zoomToDays?.("2026-08-10", "2026-08-10");
+  testState.zoomToDays?.("2026-08-11", "2026-08-11");
+  testState.resetZoom?.();
+  expect(testState.setWindowSelection).toHaveBeenLastCalledWith(
+    expect.objectContaining({
+      custom: true,
+      window: expect.objectContaining({ sinceDay: "2026-08-10", untilDay: "2026-08-11" }),
+    }),
+  );
 });
