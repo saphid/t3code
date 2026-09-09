@@ -34,6 +34,7 @@ export interface HostApiInvocationMetadata {
     readonly installationGeneration: number;
   }[];
   readonly principal?: HostApiPrincipal;
+  readonly assertAuthority?: () => Promise<void>;
 }
 
 export type HostApiPrincipal = Readonly<{
@@ -397,10 +398,13 @@ export function createApiBroker(options: {
           if (owner) affected.add(owner.id);
           if (owner && callers.at(-1) !== owner) callers.push(owner);
           const check = async () => {
+            active();
             await revalidate();
             for (const caller of callers) {
+              active();
               await scope(caller, context);
               for (const grant of method.requiredGrants) {
+                active();
                 if (
                   !caller.grants.capabilities.includes(grant) ||
                   !(await options.authorize(caller, grant, context))
@@ -408,10 +412,12 @@ export function createApiBroker(options: {
                   throw new Error("API capability denied");
               }
             }
+            if (providerGeneration(provider) !== stamp) throw new Error("Stale API generation");
             active();
           };
           await check();
           outcome = "failed";
+          const assertAuthority = check;
           const result = copyJson(
             owner
               ? await options.invokeWorker(
@@ -440,6 +446,7 @@ export function createApiBroker(options: {
                     providerGeneration: stamp,
                     callerGenerations,
                     ...(authority.root ? { principal: authority.root.principal } : {}),
+                    assertAuthority,
                   }),
                 ),
           );
@@ -679,12 +686,15 @@ export function createApiBroker(options: {
               own(owner.id);
               if (callers.at(-1) !== owner) callers.push(owner);
             }
-            validate = async () => {
+            const check = async () => {
+              active();
               await revalidate();
               active();
               for (const caller of callers) {
+                active();
                 await scope(caller, captured);
                 for (const grant of stream.requiredGrants) {
+                  active();
                   if (
                     !caller.grants.capabilities.includes(grant) ||
                     !(await options.authorize(caller, grant, captured))
@@ -696,8 +706,10 @@ export function createApiBroker(options: {
               if (providerGeneration(provider) !== generation)
                 throw new Error("Stale API generation");
             };
-            await validate();
+            validate = check;
+            await check();
             active();
+            const assertAuthority = check;
             const iterable =
               owner && options.subscribeWorker
                 ? options.subscribeWorker(
@@ -726,6 +738,7 @@ export function createApiBroker(options: {
                       providerGeneration: generation,
                       callerGenerations: Object.freeze(authority.callers.map(captureCaller)),
                       ...(authority.root ? { principal: authority.root.principal } : {}),
+                      assertAuthority,
                     }),
                     request.cursor,
                   );

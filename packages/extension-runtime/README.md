@@ -70,3 +70,34 @@ are not inherited through environment variables. To exercise this path, set
 T3_EXTENSION_TEST_ELECTRON to a cached Electron executable when running the tests.
 The optional test installs the public reader and invokes its real child worker
 without launching an Electron GUI. Ordinary Node test runs report it skipped.
+
+## Versioned APIs and authenticated host adapters
+
+Format-2 packages can provide/consume versioned unary APIs; format 3 adds bounded read-only
+streams while preserving format-1/2 loading. Dependencies, selected providers, version ranges
+and grants determine availability. Registration alone gives no authority. The runtime exposes
+catalogue/discovery, provider selection and rollback in addition to the earlier tool methods.
+
+The public runtime entry exports HostApiProvider, HostApiInvocationMetadata,
+HostApiPrincipal and HostApiRootAuthority as TypeScript types. Host providers are supplied
+through apiProviders; plugins declare APIs in their package and run handlers in their worker.
+Do not import the private broker module to implement an embedding adapter.
+
+invokeApi(installationId, expectedContentHash, request, signal, root?) and
+subscribeApi(installationId, expectedContentHash, request, signal, root?) accept a host-created
+root as their final argument. The host constructs it from verified authentication and a
+revalidation callback. Identity/scopes are captured immutably, descendants inherit attenuated
+authority, and plugin JSON cannot replace it. Providers with requiresRootAuthority reject
+legacy rootless entry. Existing tool/MCP entrypoints do not acquire authenticated roots yet.
+
+Host metadata supplies call ancestry, provider/caller generations, sanitized principal, and
+the optional host-only assertAuthority callback. A mutation adapter must require this callback
+and await it immediately before its side-effect boundary, after any preparatory I/O. It checks
+the current invocation's cancellation, root authority, grants and resource scope; retained
+callbacks reject after the invocation/stream closes. The callback is not a plugin API, is never
+sent in worker IPC and must not be returned or copied into audit payloads.
+
+This check does not create a filesystem transaction, serialize external editors or undo an
+already-completed mutation. Interrupted writes need explicit unknown-outcome recovery.
+The broker still checks before dispatch and before admitting results/frames; adapters must
+pass AbortSignal to their underlying I/O as well.

@@ -1,10 +1,10 @@
 # Authenticated authority prerequisite
 
-Status: planned next slice after public streams. This freezes host-only additions before implementation; it does not advertise a callable plugin resource API.
+Status: the first three additions are implemented and verified below; the fourth is also implemented and verified. Each addition freezes host-only changes before implementation and does not advertise a callable plugin resource API.
 
 ## Why this precedes resources
 
-The broker currently binds plugin identity, grants, ancestry and provider generation. It has no authenticated root session. WebSocket authorization captures the session at upgrade; SessionStore revocation emits a change but does not close that socket. Resource leases must not rely on plugin-supplied context.client, resource IDs or JSON identities. Effect RPC allocates RpcClientId on the server per transport; that ID is process-local bookkeeping, not an authenticated principal.
+Before these additions, the broker bound plugin identity, grants, ancestry and provider generation but had no authenticated root session. WebSocket authorization captures the session at upgrade; SessionStore revocation emits a change but does not close that socket. Resource leases must not rely on plugin-supplied context.client, resource IDs or JSON identities. Effect RPC allocates RpcClientId on the server per transport; that ID is process-local bookkeeping, not an authenticated principal.
 
 ## First bounded addition
 
@@ -160,3 +160,58 @@ leases/epochs, terminal/browser replacement, mobile or relay/tunnel parity. Lega
 embeddings remain compatible and cannot access providers opting into requiresRootAuthority.
 The current workspace provider has not opted in until its legacy tool path has an authenticated
 adapter; the HTTP and WebSocket API paths already supply a verified root.
+
+## Fourth bounded addition: authority check inside a host operation
+
+A native save can await filesystem work between API admission and its mutation. Checking only
+before provider dispatch and after its return cannot prevent a revoked caller's delayed
+operation from starting a later side effect. The host adapter needs a way to revalidate at its
+own mutation boundary. This addition is frozen before implementation.
+
+Add optional assertAuthority(): Promise<void> to HostApiInvocationMetadata. The broker supplies
+it to host unary and stream providers only. It calls the same invocation checks for cancellation,
+current root authorization, caller installation/grants/scope and provider lifetime that apply
+to dispatch/result delivery. Check cancellation before awaiting authorization and again after.
+After return, failure, close or cancellation, retained callbacks reject. This grants no extra
+authority and does not elevate a read method or read-only descendant.
+
+The callback is host-only: no new SDK package format, public JSON argument, client-host API or
+worker IPC field. Neither the callback nor other host objects appear in audit JSON. Existing
+embedding fixtures remain source-compatible via the optional field. New mutation adapters must
+require it and await it immediately before their side-effect boundary; do not silently proceed
+if an older embedding omits it. It is a point-in-time check, not a transaction or a guarantee
+against revocation after the check. Caller cancellation cannot undo a completed side effect.
+
+Tests use actual state/barriers, not revalidation-call counts: a native handler waits, root or
+grant revocation occurs, then the check rejects before a side-effect sentinel; a valid call can
+proceed; retained callback after completion/stream close rejects; pending cancellation suppresses
+the check; unrelated callers remain available. Independently packaged worker descendants must
+preserve the same host checks while forged JSON fields cannot supply or replace the callback.
+Run focused broker/worker tests, package type build, scoped lint and existing runtime compatibility.
+
+This is a prerequisite for revision-checked Files writes. It does not add filesystem writes,
+operation receipts, resource leases, Terminal control or a native panel replacement by itself.
+
+## Verified fourth addition (2026-09-10)
+
+Host providers now receive a lifetime-bound assertAuthority callback. Unary and stream
+checks reuse the broker's current root, grant, scope, generation and cancellation checks.
+Retained callbacks reject after success, provider failure, cancellation or stream close.
+An independent installed worker's write call cannot forge this callback or exceed a read-only
+root. Tests revoke authority at an actual pre-mutation barrier and verify another login
+continues through the same broker.
+
+Verification on lxso2: runtime 87/87 including real Electron; seven operation tests;
+published external consumer 2/2; scoped lint with zero warnings, package build,
+server typecheck and v13 production build all passed. A final test-only iterator spelling
+change removed a lint warning and reran all seven affected tests. Installed v13 proofs pass:
+ordinary Files replacement and reload, nested Terminal status against a real existing PTY,
+and authenticated stream revocation/identity. Those tests are regressions of existing
+installed functionality; the callback's side-effect barrier is proven by runtime tests.
+
+Evidence: operation-authority/evidence.json under
+/home/saphid/artifacts/t3-extensions-health-rounds-20260909. The independent Luna monitor
+reported no actionable findings for the final bounded target and receipts. A fresh direct
+Claude Opus 5 high launcher exited 1 before any model ran because OAuth could not refresh.
+The callback does not add editing, durable operation receipts, resource leases or full panel
+replacement. File editing remains the separate proposal in file-edit-capability-plan.md.

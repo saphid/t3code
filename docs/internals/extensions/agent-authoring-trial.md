@@ -88,3 +88,26 @@ builder initially chose a different date directory. Keep historical attempts and
 final manifest. The installed v12c native proof now passes, including its view; a metadata view is not an
 interactive terminal replacement. A failed UI attempt used the native Add panel menu instead
 of Extensions; preserve it and point the monitor at the explicit final manifest.
+
+## Host-operation authority authoring round
+
+A fresh Luna builder and a separate Luna monitor worked against the same frozen host-only
+contract. The first completion report passed six tests but omitted retained-callback rejection
+after successful completion, unrelated-root isolation and explicit audit-object inspection.
+Its independent worker fixture called a read method while describing a mutation. Parent review
+required a write-effect/grant fixture and a separate read-only denial before accepting coverage.
+
+The monitor initially reported no actionable defect by inferring behavior from source and
+older tests. This did not establish the requested cases. Monitors must distinguish source
+reasoning from a directly exercised test, include the inspected hashes and stay engaged while
+the builder revises. A monitor's clean report cannot substitute for missing acceptance evidence.
+
+Unsafe shell construction caused literal backslash-n text in a test and stripped Markdown paths
+and hashes from a monitoring artifact. Use structured writes or correctly quoted Python;
+inspect the generated file before executing or citing it. Do not reconstruct historical hashes
+from memory. The parent had to interrupt and reorient a stalled worker once in this round.
+
+File editing remains deliberately unimplemented: the native write helper has no revision check
+or durable outcome recovery, and lexical path validation alone does not contain symlinks.
+The separate file-edit capability proposal records these missing requirements before any new
+write contract is exposed. Authority revalidation is a prerequisite, not a save transaction.
