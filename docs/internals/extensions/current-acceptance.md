@@ -1,26 +1,27 @@
 # What the extension system currently proves
 
 This is an acceptance record, not a completion announcement. Implementation and evidence live
-on lxso2 in /home/saphid/projects/t3-extensions-integration. Latest verified slice: host-operation authority, based on checkpoint
-e1593b07e754776b3fd0f87f6876799b20d3f962; exact final hashes and commit receipt are in
-operation-authority/evidence.json and commit.json under the evidence root below.
+on lxso2 in /home/saphid/projects/t3-extensions-integration. Latest verified slice: bounded terminal output, based on checkpoint
+752a3f66468cf125d61417899de9dc2cd69e90c5; exact final hashes and commit receipt are in
+terminal-output/evidence.json and commit.json under the evidence root below.
 
 ## Plain-English status
 
 An installed plugin can define its own API, call another plugin or an authorized host API,
 and render an independent view. Versions, dependencies, provider selection, grants and
 lifecycle are enforced. The Files entry can show an installed read-only Files implementation.
-A separate installed Terminal status package can inspect a real existing terminal. Those are
+Independent Terminal packages can inspect status and explicitly read an 8192-byte tail of
+a real existing terminal’s retained output, with separate grants. Those are
 working examples, not proof that every existing panel has been replaced.
 
-| Surface         | Proven installed behavior                                                                                                            | What still prevents full replacement                                                                                                                            |
-| --------------- | ------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Files           | Ordinary Files entry uses public file presentation and workspace APIs; exact text and selection survive reload.                      | Editing/save recovery, full tree/media/Markdown/comments/attachments/editor actions and large-file parity.                                                      |
-| Diff            | Existing native panel remains available.                                                                                             | Its data and renderer bindings have not been replaced by an installable public API consumer.                                                                    |
-| Version control | Existing native panel remains available.                                                                                             | Public source-control operations, authorization/receipts and an independent replacement are still missing.                                                      |
-| Browser         | Existing native panel remains available.                                                                                             | Public browser/native-engine resources, connection ownership, lifecycle and renderer parity remain unimplemented.                                               |
-| Terminal        | An independently installed status view calls its own worker API, then a native metadata provider; real PTY identity stays unchanged. | Interactive output/input, resize/restart/close, durable resources, attachment leases and packaged Ghostty assets. The native Terminal panel is still a wrapper. |
-| Agents          | Existing native panel remains available.                                                                                             | Public orchestration/harness status and authorized control APIs, receipts and an independent renderer are still missing.                                        |
+| Surface         | Proven installed behavior                                                                                              | What still prevents full replacement                                                                                                                                     |
+| --------------- | ---------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Files           | Ordinary Files entry uses public file presentation and workspace APIs; exact text and selection survive reload.        | Editing/save recovery, full tree/media/Markdown/comments/attachments/editor actions and large-file parity.                                                               |
+| Diff            | Existing native panel remains available.                                                                               | Its data and renderer bindings have not been replaced by an installable public API consumer.                                                                             |
+| Version control | Existing native panel remains available.                                                                               | Public source-control operations, authorization/receipts and an independent replacement are still missing.                                                               |
+| Browser         | Existing native panel remains available.                                                                               | Public browser/native-engine resources, connection ownership, lifecycle and renderer parity remain unimplemented.                                                        |
+| Terminal        | Independent status and output snapshot views use public APIs; exact Unicode output and native PTY identity are proven. | Live output/input, ANSI rendering, resize/restart/close, durable resources, attachment leases and packaged Ghostty assets. The native Terminal panel is still a wrapper. |
+| Agents          | Existing native panel remains available.                                                                               | Public orchestration/harness status and authorized control APIs, receipts and an independent renderer are still missing.                                                 |
 
 ## Framework and authority evidence
 
@@ -44,14 +45,16 @@ A socket or API name is never counted as native-panel parity.
 ## Retained evidence and limits
 
 Canonical root: /home/saphid/artifacts/t3-extensions-health-rounds-20260909.
-Use operation-authority/evidence.json and LATEST.json for the latest slice, together with
-proof/terminal-metadata-v13.json, proof/files-proof-v13.json and
-proof/auth-session-root-v13-candidate.json. terminal-metadata/evidence.json and
+Use terminal-output/evidence.json and LATEST.json for the latest slice, together with
+proof/terminal-output-v14.json and proof/terminal-output-installed-source.json, plus
+proof/terminal-metadata-v14.json, proof/files-proof-v14.json and
+proof/auth-session-root-v14-candidate.json. terminal-metadata/evidence.json and
 proof/terminal-installed-source.json retain the earlier native adapter and delivered-package proof.
 Historical failed attempts remain beside final receipts; do not mistake them for the latest run.
 
-Verification retained from the Terminal checkpoint: 112 focused server tests and 32 SDK tests.
-The latest host callback runs 87 runtime tests including real Electron, seven operation cases,
+Latest verification: 129 focused server tests, 32 SDK tests and 87 runtime tests including real
+Electron. This includes seven host-operation cases, 90 native Manager tests and 10 output-provider
+cases, plus
 published external consumer tests, scoped lint, server typecheck,
 production build and the installed proofs. A ten-sample metadata comparison measured roughly
 13 ms through HTTP/nested plugins versus 1 ms for the native lookup; transports/payloads differ

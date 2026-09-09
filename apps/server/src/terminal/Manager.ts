@@ -162,6 +162,12 @@ export class TerminalManager extends Context.Service<
       readonly terminalId: string;
     }) => Effect.Effect<TerminalSummary | null, TerminalError>;
 
+    /** Read a bounded tail of retained output from an existing session only. */
+    readonly readOutput: (input: {
+      readonly threadId: string;
+      readonly terminalId: string;
+    }) => Effect.Effect<TerminalOutputSnapshot | null, TerminalError>;
+
     /**
      * Attach to a terminal and stream its initial snapshot followed by live events.
      *
@@ -998,6 +1004,76 @@ export class BoundedTerminalHistory {
       .join("");
     return this.cachedValue;
   }
+
+  tail(
+    maxBytes: number,
+    maxUnits: number,
+  ): {
+    readonly contents: string;
+    readonly retainedByteLength: number;
+    readonly truncated: boolean;
+  } {
+    if (
+      !Number.isInteger(maxBytes) ||
+      maxBytes < 0 ||
+      !Number.isInteger(maxUnits) ||
+      maxUnits < 0
+    ) {
+      throw new RangeError("Terminal history tail bounds must be nonnegative integers.");
+    }
+    const pieces: string[] = [];
+    let bytes = 0;
+    let units = 0;
+    let complete = true;
+    for (
+      let chunkIndex = this.chunks.length - 1;
+      chunkIndex >= this.start && complete;
+      chunkIndex -= 1
+    ) {
+      const chunk = this.chunks[chunkIndex];
+      if (!chunk) continue;
+      let end = chunk.data.length;
+      while (end > 0) {
+        let begin = end - 1;
+        const last = chunk.data.charCodeAt(begin);
+        if (last >= 0xdc00 && last <= 0xdfff && begin > 0) {
+          const high = chunk.data.charCodeAt(begin - 1);
+          if (high >= 0xd800 && high <= 0xdbff) begin -= 1;
+        }
+        const text = chunk.data.slice(begin, end);
+        const codePoint = chunk.data.codePointAt(begin) ?? 0;
+        const nextBytes =
+          codePoint <= 0x7f ? 1 : codePoint <= 0x7ff ? 2 : codePoint <= 0xffff ? 3 : 4;
+        const nextUnits = text.length;
+        if (bytes + nextBytes > maxBytes || units + nextUnits > maxUnits) {
+          complete = false;
+          break;
+        }
+        pieces.push(text);
+        bytes += nextBytes;
+        units += nextUnits;
+        end = begin;
+      }
+    }
+    pieces.reverse();
+    const contents = pieces.join("").toWellFormed();
+    return {
+      contents,
+      retainedByteLength: this.byteLength,
+      truncated: bytes < this.byteLength,
+    };
+  }
+}
+
+export interface TerminalOutputSnapshot {
+  readonly threadId: string;
+  readonly terminalId: string;
+  readonly cwd: string;
+  readonly worktreePath: string | null;
+  readonly status: TerminalSessionStatus;
+  readonly contents: string;
+  readonly retainedByteLength: number;
+  readonly truncated: boolean;
 }
 
 function isCsiFinalByte(codePoint: number): boolean {
@@ -2727,6 +2803,23 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
 
   const inspect: TerminalManager["Service"]["inspect"] = readTerminalMetadata;
 
+  const readOutput: TerminalManager["Service"]["readOutput"] = (input) =>
+    getSession(input.threadId, input.terminalId).pipe(
+      Effect.map((session) => {
+        if (Option.isNone(session)) return null;
+        const current = session.value;
+        const tail = current.history.tail(8_192, 8_192);
+        return {
+          threadId: current.threadId,
+          terminalId: current.terminalId,
+          cwd: current.cwd,
+          worktreePath: current.worktreePath,
+          status: current.status,
+          ...tail,
+        };
+      }),
+    );
+
   const subscribe: TerminalManager["Service"]["subscribe"] = (listener) =>
     Effect.sync(() => {
       terminalEventListeners.add(listener);
@@ -3046,6 +3139,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
   return TerminalManager.of({
     open,
     inspect,
+    readOutput,
     attachStream,
     write,
     resize,

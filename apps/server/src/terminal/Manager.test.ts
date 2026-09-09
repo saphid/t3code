@@ -388,6 +388,73 @@ it("bounds long partial lines and joins surrogate pairs across chunk boundaries"
   }
 });
 
+it("reads a bounded UTF-8-safe retained tail", () => {
+  const history = new TerminalManager.BoundedTerminalHistory(
+    5_000,
+    "prefix-" + "x".repeat(8_200) + "😀",
+  );
+  const tail = history.tail(8_192, 8_192);
+  expect(tail.retainedByteLength).toBe(Buffer.byteLength(history.value()));
+  expect(tail.truncated).toBe(true);
+  expect(tail.contents.endsWith("😀")).toBe(true);
+  expect(Buffer.byteLength(tail.contents)).toBeLessThanOrEqual(8_192);
+  expect(tail.contents.length).toBeLessThanOrEqual(8_192);
+});
+
+it("stops at a non-fitting code point across history chunks", () => {
+  const history = new TerminalManager.BoundedTerminalHistory(5_000, "", 32_768);
+  history.append("a".repeat(16_383));
+  history.append("😀");
+  const tail = history.tail(3, 8_192);
+  expect(tail.contents).toBe("");
+  expect(tail.truncated).toBe(true);
+});
+
+it("rejects invalid tail bounds and preserves split surrogate retention", () => {
+  const history = new TerminalManager.BoundedTerminalHistory(5_000, "", 32);
+  expect(() => history.tail(-1, 8)).toThrow();
+  expect(() => history.tail(8, -1)).toThrow();
+  expect(() => history.tail(Number.NaN, 8)).toThrow();
+  expect(() => history.tail(1.5, 8)).toThrow();
+  expect(history.tail(0, 0)).toEqual({
+    contents: "",
+    retainedByteLength: 0,
+    truncated: false,
+  });
+  history.append(String.fromCharCode(0xd83d));
+  history.append(String.fromCharCode(0xde00));
+  expect(history.tail(8, 8).contents).toBe("😀");
+  const lone = new TerminalManager.BoundedTerminalHistory(5_000, "", 32);
+  lone.append(String.fromCharCode(0xd83d));
+  expect(lone.tail(8, 8)).toMatchObject({
+    contents: "�",
+    retainedByteLength: 3,
+    truncated: false,
+  });
+  lone.append(String.fromCharCode(0xde00));
+  expect(lone.tail(8, 8)).toMatchObject({
+    contents: "😀",
+    retainedByteLength: 4,
+    truncated: false,
+  });
+  expect(lone.value()).toBe("😀");
+  history.clear();
+  expect(history.tail(8, 8)).toEqual({
+    contents: "",
+    retainedByteLength: 0,
+    truncated: false,
+  });
+});
+
+it("reports independent byte accounting after line and byte trimming", () => {
+  const history = new TerminalManager.BoundedTerminalHistory(2, "", 12);
+  const writes = "12345\nabcdef\n😀z";
+  history.append(writes);
+  const expected = retainedHistory(writes, 2, 12);
+  expect(history.tail(8_192, 8_192).contents).toBe(expected);
+  expect(history.tail(8_192, 8_192).retainedByteLength).toBe(Buffer.byteLength(expected));
+});
+
 it("preserves retained lines as older storage is compacted", () => {
   for (const maxLines of [3, 5_000]) {
     let expected = "";
@@ -2618,6 +2685,153 @@ it.layer(
       expect(process.killSignals).toContain("SIGKILL");
     }).pipe(Effect.provide(TestClock.layer())),
   );
+  it.effect("reads existing output without flattening or changing the PTY", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter } = yield* createManager();
+      expect(yield* manager.readOutput({ threadId: "thread-1", terminalId: "missing" })).toBeNull();
+      expect(ptyAdapter.spawnInputs).toHaveLength(0);
+
+      yield* manager.open(openInput());
+      const process = ptyAdapter.processes[0];
+      expect(process).toBeDefined();
+      if (!process) return;
+      const retainedText = "a".repeat(20_000) + "tail😀";
+      const receipt = yield* Deferred.make<void>();
+      const unsubscribe = yield* manager.subscribe((event) =>
+        event.type === "output"
+          ? Deferred.succeed(receipt, undefined).pipe(Effect.asVoid)
+          : Effect.void,
+      );
+      process.emitData(retainedText);
+      yield* Deferred.await(receipt);
+      unsubscribe();
+      const originalValue = TerminalManager.BoundedTerminalHistory.prototype.value;
+      TerminalManager.BoundedTerminalHistory.prototype.value = () => {
+        throw new Error("readOutput must not flatten retained history");
+      };
+      try {
+        const output = yield* manager.readOutput({
+          threadId: "thread-1",
+          terminalId: DEFAULT_TERMINAL_ID,
+        });
+        expect(output).toMatchObject({
+          terminalId: DEFAULT_TERMINAL_ID,
+          status: "running",
+          contents: "a".repeat(8_184) + "tail😀",
+          retainedByteLength: Buffer.byteLength(retainedText),
+          truncated: true,
+        });
+      } finally {
+        TerminalManager.BoundedTerminalHistory.prototype.value = originalValue;
+      }
+      expect(ptyAdapter.spawnInputs).toHaveLength(1);
+      expect(process.resizeCalls).toHaveLength(0);
+    }),
+  );
+
+  it.effect("reads running and exited retained output without restart", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter } = yield* createManager();
+      yield* manager.open(openInput());
+      const process = ptyAdapter.processes[0];
+      expect(process).toBeDefined();
+      if (!process) return;
+      const outputReceipt = yield* Deferred.make<void>();
+      const unsubscribe = yield* manager.subscribe((event) =>
+        event.type === "output"
+          ? Deferred.succeed(outputReceipt, undefined).pipe(Effect.asVoid)
+          : Effect.void,
+      );
+      process.emitData("old😀");
+      yield* Deferred.await(outputReceipt);
+      unsubscribe();
+      const running = yield* manager.readOutput({
+        threadId: "thread-1",
+        terminalId: DEFAULT_TERMINAL_ID,
+      });
+      expect(running).toMatchObject({
+        status: "running",
+        contents: "old😀",
+        retainedByteLength: Buffer.byteLength("old😀"),
+        truncated: false,
+      });
+      const exitedReceipt = yield* Deferred.make<void>();
+      const exitUnsubscribe = yield* manager.subscribe((event) =>
+        event.type === "exited"
+          ? Deferred.succeed(exitedReceipt, undefined).pipe(Effect.asVoid)
+          : Effect.void,
+      );
+      process.emitExit({ exitCode: 7, signal: 9 });
+      yield* Deferred.await(exitedReceipt);
+      exitUnsubscribe();
+      const exited = yield* manager.readOutput({
+        threadId: "thread-1",
+        terminalId: DEFAULT_TERMINAL_ID,
+      });
+      expect(exited).toMatchObject({ status: "exited", contents: "old😀" });
+      expect(ptyAdapter.spawnInputs).toHaveLength(1);
+      expect(process.resizeCalls).toHaveLength(0);
+    }),
+  );
+
+  it.effect("distinguishes empty existing output from missing and reopened output", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter } = yield* createManager();
+      yield* manager.open(openInput());
+      const firstProcess = ptyAdapter.processes[0];
+      expect(firstProcess).toBeDefined();
+      if (!firstProcess) return;
+      const beforeClearReceipt = yield* Deferred.make<void>();
+      const beforeClearUnsubscribe = yield* manager.subscribe((event) =>
+        event.type === "output"
+          ? Deferred.succeed(beforeClearReceipt, undefined).pipe(Effect.asVoid)
+          : Effect.void,
+      );
+      firstProcess.emitData("before-clear");
+      yield* Deferred.await(beforeClearReceipt);
+      beforeClearUnsubscribe();
+      expect(
+        yield* manager.readOutput({ threadId: "thread-1", terminalId: DEFAULT_TERMINAL_ID }),
+      ).toMatchObject({
+        contents: "before-clear",
+        retainedByteLength: Buffer.byteLength("before-clear"),
+        truncated: false,
+      });
+      yield* manager.clear({ threadId: "thread-1", terminalId: DEFAULT_TERMINAL_ID });
+      expect(
+        yield* manager.readOutput({ threadId: "thread-1", terminalId: DEFAULT_TERMINAL_ID }),
+      ).toMatchObject({
+        contents: "",
+        retainedByteLength: 0,
+        truncated: false,
+      });
+      yield* manager.close({ threadId: "thread-1", terminalId: DEFAULT_TERMINAL_ID });
+      expect(
+        yield* manager.readOutput({ threadId: "thread-1", terminalId: DEFAULT_TERMINAL_ID }),
+      ).toBeNull();
+      yield* manager.open(openInput());
+      const process = ptyAdapter.processes[1];
+      expect(process).toBeDefined();
+      expect(ptyAdapter.spawnInputs).toHaveLength(2);
+      if (!process) return;
+      const receipt = yield* Deferred.make<void>();
+      const unsubscribe = yield* manager.subscribe((event) =>
+        event.type === "output"
+          ? Deferred.succeed(receipt, undefined).pipe(Effect.asVoid)
+          : Effect.void,
+      );
+      process.emitData("reopened");
+      yield* Deferred.await(receipt);
+      unsubscribe();
+      expect(
+        yield* manager.readOutput({ threadId: "thread-1", terminalId: DEFAULT_TERMINAL_ID }),
+      ).toMatchObject({
+        contents: "reopened",
+        status: "running",
+      });
+    }),
+  );
+
   it.effect("inspects missing, running, and exited sessions without creating or resizing", () =>
     Effect.gen(function* () {
       const { manager, ptyAdapter } = yield* createManager();

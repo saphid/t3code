@@ -8,6 +8,8 @@ export const FILE_PRESENTATION = "t3.file/presentation";
 export const FILE_PRESENTATION_OPEN = "t3.file/open";
 export const TERMINAL_SESSIONS = "t3.terminal/sessions";
 export const TERMINAL_READ = "t3.terminal/read";
+export const TERMINAL_OUTPUT = "t3.terminal/output";
+export const TERMINAL_READ_OUTPUT = "t3.terminal/read-output";
 export type WorkspaceListEntriesInput = {
   readonly relativePath: string;
   readonly cursor?: string;
@@ -29,6 +31,13 @@ export type FilePresentationResult = {
   readonly restoreState: JsonObject;
 };
 export type TerminalSessionsInput = { readonly terminalId: string };
+export type TerminalOutputInput = { readonly terminalId: string };
+export type TerminalOutputResult = {
+  readonly terminalId: string;
+  readonly contents: string;
+  readonly retainedByteLength: number;
+  readonly truncated: boolean;
+} | null;
 export type TerminalSessionResult = {
   readonly terminalId: string;
   readonly status: "starting" | "running" | "exited" | "error";
@@ -178,11 +187,43 @@ export const terminalSessionsApi = defineApi<{
   ],
 });
 
+export const terminalOutputApi = defineApi<{
+  readSnapshot: { input: TerminalOutputInput; output: TerminalOutputResult };
+}>({
+  id: TERMINAL_OUTPUT,
+  version: "1.0.0",
+  methods: [
+    {
+      name: "readSnapshot",
+      effect: "read",
+      requiredGrants: [TERMINAL_READ_OUTPUT],
+      inputSchema: {
+        type: "object",
+        additionalProperties: false,
+        required: ["terminalId"],
+        properties: { terminalId: { type: "string", minLength: 1, maxLength: 128 } },
+      },
+      outputSchema: {
+        type: ["object", "null"],
+        additionalProperties: false,
+        required: ["terminalId", "contents", "retainedByteLength", "truncated"],
+        properties: {
+          terminalId: { type: "string", minLength: 1, maxLength: 128 },
+          contents: { type: "string", maxLength: 8192 },
+          retainedByteLength: { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER },
+          truncated: { type: "boolean" },
+        },
+      },
+    },
+  ],
+});
+
 /** Contracts only: their presence does not advertise a functioning or authorized provider. */
 export const GENERIC_API_CATALOGUE: readonly ApiDefinition[] = [
   workspaceFilesApi.definition,
   filePresentationApi.definition,
   terminalSessionsApi.definition,
+  terminalOutputApi.definition,
 ];
 function canonical(value: unknown): string {
   if (Array.isArray(value)) return "[" + value.map(canonical).join(",") + "]";
@@ -207,3 +248,5 @@ export function assertProvidedApiOwner(pluginId: string, definition: ApiDefiniti
 export const WORKSPACE_FILES_API = workspaceFilesApi.definition;
 export const FILE_PRESENTATION_API = filePresentationApi.definition;
 export const TERMINAL_SESSIONS_API = terminalSessionsApi.definition;
+
+export const TERMINAL_OUTPUT_API = terminalOutputApi.definition;

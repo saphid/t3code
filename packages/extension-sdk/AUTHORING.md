@@ -6,7 +6,7 @@ Start with the bundled [Files provider](examples/installable-files/README.md) an
 
 The public catalogue export contains t3.workspace/files@1 (listEntries and readText) and t3.file/presentation@1 (open). The workspace provider is host-backed; a file presentation provider is installed and explicitly selected. These contracts do not expose file writes, PTYs, a browser engine, source control mutations or orchestration controls.
 
-The app's built-in panels are not a list of supported plugin APIs. Terminal and Browser resource and engine APIs remain unimplemented. Format 3 adds generic declared API streams; this alone does not provide PTY or Browser services. A name in a future design or an illustrative host integration example is not callable authority. Installing a probe and catching an unavailable error proves a negative test, not a working panel.
+The app's built-in panels are not a list of supported plugin APIs. The terminal status and [output snapshot example](examples/installable-terminal-output/README.md) are explicit read-only observations; the latter needs its own t3.terminal/read-output grant. Metadata grants never imply access to output. Terminal and Browser resource and engine APIs remain unimplemented. Format 3 adds generic declared API streams; this alone does not provide PTY or Browser services. A name in a future design or an illustrative host integration example is not callable authority. Installing a probe and catching an unavailable error proves a negative test, not a working panel.
 
 ## Package shape and entry points
 

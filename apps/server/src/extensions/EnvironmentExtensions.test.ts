@@ -187,6 +187,7 @@ function fixture() {
     ExtensionCatalogueChanges.layer,
     Layer.succeed(TerminalManager, {
       inspect: () => Effect.succeed(null),
+      readOutput: () => Effect.succeed(null),
       open: () => Effect.die("unused terminal open"),
       attachStream: () => Effect.die("unused terminal attach"),
       write: () => Effect.die("unused terminal write"),

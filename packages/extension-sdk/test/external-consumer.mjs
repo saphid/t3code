@@ -39,7 +39,7 @@ NodeFS.writeFileSync(
   NodePath.join(consumer, "capabilities.ts"),
   `
 import { bindApi } from "@t3tools/extension-sdk/capabilities";
-import { workspaceFilesApi, terminalSessionsApi } from "@t3tools/extension-sdk/catalogue";
+import { workspaceFilesApi, terminalSessionsApi, terminalOutputApi } from "@t3tools/extension-sdk/catalogue";
 const context = { resource: { namespace: "thirdparty.files", id: "root", environmentId: "env" }, client: "test" };
 const api = bindApi(workspaceFilesApi, { async invokeApi() { return { entries: [], nextCursor: null }; } }, context);
 const result = await api.invoke("listEntries", { relativePath: "" }, new AbortController().signal);
@@ -49,6 +49,16 @@ const terminal = bindApi(terminalSessionsApi, { async invokeApi() { return null;
 const observed = await terminal.invoke("inspect", { terminalId: "term-1" }, new AbortController().signal);
 const terminalState: "starting" | "running" | "exited" | "error" | undefined = observed?.status;
 void terminalState;
+const output = bindApi(terminalOutputApi, { async invokeApi() { return null; } }, context);
+const tail = await output.invoke("readSnapshot", { terminalId: "term-1" }, new AbortController().signal);
+const retainedBytes: number | undefined = tail?.retainedByteLength;
+const omittedPrefix: boolean | undefined = tail?.truncated;
+void retainedBytes; void omittedPrefix;
+// @ts-expect-error read snapshots do not expose terminal process control
+void output.invoke("restart", { terminalId: "term-1" }, new AbortController().signal);
+// @ts-expect-error snapshot size/launch paths are host policy
+void output.invoke("readSnapshot", { terminalId: "term-1", cwd: "/other", limit: 1000000 }, new AbortController().signal);
+
 // @ts-expect-error terminal observation does not authorize process control
 void terminal.invoke("write", { terminalId: "term-1", data: "exit" }, new AbortController().signal);
 // @ts-expect-error native cwd is not a public terminal selector

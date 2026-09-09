@@ -111,3 +111,34 @@ File editing remains deliberately unimplemented: the native write helper has no 
 or durable outcome recovery, and lexical path validation alone does not contain symlinks.
 The separate file-edit capability proposal records these missing requirements before any new
 write contract is exposed. Authority revalidation is a prerequisite, not a save transaction.
+
+## Terminal output authoring round
+
+A fresh Luna builder and monitor worked on the frozen output snapshot plan. The framework
+lacked a native existing-only output API: the normal attach operation can create, restart or
+resize a PTY. The new readSnapshot API fills that bounded gap and gives output a separate
+grant. Live streams, resource identity/leases, process control and native assets remain
+framework gaps, not problems that a package should bypass with private components.
+
+The first tail implementation could skip a non-fitting Unicode character and continue into
+older chunks, returning a non-suffix. Repeated unshift also made collection quadratic. Parent
+review caught both; a real native chunk-boundary regression and linear traversal corrected
+them. Native callbacks can temporarily split a surrogate pair. The frozen contract now
+normalizes only the bounded observation without changing retained history's later repair.
+
+Test names initially overstated evidence: no-flatten instrumentation used empty history and
+clear tested an already empty session. Revised tests populate history, wait on output receipts,
+then prove the actual operation and independent byte accounting. A thin provider fixture also
+omitted scope/cancellation cases; the parent took that bounded provider/test work while Luna
+finished native tests. The parent built the independent example and integrated/verified it.
+This is not evidence that Luna independently delivered a full replacement.
+
+The builder again treated a requested output document as something to search for, then wrote
+malformed Markdown through shell interpolation. Correct quoting and remote readback were
+necessary. The monitor improved when asked to verify scenario setup and current source hashes
+instead of coverage labels. Raw exit receipts plus an installed proof remain acceptance gates.
+
+Final evidence is terminal-output/evidence.json and authoring-observations.md under the
+canonical lxso2 artifact root. The new installed snapshot, grant denials, actual native PTY
+comparison, UI keyboard read and cleanup passed. Native interactive Terminal, other full panel
+migrations and broader connection/client parity are still unproven.

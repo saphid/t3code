@@ -20,6 +20,7 @@ for (const name of [
   "installable-files",
   "installable-files-consumer",
   "installable-terminal-observer",
+  "installable-terminal-output",
 ]) {
   const dir = NodePath.join(sdk, "examples", name);
   const manifest = validateEnvironmentPackage(
@@ -36,6 +37,10 @@ for (const name of [
 }
 NodeAssert.equal(manifests[1].dependencies[0].pluginId, manifests[0].manifest.id);
 NodeAssert.ok(manifests[2].requires.some((api) => api.id === "t3.terminal/sessions"));
+NodeAssert.ok(manifests[3].requires.some((api) => api.id === "t3.terminal/output"));
+NodeAssert.deepEqual(manifests[3].provides[0].methods[0].requiredGrants, [
+  "t3.terminal/read-output",
+]);
 NodeAssert.ok(manifests[0].provides.some((api) => api.id === "t3.file/presentation"));
 console.log(
   "Packaged format-2 provider/consumer and authoring links verified; host runtime behavior is a separate check.",
