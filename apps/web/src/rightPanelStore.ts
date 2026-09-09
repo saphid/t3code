@@ -7,13 +7,24 @@
  * terminal surfaces point at terminal session ids, file surfaces point at
  * workspace paths, and diff/files remain singleton surfaces.
  */
-import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
+import {
+  parseScopedThreadKey,
+  scopedThreadKey,
+  scopeThreadRef,
+} from "@t3tools/client-runtime/environment";
 import {
   EnvironmentId,
   ThreadId,
   type ChatFileAttachment,
   type ScopedThreadRef,
 } from "@t3tools/contracts";
+import {
+  assertId,
+  copyJson,
+  resourceKey,
+  validateContext,
+  type ViewRecord,
+} from "@t3tools/extension-sdk/contracts";
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 
@@ -27,6 +38,7 @@ const RIGHT_PANEL_KINDS = [
   "terminal",
   "pull-request",
   "agents",
+  "extension",
 ] as const;
 export type RightPanelKind = (typeof RIGHT_PANEL_KINDS)[number];
 
@@ -72,13 +84,23 @@ export type RightPanelSurface =
       number: number;
       url?: string;
     }
-  | { id: "agents"; kind: "agents" };
+  | { id: "agents"; kind: "agents" }
+  | ExtensionPanelSurface;
+
+export interface ExtensionPanelSurface {
+  id: `extension:${string}`;
+  kind: "extension";
+  record: ViewRecord;
+}
+
+const MAX_EXTENSION_SURFACES = 64;
 
 const RIGHT_PANEL_STORAGE_KEY = "t3code:right-panel-state:v2";
 // v9 removed the "plan" surface kind (plans render inline in the transcript).
 // v10 keys pull-request surfaces by reference instead of a singleton tab.
 // v11 stops persisting the pull-request list's shared panel, so a restart opens the page fresh.
-const RIGHT_PANEL_STORAGE_VERSION = 11;
+// v12 adds bounded SDK records; normalization also runs for current-version hydration.
+const RIGHT_PANEL_STORAGE_VERSION = 12;
 
 /** A fixed workspace-level ref: each PR surface carries its own real environment. */
 export const PULL_REQUESTS_PANEL_REF = scopeThreadRef(
@@ -114,8 +136,17 @@ interface RightPanelStoreState {
   ) => boolean;
   open: (
     ref: ScopedThreadRef,
-    kind: Exclude<RightPanelKind, "file" | "terminal" | "pull-request">,
+    kind: Exclude<RightPanelKind, "file" | "terminal" | "pull-request" | "extension">,
   ) => void;
+  /** Opens a copied SDK record; an expected revision makes this an automatic request. */
+  openExtension: (
+    ref: ScopedThreadRef,
+    record: ViewRecord,
+    expectedUserActionRevision?: number,
+  ) => boolean;
+  /** Saves an existing viewer without taking focus or reopening a hidden panel. */
+  updateExtensionRecord: (ref: ScopedThreadRef, record: ViewRecord) => boolean;
+  moveSurface: (ref: ScopedThreadRef, surfaceId: string, toIndex: number) => void;
   openBrowser: (ref: ScopedThreadRef, tabId: string | null) => void;
   openFile: (ref: ScopedThreadRef, relativePath: string, line?: number) => void;
   openAttachment: (ref: ScopedThreadRef, attachment: ChatFileAttachment) => void;
@@ -150,7 +181,7 @@ interface RightPanelStoreState {
   toggleVisibility: (ref: ScopedThreadRef) => void;
   toggle: (
     ref: ScopedThreadRef,
-    kind: Exclude<RightPanelKind, "file" | "terminal" | "pull-request">,
+    kind: Exclude<RightPanelKind, "file" | "terminal" | "pull-request" | "extension">,
   ) => void;
   removeThread: (ref: ScopedThreadRef) => void;
 }
@@ -162,7 +193,7 @@ const EMPTY_THREAD_STATE: ThreadRightPanelState = {
 };
 
 const singletonSurface = (
-  kind: Exclude<RightPanelKind, "file" | "preview" | "terminal" | "pull-request">,
+  kind: Exclude<RightPanelKind, "file" | "preview" | "terminal" | "pull-request" | "extension">,
 ): RightPanelSurface => {
   switch (kind) {
     case "diff":
@@ -241,6 +272,55 @@ export function pullRequestSurface(target: {
   };
 }
 
+/** Invalid or differently scoped records never enter the layout or reach the renderer. */
+export function extensionPanelSurface(
+  ref: ScopedThreadRef,
+  value: ViewRecord,
+): ExtensionPanelSurface | null {
+  try {
+    const record = copyJson(value);
+    if (!record || typeof record !== "object") return null;
+    assertId(record.surfaceId);
+    if (
+      !record.surfaceId.includes("/") ||
+      record.version !== 1 ||
+      !Number.isSafeInteger(record.stateVersion) ||
+      record.stateVersion < 1 ||
+      !["side-panel", "bottom-dock", "full-page", "compact-detail"].includes(record.placement) ||
+      typeof record.fallback !== "string" ||
+      !record.fallback.trim()
+    )
+      return null;
+    const context = validateContext(record.context);
+    const parsed = parseScopedThreadKey(scopedThreadKey(ref));
+    // The existing persistence key splits at the first colon. Reject ambiguous
+    // environment IDs rather than restoring their records into a different ref.
+    if (
+      !parsed ||
+      parsed.environmentId !== ref.environmentId ||
+      parsed.threadId !== ref.threadId ||
+      context.resource.environmentId !== ref.environmentId ||
+      (context.resource.threadId !== undefined && context.resource.threadId !== ref.threadId)
+    )
+      return null;
+    return {
+      id: `extension:${encodeURIComponent(record.surfaceId)}:${encodeURIComponent(resourceKey(context.resource))}`,
+      kind: "extension",
+      record: {
+        version: 1,
+        surfaceId: record.surfaceId,
+        context,
+        placement: record.placement,
+        stateVersion: record.stateVersion,
+        restoreState: copyJson(record.restoreState),
+        fallback: record.fallback,
+      },
+    };
+  } catch {
+    return null;
+  }
+}
+
 const upsertSurface = (
   current: ThreadRightPanelState,
   surface: RightPanelSurface,
@@ -313,11 +393,28 @@ export function migratePersistedRightPanelState(persistedState: unknown): {
             .map(([threadKey, threadState]) => {
               const validThreadState =
                 threadState && typeof threadState === "object" ? threadState : null;
+              const extensionIds = new Set<string>();
+              const restoredExtensionIds = new Map<string, string>();
               const surfaces = Array.isArray(validThreadState?.surfaces)
                 ? validThreadState.surfaces.flatMap<RightPanelSurface>((surface) => {
-                    // Dropped surface kind: plans now render inline in the
-                    // transcript (v9).
-                    if ((surface as { kind?: string }).kind === "plan") return [];
+                    if (!surface || typeof surface !== "object") return [];
+                    if (surface.kind === "extension") {
+                      const ref = parseScopedThreadKey(threadKey);
+                      const normalized = ref ? extensionPanelSurface(ref, surface.record) : null;
+                      if (
+                        !normalized ||
+                        extensionIds.has(normalized.id) ||
+                        extensionIds.size >= MAX_EXTENSION_SURFACES
+                      )
+                        return [];
+                      extensionIds.add(normalized.id);
+                      if (typeof surface.id === "string")
+                        restoredExtensionIds.set(surface.id, normalized.id);
+                      return [normalized];
+                    }
+                    if (!(RIGHT_PANEL_KINDS as readonly string[]).includes(surface.kind)) return [];
+                    if (typeof surface.id !== "string" || surface.id.startsWith("extension:"))
+                      return [];
                     if (surface.kind === "file") {
                       const revealLine =
                         typeof surface.revealLine === "number" &&
@@ -390,9 +487,12 @@ export function migratePersistedRightPanelState(persistedState: unknown): {
                 (surface) => surface.id === rawActiveSurfaceId,
               )
                 ? (rawActiveSurfaceId ?? null)
-                : rawActiveSurfaceId === "pull-request"
-                  ? (surfaces.find((surface) => surface.kind === "pull-request")?.id ?? null)
-                  : null;
+                : typeof rawActiveSurfaceId === "string" &&
+                    restoredExtensionIds.has(rawActiveSurfaceId)
+                  ? (restoredExtensionIds.get(rawActiveSurfaceId) ?? null)
+                  : rawActiveSurfaceId === "pull-request"
+                    ? (surfaces.find((surface) => surface.kind === "pull-request")?.id ?? null)
+                    : null;
               // A migration that dropped every surface (e.g. plan-only panels
               // in v9) must not reopen an empty panel.
               const isOpen =
@@ -451,6 +551,72 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
             return upsertSurface(current, singletonSurface(kind));
           }),
         ),
+      openExtension: (ref, record, expectedUserActionRevision) => {
+        const surface = extensionPanelSurface(ref, record);
+        if (!surface) return false;
+        let opened = false;
+        set((state) => {
+          const threadKey = scopedThreadKey(ref);
+          if (
+            expectedUserActionRevision !== undefined &&
+            (state.userActionRevisionByThreadKey[threadKey] ?? 0) !== expectedUserActionRevision
+          )
+            return state;
+          const current = state.byThreadKey[threadKey] ?? EMPTY_THREAD_STATE;
+          const exists = current.surfaces.some((entry) => entry.id === surface.id);
+          if (
+            !exists &&
+            current.surfaces.filter((entry) => entry.kind === "extension").length >=
+              MAX_EXTENSION_SURFACES
+          )
+            return state;
+          opened = true;
+          const update = expectedUserActionRevision === undefined ? userAction : automaticUpdate;
+          return update(state, threadKey, (panel) => ({
+            ...upsertSurface(panel, surface),
+            surfaces: exists
+              ? panel.surfaces.map((entry) => (entry.id === surface.id ? surface : entry))
+              : [...panel.surfaces, surface],
+          }));
+        });
+        return opened;
+      },
+      updateExtensionRecord: (ref, record) => {
+        const surface = extensionPanelSurface(ref, record);
+        if (!surface) return false;
+        let updated = false;
+        set((state) => {
+          const threadKey = scopedThreadKey(ref);
+          const current = state.byThreadKey[threadKey];
+          if (
+            !current?.surfaces.some(
+              (entry) => entry.kind === "extension" && entry.id === surface.id,
+            )
+          )
+            return state;
+          updated = true;
+          return automaticUpdate(state, threadKey, (panel) => ({
+            ...panel,
+            surfaces: panel.surfaces.map((entry) => (entry.id === surface.id ? surface : entry)),
+          }));
+        });
+        return updated;
+      },
+      moveSurface: (ref, surfaceId, toIndex) =>
+        set((state) => {
+          if (!Number.isSafeInteger(toIndex)) return state;
+          return userAction(state, scopedThreadKey(ref), (current) => {
+            const fromIndex = current.surfaces.findIndex((surface) => surface.id === surfaceId);
+            if (fromIndex < 0) return current;
+            const target = Math.max(0, Math.min(toIndex, current.surfaces.length - 1));
+            if (target === fromIndex) return current;
+            const surfaces = [...current.surfaces];
+            const [surface] = surfaces.splice(fromIndex, 1);
+            if (!surface) return current;
+            surfaces.splice(target, 0, surface);
+            return { ...current, surfaces };
+          });
+        }),
       openBrowser: (ref, tabId) =>
         set((state) =>
           userAction(state, scopedThreadKey(ref), (current) => {
@@ -773,6 +939,10 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
         ),
       }),
       migrate: migratePersistedRightPanelState,
+      merge: (persistedState, currentState) => ({
+        ...currentState,
+        ...migratePersistedRightPanelState(persistedState),
+      }),
     },
   ),
 );
