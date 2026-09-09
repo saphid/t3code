@@ -267,9 +267,23 @@ export function useUsage(
         });
 
         if (refreshThreads) {
+          const refreshed = mergeUsage(
+            refreshEnvironments.flatMap(({ environmentId, label }) => {
+              const summary = Option.getOrNull(
+                AsyncResult.value(
+                  appAtomRegistry.get(
+                    serverEnvironment.usageSummary({ environmentId, input: requestInput }),
+                  ),
+                ),
+              );
+              return summary === null ? [] : [{ environmentId, label, summary }];
+            }),
+            USAGE_CONTRACT_VERSION,
+            projectFilter === undefined ? undefined : { projectFilter },
+          );
           for (const contribution of filterProviderContributionsForProject(
             projectFilter,
-            merged.providerContributions,
+            refreshed.providerContributions,
           )) {
             if (contribution.contractVersion < USAGE_THREAD_BREAKDOWN_SINCE) {
               continue;
@@ -299,14 +313,7 @@ export function useUsage(
       );
       if (nextState !== null) setManualRefreshState(nextState);
     },
-    [
-      merged.providerContributions,
-      projectFilter,
-      rangeKey,
-      refreshThreads,
-      selectedEnvironmentIds,
-      selectedEnvironments,
-    ],
+    [projectFilter, rangeKey, refreshThreads, selectedEnvironmentIds, selectedEnvironments],
   );
 
   const relevantEnvironments = filterUsageEnvironmentsForProject(
