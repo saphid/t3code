@@ -1054,6 +1054,7 @@ export function createServerEnvironmentAtoms<R, E>(
       label: "environment-data:server:usage-thread-breakdown",
       tag: WS_METHODS.serverGetUsageThreadBreakdown,
       staleTimeMs: 60_000,
+      refreshTrigger: ({ environmentId }) => usagePricesAtom(environmentId),
     }),
     configProjection,
     welcome,
