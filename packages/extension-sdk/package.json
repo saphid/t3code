@@ -5,7 +5,8 @@
     "dist",
     "README.md",
     "examples/counter/counter.ts",
-    "examples/workspace-reader"
+    "examples/workspace-reader",
+    "examples/issue-context"
   ],
   "type": "module",
   "exports": {
@@ -20,6 +21,10 @@
     "./react": {
       "types": "./dist/react.d.ts",
       "default": "./dist/react.js"
+    },
+    "./context": {
+      "types": "./dist/context.d.ts",
+      "default": "./dist/context.js"
     }
   },
   "scripts": {

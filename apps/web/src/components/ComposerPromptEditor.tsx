@@ -1,3 +1,4 @@
+import { readContextSnapshots } from "@t3tools/extension-sdk/context";
 import { LexicalComposer, type InitialConfigType } from "@lexical/react/LexicalComposer";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
 import { ContentEditable } from "@lexical/react/LexicalContentEditable";
@@ -445,7 +446,63 @@ function $createComposerTerminalContextNode(
   return $applyNodeReplacement(new ComposerTerminalContextNode(context));
 }
 
+type SerializedComposerExtensionContextNode = Spread<
+  { source: string; type: "composer-extension-context"; version: 1 },
+  SerializedLexicalNode
+>;
+
+/** Core chip retains the admitted source string even when its extension is not installed. */
+export class ComposerExtensionContextNode extends DecoratorNode<React.ReactElement> {
+  __source: string;
+  static override getType(): string {
+    return "composer-extension-context";
+  }
+  static override clone(node: ComposerExtensionContextNode): ComposerExtensionContextNode {
+    return new ComposerExtensionContextNode(node.__source, node.__key);
+  }
+  static override importJSON(
+    node: SerializedComposerExtensionContextNode,
+  ): ComposerExtensionContextNode {
+    return $applyNodeReplacement(new ComposerExtensionContextNode(node.source));
+  }
+  constructor(source: string, key?: NodeKey) {
+    super(key);
+    this.__source = source;
+  }
+  override exportJSON(): SerializedComposerExtensionContextNode {
+    return {
+      ...super.exportJSON(),
+      source: this.__source,
+      type: "composer-extension-context",
+      version: 1,
+    };
+  }
+  override createDOM(): HTMLElement {
+    const dom = document.createElement("span");
+    dom.className = COMPOSER_INLINE_CHIP_DECORATOR_CLASS_NAME;
+    return dom;
+  }
+  override updateDOM(): false {
+    return false;
+  }
+  override getTextContent(): string {
+    return this.__source;
+  }
+  override isInline(): true {
+    return true;
+  }
+  override decorate(): React.ReactElement {
+    const snapshot = readContextSnapshots(this.__source)[0]?.snapshot;
+    return (
+      <span className="rounded border border-border/70 bg-muted px-1.5 py-0.5 text-xs">
+        {snapshot?.title ?? "Captured context"}
+      </span>
+    );
+  }
+}
+
 type ComposerInlineTokenNode =
+  | ComposerExtensionContextNode
   | ComposerMentionNode
   | ComposerSkillNode
   | ComposerCitationNode
@@ -453,6 +510,7 @@ type ComposerInlineTokenNode =
 
 function isComposerInlineTokenNode(candidate: unknown): candidate is ComposerInlineTokenNode {
   return (
+    candidate instanceof ComposerExtensionContextNode ||
     candidate instanceof ComposerMentionNode ||
     candidate instanceof ComposerSkillNode ||
     candidate instanceof ComposerCitationNode ||
@@ -852,6 +910,10 @@ function $setComposerEditorPrompt(
 
   const segments = splitPromptIntoComposerSegments(prompt, terminalContexts);
   for (const segment of segments) {
+    if (segment.type === "extension-context") {
+      paragraph.append($applyNodeReplacement(new ComposerExtensionContextNode(segment.source)));
+      continue;
+    }
     if (segment.type === "citation") {
       paragraph.append($createComposerCitationNode(segment.citation, segment.source));
       continue;
@@ -1354,6 +1416,8 @@ function ComposerInlineTokenPastePlugin() {
       registerComposerInlineTokenPaste(editor, {
         createMentionNode: $createComposerMentionNode,
         createCitationNode: $createComposerCitationNode,
+        createContextNode: (source) =>
+          $applyNodeReplacement(new ComposerExtensionContextNode(source)),
         getExpandedAbsoluteOffsetForPoint,
       }),
     [editor],
@@ -2087,6 +2151,7 @@ export function ComposerPromptEditor({
       namespace: "t3tools-composer-editor",
       editable: true,
       nodes: [
+        ComposerExtensionContextNode,
         ComposerMentionNode,
         ComposerSkillNode,
         ComposerCitationNode,

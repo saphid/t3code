@@ -1,3 +1,5 @@
+import { readContextSnapshots, readableContextPrompt } from "@t3tools/extension-sdk/context";
+import { MessageDecorations } from "../../extensions/MessageDecorations";
 import {
   type AssistantCitation,
   type EnvironmentId,
@@ -1575,11 +1577,21 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
           </div>
         ) : null}
         <CollapsibleUserMessageBody
-          text={elementContextState.promptText}
+          text={readableContextPrompt(elementContextState.promptText)}
           terminalContexts={terminalContexts}
           skills={ctx.skills}
           markdownCwd={ctx.markdownCwd}
         />
+        {ctx.threadRef && !row.message.streaming && (
+          <MessageDecorations
+            message={{
+              environmentId: ctx.activeThreadEnvironmentId,
+              threadId: ctx.threadRef.threadId,
+              messageId: row.message.id,
+              text: row.message.text,
+            }}
+          />
+        )}
       </div>
       <div className="flex w-full max-w-[80%] items-center justify-end pe-1 text-xs tabular-nums opacity-0 transition-opacity duration-200 focus-within:opacity-100 group-hover:opacity-100">
         <div className="flex shrink-0 items-center gap-2">
@@ -1596,7 +1608,14 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
               <RevertUserMessageButton turnCount={revertTurnCount} />
             )}
             {displayedUserMessage.copyText && (
-              <MessageCopyButton text={displayedUserMessage.copyText} variant="ghost" />
+              <MessageCopyButton
+                text={
+                  readContextSnapshots(row.message.text).length > 0
+                    ? row.message.text
+                    : displayedUserMessage.copyText
+                }
+                variant="ghost"
+              />
             )}
           </div>
         </div>

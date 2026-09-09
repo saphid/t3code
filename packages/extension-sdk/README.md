@@ -1,6 +1,6 @@
 # T3 extension SDK developer preview
 
-This package is a trusted, in-process resource surface SDK. External packages can contribute new views without a core kind switch. It is not a community code sandbox, server plugin loader, marketplace, RPC protocol, or replacement for core domain services. Existing built-in surfaces are unchanged until their integration passes parity tests.
+This package is a trusted, in-process resource surface and text contribution SDK. External packages can contribute new views without a core kind switch. It is not a community code sandbox, server plugin loader, marketplace, RPC protocol, or replacement for core domain services. Existing built-in surfaces are unchanged until their integration passes parity tests.
 
 ## Build and try an external package
 
@@ -39,6 +39,16 @@ The right-panel store remains the layout/focus owner. Use its existing user-acti
 
 ## Coverage and limits
 
-Focused tests cover public lifecycle, hidden identity, independent viewers, scope/revision races, timeouts, late factory completion, capability revocation, invalid payloads, bounded updates, failures and 100 lifecycle cycles. They are contract tests, not UI parity or performance measurements. React Native and SwiftUI need native renderers/bridges; Electron, authenticated local/remote/relay/tunnel domain services, all providers, V2 adapters, compositor performance and accessibility journeys require separate integration verification. The JSON types are transport-ready data shapes but no wire endpoint is added here. Durable server operations, provider tools, composer/timeline contributions and untrusted isolation remain later phases.
+Focused tests cover public lifecycle, hidden identity, independent viewers, scope/revision races, timeouts, late factory completion, capability revocation, invalid payloads, bounded updates, failures and 100 lifecycle cycles. They are contract tests, not UI parity or performance measurements. React Native and SwiftUI need native renderers/bridges; Electron, authenticated local/remote/relay/tunnel domain services, all providers, V2 adapters, compositor performance and accessibility journeys require separate integration verification. The JSON types are transport-ready data shapes but no wire endpoint is added here. Durable server operations, provider tools, structured attachment protocols, asynchronous context resolution and untrusted isolation remain later phases.
 
 For a shell exit transition, `retainHiddenPresentation` keeps a hidden view painted until the shell removes it. Activity remains hidden/cancelled and the wrapper is inert and aria-hidden. The default still applies display:none. The shell must end the transition and conceal/unmount the view; this option does not resume extension work.
+
+## Composer context and read-only message cards
+
+An extension may register optional `composerContexts` and `messageDecorations` descriptor/implementation arrays alongside its surfaces. Both use namespaced IDs and explicit clients. `@t3tools/extension-sdk/context` exports the portable types and text helpers. See [the issue-context fixture](examples/issue-context/issue-context.mjs), which uses only public SDK imports and clearly labels its static data.
+
+The web composer lists registered context contributions under Add context. Its synchronous `select(ViewContext)` returns a title, plain text and optional HTTP(S) source URL. The host stamps contribution/package identity, capture time and originating resource scope. The complete captured snapshot is inserted as readable prompt text; a removable preview and core inline editor chip are derived from it. Core history formatting shows title/source/content without transport metadata, while copy/export retain the original source. Existing draft persistence, stash, prompt recall and failed-send recovery own that string. Unregistering the extension does not delete its captured text. Add the context again to capture a new revision; there is no automatic refresh.
+
+Each selection allows 8 KiB of UTF-8 text, at most eight snapshots and 32 KiB of serialized context per prompt. Text containing the composer's reserved object-replacement character is rejected. The current prompt string freezes at the existing send boundary before asynchronous uploads, and the existing server command admits that exact submitted text. This is a snapshot captured on selection, not a live server read at admission. No new attachment kind or wire field is introduced. Provider input validation still applies.
+
+A message decorator receives one copied immutable message with environment/thread/message identity and returns a bounded plain card or null. The web host invokes it only for a visible user-message row. It retains the original message text alongside the card, contains thrown errors, and stops rendering the card after unregister. Decorations cannot edit messages or submit turns. The first version supports synchronous pure projection, not asynchronous fetching or arbitrary custom renderers. Plain fallback remains usable without a renderer; native clients have no contribution UI in this implementation.

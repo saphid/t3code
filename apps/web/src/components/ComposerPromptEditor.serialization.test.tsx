@@ -1,11 +1,23 @@
+import { formatContextSnapshot, readableContextPrompt } from "@t3tools/extension-sdk/context";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
-import { $copyNode, $getRoot, $isElementNode, PASTE_COMMAND, type LexicalEditor } from "lexical";
+import {
+  $copyNode,
+  $getRoot,
+  $isElementNode,
+  PASTE_COMMAND,
+  KEY_BACKSPACE_COMMAND,
+  type LexicalEditor,
+} from "lexical";
 import { act, createRef } from "react";
 import { create, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
-import { collapseExpandedComposerCursor } from "../composer-logic";
-import { ComposerPromptEditor, type ComposerPromptEditorHandle } from "./ComposerPromptEditor";
+import { collapseExpandedComposerCursor, expandCollapsedComposerCursor } from "../composer-logic";
+import {
+  ComposerPromptEditor,
+  ComposerExtensionContextNode,
+  type ComposerPromptEditorHandle,
+} from "./ComposerPromptEditor";
 
 vi.mock("./chat/FileTagChip", () => ({
   FILE_TAG_CHIP_CLASS_NAME: "",
@@ -180,5 +192,96 @@ describe("composer mention serialization", () => {
     expect(event.defaultPrevented).toBe(true);
     expect(editorRef.current?.readSnapshot().value).toBe("[README.md](README.md) ");
     expect(lexicalEditor.getEditorState().read(() => $firstMention().isInline())).toBe(true);
+  });
+});
+
+describe("captured extension context serialization", () => {
+  const snapshot = {
+    version: 1 as const,
+    id: "opaque-fixture-id",
+    contributionId: "example.issue-context/select",
+    extensionVersion: "1.0.0",
+    capturedAt: "2026-09-09T00:00:00.000Z",
+    origin: {
+      namespace: "t3.composer",
+      id: "thread",
+      environmentId: "env",
+      projectId: "project",
+      threadId: "thread",
+    },
+    title: "Issue snapshot (fixture)",
+    sourceUrl: "https://example.com/issues/fixture",
+    text: "Unicode 選択 🌈 with @README.md and $skill kept as captured text.",
+  };
+  const prompt = formatContextSnapshot(snapshot);
+  it("shows a core chip while preserving exact source through snapshot, clone, and JSON export/import", async () => {
+    await renderPrompt(prompt);
+    expect(editorRef.current?.readSnapshot()).toMatchObject({
+      value: prompt,
+      cursor: 1,
+      expandedCursor: prompt.length,
+    });
+    const exported = lexicalEditor.getEditorState().read(() => {
+      const paragraph = $getRoot().getFirstChildOrThrow();
+      if (!$isElementNode(paragraph)) throw new Error("Expected paragraph");
+      const node = paragraph.getFirstChildOrThrow();
+      if (!(node instanceof ComposerExtensionContextNode))
+        throw new Error("Expected captured context chip");
+      expect((node.decorate().props as { children: string }).children).toBe(snapshot.title);
+      return lexicalEditor.getEditorState().toJSON();
+    });
+    await renderPrompt("");
+    await act(() => lexicalEditor.setEditorState(lexicalEditor.parseEditorState(exported)));
+    expect(editorRef.current?.readSnapshot().value).toBe(prompt);
+    expect(readableContextPrompt(prompt)).toContain(snapshot.text);
+    expect(readableContextPrompt(prompt)).not.toContain(snapshot.id);
+    expect(readableContextPrompt(prompt)).not.toContain('"origin"');
+  });
+  it("pastes captured source as a core chip without exposing transport metadata", async () => {
+    vi.stubGlobal("ClipboardEvent", TestClipboardEvent);
+    await renderPrompt("");
+    await act(() => {
+      lexicalEditor.update(
+        () => {
+          const paragraph = $getRoot().getFirstChildOrThrow();
+          if (!$isElementNode(paragraph)) throw new Error("Expected paragraph");
+          paragraph.selectEnd();
+          expect(lexicalEditor.dispatchCommand(PASTE_COMMAND, new TestClipboardEvent(prompt))).toBe(
+            true,
+          );
+        },
+        { discrete: true },
+      );
+    });
+    expect(editorRef.current?.readSnapshot().value).toBe(prompt);
+    expect(
+      lexicalEditor.getEditorState().read(() => {
+        const paragraph = $getRoot().getFirstChildOrThrow();
+        if (!$isElementNode(paragraph)) throw new Error("Expected paragraph");
+        return paragraph.getFirstChildOrThrow().getType();
+      }),
+    ).toBe("composer-extension-context");
+  });
+  it("maps collapsed cursor offsets and deletes the whole captured block with native backspace", async () => {
+    await renderPrompt(prompt);
+    expect(collapseExpandedComposerCursor(prompt, prompt.length)).toBe(1);
+    expect(expandCollapsedComposerCursor(prompt, 1)).toBe(prompt.length);
+    await act(() => {
+      lexicalEditor.update(
+        () => {
+          const paragraph = $getRoot().getFirstChildOrThrow();
+          if (!$isElementNode(paragraph)) throw new Error("Expected paragraph");
+          paragraph.selectEnd();
+          expect(
+            lexicalEditor.dispatchCommand(
+              KEY_BACKSPACE_COMMAND,
+              new Event("keydown", { cancelable: true }) as KeyboardEvent,
+            ),
+          ).toBe(true);
+        },
+        { discrete: true },
+      );
+    });
+    expect(editorRef.current?.readSnapshot().value).toBe("");
   });
 });

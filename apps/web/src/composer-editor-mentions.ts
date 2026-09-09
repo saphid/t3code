@@ -1,3 +1,4 @@
+import { readContextSnapshots, type ContextSnapshot } from "@t3tools/extension-sdk/context";
 import type { AssistantCitation } from "@t3tools/contracts";
 import { collectAssistantCitations } from "@t3tools/shared/assistantCitations";
 import {
@@ -10,6 +11,7 @@ import {
 } from "@t3tools/shared/composerInlineTokens";
 
 export type ComposerPromptSegment =
+  | { type: "extension-context"; snapshot: ContextSnapshot; source: string }
   | {
       type: "text";
       text: string;
@@ -134,15 +136,24 @@ function forEachMentionMatch(
 export function collectComposerPromptInlineTokens(text: string) {
   const tokens = collectComposerInlineTokens(text);
   const citations = collectAssistantCitations(text);
-  if (citations.length === 0) return tokens;
+  const contexts = readContextSnapshots(text).map((item) => ({
+    ...item,
+    type: "extension-context" as const,
+    source: text.slice(item.start, item.end),
+  }));
+  if (citations.length === 0 && contexts.length === 0) return tokens;
+  const outsideContexts = (token: { start: number; end: number }) =>
+    !contexts.some((context) => token.start < context.end && token.end > context.start);
 
   // An unfinished @ mention can otherwise consume the start of a citation's label.
   return [
     ...tokens.filter(
       (token) =>
+        outsideContexts(token) &&
         !citations.some((citation) => token.start < citation.end && token.end > citation.start),
     ),
-    ...citations.map((match) => ({ ...match, type: "citation" as const })),
+    ...citations.filter(outsideContexts).map((match) => ({ ...match, type: "citation" as const })),
+    ...contexts,
   ].sort((left, right) => left.start - right.start);
 }
 
@@ -163,7 +174,9 @@ function splitPromptTextIntoComposerSegments(text: string): ComposerPromptSegmen
       pushTextSegment(segments, text.slice(cursor, match.start));
     }
 
-    if (match.type === "citation") {
+    if (match.type === "extension-context") {
+      segments.push({ type: "extension-context", snapshot: match.snapshot, source: match.source });
+    } else if (match.type === "citation") {
       segments.push({ type: "citation", citation: match.citation, source: match.source });
     } else if (match.type === "mention") {
       segments.push({

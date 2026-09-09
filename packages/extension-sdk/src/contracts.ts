@@ -1,3 +1,4 @@
+import type { TextContributionDescriptor } from "./context.js";
 /** Serializable descriptors. No renderer, credentials, or app store crosses this boundary. */
 export type Json =
   | null
@@ -33,6 +34,8 @@ export interface ExtensionManifest {
   readonly apiVersion: 1;
   readonly version: string;
   readonly surfaces: readonly SurfaceDescriptor[];
+  readonly composerContexts?: readonly TextContributionDescriptor[];
+  readonly messageDecorations?: readonly TextContributionDescriptor[];
 }
 export interface ViewRecord {
   readonly version: 1;
@@ -148,6 +151,27 @@ export function validateManifest(value: ExtensionManifest): ExtensionManifest {
       throw new Error("Invalid clients");
     if (!Array.isArray(surface.capabilities)) throw new Error("Invalid capabilities");
     surface.capabilities.forEach(assertId);
+  }
+  for (const descriptors of [manifest.composerContexts ?? [], manifest.messageDecorations ?? []]) {
+    if (!Array.isArray(descriptors) || descriptors.length > 16)
+      throw new Error("Invalid text contributions");
+    for (const descriptor of descriptors) {
+      assertId(descriptor.id);
+      if (!descriptor.id.startsWith(manifest.id + "/") || ids.has(descriptor.id))
+        throw new Error("Duplicate or foreign contribution");
+      ids.add(descriptor.id);
+      if (
+        typeof descriptor.title !== "string" ||
+        !descriptor.title.trim() ||
+        descriptor.title.length > 200 ||
+        !Array.isArray(descriptor.clients) ||
+        !descriptor.clients.length ||
+        descriptor.clients.some(
+          (client: unknown) => typeof client !== "string" || !client || client.length > 100,
+        )
+      )
+        throw new Error("Invalid text contribution metadata");
+    }
   }
   return manifest;
 }

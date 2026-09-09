@@ -1,8 +1,10 @@
 # Extension developer preview
 
-The implementation is a trusted, in-process resource-view SDK plus a web/desktop application bridge. An independently authored package can register a new surface and open it through a generic layout record without adding another feature kind to the shell. Application bootstrap still imports and registers that package explicitly. There is no package discovery or user installation workflow.
+The implementation is a trusted, in-process resource-view SDK with captured composer context, read-only message cards and a web/desktop application bridge. An independently authored package can register a new surface and open it through a generic layout record without adding another feature kind to the shell. Application bootstrap still imports and registers that package explicitly. There is no package discovery or user installation workflow.
 
 Six bundled adapters use the same SDK renderer contract: Files, Diff, Version Control, Browser, Terminal and Agents. Their presence is implementation evidence, not a declaration of real-client parity or release readiness. Use the [validation and rollback guide](../../operations/extensions-validation.md) and retained run receipts to assess a candidate.
+
+Portable text snapshot validation and codecs are exported from `@t3tools/extension-sdk/context`; see the [SDK author guide](../../../packages/extension-sdk/README.md) for context and message contribution examples.
 
 ## Package API and application integration are different boundaries
 
@@ -23,6 +25,8 @@ The generic application registry defaults to no services and authorization denie
 The [workspace reader example](../../../packages/extension-sdk/examples/workspace-reader/README.md) uses only public SDK exports and React. Its explicit app adapter supplies `t3.workspace/read-text` through the existing authenticated project read API, bound to one installed environment/project grant. It derives cwd from live host state, rejects absolute/traversal inputs, retains backend canonical relative-path containment, rejects stale/revoked results and bounds the complete response JSON. This is a trusted in-process API, not server-side per-extension authentication or a sandbox. No other example capability names are implied endpoints.
 
 Bundled native adapters are a separate trusted integration case. Their typed React binding hooks carry existing component props and callbacks; factories do not read hooks outside React. They can import existing first-party domain components. An external package using only SDK exports must not assume those native imports or binding hooks are a public, portable capability API.
+
+Generic community views have real side-panel and bottom-dock destinations. See the [placement and viewer ownership guide](./placements.md) for migration, show/hide/close, captured save generations and unsupported destinations. Use `session.save` for restoration state; the app bridge supplies the matching layout owner when persisting it.
 
 ## Identity and saved layout
 
@@ -70,6 +74,8 @@ Native restore state remains owned by existing stores; those adapters accept `nu
 
 ## Deliberately later phases
 
-This preview does not implement an untrusted-code sandbox, marketplace, server plugin loader, extension RPC/wire endpoint, model-tool delivery, composer contribution runtime or timeline/attachment contribution runtime. The six native adapters' existing features do not create those general-purpose extension APIs. Core authentication, durable orchestration, approvals, provider lifecycle, turn settlement and checkpoint coordination remain outside replaceable views.
+This preview does not implement an untrusted-code sandbox, marketplace, server plugin loader, extension RPC/wire endpoint, model-tool delivery, asynchronous composer resolution or a structured attachment/timeline-item contribution protocol. The six native adapters' existing features do not create those general-purpose extension APIs. Core authentication, durable orchestration, approvals, provider lifecycle, turn settlement and checkpoint coordination remain outside replaceable views.
 
 Current integration targets the repository's V1 application. Research about V2 execution identities, migration, tools and future contribution slots is design work, not a compatibility guarantee. A common SDK type does not make a V1 client compatible with a V2 server. Those phases need their own contracts, migrations and platform/provider verification.
+
+The text contribution slice adds synchronous explicit composer selections and read-only message cards to the same trusted registration path. Captured context is readable prompt text with host attribution and scope, preserved by existing draft/send/history paths. Selection captures a snapshot; the normal send path freezes that string before awaits and the server admits it through the existing command. It does not resolve live external data inside admission. Message cards are pure projections of visible immutable user messages; original text always remains. The static issue-context example is labeled as a fixture. No new attachment union member, server plugin loader, provider tool, native client renderer or V2 protocol compatibility is implied.

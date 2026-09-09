@@ -1,3 +1,6 @@
+import { readableContextPrompt } from "@t3tools/extension-sdk/context";
+import { ComposerExtensionContext } from "../../extensions/ComposerExtensionContext";
+import { isElectron } from "../../env";
 import { RefreshIcon } from "~/components/ui/refresh-icon";
 import {
   questionAttachmentDraftId,
@@ -5189,6 +5192,33 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
               composerProviderState.composerSurfaceClassName,
             )}
           >
+            {!isComposerApprovalState &&
+              pendingUserInputs.length === 0 &&
+              activeThread &&
+              !projectSelectionRequired && (
+                <ComposerExtensionContext
+                  prompt={prompt}
+                  context={{
+                    resource: {
+                      namespace: "t3.composer",
+                      id: activeThread.id,
+                      environmentId,
+                      projectId: activeThread.projectId,
+                      threadId: activeThread.id,
+                    },
+                    client: isElectron ? "desktop" : "web",
+                  }}
+                  onChange={(nextPrompt) =>
+                    onPromptChange(
+                      nextPrompt,
+                      nextPrompt.length,
+                      nextPrompt.length,
+                      false,
+                      composerTerminalContexts.map((item) => item.id),
+                    )
+                  }
+                />
+              )}
             {showCollapsedMobilePromptRow ? (
               <div className="flex items-center justify-between gap-2 px-3 py-2">
                 <button
@@ -5210,7 +5240,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                       ? "Choose an option above"
                       : activePendingProgress.customAnswer ||
                         "Type your own answer, or leave this blank to use the selected option"
-                    : prompt.trim() ||
+                    : readableContextPrompt(prompt).trim() ||
                       (showProviderUnavailable
                         ? "Enable a provider in Settings"
                         : "Ask anything...")}

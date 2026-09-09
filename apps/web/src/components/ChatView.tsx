@@ -1,3 +1,8 @@
+import {
+  assertContextBudget,
+  readContextSnapshots,
+  readableContextPrompt,
+} from "@t3tools/extension-sdk/context";
 import { useLoadBalancedEnvironment } from "../hooks/useLoadBalancedEnvironment";
 import type { UsageLimitSourceSnapshots } from "@t3tools/contracts";
 import {
@@ -5804,6 +5809,7 @@ export default function ChatView(props: ChatViewProps) {
     },
   ) => {
     e?.preventDefault();
+    const hasExtensionContext = readContextSnapshots(promptRef.current).length > 0;
     // Typed out in full rather than picked from the menu. Attachments or contexts
     // mean the user is sending a prompt, so those go through as usual.
     if (
@@ -5811,6 +5817,7 @@ export default function ChatView(props: ChatViewProps) {
       usageLimitsKey !== null &&
       !directAnnotation &&
       !composerHasNonPromptContent &&
+      !hasExtensionContext &&
       isUsageLimitsCommand(promptRef.current)
     ) {
       if (openUsageLimits()) {
@@ -5930,6 +5937,15 @@ export default function ChatView(props: ChatViewProps) {
           ]
         : sendContextPreviewAnnotations;
     const promptForSend = promptRef.current;
+    try {
+      assertContextBudget(promptForSend);
+    } catch (error) {
+      setThreadError(
+        activeThread.id,
+        error instanceof Error ? error.message : "Captured context is too large",
+      );
+      return;
+    }
     const {
       trimmedPrompt: trimmed,
       sendableTerminalContexts: sendableComposerTerminalContexts,
@@ -5945,6 +5961,7 @@ export default function ChatView(props: ChatViewProps) {
         composerReviewComments.length,
     });
     const feedbackCommand =
+      !hasExtensionContext &&
       ctxSelectedProvider === "codex" &&
       composerImages.length === 0 &&
       composerFiles.length === 0 &&
@@ -6005,6 +6022,7 @@ export default function ChatView(props: ChatViewProps) {
     }
     if (
       !directAnnotation &&
+      !hasExtensionContext &&
       sendInteractionModeEnabled &&
       showPlanFollowUpPrompt &&
       activeProposedPlan &&
@@ -6036,6 +6054,7 @@ export default function ChatView(props: ChatViewProps) {
     }
     // Providers without the legacy toggle receive their native commands unchanged.
     const standaloneSlashCommand =
+      !hasExtensionContext &&
       sendInteractionModeEnabled &&
       composerImages.length === 0 &&
       composerFiles.length === 0 &&
@@ -6313,7 +6332,7 @@ export default function ChatView(props: ChatViewProps) {
         firstComposerImageName = firstComposerImage.name;
       }
     }
-    let titleSeed = assistantCitationsToPlainText(trimmed);
+    let titleSeed = assistantCitationsToPlainText(readableContextPrompt(trimmed));
     if (!titleSeed) {
       if (firstComposerImageName) {
         titleSeed = `Image: ${firstComposerImageName}`;

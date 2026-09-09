@@ -1,3 +1,13 @@
+import {
+  createContextSnapshotId,
+  validateContextContent,
+  validateContextSnapshot,
+  type ComposerContextContribution,
+  type MessageDecorationContribution,
+  type MessageContext,
+  type MessageCard,
+  type TextContributionDescriptor,
+} from "./context.js";
 import { assertId, copyJson, resourceKey, validateContext, validateManifest } from "./contracts.js";
 import type {
   ExtensionManifest,
@@ -33,6 +43,8 @@ export interface SurfaceContribution<Renderer> {
 export interface Extension<Renderer> {
   readonly manifest: ExtensionManifest;
   readonly surfaces: readonly SurfaceContribution<Renderer>[];
+  readonly composerContexts?: readonly ComposerContextContribution[];
+  readonly messageDecorations?: readonly MessageDecorationContribution[];
 }
 export interface ServiceCall {
   readonly extensionId: string;
@@ -65,6 +77,8 @@ export interface ViewSnapshot {
 interface Registration<R> {
   manifest: ExtensionManifest;
   contributions: Map<string, SurfaceContribution<R>>;
+  composerContexts: Map<string, ComposerContextContribution>;
+  messageDecorations: Map<string, MessageDecorationContribution>;
   enabled: boolean;
 }
 interface Entry<R> {
@@ -454,7 +468,42 @@ export function createExtensionHost<Renderer>(options: HostOptions) {
       }
       if (contributions.size !== manifest.surfaces.length)
         throw new Error("Missing contribution implementation");
-      const registration = { manifest, contributions, enabled: true };
+      function implementations<T extends { readonly id: string }>(
+        descriptors: readonly TextContributionDescriptor[],
+        supplied: readonly T[],
+        method: keyof T,
+      ): Map<string, T> {
+        const result = new Map<string, T>();
+        for (const implementation of supplied) {
+          if (
+            result.has(implementation.id) ||
+            !descriptors.some((item) => item.id === implementation.id) ||
+            typeof implementation[method] !== "function"
+          )
+            throw new Error("Invalid text contribution implementation");
+          result.set(implementation.id, { ...implementation });
+        }
+        if (result.size !== descriptors.length)
+          throw new Error("Missing text contribution implementation");
+        return result;
+      }
+      const composerContexts = implementations(
+        manifest.composerContexts ?? [],
+        extension.composerContexts ?? [],
+        "select",
+      );
+      const messageDecorations = implementations(
+        manifest.messageDecorations ?? [],
+        extension.messageDecorations ?? [],
+        "decorate",
+      );
+      const registration = {
+        manifest,
+        contributions,
+        composerContexts,
+        messageDecorations,
+        enabled: true,
+      };
       registrations.set(manifest.id, registration);
       return () => {
         if (registrations.get(manifest.id) !== registration) return;
@@ -466,6 +515,96 @@ export function createExtensionHost<Renderer>(options: HostOptions) {
       return [...registrations.values()]
         .filter((r) => r.enabled)
         .flatMap((r) => copyJson(r.manifest.surfaces));
+    },
+    contextDescriptors(client: string) {
+      return [...registrations.values()]
+        .filter((item) => item.enabled)
+        .flatMap((item) =>
+          copyJson(item.manifest.composerContexts ?? []).filter((descriptor) =>
+            descriptor.clients.includes(client),
+          ),
+        );
+    },
+    captureContext(id: string, context: ViewContext) {
+      if (disposed) throw new Error("Host disposed");
+      const safeContext = validateContext(context);
+      const registration = [...registrations.values()].find(
+        (item) => item.enabled && item.composerContexts.has(id),
+      );
+      const descriptor = registration?.manifest.composerContexts?.find((item) => item.id === id);
+      if (!registration || !descriptor?.clients.includes(context.client))
+        throw new Error("Context contribution unavailable");
+      const content = validateContextContent(
+        registration.composerContexts.get(id)!.select(copyJson(safeContext)),
+      );
+      return validateContextSnapshot({
+        ...content,
+        version: 1,
+        id: createContextSnapshotId(),
+        contributionId: id,
+        extensionVersion: registration.manifest.version,
+        capturedAt: new Date().toISOString(),
+        origin: safeContext.resource,
+      });
+    },
+    messageDecorationCount(client?: string) {
+      return [...registrations.values()]
+        .filter((item) => item.enabled)
+        .reduce(
+          (count, item) =>
+            count +
+            (item.manifest.messageDecorations ?? []).filter(
+              (descriptor) => client === undefined || descriptor.clients.includes(client),
+            ).length,
+          0,
+        );
+    },
+    decorateMessage(
+      message: MessageContext,
+      client: string,
+      limits: { maxCards?: number; maxContributions?: number } = {},
+    ): readonly MessageCard[] {
+      if (disposed) return [];
+      let safeMessage: MessageContext;
+      try {
+        safeMessage = copyJson(message, 256 * 1024);
+        if (
+          [safeMessage.environmentId, safeMessage.threadId, safeMessage.messageId].some(
+            (id) => typeof id !== "string" || !id,
+          ) ||
+          typeof safeMessage.text !== "string"
+        )
+          return [];
+      } catch {
+        return [];
+      }
+      const cards: MessageCard[] = [];
+      const cardLimit =
+        Number.isSafeInteger(limits.maxCards) && limits.maxCards! >= 0
+          ? Math.min(limits.maxCards!, 4)
+          : 4;
+      let remaining =
+        Number.isSafeInteger(limits.maxContributions) && limits.maxContributions! >= 0
+          ? Math.min(limits.maxContributions!, 16)
+          : 16;
+      for (const registration of registrations.values()) {
+        if (!registration.enabled) continue;
+        for (const descriptor of registration.manifest.messageDecorations ?? []) {
+          if (!descriptor.clients.includes(client)) continue;
+          if (cards.length >= cardLimit || remaining <= 0) return cards;
+          remaining -= 1;
+          try {
+            const content = registration.messageDecorations
+              .get(descriptor.id)!
+              .decorate(copyJson(safeMessage, 256 * 1024));
+            if (content)
+              cards.push({ ...validateContextContent(content), contributionId: descriptor.id });
+          } catch {
+            /* The original message remains the fallback for a failed decoration. */
+          }
+        }
+      }
+      return cards;
     },
     open,
     restore(record: ViewRecord) {
