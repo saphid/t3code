@@ -419,7 +419,9 @@ private struct MarkdownBlockParser {
             index += 1
         }
 
-        return imageBlocks(in: paragraphLines.joined(separator: "\n"))
+        return imageBlocks(in: CodexMarkdownDirectives.replacingVisualizations(
+            in: paragraphLines.joined(separator: "\n")
+        ))
     }
 
     private func imageBlocks(in paragraph: String) -> [MarkdownBlock] {

@@ -23,10 +23,107 @@ enum FeatureThreadLoadState: Equatable {
     case failed(String)
 }
 
+enum FeatureStopPhase: Equatable {
+    case requesting
+    case awaitingOutcome
+    case unconfirmed
+}
+
 @MainActor
 @Observable
 public final class FeatureRootModel {
     private static let maximumRetainedThreadDetails = 6
+
+    private struct StopKey: Hashable {
+        let threadID: String
+        let turnID: String?
+    }
+    private struct StopRequest {
+        let token: UUID
+        let key: StopKey
+        var canObserveOutcome: Bool
+        var phase: FeatureStopPhase
+    }
+    private var stopRequests: [String: StopRequest] = [:]
+
+    func stopPhase(threadID: String) -> FeatureStopPhase? {
+        let key = stopKey(threadID: threadID)
+        guard let request = stopRequests[threadID], request.key == key else { return nil }
+        return request.phase
+    }
+
+    private func stopKey(threadID: String) -> StopKey {
+        let thread = snapshot.threads.first { $0.id == threadID } ?? details[threadID]?.thread
+        return thread.map { StopKey(threadID: threadID, turnID: $0.latestTurnID) }
+            ?? stopRequests[threadID]?.key ?? StopKey(threadID: threadID, turnID: nil)
+    }
+
+    /// Claims the request on the tap's actor turn, before dispatching async work.
+    func requestCancelTurn(threadID: String) {
+        let key = stopKey(threadID: threadID)
+        guard let token = claimStop(key) else { return }
+        Task { await executeStop(key, token: token) }
+    }
+
+    private func claimStop(_ key: StopKey) -> UUID? {
+        guard stopRequests[key.threadID]?.key != key else { return nil }
+        let token = UUID()
+        let thread = snapshot.threads.first { $0.id == key.threadID } ?? details[key.threadID]?.thread
+        let canObserveOutcome = key.turnID != nil && thread?.latestTurnState == "running"
+        stopRequests[key.threadID] = StopRequest(
+            token: token, key: key, canObserveOutcome: canObserveOutcome, phase: .requesting
+        )
+        return token
+    }
+
+    /// A failed transport response may have followed acceptance. Reconcile before retrying.
+    @discardableResult
+    func retryCancelTurn(threadID: String) -> Task<Void, Never>? {
+        let key = stopKey(threadID: threadID)
+        guard let previous = stopRequests[key.threadID], previous.key == key,
+              previous.phase == .unconfirmed else { return nil }
+        let token = UUID()
+        // Retry must retain the running-turn evidence captured by this same request.
+        let canObserveOutcome = previous.canObserveOutcome
+        stopRequests[key.threadID] = StopRequest(
+            token: token, key: key, canObserveOutcome: canObserveOutcome, phase: .requesting
+        )
+        return Task {
+            do {
+                let status = try await client.stopStatus(threadID: threadID)
+                guard stopRequests[key.threadID]?.token == token else { return }
+                upsert(status)
+                guard stopRequests[key.threadID]?.token == token else { return }
+                guard status.latestTurnID == key.turnID else {
+                    stopRequests[key.threadID]?.phase = .unconfirmed
+                    return
+                }
+                guard status.latestTurnID != nil, status.latestTurnState == "running" else {
+                    stopRequests[key.threadID]?.phase = .unconfirmed
+                    return
+                }
+                stopRequests[key.threadID]?.canObserveOutcome = true
+                await executeStop(key, token: token)
+            } catch {
+                guard stopRequests[key.threadID]?.token == token else { return }
+                stopRequests[key.threadID]?.phase = .unconfirmed
+                errorMessage = error.localizedDescription
+            }
+        }
+    }
+
+    private func reconcileStop(_ thread: FeatureThread) {
+        guard let turnID = thread.latestTurnID,
+              thread.latestTurnState == "completed" || thread.latestTurnState == "interrupted"
+                || thread.latestTurnState == "error" else { return }
+        // Approval and input presentation can hide a session that is still running.
+        guard let sessionStatus = thread.settlementFacts?.sessionStatus,
+              ["ready", "interrupted", "stopped", "error"].contains(sessionStatus),
+              thread.state != .working && thread.state != .queued,
+              let request = stopRequests[thread.id], request.canObserveOutcome,
+              request.key.turnID == turnID else { return }
+        stopRequests.removeValue(forKey: thread.id)
+    }
 
     private struct PendingSettlementMutation {
         let id: UUID
@@ -52,6 +149,7 @@ public final class FeatureRootModel {
     public private(set) var details: [String: FeatureThreadDetail] = [:]
     private(set) var detailLoadStates: [String: FeatureThreadLoadState] = [:]
     private(set) var threadSyncStates: [String: FeatureThreadSyncState] = [:]
+    private(set) var selectedThreadReceipt: FeatureThreadReceipt?
     private var backgroundedAt: Date?
     /// Advances whenever a Home presentation input changes.
     public private(set) var homePresentationRevision: UInt64 = 0
@@ -81,6 +179,10 @@ public final class FeatureRootModel {
     private var pendingSettlementMutations: [String: PendingSettlementMutation] = [:]
     private var pendingCompletionSubmissionIDs: Set<String> = []
     private var pendingDiscardSubmissionIDs: Set<String> = []
+    @ObservationIgnored private var activeDetailPresentation: (
+        threadID: String, owner: UUID, lifetime: AsyncStream<Void>.Continuation,
+        refreshTask: Task<Void, Never>?
+    )?
     private var detailRecency: [String] = []
     private var detailLoadGeneration: UInt64 = 0
     private var detailLoadRevisions: [String: UInt64] = [:]
@@ -135,14 +237,13 @@ public final class FeatureRootModel {
 
     func applicationDidEnterBackground(at date: Date = .now) {
         backgroundedAt = date
+        client.suspendForBackground()
     }
 
-    func applicationDidBecomeActive(at date: Date = .now) async {
-        guard let backgroundedAt else { return }
+    func applicationDidBecomeActive(at _: Date = .now) async {
+        guard backgroundedAt != nil else { return }
         self.backgroundedAt = nil
-        await client.resumeAfterBackground(
-            reconnect: date.timeIntervalSince(backgroundedAt) >= 10
-        )
+        await client.resumeAfterBackground(reconnect: true)
     }
 
     /// Background refresh is deliberately separate from `reload()`: native
@@ -614,6 +715,56 @@ public final class FeatureRootModel {
         }
     }
 
+    /// Holds selected-thread transport for the owning presentation task, including after loading.
+    func runThreadPresentation(id: String, onLoaded: @MainActor () -> Void = {}) async {
+        guard !Task.isCancelled else { return }
+        if let previous = activeDetailPresentation {
+            releaseThread(previous.threadID)
+        }
+        selectedThreadReceipt = nil
+        let owner = UUID()
+        let lifetime = AsyncStream<Void>.makeStream()
+        activeDetailPresentation = (id, owner, lifetime.continuation, nil)
+        await withTaskCancellationHandler {
+            defer { releaseThreadPresentation(id: id, owner: owner) }
+            _ = await detail(for: id, force: true)
+            guard !Task.isCancelled,
+                  activeDetailPresentation?.owner == owner else { return }
+            onLoaded()
+            for await _ in lifetime.stream {}
+        } onCancel: {
+            // Cancellation must release even when the detail read is still suspended.
+            Task { @MainActor [weak self] in
+                self?.releaseThreadPresentation(id: id, owner: owner)
+            }
+        }
+    }
+
+    /// Retries belong to the current presentation and cannot outlive a close or replacement.
+    @discardableResult
+    func refreshThreadPresentation(
+        id: String, fresh: Bool = true, onLoaded: @escaping @MainActor () -> Void = {}
+    ) -> Bool {
+        guard let presentation = activeDetailPresentation, presentation.threadID == id else { return false }
+        presentation.refreshTask?.cancel()
+        let owner = presentation.owner
+        activeDetailPresentation?.refreshTask = Task { [weak self] in
+            guard let self, !Task.isCancelled,
+                  self.activeDetailPresentation?.owner == owner else { return }
+            _ = await self.detail(for: id, force: true, fresh: fresh)
+            guard !Task.isCancelled,
+                  self.activeDetailPresentation?.owner == owner else { return }
+            onLoaded()
+        }
+        return true
+    }
+
+    private func releaseThreadPresentation(id: String, owner: UUID) {
+        guard activeDetailPresentation?.threadID == id,
+              activeDetailPresentation?.owner == owner else { return }
+        releaseThread(id)
+    }
+
     public func detail(for id: String, force: Bool = false, fresh: Bool = false) async -> FeatureThreadDetail? {
         if !force, let cached = details[id] {
             return cached
@@ -692,6 +843,12 @@ public final class FeatureRootModel {
 
     /// Ends any selected-thread transport work when its detail view closes.
     public func releaseThread(_ id: String) {
+        if selectedThreadReceipt?.threadID == id { selectedThreadReceipt = nil }
+        if let presentation = activeDetailPresentation, presentation.threadID == id {
+            activeDetailPresentation = nil
+            presentation.refreshTask?.cancel()
+            presentation.lifetime.finish()
+        }
         client.releaseThread(id: id)
         markDetailRecentlyUsed(id)
         evictOldThreadDetailsIfNeeded()
@@ -789,28 +946,59 @@ public final class FeatureRootModel {
     }
 
     public func cancelTurn(threadID: String) async {
+        let key = stopKey(threadID: threadID)
+        guard let token = claimStop(key) else { return }
+        await executeStop(key, token: token)
+    }
+
+    private func executeStop(_ key: StopKey, token: UUID) async {
+        guard stopRequests[key.threadID]?.token == token else { return }
+        do {
+            let sentRemotely = try await cancelClaimedTurn(key)
+            guard stopRequests[key.threadID]?.token == token else { return }
+            if !sentRemotely {
+                stopRequests.removeValue(forKey: key.threadID)
+            } else {
+                let phase: FeatureStopPhase = stopRequests[key.threadID]?.canObserveOutcome == true
+                    ? .awaitingOutcome : .unconfirmed
+                stopRequests[key.threadID]?.phase = phase
+            }
+        } catch {
+            guard stopRequests[key.threadID]?.token == token else { return }
+            if error is FeatureStopTurnChangedError {
+                stopRequests.removeValue(forKey: key.threadID)
+            } else {
+                stopRequests[key.threadID]?.phase = .unconfirmed
+            }
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    private func cancelClaimedTurn(_ key: StopKey) async throws -> Bool {
+        let threadID = key.threadID
         if pendingSubmissionsByID.values.contains(where: {
             $0.threadID == threadID && $0.creation != nil
         }) {
             await stopOutboxDrain()
+            defer { scheduleOutboxDrain() }
             let queued = pendingSubmissionsByID.values.filter { $0.threadID == threadID }
+            var discardedAll = true
             for submission in queued {
                 if !(await discardQueuedSubmission(submission)) {
+                    discardedAll = false
                     scheduleOutboxRetry()
                 }
             }
+            guard discardedAll else { throw FeatureStopStatusUnavailableError() }
             if pendingThreadsByID[threadID] == nil,
                snapshot.threads.contains(where: { $0.id == threadID }) {
-                await perform {
-                    try await client.cancelTurn(threadID: threadID)
-                }
+                try await client.cancelTurn(threadID: threadID)
+                return true
             }
-            scheduleOutboxDrain()
-            return
+            return false
         }
-        await perform {
-            try await client.cancelTurn(threadID: threadID)
-        }
+        try await client.cancelTurn(threadID: threadID, expectedTurnID: key.turnID)
+        return true
     }
 
     public func resolveApproval(_ id: String, decision: FeatureApprovalDecision) async {
@@ -1015,6 +1203,8 @@ public final class FeatureRootModel {
 
     private func apply(_ event: FeatureEvent) {
         switch event {
+        case let .threadReceipt(receipt):
+            recordThreadReceipt(receipt)
         case let .snapshot(value):
             install(value)
         case let .connection(value):
@@ -1050,7 +1240,15 @@ public final class FeatureRootModel {
         }
     }
 
+    func recordThreadReceipt(_ receipt: FeatureThreadReceipt) {
+        guard activeDetailPresentation?.threadID == receipt.threadID else { return }
+        guard selectedThreadReceipt.map({ receipt.receivedAt >= $0.receivedAt }) ?? true else { return }
+        // Receipt-only updates must not invalidate the transcript or Home projections.
+        selectedThreadReceipt = receipt
+    }
+
     private func upsert(_ thread: FeatureThread) {
+        reconcileStop(thread)
         let thread = retainingPendingSettlement(in: thread)
         discardStalePullRequest(for: thread)
         var metadataChanged = false
@@ -1086,6 +1284,7 @@ public final class FeatureRootModel {
     }
 
     private func removeThread(id: String) {
+        stopRequests = stopRequests.filter { $0.key != id }
         guard let index = snapshot.threads.firstIndex(where: { $0.id == id }) else { return }
         let projectID = snapshot.threads[index].projectID
         snapshot.threads.remove(at: index)
@@ -1103,6 +1302,7 @@ public final class FeatureRootModel {
 
     private func install(_ value: FeatureSnapshot) {
         var value = value
+        for thread in value.threads { reconcileStop(thread) }
         if settingsWriteTask != nil {
             // A shell refresh can still contain the settings from before a
             // queued write. Keep both the visible choice and its rollback point.
@@ -1280,6 +1480,7 @@ public final class FeatureRootModel {
     }
 
     private func removeDetail(id: String) {
+        if selectedThreadReceipt?.threadID == id { selectedThreadReceipt = nil }
         if details.removeValue(forKey: id) != nil {
             detailRecency.removeAll { $0 == id }
         }
@@ -1292,6 +1493,7 @@ public final class FeatureRootModel {
     }
 
     private func clearDetails() {
+        selectedThreadReceipt = nil
         detailLoadGeneration &+= 1
         detailLoadRevisions.removeAll()
         storedDetailLoadRequestRevisions.removeAll()
@@ -1390,13 +1592,7 @@ public final class FeatureRootModel {
             }
 
             guard snapshot.threads.contains(where: { $0.id == submission.threadID }) else {
-                if pendingThreadsByID[submission.threadID] != nil {
-                    pendingSubmissionsByID[submission.id] = submission
-                } else if isEnvironmentConnected(submission.environmentID) {
-                    await discardRestoredSubmission(submission)
-                } else {
-                    pendingSubmissionsByID[submission.id] = submission
-                }
+                pendingSubmissionsByID[submission.id] = submission
                 continue
             }
             pendingSubmissionsByID[submission.id] = submission
@@ -1479,7 +1675,7 @@ public final class FeatureRootModel {
             role: .user,
             text: submission.text,
             createdAt: submission.identity.createdAt,
-            state: .queued,
+            state: pendingCompletionSubmissionIDs.contains(submission.id) ? .complete : .queued,
             attachments: submission.attachments.enumerated().map { index, attachment in
                 FeatureMessageAttachment(
                     id: "\(submission.id)-attachment-\(index)",
@@ -1569,6 +1765,8 @@ public final class FeatureRootModel {
     private func completeQueuedSubmission(_ submission: FeatureQueuedSubmission) async -> Bool {
         pendingCompletionSubmissionIDs.insert(submission.id)
         pendingDiscardSubmissionIDs.remove(submission.id)
+        // Server acceptance is independent of clearing its local durable copy.
+        markQueuedMessageDelivered(submission)
         do {
             try await outboxStore.remove(id: submission.id)
         } catch {
@@ -1579,20 +1777,23 @@ public final class FeatureRootModel {
         pendingSubmissionsByID.removeValue(forKey: submission.id)
         setAttachmentOutboxOwnership(false, for: submission)
         pendingThreadsByID.removeValue(forKey: submission.threadID)
-        markQueuedMessageDelivered(submission)
         outboxRetryAttempt = 0
         return true
     }
 
     private func markQueuedMessageDelivered(_ submission: FeatureQueuedSubmission) {
+        guard var message = details[submission.threadID]?.messages.first(where: {
+            $0.id == submission.identity.messageID
+        }), message.state != .complete else { return }
+        message.state = .complete
         mutateDetail(
             id: submission.threadID,
-            change: .delta(FeatureDetailDelta(changedMessages: []))
+            change: .delta(FeatureDetailDelta(changedMessages: [message]))
         ) { detail in
             guard let index = detail.messages.firstIndex(where: {
                 $0.id == submission.identity.messageID
             }) else { return }
-            detail.messages[index].state = .complete
+            detail.messages[index] = message
         }
     }
 
@@ -1716,6 +1917,36 @@ public final class FeatureRootModel {
                     needsRetry = true
                 }
                 continue
+            }
+            let awaitingCreation = pendingSubmissionsByID.values.contains {
+                $0.creation != nil && $0.threadID == submission.threadID
+            }
+            if submission.creation == nil, !awaitingCreation,
+               !snapshot.threads.contains(where: { $0.id == submission.threadID }),
+               isEnvironmentConnected(submission.environmentID) {
+                do {
+                    let recovered = try await client.recoverQueuedThread(
+                        environmentID: submission.environmentID,
+                        wireID: submission.identity.threadID
+                    )
+                    guard !Task.isCancelled, outboxGeneration == generation else { return false }
+                    guard pendingSubmissionsByID[submission.id] != nil else { continue }
+                    guard let recovered else {
+                        if !(await discardQueuedSubmission(submission)) { needsRetry = true }
+                        continue
+                    }
+                    guard recovered.id == submission.threadID,
+                          recovered.environmentID == submission.environmentID else {
+                        needsRetry = true
+                        continue
+                    }
+                    upsert(recovered)
+                } catch {
+                    guard !Task.isCancelled, outboxGeneration == generation else { return false }
+                    // Lookup/auth/transport failures are not evidence that the thread was deleted.
+                    needsRetry = true
+                    continue
+                }
             }
             var policySnapshot = snapshot
             if pendingThreadsByID[submission.threadID] != nil {

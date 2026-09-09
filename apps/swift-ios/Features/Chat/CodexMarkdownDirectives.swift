@@ -62,6 +62,8 @@ enum CodexMarkdownDirectives {
     private static let artifactPrefix = "::artifact-template{"
     private static let fileCitationPrefix = ":codex-file-citation{"
     private static let fileCitationCharacters = Array(fileCitationPrefix)
+    private static let visualizationPrefix = "\u{E200}visualize\u{E202}"
+    private static let visualizationCharacters = Array(visualizationPrefix)
 
     static func artifactTemplate(from line: String) -> CodexArtifactTemplate? {
         guard line.prefix(while: { $0 == " " }).count < 4, line.first != "\t" else {
@@ -120,7 +122,16 @@ enum CodexMarkdownDirectives {
         }.joined(separator: "\n")
     }
 
-    private static func replacingCitationsInInlineMarkdown(_ line: String) -> String {
+    /// Called only for parsed prose, so fenced/indented code remains literal.
+    static func replacingVisualizations(in source: String) -> String {
+        guard !source.hasPrefix("    "), !source.hasPrefix("\t"),
+              source.contains(visualizationPrefix) else { return source }
+        return replacingCitationsInInlineMarkdown(source, includeVisualizations: true)
+    }
+
+    private static func replacingCitationsInInlineMarkdown(
+        _ line: String, includeVisualizations: Bool = false
+    ) -> String {
         let characters = Array(line)
         var result = ""
         var cursor = 0
@@ -144,6 +155,18 @@ enum CodexMarkdownDirectives {
                     cursor = closing
                     continue
                 }
+            }
+            if includeVisualizations, characters[cursor] == "\u{E200}",
+               !isEscaped(at: cursor, in: characters),
+               characters[cursor...].starts(with: visualizationCharacters),
+               let closing = characters[(cursor + visualizationCharacters.count)...]
+                .firstIndex(of: "\u{E201}"),
+               let payload = String(characters[(cursor + visualizationCharacters.count)..<closing])
+                .data(using: .utf8),
+               let link = CodexVisualizationLink(payload: payload), let url = link.url {
+                result += "[Open visualization file](<\(url.absoluteString)>)"
+                cursor = closing + 1
+                continue
             }
             if characters[cursor] == ":", !isEscaped(at: cursor, in: characters),
                characters[cursor...].starts(with: fileCitationCharacters),

@@ -10,6 +10,380 @@ import XCTest
 @Suite("Feature root model")
 struct FeatureRootModelTests {
     @Test
+    func receiptBelongsToCurrentPresentationWithoutInvalidatingTranscript() async {
+        let client = FeatureClientStub()
+        let model = FeatureRootModel(client: client)
+        let loaded = AsyncStream<String>.makeStream()
+        var loads = loaded.stream.makeAsyncIterator()
+        let first = Task {
+            await model.runThreadPresentation(id: "a") { loaded.continuation.yield("a") }
+        }
+        #expect(await loads.next() == "a")
+        let detailRevision = model.detailRevision
+        let homeRevision = model.homePresentationRevision
+        let receipt = FeatureThreadReceipt(threadID: "a", receivedAt: Date(timeIntervalSince1970: 100), source: .detailEvent)
+        model.recordThreadReceipt(receipt)
+        #expect(model.selectedThreadReceipt == receipt)
+        #expect(model.detailRevision == detailRevision)
+        #expect(model.homePresentationRevision == homeRevision)
+        model.recordThreadReceipt(.init(threadID: "b", receivedAt: .now, source: .shellThreadUpdate))
+        #expect(model.selectedThreadReceipt == receipt)
+
+        let second = Task {
+            await model.runThreadPresentation(id: "b") { loaded.continuation.yield("b") }
+        }
+        #expect(await loads.next() == "b")
+        await first.value
+        #expect(model.selectedThreadReceipt == nil)
+        model.recordThreadReceipt(receipt)
+        #expect(model.selectedThreadReceipt == nil)
+        model.recordThreadReceipt(.init(threadID: "b", receivedAt: .now, source: .detailSnapshot))
+        #expect(model.selectedThreadReceipt?.source == .detailSnapshot)
+        second.cancel()
+        await second.value
+        #expect(model.selectedThreadReceipt == nil)
+        model.recordThreadReceipt(.init(threadID: "b", receivedAt: .now, source: .detailEvent))
+        #expect(model.selectedThreadReceipt == nil)
+        loaded.continuation.finish()
+    }
+
+    @Test(arguments: [FeatureThreadReceipt.Source.detailEvent, .shellThreadUpdate])
+    func olderReceiptCannotReplaceNewerReceipt(source: FeatureThreadReceipt.Source) async {
+        let client = FeatureClientStub()
+        let model = FeatureRootModel(client: client)
+        let loaded = AsyncStream<Void>.makeStream()
+        let presentation = Task {
+            await model.runThreadPresentation(id: "a") { loaded.continuation.yield(()) }
+        }
+        var loads = loaded.stream.makeAsyncIterator()
+        await loads.next()
+        let newest = FeatureThreadReceipt(threadID: "a", receivedAt: Date(timeIntervalSince1970: 100), source: source)
+        model.recordThreadReceipt(newest)
+        model.recordThreadReceipt(.init(threadID: "a", receivedAt: Date(timeIntervalSince1970: 99), source: .detailSnapshot))
+        #expect(model.selectedThreadReceipt == newest)
+        let next = FeatureThreadReceipt(threadID: "a", receivedAt: Date(timeIntervalSince1970: 101), source: .shellThreadUpdate)
+        model.recordThreadReceipt(next)
+        #expect(model.selectedThreadReceipt == next)
+        presentation.cancel()
+        await presentation.value
+        loaded.continuation.finish()
+    }
+
+    @Test(arguments: [["a", "b", "a"], ["a", "a"]])
+    func presentationTaskReplacementAndCloseReleaseExactlyOnce(threadIDs: [String]) async {
+        let client = FeatureClientStub()
+        let model = FeatureRootModel(client: client)
+        let loaded = AsyncStream<String>.makeStream()
+        var loads = loaded.stream.makeAsyncIterator()
+        var previous: Task<Void, Never>?
+        for id in threadIDs {
+            let next = Task {
+                await model.runThreadPresentation(id: id) { loaded.continuation.yield(id) }
+            }
+            #expect(await loads.next() == id)
+            // Replacement finishes the old lifetime even before SwiftUI cancels its task.
+            await previous?.value
+            previous?.cancel()
+            previous = next
+        }
+        #expect(client.loadedThreadIDs == threadIDs)
+        #expect(client.releasedThreadIDs == Array(threadIDs.dropLast()))
+        previous?.cancel()
+        await previous?.value
+        #expect(client.releasedThreadIDs == threadIDs)
+        loaded.continuation.finish()
+    }
+
+    @Test
+    func cancelledPresentationTaskCannotReplaceVisibleThread() async {
+        let client = FeatureClientStub()
+        let model = FeatureRootModel(client: client)
+        let loaded = AsyncStream<Void>.makeStream()
+        let current = Task {
+            await model.runThreadPresentation(id: "a") { loaded.continuation.yield(()) }
+        }
+        var loads = loaded.stream.makeAsyncIterator()
+        await loads.next()
+        let cancelled = Task { @MainActor in
+            withUnsafeCurrentTask { $0?.cancel() }
+            await model.runThreadPresentation(id: "a")
+        }
+        await cancelled.value
+        #expect(client.loadedThreadIDs == ["a"])
+        #expect(client.releasedThreadIDs.isEmpty)
+        current.cancel()
+        await current.value
+        #expect(client.releasedThreadIDs == ["a"])
+        loaded.continuation.finish()
+    }
+
+    @Test(arguments: [false, true])
+    func cancellationReleasesSuspendedPresentationBeforeItsLoadReturns(cancelBeforeReplacement: Bool) async {
+        let client = FeatureClientStub()
+        let model = FeatureRootModel(client: client)
+        let started = AsyncStream<Void>.makeStream()
+        let released = AsyncStream<String>.makeStream()
+        let loaded = AsyncStream<Void>.makeStream()
+        client.onReleaseThread = { released.continuation.yield($0) }
+        var pendingLoad: CheckedContinuation<FeatureThreadDetail, any Error>?
+        client.loadThreadHandler = { _ in
+            try await withCheckedThrowingContinuation { continuation in
+                pendingLoad = continuation
+                started.continuation.yield(())
+            }
+        }
+        var oldLoaded = false
+        let old = Task { await model.runThreadPresentation(id: "a") { oldLoaded = true } }
+        var starts = started.stream.makeAsyncIterator()
+        await starts.next()
+        var releases = released.stream.makeAsyncIterator()
+        if cancelBeforeReplacement {
+            old.cancel()
+            #expect(await releases.next() == "a")
+        }
+        #expect(pendingLoad != nil)
+        #expect(!oldLoaded)
+
+        client.loadThreadHandler = nil
+        let replacement = Task {
+            await model.runThreadPresentation(id: "a") { loaded.continuation.yield(()) }
+        }
+        var loads = loaded.stream.makeAsyncIterator()
+        await loads.next()
+        if !cancelBeforeReplacement {
+            // The old cancellation handler runs only after the same-ID replacement owns transport.
+            old.cancel()
+            #expect(await releases.next() == "a")
+        }
+        pendingLoad?.resume(returning: FeatureThreadDetail(thread: client.createdThread))
+        pendingLoad = nil
+        await old.value
+        #expect(!oldLoaded)
+        #expect(client.releasedThreadIDs == ["a"])
+        replacement.cancel()
+        await replacement.value
+        #expect(client.releasedThreadIDs == ["a", "a"])
+        #expect(client.loadedThreadIDs == ["a", "a"])
+        started.continuation.finish()
+        released.continuation.finish()
+        loaded.continuation.finish()
+    }
+
+    @Test
+    func presentationCloseStillReleasesAfterConnectionReload() async {
+        let client = FeatureClientStub()
+        let model = FeatureRootModel(client: client)
+        let loaded = AsyncStream<Void>.makeStream()
+        let presentation = Task {
+            await model.runThreadPresentation(id: "a") { loaded.continuation.yield(()) }
+        }
+        var loads = loaded.stream.makeAsyncIterator()
+        await loads.next()
+        await model.reloadAfterConnection()
+        presentation.cancel()
+        await presentation.value
+        #expect(client.releasedThreadIDs == ["a"])
+        loaded.continuation.finish()
+    }
+
+    @Test
+    func presentationCloseCancelsRetryAndRejectsLateRetry() async {
+        let client = FeatureClientStub()
+        let model = FeatureRootModel(client: client)
+        let loaded = AsyncStream<Void>.makeStream()
+        let started = AsyncStream<Void>.makeStream()
+        let cancelled = AsyncStream<Void>.makeStream()
+        let presentation = Task {
+            await model.runThreadPresentation(id: "a") { loaded.continuation.yield(()) }
+        }
+        var loads = loaded.stream.makeAsyncIterator()
+        await loads.next()
+        var pendingRetry: CheckedContinuation<FeatureThreadDetail, any Error>?
+        client.loadThreadHandler = { _ in
+            try await withTaskCancellationHandler {
+                try await withCheckedThrowingContinuation { continuation in
+                    pendingRetry = continuation
+                    started.continuation.yield(())
+                }
+            } onCancel: {
+                cancelled.continuation.yield(())
+            }
+        }
+        #expect(model.refreshThreadPresentation(id: "a"))
+        var retries = started.stream.makeAsyncIterator()
+        await retries.next()
+        presentation.cancel()
+        await presentation.value
+        var cancellations = cancelled.stream.makeAsyncIterator()
+        await cancellations.next()
+        #expect(client.releasedThreadIDs == ["a"])
+        #expect(!model.refreshThreadPresentation(id: "a"))
+        pendingRetry?.resume(throwing: CancellationError())
+        pendingRetry = nil
+        #expect(client.loadedThreadIDs == ["a", "a"])
+        loaded.continuation.finish()
+        started.continuation.finish()
+        cancelled.continuation.finish()
+    }
+
+    @Test
+    func queuedArchivedFollowUpWaitsForLookupThenSendsWithStableIdentity() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("t3-outbox-recovery-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = FeatureOutboxStore(fileURL: directory.appendingPathComponent("outbox.json"))
+        let threadID = FeatureScopedID.thread(environmentID: "studio", wireID: "archived-thread")
+        let submission = FeatureQueuedSubmission(
+            environmentID: "studio",
+            identity: FeatureSubmissionIdentity(threadID: "archived-thread"),
+            threadID: threadID,
+            text: "Keep my offline follow-up",
+            selection: nil,
+            runtimeMode: .fullAccess,
+            interactionMode: .standard,
+            attachments: []
+        )
+        try await store.enqueue(submission)
+        let started = AsyncStream<Void>.makeStream()
+        let response = AsyncStream<FeatureThread>.makeStream()
+        let sent = AsyncStream<Void>.makeStream()
+        let client = FeatureClientStub()
+        client.snapshot = FeatureSnapshot(
+            connection: .init(state: .connected),
+            environments: [.init(id: "studio", name: "Studio", endpoint: "https://studio.example",
+                                 isActive: true, connectionState: .connected)]
+        )
+        client.queuedThreadRecovery = { environmentID, wireID in
+            #expect(environmentID == "studio")
+            #expect(wireID == "archived-thread")
+            started.continuation.yield(())
+            var iterator = response.stream.makeAsyncIterator()
+            guard let value = await iterator.next() else { throw CancellationError() }
+            return value
+        }
+        client.beforeSendMessage = { sent.continuation.yield(()) }
+        let model = FeatureRootModel(client: client, outboxStore: store)
+        let task = Task { await model.start() }
+        defer {
+            response.continuation.finish()
+            started.continuation.finish()
+            sent.continuation.finish()
+            client.finishEvents()
+            task.cancel()
+        }
+        var startedIterator = started.stream.makeAsyncIterator()
+        _ = await startedIterator.next()
+        #expect(try await store.submissions() == [submission])
+        #expect(client.sendMessageCallCount == 0)
+        response.continuation.yield(FeatureThread(
+            id: threadID, wireID: "archived-thread", projectID: "project", environmentID: "studio",
+            title: "Archived", isArchived: true
+        ))
+        var sentIterator = sent.stream.makeAsyncIterator()
+        _ = await sentIterator.next()
+        #expect(client.sendMessageCallCount == 1)
+        #expect(client.sentIdentities == [submission.identity])
+        #expect(model.snapshot.threads.contains(where: { $0.id == threadID && $0.isArchived }))
+        await model.disconnect()
+        client.finishEvents()
+        await task.value
+    }
+
+    @Test(arguments: [false, true])
+    func queuedRecoveryDiscardsOnlyAuthoritativelyMissingThreads(confirmsDeletion: Bool) async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("t3-outbox-deletion-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = FeatureOutboxStore(fileURL: directory.appendingPathComponent("outbox.json"))
+        func submission(_ wireID: String, at time: TimeInterval) -> FeatureQueuedSubmission {
+            FeatureQueuedSubmission(
+                environmentID: "studio",
+                identity: FeatureSubmissionIdentity(threadID: wireID, createdAt: Date(timeIntervalSince1970: time)),
+                threadID: FeatureScopedID.thread(environmentID: "studio", wireID: wireID),
+                text: "Retain unless deletion is confirmed", selection: nil,
+                runtimeMode: .fullAccess, interactionMode: .standard, attachments: []
+            )
+        }
+        let first = submission("missing", at: 1)
+        let second = submission("held", at: 2)
+        try await store.enqueue(first)
+        try await store.enqueue(second)
+        let reachedSecond = AsyncStream<Void>.makeStream()
+        let response = AsyncStream<FeatureThread>.makeStream()
+        let client = FeatureClientStub()
+        client.snapshot = FeatureSnapshot(
+            connection: .init(state: .connected),
+            environments: [
+                .init(id: "other", name: "Other", endpoint: "https://other.example", isActive: true,
+                      connectionState: .connected),
+                .init(id: "studio", name: "Studio", endpoint: "https://studio.example", isActive: false,
+                      connectionState: .connected),
+            ]
+        )
+        client.queuedThreadRecovery = { environmentID, wireID in
+            #expect(environmentID == "studio")
+            if wireID == "missing" {
+                if confirmsDeletion { return nil }
+                throw URLError(.userAuthenticationRequired)
+            }
+            #expect(wireID == "held")
+            reachedSecond.continuation.yield(())
+            var iterator = response.stream.makeAsyncIterator()
+            return await iterator.next()
+        }
+        let model = FeatureRootModel(client: client, outboxStore: store)
+        let task = Task { await model.start() }
+        defer {
+            response.continuation.finish()
+            reachedSecond.continuation.finish()
+            client.finishEvents()
+            task.cancel()
+        }
+        var iterator = reachedSecond.stream.makeAsyncIterator()
+        _ = await iterator.next()
+        // Reaching the next queued lookup proves that the first result was handled.
+        let remaining = try await store.submissions()
+        #expect(Set(remaining.map(\.id)) == Set((confirmsDeletion ? [second] : [first, second]).map(\.id)))
+        await model.disconnect()
+        // Cancellation of the second lookup must not turn its nil response into deletion.
+        #expect(try await store.submissions().contains(where: { $0.id == second.id }))
+        #expect(client.sendMessageCallCount == 0)
+        client.finishEvents()
+        await task.value
+    }
+
+    @Test
+    func queuedMessageSurvivesConnectedSnapshotBeforeArchivedInventoryArrives() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("t3-outbox-inventory-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = FeatureOutboxStore(fileURL: directory.appendingPathComponent("outbox.json"))
+        let submission = FeatureQueuedSubmission(
+            environmentID: "studio",
+            identity: FeatureSubmissionIdentity(threadID: "archived-thread"),
+            threadID: FeatureScopedID.thread(environmentID: "studio", wireID: "archived-thread"),
+            text: "Keep my offline follow-up",
+            selection: nil,
+            runtimeMode: .fullAccess,
+            interactionMode: .standard,
+            attachments: []
+        )
+        try await store.enqueue(submission)
+        let client = FeatureClientStub()
+        client.snapshot = FeatureSnapshot(
+            connection: .init(state: .connected),
+            environments: [.init(id: "studio", name: "Studio", endpoint: "https://studio.example",
+                                 isActive: true, connectionState: .connected)]
+        )
+        client.finishEvents()
+        let model = FeatureRootModel(client: client, outboxStore: store)
+        await model.start()
+        await model.disconnect()
+        #expect(try await store.submissions() == [submission])
+        #expect(client.sendMessageCallCount == 0)
+    }
+
+    @Test
     func transcriptSkillPillsUseTheThreadWorkspaceCatalog() async {
         let skill = FeatureProviderSkill(name: "project-only", displayName: "Project only")
         var provider = FeatureProvider(
@@ -69,7 +443,7 @@ struct FeatureRootModelTests {
     }
 
     @Test
-    func foregroundRecoveryIgnoresInitialActivationAndReplacesLongSuspendedSockets() async {
+    func foregroundRecoveryIgnoresInitialActivationAndReplacesEverySuspendedSocket() async {
         let client = FeatureClientStub()
         let model = testRootModel(client: client)
         let start = Date(timeIntervalSince1970: 100)
@@ -80,7 +454,8 @@ struct FeatureRootModelTests {
         model.applicationDidEnterBackground(at: start)
         await model.applicationDidBecomeActive(at: start.addingTimeInterval(10))
         await model.applicationDidBecomeActive(at: start.addingTimeInterval(11))
-        #expect(client.foregroundReconnects == [false, true])
+        #expect(client.foregroundReconnects == [true, true])
+        #expect(client.backgroundSuspends == 2)
     }
 
     @Test
@@ -1691,8 +2066,67 @@ struct FeatureRootModelTests {
         #expect(model.details[thread.id]?.messages.last?.state == .queued)
     }
 
+    @Test(arguments: ["accepted", "cancelled", "network", "rejected"])
+    func queuedMessageWaitsForAcceptance(outcome: String) async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("t3-root-queued-feedback-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = FeatureOutboxStore(fileURL: directory.appendingPathComponent("outbox.json"))
+        let thread = FeatureThread(
+            id: "thread-1", projectID: "project-1", environmentID: "environment-1", title: "Thread"
+        )
+        let client = FeatureClientStub()
+        client.snapshot = FeatureSnapshot(
+            connection: .init(state: .connected),
+            environments: [.init(
+                id: "environment-1", name: "Studio", endpoint: "https://studio.example",
+                isActive: true, connectionState: .connected
+            )],
+            threads: [thread]
+        )
+        client.threadDetail = FeatureThreadDetail(thread: thread)
+        let started = AsyncStream<Void>.makeStream()
+        var response: CheckedContinuation<Void, any Error>?
+        client.beforeSendMessageReturn = {
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, any Error>) in
+                response = continuation
+                started.continuation.yield()
+            }
+        }
+        let model = FeatureRootModel(client: client, outboxStore: store)
+        await model.reload()
+        _ = await model.detail(for: thread.id)
+        let send = Task { await model.sendMessage(threadID: thread.id, text: "Queued response", selection: nil) }
+        var requests = started.stream.makeAsyncIterator()
+        await requests.next()
+        #expect(model.details[thread.id]?.messages.last?.state == .queued)
+        #expect(try await store.submissions().count == 1)
+        switch outcome {
+        case "cancelled": response?.resume(throwing: CancellationError())
+        case "network": response?.resume(throwing: URLError(.notConnectedToInternet))
+        case "rejected": response?.resume(throwing: FeatureCapabilityUnavailable("Rejected message"))
+        default: response?.resume()
+        }
+        let sent = await send.value
+        #expect(client.sendMessageCallCount == 1)
+        switch outcome {
+        case "accepted":
+            #expect(sent)
+            #expect(model.details[thread.id]?.messages.last?.state == .complete)
+            #expect(try await store.submissions().isEmpty)
+        case "rejected":
+            #expect(!sent)
+            #expect(model.details[thread.id]?.messages.isEmpty == true)
+            #expect(try await store.submissions().isEmpty)
+        default:
+            #expect(sent, "Ambiguous delivery remains queued for stable-identity retry")
+            #expect(model.details[thread.id]?.messages.last?.state == .queued)
+            #expect(try await store.submissions().count == 1)
+        }
+    }
+
     @Test
-    func failedDeliveryCleanupKeepsTheDurableAndOptimisticSubmission() async throws {
+    func failedDeliveryCleanupKeepsAcceptedStateAndTheDurableSubmission() async throws {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("t3-root-completion-failure-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(
@@ -1749,8 +2183,49 @@ struct FeatureRootModelTests {
         #expect(client.sendMessageCallCount == 1)
         #expect(try await store.submissions().count == 1)
         #expect(model.details[thread.id]?.messages.last?.text == "Already delivered")
-        #expect(model.details[thread.id]?.messages.last?.state == .queued)
+        #expect(model.details[thread.id]?.messages.last?.state == .complete)
         #expect(model.errorMessage?.contains("delivered") == true)
+        guard case let .delta(delta) = model.detailRenderUpdates[thread.id]?.change else {
+            Issue.record("Expected accepted message to update the existing timeline row")
+            return
+        }
+        #expect(delta.changedMessages == model.details[thread.id]?.messages)
+        #expect(delta.changedMessages.first?.state == .complete)
+
+        // A stale detail read must retain accepted local feedback while cleanup is pending.
+        _ = await model.detail(for: thread.id, force: true)
+        #expect(model.details[thread.id]?.messages.last?.state == .complete)
+        #expect(client.sendMessageCallCount == 1)
+
+        let accepted = try #require(await store.submissions().first)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: NSNumber(value: Int16(0o700))], ofItemAtPath: directory.path
+        )
+        client.beforeSendMessage = nil
+        client.sendMessageError = URLError(.notConnectedToInternet)
+        #expect(await model.sendMessage(threadID: thread.id, text: "Retry boundary", selection: nil))
+        client.sendMessageError = nil
+        let retryEntered = AsyncStream<Void>.makeStream()
+        var retryResponse: CheckedContinuation<Void, any Error>?
+        client.beforeSendMessageReturn = {
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, any Error>) in
+                retryResponse = continuation
+                retryEntered.continuation.yield()
+            }
+        }
+        // This public boundary cancels the delayed retry and starts the owned drain now.
+        #expect(await model.setEnvironmentEnabled("environment-1", enabled: true))
+        var retries = retryEntered.stream.makeAsyncIterator()
+        await retries.next()
+        // Sorted drain reaches the later message only after completing the accepted copy.
+        #expect(try await store.submissions().allSatisfy { $0.id != accepted.id })
+        #expect(client.sentIdentities.filter { $0.commandID == accepted.identity.commandID }.count == 1)
+        #expect(model.details[thread.id]?.messages.first { $0.id == accepted.identity.messageID }?.state == .complete)
+        retryResponse?.resume(throwing: FeatureCapabilityUnavailable("Sentinel rejected"))
+        // Await the current drain's exit through its existing owner boundary.
+        #expect(await model.setEnvironmentEnabled("environment-1", enabled: true))
+        #expect(try await store.submissions().isEmpty)
+        #expect(client.sentIdentities.filter { $0.commandID == accepted.identity.commandID }.count == 1)
     }
 
     @Test
@@ -3559,7 +4034,16 @@ private func orchestrationThread(
 
 @MainActor
 private final class FeatureClientStub: FeatureClient, T3ConnectCapable {
+    var loadedThreadIDs: [String] = []
+    var releasedThreadIDs: [String] = []
+    var onReleaseThread: ((String) -> Void)?
+    func releaseThread(id: String) {
+        releasedThreadIDs.append(id)
+        onReleaseThread?(id)
+    }
     var foregroundReconnects: [Bool] = []
+    var backgroundSuspends = 0
+    func suspendForBackground() { backgroundSuspends += 1 }
     func resumeAfterBackground(reconnect: Bool) async { foregroundReconnects.append(reconnect) }
     private let eventStream: AsyncStream<FeatureEvent>
     private let eventContinuation: AsyncStream<FeatureEvent>.Continuation
@@ -3583,10 +4067,13 @@ private final class FeatureClientStub: FeatureClient, T3ConnectCapable {
     var startedWorktreePath: String?
     var startedFromOrigin = false
     var createThreadCallCount = 0
+    var sentIdentities: [FeatureSubmissionIdentity] = []
     var sendMessageCallCount = 0
     var sentRuntimeModes: [FeatureRuntimeMode] = []
     var setRuntimeModeCalls: [FeatureRuntimeMode] = []
     var cancelTurnCallCount = 0
+    var cancelTurnHandler: (() async throws -> Void)?
+    var stopStatusHandler: (() async throws -> FeatureThread)?
     var signOutCallCount = 0
     var startTaskError: (any Error)?
     var sendMessageError: (any Error)?
@@ -3598,8 +4085,15 @@ private final class FeatureClientStub: FeatureClient, T3ConnectCapable {
     var removedEnvironmentID: String?
     var beforeStartTask: (() async throws -> Void)?
     var beforeSendMessage: (() throws -> Void)?
+    var beforeSendMessageReturn: (() async throws -> Void)?
     var beforeSaveSettings: (@MainActor () async throws -> Void)?
     var loadThreadError: (any Error)?
+    var queuedThreadRecovery: ((String, String) async throws -> FeatureThread?)?
+
+    func recoverQueuedThread(environmentID: String, wireID: String) async throws -> FeatureThread? {
+        guard let queuedThreadRecovery else { throw URLError(.resourceUnavailable) }
+        return try await queuedThreadRecovery(environmentID, wireID)
+    }
     var loadThreadHandler: ((String) async throws -> FeatureThreadDetail)?
     var preuploadHandler: ((FeatureUploadAttachment, String) async throws -> FeatureUploadedAttachmentReference?)?
     var beforeLoadThreadReturn: (() async -> Void)?
@@ -3749,6 +4243,7 @@ private final class FeatureClientStub: FeatureClient, T3ConnectCapable {
     }
 
     func loadThread(id: String) async throws -> FeatureThreadDetail {
+        loadedThreadIDs.append(id)
         if let loadThreadError {
             throw loadThreadError
         }
@@ -3770,6 +4265,7 @@ private final class FeatureClientStub: FeatureClient, T3ConnectCapable {
     func sendMessage(threadID: String, text: String, selection: FeatureSelection?) async throws {
         sendMessageCallCount += 1
         try beforeSendMessage?()
+        try await beforeSendMessageReturn?()
         if let sendMessageError { throw sendMessageError }
         sentText = text
     }
@@ -3780,14 +4276,20 @@ private final class FeatureClientStub: FeatureClient, T3ConnectCapable {
         selection: FeatureSelection?,
         runtimeMode: FeatureRuntimeMode,
         attachments _: [FeatureUploadAttachment],
-        identity _: FeatureSubmissionIdentity
+        identity: FeatureSubmissionIdentity
     ) async throws {
+        sentIdentities.append(identity)
         sentRuntimeModes.append(runtimeMode)
         try await sendMessage(threadID: threadID, text: text, selection: selection)
     }
 
     func cancelTurn(threadID: String) async throws {
         cancelTurnCallCount += 1
+        try await cancelTurnHandler?()
+    }
+    func stopStatus(threadID: String) async throws -> FeatureThread {
+        if let stopStatusHandler { return try await stopStatusHandler() }
+        return snapshot.threads.first { $0.id == threadID } ?? createdThread
     }
     func setThreadSettled(id: String, settled: Bool) async throws {
         await beforeSettlementReturn?()
@@ -3849,5 +4351,310 @@ private final class FeatureSettingsSaveGate {
     func releaseFirst() {
         firstRelease?.resume()
         firstRelease = nil
+    }
+}
+
+extension FeatureRootModelTests {
+    @Test("A failed Stop resumes queued work for other threads", .timeLimit(.minutes(1)))
+    func failedStopRestartsOtherQueuedSubmissions() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let outbox = FeatureOutboxStore(fileURL: directory.appendingPathComponent("outbox.json"))
+        let identity = FeatureSubmissionIdentity(threadID: "creating", createdAt: Date(timeIntervalSince1970: 100))
+        let creatingID = FeatureScopedID.thread(environmentID: "one", wireID: "creating")
+        let other = FeatureThread(id: "other", projectID: "project", environmentID: "one", title: "Other thread")
+        try await outbox.enqueue(.init(environmentID: "one", identity: identity, threadID: creatingID,
+            text: "Create", selection: nil, runtimeMode: .fullAccess, interactionMode: .standard, attachments: [],
+            creation: .init(projectID: "project", projectName: "Project", workspaceMode: .local,
+                            branch: nil, worktreePath: nil, startFromOrigin: false)))
+        try await outbox.enqueue(.init(environmentID: "one",
+            identity: .init(threadID: "other", createdAt: Date(timeIntervalSince1970: 101)), threadID: other.id,
+            text: "Send the other queued message", selection: nil, runtimeMode: .fullAccess,
+            interactionMode: .standard, attachments: []))
+        let client = FeatureClientStub()
+        client.snapshot = FeatureSnapshot(connection: .init(state: .connected),
+            environments: [.init(id: "one", name: "One", endpoint: "https://one.example", isActive: true, connectionState: .connected)],
+            projects: [.init(id: "project", environmentID: "one", name: "Project", path: "/project")], threads: [other])
+        let model = FeatureRootModel(client: client, outboxStore: outbox)
+        let entered = AsyncStream<Void>.makeStream()
+        let sent = AsyncStream<Void>.makeStream()
+        let gate = StopDrainCancellationGate()
+        client.beforeStartTask = {
+            var acknowledged = try #require(model.snapshot.threads.first { $0.id == creatingID })
+            acknowledged.state = .working
+            await withCheckedContinuation { continuation in
+                withObservationTracking { _ = model.snapshot.threads.first { $0.id == creatingID }?.state }
+                    onChange: { continuation.resume() }
+                client.emit(.thread(acknowledged))
+            }
+            entered.continuation.yield(())
+            await gate.waitForCancellation()
+        }
+        client.cancelTurnHandler = { throw URLError(.networkConnectionLost) }
+        client.beforeSendMessage = { sent.continuation.yield(()) }
+        let run = Task { await model.start() }
+        var starts = entered.stream.makeAsyncIterator()
+        await starts.next()
+        await model.cancelTurn(threadID: creatingID)
+        var sends = sent.stream.makeAsyncIterator()
+        await sends.next()
+        #expect(client.cancelTurnCallCount == 1)
+        #expect(client.sentText == "Send the other queued message")
+        #expect(model.stopPhase(threadID: creatingID) == .unconfirmed)
+        client.finishEvents()
+        await run.value
+        await model.disconnect()
+    }
+}
+
+@MainActor
+private final class StopDrainCancellationGate {
+    private var pending: CheckedContinuation<Void, Never>?
+    func waitForCancellation() async {
+        await withTaskCancellationHandler {
+            await withCheckedContinuation { continuation in
+                if Task.isCancelled { continuation.resume() }
+                else { pending = continuation }
+            }
+        } onCancel: {
+            Task { @MainActor in
+                self.pending?.resume()
+                self.pending = nil
+            }
+        }
+    }
+}
+
+extension FeatureRootModelTests {
+    @Test func duplicateStopWhileRequestHeld() async {
+        let client = FeatureClientStub()
+        let model = FeatureRootModel(client: client)
+        let started = AsyncStream<Void>.makeStream()
+        var held: CheckedContinuation<Void, Never>?
+        client.cancelTurnHandler = {
+            if held == nil {
+                await withCheckedContinuation { held = $0; started.continuation.yield(()) }
+            }
+        }
+        let first = Task { await model.cancelTurn(threadID: "created") }
+        var starts = started.stream.makeAsyncIterator()
+        await starts.next()
+        await model.cancelTurn(threadID: "created")
+        #expect(client.cancelTurnCallCount == 1)
+        held?.resume()
+        await first.value
+    }
+
+    @Test func stopClaimsSynchronouslyAndAcknowledgementIsNotTerminal() async {
+        let client = FeatureClientStub()
+        client.snapshot.threads = [FeatureThread(id: "created", projectID: "p", title: "Work", state: .working, latestTurnID: "a", latestTurnState: "running")]
+        let model = FeatureRootModel(client: client)
+        await model.reload()
+        let called = AsyncStream<Void>.makeStream()
+        client.cancelTurnHandler = { called.continuation.yield(()) }
+        model.requestCancelTurn(threadID: "created")
+        #expect(model.stopPhase(threadID: "created") == .requesting)
+        model.requestCancelTurn(threadID: "created")
+        var calls = called.stream.makeAsyncIterator()
+        await calls.next()
+        #expect(client.cancelTurnCallCount == 1)
+        #expect(model.stopPhase(threadID: "created") == .awaitingOutcome)
+        await model.reload()
+        #expect(model.stopPhase(threadID: "created") == .awaitingOutcome)
+        client.snapshot.threads[0].latestTurnState = "completed"
+        client.snapshot.threads[0].state = .completed
+        client.snapshot.threads[0].settlementFacts = .init(sessionStatus: "ready")
+        await model.reload()
+        #expect(model.stopPhase(threadID: "created") == nil)
+    }
+
+    @Test func stopSurvivesCloseReopenAndMissingReconnectSeed() async {
+        let client = FeatureClientStub()
+        let thread = FeatureThread(id: "created", projectID: "p", title: "Work", state: .working, latestTurnID: "a", latestTurnState: "running")
+        client.snapshot.threads = [thread]
+        client.createdThread = thread
+        let model = FeatureRootModel(client: client)
+        await model.reload()
+        await model.cancelTurn(threadID: "created")
+        let loaded = AsyncStream<Void>.makeStream()
+        var loads = loaded.stream.makeAsyncIterator()
+        for _ in 0..<2 {
+            let presentation = Task { await model.runThreadPresentation(id: "created") { loaded.continuation.yield(()) } }
+            await loads.next()
+            #expect(model.stopPhase(threadID: "created") == .awaitingOutcome)
+            presentation.cancel()
+            await presentation.value
+        }
+        client.snapshot.threads = []
+        await model.reloadAfterConnection()
+        #expect(model.stopPhase(threadID: "created") == .awaitingOutcome)
+        client.snapshot.threads = [thread]
+        await model.reload()
+        #expect(model.stopPhase(threadID: "created") == .awaitingOutcome)
+        #expect(client.cancelTurnCallCount == 1)
+    }
+
+    @Test(arguments: [false, true])
+    func lateOldStopResponseCannotClearNewTurn(fails: Bool) async {
+        let client = FeatureClientStub()
+        client.snapshot.threads = [FeatureThread(id: "created", projectID: "p", title: "Work", state: .working, latestTurnID: "a", latestTurnState: "running")]
+        let model = FeatureRootModel(client: client)
+        await model.reload()
+        let started = AsyncStream<Void>.makeStream()
+        var held: CheckedContinuation<Void, any Error>?
+        client.cancelTurnHandler = { try await withCheckedThrowingContinuation { held = $0; started.continuation.yield(()) } }
+        let old = Task { await model.cancelTurn(threadID: "created") }
+        var starts = started.stream.makeAsyncIterator()
+        await starts.next()
+        client.snapshot.threads[0].latestTurnID = "b"
+        await model.reload()
+        #expect(model.stopPhase(threadID: "created") == nil)
+        client.cancelTurnHandler = nil
+        await model.cancelTurn(threadID: "created")
+        #expect(model.stopPhase(threadID: "created") == .awaitingOutcome)
+        if fails { held?.resume(throwing: URLError(.networkConnectionLost)) }
+        else { held?.resume() }
+        await old.value
+        #expect(model.stopPhase(threadID: "created") == .awaitingOutcome)
+        #expect(model.errorMessage == nil)
+        client.snapshot.threads[0].latestTurnID = "a"
+        client.snapshot.threads[0].latestTurnState = "completed"
+        client.snapshot.threads[0].state = .completed
+        client.snapshot.threads[0].settlementFacts = .init(sessionStatus: "ready")
+        await model.reload()
+        client.snapshot.threads[0].latestTurnID = "b"
+        client.snapshot.threads[0].latestTurnState = "running"
+        client.snapshot.threads[0].state = .working
+        await model.reload()
+        #expect(model.stopPhase(threadID: "created") == .awaitingOutcome)
+    }
+
+    @Test func uncertainFailureRequiresStatusReceiptBeforeRetry() async {
+        let client = FeatureClientStub()
+        let thread = FeatureThread(id: "created", projectID: "p", title: "Work", state: .working, latestTurnID: "a", latestTurnState: "running")
+        client.snapshot.threads = [thread]
+        let model = FeatureRootModel(client: client)
+        await model.reload()
+        client.cancelTurnHandler = { throw URLError(.networkConnectionLost) }
+        await model.cancelTurn(threadID: "created")
+        #expect(model.stopPhase(threadID: "created") == .unconfirmed)
+        let started = AsyncStream<Void>.makeStream()
+        let retried = AsyncStream<Void>.makeStream()
+        var held: CheckedContinuation<FeatureThread, any Error>?
+        client.stopStatusHandler = { try await withCheckedThrowingContinuation { held = $0; started.continuation.yield(()) } }
+        client.cancelTurnHandler = { retried.continuation.yield(()) }
+        model.retryCancelTurn(threadID: "created")
+        var starts = started.stream.makeAsyncIterator()
+        await starts.next()
+        #expect(client.cancelTurnCallCount == 1)
+        #expect(model.stopPhase(threadID: "created") == .requesting)
+        held?.resume(returning: thread)
+        var retries = retried.stream.makeAsyncIterator()
+        await retries.next()
+        #expect(client.cancelTurnCallCount == 2)
+        #expect(model.stopPhase(threadID: "created") == .awaitingOutcome)
+    }
+
+    @Test(arguments: [true, false])
+    func compactionAndUnknownIdentityStayExplicitlyUnconfirmed(hasIdentity: Bool) async {
+        let client = FeatureClientStub()
+        client.snapshot.threads = [FeatureThread(id: "created", projectID: "p", title: "Work", state: .working, latestTurnID: hasIdentity ? "a" : nil, latestTurnState: hasIdentity ? "completed" : nil)]
+        let model = FeatureRootModel(client: client)
+        await model.reload()
+        await model.cancelTurn(threadID: "created")
+        #expect(model.stopPhase(threadID: "created") == .unconfirmed)
+        await model.reload()
+        #expect(model.stopPhase(threadID: "created") == .unconfirmed)
+    }
+
+    @Test(arguments: [false, true])
+    func retryPreservesRunningEvidenceAfterTerminalWhileBusy(statusStillBusy: Bool) async {
+        let client = FeatureClientStub()
+        client.snapshot.threads = [FeatureThread(id: "created", projectID: "p", title: "Work", state: .working, latestTurnID: "a", latestTurnState: "running")]
+        let model = FeatureRootModel(client: client)
+        await model.reload()
+        client.cancelTurnHandler = { throw URLError(.networkConnectionLost) }
+        await model.cancelTurn(threadID: "created")
+        #expect(model.stopPhase(threadID: "created") == .unconfirmed)
+
+        client.snapshot.threads[0].latestTurnState = "completed"
+        await model.reload()
+        #expect(model.stopPhase(threadID: "created") == .unconfirmed)
+        var status = client.snapshot.threads[0]
+        status.state = statusStillBusy ? .working : .completed
+        status.settlementFacts = .init(sessionStatus: "ready")
+        client.stopStatusHandler = { status }
+        await model.retryCancelTurn(threadID: "created")?.value
+        #expect(client.cancelTurnCallCount == 1)
+        if statusStillBusy {
+            #expect(model.stopPhase(threadID: "created") == .unconfirmed)
+            client.snapshot.threads[0].state = .completed
+        client.snapshot.threads[0].settlementFacts = .init(sessionStatus: "ready")
+            await model.reload()
+        }
+        #expect(model.stopPhase(threadID: "created") == nil)
+        let rejectedRetry = model.retryCancelTurn(threadID: "created")
+        #expect(rejectedRetry == nil)
+        await rejectedRetry?.value
+        #expect(client.cancelTurnCallCount == 1)
+    }
+
+    @Test func matchingTerminalWhileStillWorkingDoesNotClearStop() async {
+        let client = FeatureClientStub()
+        client.snapshot.threads = [FeatureThread(id: "created", projectID: "p", title: "Work", state: .working, latestTurnID: "a", latestTurnState: "running")]
+        let model = FeatureRootModel(client: client)
+        await model.reload()
+        await model.cancelTurn(threadID: "created")
+        client.snapshot.threads[0].latestTurnState = "completed"
+        await model.reload()
+        #expect(model.stopPhase(threadID: "created") == .awaitingOutcome)
+        client.snapshot.threads[0].state = .completed
+        client.snapshot.threads[0].settlementFacts = .init(sessionStatus: "ready")
+        await model.reload()
+        #expect(model.stopPhase(threadID: "created") == nil)
+    }
+
+    @Test(arguments: ["completed", "different-turn", "unknown"])
+    func retryReconciliationDoesNotInterruptTerminalDifferentOrUnknownTurn(statusKind: String) async {
+        let client = FeatureClientStub()
+        client.snapshot.threads = [FeatureThread(id: "created", projectID: "p", title: "Work", state: .working, latestTurnID: "a", latestTurnState: "running")]
+        let model = FeatureRootModel(client: client)
+        await model.reload()
+        client.cancelTurnHandler = { throw URLError(.networkConnectionLost) }
+        await model.cancelTurn(threadID: "created")
+        var status = client.snapshot.threads[0]
+        if statusKind == "completed" {
+            status.latestTurnState = "completed"
+            status.state = .completed
+            status.settlementFacts = .init(sessionStatus: "ready")
+        }
+        if statusKind == "different-turn" { status.latestTurnID = "b" }
+        if statusKind == "unknown" { status.latestTurnState = nil }
+        client.stopStatusHandler = { status }
+        await model.retryCancelTurn(threadID: "created")?.value
+        #expect(client.cancelTurnCallCount == 1)
+        if statusKind == "completed" { #expect(model.stopPhase(threadID: "created") == nil) }
+    }
+
+    @Test(arguments: [nil, "missing-status", "unknown", "idle", "starting", "running"] as [String?])
+    func stopRetainsFeedbackWithoutKnownInactiveSession(sessionStatus: String?) async {
+        let client = FeatureClientStub()
+        client.snapshot.threads = [FeatureThread(
+            id: "created", projectID: "p", title: "Work", state: .waitingForApproval,
+            latestTurnID: "a", latestTurnState: "running",
+            settlementFacts: .init(sessionStatus: "running")
+        )]
+        let model = FeatureRootModel(client: client)
+        await model.reload()
+        await model.cancelTurn(threadID: "created")
+        client.snapshot.threads[0].latestTurnState = "interrupted"
+        client.snapshot.threads[0].settlementFacts = sessionStatus.map {
+            .init(sessionStatus: $0 == "missing-status" ? nil : $0)
+        }
+        await model.reload()
+        #expect(model.stopPhase(threadID: "created") == .awaitingOutcome)
+        client.snapshot.threads[0].state = .waitingForInput
+        await model.reload()
+        #expect(model.stopPhase(threadID: "created") == .awaitingOutcome)
     }
 }

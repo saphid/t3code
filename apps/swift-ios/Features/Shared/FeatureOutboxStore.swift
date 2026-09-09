@@ -220,8 +220,9 @@ public enum FeatureOutboxPolicy {
             return .wait
         }
         guard thread != nil else {
-            // A fully synchronized environment proves the thread was deleted.
-            return isConnected ? .discard : .wait
+            // Connected snapshots can omit archived threads while hydration is pending.
+            // The owning server must confirm deletion before the outbox removes a message.
+            return .wait
         }
         guard isConnected else { return .wait }
         return .send
@@ -230,8 +231,18 @@ public enum FeatureOutboxPolicy {
 
 public actor FeatureOutboxStore {
     private struct Document: Codable {
-        var version = 1
+        static let currentVersion = 1
+
+        var version = currentVersion
         var submissions: [FeatureQueuedSubmission]
+    }
+
+    private struct UnsupportedDocumentVersion: LocalizedError {
+        let version: Int
+
+        var errorDescription: String? {
+            "The saved message queue uses unsupported version \(version)."
+        }
     }
 
     public static let shared = FeatureOutboxStore()
@@ -266,6 +277,9 @@ public actor FeatureOutboxStore {
             Document.self,
             from: Data(contentsOf: fileURL)
         )
+        guard document.version == Document.currentVersion else {
+            throw UnsupportedDocumentVersion(version: document.version)
+        }
         cached = document.submissions.map { submission in
             var submission = submission
             submission.interactionMode = submission.interactionMode.mobileNormalized

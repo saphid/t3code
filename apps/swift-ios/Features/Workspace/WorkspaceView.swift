@@ -17,24 +17,9 @@ struct FeatureWorkspaceNavigationRequest: Equatable, Sendable {
     }
 }
 
-struct WorkspaceThreadSelection: Equatable {
-    private(set) var selectedID: String?
-    private(set) var lastOpenedID: String?
-
-    var highlightedID: String? { selectedID ?? lastOpenedID }
-
-    mutating func open(_ id: String) {
-        selectedID = id
-        lastOpenedID = id
-    }
-
-    mutating func close() {
-        selectedID = nil
-    }
-}
-
 public struct WorkspaceView: View {
     @SwiftUI.Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @SwiftUI.Environment(\.horizontalSizeClass) private var horizontalSizeClass
 
     @Bindable var model: FeatureRootModel
     private let navigationRequest: FeatureWorkspaceNavigationRequest?
@@ -44,6 +29,8 @@ public struct WorkspaceView: View {
 
     @State private var threadSelection = WorkspaceThreadSelection()
     @State private var selectedProjectID: String?
+    @State private var disabledEnvironmentIDs: Set<String> = []
+    @State private var selectedProjectEnvironmentID: String?
     @State private var searchText = ""
     @State private var isSearching = false
     @AppStorage("t3.swiftui.home.snoozedExpanded") private var isSnoozedExpanded = false
@@ -54,6 +41,9 @@ public struct WorkspaceView: View {
     @State private var newTaskInitialProjectID: String?
     @State private var showingAddProject = false
     @State private var showingEnvironments = false
+    @State private var showingEnvironmentFilter = false
+    @State private var opensAddEnvironmentAfterFilterDismiss = false
+    @State private var showingAddEnvironment = false
     @State private var showingSettings = false
     @State private var renamingThread: FeatureThread?
     @State private var deletingThread: FeatureThread?
@@ -130,8 +120,8 @@ public struct WorkspaceView: View {
         }
     }
 
-    public var body: some View {
-        NavigationSplitView(preferredCompactColumn: $preferredCompactColumn) {
+    private var workspaceNavigation: some View {
+        NavigationSplitView(preferredCompactColumn: compactColumnBinding) {
             sidebar
                 .navigationSplitViewColumnWidth(
                     min: T3Metrics.minimumSidebarWidth,
@@ -142,6 +132,17 @@ public struct WorkspaceView: View {
             detail
         }
         .navigationSplitViewStyle(.balanced)
+        .task(id: presentedThreadID) { [id = presentedThreadID] in
+            guard let id else { return }
+            await model.runThreadPresentation(id: id)
+        }
+        .onChange(of: horizontalSizeClass) { _, _ in
+            reconcileThreadPresentation()
+        }
+    }
+
+    public var body: some View {
+        workspaceNavigation
         .sheet(isPresented: $showingNewTask) {
             NewThreadView(
                 model: model,
@@ -167,6 +168,19 @@ public struct WorkspaceView: View {
                     }
             }
             .presentationDragIndicator(.visible)
+            .onAppear { model.setConnectionManagementPresented(true) }
+            .onDisappear { model.setConnectionManagementPresented(false) }
+        }
+        .sheet(isPresented: $showingAddEnvironment) {
+            ConnectionOnboardingView(
+                model: model,
+                showsT3ConnectOption: false,
+                onConnected: {
+                    showingAddEnvironment = false
+                    Task { await model.reloadAfterConnection() }
+                },
+                onCancel: { showingAddEnvironment = false }
+            )
             .onAppear { model.setConnectionManagementPresented(true) }
             .onDisappear { model.setConnectionManagementPresented(false) }
         }
@@ -213,7 +227,16 @@ public struct WorkspaceView: View {
             preferredCompactColumn = newValue == nil ? .sidebar : .detail
         }
         .onChange(of: selectedProjectIsAvailable) { _, isAvailable in
-            if !isAvailable { selectedProjectID = nil }
+            if !isAvailable { selectProject(nil) }
+        }
+        .onChange(
+            of: HomeEnvironmentFilter.environmentIdentities(model.snapshot.environments),
+            initial: true
+        ) {
+            reconcileEnvironmentSelection()
+        }
+        .onChange(of: HomeEnvironmentFilter.projectIdentities(model.snapshot.projects)) {
+            reconcileEnvironmentSelection()
         }
         .onChange(of: navigationRequest?.id, initial: true) { _, _ in
             consumeNavigationRequest()
@@ -263,6 +286,8 @@ public struct WorkspaceView: View {
             revision: model.homePresentationRevision,
             query: searchText,
             projectID: selectedProjectID,
+            projectEnvironmentID: selectedProjectEnvironmentID,
+            disabledEnvironmentIDs: disabledEnvironmentIDs,
             now: sidebarBoundaryNow,
             pullRequestsByThreadID: model.pullRequestsByThreadID
         )
@@ -329,7 +354,8 @@ public struct WorkspaceView: View {
                 model: model,
                 thread: thread,
                 submitMessage: submitMessage,
-                onNavigateBack: closeSelectedThread
+                onNavigateBack: closeSelectedThread,
+                managesThreadPresentation: false
             )
             .id(id)
         } else {
@@ -525,7 +551,7 @@ public struct WorkspaceView: View {
         HStack(spacing: 0) {
             Menu {
                 Button {
-                    selectedProjectID = nil
+                    selectProject(nil)
                 } label: {
                     if selectedProjectID == nil {
                         Label("All projects", systemImage: "checkmark")
@@ -533,12 +559,13 @@ public struct WorkspaceView: View {
                         Text("All projects")
                     }
                 }
-                ForEach(model.snapshot.projects) { project in
+                ForEach(availableProjects) { project in
                     Button {
-                        selectedProjectID = project.id
+                        selectProject(project.id, targetEnvironmentID: project.environmentID)
                     } label: {
                         let title = projectMenuTitle(project)
-                        if selectedProjectID == project.id {
+                        if selectedProjectID == project.id,
+                           selectedProjectEnvironmentID == project.environmentID {
                             Label(title, systemImage: "checkmark")
                         } else {
                             Text(title)
@@ -549,20 +576,62 @@ public struct WorkspaceView: View {
                 HStack(spacing: 7) {
                     Image(systemName: "folder")
                         .font(.system(size: 13, weight: .medium))
-                    Text(selectedProject?.name ?? "All projects")
+                    Text(selectedProjectScopeLabel)
                         .lineLimit(1)
                     Image(systemName: "chevron.down")
                         .font(.system(size: 8, weight: .bold))
-            }
-            .font(T3Typography.homeMetadata.weight(.semibold))
+                }
+                .font(T3Typography.homeMetadata.weight(.semibold))
                 .foregroundStyle(T3Colors.textSecondary)
-            .frame(maxWidth: .infinity, minHeight: 40, alignment: .leading)
+                .frame(
+                    maxWidth: .infinity,
+                    minHeight: T3Metrics.minimumTapTarget,
+                    alignment: .leading
+                )
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .accessibilityLabel("Project filter")
-            .accessibilityValue(selectedProject?.name ?? "All projects")
+            .accessibilityValue(selectedProjectScopeLabel)
             .accessibilityIdentifier("sidebar-project-filter")
+
+            if showsEnvironmentFilter {
+                Button("Filter threads by environment", systemImage: "server.rack") {
+                    showingEnvironmentFilter = true
+                }
+                .labelStyle(.iconOnly)
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(T3Colors.textTertiary)
+                .frame(
+                    width: T3Metrics.minimumTapTarget,
+                    height: T3Metrics.minimumTapTarget
+                )
+                .overlay(alignment: .topTrailing) {
+                    if !disabledEnvironmentIDs.isEmpty {
+                        Circle()
+                            .fill(T3Colors.primaryAction)
+                            .frame(width: 6, height: 6)
+                            .padding(.top, 8)
+                            .padding(.trailing, 8)
+                            .accessibilityHidden(true)
+                    }
+                }
+                .buttonStyle(.plain)
+                .popover(isPresented: $showingEnvironmentFilter) {
+                    HomeEnvironmentFilterPopover(
+                        environments: enabledEnvironments,
+                        labels: environmentLabels,
+                        disabledEnvironmentIDs: disabledEnvironmentIDs,
+                        onIncludeAll: includeAllEnvironments,
+                        onToggle: toggleEnvironment,
+                        onAddEnvironment: openEnvironmentCreation
+                    )
+                    .presentationCompactAdaptation(.popover)
+                    .onDisappear(perform: openPendingEnvironmentCreation)
+                }
+                .accessibilityValue(environmentFilterAccessibilityValue)
+                .accessibilityIdentifier("sidebar-environment-filter")
+            }
 
             Button { showingAddProject = true } label: {
                 Image(systemName: "folder.badge.plus")
@@ -580,7 +649,48 @@ public struct WorkspaceView: View {
     }
 
     private var selectedProject: FeatureProject? {
-        model.snapshot.projects.first { $0.id == selectedProjectID }
+        HomeEnvironmentFilter.project(
+            id: selectedProjectID,
+            environmentID: selectedProjectEnvironmentID,
+            projects: model.snapshot.projects
+        )
+    }
+
+    private var enabledEnvironments: [FeatureEnvironment] {
+        HomeEnvironmentFilter.options(from: model.snapshot.environments)
+    }
+
+    private var showsEnvironmentFilter: Bool {
+        HomeEnvironmentFilter.shouldShow(environments: model.snapshot.environments)
+    }
+
+    private var environmentLabels: [String: String] {
+        HomeEnvironmentFilter.labels(for: enabledEnvironments)
+    }
+
+    private var selectedProjectScopeLabel: String {
+        HomeEnvironmentFilter.projectScopeLabel(
+            project: selectedProject,
+            environmentLabels: environmentLabels,
+            includedEnvironmentCount: includedEnvironmentCount
+        )
+    }
+
+    private var includedEnvironmentCount: Int {
+        enabledEnvironments.count - disabledEnvironmentIDs.count
+    }
+
+    private var environmentFilterAccessibilityValue: String {
+        guard includedEnvironmentCount != enabledEnvironments.count else {
+            return "All environments included"
+        }
+        return "\(includedEnvironmentCount) of \(enabledEnvironments.count) environments included"
+    }
+
+    private var availableProjects: [FeatureProject] {
+        model.snapshot.projects.filter {
+            !disabledEnvironmentIDs.contains($0.environmentID)
+        }
     }
 
     private var creationProjects: [FeatureProject] {
@@ -625,7 +735,95 @@ public struct WorkspaceView: View {
 
     private var selectedProjectIsAvailable: Bool {
         guard let selectedProjectID else { return true }
-        return model.snapshot.projects.contains { $0.id == selectedProjectID }
+        return availableProjects.contains {
+            $0.id == selectedProjectID
+                && $0.environmentID == selectedProjectEnvironmentID
+        }
+    }
+
+    private func toggleEnvironment(_ id: String, isIncluded: Bool) {
+        applySelection(
+            HomeEnvironmentFilter.Selection(
+                disabledEnvironmentIDs: disabledEnvironmentIDs,
+                projectID: selectedProjectID,
+                projectEnvironmentID: selectedProjectEnvironmentID
+            ).togglingEnvironment(
+                id,
+                isIncluded: isIncluded,
+                environments: model.snapshot.environments,
+                projects: model.snapshot.projects
+            )
+        )
+        settledLimit = 12
+    }
+
+    private func includeAllEnvironments() {
+        applySelection(
+            HomeEnvironmentFilter.Selection(
+                disabledEnvironmentIDs: disabledEnvironmentIDs,
+                projectID: selectedProjectID,
+                projectEnvironmentID: selectedProjectEnvironmentID
+            ).includingAll(projects: model.snapshot.projects)
+        )
+        settledLimit = 12
+    }
+
+    private func selectProject(_ id: String?, targetEnvironmentID: String? = nil) {
+        applySelection(
+            HomeEnvironmentFilter.Selection(
+                disabledEnvironmentIDs: disabledEnvironmentIDs,
+                projectID: selectedProjectID,
+                projectEnvironmentID: selectedProjectEnvironmentID
+            ).selectingProject(
+                id,
+                targetEnvironmentID: targetEnvironmentID,
+                projects: model.snapshot.projects
+            )
+        )
+    }
+
+    private func reconcileEnvironmentSelection() {
+        applySelection(
+            HomeEnvironmentFilter.Selection(
+                disabledEnvironmentIDs: disabledEnvironmentIDs,
+                projectID: selectedProjectID,
+                projectEnvironmentID: selectedProjectEnvironmentID
+            ).reconciled(
+                environments: model.snapshot.environments,
+                projects: model.snapshot.projects
+            )
+        )
+    }
+
+    private func applySelection(_ selection: HomeEnvironmentFilter.Selection) {
+        disabledEnvironmentIDs = selection.disabledEnvironmentIDs
+        selectedProjectID = selection.projectID
+        selectedProjectEnvironmentID = selection.projectEnvironmentID
+    }
+
+    private var compactColumnBinding: Binding<NavigationSplitViewColumn> {
+        Binding(
+            get: { preferredCompactColumn },
+            set: { column in
+                preferredCompactColumn = column
+                reconcileThreadPresentation()
+            }
+        )
+    }
+
+    private var presentedThreadID: String? {
+        guard let id = threadSelection.presentedID(
+            isCompact: horizontalSizeClass == .compact,
+            showsDetailColumn: preferredCompactColumn == .detail
+        ), model.snapshot.threads.contains(where: { $0.id == id }) else { return nil }
+        return id
+    }
+
+    private func reconcileThreadPresentation() {
+        threadSelection.reconcilePresentation(
+            isCompact: horizontalSizeClass == .compact,
+            showsDetailColumn: preferredCompactColumn == .detail
+        )
     }
 
     private func openThread(_ id: String) {
@@ -668,12 +866,12 @@ public struct WorkspaceView: View {
         case let .project(id):
             guard model.snapshot.projects.contains(where: { $0.id == id }) else { return }
             dismissTransientPresentations()
-            selectedProjectID = id
+            selectProject(id)
             closeSelectedThread()
         case let .newTask(projectID):
             if let projectID,
                model.snapshot.projects.contains(where: { $0.id == projectID }) {
-                selectedProjectID = projectID
+                selectProject(projectID)
             }
             dismissTransientPresentations()
             Task { @MainActor in
@@ -688,18 +886,29 @@ public struct WorkspaceView: View {
         showingNewTask = false
         showingAddProject = false
         showingEnvironments = false
+        opensAddEnvironmentAfterFilterDismiss = false
+        showingAddEnvironment = false
         showingSettings = false
         renamingThread = nil
     }
 
     private func projectMenuTitle(_ project: FeatureProject) -> String {
-        guard model.snapshot.environments.count > 1,
-              let environment = model.snapshot.environments.first(where: {
-                  $0.id == project.environmentID
-              }) else {
-            return project.name
-        }
-        return "\(project.name) · \(environment.name)"
+        HomeEnvironmentFilter.projectScopeLabel(
+            project: project,
+            environmentLabels: environmentLabels,
+            includedEnvironmentCount: includedEnvironmentCount
+        )
+    }
+
+    private func openEnvironmentCreation() {
+        opensAddEnvironmentAfterFilterDismiss = true
+        showingEnvironmentFilter = false
+    }
+
+    private func openPendingEnvironmentCreation() {
+        guard opensAddEnvironmentAfterFilterDismiss else { return }
+        opensAddEnvironmentAfterFilterDismiss = false
+        showingAddEnvironment = true
     }
 }
 
@@ -722,19 +931,28 @@ struct HomePresentation {
         snapshot: FeatureSnapshot,
         query: String,
         projectID: String?,
+        projectEnvironmentID: String? = nil,
+        disabledEnvironmentIDs: Set<String> = [],
         now: Date,
         pullRequestsByThreadID: [String: HomeThreadPullRequestPresentation] = [:]
     ) {
+        let ownership = HomeEnvironmentFilter.Ownership(projects: snapshot.projects)
         let index = DailyUXSidebarIndex(
             snapshot: snapshot,
             query: "",
             projectID: projectID,
+            projectEnvironmentID: projectEnvironmentID,
+            disabledEnvironmentIDs: disabledEnvironmentIDs,
             now: now,
             pullRequestsByThreadID: pullRequestsByThreadID
         )
         let archived = snapshot.threads
             .filter { thread in
-                thread.isArchived && (projectID == nil || thread.projectID == projectID)
+                thread.isArchived
+                    && (projectID == nil || thread.projectID == projectID)
+                    && (projectEnvironmentID == nil
+                        || ownership.environmentID(for: thread) == projectEnvironmentID)
+                    && ownership.includes(thread, excluding: disabledEnvironmentIDs)
             }
             .sorted {
                 if $0.updatedAt != $1.updatedAt { return $0.updatedAt > $1.updatedAt }
@@ -764,6 +982,8 @@ private final class HomePresentationCache {
         let revision: UInt64
         let query: String
         let projectID: String?
+        let projectEnvironmentID: String?
+        let disabledEnvironmentIDs: Set<String>
         let now: Date
     }
 
@@ -775,6 +995,8 @@ private final class HomePresentationCache {
         revision: UInt64,
         query: String,
         projectID: String?,
+        projectEnvironmentID: String?,
+        disabledEnvironmentIDs: Set<String>,
         now: Date,
         pullRequestsByThreadID: [String: HomeThreadPullRequestPresentation]
     ) -> HomePresentation {
@@ -782,6 +1004,8 @@ private final class HomePresentationCache {
             revision: revision,
             query: query,
             projectID: projectID,
+            projectEnvironmentID: projectEnvironmentID,
+            disabledEnvironmentIDs: disabledEnvironmentIDs,
             now: now
         )
         if cachedKey == key, let cachedPresentation {
@@ -792,6 +1016,8 @@ private final class HomePresentationCache {
             snapshot: snapshot,
             query: query,
             projectID: projectID,
+            projectEnvironmentID: projectEnvironmentID,
+            disabledEnvironmentIDs: disabledEnvironmentIDs,
             now: max(now, .now),
             pullRequestsByThreadID: pullRequestsByThreadID
         )
