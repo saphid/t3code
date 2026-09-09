@@ -6,12 +6,17 @@ import {
   type UsageSummaryInput,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
 import { AsyncResult, Atom, AtomRegistry } from "effect/unstable/reactivity";
 import { afterEach, describe, expect, it } from "vite-plus/test";
 
 import type { EnvironmentPresentation } from "../connection/presentation.ts";
 import { EnvironmentRpcUnavailableError } from "../rpc/client.ts";
 import { refreshUsage } from "./usage.ts";
+
+class UsageScanTestError extends Schema.TaggedError<UsageScanTestError>()("UsageScanTestError", {
+  cause: Schema.Defect(),
+}) {}
 
 const input = {
   sinceDay: UsageDay.make("2026-09-05"),
@@ -47,9 +52,12 @@ function harness(ids = ["a"]) {
       connection: { phase: "connected" },
     } as EnvironmentPresentation | null);
     const query = Atom.make(
-      Effect.promise(() => {
-        scanStarted.resolve();
-        return scan.promise;
+      Effect.tryPromise({
+        try: () => {
+          scanStarted.resolve();
+          return scan.promise;
+        },
+        catch: (cause) => new UsageScanTestError({ cause }),
       }),
     );
     return { environmentId, rates, scan, scanStarted, presentation, query };
@@ -151,7 +159,7 @@ describe("manual usage refresh", () => {
   it("reports a scan failure after the other selected environment finishes", async () => {
     const { environments, refresh } = harness(["failed", "healthy"]);
     const [failed, healthy] = environments;
-    const failure = new Error("Usage scan failed");
+    const failure = new UsageScanTestError({ cause: "Usage scan failed" });
     failed!.query = Atom.make(Effect.fail(failure));
     let finished = false;
     const refreshing = refresh().then(
