@@ -1,0 +1,42 @@
+# T3 extension SDK developer preview
+
+This package is a trusted, in-process resource surface SDK. External packages can contribute new views without a core kind switch. It is not a community code sandbox, server plugin loader, marketplace, RPC protocol, or replacement for core domain services. Existing built-in surfaces are unchanged until their integration passes parity tests.
+
+## Build and try an external package
+
+From the repository root, use the pinned package manager:
+
+```sh
+CI=true corepack pnpm install --filter @t3tools/extension-sdk --ignore-scripts
+corepack pnpm --filter @t3tools/extension-sdk build
+node --test packages/extension-sdk/test/*.test.mjs
+node packages/extension-sdk/test/external-consumer.mjs
+```
+
+The last command packs the emitted SDK into a temporary directory, installs that tarball in a separate package, compiles `examples/counter/counter.ts` with only public imports, runs its observable counter journey, and confirms private imports fail at the package resolver. It prints the retained artifact directory. No workspace aliases or source links are used. A fresh consumer needs Node 24 and the repository's TypeScript compiler for this test; the SDK has no runtime dependency unless importing the optional React adapter.
+
+Start from [the counter extension](examples/counter/counter.ts). Export an `Extension<Renderer>` from your own package. The application calls `host.register(extension)` and receives an idempotent unregister function. IDs use `publisher.extension/contribution`; resource identity includes namespace, environment, project, thread and resource ID. Never compare bare resource IDs across environments. `resourceKey` gives a stable scoped key. Registration copies metadata, validates API major `1`, semver package version, contribution ownership, duplicate IDs, and descriptor shape. State versions are independent positive integers, matched exactly on restore. There is no automatic migration or live package update in this version; unregister, register a compatible replacement, and explicitly reopen records.
+
+## View contract
+
+A surface declares title, supported placements/clients, scope, required service capabilities and restoration version. Its `createView(session)` returns a renderer and optional idempotent cleanup. `validateRestore` accepts `null` for fresh resources and validates its saved JSON. The host allocates viewer IDs; two viewers may reference one domain resource. The renderer type is chosen by the client, independently of the JSON protocol.
+
+The host supplies immutable-by-copy context with environment/project/thread/resource and optional workspace revision. `session.invoke(capability,input)` pins that context, checks declared capability and host authorization on every call, bounds input/output, and passes cancellation to the domain adapter. It never accepts a plugin-selected target context. The host adapter still must validate authenticated ownership and resource relationships. Do not expose credentials, arbitrary RPC dispatch, database handles, filesystem traversal, PTY termination, or orchestration control through a generic service. Register narrow named services such as `host.files/read`, `host.diff/read`, `host.repository/status`, `host.browser/observe`, `host.terminal/observe`, and `host.agents/read`; these names are integration examples, not implemented domain adapters.
+
+`session.publish(sequence,state)` replaces the latest JSON presentation. Sequence numbers are strictly increasing within one generation; duplicate/old/hidden/disposed publications return false. Notifications coalesce within a microtask, storing one current snapshot rather than an event queue. The default budget is 64 KiB per JSON value, nesting depth 32, 64 open viewers, eight pending service calls per viewer and a ten-second deadline. Each adapter must bound its own upstream stream; the host does not make synchronous trusted code preemptible. `session.save(state)` validates bounded restoration data. State getters return copies; modifying them cannot change host state.
+
+`hide` preserves the controller, renderer and session, aborts activity calls and rejects new calls/publications. `session.visible` and `onVisibility` let terminal/media renderers stop expensive presentation work; visibility hooks must suspend owned streams. `show` resumes the same instance. The lifetime `signal` remains live while hidden. `close`, disable, context replacement and shutdown abort lifetime and activity, call all `onDispose` cleanups, and dispose the renderer controller once. Closing one viewer never calls domain terminate. `move` changes placement without recreating a view.
+
+`updateContext` creates a new generation and clears presentation before the new factory runs. Old service responses and publications cannot appear in the new context, including a workspace revision change. A different resource resets restoration data to `null`. An adapter must honor cancellation for actual backend work; cancellation does not undo a completed external effect. Register cleanup immediately through `onDispose`, including before asynchronous activation. Late factory completion after cancellation is disposed. Service exceptions reject only that call; factory/visibility/render exceptions mark only that view failed. Promise rejection in plugin-owned callbacks remains the plugin's responsibility.
+
+The shell persists `host.records()` in its existing layout store and restores each `ViewRecord`. Unknown, disabled, missing-capability, unsupported-client, invalid-state and incompatible-state contributions retain their record and readable fallback. Restore never creates a resource in the host itself; extension factories must observe existing resources when `session.restoring` is true. Enable does not automatically reopen hidden or failed views: explicitly `show` or restore after grants/reconnection are known.
+
+## React shell integration
+
+Import `ExtensionSurface`, `SurfaceRenderer`, and `SurfaceRendererProps` from `@t3tools/extension-sdk/react`. Create one `createExtensionHost<SurfaceRenderer>` for the client scope. A trusted contribution returns a React component receiving `{snapshot}`. Mount `<ExtensionSurface host={host} viewId={id} />` inside the existing tab/dock shell. The adapter subscribes to that viewer, reports render exceptions through `host.fail`, resets its boundary on generation change, and preserves the renderer subtree behind a hidden wrapper on hide/show. Keep the adapter mounted while hidden if retaining local React state matters. A custom `fallback(snapshot)` may render retry/close controls; default fallback is text in a status element.
+
+The right-panel store remains the layout/focus owner. Use its existing user-action revision guard before calling `open` from delayed proactive work. Route sidebar, menu, palette and keybinding entries through the same host command at integration; do not let asynchronous data completion choose active tabs. The SDK deliberately does not create a competing layout or focus manager. Store the generic contribution `surfaceId` and resource record, then resolve registered metadata/renderer instead of adding six kind cases. Files and Diff can retain their existing engines; Terminal and Browser keep shared domain sessions; Version Control retains repository/review write authorization; Agents remains presentation-only. Host service adapters and their import boundaries must be reviewed in the migration lanes.
+
+## Coverage and limits
+
+Focused tests cover public lifecycle, hidden identity, independent viewers, scope/revision races, timeouts, late factory completion, capability revocation, invalid payloads, bounded updates, failures and 100 lifecycle cycles. They are contract tests, not UI parity or performance measurements. React Native and SwiftUI need native renderers/bridges; Electron, authenticated local/remote/relay/tunnel domain services, all providers, V2 adapters, compositor performance and accessibility journeys require separate integration verification. The JSON types are transport-ready data shapes but no wire endpoint is added here. Durable server operations, provider tools, composer/timeline contributions and untrusted isolation remain later phases.
