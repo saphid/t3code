@@ -5,10 +5,12 @@ import { createCatalogueRefreshQueue } from "./catalogueRefresh";
 import {
   createExtensionCatalogueAtoms,
   environmentExtensionsHttp,
+  environmentExtensionApiStream,
 } from "@t3tools/client-runtime/state/extensions";
 import {
   ExtensionInvokeInput,
   ExtensionApiInvokeInput,
+  ExtensionApiSubscribeInput,
   ExtensionApiDiscoverInput,
   type EnvironmentId,
   type ExtensionInstallInput,
@@ -19,6 +21,7 @@ import {
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
 import { AsyncResult, Atom, AtomRegistry } from "effect/unstable/reactivity";
 import type { HttpClient } from "effect/unstable/http";
 import { connectionAtomRuntime } from "../connection/runtime";
@@ -36,6 +39,7 @@ import { registerInstalledApiClient, setInstalledApiPolicy } from "./installedAp
 
 const decodeInvoke = Schema.decodeSync(ExtensionInvokeInput);
 const decodeApiInvoke = Schema.decodeSync(ExtensionApiInvokeInput);
+const decodeApiSubscribe = Schema.decodeSync(ExtensionApiSubscribeInput);
 const decodeApiDiscover = Schema.decodeSync(ExtensionApiDiscoverInput);
 const idleCatalogue = Atom.make(AsyncResult.initial<ExtensionCatalogueChange, never>(false));
 const catalogueChanges = createExtensionCatalogueAtoms(connectionAtomRuntime);
@@ -70,6 +74,43 @@ function run<A, E>(
     ),
     signal ? { signal } : undefined,
   );
+}
+/** A pull-driven iterator retains only the RPC's bounded delivery window. */
+async function* authenticatedApiFrames(
+  environmentId: EnvironmentId,
+  payload: typeof ExtensionApiSubscribeInput.Type,
+  signal: AbortSignal,
+) {
+  const context = await Effect.runPromise(
+    AtomRegistry.getResult(appAtomRegistry, connectionAtomRuntime),
+    { signal },
+  );
+  const iterable = Stream.toAsyncIterableWith(
+    environmentExtensionApiStream(environmentId, payload),
+    context,
+  );
+  const iterator = iterable[Symbol.asyncIterator]();
+  const cancel = () => {
+    void iterator.return?.().catch(() => {});
+  };
+  signal.addEventListener("abort", cancel, { once: true });
+  try {
+    if (signal.aborted) throw new Error("Extension stream cancelled");
+    while (!signal.aborted) {
+      const next = await iterator.next();
+      if (signal.aborted) throw new Error("Extension stream cancelled");
+      if (next.done) return;
+      const { cursor, ...frame } = next.value;
+      yield {
+        ...frame,
+        ...(cursor === undefined ? {} : { cursor }),
+      };
+    }
+    throw new Error("Extension stream cancelled");
+  } finally {
+    signal.removeEventListener("abort", cancel);
+    await iterator.return?.();
+  }
 }
 /** Entries are trusted code. The authenticated server binds this body to the catalog's package hash. */
 export async function importInstalledClient(code: string, signal: AbortSignal): Promise<unknown> {
@@ -140,11 +181,15 @@ function EnvironmentExtensions({ environmentId }: { environmentId: EnvironmentId
           apiResolution,
           pluginResolution,
           supportsCatalogueChanges,
+          supportsApiStreams,
+          supportedPackageFormats,
           ...result
         } = await run(environmentExtensionsHttp.list(connection), signal);
         return {
           ...result,
           supportsCatalogueChanges: supportsCatalogueChanges === true,
+          supportsApiStreams: supportsApiStreams === true,
+          supportedPackageFormats: supportedPackageFormats ?? [1, 2],
           ...(apiSelections === undefined ? {} : { apiSelections }),
           ...(apiResolution === undefined
             ? {}
@@ -184,6 +229,12 @@ function EnvironmentExtensions({ environmentId }: { environmentId: EnvironmentId
         });
         return (await run(environmentExtensionsHttp.invokeApi(connection, payload), signal)).result;
       },
+      subscribeApi: (installationId, expectedContentHash, request, signal) =>
+        authenticatedApiFrames(
+          environmentId,
+          decodeApiSubscribe({ installationId, expectedContentHash, request }),
+          signal,
+        ),
       discoverApis: async (installationId, expectedContentHash, context, signal) => {
         const payload = decodeApiDiscover({
           installationId,

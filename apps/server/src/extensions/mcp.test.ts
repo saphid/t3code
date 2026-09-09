@@ -1,6 +1,7 @@
 import { expect, it } from "@effect/vitest";
 import { EnvironmentId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Stream from "effect/Stream";
 import { EnvironmentExtensions } from "./EnvironmentExtensions.ts";
 import { handlers } from "./mcp.ts";
 import { McpInvocationContext, type McpCapability } from "../mcp/McpInvocationContext.ts";
@@ -37,6 +38,7 @@ function fixture(capabilities: readonly McpCapability[], resolvedContext = conte
     list: Effect.succeed([]),
     catalogue: Effect.succeed({ apiSelections: [], apiResolution: [], pluginResolution: [] }),
     invokeApi: () => Effect.die("unused"),
+    subscribeApi: () => Stream.die("unused"),
     discoverApis: () => Effect.die("unused"),
     selectApi: () => Effect.die("unused"),
     install: () => Effect.die("unused"),

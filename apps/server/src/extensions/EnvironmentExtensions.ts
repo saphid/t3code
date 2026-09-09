@@ -4,6 +4,7 @@ import {
   ExtensionInstallation,
   ExtensionOperationError,
   type ExtensionApiInvokeInput,
+  type ExtensionApiSubscribeInput,
   type ExtensionApiDiscoverInput,
   type ExtensionApiSelection,
   type ExtensionInstallInput,
@@ -22,6 +23,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
 import * as ServerConfig from "../config.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import { ProjectionProjectRepository } from "../persistence/Services/ProjectionProjects.ts";
@@ -157,6 +159,7 @@ export const make = Effect.fn("EnvironmentExtensions.make")(function* (
       catalogue: unavailable,
       list: unavailable,
       invokeApi: (_input: ExtensionApiInvokeInput) => unavailable,
+      subscribeApi: (_input: ExtensionApiSubscribeInput) => Stream.fromEffect(unavailable),
       discoverApis: (_input: ExtensionApiDiscoverInput) => unavailable,
       selectApi: (_input: ExtensionApiSelection) => unavailable,
       install: (_input: ExtensionInstallInput) => unavailable,
@@ -180,6 +183,35 @@ export const make = Effect.fn("EnvironmentExtensions.make")(function* (
   };
   return {
     catalogue: Effect.sync(() => runtime.catalogue()),
+    subscribeApi: (input: ExtensionApiSubscribeInput) =>
+      Stream.unwrap(
+        Effect.gen(function* () {
+          const scope = yield* resolve(input.request.context);
+          const controller = yield* Effect.acquireRelease(
+            Effect.sync(() => new AbortController()),
+            (controller) => Effect.sync(() => controller.abort()),
+          );
+          const frames = runtime.subscribeApi(
+            input.installationId,
+            input.expectedContentHash,
+            {
+              id: input.request.id,
+              name: input.request.name,
+              input: input.request.input,
+              versionRange: input.request.versionRange,
+              context: scope.context,
+              ...(input.request.expectedGeneration === undefined
+                ? {}
+                : { expectedGeneration: input.request.expectedGeneration }),
+              ...(input.request.cursor === undefined ? {} : { cursor: input.request.cursor }),
+            },
+            controller.signal,
+          );
+          return Stream.fromAsyncIterable(frames, (cause) =>
+            operationError("api.subscribe", cause),
+          ).pipe(Stream.mapEffect((frame) => resolve(scope.context).pipe(Effect.as(frame))));
+        }),
+      ),
     invokeApi: Effect.fn("EnvironmentExtensions.invokeApi")(function* (
       input: ExtensionApiInvokeInput,
     ) {

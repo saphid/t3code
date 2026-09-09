@@ -110,6 +110,9 @@ function fixture() {
   let afterRead = () => {};
   let afterInvoke = () => {};
   let afterClient = () => {};
+  let afterStream = () => {};
+  let streamSignal: AbortSignal | undefined;
+  let streamClosed = false;
   let disposed = false;
   const runtime: Awaited<ReturnType<typeof createExtensionRuntime>> = {
     list: () => [entry],
@@ -120,6 +123,30 @@ function fixture() {
     invokeApi: async () => {
       afterInvoke();
       return { ok: true };
+    },
+    subscribeApi: (_id, _hash, _request, signal) => {
+      streamSignal = signal;
+      return {
+        async *[Symbol.asyncIterator]() {
+          try {
+            yield {
+              streamId: "fixture-stream",
+              sequence: 1,
+              type: "snapshot" as const,
+              value: "first",
+            };
+            afterStream();
+            yield {
+              streamId: "fixture-stream",
+              sequence: 2,
+              type: "data" as const,
+              value: "stale",
+            };
+          } finally {
+            streamClosed = true;
+          }
+        },
+      };
     },
     install: async () => entry,
     updateGrants: async (_id, grants) => {
@@ -208,6 +235,10 @@ function fixture() {
     afterClient: (fn: () => void) => {
       afterClient = fn;
     },
+    afterStream: (fn: () => void) => {
+      afterStream = fn;
+    },
+    streamState: () => ({ aborted: streamSignal?.aborted, closed: streamClosed }),
     isDisposed: () => disposed,
     revoke: () => {
       entry = { ...entry, enabled: false };
@@ -353,7 +384,7 @@ it.effect(
           .getOptions()
           .apiProviders?.find((item) => item.providerId === "host.workspace");
         expect(provider?.definition.id).toBe("t3.workspace/files");
-        expect(provider?.definition.methods.map((method) => method.name)).toEqual([
+        expect(provider?.definition.methods?.map((method) => method.name)).toEqual([
           "listEntries",
           "readText",
         ]);
@@ -435,3 +466,41 @@ it.effect(
     );
   },
 );
+
+it.effect("stream suppresses a frame from a changed workspace and releases its lifetime", () => {
+  const f = fixture();
+  const seen: unknown[] = [];
+  return Effect.gen(function* () {
+    yield* Effect.scoped(
+      Effect.gen(function* () {
+        const service = yield* make(f.factory);
+        f.afterStream(f.changeWorkspace);
+        const failure = yield* Effect.flip(
+          service
+            .subscribeApi({
+              installationId: "fixture.reader",
+              expectedContentHash: hash,
+              request: {
+                id: "fixture.reader/events",
+                versionRange: "^1.0.0",
+                name: "changes",
+                input: {},
+                context: invoke.context,
+              },
+            })
+            .pipe(
+              Stream.tap((frame) =>
+                Effect.sync(() => {
+                  seen.push(frame.value);
+                }),
+              ),
+              Stream.runDrain,
+            ),
+        );
+        expect(failure.detail).toContain("stale");
+        expect(seen).toEqual(["first"]);
+      }).pipe(Effect.provide(f.services)),
+    );
+    expect(f.streamState()).toEqual({ aborted: true, closed: true });
+  });
+});

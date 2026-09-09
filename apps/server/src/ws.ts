@@ -1,3 +1,4 @@
+import { EnvironmentExtensions } from "./extensions/EnvironmentExtensions.ts";
 import { ExtensionCatalogueChanges } from "./extensions/catalogueChanges.ts";
 import {
   sameUsageLimitCommandCoverage,
@@ -606,6 +607,7 @@ const makeWsRpcLayer = (
         yield* SourceControlRepositoryService.SourceControlRepositoryService;
       const pullRequests = yield* PullRequestService.PullRequestService;
       const extensionCatalogueChanges = yield* ExtensionCatalogueChanges;
+      const environmentExtensions = yield* EnvironmentExtensions;
       const bootstrapCredentials = yield* PairingGrantStore.PairingGrantStore;
       const sessions = yield* SessionStore.SessionStore;
       const processDiagnostics = yield* ProcessDiagnostics.ProcessDiagnostics;
@@ -2826,6 +2828,12 @@ const makeWsRpcLayer = (
             }),
             { "rpc.aggregate": "server" },
           ),
+        [WS_METHODS.subscribeExtensionApi]: (input) =>
+          observeRpcStream(
+            WS_METHODS.subscribeExtensionApi,
+            environmentExtensions.subscribeApi(input),
+            { "rpc.aggregate": "extensions" },
+          ),
         [WS_METHODS.subscribeExtensionCatalogue]: (_input) =>
           observeRpcStream(
             WS_METHODS.subscribeExtensionCatalogue,
@@ -2941,6 +2949,7 @@ export const websocketRpcRouteLayer = Layer.unwrap(
     });
     const pullRequests = yield* PullRequestService.PullRequestService;
     const extensionCatalogueChanges = yield* ExtensionCatalogueChanges;
+    const sharedEnvironmentExtensions = yield* EnvironmentExtensions;
     return HttpRouter.add(
       "GET",
       "/ws",
@@ -2982,6 +2991,7 @@ export const websocketRpcRouteLayer = Layer.unwrap(
               // mutation invalidates the HTTP diff cache that every client reads from.
               Layer.provide(Layer.succeed(PullRequestService.PullRequestService, pullRequests)),
               Layer.provide(Layer.succeed(ExtensionCatalogueChanges, extensionCatalogueChanges)),
+              Layer.provide(Layer.succeed(EnvironmentExtensions, sharedEnvironmentExtensions)),
               Layer.provide(
                 SourceControlDiscovery.layer.pipe(
                   Layer.provide(

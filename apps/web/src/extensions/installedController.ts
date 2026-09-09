@@ -1,3 +1,4 @@
+import { installedStream } from "./installedStream";
 import type { ExtensionInstallation } from "@t3tools/contracts";
 import {
   copyJson,
@@ -15,6 +16,8 @@ import type { Extension } from "@t3tools/extension-sdk/host";
 import type {
   ApiDiscovery,
   ApiInvocation,
+  ApiStreamInvocation,
+  ApiStreamFrame,
   ApiSelection,
   ApiUnavailableReason,
 } from "@t3tools/extension-sdk/capabilities";
@@ -26,6 +29,8 @@ export type InstalledPackage = Omit<ExtensionInstallation, "package"> & {
 };
 export interface InstalledSnapshot {
   readonly supportsCatalogueChanges?: boolean;
+  readonly supportsApiStreams?: boolean;
+  readonly supportedPackageFormats?: readonly number[];
   readonly apiSelections?: readonly ApiSelection[];
   readonly apiResolution?: readonly {
     id: string;
@@ -101,6 +106,8 @@ export function createInstalledExtensionController(options: {
   readonly list: (signal: AbortSignal) => Promise<{
     installations: readonly ExtensionInstallation[];
     supportsCatalogueChanges?: boolean;
+    supportsApiStreams?: boolean;
+    supportedPackageFormats?: readonly number[];
     apiSelections?: readonly ApiSelection[];
     apiResolution?: readonly { id: string; providerId?: string; reason?: ApiUnavailableReason }[];
     pluginResolution?: readonly {
@@ -131,6 +138,12 @@ export function createInstalledExtensionController(options: {
     request: ApiInvocation,
     signal: AbortSignal,
   ) => Promise<Json>;
+  readonly subscribeApi?: (
+    id: string,
+    hash: string,
+    request: ApiStreamInvocation,
+    signal: AbortSignal,
+  ) => AsyncIterable<ApiStreamFrame>;
   readonly discoverApis?: (
     id: string,
     hash: string,
@@ -189,10 +202,57 @@ export function createInstalledExtensionController(options: {
         });
         const eligible = (item: InstalledPackage) =>
           item.enabled &&
+          (item.package.format !== 3 ||
+            (response.supportedPackageFormats?.includes(3) === true &&
+              response.supportsApiStreams === true)) &&
           (!response.pluginResolution ||
             response.pluginResolution.find((state) => state.id === item.id)?.status ===
               "available");
-        const signature = (item: InstalledPackage) => canonical([item.contentHash, item.grants]);
+        const signatures = new Map<string, string>();
+        const byId = new Map(installations.map((item) => [item.id, item]));
+        const apiResolution = new Map(
+          (response.apiResolution ?? []).map((item) => [item.id, item]),
+        );
+        const apiSelections = new Map(
+          (response.apiSelections ?? []).map((item) => [item.id, item]),
+        );
+        // A dependent client owns the lifetime of its selected providers as well as its own code.
+        // Capture only its dependency closure so unrelated catalogue changes retain live viewers.
+        const signature = (item: InstalledPackage) => {
+          const cached = signatures.get(item.id);
+          if (cached !== undefined) return cached;
+          const plugins = new Map<string, unknown>();
+          const apis = new Map<string, unknown>();
+          const visit = (id: string) => {
+            if (plugins.has(id)) return;
+            const dependency = byId.get(id);
+            plugins.set(
+              id,
+              dependency ? [dependency.contentHash, dependency.enabled, dependency.grants] : null,
+            );
+            if (!dependency) return;
+            for (const named of dependency.package.dependencies ?? []) visit(named.pluginId);
+            const required = new Set([
+              ...(dependency.package.requires ?? []).map((api) => api.id),
+              ...(dependency.package.provides ?? []).map((api) => api.id),
+              ...(dependency.package.dependencies ?? []).flatMap((named) =>
+                (named.apis ?? []).map((api) => api.id),
+              ),
+            ]);
+            for (const id of required) {
+              const resolved = apiResolution.get(id);
+              apis.set(id, [resolved ?? null, apiSelections.get(id) ?? null]);
+              if (resolved?.providerId && byId.has(resolved.providerId)) visit(resolved.providerId);
+            }
+          };
+          visit(item.id);
+          const value = canonical([
+            [...plugins].sort(([a], [b]) => a.localeCompare(b)),
+            [...apis].sort(([a], [b]) => a.localeCompare(b)),
+          ]);
+          signatures.set(item.id, value);
+          return value;
+        };
         for (const [id, entry] of active) {
           const item = installations.find((candidate) => candidate.id === id);
           if (
@@ -205,7 +265,19 @@ export function createInstalledExtensionController(options: {
             active.delete(id);
           }
         }
-        const errors: string[] = [];
+        const errors: string[] = installations
+          .filter(
+            (item) =>
+              item.enabled &&
+              item.package.format === 3 &&
+              !(
+                response.supportedPackageFormats?.includes(3) === true &&
+                response.supportsApiStreams === true
+              ),
+          )
+          .map(
+            (item) => item.id + ": This environment does not support package format 3 API streams.",
+          );
         for (const item of installations) {
           if (!live()) return;
           if (!eligible(item) || !item.package.clientEntry || active.has(item.id)) continue;
@@ -251,6 +323,36 @@ export function createInstalledExtensionController(options: {
                 if (!registered || disposed || signal.aborted)
                   throw new Error("Installed API invocation expired");
                 return copyJson(result);
+              },
+              subscribeApi(request, callerSignal) {
+                const signal = AbortSignal.any([callerSignal, lifetime.signal]);
+                const context = validateContext(request.context);
+                const validate = () => {
+                  if (
+                    !registered ||
+                    disposed ||
+                    signal.aborted ||
+                    context.resource.environmentId !== options.environmentId ||
+                    !context.resource.projectId ||
+                    !item.grants.projectIds.some((id) => id === context.resource.projectId) ||
+                    response.supportsApiStreams !== true ||
+                    !options.subscribeApi
+                  )
+                    throw new Error("Installed API stream is unavailable in this scope");
+                };
+                return installedStream(
+                  (streamSignal) => {
+                    validate();
+                    return options.subscribeApi!(
+                      item.id,
+                      item.contentHash,
+                      { ...request, input: copyJson(request.input), context },
+                      streamSignal,
+                    );
+                  },
+                  signal,
+                  validate,
+                );
               },
               async discoverApis(context, callerSignal) {
                 const signal = AbortSignal.any([callerSignal, lifetime.signal]);
@@ -325,6 +427,8 @@ export function createInstalledExtensionController(options: {
           publish({
             installations,
             supportsCatalogueChanges: response.supportsCatalogueChanges === true,
+            supportsApiStreams: response.supportsApiStreams === true,
+            supportedPackageFormats: response.supportedPackageFormats ?? [1, 2],
             apiSelections: response.apiSelections ?? [],
             apiResolution: response.apiResolution ?? [],
             pluginResolution: response.pluginResolution ?? [],
@@ -337,6 +441,8 @@ export function createInstalledExtensionController(options: {
         publish({
           installations: [],
           supportsCatalogueChanges: snapshot.supportsCatalogueChanges === true,
+          supportsApiStreams: snapshot.supportsApiStreams === true,
+          supportedPackageFormats: snapshot.supportedPackageFormats ?? [1, 2],
           loading: false,
           error: error instanceof Error ? error.message : "Could not load environment extensions",
         });

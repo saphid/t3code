@@ -9,6 +9,7 @@ import {
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
 import { makeOperations } from "./http.ts";
 import { EnvironmentExtensions } from "./EnvironmentExtensions.ts";
 
@@ -22,6 +23,7 @@ function fixture(scopes: readonly AuthEnvironmentScope[]) {
   const called: string[] = [];
   const service = EnvironmentExtensions.of({
     catalogue: Effect.succeed({ apiSelections: [], apiResolution: [], pluginResolution: [] }),
+    subscribeApi: () => Stream.empty,
     invokeApi: () =>
       Effect.sync(() => {
         called.push("invokeApi");
@@ -86,6 +88,8 @@ it.effect("read credential can read but cannot install, update, enable or remove
     expect(yield* f.provide(f.operations.list())).toEqual({
       installations: [],
       supportsCatalogueChanges: true,
+      supportedPackageFormats: [1, 2, 3],
+      supportsApiStreams: true,
       apiSelections: [],
       apiResolution: [],
       pluginResolution: [],

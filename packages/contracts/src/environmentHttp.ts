@@ -675,6 +675,8 @@ class EnvironmentExtensionsHttpApi extends HttpApiGroup.make("extensions")
       success: Schema.Struct({
         installations: Schema.Array(ExtensionInstallation),
         supportsCatalogueChanges: Schema.optional(Schema.Boolean),
+        supportedPackageFormats: Schema.optional(Schema.Array(Schema.Int)),
+        supportsApiStreams: Schema.optional(Schema.Boolean),
         apiSelections: Schema.optional(ExtensionApiCatalogue.fields.apiSelections),
         apiResolution: Schema.optional(ExtensionApiCatalogue.fields.apiResolution),
         pluginResolution: Schema.optional(ExtensionApiCatalogue.fields.pluginResolution),

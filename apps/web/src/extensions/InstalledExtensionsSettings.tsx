@@ -92,7 +92,9 @@ function EnvironmentPackages({ environmentId }: { environmentId: EnvironmentId }
       {[
         ...new Set(
           GENERIC_API_CATALOGUE.flatMap((api) =>
-            api.methods.flatMap((method) => method.requiredGrants),
+            [...(api.methods ?? []), ...(api.streams ?? [])].flatMap(
+              (operation) => operation.requiredGrants,
+            ),
           ),
         ),
       ]
@@ -194,7 +196,7 @@ function EnvironmentPackages({ environmentId }: { environmentId: EnvironmentId }
               );
             })}
           </ul>
-          {item.package.format === 2
+          {item.package.format !== 1
             ? item.package.provides.map((api) => (
                 <Button
                   key={api.id}

@@ -10,7 +10,9 @@
     "examples/installable-workspace-reader",
     "AUTHORING.md",
     "examples/installable-files",
-    "examples/installable-files-consumer"
+    "examples/installable-files-consumer",
+    "examples/installable-stream-provider",
+    "examples/installable-stream-consumer"
   ],
   "type": "module",
   "exports": {

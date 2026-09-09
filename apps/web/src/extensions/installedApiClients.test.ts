@@ -24,6 +24,7 @@ const selected: ApiDiscovery = {
   selected: true,
 };
 const client = (apis: readonly ApiDiscovery[]): ApiClient => ({
+  subscribeApi: () => ({ async *[Symbol.asyncIterator]() {} }),
   invokeApi: vi.fn(),
   discoverApis: vi.fn(async () => apis),
 });
@@ -68,6 +69,7 @@ describe("installed API provider routing", () => {
   it("rejects discovery completed after an installed client was revoked", async () => {
     let finish!: (apis: readonly ApiDiscovery[]) => void;
     const deferred: ApiClient = {
+      subscribeApi: () => ({ async *[Symbol.asyncIterator]() {} }),
       invokeApi: vi.fn(),
       discoverApis: () =>
         new Promise((resolve) => {
@@ -156,6 +158,7 @@ it("allows authoritative live discovery to replace a stale unavailable catalogue
 
 it("does not await an unrelated hung discovery for an explicitly selected provider", async () => {
   const unrelated: ApiClient = {
+    subscribeApi: () => ({ async *[Symbol.asyncIterator]() {} }),
     invokeApi: vi.fn(),
     discoverApis: vi.fn(() => new Promise<readonly ApiDiscovery[]>(() => {})),
   };

@@ -32,6 +32,7 @@ it("ordinary Open and composer selection share server-verifiable scope in the ac
   };
   const extension = factory({
     React,
+    subscribeApi: () => ({ async *[Symbol.asyncIterator]() {} }),
     invokeApi: async () => {
       throw new Error("Unused API call");
     },

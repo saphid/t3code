@@ -1,5 +1,10 @@
 import * as Schema from "effect/Schema";
-import { ExtensionCatalogueChange } from "./extensions.ts";
+import {
+  ExtensionApiSubscribeInput,
+  ExtensionApiStreamFrame,
+  ExtensionOperationError,
+  ExtensionCatalogueChange,
+} from "./extensions.ts";
 import * as Rpc from "effect/unstable/rpc/Rpc";
 import * as RpcGroup from "effect/unstable/rpc/RpcGroup";
 import { NonNegativeInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
@@ -378,6 +383,7 @@ export const WS_METHODS = {
   subscribeServerConfig: "subscribeServerConfig",
   subscribeServerLifecycle: "subscribeServerLifecycle",
   subscribeExtensionCatalogue: "subscribeExtensionCatalogue",
+  subscribeExtensionApi: "subscribeExtensionApi",
   subscribeAuthAccess: "subscribeAuthAccess",
   subscribeBackgroundPolicy: "subscribeBackgroundPolicy",
   subscribeResourceTelemetry: "subscribeResourceTelemetry",
@@ -1190,7 +1196,15 @@ const WsSubscribeExtensionCatalogueRpc = Rpc.make(WS_METHODS.subscribeExtensionC
   stream: true,
 });
 
+export const WsSubscribeExtensionApiRpc = Rpc.make(WS_METHODS.subscribeExtensionApi, {
+  payload: ExtensionApiSubscribeInput,
+  success: ExtensionApiStreamFrame,
+  error: Schema.Union([EnvironmentAuthorizationError, ExtensionOperationError]),
+  stream: true,
+});
+
 export const WsRpcGroup = RpcGroup.make(
+  WsSubscribeExtensionApiRpc,
   WsSubscribeExtensionCatalogueRpc,
   WsServerProbeRpc,
   WsServerGetConfigRpc,

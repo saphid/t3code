@@ -6,7 +6,10 @@ import {
   type ApiRequirement,
   type PluginDependency,
   type ApiInvocation,
+  type ApiStreamInvocation,
+  type ApiStreamFrame,
   type ApiDiscovery,
+  type ApiStreamEvent,
 } from "./capabilities.js";
 import { assertProvidedApiOwner } from "./catalogue.js";
 import type * as React from "react";
@@ -51,12 +54,16 @@ export interface EnvironmentPackageV2 extends Omit<
   readonly provides: readonly ApiDefinition[];
   readonly requires: readonly ApiRequirement[];
 }
-export type EnvironmentPackage = EnvironmentPackageV1 | EnvironmentPackageV2;
+export interface EnvironmentPackageV3 extends Omit<EnvironmentPackageV2, "format"> {
+  readonly format: 3;
+}
+export type EnvironmentPackage = EnvironmentPackageV1 | EnvironmentPackageV2 | EnvironmentPackageV3;
 export interface ToolSession {
   readonly context: ViewContext;
   readonly signal: AbortSignal;
   invoke(capability: string, input: Json): Promise<Json>;
   invokeApi(request: Omit<ApiInvocation, "context">): Promise<Json>;
+  subscribeApi(request: Omit<ApiStreamInvocation, "context">): AsyncIterable<ApiStreamFrame>;
 }
 export interface ServerTool {
   readonly id: string;
@@ -64,10 +71,23 @@ export interface ServerTool {
 }
 export interface ServerApi {
   readonly id: string;
-  readonly methods: readonly {
+  readonly methods?: readonly {
     readonly name: string;
     invoke(input: Json, session: ToolSession): Json | Promise<Json>;
   }[];
+  readonly streams?: readonly {
+    readonly name: string;
+    subscribe(input: Json, session: ApiStreamSession): AsyncIterable<ApiStreamEvent>;
+  }[];
+}
+export interface ApiStreamSession {
+  readonly context: ViewContext;
+  readonly signal: AbortSignal;
+  readonly resumeCursor?: string;
+  readonly invokeApi: (request: Omit<ApiInvocation, "context">) => Promise<Json>;
+  readonly subscribeApi: (
+    request: Omit<ApiStreamInvocation, "context">,
+  ) => AsyncIterable<ApiStreamFrame>;
 }
 export interface ServerExtension {
   readonly apis?: readonly ServerApi[];
@@ -77,6 +97,7 @@ export interface ClientHost {
   /** Use this React identity; a client entry must not bundle or import another React runtime. */
   readonly React: typeof React;
   invokeApi(request: ApiInvocation, signal: AbortSignal): Promise<Json>;
+  subscribeApi(request: ApiStreamInvocation, signal: AbortSignal): AsyncIterable<ApiStreamFrame>;
   discoverApis(context: ViewContext, signal: AbortSignal): Promise<readonly ApiDiscovery[]>;
   /** Host resolves installed grants and authenticated scope; supplied context is not authority. */
   invokeTool(toolId: string, input: Json, context: ViewContext, signal: AbortSignal): Promise<Json>;
@@ -113,12 +134,13 @@ export function validateEnvironmentPackage(value: unknown): EnvironmentPackage {
     !pkg ||
     typeof pkg !== "object" ||
     Array.isArray(pkg) ||
-    (pkg.format !== 1 && pkg.format !== 2) ||
+    (pkg.format !== 1 && pkg.format !== 2 && pkg.format !== 3) ||
     Object.keys(pkg).some(
       (key) =>
         !(
-          pkg.format === 2
-            ? [
+          pkg.format === 1
+            ? ["format", "manifest", "clientEntry", "serverEntry", "tools"]
+            : [
                 "format",
                 "manifest",
                 "clientEntry",
@@ -128,7 +150,6 @@ export function validateEnvironmentPackage(value: unknown): EnvironmentPackage {
                 "provides",
                 "requires",
               ]
-            : ["format", "manifest", "clientEntry", "serverEntry", "tools"]
         ).includes(key),
     )
   )
@@ -180,7 +201,7 @@ export function validateEnvironmentPackage(value: unknown): EnvironmentPackage {
     }
     validateSchemaRefs(tool.inputSchema);
   }
-  if (pkg.format === 2) {
+  if (pkg.format === 2 || pkg.format === 3) {
     for (const array of [pkg.dependencies, pkg.provides, pkg.requires])
       if (!Array.isArray(array) || array.length > 32)
         throw new Error("Invalid capability declarations");
@@ -205,6 +226,8 @@ export function validateEnvironmentPackage(value: unknown): EnvironmentPackage {
     const provided = new Set<string>();
     for (const api of pkg.provides) {
       validateApiDefinition(api);
+      if (pkg.format === 2 && api.streams?.length)
+        throw new Error("API streams require package format 3");
       assertProvidedApiOwner(manifest.id, api);
       if (provided.has(api.id)) throw new Error("Duplicate provided API");
       provided.add(api.id);
@@ -241,7 +264,7 @@ export function validateServerExtension(pkg: EnvironmentPackage, value: unknown)
       throw new Error("Duplicate, foreign or invalid server tool");
     ids.add(tool.id);
   }
-  const expected = safe.format === 2 ? safe.provides : [];
+  const expected = safe.format === 1 ? [] : safe.provides;
   const apis = definition.apis ?? [];
   if (!Array.isArray(apis) || apis.length !== expected.length)
     throw new Error("Server APIs do not match package");
@@ -251,20 +274,29 @@ export function validateServerExtension(pkg: EnvironmentPackage, value: unknown)
     if (
       !descriptor ||
       apiIds.has(api.id) ||
-      !Array.isArray(api.methods) ||
-      api.methods.length !== descriptor.methods.length
+      (descriptor.methods?.length ?? 0) !== (api.methods?.length ?? 0) ||
+      (descriptor.streams?.length ?? 0) !== (api.streams?.length ?? 0)
     )
       throw new Error("Duplicate, foreign or invalid server API");
     apiIds.add(api.id);
     const names = new Set<string>();
-    for (const method of api.methods) {
+    for (const method of api.methods ?? []) {
       if (
         names.has(method.name) ||
-        !descriptor.methods.some((item) => item.name === method.name) ||
+        !descriptor.methods?.some((item) => item.name === method.name) ||
         typeof method.invoke !== "function"
       )
         throw new Error("Server API methods do not match package");
       names.add(method.name);
+    }
+    for (const stream of api.streams ?? []) {
+      if (
+        names.has(stream.name) ||
+        !descriptor.streams?.some((item) => item.name === stream.name) ||
+        typeof stream.subscribe !== "function"
+      )
+        throw new Error("Server API streams do not match package");
+      names.add(stream.name);
     }
   }
   return {
@@ -273,10 +305,22 @@ export function validateServerExtension(pkg: EnvironmentPackage, value: unknown)
       ? {
           apis: apis.map((api) => ({
             id: api.id,
-            methods: api.methods.map((method: ServerApi["methods"][number]) => ({
-              name: method.name,
-              invoke: method.invoke,
-            })),
+            ...(api.methods?.length
+              ? {
+                  methods: api.methods.map((method: NonNullable<ServerApi["methods"]>[number]) => ({
+                    name: method.name,
+                    invoke: method.invoke,
+                  })),
+                }
+              : {}),
+            ...(api.streams?.length
+              ? {
+                  streams: api.streams.map((stream: NonNullable<ServerApi["streams"]>[number]) => ({
+                    name: stream.name,
+                    subscribe: stream.subscribe,
+                  })),
+                }
+              : {}),
           })),
         }
       : {}),

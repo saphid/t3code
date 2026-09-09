@@ -92,6 +92,30 @@ export const ExtensionApiInvokeInput = Schema.Struct({
   request: ExtensionApiInvocation,
 });
 export type ExtensionApiInvokeInput = typeof ExtensionApiInvokeInput.Type;
+/** Streams are read-only and bound to an installed package and its current grants. */
+export const ExtensionApiStreamInvocation = Schema.Struct({
+  id: Identity,
+  versionRange: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200)),
+  name: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(80)),
+  input: Schema.Json,
+  context: ExtensionViewContext,
+  expectedGeneration: Schema.optional(Schema.Int.check(Schema.isGreaterThanOrEqualTo(1))),
+  cursor: Schema.optional(Schema.String.check(Schema.isMaxLength(1024))),
+});
+export const ExtensionApiSubscribeInput = Schema.Struct({
+  installationId: Identity,
+  expectedContentHash: ExtensionContentHash,
+  request: ExtensionApiStreamInvocation,
+});
+export type ExtensionApiSubscribeInput = typeof ExtensionApiSubscribeInput.Type;
+export const ExtensionApiStreamFrame = Schema.Struct({
+  streamId: Identity,
+  sequence: Schema.Int.check(Schema.isGreaterThanOrEqualTo(1)),
+  type: Schema.Literals(["snapshot", "data", "reset", "closed"]),
+  value: Schema.Json,
+  cursor: Schema.optional(Schema.String.check(Schema.isMaxLength(1024))),
+});
+export type ExtensionApiStreamFrame = typeof ExtensionApiStreamFrame.Type;
 export const ExtensionApiDiscoverInput = Schema.Struct({
   installationId: Identity,
   expectedContentHash: ExtensionContentHash,

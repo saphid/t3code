@@ -111,6 +111,7 @@ it.each([1, 2])(
           selected: true,
         },
       ],
+      subscribeApi: () => ({ async *[Symbol.asyncIterator]() {} }),
       invokeApi: async (_id, _hash, request) => {
         expect(request.context.workspaceRevision).toBe(
           extensionWorkspaceRevision("/fixtures/workspace", "/fixtures/worktree"),
@@ -227,7 +228,11 @@ it.each([1, 2])(
       const callsBeforeUnrelatedChange = calls.length;
       let stopOtherEnvironment!: () => void;
       let stopOtherPlugin!: () => void;
-      const peer = { invokeApi: vi.fn(), discoverApis: vi.fn(async () => []) };
+      const peer = {
+        subscribeApi: () => ({ async *[Symbol.asyncIterator]() {} }),
+        invokeApi: vi.fn(),
+        discoverApis: vi.fn(async () => []),
+      };
       await act(async () => {
         stopOtherEnvironment = registerInstalledApiClient(
           "unrelated-environment",

@@ -1,9 +1,11 @@
 import { WS_METHODS } from "@t3tools/contracts";
 import { Atom } from "effect/unstable/reactivity";
-import type { EnvironmentRegistry } from "../connection/registry.ts";
+import { EnvironmentRegistry } from "../connection/registry.ts";
 import { createEnvironmentRpcSubscriptionAtomFamily } from "./runtime.ts";
 import type {
   ExtensionClientInput,
+  ExtensionApiSubscribeInput,
+  EnvironmentId,
   ExtensionApiInvokeInput,
   ExtensionApiDiscoverInput,
   ExtensionApiSelection,
@@ -12,6 +14,8 @@ import type {
   ExtensionManageInput,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Stream from "effect/Stream";
+import { runStream } from "../rpc/client.ts";
 import { RemoteEnvironmentAuthorization } from "../authorization/service.ts";
 import type { PreparedConnection } from "../connection/model.ts";
 import { environmentEndpointUrl } from "../environment/endpoint.ts";
@@ -91,4 +95,20 @@ export function createExtensionCatalogueAtoms<R, E>(
     tag: WS_METHODS.subscribeExtensionCatalogue,
     idleTtlMs: 0,
   });
+}
+
+/** One authenticated connection lifetime. Reconnect requires explicit rediscovery and a new cursor. */
+export function environmentExtensionApiStream(
+  environmentId: EnvironmentId,
+  payload: ExtensionApiSubscribeInput,
+) {
+  return Stream.unwrap(
+    Effect.gen(function* () {
+      const registry = yield* EnvironmentRegistry;
+      return registry.runStream(
+        environmentId,
+        runStream(WS_METHODS.subscribeExtensionApi, payload, { streamBufferSize: 1 }),
+      );
+    }),
+  );
 }

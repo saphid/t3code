@@ -13,6 +13,9 @@ import {
   type ApiDefinition,
   type ApiDiscovery,
   type ApiInvocation,
+  type ApiStreamInvocation,
+  type ApiStreamFrame,
+  type ApiStreamEvent,
   type ApiSelection,
 } from "@t3tools/extension-sdk/capabilities";
 import { resolveCapabilities } from "./resolution.js";
@@ -35,6 +38,14 @@ export interface HostApiInvocationMetadata {
 export interface HostApiProvider {
   readonly providerId: string;
   readonly definition: ApiDefinition;
+  subscribe?(
+    name: string,
+    input: Json,
+    context: ViewContext,
+    signal: AbortSignal,
+    metadata: HostApiInvocationMetadata,
+    resumeCursor?: string,
+  ): AsyncIterable<ApiStreamEvent>;
   invoke(
     method: string,
     input: Json,
@@ -63,6 +74,7 @@ export interface ApiAudit {
   readonly providerId?: string;
   readonly generation: number;
   readonly outcome: "completed" | "denied" | "failed";
+  readonly operation?: "stream-open" | "stream-close";
 }
 export function createApiBroker(options: {
   installations(): readonly Installation[];
@@ -73,6 +85,12 @@ export function createApiBroker(options: {
   authorize(record: Installation, grant: string, context: ViewContext): boolean | Promise<boolean>;
   environmentId: string;
   timeoutMs: number;
+  subscribeWorker?(
+    record: Installation,
+    request: ApiStreamInvocation,
+    signal: AbortSignal,
+    authority: ApiAuthority,
+  ): AsyncIterable<ApiStreamEvent>;
   invokeWorker(
     record: Installation,
     request: ApiInvocation,
@@ -88,7 +106,11 @@ export function createApiBroker(options: {
   }));
   const validators = new Map<
     string,
-    { input: ReturnType<typeof ajv.compile>; output: ReturnType<typeof ajv.compile> }
+    {
+      input: ReturnType<typeof ajv.compile>;
+      output: ReturnType<typeof ajv.compile>;
+      event?: ReturnType<typeof ajv.compile>;
+    }
   >();
   let nextProviderGeneration = NodeCrypto.randomInt(1, 2 ** 48);
   const providerGenerations = new Map<
@@ -110,6 +132,8 @@ export function createApiBroker(options: {
     });
   };
   const pending = new Map<AbortController, Set<string>>();
+  const streamCounts = new Map<string, number>();
+  let streamCount = 0;
   const resolution = () =>
     resolveCapabilities({
       installations: options.installations(),
@@ -129,6 +153,7 @@ export function createApiBroker(options: {
         pluginId: record.id,
         definition,
         invoke: undefined,
+        subscribe: undefined,
       })),
     ),
   ];
@@ -184,12 +209,21 @@ export function createApiBroker(options: {
       throw new Error("Declared API version is incompatible");
   }
   function compile(definition: ApiDefinition) {
-    for (const method of definition.methods) {
+    for (const method of definition.methods ?? []) {
       const key = JSON.stringify([definition, method.name]);
       if (!validators.has(key))
         validators.set(key, {
           input: ajv.compile(method.inputSchema),
           output: ajv.compile(method.outputSchema),
+        });
+    }
+    for (const stream of definition.streams ?? []) {
+      const key = JSON.stringify([definition, "stream", stream.name]);
+      if (!validators.has(key))
+        validators.set(key, {
+          input: ajv.compile(stream.inputSchema),
+          output: ajv.compile(stream.eventSchema),
+          event: ajv.compile(stream.eventSchema),
         });
     }
   }
@@ -276,7 +310,7 @@ export function createApiBroker(options: {
           declared(record, request, provider.definition.version);
           if (!satisfies(provider.definition.version, request.versionRange))
             throw new Error("Incompatible API version");
-          const method = provider.definition.methods.find((item) => item.name === request.method);
+          const method = provider.definition.methods?.find((item) => item.name === request.method);
           if (!method) throw new Error("API method unavailable");
           if (method.effect === "write" && !authority.allowWrite)
             throw new Error("Read-only API authority cannot invoke writes");
@@ -368,6 +402,320 @@ export function createApiBroker(options: {
     }
   }
   return {
+    subscribe(
+      record: Installation,
+      unsafe: ApiStreamInvocation,
+      signal: AbortSignal,
+      inherited?: ApiAuthority,
+    ): AsyncIterable<ApiStreamFrame> {
+      const request = copyJson(unsafe);
+      return {
+        [Symbol.asyncIterator]() {
+          const controller = new AbortController();
+          const affected = new Set<string>();
+          const authority: ApiAuthority = {
+            ...(inherited ?? { callers: [record], calls: [] }),
+            allowWrite: false,
+          };
+          const callId = NodeCrypto.randomUUID();
+          let source: AsyncIterator<ApiStreamEvent> | undefined;
+          let started = false;
+          let admitted = false;
+          let closed = false;
+          let wasCancelled = false;
+          let pulling = false;
+          let sequence = 0;
+          let context: ViewContext | undefined;
+          let providerId: string | undefined;
+          let generation = 0;
+          let outcome: ApiAudit["outcome"] = "denied";
+          let deadline: ReturnType<typeof setTimeout> | undefined;
+          let cleanup: Promise<void> | undefined;
+          let validate: (() => Promise<void>) | undefined;
+          let eventValid: ReturnType<typeof ajv.compile> | undefined;
+          let rejectCancelled!: (error: unknown) => void;
+          const cancelled = new Promise<never>((_, reject) => {
+            rejectCancelled = reject;
+          });
+          void cancelled.catch(() => {});
+          const audit = (operation: "stream-open" | "stream-close") => {
+            if (!context) return;
+            try {
+              options.audit?.({
+                callId,
+                ...(authority.parentCallId ? { parentCallId: authority.parentCallId } : {}),
+                rootCallerId: authority.callers[0]!.id,
+                callerId: record.id,
+                environmentId: context.resource.environmentId,
+                ...(context.resource.projectId ? { projectId: context.resource.projectId } : {}),
+                ...(context.resource.threadId ? { threadId: context.resource.threadId } : {}),
+                apiId: request.id,
+                method: request.name,
+                ...(providerId ? { providerId } : {}),
+                generation,
+                outcome,
+                operation,
+              });
+            } catch {
+              /* Audit sinks cannot change stream lifetime. */
+            }
+          };
+          const finish = () => {
+            if (cleanup) return cleanup;
+            closed = true;
+            signal.removeEventListener("abort", abort);
+            controller.signal.removeEventListener("abort", onCancel);
+            clearTimeout(deadline);
+            if (admitted) {
+              pending.delete(controller);
+              streamCount--;
+              for (const id of affected) {
+                const count = (streamCounts.get(id) ?? 1) - 1;
+                if (count) streamCounts.set(id, count);
+                else streamCounts.delete(id);
+              }
+              admitted = false;
+              audit("stream-close");
+            }
+            controller.abort(new Error("API stream closed"));
+            rejectCancelled(controller.signal.reason);
+            // Worker cancellation has its own grace/termination policy. Host providers must
+            // cooperate with AbortSignal; waiting on their cleanup cannot retain admission.
+            const returned = Promise.resolve()
+              .then(() => source?.return?.())
+              .then(() => {});
+            cleanup = new Promise<void>((resolve) => {
+              const timer = setTimeout(resolve, Math.min(options.timeoutMs, 250));
+              returned.then(
+                () => {
+                  clearTimeout(timer);
+                  resolve();
+                },
+                () => {
+                  clearTimeout(timer);
+                  resolve();
+                },
+              );
+            });
+            return cleanup;
+          };
+          const onCancel = () => {
+            wasCancelled = true;
+            rejectCancelled(controller.signal.reason ?? new Error("API stream cancelled"));
+            void finish();
+          };
+          const abort = () => controller.abort(new Error("API stream cancelled"));
+          signal.addEventListener("abort", abort, { once: true });
+          controller.signal.addEventListener("abort", onCancel, { once: true });
+          const active = () => {
+            if (closed || controller.signal.aborted)
+              throw controller.signal.reason ?? new Error("API stream closed");
+          };
+          const own = (id: string) => {
+            if (affected.has(id)) return;
+            if ((streamCounts.get(id) ?? 0) >= 8) throw new Error("Plugin stream limit reached");
+            affected.add(id);
+            streamCounts.set(id, (streamCounts.get(id) ?? 0) + 1);
+          };
+          const initialize = async () => {
+            active();
+            assertId(request.id);
+            if (typeof request.name !== "string" || !/^[a-z][a-zA-Z0-9]{0,79}$/.test(request.name))
+              throw new Error("Invalid API stream");
+            if (!validRange(request.versionRange) || request.versionRange.length > 200)
+              throw new Error("Invalid API version range");
+            if (
+              request.cursor !== undefined &&
+              (typeof request.cursor !== "string" || request.cursor.length > 1024)
+            )
+              throw new Error("Invalid stream cursor");
+            if (
+              request.expectedGeneration !== undefined &&
+              (!Number.isSafeInteger(request.expectedGeneration) || request.expectedGeneration < 1)
+            )
+              throw new Error("Invalid API generation");
+            context = validateContext(request.context);
+            const captured = context;
+            if (authority.callers.at(-1) !== record) throw new Error("Invalid API caller");
+            const key = JSON.stringify([record.id, request.id, "stream", request.name]);
+            if (authority.calls.includes(key) || authority.calls.length >= 8)
+              throw new Error("API call cycle or depth limit");
+            if (streamCount >= 64) throw new Error("Environment stream limit reached");
+            admitted = true;
+            streamCount++;
+            pending.set(controller, affected);
+            for (const caller of authority.callers) own(caller.id);
+            deadline = setTimeout(
+              () => controller.abort(new Error("API stream admission deadline exceeded")),
+              options.timeoutMs,
+            );
+            await scope(record, captured);
+            active();
+            const resolved = resolution().apis.find((api) => api.id === request.id);
+            const bindings = (record.package.dependencies ?? []).filter((item) =>
+              item.apis.some((api) => api.id === request.id),
+            );
+            if (bindings.length > 1) throw new Error("Ambiguous dependency API binding");
+            providerId = bindings[0]?.pluginId ?? resolved?.providerId;
+            if (!providerId) throw new Error(resolved?.reason?.code ?? "API unavailable");
+            const provider = providers().find(
+              (item) => item.providerId === providerId && item.definition.id === request.id,
+            );
+            if (!provider) throw new Error("Dependency API unavailable");
+            generation = providerGeneration(provider);
+            if (
+              request.expectedGeneration !== undefined &&
+              request.expectedGeneration !== generation
+            )
+              throw new Error("Stale API generation");
+            declared(record, { ...request, method: request.name }, provider.definition.version);
+            if (!satisfies(provider.definition.version, request.versionRange))
+              throw new Error("Incompatible API version");
+            const stream = provider.definition.streams?.find((item) => item.name === request.name);
+            if (!stream) throw new Error("API stream unavailable");
+            compile(provider.definition);
+            const validator = validators.get(
+              JSON.stringify([provider.definition, "stream", stream.name]),
+            )!;
+            eventValid = validator.event;
+            const input = copyJson(request.input);
+            if (!validator.input(input)) throw new Error("API stream input does not match schema");
+            const callers = [...authority.callers];
+            const owner = provider.pluginId
+              ? options.installations().find((item) => item.id === provider.pluginId)
+              : undefined;
+            if (owner) {
+              own(owner.id);
+              if (callers.at(-1) !== owner) callers.push(owner);
+            }
+            validate = async () => {
+              active();
+              for (const caller of callers) {
+                await scope(caller, captured);
+                for (const grant of stream.requiredGrants) {
+                  if (
+                    !caller.grants.capabilities.includes(grant) ||
+                    !(await options.authorize(caller, grant, captured))
+                  )
+                    throw new Error("API capability denied");
+                }
+              }
+              active();
+              if (providerGeneration(provider) !== generation)
+                throw new Error("Stale API generation");
+            };
+            await validate();
+            active();
+            const iterable =
+              owner && options.subscribeWorker
+                ? options.subscribeWorker(
+                    owner,
+                    { ...request, input, context: captured },
+                    controller.signal,
+                    {
+                      callers,
+                      calls: [...authority.calls, key],
+                      allowWrite: false,
+                      parentCallId: callId,
+                    },
+                  )
+                : provider.subscribe?.(
+                    request.name,
+                    input,
+                    captured,
+                    controller.signal,
+                    Object.freeze({
+                      callId,
+                      ...(authority.parentCallId ? { parentCallId: authority.parentCallId } : {}),
+                      rootCallerId: authority.callers[0]!.id,
+                      callerId: record.id,
+                      providerId: provider.providerId,
+                      providerGeneration: generation,
+                      callerGenerations: Object.freeze(authority.callers.map(captureCaller)),
+                    }),
+                    request.cursor,
+                  );
+            if (!iterable) throw new Error("API stream provider unavailable");
+            source = iterable[Symbol.asyncIterator]();
+            clearTimeout(deadline);
+            outcome = "failed";
+            outcome = "completed";
+            audit("stream-open");
+          };
+          if (signal.aborted) abort();
+          return {
+            async next(): Promise<IteratorResult<ApiStreamFrame>> {
+              if (closed) {
+                if (wasCancelled) throw controller.signal.reason;
+                return { done: true, value: undefined };
+              }
+              if (pulling) throw new Error("Concurrent API stream pull");
+              pulling = true;
+              try {
+                if (!started) {
+                  started = true;
+                  await Promise.race([initialize(), cancelled]);
+                }
+                active();
+                await Promise.race([validate!(), cancelled]);
+                const result = await Promise.race([source!.next(), cancelled]);
+                active();
+                await Promise.race([validate!(), cancelled]);
+                if (result.done) {
+                  outcome = "completed";
+                  await finish();
+                  return { done: true, value: undefined };
+                }
+                const event = copyJson(result.value);
+                if (
+                  !event ||
+                  typeof event !== "object" ||
+                  Array.isArray(event) ||
+                  !["snapshot", "data", "reset", "closed"].includes(event.type) ||
+                  !eventValid?.(event.value)
+                )
+                  throw new Error("API stream event does not match schema");
+                if (
+                  event.cursor !== undefined &&
+                  (typeof event.cursor !== "string" || event.cursor.length > 1024)
+                )
+                  throw new Error("Invalid stream cursor");
+                if (sequence >= Number.MAX_SAFE_INTEGER)
+                  throw new Error("API stream sequence exhausted");
+                const frame = copyJson({
+                  streamId: callId,
+                  sequence: ++sequence,
+                  type: event.type,
+                  value: event.value,
+                  ...(event.cursor === undefined ? {} : { cursor: event.cursor }),
+                }) as ApiStreamFrame;
+                if (Buffer.byteLength(JSON.stringify(frame)) > 64 * 1024)
+                  throw new Error("API stream frame exceeds byte limit");
+                if (frame.type === "closed") {
+                  outcome = "completed";
+                  await finish();
+                }
+                return { done: false, value: frame };
+              } catch (error) {
+                await finish();
+                throw error;
+              } finally {
+                pulling = false;
+              }
+            },
+            async return(): Promise<IteratorResult<ApiStreamFrame>> {
+              if (!closed) outcome = "completed";
+              await finish();
+              return { done: true, value: undefined };
+            },
+            async throw(error: unknown): Promise<IteratorResult<ApiStreamFrame>> {
+              await finish();
+              throw error;
+            },
+          };
+        },
+      };
+    },
     invoke,
     validatePackage,
     resolution,

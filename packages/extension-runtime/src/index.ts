@@ -7,6 +7,9 @@ import {
 } from "./broker.js";
 import type {
   ApiInvocation,
+  ApiStreamInvocation,
+  ApiStreamFrame,
+  ApiStreamEvent,
   ApiDiscovery,
   ApiSelection,
 } from "@t3tools/extension-sdk/capabilities";
@@ -91,6 +94,12 @@ export interface ExtensionRuntime {
     request: ApiInvocation,
     signal: AbortSignal,
   ): Promise<Json>;
+  subscribeApi(
+    id: string,
+    expectedContentHash: string,
+    request: ApiStreamInvocation,
+    signal: AbortSignal,
+  ): AsyncIterable<ApiStreamFrame>;
   discoverApis(
     id: string,
     expectedContentHash: string,
@@ -107,6 +116,25 @@ export interface ExtensionRuntime {
   ): Promise<Json>;
   dispose(): Promise<void>;
 }
+interface NestedStream {
+  readonly parentCallId: string;
+  readonly controller: AbortController;
+  readonly iterator: AsyncIterator<ApiStreamFrame>;
+  pulling: boolean;
+  readonly unlinkParent: () => void;
+}
+interface StreamPending {
+  readonly controller: AbortController;
+  readonly context: ViewContext;
+  readonly authority: ApiAuthority;
+  readonly ready: Promise<void>;
+  readyResolve(): void;
+  readyReject(error: Error): void;
+  waiting:
+    | { resolve(value: IteratorResult<ApiStreamFrame>): void; reject(error: Error): void }
+    | undefined;
+  pulling: boolean;
+}
 interface Pending {
   readonly authority?: ApiAuthority;
   readonly context: ViewContext;
@@ -120,6 +148,9 @@ interface Worker {
   readonly child: NodeChildProcess.ChildProcess;
   readonly installation: Installation;
   readonly calls: Map<string, Pending>;
+  readonly streams: Map<string, StreamPending>;
+  readonly nestedStreams: Map<string, NestedStream>;
+  readonly streamSettlers: Map<string, () => void>;
   readonly cancelled: Map<string, ReturnType<typeof setTimeout>>;
   services: number;
   readonly ready: Promise<void>;
@@ -399,8 +430,22 @@ export async function createExtensionRuntime(options: RuntimeOptions): Promise<E
       pending.reject(reason);
     }
     worker.calls.clear();
+    for (const stream of worker.streams.values()) {
+      stream.controller.abort(reason);
+      stream.readyReject(reason);
+      stream.waiting?.reject(reason);
+    }
+    worker.streams.clear();
+    for (const nested of worker.nestedStreams.values()) {
+      nested.controller.abort(reason);
+      nested.unlinkParent();
+      void nested.iterator.return?.().catch(() => {});
+    }
+    worker.nestedStreams.clear();
     for (const timer of worker.cancelled.values()) clearTimeout(timer);
     worker.cancelled.clear();
+    for (const settle of worker.streamSettlers.values()) settle();
+    worker.streamSettlers.clear();
     if (worker.child.exitCode === null && worker.child.signalCode === null)
       worker.child.kill("SIGKILL");
   }
@@ -429,6 +474,142 @@ export async function createExtensionRuntime(options: RuntimeOptions): Promise<E
       return;
     }
     const id = String(message.callId);
+    if (
+      message.type === "api-stream-open" ||
+      message.type === "api-stream-pull" ||
+      message.type === "api-stream-cancel"
+    ) {
+      const streamId = String(message.streamId);
+      if (message.type === "api-stream-open") {
+        const parent = worker.calls.get(id) ?? worker.streams.get(id);
+        if (!parent) {
+          send(worker, { type: "api-stream-error", streamId, error: "Unknown stream parent" });
+          return;
+        }
+        if (worker.nestedStreams.size >= 8 || worker.nestedStreams.has(streamId)) {
+          send(worker, {
+            type: "api-stream-error",
+            streamId,
+            error: "Worker stream limit reached",
+          });
+          return;
+        }
+        const controller = new AbortController();
+        const parentSignal = parent.controller.signal;
+        if (parentSignal.aborted) {
+          send(worker, { type: "api-stream-error", streamId, error: "Stream parent expired" });
+          return;
+        }
+        const onParentAbort = () => controller.abort(parentSignal.reason);
+        parentSignal.addEventListener("abort", onParentAbort, { once: true });
+        const unlinkParent = () => parentSignal.removeEventListener("abort", onParentAbort);
+        const context = parent.context;
+        const authority = parent.authority;
+        const request = copyJson(message.request ?? {}) as unknown as Omit<
+          ApiStreamInvocation,
+          "context"
+        >;
+        let source: AsyncIterable<ApiStreamFrame>;
+        try {
+          source = broker.subscribe(
+            worker.installation,
+            { ...request, context },
+            controller.signal,
+            authority,
+          );
+          const iterator = source[Symbol.asyncIterator]();
+          worker.nestedStreams.set(streamId, {
+            parentCallId: id,
+            controller,
+            iterator,
+            pulling: false,
+            unlinkParent,
+          });
+          send(worker, { type: "api-stream-ready", streamId });
+        } catch (error) {
+          unlinkParent();
+          send(worker, { type: "api-stream-error", streamId, error: errorMessage(error) });
+        }
+        return;
+      }
+      const nested = worker.nestedStreams.get(streamId);
+      if (!nested || nested.parentCallId !== id) {
+        if (message.type === "api-stream-cancel")
+          send(worker, { type: "api-stream-settled", streamId });
+        else send(worker, { type: "api-stream-error", streamId, error: "Unknown stream parent" });
+        return;
+      }
+      if (message.type === "api-stream-cancel") {
+        nested.controller.abort(new Error("Stream cancelled"));
+        nested.unlinkParent();
+        try {
+          await nested.iterator.return?.();
+        } catch {}
+        worker.nestedStreams.delete(streamId);
+        send(worker, { type: "api-stream-settled", streamId });
+        return;
+      }
+      if (nested.pulling) {
+        send(worker, { type: "api-stream-error", streamId, error: "Concurrent stream pull" });
+        return;
+      }
+      nested.pulling = true;
+      try {
+        const next = await nested.iterator.next();
+        if (nested.controller.signal.aborted || worker.nestedStreams.get(streamId) !== nested)
+          return;
+        if (next.done) {
+          worker.nestedStreams.delete(streamId);
+          nested.unlinkParent();
+          await nested.iterator.return?.();
+          send(worker, { type: "api-stream-end", streamId });
+        } else send(worker, { type: "api-stream-frame", streamId, frame: copyJson(next.value) });
+      } catch (error) {
+        worker.nestedStreams.delete(streamId);
+        nested.unlinkParent();
+        send(worker, { type: "api-stream-error", streamId, error: errorMessage(error) });
+      } finally {
+        nested.pulling = false;
+      }
+      return;
+    }
+    const streamPending = worker.streams.get(id);
+    if (message.type === "stream-ready" && streamPending) {
+      streamPending.readyResolve();
+      return;
+    }
+    if (message.type === "stream-frame" && streamPending?.waiting) {
+      streamPending.pulling = false;
+      const wait = streamPending.waiting;
+      streamPending.waiting = undefined;
+      wait.resolve({ done: false, value: copyJson(message.event) as unknown as ApiStreamFrame });
+      return;
+    }
+    if (message.type === "stream-end" && streamPending?.waiting) {
+      streamPending.pulling = false;
+      const wait = streamPending.waiting;
+      streamPending.waiting = undefined;
+      worker.streams.delete(id);
+      wait.resolve({ done: true, value: undefined });
+      return;
+    }
+    if (message.type === "stream-error" && streamPending?.waiting) {
+      streamPending.pulling = false;
+      const wait = streamPending.waiting;
+      streamPending.waiting = undefined;
+      worker.streams.delete(id);
+      wait.reject(new Error(String(message.error ?? "Stream failed")));
+      return;
+    }
+    if (message.type === "stream-settled") {
+      worker.streamSettlers.get(id)?.();
+      worker.streamSettlers.delete(id);
+      const timer = worker.cancelled.get(id);
+      if (timer) clearTimeout(timer);
+      worker.cancelled.delete(id);
+      worker.streams.delete(id);
+      return;
+    }
     if (message.type === "settled") {
       const timer = worker.cancelled.get(id);
       if (timer) clearTimeout(timer);
@@ -436,9 +617,12 @@ export async function createExtensionRuntime(options: RuntimeOptions): Promise<E
       return;
     }
     const pending = worker.calls.get(id);
-    if (!pending) return;
+    const streamParent = worker.streams.get(id);
+    if (!pending && !streamParent) return;
     if (message.type === "api-service") {
-      if (!pending.authority || worker.services >= 8) {
+      const parentAuthority = pending?.authority ?? streamParent?.authority;
+      const parentContext = pending?.context ?? streamParent?.context;
+      if (!parentAuthority || !parentContext || worker.services >= 8) {
         send(worker, {
           type: "service-result",
           requestId: message.requestId,
@@ -451,14 +635,22 @@ export async function createExtensionRuntime(options: RuntimeOptions): Promise<E
         const request = copyJson(message.request) as unknown as Omit<ApiInvocation, "context">;
         const value = await broker.invoke(
           worker.installation,
-          { ...request, context: pending.context },
-          pending.controller.signal,
-          pending.authority,
+          { ...request, context: parentContext },
+          pending?.controller.signal ?? streamParent!.controller.signal,
+          parentAuthority,
         );
-        if (worker.calls.get(id) === pending && !pending.controller.signal.aborted)
+        if (
+          ((pending && worker.calls.get(id) === pending) ||
+            (streamParent && worker.streams.get(id) === streamParent)) &&
+          !(pending?.controller.signal ?? streamParent!.controller.signal).aborted
+        )
           send(worker, { type: "service-result", requestId: message.requestId, value });
       } catch (error) {
-        if (worker.calls.get(id) === pending && !pending.controller.signal.aborted)
+        if (
+          ((pending && worker.calls.get(id) === pending) ||
+            (streamParent && worker.streams.get(id) === streamParent)) &&
+          !(pending?.controller.signal ?? streamParent!.controller.signal).aborted
+        )
           send(worker, {
             type: "service-result",
             requestId: message.requestId,
@@ -470,6 +662,7 @@ export async function createExtensionRuntime(options: RuntimeOptions): Promise<E
       return;
     }
     if (message.type === "service") {
+      if (!pending) return;
       if (worker.services >= 8) {
         stop(worker, new Error("Worker service limit reached"));
         return;
@@ -509,6 +702,7 @@ export async function createExtensionRuntime(options: RuntimeOptions): Promise<E
       }
       return;
     }
+    if (!pending) return;
     if (message.type !== "result") {
       stop(worker, new Error("Invalid worker response"));
       return;
@@ -552,6 +746,9 @@ export async function createExtensionRuntime(options: RuntimeOptions): Promise<E
       child,
       installation: record,
       calls: new Map(),
+      streams: new Map(),
+      nestedStreams: new Map(),
+      streamSettlers: new Map(),
       cancelled: new Map(),
       services: 0,
       ready,
@@ -664,7 +861,7 @@ export async function createExtensionRuntime(options: RuntimeOptions): Promise<E
       const descriptor = api
         ? record.package.provides
             ?.find((item) => item.id === api.request.id)
-            ?.methods.find((item) => item.name === api.request.method)
+            ?.methods?.find((item) => item.name === api.request.method)
         : undefined;
       const tool: ToolDescriptor = api
         ? {
@@ -739,6 +936,104 @@ export async function createExtensionRuntime(options: RuntimeOptions): Promise<E
     }
   }
 
+  async function* subscribeWorker(
+    record: Installation,
+    request: ApiStreamInvocation,
+    signal: AbortSignal,
+    authority: ApiAuthority,
+  ): AsyncIterable<ApiStreamEvent> {
+    if (!record || !record.enabled || record.package.format !== 3)
+      throw new Error("API streams require an enabled format-3 installation");
+    const worker = start(record);
+    await worker.ready;
+    if (signal.aborted) throw new Error("Stream cancelled");
+    if (worker.streams.size + worker.cancelled.size >= 8)
+      throw new Error("Plugin stream limit reached");
+    const callId = NodeCrypto.randomUUID();
+    let readyResolve!: () => void, readyReject!: (error: Error) => void;
+    const ready = new Promise<void>((resolve, reject) => {
+      readyResolve = resolve;
+      readyReject = reject;
+    });
+    const controller = new AbortController();
+    const pending: StreamPending = {
+      controller,
+      context: request.context,
+      authority,
+      ready,
+      readyResolve,
+      readyReject,
+      waiting: undefined,
+      pulling: false,
+    };
+    worker.streams.set(callId, pending);
+    const settled = new Promise<void>((resolve) => {
+      worker.streamSettlers.set(callId, resolve);
+    });
+    const abort = (reason = new Error("Stream cancelled")) => {
+      controller.abort(reason);
+      readyReject(reason);
+      pending.waiting?.reject(reason);
+      try {
+        send(worker, { type: "stream-cancel", callId });
+      } catch {}
+      if (!worker.cancelled.has(callId)) {
+        worker.cancelled.set(
+          callId,
+          setTimeout(() => {
+            worker.cancelled.delete(callId);
+            if (workers.get(record.id) === worker)
+              stop(worker, new Error("Cancelled stream did not settle before deadline"));
+          }, 250),
+        );
+      }
+    };
+    const handshakeTimer = setTimeout(
+      () => abort(new Error("Stream handshake deadline exceeded")),
+      timeout,
+    );
+    const onAbort = () =>
+      abort(signal.reason instanceof Error ? signal.reason : new Error("Stream cancelled"));
+    signal.addEventListener("abort", onAbort, { once: true });
+    if (signal.aborted) onAbort();
+    try {
+      send(worker, {
+        type: "stream-open",
+        callId,
+        apiId: request.id,
+        name: request.name,
+        input: copyJson(request.input),
+        context: copyJson(request.context),
+        ...(request.cursor ? { cursor: request.cursor } : {}),
+      });
+      await ready;
+      clearTimeout(handshakeTimer);
+      if (controller.signal.aborted) throw controller.signal.reason;
+      while (!controller.signal.aborted) {
+        const frame = await new Promise<IteratorResult<ApiStreamFrame>>((resolve, reject) => {
+          if (pending.pulling) {
+            reject(new Error("Concurrent stream pull"));
+            return;
+          }
+          pending.pulling = true;
+          pending.waiting = { resolve, reject };
+          send(worker, { type: "stream-pull", callId });
+        });
+        if (frame.done) return;
+        yield frame.value as unknown as ApiStreamEvent;
+      }
+      throw controller.signal.reason ?? new Error("Stream cancelled");
+    } finally {
+      clearTimeout(handshakeTimer);
+      signal.removeEventListener("abort", onAbort);
+      if (!controller.signal.aborted) abort(new Error("Stream closed"));
+      worker.streams.delete(callId);
+      pending.pulling = false;
+      pending.waiting = undefined;
+      await settled;
+    }
+  }
+
   const broker = createApiBroker({
     installations: () => [...installations.values()],
     providers: options.apiProviders ?? [],
@@ -749,6 +1044,7 @@ export async function createExtensionRuntime(options: RuntimeOptions): Promise<E
     ...(options.auditApi ? { audit: options.auditApi } : {}),
     ...(options.validateApiScope ? { validateScope: options.validateApiScope } : {}),
     health: (id) => health.get(id) ?? "starting",
+    subscribeWorker,
     invokeWorker: (record, request, signal, authority) =>
       invokeWorker(request.id, request.input, request.context, signal, record.contentHash, {
         record,
@@ -927,6 +1223,12 @@ export async function createExtensionRuntime(options: RuntimeOptions): Promise<E
         return Promise.reject(new Error("Installed content changed"));
       return broker.invoke(record, request, signal);
     },
+    subscribeApi(id, expectedContentHash, request, signal) {
+      const record = required(id);
+      if (record.contentHash !== expectedContentHash) throw new Error("Installed content changed");
+      current(record);
+      return broker.subscribe(record, request, signal);
+    },
     async discoverApis(id, expectedContentHash, context, signal) {
       const record = required(id);
       if (record.contentHash !== expectedContentHash)
@@ -946,7 +1248,7 @@ export async function createExtensionRuntime(options: RuntimeOptions): Promise<E
           await start(provider).ready;
         } catch (error) {
           if (disposed || installations.get(provider.id) !== provider)
-            throw new Error("Discovery installation changed");
+            throw new Error("Discovery installation changed", { cause: error });
           health.set(provider.id, "failed");
           broker.invalidate(affectedPlugins([provider.id]));
           publishCatalogueChange();

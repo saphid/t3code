@@ -44,6 +44,8 @@ export function makeOperations(extensions: EnvironmentExtensions["Service"]) {
         installations: yield* extensions.list,
         ...(yield* extensions.catalogue),
         supportsCatalogueChanges: true,
+        supportedPackageFormats: [1, 2, 3],
+        supportsApiStreams: true,
       };
     }),
     client: Effect.fn("environment.extensions.client")(function* (input: ExtensionClientInput) {

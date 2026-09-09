@@ -8,10 +8,17 @@ export interface ApiMethod {
   readonly effect: "read" | "write";
   readonly requiredGrants: readonly string[];
 }
+export interface ApiStreamDefinition {
+  readonly name: string;
+  readonly inputSchema: JsonObject;
+  readonly eventSchema: JsonObject;
+  readonly requiredGrants: readonly string[];
+}
 export interface ApiDefinition {
   readonly id: string;
   readonly version: string;
-  readonly methods: readonly ApiMethod[];
+  readonly methods?: readonly ApiMethod[];
+  readonly streams?: readonly ApiStreamDefinition[];
 }
 export interface ApiRequirement {
   readonly id: string;
@@ -30,6 +37,25 @@ export interface ApiInvocation {
   readonly context: ViewContext;
   readonly expectedGeneration?: number;
   readonly requestId?: string;
+}
+export interface ApiStreamInvocation {
+  readonly id: string;
+  readonly versionRange: string;
+  readonly name: string;
+  readonly input: Json;
+  readonly context: ViewContext;
+  readonly expectedGeneration?: number;
+  readonly cursor?: string;
+}
+export type ApiStreamEventType = "snapshot" | "data" | "reset" | "closed";
+export interface ApiStreamEvent {
+  readonly type: ApiStreamEventType;
+  readonly value: Json;
+  readonly cursor?: string;
+}
+export interface ApiStreamFrame extends ApiStreamEvent {
+  readonly streamId: string;
+  readonly sequence: number;
 }
 export interface ApiSelection {
   readonly id: string;
@@ -53,6 +79,7 @@ export interface ApiDiscovery {
 }
 export interface ApiClient {
   invokeApi(request: ApiInvocation, signal: AbortSignal): Promise<Json>;
+  subscribeApi(request: ApiStreamInvocation, signal: AbortSignal): AsyncIterable<ApiStreamFrame>;
   discoverApis(context: ViewContext, signal: AbortSignal): Promise<readonly ApiDiscovery[]>;
 }
 export type ApiMethodTypes = Record<string, { input: Json; output: Json }>;
@@ -116,10 +143,16 @@ export function validateApiDefinition(value: ApiDefinition): ApiDefinition {
     !/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/.test(api.version)
   )
     throw new Error("Invalid API version");
-  if (!Array.isArray(api.methods) || !api.methods.length || api.methods.length > 32)
+  if (
+    (!Array.isArray(api.methods) && api.methods !== undefined) ||
+    (!Array.isArray(api.streams) && api.streams !== undefined) ||
+    (!api.methods?.length && !api.streams?.length) ||
+    (api.methods?.length ?? 0) > 32 ||
+    (api.streams?.length ?? 0) > 32
+  )
     throw new Error("Invalid API methods");
   const names = new Set<string>();
-  for (const method of api.methods) {
+  for (const method of api.methods ?? []) {
     if (!method || typeof method !== "object") throw new Error("Invalid API method");
     if (
       typeof method.name !== "string" ||
@@ -139,6 +172,25 @@ export function validateApiDefinition(value: ApiDefinition): ApiDefinition {
     )
       throw new Error("Invalid API grants");
     method.requiredGrants.forEach(assertId);
+  }
+  for (const stream of api.streams ?? []) {
+    if (
+      !stream ||
+      typeof stream.name !== "string" ||
+      !/^[a-z][a-zA-Z0-9]{0,79}$/.test(stream.name) ||
+      names.has(stream.name)
+    )
+      throw new Error("Duplicate or invalid API stream");
+    names.add(stream.name);
+    validateApiSchema(stream.inputSchema);
+    validateApiSchema(stream.eventSchema);
+    if (
+      !Array.isArray(stream.requiredGrants) ||
+      stream.requiredGrants.length > 16 ||
+      new Set(stream.requiredGrants).size !== stream.requiredGrants.length
+    )
+      throw new Error("Invalid API stream grants");
+    stream.requiredGrants.forEach(assertId);
   }
   return api;
 }

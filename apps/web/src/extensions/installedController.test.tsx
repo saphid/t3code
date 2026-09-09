@@ -1,6 +1,7 @@
 import * as React from "react";
 import { describe, it, expect, vi } from "vite-plus/test";
 import { EnvironmentId, ProjectId, type ExtensionInstallation } from "@t3tools/contracts";
+import type { ApiStreamFrame } from "@t3tools/extension-sdk/capabilities";
 import type { ClientHost } from "@t3tools/extension-sdk/environment";
 import type { Extension } from "@t3tools/extension-sdk/host";
 import type { SurfaceRenderer } from "@t3tools/extension-sdk/react";
@@ -62,6 +63,14 @@ function harness(environmentId = "env-a") {
     ),
     invoke: vi.fn(async () => ({ contents: "actual-shaped result" })),
     invokeApi: vi.fn(async () => ({ contents: "public API result" })),
+    subscribeApi: vi.fn(
+      (
+        _id: string,
+        _hash: string,
+        _request: unknown,
+        _signal: AbortSignal,
+      ): AsyncIterable<ApiStreamFrame> => ({ async *[Symbol.asyncIterator]() {} }),
+    ),
     discoverApis: vi.fn(async () => []),
     register,
     changed: (snapshot: InstalledSnapshot) => snapshots.push(snapshot),
@@ -424,3 +433,237 @@ it("retains receipt negotiation after a transient list failure so the next recei
     h.controller.dispose();
   }
 });
+
+it("loads format 3 only after explicit negotiation and unloads it on downgrade", async () => {
+  const h = harness();
+  const streamed: ExtensionInstallation = {
+    ...installation,
+    package: { ...installation.package, format: 3, provides: [], requires: [], dependencies: [] },
+  };
+  h.setCatalog([streamed]);
+  try {
+    await h.controller.refresh();
+    expect(h.options.client).not.toHaveBeenCalled();
+    expect(h.snapshots.at(-1)?.error).toContain("does not support package format 3");
+    h.options.list.mockImplementation(async () => ({
+      installations: [streamed],
+      supportedPackageFormats: [1, 2, 3],
+      supportsApiStreams: true,
+    }));
+    await h.controller.refresh();
+    expect(h.register).toHaveBeenCalledTimes(1);
+    h.options.list.mockImplementation(async () => ({ installations: [streamed] }));
+    await h.controller.refresh();
+    expect(h.stop).toHaveBeenCalledTimes(1);
+    expect(h.snapshots.at(-1)?.error).toContain("does not support package format 3");
+  } finally {
+    h.controller.dispose();
+  }
+});
+
+it("never sends a stream RPC to an older host", async () => {
+  const h = harness();
+  try {
+    await h.controller.refresh();
+    const iteratorSource = h.getHost().subscribeApi(
+      {
+        id: "test.installed/events",
+        versionRange: "^1.0.0",
+        name: "changes",
+        input: {},
+        context,
+      },
+      new AbortController().signal,
+    );
+    const iterator = iteratorSource[Symbol.asyncIterator]();
+    await expect(iterator.next()).rejects.toThrow("unavailable");
+    expect(h.options.subscribeApi).not.toHaveBeenCalled();
+  } finally {
+    h.controller.dispose();
+  }
+});
+
+it("binds streams to installed identity and cancels a pending next on permission replacement", async () => {
+  const h = harness();
+  h.options.list.mockImplementation(async () => ({
+    installations: [installation],
+    supportsApiStreams: true,
+    supportedPackageFormats: [1, 2, 3],
+  }));
+  let captured: AbortSignal | undefined;
+  h.options.subscribeApi.mockImplementation((_id, _hash, _request, signal) => {
+    captured = signal;
+    return {
+      [Symbol.asyncIterator]() {
+        return {
+          next: () =>
+            new Promise<IteratorResult<ApiStreamFrame>>((resolve) => {
+              signal.addEventListener("abort", () => resolve({ done: true, value: undefined }), {
+                once: true,
+              });
+            }),
+          return: async () => ({ done: true, value: undefined }),
+        };
+      },
+    };
+  });
+  try {
+    await h.controller.refresh();
+    const request = {
+      id: "test.installed/events",
+      versionRange: "^1.0.0",
+      name: "changes",
+      input: {},
+      context,
+    };
+    const iteratorSource = h.getHost().subscribeApi(request, new AbortController().signal);
+    const iterator = iteratorSource[Symbol.asyncIterator]();
+    const pending = iterator.next();
+    const rejected = expect(pending).rejects.toThrow("expired");
+    expect(h.options.subscribeApi).toHaveBeenCalledWith(
+      installation.id,
+      installation.contentHash,
+      request,
+      captured,
+    );
+    h.options.list.mockImplementation(async () => ({
+      installations: [{ ...installation, grants: { capabilities: [], projectIds: [] } }],
+      supportsApiStreams: true,
+      supportedPackageFormats: [1, 2, 3],
+    }));
+    await h.controller.refresh();
+    await rejected;
+    expect(captured?.aborted).toBe(true);
+  } finally {
+    h.controller.dispose();
+  }
+});
+it.each(["named", "selected API"] as const)(
+  "reloads transitive %s dependents after provider replacement while retaining unrelated viewers",
+  async (mode) => {
+    const h = harness();
+    const make = (id: string, dependencies: string[] = []): ExtensionInstallation => ({
+      ...installation,
+      id,
+      package: {
+        format: 3,
+        manifest: { ...manifest, id },
+        clientEntry: "client.mjs",
+        serverEntry: "server.mjs",
+        tools: [],
+        dependencies:
+          mode === "named"
+            ? dependencies.map((pluginId) => ({ pluginId, versionRange: "^1.0.0", apis: [] }))
+            : [],
+        requires:
+          mode === "selected API"
+            ? dependencies.map((pluginId) => ({ id: pluginId + "/events", versionRange: "^1.0.0" }))
+            : [],
+        provides: [
+          {
+            id: id + "/events",
+            version: "1.0.0",
+            streams: [
+              {
+                name: "changes",
+                inputSchema: { type: "object" },
+                eventSchema: { type: "number" },
+                requiredGrants: [],
+              },
+            ],
+          },
+        ],
+      },
+    });
+    let entries = [
+      make("trial.provider"),
+      make("trial.bridge", ["trial.provider"]),
+      make("trial.consumer", ["trial.bridge"]),
+      make("trial.unrelated"),
+    ];
+    const hosts = new Map<string, ClientHost>();
+    const stopped: string[] = [];
+    const loaded: string[] = [];
+    let streamAborted = false;
+    const controller = createInstalledExtensionController({
+      ...h.options,
+      list: async () => ({
+        installations: entries,
+        supportedPackageFormats: [1, 2, 3],
+        supportsApiStreams: true,
+        apiResolution: entries.map((entry) => ({ id: entry.id + "/events", providerId: entry.id })),
+      }),
+      client: async (id, contentHash) => ({ code: id, contentHash }),
+      load: async (id) => (host: ClientHost) => {
+        hosts.set(id, host);
+        return {
+          manifest: entries.find((entry) => entry.id === id)!.package.manifest,
+          surfaces: [],
+        };
+      },
+      register: (extension) => {
+        loaded.push(extension.manifest.id);
+        return () => {
+          stopped.push(extension.manifest.id);
+        };
+      },
+      subscribeApi: (_id, _hash, _request, signal) => ({
+        async *[Symbol.asyncIterator]() {
+          try {
+            yield { streamId: "fixture", sequence: 1, type: "snapshot", value: 1 };
+            await new Promise<void>((resolve) =>
+              signal.addEventListener(
+                "abort",
+                () => {
+                  streamAborted = true;
+                  resolve();
+                },
+                { once: true },
+              ),
+            );
+          } finally {
+            streamAborted = true;
+          }
+        },
+      }),
+    });
+    try {
+      await controller.refresh();
+      expect(h.snapshots.at(-1)?.error).toBeNull();
+      const old = hosts.get("trial.consumer")!;
+      const request = {
+        id: "trial.consumer/state",
+        name: "changes",
+        versionRange: "^1.0.0",
+        input: {},
+        context,
+      };
+      const subscription = old.subscribeApi(request, new AbortController().signal);
+      const iterator = subscription[Symbol.asyncIterator]();
+      expect((await iterator.next()).value?.value).toBe(1);
+      const pending = iterator.next().then(
+        () => "ended",
+        () => "cancelled",
+      );
+      entries = entries.map((entry) =>
+        entry.id === "trial.provider" ? { ...entry, contentHash: "b".repeat(64) } : entry,
+      );
+      await controller.refresh();
+      await pending;
+      expect(streamAborted).toBe(true);
+      expect(stopped.sort()).toEqual(["trial.bridge", "trial.consumer", "trial.provider"]);
+      expect(loaded.filter((id) => id === "trial.unrelated")).toHaveLength(1);
+      expect(hosts.get("trial.consumer")).not.toBe(old);
+      await expect(
+        old.invokeApi(
+          { id: request.id, method: "read", input: {}, versionRange: "^1.0.0", context },
+          new AbortController().signal,
+        ),
+      ).rejects.toThrow("unavailable");
+      await controller.refresh();
+      expect(loaded).toHaveLength(7);
+    } finally {
+      controller.dispose();
+    }
+  },
+);

@@ -45,6 +45,7 @@ export type EnvironmentSubscriptionRpcTag =
   | typeof ORCHESTRATION_WS_METHODS.subscribeShell
   | typeof ORCHESTRATION_WS_METHODS.subscribeThread
   | typeof WS_METHODS.subscribeExtensionCatalogue
+  | typeof WS_METHODS.subscribeExtensionApi
   | typeof WS_METHODS.subscribeAuthAccess
   | typeof WS_METHODS.subscribeServerConfig
   | typeof WS_METHODS.subscribeServerLifecycle
@@ -147,9 +148,10 @@ export const request = Effect.fn("EnvironmentRpc.request")(function* <
   return yield* method(input).pipe(Effect.ensuring(completeObservation));
 });
 
-export function runStream<TTag extends EnvironmentStreamCommandRpcTag>(
+export function runStream<TTag extends EnvironmentStreamRpcTag>(
   tag: TTag,
   input: EnvironmentRpcInput<TTag>,
+  options?: { readonly streamBufferSize?: number },
 ): Stream.Stream<
   EnvironmentRpcStreamValue<TTag>,
   EnvironmentRpcStreamFailure<TTag> | EnvironmentRpcUnavailableError,
@@ -160,8 +162,9 @@ export function runStream<TTag extends EnvironmentStreamCommandRpcTag>(
       Effect.map((session) => {
         const method = session.client[tag] as (
           input: EnvironmentRpcInput<TTag>,
+          options?: { readonly streamBufferSize?: number },
         ) => Stream.Stream<EnvironmentRpcStreamValue<TTag>, EnvironmentRpcStreamFailure<TTag>>;
-        return method(input);
+        return method(input, options);
       }),
     ),
   ).pipe(
