@@ -53,7 +53,7 @@ describe("generic extension layout records", () => {
     expect(store.openExtension(ref, value)).toBe(true);
     const selected = state().surfaces[1]!;
     expect(selected.kind).toBe("extension");
-    expect(selected).toEqual(extensionPanelSurface(ref, value));
+    expect(selected).toMatchObject(extensionPanelSurface(ref, value)!);
     (value.restoreState as { selection: string }).selection = "mutated by caller";
     expect(selected.kind === "extension" && selected.record.restoreState).toEqual({
       selection: "apples",
@@ -103,7 +103,12 @@ describe("generic extension layout records", () => {
     const restored = migratePersistedRightPanelState({
       byThreadKey: { [scopedThreadKey(ref)]: state() },
     });
-    expect(restored.byThreadKey[scopedThreadKey(ref)]).toEqual(state());
+    expect(restored.byThreadKey[scopedThreadKey(ref)]).toEqual({
+      ...state(),
+      surfaces: state().surfaces.map((surface) =>
+        surface.kind === "extension" ? extensionPanelSurface(ref, surface.record) : surface,
+      ),
+    });
   });
 
   it("isolates identities across scopes and rejects mismatched or ambiguous thread keys", () => {
@@ -298,7 +303,11 @@ it("saves inactive records without stealing focus, reopening the panel or defeat
   store.close(ref);
   const revision = store.getUserActionRevision(ref);
   expect(
-    store.updateExtensionRecord(ref, { ...record(), restoreState: { selection: "saved" } }),
+    store.updateExtensionRecord(
+      ref,
+      { ...record(), restoreState: { selection: "saved" } },
+      state().surfaces.find((entry) => entry.kind === "extension")?.viewerGeneration,
+    ),
   ).toBe(true);
   expect(state().isOpen).toBe(false);
   expect(state().activeSurfaceId).toBe("agents");

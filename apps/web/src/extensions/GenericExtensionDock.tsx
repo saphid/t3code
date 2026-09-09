@@ -30,9 +30,16 @@ function ThreadExtensionDock({
   const scope = scopedThreadKey(threadRef);
   const titles = useWorkspaceSurfaceTitles();
   const panelId = useId();
-  const [hasOpened, setHasOpened] = useState(dock.isOpen);
-  // Cold hidden records remain inert; a viewer opened in this scope survives later hides.
-  if (dock.isOpen && !hasOpened) setHasOpened(true);
+  const selected = dock.surfaces.find((surface) => surface.id === dock.activeSurfaceId);
+  const [retained, setRetained] = useState(dock.isOpen ? selected : undefined);
+  // A hidden selection cannot activate a cold factory. Only retain a still-open viewer.
+  if (dock.isOpen && retained !== selected) setRetained(selected);
+  const rendered = dock.isOpen
+    ? selected
+    : dock.surfaces.find(
+        (surface) =>
+          surface.id === retained?.id && surface.viewerGeneration === retained.viewerGeneration,
+      );
   const animations = usePanelAnimationSettings();
   const presence = usePanelPresence(
     dock.isOpen,
@@ -41,7 +48,6 @@ function ThreadExtensionDock({
     scope,
     animations.durationMs,
   );
-  const selected = dock.surfaces.find((surface) => surface.id === dock.activeSurfaceId);
   const selectedIndex = dock.surfaces.findIndex((surface) => surface.id === dock.activeSurfaceId);
   const activate = (index: number) => {
     const surface = dock.surfaces[index];
@@ -129,13 +135,15 @@ function ThreadExtensionDock({
         aria-labelledby={`${panelId}-tab-${selectedIndex}`}
         className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden"
       >
-        {selected && (hasOpened || dock.isOpen) ? (
+        {rendered ? (
           <WorkspaceExtensionSurface
-            key={JSON.stringify([scope, "bottom-dock", selected.id])}
-            record={selected.record}
+            key={JSON.stringify([scope, "bottom-dock", rendered.id, rendered.viewerGeneration])}
+            record={rendered.record}
             visible={dock.isOpen}
             onRecordChange={(record) =>
-              useRightPanelStore.getState().updateExtensionRecord(threadRef, record)
+              useRightPanelStore
+                .getState()
+                .updateExtensionRecord(threadRef, record, rendered.viewerGeneration)
             }
           />
         ) : null}

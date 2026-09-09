@@ -100,11 +100,18 @@ export function NativeRightPanel(props: PanelProps) {
           props.threadRef.environmentId,
           props.threadRef.threadId,
           props.surface.id,
+          props.surface.viewerGeneration,
         ])}
         record={props.surface.record}
         visible={props.visible}
         onRecordChange={(record) =>
-          useRightPanelStore.getState().updateExtensionRecord(props.threadRef, record)
+          useRightPanelStore
+            .getState()
+            .updateExtensionRecord(
+              props.threadRef,
+              record,
+              props.surface.kind === "extension" ? props.surface.viewerGeneration : undefined,
+            )
         }
       />
     );

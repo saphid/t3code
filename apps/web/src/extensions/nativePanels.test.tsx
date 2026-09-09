@@ -132,7 +132,8 @@ describe("generic extension layout ownership", () => {
     try {
       expect(useRightPanelStore.getState().openExtension(a, record)).toBe(true);
       expect(useRightPanelStore.getState().openExtension(b, record)).toBe(true);
-      expect(surfaceFor(a)).toEqual(surfaceFor(b));
+      expect(surfaceFor(a).record).toEqual(surfaceFor(b).record);
+      expect(surfaceFor(a).viewerGeneration).not.toBe(surfaceFor(b).viewerGeneration);
       await act(async () => {
         root = create(render(a));
       });

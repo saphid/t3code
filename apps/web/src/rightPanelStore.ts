@@ -29,6 +29,7 @@ import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 
 import { resolveStorage } from "./lib/storage";
+import { randomUUID } from "./lib/utils";
 
 const RIGHT_PANEL_KINDS = [
   "diff",
@@ -88,6 +89,7 @@ export type RightPanelSurface =
   | ExtensionPanelSurface;
 
 export interface ExtensionPanelSurface {
+  viewerGeneration?: string;
   id: `extension:${string}`;
   kind: "extension";
   record: ViewRecord;
@@ -153,7 +155,11 @@ interface RightPanelStoreState {
     expectedUserActionRevision?: number,
   ) => boolean;
   /** Saves an existing viewer without taking focus or reopening a hidden panel. */
-  updateExtensionRecord: (ref: ScopedThreadRef, record: ViewRecord) => boolean;
+  updateExtensionRecord: (
+    ref: ScopedThreadRef,
+    record: ViewRecord,
+    viewerGeneration?: string,
+  ) => boolean;
   showExtensionDock: (ref: ScopedThreadRef) => void;
   hideExtensionDock: (ref: ScopedThreadRef) => void;
   activateDockExtension: (ref: ScopedThreadRef, surfaceId: string) => void;
@@ -669,6 +675,7 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
         const surface = extensionPanelSurface(ref, record);
         if (!surface || !["side-panel", "bottom-dock"].includes(surface.record.placement))
           return false;
+        surface.viewerGeneration = randomUUID();
         let opened = false;
         set((state) => {
           const threadKey = scopedThreadKey(ref);
@@ -710,7 +717,7 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
         });
         return opened;
       },
-      updateExtensionRecord: (ref, record) => {
+      updateExtensionRecord: (ref, record, viewerGeneration) => {
         const surface = extensionPanelSurface(ref, record);
         if (!surface || !["side-panel", "bottom-dock"].includes(surface.record.placement))
           return false;
@@ -719,7 +726,13 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
           const threadKey = scopedThreadKey(ref);
           if (surface.record.placement === "bottom-dock") {
             const dock = state.extensionDockByThreadKey[threadKey];
-            if (!dock?.surfaces.some((entry) => entry.id === surface.id)) return state;
+            const existing = dock?.surfaces.find((entry) => entry.id === surface.id);
+            if (!existing || !canSaveExtensionRecord(existing, surface.record, viewerGeneration))
+              return state;
+            const saved = {
+              ...existing,
+              record: { ...existing.record, restoreState: surface.record.restoreState },
+            };
             updated = true;
             return updateExtensionDock(
               state,
@@ -727,23 +740,27 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
               (current) => ({
                 ...current,
                 surfaces: current.surfaces.map((entry) =>
-                  entry.id === surface.id ? surface : entry,
+                  entry.id === surface.id ? saved : entry,
                 ),
               }),
               false,
             );
           }
           const current = state.byThreadKey[threadKey];
-          if (
-            !current?.surfaces.some(
-              (entry) => entry.kind === "extension" && entry.id === surface.id,
-            )
-          )
+          const existing = current?.surfaces.find(
+            (entry): entry is ExtensionPanelSurface =>
+              entry.kind === "extension" && entry.id === surface.id,
+          );
+          if (!existing || !canSaveExtensionRecord(existing, surface.record, viewerGeneration))
             return state;
+          const saved = {
+            ...existing,
+            record: { ...existing.record, restoreState: surface.record.restoreState },
+          };
           updated = true;
           return automaticUpdate(state, threadKey, (panel) => ({
             ...panel,
-            surfaces: panel.surfaces.map((entry) => (entry.id === surface.id ? surface : entry)),
+            surfaces: panel.surfaces.map((entry) => (entry.id === surface.id ? saved : entry)),
           }));
         });
         return updated;
@@ -1178,4 +1195,15 @@ export function selectThreadExtensionDock(
   ref: ScopedThreadRef | null | undefined,
 ): ExtensionDockState {
   return ref ? (byThreadKey[scopedThreadKey(ref)] ?? EMPTY_EXTENSION_DOCK) : EMPTY_EXTENSION_DOCK;
+}
+
+function canSaveExtensionRecord(
+  existing: ExtensionPanelSurface,
+  record: ViewRecord,
+  generation: string | undefined,
+): boolean {
+  if (existing.viewerGeneration !== generation) return false;
+  const { restoreState: _oldState, ...oldMetadata } = existing.record;
+  const { restoreState: _newState, ...newMetadata } = record;
+  return JSON.stringify(oldMetadata) === JSON.stringify(newMetadata);
 }

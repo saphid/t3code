@@ -294,7 +294,9 @@ describe("generic extension dock composition", () => {
     const sideRecord: ViewRecord = { ...record, placement: "side-panel" };
     store.openExtension(a, sideRecord);
     store.openExtension(a, record);
-    const surface = extensionPanelSurface(a, sideRecord)!;
+    const surface = Object.values(useRightPanelStore.getState().byThreadKey)[0]!.surfaces.find(
+      (entry) => entry.kind === "extension",
+    )!;
     let root: ReactTestRenderer | undefined;
     try {
       await act(async () => {
@@ -379,4 +381,43 @@ describe("generic extension dock composition", () => {
       }
     },
   );
+});
+
+it("does not activate a cold successor when the visible viewer is closed while hidden", async () => {
+  const counter = registerCounter(),
+    store = useRightPanelStore.getState();
+  const second = {
+    ...record,
+    restoreState: 8,
+    context: { ...record.context, resource: { ...record.context.resource, id: "second-counter" } },
+  };
+  store.openExtension(a, second);
+  store.openExtension(a, record);
+  const firstId = dock().activeSurfaceId!;
+  let root: ReactTestRenderer | undefined;
+  try {
+    await act(async () => {
+      root = create(<GenericExtensionDock threadRef={a} />);
+    });
+    expect(counter.restored).toEqual([0]);
+    await act(async () => {
+      store.hideExtensionDock(a);
+    });
+    await act(async () => {
+      store.closeDockExtension(a, firstId);
+    });
+    expect(counter.restored).toEqual([0]);
+    expect(counter.disposals()).toBe(1);
+    expect(root!.root.findAllByProps({ "aria-label": "Increment dock counter" })).toHaveLength(0);
+    await act(async () => {
+      store.showExtensionDock(a);
+    });
+    expect(counter.restored).toEqual([0, 8]);
+    expect(button(root!, "Increment dock counter").children).toEqual(["8"]);
+  } finally {
+    await act(async () => {
+      root?.unmount();
+      counter.unregister();
+    });
+  }
 });

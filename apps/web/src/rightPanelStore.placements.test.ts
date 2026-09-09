@@ -59,7 +59,13 @@ describe("generic extension placements", () => {
     expect(dock().surfaces).toHaveLength(1);
     store.hideExtensionDock(a);
     const revision = store.getUserActionRevision(a);
-    expect(store.updateExtensionRecord(a, { ...record(), restoreState: 3 })).toBe(true);
+    expect(
+      store.updateExtensionRecord(
+        a,
+        { ...record(), restoreState: 3 },
+        dock().surfaces[0]?.viewerGeneration,
+      ),
+    ).toBe(true);
     expect(dock().surfaces[0]?.record.restoreState).toBe(3);
     expect(dock().isOpen).toBe(false);
     expect(side().surfaces[0]).toMatchObject({ record: { restoreState: 0 } });
@@ -242,3 +248,57 @@ describe("generic extension placements", () => {
     expect(normalized.byThreadKey).toEqual({});
   });
 });
+
+for (const placement of ["side-panel", "bottom-dock"] as const) {
+  it(`rejects stale metadata and closed/reopened owners in ${placement}`, () => {
+    const store = useRightPanelStore.getState();
+    const current = () =>
+      (placement === "bottom-dock" ? dock() : side()).surfaces.find(
+        (entry) => entry.kind === "extension",
+      );
+    const old = record(placement);
+    store.openExtension(a, old);
+    const oldGeneration = current()!.viewerGeneration;
+    const next = {
+      ...old,
+      stateVersion: 2,
+      context: { ...old.context, workspaceRevision: "new-revision" },
+    };
+    store.openExtension(a, next);
+    const nextGeneration = current()!.viewerGeneration;
+    expect(store.updateExtensionRecord(a, { ...old, restoreState: 99 }, oldGeneration)).toBe(false);
+    expect(store.updateExtensionRecord(a, { ...old, restoreState: 99 }, nextGeneration)).toBe(
+      false,
+    );
+    expect(current()!.record).toEqual(next);
+    expect(store.updateExtensionRecord(a, { ...next, restoreState: 5 }, nextGeneration)).toBe(true);
+    expect(current()!.viewerGeneration).toBe(nextGeneration);
+    const id = current()!.id;
+    if (placement === "bottom-dock") store.closeDockExtension(a, id);
+    else store.closeSurface(a, id);
+    store.openExtension(a, next);
+    expect(store.updateExtensionRecord(a, { ...next, restoreState: 99 }, nextGeneration)).toBe(
+      false,
+    );
+    expect(current()!.record.restoreState).toBe(0);
+  });
+  it(`rejects an absent hydrated generation after a fresh open in ${placement}`, () => {
+    const value = record(placement),
+      surface = extensionPanelSurface(a, value)!;
+    const key = scopedThreadKey(a);
+    if (placement === "bottom-dock")
+      useRightPanelStore.setState({
+        extensionDockByThreadKey: {
+          [key]: { isOpen: false, activeSurfaceId: surface.id, surfaces: [surface] },
+        },
+      });
+    else
+      useRightPanelStore.setState({
+        byThreadKey: { [key]: { isOpen: false, activeSurfaceId: surface.id, surfaces: [surface] } },
+      });
+    const store = useRightPanelStore.getState();
+    expect(store.updateExtensionRecord(a, { ...value, restoreState: 1 }, undefined)).toBe(true);
+    store.openExtension(a, value);
+    expect(store.updateExtensionRecord(a, { ...value, restoreState: 99 }, undefined)).toBe(false);
+  });
+}
