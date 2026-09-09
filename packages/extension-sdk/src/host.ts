@@ -112,13 +112,17 @@ export function createExtensionHost<Renderer>(options: HostOptions) {
     if (services.has(service.capability)) throw new Error("Duplicate host service");
     services.set(service.capability, service);
   }
+  // Record and presentation are independently bounded payloads; the envelope is host-owned.
+  function copySnapshot(source: ViewSnapshot): ViewSnapshot {
+    return { ...source, record: copyJson(source.record), state: copyJson(source.state) };
+  }
   const snapshots = new WeakMap<ViewSnapshot, ViewSnapshot>();
   function getSnapshot(id: string): ViewSnapshot | null {
     const source = entries.get(id)?.snapshot;
     if (!source) return null;
     let cached = snapshots.get(source);
     if (!cached) {
-      cached = copyJson(source);
+      cached = copySnapshot(source);
       function freeze(value: unknown): void {
         if (value && typeof value === "object") {
           Object.values(value).forEach(freeze);
@@ -135,7 +139,7 @@ export function createExtensionHost<Renderer>(options: HostOptions) {
   function emit(entry: Entry<Renderer> | null, id: string) {
     for (const listener of listeners) {
       try {
-        listener(entry ? copyJson(entry.snapshot) : null, id);
+        listener(entry ? copySnapshot(entry.snapshot) : null, id);
       } catch {
         /* A failing observer cannot break another view. */
       }
@@ -247,6 +251,7 @@ export function createExtensionHost<Renderer>(options: HostOptions) {
     entry.registration = resolved.registration;
     entry.descriptor = resolved.descriptor;
     if (resolved.reason) {
+      stop(entry);
       setStatus(entry, "unavailable", resolved.reason);
       return;
     }
@@ -304,7 +309,7 @@ export function createExtensionHost<Renderer>(options: HostOptions) {
           throw new Error("Invalid restore state");
         entry.snapshot = {
           ...entry.snapshot,
-          record: { ...entry.snapshot.record, restoreState: copied },
+          record: validateRecord({ ...entry.snapshot.record, restoreState: copied }),
         };
         notifyCurrent();
         return true;
@@ -612,7 +617,7 @@ export function createExtensionHost<Renderer>(options: HostOptions) {
     },
     getSnapshot,
     snapshot(id: string) {
-      return copyJson(required(id).snapshot);
+      return copySnapshot(required(id).snapshot);
     },
     records() {
       return [...entries.values()].map((entry) => copyJson(entry.snapshot.record));
@@ -634,11 +639,11 @@ export function createExtensionHost<Renderer>(options: HostOptions) {
         resourceKey(copied.resource) !== resourceKey(entry.snapshot.record.context.resource);
       entry.snapshot = {
         ...entry.snapshot,
-        record: {
+        record: validateRecord({
           ...entry.snapshot.record,
           context: copied,
           restoreState: changedResource ? null : entry.snapshot.record.restoreState,
-        },
+        }),
       };
       if (entry.snapshot.status === "hidden") {
         stop(entry);
@@ -684,7 +689,10 @@ export function createExtensionHost<Renderer>(options: HostOptions) {
       const entry = required(id);
       if (!entry.descriptor?.placements.includes(placement))
         throw new Error("Unsupported placement");
-      entry.snapshot = { ...entry.snapshot, record: { ...entry.snapshot.record, placement } };
+      entry.snapshot = {
+        ...entry.snapshot,
+        record: validateRecord({ ...entry.snapshot.record, placement }),
+      };
       emit(entry, id);
     },
     close,
