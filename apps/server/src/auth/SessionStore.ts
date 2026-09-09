@@ -17,6 +17,7 @@ import * as Layer from "effect/Layer";
 import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
+import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as Option from "effect/Option";
 
@@ -52,6 +53,15 @@ export interface VerifiedSession {
   readonly subject: string;
   readonly scopes: ReadonlyArray<AuthEnvironmentScope>;
   readonly proofKeyThumbprint?: string;
+}
+
+/** A persisted session principal for host-internal revalidation; it contains no credential or client metadata. */
+export interface RevalidatedSession {
+  readonly sessionId: AuthSessionId;
+  readonly subject: string;
+  readonly method: ServerAuthSessionMethod;
+  readonly scopes: ReadonlyArray<AuthEnvironmentScope>;
+  readonly expiresAt: DateTime.DateTime;
 }
 
 export type SessionCredentialChange =
@@ -375,6 +385,9 @@ export class SessionStore extends Context.Service<
       readonly replaceActiveForSubjectAndMethod?: boolean;
     }) => Effect.Effect<IssuedSession, SessionCredentialInternalError>;
     readonly verify: (token: string) => Effect.Effect<VerifiedSession, SessionCredentialError>;
+    readonly revalidate: (
+      sessionId: AuthSessionId,
+    ) => Effect.Effect<RevalidatedSession, SessionCredentialError>;
     readonly issueWebSocketToken: (
       sessionId: AuthSessionId,
       input?: {
@@ -395,6 +408,12 @@ export class SessionStore extends Context.Service<
       SessionCredentialInternalError
     >;
     readonly streamChanges: Stream.Stream<SessionCredentialChange>;
+    /** Acquire a PubSub subscription before returning its stream. */
+    readonly watchChanges: () => Effect.Effect<
+      Stream.Stream<SessionCredentialChange>,
+      never,
+      Scope.Scope
+    >;
     readonly revoke: (
       sessionId: AuthSessionId,
     ) => Effect.Effect<boolean, SessionCredentialInternalError>;
@@ -777,6 +796,35 @@ export const make = Effect.gen(function* () {
     },
   );
 
+  const revalidate: SessionStore["Service"]["revalidate"] = Effect.fn("SessionStore.revalidate")(
+    function* (sessionId) {
+      const observedAt = yield* DateTime.now;
+      const row = yield* authSessions
+        .getById({ sessionId })
+        .pipe(
+          Effect.mapError((cause) => new SessionCredentialVerificationError({ sessionId, cause })),
+        );
+      if (Option.isNone(row)) return yield* new UnknownSessionTokenError({ sessionId });
+      if (row.value.revokedAt !== null) {
+        return yield* new SessionTokenRevokedError({ sessionId, revokedAt: row.value.revokedAt });
+      }
+      if (row.value.expiresAt.epochMilliseconds <= observedAt.epochMilliseconds) {
+        return yield* new SessionTokenExpiredError({
+          sessionId,
+          expiresAt: row.value.expiresAt,
+          observedAt,
+        });
+      }
+      return {
+        sessionId: row.value.sessionId,
+        subject: row.value.subject,
+        method: row.value.method,
+        scopes: row.value.scopes,
+        expiresAt: row.value.expiresAt,
+      } satisfies RevalidatedSession;
+    },
+  );
+
   const encodeWsClaims = Schema.encodeEffect(Schema.fromJsonString(WebSocketClaims));
   const issueWebSocketToken: SessionStore["Service"]["issueWebSocketToken"] = Effect.fn(
     "SessionStore.issueWebSocketToken",
@@ -967,12 +1015,14 @@ export const make = Effect.gen(function* () {
     legacyCookieName,
     issue,
     verify,
+    revalidate,
     issueWebSocketToken,
     verifyWebSocketToken,
     listActive,
     get streamChanges() {
       return Stream.fromPubSub(changesPubSub);
     },
+    watchChanges: () => PubSub.subscribe(changesPubSub).pipe(Effect.map(Stream.fromSubscription)),
     revoke,
     revokeAllExcept,
     markConnected,

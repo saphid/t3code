@@ -156,6 +156,7 @@ import * as VcsDriverRegistry from "./vcs/VcsDriverRegistry.ts";
 import * as VcsProjectConfig from "./vcs/VcsProjectConfig.ts";
 import * as PairingGrantStore from "./auth/PairingGrantStore.ts";
 import * as SessionStore from "./auth/SessionStore.ts";
+import { guardExtensionSessionStream } from "./extensions/sessionStream.ts";
 import { failEnvironmentAuthInvalid, failEnvironmentInternal } from "./auth/http.ts";
 import * as RelayClient from "@t3tools/shared/relayClient";
 const isOrchestrationDispatchCommandError = Schema.is(OrchestrationDispatchCommandError);
@@ -2831,7 +2832,11 @@ const makeWsRpcLayer = (
         [WS_METHODS.subscribeExtensionApi]: (input) =>
           observeRpcStream(
             WS_METHODS.subscribeExtensionApi,
-            environmentExtensions.subscribeApi(input),
+            guardExtensionSessionStream(
+              environmentExtensions.subscribeApi(input),
+              currentSession,
+              sessions,
+            ),
             { "rpc.aggregate": "extensions" },
           ),
         [WS_METHODS.subscribeExtensionCatalogue]: (_input) =>
