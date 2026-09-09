@@ -19,6 +19,8 @@ import {
 import {
   atomicJson,
   checkSyntax,
+  ensureModuleScope,
+  validateModuleScope,
   readPackage,
   storePackage,
   prunePackages,
@@ -114,6 +116,7 @@ export async function createExtensionRuntime(options: RuntimeOptions): Promise<E
   await NodeFSP.mkdir(root, { recursive: true, mode: 0o700 });
   if ((await NodeFSP.realpath(root)) !== root)
     throw new Error("Runtime root cannot contain symlinks");
+  await ensureModuleScope(root);
   const installations = new Map<string, Installation>();
   const validators = new Map<string, Map<string, ValidateFunction>>();
   const workers = new Map<string, Worker>();
@@ -207,6 +210,7 @@ export async function createExtensionRuntime(options: RuntimeOptions): Promise<E
     await atomicJson(root, { version: 1, environmentId, installations: [...next.values()] });
   }
   async function verify(record: Installation): Promise<PackageSnapshot> {
+    await validateModuleScope(root);
     const snapshot = await readPackage(NodePath.join(root, "packages", record.contentHash));
     if (
       snapshot.contentHash !== record.contentHash ||

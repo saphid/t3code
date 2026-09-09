@@ -25,6 +25,10 @@ Only `t3-extension.json` and its declared client/server entries are copied.
 Entries must be bundled ESM .mjs/.js, with no separately installed dependencies or
 assets. Installation checks format, strict draft-7 schemas without external
 references, byte bounds and JavaScript syntax without executing package code.
+The runtime owns a small module-scope file outside the content hash directories,
+so declared ESM .js entries remain modules even beneath a CommonJS ancestor.
+An existing conflicting file or symlink is rejected and preserved. The three
+declared package files and their digest remain unchanged.
 The server default export is validated during lazy first invocation. A valid
 syntax file with an invalid export fails explicitly at that point; an explicit
 update can replace it. No package code runs inside the host process.

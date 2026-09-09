@@ -39,6 +39,57 @@ async function readBounded(root: string, name: string, remaining: number): Promi
     await handle.close();
   }
 }
+/** Host metadata lives outside content hashes and never changes the declared package files. */
+export async function validateModuleScope(root: string): Promise<void> {
+  const bytes = await readBounded(NodePath.join(root, "packages"), "package.json", 128);
+  let scope: unknown;
+  try {
+    scope = JSON.parse(bytes.toString("utf8"));
+  } catch {
+    throw new Error("Invalid runtime module scope");
+  }
+  if (
+    !scope ||
+    typeof scope !== "object" ||
+    Array.isArray(scope) ||
+    Object.keys(scope).length !== 1 ||
+    !("type" in scope) ||
+    scope.type !== "module"
+  )
+    throw new Error("Invalid runtime module scope");
+}
+
+/** Publish a complete module boundary without replacing any existing user file or symlink. */
+export async function ensureModuleScope(root: string): Promise<void> {
+  const store = NodePath.join(root, "packages");
+  await NodeFSP.mkdir(store, { recursive: true, mode: 0o700 });
+  if ((await NodeFSP.realpath(store)) !== store) throw new Error("Invalid package store");
+  try {
+    await validateModuleScope(root);
+    return;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  }
+  const temporary = NodePath.join(store, ".module-" + NodeCrypto.randomUUID());
+  try {
+    const handle = await NodeFSP.open(temporary, "wx", 0o400);
+    try {
+      await handle.writeFile('{"type":"module"}\n');
+      await handle.sync();
+    } finally {
+      await handle.close();
+    }
+    try {
+      await NodeFSP.link(temporary, NodePath.join(store, "package.json"));
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+    }
+    await validateModuleScope(root);
+  } finally {
+    await NodeFSP.rm(temporary, { force: true });
+  }
+}
+
 export async function readPackage(directory: string): Promise<PackageSnapshot> {
   const root = NodePath.resolve(directory);
   if ((await NodeFSP.realpath(root)) !== root || !(await NodeFSP.lstat(root)).isDirectory())

@@ -657,3 +657,79 @@ NodeTest.test(
     }
   },
 );
+
+NodeTest.test(
+  "declared ESM .js entries work below a CommonJS ancestor without changing copied package identity",
+  { timeout: 10000 },
+  async (t) => {
+    const f = await fixture(t);
+    await NodeFSP.writeFile(
+      NodePath.join(f.directory, "package.json"),
+      JSON.stringify({ type: "commonjs" }),
+    );
+    const pkg = descriptor();
+    pkg.clientEntry = "client.js";
+    pkg.serverEntry = "server.js";
+    await NodeFSP.writeFile(NodePath.join(f.source, "t3-extension.json"), JSON.stringify(pkg));
+    await NodeFSP.rename(
+      NodePath.join(f.source, "client.mjs"),
+      NodePath.join(f.source, "client.js"),
+    );
+    await NodeFSP.rename(
+      NodePath.join(f.source, "server.mjs"),
+      NodePath.join(f.source, "server.js"),
+    );
+    const before = await readPackage(f.source);
+    const installed = await f.runtime.install(f.source, grants);
+    NodeAssert.equal(installed.contentHash, before.contentHash);
+    const delivered = await f.runtime.readClient(installed.id);
+    NodeAssert.equal(delivered.code, before.files.get("client.js").toString("utf8"));
+    NodeAssert.equal(typeof (await f.invoke("pid")), "number");
+    NodeAssert.deepEqual(
+      (await NodeFSP.readdir(NodePath.join(f.root, "packages", installed.contentHash))).sort(),
+      ["client.js", "server.js", "t3-extension.json"],
+    );
+    await f.runtime.dispose();
+    await NodeFSP.unlink(NodePath.join(f.root, "packages", "package.json"));
+    const reopened = await createExtensionRuntime(f.settings);
+    try {
+      NodeAssert.equal(
+        typeof (await reopened.invoke("test.reader/pid", { relativePath: "a" }, context, signal())),
+        "number",
+      );
+    } finally {
+      await reopened.dispose();
+    }
+  },
+);
+
+NodeTest.test(
+  "a conflicting or symlinked module-scope file is rejected without overwrite",
+  { timeout: 10000 },
+  async (t) => {
+    const f = await fixture(t);
+    await f.runtime.install(f.source, grants);
+    const metadata = NodePath.join(f.root, "packages", "package.json");
+    await NodeFSP.chmod(metadata, 0o600);
+    const foreign = '{"type":"commonjs","private":true}\n';
+    await NodeFSP.writeFile(metadata, foreign);
+    await NodeAssert.rejects(f.invoke(), /module scope/);
+    await NodeAssert.rejects(f.runtime.readClient("test.reader"), /module scope/);
+    await f.runtime.dispose();
+    await NodeAssert.rejects(createExtensionRuntime(f.settings), /module scope/);
+    NodeAssert.equal(await NodeFSP.readFile(metadata, "utf8"), foreign);
+    await NodeFSP.unlink(metadata);
+    const outside = NodePath.join(f.directory, "outside-package.json");
+    await NodeFSP.writeFile(outside, '{"type":"module"}\n');
+    await NodeFSP.symlink(outside, metadata);
+    await NodeAssert.rejects(createExtensionRuntime(f.settings), /symlink/);
+    NodeAssert.ok((await NodeFSP.lstat(metadata)).isSymbolicLink());
+    NodeAssert.equal(await NodeFSP.readFile(outside, "utf8"), '{"type":"module"}\n');
+    NodeAssert.equal(
+      (await NodeFSP.readdir(NodePath.dirname(metadata))).some((name) =>
+        name.startsWith(".module-"),
+      ),
+      false,
+    );
+  },
+);
