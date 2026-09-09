@@ -1,3 +1,5 @@
+import { installedWorkspaceContext } from "../extensions/installedContext";
+import { InstalledExtensionMenu } from "../extensions/InstalledExtensionMenu";
 import {
   assertContextBudget,
   readContextSnapshots,
@@ -7376,8 +7378,24 @@ export default function ChatView(props: ChatViewProps) {
     return <NoActiveThreadState />;
   }
 
+  const installedExtensionContext =
+    activeThreadRef && activeProjectCwd
+      ? installedWorkspaceContext({
+          environmentId: activeThreadRef.environmentId,
+          projectId: activeThread.projectId,
+          threadId: activeThreadRef.threadId,
+          projectWorkspaceRoot: activeProjectCwd,
+          threadWorktreePath: activeThread.worktreePath ?? null,
+          client: isElectron ? "desktop" : "web",
+        })
+      : undefined;
   const panelToggleControls = (
     <PanelLayoutControls
+      extensionMenu={
+        activeThreadRef && installedExtensionContext ? (
+          <InstalledExtensionMenu threadRef={activeThreadRef} context={installedExtensionContext} />
+        ) : null
+      }
       extensionDockOpen={extensionDock.isOpen}
       {...(extensionDock.surfaces.length && activeThreadRef
         ? {
@@ -7777,6 +7795,9 @@ export default function ChatView(props: ChatViewProps) {
                       <ComposerSurface.Host>
                         <div ref={attachDraftHeroComposerAnchorRef} className="relative z-10">
                           <ChatComposer
+                            {...(installedExtensionContext
+                              ? { extensionContext: installedExtensionContext }
+                              : {})}
                             composerRef={composerRef}
                             composerDraftTarget={composerDraftTarget}
                             environmentId={environmentId}

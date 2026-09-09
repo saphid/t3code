@@ -3,106 +3,151 @@ import type {
   MessageContext,
   TextContributionDescriptor,
 } from "@t3tools/extension-sdk/context";
-import type { ViewContext } from "@t3tools/extension-sdk/contracts";
-import { useCallback, useSyncExternalStore } from "react";
-import { validateManifest, type ViewRecord } from "@t3tools/extension-sdk/contracts";
+import {
+  validateManifest,
+  type ViewContext,
+  type ViewRecord,
+} from "@t3tools/extension-sdk/contracts";
 import { createExtensionHost, type Extension, type HostOptions } from "@t3tools/extension-sdk/host";
 import type { SurfaceRenderer } from "@t3tools/extension-sdk/react";
+import { useCallback, useSyncExternalStore } from "react";
 import { createNativeSurfaceBridge } from "./nativeBridge";
 
-type WorkspaceBridge = ReturnType<typeof createNativeSurfaceBridge<null>>;
-const contributions = new Map<string, WorkspaceBridge>();
-const extensionIds = new Set<string>();
-const textHosts = new Map<string, ReturnType<typeof createExtensionHost<SurfaceRenderer>>>();
-let textRevision = 0;
-let contextDescriptors: readonly TextContributionDescriptor[] = [];
-const getTextRevision = () => textRevision;
-const getContextDescriptors = () => contextDescriptors;
+type Registration = {
+  environmentId: string | undefined;
+  extension: Extension<SurfaceRenderer>;
+  bridge: ReturnType<typeof createNativeSurfaceBridge<null>>;
+  host: ReturnType<typeof createExtensionHost<SurfaceRenderer>>;
+};
+const registrations = new Map<string, Registration>();
 const listeners = new Set<() => void>();
-let titles: ReadonlyMap<string, string> = new Map();
-const getTitles = () => titles;
+let textRevision = 0;
+let titlesByEnvironment = new Map<string, ReadonlyMap<string, string>>();
+let contextsByEnvironment = new Map<string, readonly TextContributionDescriptor[]>();
+const EMPTY_TITLES: ReadonlyMap<string, string> = new Map();
+const EMPTY_CONTEXTS: readonly TextContributionDescriptor[] = [];
 const subscribe = (listener: () => void) => {
   listeners.add(listener);
   return () => {
     listeners.delete(listener);
   };
 };
+const scoped = (environmentId?: string) => {
+  const winners = new Map<string, Registration>();
+  for (const entry of registrations.values())
+    if (entry.environmentId === undefined) winners.set(entry.extension.manifest.id, entry);
+  if (environmentId !== undefined)
+    for (const entry of registrations.values())
+      if (entry.environmentId === environmentId) winners.set(entry.extension.manifest.id, entry);
+  return [...winners.values()];
+};
 function notify() {
-  textRevision += 1;
-  contextDescriptors = [
-    ...new Map(
-      [...textHosts.values()]
-        .flatMap((host) => [
-          ...host.contextDescriptors("web"),
-          ...host.contextDescriptors("desktop"),
-        ])
-        .map((item) => [item.id, item]),
-    ).values(),
-  ];
-  const nextTitles = new Map<string, string>();
-  for (const [id, bridge] of contributions) {
-    const surface = bridge.extension.manifest.surfaces.find((candidate) => candidate.id === id);
-    if (surface) nextTitles.set(id, surface.title);
+  textRevision++;
+  const scopes = new Set([
+    "",
+    ...[...registrations.values()].map((entry) => entry.environmentId ?? ""),
+  ]);
+  const titles = new Map<string, ReadonlyMap<string, string>>();
+  const contexts = new Map<string, readonly TextContributionDescriptor[]>();
+  for (const scope of scopes) {
+    const entries = scoped(scope || undefined);
+    titles.set(
+      scope,
+      new Map(
+        entries.flatMap((entry) =>
+          entry.extension.manifest.surfaces.map((surface) => [surface.id, surface.title] as const),
+        ),
+      ),
+    );
+    contexts.set(scope, [
+      ...new Map(
+        entries
+          .flatMap((entry) => [
+            ...entry.host.contextDescriptors("web"),
+            ...entry.host.contextDescriptors("desktop"),
+          ])
+          .map((item) => [item.id, item]),
+      ).values(),
+    ]);
   }
-  titles = nextTitles;
+  titlesByEnvironment = titles;
+  contextsByEnvironment = contexts;
   for (const listener of listeners) listener();
 }
 
-/** Trusted application bootstrap registration; installation/isolation are separate host concerns. */
+/** Trusted bootstrap remains global; installed packages register for exactly one authenticated environment. */
 export function registerWorkspaceExtension(
   extension: Extension<SurfaceRenderer>,
   hostOptions: HostOptions = { authorize: () => false },
+  scope?: { readonly environmentId: string },
 ) {
   extension = {
     ...extension,
     manifest: validateManifest(extension.manifest),
     surfaces: extension.surfaces.map((surface) => ({ ...surface })),
   };
-  if (extensionIds.has(extension.manifest.id)) throw new Error("Extension already registered");
-  if (extensionIds.size >= 64) throw new Error("Workspace extension limit reached");
-  const validator = createExtensionHost<SurfaceRenderer>(hostOptions);
-  validator.register(extension);
-  const bridge = createNativeSurfaceBridge<null>(() => extension, hostOptions);
-  const ids = extension.manifest.surfaces.map((surface) => surface.id);
-  if (ids.some((id) => contributions.has(id))) throw new Error("Surface already registered");
-  extensionIds.add(extension.manifest.id);
-  textHosts.set(extension.manifest.id, validator);
-  for (const id of ids) contributions.set(id, bridge);
+  const key = JSON.stringify([scope?.environmentId, extension.manifest.id]);
+  if (registrations.has(key)) throw new Error("Extension already registered");
+  const peers = [...registrations.values()].filter(
+    (entry) => entry.environmentId === scope?.environmentId,
+  );
+  if (peers.length >= 64) throw new Error("Workspace extension limit reached");
+  if (
+    peers.some((entry) =>
+      entry.extension.manifest.surfaces.some((surface) =>
+        extension.manifest.surfaces.some((candidate) => candidate.id === surface.id),
+      ),
+    )
+  )
+    throw new Error("Surface already registered");
+  const host = createExtensionHost<SurfaceRenderer>(hostOptions);
+  host.register(extension);
+  const entry: Registration = {
+    environmentId: scope?.environmentId,
+    extension,
+    host,
+    bridge: createNativeSurfaceBridge<null>(() => extension, hostOptions),
+  };
+  registrations.set(key, entry);
   notify();
-  let registered = true;
   return () => {
-    if (!registered) return;
-    registered = false;
-    extensionIds.delete(extension.manifest.id);
-    textHosts.delete(extension.manifest.id);
-    validator.dispose();
-    for (const id of ids) contributions.delete(id);
+    if (registrations.get(key) !== entry) return;
+    registrations.delete(key);
+    host.dispose();
     notify();
   };
 }
-
-export function useWorkspaceSurfaceTitles() {
-  return useSyncExternalStore(subscribe, getTitles, getTitles);
+export function useWorkspaceSurfaceTitles(environmentId?: string) {
+  const get = useCallback(
+    () =>
+      titlesByEnvironment.get(environmentId ?? "") ?? titlesByEnvironment.get("") ?? EMPTY_TITLES,
+    [environmentId],
+  );
+  return useSyncExternalStore(subscribe, get, get);
 }
-
-export function workspaceSurfaceTitle(surfaceId: string, fallback: string) {
+export function workspaceSurfaceTitle(surfaceId: string, fallback: string, environmentId?: string) {
   return (
-    contributions
-      .get(surfaceId)
-      ?.extension.manifest.surfaces.find((surface) => surface.id === surfaceId)?.title ?? fallback
+    (titlesByEnvironment.get(environmentId ?? "") ?? titlesByEnvironment.get(""))?.get(surfaceId) ??
+    fallback
   );
 }
-
 export function WorkspaceExtensionSurface(props: {
   readonly record: ViewRecord;
   readonly visible: boolean;
   readonly onRecordChange?: (record: ViewRecord) => void;
 }) {
-  const getBridge = useCallback(
-    () => contributions.get(props.record.surfaceId) ?? null,
-    [props.record.surfaceId],
+  const get = useCallback(
+    () =>
+      scoped(props.record.context.resource.environmentId)
+        .reverse()
+        .find((entry) =>
+          entry.extension.manifest.surfaces.some(
+            (surface) => surface.id === props.record.surfaceId,
+          ),
+        )?.bridge ?? null,
+    [props.record.surfaceId, props.record.context.resource.environmentId],
   );
-  const bridge = useSyncExternalStore(subscribe, getBridge, getBridge);
+  const bridge = useSyncExternalStore(subscribe, get, get);
   return bridge ? (
     <bridge.Surface
       record={props.record}
@@ -115,23 +160,29 @@ export function WorkspaceExtensionSurface(props: {
     <div role="status">{props.record.fallback}</div>
   );
 }
-
-export function useWorkspaceContextDescriptors() {
-  return useSyncExternalStore(subscribe, getContextDescriptors, getContextDescriptors);
-}
-
-export function captureWorkspaceContext(id: string, context: ViewContext) {
-  const host = [...textHosts.values()].find((candidate) =>
-    candidate.contextDescriptors(context.client).some((item) => item.id === id),
+export function useWorkspaceContextDescriptors(environmentId?: string) {
+  const get = useCallback(
+    () =>
+      contextsByEnvironment.get(environmentId ?? "") ??
+      contextsByEnvironment.get("") ??
+      EMPTY_CONTEXTS,
+    [environmentId],
   );
+  return useSyncExternalStore(subscribe, get, get);
+}
+export function captureWorkspaceContext(id: string, context: ViewContext) {
+  const host = scoped(context.resource.environmentId)
+    .reverse()
+    .find((entry) =>
+      entry.host.contextDescriptors(context.client).some((item) => item.id === id),
+    )?.host;
   if (!host) throw new Error("Context contribution unavailable");
   return host.captureContext(id, context);
 }
-
+const getTextRevision = () => textRevision;
 export function useWorkspaceTextRevision() {
   return useSyncExternalStore(subscribe, getTextRevision, getTextRevision);
 }
-
 export function decorateWorkspaceMessage(
   message: MessageContext,
   client: string,
@@ -140,26 +191,24 @@ export function decorateWorkspaceMessage(
   if (revision !== textRevision) return [];
   const cards: MessageCard[] = [];
   let remaining = 16;
-  for (const host of textHosts.values()) {
+  for (const { host } of scoped(message.environmentId)) {
     if (cards.length >= 4 || remaining <= 0) break;
-    const compatibleCount = host.messageDecorationCount(client);
-    if (compatibleCount === 0) continue;
+    const count = host.messageDecorationCount(client);
+    if (!count) continue;
     cards.push(
       ...host.decorateMessage(message, client, {
         maxCards: 4 - cards.length,
         maxContributions: remaining,
       }),
     );
-    remaining -= Math.min(remaining, compatibleCount);
+    remaining -= Math.min(remaining, count);
   }
   return cards;
 }
-
 export function workspaceHasMessageDecorations() {
-  return [...textHosts.values()].some((host) => host.messageDecorationCount() > 0);
+  return [...registrations.values()].some((entry) => entry.host.messageDecorationCount() > 0);
 }
-
-/** Availability is reactive even when a compiled message row mounted before registration. */
+/** Reactivity must be observed even when a compiled row mounted before registration. */
 export function useWorkspaceHasMessageDecorations() {
   return useSyncExternalStore(
     subscribe,

@@ -15,8 +15,8 @@ export function ComposerExtensionContext(props: {
   readonly context: ViewContext;
   readonly onChange: (prompt: string) => void;
 }) {
-  const descriptors = useWorkspaceContextDescriptors().filter((item) =>
-    item.clients.includes(props.context.client),
+  const descriptors = useWorkspaceContextDescriptors(props.context.resource.environmentId).filter(
+    (item) => item.clients.includes(props.context.client),
   );
   const snapshots = useMemo(() => readContextSnapshots(props.prompt), [props.prompt]);
   const [error, setError] = useState<string | null>(null);

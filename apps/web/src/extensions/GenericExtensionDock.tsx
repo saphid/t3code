@@ -28,7 +28,7 @@ function ThreadExtensionDock({
   dock: ExtensionDockState;
 }) {
   const scope = scopedThreadKey(threadRef);
-  const titles = useWorkspaceSurfaceTitles();
+  const titles = useWorkspaceSurfaceTitles(threadRef.environmentId);
   const panelId = useId();
   const selected = dock.surfaces.find((surface) => surface.id === dock.activeSurfaceId);
   const [retained, setRetained] = useState(dock.isOpen ? selected : undefined);

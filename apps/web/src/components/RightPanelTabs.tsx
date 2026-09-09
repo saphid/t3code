@@ -730,7 +730,7 @@ function PullRequestSurfaceIcon({
 }
 
 export function RightPanelTabs(props: RightPanelTabsProps) {
-  const extensionTitles = useWorkspaceSurfaceTitles();
+  const extensionTitles = useWorkspaceSurfaceTitles(props.environmentId ?? undefined);
   const ownsDesktopTitleBar = isElectron && props.mode === "inline";
   const browserProfiles = useBrowserDefaults().profiles;
   const { resolvedTheme } = useTheme();

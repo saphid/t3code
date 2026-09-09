@@ -5,12 +5,13 @@ import {
   PanelBottomOpenIcon,
   PanelRightIcon,
 } from "lucide-react";
-import { memo } from "react";
+import { memo, type ReactNode } from "react";
 
 import { Toggle } from "../ui/toggle";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 
 interface PanelLayoutControlsProps {
+  extensionMenu?: ReactNode;
   showTerminalControl?: boolean;
   extensionDockOpen?: boolean;
   onToggleExtensionDock?: () => void;
@@ -28,6 +29,7 @@ interface PanelLayoutControlsProps {
 }
 
 export const PanelLayoutControls = memo(function PanelLayoutControls({
+  extensionMenu,
   showTerminalControl = true,
   extensionDockOpen = false,
   onToggleExtensionDock,
@@ -47,6 +49,7 @@ export const PanelLayoutControls = memo(function PanelLayoutControls({
       className="flex h-full shrink-0 items-center gap-1 [-webkit-app-region:no-drag]"
       data-panel-layout-controls
     >
+      {extensionMenu}
       {onToggleExtensionDock ? (
         <Tooltip>
           <TooltipTrigger render={<span className="flex shrink-0" />}>

@@ -1,3 +1,4 @@
+import type { ViewContext } from "@t3tools/extension-sdk/contracts";
 import { readableContextPrompt } from "@t3tools/extension-sdk/context";
 import { ComposerExtensionContext } from "../../extensions/ComposerExtensionContext";
 import { isElectron } from "../../env";
@@ -1242,6 +1243,7 @@ export interface ChatComposerHandle {
 // --------------------------------------------------------------------------
 
 export interface ChatComposerProps {
+  extensionContext?: ViewContext;
   composerDraftTarget: ScopedThreadRef | DraftId;
   environmentId: EnvironmentId;
   attachmentUploadsCapabilityKnown: boolean;
@@ -5198,16 +5200,18 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
               !projectSelectionRequired && (
                 <ComposerExtensionContext
                   prompt={prompt}
-                  context={{
-                    resource: {
-                      namespace: "t3.composer",
-                      id: activeThread.id,
-                      environmentId,
-                      projectId: activeThread.projectId,
-                      threadId: activeThread.id,
-                    },
-                    client: isElectron ? "desktop" : "web",
-                  }}
+                  context={
+                    props.extensionContext ?? {
+                      resource: {
+                        namespace: "t3.composer",
+                        id: activeThread.id,
+                        environmentId,
+                        projectId: activeThread.projectId,
+                        threadId: activeThread.id,
+                      },
+                      client: isElectron ? "desktop" : "web",
+                    }
+                  }
                   onChange={(nextPrompt) =>
                     onPromptChange(
                       nextPrompt,
