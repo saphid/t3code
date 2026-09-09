@@ -2,6 +2,9 @@ import {
   AuthAccessWriteScope,
   AuthOrchestrationReadScope,
   EnvironmentHttpApi,
+  type EnvironmentSessionPrincipalShape,
+  type ExtensionOperationError,
+  type AuthEnvironmentScope,
   type ExtensionApiInvokeInput,
   type ExtensionApiDiscoverInput,
   type ExtensionApiSelection,
@@ -11,19 +14,30 @@ import {
   type ExtensionManageInput,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import type { HostApiRootAuthority } from "@t3tools/extension-runtime";
+import { SessionStore } from "../auth/SessionStore.ts";
+import { ServerEnvironment } from "../environment/ServerEnvironment.ts";
+import { makeSessionApiAuthority } from "./sessionApiAuthority.ts";
 import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
 import { annotateEnvironmentRequest, requireEnvironmentScope } from "../auth/http.ts";
 import { EnvironmentExtensions } from "./EnvironmentExtensions.ts";
 
 /** These are the actual authenticated endpoint operations, shared with focused scope tests. */
-export function makeOperations(extensions: EnvironmentExtensions["Service"]) {
+export function makeOperations(
+  extensions: EnvironmentExtensions["Service"],
+  makeAuthority: (
+    session: EnvironmentSessionPrincipalShape,
+    scope: AuthEnvironmentScope,
+  ) => Effect.Effect<HostApiRootAuthority, ExtensionOperationError>,
+) {
   return {
     invokeApi: Effect.fn("environment.extensions.invokeApi")(function* (
       input: ExtensionApiInvokeInput,
     ) {
       // Until transport grants are method-scoped, API calls require the authenticated app's write authority.
-      yield* requireEnvironmentScope(AuthAccessWriteScope);
-      return { result: yield* extensions.invokeApi(input) };
+      const session = yield* requireEnvironmentScope(AuthAccessWriteScope);
+      const root = yield* makeAuthority(session, AuthAccessWriteScope);
+      return { result: yield* extensions.invokeApi(input, root) };
     }),
     discoverApis: Effect.fn("environment.extensions.discoverApis")(function* (
       input: ExtensionApiDiscoverInput,
@@ -70,7 +84,12 @@ export const extensionsHttpApiLayer = HttpApiBuilder.group(
   EnvironmentHttpApi,
   "extensions",
   Effect.fnUntraced(function* (handlers) {
-    const operations = makeOperations(yield* EnvironmentExtensions);
+    const sessions = yield* SessionStore;
+    const environment = yield* ServerEnvironment;
+    const environmentId = yield* environment.getEnvironmentId;
+    const operations = makeOperations(yield* EnvironmentExtensions, (session, scope) =>
+      makeSessionApiAuthority(session, environmentId, scope, sessions),
+    );
     return handlers
       .handle("invokeApi", (args) =>
         annotateEnvironmentRequest(args.endpoint.name).pipe(

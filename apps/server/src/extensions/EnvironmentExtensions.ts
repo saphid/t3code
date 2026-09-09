@@ -11,7 +11,7 @@ import {
   type ExtensionManageInput,
   type ExtensionInvokeInput,
 } from "@t3tools/contracts";
-import { createExtensionRuntime } from "@t3tools/extension-runtime";
+import { createExtensionRuntime, type HostApiRootAuthority } from "@t3tools/extension-runtime";
 import type { ViewContext } from "@t3tools/extension-sdk/contracts";
 import type { ToolDescriptor } from "@t3tools/extension-sdk/environment";
 import {
@@ -183,7 +183,7 @@ export const make = Effect.fn("EnvironmentExtensions.make")(function* (
   };
   return {
     catalogue: Effect.sync(() => runtime.catalogue()),
-    subscribeApi: (input: ExtensionApiSubscribeInput) =>
+    subscribeApi: (input: ExtensionApiSubscribeInput, root?: HostApiRootAuthority) =>
       Stream.unwrap(
         Effect.gen(function* () {
           const scope = yield* resolve(input.request.context);
@@ -206,6 +206,7 @@ export const make = Effect.fn("EnvironmentExtensions.make")(function* (
               ...(input.request.cursor === undefined ? {} : { cursor: input.request.cursor }),
             },
             controller.signal,
+            root,
           );
           return Stream.fromAsyncIterable(frames, (cause) =>
             operationError("api.subscribe", cause),
@@ -214,6 +215,7 @@ export const make = Effect.fn("EnvironmentExtensions.make")(function* (
       ),
     invokeApi: Effect.fn("EnvironmentExtensions.invokeApi")(function* (
       input: ExtensionApiInvokeInput,
+      root?: HostApiRootAuthority,
     ) {
       const scope = yield* resolve(input.request.context);
       const result = yield* promise("api.invoke", (signal) =>
@@ -234,6 +236,7 @@ export const make = Effect.fn("EnvironmentExtensions.make")(function* (
               : {}),
           },
           signal,
+          root,
         ),
       );
       yield* resolve(scope.context);

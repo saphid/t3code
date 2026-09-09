@@ -4,6 +4,7 @@ import {
   type ApiAuthority,
   type HostApiProvider,
   type ApiAudit,
+  type HostApiRootAuthority,
 } from "./broker.js";
 import type {
   ApiInvocation,
@@ -93,12 +94,14 @@ export interface ExtensionRuntime {
     expectedContentHash: string,
     request: ApiInvocation,
     signal: AbortSignal,
+    root?: HostApiRootAuthority,
   ): Promise<Json>;
   subscribeApi(
     id: string,
     expectedContentHash: string,
     request: ApiStreamInvocation,
     signal: AbortSignal,
+    root?: HostApiRootAuthority,
   ): AsyncIterable<ApiStreamFrame>;
   discoverApis(
     id: string,
@@ -1217,17 +1220,17 @@ export async function createExtensionRuntime(options: RuntimeOptions): Promise<E
       };
     },
     invoke: invokeWorker,
-    invokeApi(id, expectedContentHash, request, signal) {
+    invokeApi(id, expectedContentHash, request, signal, root) {
       const record = required(id);
       if (record.contentHash !== expectedContentHash)
         return Promise.reject(new Error("Installed content changed"));
-      return broker.invoke(record, request, signal);
+      return broker.invoke(record, request, signal, undefined, root);
     },
-    subscribeApi(id, expectedContentHash, request, signal) {
+    subscribeApi(id, expectedContentHash, request, signal, root) {
       const record = required(id);
       if (record.contentHash !== expectedContentHash) throw new Error("Installed content changed");
       current(record);
-      return broker.subscribe(record, request, signal);
+      return broker.subscribe(record, request, signal, undefined, root);
     },
     async discoverApis(id, expectedContentHash, context, signal) {
       const record = required(id);
@@ -1309,4 +1312,8 @@ export async function createExtensionRuntime(options: RuntimeOptions): Promise<E
   };
 }
 
-export type { HostApiInvocationMetadata } from "./broker.js";
+export type {
+  HostApiInvocationMetadata,
+  HostApiPrincipal,
+  HostApiRootAuthority,
+} from "./broker.js";

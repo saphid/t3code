@@ -19,6 +19,7 @@ import * as Stream from "effect/Stream";
 import {
   DEFAULT_AUTOMATIC_GIT_FETCH_INTERVAL,
   AuthAccessStreamError,
+  AuthOrchestrationReadScope,
   type AuthAccessStreamEvent,
   type AuthEnvironmentScope,
   AuthSessionId,
@@ -157,6 +158,7 @@ import * as VcsProjectConfig from "./vcs/VcsProjectConfig.ts";
 import * as PairingGrantStore from "./auth/PairingGrantStore.ts";
 import * as SessionStore from "./auth/SessionStore.ts";
 import { guardExtensionSessionStream } from "./extensions/sessionStream.ts";
+import { makeSessionApiAuthority } from "./extensions/sessionApiAuthority.ts";
 import { failEnvironmentAuthInvalid, failEnvironmentInternal } from "./auth/http.ts";
 import * as RelayClient from "@t3tools/shared/relayClient";
 const isOrchestrationDispatchCommandError = Schema.is(OrchestrationDispatchCommandError);
@@ -2832,10 +2834,21 @@ const makeWsRpcLayer = (
         [WS_METHODS.subscribeExtensionApi]: (input) =>
           observeRpcStream(
             WS_METHODS.subscribeExtensionApi,
-            guardExtensionSessionStream(
-              environmentExtensions.subscribeApi(input),
-              currentSession,
-              sessions,
+            Stream.unwrap(
+              Effect.gen(function* () {
+                const environmentId = yield* serverEnvironment.getEnvironmentId;
+                const root = yield* makeSessionApiAuthority(
+                  currentSession,
+                  environmentId,
+                  AuthOrchestrationReadScope,
+                  sessions,
+                );
+                return guardExtensionSessionStream(
+                  environmentExtensions.subscribeApi(input, root),
+                  currentSession,
+                  sessions,
+                );
+              }),
             ),
             { "rpc.aggregate": "extensions" },
           ),

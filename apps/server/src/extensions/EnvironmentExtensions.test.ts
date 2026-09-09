@@ -107,6 +107,7 @@ function fixture() {
   };
   let options: Parameters<typeof createExtensionRuntime>[0] | undefined;
   const calls: Array<{ cwd: string; relativePath: string }> = [];
+  const forwardedRoots: unknown[] = [];
   let afterRead = () => {};
   let afterInvoke = () => {};
   let afterClient = () => {};
@@ -120,11 +121,13 @@ function fixture() {
     rollback: async () => entry,
     selectApi: async () => {},
     discoverApis: async () => [],
-    invokeApi: async () => {
+    invokeApi: async (_id, _hash, _input, _signal, root) => {
+      forwardedRoots.push(root);
       afterInvoke();
       return { ok: true };
     },
-    subscribeApi: (_id, _hash, _request, signal) => {
+    subscribeApi: (_id, _hash, _request, signal, root) => {
+      forwardedRoots.push(root);
       streamSignal = signal;
       return {
         async *[Symbol.asyncIterator]() {
@@ -219,6 +222,7 @@ function fixture() {
     services,
     runtime,
     calls,
+    forwardedRoots,
     getOptions: () => {
       if (!options) throw new Error("Runtime not constructed");
       return options;
@@ -245,6 +249,58 @@ function fixture() {
     },
   };
 }
+
+it.effect("forwards the verified root authority to unary and stream runtime calls", () => {
+  const f = fixture();
+  const root = Object.freeze({
+    principal: Object.freeze({
+      kind: "environment-session" as const,
+      id: "session-a",
+      environmentId: "env-a",
+      subject: "fixture",
+      scopes: Object.freeze(["auth:read"]),
+    }),
+    allowWrite: false,
+    revalidate: () => {},
+  });
+  return Effect.scoped(
+    Effect.gen(function* () {
+      const service = yield* make(f.factory);
+      const request = {
+        installationId: "fixture.reader",
+        expectedContentHash: hash,
+        request: {
+          id: "fixture.reader/events",
+          versionRange: "^1.0.0",
+          method: "read",
+          input: {},
+          context: invoke.context,
+        },
+      };
+      yield* service.invokeApi(request, root);
+      yield* service
+        .subscribeApi(
+          {
+            installationId: request.installationId,
+            expectedContentHash: request.expectedContentHash,
+            request: {
+              id: request.request.id,
+              versionRange: request.request.versionRange,
+              name: "changes",
+              input: {},
+              context: request.request.context,
+            },
+          },
+          root,
+        )
+        .pipe(Stream.runDrain);
+      expect(f.forwardedRoots).toHaveLength(2);
+      expect(f.forwardedRoots[0]).toBe(root);
+      expect(f.forwardedRoots[1]).toBe(root);
+    }).pipe(Effect.provide(f.services)),
+  );
+});
+
 it.effect(
   "corrupt runtime startup leaves a constructible service with explicit operation errors",
   () => {

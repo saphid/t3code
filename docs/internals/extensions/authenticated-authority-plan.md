@@ -77,3 +77,86 @@ Opus 5 high launcher failed authentication (OAuth expired, process exit 1, model
 Luna independently inspected the bounded implementation and proof script without actionable
 findings after corrections. Full root metadata propagation, MCP revocation and native resource
 APIs remain the next gates.
+
+## Third bounded addition: host-only root authority through the broker
+
+Freeze these internal runtime types before implementation. They do not change SDK package
+format 3 or the wire request schemas.
+
+HostApiPrincipal contains kind ("environment-session", "provider-session", or "host"), id,
+environmentId, optional subject, and readonly scopes. It contains no credential or proof key.
+HostApiRootAuthority contains that principal, allowWrite, and a host-owned revalidate callback
+returning void or Promise<void>. The host constructs it after authentication. The runtime
+captures and freezes the principal and scopes on entry; plugin JSON and IPC never construct
+or replace it. Reject an authority whose environment differs from the validated resource.
+
+Runtime invokeApi and subscribeApi gain an optional final root-authority argument for
+embedding compatibility. ApiAuthority retains this root through every nested unary or stream
+call and worker pending record. Initial allowWrite is intersected with the root's allowWrite;
+streams and tool-originated calls remain read-only. Revalidate at admission and immediately
+before dispatch and before results/frames escape. Callback failures deny the operation and
+cannot be suppressed by a nested provider. Existing AbortSignal controls pending cancellation;
+the root's host adapter owns its revocation watcher and expiry interruption.
+
+HostApiInvocationMetadata and ApiAudit gain an optional sanitized principal snapshot.
+HostApiProvider gains requiresRootAuthority?: boolean; providers opting in deny rootless calls
+before invoking handlers. Omission preserves existing embeddings, not an authenticated
+identity. Native resource providers must opt in. Registration does not construct a root or
+grant capability access; existing plugin dependency/grant/provider checks stay intact.
+
+This first runtime step covers invokeApi/subscribeApi and their nested descendants. Legacy
+tool entrypoints and MCP root acquisition are separate adapter work, explicitly unproven until
+wired and tested. Do not fabricate a root for legacy callers. Worker IPC must not include the
+root object or callback; recover them only from host-owned parent pending state.
+
+Tests: immutable identity despite caller object mutation; forged request/worker fields cannot
+replace the root; nested independent worker calls preserve root metadata; read-only root cannot
+write even with plugin grants; rootless access to an opted-in host provider is denied;
+revalidation failure before dispatch prevents side effects, after dispatch suppresses stale
+results; stream checks and unrelated-root isolation; sanitized audit identity. Continue to run
+existing runtime/Electron and packaged-consumer tests. This is a prerequisite, not proof of
+Terminal, Browser, orchestration, MCP, remote or mobile parity.
+
+### Environment HTTP and WebSocket adapter for the third addition
+
+A server-owned makeSessionApiAuthority adapter takes the verified HTTP/WS session, the
+ServerEnvironment ID, required transport scope and SessionStore. It obtains a fresh persisted
+principal, intersects scopes with the original authentication, checks subject/method/expiry,
+and captures an immutable non-secret root. Its revalidate callback checks that captured
+authority is still present and never grows it. Capture only the Effect Clock service so injected clocks remain effective across the Promise
+boundary; do not retain the HTTP request context or its headers in the root callback.
+
+HTTP invokeApi keeps its current conservative access:write requirement and supplies this root
+to EnvironmentExtensions.invokeApi. WebSocket subscribeExtensionApi supplies a read-only root
+to EnvironmentExtensions.subscribeApi while retaining the acquired session stream guard for
+silent cancellation. EnvironmentExtensions forwards the optional root to the runtime. Old
+embedding calls retain compatibility but have no authenticated principal and cannot call
+providers that require one. Legacy tool/MCP adapters and domain-specific scope requirements
+remain explicitly separate; this addition does not grant orchestration or terminal control.
+
+## Verified third addition (2026-09-10)
+
+The host-only root is implemented and propagated from authenticated HTTP and WebSocket
+adapters through EnvironmentExtensions and nested plugin API calls. Runtime entry captures
+identity before asynchronous dispatch or iterator creation. Opted-in host providers reject
+rootless calls; principal metadata and audit fields contain no credential material.
+
+Verification on lxso2: runtime 80/80, no skips, including real Electron; new root tests 9/9;
+EnvironmentExtensions 10/10 including exact unary/stream forwarding; session authority 5/5;
+HTTP 3/3; scoped lint, server typecheck and v11 production build exited 0. The installed raw
+WebSocket proof observes the same verified read-only principal in linked outer-consumer and
+inner-provider stream audit records. Revocation interrupts that stream, reuse of the open
+socket fails, and another login continues. HTTP write calls audit their verified root.
+The installed read-only Files presentation still reads exact bytes and restores across reload.
+
+Evidence: /home/saphid/artifacts/t3-extensions-health-rounds-20260909/root-authority and
+proof/auth-session-root-v11-candidate.json, proof/files-proof-v11.json.
+A fresh direct Claude Opus 5 high review launch exited 1 because its OAuth session had
+expired and could not refresh; modelUsage was empty. No Claude review took place.
+Luna independently reviewed the bounded implementation and installed proof scripts.
+
+These proofs do not establish authenticated tool/MCP roots, native domain scopes, resource
+leases/epochs, terminal/browser replacement, mobile or relay/tunnel parity. Legacy rootless
+embeddings remain compatible and cannot access providers opting into requiresRootAuthority.
+The current workspace provider has not opted in until its legacy tool path has an authenticated
+adapter; the HTTP and WebSocket API paths already supply a verified root.

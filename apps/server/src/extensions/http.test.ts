@@ -1,4 +1,6 @@
 import { expect, it } from "@effect/vitest";
+import type { HostApiRootAuthority } from "@t3tools/extension-runtime";
+import { SessionStore } from "../auth/SessionStore.ts";
 import {
   AuthAccessWriteScope,
   AuthOrchestrationReadScope,
@@ -6,6 +8,7 @@ import {
   EnvironmentAuthenticatedPrincipal,
   ExtensionInvokeInput,
   type AuthEnvironmentScope,
+  type ExtensionApiInvokeInput,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
@@ -21,11 +24,13 @@ const decodeCatalogueMetadata = Schema.decodeUnknownEffect(
 
 function fixture(scopes: readonly AuthEnvironmentScope[]) {
   const called: string[] = [];
+  const roots: (HostApiRootAuthority | undefined)[] = [];
   const service = EnvironmentExtensions.of({
     catalogue: Effect.succeed({ apiSelections: [], apiResolution: [], pluginResolution: [] }),
     subscribeApi: () => Stream.empty,
-    invokeApi: () =>
+    invokeApi: (_input: ExtensionApiInvokeInput, root?: HostApiRootAuthority) =>
       Effect.sync(() => {
+        roots.push(root);
         called.push("invokeApi");
         return { ok: true };
       }),
@@ -71,7 +76,19 @@ function fixture(scopes: readonly AuthEnvironmentScope[]) {
     contextForThread: () => Effect.die("unused"),
     tools: () => Effect.die("unused"),
   });
-  const operations = makeOperations(service);
+  const operations = makeOperations(service, (session, scope) =>
+    Effect.succeed({
+      principal: {
+        kind: "environment-session" as const,
+        id: session.sessionId,
+        environmentId: "env-a",
+        subject: session.subject,
+        scopes: [...session.scopes],
+      },
+      allowWrite: scope === AuthAccessWriteScope,
+      revalidate: () => {},
+    }),
+  );
   const principal = {
     sessionId: AuthSessionId.make("fixture-session"),
     subject: "fixture",
@@ -80,7 +97,7 @@ function fixture(scopes: readonly AuthEnvironmentScope[]) {
   };
   const provide = <A, E>(effect: Effect.Effect<A, E, EnvironmentAuthenticatedPrincipal>) =>
     effect.pipe(Effect.provideService(EnvironmentAuthenticatedPrincipal, principal));
-  return { called, service, operations, provide };
+  return { called, roots, service, operations, provide };
 }
 it.effect("read credential can read but cannot install, update, enable or remove", () =>
   Effect.gen(function* () {
@@ -163,7 +180,7 @@ class ExtensionTestApi extends HttpApi.make("environment").add(
 const realAuthLayer = EnvironmentAuth.layer.pipe(
   Layer.provide(SqlitePersistenceMemory),
   Layer.provide(ServerSecretStore.layer),
-  Layer.provide(ServerEnvironment.identityLayer),
+  Layer.provideMerge(ServerEnvironment.identityLayer),
   Layer.provide(ServerConfig.layerTest("/tmp", { prefix: "t3-extension-http-test-" })),
   Layer.provide(NodeServices.layer),
 );
@@ -172,11 +189,20 @@ it.live(
   () =>
     Effect.gen(function* () {
       const auth = yield* EnvironmentAuth.EnvironmentAuth;
+      const sessions = yield* SessionStore;
+      const environment = yield* ServerEnvironment.ServerEnvironmentIdentity;
       const f = fixture([]);
       const routes = HttpApiBuilder.layer(ExtensionTestApi).pipe(
         Layer.provide(extensionsHttpApiLayer),
         Layer.provide(environmentAuthenticatedAuthLayer),
         Layer.provide(Layer.succeed(EnvironmentAuth.EnvironmentAuth, auth)),
+        Layer.provide(Layer.succeed(SessionStore, sessions)),
+        Layer.provide(
+          Layer.succeed(ServerEnvironment.ServerEnvironment, {
+            getEnvironmentId: environment.getEnvironmentId,
+            getDescriptor: Effect.die("unused descriptor"),
+          }),
+        ),
         Layer.provide(Layer.succeed(EnvironmentExtensions, f.service)),
         Layer.provide(NodeHttpPlatform.layer),
         Layer.provide(Etag.layer),
@@ -298,6 +324,11 @@ it.live(
         "invokeApi",
         "selectApi",
       ]);
+      expect(f.roots).toHaveLength(1);
+      expect(f.roots[0]?.principal.kind).toBe("environment-session");
+      expect(f.roots[0]?.principal.environmentId).toBe(yield* environment.getEnvironmentId);
+      expect(f.roots[0]?.principal.scopes).toContain(AuthAccessWriteScope);
+      expect(f.roots[0]?.allowWrite).toBe(true);
       const adminGrant = yield* auth.issuePairingCredential({ scopes: AuthAdministrativeScopes });
       const admin = yield* auth.exchangeBootstrapCredentialForAccessToken(
         adminGrant.credential,

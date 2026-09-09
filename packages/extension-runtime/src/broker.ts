@@ -33,11 +33,27 @@ export interface HostApiInvocationMetadata {
     readonly contentHash: string;
     readonly installationGeneration: number;
   }[];
+  readonly principal?: HostApiPrincipal;
+}
+
+export type HostApiPrincipal = Readonly<{
+  kind: "environment-session" | "provider-session" | "host";
+  id: string;
+  environmentId: string;
+  subject?: string;
+  scopes: readonly string[];
+}>;
+
+export interface HostApiRootAuthority {
+  readonly principal: HostApiPrincipal;
+  readonly allowWrite: boolean;
+  readonly revalidate: () => void | Promise<void>;
 }
 
 export interface HostApiProvider {
   readonly providerId: string;
   readonly definition: ApiDefinition;
+  readonly requiresRootAuthority?: boolean;
   subscribe?(
     name: string,
     input: Json,
@@ -59,6 +75,7 @@ export interface ApiAuthority {
   readonly allowWrite: boolean;
   readonly callers: readonly Installation[];
   readonly calls: readonly string[];
+  readonly root?: HostApiRootAuthority;
 }
 export interface ApiAudit {
   readonly callId: string;
@@ -74,6 +91,7 @@ export interface ApiAudit {
   readonly providerId?: string;
   readonly generation: number;
   readonly outcome: "completed" | "denied" | "failed";
+  readonly principal?: HostApiPrincipal;
   readonly operation?: "stream-open" | "stream-close";
 }
 export function createApiBroker(options: {
@@ -152,6 +170,7 @@ export function createApiBroker(options: {
         providerId: record.id,
         pluginId: record.id,
         definition,
+        requiresRootAuthority: undefined,
         invoke: undefined,
         subscribe: undefined,
       })),
@@ -236,11 +255,47 @@ export function createApiBroker(options: {
     });
   }
   hosts.forEach((item) => compile(item.definition));
+  function captureRoot(root: HostApiRootAuthority | undefined, environmentId: string) {
+    if (!root) return undefined;
+    if (
+      !root ||
+      typeof root !== "object" ||
+      !root.principal ||
+      typeof root.revalidate !== "function"
+    )
+      throw new Error("Invalid API root authority");
+    const principal = root.principal;
+    if (
+      !principal ||
+      !["environment-session", "provider-session", "host"].includes(principal.kind) ||
+      typeof principal.id !== "string" ||
+      !principal.id ||
+      typeof principal.environmentId !== "string" ||
+      principal.environmentId !== environmentId ||
+      (principal.subject !== undefined && typeof principal.subject !== "string") ||
+      !Array.isArray(principal.scopes) ||
+      principal.scopes.some((scope) => typeof scope !== "string")
+    )
+      throw new Error("Invalid API root principal");
+    const frozenPrincipal = Object.freeze({
+      kind: principal.kind,
+      id: principal.id,
+      environmentId: principal.environmentId,
+      ...(principal.subject === undefined ? {} : { subject: principal.subject }),
+      scopes: Object.freeze([...principal.scopes]),
+    }) as HostApiPrincipal;
+    return Object.freeze({
+      principal: frozenPrincipal,
+      allowWrite: root.allowWrite === true,
+      revalidate: root.revalidate,
+    }) as HostApiRootAuthority;
+  }
   async function invoke(
     record: Installation,
     unsafe: ApiInvocation,
     signal: AbortSignal,
     inherited?: ApiAuthority,
+    root?: HostApiRootAuthority,
   ): Promise<Json> {
     if (pending.size >= 64) throw new Error("API concurrency limit reached");
     const request = copyJson(unsafe);
@@ -258,7 +313,16 @@ export function createApiBroker(options: {
     if (!validRange(request.versionRange) || request.versionRange.length > 200)
       throw new Error("Invalid API version range");
     let stamp = 0;
-    const authority = inherited ?? { callers: [record], calls: [], allowWrite: true };
+    const capturedRoot = inherited?.root ?? captureRoot(root, options.environmentId);
+    const authority = inherited ?? {
+      callers: [record],
+      calls: [],
+      allowWrite: capturedRoot?.allowWrite ?? true,
+      ...(capturedRoot ? { root: capturedRoot } : {}),
+    };
+    const revalidate = async () => {
+      if (authority.root) await authority.root.revalidate();
+    };
     const callId = NodeCrypto.randomUUID();
     const callerGenerations = Object.freeze(authority.callers.map(captureCaller));
     if (authority.callers.at(-1) !== record) throw new Error("Invalid API caller");
@@ -292,6 +356,12 @@ export function createApiBroker(options: {
         cancelled,
         (async () => {
           active();
+          await revalidate();
+          if (
+            authority.root &&
+            authority.root.principal.environmentId !== context.resource.environmentId
+          )
+            throw new Error("Root authority resource mismatch");
           await scope(record, context);
           const resolved = resolution().apis.find((api) => api.id === request.id);
           const bindings = (record.package.dependencies ?? []).filter((item) =>
@@ -304,6 +374,8 @@ export function createApiBroker(options: {
             (item) => item.providerId === providerId && item.definition.id === request.id,
           )!;
           if (!provider) throw new Error("Dependency API unavailable");
+          if (provider.requiresRootAuthority && !authority.root)
+            throw new Error("API root authority required");
           stamp = providerGeneration(provider);
           if (request.expectedGeneration !== undefined && request.expectedGeneration !== stamp)
             throw new Error("Stale API generation");
@@ -325,6 +397,7 @@ export function createApiBroker(options: {
           if (owner) affected.add(owner.id);
           if (owner && callers.at(-1) !== owner) callers.push(owner);
           const check = async () => {
+            await revalidate();
             for (const caller of callers) {
               await scope(caller, context);
               for (const grant of method.requiredGrants) {
@@ -350,6 +423,7 @@ export function createApiBroker(options: {
                     calls: [...authority.calls, key],
                     allowWrite: authority.allowWrite && method.effect === "write",
                     parentCallId: callId,
+                    ...(authority.root ? { root: authority.root } : {}),
                   },
                 )
               : await provider.invoke!(
@@ -365,6 +439,7 @@ export function createApiBroker(options: {
                     providerId: provider.providerId,
                     providerGeneration: stamp,
                     callerGenerations,
+                    ...(authority.root ? { principal: authority.root.principal } : {}),
                   }),
                 ),
           );
@@ -395,6 +470,7 @@ export function createApiBroker(options: {
           ...(providerId ? { providerId } : {}),
           generation: stamp,
           outcome,
+          ...(authority.root ? { principal: authority.root.principal } : {}),
         });
       } catch {
         /* Audit sinks cannot change a completed result. */
@@ -407,8 +483,10 @@ export function createApiBroker(options: {
       unsafe: ApiStreamInvocation,
       signal: AbortSignal,
       inherited?: ApiAuthority,
+      root?: HostApiRootAuthority,
     ): AsyncIterable<ApiStreamFrame> {
       const request = copyJson(unsafe);
+      const capturedRoot = inherited?.root ?? captureRoot(root, options.environmentId);
       return {
         [Symbol.asyncIterator]() {
           const controller = new AbortController();
@@ -416,6 +494,10 @@ export function createApiBroker(options: {
           const authority: ApiAuthority = {
             ...(inherited ?? { callers: [record], calls: [] }),
             allowWrite: false,
+            ...(capturedRoot ? { root: capturedRoot } : {}),
+          };
+          const revalidate = async () => {
+            if (authority.root) await authority.root.revalidate();
           };
           const callId = NodeCrypto.randomUUID();
           let source: AsyncIterator<ApiStreamEvent> | undefined;
@@ -454,6 +536,7 @@ export function createApiBroker(options: {
                 ...(providerId ? { providerId } : {}),
                 generation,
                 outcome,
+                ...(authority.root ? { principal: authority.root.principal } : {}),
                 operation,
               });
             } catch {
@@ -536,6 +619,12 @@ export function createApiBroker(options: {
               throw new Error("Invalid API generation");
             context = validateContext(request.context);
             const captured = context;
+            await revalidate();
+            if (
+              authority.root &&
+              authority.root.principal.environmentId !== captured.resource.environmentId
+            )
+              throw new Error("Root authority resource mismatch");
             if (authority.callers.at(-1) !== record) throw new Error("Invalid API caller");
             const key = JSON.stringify([record.id, request.id, "stream", request.name]);
             if (authority.calls.includes(key) || authority.calls.length >= 8)
@@ -562,6 +651,8 @@ export function createApiBroker(options: {
               (item) => item.providerId === providerId && item.definition.id === request.id,
             );
             if (!provider) throw new Error("Dependency API unavailable");
+            if (provider.requiresRootAuthority && !authority.root)
+              throw new Error("API root authority required");
             generation = providerGeneration(provider);
             if (
               request.expectedGeneration !== undefined &&
@@ -589,6 +680,7 @@ export function createApiBroker(options: {
               if (callers.at(-1) !== owner) callers.push(owner);
             }
             validate = async () => {
+              await revalidate();
               active();
               for (const caller of callers) {
                 await scope(caller, captured);
@@ -617,6 +709,7 @@ export function createApiBroker(options: {
                       calls: [...authority.calls, key],
                       allowWrite: false,
                       parentCallId: callId,
+                      ...(authority.root ? { root: authority.root } : {}),
                     },
                   )
                 : provider.subscribe?.(
@@ -632,6 +725,7 @@ export function createApiBroker(options: {
                       providerId: provider.providerId,
                       providerGeneration: generation,
                       callerGenerations: Object.freeze(authority.callers.map(captureCaller)),
+                      ...(authority.root ? { principal: authority.root.principal } : {}),
                     }),
                     request.cursor,
                   );
