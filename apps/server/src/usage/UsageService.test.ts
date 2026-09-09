@@ -13,7 +13,6 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
 import { ProjectId, ThreadId, UsageDay, type UsageSummaryInput } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
-import * as Duration from "effect/Duration";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -22,6 +21,8 @@ import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
 import * as Scheduler from "effect/Scheduler";
 import * as Schema from "effect/Schema";
+import * as Tracer from "effect/Tracer";
+
 import * as TestClock from "effect/testing/TestClock";
 import { HttpClient, HttpClientResponse } from "effect/unstable/http";
 
@@ -141,6 +142,8 @@ function codexRollout(
     .map((line) => JSON.stringify(line))
     .join("\n");
 }
+
+const decodeUnknownJson = Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Unknown));
 
 const WINDOW: UsageSummaryInput = {
   timeZone: "UTC",
@@ -323,9 +326,7 @@ describe("UsageService", () => {
             assert.strictEqual(breakdown.rows.length, 1);
             assert.strictEqual(breakdown.rows[0]?.totals.outputTokens, 7);
 
-            const persisted = (yield* Schema.decodeUnknownEffect(
-              Schema.fromJsonString(Schema.Unknown),
-            )(
+            const persisted = (yield* decodeUnknownJson(
               yield* Effect.promise(() =>
                 NodeFSP.readFile(NodePath.join(config.stateDir, "usage-scan-cache.json"), "utf8"),
               ),
@@ -496,7 +497,7 @@ describe("UsageService", () => {
       yield* Deferred.succeed(releaseThreadAggregation, undefined);
       yield* Fiber.join(olderThread);
 
-      const persisted = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Unknown))(
+      const persisted = yield* decodeUnknownJson(
         yield* Effect.promise(() =>
           NodeFSP.readFile(NodePath.join(baseDir, "userdata", "usage-scan-cache.json"), "utf8"),
         ),
@@ -1131,8 +1132,20 @@ describe("UsageService", () => {
             "example-model": { inputCostPerMillionTokens: 2, outputCostPerMillionTokens: 8 },
           },
         });
-        const second = yield* service.readSummary(WINDOW).pipe(Effect.forkChild);
-        yield* Effect.yieldNow;
+        const secondScanStarted = yield* Deferred.make<void>();
+        const tracer = Tracer.make({
+          span: (options) => {
+            const span = new Tracer.NativeSpan(options);
+            if (span.name === "UsageService.scanSummary") {
+              Deferred.doneUnsafe(secondScanStarted, Effect.void);
+            }
+            return span;
+          },
+        });
+        const second = yield* service
+          .readSummary(WINDOW)
+          .pipe(Effect.withTracer(tracer), Effect.forkChild);
+        yield* Deferred.await(secondScanStarted);
         yield* Deferred.succeed(releaseRates, undefined);
 
         const original = yield* Fiber.join(first);

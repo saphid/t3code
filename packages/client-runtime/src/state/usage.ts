@@ -1,0 +1,95 @@
+import {
+  USAGE_EXPLICIT_REFRESH_SINCE,
+  type EnvironmentId,
+  type UsageSummaryInput,
+} from "@t3tools/contracts";
+import * as Schema from "effect/Schema";
+import type { AtomRegistry } from "effect/unstable/reactivity";
+
+import { EnvironmentRpcUnavailableError } from "../rpc/client.ts";
+import type { createEnvironmentPresentationAtoms } from "./presentation.ts";
+import { executeAtomQuery, runAtomCommand, squashAtomCommandFailure } from "./runtime.ts";
+import type { createServerEnvironmentAtoms } from "./server.ts";
+
+const isEnvironmentRpcUnavailable = Schema.is(EnvironmentRpcUnavailableError);
+
+/** Refresh pricing, then await each selected environment's rescan while it remains connected. */
+export async function refreshUsage({
+  registry,
+  server,
+  presentations,
+  environmentIds,
+  input,
+  refreshToken,
+  contractVersions,
+}: {
+  registry: AtomRegistry.AtomRegistry;
+  server: Pick<
+    ReturnType<typeof createServerEnvironmentAtoms>,
+    "usageSummary" | "refreshUsageRates" | "refreshUsageSummary"
+  >;
+  presentations: Pick<ReturnType<typeof createEnvironmentPresentationAtoms>, "presentationAtom">;
+  environmentIds: readonly EnvironmentId[];
+  input: UsageSummaryInput;
+  refreshToken: string;
+  contractVersions?: ReadonlyMap<EnvironmentId, number>;
+}): Promise<void> {
+  const results = await Promise.allSettled(
+    environmentIds.map(async (environmentId) => {
+      const query = server.usageSummary({ environmentId, input });
+      const presentation = presentations.presentationAtom(environmentId);
+      const controller = new AbortController();
+      const abortWhenDisconnected = () => {
+        if (registry.get(presentation)?.connection.phase !== "connected") controller.abort();
+      };
+      const unsubscribe = registry.subscribe(presentation, abortWhenDisconnected);
+      abortWhenDisconnected();
+      try {
+        const ratesResult = await runAtomCommand(
+          registry,
+          server.refreshUsageRates,
+          { environmentId, input: {} },
+          { reportFailure: false },
+        );
+        const sessionUnavailable =
+          ratesResult._tag === "Failure" &&
+          isEnvironmentRpcUnavailable(squashAtomCommandFailure(ratesResult));
+        // Invalidate even on failure so reconnects cannot reuse the old summary.
+        registry.refresh(query);
+        if (sessionUnavailable || controller.signal.aborted) return;
+        // The token bypasses the source cache, then the ordinary window query
+        // publishes that completed snapshot to every subscribed client view.
+        const scanned =
+          (contractVersions?.get(environmentId) ?? 0) >= USAGE_EXPLICIT_REFRESH_SINCE
+            ? await runAtomCommand(
+                registry,
+                server.refreshUsageSummary,
+                { environmentId, input },
+                { reportFailure: false },
+              )
+            : await executeAtomQuery(
+                registry,
+                server.usageSummary({
+                  environmentId,
+                  input: { ...input, refreshToken },
+                }),
+                { reportFailure: false, signal: controller.signal, refresh: true },
+              );
+        if (controller.signal.aborted) return;
+        if (scanned._tag === "Failure") throw squashAtomCommandFailure(scanned);
+        const published = await executeAtomQuery(registry, query, {
+          reportFailure: false,
+          signal: controller.signal,
+          refresh: true,
+        });
+        if (!controller.signal.aborted && published._tag === "Failure") {
+          throw squashAtomCommandFailure(published);
+        }
+      } finally {
+        unsubscribe();
+      }
+    }),
+  );
+  const failed = results.find((result) => result.status === "rejected");
+  if (failed?.status === "rejected") throw failed.reason;
+}

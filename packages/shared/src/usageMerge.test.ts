@@ -12,7 +12,6 @@ import {
 import { describe, expect, it } from "vite-plus/test";
 
 import {
-  makeUsageRefreshToken,
   mergeUsage,
   projectFilterForEnvironment,
   retainUsageStatuses,
@@ -786,26 +785,6 @@ describe("mergeUsage", () => {
     expect(merged.availableThroughTime).toBe("2026-08-08T00:30:00.000Z");
     expect(merged.hourly.map((hour) => hour.hourStart)).toEqual(["2026-08-07T23:30:00.000Z"]);
     expect(merged.costUsd).toBe(3);
-  });
-});
-
-describe("makeUsageRefreshToken", () => {
-  it("changes when an environment returns a newer source snapshot", () => {
-    const first = environment("env-a", summary([], []));
-    const second = {
-      ...first,
-      summary: { ...first.summary, readAt: "2026-08-07T00:01:00.000Z" },
-    };
-
-    expect(makeUsageRefreshToken([second])).not.toBe(makeUsageRefreshToken([first]));
-  });
-
-  it("is stable when environment order changes", () => {
-    const first = environment("env-a", summary([], []));
-    const second = environment("env-b", summary([], []));
-
-    expect(makeUsageRefreshToken([first, second])).toBe(makeUsageRefreshToken([second, first]));
-    expect(makeUsageRefreshToken([])).toBeUndefined();
   });
 });
 

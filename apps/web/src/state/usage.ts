@@ -9,7 +9,6 @@
 import { useAtomValue } from "@effect/atom-react";
 import {
   USAGE_CONTRACT_VERSION,
-  USAGE_EXPLICIT_REFRESH_SINCE,
   USAGE_THREAD_BREAKDOWN_SINCE,
   type EnvironmentId,
   type UsageSummary,
@@ -30,7 +29,6 @@ import {
   type UsageRefreshState,
 } from "@t3tools/shared/usageRefreshState";
 import {
-  makeUsageRefreshToken,
   mergeUsage,
   projectFilterForEnvironment,
   retainUsageStatuses,
@@ -40,12 +38,11 @@ import {
   type MergedUsage,
   type SettledUsageStatuses,
 } from "@t3tools/shared/usageMerge";
-import { executeAtomQuery } from "@t3tools/client-runtime/state/runtime";
+import { refreshUsage } from "@t3tools/client-runtime/state/usage";
 import { randomUUID } from "../lib/utils";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { environmentPresentations } from "./presentation";
 import { serverEnvironment } from "./server";
-import { useAtomCommand } from "./use-atom-command";
 
 export interface EnvironmentUsageStatus {
   readonly environmentId: EnvironmentId;
@@ -97,7 +94,7 @@ export interface UsageView {
   /** True while a previously loaded snapshot is being refreshed. */
   readonly isRefreshing: boolean;
   readonly refreshError?: string | null;
-  readonly refresh: (requestedInput?: UsageSummaryInput) => void;
+  readonly refresh: (requestedInput?: UsageSummaryInput) => Promise<void>;
 }
 
 export function filterUsageEnvironmentsForProject<
@@ -200,12 +197,6 @@ export function useUsage(
     [answered, projectFilter],
   );
 
-  const refreshUsageSummary = useAtomCommand(serverEnvironment.refreshUsageSummary, {
-    reportFailure: false,
-  });
-  const refreshUsageRates = useAtomCommand(serverEnvironment.refreshUsageRates, {
-    reportFailure: false,
-  });
   const [manualRefreshState, setManualRefreshState] = useState<UsageRefreshState>({
     windowKey: viewKey,
     requestId: 0,
@@ -231,7 +222,7 @@ export function useUsage(
   }, [manualRefreshState, viewKey]);
 
   const refresh = useCallback(
-    (requestedInput?: UsageSummaryInput) => {
+    async (requestedInput?: UsageSummaryInput) => {
       const refreshEnvironments = usageRefreshTargets(
         filterUsageEnvironmentsForProject(selectedEnvironments, projectFilter),
       );
@@ -259,75 +250,26 @@ export function useUsage(
       pendingRefreshViewKey.current = requestViewKey;
       setManualRefreshState(nextRefreshState);
 
-      const legacyOrUnknown = refreshEnvironments.filter(
-        (environment) => (environment.summary?.contractVersion ?? 0) < USAGE_EXPLICIT_REFRESH_SINCE,
-      );
-      const legacyAnswered = legacyOrUnknown.flatMap((environment) =>
-        environment.summary === null
-          ? []
-          : [
-              {
-                environmentId: environment.environmentId,
-                label: environment.label,
-                summary: environment.summary,
-              },
-            ],
-      );
-      const refreshToken = JSON.stringify([
-        makeUsageRefreshToken(legacyAnswered) ?? "unknown",
-        randomUUID(),
-      ]);
-      const environmentsAfterRates = refreshEnvironments.map(async (environment) => {
-        await Promise.allSettled([
-          refreshUsageRates({ environmentId: environment.environmentId, input: {} }),
-        ]);
-        return environment;
-      });
-      const summaryRefreshes = environmentsAfterRates.map(async (environmentAfterRates) => {
-        const environment = await environmentAfterRates;
-        let result;
-        if ((environment.summary?.contractVersion ?? 0) < USAGE_EXPLICIT_REFRESH_SINCE) {
-          const refreshed = await executeAtomQuery(
-            appAtomRegistry,
-            serverEnvironment.usageSummary({
-              environmentId: environment.environmentId,
-              input: { ...requestInput, refreshToken },
-            }),
-            { reportFailure: false, refresh: true },
-          );
-          if (refreshed._tag === "Failure") {
-            result = refreshed;
-          } else {
-            const baseAtom = serverEnvironment.usageSummary({
-              environmentId: environment.environmentId,
-              input: requestInput,
-            });
-            if (appAtomRegistry.get(baseAtom).waiting) {
-              await executeAtomQuery(appAtomRegistry, baseAtom, {
-                reportFailure: false,
-              });
-            }
-            result = await executeAtomQuery(appAtomRegistry, baseAtom, {
-              reportFailure: false,
-              refresh: true,
-            });
-          }
-        } else {
-          result = await refreshUsageSummary({
-            environmentId: environment.environmentId,
-            input: requestInput,
-          });
-        }
+      let error: string | null = null;
+      try {
+        await refreshUsage({
+          registry: appAtomRegistry,
+          server: serverEnvironment,
+          presentations: environmentPresentations,
+          environmentIds: refreshEnvironments.map(({ environmentId }) => environmentId),
+          contractVersions: new Map(
+            refreshEnvironments.map((e) => [e.environmentId, e.summary?.contractVersion ?? 0]),
+          ),
+          input: requestInput,
+          refreshToken: randomUUID(),
+        });
 
         if (refreshThreads) {
           for (const contribution of filterProviderContributionsForProject(
             projectFilter,
             merged.providerContributions,
           )) {
-            if (
-              contribution.environmentId !== environment.environmentId ||
-              contribution.contractVersion < USAGE_THREAD_BREAKDOWN_SINCE
-            ) {
+            if (contribution.contractVersion < USAGE_THREAD_BREAKDOWN_SINCE) {
               continue;
             }
             appAtomRegistry.refresh(
@@ -343,40 +285,23 @@ export function useUsage(
             );
           }
         }
-        return result;
-      });
-
-      void Promise.all(summaryRefreshes)
-        .then((results) => {
-          const nextState = completeUsageRefresh(
-            currentViewKey.current,
-            currentRefreshId.current,
-            requestViewKey,
-            requestId,
-            results.some((result) => result._tag === "Failure")
-              ? "Refresh failed. Showing the last successful usage snapshot."
-              : null,
-          );
-          if (nextState !== null) setManualRefreshState(nextState);
-        })
-        .catch(() => {
-          const nextState = completeUsageRefresh(
-            currentViewKey.current,
-            currentRefreshId.current,
-            requestViewKey,
-            requestId,
-            "Refresh failed. Showing the last successful usage snapshot.",
-          );
-          if (nextState !== null) setManualRefreshState(nextState);
-        });
+      } catch {
+        error = "Refresh failed. Showing the last successful usage snapshot.";
+      }
+      const nextState = completeUsageRefresh(
+        currentViewKey.current,
+        currentRefreshId.current,
+        requestViewKey,
+        requestId,
+        error,
+      );
+      if (nextState !== null) setManualRefreshState(nextState);
     },
     [
       merged.providerContributions,
       projectFilter,
       rangeKey,
       refreshThreads,
-      refreshUsageRates,
-      refreshUsageSummary,
       selectedEnvironmentIds,
       selectedEnvironments,
     ],
