@@ -30,6 +30,7 @@ import { ProjectionProjectRepository } from "../persistence/Services/ProjectionP
 import { ProjectionThreadRepository } from "../persistence/Services/ProjectionThreads.ts";
 import { WorkspaceFileSystem } from "../workspace/WorkspaceFileSystem.ts";
 import { makeExtensionScopeResolver } from "./scope.ts";
+import { makeTerminalApiProvider } from "./terminalApi.ts";
 import { boundedWorkspaceText } from "./workspaceText.ts";
 
 const decodeJson = Schema.decodeUnknownEffect(Schema.Json);
@@ -58,6 +59,7 @@ export const make = Effect.fn("EnvironmentExtensions.make")(function* (
   const threads = yield* ProjectionThreadRepository;
   const workspace = yield* WorkspaceFileSystem;
   const workspaceApi = yield* makeWorkspaceApiProvider();
+  const terminalApi = yield* makeTerminalApiProvider();
   const catalogueChanges = yield* ExtensionCatalogueChanges;
   const resolve = makeExtensionScopeResolver({ environmentId, projects, threads });
   const read = Effect.fn("EnvironmentExtensions.readWorkspace")(function* (
@@ -95,7 +97,7 @@ export const make = Effect.fn("EnvironmentExtensions.make")(function* (
           ...(import.meta.url.endsWith(".mjs")
             ? { workerUrl: new URL("./extension-worker.mjs", import.meta.url) }
             : {}),
-          apiProviders: [workspaceApi],
+          apiProviders: [workspaceApi, terminalApi],
           onCatalogueChanged: () => Effect.runSync(catalogueChanges.publish),
           auditApi: (event) => {
             Effect.runSync(Effect.logInfo("Extension API invocation", { ...event }));

@@ -16,7 +16,11 @@ for (const name of ["README.md", "AUTHORING.md"]) {
   }
 }
 const manifests = [];
-for (const name of ["installable-files", "installable-files-consumer"]) {
+for (const name of [
+  "installable-files",
+  "installable-files-consumer",
+  "installable-terminal-observer",
+]) {
   const dir = NodePath.join(sdk, "examples", name);
   const manifest = validateEnvironmentPackage(
     JSON.parse(await NodeFSP.readFile(NodePath.join(dir, "t3-extension.json"), "utf8")),
@@ -31,6 +35,7 @@ for (const name of ["installable-files", "installable-files-consumer"]) {
   manifests.push(manifest);
 }
 NodeAssert.equal(manifests[1].dependencies[0].pluginId, manifests[0].manifest.id);
+NodeAssert.ok(manifests[2].requires.some((api) => api.id === "t3.terminal/sessions"));
 NodeAssert.ok(manifests[0].provides.some((api) => api.id === "t3.file/presentation"));
 console.log(
   "Packaged format-2 provider/consumer and authoring links verified; host runtime behavior is a separate check.",

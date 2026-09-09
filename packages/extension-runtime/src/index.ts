@@ -1313,6 +1313,7 @@ export async function createExtensionRuntime(options: RuntimeOptions): Promise<E
 }
 
 export type {
+  HostApiProvider,
   HostApiInvocationMetadata,
   HostApiPrincipal,
   HostApiRootAuthority,

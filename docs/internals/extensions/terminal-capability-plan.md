@@ -1,10 +1,10 @@
 # Public terminal capability proposal
 
-Status: proposed follow-on slice, not an implemented API or a terminal replacement claim. This proposal extends the [capability architecture](capability-system.md). It was prepared from the lxso2 integration source before any streaming, resource, or terminal contract changes. Browser capabilities must use the same caller, resource, and stream primitives.
+Status: staged proposal with implemented prerequisites; not a terminal replacement claim. This proposal extends the [capability architecture](capability-system.md). Generic format-3 streams and host root-authority propagation are implemented and documented in the [stream implementation round](stream-implementation-round.md) and [authenticated authority plan](authenticated-authority-plan.md). The bounded native terminal metadata slice is implemented in source and focused tests in [terminal-metadata-slice](terminal-metadata-slice.md); its installed metadata and status-view proof passed on lxso2 (v12c). Browser capabilities must use the same caller, resource, and stream primitives.
 
 ## Existing behavior and boundaries
 
-The current [terminal extension](../../../apps/web/src/extensions/terminal/index.tsx) injects private TerminalBindings and renders PersistentThreadTerminal components. It is a privileged wrapper. An installable package cannot reproduce its behavior with the current unary SDK alone.
+The current [terminal extension](../../../apps/web/src/extensions/terminal/index.tsx) injects private TerminalBindings and renders PersistentThreadTerminal components. It is a privileged wrapper. Generic streams and bounded metadata inspection now exist, but an installable package cannot yet reproduce its terminal output, input, resource ownership or renderer behavior.
 
 The underlying host already owns PTYs through TerminalManager. Its open, write, resize, clear, restart, close, attachStream and metadata subscription operations are the right adapter boundary. The client state layer serializes lifecycle commands per thread and coalesces resize per session. An ordinary package must obtain equivalent behavior through public contracts without importing either that state layer or ThreadTerminalDrawer.
 
@@ -54,13 +54,13 @@ After a client reload or reconnect, reattach to the same resource. After an envi
 
 ## Generic streaming extension
 
-Do not implement terminal output as repeated unary reads or a terminal-specific core switch. Add one public streaming operation model reusable by terminal, browser, source control and orchestration.
+The generic format-3 stream transport and broker lifecycle are implemented prerequisites. They are transport foundations only; no terminal stream provider is registered by this document. Do not implement terminal output as repeated unary reads or a terminal-specific core switch. Add one public streaming operation model reusable by terminal, browser, source control and orchestration.
 
 The proposed portable API definition gains separately declared streams with name, inputSchema, eventSchema and requiredGrants. Streams are observational/read-only; controls remain ordinary write methods. Server API registration must match every declared stream exactly and expose an AsyncIterable implementation or an equivalent cancellable producer interface. Independent TypeScript consumers receive a typed subscribeApi binding.
 
 The initial SDK shape is conceptually subscribeApi(request, signal) -> AsyncIterable<ApiStreamFrame<T>>. Request retains API ID/range, stream name, input, context, expected generation and an optional opaque resume cursor. Frame envelopes contain a host stream ID, monotonically increasing sequence, optional resumable cursor and a bounded payload. Distinguish initial snapshot, live data, reset-required and terminal closed/error states. A stream carries inherited read-only authority; nested API calls cannot gain write capability.
 
-This is incompatible with the current format-2 executable handshake and unary-only client host. Prefer a format-3 discriminator while keeping surface manifest API version 1 and ViewRecord version 1. Preserve format-1/2 loaders. Do not merely add ignored stream fields to format 2 and advertise a half-supported package. Installation-list protocol negotiation must advertise supported package formats and streaming/assets support before a client opens a new RPC. Older hosts reject format 3 clearly; older clients show an unavailable renderer rather than entering unknown-method retries.
+Format 3 is now the implemented streaming handshake while format-2 unary compatibility remains supported. Keep surface manifest API version 1 and ViewRecord version 1, and preserve format-1/2 loaders. Do not add ignored stream fields to format 2 or advertise a half-supported package. Installation-list protocol negotiation must advertise supported package formats and streaming/assets support before a client opens a new RPC. The verified stream transport is still not evidence of a terminal domain adapter. Older hosts reject format 3 clearly; older clients show an unavailable renderer rather than entering unknown-method retries.
 
 Use one authenticated subscribeExtensionApi WS operation and the same extension broker selection/authority logic. Worker IPC adds generic subscribe/frame/ack/cancel messages; it does not carry raw app stores or a dedicated terminal socket. A transport adapter for relay/tunnel uses existing authenticated connection machinery. A stream ID belongs to a particular authenticated connection and invocation generation; ACK and cancel messages validate that ownership.
 
@@ -78,21 +78,21 @@ Use a composite resource epoch and sequence cursor. A cursor from another resour
 
 ## Terminal API contract families
 
-The names below are proposed generic catalogue entries, not advertised providers.
+The names below are proposed generic catalogue entries, except the bounded inspect method documented above; no terminal output or control method is an advertised provider.
 
-| API                      | Operation                          | Effect and host authority                                                                                        |
-| ------------------------ | ---------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
-| t3.terminal/sessions     | acquire or import existing session | Write, t3.terminal/create or explicit existing-resource attach authority; request identity deduplicates creation |
-| t3.terminal/sessions     | inspect                            | Read, t3.terminal/read; bounded metadata without full history or environment secrets                             |
-| t3.terminal/sessions     | metadata stream                    | Read, t3.terminal/read, filtered to authorized project/thread resources                                          |
-| t3.terminal/sessions     | output stream                      | Read, t3.terminal/read; existing resource only, no implicit spawn/restart/resize                                 |
-| t3.terminal/sessions     | input                              | Write, t3.terminal/input; exact ordered bytes to one resource/epoch                                              |
-| t3.terminal/sessions     | resize                             | Write, t3.terminal/resize; coalesced per resource and authorized controlling lease                               |
-| t3.terminal/sessions     | clearHistory                       | Write, t3.terminal/clear; distinct from sending Ctrl-L or clearing only local renderer state                     |
-| t3.terminal/sessions     | restart                            | Write, t3.terminal/restart; explicit new process epoch and restart receipt, preserving resource identity         |
-| t3.terminal/sessions     | close                              | Write, t3.terminal/close; exact session, running-subprocess policy checked, explicit history deletion choice     |
-| t3.terminal/presentation | open                               | Read descriptor creation; references an existing terminal resource and supported dock/side placement             |
-| Shared resource API      | attach/release                     | Acquire/release scoped observational attachment, never implicit PTY destruction                                  |
+| API                      | Operation                          | Effect and host authority                                                                                                                |
+| ------------------------ | ---------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| t3.terminal/sessions     | acquire or import existing session | Write, t3.terminal/create or explicit existing-resource attach authority; request identity deduplicates creation                         |
+| t3.terminal/sessions     | inspect                            | Read, t3.terminal/read; bounded metadata without full history or environment secrets (implemented host adapter; installed proof pending) |
+| t3.terminal/sessions     | metadata stream                    | Read, t3.terminal/read, filtered to authorized project/thread resources                                                                  |
+| t3.terminal/sessions     | output stream                      | Read, t3.terminal/read; existing resource only, no implicit spawn/restart/resize                                                         |
+| t3.terminal/sessions     | input                              | Write, t3.terminal/input; exact ordered bytes to one resource/epoch                                                                      |
+| t3.terminal/sessions     | resize                             | Write, t3.terminal/resize; coalesced per resource and authorized controlling lease                                                       |
+| t3.terminal/sessions     | clearHistory                       | Write, t3.terminal/clear; distinct from sending Ctrl-L or clearing only local renderer state                                             |
+| t3.terminal/sessions     | restart                            | Write, t3.terminal/restart; explicit new process epoch and restart receipt, preserving resource identity                                 |
+| t3.terminal/sessions     | close                              | Write, t3.terminal/close; exact session, running-subprocess policy checked, explicit history deletion choice                             |
+| t3.terminal/presentation | open                               | Read descriptor creation; references an existing terminal resource and supported dock/side placement                                     |
+| Shared resource API      | attach/release                     | Acquire/release scoped observational attachment, never implicit PTY destruction                                                          |
 
 Do not expose the existing close-with-omitted-terminalId operation as an accidental close-all. Batch close, if needed for native parity, is an explicit bounded resource list with per-resource authorization and receipts.
 
@@ -130,10 +130,14 @@ Use lxso2 and the existing heavy-check lock. Preserve baseline metrics and fixtu
 
 Measure bytes, queued memory, frame count and input-to-output latency against the built-in on the same fixture. Verify native web and Electron behavior separately. React Native and SwiftUI need explicit renderer/transport decisions; browser-origin portability is not mobile implementation proof. V1 thread IDs may map directly to existing terminal records, while V2 session/thread adapters must validate real ownership and never manufacture equivalence.
 
+## Current terminal metadata boundary
+
+The implemented `t3.terminal/sessions@1.0.0` catalogue currently exposes only `inspect`, requiring `t3.terminal/read`. The host adapter requires root authority and `AuthTerminalOperateScope`, resolves and revalidates the validated thread/project/workspace scope, and returns only terminal ID, status, label, subprocess flag, exit code, exit signal and bounded timestamp. It never opens, attaches, spawns, resizes, reads history or controls a PTY. Missing sessions return null; moved or mismatched sessions are unavailable. See [terminal-metadata-slice](terminal-metadata-slice.md) for the frozen contract and limits. The source and focused tests exist; the independently installed consumer proof is still pending.
+
 ## Explicitly impossible or unproven today
 
-The installed format-2 path has no generic streaming API, authenticated asset delivery, durable terminal resource catalogue or public Ghostty package. It cannot presently replace the native interactive terminal. Current TerminalManager history persistence does not provide live PTY survival across environment restart. Existing raw history replay does not prove exact alternate-screen restoration after truncation. Client code and Node workers remain trusted rather than sandboxed. Full terminal parity, browser-shared streaming, mobile rendering and V2 terminal ownership remain unproven until the implementation and comparative evidence above exist.
+The format-2 unary path remains compatible, and format 3 now provides generic streaming transport, but there is still no terminal output provider, terminal input/resize/restart/close controls, attachment leases, authenticated terminal asset delivery, durable terminal resource catalogue or public Ghostty package. The implemented terminal metadata provider is intentionally bounded inspection only; installed proof is pending. It cannot presently replace the native interactive terminal. Current TerminalManager history persistence does not provide live PTY survival across environment restart. Existing raw history replay does not prove exact alternate-screen restoration after truncation. Client code and Node workers remain trusted rather than sandboxed. Full terminal parity, browser-shared streaming, React Native/SwiftUI mobile rendering, and V2 terminal ownership remain unproven until the implementation and comparative evidence above exist.
 
 ## Implemented prerequisite boundary
 
-The current runtime now passes immutable HostApiInvocationMetadata to host API adapters: host call/parent IDs, root/immediate plugin IDs, selected provider lifetime, and each caller installation/content generation. Scope and cancellation remain separate existing arguments. This does not yet carry an authenticated transport principal, bind native connections, allocate resource leases or provide streams. The broader context proposed above is still required before Browser/Terminal ownership can be implemented safely.
+The current runtime now passes immutable HostApiInvocationMetadata to host API adapters: host call/parent IDs, root/immediate plugin IDs, selected provider lifetime, and each caller installation/content generation. Scope and cancellation remain separate existing arguments. This now carries host root authority through unary and stream broker calls, and the format-3 stream transport is implemented. It does not bind native terminal connections, allocate durable terminal resources or attachment leases, and the terminal metadata provider does not claim those capabilities. The broader resource and ownership context proposed above is still required before Browser/Terminal ownership can be implemented safely.

@@ -6,6 +6,8 @@ export const WORKSPACE_FILES = "t3.workspace/files";
 export const WORKSPACE_LIST_ENTRIES = "t3.workspace/list-entries";
 export const FILE_PRESENTATION = "t3.file/presentation";
 export const FILE_PRESENTATION_OPEN = "t3.file/open";
+export const TERMINAL_SESSIONS = "t3.terminal/sessions";
+export const TERMINAL_READ = "t3.terminal/read";
 export type WorkspaceListEntriesInput = {
   readonly relativePath: string;
   readonly cursor?: string;
@@ -26,6 +28,16 @@ export type FilePresentationResult = {
   readonly placement: "side-panel" | "bottom-dock" | "full-page" | "compact-detail";
   readonly restoreState: JsonObject;
 };
+export type TerminalSessionsInput = { readonly terminalId: string };
+export type TerminalSessionResult = {
+  readonly terminalId: string;
+  readonly status: "starting" | "running" | "exited" | "error";
+  readonly label: string;
+  readonly hasRunningSubprocess: boolean;
+  readonly exitCode: number | null;
+  readonly exitSignal: number | null;
+  readonly updatedAt: string;
+} | null;
 const path = { type: "string", maxLength: 512 };
 export const workspaceFilesApi = defineApi<{
   listEntries: { input: WorkspaceListEntriesInput; output: WorkspaceListEntriesResult };
@@ -124,10 +136,53 @@ export const filePresentationApi = defineApi<{
     },
   ],
 });
+export const terminalSessionsApi = defineApi<{
+  inspect: { input: TerminalSessionsInput; output: TerminalSessionResult };
+}>({
+  id: TERMINAL_SESSIONS,
+  version: "1.0.0",
+  methods: [
+    {
+      name: "inspect",
+      effect: "read",
+      requiredGrants: [TERMINAL_READ],
+      inputSchema: {
+        type: "object",
+        additionalProperties: false,
+        required: ["terminalId"],
+        properties: { terminalId: { type: "string", minLength: 1, maxLength: 128 } },
+      },
+      outputSchema: {
+        type: ["object", "null"],
+        additionalProperties: false,
+        required: [
+          "terminalId",
+          "status",
+          "label",
+          "hasRunningSubprocess",
+          "exitCode",
+          "exitSignal",
+          "updatedAt",
+        ],
+        properties: {
+          terminalId: { type: "string", minLength: 1, maxLength: 128 },
+          status: { enum: ["starting", "running", "exited", "error"] },
+          label: { type: "string", maxLength: 128 },
+          hasRunningSubprocess: { type: "boolean" },
+          exitCode: { type: ["integer", "null"] },
+          exitSignal: { type: ["integer", "null"] },
+          updatedAt: { type: "string", maxLength: 64 },
+        },
+      },
+    },
+  ],
+});
+
 /** Contracts only: their presence does not advertise a functioning or authorized provider. */
 export const GENERIC_API_CATALOGUE: readonly ApiDefinition[] = [
   workspaceFilesApi.definition,
   filePresentationApi.definition,
+  terminalSessionsApi.definition,
 ];
 function canonical(value: unknown): string {
   if (Array.isArray(value)) return "[" + value.map(canonical).join(",") + "]";
@@ -151,3 +206,4 @@ export function assertProvidedApiOwner(pluginId: string, definition: ApiDefiniti
 
 export const WORKSPACE_FILES_API = workspaceFilesApi.definition;
 export const FILE_PRESENTATION_API = filePresentationApi.definition;
+export const TERMINAL_SESSIONS_API = terminalSessionsApi.definition;

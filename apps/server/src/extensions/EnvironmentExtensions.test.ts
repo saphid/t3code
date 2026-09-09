@@ -26,6 +26,7 @@ import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 import { WorkspaceFileSystem } from "../workspace/WorkspaceFileSystem.ts";
 import { toSdkContext } from "./scope.ts";
 import { make } from "./EnvironmentExtensions.ts";
+import { TerminalManager } from "../terminal/Manager.ts";
 
 const project = Schema.decodeUnknownSync(ProjectionProject)({
   projectId: "project-a",
@@ -184,6 +185,18 @@ function fixture() {
   };
   const services = Layer.mergeAll(
     ExtensionCatalogueChanges.layer,
+    Layer.succeed(TerminalManager, {
+      inspect: () => Effect.succeed(null),
+      open: () => Effect.die("unused terminal open"),
+      attachStream: () => Effect.die("unused terminal attach"),
+      write: () => Effect.die("unused terminal write"),
+      resize: () => Effect.die("unused terminal resize"),
+      clear: () => Effect.die("unused terminal clear"),
+      restart: () => Effect.die("unused terminal restart"),
+      close: () => Effect.die("unused terminal close"),
+      subscribe: () => Effect.die("unused terminal subscribe"),
+      subscribeMetadata: () => Effect.die("unused terminal metadata"),
+    }),
     WorkspacePaths.layer,
     Layer.succeed(ServerEnvironment.ServerEnvironment, {
       getEnvironmentId: Effect.succeed(EnvironmentId.make("env-a")),

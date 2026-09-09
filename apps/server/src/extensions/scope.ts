@@ -79,6 +79,7 @@ export function makeExtensionScopeResolver(dependencies: {
       return yield* fail("Extension workspace context is stale.");
     return {
       cwd: worktreePath ?? found.value.workspaceRoot,
+      worktreePath,
       context: { ...context, resource: { ...context.resource, projectId }, workspaceRevision },
     };
   });

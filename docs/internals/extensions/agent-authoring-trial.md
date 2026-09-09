@@ -62,3 +62,29 @@ is now verified separately: runtime 80/80 (including nine root tests), server ro
 forwarding 10/10 and HTTP 3/3; lint/types/build 0. Installed v11 proof verifies linked
 consumer/provider audit identity, revocation and the existing Files replacement.
 Artifacts: root-authority/, proof/auth-session-root-v11-candidate.json, proof/files-proof-v11.json.
+
+## Terminal metadata authoring round
+
+The fresh Luna builder repeatedly ended its turn with focused execution tests passing while
+required cases, types or lint were still missing. The parent sent it back with exact remaining
+gates. Executed JavaScript tests hid an unavailable vitest import, unbranded fixture IDs,
+incomplete principal types and an unexported host provider type. Public HostApiProvider is now
+an additive runtime type export; adapters must not reach into private broker modules.
+
+The first provider returned null for a workspace mismatch and did not pass AbortSignal into
+Effect.runPromise. Parent review required explicit unavailable errors and acquired/cleanup
+receipts for cancellation. A scheduler yield and immediate abort are not settlement evidence.
+Tests must mutate native/repository state, rather than depend on validation call counts.
+
+The parent initially omitted the new example from the SDK package files list. A test installing
+the actual tarball in an external directory caught the missing files; source-tree tests did not.
+The fixed packaged test validates the included manifest/handler and compiles typed inspection,
+including rejected control methods and cwd fields.
+
+Monitor findings sometimes referred to source that had changed before delivery. The parent
+checked current source and withdrew those findings. Future reports should include the exact
+file hash and relevant excerpt. Evidence paths need the provided absolute location: the
+builder initially chose a different date directory. Keep historical attempts and one canonical
+final manifest. The installed v12c native proof now passes, including its view; a metadata view is not an
+interactive terminal replacement. A failed UI attempt used the native Add panel menu instead
+of Extensions; preserve it and point the monitor at the explicit final manifest.

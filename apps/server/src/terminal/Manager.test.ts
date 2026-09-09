@@ -2618,4 +2618,46 @@ it.layer(
       expect(process.killSignals).toContain("SIGKILL");
     }).pipe(Effect.provide(TestClock.layer())),
   );
+  it.effect("inspects missing, running, and exited sessions without creating or resizing", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter } = yield* createManager();
+      expect(yield* manager.inspect({ threadId: "thread-1", terminalId: "missing" })).toBeNull();
+      expect(ptyAdapter.spawnInputs).toHaveLength(0);
+      const snapshot = yield* manager.open(openInput());
+      const process = ptyAdapter.processes[0];
+      expect(process).toBeDefined();
+      if (!process) return;
+      const spawnCount = ptyAdapter.spawnInputs.length;
+      const running = yield* manager.inspect({
+        threadId: "thread-1",
+        terminalId: DEFAULT_TERMINAL_ID,
+      });
+      expect(running).toMatchObject({
+        terminalId: DEFAULT_TERMINAL_ID,
+        status: "running",
+        cwd: snapshot.cwd,
+        worktreePath: null,
+      });
+      expect(ptyAdapter.spawnInputs).toHaveLength(spawnCount);
+      expect(process.resizeCalls).toHaveLength(0);
+      const exitedReceipt = yield* Deferred.make<void>();
+      const unsubscribe = yield* manager.subscribe((event) =>
+        event.type === "exited" &&
+        event.threadId === "thread-1" &&
+        event.terminalId === DEFAULT_TERMINAL_ID
+          ? Deferred.succeed(exitedReceipt, undefined).pipe(Effect.asVoid)
+          : Effect.void,
+      );
+      process.emitExit({ exitCode: 7, signal: 9 });
+      yield* Deferred.await(exitedReceipt);
+      unsubscribe();
+      const exited = yield* manager.inspect({
+        threadId: "thread-1",
+        terminalId: DEFAULT_TERMINAL_ID,
+      });
+      expect(exited).toMatchObject({ status: "exited", exitCode: 7, exitSignal: 9 });
+      expect(ptyAdapter.spawnInputs).toHaveLength(spawnCount);
+      expect(process.resizeCalls).toHaveLength(0);
+    }),
+  );
 });

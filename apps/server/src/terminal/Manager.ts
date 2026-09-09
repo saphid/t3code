@@ -156,6 +156,12 @@ export class TerminalManager extends Context.Service<
       input: TerminalOpenInput,
     ) => Effect.Effect<TerminalSessionSnapshot, TerminalError>;
 
+    /** Read bounded metadata for an existing session without starting or changing it. */
+    readonly inspect: (input: {
+      readonly threadId: string;
+      readonly terminalId: string;
+    }) => Effect.Effect<TerminalSummary | null, TerminalError>;
+
     /**
      * Attach to a terminal and stream its initial snapshot followed by live events.
      *
@@ -2719,6 +2725,8 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       Effect.map((session) => (Option.isSome(session) ? summary(session.value) : null)),
     );
 
+  const inspect: TerminalManager["Service"]["inspect"] = readTerminalMetadata;
+
   const subscribe: TerminalManager["Service"]["subscribe"] = (listener) =>
     Effect.sync(() => {
       terminalEventListeners.add(listener);
@@ -3037,6 +3045,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
 
   return TerminalManager.of({
     open,
+    inspect,
     attachStream,
     write,
     resize,

@@ -39,12 +39,20 @@ NodeFS.writeFileSync(
   NodePath.join(consumer, "capabilities.ts"),
   `
 import { bindApi } from "@t3tools/extension-sdk/capabilities";
-import { workspaceFilesApi } from "@t3tools/extension-sdk/catalogue";
+import { workspaceFilesApi, terminalSessionsApi } from "@t3tools/extension-sdk/catalogue";
 const context = { resource: { namespace: "thirdparty.files", id: "root", environmentId: "env" }, client: "test" };
 const api = bindApi(workspaceFilesApi, { async invokeApi() { return { entries: [], nextCursor: null }; } }, context);
 const result = await api.invoke("listEntries", { relativePath: "" }, new AbortController().signal);
 const kind: "file" | "directory" | undefined = result.entries[0]?.kind;
 void kind;
+const terminal = bindApi(terminalSessionsApi, { async invokeApi() { return null; } }, context);
+const observed = await terminal.invoke("inspect", { terminalId: "term-1" }, new AbortController().signal);
+const terminalState: "starting" | "running" | "exited" | "error" | undefined = observed?.status;
+void terminalState;
+// @ts-expect-error terminal observation does not authorize process control
+void terminal.invoke("write", { terminalId: "term-1", data: "exit" }, new AbortController().signal);
+// @ts-expect-error native cwd is not a public terminal selector
+void terminal.invoke("inspect", { terminalId: "term-1", cwd: "/other" }, new AbortController().signal);
 // @ts-expect-error unknown method is rejected by public typed binding
 void api.invoke("privateStore", {}, new AbortController().signal);
 // @ts-expect-error required public input cannot be omitted
