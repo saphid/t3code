@@ -81,6 +81,7 @@ describe("hourly usage formatting", () => {
 
       expect(makeWindow(1, now, "hour").timeZone).toBe("UTC");
       expect(makeWindow(30, now).timeZone).toBe("UTC");
+      expect(makeCustomWindow("2026-08-01", "2026-08-11").timeZone).toBe("UTC");
     } finally {
       resolvedOptions.mockRestore();
     }
