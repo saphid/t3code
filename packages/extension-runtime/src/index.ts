@@ -353,7 +353,7 @@ export async function createExtensionRuntime(options: RuntimeOptions): Promise<E
       cwd: NodePath.join(root, "packages", record.contentHash),
       stdio: ["ignore", "ignore", "ignore", "ipc"],
       execArgv: ["--max-old-space-size=96"],
-      env: { PATH: process.env.PATH ?? "", NODE_ENV: "production" },
+      env: { PATH: process.env.PATH ?? "", NODE_ENV: "production", ELECTRON_RUN_AS_NODE: "1" },
     });
     let readyResolve!: () => void, readyReject!: (error: Error) => void;
     const ready = new Promise<void>((resolve, reject) => {

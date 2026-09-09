@@ -62,3 +62,11 @@ Bundled server adapters may pass workerUrl pointing at their separately emitted
 worker entry, bundled from @t3tools/extension-runtime/worker. The default uses
 the packaged adjacent dist/worker.js. IPC envelope overhead has a separate
 256 KiB bound; each input, result and package retains its public SDK bound.
+
+Syntax checks and workers explicitly set ELECTRON_RUN_AS_NODE=1 because desktop
+backends use the Electron executable as Node. Their environment remains limited
+to PATH, this mode flag, and production NODE_ENV for workers; host credentials
+are not inherited through environment variables. To exercise this path, set
+T3_EXTENSION_TEST_ELECTRON to a cached Electron executable when running the tests.
+The optional test installs the public reader and invokes its real child worker
+without launching an Electron GUI. Ordinary Node test runs report it skipped.

@@ -125,7 +125,7 @@ export async function checkSyntax(snapshot: PackageSnapshot): Promise<void> {
     await new Promise<void>((resolve, reject) => {
       const child = NodeChildProcess.spawn(process.execPath, ["--input-type=module", "--check"], {
         stdio: ["pipe", "ignore", "ignore"],
-        env: { PATH: process.env.PATH ?? "" },
+        env: { PATH: process.env.PATH ?? "", ELECTRON_RUN_AS_NODE: "1" },
       });
       const timer = setTimeout(() => {
         child.kill("SIGKILL");
