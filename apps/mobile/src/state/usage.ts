@@ -1,3 +1,4 @@
+import { uuidv4 } from "../lib/uuid";
 /**
  * Multi-environment usage state.
  *
@@ -16,24 +17,18 @@ import {
   type UsageSummary,
   type UsageSummaryInput,
 } from "@t3tools/contracts";
+import { refreshUsage } from "@t3tools/client-runtime/state/usage";
 import {
-  executeAtomQuery,
-  runAtomCommand,
-  squashAtomCommandFailure,
-} from "@t3tools/client-runtime/state/runtime";
-import {
-  makeUsageRefreshToken,
   mergeUsage,
   retainUsageStatuses,
+  type SettledUsageStatuses,
   type EnvironmentUsage,
   type MergedUsage,
-  type SettledUsageStatuses,
 } from "@t3tools/shared/usageMerge";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/unstable/reactivity";
 import { useCallback, useMemo, useRef } from "react";
 
-import { uuidv4 } from "../lib/uuid";
 import { appAtomRegistry } from "./atom-registry";
 import { environmentPresentations } from "./presentation";
 import { serverEnvironment } from "./server";
@@ -42,6 +37,7 @@ export interface EnvironmentUsageStatus {
   readonly environmentId: EnvironmentId;
   readonly label: string;
   readonly isPending: boolean;
+  readonly isConnected: boolean;
   readonly error: string | null;
   readonly summary: UsageSummary | null;
 }
@@ -65,6 +61,7 @@ const usageByWindowAtom = Atom.family((windowKey: string) =>
         environmentId,
         label: presentation.entry.target.label,
         isPending: result.waiting,
+        isConnected: presentation.connection.phase === "connected",
         error: result._tag === "Failure" ? "This environment could not report usage." : null,
         summary: Option.getOrNull(AsyncResult.value(result)),
       });
@@ -76,19 +73,23 @@ const usageByWindowAtom = Atom.family((windowKey: string) =>
 export interface UsageView {
   readonly merged: MergedUsage;
   readonly environments: readonly EnvironmentUsageStatus[];
+  readonly selectedEnvironments: readonly EnvironmentUsageStatus[];
   /** True until at least one environment has answered. */
   readonly isPending: boolean;
   /**
    * True while environments that have not failed are still answering. Failed
-   * environments are reported through their own error rows: totals will not
+   * environments are reported in the environment menu: totals will not
    * improve by waiting on them, so they must not read as "still reporting".
    */
   readonly isPartial: boolean;
-  readonly refresh: (requestedInput?: UsageSummaryInput) => Promise<void>;
+  readonly refresh: (input?: UsageSummaryInput) => Promise<void>;
 }
 
-export function useUsage(input: UsageSummaryInput): UsageView {
-  const rangeKey = useMemo(
+export function useUsage(
+  input: UsageSummaryInput,
+  selectedEnvironmentIds: ReadonlySet<EnvironmentId> | null = null,
+): UsageView {
+  const windowKey = useMemo(
     () =>
       JSON.stringify({
         sinceDay: input.sinceDay,
@@ -107,99 +108,59 @@ export function useUsage(input: UsageSummaryInput): UsageView {
       input.untilTime,
     ],
   );
-  const windowKey = rangeKey;
   const atom = usageByWindowAtom(windowKey);
   const currentEnvironments = useAtomValue(atom);
   const settledStatuses = useRef<SettledUsageStatuses<EnvironmentUsageStatus> | null>(null);
-  const retained = retainUsageStatuses(rangeKey, currentEnvironments, settledStatuses.current);
+  const retained = retainUsageStatuses(windowKey, currentEnvironments, settledStatuses.current);
   settledStatuses.current = retained.settled;
   const environments = retained.visible;
-
-  const answered = useMemo<readonly EnvironmentUsage[]>(
+  const selectedEnvironments = useMemo(
     () =>
-      environments.flatMap((environment) =>
-        environment.summary === null
-          ? []
-          : [
-              {
-                environmentId: environment.environmentId,
-                label: environment.label,
-                summary: environment.summary,
-              },
-            ],
-      ),
-    [environments],
+      selectedEnvironmentIds === null
+        ? environments
+        : environments.filter(({ environmentId }) => selectedEnvironmentIds.has(environmentId)),
+    [environments, selectedEnvironmentIds],
   );
 
-  // Refreshing only the derived atom would re-read the per-environment SWR
-  // queries within their stale window and change nothing. Refresh each
-  // environment's query so pull-to-refresh always rescans.
-  //
-  // Each environment refetches model pricing first, so a model released since
-  // its last daily fetch gets priced by the rescan. The rescan runs whether or
-  // not the refetch succeeds: an offline environment still recounts tokens.
   const refresh = useCallback(
-    (requestedInput?: UsageSummaryInput) => {
-      const currentInput = requestedInput ?? (JSON.parse(windowKey) as UsageSummaryInput);
-      const refreshEnvironments = environments.filter(
-        (environment) => environment.summary !== null || !environment.isPending,
-      );
-      const refreshToken = JSON.stringify([makeUsageRefreshToken(answered) ?? "unknown", uuidv4()]);
-      const rateRefreshes = refreshEnvironments.map(({ environmentId }) =>
-        runAtomCommand(
-          appAtomRegistry,
-          serverEnvironment.refreshUsageRates,
-          { environmentId, input: {} },
-          { reportFailure: false },
-        ),
-      );
-      return Promise.allSettled(rateRefreshes).then(async () => {
-        const refreshes = await Promise.allSettled(
-          refreshEnvironments.map(async ({ environmentId }) => {
-            const refreshed = await executeAtomQuery(
-              appAtomRegistry,
-              serverEnvironment.usageSummary({
-                environmentId,
-                input: { ...currentInput, refreshToken },
-              }),
-              { reportFailure: false, refresh: true },
-            );
-            if (refreshed._tag === "Failure") throw squashAtomCommandFailure(refreshed);
-            const baseAtom = serverEnvironment.usageSummary({
-              environmentId,
-              input: currentInput,
-            });
-            if (appAtomRegistry.get(baseAtom).waiting) {
-              await executeAtomQuery(appAtomRegistry, baseAtom, {
-                reportFailure: false,
-              });
-            }
-            const published = await executeAtomQuery(appAtomRegistry, baseAtom, {
-              reportFailure: false,
-              refresh: true,
-            });
-            if (published._tag === "Failure") throw squashAtomCommandFailure(published);
-          }),
-        );
-        const failed = refreshes.find(
-          (result): result is PromiseRejectedResult => result.status === "rejected",
-        );
-        if (failed !== undefined) throw failed.reason;
-      });
-    },
-    [answered, environments, windowKey],
+    (nextInput?: UsageSummaryInput) =>
+      refreshUsage({
+        registry: appAtomRegistry,
+        refreshToken: uuidv4(),
+        server: serverEnvironment,
+        presentations: environmentPresentations,
+        environmentIds: selectedEnvironments.map(({ environmentId }) => environmentId),
+        input: nextInput ?? (JSON.parse(windowKey) as UsageSummaryInput),
+      }),
+    [selectedEnvironments, windowKey],
   );
 
-  const merged = useMemo(() => mergeUsage(answered, USAGE_CONTRACT_VERSION), [answered]);
+  const merged = useMemo(() => {
+    const answered: EnvironmentUsage[] = selectedEnvironments.flatMap((environment) =>
+      environment.summary === null
+        ? []
+        : [
+            {
+              environmentId: environment.environmentId,
+              label: environment.label,
+              summary: environment.summary,
+            },
+          ],
+    );
+    return mergeUsage(answered, USAGE_CONTRACT_VERSION);
+  }, [selectedEnvironments]);
 
-  const answeredCount = environments.filter((environment) => environment.summary !== null).length;
-  const stillReporting = environments.filter(
+  const answeredCount = selectedEnvironments.filter(
+    (environment) => environment.summary !== null,
+  ).length;
+  const stillReporting = selectedEnvironments.filter(
     (environment) => environment.summary === null && environment.error === null,
   ).length;
 
   return {
     merged,
     environments,
+    selectedEnvironments,
     isPending: answeredCount === 0 && stillReporting > 0,
     isPartial: answeredCount > 0 && stillReporting > 0,
     refresh,
