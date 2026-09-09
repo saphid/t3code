@@ -17,6 +17,8 @@ import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Scheduler from "effect/Scheduler";
 import * as Schema from "effect/Schema";
+import * as Tracer from "effect/Tracer";
+
 import * as TestClock from "effect/testing/TestClock";
 import { HttpClient, HttpClientResponse } from "effect/unstable/http";
 
@@ -334,8 +336,20 @@ describe("UsageService", () => {
             "example-model": { inputCostPerMillionTokens: 2, outputCostPerMillionTokens: 8 },
           },
         });
-        const second = yield* service.readSummary(WINDOW).pipe(Effect.forkChild);
-        yield* Effect.yieldNow;
+        const secondScanStarted = yield* Deferred.make<void>();
+        const tracer = Tracer.make({
+          span: (options) => {
+            const span = new Tracer.NativeSpan(options);
+            if (span.name === "UsageService.scanSummary") {
+              Deferred.doneUnsafe(secondScanStarted, Effect.void);
+            }
+            return span;
+          },
+        });
+        const second = yield* service
+          .readSummary(WINDOW)
+          .pipe(Effect.withTracer(tracer), Effect.forkChild);
+        yield* Deferred.await(secondScanStarted);
         yield* Deferred.succeed(releaseRates, undefined);
 
         const original = yield* Fiber.join(first);
