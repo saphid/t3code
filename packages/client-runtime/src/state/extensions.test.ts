@@ -58,3 +58,56 @@ describe("environment extension HTTP", () => {
     }),
   );
 });
+
+describe("binary installed package assets", () => {
+  for (const bearer of [false, true]) {
+    it.effect(
+      bearer
+        ? "delivers exact binary over bearer connection"
+        : "delivers exact binary over cookie connection",
+      () =>
+        Effect.gen(function* () {
+          const input = {
+            id: "example.asset",
+            expectedContentHash: "a".repeat(64),
+            path: "assets/core.wasm",
+          };
+          const bytes = new Uint8Array([0, 97, 115, 109, 0, 255]);
+          const result = yield* environmentExtensionsHttp
+            .asset(
+              bearer
+                ? { ...prepared, httpAuthorization: { _tag: "Bearer", token: "asset-fixture" } }
+                : prepared,
+              input,
+            )
+            .pipe(
+              Effect.provide(
+                remoteHttpClientLayer((url, init) => {
+                  expect(String(url)).toBe("https://fixture.example/api/extensions/asset");
+                  expect(init?.method).toBe("POST");
+                  const request = new Request(String(url), init);
+                  return request.json().then((body) => {
+                    expect(body).toEqual(input);
+                    if (bearer)
+                      expect(new Headers(init?.headers).get("authorization")).toBe(
+                        "Bearer asset-fixture",
+                      );
+                    else expect(init?.credentials).toBe("include");
+                    return Promise.resolve(
+                      new Response(bytes, {
+                        headers: {
+                          "content-type": "application/octet-stream",
+                          "cache-control": "no-store",
+                          "x-content-type-options": "nosniff",
+                        },
+                      }),
+                    );
+                  });
+                }),
+              ),
+            );
+          expect(result).toEqual(bytes);
+        }),
+    );
+  }
+});

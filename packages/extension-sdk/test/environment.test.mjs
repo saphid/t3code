@@ -23,6 +23,13 @@ const descriptor = JSON.parse(
     "utf8",
   ),
 );
+const streamDescriptor = JSON.parse(
+  await NodeFSP.readFile(
+    new URL("../examples/installable-stream-provider/t3-extension.json", import.meta.url),
+    "utf8",
+  ),
+);
+const streamServer = (await import("../examples/installable-stream-provider/server.mjs")).default;
 const context = {
   resource: {
     namespace: "example.workspace",
@@ -249,4 +256,111 @@ NodeTest.test("reader aborts hidden pending tool calls and refuses late presenta
       host.dispose();
     });
   }
+});
+
+NodeTest.test(
+  "format 4 validates strict asset declarations and legacy format 3 rejects them",
+  () => {
+    const package4 = {
+      ...descriptor,
+      format: 4,
+      dependencies: [],
+      provides: [],
+      requires: [],
+      assets: [
+        {
+          path: "vendor/runtime.wasm",
+          byteLength: 3,
+          sha256: "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+          mediaType: "application/wasm",
+        },
+      ],
+    };
+    NodeAssert.deepEqual(validateEnvironmentPackage(package4), package4);
+    NodeAssert.throws(() => validateEnvironmentPackage({ ...descriptor, format: 3, assets: [] }));
+    for (const path of ["../secret", "/secret", "a\\\\b", "a//b", "a/./b", ""])
+      NodeAssert.throws(() =>
+        validateEnvironmentPackage({ ...package4, assets: [{ ...package4.assets[0], path }] }),
+      );
+    NodeAssert.throws(() =>
+      validateEnvironmentPackage({
+        ...package4,
+        assets: [{ ...package4.assets[0], byteLength: 4 * 1024 * 1024 + 1 }],
+      }),
+    );
+    NodeAssert.throws(() =>
+      validateEnvironmentPackage({
+        ...package4,
+        assets: [{ ...package4.assets[0], mediaType: "text/javascript" }],
+      }),
+    );
+    NodeAssert.throws(() =>
+      validateEnvironmentPackage({
+        ...package4,
+        assets: [package4.assets[0], { ...package4.assets[0], path: "vendor/runtime.wasm" }],
+      }),
+    );
+    NodeAssert.throws(() =>
+      validateEnvironmentPackage({
+        ...package4,
+        assets: [package4.assets[0], { ...package4.assets[0], path: "vendor/runtime.wasm/map" }],
+      }),
+    );
+    NodeAssert.throws(() =>
+      validateEnvironmentPackage({
+        ...package4,
+        assets: [package4.assets[0], { ...package4.assets[0], path: "client.mjs/map" }],
+      }),
+    );
+    NodeAssert.throws(() =>
+      validateEnvironmentPackage({
+        ...package4,
+        assets: Array.from({ length: 33 }, (_, i) => ({ ...package4.assets[0], path: "x" + i })),
+      }),
+    );
+    NodeAssert.throws(() =>
+      validateEnvironmentPackage({
+        ...package4,
+        assets: Array.from({ length: 3 }, (_, i) => ({
+          ...package4.assets[0],
+          path: "x" + i,
+          byteLength: 4 * 1024 * 1024,
+        })),
+      }),
+    );
+  },
+);
+
+NodeTest.test("format 4 keeps format-3 API stream declarations and exact asset boundaries", () => {
+  const package4 = { ...streamDescriptor, format: 4, assets: [] };
+  NodeAssert.deepEqual(validateEnvironmentPackage(package4), package4);
+  NodeAssert.equal(
+    validateServerExtension(package4, streamServer).apis[0].streams[0].name,
+    "changes",
+  );
+  for (const asset of [
+    { path: "a", byteLength: 0, sha256: "0".repeat(64), mediaType: "application/octet-stream" },
+    {
+      path: "a".repeat(240),
+      byteLength: 4 * 1024 * 1024,
+      sha256: "f".repeat(64),
+      mediaType: "font/woff2",
+    },
+  ])
+    NodeAssert.deepEqual(
+      validateEnvironmentPackage({ ...package4, assets: [asset] }).assets[0],
+      asset,
+    );
+  for (const asset of [
+    { path: "é", byteLength: 0, sha256: "0".repeat(64), mediaType: "application/octet-stream" },
+    {
+      path: "a".repeat(241),
+      byteLength: 0,
+      sha256: "0".repeat(64),
+      mediaType: "application/octet-stream",
+    },
+    { path: "a", byteLength: -1, sha256: "0".repeat(64), mediaType: "application/octet-stream" },
+    { path: "a", byteLength: 0, sha256: "A".repeat(64), mediaType: "application/octet-stream" },
+  ])
+    NodeAssert.throws(() => validateEnvironmentPackage({ ...package4, assets: [asset] }));
 });

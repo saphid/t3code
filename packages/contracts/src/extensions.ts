@@ -49,6 +49,11 @@ export const ExtensionClientInput = Schema.Struct({
   expectedContentHash: ExtensionContentHash,
 });
 export type ExtensionClientInput = typeof ExtensionClientInput.Type;
+export const ExtensionAssetInput = Schema.Struct({
+  ...ExtensionClientInput.fields,
+  path: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(240)),
+});
+export type ExtensionAssetInput = typeof ExtensionAssetInput.Type;
 export const ExtensionInvokeInput = Schema.Struct({
   toolId: Identity,
   input: Schema.Json,

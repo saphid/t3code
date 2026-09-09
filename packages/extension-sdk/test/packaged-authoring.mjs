@@ -2,6 +2,7 @@ import * as NodeAssert from "node:assert/strict";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
+import * as NodeCrypto from "node:crypto";
 import {
   validateEnvironmentPackage,
   validateServerExtension,
@@ -62,4 +63,23 @@ for (const name of ["installable-stream-provider", "installable-stream-consumer"
 NodeAssert.equal(streamPackages[1].dependencies[0].pluginId, streamPackages[0].manifest.id);
 console.log(
   "Packaged format-3 provider/consumer declarations verified; worker/network proof remains separate.",
+);
+
+const assetDirectory = NodePath.join(sdk, "examples/installable-package-assets");
+const assetPackage = validateEnvironmentPackage(
+  JSON.parse(await NodeFSP.readFile(NodePath.join(assetDirectory, "t3-extension.json"), "utf8")),
+);
+NodeAssert.equal(assetPackage.format, 4);
+const assetClient = await import(
+  NodeURL.pathToFileURL(NodePath.join(assetDirectory, assetPackage.clientEntry))
+);
+NodeAssert.equal(typeof assetClient.default, "function");
+const declared = assetPackage.assets[0];
+const assetBytes = await NodeFSP.readFile(NodePath.join(assetDirectory, declared.path));
+NodeAssert.equal(assetBytes.byteLength, declared.byteLength);
+NodeAssert.equal(NodeCrypto.createHash("sha256").update(assetBytes).digest("hex"), declared.sha256);
+const assetModule = await WebAssembly.instantiate(assetBytes);
+NodeAssert.equal(assetModule.instance.exports.value(), 42);
+console.log(
+  "Published format-4 example contains a valid declared WASM asset; installed host proof remains separate.",
 );

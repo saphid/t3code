@@ -57,7 +57,21 @@ export interface EnvironmentPackageV2 extends Omit<
 export interface EnvironmentPackageV3 extends Omit<EnvironmentPackageV2, "format"> {
   readonly format: 3;
 }
-export type EnvironmentPackage = EnvironmentPackageV1 | EnvironmentPackageV2 | EnvironmentPackageV3;
+export interface EnvironmentAsset {
+  readonly path: string;
+  readonly byteLength: number;
+  readonly sha256: string;
+  readonly mediaType: "application/wasm" | "application/octet-stream" | "font/woff2";
+}
+export interface EnvironmentPackageV4 extends Omit<EnvironmentPackageV3, "format"> {
+  readonly format: 4;
+  readonly assets: readonly EnvironmentAsset[];
+}
+export type EnvironmentPackage =
+  | EnvironmentPackageV1
+  | EnvironmentPackageV2
+  | EnvironmentPackageV3
+  | EnvironmentPackageV4;
 export interface ToolSession {
   readonly context: ViewContext;
   readonly signal: AbortSignal;
@@ -99,6 +113,10 @@ export interface ClientHost {
   invokeApi(request: ApiInvocation, signal: AbortSignal): Promise<Json>;
   subscribeApi(request: ApiStreamInvocation, signal: AbortSignal): AsyncIterable<ApiStreamFrame>;
   discoverApis(context: ViewContext, signal: AbortSignal): Promise<readonly ApiDiscovery[]>;
+  readAsset?(
+    path: string,
+    signal: AbortSignal,
+  ): Promise<{ readonly bytes: Uint8Array; readonly mediaType: string; readonly sha256: string }>;
   /** Host resolves installed grants and authenticated scope; supplied context is not authority. */
   invokeTool(toolId: string, input: Json, context: ViewContext, signal: AbortSignal): Promise<Json>;
 }
@@ -114,6 +132,17 @@ function validateEntry(value: string): void {
       .some((part) => !/^[a-zA-Z0-9][a-zA-Z0-9._-]*$/.test(part) || part === "." || part === "..")
   )
     throw new Error("Entry must be a package-relative bundled ESM .mjs or .js file");
+}
+function validateAssetPath(value: string): void {
+  if (
+    typeof value !== "string" ||
+    value.length === 0 ||
+    value.length > 240 ||
+    value.includes("\\") ||
+    value.startsWith("/") ||
+    value.split("/").some((part) => !/^[a-zA-Z0-9][a-zA-Z0-9._-]*$/.test(part))
+  )
+    throw new Error("Asset path must be package-relative ASCII segments");
 }
 function validateSchemaRefs(value: Json): void {
   if (!value || typeof value !== "object") return;
@@ -134,7 +163,7 @@ export function validateEnvironmentPackage(value: unknown): EnvironmentPackage {
     !pkg ||
     typeof pkg !== "object" ||
     Array.isArray(pkg) ||
-    (pkg.format !== 1 && pkg.format !== 2 && pkg.format !== 3) ||
+    (pkg.format !== 1 && pkg.format !== 2 && pkg.format !== 3 && pkg.format !== 4) ||
     Object.keys(pkg).some(
       (key) =>
         !(
@@ -149,6 +178,7 @@ export function validateEnvironmentPackage(value: unknown): EnvironmentPackage {
                 "dependencies",
                 "provides",
                 "requires",
+                ...(pkg.format === 4 ? ["assets"] : []),
               ]
         ).includes(key),
     )
@@ -201,7 +231,7 @@ export function validateEnvironmentPackage(value: unknown): EnvironmentPackage {
     }
     validateSchemaRefs(tool.inputSchema);
   }
-  if (pkg.format === 2 || pkg.format === 3) {
+  if (pkg.format === 2 || pkg.format === 3 || pkg.format === 4) {
     for (const array of [pkg.dependencies, pkg.provides, pkg.requires])
       if (!Array.isArray(array) || array.length > 32)
         throw new Error("Invalid capability declarations");
@@ -238,6 +268,45 @@ export function validateEnvironmentPackage(value: unknown): EnvironmentPackage {
       if (required.has(api.id)) throw new Error("Duplicate required API");
       required.add(api.id);
     }
+  }
+  if (pkg.format === 4) {
+    if (!Array.isArray(pkg.assets) || pkg.assets.length > 32)
+      throw new Error("Invalid package assets");
+    const paths = new Set<string>();
+    const entries = new Set([pkg.clientEntry, pkg.serverEntry, ENVIRONMENT_MANIFEST_FILE]);
+    const allPaths = new Set([
+      ...[pkg.clientEntry, pkg.serverEntry, ENVIRONMENT_MANIFEST_FILE].filter(
+        (path): path is string => path !== undefined,
+      ),
+      ...pkg.assets.map((asset) => asset.path),
+    ]);
+    for (const asset of pkg.assets) {
+      if (
+        !asset ||
+        typeof asset !== "object" ||
+        Object.keys(asset).some(
+          (key) => !["path", "byteLength", "sha256", "mediaType"].includes(key),
+        ) ||
+        typeof asset.path !== "string" ||
+        !Number.isSafeInteger(asset.byteLength) ||
+        asset.byteLength < 0 ||
+        asset.byteLength > 4 * 1024 * 1024 ||
+        typeof asset.sha256 !== "string" ||
+        !/^[a-f0-9]{64}$/.test(asset.sha256) ||
+        !["application/wasm", "application/octet-stream", "font/woff2"].includes(asset.mediaType)
+      )
+        throw new Error("Invalid package asset");
+      validateAssetPath(asset.path);
+      if (paths.has(asset.path) || entries.has(asset.path))
+        throw new Error("Duplicate package asset");
+      paths.add(asset.path);
+    }
+    for (const path of allPaths)
+      for (const other of allPaths)
+        if (path !== other && other.startsWith(path + "/"))
+          throw new Error("Package path is an ancestor of another path");
+    if (pkg.assets.reduce((total, asset) => total + asset.byteLength, 0) > 8 * 1024 * 1024)
+      throw new Error("Package assets exceed aggregate limit");
   }
   return { ...pkg, manifest };
 }

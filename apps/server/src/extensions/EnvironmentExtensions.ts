@@ -4,6 +4,7 @@ import {
   ExtensionInstallation,
   ExtensionOperationError,
   type ExtensionApiInvokeInput,
+  type ExtensionAssetInput,
   type ExtensionApiSubscribeInput,
   type ExtensionApiDiscoverInput,
   type ExtensionApiSelection,
@@ -168,6 +169,7 @@ export const make = Effect.fn("EnvironmentExtensions.make")(function* (
       selectApi: (_input: ExtensionApiSelection) => unavailable,
       install: (_input: ExtensionInstallInput) => unavailable,
       manage: (_input: ExtensionManageInput) => unavailable,
+      asset: (_input: ExtensionAssetInput) => unavailable,
       client: (_id: string, _hash: string) => unavailable,
       invoke: (_input: ExtensionInvokeInput) => unavailable,
       contextForThread: (_threadId: string, _environmentId: string) => unavailable,
@@ -292,6 +294,18 @@ export const make = Effect.fn("EnvironmentExtensions.make")(function* (
           return installation(await runtime.update(input.id, input.sourceDir));
         }
         return installation(await runtime[input.action](input.id));
+      }),
+    asset: (input: ExtensionAssetInput) =>
+      promise("asset", async (signal) => {
+        verifyClient(input.id, input.expectedContentHash);
+        const result = await runtime.readAsset(
+          input.id,
+          input.expectedContentHash,
+          input.path,
+          signal,
+        );
+        verifyClient(input.id, input.expectedContentHash);
+        return result.bytes;
       }),
     client: (id: string, expectedContentHash: string) =>
       promise("client", async () => {

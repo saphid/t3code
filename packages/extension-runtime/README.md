@@ -21,14 +21,15 @@ contentHash, enabled and grants. Updates retain grants and enabled state.
 Client delivery returns authenticated-adapter-ready `{ code, contentHash }`;
 clients should bind that hash to every invocation so an update rejects stale code.
 
-Only `t3-extension.json` and its declared client/server entries are copied.
-Entries must be bundled ESM .mjs/.js, with no separately installed dependencies or
-assets. Installation checks format, strict draft-7 schemas without external
+Formats 1/2/3 copy only `t3-extension.json` and declared client/server entries.
+Format 4 additionally copies explicitly declared binary assets. Entries remain
+bundled ESM .mjs/.js, with no separately installed dependencies. Installation checks format, strict draft-7 schemas without external
 references, byte bounds and JavaScript syntax without executing package code.
 The runtime owns a small module-scope file outside the content hash directories,
 so declared ESM .js entries remain modules even beneath a CommonJS ancestor.
-An existing conflicting file or symlink is rejected and preserved. The three
-declared package files and their digest remain unchanged.
+An existing conflicting file or symlink is rejected and preserved. Legacy package
+hash framing remains unchanged. A format-4 manifest commits each asset's path,
+size, media type and SHA-256 digest into the installation hash.
 The server default export is validated during lazy first invocation. A valid
 syntax file with an invalid export fails explicitly at that point; an explicit
 update can replace it. No package code runs inside the host process.
@@ -44,8 +45,8 @@ Host services receive a copied context and an AbortSignal. Services must observe
 that signal to stop their own underlying work. A late result is never admitted
 after cancellation, generation change or authorization revocation.
 
-Bounds: 32 installations, 128 stored content revisions, three declared files and
-1 MiB per package, 64 KiB manifest/JSON messages, 16 tools and capabilities per
+Bounds: 32 installations, 128 stored content revisions, 1 MiB for declared code
+and metadata, 64 KiB manifest/JSON messages, 16 tools and capabilities per
 tool, 64 project grants, eight pending calls and host-service requests per worker.
 The default total invocation deadline is ten seconds (configurable up to sixty).
 Workers receive a 96 MiB V8 heap limit. These bounds constrain normal protocol
@@ -101,3 +102,16 @@ This check does not create a filesystem transaction, serialize external editors 
 already-completed mutation. Interrupted writes need explicit unknown-outcome recovery.
 The broker still checks before dispatch and before admitting results/frames; adapters must
 pass AbortSignal to their underlying I/O as well.
+
+Format-4 assets are limited to 32 files, 4 MiB each and 8 MiB combined.
+readAsset(id, expectedContentHash, path, signal) returns verified bytes and
+declared mediaType/sha256. It admits at most 16 concurrent reads overall and four
+per installation; overflow fails immediately and cancellation/failure releases
+capacity. The host adapter supplies authenticated read authority; registration
+does not grant terminal, workspace or orchestration control.
+
+Installation, client delivery, enable and rollback verify complete assets.
+Ordinary API/tool integrity checks read code and metadata only; each asset is
+size/digest-verified before its own delivery. Unrequested asset files are not
+continuously rehashed. This avoids rereading renderer binaries on every API call.
+Returned bytes are static package data, not an authority or resource lease.

@@ -22,7 +22,10 @@ const decodeCatalogueMetadata = Schema.decodeUnknownEffect(
   Schema.fromJsonString(Schema.Struct({ supportsCatalogueChanges: Schema.Boolean })),
 );
 
-function fixture(scopes: readonly AuthEnvironmentScope[]) {
+function fixture(
+  scopes: readonly AuthEnvironmentScope[],
+  assetHooks?: { read: () => Uint8Array; revalidate: () => void },
+) {
   const called: string[] = [];
   const roots: (HostApiRootAuthority | undefined)[] = [];
   const service = EnvironmentExtensions.of({
@@ -47,6 +50,11 @@ function fixture(scopes: readonly AuthEnvironmentScope[]) {
       called.push("list");
       return [];
     }),
+    asset: () =>
+      Effect.sync(() => {
+        called.push("asset");
+        return assetHooks?.read() ?? new Uint8Array([0, 97, 115, 109]);
+      }),
     client: () =>
       Effect.sync(() => {
         called.push("client");
@@ -86,7 +94,9 @@ function fixture(scopes: readonly AuthEnvironmentScope[]) {
         scopes: [...session.scopes],
       },
       allowWrite: scope === AuthAccessWriteScope,
-      revalidate: () => {},
+      revalidate: () => {
+        assetHooks?.revalidate();
+      },
     }),
   );
   const principal = {
@@ -105,7 +115,7 @@ it.effect("read credential can read but cannot install, update, enable or remove
     expect(yield* f.provide(f.operations.list())).toEqual({
       installations: [],
       supportsCatalogueChanges: true,
-      supportedPackageFormats: [1, 2, 3],
+      supportedPackageFormats: [1, 2, 3, 4],
       supportsApiStreams: true,
       apiSelections: [],
       apiResolution: [],
@@ -356,4 +366,52 @@ it.live(
         "install",
       ]);
     }).pipe(Effect.provide(realAuthLayer)),
+);
+
+it.effect("asset bytes require read scope and carry no-store/nosniff headers", () =>
+  Effect.gen(function* () {
+    const input = {
+      id: "fixture",
+      expectedContentHash: "a".repeat(64),
+      path: "assets/renderer.wasm",
+    };
+    const denied = fixture([AuthAccessWriteScope]);
+    expect((yield* denied.provide(Effect.flip(denied.operations.asset(input))))._tag).toBe(
+      "EnvironmentScopeRequiredError",
+    );
+    expect(denied.called).toEqual([]);
+    const allowed = fixture([AuthOrchestrationReadScope]);
+    const result = yield* allowed.provide(allowed.operations.asset(input));
+    expect(result.body).toEqual(new Uint8Array([0, 97, 115, 109]));
+    expect(result.headers).toEqual({
+      "cache-control": "no-store",
+      "x-content-type-options": "nosniff",
+    });
+    expect(allowed.called).toEqual(["asset"]);
+  }),
+);
+it.effect("revocation during asset read prevents successful bytes", () =>
+  Effect.gen(function* () {
+    let revoked = false;
+    const f = fixture([AuthOrchestrationReadScope], {
+      read: () => {
+        revoked = true;
+        return new Uint8Array([1]);
+      },
+      revalidate: () => {
+        if (revoked) throw new Error("revoked");
+      },
+    });
+    const error = yield* f.provide(
+      Effect.flip(
+        f.operations.asset({
+          id: "fixture",
+          expectedContentHash: "a".repeat(64),
+          path: "asset.wasm",
+        }),
+      ),
+    );
+    expect(error._tag).toBe("ExtensionOperationError");
+    expect(f.called).toEqual(["asset"]);
+  }),
 );

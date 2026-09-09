@@ -10,7 +10,7 @@ The app's built-in panels are not a list of supported plugin APIs. The terminal 
 
 ## Package shape and entry points
 
-Copy one of the included format-2 example directories into an independent package directory. Keep t3-extension.json, client.mjs and any declared server.mjs together. Only declared bundled entries are loaded; arbitrary asset directories are not currently served. Use your own publisher.plugin identity and contribution namespace consistently.
+Copy one of the included format-2 example directories into an independent package directory. Keep t3-extension.json, client.mjs and any declared server.mjs together. Formats 1/2/3 load declared bundled entries; format 4 adds explicitly declared assets as described below. Arbitrary directories are never served. Use your own publisher.plugin identity and contribution namespace consistently.
 
 Format 2 requires dependencies, provides and requires arrays, even when empty. provides contains versioned API descriptors with method input/output JSON schemas, read/write effects and required grants. A plugin may own APIs in its own namespace. Shared catalogue contracts must match the public descriptor exactly; a plugin cannot change their schema or remove their grants.
 
@@ -99,3 +99,11 @@ For concurrency tests, observe a precise event or query state through an indepen
 operation. A consumer-side event before its next pull does not prove a producer has entered
 that pull. Assertions must require the intended result, rather than accepting both a value
 and cancellation/limit errors.
+
+## Declared renderer assets (format 4)
+
+Format 4 adds a required assets array. Each declaration contains path, byteLength, sha256 and mediaType. Use package-relative ASCII paths, lowercase SHA-256 digests and one of application/wasm, application/octet-stream or font/woff2. Limits are 32 assets, 4 MiB per file and 8 MiB combined; the existing 1 MiB code/manifest budget remains separate. Assets cannot overlap or be ancestors of other package files. Formats 1, 2 and 3 retain their previous accepted shapes.
+
+The host must advertise format 4 before installing/loading this format. A format-4 installed ClientHost supplies readAsset(path, signal), which returns verified bytes, mediaType and sha256. The host binds owner, environment and installation hash. Do not derive an asset URL from the server origin or use an API JSON response to carry binary data. Always pass your surface lifetime signal. Bytes are not a resource lease; dispose object URLs you create.
+
+[The asset example](examples/installable-package-assets/README.md) loads and executes a small WASM module without private bindings. Host delivery and real panel parity need separate end-to-end proof.

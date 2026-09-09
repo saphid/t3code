@@ -167,6 +167,11 @@ function fixture() {
     },
     remove: async () => {},
     update: async () => entry,
+    readAsset: async () => ({
+      bytes: new Uint8Array(),
+      mediaType: "application/octet-stream",
+      sha256: "a".repeat(64),
+    }),
     readClient: async () => {
       afterClient();
       return { code: "export default null", contentHash: hash };
@@ -332,6 +337,15 @@ it.effect(
         const error = yield* Effect.flip(service.list);
         expect(error._tag).toBe("ExtensionOperationError");
         expect(error.operation).toBe("initialize");
+        const assetError = yield* Effect.flip(
+          service.asset({
+            id: "example.asset",
+            expectedContentHash: "a".repeat(64),
+            path: "assets/value.wasm",
+          }),
+        );
+        expect(assetError._tag).toBe("ExtensionOperationError");
+        expect(assetError.operation).toBe("initialize");
         expect(yield* fs.readFileString(file)).toBe("{broken");
       }).pipe(Effect.provide(f.services)),
     );

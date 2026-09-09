@@ -1,3 +1,4 @@
+import { sha256 } from "@noble/hashes/sha2";
 import { installedStream } from "./installedStream";
 import type { ExtensionInstallation } from "@t3tools/contracts";
 import {
@@ -125,6 +126,12 @@ export function createInstalledExtensionController(options: {
     hash: string,
     signal: AbortSignal,
   ) => Promise<{ code: string; contentHash: string }>;
+  readonly readAsset?: (
+    id: string,
+    hash: string,
+    path: string,
+    signal: AbortSignal,
+  ) => Promise<Uint8Array>;
   readonly invoke: (
     toolId: string,
     input: Json,
@@ -202,9 +209,10 @@ export function createInstalledExtensionController(options: {
         });
         const eligible = (item: InstalledPackage) =>
           item.enabled &&
-          (item.package.format !== 3 ||
-            (response.supportedPackageFormats?.includes(3) === true &&
-              response.supportsApiStreams === true)) &&
+          (item.package.format < 3 ||
+            (response.supportedPackageFormats?.includes(item.package.format) === true &&
+              response.supportsApiStreams === true &&
+              (item.package.format !== 4 || options.readAsset !== undefined))) &&
           (!response.pluginResolution ||
             response.pluginResolution.find((state) => state.id === item.id)?.status ===
               "available");
@@ -269,14 +277,16 @@ export function createInstalledExtensionController(options: {
           .filter(
             (item) =>
               item.enabled &&
-              item.package.format === 3 &&
+              item.package.format >= 3 &&
               !(
-                response.supportedPackageFormats?.includes(3) === true &&
-                response.supportsApiStreams === true
+                response.supportedPackageFormats?.includes(item.package.format) === true &&
+                response.supportsApiStreams === true &&
+                (item.package.format !== 4 || options.readAsset !== undefined)
               ),
           )
           .map(
-            (item) => item.id + ": This environment does not support package format 3 API streams.",
+            (item) =>
+              item.id + ": This host does not support package format " + item.package.format + ".",
           );
         for (const item of installations) {
           if (!live()) return;
@@ -376,6 +386,32 @@ export function createInstalledExtensionController(options: {
                 if (!registered || disposed || signal.aborted)
                   throw new Error("Installed API discovery expired");
                 return copyJson(result);
+              },
+              async readAsset(path, callerSignal) {
+                const signal = AbortSignal.any([callerSignal, lifetime.signal]);
+                const validate = () => {
+                  if (!registered || disposed || signal.aborted)
+                    throw new Error("Installed asset lifetime expired");
+                };
+                validate();
+                const declaration =
+                  item.package.format === 4
+                    ? item.package.assets.find((asset) => asset.path === path)
+                    : undefined;
+                if (!declaration || !options.readAsset)
+                  throw new Error("Installed asset is not declared or supported");
+                const bytes = await options.readAsset(item.id, item.contentHash, path, signal);
+                validate();
+                if (!(bytes instanceof Uint8Array) || bytes.byteLength !== declaration.byteLength)
+                  throw new Error("Installed asset length mismatch");
+                // The existing browser-safe hash also works for direct HTTP environments.
+                const digest = Array.from(sha256(bytes), (byte) =>
+                  byte.toString(16).padStart(2, "0"),
+                ).join("");
+                if (digest !== declaration.sha256)
+                  throw new Error("Installed asset digest mismatch");
+                validate();
+                return { bytes, mediaType: declaration.mediaType, sha256: digest };
               },
               async invokeTool(toolId, input, context, callerSignal) {
                 const signal = AbortSignal.any([callerSignal, lifetime.signal]);

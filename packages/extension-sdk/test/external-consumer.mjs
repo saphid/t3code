@@ -38,6 +38,15 @@ NodeFS.copyFileSync(installedExample, NodePath.join(consumer, "packaged-counter.
 NodeFS.writeFileSync(
   NodePath.join(consumer, "capabilities.ts"),
   `
+import type { ClientHost } from "@t3tools/extension-sdk/environment";
+export async function checkPublicAsset(host: ClientHost) {
+  if (!host.readAsset) return;
+  const loaded = await host.readAsset("assets/value.wasm", new AbortController().signal);
+  const bytes: Uint8Array = loaded.bytes;
+  void bytes;
+  // @ts-expect-error owner, environment and installation hash are selected by the host
+  await host.readAsset({ id: "other", path: "assets/value.wasm" }, new AbortController().signal);
+}
 import { bindApi } from "@t3tools/extension-sdk/capabilities";
 import { workspaceFilesApi, terminalSessionsApi, terminalOutputApi } from "@t3tools/extension-sdk/catalogue";
 const context = { resource: { namespace: "thirdparty.files", id: "root", environmentId: "env" }, client: "test" };

@@ -3,12 +3,13 @@ import {
   AuthOrchestrationReadScope,
   EnvironmentHttpApi,
   type EnvironmentSessionPrincipalShape,
-  type ExtensionOperationError,
+  ExtensionOperationError,
   type AuthEnvironmentScope,
   type ExtensionApiInvokeInput,
   type ExtensionApiDiscoverInput,
   type ExtensionApiSelection,
   type ExtensionClientInput,
+  type ExtensionAssetInput,
   type ExtensionInstallInput,
   type ExtensionInvokeInput,
   type ExtensionManageInput,
@@ -18,6 +19,7 @@ import type { HostApiRootAuthority } from "@t3tools/extension-runtime";
 import { SessionStore } from "../auth/SessionStore.ts";
 import { ServerEnvironment } from "../environment/ServerEnvironment.ts";
 import { makeSessionApiAuthority } from "./sessionApiAuthority.ts";
+import * as HttpApiSchema from "effect/unstable/httpapi/HttpApiSchema";
 import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
 import { annotateEnvironmentRequest, requireEnvironmentScope } from "../auth/http.ts";
 import { EnvironmentExtensions } from "./EnvironmentExtensions.ts";
@@ -58,9 +60,31 @@ export function makeOperations(
         installations: yield* extensions.list,
         ...(yield* extensions.catalogue),
         supportsCatalogueChanges: true,
-        supportedPackageFormats: [1, 2, 3],
+        supportedPackageFormats: [1, 2, 3, 4],
         supportsApiStreams: true,
       };
+    }),
+    asset: Effect.fn("environment.extensions.asset")(function* (input: ExtensionAssetInput) {
+      const session = yield* requireEnvironmentScope(AuthOrchestrationReadScope);
+      const authority = yield* makeAuthority(session, AuthOrchestrationReadScope);
+      const bytes = yield* extensions.asset(input);
+      yield* Effect.tryPromise({
+        try: async () => {
+          await authority.revalidate();
+        },
+        catch: () =>
+          new ExtensionOperationError({
+            operation: "asset",
+            detail: "The authenticated asset caller is no longer authorized.",
+          }),
+      });
+      return HttpApiSchema.withHeaders({
+        body: bytes,
+        headers: {
+          "cache-control": "no-store" as const,
+          "x-content-type-options": "nosniff" as const,
+        },
+      });
     }),
     client: Effect.fn("environment.extensions.client")(function* (input: ExtensionClientInput) {
       yield* requireEnvironmentScope(AuthOrchestrationReadScope);
@@ -108,6 +132,11 @@ export const extensionsHttpApiLayer = HttpApiBuilder.group(
       )
       .handle("list", (args) =>
         annotateEnvironmentRequest(args.endpoint.name).pipe(Effect.andThen(operations.list())),
+      )
+      .handle("asset", (args) =>
+        annotateEnvironmentRequest(args.endpoint.name).pipe(
+          Effect.andThen(operations.asset(args.payload)),
+        ),
       )
       .handle("client", (args) =>
         annotateEnvironmentRequest(args.endpoint.name).pipe(

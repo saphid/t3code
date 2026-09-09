@@ -43,6 +43,7 @@ function fixture(capabilities: readonly McpCapability[], resolvedContext = conte
     selectApi: () => Effect.die("unused"),
     install: () => Effect.die("unused"),
     manage: () => Effect.die("unused"),
+    asset: () => Effect.succeed(new Uint8Array()),
     client: () => Effect.die("unused"),
     invoke: (input) =>
       Effect.sync(() => {

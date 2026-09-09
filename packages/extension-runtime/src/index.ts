@@ -38,8 +38,11 @@ import {
   ensureModuleScope,
   validateModuleScope,
   readPackage,
+  readPackageMetadata,
+  readDeclaredAsset,
   storePackage,
   prunePackages,
+  type PackageMetadata,
   type PackageSnapshot,
 } from "./storage.js";
 
@@ -110,6 +113,12 @@ export interface ExtensionRuntime {
     signal: AbortSignal,
   ): Promise<readonly ApiDiscovery[]>;
   readClient(id: string): Promise<{ code: string; contentHash: string }>;
+  readAsset(
+    id: string,
+    expectedContentHash: string,
+    path: string,
+    signal: AbortSignal,
+  ): Promise<{ bytes: Uint8Array; mediaType: string; sha256: string }>;
   invoke(
     toolId: string,
     input: Json,
@@ -174,6 +183,8 @@ export async function createExtensionRuntime(options: RuntimeOptions): Promise<E
   const timeout = options.timeoutMs ?? 10_000;
   if (!Number.isSafeInteger(timeout) || timeout < 1 || timeout > 60_000)
     throw new Error("Invalid deadline");
+  let activeAssetReads = 0;
+  const activeAssetReadsByInstallation = new Map<string, number>();
   const services = new Map<string, HostService>();
   for (const service of options.services) {
     assertId(service.capability);
@@ -304,7 +315,17 @@ export async function createExtensionRuntime(options: RuntimeOptions): Promise<E
       }),
     );
   }
-  async function verify(record: Installation): Promise<PackageSnapshot> {
+  async function verify(record: Installation): Promise<PackageMetadata> {
+    await validateModuleScope(root);
+    const snapshot = await readPackageMetadata(NodePath.join(root, "packages", record.contentHash));
+    if (
+      snapshot.contentHash !== record.contentHash ||
+      JSON.stringify(snapshot.package) !== JSON.stringify(record.package)
+    )
+      throw new Error("Installed package digest mismatch");
+    return snapshot;
+  }
+  async function verifyComplete(record: Installation): Promise<PackageSnapshot> {
     await validateModuleScope(root);
     const snapshot = await readPackage(NodePath.join(root, "packages", record.contentHash));
     if (
@@ -945,7 +966,7 @@ export async function createExtensionRuntime(options: RuntimeOptions): Promise<E
     signal: AbortSignal,
     authority: ApiAuthority,
   ): AsyncIterable<ApiStreamEvent> {
-    if (!record || !record.enabled || record.package.format !== 3)
+    if (!record || !record.enabled || (record.package.format !== 3 && record.package.format !== 4))
       throw new Error("API streams require an enabled format-3 installation");
     const worker = start(record);
     await worker.ready;
@@ -1145,7 +1166,7 @@ export async function createExtensionRuntime(options: RuntimeOptions): Promise<E
     enable(id) {
       return mutate(async () => {
         const record = required(id);
-        await verify(record);
+        await verifyComplete(record);
         const next = { ...record, enabled: true };
         await stage(next);
         await replace(record, next);
@@ -1211,13 +1232,44 @@ export async function createExtensionRuntime(options: RuntimeOptions): Promise<E
     async readClient(id) {
       const record = required(id);
       current(record);
-      const snapshot = await verify(record);
+      const snapshot = await verifyComplete(record);
       current(record);
       if (!record.package.clientEntry) throw new Error("Package has no client entry");
       return {
         code: snapshot.files.get(record.package.clientEntry)!.toString("utf8"),
         contentHash: record.contentHash,
       };
+    },
+    async readAsset(id, expectedContentHash, path, signal) {
+      const record = required(id);
+      if (record.contentHash !== expectedContentHash) throw new Error("Installed content changed");
+      current(record);
+      if (signal.aborted) throw new Error("Asset read cancelled");
+      if (record.package.format !== 4) throw new Error("Package has no declared assets");
+      const asset = record.package.assets.find((candidate) => candidate.path === path);
+      if (!asset) throw new Error("Package asset is not declared");
+      const count = activeAssetReadsByInstallation.get(id) ?? 0;
+      if (activeAssetReads >= 16) throw new Error("Asset read limit reached");
+      if (count >= 4) throw new Error("Installation asset read limit reached");
+      activeAssetReads += 1;
+      activeAssetReadsByInstallation.set(id, count + 1);
+      try {
+        await verify(record);
+        current(record);
+        if (signal.aborted) throw new Error("Asset read cancelled");
+        const bytes = await readDeclaredAsset(
+          NodePath.join(root, "packages", record.contentHash),
+          asset,
+        );
+        if (signal.aborted) throw new Error("Asset read cancelled");
+        current(record);
+        return { bytes: new Uint8Array(bytes), mediaType: asset.mediaType, sha256: asset.sha256 };
+      } finally {
+        activeAssetReads -= 1;
+        const remaining = (activeAssetReadsByInstallation.get(id) ?? 1) - 1;
+        if (remaining > 0) activeAssetReadsByInstallation.set(id, remaining);
+        else activeAssetReadsByInstallation.delete(id);
+      }
     },
     invoke: invokeWorker,
     invokeApi(id, expectedContentHash, request, signal, root) {
@@ -1288,7 +1340,7 @@ export async function createExtensionRuntime(options: RuntimeOptions): Promise<E
         const old = previous.get(id);
         if (!old) throw new Error("No rollback package available");
         const next = { ...old, grants: record.grants, enabled: record.enabled };
-        await verify(next);
+        await verifyComplete(next);
         broker.validatePackage(next);
         await stage(next);
         previous.set(id, record);

@@ -66,3 +66,9 @@ The server entry defaults to a ServerExtension object whose tool IDs match the d
 The public @t3tools/extension-sdk/workspace export defines WORKSPACE_READ_TEXT, WorkspaceReadTextInput, WorkspaceReadTextResult and their validators. Input is one forward-slash relative path; output is complete bounded JSON with text, source byte length and truthful truncation. Canonical filesystem containment, live environment/project resolution and authorization remain host duties.
 
 The [installable workspace reader](examples/installable-workspace-reader/README.md) supplies self-contained client/server entries with an actual host-backed read tool and explicit captured text. These package contracts do not themselves install code, expose an RPC endpoint or deliver tools to providers. A host implementing those boundaries must retain its own activation, grant, timeout and process-lifetime policies. Trusted packages are not sandboxed.
+
+Format-4 packages can carry bounded, immutable WASM/font/binary assets. Use the
+[installed asset example](examples/installable-package-assets/README.md) and
+[asset authoring contract](AUTHORING.md#declared-renderer-assets-format-4).
+Availability requires an environment and client that both support format 4;
+this does not establish native panel or mobile parity.

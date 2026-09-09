@@ -6,11 +6,13 @@ import * as NodeCrypto from "node:crypto";
 import {
   ENVIRONMENT_MANIFEST_FILE,
   validateEnvironmentPackage,
+  type EnvironmentAsset,
   type EnvironmentPackage,
 } from "@t3tools/extension-sdk/environment";
 
 export const MAX_PACKAGE_BYTES = 1024 * 1024;
 export interface PackageSnapshot {
+  readonly complete: true;
   package: EnvironmentPackage;
   contentHash: string;
   files: Map<string, Buffer>;
@@ -90,7 +92,13 @@ export async function ensureModuleScope(root: string): Promise<void> {
   }
 }
 
-export async function readPackage(directory: string): Promise<PackageSnapshot> {
+export interface PackageMetadata {
+  readonly complete: false;
+  package: EnvironmentPackage;
+  contentHash: string;
+  files: Map<string, Buffer>;
+}
+export async function readPackageMetadata(directory: string): Promise<PackageMetadata> {
   const root = NodePath.resolve(directory);
   if ((await NodeFSP.realpath(root)) !== root || !(await NodeFSP.lstat(root)).isDirectory())
     throw new Error("Invalid package directory");
@@ -112,11 +120,37 @@ export async function readPackage(directory: string): Promise<PackageSnapshot> {
         ? manifest
         : await readBounded(root, name, MAX_PACKAGE_BYTES - total);
     total += bytes.length;
-    if (total > MAX_PACKAGE_BYTES) throw new Error("Package exceeds size limit");
+    if (total > MAX_PACKAGE_BYTES) throw new Error("Package exceeds code and metadata limit");
     files.set(name, bytes);
     hash.update(name + "\0" + bytes.length + "\0").update(bytes);
   }
-  return { package: pkg, contentHash: hash.digest("hex"), files };
+  return { complete: false, package: pkg, contentHash: hash.digest("hex"), files };
+}
+export async function readPackage(directory: string): Promise<PackageSnapshot> {
+  const metadata = await readPackageMetadata(directory);
+  const files = new Map(metadata.files);
+  if (metadata.package.format === 4) {
+    const root = NodePath.resolve(directory);
+    for (const asset of metadata.package.assets) {
+      const bytes = await readBounded(root, asset.path, asset.byteLength);
+      if (bytes.length !== asset.byteLength) throw new Error("Package asset size mismatch");
+      const digest = NodeCrypto.createHash("sha256").update(bytes).digest("hex");
+      if (digest !== asset.sha256) throw new Error("Package asset digest mismatch");
+      files.set(asset.path, bytes);
+    }
+  }
+  return { complete: true, package: metadata.package, contentHash: metadata.contentHash, files };
+}
+export async function readDeclaredAsset(
+  directory: string,
+  asset: EnvironmentAsset,
+): Promise<Buffer> {
+  const root = NodePath.resolve(directory);
+  const bytes = await readBounded(root, asset.path, asset.byteLength);
+  if (bytes.length !== asset.byteLength) throw new Error("Package asset size mismatch");
+  const digest = NodeCrypto.createHash("sha256").update(bytes).digest("hex");
+  if (digest !== asset.sha256) throw new Error("Package asset digest mismatch");
+  return bytes;
 }
 /** Parse the exact copied bytes without running package code or resolving imports. */
 export async function checkSyntax(snapshot: PackageSnapshot): Promise<void> {
@@ -142,6 +176,7 @@ export async function checkSyntax(snapshot: PackageSnapshot): Promise<void> {
   }
 }
 export async function storePackage(root: string, snapshot: PackageSnapshot): Promise<void> {
+  if (snapshot.complete !== true) throw new Error("Package store requires a complete snapshot");
   const store = NodePath.join(root, "packages");
   await NodeFSP.mkdir(store, { recursive: true, mode: 0o700 });
   if ((await NodeFSP.realpath(store)) !== store || !(await NodeFSP.lstat(store)).isDirectory())

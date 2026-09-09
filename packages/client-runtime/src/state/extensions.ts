@@ -4,6 +4,7 @@ import { EnvironmentRegistry } from "../connection/registry.ts";
 import { createEnvironmentRpcSubscriptionAtomFamily } from "./runtime.ts";
 import type {
   ExtensionClientInput,
+  ExtensionAssetInput,
   ExtensionApiSubscribeInput,
   EnvironmentId,
   ExtensionApiInvokeInput,
@@ -68,6 +69,10 @@ export const environmentExtensionsHttp = {
     request(prepared, "list", (client, headers) =>
       client.extensions.list({ payload: {}, headers }),
     ),
+  asset: (prepared: PreparedConnection, payload: ExtensionAssetInput) =>
+    request(prepared, "asset", (client, headers) =>
+      client.extensions.asset({ payload, headers }),
+    ).pipe(Effect.map((response) => response.body)),
   client: (prepared: PreparedConnection, payload: ExtensionClientInput) =>
     request(prepared, "client", (client, headers) =>
       client.extensions.client({ payload, headers }),

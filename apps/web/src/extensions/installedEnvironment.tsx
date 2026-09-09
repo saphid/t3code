@@ -212,6 +212,8 @@ function EnvironmentExtensions({ environmentId }: { environmentId: EnvironmentId
       },
       client: (id, expectedContentHash, signal) =>
         run(environmentExtensionsHttp.client(connection, { id, expectedContentHash }), signal),
+      readAsset: (id, expectedContentHash, path, signal) =>
+        run(environmentExtensionsHttp.asset(connection, { id, expectedContentHash, path }), signal),
       invoke: async (toolId, input, context, expectedContentHash, signal) => {
         const payload = decodeInvoke({
           toolId,

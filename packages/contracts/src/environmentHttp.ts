@@ -1,6 +1,7 @@
 import {
   ExtensionContentHash,
   ExtensionClientInput,
+  ExtensionAssetInput,
   ExtensionInstallInput,
   ExtensionInstallation,
   ExtensionInvokeInput,
@@ -16,6 +17,7 @@ import * as Context from "effect/Context";
 import type * as DateTime from "effect/DateTime";
 import * as Schema from "effect/Schema";
 import * as HttpApi from "effect/unstable/httpapi/HttpApi";
+import * as HttpApiSchema from "effect/unstable/httpapi/HttpApiSchema";
 import * as HttpApiEndpoint from "effect/unstable/httpapi/HttpApiEndpoint";
 import * as HttpApiGroup from "effect/unstable/httpapi/HttpApiGroup";
 import * as HttpApiMiddleware from "effect/unstable/httpapi/HttpApiMiddleware";
@@ -680,6 +682,22 @@ class EnvironmentExtensionsHttpApi extends HttpApiGroup.make("extensions")
         apiSelections: Schema.optional(ExtensionApiCatalogue.fields.apiSelections),
         apiResolution: Schema.optional(ExtensionApiCatalogue.fields.apiResolution),
         pluginResolution: Schema.optional(ExtensionApiCatalogue.fields.pluginResolution),
+      }),
+      error: [
+        ExtensionOperationError,
+        EnvironmentAuthInvalidError,
+        EnvironmentScopeRequiredError,
+        EnvironmentInternalError,
+      ],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("asset", "/api/extensions/asset", {
+      headers: OptionalBearerHeaders,
+      payload: ExtensionAssetInput,
+      success: HttpApiSchema.WithHeaders(Schema.Uint8Array.pipe(HttpApiSchema.asUint8Array()), {
+        "cache-control": Schema.Literal("no-store"),
+        "x-content-type-options": Schema.Literal("nosniff"),
       }),
       error: [
         ExtensionOperationError,
