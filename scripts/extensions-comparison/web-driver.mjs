@@ -1,6 +1,8 @@
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
+import * as NodeCrypto from "node:crypto";
+import { prepareContent } from "./web-driver-readiness.mjs";
 import * as NodePerfHooks from "node:perf_hooks";
 import {
   endpoint,
@@ -9,6 +11,9 @@ import {
   measuredDelta,
   webSocketPayloadBytes,
   validateRequest,
+  contentFixture,
+  completeCycles,
+  reusablePage,
 } from "./web-driver-observations.mjs";
 
 const defaults = {
@@ -87,7 +92,7 @@ export async function observe(request, { probe = false } = {}) {
       "No full schema-2 conformance verdict: backend resources/handles, fault injection, unrelated-session survival, throughput and process RSS/CPU are not observed.",
       "CDP TaskDuration is renderer task occupancy, not OS process CPU time. DOM listeners exclude backend/native listeners.",
       "Network counters cover this page CDP session only; exclude other tabs, workers and native service traffic.",
-      "Two presented frames plus visible controls establish mounted UI only, not terminal PTY readiness, diff/content correctness or transport drain.",
+      "Content-verification latency includes Playwright/CDP observation and native copy overhead, not pure compositor paint time. No transport drain is established.",
     ],
   };
   if (!["files", "diff", "terminal", "sidebar"].includes(journey)) {
@@ -98,6 +103,7 @@ export async function observe(request, { probe = false } = {}) {
     return result;
   }
   const { target } = request;
+  const fixture = contentFixture(request, journey);
   const moduleName = process.env.T3_COMPARISON_PLAYWRIGHT_MODULE;
   if (moduleName && !NodePath.isAbsolute(moduleName))
     throw new Error("Playwright module override must be an absolute installed module path");
@@ -107,13 +113,14 @@ export async function observe(request, { probe = false } = {}) {
   await NodeFSP.mkdir(target.artifactDir, { recursive: true });
   const evidenceDir = await NodeFSP.mkdtemp(NodePath.join(target.artifactDir, `web-${journey}-`));
   result.evidenceDir = evidenceDir;
-  let browser, page, cdp;
+  let browser, page, cdp, awaitContent;
   let stage = "connect owned browser";
   let httpReceived = 0,
     wsReceived = 0,
     wsSent = 0,
     wsFrames = 0;
   const pageErrors = [];
+  const onPageError = (error) => pageErrors.push(error.name);
   try {
     browser = await chromium.connectOverCDP(target.webCdpUrl, {
       timeout: target.timeoutMs ?? 15000,
@@ -123,12 +130,16 @@ export async function observe(request, { probe = false } = {}) {
     const contexts = browser.contexts();
     if (contexts.length !== 1)
       throw new Error("Expected one explicitly owned paired browser context");
-    page = await contexts[0].newPage();
+    page =
+      target.pageMode === "reuse"
+        ? reusablePage(contexts[0].pages(), target.webUrl)
+        : await contexts[0].newPage();
+    result.pageMode = target.pageMode ?? "fresh";
     // Fresh Vite page readiness is outside the measured surface interaction.
     page.setDefaultTimeout(60_000);
     const startupStarted = NodePerfHooks.performance.now();
     result.startupStages = [];
-    page.on("pageerror", (error) => pageErrors.push(error.name));
+    page.on("pageerror", onPageError);
     cdp = await contexts[0].newCDPSession(page);
     await cdp.send("Performance.enable", { timeDomain: "timeTicks" });
     await cdp.send("Network.enable");
@@ -143,7 +154,8 @@ export async function observe(request, { probe = false } = {}) {
       wsSent += webSocketPayloadBytes(response);
     });
     stage = "navigate paired seeded thread";
-    await page.goto(target.webUrl, { waitUntil: "domcontentloaded" });
+    if (target.pageMode !== "reuse")
+      await page.goto(target.webUrl, { waitUntil: "domcontentloaded" });
     result.startupStages.push({
       stage,
       elapsedMs: NodePerfHooks.performance.now() - startupStarted,
@@ -221,6 +233,9 @@ export async function observe(request, { probe = false } = {}) {
       }
     } else if (!(await ready.isVisible())) await toggle.click();
     await uniqueVisible(ready, "ready control");
+    stage = "prepare actual fixture content";
+    awaitContent = await prepareContent(page, cdp, journey, fixture, target.timeoutMs ?? 15000);
+    result.initialContent = await awaitContent();
     await presented(page);
     await page.screenshot({ path: NodePath.join(evidenceDir, "initial.png") });
     const before = await readCounters(cdp);
@@ -247,12 +262,14 @@ export async function observe(request, { probe = false } = {}) {
       if (!reopened) throw new Error("Ready control disappeared after reopen");
       await waitPresentedVisibility(page, reopened, true);
       await reopened.dispose();
+      const content = await awaitContent();
       await presented(page);
       samples.push({
         cycle,
         hideMs,
         openMs: NodePerfHooks.performance.now() - openStart,
         hiddenCounters,
+        content,
       });
       // Persist completed observations even if a later cycle fails or the runner times out.
       await NodeFSP.appendFile(
@@ -260,6 +277,12 @@ export async function observe(request, { probe = false } = {}) {
         JSON.stringify(samples.at(-1)) + "\n",
       );
     }
+    const raw = await NodeFSP.readFile(NodePath.join(evidenceDir, "cycles.jsonl"), "utf8");
+    completeCycles(raw, cycles, pageErrors, journey !== "sidebar");
+    result.rawCycles = {
+      count: cycles,
+      sha256: NodeCrypto.createHash("sha256").update(raw).digest("hex"),
+    };
     const after = await readCounters(cdp);
     result.measurements = {
       ...measuredDelta(before, after),
@@ -281,14 +304,22 @@ export async function observe(request, { probe = false } = {}) {
       samplesPath: NodePath.join(evidenceDir, "cycles.jsonl"),
     };
     result.observedChecks.push({
-      id: "visible-hide-reopen",
+      id: "content-hide-reopen",
       passed: true,
-      evidence: `${samples.length} UI cycles awaited ready control hidden and visible, then two animation frames; ${result.cycles.samplesPath}`,
+      evidence: `${samples.length} cycles observed hide, reopen and configured content; ${result.cycles.samplesPath}`,
     });
     result.pageErrors = pageErrors;
     if (pageErrors.length) throw new Error("Page emitted errors during observation");
     await page.screenshot({ path: NodePath.join(evidenceDir, "final.png") });
+    if (pageErrors.length) throw new Error("Page emitted errors during final observation");
     result.status = probe ? "observed" : "inconclusive";
+    result.measurementSemantics = {
+      openMs: "warm reopen-to-content verification including observation overhead",
+      actionMs: "hide until clipped then two frames",
+      heapBytes: "uncollected endpoint",
+      domNodes: "renderer instance endpoint",
+      domListeners: "renderer instance endpoint",
+    };
     result.reason =
       "Observed UI microjourney only; required full behavior/identity/metrics remain unverified";
   } catch (error) {
@@ -299,9 +330,22 @@ export async function observe(request, { probe = false } = {}) {
         ? "Timed out awaiting an actual UI observation"
         : "Driver failed; see sanitized error type";
     result.errorType = error.name;
+    if (error.inputGuard) result.inputGuard = error.inputGuard;
     result.failedStage = stage;
     result.pageErrors = pageErrors;
   } finally {
+    if (awaitContent?.dispose) {
+      try {
+        result.inputGuard = await awaitContent.dispose();
+        if (result.inputGuard.violations.length || result.inputGuard.forwardedWrites < 1)
+          result.status = "failed";
+      } catch (error) {
+        result.status = "failed";
+        result.inputGuardCleanupError = error.name;
+      }
+    }
+    if (page) page.off("pageerror", onPageError);
+    if (pageErrors.length) result.status = "failed";
     const cleanup = {
       cdp: "not-created",
       page: "not-created",
@@ -310,7 +354,7 @@ export async function observe(request, { probe = false } = {}) {
     };
     for (const [key, resource, close] of [
       ["cdp", cdp, () => cdp.detach()],
-      ["page", page, () => page.close()],
+      ["page", target.pageMode === "reuse" ? null : page, () => page.close()],
       // Closing a connectOverCDP client disconnects it; no browser process was launched.
       ["connection", browser, () => browser.close()],
     ]) {
@@ -323,6 +367,7 @@ export async function observe(request, { probe = false } = {}) {
         result.status = "failed";
       }
     }
+    if (target.pageMode === "reuse" && page) cleanup.page = "retained-owned-page";
     result.cleanup = cleanup;
     await NodeFSP.writeFile(
       NodePath.join(evidenceDir, "observation.json"),

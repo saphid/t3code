@@ -91,5 +91,78 @@ export function validateRequest(request) {
   if (target.selectors?.[journey]) {
     for (const value of Object.values(target.selectors[journey])) selector(value);
   }
+  if (target.pageMode !== undefined && !["fresh", "reuse"].includes(target.pageMode))
+    throw new Error("Unknown pageMode");
   return journey;
+}
+
+export function contentFixture(request, journey) {
+  if (!["files", "diff", "terminal"].includes(journey)) return null;
+  const fixture = request.target.content?.[journey];
+  const keys =
+    journey === "files"
+      ? ["filename", "text"]
+      : journey === "diff"
+        ? ["file", "before", "after"]
+        : ["threadId", "terminalId"];
+  if (
+    !fixture ||
+    keys.some(
+      (key) =>
+        typeof fixture[key] !== "string" || !fixture[key].trim() || fixture[key].length > 4096,
+    )
+  )
+    throw new Error("Explicit deterministic content fixture required");
+  if (journey === "terminal" && fixture.allowInput !== true)
+    throw new Error("Terminal fixture must explicitly authorize input in its owned active shell");
+  if (
+    journey === "terminal" &&
+    new URL(request.target.webUrl).pathname.split("/").at(-1) !== fixture.threadId
+  )
+    throw new Error("Terminal fixture thread differs from requested page");
+  return fixture;
+}
+export function completeCycles(raw, expected, errors, requireContent = true) {
+  if (errors.length) throw new Error("Page emitted errors during observation");
+  const lines = raw.trim().split("\n").filter(Boolean);
+  if (lines.length !== expected) throw new Error("Incomplete raw cycles");
+  const samples = lines.map((line) => JSON.parse(line));
+  samples.forEach((sample, index) => {
+    if (
+      sample.cycle !== index ||
+      !Number.isFinite(sample.openMs) ||
+      sample.openMs < 0 ||
+      !Number.isFinite(sample.hideMs) ||
+      sample.hideMs < 0
+    )
+      throw new Error("Invalid raw cycle sequence or timing");
+    if (requireContent && sample.content?.matched !== true)
+      throw new Error("Raw cycle lacks content evidence");
+  });
+  return samples;
+}
+export function reusablePage(pages, webUrl) {
+  const expected = endpoint(webUrl, "webUrl");
+  const matching = pages.filter((page) => {
+    try {
+      const actual = new URL(page.url());
+      return actual.href === expected.href;
+    } catch {
+      return false;
+    }
+  });
+  if (matching.length !== 1)
+    throw new Error("Reuse requires exactly one existing page at the exact fixture URL");
+  return matching[0];
+}
+export function terminalChunks(value, fixture) {
+  if (!value || typeof value !== "object") return [];
+  if (
+    value.type === "output" &&
+    value.threadId === fixture.threadId &&
+    value.terminalId === fixture.terminalId &&
+    typeof value.data === "string"
+  )
+    return [value.data];
+  return Object.values(value).flatMap((child) => terminalChunks(child, fixture));
 }
