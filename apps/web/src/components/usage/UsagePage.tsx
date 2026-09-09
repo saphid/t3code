@@ -250,9 +250,10 @@ export function UsagePage() {
   };
   const resetZoom = () => {
     const original = preZoomSelection.current;
+    if (original === null) return;
     preZoomSelection.current = null;
-    if (original?.custom) setWindowSelection(original);
-    else selectWindow(original?.days ?? windowDays);
+    if (original.custom) setWindowSelection(original);
+    else selectWindow(original.days);
   };
   const selectMetric = (nextMetric: UsageMetric) => {
     const nextPreferences = { metric: nextMetric, windowDays };

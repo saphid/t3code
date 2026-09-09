@@ -212,7 +212,10 @@ function formatUsageDay(format: Intl.DateTimeFormat, instant: Date): string {
   const parts = Object.fromEntries(
     format.formatToParts(instant).map(({ type, value }) => [type, value]),
   );
-  return `${parts.year}-${parts.month}-${parts.day}`;
+  const year = parts.year?.padStart(4, "0");
+  if (year === undefined || year.length !== 4)
+    throw new RangeError("Usage years must have four digits");
+  return `${year}-${parts.month}-${parts.day}`;
 }
 
 function viewerDayFormat(): { timeZone: string; format: Intl.DateTimeFormat } {
@@ -297,12 +300,9 @@ export function makeWindow(
   // the local end day, done in UTC where days are uniform.
   // Daily views only expose complete calendar days. The current day remains
   // open, so including it would make a partial snapshot look complete.
-  const [year = 0, month = 1, dayOfMonth = 1] = today
-    .split("-")
-    .map((part) => Number.parseInt(part, 10));
-  const yesterday = new Date(Date.UTC(year, month - 1, dayOfMonth - 1));
-  const untilDay = yesterday.toISOString().slice(0, 10);
-  const start = new Date(Date.UTC(year, month - 1, dayOfMonth - days));
+  const todayMs = Date.parse(`${today}T00:00:00Z`);
+  const untilDay = new Date(todayMs - DAY_MS).toISOString().slice(0, 10);
+  const start = new Date(todayMs - days * DAY_MS);
   return {
     sinceDay: UsageDay.make(start.toISOString().slice(0, 10)),
     untilDay: UsageDay.make(untilDay),

@@ -160,3 +160,13 @@ describe("locale-independent usage windows", () => {
     }
   });
 });
+
+it("preserves four-digit early years in both daily bounds", () => {
+  const window = makeWindow(1, new Date("0001-07-15T12:00:00Z"));
+  expect(window.sinceDay).toMatch(/^0001-/);
+  expect(window.untilDay).toBe(window.sinceDay);
+});
+
+it("rejects years outside the four-digit usage contract", () => {
+  expect(() => makeWindow(1, new Date("+010000-07-15T12:00:00Z"))).toThrow(RangeError);
+});

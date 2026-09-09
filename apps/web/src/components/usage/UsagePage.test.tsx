@@ -555,3 +555,11 @@ it("restores the original custom window after repeated chart zooms", () => {
     }),
   );
 });
+
+it("keeps an unzoomed custom range when the plot is double-clicked", () => {
+  testState.customWindow = true;
+  renderToStaticMarkup(<UsagePage />);
+  expect(testState.resetZoom).toBeTypeOf("function");
+  testState.resetZoom?.();
+  expect(testState.setWindowSelection).not.toHaveBeenCalled();
+});
