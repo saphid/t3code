@@ -14,8 +14,8 @@
     "./worker": "./dist/worker.js"
   },
   "scripts": {
-    "build": "tsc -p tsconfig.json",
-    "test": "tsc -p tsconfig.json && node --test test/*.test.mjs"
+    "build": "vp run --filter @t3tools/extension-sdk build && tsc -p tsconfig.json",
+    "test": "vp run build && node --test test/*.test.mjs"
   },
   "dependencies": {
     "@t3tools/extension-sdk": "workspace:*",

@@ -20,7 +20,9 @@ An outside-root fixture produces a workspace-boundary error. `DiffPanel` can the
 
 ## SDK and fresh-install gate
 
-The SDK's `prepare` script builds its emitted exports during normal workspace installation. The web package's `dev` and `build` scripts also build the SDK first. If installing with lifecycle scripts disabled, use those package scripts or explicitly build the SDK before invoking Vite directly. Do not remove an active environment's `dist` to test this: use an isolated package/workspace copy.
+The SDK's `prepare` script builds its emitted exports during normal workspace installation. The web package's `dev`, `build`, `test` and `typecheck` scripts build the SDK first. The runtime's `build` and `test` scripts also build the SDK; the server's `dev`, `build:bundle`, `test` and `typecheck` scripts use `build:extensions` to build that runtime dependency.
+
+Raw commands such as `vp test run` and `pnpm exec tsc` bypass package-script prerequisites. Before using them in a clean checkout, run `CI=true corepack pnpm --filter t3 run build:extensions`. Do not remove an active environment's `dist` to test this: use an isolated package/workspace copy.
 
 Run the focused SDK checks from the repository root:
 

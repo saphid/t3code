@@ -1,5 +1,4 @@
-import { expect, it } from "@effect/vitest";
-import { vi } from "vitest";
+import { expect, it, vi } from "@effect/vitest";
 import * as NodeBuffer from "node:buffer";
 import { boundedWorkspaceText } from "./workspaceText.ts";
 import { validateWorkspaceReadTextInput } from "@t3tools/extension-sdk/workspace";
