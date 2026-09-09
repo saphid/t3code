@@ -109,11 +109,13 @@ let latest: UsageView;
 function Probe({
   selected,
   refreshThreads = false,
+  windowInput = input,
 }: {
   selected: ReadonlySet<EnvironmentId> | null;
   refreshThreads?: boolean;
+  windowInput?: typeof input;
 }) {
-  const usage = useUsage(input, undefined, refreshThreads, selected);
+  const usage = useUsage(windowInput, undefined, refreshThreads, selected);
   useLayoutEffect(() => {
     latest = usage;
   }, [usage]);
@@ -300,3 +302,26 @@ it("refreshes thread keys with the new window and newly published providers", as
     query.mockRestore();
   }
 });
+
+it.each([false, true])(
+  "settles a next-window refresh before React commits, failure=%s",
+  async (fails) => {
+    const selected = new Set([EnvironmentId.make("a")]);
+    await select("a");
+    const nextInput = {
+      ...input,
+      sinceDay: UsageDay.make("2026-09-05"),
+      untilDay: UsageDay.make("2026-09-06"),
+    };
+    if (fails) testState.refreshUsage.mockRejectedValueOnce(new Error("offline"));
+    else testState.refreshUsage.mockResolvedValueOnce(undefined);
+    await act(async () => {
+      renderer?.update(<Probe selected={selected} windowInput={nextInput} />);
+      await latest.refresh(nextInput);
+    });
+    expect(latest.isRefreshing).toBe(false);
+    expect(latest.refreshError).toBe(
+      fails ? "Refresh failed. Showing the last successful usage snapshot." : null,
+    );
+  },
+);

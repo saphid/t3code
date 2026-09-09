@@ -159,12 +159,8 @@ export function useUsage(
     refreshing: false,
     error: null as string | null,
   });
-  const currentWindowKey = useRef(viewKey);
   const currentRefreshId = useRef(0);
   const pendingRefreshWindowKey = useRef(viewKey);
-  useEffect(() => {
-    currentWindowKey.current = viewKey;
-  }, [viewKey]);
   useEffect(() => {
     // A refresh started while selecting the next window already targets this
     // committed key. Keep its request id and state so the completion can settle
@@ -226,7 +222,7 @@ export function useUsage(
         error = "Refresh failed. Showing the last successful usage snapshot.";
       }
       const nextState = completeUsageRefresh(
-        currentWindowKey.current,
+        pendingRefreshWindowKey.current,
         currentRefreshId.current,
         requestWindowKey,
         requestId,

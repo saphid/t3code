@@ -205,12 +205,8 @@ export function useUsage(
     refreshing: false,
     error: null,
   });
-  const currentViewKey = useRef(viewKey);
   const currentRefreshId = useRef(0);
   const pendingRefreshViewKey = useRef(viewKey);
-  useEffect(() => {
-    currentViewKey.current = viewKey;
-  }, [viewKey]);
   useEffect(() => {
     const nextState = refreshStateForWindowChange(
       manualRefreshState,
@@ -305,7 +301,7 @@ export function useUsage(
         error = "Refresh failed. Showing the last successful usage snapshot.";
       }
       const nextState = completeUsageRefresh(
-        currentViewKey.current,
+        pendingRefreshViewKey.current,
         currentRefreshId.current,
         requestViewKey,
         requestId,
