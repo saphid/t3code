@@ -257,6 +257,35 @@ function currentCanonicalWindow(timeZone = "UTC"): UsageSummaryInput {
 }
 
 describe("UsageService", () => {
+  it.live("keeps cold foreground thread reads off the pricing network", () =>
+    Effect.gen(function* () {
+      const { transcript, settings, home } = yield* setup;
+      yield* Effect.promise(() => NodeFSP.writeFile(transcript, claudeLine(1, 5)));
+      let fetches = 0;
+      yield* Effect.gen(function* () {
+        const service = yield* UsageService.make;
+        yield* service.readThreadBreakdown(WINDOW);
+        assert.strictEqual(fetches, 0);
+        yield* service.readThreadBreakdown({ ...WINDOW, refreshToken: "manual" });
+        assert.strictEqual(fetches, 1);
+      }).pipe(
+        Effect.provide(
+          serviceLayers({
+            prefix: "usage-thread-offline-rates",
+            home,
+            settings,
+            ratesDocument: {
+              "claude-fable-5": { input_cost_per_token: 1e-5, output_cost_per_token: 5e-5 },
+            },
+            onRatesFetch: () => {
+              fetches += 1;
+            },
+          }),
+        ),
+      );
+    }).pipe(Effect.scoped),
+  );
+
   it.live("scans a current common preset on its first read", () =>
     Effect.gen(function* () {
       const { transcript, settings, home } = yield* setup;

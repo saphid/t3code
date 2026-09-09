@@ -289,7 +289,7 @@ describe("UsagePage project breakdown", () => {
         ...usage.merged,
         costUsd: 10,
         totalTokens: 300,
-        projects: [projectTotals[0]],
+        projects: [projectTotals[0]!],
       },
     });
 
@@ -306,7 +306,7 @@ describe("UsagePage project breakdown", () => {
         ...usage.merged,
         costUsd: 9,
         totalTokens: 200,
-        projects: [projectTotals[0]],
+        projects: [projectTotals[0]!],
       },
     });
 

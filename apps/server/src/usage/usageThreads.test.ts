@@ -61,6 +61,24 @@ const NO_ATTRIBUTION: ThreadAttribution = {
 };
 
 describe("ThreadUsageAccumulator", () => {
+  it("keeps identical record keys from different directories consistent with the summary", () => {
+    const options = { timeZone: "UTC", sinceDay: "2026-08-01", untilDay: "2026-08-31", rates };
+    const accumulator = new ThreadUsageAccumulator(options);
+    const summary = new UsageAggregator(options);
+    const item = record({ dedupeKey: "shared-key" });
+    for (const directory of ["/first", "/first", "/second"]) {
+      accumulator.add(item, { sessionKey: "claude:session-a", agentId: null }, directory);
+      summary.add(item, directory);
+    }
+    const threadTokens = accumulator
+      .finish()
+      .reduce((sum, group) => sum + group.totals.outputTokens, 0);
+    expect(threadTokens).toBe(100);
+    expect(
+      summary.finish().buckets.reduce((sum, bucket) => sum + bucket.totals.outputTokens, 0),
+    ).toBe(threadTokens);
+  });
+
   it("groups records by session and splits subagent slices out", () => {
     const main = { sessionKey: "claude:session-a", agentId: null };
     const agent = { sessionKey: "claude:session-a", agentId: "agent-1" };
@@ -76,7 +94,7 @@ describe("ThreadUsageAccumulator", () => {
     expect(sessionA?.agents.get("agent-1")?.totals.outputTokens).toBe(50);
   });
 
-  it("dedupes globally across files with the summary's semantics", () => {
+  it("dedupes across files within one directory with the summary's semantics", () => {
     const context = { sessionKey: "claude:session-a", agentId: null };
     const groups = accumulate([
       [record({ dedupeKey: "msg_1:" }), context],

@@ -2032,7 +2032,7 @@ export const make = Effect.gen(function* () {
 
     const startedAtMs = yield* Clock.currentTimeMillis;
     const settings = yield* readSettings;
-    yield* ensureRates(false);
+    yield* ensureRates(false, input.refreshToken !== undefined);
     yield* ensureScanCacheLoaded;
     const attribution = yield* loadThreadAttribution();
     const target =
@@ -2089,7 +2089,7 @@ export const make = Effect.gen(function* () {
           record.sessionId.length > 0
             ? `${provider}:${record.sessionId}`
             : `${provider}:file:${path.basename(path.dirname(filePath))}:${path.basename(filePath, ".jsonl")}`;
-        accumulator.add(record, { sessionKey, agentId });
+        accumulator.add(record, { sessionKey, agentId }, path.dirname(filePath));
         if (!isSubagent && !titleFiles.has(sessionKey)) {
           titleFiles.set(sessionKey, { path: filePath, provider });
         }

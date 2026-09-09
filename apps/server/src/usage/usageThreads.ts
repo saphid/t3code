@@ -97,7 +97,7 @@ export interface ThreadUsageOptions {
 /**
  * Folds records into per-session groups with per-day component costs.
  *
- * De-duplication is global across the scan with the same semantics as the
+ * De-duplication is scoped to each transcript directory with the same semantics as the
  * summary aggregator, so a thread's number here always reconciles with its
  * share of the summary.
  */
@@ -118,17 +118,18 @@ export class ThreadUsageAccumulator {
     this.#toDay = makeDayFormatter(options.timeZone);
   }
 
-  add(record: UsageRecord, context: ThreadRecordContext): boolean {
+  add(record: UsageRecord, context: ThreadRecordContext, directory = ""): boolean {
     const inWindow = this.#isInWindow(record);
     if (record.dedupeKey === null) {
       this.#unkeyedRecords.push({ record, context });
       return inWindow;
     }
-    if (this.#recordsByKey.has(record.dedupeKey)) {
-      this.#recordsByKey.set(record.dedupeKey, { record, context });
+    const dedupeKey = JSON.stringify([directory, record.dedupeKey]);
+    if (this.#recordsByKey.has(dedupeKey)) {
+      this.#recordsByKey.set(dedupeKey, { record, context });
       return inWindow;
     }
-    this.#recordsByKey.set(record.dedupeKey, { record, context });
+    this.#recordsByKey.set(dedupeKey, { record, context });
     return inWindow;
   }
 
