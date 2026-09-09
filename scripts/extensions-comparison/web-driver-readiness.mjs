@@ -15,6 +15,69 @@ async function unique(locator) {
   if ((await locator.count()) !== 1) throw new Error("Ambiguous content control");
   return locator;
 }
+/** Runs inside page.evaluate: every clipboard read is awaited before deciding or rescheduling. */
+export function waitForClipboardMarker({ marker, sentinel, timeoutMs }) {
+  return new Promise((resolve, reject) => {
+    if (
+      typeof marker !== "string" ||
+      !marker ||
+      marker.trim() !== marker ||
+      !Number.isFinite(timeoutMs) ||
+      timeoutMs <= 0
+    ) {
+      reject(new Error("Invalid clipboard observation request"));
+      return;
+    }
+    const deadline = performance.now() + timeoutMs;
+    let finished = false;
+    let frame = null;
+    let reads = 0;
+    let timer;
+    const finish = (error) => {
+      if (finished) return;
+      finished = true;
+      if (frame !== null) cancelAnimationFrame(frame);
+      clearTimeout(timer);
+      if (error) reject(error);
+      else resolve({ matched: true, clipboardReads: reads });
+    };
+    const expired = () =>
+      new Error("System clipboard did not receive the exact terminal marker before its deadline");
+    timer = setTimeout(() => finish(expired()), timeoutMs);
+    const read = async () => {
+      frame = null;
+      if (finished) return;
+      if (performance.now() >= deadline) {
+        finish(expired());
+        return;
+      }
+      try {
+        const text = await navigator.clipboard.readText();
+        if (finished) return;
+        reads++;
+        if (performance.now() >= deadline) {
+          finish(expired());
+          return;
+        }
+        if (
+          text !== sentinel &&
+          text
+            .replaceAll("\r\n", "\n")
+            .split("\n")
+            .some((line) => line.trim() === marker)
+        ) {
+          finish();
+          return;
+        }
+        frame = requestAnimationFrame(read);
+      } catch (error) {
+        finish(error);
+      }
+    };
+    void read();
+  });
+}
+
 async function terminalCopy(page, marker, timeoutMs) {
   const root = page.locator('[data-terminal-owner="drawer"]:visible');
   const canvas = await unique(root.locator("canvas:visible"));
@@ -22,26 +85,14 @@ async function terminalCopy(page, marker, timeoutMs) {
   await page.evaluate((value) => navigator.clipboard.writeText(value), sentinel);
   await canvas.click({ position: { x: 20, y: 10 }, clickCount: 3 });
   await page.keyboard.press("Control+C");
-  let receipt;
-  try {
-    receipt = await page.waitForFunction(
-      async ({ marker, sentinel }) => {
-        const text = await navigator.clipboard.readText();
-        return text !== sentinel && text.includes(marker);
-      },
-      { marker, sentinel },
-      { polling: "raf", timeout: timeoutMs },
-    );
-    if ((await receipt.jsonValue()) !== true)
-      throw new Error("System clipboard did not receive actual terminal output");
-    return {
-      matched: true,
-      marker,
-      evidence: "Ghostty pointer selection, real Control+C and system clipboard read",
-    };
-  } finally {
-    await receipt?.dispose();
-  }
+  const receipt = await page.evaluate(waitForClipboardMarker, { marker, sentinel, timeoutMs });
+  if (receipt.matched !== true)
+    throw new Error("System clipboard did not receive actual terminal output");
+  return {
+    ...receipt,
+    marker,
+    evidence: "Ghostty pointer selection, real Control+C and system clipboard read",
+  };
 }
 export async function prepareContent(page, cdp, journey, fixture, timeoutMs) {
   const options = { timeoutMs };
