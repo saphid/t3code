@@ -57,10 +57,13 @@ Run this focused store, bridge, service, placement and text-contribution selecti
   src/extensions/workspaceServices.test.tsx \
   src/extensions/services/workspaceRead.test.ts \
   src/extensions/GenericExtensionDock.test.tsx \
-  src/extensions/context.test.tsx
+  src/extensions/context.test.tsx \
+  src/extensions/MessageDecorations.compiler.test.tsx
 ```
 
 Service cases cover explicit grants, revocation, scope and bounded/stale results using controlled dependencies; they do not prove backend or provider behavior. Placement cases cover container ownership, saved generations and hidden activation; real-client retention and geometry still require observation. Text-contribution cases cover explicit capture and visible read-only cards. When changing composer integration, also run the existing editor serialization, mention, paste, logic and prompt-history tests.
+
+The message-decoration compiler test transforms the actual component with the application's React compiler preset. It covers a message mounted before registration, subsequent installation, unregister and reinstall, including obsolete visibility callbacks. Keep this case alongside the ordinary component tests: uncompiled tests can miss a mutable registry lookup that the compiler memoizes as a constant. Registration availability must remain an explicit reactive dependency. The compiler test uses a controlled observer; a real-client reinstall journey remains separate evidence.
 
 Run the changed native adapter's focused tests as well. Keep the existing store cases in the selection so generic records cannot silently regress native order, close/reopen behavior or automatic-open priority.
 
@@ -71,6 +74,14 @@ For native surfaces, preserve resource ownership and presentation identity. In p
 Follow the [comparison protocol](extensions-comparison.md) for matched baseline/candidate journeys, baseline-noise measurement, fault injection, 100-cycle soaks, raw latency/CPU/memory/wire samples and acceptance analysis. Supply actual web/Electron drivers and service receipts. Synthetic analyzer fixtures are not substitute journey evidence. Record unsupported macOS, React Native, SwiftUI, provider and connection-mode paths explicitly.
 
 The paired `electron-baseline-observation-4.json` and `electron-candidate-observation-4.json` receipts record passing Linux native-browser behavior checks. Their scope is those observed checks; they do not establish full Browser parity, repeated performance measurements, reconnect coverage, a complete shared-viewer soak or other-platform compatibility.
+
+## Interpret readiness and resource diagnostics
+
+Require actual content readiness before measuring a surface. For Files, a refresh button or mounted shell does not establish that the tree has loaded: wait for the expected fixture tree item and selected file content, and retain failure evidence if they never appear. Apply the same rule to the seeded diff and actual terminal output.
+
+Distinguish CDP instance counters from connected DOM counts. `Memory.getDOMCounters` reports renderer-wide objects and listeners; a document query counts a different population and can omit retained or shadow-tree nodes. Do not subtract connected elements from CDP node counts and label the difference an exact detached-node count.
+
+For resource investigation, compare matched visible states and, separately, matched drained states after owned subscriptions, requests and viewer cleanup have settled. A controlled garbage-collection phase may help distinguish retained resources from objects awaiting collection, but record it as a diagnostic phase applied equally to baseline and candidate. Forced GC is not a latency benchmark and must not be mixed into ordinary interaction timing. Keep phase labels, raw counters and ownership observations together; a single unmatched count cannot establish a leak or its cause.
 
 ## Classify failures before changing the candidate
 
