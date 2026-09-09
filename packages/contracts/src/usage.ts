@@ -41,8 +41,6 @@ export const USAGE_MERGE_COMPATIBLE_SINCE = 4 as const;
 export const USAGE_PROJECT_ATTRIBUTION_SINCE = 8 as const;
 /** First contract version that exposes the current thread-breakdown RPC. */
 export const USAGE_THREAD_BREAKDOWN_SINCE = 9 as const;
-/** First contract version that applies `threadId` before the breakdown row cap. */
-export const USAGE_THREAD_FILTER_SINCE = 12 as const;
 /** First contract version that exposes bounded coverage and explicit summary refresh. */
 export const USAGE_EXPLICIT_REFRESH_SINCE = 13 as const;
 
