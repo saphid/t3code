@@ -74,7 +74,10 @@ export async function observe(request, { probe = false } = {}) {
     const contexts = browser.contexts();
     if (contexts.length !== 1) throw new Error("Expected one explicitly owned paired browser context");
     page = await contexts[0].newPage();
-    page.setDefaultTimeout(target.timeoutMs ?? 15000);
+    // Fresh Vite page readiness is outside the measured surface interaction.
+    page.setDefaultTimeout(60_000);
+    const startupStarted = performance.now();
+    result.startupStages = [];
     page.on("pageerror", (error) => pageErrors.push(error.name));
     cdp = await contexts[0].newCDPSession(page);
     await cdp.send("Performance.enable", { timeDomain: "timeTicks" });
@@ -84,12 +87,20 @@ export async function observe(request, { probe = false } = {}) {
     cdp.on("Network.webSocketFrameSent", ({ response }) => { wsSent += webSocketPayloadBytes(response); });
     stage = "navigate paired seeded thread";
     await page.goto(target.webUrl, { waitUntil: "domcontentloaded" });
+    result.startupStages.push({ stage, elapsedMs: performance.now() - startupStarted });
     const expected = endpoint(target.webUrl, "webUrl");
     const actual = new URL(page.url());
     if (actual.origin !== expected.origin || actual.pathname !== expected.pathname)
       throw new Error("Client redirected away from the seeded thread (pairing/readiness not established)");
+    stage = "await app shell readiness";
     await uniqueVisible(page.getByRole("button", { name: "Toggle main sidebar", exact: true }), "app sidebar toggle");
-    if (target.threadTitle) await uniqueVisible(page.getByRole("button", { name: `Thread actions for ${target.threadTitle}`, exact: true }), "fixture thread title");
+    result.startupStages.push({ stage, elapsedMs: performance.now() - startupStarted });
+    if (target.threadTitle) {
+      stage = "await seeded thread readiness";
+      await uniqueVisible(page.getByRole("button", { name: `Thread actions for ${target.threadTitle}`, exact: true }), "fixture thread title");
+      result.startupStages.push({ stage, elapsedMs: performance.now() - startupStarted });
+    }
+    page.setDefaultTimeout(target.timeoutMs ?? 15000);
     stage = "select native surface and await mounted UI";
     const selectors = { ...defaults[journey], ...target.selectors?.[journey] };
     const ready = locate(page, selectors.ready);

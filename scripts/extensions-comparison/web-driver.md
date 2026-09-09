@@ -56,3 +56,5 @@ node --test scripts/extensions-comparison/web-driver-observations.test.mjs
 ```
 
 Tests cover input ownership and credential rejection, selector shape, missing/reset metrics, UTF-8/binary byte accounting and unsupported-journey fail-closed behavior. They never launch browsers or claim real-client success. Actual selector/runtime verification belongs to the integrated owner run.
+
+Fresh page startup is outside surface timing. Navigation, app-shell readiness and seeded-thread readiness each have a 60-second wait and their cumulative elapsed time (from page creation, including CDP setup) is retained in `startupStages`. The configured interaction timeout (15 seconds by default) resumes before selecting the native surface. The outer runner still bounds each complete probe; increasing startup tolerance does not grant a slower hide/reopen pass or establish startup performance.
