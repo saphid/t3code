@@ -16,7 +16,6 @@ import {
 } from "@t3tools/shared/usageFormat";
 import type { EnvironmentProviderContribution } from "@t3tools/shared/usageMerge";
 
-import { cn } from "../../lib/utils";
 import { useUsageThreads, type UsageThreadRowWithEnvironment } from "../../state/usage";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
@@ -451,22 +450,6 @@ export function UsageThreadDailyChart({
     </div>
   );
 }
-
-function LegendSwatch({
-  className,
-  label,
-}: {
-  readonly className: string;
-  readonly label: string;
-}) {
-  return (
-    <span className="flex items-center gap-1.5">
-      <span aria-hidden className={cn("size-2 rounded-[2px] bg-current", className)} />
-      {label}
-    </span>
-  );
-}
-
 function ProviderMark({ provider }: { readonly provider: UsageProviderKind }) {
   const Mark = PROVIDER_PRESENTATION[provider].mark;
   return <Mark className="size-3.5 shrink-0" aria-hidden />;
