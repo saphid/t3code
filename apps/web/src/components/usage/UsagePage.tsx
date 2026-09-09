@@ -636,7 +636,7 @@ export function UsagePage() {
                       }}
                       providerContributions={merged.providerContributions}
                       summaryFailedEnvironments={
-                        environments.filter(
+                        selectedEnvironments.filter(
                           (environment) =>
                             (environment.error !== null ||
                               merged.staleEnvironments.includes(environment.environmentId)) &&
