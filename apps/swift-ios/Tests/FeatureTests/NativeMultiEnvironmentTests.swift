@@ -26,7 +26,10 @@ final class NativeMultiEnvironmentTests: XCTestCase {
                 ),
                 host: "two.example"
             )
-            let snapshot = try await fixture.client.initialSnapshot()
+            _ = try await fixture.hydratedSnapshot()
+            let snapshot = try await fixture.recorder!.wait {
+                $0.threads.contains { $0.environmentID == "two" && $0.wireID == "thread-two" }
+            }
             let thread = try XCTUnwrap(snapshot.threads.first { $0.environmentID == "two" })
             let monitor = Task {
                 for await _ in client.sourceControlStatusEvents(threadID: thread.id) {}
@@ -47,7 +50,8 @@ final class NativeMultiEnvironmentTests: XCTestCase {
             await fixture.client.disconnect()
             try? FileManager.default.removeItem(at: fixture.directory)
         }
-        _ = try await fixture.client.initialSnapshot()
+        let snapshot = try await fixture.hydratedSnapshot()
+        XCTAssertFalse(snapshot.threads.contains { $0.wireID == "queued-archived" })
         let wireID = "queued-archived"
         let archived = multiEnvironmentDetail(
             projectID: "project-two", threadID: wireID, archivedAt: "2026-07-31T12:00:00.000Z"
@@ -77,7 +81,8 @@ final class NativeMultiEnvironmentTests: XCTestCase {
             await fixture.client.disconnect()
             try? FileManager.default.removeItem(at: fixture.directory)
         }
-        _ = try await fixture.client.initialSnapshot()
+        let snapshot = try await fixture.hydratedSnapshot()
+        XCTAssertFalse(snapshot.threads.contains { $0.wireID == "queued-archived" })
         let cases = [
             (404, #"{"code":"not_found","reason":"thread_not_found"}"#, true),
             (404, #"{"message":"Proxy route missing"}"#, false),
@@ -103,7 +108,8 @@ final class NativeMultiEnvironmentTests: XCTestCase {
                 await fixture.client.disconnect()
                 try? FileManager.default.removeItem(at: fixture.directory)
             }
-            _ = try await fixture.client.initialSnapshot()
+            let snapshot = try await fixture.hydratedSnapshot()
+            XCTAssertFalse(snapshot.threads.contains { $0.wireID == "queued-archived" })
             if deleted {
                 await fixture.transport.setQueuedRecoveryResponse(
                     status: 404, body: #"{"code":"not_found","reason":"thread_not_found"}"#
