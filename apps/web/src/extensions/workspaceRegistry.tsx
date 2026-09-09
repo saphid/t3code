@@ -158,3 +158,12 @@ export function decorateWorkspaceMessage(
 export function workspaceHasMessageDecorations() {
   return [...textHosts.values()].some((host) => host.messageDecorationCount() > 0);
 }
+
+/** Availability is reactive even when a compiled message row mounted before registration. */
+export function useWorkspaceHasMessageDecorations() {
+  return useSyncExternalStore(
+    subscribe,
+    workspaceHasMessageDecorations,
+    workspaceHasMessageDecorations,
+  );
+}

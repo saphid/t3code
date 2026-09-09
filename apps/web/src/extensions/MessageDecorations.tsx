@@ -4,13 +4,13 @@ import type { MessageContext } from "@t3tools/extension-sdk/context";
 import {
   decorateWorkspaceMessage,
   useWorkspaceTextRevision,
-  workspaceHasMessageDecorations,
+  useWorkspaceHasMessageDecorations,
 } from "./workspaceRegistry";
 
 /** Read-only cards augment an immutable message; the row always retains its original text. */
 export function MessageDecorations(props: { readonly message: MessageContext }) {
   const revision = useWorkspaceTextRevision();
-  const enabled = workspaceHasMessageDecorations();
+  const enabled = useWorkspaceHasMessageDecorations();
   const { environmentId, threadId, messageId, text } = props.message;
   const container = useRef<HTMLDivElement>(null);
   const [visibility, setVisibility] = useState({ revision: -1, visible: false });
