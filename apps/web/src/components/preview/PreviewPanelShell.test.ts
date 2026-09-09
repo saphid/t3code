@@ -47,3 +47,24 @@ describe("getPreviewPanelMaxWidth", () => {
     expect(getPreviewPanelMaxWidth(1_512, 300)).toBe(360);
   });
 });
+
+it("keeps retained closed inline controls inert without hiding open or sheet content", () => {
+  const closed = renderToStaticMarkup(
+    jsx(PreviewPanelShell, {
+      mode: "inline",
+      open: false,
+      children: jsx("button", { children: "Retained tab" }),
+    }),
+  );
+  expect(closed).toContain('inert=""');
+  expect(closed).toContain('aria-hidden="true"');
+  expect(closed).toContain("Retained tab");
+  for (const props of [
+    { mode: "inline" as const, open: true },
+    { mode: "sheet" as const, open: false },
+  ]) {
+    const markup = renderToStaticMarkup(jsx(PreviewPanelShell, { ...props, children: "Panel" }));
+    expect(markup.slice(0, markup.indexOf(">") + 1)).not.toContain("inert=");
+    expect(markup.slice(0, markup.indexOf(">") + 1)).not.toContain('aria-hidden="true"');
+  }
+});

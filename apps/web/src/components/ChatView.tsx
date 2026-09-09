@@ -214,6 +214,7 @@ import { BranchToolbar } from "./BranchToolbar";
 import { resolveShortcutCommand, shortcutLabelForCommand } from "../keybindings";
 import { NativeRightPanel, NativeTerminalDock } from "../extensions/nativePanels";
 import { GenericExtensionDock } from "../extensions/GenericExtensionDock";
+import { useRetainedExtensionSidePanel } from "../extensions/useRetainedExtensionSidePanel";
 import {
   AlarmClockIcon,
   CheckCircle2Icon,
@@ -1353,8 +1354,21 @@ export default function ChatView(props: ChatViewProps) {
   const rightPanelPresent = rightPanelPresence.present;
   const rightPanelControlsInPanel = shouldUseRightPanelSheet && rightPanelPresent && rightPanelOpen;
   const rightPanelControlsAtRoot = rightPanelPresent && !shouldUseRightPanelSheet;
-  const renderedRightPanelSurface = rightPanelPresence.value?.activeSurface ?? null;
-  const renderedRightPanelSurfaces = rightPanelPresence.value?.surfaces ?? [];
+  const retainedExtensionSidePanel = useRetainedExtensionSidePanel(
+    activeThreadKey,
+    rightPanelOpen && activeThreadRef !== null,
+    activeRightPanelSurface,
+    rightPanelState.surfaces,
+  );
+  const presentRightPanelSurface = rightPanelPresence.value?.activeSurface ?? null;
+  const renderedRightPanelSurface = rightPanelOpen
+    ? presentRightPanelSurface
+    : (retainedExtensionSidePanel ??
+      (presentRightPanelSurface?.kind === "extension" ? null : presentRightPanelSurface));
+  const renderedRightPanelSurfaces = retainedExtensionSidePanel
+    ? rightPanelState.surfaces
+    : (rightPanelPresence.value?.surfaces ?? []);
+  const mountRightPanel = rightPanelPresent || retainedExtensionSidePanel !== null;
   const previewMiniPlayerVisible = shouldRenderPreviewMiniPlayer(
     activePreviewMiniPlayer?.tabId ?? null,
     renderedRightPanelSurface,
@@ -8021,7 +8035,7 @@ export default function ChatView(props: ChatViewProps) {
         ))}
       </div>
 
-      {rightPanelPresent && !shouldUseRightPanelSheet && activeThreadRef ? (
+      {mountRightPanel && !shouldUseRightPanelSheet && activeThreadRef ? (
         <RightPanelTabs
           mode="inline"
           open={rightPanelOpen}
@@ -8058,7 +8072,7 @@ export default function ChatView(props: ChatViewProps) {
           {rightPanelContent}
         </RightPanelTabs>
       ) : null}
-      {rightPanelPresent && shouldUseRightPanelSheet && activeThreadRef ? (
+      {mountRightPanel && shouldUseRightPanelSheet && activeThreadRef ? (
         <RightPanelSheet
           animationDurationMs={panelAnimationsActive ? panelAnimationDurationMs : 0}
           open={rightPanelOpen}

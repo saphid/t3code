@@ -26,7 +26,7 @@ Run the focused SDK checks from the repository root:
 
 ```sh
 CI=true corepack pnpm --filter @t3tools/extension-sdk build
-node --test packages/extension-sdk/test/host.test.mjs packages/extension-sdk/test/react.test.mjs
+CI=true corepack pnpm --filter @t3tools/extension-sdk test
 node packages/extension-sdk/test/external-consumer.mjs
 ```
 
@@ -45,15 +45,22 @@ Test two clean installation paths separately. A fresh workspace copy without emi
 
 ## Application integration gate
 
-Run focused store and bridge checks from `apps/web` after building the SDK:
+Run this focused store, bridge, service, placement and text-contribution selection from `apps/web` after building the SDK. These are component/unit checks, not a complete native-adapter or real-client gate:
 
 ```sh
 ../../node_modules/.bin/vp test run --project unit \
   src/rightPanelStore.test.ts \
   src/rightPanelStore.extensions.test.ts \
+  src/rightPanelStore.placements.test.ts \
   src/extensions/nativeBridge.test.tsx \
-  src/extensions/workspaceRegistry.test.tsx
+  src/extensions/workspaceRegistry.test.tsx \
+  src/extensions/workspaceServices.test.tsx \
+  src/extensions/services/workspaceRead.test.ts \
+  src/extensions/GenericExtensionDock.test.tsx \
+  src/extensions/context.test.tsx
 ```
+
+Service cases cover explicit grants, revocation, scope and bounded/stale results using controlled dependencies; they do not prove backend or provider behavior. Placement cases cover container ownership, saved generations and hidden activation; real-client retention and geometry still require observation. Text-contribution cases cover explicit capture and visible read-only cards. When changing composer integration, also run the existing editor serialization, mention, paste, logic and prompt-history tests.
 
 Run the changed native adapter's focused tests as well. Keep the existing store cases in the selection so generic records cannot silently regress native order, close/reopen behavior or automatic-open priority.
 

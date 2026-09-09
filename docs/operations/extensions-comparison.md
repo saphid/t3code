@@ -1,6 +1,6 @@
 # Comparing extension surfaces
 
-Run the comparison on an isolated Linux host before replacing built-in surfaces. The harness currently supplies deterministic inputs, scheduling, driver protocol and a fail-closed analyzer. **Real-client journey drivers are still required. No surface migration has passed this gate.** Pure analyzer tests use synthetic data and prove only the decision logic.
+Run the comparison on an isolated Linux host before replacing built-in surfaces. The harness currently supplies deterministic inputs, scheduling, driver protocol and a fail-closed analyzer. A [bounded web/Electron driver](../../scripts/extensions-comparison/web-driver.mjs) and its [driver contract](../../scripts/extensions-comparison/web-driver.md) exist; their implemented observations do not cover the complete six-surface conformance and metric requirements below. Complete real-client driver coverage and valid retained measurements are still required. **No surface migration has passed this gate.** Pure analyzer tests use synthetic data and prove only the decision logic.
 
 ## Operator contract
 
