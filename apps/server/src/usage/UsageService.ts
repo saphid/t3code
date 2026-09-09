@@ -777,6 +777,7 @@ export const make = Effect.gen(function* () {
         walkedRoots,
       });
       if (prunedIdentities > 0) cacheRevision += 1;
+
       yield* persistScanCache();
     }
 
@@ -1121,6 +1122,7 @@ export const make = Effect.gen(function* () {
       if (prunedIdentities > 0) cacheRevision += 1;
       // Persist selected lifetime records so a restart does not cold-parse the
       // same old thread again. Unfiltered reads retain the normal bounded cache.
+
       yield* persistScanCache();
     }
 

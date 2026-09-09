@@ -31,7 +31,7 @@ import type { CodexScanState, UsageRecord } from "./usageTranscripts.ts";
 // v5: Claude records retain cache TTLs and expanded fallback iterations.
 // v6: Claude iterations without their own model inherit the serving model.
 // v7: a compact file identity index survives record-retention pruning.
-export const USAGE_SCAN_CACHE_VERSION = 7 as const;
+const USAGE_SCAN_CACHE_VERSION = 7 as const;
 
 export interface CachedFile {
   readonly size: number;
