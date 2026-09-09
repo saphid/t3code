@@ -5,7 +5,6 @@ import {
   dedupeWithinFile,
   encodeScanCache,
   pruneScanCache,
-  USAGE_SCAN_CACHE_VERSION,
   type CachedFile,
   type ScanCache,
 } from "./usageScanCache.ts";
@@ -148,7 +147,7 @@ describe("scan cache round trip", () => {
 
   it("rejects a document from the previous cache version", () => {
     const encoded = encodeScanCache(cacheWith([["/a.jsonl", 100, [record()]]]));
-    const previous = { ...encoded, version: USAGE_SCAN_CACHE_VERSION - 1 };
+    const previous = { ...encoded, version: 5 };
 
     expect(decodeScanCache(JSON.parse(JSON.stringify(previous))).size).toBe(0);
   });

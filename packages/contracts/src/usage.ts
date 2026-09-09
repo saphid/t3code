@@ -336,7 +336,7 @@ export const UsageThreadBreakdown = Schema.Struct({
 });
 export type UsageThreadBreakdown = typeof UsageThreadBreakdown.Type;
 
-export class UsageReadError extends Schema.TaggedErrorClass<UsageReadError>()("UsageReadError", {
+export class UsageReadError extends Schema.TaggedError<UsageReadError>()("UsageReadError", {
   reason: Schema.Literals(["scanFailed", "invalidWindow"]),
   /** Stable, bounded description. The underlying failure travels in `cause`. */
   detail: TrimmedNonEmptyString,

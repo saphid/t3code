@@ -1,3 +1,4 @@
+import { RefreshIcon } from "~/components/ui/refresh-icon";
 import { useAtomValue } from "@effect/atom-react";
 import {
   USAGE_CONTRACT_VERSION,
@@ -8,7 +9,6 @@ import {
   CircleAlertIcon,
   ChevronDownIcon,
   CircleDashedIcon,
-  RefreshCwIcon,
   SlidersHorizontalIcon,
 } from "lucide-react";
 import { useMemo, useRef, useState } from "react";
@@ -43,6 +43,7 @@ import {
 } from "@t3tools/shared/usageFormat";
 import { useCommitOnBlur } from "../../hooks/useCommitOnBlur";
 import { Button } from "../ui/button";
+import { toastManager } from "../ui/toast";
 import { Input } from "../ui/input";
 import {
   Menu,
@@ -71,6 +72,11 @@ import { UsageProviderChart, type UsageChartMetric } from "./UsageProviderChart"
 import { UsageCacheWriteCell } from "./UsageCacheWriteCell";
 import { UsageThreadTable } from "./UsageThreadTable";
 import { PROVIDER_ORDER, PROVIDER_PRESENTATION, providersWithUsage } from "./usageProviders";
+import {
+  readUsagePagePreferences,
+  saveUsagePagePreferences,
+  type UsagePagePreferences,
+} from "./usagePagePreferences";
 
 type UsageMetric = UsageChartMetric | "limits";
 const METRIC_OPTIONS = [
@@ -90,17 +96,27 @@ const WINDOW_OPTIONS = [
   { days: 90, label: "90 days" },
 ] as const;
 
+function isUsageWindowDays(value: number): value is UsagePagePreferences["windowDays"] {
+  return WINDOW_OPTIONS.some((option) => option.days === value);
+}
+
 export function UsagePage() {
-  // `days` remembers the last preset even while a custom (brushed or typed)
-  // range is active, so a reset lands back where the user started.
+  const [preferences, setPreferences] = useState(readUsagePagePreferences);
   const [windowSelection, setWindowSelection] = useState(() => ({
-    days: 30,
+    days: preferences.windowDays,
     custom: false,
-    window: makeWindow(30),
+    window: makeWindow(
+      preferences.windowDays,
+      undefined,
+      preferences.windowDays === 1 ? "hour" : "day",
+    ),
   }));
-  const [metric, setMetric] = useState<UsageMetric>("cost");
+  const metric = preferences.metric;
   const showingLimits = metric === "limits";
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const refreshingRef = useRef(false);
   const [breakdown, setBreakdown] = useState<"model" | "project" | "thread" | "time">("model");
+
   const [selectedEnvironmentIds, setSelectedEnvironmentIds] =
     useState<ReadonlySet<EnvironmentId> | null>(null);
   // A namespaced project key, null for work outside every project, undefined for all.
@@ -187,6 +203,10 @@ export function UsagePage() {
       (onlyProject.totalTokens !== merged.totalTokens || onlyProject.costUsd !== merged.costUsd));
 
   const selectWindow = (days: number) => {
+    if (!isUsageWindowDays(days)) return;
+    const nextPreferences = { metric, windowDays: days };
+    setPreferences(nextPreferences);
+    saveUsagePagePreferences(nextPreferences);
     setWindowSelection({
       days,
       custom: false,
@@ -200,23 +220,33 @@ export function UsagePage() {
       window: makeCustomWindow(sinceDay, untilDay),
     });
   };
+  const selectMetric = (nextMetric: UsageMetric) => {
+    const nextPreferences = { metric: nextMetric, windowDays };
+    setPreferences(nextPreferences);
+    saveUsagePagePreferences(nextPreferences);
+  };
   const refreshWindow = () => {
+    if (refreshingRef.current) return;
+
     if (showingLimits) {
-      for (const [environmentId, presentation] of presentations) {
-        if (selectedEnvironmentIds !== null && !selectedEnvironmentIds.has(environmentId)) continue;
-        if (presentation.connection.phase === "connected" && presentation.serverConfig !== null) {
-          void refreshProviders({ environmentId, input: {} });
-        }
-      }
+      refreshingRef.current = true;
+      setIsRefreshing(true);
+      void Promise.all(
+        Array.from(presentations, ([environmentId, presentation]) => {
+          if (selectedEnvironmentIds !== null && !selectedEnvironmentIds.has(environmentId)) return;
+          if (presentation.connection.phase === "connected" && presentation.serverConfig !== null) {
+            return refreshProviders({ environmentId, input: {} });
+          }
+        }),
+      ).finally(() => {
+        refreshingRef.current = false;
+        setIsRefreshing(false);
+      });
       return;
     }
-    // A custom range is a fixed span of past days; rescanning is all a
-    // refresh can mean for it.
-    if (isCustomWindow) {
-      refresh();
-      return;
-    }
-    const nextWindow = makeWindow(windowDays, undefined, isPast24Hours ? "hour" : "day");
+    const nextWindow = isCustomWindow
+      ? window
+      : makeWindow(windowDays, undefined, isPast24Hours ? "hour" : "day");
     if (
       nextWindow.sinceDay !== window.sinceDay ||
       nextWindow.untilDay !== window.untilDay ||
@@ -225,7 +255,20 @@ export function UsagePage() {
     ) {
       setWindowSelection({ days: windowDays, custom: false, window: nextWindow });
     }
-    refresh();
+    refreshingRef.current = true;
+    setIsRefreshing(true);
+    void refresh(nextWindow)
+      .catch((error: unknown) => {
+        toastManager.add({
+          type: "error",
+          title: "Could not refresh usage",
+          description: error instanceof Error ? error.message : "Try again.",
+        });
+      })
+      .finally(() => {
+        refreshingRef.current = false;
+        setIsRefreshing(false);
+      });
   };
   const windowLabel =
     isPast24Hours && window.sinceTime !== undefined && window.untilTime !== undefined
@@ -271,7 +314,7 @@ export function UsagePage() {
           value={[metric]}
           onValueChange={(next) => {
             const value = next[0];
-            if (isUsageMetric(value)) setMetric(value);
+            if (isUsageMetric(value)) selectMetric(value);
           }}
         >
           {METRIC_OPTIONS.map((option) => (
@@ -307,10 +350,12 @@ export function UsagePage() {
         <Button
           onClick={refreshWindow}
           aria-label={showingLimits ? "Refresh limits" : "Refresh usage"}
+          aria-busy={isRefreshing}
+          disabled={isRefreshing}
           size="icon-sm"
           variant="ghost"
         >
-          <RefreshCwIcon className="size-3.5" />
+          <RefreshIcon className="size-3.5" refreshing={isRefreshing} />
         </Button>
       </div>
       <div className="col-span-2 ms-auto flex min-w-0 items-center justify-end gap-1 xl:hidden">
@@ -325,7 +370,7 @@ export function UsagePage() {
         <Select
           value={metric}
           onValueChange={(value) => {
-            if (isUsageMetric(value)) setMetric(value);
+            if (isUsageMetric(value)) selectMetric(value);
           }}
         >
           <SelectTrigger
@@ -376,10 +421,12 @@ export function UsagePage() {
         <Button
           onClick={refreshWindow}
           aria-label={showingLimits ? "Refresh limits" : "Refresh usage"}
+          aria-busy={isRefreshing}
+          disabled={isRefreshing}
           size="icon-sm"
           variant="ghost"
         >
-          <RefreshCwIcon className="size-3.5" />
+          <RefreshIcon className="size-3.5" refreshing={isRefreshing} />
         </Button>
       </div>
     </div>

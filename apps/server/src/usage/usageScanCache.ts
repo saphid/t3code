@@ -30,7 +30,7 @@ import type { CodexScanState, UsageRecord } from "./usageTranscripts.ts";
 // would pin every cached file to "no project" forever.
 // v5: Claude records retain cache TTLs and expanded fallback iterations.
 // v6: Claude iterations without their own model inherit the serving model.
-export const USAGE_SCAN_CACHE_VERSION = 6 as const;
+const USAGE_SCAN_CACHE_VERSION = 6 as const;
 
 export interface CachedFile {
   readonly size: number;

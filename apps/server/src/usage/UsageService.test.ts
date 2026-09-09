@@ -380,6 +380,53 @@ describe("UsageService", () => {
     }).pipe(Effect.scoped),
   );
 
+  it.live("coalesces concurrent caller refresh tokens for the same summary", () =>
+    Effect.gen(function* () {
+      const { transcript, settings, home } = yield* setup;
+      yield* Effect.promise(() => NodeFSP.writeFile(transcript, claudeLine(1, 5)));
+      const scanStarted = yield* Deferred.make<void>();
+      const releaseScan = yield* Deferred.make<void>();
+      let projectReads = 0;
+      const unused = Effect.die(new Error("unused project repository operation"));
+      const projectRepository: ProjectionProjectRepository["Service"] = {
+        upsert: () => unused,
+        getById: () => unused,
+        listAll: () =>
+          Effect.sync(() => {
+            projectReads += 1;
+          }).pipe(
+            Effect.andThen(Deferred.succeed(scanStarted, undefined)),
+            Effect.andThen(Deferred.await(releaseScan)),
+            Effect.as([]),
+          ),
+        deleteById: () => unused,
+      };
+      const service = yield* UsageService.make.pipe(
+        Effect.provide(
+          serviceLayers({
+            prefix: "usage-service-refresh-coalescing-test",
+            home,
+            settings,
+            projectRepository,
+          }),
+        ),
+      );
+
+      const reads = yield* Effect.forEach(
+        Array.from({ length: 16 }, (_, index) => `caller-${index}`),
+        (refreshToken) => service.readSummary({ ...WINDOW, refreshToken }),
+        { concurrency: "unbounded" },
+      ).pipe(Effect.forkChild);
+      yield* Deferred.await(scanStarted);
+      yield* Effect.yieldNow;
+      yield* Deferred.succeed(releaseScan, undefined);
+      const summaries = yield* Fiber.join(reads);
+
+      assert.strictEqual(projectReads, 1);
+      assert.strictEqual(new Set(summaries.map(({ readAt }) => readAt)).size, 1);
+    }).pipe(Effect.scoped),
+  );
+
   it.live("does not prune files added by a newer source scan", () =>
     Effect.gen(function* () {
       const { transcript, settings, home } = yield* setup;
@@ -388,6 +435,7 @@ describe("UsageService", () => {
       const newerTranscript = NodePath.join(NodePath.dirname(transcript), "newer.jsonl");
       const firstAggregationStarted = yield* Deferred.make<void>();
       const releaseFirstAggregation = yield* Deferred.make<void>();
+
       let projectReads = 0;
       const unused = Effect.die(new Error("unused project repository operation"));
       const projectRepository: ProjectionProjectRepository["Service"] = {
@@ -402,6 +450,7 @@ describe("UsageService", () => {
             }
             return [];
           }),
+
         deleteById: () => unused,
       };
       const service = yield* UsageService.make.pipe(
@@ -409,6 +458,7 @@ describe("UsageService", () => {
           serviceLayers({
             prefix: "usage-service-prune-race-test",
             baseDir,
+
             home,
             settings,
             projectRepository,
