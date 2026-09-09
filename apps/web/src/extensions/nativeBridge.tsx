@@ -101,7 +101,9 @@ export function createNativeSurfaceBridge<Bindings>(
             viewId={mounted.viewId}
             retainHiddenPresentation={props.retainHiddenPresentation ?? false}
             className={
-              props.record.placement === "bottom-dock" ? "contents" : "h-full min-h-0 min-w-0"
+              props.record.placement === "bottom-dock"
+                ? "contents"
+                : "flex h-full min-h-0 min-w-0 flex-col"
             }
           />
         ) : failure?.recordKey === recordKey ? (

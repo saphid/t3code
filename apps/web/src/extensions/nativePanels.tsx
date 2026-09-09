@@ -88,6 +88,11 @@ export function NativeRightPanel(props: PanelProps) {
   if (props.surface.kind === "extension") {
     return (
       <WorkspaceExtensionSurface
+        key={JSON.stringify([
+          props.threadRef.environmentId,
+          props.threadRef.threadId,
+          props.surface.id,
+        ])}
         record={props.surface.record}
         visible={props.visible}
         onRecordChange={(record) =>
