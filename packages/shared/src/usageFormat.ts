@@ -208,6 +208,29 @@ export function formatRelativeHourShort(
   return formatDateTimeShort(hourStart, timeZone);
 }
 
+function viewerDayFormat(): { timeZone: string; format: Intl.DateTimeFormat } {
+  let timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+  let format: Intl.DateTimeFormat;
+  try {
+    format = new Intl.DateTimeFormat("en-CA", {
+      timeZone,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    });
+  } catch {
+    // An unknown zone should degrade to UTC rather than crash the page.
+    timeZone = "UTC";
+    format = new Intl.DateTimeFormat("en-CA", {
+      timeZone: "UTC",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    });
+  }
+  return { timeZone, format };
+}
+
 /**
  * A daily window over an explicit inclusive day range, in the viewer's zone.
  * Bounds arrive from date inputs or a chart brush; out-of-order bounds are
@@ -230,7 +253,7 @@ export function makeCustomWindow(sinceDay: string, untilDay: string): UsageSumma
   return {
     sinceDay: UsageDay.make(first),
     untilDay: UsageDay.make(last),
-    timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
+    timeZone: viewerDayFormat().timeZone,
     resolution: "day",
   };
 }
@@ -244,25 +267,7 @@ export function makeWindow(
   now = new Date(),
   resolution: UsageResolution = "day",
 ): UsageSummaryInput {
-  let timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
-  let format: Intl.DateTimeFormat;
-  try {
-    format = new Intl.DateTimeFormat("en-CA", {
-      timeZone,
-      year: "numeric",
-      month: "2-digit",
-      day: "2-digit",
-    });
-  } catch {
-    // An unknown zone should degrade to UTC rather than crash the page.
-    timeZone = "UTC";
-    format = new Intl.DateTimeFormat("en-CA", {
-      timeZone: "UTC",
-      year: "numeric",
-      month: "2-digit",
-      day: "2-digit",
-    });
-  }
+  const { timeZone, format } = viewerDayFormat();
   const today = format.format(now);
   if (resolution === "hour") {
     // Half-hour-aligned bounds keep the common rolling window stable long
