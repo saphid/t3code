@@ -582,14 +582,11 @@ const WsServerGetUsageSummaryRpc = Rpc.make(WS_METHODS.serverGetUsageSummary, {
   error: Schema.Union([EnvironmentAuthorizationError, UsageReadError]),
 });
 
-export const WsServerGetUsageThreadBreakdownRpc = Rpc.make(
-  WS_METHODS.serverGetUsageThreadBreakdown,
-  {
-    payload: UsageThreadBreakdownInput,
-    success: UsageThreadBreakdown,
-    error: Schema.Union([EnvironmentAuthorizationError, UsageReadError]),
-  },
-);
+const WsServerGetUsageThreadBreakdownRpc = Rpc.make(WS_METHODS.serverGetUsageThreadBreakdown, {
+  payload: UsageThreadBreakdownInput,
+  success: UsageThreadBreakdown,
+  error: Schema.Union([EnvironmentAuthorizationError, UsageReadError]),
+});
 
 /**
  * Refetches the model rate table ahead of its daily TTL, so a model released
