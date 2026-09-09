@@ -14,6 +14,7 @@ const rates: RateTable = new Map([
       outputCostPerToken: 5e-5,
       cacheReadCostPerToken: 1e-6,
       cacheCreationCostPerToken: 1.25e-5,
+      cacheCreation1hCostPerToken: 2e-5,
     },
   ],
 ]);
@@ -244,6 +245,35 @@ describe("ThreadUsageAccumulator", () => {
 describe("foldThreadRows", () => {
   const threadId = ThreadId.make("11111111-1111-4111-8111-111111111111");
 
+  it("keeps only the requested thread before applying the row cap", () => {
+    const targetThreadId = ThreadId.make("thread-target");
+    const groups = accumulate([
+      [
+        record({ sessionId: "expensive", totals: { ...record().totals, outputTokens: 1_000 } }),
+        { sessionKey: "claude:expensive", agentId: null },
+      ],
+      [record({ sessionId: "target" }), { sessionKey: "claude:target", agentId: null }],
+      [
+        record({ sessionId: "other", totals: { ...record().totals, outputTokens: 500 } }),
+        { sessionKey: "claude:other", agentId: null },
+      ],
+    ]);
+    const attribution: ThreadAttribution = {
+      sessionToThread: new Map([
+        ["claude:expensive", { threadId: ThreadId.make("thread-expensive"), title: "Expensive" }],
+        ["claude:target", { threadId: targetThreadId, title: "Target" }],
+        ["claude:other", { threadId: ThreadId.make("thread-other"), title: "Other" }],
+      ]),
+      worktreeToThread: new Map(),
+    };
+
+    const result = foldThreadRows(groups, attribution, { cap: 1, threadFilter: targetThreadId });
+
+    expect(result.truncatedRows).toBe(0);
+    expect(result.rows).toHaveLength(1);
+    expect(result.rows[0]?.threadId).toBe(targetThreadId);
+  });
+
   it("folds sessions into one row per thread via cursor and worktree matches", () => {
     const groups = accumulate([
       [record(), { sessionKey: "claude:session-a", agentId: null }],
@@ -295,6 +325,25 @@ describe("foldThreadRows", () => {
     expect(rows[0]?.title).toBe("Nested worktree");
   });
 
+  it("matches worktrees across slash styles and normalized segments", () => {
+    const groups = accumulate([
+      [
+        record({ sessionId: "mixed", cwd: "\\work\\app\\.wt\\thread-1\\packages\\web" }),
+        { sessionKey: "claude:mixed", agentId: null },
+      ],
+    ]);
+    const attribution: ThreadAttribution = {
+      sessionToThread: new Map(),
+      worktreeToThread: new Map([
+        ["/work/app/other/../.wt/thread-1/", { threadId, title: "Normalized worktree" }],
+      ]),
+    };
+
+    const { rows } = foldThreadRows(groups, attribution, { cap: 40 });
+
+    expect(rows[0]?.threadId).toBe(threadId);
+    expect(rows[0]?.title).toBe("Normalized worktree");
+  });
   it("matches Windows worktrees without changing POSIX case sensitivity", () => {
     const groups = accumulate([
       [
@@ -320,7 +369,6 @@ describe("foldThreadRows", () => {
     expect(threadRow?.sessions).toBe(1);
     expect(rows.some((row) => row.threadId === null && row.sessions === 1)).toBe(true);
   });
-
   it("scopes one T3 thread by provider and project", () => {
     const accumulator = new ThreadUsageAccumulator({
       timeZone: "UTC",
