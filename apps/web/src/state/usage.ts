@@ -23,7 +23,7 @@ import { refreshUsage } from "@t3tools/client-runtime/state/usage";
 
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/unstable/reactivity";
-import { useCallback, useMemo, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef } from "react";
 
 import {
   mergeUsage,
@@ -129,7 +129,9 @@ export function useUsage(
   const currentEnvironments = useAtomValue(atom);
   const settledStatuses = useRef<SettledUsageStatuses<EnvironmentUsageStatus> | null>(null);
   const retained = retainUsageStatuses(windowKey, currentEnvironments, settledStatuses.current);
-  settledStatuses.current = retained.settled;
+  useEffect(() => {
+    settledStatuses.current = retained.settled;
+  }, [retained.settled]);
   const environments = retained.visible;
   const selectedEnvironments = useMemo(
     () =>
