@@ -245,6 +245,15 @@ export function createExtensionHost<Renderer>(options: HostOptions) {
       entries.get(entry.snapshot.id) === entry &&
       entry.snapshot.generation === generation;
     setStatus(entry, "loading");
+    let queued = false;
+    function notifyCurrent() {
+      if (queued) return;
+      queued = true;
+      queueMicrotask(() => {
+        queued = false;
+        if (live()) emit(entry, entry.snapshot.id);
+      });
+    }
     const session: ViewSession = {
       context: copyJson(context),
       signal,
@@ -270,14 +279,8 @@ export function createExtensionHost<Renderer>(options: HostOptions) {
         const copied = copyJson(state);
         entry.sequence = sequence;
         entry.snapshot = { ...entry.snapshot, state: copied };
-        // Coalesce publications into one notification per microtask, without retaining a queue.
-        if (!queued) {
-          queued = true;
-          queueMicrotask(() => {
-            queued = false;
-            if (live()) emit(entry, entry.snapshot.id);
-          });
-        }
+        // Presentation and saved records share one bounded microtask notification.
+        notifyCurrent();
         return true;
       },
       save(state) {
@@ -289,6 +292,7 @@ export function createExtensionHost<Renderer>(options: HostOptions) {
           ...entry.snapshot,
           record: { ...entry.snapshot.record, restoreState: copied },
         };
+        notifyCurrent();
         return true;
       },
       async invoke(capability, input) {
@@ -337,7 +341,6 @@ export function createExtensionHost<Renderer>(options: HostOptions) {
         }
       },
     };
-    let queued = false;
     try {
       const controller = await deadline(async () => {
         if (!live()) throw new Error("View cancelled");

@@ -447,3 +447,39 @@ NodeTest.test("cached external-store snapshots are stable and deeply immutable",
   NodeAssert.equal(f.host.getSnapshot(id), null);
   f.host.dispose();
 });
+
+NodeTest.test(
+  "save notifies durable record observers once per burst without requiring publish",
+  async () => {
+    const host = createExtensionHost({ authorize: () => false });
+    let session;
+    host.register({
+      manifest: {
+        ...manifest(),
+        surfaces: manifest().surfaces.map((surface) => ({ ...surface, capabilities: [] })),
+      },
+      surfaces: [
+        {
+          id: "example.counter/view",
+          validateRestore: () => true,
+          createView(current) {
+            session = current;
+            return { renderer: {} };
+          },
+        },
+      ],
+    });
+    const id = await host.open(record());
+    const observed = [];
+    host.subscribe((next) => {
+      if (next) observed.push(next.record.restoreState);
+    });
+    for (let count = 0; count < 1000; count++) session.save({ count });
+    await new Promise((resolve) => queueMicrotask(resolve));
+    NodeAssert.deepEqual(observed, [{ count: 999 }]);
+    NodeAssert.deepEqual(host.records()[0].restoreState, { count: 999 });
+    host.close(id);
+    NodeAssert.equal(session.save({ count: 1000 }), false);
+    host.dispose();
+  },
+);

@@ -1,3 +1,4 @@
+import { NativeVersionControlPanel } from "../extensions/nativeVersionControl";
 import { RefreshIcon } from "~/components/ui/refresh-icon";
 import { Spinner } from "~/components/ui/spinner";
 import { pullRequestHostOf, resolveEnvironmentMachineKind } from "@t3tools/contracts";
@@ -87,7 +88,6 @@ import {
 import { assignProjectsToEnvironments } from "../components/pullRequest/pullRequestProjectAssignment.logic";
 import { pullRequestFilterProjects } from "../components/pullRequest/pullRequestProjectFilter.logic";
 import { environmentMachineIcon } from "../components/EnvironmentMachineIcon";
-import { PullRequestDetailPanel } from "../components/pullRequest/PullRequestDetailPanel";
 import {
   PullRequestFiltersMenu,
   PullRequestFilterOptionIcon,
@@ -1933,24 +1933,36 @@ function PullRequestsRouteView() {
             liveAgentCount={0}
             pullRequestStatusSeeds={listedPullRequestTabStatuses}
           >
-            <PullRequestDetailPanel
+            <NativeVersionControlPanel
               key={renderedPullRequestSurface.id}
-              environmentId={panelEnvironmentId}
-              reference={{
-                projectId: renderedPullRequestSurface.projectId as ProjectId,
-                repository: renderedPullRequestSurface.repository,
-                number: renderedPullRequestSurface.number,
+              visible={rightPanelState.isOpen}
+              context={{
+                client: isElectron ? "desktop" : "web",
+                resource: {
+                  namespace: "t3.repository",
+                  id: renderedPullRequestSurface.id,
+                  environmentId: panelEnvironmentId,
+                  projectId: renderedPullRequestSurface.projectId,
+                },
               }}
-              listEntry={
-                listedPullRequestsBySurface.get(
-                  pullRequestListEntryId(renderedPullRequestSurface),
-                ) ?? null
-              }
-              refreshToken={detailRefreshToken}
-              // Host actions can change both readiness and diff size, so refresh the counts
-              // alongside the list. The panel already refreshes itself after each action.
-              onActed={() => {
-                void refreshFromHost(false);
+              bindings={{
+                status: "ready",
+                detail: {
+                  environmentId: panelEnvironmentId,
+                  reference: {
+                    projectId: renderedPullRequestSurface.projectId as ProjectId,
+                    repository: renderedPullRequestSurface.repository,
+                    number: renderedPullRequestSurface.number,
+                  },
+                  listEntry:
+                    listedPullRequestsBySurface.get(
+                      pullRequestListEntryId(renderedPullRequestSurface),
+                    ) ?? null,
+                  refreshToken: detailRefreshToken,
+                  onActed: () => {
+                    void refreshFromHost(false);
+                  },
+                },
               }}
             />
           </RightPanelTabs>

@@ -29,6 +29,7 @@ export function ExtensionSurface(props: {
   readonly viewId: string;
   readonly className?: string;
   readonly style?: CSSProperties;
+  readonly retainHiddenPresentation?: boolean;
   readonly fallback?: (snapshot: ViewSnapshot | null) => ReactNode;
 }) {
   const { host, viewId } = props;
@@ -51,12 +52,15 @@ export function ExtensionSurface(props: {
   const renderable = snapshot && (snapshot.status === "ready" || snapshot.status === "hidden");
   const Renderer = renderable ? host.renderer(viewId) : undefined;
   const hidden = snapshot?.status === "hidden";
+  const concealed = hidden && !props.retainHiddenPresentation;
   return createElement(
     "div",
     {
       className: props.className,
-      style: hidden ? { ...props.style, display: "none" } : props.style,
-      hidden,
+      style: concealed ? { ...props.style, display: "none" } : props.style,
+      hidden: concealed,
+      inert: hidden,
+      "aria-hidden": hidden || undefined,
     },
     Renderer && snapshot
       ? createElement(

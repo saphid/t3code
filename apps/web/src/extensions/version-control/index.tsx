@@ -48,7 +48,7 @@ export function createVersionControlExtension(
           title: "Version Control",
           placements: ["side-panel"],
           clients: ["web", "desktop"],
-          scope: "thread",
+          scope: "project",
           capabilities: [],
           stateVersion: 1,
         },

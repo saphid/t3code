@@ -1,0 +1,84 @@
+# Validate and roll back extension integration
+
+This runbook covers the trusted resource-view developer preview described in the [contributor guide](../internals/extensions/developer-preview.md). Use it for a frozen SDK or application candidate. Unit tests, a successful build and six registered native adapters do not establish real-client parity.
+
+## Freeze the thing being tested
+
+Record the exact baseline and candidate commits, package-source hashes, packed SDK hash, tool versions, fixture seed, commands, real exit statuses and retained logs. If validation starts against an uncommitted package snapshot, retain hashes for its source/configuration and label the result as a snapshot result. Pin it to a committed candidate with matching content before calling it a frozen release gate; rerun affected checks if content changed.
+
+Keep fixtures, raw traces, failed attempts and receipts outside the repository. Keep baseline and candidate source/build/state separate. Never point a test server at live T3 userdata. Use supported consistent database snapshots when real test data is needed, copy it into disposable state, and keep data flow one-way.
+
+On a shared machine, serialize dependency installation, builds and heavyweight tests with the team's agreed lock, set `CI=true`, and bound Node heap usage. Do not run builds during performance measurement. Keep captured process IDs and stop only processes owned by the run. The [development runbook](development.md) covers normal dev environment setup.
+
+## SDK and fresh-install gate
+
+The SDK's `prepare` script builds its emitted exports during normal workspace installation. The web package's `dev` and `build` scripts also build the SDK first. If installing with lifecycle scripts disabled, use those package scripts or explicitly build the SDK before invoking Vite directly. Do not remove an active environment's `dist` to test this: use an isolated package/workspace copy.
+
+Run the focused SDK checks from the repository root:
+
+```sh
+CI=true corepack pnpm --filter @t3tools/extension-sdk build
+node --test packages/extension-sdk/test/host.test.mjs packages/extension-sdk/test/react.test.mjs
+node packages/extension-sdk/test/external-consumer.mjs
+```
+
+The packed example check is necessary but is authored with the SDK. Add a fresh external consumer package that uses only public exports and real TypeScript resolution against the emitted tarball. It must not use workspace aliases, private source imports or SDK test helpers. Preserve the tarball, compile command and consumer fixture. Verify private imports fail at the package resolver.
+
+At minimum, independently exercise:
+
+- Registration, duplicate/malformed manifests, unsupported state/client/capability fallback and unavailable-plugin restoration.
+- Two environments with colliding local resource IDs; context/workspace changes during delayed requests; rejection of old publications and cancellation races.
+- Interactive renderer state across hide/show, late/failed factories, cleanup/disable/reopen and shared-resource survival after closing one viewer.
+- A burst of saves without any publication: notifications coalesce, the latest restoration value reaches persistence, and reopening reads that value.
+- Optional retained exit presentation: state stays mounted, hidden activity remains blocked, and the shell eventually conceals it.
+- A lifecycle soak of at least 100 cycles with resource/listener/pending-call counts returning to baseline after drain.
+
+Test two clean installation paths separately. A fresh workspace copy without emitted output must run `prepare` successfully; the web scripts' build prefix must also rebuild missing SDK exports. A fresh downstream package must install the packed tarball with lifecycle scripts enabled and import its runtime exports without requiring SDK source files or a compiler.
+
+## Application integration gate
+
+Run focused store and bridge checks from `apps/web` after building the SDK:
+
+```sh
+../../node_modules/.bin/vp test run --project unit \
+  src/rightPanelStore.test.ts \
+  src/rightPanelStore.extensions.test.ts \
+  src/extensions/nativeBridge.test.tsx \
+  src/extensions/workspaceRegistry.test.tsx
+```
+
+Run the changed native adapter's focused tests as well. Keep the existing store cases in the selection so generic records cannot silently regress native order, close/reopen behavior or automatic-open priority.
+
+A real application journey must then establish that a newly registered contribution opens without a new core kind, uses the normal tab/menu/keyboard close and focus paths, saves without publishing or stealing focus, survives a reload, and becomes readable fallback when unregistered. Confirm factory restoration semantics on mounting retained records, including `null` saved state. A mock React composition test cannot establish that persistence path.
+
+For native surfaces, preserve resource ownership and presentation identity. In particular, verify same-workspace file navigation does not reset the outer preview merely because a thread or selected path changed; attachments still reset by attachment identity. Retained terminal docks must not acquire the foreground project's context.
+
+Follow the [comparison protocol](extensions-comparison.md) for matched baseline/candidate journeys, baseline-noise measurement, fault injection, 100-cycle soaks, raw latency/CPU/memory/wire samples and acceptance analysis. Supply actual web/Electron drivers and service receipts. Synthetic analyzer fixtures are not substitute journey evidence. Record unsupported macOS, React Native, SwiftUI, provider and connection-mode paths explicitly.
+
+## Classify failures before changing the candidate
+
+An invalid record rejected before opening is different from a valid record whose plugin is unavailable. Preserve a valid record's fallback and restoration data; do not erase it simply to remove an error panel.
+
+A stale-context result is a lifecycle defect, not a reason to relax scope validation. Confirm the resource environment and optional thread match the layout ref, then inspect host cancellation/generation and domain-adapter ownership. Shared PTYs or browser sessions disappearing after viewer closure indicate a resource-ownership violation.
+
+Saved state disappearing without a presentation update usually points to notification or bridge persistence wiring. Check `session.save` notification, the bridge's record callback, and `updateExtensionRecord`. Calling `openExtension` for every save can reopen a hidden panel or defeat focus expectations.
+
+A blank full-height renderer can be a layout-boundary failure. Inspect the SDK wrapper dimensions and visibility before replacing the native engine. Retained exit paint must be inert and aria-hidden, and it must end.
+
+Do not change provider credentials, restart unrelated services or mutate live state to make a validation fixture pass. Retain the failed receipt and fix the candidate or fixture within its disposable environment.
+
+## Rollback
+
+For one bootstrap contribution, invoke its unregister function or remove its trusted bootstrap registration in the candidate. Existing generic layout records remain readable via fallback; registration can be restored later. Explicitly close a layout record to remove it from the panel. Neither action is a domain terminate command.
+
+For a native adapter regression, return the candidate build to the previously validated baseline or revert the relevant integration change through the normal review workflow. The integration does not promise a permanent runtime switch between built-in and extension renderers. Do not mount both implementations at once: duplicate listeners, queries or viewers can invalidate both behavior and measurements.
+
+Preserve a copy of candidate layout state before running an older client. An older layout schema may discard unknown extension records; downgrade behavior is not a guarantee of data preservation. Reverting a viewer does not undo completed filesystem writes, repository operations, browser navigation or terminal activity. Their existing recovery paths remain authoritative.
+
+A runtime/fleet rollback is a deployment action with its own authorization and compatibility checks. Completing this validation runbook does not authorize a live update, state migration or public release.
+
+## Completion receipt
+
+Report the frozen source and package identities, exact focused checks and exit statuses, independent consumer result, real-client journey evidence, comparison decision, unresolved gaps and rollback target. State whether cross-provider review actually ran; if credentials or quota made it unavailable, preserve the failed availability evidence and do not imply a review occurred.
+
+Keep SDK usability, app persistence correctness, six-surface parity, performance and platform coverage as separate conclusions. A passing result in one category does not fill a missing result in another.

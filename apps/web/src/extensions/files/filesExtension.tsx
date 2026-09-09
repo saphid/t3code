@@ -1,3 +1,4 @@
+import type { ViewContext, ViewRecord } from "@t3tools/extension-sdk/contracts";
 import type { Extension } from "@t3tools/extension-sdk/host";
 import type { SurfaceRenderer } from "@t3tools/extension-sdk/react";
 import { lazy, Suspense, type ComponentProps } from "react";
@@ -46,7 +47,7 @@ export function createFilesExtension(useBindings: () => FilesBindings): Extensio
           title: "Files",
           placements: ["side-panel"],
           clients: ["web", "desktop"],
-          scope: "thread",
+          scope: "project",
           capabilities: [],
           stateVersion: 1,
         },
@@ -66,5 +67,26 @@ export function createFilesExtension(useBindings: () => FilesBindings): Extensio
       validateRestore: (state) => state === null,
       createView: () => ({ renderer: FilesRenderer }),
     })),
+  };
+}
+
+/** Workspace file presentation survives thread navigation; attachments remain thread-owned. */
+export function filesViewRecord(
+  bindings: Pick<FilesBindings, "surface">,
+  context: ViewContext,
+): ViewRecord {
+  const attachment = bindings.surface.kind === "file" ? bindings.surface.attachment : undefined;
+  const { threadId: _threadId, ...workspace } = context.resource;
+  return {
+    version: 1,
+    surfaceId: attachment ? "t3.files/file" : "t3.files/view",
+    placement: "side-panel",
+    stateVersion: 1,
+    restoreState: null,
+    fallback: "Files unavailable",
+    context: {
+      ...context,
+      resource: attachment ? { ...context.resource, id: "attachment:" + attachment.id } : workspace,
+    },
   };
 }

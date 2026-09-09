@@ -1,3 +1,4 @@
+import { useWorkspaceSurfaceTitles } from "../extensions/workspaceRegistry";
 import type {
   ContextMenuItem,
   EnvironmentId,
@@ -16,6 +17,7 @@ import {
   GitPullRequest,
   Globe2,
   Plus,
+  Puzzle,
   TerminalSquare,
   Volume2,
   VolumeOff,
@@ -585,8 +587,11 @@ function surfaceTitle(
   surface: RightPanelSurface,
   sessions: Readonly<Record<string, PreviewSessionSnapshot>>,
   terminalLabelsById: ReadonlyMap<string, string>,
+  extensionTitles: ReadonlyMap<string, string>,
 ): string {
   switch (surface.kind) {
+    case "extension":
+      return extensionTitles.get(surface.record.surfaceId) ?? surface.record.fallback;
     case "diff":
       return "Diff";
     case "files":
@@ -652,6 +657,8 @@ function SurfaceIcon({
   pullRequestStatusSeeds: Readonly<Record<string, PullRequestTabStatusSeed>> | undefined;
 }) {
   switch (surface.kind) {
+    case "extension":
+      return <Puzzle className="size-3 shrink-0" />;
     case "preview": {
       const snapshot = surface.resourceId ? sessions[surface.resourceId] : null;
       const url = !snapshot || snapshot.navStatus._tag === "Idle" ? null : snapshot.navStatus.url;
@@ -723,6 +730,7 @@ function PullRequestSurfaceIcon({
 }
 
 export function RightPanelTabs(props: RightPanelTabsProps) {
+  const extensionTitles = useWorkspaceSurfaceTitles();
   const ownsDesktopTitleBar = isElectron && props.mode === "inline";
   const browserProfiles = useBrowserDefaults().profiles;
   const { resolvedTheme } = useTheme();
@@ -1009,7 +1017,12 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
             {props.surfaces.map((surface) => {
               const active = surface.id === props.activeSurfaceId;
               const pending = props.pendingSurfaceIds.has(surface.id);
-              const title = surfaceTitle(surface, props.previewSessions, props.terminalLabelsById);
+              const title = surfaceTitle(
+                surface,
+                props.previewSessions,
+                props.terminalLabelsById,
+                extensionTitles,
+              );
               const previewTabId = previewTabIdOf(surface, props.previewSessions);
               // Desktop state is keyed by the session id, but desktop actions
               // must be addressed with the runtime id.

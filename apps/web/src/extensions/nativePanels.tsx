@@ -1,0 +1,133 @@
+import type { ReactNode } from "react";
+import type { ViewContext, ViewRecord } from "@t3tools/extension-sdk/contracts";
+import { useRightPanelStore, type RightPanelSurface } from "../rightPanelStore";
+import type { ScopedThreadRef } from "@t3tools/contracts";
+import { WorkspaceExtensionSurface } from "./workspaceRegistry";
+import { isElectron } from "../env";
+import { useThreadShell } from "../state/entities";
+import { useComposerDraftStore } from "../composerDraftStore";
+import { createNativeSurfaceBridge } from "./nativeBridge";
+import { createBrowserExtension, type BrowserBindings } from "./browser/browserExtension";
+import { createFilesExtension, filesViewRecord, type FilesBindings } from "./files/filesExtension";
+import { createTerminalExtension, type TerminalBindings } from "./terminal";
+import type { PersistentThreadTerminalDrawerProps } from "./terminal/PersistentThreadTerminal";
+import { createDiffExtension, type DiffBindings } from "./diff";
+import { createAgentsExtension, type AgentsBindings } from "./agents";
+import type { VersionControlBindings } from "./version-control";
+import { versionControlBridge } from "./nativeVersionControl";
+
+const browser = createNativeSurfaceBridge(createBrowserExtension);
+const files = createNativeSurfaceBridge(createFilesExtension);
+const terminal = createNativeSurfaceBridge(createTerminalExtension);
+const diff = createNativeSurfaceBridge(createDiffExtension);
+const agents = createNativeSurfaceBridge(createAgentsExtension);
+
+export interface NativePanelBindings {
+  readonly browser: BrowserBindings | null;
+  readonly files: FilesBindings | null;
+  readonly terminal: TerminalBindings | null;
+  readonly diff: DiffBindings;
+  readonly agents: AgentsBindings;
+  readonly versionControl: VersionControlBindings | null;
+}
+interface PanelProps {
+  readonly surface: RightPanelSurface;
+  readonly threadRef: ScopedThreadRef;
+  readonly context: ViewContext;
+  readonly visible: boolean;
+  readonly bindings: NativePanelBindings;
+}
+function entry<Bindings>(
+  bridge: ReturnType<typeof createNativeSurfaceBridge<Bindings>>,
+  select: (bindings: NativePanelBindings) => Bindings | null,
+  makeRecord?: (bindings: Bindings, context: ViewContext) => ViewRecord,
+) {
+  const descriptor = bridge.extension.manifest.surfaces[0]!;
+  return {
+    descriptor,
+    render({ bindings, context, visible }: PanelProps): ReactNode {
+      const selected = select(bindings);
+      if (selected === null) return null;
+      return (
+        <bridge.Surface
+          bindings={selected}
+          visible={visible}
+          retainHiddenPresentation
+          record={
+            makeRecord?.(selected, context) ?? {
+              version: 1,
+              surfaceId: descriptor.id,
+              context,
+              placement: "side-panel",
+              stateVersion: descriptor.stateVersion,
+              restoreState: null,
+              fallback: descriptor.title + " unavailable",
+            }
+          }
+        />
+      );
+    },
+  };
+}
+const filesEntry = entry(files, (bindings) => bindings.files, filesViewRecord);
+/** Legacy resource records remain domain-owned; the shell resolves registered presentations. */
+export const nativePanelRegistry = {
+  preview: entry(browser, (bindings) => bindings.browser),
+  terminal: entry(terminal, (bindings) => bindings.terminal),
+  files: filesEntry,
+  file: filesEntry,
+  diff: entry(diff, (bindings) => bindings.diff),
+  agents: entry(agents, (bindings) => bindings.agents),
+  "pull-request": entry(versionControlBridge, (bindings) => bindings.versionControl),
+} satisfies Record<
+  Exclude<RightPanelSurface["kind"], "extension">,
+  { render(props: PanelProps): ReactNode }
+>;
+
+export function NativeRightPanel(props: PanelProps) {
+  if (props.surface.kind === "extension") {
+    return (
+      <WorkspaceExtensionSurface
+        record={props.surface.record}
+        visible={props.visible}
+        onRecordChange={(record) =>
+          useRightPanelStore.getState().updateExtensionRecord(props.threadRef, record)
+        }
+      />
+    );
+  }
+  return nativePanelRegistry[props.surface.kind].render(props);
+}
+
+/** Each retained dock resolves its own thread; a foreground project must never retarget it. */
+export function NativeTerminalDock(props: PersistentThreadTerminalDrawerProps) {
+  const shell = useThreadShell(props.threadRef);
+  const draft = useComposerDraftStore((store) => store.getDraftThreadByRef(props.threadRef));
+  const projectId = shell?.projectId ?? draft?.projectId;
+  if (!projectId) return null;
+  const record: ViewRecord = {
+    version: 1,
+    surfaceId: "t3.terminal/view",
+    placement: "bottom-dock",
+    stateVersion: 1,
+    restoreState: null,
+    fallback: "Terminal unavailable",
+    context: {
+      client: isElectron ? "desktop" : "web",
+      resource: {
+        namespace: "t3.workspace",
+        id: "terminal-dock",
+        projectId,
+        environmentId: props.threadRef.environmentId,
+        threadId: props.threadRef.threadId,
+      },
+    },
+  };
+  return (
+    <terminal.Surface
+      record={record}
+      visible={props.active}
+      bindings={{ placement: "bottom-dock", props }}
+    />
+  );
+}
