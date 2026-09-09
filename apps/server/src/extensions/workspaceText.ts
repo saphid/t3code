@@ -15,7 +15,7 @@ export function boundedWorkspaceText(value: ProjectReadFileResult) {
       "utf8",
     ) <= budget;
   let low = 0;
-  let high = value.contents.length;
+  let high = Math.min(value.contents.length, budget);
   if (!fits(0)) throw new Error("Workspace text metadata exceeds the result budget.");
   while (low < high) {
     const middle = Math.ceil((low + high) / 2);
