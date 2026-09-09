@@ -1,6 +1,7 @@
 import { act, create, type ReactTestRenderer } from "react-test-renderer";
 import { useLayoutEffect, useState, StrictMode, Activity } from "react";
 import { describe, expect, it } from "vite-plus/test";
+import type { ViewSession } from "@t3tools/extension-sdk/host";
 import type { ViewRecord } from "@t3tools/extension-sdk/contracts";
 import { createNativeSurfaceBridge } from "./nativeBridge";
 
@@ -24,6 +25,121 @@ const record: ViewRecord = {
   },
 };
 describe("native surface bridge", () => {
+  it.each([true, false])(
+    "updates factory activity before activation completes (initial visible=%s)",
+    async (initialVisible) => {
+      let session!: ViewSession;
+      let factoryVisibility: boolean | undefined;
+      let finishFactory!: () => void;
+      const factoryGate = new Promise<void>((resolve) => {
+        finishFactory = resolve;
+      });
+      let serviceStarted!: () => void;
+      const serviceStart = new Promise<void>((resolve) => {
+        serviceStarted = resolve;
+      });
+      let serviceSignal: AbortSignal | undefined;
+      let serviceCalls = 0;
+      let disposed = 0;
+      const bridge = createNativeSurfaceBridge(
+        () => ({
+          manifest: {
+            id: "test.native",
+            apiVersion: 1,
+            version: "1.0.0",
+            surfaces: [
+              {
+                id: "test.native/view",
+                title: "Pending",
+                placements: ["side-panel"],
+                clients: ["web"],
+                scope: "thread",
+                capabilities: ["test.service/read"],
+                stateVersion: 1,
+              },
+            ],
+          },
+          surfaces: [
+            {
+              id: "test.native/view",
+              validateRestore: (state) => state === null,
+              async createView(current) {
+                session = current;
+                factoryVisibility = current.visible;
+                await factoryGate;
+                return {
+                  renderer: () => <span>factory completed</span>,
+                  dispose: () => {
+                    disposed++;
+                  },
+                };
+              },
+            },
+          ],
+        }),
+        {
+          authorize: () => true,
+          services: [
+            {
+              capability: "test.service/read",
+              invoke(call) {
+                serviceCalls++;
+                serviceSignal = call.signal;
+                serviceStarted();
+                return new Promise((resolve) => {
+                  call.signal.addEventListener("abort", () => resolve(null), { once: true });
+                });
+              },
+            },
+          ],
+        },
+      );
+      let root!: ReactTestRenderer;
+      const render = (visible: boolean) => (
+        <bridge.Surface bindings={null} record={record} visible={visible} />
+      );
+      try {
+        await act(async () => {
+          root = create(render(initialVisible));
+        });
+        expect(factoryVisibility).toBe(initialVisible);
+        expect(session.signal.aborted).toBe(false);
+        if (initialVisible) {
+          const pending = session
+            .invoke("test.service/read", null)
+            .catch((error: unknown) => error);
+          await serviceStart;
+          await act(async () => {
+            root.update(render(false));
+          });
+          expect(serviceSignal?.aborted).toBe(true);
+          expect(await pending).toBeInstanceOf(Error);
+          expect(serviceCalls).toBe(1);
+        }
+        expect(session.visible).toBe(false);
+        expect(session.signal.aborted).toBe(false);
+        expect(session.publish(1, "must not publish while hidden")).toBe(false);
+        await expect(session.invoke("test.service/read", null)).rejects.toThrow("inactive");
+        expect(serviceCalls).toBe(initialVisible ? 1 : 0);
+        await act(async () => {
+          root.update(render(true));
+        });
+        expect(session.visible).toBe(true);
+        await act(async () => {
+          finishFactory();
+        });
+        expect(root.root.findByType("span").children).toEqual(["factory completed"]);
+        expect(disposed).toBe(0);
+      } finally {
+        finishFactory();
+        await act(async () => {
+          root?.unmount();
+        });
+      }
+      expect(disposed).toBe(1);
+    },
+  );
+
   it.each([true, false])(
     "reconnects Activity effects without addressing a disposed host (visible=%s)",
     async (visible) => {

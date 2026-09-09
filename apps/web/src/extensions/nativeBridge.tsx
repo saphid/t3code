@@ -61,6 +61,7 @@ export function createNativeSurfaceBridge<Bindings>(
     const bindingValue = useMemo(() => ({ value: bindings }), [bindings]);
     const [mounted, setMounted] = useState<MountedView | null>(null);
     const activeHost = useRef<ExtensionHost<SurfaceRenderer> | null>(null);
+    const activeView = useRef<MountedView | null>(null);
     const [failure, setFailure] = useState<{ recordKey: string; text: string } | null>(null);
     useEffect(() => {
       const host = createExtensionHost<SurfaceRenderer>(options);
@@ -71,6 +72,9 @@ export function createNativeSurfaceBridge<Bindings>(
       let saved = JSON.stringify(currentRecord.current.restoreState);
       const unsubscribe = host.subscribe((next) => {
         if (!next || closed) return;
+        // Loading is published before the factory starts, so visibility also governs activation.
+        activeView.current = { host, viewId: next.id, recordKey };
+        if (!visibility.current && next.status !== "hidden") host.hide(next.id);
         const nextSaved = JSON.stringify(next.record.restoreState);
         if (saved === nextSaved) return;
         saved = nextSaved;
@@ -93,6 +97,7 @@ export function createNativeSurfaceBridge<Bindings>(
       );
       return () => {
         if (activeHost.current === host) activeHost.current = null;
+        if (activeView.current?.host === host) activeView.current = null;
         const record = host.records()[0];
         if (record && JSON.stringify(record.restoreState) !== saved) persistRecord?.(record);
         closed = true;
@@ -102,11 +107,11 @@ export function createNativeSurfaceBridge<Bindings>(
     }, [recordKey]);
     useEffect(() => {
       // Activity reconnects effects while retaining mounted state from the disposed host.
-      if (!mounted || mounted.recordKey !== recordKey || activeHost.current !== mounted.host)
-        return;
-      if (visible) void mounted.host.show(mounted.viewId);
-      else mounted.host.hide(mounted.viewId);
-    }, [mounted, recordKey, visible]);
+      const view = activeView.current;
+      if (!view || view.recordKey !== recordKey || activeHost.current !== view.host) return;
+      if (visible) void view.host.show(view.viewId);
+      else view.host.hide(view.viewId);
+    }, [recordKey, visible]);
     return (
       <BindingsContext value={bindingValue}>
         {mounted?.recordKey === recordKey ? (
