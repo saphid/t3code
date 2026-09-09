@@ -28,8 +28,8 @@ import { cacheSavingsUsd, cacheWriteUsd, priceUsage, type RateTable } from "./us
 /**
  * Formats an instant as a `YYYY-MM-DD` day in `timeZone`.
  *
- * `en-CA` yields ISO-ordered parts, which is why it is used here rather than
- * assembling the day from `Date` getters (those are host-local only).
+ * Numeric parts preserve the requested time zone without depending on the
+ * locale's punctuation or date ordering.
  */
 export function makeDayFormatter(timeZone: string): (timestampMs: number) => string {
   let format: Intl.DateTimeFormat;
@@ -49,7 +49,12 @@ export function makeDayFormatter(timeZone: string): (timestampMs: number) => str
       day: "2-digit",
     });
   }
-  return (timestampMs) => format.format(new Date(timestampMs));
+  return (timestampMs) => {
+    const parts = Object.fromEntries(
+      format.formatToParts(new Date(timestampMs)).map(({ type, value }) => [type, value]),
+    );
+    return `${parts.year?.padStart(4, "0")}-${parts.month}-${parts.day}`;
+  };
 }
 
 const HOUR_MS = 60 * 60 * 1000;
@@ -182,6 +187,7 @@ export class UsageAggregator {
   readonly #recordsByKey = new Map<string, UsageRecord>();
   readonly #unkeyedRecords: UsageRecord[] = [];
   readonly #toDay: (timestampMs: number) => string;
+  readonly #recordDays = new WeakMap<UsageRecord, string>();
   readonly #hourlyWindow: { readonly sinceTimeMs: number; readonly untilTimeMs: number } | null;
   readonly #options: AggregateOptions;
   #outOfWindow = 0;
@@ -222,6 +228,14 @@ export class UsageAggregator {
     return inWindow;
   }
 
+  #dayFor(record: UsageRecord): string {
+    const cached = this.#recordDays.get(record);
+    if (cached !== undefined) return cached;
+    const day = this.#toDay(record.timestampMs);
+    this.#recordDays.set(record, day);
+    return day;
+  }
+
   #isInWindow(record: UsageRecord): boolean {
     if (
       this.#hourlyWindow !== null &&
@@ -231,7 +245,7 @@ export class UsageAggregator {
       return false;
     }
 
-    const day = this.#toDay(record.timestampMs);
+    const day = this.#dayFor(record);
     if (
       this.#hourlyWindow === null &&
       (day < this.#options.sinceDay || day > this.#options.untilDay)
@@ -245,7 +259,7 @@ export class UsageAggregator {
   distinctSessions(provider: UsageRecord["provider"]): number {
     const sessionIds = new Set<string>();
     const addSession = (record: UsageRecord): void => {
-      if (this.#isInWindow(record) && record.provider === provider && record.sessionId.length > 0) {
+      if (record.provider === provider && this.#isInWindow(record) && record.sessionId.length > 0) {
         sessionIds.add(record.sessionId);
       }
     };
@@ -255,7 +269,7 @@ export class UsageAggregator {
   }
 
   #foldRecord(record: UsageRecord, buckets: Map<string, MutableBucket>): void {
-    const day = this.#toDay(record.timestampMs);
+    const day = this.#dayFor(record);
 
     const hourStart =
       this.#hourlyWindow === null

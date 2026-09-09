@@ -767,24 +767,31 @@ export const make = Effect.gen(function* () {
     ];
   });
 
-  /**
-   * Builds the cwd → project-title resolver for one scan.
-   *
-   * Projects are re-read every scan so a project created or renamed since the
-   * last refresh attributes correctly. A repository failure degrades to "no
-   * attribution" rather than failing the page.
-   */
-  const resolveProjects = Effect.fn("UsageService.resolveProjects")(function* () {
+  const loadProjectThreads = Effect.gen(function* () {
     const projects = yield* projectRepository
       .listAll()
       .pipe(Effect.catch(() => Effect.succeed(null)));
-    if (projects === null) return undefined;
-    const projectRoots = yield* Effect.forEach(
+    if (projects === null) return null;
+    return yield* Effect.forEach(
       projects,
       Effect.fnUntraced(function* (project) {
         const threads = yield* threadRepository
           .listByProjectId({ projectId: project.projectId })
           .pipe(Effect.catchCause(() => Effect.succeed<readonly never[]>([])));
+        return { project, threads };
+      }),
+      { concurrency: 8 },
+    );
+  });
+
+  /** Project names and worktree ownership are re-read for each request. */
+  const resolveProjects = Effect.fn("UsageService.resolveProjects")(function* (
+    snapshot: typeof loadProjectThreads = loadProjectThreads,
+  ) {
+    const projects = yield* snapshot;
+    if (projects === null) return undefined;
+    return makeProjectResolver(
+      projects.flatMap(({ project, threads }) => {
         const root = {
           projectId: project.projectId,
           workspaceRoot: project.workspaceRoot,
@@ -798,9 +805,7 @@ export const make = Effect.gen(function* () {
           ),
         ];
       }),
-      { concurrency: 8 },
     );
-    return makeProjectResolver(projectRoots.flat());
   });
 
   /**
@@ -1927,19 +1932,16 @@ export const make = Effect.gen(function* () {
    * worktree map instead; sessions that never ran through T3 Code stay
    * session-granular.
    */
-  const loadThreadAttribution = Effect.fn("UsageService.loadThreadAttribution")(function* () {
+  const loadThreadAttribution = Effect.fn("UsageService.loadThreadAttribution")(function* (
+    snapshot: typeof loadProjectThreads = loadProjectThreads,
+  ) {
     const sessionToThread = new Map<string, ThreadRef>();
     const worktreeToThread = new Map<string, ThreadRef>();
     const titles = new Map<string, string>();
 
-    const projects = yield* projectRepository
-      .listAll()
-      .pipe(Effect.catch(() => Effect.succeed<readonly never[]>([])));
+    const projects = yield* snapshot;
     const worktreeClaims = new Map<string, { ref: ThreadRef; shared: boolean }>();
-    for (const project of projects) {
-      const threads = yield* threadRepository
-        .listByProjectId({ projectId: project.projectId })
-        .pipe(Effect.catchCause(() => Effect.succeed<readonly never[]>([])));
+    for (const { project, threads } of projects ?? []) {
       for (const thread of threads) {
         const title = thread.title.trim();
         if (title.length > 0) titles.set(thread.threadId, title);
@@ -2034,7 +2036,8 @@ export const make = Effect.gen(function* () {
     const settings = yield* readSettings;
     yield* ensureRates(false, input.refreshToken !== undefined);
     yield* ensureScanCacheLoaded;
-    const attribution = yield* loadThreadAttribution();
+    const projectSnapshot = yield* Effect.cached(loadProjectThreads);
+    const attribution = yield* loadThreadAttribution(projectSnapshot);
     const target =
       input.threadId === undefined ? null : threadTranscriptTarget(attribution, input.threadId);
 
@@ -2052,7 +2055,7 @@ export const make = Effect.gen(function* () {
         ? getSourceSnapshot(windowStartMs, startedAtMs, input.refreshToken, settings)
         : Effect.succeed(null);
 
-    const resolveProject = yield* resolveProjects();
+    const resolveProject = yield* resolveProjects(projectSnapshot);
     const accumulator = new ThreadUsageAccumulator({
       timeZone: input.timeZone,
       sinceDay: input.sinceDay,

@@ -1,3 +1,4 @@
+import { vi } from "vite-plus/test";
 import { ProjectId } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 
@@ -582,4 +583,24 @@ describe("makeProjectResolver", () => {
     ]);
     expect(windowsResolver("c:/work/app/src")).toEqual({ projectId: appId, title: "App" });
   });
+});
+
+it("formats a retained record once across provider counts and final folding", () => {
+  const format = vi.spyOn(Intl.DateTimeFormat.prototype, "formatToParts");
+  try {
+    const aggregator = new UsageAggregator({
+      timeZone: "UTC",
+      sinceDay: "2026-08-01",
+      untilDay: "2026-08-31",
+      rates,
+    });
+    aggregator.add(record());
+    for (const provider of ["codex", "claude", "grok"] as const)
+      aggregator.distinctSessions(provider);
+    const result = aggregator.finish();
+    expect(result.buckets[0]?.day).toBe("2026-08-07");
+    expect(format).toHaveBeenCalledOnce();
+  } finally {
+    format.mockRestore();
+  }
 });

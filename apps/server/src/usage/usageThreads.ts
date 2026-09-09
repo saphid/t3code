@@ -351,12 +351,12 @@ function addDailyCosts(
 
 function worktreeThreadForCwd(
   cwd: string,
-  worktreeToThread: ReadonlyMap<string, ThreadRef>,
+  worktreeToThread: Iterable<readonly [string, ThreadRef]>,
 ): ThreadRef | undefined {
   const normalizedCwd = normalizeUsagePath(cwd);
   let deepest: { readonly pathLength: number; readonly ref: ThreadRef } | undefined;
   for (const [worktree, ref] of worktreeToThread) {
-    const normalizedWorktree = normalizeUsagePath(worktree);
+    const normalizedWorktree = worktree;
     const prefix = normalizedWorktree.endsWith("/") ? normalizedWorktree : `${normalizedWorktree}/`;
     if (normalizedCwd !== normalizedWorktree && !normalizedCwd.startsWith(prefix)) continue;
     if (deepest === undefined || normalizedWorktree.length > deepest.pathLength) {
@@ -419,6 +419,10 @@ export function foldThreadRows(
   options: FoldThreadRowsOptions,
 ): FoldedThreadRows {
   const byKey = new Map<string, MutableThreadRow>();
+  const worktrees = Array.from(
+    attribution.worktreeToThread,
+    ([worktree, ref]) => [normalizeUsagePath(worktree), ref] as const,
+  );
 
   for (const group of groups) {
     if (
@@ -431,9 +435,7 @@ export function foldThreadRows(
 
     const ref =
       attribution.sessionToThread.get(group.sessionKey) ??
-      (group.cwd.length > 0
-        ? worktreeThreadForCwd(group.cwd, attribution.worktreeToThread)
-        : undefined);
+      (group.cwd.length > 0 ? worktreeThreadForCwd(group.cwd, worktrees) : undefined);
     if (options.threadFilter !== undefined && ref?.threadId !== options.threadFilter) continue;
     const rowKey =
       ref === undefined

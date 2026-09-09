@@ -2802,3 +2802,34 @@ describe("transcriptFileMayMatchThread", () => {
     );
   });
 });
+
+it.live("shares project reads within a thread request and reloads them for the next request", () =>
+  Effect.gen(function* () {
+    const { settings, home } = yield* setup;
+    let projectReads = 0;
+    const unused = Effect.die(new Error("unused project operation"));
+    const projectRepository: ProjectionProjectRepository["Service"] = {
+      upsert: () => unused,
+      getById: () => unused,
+      listAll: () =>
+        Effect.sync(() => {
+          projectReads += 1;
+          return [];
+        }),
+      deleteById: () => unused,
+    };
+    const dependencies = yield* Layer.build(
+      serviceLayers({
+        prefix: "usage-one-project-snapshot",
+        home,
+        settings,
+        projectRepository,
+      }),
+    );
+    const service = yield* UsageService.make.pipe(Effect.provide(dependencies));
+    yield* service.readThreadBreakdown(WINDOW);
+    assert.equal(projectReads, 1);
+    yield* service.readThreadBreakdown(WINDOW);
+    assert.equal(projectReads, 2);
+  }).pipe(Effect.scoped),
+);
