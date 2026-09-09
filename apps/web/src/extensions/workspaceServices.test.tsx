@@ -1,7 +1,7 @@
 import { act, create, type ReactTestRenderer } from "react-test-renderer";
 import { describe, expect, it } from "vite-plus/test";
 import type { ViewRecord } from "@t3tools/extension-sdk/contracts";
-import { workspaceReader } from "../../../../packages/extension-sdk/examples/workspace-reader/workspace-reader";
+import { workspaceReader } from "../../../../packages/extension-sdk/examples/workspace-reader/workspace-reader.mjs";
 import { registerWorkspaceExtension, WorkspaceExtensionSurface } from "./workspaceRegistry";
 import { workspaceReadHostOptions } from "./services/workspaceRead";
 

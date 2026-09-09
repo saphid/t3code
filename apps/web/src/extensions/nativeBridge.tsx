@@ -60,9 +60,11 @@ export function createNativeSurfaceBridge<Bindings>(
     }, [props.record, props.onRecordChange, visible]);
     const bindingValue = useMemo(() => ({ value: bindings }), [bindings]);
     const [mounted, setMounted] = useState<MountedView | null>(null);
+    const activeHost = useRef<ExtensionHost<SurfaceRenderer> | null>(null);
     const [failure, setFailure] = useState<{ recordKey: string; text: string } | null>(null);
     useEffect(() => {
       const host = createExtensionHost<SurfaceRenderer>(options);
+      activeHost.current = host;
       const persistRecord = onRecordChange.current;
       let closed = false;
       host.register(extension);
@@ -90,6 +92,7 @@ export function createNativeSurfaceBridge<Bindings>(
         },
       );
       return () => {
+        if (activeHost.current === host) activeHost.current = null;
         const record = host.records()[0];
         if (record && JSON.stringify(record.restoreState) !== saved) persistRecord?.(record);
         closed = true;
@@ -98,7 +101,9 @@ export function createNativeSurfaceBridge<Bindings>(
       };
     }, [recordKey]);
     useEffect(() => {
-      if (!mounted || mounted.recordKey !== recordKey) return;
+      // Activity reconnects effects while retaining mounted state from the disposed host.
+      if (!mounted || mounted.recordKey !== recordKey || activeHost.current !== mounted.host)
+        return;
       if (visible) void mounted.host.show(mounted.viewId);
       else mounted.host.hide(mounted.viewId);
     }, [mounted, recordKey, visible]);

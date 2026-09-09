@@ -2,7 +2,7 @@
 
 This is an independently authored view package using only React and the SDK's public exports. It declares t3.workspace/read-text, saves the selected relative path, and reads only after an explicit click. Restoration does not create a resource or start a read. The view can declare side-panel and bottom-dock support; the application decides which placements it actually implements.
 
-Copy this directory into an external package, rename package.template.json to package.json, and install the emitted @t3tools/extension-sdk tarball with React 19. The source entry is ./workspace-reader.tsx. This sample does not import a native Files renderer, app bindings, server internals or credentials. The app adapter lives outside the sample.
+Copy this directory into an external package, rename package.template.json to package.json, and install the emitted @t3tools/extension-sdk tarball with React 19. The source entry is ./workspace-reader.mjs with ./workspace-reader.d.mts declarations. TypeScript checks the JavaScript implementation with allowJs and checkJs. This sample does not import a native Files renderer, app bindings, server internals or credentials. The app adapter lives outside the sample.
 
 Trusted web bootstrap imports workspaceReader, creates options with createAppWorkspaceReadHostOptions({ extensionId: workspaceReader.manifest.id, environmentId, projectId, isEnabled }), then calls registerWorkspaceExtension(workspaceReader, options). That bootstrap API is application integration, not another SDK export. isEnabled belongs to the host and must reflect revocation. Default registration without options denies service access. Registration does not open a view; open the generic ViewRecord through the layout intent separately.
 

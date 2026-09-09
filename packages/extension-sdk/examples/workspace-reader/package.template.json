@@ -4,7 +4,10 @@
   "private": true,
   "type": "module",
   "exports": {
-    "./view": "./workspace-reader.tsx"
+    "./view": {
+      "types": "./workspace-reader.d.mts",
+      "default": "./workspace-reader.mjs"
+    }
   },
   "dependencies": {
     "@t3tools/extension-sdk": "0.1.0"

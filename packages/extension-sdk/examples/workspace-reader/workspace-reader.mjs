@@ -1,10 +1,8 @@
-import { useEffect, useRef, useState } from "react";
-import type { Extension } from "@t3tools/extension-sdk/host";
-import type { SurfaceRenderer } from "@t3tools/extension-sdk/react";
-import type { Json } from "@t3tools/extension-sdk/contracts";
+import { createElement as h, useEffect, useRef, useState } from "react";
 
 const capability = "t3.workspace/read-text";
-function savedPath(state: Json): string | null {
+/** @param {import("@t3tools/extension-sdk/contracts").Json} state */
+function savedPath(state) {
   return state !== null &&
     !Array.isArray(state) &&
     typeof state === "object" &&
@@ -15,8 +13,11 @@ function savedPath(state: Json): string | null {
     : null;
 }
 
-/** Community package: only React and public SDK exports; no native bindings or app imports. */
-export const workspaceReader: Extension<SurfaceRenderer> = {
+/**
+ * Community package: only React and public SDK exports; no native bindings or app imports.
+ * @type {import("@t3tools/extension-sdk/host").Extension<import("@t3tools/extension-sdk/react").SurfaceRenderer>}
+ */
+export const workspaceReader = {
   manifest: {
     id: "example.workspace-reader",
     apiVersion: 1,
@@ -80,24 +81,26 @@ export const workspaceReader: Extension<SurfaceRenderer> = {
                   setStatus(error instanceof Error ? error.message : "Read failed");
               }
             }
-            return (
-              <section aria-label="Workspace text reader">
-                <label>
-                  Workspace-relative path
-                  <input
-                    value={path}
-                    onChange={(event) => {
-                      request.current++;
-                      setPath(event.target.value);
-                      setContents("");
-                      setStatus("Ready to read");
-                    }}
-                  />
-                </label>
-                <button onClick={() => void read()}>Read file</button>
-                <p role="status">{status}</p>
-                <pre>{contents}</pre>
-              </section>
+            return h(
+              "section",
+              { "aria-label": "Workspace text reader" },
+              h(
+                "label",
+                null,
+                "Workspace-relative path",
+                h("input", {
+                  value: path,
+                  onChange: (event) => {
+                    request.current++;
+                    setPath(event.target.value);
+                    setContents("");
+                    setStatus("Ready to read");
+                  },
+                }),
+              ),
+              h("button", { onClick: () => void read() }, "Read file"),
+              h("p", { role: "status" }, status),
+              h("pre", null, contents),
             );
           },
         };

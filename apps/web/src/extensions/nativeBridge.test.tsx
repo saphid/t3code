@@ -1,5 +1,5 @@
 import { act, create, type ReactTestRenderer } from "react-test-renderer";
-import { useLayoutEffect, useState, StrictMode } from "react";
+import { useLayoutEffect, useState, StrictMode, Activity } from "react";
 import { describe, expect, it } from "vite-plus/test";
 import type { ViewRecord } from "@t3tools/extension-sdk/contracts";
 import { createNativeSurfaceBridge } from "./nativeBridge";
@@ -24,6 +24,84 @@ const record: ViewRecord = {
   },
 };
 describe("native surface bridge", () => {
+  it.each([true, false])(
+    "reconnects Activity effects without addressing a disposed host (visible=%s)",
+    async (visible) => {
+      let created = 0;
+      let disposed = 0;
+      const bridge = createNativeSurfaceBridge(() => ({
+        manifest: {
+          id: "test.native",
+          apiVersion: 1,
+          version: "1.0.0",
+          surfaces: [
+            {
+              id: "test.native/view",
+              title: "Activity view",
+              placements: ["side-panel"],
+              clients: ["web"],
+              scope: "thread",
+              capabilities: [],
+              stateVersion: 1,
+            },
+          ],
+        },
+        surfaces: [
+          {
+            id: "test.native/view",
+            validateRestore: (state) => state === null,
+            createView(session) {
+              expect(session.restoring).toBe(true);
+              const generation = ++created;
+              return {
+                renderer: () => <span>ready {generation}</span>,
+                dispose() {
+                  disposed++;
+                },
+              };
+            },
+          },
+        ],
+      }));
+      let root!: ReactTestRenderer;
+      const render = (mode: "visible" | "hidden") => (
+        <Activity mode={mode}>
+          <bridge.Surface bindings={null} record={record} visible={visible} />
+        </Activity>
+      );
+      try {
+        await act(async () => {
+          root = create(render("visible"));
+        });
+        expect(root.root.findByType("span").children.join("")).toBe("ready 1");
+        await act(async () => {
+          root.update(render("hidden"));
+        });
+        expect(disposed).toBe(1);
+        await act(async () => {
+          root.update(render("visible"));
+        });
+        expect(root.root.findByType("span").children.join("")).toBe("ready 2");
+        expect(created).toBe(2);
+        expect(disposed).toBe(1);
+        await act(async () => {
+          root.update(render("hidden"));
+        });
+        await act(async () => {
+          root.update(render("visible"));
+        });
+        expect(root.root.findByType("span").children.join("")).toBe("ready 3");
+        expect(created).toBe(3);
+        expect(disposed).toBe(2);
+      } finally {
+        await act(async () => {
+          root?.unmount();
+        });
+      }
+      expect(disposed).toBe(created);
+    },
+  );
+
   it("saves outgoing layout cleanup through its own record generation", async () => {
     const savedA: ViewRecord[] = [];
     const savedB: ViewRecord[] = [];
