@@ -116,3 +116,23 @@ describe("makeCustomWindow", () => {
     expect(() => makeCustomWindow("10000-01-01", "9999-12-31")).toThrow(RangeError);
   });
 });
+
+describe("locale-independent usage windows", () => {
+  it.each(["day", "hour"] as const)("builds %s bounds from numeric date parts", (resolution) => {
+    const descriptor = Object.getOwnPropertyDescriptor(Intl.DateTimeFormat.prototype, "format");
+    if (descriptor === undefined) throw new Error("Expected the Intl format accessor");
+    const formatted = vi.fn(() => () => "09/09/2026");
+    Object.defineProperty(Intl.DateTimeFormat.prototype, "format", {
+      configurable: true,
+      get: formatted,
+    });
+    try {
+      const window = makeWindow(1, new Date("2026-09-09T12:00:00Z"), resolution);
+      expect(window.sinceDay).toMatch(/^2026-09-\d{2}$/);
+      expect(window.untilDay).toMatch(/^2026-09-\d{2}$/);
+      expect(formatted).not.toHaveBeenCalled();
+    } finally {
+      Object.defineProperty(Intl.DateTimeFormat.prototype, "format", descriptor);
+    }
+  });
+});

@@ -19,7 +19,7 @@ source data first. The Refresh action always requests an update. Updates parse o
 transcript content.
 
 Any daily chart zooms: drag across it to make the selection the new date window, and double-click
-to return to the preset. The date fields beside the presets accept custom ranges up to 90 days.
+to return to the range selected before zooming. The date fields beside the presets accept custom ranges up to 90 days.
 
 The breakdown's **Thread** view drills into where the spend went: sessions group into the T3 Code
 thread they belong to, with sessions that never ran through T3 Code listed under the first thing
