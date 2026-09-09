@@ -16,7 +16,7 @@
   "type": "module",
   "scripts": {
     "dev": "node --watch src/bin.ts",
-    "build:bundle": "vp pack && vp pack src/service-launcher.ts --out-dir dist --no-clean",
+    "build:bundle": "vp run --filter @t3tools/extension-sdk build && vp run --filter @t3tools/extension-runtime build && vp pack && vp pack src/service-launcher.ts --out-dir dist --no-clean",
     "start": "node dist/bin.mjs",
     "typecheck": "tsc --noEmit",
     "test": "vp test run"
@@ -39,6 +39,8 @@
   "devDependencies": {
     "@effect/vitest": "catalog:",
     "@t3tools/contracts": "workspace:*",
+    "@t3tools/extension-runtime": "workspace:*",
+    "@t3tools/extension-sdk": "workspace:*",
     "@t3tools/shared": "workspace:*",
     "@t3tools/tailscale": "workspace:*",
     "@t3tools/web": "workspace:*",

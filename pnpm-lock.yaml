@@ -537,6 +537,12 @@ importers:
       '@t3tools/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
+      '@t3tools/extension-runtime':
+        specifier: workspace:*
+        version: link:../../packages/extension-runtime
+      '@t3tools/extension-sdk':
+        specifier: workspace:*
+        version: link:../../packages/extension-sdk
       '@t3tools/shared':
         specifier: workspace:*
         version: link:../../packages/shared
