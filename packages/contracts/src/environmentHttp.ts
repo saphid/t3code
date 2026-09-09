@@ -1,3 +1,12 @@
+import {
+  ExtensionContentHash,
+  ExtensionClientInput,
+  ExtensionInstallInput,
+  ExtensionInstallation,
+  ExtensionInvokeInput,
+  ExtensionManageInput,
+  ExtensionOperationError,
+} from "./extensions.ts";
 import * as Context from "effect/Context";
 import type * as DateTime from "effect/DateTime";
 import * as Schema from "effect/Schema";
@@ -614,9 +623,77 @@ class EnvironmentConnectHttpApi extends HttpApiGroup.make("connect")
     }),
   ) {}
 
+class EnvironmentExtensionsHttpApi extends HttpApiGroup.make("extensions")
+  .add(
+    HttpApiEndpoint.post("list", "/api/extensions/list", {
+      headers: OptionalBearerHeaders,
+      payload: Schema.Struct({}),
+      success: Schema.Struct({ installations: Schema.Array(ExtensionInstallation) }),
+      error: [
+        ExtensionOperationError,
+        EnvironmentAuthInvalidError,
+        EnvironmentScopeRequiredError,
+        EnvironmentInternalError,
+      ],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("client", "/api/extensions/client", {
+      headers: OptionalBearerHeaders,
+      payload: ExtensionClientInput,
+      success: Schema.Struct({ code: Schema.String, contentHash: ExtensionContentHash }),
+      error: [
+        ExtensionOperationError,
+        EnvironmentAuthInvalidError,
+        EnvironmentScopeRequiredError,
+        EnvironmentInternalError,
+      ],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("invoke", "/api/extensions/invoke", {
+      headers: OptionalBearerHeaders,
+      payload: ExtensionInvokeInput,
+      success: Schema.Struct({ result: Schema.Json }),
+      error: [
+        ExtensionOperationError,
+        EnvironmentAuthInvalidError,
+        EnvironmentScopeRequiredError,
+        EnvironmentInternalError,
+      ],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("install", "/api/extensions/install", {
+      headers: OptionalBearerHeaders,
+      payload: ExtensionInstallInput,
+      success: ExtensionInstallation,
+      error: [
+        ExtensionOperationError,
+        EnvironmentAuthInvalidError,
+        EnvironmentScopeRequiredError,
+        EnvironmentInternalError,
+      ],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("manage", "/api/extensions/manage", {
+      headers: OptionalBearerHeaders,
+      payload: ExtensionManageInput,
+      success: Schema.Struct({ installation: Schema.NullOr(ExtensionInstallation) }),
+      error: [
+        ExtensionOperationError,
+        EnvironmentAuthInvalidError,
+        EnvironmentScopeRequiredError,
+        EnvironmentInternalError,
+      ],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  ) {}
+
 export class EnvironmentHttpApi extends HttpApi.make("environment")
   .add(EnvironmentMetadataHttpApi)
   .add(EnvironmentAuthHttpApi)
   .add(EnvironmentOrchestrationHttpApi)
   .add(EnvironmentPullRequestsHttpApi)
-  .add(EnvironmentConnectHttpApi) {}
+  .add(EnvironmentConnectHttpApi)
+  .add(EnvironmentExtensionsHttpApi) {}
