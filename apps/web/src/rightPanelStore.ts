@@ -100,7 +100,8 @@ const RIGHT_PANEL_STORAGE_KEY = "t3code:right-panel-state:v2";
 // v10 keys pull-request surfaces by reference instead of a singleton tab.
 // v11 stops persisting the pull-request list's shared panel, so a restart opens the page fresh.
 // v12 adds bounded SDK records; normalization also runs for current-version hydration.
-const RIGHT_PANEL_STORAGE_VERSION = 12;
+// v13 routes contributed bottom-dock records to their own thread layout.
+const RIGHT_PANEL_STORAGE_VERSION = 13;
 
 /** A fixed workspace-level ref: each PR surface carries its own real environment. */
 export const PULL_REQUESTS_PANEL_REF = scopeThreadRef(
@@ -120,7 +121,14 @@ export interface ThreadRightPanelState {
   surfaces: RightPanelSurface[];
 }
 
+export interface ExtensionDockState {
+  isOpen: boolean;
+  activeSurfaceId: string | null;
+  surfaces: ExtensionPanelSurface[];
+}
+
 interface RightPanelStoreState {
+  extensionDockByThreadKey: Record<string, ExtensionDockState>;
   byThreadKey: Record<string, ThreadRightPanelState>;
   /** Session-only count of user panel choices per thread. Automatic updates do not advance it. */
   userActionRevisionByThreadKey: Record<string, number>;
@@ -146,6 +154,10 @@ interface RightPanelStoreState {
   ) => boolean;
   /** Saves an existing viewer without taking focus or reopening a hidden panel. */
   updateExtensionRecord: (ref: ScopedThreadRef, record: ViewRecord) => boolean;
+  showExtensionDock: (ref: ScopedThreadRef) => void;
+  hideExtensionDock: (ref: ScopedThreadRef) => void;
+  activateDockExtension: (ref: ScopedThreadRef, surfaceId: string) => void;
+  closeDockExtension: (ref: ScopedThreadRef, surfaceId: string) => void;
   moveSurface: (ref: ScopedThreadRef, surfaceId: string, toIndex: number) => void;
   openBrowser: (ref: ScopedThreadRef, tabId: string | null) => void;
   openFile: (ref: ScopedThreadRef, relativePath: string, line?: number) => void;
@@ -185,6 +197,12 @@ interface RightPanelStoreState {
   ) => void;
   removeThread: (ref: ScopedThreadRef) => void;
 }
+
+const EMPTY_EXTENSION_DOCK: ExtensionDockState = {
+  isOpen: false,
+  activeSurfaceId: null,
+  surfaces: [],
+};
 
 const EMPTY_THREAD_STATE: ThreadRightPanelState = {
   isOpen: false,
@@ -377,7 +395,10 @@ function normalizeRevealLine(line: number | undefined): number | null {
   return Math.max(1, Math.trunc(line));
 }
 
-export function migratePersistedRightPanelState(persistedState: unknown): {
+function normalizeLegacyRightPanelState(
+  persistedState: unknown,
+  extensionPlacement?: ViewRecord["placement"],
+): {
   byThreadKey: Record<string, ThreadRightPanelState>;
 } {
   if (!persistedState || typeof persistedState !== "object") {
@@ -403,6 +424,8 @@ export function migratePersistedRightPanelState(persistedState: unknown): {
                       const normalized = ref ? extensionPanelSurface(ref, surface.record) : null;
                       if (
                         !normalized ||
+                        (extensionPlacement !== undefined &&
+                          normalized.record.placement !== extensionPlacement) ||
                         extensionIds.has(normalized.id) ||
                         extensionIds.size >= MAX_EXTENSION_SURFACES
                       )
@@ -412,6 +435,7 @@ export function migratePersistedRightPanelState(persistedState: unknown): {
                         restoredExtensionIds.set(surface.id, normalized.id);
                       return [normalized];
                     }
+                    if (extensionPlacement !== undefined) return [];
                     if (!(RIGHT_PANEL_KINDS as readonly string[]).includes(surface.kind)) return [];
                     if (typeof surface.id !== "string" || surface.id.startsWith("extension:"))
                       return [];
@@ -512,10 +536,100 @@ export function migratePersistedRightPanelState(persistedState: unknown): {
   return { byThreadKey };
 }
 
+/** Migrate misplaced v12 dock records and normalize current-version storage without activation. */
+export function migratePersistedRightPanelState(persistedState: unknown): {
+  byThreadKey: Record<string, ThreadRightPanelState>;
+  extensionDockByThreadKey: Record<string, ExtensionDockState>;
+} {
+  const { byThreadKey: legacy } = normalizeLegacyRightPanelState(persistedState);
+  // Reuse the copied-record validation and identity normalization for persisted dock entries.
+  const dockInput =
+    persistedState &&
+    typeof persistedState === "object" &&
+    "extensionDockByThreadKey" in persistedState
+      ? persistedState.extensionDockByThreadKey
+      : {};
+  const currentDocks = normalizeLegacyRightPanelState(
+    { byThreadKey: dockInput },
+    "bottom-dock",
+  ).byThreadKey;
+  const byThreadKey: Record<string, ThreadRightPanelState> = {};
+  const extensionDockByThreadKey: Record<string, ExtensionDockState> = {};
+  for (const threadKey of new Set([...Object.keys(legacy), ...Object.keys(currentDocks)])) {
+    const previous = legacy[threadKey] ?? EMPTY_THREAD_STATE;
+    const currentDock = currentDocks[threadKey];
+    const misplaced = previous.surfaces.filter(
+      (surface): surface is ExtensionPanelSurface =>
+        surface.kind === "extension" && surface.record.placement === "bottom-dock",
+    );
+    const surfaces = previous.surfaces.filter(
+      (surface) => surface.kind !== "extension" || surface.record.placement !== "bottom-dock",
+    );
+    const currentDockSurfaces = (currentDock?.surfaces ?? []).filter(
+      (surface): surface is ExtensionPanelSurface =>
+        surface.kind === "extension" && surface.record.placement === "bottom-dock",
+    );
+    const remaining =
+      MAX_EXTENSION_SURFACES - surfaces.filter((surface) => surface.kind === "extension").length;
+    const seen = new Set<string>();
+    const dockSurfaces = [...currentDockSurfaces, ...misplaced].filter((surface) => {
+      if (seen.has(surface.id) || seen.size >= remaining) return false;
+      seen.add(surface.id);
+      return true;
+    });
+    const movedActive = misplaced.some((surface) => surface.id === previous.activeSurfaceId);
+    if (threadKey in legacy) {
+      byThreadKey[threadKey] = {
+        isOpen: previous.isOpen && surfaces.length > 0,
+        activeSurfaceId: movedActive ? (surfaces[0]?.id ?? null) : previous.activeSurfaceId,
+        surfaces,
+      };
+    }
+    if (dockSurfaces.length) {
+      const preferredId =
+        currentDock?.activeSurfaceId ?? (movedActive ? previous.activeSurfaceId : null);
+      extensionDockByThreadKey[threadKey] = {
+        isOpen: currentDock ? currentDock.isOpen : movedActive && previous.isOpen,
+        activeSurfaceId: dockSurfaces.some((surface) => surface.id === preferredId)
+          ? preferredId
+          : dockSurfaces[0]!.id,
+        surfaces: dockSurfaces,
+      };
+    }
+  }
+  return { byThreadKey, extensionDockByThreadKey };
+}
+
+function updateExtensionDock(
+  state: RightPanelStoreState,
+  threadKey: string,
+  updater: (current: ExtensionDockState) => ExtensionDockState,
+  userChoice = true,
+): Partial<RightPanelStoreState> {
+  const current = state.extensionDockByThreadKey[threadKey] ?? EMPTY_EXTENSION_DOCK;
+  const next = updater(current);
+  if (next === current) return state;
+  const extensionDockByThreadKey = { ...state.extensionDockByThreadKey };
+  if (!next.surfaces.length) delete extensionDockByThreadKey[threadKey];
+  else extensionDockByThreadKey[threadKey] = next;
+  return {
+    extensionDockByThreadKey,
+    ...(userChoice
+      ? {
+          userActionRevisionByThreadKey: {
+            ...state.userActionRevisionByThreadKey,
+            [threadKey]: (state.userActionRevisionByThreadKey[threadKey] ?? 0) + 1,
+          },
+        }
+      : {}),
+  };
+}
+
 export const useRightPanelStore = create<RightPanelStoreState>()(
   persist(
     (set, get) => ({
       byThreadKey: {},
+      extensionDockByThreadKey: {},
       userActionRevisionByThreadKey: {},
       getUserActionRevision: (ref) =>
         get().userActionRevisionByThreadKey[scopedThreadKey(ref)] ?? 0,
@@ -553,7 +667,8 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
         ),
       openExtension: (ref, record, expectedUserActionRevision) => {
         const surface = extensionPanelSurface(ref, record);
-        if (!surface) return false;
+        if (!surface || !["side-panel", "bottom-dock"].includes(surface.record.placement))
+          return false;
         let opened = false;
         set((state) => {
           const threadKey = scopedThreadKey(ref);
@@ -562,15 +677,29 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
             (state.userActionRevisionByThreadKey[threadKey] ?? 0) !== expectedUserActionRevision
           )
             return state;
-          const current = state.byThreadKey[threadKey] ?? EMPTY_THREAD_STATE;
+          const isDock = surface.record.placement === "bottom-dock";
+          const current = isDock
+            ? (state.extensionDockByThreadKey[threadKey] ?? EMPTY_EXTENSION_DOCK)
+            : (state.byThreadKey[threadKey] ?? EMPTY_THREAD_STATE);
           const exists = current.surfaces.some((entry) => entry.id === surface.id);
-          if (
-            !exists &&
-            current.surfaces.filter((entry) => entry.kind === "extension").length >=
-              MAX_EXTENSION_SURFACES
-          )
-            return state;
+          const count =
+            (state.byThreadKey[threadKey]?.surfaces.filter((entry) => entry.kind === "extension")
+              .length ?? 0) + (state.extensionDockByThreadKey[threadKey]?.surfaces.length ?? 0);
+          if (!exists && count >= MAX_EXTENSION_SURFACES) return state;
           opened = true;
+          if (isDock)
+            return updateExtensionDock(
+              state,
+              threadKey,
+              (dock) => ({
+                isOpen: true,
+                activeSurfaceId: surface.id,
+                surfaces: exists
+                  ? dock.surfaces.map((entry) => (entry.id === surface.id ? surface : entry))
+                  : [...dock.surfaces, surface],
+              }),
+              expectedUserActionRevision === undefined,
+            );
           const update = expectedUserActionRevision === undefined ? userAction : automaticUpdate;
           return update(state, threadKey, (panel) => ({
             ...upsertSurface(panel, surface),
@@ -583,10 +712,27 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
       },
       updateExtensionRecord: (ref, record) => {
         const surface = extensionPanelSurface(ref, record);
-        if (!surface) return false;
+        if (!surface || !["side-panel", "bottom-dock"].includes(surface.record.placement))
+          return false;
         let updated = false;
         set((state) => {
           const threadKey = scopedThreadKey(ref);
+          if (surface.record.placement === "bottom-dock") {
+            const dock = state.extensionDockByThreadKey[threadKey];
+            if (!dock?.surfaces.some((entry) => entry.id === surface.id)) return state;
+            updated = true;
+            return updateExtensionDock(
+              state,
+              threadKey,
+              (current) => ({
+                ...current,
+                surfaces: current.surfaces.map((entry) =>
+                  entry.id === surface.id ? surface : entry,
+                ),
+              }),
+              false,
+            );
+          }
           const current = state.byThreadKey[threadKey];
           if (
             !current?.surfaces.some(
@@ -602,6 +748,43 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
         });
         return updated;
       },
+      showExtensionDock: (ref) =>
+        set((state) =>
+          updateExtensionDock(state, scopedThreadKey(ref), (dock) =>
+            dock.isOpen || !dock.surfaces.length ? dock : { ...dock, isOpen: true },
+          ),
+        ),
+      hideExtensionDock: (ref) =>
+        set((state) =>
+          updateExtensionDock(state, scopedThreadKey(ref), (dock) =>
+            dock.isOpen ? { ...dock, isOpen: false } : dock,
+          ),
+        ),
+      activateDockExtension: (ref, surfaceId) =>
+        set((state) =>
+          updateExtensionDock(state, scopedThreadKey(ref), (dock) =>
+            !dock.surfaces.some((surface) => surface.id === surfaceId) ||
+            (dock.isOpen && dock.activeSurfaceId === surfaceId)
+              ? dock
+              : { ...dock, isOpen: true, activeSurfaceId: surfaceId },
+          ),
+        ),
+      closeDockExtension: (ref, surfaceId) =>
+        set((state) =>
+          updateExtensionDock(state, scopedThreadKey(ref), (dock) => {
+            const index = dock.surfaces.findIndex((surface) => surface.id === surfaceId);
+            if (index === -1) return dock;
+            const surfaces = dock.surfaces.filter((surface) => surface.id !== surfaceId);
+            return {
+              isOpen: dock.isOpen && surfaces.length > 0,
+              activeSurfaceId:
+                dock.activeSurfaceId === surfaceId
+                  ? (surfaces[Math.min(index, surfaces.length - 1)]?.id ?? null)
+                  : dock.activeSurfaceId,
+              surfaces,
+            };
+          }),
+        ),
       moveSurface: (ref, surfaceId, toIndex) =>
         set((state) => {
           if (!Number.isSafeInteger(toIndex)) return state;
@@ -915,6 +1098,7 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
           const threadKey = scopedThreadKey(ref);
           if (
             !(threadKey in state.byThreadKey) &&
+            !(threadKey in state.extensionDockByThreadKey) &&
             !(threadKey in state.userActionRevisionByThreadKey)
           ) {
             return state;
@@ -922,7 +1106,9 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
           const { [threadKey]: _removed, ...rest } = state.byThreadKey;
           const { [threadKey]: _revision, ...userActionRevisionByThreadKey } =
             state.userActionRevisionByThreadKey;
-          return { byThreadKey: rest, userActionRevisionByThreadKey };
+          const { [threadKey]: _dock, ...extensionDockByThreadKey } =
+            state.extensionDockByThreadKey;
+          return { byThreadKey: rest, extensionDockByThreadKey, userActionRevisionByThreadKey };
         }),
     }),
     {
@@ -932,6 +1118,11 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
         resolveStorage(typeof window !== "undefined" ? window.localStorage : undefined),
       ),
       partialize: (state) => ({
+        extensionDockByThreadKey: Object.fromEntries(
+          Object.entries(state.extensionDockByThreadKey).filter(
+            ([threadKey]) => !isPullRequestsPanelKey(threadKey),
+          ),
+        ),
         byThreadKey: Object.fromEntries(
           Object.entries(state.byThreadKey).filter(
             ([threadKey]) => !isPullRequestsPanelKey(threadKey),
@@ -980,4 +1171,11 @@ export function selectSelectedRightPanelSurface(
 ): RightPanelSurface | null {
   const state = selectThreadRightPanelState(byThreadKey, ref);
   return state.surfaces.find((surface) => surface.id === state.activeSurfaceId) ?? null;
+}
+
+export function selectThreadExtensionDock(
+  byThreadKey: Record<string, ExtensionDockState>,
+  ref: ScopedThreadRef | null | undefined,
+): ExtensionDockState {
+  return ref ? (byThreadKey[scopedThreadKey(ref)] ?? EMPTY_EXTENSION_DOCK) : EMPTY_EXTENSION_DOCK;
 }

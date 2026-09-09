@@ -17,7 +17,11 @@ const refA = scopeThreadRef("env-1" as EnvironmentId, ThreadId.make("thread-A"))
 const refB = scopeThreadRef("env-1" as EnvironmentId, ThreadId.make("thread-B"));
 
 beforeEach(() => {
-  useRightPanelStore.setState({ byThreadKey: {}, userActionRevisionByThreadKey: {} });
+  useRightPanelStore.setState({
+    byThreadKey: {},
+    extensionDockByThreadKey: {},
+    userActionRevisionByThreadKey: {},
+  });
 });
 
 describe("rightPanelStore", () => {
@@ -141,6 +145,7 @@ describe("rightPanelStore", () => {
         },
       }),
     ).toEqual({
+      extensionDockByThreadKey: {},
       byThreadKey: {
         "env-1:thread-A": {
           isOpen: false,
@@ -163,6 +168,7 @@ describe("rightPanelStore", () => {
         },
       }),
     ).toEqual({
+      extensionDockByThreadKey: {},
       byThreadKey: {
         "env-1:thread-A": {
           isOpen: true,
@@ -193,6 +199,7 @@ describe("rightPanelStore", () => {
         },
       }),
     ).toEqual({
+      extensionDockByThreadKey: {},
       byThreadKey: {
         "env-1:thread-A": {
           isOpen: true,
@@ -236,6 +243,7 @@ describe("rightPanelStore", () => {
         },
       }),
     ).toEqual({
+      extensionDockByThreadKey: {},
       byThreadKey: {
         "env-1:thread-A": {
           isOpen: true,
@@ -280,7 +288,7 @@ describe("rightPanelStore", () => {
           "env-1:thread-A": panelState,
         },
       }),
-    ).toEqual({ byThreadKey: { "env-1:thread-A": panelState } });
+    ).toEqual({ extensionDockByThreadKey: {}, byThreadKey: { "env-1:thread-A": panelState } });
   });
 
   it("drops persisted plan surfaces and does not reopen an empty panel", () => {
@@ -303,6 +311,7 @@ describe("rightPanelStore", () => {
         },
       }),
     ).toEqual({
+      extensionDockByThreadKey: {},
       byThreadKey: {
         "env-1:thread-A": {
           isOpen: false,

@@ -38,7 +38,11 @@ let memory = createMemoryStorage();
 beforeEach(() => {
   memory = createMemoryStorage();
   useRightPanelStore.persist.setOptions({ storage: createJSONStorage(() => memory) });
-  useRightPanelStore.setState({ byThreadKey: {}, userActionRevisionByThreadKey: {} });
+  useRightPanelStore.setState({
+    byThreadKey: {},
+    extensionDockByThreadKey: {},
+    userActionRevisionByThreadKey: {},
+  });
 });
 
 describe("generic extension layout records", () => {

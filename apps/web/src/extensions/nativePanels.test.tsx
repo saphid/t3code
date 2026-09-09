@@ -30,7 +30,11 @@ Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
 
 describe("generic extension layout ownership", () => {
   it("keeps project-scoped counter restore records in their owning threads", async () => {
-    useRightPanelStore.setState({ byThreadKey: {}, userActionRevisionByThreadKey: {} });
+    useRightPanelStore.setState({
+      byThreadKey: {},
+      extensionDockByThreadKey: {},
+      userActionRevisionByThreadKey: {},
+    });
     const a = scopeThreadRef(EnvironmentId.make("environment"), ThreadId.make("thread-a"));
     const b = scopeThreadRef(a.environmentId, ThreadId.make("thread-b"));
     const record: ViewRecord = {
@@ -165,7 +169,11 @@ describe("generic extension layout ownership", () => {
         root?.unmount();
         unregister();
       });
-      useRightPanelStore.setState({ byThreadKey: {}, userActionRevisionByThreadKey: {} });
+      useRightPanelStore.setState({
+        byThreadKey: {},
+        extensionDockByThreadKey: {},
+        userActionRevisionByThreadKey: {},
+      });
     }
   });
 });

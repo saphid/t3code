@@ -173,6 +173,7 @@ import {
   selectActiveRightPanel,
   selectActiveRightPanelSurface,
   selectThreadRightPanelState,
+  selectThreadExtensionDock,
   type RightPanelSurface,
   useRightPanelStore,
 } from "../rightPanelStore";
@@ -207,6 +208,7 @@ import {
 import { BranchToolbar } from "./BranchToolbar";
 import { resolveShortcutCommand, shortcutLabelForCommand } from "../keybindings";
 import { NativeRightPanel, NativeTerminalDock } from "../extensions/nativePanels";
+import { GenericExtensionDock } from "../extensions/GenericExtensionDock";
 import {
   AlarmClockIcon,
   CheckCircle2Icon,
@@ -1286,6 +1288,9 @@ export default function ChatView(props: ChatViewProps) {
   const diffOpen = activeRightPanelKind === "diff";
   const rightPanelState = useRightPanelStore((state) =>
     selectThreadRightPanelState(state.byThreadKey, activeThreadRef),
+  );
+  const extensionDock = useRightPanelStore((state) =>
+    selectThreadExtensionDock(state.extensionDockByThreadKey, activeThreadRef),
   );
   const activeRightPanelSurface = useRightPanelStore((state) =>
     selectActiveRightPanelSurface(state.byThreadKey, activeThreadRef),
@@ -7340,6 +7345,16 @@ export default function ChatView(props: ChatViewProps) {
 
   const panelToggleControls = (
     <PanelLayoutControls
+      extensionDockOpen={extensionDock.isOpen}
+      {...(extensionDock.surfaces.length && activeThreadRef
+        ? {
+            onToggleExtensionDock: () => {
+              const store = useRightPanelStore.getState();
+              if (extensionDock.isOpen) store.hideExtensionDock(activeThreadRef);
+              else store.showExtensionDock(activeThreadRef);
+            },
+          }
+        : {})}
       terminalAvailable={activeProject !== null}
       terminalOpen={terminalUiState.terminalOpen}
       terminalShortcutLabel={shortcutLabelForCommand(keybindings, "terminal.toggle")}
@@ -7964,6 +7979,8 @@ export default function ChatView(props: ChatViewProps) {
           {/* end chat column */}
         </div>
         {/* end horizontal flex container */}
+
+        {activeThreadRef ? <GenericExtensionDock threadRef={activeThreadRef} /> : null}
 
         {mountedTerminalThreadRefs.map(({ key: mountedThreadKey, threadRef: mountedThreadRef }) => (
           <NativeTerminalDock

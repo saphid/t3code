@@ -86,6 +86,14 @@ export const nativePanelRegistry = {
 
 export function NativeRightPanel(props: PanelProps) {
   if (props.surface.kind === "extension") {
+    if (props.surface.record.placement !== "side-panel") {
+      return (
+        <div role="status">
+          {props.surface.record.fallback} — Placement {props.surface.record.placement} is
+          unavailable here.
+        </div>
+      );
+    }
     return (
       <WorkspaceExtensionSurface
         key={JSON.stringify([
