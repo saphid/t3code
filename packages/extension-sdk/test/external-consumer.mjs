@@ -23,6 +23,13 @@ pkg.dependencies["@t3tools/extension-sdk"] =
   `file:${NodePath.join(artifact, "t3tools-extension-sdk-0.1.0.tgz")}`;
 NodeFS.writeFileSync(NodePath.join(consumer, "package.json"), JSON.stringify(pkg, null, 2));
 run("npm", ["install", "--ignore-scripts", "--omit=optional", "--no-audit", "--no-fund"], consumer);
+
+NodeFS.copyFileSync(
+  NodePath.join(sdk, "test/packaged-authoring.mjs"),
+  NodePath.join(consumer, "packaged-capabilities.mjs"),
+);
+run(process.execPath, ["packaged-capabilities.mjs"], consumer);
+
 const installedExample = NodePath.join(
   consumer,
   "node_modules/@t3tools/extension-sdk/examples/counter/counter.ts",
