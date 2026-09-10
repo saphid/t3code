@@ -1,4 +1,4 @@
-import { defineApi, type ApiDefinition } from "./capabilities.js";
+import { defineApi, defineStreamApi, type ApiDefinition } from "./capabilities.js";
 import type { JsonObject } from "./environment.js";
 import type { WorkspaceReadTextInput, WorkspaceReadTextResult } from "./workspace.js";
 
@@ -10,6 +10,7 @@ export const TERMINAL_SESSIONS = "t3.terminal/sessions";
 export const TERMINAL_READ = "t3.terminal/read";
 export const TERMINAL_OUTPUT = "t3.terminal/output";
 export const TERMINAL_READ_OUTPUT = "t3.terminal/read-output";
+export const TERMINAL_OUTPUT_EVENTS = "t3.terminal/output-events";
 export type WorkspaceListEntriesInput = {
   readonly relativePath: string;
   readonly cursor?: string;
@@ -38,6 +39,53 @@ export type TerminalOutputResult = {
   readonly retainedByteLength: number;
   readonly truncated: boolean;
 } | null;
+export type TerminalOutputEventsInput = { readonly terminalId: string };
+export type TerminalOutputEventsSnapshot = {
+  readonly kind: "snapshot";
+  readonly terminalId: string;
+  readonly streamEpoch: string;
+  readonly status: "starting" | "running" | "exited" | "error";
+  readonly contents: string;
+  readonly retainedByteLength: number;
+  readonly truncated: boolean;
+  readonly boundarySequence: number;
+};
+export type TerminalOutputEventsOutput = {
+  readonly kind: "output";
+  readonly terminalId: string;
+  readonly streamEpoch: string;
+  readonly sequence: number;
+  readonly chunkIndex: number;
+  readonly chunkCount: number;
+  readonly data: string;
+};
+export type TerminalOutputEventsReset = {
+  readonly kind: "reset";
+  readonly terminalId: string;
+  readonly streamEpoch: string;
+  readonly sequence: number;
+  readonly reason: "history-cleared";
+};
+export type TerminalOutputEventsExit = {
+  readonly kind: "exit";
+  readonly terminalId: string;
+  readonly streamEpoch: string;
+  readonly sequence: number;
+  readonly exitCode: number | null;
+  readonly exitSignal: number | null;
+};
+export type TerminalOutputEventsClosed = {
+  readonly kind: "closed";
+  readonly terminalId: string;
+  readonly streamEpoch: string;
+  readonly reason: "terminal-closed" | "identity-changed" | "overflow" | "terminal-error";
+};
+export type TerminalOutputEventsValue =
+  | TerminalOutputEventsSnapshot
+  | TerminalOutputEventsOutput
+  | TerminalOutputEventsReset
+  | TerminalOutputEventsExit
+  | TerminalOutputEventsClosed;
 export type TerminalSessionResult = {
   readonly terminalId: string;
   readonly status: "starting" | "running" | "exited" | "error";
@@ -218,12 +266,130 @@ export const terminalOutputApi = defineApi<{
   ],
 });
 
+const terminalOutputEventsValueSchema = {
+  oneOf: [
+    {
+      type: "object",
+      additionalProperties: false,
+      required: [
+        "kind",
+        "terminalId",
+        "streamEpoch",
+        "status",
+        "contents",
+        "retainedByteLength",
+        "truncated",
+        "boundarySequence",
+      ],
+      properties: {
+        kind: { const: "snapshot" },
+        terminalId: { type: "string", minLength: 1, maxLength: 128 },
+        streamEpoch: { type: "string", minLength: 1, maxLength: 128 },
+        status: { enum: ["starting", "running", "exited", "error"] },
+        contents: { type: "string", maxLength: 8192 },
+        retainedByteLength: { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER },
+        truncated: { type: "boolean" },
+        boundarySequence: { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER },
+      },
+    },
+    {
+      type: "object",
+      additionalProperties: false,
+      required: [
+        "kind",
+        "terminalId",
+        "streamEpoch",
+        "sequence",
+        "chunkIndex",
+        "chunkCount",
+        "data",
+      ],
+      properties: {
+        kind: { const: "output" },
+        terminalId: { type: "string", minLength: 1, maxLength: 128 },
+        streamEpoch: { type: "string", minLength: 1, maxLength: 128 },
+        sequence: { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER },
+        chunkIndex: { type: "integer", minimum: 0, maximum: 63 },
+        chunkCount: { type: "integer", minimum: 1, maximum: 64 },
+        data: { type: "string", maxLength: 8192 },
+      },
+    },
+    {
+      type: "object",
+      additionalProperties: false,
+      required: ["kind", "terminalId", "streamEpoch", "sequence", "reason"],
+      properties: {
+        kind: { const: "reset" },
+        terminalId: { type: "string", minLength: 1, maxLength: 128 },
+        streamEpoch: { type: "string", minLength: 1, maxLength: 128 },
+        sequence: { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER },
+        reason: { const: "history-cleared" },
+      },
+    },
+    {
+      type: "object",
+      additionalProperties: false,
+      required: ["kind", "terminalId", "streamEpoch", "sequence", "exitCode", "exitSignal"],
+      properties: {
+        kind: { const: "exit" },
+        terminalId: { type: "string", minLength: 1, maxLength: 128 },
+        streamEpoch: { type: "string", minLength: 1, maxLength: 128 },
+        sequence: { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER },
+        exitCode: {
+          type: ["integer", "null"],
+          minimum: -Number.MAX_SAFE_INTEGER,
+          maximum: Number.MAX_SAFE_INTEGER,
+        },
+        exitSignal: {
+          type: ["integer", "null"],
+          minimum: -Number.MAX_SAFE_INTEGER,
+          maximum: Number.MAX_SAFE_INTEGER,
+        },
+      },
+    },
+    {
+      type: "object",
+      additionalProperties: false,
+      required: ["kind", "terminalId", "streamEpoch", "reason"],
+      properties: {
+        kind: { const: "closed" },
+        terminalId: { type: "string", minLength: 1, maxLength: 128 },
+        streamEpoch: { type: "string", minLength: 1, maxLength: 128 },
+        reason: { enum: ["terminal-closed", "identity-changed", "overflow", "terminal-error"] },
+      },
+    },
+  ],
+} as const;
+
+/** Stream-only additive contract; the existing unary output API is intentionally unchanged. */
+export const terminalOutputEventsApi = defineStreamApi<{
+  subscribe: { input: TerminalOutputEventsInput; event: TerminalOutputEventsValue };
+}>({
+  id: TERMINAL_OUTPUT_EVENTS,
+  version: "1.0.0",
+  methods: [],
+  streams: [
+    {
+      name: "subscribe",
+      requiredGrants: [TERMINAL_READ_OUTPUT],
+      inputSchema: {
+        type: "object",
+        additionalProperties: false,
+        required: ["terminalId"],
+        properties: { terminalId: { type: "string", minLength: 1, maxLength: 128 } },
+      },
+      eventSchema: terminalOutputEventsValueSchema,
+    },
+  ],
+});
+
 /** Contracts only: their presence does not advertise a functioning or authorized provider. */
 export const GENERIC_API_CATALOGUE: readonly ApiDefinition[] = [
   workspaceFilesApi.definition,
   filePresentationApi.definition,
   terminalSessionsApi.definition,
   terminalOutputApi.definition,
+  terminalOutputEventsApi.definition,
 ];
 function canonical(value: unknown): string {
   if (Array.isArray(value)) return "[" + value.map(canonical).join(",") + "]";
@@ -250,3 +416,4 @@ export const FILE_PRESENTATION_API = filePresentationApi.definition;
 export const TERMINAL_SESSIONS_API = terminalSessionsApi.definition;
 
 export const TERMINAL_OUTPUT_API = terminalOutputApi.definition;
+export const TERMINAL_OUTPUT_EVENTS_API = terminalOutputEventsApi.definition;

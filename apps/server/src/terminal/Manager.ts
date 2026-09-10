@@ -42,6 +42,7 @@ import { makeKeyedCoalescingWorker } from "@t3tools/shared/KeyedCoalescingWorker
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { getTerminalLabel } from "@t3tools/shared/terminalLabels";
 import * as DateTime from "effect/DateTime";
+import * as NodeCrypto from "node:crypto";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Encoding from "effect/Encoding";
@@ -168,6 +169,12 @@ export class TerminalManager extends Context.Service<
       readonly terminalId: string;
     }) => Effect.Effect<TerminalOutputSnapshot | null, TerminalError>;
 
+    /** Subscribe to an existing session's bounded output without opening or changing it. */
+    readonly subscribeOutput: (
+      input: { readonly threadId: string; readonly terminalId: string },
+      listener: (event: TerminalOutputObservationEvent) => void,
+    ) => Effect.Effect<() => void, TerminalError>;
+
     /**
      * Attach to a terminal and stream its initial snapshot followed by live events.
      *
@@ -286,6 +293,7 @@ interface TerminalSessionState {
   exitSignal: number | null;
   updatedAt: string;
   eventSequence: number;
+  observationEpoch: string;
   cols: number;
   rows: number;
   process: PtyAdapter.PtyProcess | null;
@@ -315,6 +323,7 @@ type DrainProcessEventAction =
       sequence: number;
       history: BoundedTerminalHistory | null;
       data: string;
+      sourceEpoch: string;
     }
   | {
       type: "exit";
@@ -324,6 +333,7 @@ type DrainProcessEventAction =
       sequence: number;
       exitCode: number | null;
       exitSignal: number | null;
+      sourceEpoch: string;
     };
 
 interface TerminalManagerState {
@@ -1076,6 +1086,48 @@ export interface TerminalOutputSnapshot {
   readonly truncated: boolean;
 }
 
+export type TerminalOutputObservationEvent =
+  | {
+      readonly type: "output";
+      readonly sourceEpoch: string;
+      readonly threadId: string;
+      readonly terminalId: string;
+      readonly sequence: number;
+      readonly data: string;
+    }
+  | {
+      readonly type: "cleared";
+      readonly sourceEpoch: string;
+      readonly threadId: string;
+      readonly terminalId: string;
+      readonly sequence: number;
+    }
+  | {
+      readonly type: "exited";
+      readonly sourceEpoch: string;
+      readonly threadId: string;
+      readonly terminalId: string;
+      readonly sequence: number;
+      readonly exitCode: number | null;
+      readonly exitSignal: number | null;
+    }
+  | {
+      readonly type: "closed";
+      readonly sourceEpoch: string;
+      readonly threadId: string;
+      readonly terminalId: string;
+      readonly sequence: number;
+      readonly reason: "terminal-closed" | "identity-changed" | "terminal-error";
+    }
+  | {
+      readonly type: "snapshot";
+      readonly sourceEpoch: string;
+      readonly threadId: string;
+      readonly terminalId: string;
+      readonly sequence: number;
+      readonly snapshot: TerminalOutputSnapshot;
+    };
+
 function isCsiFinalByte(codePoint: number): boolean {
   return codePoint >= 0x40 && codePoint <= 0x7e;
 }
@@ -1610,6 +1662,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
   });
   const threadLocksRef = yield* SynchronizedRef.make(new Map<string, Semaphore.Semaphore>());
   const terminalEventListeners = new Set<(event: TerminalEvent) => Effect.Effect<void>>();
+  const terminalOutputListeners = new Set<(event: TerminalOutputObservationEvent) => void>();
   const workerScope = yield* Scope.make("sequential");
   yield* Effect.addFinalizer(() => Scope.close(workerScope, Exit.void));
 
@@ -1617,6 +1670,17 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     Effect.gen(function* () {
       for (const listener of terminalEventListeners) {
         yield* listener(event).pipe(Effect.ignoreCause({ log: true }));
+      }
+    });
+
+  const publishOutputEvent = (event: TerminalOutputObservationEvent) =>
+    Effect.sync(() => {
+      for (const listener of terminalOutputListeners) {
+        try {
+          listener(event);
+        } catch {
+          // An observer must never block or alter native terminal fanout.
+        }
       }
     });
 
@@ -2111,6 +2175,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
             sequence: eventStamp.sequence,
             history: sanitized.visibleText.length > 0 ? session.history : null,
             data: nextEvent.data,
+            sourceEpoch: session.observationEpoch,
           } as const;
         }
 
@@ -2141,6 +2206,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
           sequence: eventStamp.sequence,
           exitCode: session.exitCode,
           exitSignal: session.exitSignal,
+          sourceEpoch: session.observationEpoch,
         } as const;
       });
 
@@ -2153,6 +2219,14 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
           yield* queuePersist(action.threadId, action.terminalId, action.history);
         }
 
+        yield* publishOutputEvent({
+          type: "output",
+          sourceEpoch: action.sourceEpoch,
+          threadId: action.threadId,
+          terminalId: action.terminalId,
+          sequence: action.sequence,
+          data: action.data,
+        });
         yield* publishEvent({
           type: "output",
           threadId: action.threadId,
@@ -2167,6 +2241,15 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       yield* unregisterTerminal({
         threadId: action.threadId,
         terminalId: action.terminalId,
+      });
+      yield* publishOutputEvent({
+        type: "exited",
+        sourceEpoch: action.sourceEpoch,
+        threadId: action.threadId,
+        terminalId: action.terminalId,
+        sequence: action.sequence,
+        exitCode: action.exitCode,
+        exitSignal: action.exitSignal,
       });
       yield* publishEvent({
         type: "exited",
@@ -2270,6 +2353,16 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     input: TerminalStartInput,
     eventType: "started" | "restarted",
   ) {
+    const previousEpoch = session.observationEpoch;
+    session.observationEpoch = NodeCrypto.randomUUID();
+    yield* publishOutputEvent({
+      type: "closed",
+      sourceEpoch: previousEpoch,
+      threadId: session.threadId,
+      terminalId: session.terminalId,
+      sequence: session.eventSequence,
+      reason: "identity-changed",
+    });
     yield* stopProcess(session);
     yield* Effect.annotateCurrentSpan({
       "terminal.thread_id": session.threadId,
@@ -2359,7 +2452,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
         yield* startKillEscalation(ptyProcess, session.threadId, session.terminalId);
       }
 
-      yield* modifyManagerState((state) => {
+      const errorObservation = yield* modifyManagerState((state) => {
         cleanupProcessHandles(session);
         session.status = "error";
         session.pid = null;
@@ -2369,8 +2462,8 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
         session.pendingProcessEvents = [];
         session.pendingProcessEventIndex = 0;
         session.processEventDrainRunning = false;
-        advanceEventSequence(session);
-        return [undefined, state] as const;
+        const eventStamp = advanceEventSequence(session);
+        return [{ epoch: session.observationEpoch, sequence: eventStamp.sequence }, state] as const;
       });
       yield* unregisterTerminal({
         threadId: session.threadId,
@@ -2380,11 +2473,19 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       yield* evictInactiveSessionsIfNeeded();
 
       const message = error.message;
+      yield* publishOutputEvent({
+        type: "closed",
+        sourceEpoch: errorObservation.epoch,
+        threadId: session.threadId,
+        terminalId: session.terminalId,
+        sequence: errorObservation.sequence,
+        reason: "terminal-error",
+      });
       yield* publishEvent({
         type: "error",
         threadId: session.threadId,
         terminalId: session.terminalId,
-        sequence: session.eventSequence,
+        sequence: errorObservation.sequence,
         message,
       });
       yield* Effect.logError("failed to start terminal", {
@@ -2404,6 +2505,9 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     const key = toSessionKey(threadId, terminalId);
     const session = yield* getSession(threadId, terminalId);
     const closedEventSequence = Option.isSome(session) ? session.value.eventSequence + 1 : 0;
+    const closedObservation = Option.isSome(session)
+      ? { epoch: session.value.observationEpoch, sequence: closedEventSequence }
+      : null;
 
     if (Option.isSome(session)) {
       yield* stopProcess(session.value);
@@ -2423,6 +2527,16 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     });
 
     if (removed) {
+      if (Option.isSome(session)) {
+        yield* publishOutputEvent({
+          type: "closed",
+          sourceEpoch: closedObservation!.epoch,
+          threadId,
+          terminalId,
+          sequence: closedObservation!.sequence,
+          reason: "terminal-closed",
+        });
+      }
       yield* publishEvent({
         type: "closed",
         threadId,
@@ -2625,6 +2739,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
         exitSignal: null,
         updatedAt: yield* nowIso,
         eventSequence: 0,
+        observationEpoch: NodeCrypto.randomUUID(),
         cols,
         rows,
         process: null,
@@ -2819,6 +2934,111 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
         };
       }),
     );
+
+  const subscribeOutput: TerminalManager["Service"]["subscribeOutput"] = (input, listener) => {
+    let unsubscribe: (() => void) | null = null;
+    let active = true;
+    let sourceEpoch = "";
+    let initialSequence = 0;
+
+    return withThreadLock(
+      input.threadId,
+      Effect.gen(function* () {
+        const handler = (event: TerminalOutputObservationEvent) => {
+          if (
+            !active ||
+            event.threadId !== input.threadId ||
+            event.terminalId !== input.terminalId
+          ) {
+            return;
+          }
+          if (event.sourceEpoch !== sourceEpoch) {
+            return;
+          }
+          if (event.type === "closed" || event.type === "exited") {
+            active = false;
+            unsubscribe?.();
+            unsubscribe = null;
+            listener(event);
+            return;
+          }
+          if (event.sequence <= initialSequence) return;
+          listener(event);
+        };
+        const observed = yield* modifyManagerState((state) => {
+          const session = state.sessions.get(toSessionKey(input.threadId, input.terminalId));
+          if (!session) return [null, state] as const;
+          sourceEpoch = session.observationEpoch;
+          initialSequence = session.eventSequence;
+          unsubscribe = () => {
+            active = false;
+            terminalOutputListeners.delete(handler);
+          };
+          terminalOutputListeners.add(handler);
+          const tail = session.history.tail(8_192, 8_192);
+          listener({
+            type: "snapshot",
+            sourceEpoch,
+            threadId: session.threadId,
+            terminalId: session.terminalId,
+            sequence: initialSequence,
+            snapshot: {
+              threadId: session.threadId,
+              terminalId: session.terminalId,
+              cwd: session.cwd,
+              worktreePath: session.worktreePath,
+              status: session.status,
+              ...tail,
+            },
+          });
+          if (session.status === "exited") {
+            active = false;
+            unsubscribe();
+            unsubscribe = null;
+            listener({
+              type: "exited",
+              sourceEpoch,
+              threadId: session.threadId,
+              terminalId: session.terminalId,
+              sequence: initialSequence,
+              exitCode: session.exitCode,
+              exitSignal: session.exitSignal,
+            });
+          } else if (session.status === "error") {
+            active = false;
+            unsubscribe();
+            unsubscribe = null;
+            listener({
+              type: "closed",
+              sourceEpoch,
+              threadId: session.threadId,
+              terminalId: session.terminalId,
+              sequence: initialSequence,
+              reason: "terminal-error",
+            });
+          }
+          return [session, state] as const;
+        });
+        if (!observed) return yield* new TerminalSessionLookupError(input);
+        return () => {
+          active = false;
+          unsubscribe?.();
+          unsubscribe = null;
+        };
+      }).pipe(
+        Effect.catchCause((cause) =>
+          Effect.flatMap(
+            Effect.sync(() => {
+              active = false;
+              unsubscribe?.();
+              unsubscribe = null;
+            }),
+            () => Effect.failCause(cause),
+          ),
+        ),
+      ),
+    );
+  };
 
   const subscribe: TerminalManager["Service"]["subscribe"] = (listener) =>
     Effect.sync(() => {
@@ -3021,12 +3241,23 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
         session.pendingProcessEventIndex = 0;
         session.processEventDrainRunning = false;
         const eventStamp = advanceEventSequence(session);
+        const observation = {
+          epoch: session.observationEpoch,
+          sequence: eventStamp.sequence,
+        };
         yield* persistHistory(input.threadId, terminalId, session.history);
         yield* publishEvent({
           type: "cleared",
           threadId: input.threadId,
           terminalId,
           sequence: eventStamp.sequence,
+        });
+        yield* publishOutputEvent({
+          type: "cleared",
+          sourceEpoch: observation.epoch,
+          threadId: input.threadId,
+          terminalId,
+          sequence: observation.sequence,
         });
       }),
     );
@@ -3059,6 +3290,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
           exitSignal: null,
           updatedAt: yield* nowIso,
           eventSequence: 0,
+          observationEpoch: NodeCrypto.randomUUID(),
           cols,
           rows,
           process: null,
@@ -3140,6 +3372,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     open,
     inspect,
     readOutput,
+    subscribeOutput,
     attachStream,
     write,
     resize,

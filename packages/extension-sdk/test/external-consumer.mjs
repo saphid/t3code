@@ -48,7 +48,7 @@ export async function checkPublicAsset(host: ClientHost) {
   await host.readAsset({ id: "other", path: "assets/value.wasm" }, new AbortController().signal);
 }
 import { bindApi } from "@t3tools/extension-sdk/capabilities";
-import { workspaceFilesApi, terminalSessionsApi, terminalOutputApi } from "@t3tools/extension-sdk/catalogue";
+import { workspaceFilesApi, terminalSessionsApi, terminalOutputApi, terminalOutputEventsApi } from "@t3tools/extension-sdk/catalogue";
 const context = { resource: { namespace: "thirdparty.files", id: "root", environmentId: "env" }, client: "test" };
 const api = bindApi(workspaceFilesApi, { async invokeApi() { return { entries: [], nextCursor: null }; } }, context);
 const result = await api.invoke("listEntries", { relativePath: "" }, new AbortController().signal);
@@ -67,6 +67,40 @@ void retainedBytes; void omittedPrefix;
 void output.invoke("restart", { terminalId: "term-1" }, new AbortController().signal);
 // @ts-expect-error snapshot size/launch paths are host policy
 void output.invoke("readSnapshot", { terminalId: "term-1", cwd: "/other", limit: 1000000 }, new AbortController().signal);
+
+
+import { bindStreamApi, defineStreamApi } from "@t3tools/extension-sdk/capabilities";
+const typedStream = defineStreamApi<{ changes: { input: { terminalId: string }; event: { kind: "output"; data: string } } }>({
+  id: "thirdparty.files/events", version: "1.0.0", methods: [],
+  streams: [{ name: "changes", inputSchema: { type: "object" }, eventSchema: { type: "object" }, requiredGrants: [] }],
+});
+const streams = bindStreamApi(typedStream, { async *subscribeApi() {
+  yield { type: "data", streamId: "test", sequence: 1, value: { kind: "output", data: "text" } };
+} }, context);
+for await (const frame of streams.subscribe("changes", { terminalId: "term-1" }, new AbortController().signal)) {
+  const content: string = frame.value.data;
+  const kind: "output" = frame.value.kind;
+  void content; void kind;
+  // @ts-expect-error private fields are not part of the public event
+  void frame.value.pid;
+}
+const terminalEvents = bindStreamApi(terminalOutputEventsApi, { async *subscribeApi() {} }, context);
+for await (const frame of terminalEvents.subscribe("subscribe", { terminalId: "term-1" }, new AbortController().signal)) {
+  if (frame.value.kind === "output") {
+    const rawOutput: string = frame.value.data;
+    const chunk: number = frame.value.chunkIndex;
+    void rawOutput; void chunk;
+  }
+}
+// @ts-expect-error terminal launch options are not stream selectors
+void terminalEvents.subscribe("subscribe", { terminalId: "term-1", cwd: "/other" }, new AbortController().signal);
+
+// @ts-expect-error stream name is checked
+void streams.subscribe("privateEvents", { terminalId: "term-1" }, new AbortController().signal);
+// @ts-expect-error stream input is checked
+void streams.subscribe("changes", { cwd: "/other" }, new AbortController().signal);
+// @ts-expect-error stream bindings never accept caller-selected context or API owner
+void streams.subscribe("changes", { terminalId: "term-1" }, new AbortController().signal, { context, id: "other" });
 
 // @ts-expect-error terminal observation does not authorize process control
 void terminal.invoke("write", { terminalId: "term-1", data: "exit" }, new AbortController().signal);

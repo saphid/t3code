@@ -110,6 +110,54 @@ export function bindApi<T extends ApiMethodTypes>(
     },
   };
 }
+export type ApiStreamTypes = Record<string, { input: Json; event: Json }>;
+/** Public stream types accompany the descriptor validated by the host at delivery. */
+export interface TypedStreamApi<T extends ApiStreamTypes> {
+  readonly definition: ApiDefinition;
+  readonly streamTypes?: T;
+}
+export type TypedApiStreamFrame<T extends Json> = Omit<ApiStreamFrame, "value"> & {
+  readonly value: T;
+};
+export function defineStreamApi<T extends ApiStreamTypes>(
+  definition: ApiDefinition,
+): TypedStreamApi<T> {
+  const validated = validateApiDefinition(definition);
+  if (!validated.streams?.length) throw new Error("Expected API stream definitions");
+  return { definition: validated };
+}
+/** Retain the host iterable so return(), cancellation and backpressure keep their ownership. */
+export function bindStreamApi<T extends ApiStreamTypes>(
+  api: TypedStreamApi<T>,
+  client: Pick<ApiClient, "subscribeApi">,
+  context: ViewContext,
+  versionRange = "^" + api.definition.version,
+) {
+  return {
+    subscribe<K extends keyof T & string>(
+      name: K,
+      input: T[K]["input"],
+      signal: AbortSignal,
+      options?: { readonly cursor?: string; readonly expectedGeneration?: number },
+    ): AsyncIterable<TypedApiStreamFrame<T[K]["event"]>> {
+      return client.subscribeApi(
+        {
+          id: api.definition.id,
+          versionRange,
+          name,
+          input,
+          context,
+          ...(options?.cursor === undefined ? {} : { cursor: options.cursor }),
+          ...(options?.expectedGeneration === undefined
+            ? {}
+            : { expectedGeneration: options.expectedGeneration }),
+        },
+        signal,
+      ) as AsyncIterable<TypedApiStreamFrame<T[K]["event"]>>;
+    },
+  };
+}
+
 export function validateRangeText(value: unknown): asserts value is string {
   if (typeof value !== "string" || !value.trim() || value.length > 200)
     throw new Error("Invalid API or dependency version range");

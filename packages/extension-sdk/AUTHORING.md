@@ -107,3 +107,32 @@ Format 4 adds a required assets array. Each declaration contains path, byteLengt
 The host must advertise format 4 before installing/loading this format. A format-4 installed ClientHost supplies readAsset(path, signal), which returns verified bytes, mediaType and sha256. The host binds owner, environment and installation hash. Do not derive an asset URL from the server origin or use an API JSON response to carry binary data. Always pass your surface lifetime signal. Bytes are not a resource lease; dispose object URLs you create.
 
 [The asset example](examples/installable-package-assets/README.md) loads and executes a small WASM module without private bindings. Host delivery and real panel parity need separate end-to-end proof.
+
+## Typed API streams
+
+Use defineStreamApi for a validated stream descriptor with public input/event
+types, and bindStreamApi to bind a consumer to its view context. The binding's
+subscribe(name, input, signal, options?) preserves the host iterable, including
+return(), cancellation and backpressure. Optional cursor and expectedGeneration
+fields are forwarded only when explicitly provided; API ownership and context
+cannot be overridden through options. Stream cursor support is defined by each
+API, so the presence of a generic cursor field does not imply replay support.
+
+The separately installed
+[terminal live-output example](examples/installable-terminal-live-output/client.mjs)
+provides its own namespaced forwarding stream and consumes the generic
+t3.terminal/output-events API. Its independent
+[server entry](examples/installable-terminal-live-output/server.mjs) and
+[manifest](examples/installable-terminal-live-output/t3-extension.json) declare
+the contract and t3.terminal/read-output grant. The authenticated session also
+needs terminal:operate. Installation and registration alone supply neither
+authority.
+
+This example displays a bounded diagnostic tail, not a VT terminal. Initial
+history is sanitized retained text; subsequent data is raw PTY output. The
+consumer assembles complete bounded native chunk groups, rejects discontinuous
+or foreign-epoch frames, clears on explicit reset/unavailable, and requires an
+exit/close receipt before claiming normal completion. It keeps at most8,192
+UTF-16 units of displayed text and256KiB of an incomplete native event. A new
+terminal/process incarnation requires a new subscription; v1 has no resume
+cursor. Stop/unmount/input changes abort the prior subscription.

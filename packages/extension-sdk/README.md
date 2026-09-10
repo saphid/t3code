@@ -72,3 +72,9 @@ Format-4 packages can carry bounded, immutable WASM/font/binary assets. Use the
 [asset authoring contract](AUTHORING.md#declared-renderer-assets-format-4).
 Availability requires an environment and client that both support format 4;
 this does not establish native panel or mobile parity.
+
+The public capabilities export also provides defineStreamApi, bindStreamApi and
+TypedApiStreamFrame for typed, cancellable API streams. The
+[independent live terminal output example](examples/installable-terminal-live-output/client.mjs)
+owns its client and namespaced forwarding API. It is a read-only diagnostic
+consumer, not a replacement for the interactive Terminal panel.

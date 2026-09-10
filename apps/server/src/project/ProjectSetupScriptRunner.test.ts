@@ -60,6 +60,7 @@ const makeTerminalManagerLayer = (
     ...overrides,
     inspect: () => Effect.die(new Error("unused")),
     readOutput: () => Effect.die(new Error("unused")),
+    subscribeOutput: () => Effect.die(new Error("unused")),
     attachStream: () => Effect.die(new Error("unused")),
     resize: () => Effect.void,
     clear: () => Effect.void,

@@ -113,12 +113,25 @@ class FakePtyAdapter {
   readonly spawnFailures: Error[] = [];
   private readonly mode: "sync" | "async";
   private nextPid = 9000;
+  spawnGate: Deferred.Deferred<void> | null = null;
+  spawnStarted: Deferred.Deferred<void> | null = null;
 
   constructor(mode: "sync" | "async" = "sync") {
     this.mode = mode;
   }
 
   spawn(
+    input: PtyAdapter.PtySpawnInput,
+  ): Effect.Effect<PtyAdapter.PtyProcess, PtyAdapter.PtySpawnError> {
+    if (this.spawnGate) {
+      const gate = this.spawnGate;
+      if (this.spawnStarted) Deferred.doneUnsafe(this.spawnStarted, Effect.void);
+      return Deferred.await(gate).pipe(Effect.andThen(this.spawnNow(input)));
+    }
+    return this.spawnNow(input);
+  }
+
+  private spawnNow(
     input: PtyAdapter.PtySpawnInput,
   ): Effect.Effect<PtyAdapter.PtyProcess, PtyAdapter.PtySpawnError> {
     this.spawnInputs.push(input);
@@ -233,6 +246,7 @@ interface CreateManagerOptions {
   resolveProviderInstanceEnvironment?: Parameters<
     typeof TerminalManager.makeWithOptions
   >[0]["resolveProviderInstanceEnvironment"];
+  unregisterTerminal?: Parameters<typeof TerminalManager.makeWithOptions>[0]["unregisterTerminal"];
 }
 
 interface ManagerFixture {
@@ -280,6 +294,9 @@ const createManager = (
           : {}),
         ...(options.resolveProviderInstanceEnvironment !== undefined
           ? { resolveProviderInstanceEnvironment: options.resolveProviderInstanceEnvironment }
+          : {}),
+        ...(options.unregisterTerminal !== undefined
+          ? { unregisterTerminal: options.unregisterTerminal }
           : {}),
       });
       const eventsRef = yield* Ref.make<ReadonlyArray<TerminalEvent>>([]);
@@ -512,6 +529,189 @@ it.layer(
       assert.equal(snapshot.snapshot.threadId, "thread-1");
       assert.equal(snapshot.snapshot.terminalId, DEFAULT_TERMINAL_ID);
       expect(ptyAdapter.spawnInputs).toHaveLength(1);
+    }),
+  );
+
+  it.effect("observes an existing terminal with an acquired snapshot boundary", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter } = yield* createManager();
+      yield* manager.open(openInput());
+      const outputSeen = yield* Deferred.make<void>();
+      const events: TerminalManager.TerminalOutputObservationEvent[] = [];
+      const unsubscribe = yield* manager.subscribeOutput(
+        { threadId: "thread-1", terminalId: DEFAULT_TERMINAL_ID },
+        (event) => {
+          events.push(event);
+          if (event.type === "output") Deferred.doneUnsafe(outputSeen, Effect.void);
+        },
+      );
+      yield* Effect.addFinalizer(() => Effect.sync(unsubscribe));
+
+      expect(events[0]?.type).toBe("snapshot");
+      expect(ptyAdapter.spawnInputs).toHaveLength(1);
+      ptyAdapter.processes[0]!.emitData("after snapshot");
+      yield* Deferred.await(outputSeen);
+      expect(events.filter((event) => event.type === "output")).toHaveLength(1);
+      expect(events.find((event) => event.type === "output")).toMatchObject({
+        data: "after snapshot",
+      });
+      expect(ptyAdapter.processes[0]!.writes).toHaveLength(0);
+      expect(ptyAdapter.processes[0]!.resizeCalls).toHaveLength(0);
+    }),
+  );
+
+  it.effect("returns only an exited snapshot and emits clear/close lifecycle observations", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter } = yield* createManager();
+      yield* manager.open(openInput());
+      const exited = yield* Deferred.make<void>();
+      const legacyUnsubscribe = yield* manager.subscribe((event) =>
+        event.type === "exited"
+          ? Effect.sync(() => {
+              Deferred.doneUnsafe(exited, Effect.void);
+            })
+          : Effect.void,
+      );
+      ptyAdapter.processes[0]!.emitExit({ exitCode: 0, signal: 0 });
+      yield* Deferred.await(exited);
+      yield* Effect.sync(legacyUnsubscribe);
+
+      const exitedEvents: TerminalManager.TerminalOutputObservationEvent[] = [];
+      const exitedUnsubscribe = yield* manager.subscribeOutput(
+        { threadId: "thread-1", terminalId: DEFAULT_TERMINAL_ID },
+        (event) => exitedEvents.push(event),
+      );
+      yield* Effect.sync(exitedUnsubscribe);
+      expect(exitedEvents).toHaveLength(2);
+      expect(exitedEvents[0]).toMatchObject({ type: "snapshot", snapshot: { status: "exited" } });
+      expect(exitedEvents[1]).toMatchObject({ type: "exited" });
+
+      yield* manager.open(openInput());
+      const cleared = yield* Deferred.make<void>();
+      const closed = yield* Deferred.make<void>();
+      const events: TerminalManager.TerminalOutputObservationEvent[] = [];
+      const unsubscribe = yield* manager.subscribeOutput(
+        { threadId: "thread-1", terminalId: DEFAULT_TERMINAL_ID },
+        (event) => {
+          events.push(event);
+          if (event.type === "cleared") Deferred.doneUnsafe(cleared, Effect.void);
+          if (event.type === "closed") Deferred.doneUnsafe(closed, Effect.void);
+        },
+      );
+      yield* manager.clear({ threadId: "thread-1", terminalId: DEFAULT_TERMINAL_ID });
+      yield* Deferred.await(cleared);
+      yield* manager.close({ threadId: "thread-1", terminalId: DEFAULT_TERMINAL_ID });
+      yield* Deferred.await(closed);
+      yield* Effect.sync(unsubscribe);
+      expect(events.map((event) => event.type)).toEqual(["snapshot", "cleared", "closed"]);
+    }),
+  );
+
+  it.effect("terminates an old observation on reincarnation without accepting old identity", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter } = yield* createManager();
+      yield* manager.open(openInput());
+      const closed = yield* Deferred.make<void>();
+      const events: TerminalManager.TerminalOutputObservationEvent[] = [];
+      const unsubscribe = yield* manager.subscribeOutput(
+        { threadId: "thread-1", terminalId: DEFAULT_TERMINAL_ID },
+        (event) => {
+          events.push(event);
+          if (event.type === "closed") Deferred.doneUnsafe(closed, Effect.void);
+        },
+      );
+      yield* Effect.addFinalizer(() => Effect.sync(unsubscribe));
+
+      yield* manager.restart(restartInput());
+      yield* Deferred.await(closed);
+      expect(events.at(-1)).toMatchObject({ type: "closed", reason: "identity-changed" });
+      expect(ptyAdapter.spawnInputs).toHaveLength(2);
+    }),
+  );
+
+  it.effect("does not acquire a new observation while restart still owns the thread lock", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter } = yield* createManager();
+      yield* manager.open(openInput());
+      const gate = yield* Deferred.make<void>();
+      const spawnStarted = yield* Deferred.make<void>();
+      ptyAdapter.spawnGate = gate;
+      ptyAdapter.spawnStarted = spawnStarted;
+
+      const restartFiber = yield* manager.restart(restartInput()).pipe(Effect.forkChild);
+      yield* Deferred.await(spawnStarted);
+      const snapshotSeen = yield* Deferred.make<void>();
+      const subscribeFiber = yield* Effect.forkChild(
+        manager.subscribeOutput(
+          { threadId: "thread-1", terminalId: DEFAULT_TERMINAL_ID },
+          (event) => {
+            if (event.type === "snapshot") Deferred.doneUnsafe(snapshotSeen, Effect.void);
+          },
+        ),
+      );
+      expect(Option.isNone(yield* Deferred.poll(snapshotSeen))).toBe(true);
+
+      yield* Deferred.succeed(gate, undefined);
+      yield* Fiber.join(restartFiber);
+      const unsubscribe = yield* Fiber.join(subscribeFiber);
+      yield* Effect.sync(unsubscribe);
+      expect(Option.isSome(yield* Deferred.poll(snapshotSeen))).toBe(true);
+      expect(ptyAdapter.spawnInputs).toHaveLength(2);
+    }),
+  );
+
+  it.effect("ignores delayed old-source exit publication after reincarnation", () =>
+    Effect.gen(function* () {
+      const exitUnregisterEntered = yield* Deferred.make<void>();
+      const releaseExitUnregister = yield* Deferred.make<void>();
+      const oldExitPublished = yield* Deferred.make<void>();
+      let holdFirstExitUnregister = true;
+      const { manager, ptyAdapter } = yield* createManager(5, {
+        unregisterTerminal: () => {
+          if (!holdFirstExitUnregister) return Effect.void;
+          holdFirstExitUnregister = false;
+          return Effect.sync(() => {
+            Deferred.doneUnsafe(exitUnregisterEntered, Effect.void);
+          }).pipe(Effect.andThen(Deferred.await(releaseExitUnregister)));
+        },
+      });
+      const legacyUnsubscribe = yield* manager.subscribe((event) =>
+        event.type === "exited"
+          ? Effect.sync(() => {
+              Deferred.doneUnsafe(oldExitPublished, Effect.void);
+            })
+          : Effect.void,
+      );
+      yield* Effect.addFinalizer(() => Effect.sync(legacyUnsubscribe));
+
+      yield* manager.open(openInput());
+      const oldEvents: TerminalManager.TerminalOutputObservationEvent[] = [];
+      const oldUnsubscribe = yield* manager.subscribeOutput(
+        { threadId: "thread-1", terminalId: DEFAULT_TERMINAL_ID },
+        (event) => oldEvents.push(event),
+      );
+      yield* Effect.addFinalizer(() => Effect.sync(oldUnsubscribe));
+      const oldEpoch = oldEvents[0]?.sourceEpoch;
+      const oldProcess = ptyAdapter.processes[0]!;
+      oldProcess.emitExit({ exitCode: 17, signal: 0 });
+      yield* Deferred.await(exitUnregisterEntered);
+
+      yield* manager.restart(restartInput());
+      const freshEvents: TerminalManager.TerminalOutputObservationEvent[] = [];
+      const freshUnsubscribe = yield* manager.subscribeOutput(
+        { threadId: "thread-1", terminalId: DEFAULT_TERMINAL_ID },
+        (event) => freshEvents.push(event),
+      );
+      yield* Effect.addFinalizer(() => Effect.sync(freshUnsubscribe));
+      const freshEpoch = freshEvents[0]?.sourceEpoch;
+      expect(freshEvents[0]?.type).toBe("snapshot");
+      expect(freshEpoch).toBeDefined();
+      expect(freshEpoch).not.toBe(oldEpoch);
+
+      yield* Deferred.succeed(releaseExitUnregister, undefined);
+      yield* Deferred.await(oldExitPublished);
+      expect(freshEvents).toHaveLength(1);
+      expect(freshEvents[0]).toMatchObject({ type: "snapshot", sourceEpoch: freshEpoch });
     }),
   );
 
@@ -1410,7 +1610,7 @@ it.layer(
       expect(events.filter((event) => event.type === "output").map((event) => event.data)).toEqual(
         writes,
       );
-      const snapshot = events.filter((event) => event.type === "snapshot").at(-1)?.snapshot;
+      const snapshot = events.findLast((event) => event.type === "snapshot")?.snapshot;
       expect(snapshot?.history).toBe("aa😀\rEND");
       expect(snapshot?.sequence).toBe(reopened.sequence);
     }),

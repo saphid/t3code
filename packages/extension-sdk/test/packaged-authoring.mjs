@@ -48,7 +48,11 @@ console.log(
 );
 
 const streamPackages = [];
-for (const name of ["installable-stream-provider", "installable-stream-consumer"]) {
+for (const name of [
+  "installable-stream-provider",
+  "installable-stream-consumer",
+  "installable-terminal-live-output",
+]) {
   const dir = NodePath.join(sdk, "examples", name);
   const pkg = validateEnvironmentPackage(
     JSON.parse(await NodeFSP.readFile(NodePath.join(dir, "t3-extension.json"), "utf8")),
@@ -61,6 +65,10 @@ for (const name of ["installable-stream-provider", "installable-stream-consumer"
   streamPackages.push(pkg);
 }
 NodeAssert.equal(streamPackages[1].dependencies[0].pluginId, streamPackages[0].manifest.id);
+NodeAssert.equal(streamPackages[2].requires[0].id, "t3.terminal/output-events");
+NodeAssert.deepEqual(streamPackages[2].provides[0].streams[0].requiredGrants, [
+  "t3.terminal/read-output",
+]);
 console.log(
   "Packaged format-3 provider/consumer declarations verified; worker/network proof remains separate.",
 );

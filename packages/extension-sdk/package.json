@@ -15,7 +15,8 @@
     "examples/installable-stream-consumer",
     "examples/installable-terminal-observer",
     "examples/installable-terminal-output",
-    "examples/installable-package-assets"
+    "examples/installable-package-assets",
+    "examples/installable-terminal-live-output"
   ],
   "type": "module",
   "exports": {
