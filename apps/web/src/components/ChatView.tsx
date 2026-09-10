@@ -36,7 +36,6 @@ import {
   type PreviewAnnotationPayload,
   ProviderInstanceId,
   type ServerProvider,
-  type ResolvedKeybindingsConfig,
   type ScopedThreadRef,
   type ThreadId,
   type ThreadLinkedPullRequest,
@@ -85,9 +84,6 @@ import {
 import { Debouncer } from "@tanstack/react-pacer";
 import { useAtomValue } from "@effect/atom-react";
 import {
-  lazy,
-  memo,
-  Suspense,
   useCallback,
   useEffect,
   useEffectEvent,
@@ -206,8 +202,8 @@ import {
   usePreviewMiniPlayerStore,
 } from "../previewMiniPlayerStore";
 import { isThreadOwnPullRequest } from "./pullRequest/pullRequestDetail.logic";
-import { PullRequestDetailPanel } from "./pullRequest/PullRequestDetailPanel";
 import { RightPanelTabs } from "./RightPanelTabs";
+import { LinkPullRequestDialogHost } from "./pullRequest/LinkPullRequestDialog";
 import {
   deriveAgentPanelModel,
   foldSubagentActivities,
@@ -579,6 +575,7 @@ const TYPE_TO_FOCUS_INTERACTIVE_SELECTOR = [
   '[role="tab"]',
 ].join(",");
 const TYPE_TO_FOCUS_FLOATING_LAYER_SELECTOR = [
+  '[role="dialog"][aria-modal="true"]',
   '[data-slot="alert-dialog-popup"]:is([data-open],[data-ending-style])',
   '[data-slot="command-dialog-popup"]:is([data-open],[data-ending-style])',
   '[data-slot="dialog-popup"]:is([data-open],[data-ending-style])',
@@ -3557,6 +3554,12 @@ export default function ChatView(props: ChatViewProps) {
     if (!activeThreadRef) return;
     useRightPanelStore.getState().open(activeThreadRef, "agents");
   }, [activeThreadRef]);
+  const supportsThreadPullRequests =
+    serverConfig?.environment.capabilities.threadPullRequests === true;
+  const addPullRequestsSurface = useCallback(() => {
+    if (!activeThreadRef || !supportsThreadPullRequests) return;
+    useRightPanelStore.getState().open(activeThreadRef, "pull-requests");
+  }, [activeThreadRef, supportsThreadPullRequests]);
   const openFileSurface = useCallback(
     (relativePath: string) => {
       if (!activeThreadRef || !activeProject) return;
@@ -4805,9 +4808,16 @@ export default function ChatView(props: ChatViewProps) {
         : resolveThreadReferenceCopyTarget({
             threadId: activeThreadId,
             openPanelPullRequestUrl,
+            pullRequests: activeThreadMetadata?.pullRequests,
             linkedPullRequestUrl: linkedThreadPullRequest?.url ?? null,
           }),
-    [activeThreadId, isServerThread, linkedThreadPullRequest?.url, openPanelPullRequestUrl],
+    [
+      activeThreadId,
+      isServerThread,
+      activeThreadMetadata?.pullRequests,
+      linkedThreadPullRequest?.url,
+      openPanelPullRequestUrl,
+    ],
   );
   const copyActiveThreadReference = useCallback(() => {
     const target = activeThreadReferenceCopyTarget;
@@ -7512,39 +7522,53 @@ export default function ChatView(props: ChatViewProps) {
             workspaceMutationId,
           },
           versionControl:
-            renderedRightPanelSurface.kind === "pull-request"
-              ? !pullRequestsCapabilityKnown
-                ? { status: "loading" }
-                : !supportsPullRequests
-                  ? { status: "unavailable" }
-                  : {
-                      status: "ready",
-                      detail: {
-                        environmentId: activeThread.environmentId,
-                        threadRef: activeThreadRef,
-                        reference: {
-                          projectId: renderedRightPanelSurface.projectId as ProjectId,
-                          repository: renderedRightPanelSurface.repository,
-                          number: renderedRightPanelSurface.number,
-                        },
-                        context: isThreadOwnPullRequest(
-                          {
-                            projectId: linkedThreadPullRequest?.projectId ?? null,
-                            repository: linkedThreadPullRequest?.repository ?? null,
-                            number: linkedThreadPullRequest?.number ?? null,
-                          },
-                          {
-                            projectId: renderedRightPanelSurface.projectId,
+            renderedRightPanelSurface.kind === "pull-requests" && activeThreadRef
+              ? { status: "list", threadRef: activeThreadRef }
+              : renderedRightPanelSurface.kind === "pull-request"
+                ? !pullRequestsCapabilityKnown
+                  ? { status: "loading" }
+                  : !supportsPullRequests
+                    ? { status: "unavailable" }
+                    : {
+                        status: "ready",
+                        detail: {
+                          environmentId: activeThread.environmentId,
+                          threadRef: activeThreadRef,
+                          reference: {
+                            projectId: renderedRightPanelSurface.projectId as ProjectId,
+                            ...(renderedRightPanelSurface.host
+                              ? { host: renderedRightPanelSurface.host }
+                              : {}),
                             repository: renderedRightPanelSurface.repository,
                             number: renderedRightPanelSurface.number,
                           },
-                        )
-                          ? "thread"
-                          : "page",
-                        composerDraftTarget,
-                      },
-                    }
-              : null,
+                          onBack: supportsThreadPullRequests ? addPullRequestsSurface : undefined,
+                          onSelectPullRequest: (reference) => {
+                            useRightPanelStore.getState().openPullRequest(activeThreadRef, {
+                              projectId: reference.projectId,
+                              repository: reference.repository,
+                              number: reference.number,
+                              ...(reference.host ? { host: reference.host } : {}),
+                            });
+                          },
+                          context: isThreadOwnPullRequest(
+                            {
+                              projectId: linkedThreadPullRequest?.projectId ?? null,
+                              repository: linkedThreadPullRequest?.repository ?? null,
+                              number: linkedThreadPullRequest?.number ?? null,
+                            },
+                            {
+                              projectId: renderedRightPanelSurface.projectId,
+                              repository: renderedRightPanelSurface.repository,
+                              number: renderedRightPanelSurface.number,
+                            },
+                          )
+                            ? "thread"
+                            : "page",
+                          composerDraftTarget,
+                        },
+                      }
+                : null,
           agents: {
             model: agentPanelModel,
             environmentId: activeThreadRef.environmentId,
@@ -8082,12 +8106,14 @@ export default function ChatView(props: ChatViewProps) {
           onAddDiff={addDiffSurface}
           onAddFiles={addFilesSurface}
           onAddPullRequest={addPullRequestSurface}
+          onAddPullRequests={addPullRequestsSurface}
           onAddAgents={addAgentsSurface}
           browserAvailable={isPreviewSupportedInRuntime()}
           terminalAvailable={activeProject !== null}
           diffAvailable={isServerThread && isGitRepo}
           filesAvailable={activeProject !== null}
           pullRequestAvailable={pullRequestSurfaceAvailable}
+          pullRequestsAvailable={isServerThread && supportsThreadPullRequests}
           agentsAvailable
           liveAgentCount={agentPanelModel.liveCount}
         >
@@ -8132,12 +8158,14 @@ export default function ChatView(props: ChatViewProps) {
             onAddDiff={addDiffSurface}
             onAddFiles={addFilesSurface}
             onAddPullRequest={addPullRequestSurface}
+            onAddPullRequests={addPullRequestsSurface}
             onAddAgents={addAgentsSurface}
             browserAvailable={isPreviewSupportedInRuntime()}
             terminalAvailable={activeProject !== null}
             diffAvailable={isServerThread && isGitRepo}
             filesAvailable={activeProject !== null}
             pullRequestAvailable={pullRequestSurfaceAvailable}
+            pullRequestsAvailable={isServerThread && supportsThreadPullRequests}
             agentsAvailable
             liveAgentCount={agentPanelModel.liveCount}
           >
@@ -8146,6 +8174,7 @@ export default function ChatView(props: ChatViewProps) {
         </RightPanelSheet>
       ) : null}
 
+      <LinkPullRequestDialogHost />
       {expandedImage && (
         <ExpandedImageDialog
           key={expandedImageKey(expandedImage)}

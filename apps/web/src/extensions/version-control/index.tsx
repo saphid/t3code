@@ -3,10 +3,13 @@ import type { Extension } from "@t3tools/extension-sdk/host";
 import type { SurfaceRenderer } from "@t3tools/extension-sdk/react";
 
 import { PullRequestDetailPanel } from "../../components/pullRequest/PullRequestDetailPanel";
+import { ThreadPullRequestsPanel } from "../../components/pullRequest/ThreadPullRequestsPanel";
+import type { ScopedThreadRef } from "@t3tools/contracts";
 import { PullRequestDetailGhost } from "../../components/pullRequest/PullRequestGhosts";
 import { PullRequestsUnavailableState } from "../../components/pullRequest/PullRequestsUnavailableState";
 
 export type VersionControlBindings =
+  | { readonly status: "list"; readonly threadRef: ScopedThreadRef }
   | { readonly status: "loading" }
   | { readonly status: "unavailable" }
   | {
@@ -19,6 +22,8 @@ export function createVersionControlExtension(
 ): Extension<SurfaceRenderer> {
   function VersionControlSurface() {
     const bindings = useBindings();
+    if (bindings.status === "list")
+      return <ThreadPullRequestsPanel threadRef={bindings.threadRef} />;
     if (bindings.status === "loading") return <PullRequestDetailGhost />;
     if (bindings.status === "unavailable") {
       return (
@@ -32,7 +37,7 @@ export function createVersionControlExtension(
     return (
       <PullRequestDetailPanel
         {...bindings.detail}
-        key={`${reference.repository}#${reference.number}`}
+        key={`${bindings.detail.environmentId}:${bindings.detail.reference.projectId}:${reference.host ?? ""}:${reference.repository}#${reference.number}`}
       />
     );
   }

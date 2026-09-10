@@ -166,6 +166,12 @@ export interface CodexSessionRuntimeOptions {
   readonly serviceTier?: CodexServiceTier | undefined;
   readonly resumeCursor?: CodexResumeCursor;
   readonly appServerArgs?: ReadonlyArray<string>;
+  /**
+   * Whether the attached `t3-code` MCP server exposes the preview tools. The
+   * server is attached for every session now (the pull request toolkit is
+   * always on), so its presence in `appServerArgs` no longer implies browser
+   * access; the credential's own capability decides the developer prompt.
+   */
   readonly browserToolsAvailable?: boolean;
 }
 
@@ -585,7 +591,7 @@ function buildCodexCollaborationMode(input: {
       developer_instructions: buildCodexDeveloperInstructions(
         input.interactionMode,
         { model, reasoningEffort },
-        input.browserToolsAvailable ?? true,
+        input.browserToolsAvailable === true,
       ),
     },
   };
@@ -603,7 +609,7 @@ export function buildTurnStartParams(input: {
   readonly serviceTier?: CodexServiceTier;
   readonly effort?: EffectCodexSchema.V2TurnStartParams__ReasoningEffort;
   readonly interactionMode?: ProviderInteractionMode;
-  /** Defaults to true so callers that predate the agent-access gate are unchanged. */
+  /** Browser instructions require an explicit preview grant from the attached MCP credential. */
   readonly browserToolsAvailable?: boolean;
 }): Effect.Effect<
   CodexTurnStartParamsWithCollaborationMode,
@@ -625,7 +631,7 @@ export function buildTurnStartParams(input: {
     ...(input.interactionMode ? { interactionMode: input.interactionMode } : {}),
     ...(input.model ? { model: input.model } : {}),
     ...(input.effort ? { effort: input.effort } : {}),
-    browserToolsAvailable: input.browserToolsAvailable ?? true,
+    browserToolsAvailable: input.browserToolsAvailable === true,
   });
 
   return decodeCodexTurnStartParamsWithCollaborationMode({
@@ -2350,10 +2356,12 @@ export const makeCodexSessionRuntime = (
             ...(input.serviceTier ? { serviceTier: input.serviceTier } : {}),
             ...(input.effort ? { effort: input.effort } : {}),
             ...(input.interactionMode ? { interactionMode: input.interactionMode } : {}),
-            // Derived from the session's own MCP configuration rather than the
+            // Derived from the session's own credential rather than the
             // setting, so the prompt describes the tools this turn actually
             // has even if the setting changed after the session started.
-            browserToolsAvailable: options.browserToolsAvailable === true,
+            browserToolsAvailable:
+              hasConfiguredMcpServer(options.appServerArgs) &&
+              options.browserToolsAvailable === true,
           });
           const rawResponse = yield* client.raw.request("turn/start", params);
           const response = yield* decodeV2TurnStartResponse(rawResponse).pipe(

@@ -121,10 +121,14 @@ describe("buildTurnStartParams", () => {
         settings: {
           model: "gpt-5.3-codex",
           reasoning_effort: "medium",
-          developer_instructions: buildCodexDeveloperInstructions("plan", {
-            model: "gpt-5.3-codex",
-            reasoningEffort: "medium",
-          }),
+          developer_instructions: buildCodexDeveloperInstructions(
+            "plan",
+            {
+              model: "gpt-5.3-codex",
+              reasoningEffort: "medium",
+            },
+            false,
+          ),
         },
       },
     });
@@ -170,10 +174,14 @@ describe("buildTurnStartParams", () => {
         settings: {
           model: "gpt-5.3-codex",
           reasoning_effort: "medium",
-          developer_instructions: buildCodexDeveloperInstructions("default", {
-            model: "gpt-5.3-codex",
-            reasoningEffort: "medium",
-          }),
+          developer_instructions: buildCodexDeveloperInstructions(
+            "default",
+            {
+              model: "gpt-5.3-codex",
+              reasoningEffort: "medium",
+            },
+            false,
+          ),
         },
       },
     });
@@ -194,6 +202,29 @@ describe("buildTurnStartParams", () => {
     NodeAssert.equal(settings?.reasoning_effort, "medium");
     NodeAssert.ok(settings?.developer_instructions?.includes(`as ${DEFAULT_MODEL} with medium`));
   });
+
+  it.effect("requires explicit browser availability in both collaboration modes", () =>
+    Effect.gen(function* () {
+      for (const mode of ["default", "plan"] as const) {
+        for (const availability of [undefined, false, true] as const) {
+          const params = yield* buildTurnStartParams({
+            threadId: "provider-thread-browser-availability",
+            runtimeMode: "full-access",
+            interactionMode: mode,
+            ...(availability === undefined ? {} : { browserToolsAvailable: availability }),
+          });
+          const instructions = params.collaborationMode?.settings.developer_instructions ?? "";
+          if (availability === true) {
+            NodeAssert.match(instructions, /preview_status/);
+            NodeAssert.match(instructions, /preview_open/);
+          } else {
+            NodeAssert.doesNotMatch(instructions, /preview_status/);
+            NodeAssert.doesNotMatch(instructions, /preview_open/);
+          }
+        }
+      }
+    }),
+  );
 
   it.effect("routes approvals to the auto reviewer in auto mode", () =>
     Effect.gen(function* () {
@@ -220,30 +251,30 @@ describe("buildTurnStartParams", () => {
     }),
   );
 
-  it("omits collaboration mode when interaction mode is absent", () => {
-    const params = Effect.runSync(
-      buildTurnStartParams({
+  it.effect("omits collaboration mode when interaction mode is absent", () =>
+    Effect.gen(function* () {
+      const params = yield* buildTurnStartParams({
         threadId: "provider-thread-1",
         runtimeMode: "approval-required",
         prompt: "Review",
-      }),
-    );
+      });
 
-    NodeAssert.deepStrictEqual(params, {
-      threadId: "provider-thread-1",
-      approvalPolicy: "untrusted",
-      approvalsReviewer: "user",
-      sandboxPolicy: {
-        type: "readOnly",
-      },
-      input: [
-        {
-          type: "text",
-          text: "Review",
+      NodeAssert.deepStrictEqual(params, {
+        threadId: "provider-thread-1",
+        approvalPolicy: "untrusted",
+        approvalsReviewer: "user",
+        sandboxPolicy: {
+          type: "readOnly",
         },
-      ],
-    });
-  });
+        input: [
+          {
+            type: "text",
+            text: "Review",
+          },
+        ],
+      });
+    }),
+  );
 });
 
 describe("Codex MCP elicitation approvals", () => {

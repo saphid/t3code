@@ -15,6 +15,11 @@ export interface McpCredentialRequest {
   readonly capabilities?: ReadonlyArray<McpInvocationContext.McpCapability>;
   readonly threadId: ThreadId;
   readonly providerInstanceId: ProviderInstanceId;
+  /**
+   * Whether the credential may drive the user's browser. The pull request
+   * toolkit is always granted: it only touches the thread's own links.
+   */
+  readonly preview: boolean;
 }
 
 export interface McpIssuedCredential {
@@ -69,7 +74,7 @@ export interface McpSessionRegistryOptions {
  *
  * The bound matters because `/mcp` is mounted outside the environment auth
  * stack and is reachable on whatever host the server binds to, so this token is
- * the only thing guarding the preview toolkit on a remote-reachable server.
+ * the only thing guarding the `t3-code` toolkits on a remote-reachable server.
  */
 const DEFAULT_LIVENESS_WINDOW_MS = 24 * 60 * 60 * 1_000;
 
@@ -124,12 +129,21 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
       const providerSessionId = yield* crypto.randomUUIDv4.pipe(Effect.orDie);
       const rawToken = yield* crypto.randomBytes(32).pipe(Effect.map(tokenFromBytes), Effect.orDie);
       const tokenHash = yield* hashToken(rawToken);
+      const capabilities = new Set<McpInvocationContext.McpCapability>(["pull-requests"]);
+      if (request.capabilities === undefined) {
+        capabilities.add("extensions");
+        if (request.preview) capabilities.add("preview");
+      } else {
+        for (const capability of request.capabilities) {
+          if (capability !== "preview" || request.preview) capabilities.add(capability);
+        }
+      }
       const scope: McpInvocationContext.McpInvocationScope = {
         environmentId,
         threadId: ThreadId.make(request.threadId),
         providerSessionId,
         providerInstanceId: ProviderInstanceId.make(request.providerInstanceId),
-        capabilities: new Set(request.capabilities ?? ["preview", "extensions"]),
+        capabilities,
         issuedAt,
       };
       yield* SynchronizedRef.update(state, ({ records }) => {
@@ -146,6 +160,7 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
           capabilities: [...scope.capabilities],
           endpoint,
           authorizationHeader: `Bearer ${rawToken}`,
+          preview: scope.capabilities.has("preview"),
         },
       };
     },

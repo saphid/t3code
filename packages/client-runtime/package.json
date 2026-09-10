@@ -234,6 +234,10 @@
     "./state/extensions": {
       "types": "./src/state/extensions.ts",
       "default": "./src/state/extensions.ts"
+    },
+    "./thread-pull-request-compatibility": {
+      "types": "./src/threadPullRequestCompatibility.ts",
+      "default": "./src/threadPullRequestCompatibility.ts"
     }
   },
   "scripts": {

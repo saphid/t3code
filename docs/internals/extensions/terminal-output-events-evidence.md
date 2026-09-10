@@ -51,4 +51,4 @@ A direct Claude Opus5 high review was attempted with /usr/local/bin/claude --pri
 - Web was exercised against a local isolated lxso2 server. Desktop packaging, React Native mobile, SwiftUI mobile, relay/tunnel and orchestration V2 execution remain unproved for this slice.
 - Browser, Diff, Version Control, Agents and full Files/Terminal migrations remain incomplete. The earlier readonly Files path is a real API-driven replacement for its proved read/open scope.
 - Shared catalogue compatibility currently preserves one exact definition per API ID. General simultaneous multi-version retention remains future work; this slice adds a separate API ID and preserves the old descriptor.
-- Latest fetched origin/main is 8d8189e67dc091ffb91df451c9a957bbd68a5364. It is not yet integrated; the read-only merge assessment found 13 conflicts. These results apply to the recorded branch baseline.
+- These original results apply to the recorded premerge branch baseline. A later integration of upstream b7b3ef1e6fcb5c22a9790d2578fe8af7ce396835 repeats the installed comparisons; see [upstream integration evidence](upstream-integration-evidence.md).

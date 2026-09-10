@@ -249,7 +249,7 @@ export interface ProviderServiceLiveOptions {
    * test see whether a credential was requested at all.
    */
   readonly issueMcpCredential?: typeof McpSessionRegistry.issueActiveMcpCredential;
-  /** Same seam as `issueMcpCredential`, for observing the deny path's revoke. */
+  /** Same seam as issuance, for observing cleanup when issuance is unavailable. */
   readonly revokeMcpCredential?: typeof McpSessionRegistry.revokeActiveMcpThread;
 }
 
@@ -853,13 +853,11 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     yield* recordCompletedTurnProperties(properties);
   });
   /**
-   * Attach the `t3-code` MCP server to the session that is about to start.
+   * Whether the credential minted below may drive the user's browser.
    *
    * The issued capabilities independently grant extensions and optional preview.
    * Every preview handler checks the credential grant, so attaching extensions
    * does not enable browser access.
-   */
-  /**
    * Deny on an unreadable settings file rather than letting the read failure
    * escape: adding `ServerSettingsError` to `ProviderServiceError` would widen
    * a union every caller handles, for a branch that only decides whether one
@@ -888,12 +886,23 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     ),
   );
 
+  /**
+   * Attach the `t3-code` MCP server to the session that is about to start.
+   *
+   * Every session gets a credential: the pull request toolkit is always on,
+   * since it only registers links on the session's own thread. Browser access
+   * is a capability on that credential, so turning the setting off withholds
+   * the preview tools without taking the server away. `issueActiveMcpCredential`
+   * revokes the thread's previous token first, which matters because a session
+   * restart (runtime mode, cwd, model) re-prepares without stopping.
+   */
   const prepareMcpSession = (threadId: ThreadId, providerInstanceId: ProviderInstanceId) =>
     Effect.gen(function* () {
       const preview = yield* agentBrowserAccessEnabled(threadId);
       const credential = yield* issueMcpCredential({
         threadId,
         providerInstanceId,
+        preview,
         capabilities: preview ? ["extensions", "preview"] : ["extensions"],
       });
       if (credential) {

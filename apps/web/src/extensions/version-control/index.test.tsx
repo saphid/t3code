@@ -9,6 +9,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test"
 import { PullRequestDetailPanel } from "../../components/pullRequest/PullRequestDetailPanel";
 import { PullRequestDetailGhost } from "../../components/pullRequest/PullRequestGhosts";
 import { PullRequestsUnavailableState } from "../../components/pullRequest/PullRequestsUnavailableState";
+import { ThreadPullRequestsPanel } from "../../components/pullRequest/ThreadPullRequestsPanel";
 import { createVersionControlExtension, type VersionControlBindings } from "./index";
 
 const lifecycle = vi.hoisted(() => ({ mounts: 0, unmounts: 0 }));
@@ -79,6 +80,7 @@ const record: ViewRecord = {
 };
 
 function BuiltIn({ bindings }: { bindings: VersionControlBindings }) {
+  if (bindings.status === "list") return <ThreadPullRequestsPanel threadRef={bindings.threadRef} />;
   if (bindings.status === "loading") return <PullRequestDetailGhost />;
   if (bindings.status === "unavailable") {
     return (
@@ -90,7 +92,7 @@ function BuiltIn({ bindings }: { bindings: VersionControlBindings }) {
   }
   return (
     <PullRequestDetailPanel
-      key={`${bindings.detail.reference.repository}#${bindings.detail.reference.number}`}
+      key={`${bindings.detail.environmentId}:${bindings.detail.reference.projectId}:${bindings.detail.reference.host ?? ""}:${bindings.detail.reference.repository}#${bindings.detail.reference.number}`}
       {...bindings.detail}
     />
   );

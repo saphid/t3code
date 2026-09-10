@@ -114,6 +114,7 @@ export const nativePanelRegistry = {
   diff: entry(diff, (bindings) => bindings.diff),
   agents: entry(agents, (bindings) => bindings.agents),
   "pull-request": entry(versionControlBridge, (bindings) => bindings.versionControl),
+  "pull-requests": entry(versionControlBridge, (bindings) => bindings.versionControl),
 } satisfies Record<
   Exclude<RightPanelSurface["kind"], "extension">,
   { render(props: PanelProps): ReactNode }

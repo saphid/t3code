@@ -312,6 +312,7 @@ validationLayer("CodexAdapterLive validation", (it) => {
         endpoint: "http://127.0.0.1/mcp",
         authorizationHeader: "Bearer fixture-only",
         capabilities: ["extensions"],
+        preview: false,
       });
       validationRuntimeFactory.factory.mockClear();
       const adapter = yield* CodexAdapter;
