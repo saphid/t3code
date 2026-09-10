@@ -7,10 +7,10 @@ Prefer source references over copied contracts:
 | Need                                          | Source of truth                        | Example                                                                         |
 | --------------------------------------------- | -------------------------------------- | ------------------------------------------------------------------------------- |
 | Author definition and read helper             | [authoring.ts](src/authoring.ts)       | [Start here](examples/start-here/extension.ts)                                  |
-| Available shared API descriptors              | [catalogue.ts](src/catalogue.ts)       | [Files provider](examples/installable-files/)                                   |
+| Available shared API descriptors              | [catalogue.ts](src/catalogue.ts)       | [Typed Files provider](examples/files/)                                         |
 | Own typed APIs, requirements and dependencies | [capabilities.ts](src/capabilities.ts) | [Typed provider](examples/api-provider/) and [consumer](examples/api-consumer/) |
 | Client/server entries and package validation  | [environment.ts](src/environment.ts)   | [Stream provider](examples/installable-stream-provider/)                        |
-| View identity, placement and JSON bounds      | [contracts.ts](src/contracts.ts)       | [Files client](examples/installable-files/client.mjs)                           |
+| View identity, placement and JSON bounds      | [contracts.ts](src/contracts.ts)       | [Typed Files client](examples/files/extension.ts)                               |
 | View lifecycle and restoration                | [host.ts](src/host.ts)                 | [Read helper tests](test/authoring.test.mjs)                                    |
 | API streams                                   | [capabilities.ts](src/capabilities.ts) | [Live output](examples/installable-terminal-live-output/)                       |
 | Verified assets                               | [environment.ts](src/environment.ts)   | [WASM example](examples/installable-package-assets/)                            |

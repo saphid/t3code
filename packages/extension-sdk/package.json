@@ -24,6 +24,7 @@
     "test",
     "bin",
     "examples/start-here",
+    "examples/files",
     "HOST.md",
     "examples/api-provider",
     "examples/api-consumer"
