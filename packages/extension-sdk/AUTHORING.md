@@ -24,6 +24,14 @@ Use the installed client's discoverApis with the view context and a cancellation
 
 For typed calls import bindApi from @t3tools/extension-sdk/capabilities and a typed descriptor such as workspaceFilesApi from @t3tools/extension-sdk/catalogue. The Files examples also demonstrate the portable JSON invocation form. Server-side validation checks both inputs and results; the caller must still handle denied access, cancellation, stale scope, unavailable dependencies and bounded/truncated data.
 
+Authenticated API invocation uses the existing request shape and selects authority from the
+verified environment session: `orchestration:read` admits declared read-effect methods with a
+read-only root, while `access:write` preserves write authority. A session with both scopes keeps
+write authority; a write-only session does not acquire a new read-scope requirement. The host and
+broker enforce this ceiling for nested calls and revalidate it before dispatch and delivery.
+Package capability/project grants remain required independently; registration and API discovery
+do not grant them, and a provider cannot turn a read-only root into a write.
+
 ## Install and verify
 
 Open Settings → Integrations → Environment extensions on the target environment. Supply the package directory on that machine, select the intended projects and capabilities, acknowledge trusted code execution and install. Choose Use for t3.file/presentation for the Files provider, then use the ordinary Files entry. Install the independent consumer to exercise a plugin-owned API.

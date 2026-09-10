@@ -1,71 +1,38 @@
 # What the extension system currently proves
 
-This is an acceptance record, not a completion announcement. Implementation and evidence live
-on lxso2 in /home/saphid/projects/t3-extensions-integration. Latest verified slice: bounded terminal output, based on checkpoint
-752a3f66468cf125d61417899de9dc2cd69e90c5; exact final hashes and commit receipt are in
-terminal-output/evidence.json and commit.json under the evidence root below.
+This is an acceptance record, not a completion announcement. Source and evidence are on lxso2 in /home/saphid/projects/t3-extensions-integration. The latest bounded slice is [authenticated read-only API invocation](read-api-authority-evidence.md), following [upstream integration](upstream-integration-evidence.md), [terminal live output](terminal-output-events-evidence.md), and [verified package assets](package-assets-evidence.md).
 
 ## Plain-English status
 
-An installed plugin can define its own API, call another plugin or an authorized host API,
-and render an independent view. Versions, dependencies, provider selection, grants and
-lifecycle are enforced. The Files entry can show an installed read-only Files implementation.
-Independent Terminal packages can inspect status and explicitly read an 8192-byte tail of
-a real existing terminal’s retained output, with separate grants. Those are
-working examples, not proof that every existing panel has been replaced.
+An installed plugin can define its own API, call another installed plugin or an authorized host API, and render its own view. The ordinary Files entry can use an installed read-only implementation, including with a read-only login. Independently installed Terminal examples inspect existing sessions and consume bounded snapshots/live output. WASM/font assets can be verified and loaded through public package APIs.
 
-| Surface         | Proven installed behavior                                                                                              | What still prevents full replacement                                                                                                                                     |
-| --------------- | ---------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Files           | Ordinary Files entry uses public file presentation and workspace APIs; exact text and selection survive reload.        | Editing/save recovery, full tree/media/Markdown/comments/attachments/editor actions and large-file parity.                                                               |
-| Diff            | Existing native panel remains available.                                                                               | Its data and renderer bindings have not been replaced by an installable public API consumer.                                                                             |
-| Version control | Existing native panel remains available.                                                                               | Public source-control operations, authorization/receipts and an independent replacement are still missing.                                                               |
-| Browser         | Existing native panel remains available.                                                                               | Public browser/native-engine resources, connection ownership, lifecycle and renderer parity remain unimplemented.                                                        |
-| Terminal        | Independent status and output snapshot views use public APIs; exact Unicode output and native PTY identity are proven. | Live output/input, ANSI rendering, resize/restart/close, durable resources, attachment leases and packaged Ghostty assets. The native Terminal panel is still a wrapper. |
-| Agents          | Existing native panel remains available.                                                                               | Public orchestration/harness status and authorized control APIs, receipts and an independent renderer are still missing.                                                 |
+Those paths work. Full replacements for all six built-in panels are not built.
 
-## Framework and authority evidence
+| Surface         | Proven installed behavior                                                                                                                                        | Remaining replacement work                                                                                                                                                        |
+| --------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Files           | Ordinary entry uses public presentation/workspace APIs; exact text and selected file survive reload, including with only orchestration:read authority.           | Editing/save recovery, full tree/media/Markdown/comments/attachments/editor actions and large-file parity.                                                                        |
+| Diff            | Existing native panel remains available.                                                                                                                         | Public data/renderer contracts and independent installed replacement.                                                                                                             |
+| Version Control | Upstream linked-PR list remains integrated through the native extension bridge; empty-list/reload path tested.                                                   | Public source-control/review operations, receipts and independent renderer; current bridge is privileged. Populated GitHub/GHE parity is not established by the empty-list proof. |
+| Browser         | Existing native panel remains available.                                                                                                                         | Public browser/native-engine resources, ownership, lifecycle and installed renderer parity.                                                                                       |
+| Terminal        | Installed status, output snapshots and bounded live-output diagnostic consumers use public APIs. Real renderer assets load through public verified-asset access. | Interactive open/input/resize/restart/close, complete VT renderer, durable selection/resource continuity and sustained-output parity. The native Terminal remains a wrapper.      |
+| Agents          | Existing native panel remains available; source audit and candidate migration slices are documented in retained trial artifacts.                                 | Public roster/workflow/script adapters and independent renderer. The transport prerequisite is fixed; the Agents migration itself is not implemented.                             |
 
-The installed stream provider and consumer survive ordinary open/close, grant revocation,
-provider update/rollback/uninstall/reinstall, and dependency-driven view replacement.
-Counters deliberately reset after server restart; they do not demonstrate durable plugin
-domain state. Installations, grants, package hashes and compatible view restoration are separate.
+## Framework and authority
 
-Authenticated HTTP/WS API calls retain immutable root identity through nested plugin calls.
-Revoked/expired sessions are rejected; a silent extension stream is stopped on revocation
-without relying on UI logout. A different login remains usable. Native Terminal metadata
-additionally requires the login's terminal permission, independently of the plugin grant.
-Legacy tool/MCP roots and native resource authority are not fully implemented.
+Dependency/version requirements, deterministic provider selection, grants, lifecycle, unavailable states and installed update/rollback/uninstall paths have focused tests and independent consumer examples. The shared catalogue currently keeps one exact definition per API ID; general simultaneous multi-version retention is not implemented.
 
-The host-operation callback now rechecks authority before a native side effect and expires
-when its call closes. Seven focused cases prove its lifetime and revocation behavior.
-File editing remains a
-proposal until revision checks, safe replacement and recoverable operation receipts are proven.
-A socket or API name is never counted as native-panel parity.
+Installed stream provider/consumer examples survive ordinary open/close, revocation, dependency changes and replacement. Their counters reset after server restart. Installations, grants, package hashes and view restoration are durable independently of a plugin's domain state; the examples do not prove arbitrary durable domain resources.
 
-## Retained evidence and limits
+Authenticated HTTP/WS calls retain root identity through nested plugins. Read-only HTTP sessions can invoke read methods, while writes retain access:write authority and independent domain/plugin grants. Revocation and stale-result suppression are proven, including a real pending installed handler and a silent stream. Native Terminal APIs also require the login's terminal permission. Legacy tool/MCP roots and the model-facing typed API front door remain incomplete.
 
-Canonical root: /home/saphid/artifacts/t3-extensions-health-rounds-20260909.
-Use terminal-output/evidence.json and LATEST.json for the latest slice, together with
-proof/terminal-output-v14.json and proof/terminal-output-installed-source.json, plus
-proof/terminal-metadata-v14.json, proof/files-proof-v14.json and
-proof/auth-session-root-v14-candidate.json. terminal-metadata/evidence.json and
-proof/terminal-installed-source.json retain the earlier native adapter and delivered-package proof.
-Historical failed attempts remain beside final receipts; do not mistake them for the latest run.
+Verified format-4 assets support bounded WASM/font/binary delivery and client lifetime/hash checks. The [renderer-assets trial](renderer-assets-trial.md) loads actual Ghostty WASM and font assets; this is not complete terminal-renderer parity. [Composer context and message decorations](architecture.md) retain their documented synchronous, read-only/snapshot limitations.
 
-Latest verification: 129 focused server tests, 32 SDK tests and 87 runtime tests including real
-Electron. This includes seven host-operation cases, 90 native Manager tests and 10 output-provider
-cases, plus
-published external consumer tests, scoped lint, server typecheck,
-production build and the installed proofs. A ten-sample metadata comparison measured roughly
-13 ms through HTTP/nested plugins versus 1 ms for the native lookup; transports/payloads differ
-and this is not an interactive terminal performance claim.
+## Evidence and remaining limits
 
-The Luna builder/monitor process found real bugs and missing validation gates. Parent review
-and exact command exits were necessary; worker completion prose alone was unreliable.
-Direct Claude Opus 5 high review attempts exited 1 before any model ran because OAuth could
-not refresh. No independent Claude review is claimed.
+Canonical artifact root: /home/saphid/artifacts/t3-extensions-health-rounds-20260909. Use each linked evidence document's exact final receipts, source/package identity and scope; do not add test counts from different checkpoints into one supposed full-suite result.
 
-Remote work was performed on lxso2. Browser-origin portability does not establish relay/tunnel
-or multi-environment parity. Web and server tests do not establish React Native mobile,
-SwiftUI mobile, Windows, macOS native engines or Orchestra V2 parity. No PR, push or deployment
-has been performed for these checkpoints.
+The read-authority slice has 11 HTTP/session tests, nine root tests, one focused nested-worker case, scoped typecheck/lint, a production build and eight real installed-path checks. Earlier terminal/assets/upstream evidence retains its own broader checks and baseline comparisons. Small local timing measurements do not establish full interactive performance or relay/tunnel throughput.
+
+Luna builder/monitor pairs found useful defects, but source checks, visual inspection, exact process exits and parent judgment remained necessary. Repeated stale reports, wrong artifact/lock paths and proof assumptions are recorded in trial notes. A completed worker turn alone is not acceptance. Direct Claude Opus 5 high attempts failed OAuth before any reviewer model ran; no Claude review is claimed.
+
+React Native mobile, SwiftUI mobile, Electron packaging, native Windows/macOS engines, remote/relay/tunnel modes, complete durable resource identity and Orchestra V2 execution require separate proof. No PR, push or deployment has been made for these checkpoints.

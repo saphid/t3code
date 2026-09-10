@@ -126,9 +126,11 @@ and captures an immutable non-secret root. Its revalidate callback checks that c
 authority is still present and never grows it. Capture only the Effect Clock service so injected clocks remain effective across the Promise
 boundary; do not retain the HTTP request context or its headers in the root callback.
 
-HTTP invokeApi keeps its current conservative access:write requirement and supplies this root
-to EnvironmentExtensions.invokeApi. WebSocket subscribeExtensionApi supplies a read-only root
-to EnvironmentExtensions.subscribeApi while retaining the acquired session stream guard for
+HTTP invokeApi selects the host-verified root scope: access:write callers retain a write-capable
+root, while orchestration:read-only callers receive a read-only root and can invoke declared read
+methods. A session with both scopes selects access:write; a write-only session does not gain a new
+read-scope requirement. Missing both scopes is denied. WebSocket subscribeExtensionApi supplies a
+read-only root to EnvironmentExtensions.subscribeApi while retaining the acquired session stream guard for
 silent cancellation. EnvironmentExtensions forwards the optional root to the runtime. Old
 embedding calls retain compatibility but have no authenticated principal and cannot call
 providers that require one. Legacy tool/MCP adapters and domain-specific scope requirements

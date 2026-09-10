@@ -1,6 +1,7 @@
 import {
   AuthAccessWriteScope,
   AuthOrchestrationReadScope,
+  EnvironmentAuthenticatedPrincipal,
   EnvironmentHttpApi,
   type EnvironmentSessionPrincipalShape,
   ExtensionOperationError,
@@ -36,9 +37,15 @@ export function makeOperations(
     invokeApi: Effect.fn("environment.extensions.invokeApi")(function* (
       input: ExtensionApiInvokeInput,
     ) {
-      // Until transport grants are method-scoped, API calls require the authenticated app's write authority.
-      const session = yield* requireEnvironmentScope(AuthAccessWriteScope);
-      const root = yield* makeAuthority(session, AuthAccessWriteScope);
+      // Prefer the host-verified write scope so write-only sessions keep their
+      // existing authority. A read-only session gets a root ceiling that the
+      // broker carries through nested calls and enforces for method effects.
+      const authenticated = yield* EnvironmentAuthenticatedPrincipal;
+      const requiredScope = authenticated.scopes.has(AuthAccessWriteScope)
+        ? AuthAccessWriteScope
+        : AuthOrchestrationReadScope;
+      const session = yield* requireEnvironmentScope(requiredScope);
+      const root = yield* makeAuthority(session, requiredScope);
       return { result: yield* extensions.invokeApi(input, root) };
     }),
     discoverApis: Effect.fn("environment.extensions.discoverApis")(function* (

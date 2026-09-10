@@ -5,6 +5,7 @@ import {
   AuthAccessWriteScope,
   AuthOrchestrationReadScope,
   AuthSessionId,
+  EnvironmentId,
   EnvironmentAuthenticatedPrincipal,
   ExtensionInvokeInput,
   type AuthEnvironmentScope,
@@ -167,6 +168,46 @@ it.effect("missing read scope cannot inspect code, catalog or invoke even with a
   }),
 );
 
+it.effect("selects invokeApi authority from verified scopes without widening old callers", () =>
+  Effect.gen(function* () {
+    const input: ExtensionApiInvokeInput = {
+      installationId: "fixture",
+      expectedContentHash: "a".repeat(64),
+      request: {
+        id: "t3.workspace/files",
+        versionRange: "^1.0.0",
+        method: "listEntries",
+        input: { relativePath: "" },
+        context: {
+          resource: { namespace: "fixture", id: "a", environmentId: EnvironmentId.make("env") },
+          client: "web",
+        },
+      },
+    };
+    const cases = [
+      { scopes: [AuthOrchestrationReadScope] as const, allowWrite: false },
+      { scopes: [AuthAccessWriteScope] as const, allowWrite: true },
+      {
+        scopes: [AuthOrchestrationReadScope, AuthAccessWriteScope] as const,
+        allowWrite: true,
+      },
+    ];
+    for (const testCase of cases) {
+      const f = fixture(testCase.scopes);
+      yield* f.provide(f.operations.invokeApi(input));
+      expect(f.roots).toHaveLength(1);
+      expect(f.roots[0]?.allowWrite).toBe(testCase.allowWrite);
+      expect(f.called).toEqual(["invokeApi"]);
+    }
+    const denied = fixture([]);
+    expect((yield* denied.provide(Effect.flip(denied.operations.invokeApi(input))))._tag).toBe(
+      "EnvironmentScopeRequiredError",
+    );
+    expect(denied.called).toEqual([]);
+    expect(denied.roots).toEqual([]);
+  }),
+);
+
 // Exercise the actual middleware and HTTP schemas without opening a listening socket.
 import * as NodeHttpPlatform from "@effect/platform-node/NodeHttpPlatform";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -314,9 +355,9 @@ it.live(
           (yield* request("manage", { id: "fixture", action }, read.access_token)).status,
         ).toBe(403);
       expect((yield* request("api/discover", apiDiscover, read.access_token)).status).toBe(200);
-      expect((yield* request("api/invoke", apiInvoke, read.access_token)).status).toBe(403);
+      expect((yield* request("api/invoke", apiInvoke, read.access_token)).status).toBe(200);
       expect((yield* request("api/select", apiSelect, read.access_token)).status).toBe(403);
-      expect(f.called).toEqual(["list", "client", "invoke", "discoverApis"]);
+      expect(f.called).toEqual(["list", "client", "invoke", "discoverApis", "invokeApi"]);
       const writeGrant = yield* auth.issuePairingCredential({ scopes: [AuthAccessWriteScope] });
       const write = yield* auth.exchangeBootstrapCredentialForAccessToken(
         writeGrant.credential,
@@ -332,13 +373,26 @@ it.live(
         "invoke",
         "discoverApis",
         "invokeApi",
+        "invokeApi",
         "selectApi",
       ]);
-      expect(f.roots).toHaveLength(1);
+      expect(f.roots).toHaveLength(2);
       expect(f.roots[0]?.principal.kind).toBe("environment-session");
       expect(f.roots[0]?.principal.environmentId).toBe(yield* environment.getEnvironmentId);
-      expect(f.roots[0]?.principal.scopes).toContain(AuthAccessWriteScope);
-      expect(f.roots[0]?.allowWrite).toBe(true);
+      expect(f.roots[0]?.principal.scopes).toContain(AuthOrchestrationReadScope);
+      expect(f.roots[0]?.allowWrite).toBe(false);
+      expect(f.roots[1]?.principal.scopes).toContain(AuthAccessWriteScope);
+      expect(f.roots[1]?.allowWrite).toBe(true);
+      const bothGrant = yield* auth.issuePairingCredential({
+        scopes: [AuthOrchestrationReadScope, AuthAccessWriteScope],
+      });
+      const both = yield* auth.exchangeBootstrapCredentialForAccessToken(
+        bothGrant.credential,
+        undefined,
+        metadata,
+      );
+      expect((yield* request("api/invoke", apiInvoke, both.access_token)).status).toBe(200);
+      expect(f.roots[2]?.allowWrite).toBe(true);
       const adminGrant = yield* auth.issuePairingCredential({ scopes: AuthAdministrativeScopes });
       const admin = yield* auth.exchangeBootstrapCredentialForAccessToken(
         adminGrant.credential,
@@ -361,7 +415,9 @@ it.live(
         "invoke",
         "discoverApis",
         "invokeApi",
+        "invokeApi",
         "selectApi",
+        "invokeApi",
         "manage",
         "install",
       ]);
