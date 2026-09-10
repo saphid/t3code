@@ -1,3 +1,5 @@
+import React from "react";
+import TestRenderer from "react-test-renderer";
 import * as NodeTest from "node:test";
 import * as NodeAssert from "node:assert/strict";
 import * as NodeFSP from "node:fs/promises";
@@ -87,6 +89,48 @@ NodeTest.test(
       run("npm", ["run", "check"], project, 1);
       run("npm", ["run", "build"], project);
       run("npm", ["run", "check"], project);
+      // An ordinary dependency may initialize context at import time and use imported hooks.
+      await NodeFSP.writeFile(
+        NodePath.join(project, "component.ts"),
+        [
+          'import { createContext, createElement, useContext, useState } from "react";',
+          'import { jsx } from "react/jsx-runtime";',
+          'const Context = createContext("shared");',
+          "export function Component() { const [n, set] = useState(0); const label = useContext(Context);",
+          'return jsx("button", { onClick: () => set(n + 1), children: label + n }); }',
+        ].join("\n"),
+      );
+      await NodeFSP.writeFile(
+        sourcePath,
+        [
+          'import { defineExtension } from "@t3tools/extension-sdk/authoring";',
+          'import { Component } from "./component.js";',
+          'export default defineExtension({id:"test.shared-react",version:"1.0.0",surfaces:[{',
+          'name:"view",title:"Shared React",scope:"project",createView(){return {renderer:Component};}}]});',
+        ].join("\n"),
+      );
+      run("npm", ["run", "build"], project);
+      run("npm", ["run", "check"], project);
+      const factory = (
+        await import(NodeURL.pathToFileURL(NodePath.join(output, "client.mjs")).href)
+      ).default;
+      globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+      let mounted;
+      const surface = factory({ React }).surfaces[0];
+      const Component = surface.createView({}).renderer;
+      await TestRenderer.act(async () => {
+        mounted = TestRenderer.create(React.createElement(Component));
+      });
+      NodeAssert.equal(mounted.toJSON().children[0], "shared0");
+      await TestRenderer.act(async () => {
+        mounted.root.findByType("button").props.onClick();
+      });
+      NodeAssert.equal(mounted.toJSON().children[0], "shared1");
+      await TestRenderer.act(async () => {
+        mounted.unmount();
+      });
+      await NodeFSP.writeFile(sourcePath, source);
+      run("npm", ["run", "build"], project);
       const provider = NodePath.join(root, "provider");
       await NodeFSP.mkdir(provider);
       await NodeFSP.cp(NodePath.join(installed, "examples/api-provider"), provider, {
@@ -146,6 +190,7 @@ NodeTest.test(
             checks: [
               "source and tests shipped",
               "typed starter builds independently",
+              "imported hooks, module context and JSX use host React in external package",
               "receipt hashes match",
               "wrong input rejected; prior output retained",
               "changed output rejected; rebuild recovers",

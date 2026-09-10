@@ -1,12 +1,14 @@
 # What the extension system currently proves
 
-This is an acceptance record, not a completion announcement. Source and evidence are on lxso2 in /home/saphid/projects/t3-extensions-integration. The latest bounded slice is [authenticated read-only API invocation](read-api-authority-evidence.md), following [upstream integration](upstream-integration-evidence.md), [terminal live output](terminal-output-events-evidence.md), and [verified package assets](package-assets-evidence.md).
+This is an acceptance record, not a completion announcement. The latest bounded slice is the [installed native Files tree source](../../../packages/extension-sdk/examples/native-files-tree/README.md) and its [dated proof receipt](../../../packages/extension-sdk/examples/native-files-tree/proof.json), in /home/saphid/projects/t3-extensions-authoring on lxso2. Earlier [read-only authority](read-api-authority-evidence.md), [upstream integration](upstream-integration-evidence.md), [terminal output](terminal-output-events-evidence.md), and [package asset](package-assets-evidence.md) receipts retain their own scope.
 
 ## Plain-English status
 
 An installed plugin can define its own API, call another installed plugin or an authorized host API, and render its own view. The ordinary Files entry can use an installed read-only implementation, including with a read-only login. Independently installed Terminal examples inspect existing sessions and consume bounded snapshots/live output. WASM/font assets can be verified and loaded through public package APIs.
 
 Those paths work. Full replacements for all six built-in panels are not built.
+
+The native-tree slice independently packages the same Pierre tree engine and consumes a finite public native-index snapshot plus public file reads through the ordinary Files entry. Seven installed checks, 23 focused host tests, 49 SDK tests, and scoped lint/typecheck pass. Ordinary React/JSX dependency imports now share host React through the SDK CLI. Automatic workspace mutation refresh, composer actions, theme/icon fidelity, full Files preview/editing and performance parity remain unproven; React DOM imports remain unsupported.
 
 | Surface         | Proven installed behavior                                                                                                                                        | Remaining replacement work                                                                                                                                                        |
 | --------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |

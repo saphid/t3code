@@ -22,3 +22,5 @@ A requirement selects an API/version; a named plugin dependency also declares th
 useApiRead is for declared read methods. Use [bindApi/bindStreamApi](src/capabilities.ts) for writes or streams, pass cancellation, and handle their actual contract. Do not retry writes on a different provider. Registration, a view or a read subscription never supplies write authority.
 
 Run build/check on the real output, then verify the installed feature. receipt.json identifies checked bytes; it explicitly does not claim installation or behavior. Keep a small feature assertion alongside your source. Platform maintainers own the shared lifecycle/dependency regression suite; authors should not recreate it.
+
+The [native tree source](examples/native-files-tree/README.md) uses ordinary React imports and a component library. The CLI binds React and JSX imports to the host runtime; React DOM imports require a separate host contract and are currently rejected. This example is a partial Files migration.

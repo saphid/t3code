@@ -1,0 +1,40 @@
+{
+  "date": "2026-09-10",
+  "host": "lxso2",
+  "scope": "Native Pierre tree and read-only text through installed public APIs; partial Files migration",
+  "sourceHashes": {
+    "server.ts": "2567e3cc529358ab72181957fa97f8126309dacb435bcbbab5c706edaba21299",
+    "treeLogic.ts": "cfd327b8b2f30e23dfcbbfafc19fd93eba8031c4aa141aa8e97562a5c691f660",
+    "extension.tsx": "f609149111d370db8634862058edb9229f1dc0ed754165fefc9dfbcbaec453af",
+    "extension.ts": "fb20f105ee5f533a9f4e318318e5684b06a72b91698d80a7e6451c11a824d5cb",
+    "treeLogic.test.mjs": "142e1db27ea37a825d04ec2036dc416f095590fab1e68ab1f58353debdc6ccd7"
+  },
+  "installedContentHash": "1012432b3e7cc0a2807f3f5e7968eb685f05fd4d27454eae20acfa0a806aa765",
+  "checks": [
+    "ordinary Files entry selects installed presentation provider",
+    "same indexed fixture search and exact file bytes",
+    "manual refresh retains an active query and rereads contents",
+    "reactive expand/collapse",
+    "selected file restoration after reload",
+    "disable removes rendered provider",
+    "enable restores selected file"
+  ],
+  "focusedChecks": {
+    "hostTests": 23,
+    "sdkTests": 49,
+    "scopedTypecheckExit": 0,
+    "scopedLintErrors": 0,
+    "scopedLintWarnings": 0
+  },
+  "evidenceRoot": "/home/saphid/artifacts/t3-extensions-health-rounds-20260909/native-files-tree",
+  "notProven": [
+    "complete Files replacement",
+    "automatic workspace mutation refresh",
+    "composer context menu and drag",
+    "native theme and icons",
+    "editing/media/attachments/annotations",
+    "latency/CPU parity",
+    "remote/relay/tunnel and Orchestra V2",
+    "Electron packaging or mobile renderer support"
+  ]
+}

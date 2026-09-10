@@ -31,7 +31,7 @@ async function check(dir) {
       NodeURL.pathToFileURL(NodePath.join(dir, pkg.clientEntry)).href + "?check=" + Date.now()
     );
     if (typeof client.default !== "function") throw new Error("clientEntry must export a factory");
-    const extension = client.default({ React: {} });
+    const extension = client.default({ React: require("react") });
     if (JSON.stringify(extension.manifest) !== JSON.stringify(pkg.manifest))
       throw new Error("Client manifest differs from package manifest");
     if (
@@ -138,12 +138,56 @@ async function main() {
         target: platform === "browser" ? "es2022" : "node24",
         logLevel: "silent",
       });
-    if (pkg.clientEntry)
-      await bundle(
-        'import extension from "./extension.ts"; export default extension.client;',
-        pkg.clientEntry,
-        "browser",
+    if (pkg.clientEntry) {
+      // Evaluate dependency modules inside each factory so imported hooks share the host identity.
+      const client = await build({
+        stdin: {
+          contents: 'import extension from "./extension.ts"; export default extension.client;',
+          resolveDir: dir,
+          sourcefile: "generated-client.ts",
+          loader: "ts",
+        },
+        bundle: true,
+        write: false,
+        platform: "browser",
+        format: "iife",
+        globalName: "__t3Client",
+        target: "es2022",
+        logLevel: "silent",
+        plugins: [
+          {
+            name: "host-react",
+            setup(build) {
+              build.onResolve({ filter: /^react(?:\/.*)?$/ }, ({ path }) => {
+                if (!["react", "react/jsx-runtime", "react/jsx-dev-runtime"].includes(path))
+                  throw new Error("Unsupported host React entry: " + path);
+                return { path, namespace: "host-react" };
+              });
+              build.onResolve({ filter: /^react-dom(?:\/.*)?$/ }, () => {
+                throw new Error(
+                  "React DOM imports need a public host contract; do not bundle another renderer.",
+                );
+              });
+              build.onLoad({ filter: /.*/, namespace: "host-react" }, ({ path }) => ({
+                loader: "js",
+                contents:
+                  path === "react"
+                    ? "module.exports = __t3Host.React;"
+                    : "const R = __t3Host.React; exports.Fragment = R.Fragment; " +
+                      "exports.jsx = exports.jsxs = exports.jsxDEV = (type, props, key) => " +
+                      "R.createElement(type, key === undefined ? props : { ...props, key });",
+              }));
+            },
+          },
+        ],
+      });
+      await NodeFSP.writeFile(
+        NodePath.join(temp, pkg.clientEntry),
+        "export default function (__t3Host) {\n" +
+          client.outputFiles[0].text +
+          "\nreturn __t3Client.default(__t3Host);\n}\n",
       );
+    }
     if (pkg.serverEntry) {
       if (
         !authored.serverEntry ||

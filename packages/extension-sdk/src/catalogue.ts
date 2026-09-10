@@ -383,9 +383,70 @@ export const terminalOutputEventsApi = defineStreamApi<{
   ],
 });
 
+export type WorkspaceTreeEntry = { readonly path: string; readonly kind: "file" | "directory" };
+export type WorkspaceTreeEvent =
+  | {
+      readonly kind: "chunk";
+      readonly entries: readonly WorkspaceTreeEntry[];
+      readonly truncated: boolean;
+    }
+  | { readonly kind: "complete"; readonly entryCount: number; readonly truncated: boolean };
+/** A finite native-index snapshot. Publish only after complete; cancellation discards partial chunks. */
+export const workspaceTreeApi = defineStreamApi<{
+  snapshot: { input: Record<string, never>; event: WorkspaceTreeEvent };
+}>({
+  id: "t3.workspace/tree",
+  version: "1.0.0",
+  methods: [],
+  streams: [
+    {
+      name: "snapshot",
+      requiredGrants: [WORKSPACE_LIST_ENTRIES],
+      inputSchema: { type: "object", additionalProperties: false, properties: {} },
+      eventSchema: {
+        oneOf: [
+          {
+            type: "object",
+            additionalProperties: false,
+            required: ["kind", "entries", "truncated"],
+            properties: {
+              kind: { const: "chunk" },
+              truncated: { type: "boolean" },
+              entries: {
+                type: "array",
+                maxItems: 200,
+                items: {
+                  type: "object",
+                  additionalProperties: false,
+                  required: ["path", "kind"],
+                  properties: {
+                    path: { type: "string", minLength: 1, maxLength: 32768 },
+                    kind: { enum: ["file", "directory"] },
+                  },
+                },
+              },
+            },
+          },
+          {
+            type: "object",
+            additionalProperties: false,
+            required: ["kind", "entryCount", "truncated"],
+            properties: {
+              kind: { const: "complete" },
+              entryCount: { type: "integer", minimum: 0, maximum: 25000 },
+              truncated: { type: "boolean" },
+            },
+          },
+        ],
+      },
+    },
+  ],
+});
+
 /** Contracts only: their presence does not advertise a functioning or authorized provider. */
 export const GENERIC_API_CATALOGUE: readonly ApiDefinition[] = [
   workspaceFilesApi.definition,
+  workspaceTreeApi.definition,
   filePresentationApi.definition,
   terminalSessionsApi.definition,
   terminalOutputApi.definition,

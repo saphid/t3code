@@ -23,6 +23,7 @@ import {
   ProjectionThreadRepository,
 } from "../persistence/Services/ProjectionThreads.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
+import { WorkspaceEntries } from "../workspace/WorkspaceEntries.ts";
 import { WorkspaceFileSystem } from "../workspace/WorkspaceFileSystem.ts";
 import { toSdkContext } from "./scope.ts";
 import { make } from "./EnvironmentExtensions.ts";
@@ -220,6 +221,13 @@ function fixture() {
       upsert: () => Effect.void,
       listByProjectId: () => Effect.succeed([thread]),
       deleteById: () => Effect.void,
+    }),
+    Layer.succeed(WorkspaceEntries, {
+      list: () => Effect.succeed({ entries: [], truncated: false }),
+      refresh: () => Effect.void,
+      browse: () => Effect.die("unused"),
+      search: () => Effect.die("unused"),
+      searchContents: () => Effect.die("unused"),
     }),
     Layer.succeed(WorkspaceFileSystem, {
       readFile: (input) =>

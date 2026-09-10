@@ -27,7 +27,8 @@
     "examples/files",
     "HOST.md",
     "examples/api-provider",
-    "examples/api-consumer"
+    "examples/api-consumer",
+    "examples/native-files-tree"
   ],
   "type": "module",
   "exports": {
@@ -75,7 +76,8 @@
   },
   "dependencies": {
     "esbuild": "0.28.1",
-    "typescript": "7.0.2"
+    "typescript": "7.0.2",
+    "react": "19.2.6"
   },
   "devDependencies": {
     "@types/react": "^19.2.14",

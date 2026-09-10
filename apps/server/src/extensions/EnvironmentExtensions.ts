@@ -1,3 +1,4 @@
+import { makeWorkspaceTreeApiProvider } from "./workspaceTreeApi.ts";
 import { ExtensionCatalogueChanges } from "./catalogueChanges.ts";
 import { makeWorkspaceApiProvider } from "./workspaceApi.ts";
 import {
@@ -62,6 +63,7 @@ export const make = Effect.fn("EnvironmentExtensions.make")(function* (
   const threads = yield* ProjectionThreadRepository;
   const workspace = yield* WorkspaceFileSystem;
   const workspaceApi = yield* makeWorkspaceApiProvider();
+  const workspaceTreeApi = yield* makeWorkspaceTreeApiProvider();
   const terminalApi = yield* makeTerminalApiProvider();
   const terminalOutputApi = yield* makeTerminalOutputApiProvider();
   const terminalOutputEventsApi = yield* makeTerminalOutputEventsApiProvider();
@@ -102,7 +104,13 @@ export const make = Effect.fn("EnvironmentExtensions.make")(function* (
           ...(import.meta.url.endsWith(".mjs")
             ? { workerUrl: new URL("./extension-worker.mjs", import.meta.url) }
             : {}),
-          apiProviders: [workspaceApi, terminalApi, terminalOutputApi, terminalOutputEventsApi],
+          apiProviders: [
+            workspaceApi,
+            workspaceTreeApi,
+            terminalApi,
+            terminalOutputApi,
+            terminalOutputEventsApi,
+          ],
           onCatalogueChanged: () => Effect.runSync(catalogueChanges.publish),
           auditApi: (event) => {
             Effect.runSync(Effect.logInfo("Extension API invocation", { ...event }));
