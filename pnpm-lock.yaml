@@ -937,6 +937,13 @@ importers:
         version: 7.0.2
 
   packages/extension-sdk:
+    dependencies:
+      esbuild:
+        specifier: 0.28.1
+        version: 0.28.1
+      typescript:
+        specifier: 7.0.2
+        version: 7.0.2
     devDependencies:
       '@types/react':
         specifier: ^19.2.14
@@ -947,9 +954,6 @@ importers:
       react-test-renderer:
         specifier: 19.2.6
         version: 19.2.6(react@19.2.6)
-      typescript:
-        specifier: 'catalog:'
-        version: 7.0.2
 
   packages/shared:
     dependencies:

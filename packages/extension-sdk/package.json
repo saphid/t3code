@@ -1,6 +1,9 @@
 {
   "name": "@t3tools/extension-sdk",
   "version": "0.1.0",
+  "bin": {
+    "t3-extension": "bin/t3-extension.mjs"
+  },
   "files": [
     "dist",
     "README.md",
@@ -16,7 +19,14 @@
     "examples/installable-terminal-observer",
     "examples/installable-terminal-output",
     "examples/installable-package-assets",
-    "examples/installable-terminal-live-output"
+    "examples/installable-terminal-live-output",
+    "src",
+    "test",
+    "bin",
+    "examples/start-here",
+    "HOST.md",
+    "examples/api-provider",
+    "examples/api-consumer"
   ],
   "type": "module",
   "exports": {
@@ -51,6 +61,10 @@
     "./catalogue": {
       "types": "./dist/catalogue.d.ts",
       "default": "./dist/catalogue.js"
+    },
+    "./authoring": {
+      "types": "./dist/authoring.d.ts",
+      "default": "./dist/authoring.js"
     }
   },
   "scripts": {
@@ -58,11 +72,14 @@
     "test": "tsc -p tsconfig.json && node --test test/*.test.mjs",
     "prepare": "tsc -p tsconfig.json"
   },
+  "dependencies": {
+    "esbuild": "0.28.1",
+    "typescript": "7.0.2"
+  },
   "devDependencies": {
     "@types/react": "^19.2.14",
     "react": "19.2.6",
-    "react-test-renderer": "19.2.6",
-    "typescript": "catalog:"
+    "react-test-renderer": "19.2.6"
   },
   "peerDependencies": {
     "react": "^19.0.0"

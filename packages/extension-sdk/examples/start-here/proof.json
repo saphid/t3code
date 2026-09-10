@@ -1,0 +1,35 @@
+{
+  "kind": "historical-installed-example-receipt",
+  "recordedAt": "2026-09-10T03:42:59.095528+00:00",
+  "hostRevision": "d4dc5d406ff72bddac847809777d00e422f416db",
+  "runner": "lxso2, headless Playwright against an isolated real T3 environment",
+  "checks": [
+    "Shipped starter displays exact README.md bytes and restores after reload",
+    "Independent Luna reader displays exact new.txt bytes after installation/update",
+    "Independent provider and consumer render the real provider result",
+    "Missing/disabled dependency denies invocation and removes consumer UI",
+    "Re-enable and reload restore the consumer"
+  ],
+  "installations": [
+    {
+      "id": "trial.greeting-consumer",
+      "contentHash": "0ac829dd191dc2aa11f3eee246af72afd5617aed8168d63f77be35b0091442ea"
+    },
+    {
+      "id": "trial.greeting",
+      "contentHash": "b98d382e52a98949d456b51be2f619f261a9b967d83c2e43b40e22b1319d9fb5"
+    },
+    {
+      "id": "trial.workspace-reader",
+      "contentHash": "4db109afae4d645ea7b5ac2dfc2171de069d019cf4a28e4bcf771b61c4242a42"
+    }
+  ],
+  "exitCode": 0,
+  "errors": [],
+  "receiptSha256": "0e64b47d7ceed3a6dde141f52185b22919bd7e211a1051441596743c463e611e",
+  "evidence": "t3-extensions-health-rounds-20260909/authoring-fast-path/installed-pair-r4.json",
+  "limits": [
+    "Historical result, not a promise about later code",
+    "No full native-panel parity, remote/tunnel, native-mobile or performance benchmark claim"
+  ]
+}
