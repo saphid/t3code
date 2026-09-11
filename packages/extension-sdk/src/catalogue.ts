@@ -39,6 +39,40 @@ export const TERMINAL_READ = "t3.terminal/read";
 export const TERMINAL_OUTPUT = "t3.terminal/output";
 export const TERMINAL_READ_OUTPUT = "t3.terminal/read-output";
 export const TERMINAL_OUTPUT_EVENTS = "t3.terminal/output-events";
+export const WORKSPACE_SEARCH = "t3.workspace/search";
+export type WorkspaceSearchInput = {
+  readonly query: string;
+  readonly limit?: number;
+  readonly kind?: "file" | "directory";
+  readonly imageOnly?: boolean;
+};
+export type WorkspaceSearchResultEntry = {
+  readonly path: string;
+  readonly kind: "file" | "directory";
+};
+export type WorkspaceSearchResult = {
+  readonly entries: readonly WorkspaceSearchResultEntry[];
+  readonly truncated: boolean;
+};
+export type WorkspaceSearchContentsInput = {
+  readonly query: string;
+  readonly limit?: number;
+  readonly caseSensitive?: boolean;
+  readonly wholeWord?: boolean;
+  readonly useRegex?: boolean;
+};
+export type WorkspaceContentMatchRange = { readonly start: number; readonly end: number };
+export type WorkspaceContentMatch = {
+  readonly path: string;
+  readonly lineNumber: number;
+  readonly lineContent: string;
+  readonly matchRanges: readonly WorkspaceContentMatchRange[];
+};
+export type WorkspaceSearchContentsResult = {
+  readonly matches: readonly WorkspaceContentMatch[];
+  readonly truncated: boolean;
+  readonly regexFallbackError?: string;
+};
 export type WorkspaceListEntriesInput = {
   readonly relativePath: string;
   readonly cursor?: string;
@@ -471,6 +505,108 @@ export const workspaceTreeApi = defineStreamApi<{
   ],
 });
 
+const searchEntrySchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["path", "kind"],
+  properties: {
+    path: { type: "string", minLength: 1, maxLength: 512 },
+    kind: { enum: ["file", "directory"] },
+  },
+} as const;
+/**
+ * Bounded workspace search over the host's native index. Mirrors the bounds
+ * of the private projectsSearchEntries/projectsSearchContents RPCs so a
+ * plugin never has to pull the whole tree client-side to answer a query.
+ */
+export const workspaceSearchApi = defineApi<{
+  search: { input: WorkspaceSearchInput; output: WorkspaceSearchResult };
+  searchContents: { input: WorkspaceSearchContentsInput; output: WorkspaceSearchContentsResult };
+}>({
+  id: WORKSPACE_SEARCH,
+  version: "1.0.0",
+  methods: [
+    {
+      name: "search",
+      effect: "read",
+      requiredGrants: [WORKSPACE_SEARCH],
+      inputSchema: {
+        type: "object",
+        additionalProperties: false,
+        required: ["query"],
+        properties: {
+          query: { type: "string", maxLength: 256 },
+          limit: { type: "integer", minimum: 1, maximum: 200 },
+          kind: { enum: ["file", "directory"] },
+          imageOnly: { type: "boolean" },
+        },
+      },
+      outputSchema: {
+        type: "object",
+        additionalProperties: false,
+        required: ["entries", "truncated"],
+        properties: {
+          entries: { type: "array", maxItems: 200, items: searchEntrySchema },
+          truncated: { type: "boolean" },
+        },
+      },
+    },
+    {
+      name: "searchContents",
+      effect: "read",
+      requiredGrants: [WORKSPACE_SEARCH],
+      inputSchema: {
+        type: "object",
+        additionalProperties: false,
+        required: ["query"],
+        properties: {
+          query: { type: "string", minLength: 1, maxLength: 256 },
+          limit: { type: "integer", minimum: 1, maximum: 500 },
+          caseSensitive: { type: "boolean" },
+          wholeWord: { type: "boolean" },
+          useRegex: { type: "boolean" },
+        },
+      },
+      outputSchema: {
+        type: "object",
+        additionalProperties: false,
+        required: ["matches", "truncated"],
+        properties: {
+          matches: {
+            type: "array",
+            maxItems: 500,
+            items: {
+              type: "object",
+              additionalProperties: false,
+              required: ["path", "lineNumber", "lineContent", "matchRanges"],
+              properties: {
+                path: { type: "string", minLength: 1, maxLength: 512 },
+                lineNumber: { type: "integer", minimum: 1 },
+                lineContent: { type: "string", maxLength: 8192 },
+                matchRanges: {
+                  type: "array",
+                  maxItems: 512,
+                  items: {
+                    type: "object",
+                    additionalProperties: false,
+                    required: ["start", "end"],
+                    properties: {
+                      start: { type: "integer", minimum: 0 },
+                      end: { type: "integer", minimum: 0 },
+                    },
+                  },
+                },
+              },
+            },
+          },
+          truncated: { type: "boolean" },
+          regexFallbackError: { type: "string", maxLength: 512 },
+        },
+      },
+    },
+  ],
+});
+
 /**
  * Contracts only: their presence does not advertise a functioning or
  * authorized provider. Shared ids may hold multiple frozen versions (newest
@@ -479,6 +615,7 @@ export const workspaceTreeApi = defineStreamApi<{
 export const GENERIC_API_CATALOGUE: readonly ApiDefinition[] = [
   workspaceFilesApi.definition,
   workspaceTreeApi.definition,
+  workspaceSearchApi.definition,
   textEditsApi.definition,
   textEditsApiV1.definition,
   filePresentationApi.definition,
@@ -508,6 +645,7 @@ export function assertProvidedApiOwner(pluginId: string, definition: ApiDefiniti
 }
 
 export const WORKSPACE_FILES_API = workspaceFilesApi.definition;
+export const WORKSPACE_SEARCH_API = workspaceSearchApi.definition;
 export const FILE_PRESENTATION_API = filePresentationApi.definition;
 export const TERMINAL_SESSIONS_API = terminalSessionsApi.definition;
 

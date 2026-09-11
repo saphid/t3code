@@ -1,6 +1,7 @@
 import {
   filePresentationApi,
   workspaceFilesApi,
+  workspaceSearchApi,
   workspaceTreeApi,
   type WorkspaceTreeEvent,
 } from "@t3tools/extension-sdk/catalogue";
@@ -12,17 +13,22 @@ import { useEffect, useMemo, useState } from "react";
 
 import {
   describeRead,
+  describeSearch,
   mediaPreviewNotice,
   parentPath,
   previewKind,
   toggleExpanded,
   visibleRows,
   type PreviewKind,
+  type SearchKindFilter,
+  type SearchResults,
   type TreeEntry,
 } from "./viewModel.js";
 
 const manifestId = "t3.files";
 const PREVIEW_ASSET_PATH = "assets/preview.png";
+const SEARCH_LIMIT = 100;
+const SEARCH_DEBOUNCE_MS = 150;
 
 function restoreState(value: unknown): value is { readonly relativePath: string } | null {
   if (value === null) return true;
@@ -148,6 +154,12 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
   const { entries, status, refresh, revision, visible } = useWorkspaceTree(host, session);
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(() => new Set());
   const [query, setQuery] = useState("");
+  const [kindFilter, setKindFilter] = useState<SearchKindFilter>("all");
+  const [search, setSearch] = useState<{
+    key: string;
+    results: SearchResults | null;
+    error: string | null;
+  } | null>(null);
   const restoredPath =
     session.restoreState &&
     typeof session.restoreState === "object" &&
@@ -172,7 +184,49 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
   );
   const currentRead = read?.relativePath === selected && read.revision === revision ? read : null;
   const kindByPath = useMemo(() => new Map(entries.map((e) => [e.path, e.kind])), [entries]);
-  const rows = useMemo(() => visibleRows(entries, expanded, query), [entries, expanded, query]);
+  const searching = query.trim() !== "";
+  const rows = useMemo(
+    () => visibleRows(entries, expanded, searching ? "" : ""),
+    [entries, expanded, searching],
+  );
+  useEffect(() => {
+    const needle = query.trim();
+    if (!needle || !visible) return;
+    const key = `${needle} ${kindFilter} ${revision}`;
+    const controller = new AbortController();
+    const signal = AbortSignal.any([controller.signal, session.signal]);
+    const timer = setTimeout(() => {
+      void bindApi(workspaceSearchApi, host, session.context)
+        .invoke(
+          "search",
+          {
+            query: needle,
+            limit: SEARCH_LIMIT,
+            ...(kindFilter === "all" ? {} : { kind: kindFilter }),
+          },
+          signal,
+        )
+        .then(
+          (result) => {
+            if (!signal.aborted) setSearch({ key, results: result, error: null });
+          },
+          (error) => {
+            if (!signal.aborted)
+              setSearch({
+                key,
+                results: null,
+                error: error instanceof Error ? error.message : "Workspace search unavailable",
+              });
+          },
+        );
+    }, SEARCH_DEBOUNCE_MS);
+    return () => {
+      clearTimeout(timer);
+      controller.abort();
+    };
+  }, [host, session, query, kindFilter, revision, visible]);
+  const activeSearch =
+    searching && search?.key === `${query.trim()} ${kindFilter} ${revision}` ? search : null;
 
   const select = (path: string) => {
     setSelected(path);
@@ -245,8 +299,8 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
         </button>
         <input
           type="search"
-          aria-label="Filter workspace files"
-          placeholder="Filter files"
+          aria-label="Search workspace files"
+          placeholder="Search files"
           value={query}
           onChange={(event) => setQuery(event.target.value)}
           onKeyDown={(event) => {
@@ -257,6 +311,15 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
           }}
           style={{ flex: 1, minWidth: 0 }}
         />
+        <select
+          aria-label="Search kind"
+          value={kindFilter}
+          onChange={(event) => setKindFilter(event.target.value as SearchKindFilter)}
+        >
+          <option value="all">All</option>
+          <option value="file">Files</option>
+          <option value="directory">Directories</option>
+        </select>
       </header>
       <ul
         aria-label="Workspace files"
@@ -269,45 +332,91 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
           minHeight: 0,
         }}
       >
-        {rows.map((row) => (
-          <li key={row.entry.path}>
-            <button
-              type="button"
-              aria-expanded={row.expandable ? expanded.has(row.entry.path) : undefined}
-              aria-current={row.entry.path === selected ? "true" : undefined}
-              onClick={() =>
-                row.expandable
-                  ? setExpanded((previous) => toggleExpanded(previous, row.entry.path))
-                  : select(row.entry.path)
-              }
-              style={{
-                display: "block",
-                width: "100%",
-                textAlign: "left",
-                font: "inherit",
-                fontSize: 12,
-                padding: "4px 6px",
-                paddingLeft: 6 + row.depth * 14,
-                border: "1px solid transparent",
-                borderRadius: 5,
-                cursor: "pointer",
-                color: "var(--foreground, #20252d)",
-                background: row.entry.path === selected ? "var(--accent, #e8eef7)" : "transparent",
-                overflow: "hidden",
-                textOverflow: "ellipsis",
-                whiteSpace: "nowrap",
-              }}
-            >
-              {row.expandable ? (expanded.has(row.entry.path) ? "▾ " : "▸ ") : ""}
-              {row.entry.path.split("/").at(-1)}
-              {row.expandable ? "/" : ""}
-            </button>
-          </li>
-        ))}
+        {searching
+          ? (activeSearch?.results?.entries ?? []).map((entry) => (
+              <li key={entry.path}>
+                <button
+                  type="button"
+                  aria-current={entry.path === selected ? "true" : undefined}
+                  onClick={() =>
+                    entry.kind === "directory"
+                      ? (setQuery(""),
+                        setExpanded((previous) => {
+                          const next = new Set(previous);
+                          for (
+                            let ancestor: string | null = entry.path;
+                            ancestor !== null;
+                            ancestor = parentPath(ancestor)
+                          )
+                            next.add(ancestor);
+                          return next;
+                        }))
+                      : select(entry.path)
+                  }
+                  style={{
+                    display: "block",
+                    width: "100%",
+                    textAlign: "left",
+                    font: "inherit",
+                    fontSize: 12,
+                    padding: "4px 6px",
+                    border: "1px solid transparent",
+                    borderRadius: 5,
+                    cursor: "pointer",
+                    color: "var(--foreground, #20252d)",
+                    background: entry.path === selected ? "var(--accent, #e8eef7)" : "transparent",
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  {entry.kind === "directory" ? "▸ " : ""}
+                  {entry.path}
+                </button>
+              </li>
+            ))
+          : rows.map((row) => (
+              <li key={row.entry.path}>
+                <button
+                  type="button"
+                  aria-expanded={row.expandable ? expanded.has(row.entry.path) : undefined}
+                  aria-current={row.entry.path === selected ? "true" : undefined}
+                  onClick={() =>
+                    row.expandable
+                      ? setExpanded((previous) => toggleExpanded(previous, row.entry.path))
+                      : select(row.entry.path)
+                  }
+                  style={{
+                    display: "block",
+                    width: "100%",
+                    textAlign: "left",
+                    font: "inherit",
+                    fontSize: 12,
+                    padding: "4px 6px",
+                    paddingLeft: 6 + row.depth * 14,
+                    border: "1px solid transparent",
+                    borderRadius: 5,
+                    cursor: "pointer",
+                    color: "var(--foreground, #20252d)",
+                    background:
+                      row.entry.path === selected ? "var(--accent, #e8eef7)" : "transparent",
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  {row.expandable ? (expanded.has(row.entry.path) ? "▾ " : "▸ ") : ""}
+                  {row.entry.path.split("/").at(-1)}
+                  {row.expandable ? "/" : ""}
+                </button>
+              </li>
+            ))}
       </ul>
       <output aria-label="Tree status" style={{ padding: "6px 10px", color: muted, fontSize: 11 }}>
-        {status}
-        {kindByPath.size > 0 ? ` — ${entries.length} entries` : ""}
+        {searching
+          ? (activeSearch?.error ??
+            describeSearch(activeSearch?.results ?? null, query, SEARCH_LIMIT))
+          : status + (kindByPath.size > 0 ? ` — ${entries.length} entries` : "")}
       </output>
       {selected && (
         <output
@@ -367,11 +476,15 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
 
 export default defineExtension({
   id: manifestId,
-  version: "0.2.0",
+  version: "0.3.0",
   provides: [filePresentationApi.definition],
   assets: [{ path: PREVIEW_ASSET_PATH, mediaType: "application/octet-stream" }],
   serverEntry: "server.ts",
-  requires: [requireApi(workspaceTreeApi), requireApi(workspaceFilesApi)],
+  requires: [
+    requireApi(workspaceTreeApi),
+    requireApi(workspaceFilesApi),
+    requireApi(workspaceSearchApi),
+  ],
   surfaces: [
     {
       name: "view",

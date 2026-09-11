@@ -189,3 +189,27 @@ export function describeRead(read: PreviewRead): PreviewStatus {
 export function mediaPreviewNotice(kind: PreviewKind): string {
   return `${kind} preview is not public yet — workspace media reads await the t3.workspace/resources contract`;
 }
+
+/** Kind selector values for the `t3.workspace/search` contract call. */
+export type SearchKindFilter = "all" | "file" | "directory";
+
+/** The public search-contract result mapped onto the panel's entry shape. */
+export interface SearchResults {
+  readonly entries: readonly TreeEntry[];
+  readonly truncated: boolean;
+}
+
+/**
+ * Honest status for a contract search (F1 #7): `truncated` comes straight
+ * off the wire — the panel never claims completeness the index did not
+ * report, and names the limit instead of silently clipping the list.
+ */
+export function describeSearch(result: SearchResults | null, query: string, limit: number): string {
+  const needle = query.trim();
+  if (!needle) return "";
+  if (result === null) return `Searching for “${needle}”`;
+  const count = result.entries.length;
+  if (count === 0) return `No matches for “${needle}”`;
+  const suffix = result.truncated ? ` — showing first ${count}, refine the query` : "";
+  return `${count}${result.truncated ? "+" : ""} match${count === 1 && !result.truncated ? "" : "es"} for “${needle}” (limit ${limit})${suffix}`;
+}

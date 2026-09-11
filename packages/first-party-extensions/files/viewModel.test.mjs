@@ -3,6 +3,7 @@ import * as NodeTest from "node:test";
 import {
   compareTreeEntries,
   describeRead,
+  describeSearch,
   filterEntries,
   mediaPreviewNotice,
   parentPath,
@@ -125,6 +126,42 @@ NodeTest.describe("describeRead", () => {
     const described = describeRead({ contents: "é".repeat(10), byteLength: 40, truncated: true });
     NodeAssert.equal(described.shownByteLength, 20);
     NodeAssert.match(described.status, /showing first 20 of 40 bytes/);
+  });
+});
+
+NodeTest.describe("describeSearch", () => {
+  NodeTest.it("is empty while the query is blank and pending before results land", () => {
+    NodeAssert.equal(describeSearch(null, "  ", 100), "");
+    NodeAssert.equal(describeSearch(null, "app", 100), "Searching for “app”");
+  });
+
+  NodeTest.it("reports no-match and exact-match states", () => {
+    NodeAssert.equal(
+      describeSearch({ entries: [], truncated: false }, "zzz", 100),
+      "No matches for “zzz”",
+    );
+    NodeAssert.equal(
+      describeSearch(
+        { entries: [{ path: "src/app.ts", kind: "file" }], truncated: false },
+        "app",
+        100,
+      ),
+      "1 match for “app” (limit 100)",
+    );
+  });
+
+  NodeTest.it("marks wire truncation honestly instead of claiming completeness", () => {
+    const result = {
+      entries: Array.from({ length: 100 }, (_, i) => ({
+        path: `f${i}.ts`,
+        kind: "file",
+      })),
+      truncated: true,
+    };
+    NodeAssert.equal(
+      describeSearch(result, "f", 100),
+      "100+ matches for “f” (limit 100) — showing first 100, refine the query",
+    );
   });
 });
 
