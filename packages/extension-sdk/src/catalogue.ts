@@ -1,6 +1,33 @@
 import { defineApi, defineStreamApi, type ApiDefinition } from "./capabilities.js";
 import type { JsonObject } from "./environment.js";
 import type { WorkspaceReadTextInput, WorkspaceReadTextResult } from "./workspace.js";
+import { textEditsApi } from "./textEdits.js";
+
+export {
+  EDITABLE_TEXT_MAX_BYTES,
+  REVISION_HEX_LENGTH,
+  WORKSPACE_READ_TEXT_EDITS,
+  WORKSPACE_READ_TEXT_GRANT,
+  WORKSPACE_WRITE_TEXT,
+  textEditsApi,
+  isTextRevision,
+  validateReadSnapshotInput,
+  validateReadSnapshotResult,
+  validateSaveInput,
+  validateSaveResult,
+} from "./textEdits.js";
+export type {
+  EditableSnapshot,
+  EditableRelativePath,
+  NotEditableSnapshot,
+  ReadSnapshotInput,
+  ReadSnapshotResult,
+  SaveInput,
+  SaveResult,
+  SavedResult,
+  ConflictResult,
+  TextRevision,
+} from "./textEdits.js";
 
 export const WORKSPACE_FILES = "t3.workspace/files";
 export const WORKSPACE_LIST_ENTRIES = "t3.workspace/list-entries";
@@ -447,6 +474,7 @@ export const workspaceTreeApi = defineStreamApi<{
 export const GENERIC_API_CATALOGUE: readonly ApiDefinition[] = [
   workspaceFilesApi.definition,
   workspaceTreeApi.definition,
+  textEditsApi.definition,
   filePresentationApi.definition,
   terminalSessionsApi.definition,
   terminalOutputApi.definition,

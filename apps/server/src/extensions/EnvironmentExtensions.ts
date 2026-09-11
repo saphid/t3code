@@ -35,6 +35,7 @@ import { makeExtensionScopeResolver } from "./scope.ts";
 import { makeTerminalApiProvider } from "./terminalApi.ts";
 import { makeTerminalOutputApiProvider } from "./terminalOutputApi.ts";
 import { makeTerminalOutputEventsApiProvider } from "./terminalOutputEventsApi.ts";
+import { makeTextEditsApiProvider } from "./textEditsApi.ts";
 import { boundedWorkspaceText } from "./workspaceText.ts";
 
 const decodeJson = Schema.decodeUnknownEffect(Schema.Json);
@@ -67,6 +68,7 @@ export const make = Effect.fn("EnvironmentExtensions.make")(function* (
   const terminalApi = yield* makeTerminalApiProvider();
   const terminalOutputApi = yield* makeTerminalOutputApiProvider();
   const terminalOutputEventsApi = yield* makeTerminalOutputEventsApiProvider();
+  const textEditsApi = yield* makeTextEditsApiProvider();
   const catalogueChanges = yield* ExtensionCatalogueChanges;
   const resolve = makeExtensionScopeResolver({ environmentId, projects, threads });
   const read = Effect.fn("EnvironmentExtensions.readWorkspace")(function* (
@@ -107,6 +109,7 @@ export const make = Effect.fn("EnvironmentExtensions.make")(function* (
           apiProviders: [
             workspaceApi,
             workspaceTreeApi,
+            textEditsApi,
             terminalApi,
             terminalOutputApi,
             terminalOutputEventsApi,

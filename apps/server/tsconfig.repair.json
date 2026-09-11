@@ -1,0 +1,20 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "types": ["node"],
+    "lib": ["ESNext", "esnext.disposable"],
+    "noEmit": true
+  },
+  "include": [
+    "src/workspace/textEdits.ts",
+    "src/workspace/textEdits.test.ts",
+    "src/extensions/textEditsApi.ts",
+    "src/extensions/textEditsApi.test.ts",
+    "src/extensions/http.ts",
+    "src/extensions/http.test.ts",
+    "src/extensions/sessionApiAuthority.ts",
+    "src/extensions/sessionApiAuthority.test.ts",
+    "src/extensions/EnvironmentExtensions.ts",
+    "src/extensions/EnvironmentExtensions.test.ts"
+  ]
+}

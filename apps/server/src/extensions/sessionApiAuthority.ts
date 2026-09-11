@@ -17,12 +17,23 @@ const denied = () =>
     detail: "The authenticated extension caller is no longer authorized.",
   });
 
-/** Capture verified identity and attenuated scopes without retaining credential material. */
+/**
+ * Capture verified identity and attenuated scopes without retaining credential
+ * material.
+ *
+ * `writeScope` is the domain scope that makes this root write-capable. When it
+ * is omitted, legacy semantics apply: only a root whose required scope is the
+ * administrative transport write scope is write-capable. When given, write
+ * capability requires that gate scope to be in the captured ∩ live scope
+ * intersection, and the same intersection feeds `revalidate`, so losing the
+ * gate scope mid-request fails the re-check.
+ */
 export const makeSessionApiAuthority = Effect.fn("Extensions.makeSessionApiAuthority")(function* (
   session: AuthenticatedSession | EnvironmentSessionPrincipalShape,
   environmentId: string,
   requiredScope: AuthEnvironmentScope,
   sessions: Pick<SessionStore["Service"], "revalidate">,
+  writeScope?: AuthEnvironmentScope,
 ) {
   const captured = Object.freeze({
     sessionId: session.sessionId,
@@ -57,9 +68,11 @@ export const makeSessionApiAuthority = Effect.fn("Extensions.makeSessionApiAutho
     scopes,
   });
   const clock = yield* Clock.Clock;
+  const allowWrite =
+    writeScope === undefined ? requiredScope === AuthAccessWriteScope : scopes.includes(writeScope);
   return {
     principal,
-    allowWrite: requiredScope === AuthAccessWriteScope,
+    allowWrite,
     revalidate: () =>
       Effect.runPromise(
         Effect.gen(function* () {

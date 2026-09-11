@@ -243,6 +243,7 @@ function fixture() {
         }),
       writeFile: () => Effect.die("unused"),
     }),
+    WorkspacePaths.layer,
     ServerConfig.layerTest(process.cwd(), { prefix: "t3-extension-service-test-" }),
   ).pipe(Layer.provideMerge(NodeServices.layer));
   return {

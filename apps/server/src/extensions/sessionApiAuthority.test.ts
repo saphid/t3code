@@ -1,6 +1,7 @@
 import { expect, it } from "@effect/vitest";
 import {
   AuthAccessWriteScope,
+  AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
   AuthSessionId,
   ExtensionOperationError,
@@ -121,6 +122,42 @@ it.effect("requires both current and original write permission for write roots",
       f.sessions,
     ).pipe(Effect.flip);
     expect(denied._tag).toBe("ExtensionOperationError");
+  }),
+);
+
+it.effect("a domain write gate grants write only while the intersection holds it", () =>
+  Effect.gen(function* () {
+    // Ordinary pairing shape: read + operate, no administrative access:write.
+    // Both the captured credential and the persisted session must hold the
+    // gate scope; the root only ever sees their intersection.
+    const f = fixture();
+    const pairing = [AuthOrchestrationReadScope, AuthOrchestrationOperateScope] as const;
+    f.session.scopes = [...pairing];
+    f.setCurrent({ ...f.session, scopes: [...pairing] });
+    const root = yield* makeSessionApiAuthority(
+      f.session,
+      "environment-a",
+      AuthOrchestrationReadScope,
+      f.sessions,
+      AuthOrchestrationOperateScope,
+    );
+    expect(root.allowWrite).toBe(true);
+    // Losing the operate scope mid-request fails the re-check: the gate scope
+    // lives in the captured ∩ live intersection that revalidate walks.
+    f.setCurrent({ ...f.session, scopes: [AuthOrchestrationReadScope] });
+    const error = yield* check(root).pipe(Effect.flip);
+    expect(error).toMatchObject({ _tag: "ExtensionOperationError" });
+    // A read-only session under the same gate stays read-only.
+    const f2 = fixture();
+    f2.session.scopes = [AuthOrchestrationReadScope];
+    const readOnly = yield* makeSessionApiAuthority(
+      f2.session,
+      "environment-a",
+      AuthOrchestrationReadScope,
+      f2.sessions,
+      AuthOrchestrationOperateScope,
+    );
+    expect(readOnly.allowWrite).toBe(false);
   }),
 );
 

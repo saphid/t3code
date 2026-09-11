@@ -3,6 +3,7 @@ import type { HostApiRootAuthority } from "@t3tools/extension-runtime";
 import { SessionStore } from "../auth/SessionStore.ts";
 import {
   AuthAccessWriteScope,
+  AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
   AuthSessionId,
   EnvironmentId,
@@ -85,7 +86,7 @@ function fixture(
     contextForThread: () => Effect.die("unused"),
     tools: () => Effect.die("unused"),
   });
-  const operations = makeOperations(service, (session, scope) =>
+  const operations = makeOperations(service, (session, scope, writeScope) =>
     Effect.succeed({
       principal: {
         kind: "environment-session" as const,
@@ -94,7 +95,8 @@ function fixture(
         subject: session.subject,
         scopes: [...session.scopes],
       },
-      allowWrite: scope === AuthAccessWriteScope,
+      allowWrite:
+        writeScope === undefined ? scope === AuthAccessWriteScope : session.scopes.has(writeScope),
       revalidate: () => {
         assetHooks?.revalidate();
       },
@@ -168,44 +170,116 @@ it.effect("missing read scope cannot inspect code, catalog or invoke even with a
   }),
 );
 
-it.effect("selects invokeApi authority from verified scopes without widening old callers", () =>
-  Effect.gen(function* () {
-    const input: ExtensionApiInvokeInput = {
-      installationId: "fixture",
-      expectedContentHash: "a".repeat(64),
-      request: {
-        id: "t3.workspace/files",
-        versionRange: "^1.0.0",
-        method: "listEntries",
-        input: { relativePath: "" },
-        context: {
-          resource: { namespace: "fixture", id: "a", environmentId: EnvironmentId.make("env") },
-          client: "web",
+it.effect(
+  "selects invokeApi authority from verified domain scopes without widening old callers",
+  () =>
+    Effect.gen(function* () {
+      const input: ExtensionApiInvokeInput = {
+        installationId: "fixture",
+        expectedContentHash: "a".repeat(64),
+        request: {
+          id: "t3.workspace/files",
+          versionRange: "^1.0.0",
+          method: "listEntries",
+          input: { relativePath: "" },
+          context: {
+            resource: { namespace: "fixture", id: "a", environmentId: EnvironmentId.make("env") },
+            client: "web",
+          },
         },
-      },
-    };
-    const cases = [
-      { scopes: [AuthOrchestrationReadScope] as const, allowWrite: false },
-      { scopes: [AuthAccessWriteScope] as const, allowWrite: true },
-      {
-        scopes: [AuthOrchestrationReadScope, AuthAccessWriteScope] as const,
-        allowWrite: true,
-      },
-    ];
-    for (const testCase of cases) {
-      const f = fixture(testCase.scopes);
-      yield* f.provide(f.operations.invokeApi(input));
-      expect(f.roots).toHaveLength(1);
-      expect(f.roots[0]?.allowWrite).toBe(testCase.allowWrite);
-      expect(f.called).toEqual(["invokeApi"]);
-    }
-    const denied = fixture([]);
-    expect((yield* denied.provide(Effect.flip(denied.operations.invokeApi(input))))._tag).toBe(
-      "EnvironmentScopeRequiredError",
-    );
-    expect(denied.called).toEqual([]);
-    expect(denied.roots).toEqual([]);
-  }),
+      };
+      const cases = [
+        // Read-only pairing: invokeApi passes, root ceiling stays read-only so
+        // the broker rejects write-effect methods.
+        { scopes: [AuthOrchestrationReadScope] as const, allowWrite: false },
+        // Ordinary paired session: domain operate makes the root write-capable
+        // without any administrative access:write grant.
+        {
+          scopes: [AuthOrchestrationReadScope, AuthOrchestrationOperateScope] as const,
+          allowWrite: true,
+        },
+        // access:write is an administrative grant and never substitutes for the
+        // domain operate scope.
+        {
+          scopes: [AuthOrchestrationReadScope, AuthAccessWriteScope] as const,
+          allowWrite: false,
+        },
+      ];
+      for (const testCase of cases) {
+        const f = fixture(testCase.scopes);
+        yield* f.provide(f.operations.invokeApi(input));
+        expect(f.roots).toHaveLength(1);
+        expect(f.roots[0]?.allowWrite).toBe(testCase.allowWrite);
+        expect(f.called).toEqual(["invokeApi"]);
+      }
+      const denied = fixture([]);
+      expect((yield* denied.provide(Effect.flip(denied.operations.invokeApi(input))))._tag).toBe(
+        "EnvironmentScopeRequiredError",
+      );
+      expect(denied.called).toEqual([]);
+      expect(denied.roots).toEqual([]);
+    }),
+);
+
+it.effect(
+  "invokeApi requires a domain scope even with access:write; admin stays access:write-gated",
+  () =>
+    Effect.gen(function* () {
+      const input: ExtensionApiInvokeInput = {
+        installationId: "fixture",
+        expectedContentHash: "a".repeat(64),
+        request: {
+          id: "t3.workspace/files",
+          versionRange: "^1.0.0",
+          method: "listEntries",
+          input: { relativePath: "" },
+          context: {
+            resource: { namespace: "fixture", id: "a", environmentId: EnvironmentId.make("env") },
+            client: "web",
+          },
+        },
+      };
+      // An access:write-only session cannot invoke APIs at all: it holds no
+      // orchestration domain scope, and the administrative grant is not a
+      // substitute.
+      const adminOnly = fixture([AuthAccessWriteScope]);
+      expect(
+        (yield* adminOnly.provide(Effect.flip(adminOnly.operations.invokeApi(input))))._tag,
+      ).toBe("EnvironmentScopeRequiredError");
+      expect(adminOnly.called).toEqual([]);
+      // Extension administration keeps its transport gate: a session with
+      // orchestration:operate but no access:write is denied install/manage/select.
+      const operator = fixture([AuthOrchestrationReadScope, AuthOrchestrationOperateScope]);
+      expect(
+        (yield* operator.provide(
+          Effect.flip(
+            operator.operations.install({
+              sourceDir: "/fixture",
+              trusted: true,
+              projectIds: [],
+              capabilities: [],
+            }),
+          ),
+        ))._tag,
+      ).toBe("EnvironmentScopeRequiredError");
+      expect(
+        (yield* operator.provide(
+          Effect.flip(operator.operations.manage({ id: "fixture", action: "enable" })),
+        ))._tag,
+      ).toBe("EnvironmentScopeRequiredError");
+      expect(
+        (yield* operator.provide(
+          Effect.flip(
+            operator.operations.selectApi({
+              id: "t3.workspace/files",
+              providerId: "host.workspace",
+              fallbackProviderIds: [],
+            }),
+          ),
+        ))._tag,
+      ).toBe("EnvironmentScopeRequiredError");
+      expect(operator.called).toEqual([]);
+    }),
 );
 
 // Exercise the actual middleware and HTTP schemas without opening a listening socket.
@@ -358,6 +432,9 @@ it.live(
       expect((yield* request("api/invoke", apiInvoke, read.access_token)).status).toBe(200);
       expect((yield* request("api/select", apiSelect, read.access_token)).status).toBe(403);
       expect(f.called).toEqual(["list", "client", "invoke", "discoverApis", "invokeApi"]);
+      // An access:write-only (administrative) session keeps install/select
+      // authority but holds no orchestration domain scope, so api/invoke is
+      // denied outright.
       const writeGrant = yield* auth.issuePairingCredential({ scopes: [AuthAccessWriteScope] });
       const write = yield* auth.exchangeBootstrapCredentialForAccessToken(
         writeGrant.credential,
@@ -365,7 +442,7 @@ it.live(
         metadata,
       );
       expect((yield* request("api/discover", apiDiscover, write.access_token)).status).toBe(403);
-      expect((yield* request("api/invoke", apiInvoke, write.access_token)).status).toBe(200);
+      expect((yield* request("api/invoke", apiInvoke, write.access_token)).status).toBe(403);
       expect((yield* request("api/select", apiSelect, write.access_token)).status).toBe(200);
       expect(f.called).toEqual([
         "list",
@@ -373,16 +450,16 @@ it.live(
         "invoke",
         "discoverApis",
         "invokeApi",
-        "invokeApi",
         "selectApi",
       ]);
-      expect(f.roots).toHaveLength(2);
+      // The only root so far is the read-only pairing's: read ceiling intact.
+      expect(f.roots).toHaveLength(1);
       expect(f.roots[0]?.principal.kind).toBe("environment-session");
       expect(f.roots[0]?.principal.environmentId).toBe(yield* environment.getEnvironmentId);
       expect(f.roots[0]?.principal.scopes).toContain(AuthOrchestrationReadScope);
       expect(f.roots[0]?.allowWrite).toBe(false);
-      expect(f.roots[1]?.principal.scopes).toContain(AuthAccessWriteScope);
-      expect(f.roots[1]?.allowWrite).toBe(true);
+      // read + access:write enters via the read scope but gets a read-only
+      // root: the administrative grant is never a domain write authority.
       const bothGrant = yield* auth.issuePairingCredential({
         scopes: [AuthOrchestrationReadScope, AuthAccessWriteScope],
       });
@@ -392,6 +469,20 @@ it.live(
         metadata,
       );
       expect((yield* request("api/invoke", apiInvoke, both.access_token)).status).toBe(200);
+      expect(f.roots[1]?.principal.scopes).toContain(AuthAccessWriteScope);
+      expect(f.roots[1]?.allowWrite).toBe(false);
+      // Ordinary pairing (read + operate, no access:write) gets the
+      // write-capable root the Files save path requires.
+      const operateGrant = yield* auth.issuePairingCredential({
+        scopes: [AuthOrchestrationReadScope, AuthOrchestrationOperateScope],
+      });
+      const operate = yield* auth.exchangeBootstrapCredentialForAccessToken(
+        operateGrant.credential,
+        undefined,
+        metadata,
+      );
+      expect((yield* request("api/invoke", apiInvoke, operate.access_token)).status).toBe(200);
+      expect(f.roots[2]?.principal.scopes).toContain(AuthOrchestrationOperateScope);
       expect(f.roots[2]?.allowWrite).toBe(true);
       const adminGrant = yield* auth.issuePairingCredential({ scopes: AuthAdministrativeScopes });
       const admin = yield* auth.exchangeBootstrapCredentialForAccessToken(
@@ -415,8 +506,8 @@ it.live(
         "invoke",
         "discoverApis",
         "invokeApi",
-        "invokeApi",
         "selectApi",
+        "invokeApi",
         "invokeApi",
         "manage",
         "install",

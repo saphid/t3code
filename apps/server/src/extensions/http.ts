@@ -1,5 +1,6 @@
 import {
   AuthAccessWriteScope,
+  AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
   EnvironmentAuthenticatedPrincipal,
   EnvironmentHttpApi,
@@ -31,21 +32,24 @@ export function makeOperations(
   makeAuthority: (
     session: EnvironmentSessionPrincipalShape,
     scope: AuthEnvironmentScope,
+    writeScope?: AuthEnvironmentScope,
   ) => Effect.Effect<HostApiRootAuthority, ExtensionOperationError>,
 ) {
   return {
     invokeApi: Effect.fn("environment.extensions.invokeApi")(function* (
       input: ExtensionApiInvokeInput,
     ) {
-      // Prefer the host-verified write scope so write-only sessions keep their
-      // existing authority. A read-only session gets a root ceiling that the
-      // broker carries through nested calls and enforces for method effects.
+      // Domain scopes decide write capability: an ordinary paired session with
+      // orchestration:operate gets a write-capable root without any
+      // administrative access:write grant; a read-only session gets a
+      // read-only root that the broker enforces for method effects. Access
+      // alone is never a substitute for the domain operate scope.
       const authenticated = yield* EnvironmentAuthenticatedPrincipal;
-      const requiredScope = authenticated.scopes.has(AuthAccessWriteScope)
-        ? AuthAccessWriteScope
+      const requiredScope = authenticated.scopes.has(AuthOrchestrationOperateScope)
+        ? AuthOrchestrationOperateScope
         : AuthOrchestrationReadScope;
       const session = yield* requireEnvironmentScope(requiredScope);
-      const root = yield* makeAuthority(session, requiredScope);
+      const root = yield* makeAuthority(session, requiredScope, AuthOrchestrationOperateScope);
       return { result: yield* extensions.invokeApi(input, root) };
     }),
     discoverApis: Effect.fn("environment.extensions.discoverApis")(function* (
@@ -118,8 +122,8 @@ export const extensionsHttpApiLayer = HttpApiBuilder.group(
     const sessions = yield* SessionStore;
     const environment = yield* ServerEnvironment;
     const environmentId = yield* environment.getEnvironmentId;
-    const operations = makeOperations(yield* EnvironmentExtensions, (session, scope) =>
-      makeSessionApiAuthority(session, environmentId, scope, sessions),
+    const operations = makeOperations(yield* EnvironmentExtensions, (session, scope, writeScope) =>
+      makeSessionApiAuthority(session, environmentId, scope, sessions, writeScope),
     );
     return handlers
       .handle("invokeApi", (args) =>
