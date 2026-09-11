@@ -29,7 +29,8 @@
     "examples/api-provider",
     "examples/api-consumer",
     "examples/native-files-tree",
-    "examples/editable-files"
+    "examples/editable-files",
+    "examples/persisted-state"
   ],
   "type": "module",
   "exports": {

@@ -1,0 +1,35 @@
+{
+  "date": "2026-09-12",
+  "host": "macbook-pro",
+  "scope": "Minimal persisted-state surface: save/restore through the declared stateSchema, plus actionable validation errors",
+  "sourceHashes": {
+    "state.ts": "aa640176803e54ac15a23665284840b9e28ea1cbb35f1a5c35776bf961ad75f2",
+    "extension.tsx": "215ae5786447d716f8433732ed8252bc556d38eb043df6d93f183004d3474516",
+    "extension.ts": "fb20f105ee5f533a9f4e318318e5684b06a72b91698d80a7e6451c11a824d5cb",
+    "persistence.test.mjs": "90451d4d613b2cb897cedf32811592a66a94dda2a05518314b90ab01950eaf26"
+  },
+  "checks": [
+    "t3-extension build . exits 0 and emits a checkable .t3-extension package",
+    "built client registers in the real host, renders, and session.save persists {count, label}",
+    "closing and restoring the saved record reopens the view with the saved count",
+    "restore of a wrong field type, a missing required field, and a non-object state are each unavailable with a reason naming surface, expectation, received value and fix",
+    "a stateVersion mismatch is rejected as incompatible before validateRestore runs",
+    "session.save with an out-of-schema value throws the same actionable error",
+    "a surface that declares neither stateSchema nor validateRestore rejects non-null state with a message telling the author what to declare"
+  ],
+  "focusedChecks": {
+    "exampleBuildExit": 0,
+    "exampleTests": 3,
+    "exampleTestsPassed": 3,
+    "sdkTests": 59,
+    "sdkTestsPassed": 59,
+    "scopedLintErrors": 0
+  },
+  "evidenceRoot": "/Users/saphid/artifacts/t3-sdk-refinements-devin-20260911/f2c",
+  "notProven": [
+    "installation into a real T3 environment or any host UI rendering",
+    "remote/relay/tunnel and mobile client behavior",
+    "migration of state saved by a previous extension version",
+    "state larger than a counter record, or host payload-bound edge cases"
+  ]
+}

@@ -95,6 +95,10 @@ interface Entry<R> {
 }
 const failure = (error: unknown) =>
   error instanceof Error ? error.message.slice(0, 500) : "Extension failed";
+const statePreview = (state: Json) => {
+  const encoded = JSON.stringify(state);
+  return encoded.length > 200 ? encoded.slice(0, 200) + "…" : encoded;
+};
 
 /** Trusted, in-process view host. No domain resource creation/destruction or layout ownership. */
 export function createExtensionHost<Renderer>(options: HostOptions) {
@@ -233,7 +237,10 @@ export function createExtensionHost<Renderer>(options: HostOptions) {
             .get(record.surfaceId)!
             .validateRestore(copyJson(record.restoreState))
         )
-          reason = "Saved state is invalid";
+          reason =
+            `Saved state for "${record.surfaceId}" is invalid: the surface's validateRestore rejected ` +
+            `${statePreview(record.restoreState)}. Restore needs the shape the surface declared ` +
+            `for stateVersion ${record.stateVersion}; fix the stored record or the validator.`;
       } catch (error) {
         reason = failure(error);
       }
@@ -306,7 +313,11 @@ export function createExtensionHost<Renderer>(options: HostOptions) {
         if (!live()) return false;
         const copied = copyJson(state);
         if (!contribution.validateRestore(copyJson(copied)))
-          throw new Error("Invalid restore state");
+          throw new Error(
+            `Invalid restore state for "${contribution.id}": the surface's validateRestore ` +
+              `rejected ${statePreview(copied)}. Pass the shape declared for stateVersion ` +
+              `${entry.descriptor!.stateVersion}, or fix the validator if the persisted shape changed.`,
+          );
         entry.snapshot = {
           ...entry.snapshot,
           record: validateRecord({ ...entry.snapshot.record, restoreState: copied }),

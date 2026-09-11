@@ -16,6 +16,97 @@ import {
   type ApiMethodTypes,
 } from "./capabilities.js";
 
+export type RestoreFieldType = "boolean" | "number" | "string";
+export interface RestoreStateSchema {
+  /**
+   * Required keys and their JSON primitive types. Undeclared keys are ignored so a
+   * later stateVersion can add fields without rejecting older saves outright.
+   */
+  readonly fields: Readonly<Record<string, RestoreFieldType>>;
+  /** Declared fields that may be absent in older saves. */
+  readonly optional?: readonly string[];
+}
+type RestoreFieldValue<T> = T extends "string"
+  ? string
+  : T extends "number"
+    ? number
+    : T extends "boolean"
+      ? boolean
+      : never;
+type OptionalKeys<S extends RestoreStateSchema> = S["optional"] extends readonly (infer O)[]
+  ? O
+  : never;
+/** The TypeScript shape a RestoreStateSchema accepts; persist this via session.save. */
+export type RestoreState<S extends RestoreStateSchema> = {
+  [K in keyof S["fields"] as K extends OptionalKeys<S> ? never : K]: RestoreFieldValue<
+    S["fields"][K]
+  >;
+} & {
+  [K in keyof S["fields"] as K extends OptionalKeys<S> ? K : never]?: RestoreFieldValue<
+    S["fields"][K]
+  >;
+};
+
+const statePreview = (state: Json) => {
+  const encoded = JSON.stringify(state);
+  return encoded.length > 200 ? encoded.slice(0, 200) + "…" : encoded;
+};
+const shapeText = (schema: RestoreStateSchema) => {
+  const optional = new Set(schema.optional ?? []);
+  return (
+    "{" +
+    Object.entries(schema.fields)
+      .map(([key, type]) => key + (optional.has(key) ? "?" : "") + ": " + type)
+      .join(", ") +
+    "}"
+  );
+};
+const restoreFix =
+  "Fix the value passed to session.save() or the stored record. If the persisted shape changed on purpose, update the surface's stateSchema and bump stateVersion so incompatible saves are not restored.";
+
+/**
+ * Builds a validateRestore that accepts null (nothing saved yet) or an object
+ * matching the schema, and throws an error naming the expectation, the received
+ * value and the fix for anything else.
+ */
+export function restoreStateValidator(
+  surfaceId: string,
+  stateVersion: number,
+  schema: RestoreStateSchema,
+): (state: Json) => boolean {
+  return (state) => {
+    if (state === null) return true;
+    const prefix = `Invalid restore state for "${surfaceId}" (stateVersion ${stateVersion}): `;
+    const expected = `expected null (nothing saved yet) or an object matching ${shapeText(schema)}`;
+    if (typeof state !== "object" || Array.isArray(state))
+      throw new Error(`${prefix}${expected}; received ${statePreview(state)}. ${restoreFix}`);
+    const optional = new Set(schema.optional ?? []);
+    for (const [key, type] of Object.entries(schema.fields)) {
+      const value = (state as Record<string, Json>)[key];
+      if (value === undefined) {
+        if (optional.has(key)) continue;
+        throw new Error(
+          `${prefix}missing required field "${key}" (${type}). Expected ${shapeText(schema)}; received ${statePreview(state)}. ${restoreFix}`,
+        );
+      }
+      if (typeof value !== type)
+        throw new Error(
+          `${prefix}expected field "${key}" to be ${type}, received ${typeof value} (${statePreview(value)}). Expected ${shapeText(schema)}. ${restoreFix}`,
+        );
+    }
+    return true;
+  };
+}
+/** Default restore policy: fresh views get null; anything else explains the missing declaration. */
+function nullOnlyValidator(surfaceId: string): (state: Json) => boolean {
+  return (state) => {
+    if (state === null) return true;
+    throw new Error(
+      `Invalid restore state for "${surfaceId}": the surface received persisted state ${statePreview(state)} but declares neither stateSchema nor validateRestore, so only null is accepted. Declare a stateSchema (or a validateRestore predicate) on the surface, and bump stateVersion if the shape differs from older saves.`,
+    );
+  };
+}
+
 export interface AuthoredSurface extends Omit<
   SurfaceDescriptor,
   "id" | "capabilities" | "stateVersion" | "placements" | "clients"
@@ -26,6 +117,9 @@ export interface AuthoredSurface extends Omit<
   readonly clients?: readonly string[];
   readonly capabilities?: readonly string[];
   readonly stateVersion?: number;
+  /** Declared persisted shape; compiles to validateRestore with actionable errors. */
+  readonly stateSchema?: RestoreStateSchema;
+  /** Explicit predicate; takes precedence over stateSchema. */
   readonly validateRestore?: SurfaceContribution<SurfaceRenderer>["validateRestore"];
   createView(
     host: ClientHost,
@@ -85,11 +179,18 @@ export function defineExtension(source: ExtensionSource): AuthoredExtension {
       ? {
           client: (host: ClientHost) => ({
             manifest: pkg.manifest,
-            surfaces: surfaces.map((surface) => ({
-              id: source.id + "/" + surface.name,
-              validateRestore: surface.validateRestore ?? ((state: Json) => state === null),
-              createView: (session: ViewSession) => surface.createView(host, session),
-            })),
+            surfaces: surfaces.map((surface) => {
+              const id = source.id + "/" + surface.name;
+              return {
+                id,
+                validateRestore:
+                  surface.validateRestore ??
+                  (surface.stateSchema
+                    ? restoreStateValidator(id, surface.stateVersion ?? 1, surface.stateSchema)
+                    : nullOnlyValidator(id)),
+                createView: (session: ViewSession) => surface.createView(host, session),
+              };
+            }),
           }),
         }
       : {}),

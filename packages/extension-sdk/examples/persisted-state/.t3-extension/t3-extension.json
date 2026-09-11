@@ -1,0 +1,24 @@
+{
+  "format": 2,
+  "manifest": {
+    "id": "example.persisted-state",
+    "version": "1.0.0",
+    "apiVersion": 1,
+    "surfaces": [
+      {
+        "id": "example.persisted-state/view",
+        "title": "Persisted counter",
+        "scope": "thread",
+        "placements": ["side-panel"],
+        "clients": ["web", "desktop"],
+        "capabilities": [],
+        "stateVersion": 1
+      }
+    ]
+  },
+  "clientEntry": "client.mjs",
+  "tools": [],
+  "provides": [],
+  "requires": [],
+  "dependencies": []
+}

@@ -449,6 +449,25 @@ NodeTest.test("cached external-store snapshots are stable and deeply immutable",
 });
 
 NodeTest.test(
+  "restore and save rejections name the surface, the received state and the fix",
+  async () => {
+    const f = fixture();
+    const bad = await f.host.restore({ ...record(), restoreState: { wrong: true } });
+    NodeAssert.equal(f.host.snapshot(bad).status, "unavailable");
+    NodeAssert.match(
+      f.host.snapshot(bad).reason,
+      /"example\.counter\/view".*validateRestore rejected \{"wrong":true\}.*stateVersion 1.*fix the stored record or the validator/s,
+    );
+    const open = await f.host.open(record());
+    NodeAssert.throws(
+      () => f.sessions.at(-1).save({ wrong: true }),
+      /Invalid restore state for "example\.counter\/view".*rejected \{"wrong":true\}.*stateVersion 1.*fix the validator/s,
+    );
+    NodeAssert.equal(f.host.snapshot(open).status, "ready");
+    f.host.dispose();
+  },
+);
+NodeTest.test(
   "save notifies durable record observers once per burst without requiring publish",
   async () => {
     const host = createExtensionHost({ authorize: () => false });
