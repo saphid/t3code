@@ -44,16 +44,19 @@ const availableArea = (
 
 /**
  * Width is the player's only free dimension; height always follows the source
- * aspect ratio so the webview fills the box without letterboxing. The player
- * never grows past the source's own size (the guest keeps its CSS viewport, so
- * going bigger would only upscale), and a tight container wins over the minimum.
+ * aspect ratio so the webview fills the box without letterboxing. An explicit
+ * `aspect` wins over the source's — it is what the webview is actually
+ * painting, and the derived source can disagree with that. Width still caps
+ * at the source's own size (the guest keeps its CSS viewport, so a wider box
+ * would only upscale), and a tight container wins over the minimum.
  */
 function fitPreviewMiniPlayerWidth(
   desiredWidth: number,
   source: PreviewMiniPlayerSize,
   max: PreviewMiniPlayerSize,
+  aspect?: number,
 ): PreviewMiniPlayerSize {
-  const aspectRatio = source.width / source.height;
+  const aspectRatio = aspect ?? source.width / source.height;
   const width = Math.min(
     Math.max(
       desiredWidth,
@@ -67,10 +70,11 @@ function fitPreviewMiniPlayerWidth(
   return { width: Math.round(width), height: Math.round(width / aspectRatio) };
 }
 
-function defaultPreviewMiniPlayerWidth(source: PreviewMiniPlayerSize): number {
+function defaultPreviewMiniPlayerWidth(source: PreviewMiniPlayerSize, aspect?: number): number {
+  const aspectRatio = aspect ?? source.width / source.height;
   return Math.min(
     PREVIEW_MINI_PLAYER_DEFAULT_BOX.width,
-    (PREVIEW_MINI_PLAYER_DEFAULT_BOX.height * source.width) / source.height,
+    PREVIEW_MINI_PLAYER_DEFAULT_BOX.height * aspectRatio,
   );
 }
 
@@ -107,12 +111,15 @@ export function resolvePreviewMiniPlayerFrame(input: {
   readonly source: PreviewMiniPlayerSize;
   readonly container: PreviewMiniPlayerSize;
   readonly bottomInset?: number;
+  /** The aspect the webview is actually painting; beats the source's. */
+  readonly aspect?: number | undefined;
 }): PreviewMiniPlayerFrame {
-  const { width, position, source, container, bottomInset = 0 } = input;
+  const { width, position, source, container, bottomInset = 0, aspect } = input;
   const size = fitPreviewMiniPlayerWidth(
-    width ?? defaultPreviewMiniPlayerWidth(source),
+    width ?? defaultPreviewMiniPlayerWidth(source, aspect),
     source,
     availableArea(container, bottomInset),
+    aspect,
   );
   const anchored = position ?? {
     x: container.width - PREVIEW_MINI_PLAYER_EDGE_GAP - size.width,
@@ -135,8 +142,10 @@ export function resizePreviewMiniPlayer(input: {
   readonly source: PreviewMiniPlayerSize;
   readonly container: PreviewMiniPlayerSize;
   readonly bottomInset?: number;
+  /** The aspect the webview is actually painting; beats the source's. */
+  readonly aspect?: number | undefined;
 }): PreviewMiniPlayerFrame {
-  const { start, direction, delta, source, container, bottomInset = 0 } = input;
+  const { start, direction, delta, source, container, bottomInset = 0, aspect } = input;
   const east = direction.includes("east");
   const west = direction.includes("west");
   const north = direction.includes("north");
@@ -168,9 +177,10 @@ export function resizePreviewMiniPlayer(input: {
         : Math.abs(desiredWidth - start.width) / start.width >=
           Math.abs(desiredHeight - start.height) / start.height;
   const size = fitPreviewMiniPlayerWidth(
-    widthLeads ? desiredWidth : (desiredHeight * source.width) / source.height,
+    widthLeads ? desiredWidth : desiredHeight * (aspect ?? source.width / source.height),
     source,
     max,
+    aspect,
   );
   const position = clampPreviewMiniPlayerPosition(
     { x: west ? right - size.width : start.x, y: north ? bottom - size.height : start.y },

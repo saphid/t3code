@@ -79,6 +79,20 @@ export function ThreadPreviewMiniPlayer({ threadRef, tabId, bottomInset }: Props
   const fittedSourceContent = useBrowserSurfaceStore(
     (state) => state.byTabId[runtimeTabId]?.fittedSourceContent ?? null,
   );
+  // Aspect of the rect the hosted webview painted last layout. The derived
+  // source can disagree with it (a stale frozen size, a layout pass the
+  // webview took off its own container math), and the webview centers its
+  // picture inside whatever frame it is given — a frame at the wrong aspect
+  // shows dead translucent margins around the content. So the frame's shape
+  // follows the painted rectangle, while the derived source keeps bounding
+  // the 1:1 size. Selected as a primitive so content scroll/position reports
+  // don't re-render the player.
+  const paintedAspect = useBrowserSurfaceStore((state) => {
+    const content = state.byTabId[runtimeTabId]?.content;
+    return content && content.width > 0 && content.height > 0
+      ? content.width / content.height
+      : undefined;
+  });
   const source = resolvePreviewMiniPlayerSourceSize(
     snapshot?.viewport ?? FILL_PREVIEW_VIEWPORT,
     fittedSourceContent,
@@ -92,6 +106,7 @@ export function ThreadPreviewMiniPlayer({ threadRef, tabId, bottomInset }: Props
           source,
           container,
           bottomInset,
+          aspect: paintedAspect,
         })
       : null;
 
@@ -177,6 +192,7 @@ export function ThreadPreviewMiniPlayer({ threadRef, tabId, bottomInset }: Props
       source,
       container,
       bottomInset,
+      aspect: paintedAspect,
     });
     store.resize(threadRef, tabId, next.width);
     store.move(threadRef, tabId, { x: next.x, y: next.y });
