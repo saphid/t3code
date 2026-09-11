@@ -32,8 +32,8 @@ is stored on the server and never sent back to a client. Emails are blurred unti
 provider settings.
 
 The page opens on **7 days** of cost by project and remembers the period, metric, breakdown, grouping,
-and sort you last used. The **Cost** and **Tokens** switch changes every number on the page, including
-the headline total and which table column is emphasized. Every preset retains half-hour source
+and sort you last used. The **Cost** and **Tokens** switch changes the headline, chart, shares,
+and default row order. The table keeps both metrics available. Every preset retains half-hour source
 buckets, including **24 hours**, **30 days**, and **90 days**. The chart groups those buckets
 automatically: hourly for a day, six-hourly for up to ten days, daily beyond that. Use **Group**
 above the chart to pin **30 minutes** through **1 day** instead; the hover cursor still advances in
@@ -75,16 +75,33 @@ agent-instruction fan-out limits and the independent usage watcher for that laye
 Choose **Custom** in the date row to type a start and end day. Custom ranges can span up to 90
 days, and picking a preset again returns to a rolling window.
 
-The breakdown's **Thread** view drills into where the spend went: sessions group into the T3 Code
+Expand a project in the breakdown to see its threads: sessions group into the T3 Code
 thread they belong to, with sessions that never ran through T3 Code listed under the first thing
 you asked in them. Grok Build has no trusted prompt title, so its rows use a short session label.
 Expanding a row splits its daily model-priced cost into cache writes, cache
 reads, and fresh input plus output, alongside any Claude subagents the thread spawned.
 Provider-reported totals are not split into estimated components.
-Each connected environment contributes at most 40 rows, reserving room to group lower-cost rows
+Each connected environment contributes at most 40 rows per expanded project, reserving room to group lower-cost rows
 under **Other threads** by provider and project. Those grouped rows stay in the totals, so the
-thread view still adds up to the selected project or full summary.
+thread view still adds up to the selected project.
 Rows that map to a thread carry a link that opens it.
+
+Each expanded project has **All providers** and **All models** filters. Model filtering includes
+only that model's usage, even when a thread switched models or its subagents used another model.
+Daily charts, cache costs, and token counts follow the filter. Shares are within the filtered
+threads, and a filtered subtotal appears below them. The project row and main chart keep their
+full totals. **Clear filters** restores all threads. Model filtering requires an updated environment;
+older environments show an update message instead of returning misleading totals.
+
+Star a project to keep it above the other projects. Sorting applies within favorites and within
+the remaining projects. Click its star again to remove it from favorites.
+
+Use **Columns** to show or hide Cost, Share, Tokens, Input, Output, Cache reads, and Cache writes.
+The provider table also offers Sessions. Column choices and favorites are remembered on this client.
+The nested thread table uses the same columns, with its own sortable headers. **Input** counts
+uncached input; cache reads and cache writes are separate token counts. Output includes reasoning,
+so these four columns add up to Tokens without counting reasoning twice. Cache writes show the
+token count with its estimated cost beneath it. Narrow windows let the table scroll horizontally.
 
 The **Cache writes, estimated** total prices cache-creation tokens at each model's cache-write rate.
 It only applies to model-priced records that report cache-creation tokens. Rows without cache
@@ -93,11 +110,12 @@ Cache creation is a billing category, not evidence that a cache entry expired.
 
 Usage is attributed to the project whose folder a session ran in, including sessions driven
 outside T3 Code. The breakdown below the chart switches between **Projects**, **Providers**,
-**Models**, and **Threads**; the chart stacks by the same dimension, and each row keeps its color in
+and **Models**; the chart stacks by the same dimension, and each row keeps its color in
 both. Click a column header to sort by it and click again to reverse; the page remembers the sort
 for each dimension. Hovering a row highlights its series in the chart. The checkbox at the start of
 a row removes it from the chart and from the shown totals in the table footer, and the header
-checkbox shows or hides every row at once. Work outside every project and usage whose transcript has
+checkbox shows or hides every row at once. The table is the chart legend; there is no separate
+legend underneath the graph. Work outside every project and usage whose transcript has
 no trusted folder remain separate rows.
 
 If a window looks stale, refresh Limits to re-check every provider and hub.
@@ -134,6 +152,6 @@ CLIs may create their own internal subagents, which T3 cannot reject before the 
 them.
 
 The **Providers** view adds a session count per provider, and the **Models** view lists every model
-with its provider mark. Hiding a provider or model removes it from every view's chart, so the graph
-always shows exactly the rows that are checked. Grok Build remains present in provider totals and
+with its provider mark. Visibility is remembered separately for each breakdown, so the graph
+always shows exactly the rows checked in the current table. Grok Build remains present in provider totals and
 model rows even when its sessions have unknown project attribution.

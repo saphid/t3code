@@ -61,6 +61,42 @@ const NO_ATTRIBUTION: ThreadAttribution = {
 };
 
 describe("ThreadUsageAccumulator", () => {
+  it("filters model switches and subagents before calculating thread totals and daily costs", () => {
+    const accumulator = new ThreadUsageAccumulator({
+      timeZone: "UTC",
+      sinceDay: "2026-08-01",
+      untilDay: "2026-08-31",
+      rates,
+      model: { provider: "claude", model: "claude-fable-5" },
+    });
+    const main = { sessionKey: "claude:session-a", agentId: null };
+    accumulator.add(record(), main);
+    accumulator.add(record(), { ...main, agentId: "matching-agent" });
+    accumulator.add(record({ model: "different-model" }), { ...main, agentId: "other-agent" });
+    accumulator.add(record({ provider: "codex" }), main);
+    const expected = accumulate([
+      [record(), main],
+      [record(), { ...main, agentId: "matching-agent" }],
+    ]);
+    expect(accumulator.finish()).toEqual(expected);
+    const folded = foldThreadRows(accumulator.finish(), NO_ATTRIBUTION, { cap: 40 });
+    expect(folded.rows[0]?.totals.outputTokens).toBe(100);
+    expect(folded.rows[0]?.agents.map((agent) => agent.agentId)).toEqual(["matching-agent"]);
+  });
+
+  it("applies the model filter after choosing the final deduplicated snapshot", () => {
+    const accumulator = new ThreadUsageAccumulator({
+      timeZone: "UTC",
+      sinceDay: "2026-08-01",
+      untilDay: "2026-08-31",
+      rates,
+      model: { provider: "claude", model: "claude-fable-5" },
+    });
+    const context = { sessionKey: "claude:session-a", agentId: null };
+    accumulator.add(record({ dedupeKey: "changed-model" }), context);
+    accumulator.add(record({ dedupeKey: "changed-model", model: "different-model" }), context);
+    expect(accumulator.finish()).toEqual([]);
+  });
   it("groups records by session and splits subagent slices out", () => {
     const main = { sessionKey: "claude:session-a", agentId: null };
     const agent = { sessionKey: "claude:session-a", agentId: "agent-1" };

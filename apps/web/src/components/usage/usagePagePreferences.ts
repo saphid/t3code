@@ -4,11 +4,21 @@ import { getLocalStorageItem, setLocalStorageItem } from "../../hooks/useLocalSt
 
 const STORAGE_KEY = "t3code:usage-page-preferences:v2";
 
-const UsageDimensionSchema = Schema.Literals(["projects", "providers", "models", "threads"]);
+const UsageDimensionSchema = Schema.Literals(["projects", "providers", "models"]);
 export type UsageDimension = typeof UsageDimensionSchema.Type;
 
 const BreakdownSortSchema = Schema.Struct({
-  column: Schema.Literals(["name", "cost", "tokens", "share", "cacheWrites", "sessions"]),
+  column: Schema.Literals([
+    "name",
+    "cost",
+    "tokens",
+    "share",
+    "cacheWrites",
+    "cacheReads",
+    "input",
+    "output",
+    "sessions",
+  ]),
   direction: Schema.Literals(["asc", "desc"]),
 });
 export type BreakdownSort = typeof BreakdownSortSchema.Type;
@@ -19,8 +29,23 @@ const OptionalSort = Schema.NullOr(BreakdownSortSchema);
 const UsagePagePreferencesSchema = Schema.Struct({
   metric: Schema.Literals(["cost", "tokens"]),
   windowDays: Schema.Literals([1, 7, 30, 90]),
-  dimension: UsageDimensionSchema,
+  dimension: Schema.Literals(["projects", "providers", "models", "threads"]),
   grouping: Schema.Literals(["auto", "30m", "1h", "6h", "12h", "1d"]),
+  hiddenColumns: Schema.optional(
+    Schema.Array(
+      Schema.Literals([
+        "cost",
+        "tokens",
+        "share",
+        "cacheWrites",
+        "cacheReads",
+        "input",
+        "output",
+        "sessions",
+      ]),
+    ),
+  ),
+  favoriteProjects: Schema.optional(Schema.Array(Schema.String)),
   sort: Schema.Struct({
     projects: OptionalSort,
     providers: OptionalSort,
@@ -28,7 +53,9 @@ const UsagePagePreferencesSchema = Schema.Struct({
     threads: OptionalSort,
   }),
 });
-export type UsagePagePreferences = typeof UsagePagePreferencesSchema.Type;
+export type UsagePagePreferences = Omit<typeof UsagePagePreferencesSchema.Type, "dimension"> & {
+  readonly dimension: UsageDimension;
+};
 
 export const DEFAULT_USAGE_PAGE_PREFERENCES: UsagePagePreferences = {
   metric: "cost",
@@ -46,9 +73,9 @@ export const DEFAULT_USAGE_PAGE_PREFERENCES: UsagePagePreferences = {
 export function readUsagePagePreferences(): UsagePagePreferences {
   if (typeof window === "undefined") return DEFAULT_USAGE_PAGE_PREFERENCES;
   try {
-    return (
-      getLocalStorageItem(STORAGE_KEY, UsagePagePreferencesSchema) ?? DEFAULT_USAGE_PAGE_PREFERENCES
-    );
+    const stored = getLocalStorageItem(STORAGE_KEY, UsagePagePreferencesSchema);
+    if (stored === null) return DEFAULT_USAGE_PAGE_PREFERENCES;
+    return { ...stored, dimension: stored.dimension === "threads" ? "projects" : stored.dimension };
   } catch (error) {
     console.error("Could not read Usage page preferences.", error);
     return DEFAULT_USAGE_PAGE_PREFERENCES;

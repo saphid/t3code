@@ -15,6 +15,7 @@ import type {
   UsageAgentRow,
   UsageProviderKind,
   UsageThreadDayCost,
+  UsageThreadBreakdownInput,
   UsageThreadRow,
   UsageTokenTotals,
 } from "@t3tools/contracts";
@@ -80,6 +81,7 @@ interface MutableSessionGroup {
 }
 
 export interface ThreadUsageOptions {
+  readonly model?: UsageThreadBreakdownInput["model"];
   readonly timeZone: string;
   readonly sinceDay: string;
   readonly untilDay: string;
@@ -157,6 +159,9 @@ export class ThreadUsageAccumulator {
     context: ThreadRecordContext,
     groups: Map<string, MutableSessionGroup>,
   ): void {
+    const model = this.#options.model;
+    if (model !== undefined && (record.provider !== model.provider || record.model !== model.model))
+      return;
     const day = this.#toDay(record.timestampMs);
     const resolvedProject = this.#options.resolveProject?.(record.cwd) ?? null;
     const projectKey =

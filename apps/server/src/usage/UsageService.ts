@@ -1775,6 +1775,7 @@ export const make = Effect.gen(function* () {
       (exactWindow?.sinceTimeMs ?? DateTime.toEpochMillis(windowStart.value)) - MTIME_SLACK_MS;
 
     const accumulator = new ThreadUsageAccumulator({
+      ...(input.model === undefined ? {} : { model: input.model }),
       timeZone: input.timeZone,
       sinceDay: input.sinceDay,
       untilDay: input.untilDay,

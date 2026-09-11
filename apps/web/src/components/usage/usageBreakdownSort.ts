@@ -14,11 +14,20 @@ export interface SortableBreakdownRow {
   readonly cacheWriteUsd: number | null;
   /** `null` when the dimension does not count sessions. */
   readonly sessions: number | null;
+  readonly inputTokens?: number | null;
+  readonly outputTokens?: number | null;
+  readonly cacheReadTokens?: number | null;
 }
 
 /** Until the user picks a column, rows follow the metric the page is showing. */
-export function defaultBreakdownSort(metric: UsageStackMetric): BreakdownSort {
-  return { column: metric === "cost" ? "cost" : "tokens", direction: "desc" };
+export function defaultBreakdownSort(
+  metric: UsageStackMetric,
+  hiddenColumns?: readonly BreakdownColumn[],
+): BreakdownSort {
+  const column = metric === "cost" ? "cost" : "tokens";
+  return hiddenColumns?.includes(column)
+    ? { column: "name", direction: "asc" }
+    : { column, direction: "desc" };
 }
 
 /** Clicking the active column flips it; a new column starts in its natural direction. */
@@ -43,15 +52,21 @@ function sortValue(row: SortableBreakdownRow, column: BreakdownColumn): number |
     case "share":
       return row.share;
     case "cacheWrites":
-      return row.cacheWriteTokens === 0 ? 0 : row.cacheWriteUsd;
+      return row.cacheWriteTokens;
     case "sessions":
       return row.sessions;
+    case "input":
+      return row.inputTokens ?? null;
+    case "output":
+      return row.outputTokens ?? null;
+    case "cacheReads":
+      return row.cacheReadTokens ?? null;
   }
 }
 
 /**
  * Orders rows for display. Rows with no value for the column (unpriced cache
- * writes, dimensions without sessions) sink to the bottom in either direction,
+ * components, dimensions without sessions) sink to the bottom in either direction,
  * and ties keep their incoming order so re-sorting never shuffles equal rows.
  */
 export function sortBreakdownRows<T extends SortableBreakdownRow>(

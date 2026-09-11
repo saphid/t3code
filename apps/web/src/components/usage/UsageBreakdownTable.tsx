@@ -1,12 +1,19 @@
 import type { UsageProviderKind } from "@t3tools/contracts";
-import { ArrowDownIcon, ArrowUpIcon } from "lucide-react";
-import { useMemo } from "react";
+import {
+  ArrowDownIcon,
+  ArrowUpIcon,
+  ChevronDownIcon,
+  ChevronRightIcon,
+  StarIcon,
+} from "lucide-react";
+import { Fragment, useMemo, useState, type ReactNode } from "react";
 
-import { formatCount, formatPercent, formatTokens, formatUsd } from "@t3tools/shared/usageFormat";
+import { formatCount } from "@t3tools/shared/usageFormat";
 
 import { cn } from "../../lib/utils";
 import { Checkbox } from "../ui/checkbox";
-import { UsageCacheWriteCell } from "./UsageCacheWriteCell";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { USAGE_COLUMNS, UsageMetricCells, type UsageMetricColumn } from "./UsageColumns";
 import {
   sortBreakdownRows,
   type BreakdownColumn,
@@ -73,15 +80,12 @@ export function SortableHeader({
   );
 }
 
-/**
- * One sortable breakdown table for a dimension (projects, providers, or
- * models). Rows share keys and colors with the chart: hovering a row highlights
- * its series, and the checkbox removes it from the chart and the shown totals.
- */
+const NO_HIDDEN_COLUMNS: readonly UsageMetricColumn[] = [];
+
+/** Colored rows are the chart legend; projects expand into their own threads. */
 export function UsageBreakdownTable({
   rows,
   nameLabel,
-  metric,
   sort,
   onSort,
   hidden,
@@ -91,6 +95,10 @@ export function UsageBreakdownTable({
   onActiveKeyChange,
   showSessions = false,
   ariaLabel,
+  hiddenColumns = NO_HIDDEN_COLUMNS,
+  favoriteProjects,
+  onToggleFavorite,
+  renderThreads,
 }: {
   readonly rows: readonly BreakdownTableRow[];
   readonly nameLabel: string;
@@ -104,185 +112,209 @@ export function UsageBreakdownTable({
   readonly onActiveKeyChange: (key: string | null) => void;
   readonly showSessions?: boolean;
   readonly ariaLabel: string;
+  readonly hiddenColumns?: readonly UsageMetricColumn[];
+  readonly favoriteProjects?: readonly string[];
+  readonly onToggleFavorite?: (key: string) => void;
+  readonly renderThreads?: (key: string, columns: readonly UsageMetricColumn[]) => ReactNode;
 }) {
-  const sorted = useMemo(() => sortBreakdownRows(rows, sort), [rows, sort]);
-  const shown = useMemo(() => rows.filter((row) => !hidden.has(row.key)), [hidden, rows]);
+  const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set());
+  const sorted = useMemo(() => {
+    const ordered = sortBreakdownRows(rows, sort);
+    const favorites = new Set(favoriteProjects);
+    return [
+      ...ordered.filter((row) => favorites.has(row.key)),
+      ...ordered.filter((row) => !favorites.has(row.key)),
+    ];
+  }, [rows, sort, favoriteProjects]);
+  const columns = USAGE_COLUMNS.filter(
+    ({ key }) => !hiddenColumns.includes(key) && (key !== "sessions" || showSessions),
+  );
+  const columnKeys = columns.map(({ key }) => key);
+  const shown = rows.filter((row) => !hidden.has(row.key));
   const hiddenCount = rows.length - shown.length;
-  const shownTotals = useMemo(() => {
-    let costUsd = 0;
-    let totalTokens = 0;
-    let share = 0;
-    let cacheWriteTokens = 0;
-    let cacheWriteUsd: number | null = 0;
-    let sessions = 0;
-    for (const row of shown) {
-      costUsd += row.costUsd;
-      totalTokens += row.totalTokens;
-      share += row.share;
-      cacheWriteTokens += row.cacheWriteTokens;
-      if (row.cacheWriteTokens > 0 && row.cacheWriteUsd === null) cacheWriteUsd = null;
-      else if (cacheWriteUsd !== null) cacheWriteUsd += row.cacheWriteUsd ?? 0;
-      sessions += row.sessions ?? 0;
-    }
-    return { costUsd, totalTokens, share, cacheWriteTokens, cacheWriteUsd, sessions };
-  }, [shown]);
-  const columnCount = showSessions ? 7 : 6;
-  const costEmphasis = metric === "cost" ? "text-foreground" : "text-muted-foreground";
-  const tokenEmphasis = metric === "tokens" ? "text-foreground" : "text-muted-foreground";
-
+  const sum = (key: "inputTokens" | "outputTokens" | "cacheReadTokens" | "sessions") =>
+    shown.some((row) => row[key] == null)
+      ? null
+      : shown.reduce((total, row) => total + (row[key] ?? 0), 0);
+  const shownTotals = {
+    costUsd: shown.reduce((total, row) => total + row.costUsd, 0),
+    totalTokens: shown.reduce((total, row) => total + row.totalTokens, 0),
+    share: shown.reduce((total, row) => total + row.share, 0),
+    cacheWriteTokens: shown.reduce((total, row) => total + row.cacheWriteTokens, 0),
+    cacheWriteUsd: shown.some((row) => row.cacheWriteTokens > 0 && row.cacheWriteUsd === null)
+      ? null
+      : shown.reduce((total, row) => total + (row.cacheWriteUsd ?? 0), 0),
+    inputTokens: sum("inputTokens"),
+    outputTokens: sum("outputTokens"),
+    cacheReadTokens: sum("cacheReadTokens"),
+    sessions: sum("sessions"),
+  };
   return (
-    <table className="w-full table-fixed text-sm" aria-label={ariaLabel}>
-      <colgroup>
-        <col className="w-9" />
-        <col />
-        <col className="w-[13%]" />
-        <col className="w-[12%]" />
-        <col className="w-[17%]" />
-        <col className="w-[14%]" />
-        {showSessions ? <col className="w-[11%]" /> : null}
-      </colgroup>
-      <thead>
-        <tr className="border-b border-border text-xs text-muted-foreground">
-          <th scope="col" className="py-2 text-left">
-            <Checkbox
-              checked={hiddenCount === 0 && rows.length > 0}
-              indeterminate={hiddenCount > 0 && hiddenCount < rows.length}
-              onCheckedChange={(checked) => onSetAllHidden(!checked)}
-              aria-label={hiddenCount === 0 ? "Hide all rows" : "Show all rows"}
-              disabled={rows.length === 0}
+    <div className="@container min-w-0 overflow-x-auto">
+      <table className="w-full text-sm" aria-label={ariaLabel}>
+        <thead>
+          <tr className="border-b border-border text-xs text-muted-foreground">
+            <th scope="col" className="w-8 py-2">
+              <Checkbox
+                checked={hiddenCount === 0 && rows.length > 0}
+                indeterminate={hiddenCount > 0 && hiddenCount < rows.length}
+                onCheckedChange={(checked) => onSetAllHidden(!checked)}
+                aria-label={hiddenCount === 0 ? "Hide all rows" : "Show all rows"}
+                disabled={rows.length === 0}
+              />
+            </th>
+            <SortableHeader
+              column="name"
+              label={nameLabel}
+              sort={sort}
+              onSort={onSort}
+              align="left"
+              className="min-w-64"
             />
-          </th>
-          <SortableHeader
-            column="name"
-            label={nameLabel}
-            sort={sort}
-            onSort={onSort}
-            align="left"
-          />
-          <SortableHeader column="cost" label="Cost" sort={sort} onSort={onSort} />
-          <SortableHeader column="tokens" label="Tokens" sort={sort} onSort={onSort} />
-          <SortableHeader column="share" label="Share" sort={sort} onSort={onSort} />
-          <SortableHeader column="cacheWrites" label="Cache writes" sort={sort} onSort={onSort} />
-          {showSessions ? (
-            <SortableHeader column="sessions" label="Sessions" sort={sort} onSort={onSort} />
-          ) : null}
-        </tr>
-      </thead>
-      <tbody>
-        {sorted.length === 0 ? (
-          <tr>
-            <td colSpan={columnCount} className="py-6 text-center text-muted-foreground">
-              No activity in this window.
-            </td>
+            {columns.map(({ key, label }) => (
+              <SortableHeader
+                key={key}
+                column={key}
+                label={label}
+                sort={sort}
+                onSort={onSort}
+                className="px-2 whitespace-nowrap"
+              />
+            ))}
           </tr>
-        ) : (
-          sorted.map((row) => {
-            const isHidden = hidden.has(row.key);
-            const highlighted = activeKey === row.key;
-            const Mark =
-              row.provider === undefined ? null : PROVIDER_PRESENTATION[row.provider].mark;
-            return (
-              <tr
-                key={row.key}
-                onPointerEnter={() => onActiveKeyChange(row.key)}
-                onPointerLeave={() => onActiveKeyChange(null)}
-                className={cn(
-                  "border-b border-border/50",
-                  highlighted && "bg-muted/60",
-                  isHidden && "text-muted-foreground",
-                  activeKey !== null && !highlighted && "opacity-60",
-                )}
-              >
-                <td className="py-1.5">
-                  <Checkbox
-                    checked={!isHidden}
-                    onCheckedChange={() => onToggleHidden(row.key)}
-                    aria-label={`${isHidden ? "Show" : "Hide"} ${row.label}`}
-                  />
-                </td>
-                <td className="py-1.5">
-                  <span className="flex min-w-0 items-center gap-2">
-                    <span
-                      aria-hidden
-                      className={cn("size-2.5 shrink-0 rounded-[3px]", isHidden && "opacity-30")}
-                      style={{ backgroundColor: row.color }}
-                    />
-                    {Mark === null ? null : (
-                      <Mark className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />
+        </thead>
+        <tbody>
+          {sorted.length === 0 ? (
+            <tr>
+              <td colSpan={columns.length + 2} className="py-6 text-center text-muted-foreground">
+                No activity in this window.
+              </td>
+            </tr>
+          ) : (
+            sorted.map((row) => {
+              const isHidden = hidden.has(row.key);
+              const favorite = favoriteProjects?.includes(row.key) ?? false;
+              const open = expanded.has(row.key);
+              const Chevron = open ? ChevronDownIcon : ChevronRightIcon;
+              const canExpand = renderThreads !== undefined && row.key !== "unknown";
+              const Mark =
+                row.provider === undefined ? null : PROVIDER_PRESENTATION[row.provider].mark;
+              return (
+                <Fragment key={row.key}>
+                  <tr
+                    onPointerEnter={() => onActiveKeyChange(row.key)}
+                    onPointerLeave={() => onActiveKeyChange(null)}
+                    className={cn(
+                      "border-b border-border/50",
+                      activeKey === row.key && "bg-muted/60",
+                      isHidden && "text-muted-foreground",
                     )}
-                    <span className={cn("truncate", isHidden && "line-through")}>{row.label}</span>
-                  </span>
-                </td>
-                <td className={cn("py-1.5 text-right tabular-nums", costEmphasis)}>
-                  {formatUsd(row.costUsd)}
-                </td>
-                <td className={cn("py-1.5 text-right tabular-nums", tokenEmphasis)}>
-                  {formatTokens(row.totalTokens)}
-                </td>
-                <td className="py-1.5 text-right tabular-nums text-muted-foreground">
-                  <ShareCell share={row.share} color={row.color} muted={isHidden} />
-                </td>
-                <UsageCacheWriteCell
-                  cacheWriteTokens={row.cacheWriteTokens}
-                  cacheWriteUsd={row.cacheWriteUsd}
-                />
-                {showSessions ? (
-                  <td className="py-1.5 text-right tabular-nums text-muted-foreground">
-                    {row.sessions === null ? "-" : formatCount(row.sessions)}
-                  </td>
-                ) : null}
-              </tr>
-            );
-          })
-        )}
-      </tbody>
-      {rows.length > 1 ? (
-        <tfoot>
-          <tr className="text-xs text-muted-foreground">
-            <td />
-            <td className="py-2">
-              {hiddenCount > 0
-                ? `Shown, ${formatCount(shown.length)} of ${formatCount(rows.length)}`
-                : "Total"}
-            </td>
-            <td className="py-2 text-right tabular-nums">{formatUsd(shownTotals.costUsd)}</td>
-            <td className="py-2 text-right tabular-nums">
-              {formatTokens(shownTotals.totalTokens)}
-            </td>
-            <td className="py-2 text-right tabular-nums">{formatPercent(shownTotals.share)}</td>
-            <UsageCacheWriteCell
-              cacheWriteTokens={shownTotals.cacheWriteTokens}
-              cacheWriteUsd={shownTotals.cacheWriteUsd}
-            />
-            {showSessions ? (
-              <td className="py-2 text-right tabular-nums">{formatCount(shownTotals.sessions)}</td>
-            ) : null}
-          </tr>
-        </tfoot>
-      ) : null}
-    </table>
+                  >
+                    <td className="py-2">
+                      <Checkbox
+                        checked={!isHidden}
+                        onCheckedChange={() => onToggleHidden(row.key)}
+                        aria-label={`${isHidden ? "Show" : "Hide"} ${row.label}`}
+                      />
+                    </td>
+                    <td className="py-2">
+                      <div className="flex items-center gap-2 pr-4">
+                        {onToggleFavorite && row.key !== "unknown" && row.key !== "outside" ? (
+                          <button
+                            type="button"
+                            aria-label={`${favorite ? "Unfavorite" : "Favorite"} ${row.label}`}
+                            aria-pressed={favorite}
+                            onClick={() => onToggleFavorite(row.key)}
+                            className={cn(
+                              "shrink-0 rounded-sm p-1 outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                              favorite
+                                ? "text-amber-500"
+                                : "text-muted-foreground/50 hover:text-amber-500",
+                            )}
+                          >
+                            <StarIcon
+                              aria-hidden
+                              className="size-3.5"
+                              fill={favorite ? "currentColor" : "none"}
+                            />
+                          </button>
+                        ) : null}
+                        <span
+                          aria-hidden
+                          className={cn(
+                            "size-2.5 shrink-0 rounded-[3px]",
+                            isHidden && "opacity-30",
+                          )}
+                          style={{ backgroundColor: row.color }}
+                        />
+                        {Mark ? (
+                          <Mark aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />
+                        ) : null}
+                        {canExpand ? (
+                          <button
+                            type="button"
+                            aria-expanded={open}
+                            aria-label={`${open ? "Collapse" : "Expand"} ${row.label} threads`}
+                            onClick={() =>
+                              setExpanded((current) => {
+                                const next = new Set(current);
+                                if (next.has(row.key)) next.delete(row.key);
+                                else next.add(row.key);
+                                return next;
+                              })
+                            }
+                            className={cn(
+                              "flex min-w-0 items-center gap-1.5 rounded-sm text-left outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                              isHidden && "line-through",
+                            )}
+                          >
+                            <RowLabel label={row.label} />
+                            <Chevron
+                              aria-hidden
+                              className="size-3.5 shrink-0 text-muted-foreground"
+                            />
+                          </button>
+                        ) : (
+                          <RowLabel label={row.label} />
+                        )}
+                      </div>
+                    </td>
+                    <UsageMetricCells
+                      row={row}
+                      columns={columnKeys}
+                      color={row.color}
+                      muted={isHidden}
+                    />
+                  </tr>
+                  {canExpand && open ? renderThreads(row.key, columnKeys) : null}
+                </Fragment>
+              );
+            })
+          )}
+        </tbody>
+        {rows.length > 0 ? (
+          <tfoot>
+            <tr className="text-xs text-muted-foreground">
+              <td />
+              <td className="py-3">
+                {hiddenCount > 0
+                  ? `Shown, ${formatCount(shown.length)} of ${formatCount(rows.length)}`
+                  : "Total"}
+              </td>
+              <UsageMetricCells row={shownTotals} columns={columnKeys} />
+            </tr>
+          </tfoot>
+        ) : null}
+      </table>
+    </div>
   );
 }
 
-/** Percent with a small proportional bar so the eye can rank rows without reading. */
-function ShareCell({
-  share,
-  color,
-  muted,
-}: {
-  readonly share: number;
-  readonly color: string;
-  readonly muted: boolean;
-}) {
+function RowLabel({ label }: { readonly label: string }) {
   return (
-    <span className="inline-flex items-center justify-end gap-2">
-      <span aria-hidden className="h-1.5 w-14 overflow-hidden rounded-full bg-muted">
-        <span
-          className={cn("block h-full rounded-full", muted && "opacity-30")}
-          style={{ width: `${Math.min(100, Math.max(0, share * 100))}%`, backgroundColor: color }}
-        />
-      </span>
-      <span className="w-12 text-right">{formatPercent(share)}</span>
-    </span>
+    <Tooltip>
+      <TooltipTrigger render={<span className="block max-w-64 truncate" />}>{label}</TooltipTrigger>
+      <TooltipPopup>{label}</TooltipPopup>
+    </Tooltip>
   );
 }

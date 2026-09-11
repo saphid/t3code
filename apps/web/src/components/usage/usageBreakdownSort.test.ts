@@ -77,12 +77,12 @@ describe("sortBreakdownRows", () => {
     ]);
   });
 
-  it("sinks unpriced cache writes to the bottom in either direction", () => {
+  it("sorts cache-write token counts even when their price is unavailable", () => {
     expect(labels(sortBreakdownRows(rows, { column: "cacheWrites", direction: "desc" }))).toEqual([
+      "Orbit",
       "atlas",
       "Pipeline 10",
       "Pipeline 2",
-      "Orbit",
     ]);
     expect(labels(sortBreakdownRows(rows, { column: "cacheWrites", direction: "asc" }))).toEqual([
       "Pipeline 2",
@@ -90,6 +90,25 @@ describe("sortBreakdownRows", () => {
       "atlas",
       "Orbit",
     ]);
+  });
+
+  it("sorts component counts and sinks missing data in either direction", () => {
+    const components = [
+      row("Unknown"),
+      row("Small", { inputTokens: 1 }),
+      row("Large", { inputTokens: 9 }),
+    ];
+    expect(labels(sortBreakdownRows(components, { column: "input", direction: "desc" }))).toEqual([
+      "Large",
+      "Small",
+      "Unknown",
+    ]);
+    expect(labels(sortBreakdownRows(components, { column: "input", direction: "asc" }))).toEqual([
+      "Small",
+      "Large",
+      "Unknown",
+    ]);
+    expect(defaultBreakdownSort("cost", ["cost"])).toEqual({ column: "name", direction: "asc" });
   });
 
   it("does not mutate its input", () => {

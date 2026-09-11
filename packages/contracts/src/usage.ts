@@ -21,7 +21,7 @@ import { NonNegativeInt, ProjectId, ThreadId, TrimmedNonEmptyString } from "./ba
  * client renders partial coverage when an environment reports an older version
  * rather than failing the whole page.
  */
-export const USAGE_CONTRACT_VERSION = 13 as const;
+export const USAGE_CONTRACT_VERSION = 14 as const;
 
 /**
  * Oldest {@link UsageSummary} version a current client will still merge.
@@ -30,7 +30,8 @@ export const USAGE_CONTRACT_VERSION = 13 as const;
  * v8 adds its optional stable `projectId`, and v9 distinguishes outside
  * projects from unknown attribution, and v10 adds the separate thread-breakdown
  * request. v11 adds optional cache-write costs, and v12 adds optional
- * cache-write TTL counters. v13 adds half-hour timeline buckets. v4/v5
+ * cache-write TTL counters. v13 adds half-hour timeline buckets. v14 supports
+ * provider/model filtering in thread breakdown requests. v4/v5
  * summaries remain decodable for mixed-version
  * clients, but summaries without coverage are not merged because the client
  * cannot treat them as bounded snapshots.
@@ -40,6 +41,8 @@ export const USAGE_MERGE_COMPATIBLE_SINCE = 4 as const;
 export const USAGE_PROJECT_ATTRIBUTION_SINCE = 9 as const;
 /** First contract version that exposes the thread-breakdown RPC. */
 export const USAGE_THREAD_BREAKDOWN_SINCE = 10 as const;
+/** First version that filters thread records by provider and model before aggregation. */
+export const USAGE_THREAD_MODEL_FILTER_SINCE = 14 as const;
 
 export const UsageProviderKind = Schema.Literals(["claude", "codex", "grok"]);
 export type UsageProviderKind = typeof UsageProviderKind.Type;
@@ -274,6 +277,10 @@ export const UsageThreadBreakdownInput = Schema.Struct({
   projectKey: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   /** Providers this environment owns after physical-source de-duplication. */
   providers: Schema.optional(Schema.Array(UsageProviderKind)),
+  /** Restrict every thread total and detail to this provider/model pair. */
+  model: Schema.optional(
+    Schema.Struct({ provider: UsageProviderKind, model: TrimmedNonEmptyString }),
+  ),
 });
 export type UsageThreadBreakdownInput = typeof UsageThreadBreakdownInput.Type;
 

@@ -37,7 +37,9 @@ import { WorkspacePageHeader } from "../WorkspacePageHeader";
 import { UsageBreakdownTable, type BreakdownTableRow } from "./UsageBreakdownTable";
 import { UsageLimitsSection } from "./UsageLimits";
 import { UsagePriceOverrides } from "./UsagePriceOverrides";
-import { UsageThreadTable } from "./UsageThreadTable";
+import { UsageProjectThreads } from "./UsageProjectThreads";
+import { UsageColumns } from "./UsageColumns";
+import { usageTokenColumns } from "./usageTokenColumns";
 import { evaluateDailyUsageBudget } from "./usageBudget";
 import {
   defaultBreakdownSort,
@@ -73,7 +75,6 @@ const DIMENSION_OPTIONS: readonly { value: UsageDimension; label: string }[] = [
   { value: "projects", label: "Projects" },
   { value: "providers", label: "Providers" },
   { value: "models", label: "Models" },
-  { value: "threads", label: "Threads" },
 ];
 const GROUPING_OPTIONS: readonly { value: UsagePagePreferences["grouping"]; label: string }[] = [
   { value: "auto", label: "Auto" },
@@ -169,12 +170,14 @@ export function UsagePage() {
   const unknownTotals = useMemo(() => {
     let costUsd = 0;
     let totalTokens = 0;
+    let cacheWriteTokens = 0;
     for (const cell of merged.timeline) {
       if (cell.projectKey !== undefined) continue;
       costUsd += cell.costUsd;
       totalTokens += cell.totalTokens;
+      cacheWriteTokens += cell.totals?.cacheCreationTokens ?? 0;
     }
-    return costUsd > 0 || totalTokens > 0 ? { costUsd, totalTokens } : null;
+    return costUsd > 0 || totalTokens > 0 ? { costUsd, totalTokens, cacheWriteTokens } : null;
   }, [merged.timeline]);
 
   const projectSeries = useMemo<readonly UsageChartSeries[]>(() => {
@@ -207,7 +210,7 @@ export function UsagePage() {
     [merged.models],
   );
 
-  const seriesMode: UsageSeriesMode = dimension === "threads" ? "projects" : dimension;
+  const seriesMode: UsageSeriesMode = dimension;
   const series =
     seriesMode === "projects"
       ? projectSeries
@@ -224,18 +227,54 @@ export function UsagePage() {
     () => new Set(series.filter((entry) => !hiddenForSeries.has(entry.key)).map((e) => e.key)),
     [hiddenForSeries, series],
   );
-  // Hidden rows in any dimension leave the chart, so the picture always matches
-  // the "Shown" footer of whichever table is open.
   const chartCells = useMemo(
     () =>
       merged.timeline.filter(
         (cell) =>
-          !hiddenProjects.has(projectSeriesKey(cell.projectKey)) &&
-          !hiddenProviders.has(cell.provider) &&
-          !hiddenModels.has(modelSeriesKey(cell.provider, cell.model)),
+          !hiddenForSeries.has(
+            seriesMode === "projects"
+              ? projectSeriesKey(cell.projectKey)
+              : seriesMode === "providers"
+                ? cell.provider
+                : modelSeriesKey(cell.provider, cell.model),
+          ),
       ),
-    [hiddenModels, hiddenProjects, hiddenProviders, merged.timeline],
+    [hiddenForSeries, seriesMode, merged.timeline],
   );
+  const tokenColumns = useMemo(
+    () => ({
+      projects: usageTokenColumns(merged.timeline, (cell) => projectSeriesKey(cell.projectKey)),
+      providers: usageTokenColumns(merged.timeline, (cell) => cell.provider),
+      models: usageTokenColumns(merged.timeline, (cell) =>
+        modelSeriesKey(cell.provider, cell.model),
+      ),
+    }),
+    [merged.timeline],
+  );
+  const modelsByProject = useMemo(() => {
+    const byProject = new Map<
+      string,
+      Map<string, { provider: UsageProviderKind; model: string }>
+    >();
+    for (const cell of merged.timeline) {
+      const key = projectSeriesKey(cell.projectKey);
+      const models =
+        byProject.get(key) ?? new Map<string, { provider: UsageProviderKind; model: string }>();
+      models.set(modelSeriesKey(cell.provider, cell.model), {
+        provider: cell.provider,
+        model: cell.model,
+      });
+      byProject.set(key, models);
+    }
+    return new Map(
+      [...byProject].map(([key, models]) => [
+        key,
+        [...models.values()].sort(
+          (a, b) => a.model.localeCompare(b.model) || a.provider.localeCompare(b.provider),
+        ),
+      ]),
+    );
+  }, [merged.timeline]);
 
   const colorByKey = useMemo(
     () =>
@@ -249,6 +288,7 @@ export function UsagePage() {
         key,
         label: projectLabel(project),
         color: colorByKey.get(key) ?? UNKNOWN_COLOR,
+        ...tokenColumns.projects.get(key),
         costUsd: project.costUsd,
         totalTokens: project.totalTokens,
         share:
@@ -261,6 +301,7 @@ export function UsagePage() {
     if (unknownTotals !== null) {
       rows.push({
         key: "unknown",
+        ...tokenColumns.projects.get("unknown"),
         label: "Unknown attribution",
         color: UNKNOWN_COLOR,
         costUsd: unknownTotals.costUsd,
@@ -269,13 +310,21 @@ export function UsagePage() {
           metric === "cost"
             ? ratio(unknownTotals.costUsd, merged.costUsd)
             : ratio(unknownTotals.totalTokens, merged.totalTokens),
-        cacheWriteTokens: 0,
-        cacheWriteUsd: 0,
+        cacheWriteTokens: unknownTotals.cacheWriteTokens,
+        cacheWriteUsd: unknownTotals.cacheWriteTokens === 0 ? 0 : null,
         sessions: null,
       });
     }
     return rows;
-  }, [colorByKey, merged.costUsd, merged.projects, merged.totalTokens, metric, unknownTotals]);
+  }, [
+    colorByKey,
+    merged.costUsd,
+    merged.projects,
+    merged.totalTokens,
+    metric,
+    unknownTotals,
+    tokenColumns.projects,
+  ]);
   const providerRows = useMemo<readonly BreakdownTableRow[]>(
     () =>
       activeProviders.map((provider) => {
@@ -289,6 +338,7 @@ export function UsagePage() {
           : models.reduce((sum, model) => sum + (model.cacheWriteUsd ?? 0), 0);
         return {
           key: provider,
+          ...tokenColumns.providers.get(provider),
           label: PROVIDER_PRESENTATION[provider].label,
           color: PROVIDER_PRESENTATION[provider].color,
           costUsd: totals?.costUsd ?? 0,
@@ -299,7 +349,7 @@ export function UsagePage() {
           sessions: totals?.sessions ?? 0,
         };
       }),
-    [activeProviders, merged.models, merged.providers, metric],
+    [activeProviders, merged.models, merged.providers, metric, tokenColumns.providers],
   );
   const modelRows = useMemo<readonly BreakdownTableRow[]>(
     () =>
@@ -307,6 +357,7 @@ export function UsagePage() {
         const key = modelSeriesKey(model.provider, model.model);
         return {
           key,
+          ...tokenColumns.models.get(key),
           label: model.model,
           color: colorByKey.get(key) ?? UNKNOWN_COLOR,
           provider: model.provider,
@@ -318,10 +369,11 @@ export function UsagePage() {
           sessions: null,
         };
       }),
-    [colorByKey, merged.models, merged.totalTokens, metric],
+    [colorByKey, merged.models, merged.totalTokens, metric, tokenColumns.models],
   );
 
-  const sort = preferences.sort[dimension] ?? defaultBreakdownSort(metric);
+  const sort =
+    preferences.sort[dimension] ?? defaultBreakdownSort(metric, preferences.hiddenColumns);
   const onSort = (column: BreakdownColumn) =>
     updatePreferences({
       sort: { ...preferences.sort, [dimension]: toggleBreakdownSort(sort, column) },
@@ -501,7 +553,7 @@ export function UsagePage() {
                         : " · session count unavailable at this cutoff"}
                     </div>
                   </div>
-                  <dl className="grid grid-cols-3 gap-x-8 gap-y-1 text-sm">
+                  <dl className="grid w-full grid-cols-[repeat(auto-fit,minmax(min(100%,12rem),1fr))] gap-4 text-sm">
                     <Stat
                       label={metric === "cost" ? "Tokens" : "Cost"}
                       value={
@@ -577,11 +629,6 @@ export function UsagePage() {
                         </Toggle>
                       ))}
                     </ToggleGroup>
-                    {dimension === "threads" ? (
-                      <span className="text-xs text-muted-foreground">
-                        Chart stacked by project
-                      </span>
-                    ) : null}
                     <Menu>
                       <MenuTrigger
                         render={<Button variant="ghost" size="sm" className="ms-auto" />}
@@ -622,28 +669,93 @@ export function UsagePage() {
                     activeSeries={activeSeries}
                     onActiveSeriesChange={setActiveSeries}
                   />
-                  {dimension === "threads" ? (
-                    <UsageThreadTable
-                      input={threadInput}
-                      providerContributions={merged.providerContributions}
-                      summaryFailedEnvironments={
-                        environments.filter(
-                          (entry) =>
-                            entry.error !== null ||
-                            merged.staleEnvironments.includes(entry.environmentId),
-                        ).length
-                      }
-                      sort={sort}
-                      onSort={onSort}
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div>
+                      <h2 className="text-sm font-medium">Breakdown</h2>
+                      <p className="text-xs text-muted-foreground">
+                        {dimension === "projects"
+                          ? "Expand a project for threads. Star favorites to keep them first."
+                          : "Use the colored rows to show or hide chart series."}
+                      </p>
+                    </div>
+                    <UsageColumns
+                      showSessions={dimension === "providers"}
+                      hidden={preferences.hiddenColumns ?? []}
+                      onChange={(hiddenColumns) => {
+                        const nextSort = { ...preferences.sort };
+                        for (const view of [
+                          ...DIMENSION_OPTIONS.map((entry) => entry.value),
+                          "threads",
+                        ] as const) {
+                          const selected = nextSort[view];
+                          if (
+                            selected &&
+                            selected.column !== "name" &&
+                            hiddenColumns.includes(selected.column)
+                          ) {
+                            nextSort[view] = { column: "name", direction: "asc" };
+                          }
+                        }
+                        updatePreferences({ hiddenColumns, sort: nextSort });
+                      }}
                     />
-                  ) : dimension === "projects" ? (
+                  </div>
+                  {dimension === "projects" ? (
                     <UsageBreakdownTable
                       ariaLabel="Project breakdown"
                       nameLabel="Project"
+                      favoriteProjects={preferences.favoriteProjects ?? []}
+                      onToggleFavorite={(key) =>
+                        updatePreferences({
+                          favoriteProjects: [
+                            ...setToggled(new Set(preferences.favoriteProjects), key),
+                          ],
+                        })
+                      }
+                      renderThreads={(key, columns) => {
+                        const project = merged.projects.find(
+                          (entry) => projectSeriesKey(entry.projectKey) === key,
+                        );
+                        if (!project) return null;
+                        return (
+                          <UsageProjectThreads
+                            projectLabel={projectLabel(project)}
+                            input={{ ...threadInput, projectKey: project.projectKey }}
+                            providerContributions={merged.providerContributions}
+                            summaryFailedEnvironments={
+                              environments.filter(
+                                (entry) =>
+                                  entry.error !== null ||
+                                  merged.staleEnvironments.includes(entry.environmentId),
+                              ).length
+                            }
+                            models={modelsByProject.get(key) ?? []}
+                            columns={columns}
+                            metric={metric}
+                            sort={
+                              preferences.sort.threads ??
+                              defaultBreakdownSort(metric, preferences.hiddenColumns)
+                            }
+                            onSort={(column) =>
+                              updatePreferences({
+                                sort: {
+                                  ...preferences.sort,
+                                  threads: toggleBreakdownSort(
+                                    preferences.sort.threads ??
+                                      defaultBreakdownSort(metric, preferences.hiddenColumns),
+                                    column,
+                                  ),
+                                },
+                              })
+                            }
+                          />
+                        );
+                      }}
                       rows={projectRows}
                       metric={metric}
                       sort={sort}
                       onSort={onSort}
+                      hiddenColumns={preferences.hiddenColumns ?? []}
                       hidden={hiddenProjects}
                       onToggleHidden={(key) => setHiddenProjects((c) => setToggled(c, key))}
                       onSetAllHidden={(hidden) =>
@@ -662,6 +774,7 @@ export function UsagePage() {
                       metric={metric}
                       sort={sort}
                       onSort={onSort}
+                      hiddenColumns={preferences.hiddenColumns ?? []}
                       hidden={hiddenProviders}
                       onToggleHidden={(key) =>
                         setHiddenProviders((c) => setToggled(c, key as UsageProviderKind))
@@ -683,6 +796,7 @@ export function UsagePage() {
                       metric={metric}
                       sort={sort}
                       onSort={onSort}
+                      hiddenColumns={preferences.hiddenColumns ?? []}
                       hidden={hiddenModels}
                       onToggleHidden={(key) => setHiddenModels((c) => setToggled(c, key))}
                       onSetAllHidden={(hidden) =>

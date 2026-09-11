@@ -68,4 +68,16 @@ describe("Usage page preferences", () => {
     vi.unstubAllGlobals();
     expect(readUsagePagePreferences()).toEqual(DEFAULT_USAGE_PAGE_PREFERENCES);
   });
+
+  it("restores favorites and hidden columns and migrates the old Threads view", () => {
+    const saved = {
+      ...DEFAULT_USAGE_PAGE_PREFERENCES,
+      favoriteProjects: ["project:environment:id:one"],
+      hiddenColumns: ["sessions"] as const,
+    };
+    saveUsagePagePreferences(saved);
+    expect(readUsagePagePreferences()).toEqual(saved);
+    values.set(key, JSON.stringify({ ...saved, dimension: "threads" }));
+    expect(readUsagePagePreferences()).toEqual(saved);
+  });
 });

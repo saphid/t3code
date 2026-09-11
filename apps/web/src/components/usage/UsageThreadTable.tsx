@@ -24,6 +24,7 @@ import { Skeleton } from "../ui/skeleton";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { SortableHeader } from "./UsageBreakdownTable";
 import { UsageCacheWriteCell } from "./UsageCacheWriteCell";
+import { UsageMetricCells, type UsageMetricColumn } from "./UsageColumns";
 import { sortBreakdownRows, type BreakdownColumn } from "./usageBreakdownSort";
 import type { BreakdownSort } from "./usagePagePreferences";
 import { PROVIDER_PRESENTATION } from "./usageProviders";
@@ -164,7 +165,7 @@ export function UsageThreadTable({
   );
 }
 
-function ThreadRowGroup({
+export function ThreadRowGroup({
   row,
   open,
   tokens,
@@ -172,6 +173,7 @@ function ThreadRowGroup({
   sinceDay,
   untilDay,
   onToggle,
+  columns,
 }: {
   readonly row: UsageThreadRowWithEnvironment;
   readonly open: boolean;
@@ -180,6 +182,7 @@ function ThreadRowGroup({
   readonly sinceDay: string;
   readonly untilDay: string;
   readonly onToggle: () => void;
+  readonly columns?: readonly UsageMetricColumn[];
 }) {
   const Chevron = open ? ChevronDownIcon : ChevronRightIcon;
   const navigate = useNavigate();
@@ -187,8 +190,9 @@ function ThreadRowGroup({
   return (
     <>
       <tr className="border-b border-border/50 transition-colors hover:bg-muted/50 has-aria-expanded:bg-muted/50">
+        {columns ? <td /> : null}
         <td className="py-2 text-foreground">
-          <div className="flex min-w-0 items-center gap-1">
+          <div className="flex min-w-0 max-w-80 items-center gap-1 ps-3">
             <Tooltip>
               <TooltipTrigger
                 render={
@@ -240,21 +244,42 @@ function ThreadRowGroup({
             )}
           </div>
         </td>
-        <td className="py-2 text-right text-foreground tabular-nums">{formatUsd(row.costUsd)}</td>
-        <UsageCacheWriteCell
-          cacheWriteTokens={row.totals.cacheCreationTokens}
-          cacheWriteUsd={row.cacheWriteUsd}
-        />
-        <td className="py-2 text-right text-muted-foreground tabular-nums">
-          {formatPercent(share)}
-        </td>
-        <td className="py-2 text-right text-muted-foreground tabular-nums">
-          {formatTokens(tokens)}
-        </td>
+        {columns ? (
+          <UsageMetricCells
+            columns={columns}
+            row={{
+              costUsd: row.costUsd,
+              totalTokens: tokens,
+              share,
+              cacheWriteTokens: row.totals.cacheCreationTokens,
+              cacheWriteUsd: row.cacheWriteUsd,
+              sessions: row.sessions,
+              inputTokens: row.totals.uncachedInputTokens,
+              outputTokens: row.totals.outputTokens,
+              cacheReadTokens: row.totals.cachedInputTokens,
+            }}
+          />
+        ) : (
+          <>
+            <td className="py-2 text-right text-foreground tabular-nums">
+              {formatUsd(row.costUsd)}
+            </td>
+            <UsageCacheWriteCell
+              cacheWriteTokens={row.totals.cacheCreationTokens}
+              cacheWriteUsd={row.cacheWriteUsd}
+            />
+            <td className="py-2 text-right text-muted-foreground tabular-nums">
+              {formatPercent(share)}
+            </td>
+            <td className="py-2 text-right text-muted-foreground tabular-nums">
+              {formatTokens(tokens)}
+            </td>
+          </>
+        )}
       </tr>
       {open ? (
         <tr className="border-b border-border/50">
-          <td colSpan={5} className="py-3 ps-9">
+          <td colSpan={columns ? columns.length + 2 : 5} className="py-3 ps-9">
             <UsageThreadDailyChart daily={row.daily} sinceDay={sinceDay} untilDay={untilDay} />
             {row.agents.map((agent) => {
               const agentTokens =

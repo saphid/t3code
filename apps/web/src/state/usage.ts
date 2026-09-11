@@ -10,6 +10,7 @@ import { useAtomValue } from "@effect/atom-react";
 import {
   USAGE_CONTRACT_VERSION,
   USAGE_THREAD_BREAKDOWN_SINCE,
+  USAGE_THREAD_MODEL_FILTER_SINCE,
   type EnvironmentId,
   type UsageSummary,
   type UsageSummaryInput,
@@ -345,11 +346,13 @@ const usageThreadsAtom = Atom.family((requestKey: string) =>
     );
     const breakdowns: EnvironmentUsageThreadBreakdown[] = [];
     let pending = 0;
+    const minimumVersion =
+      input.model === undefined ? USAGE_THREAD_BREAKDOWN_SINCE : USAGE_THREAD_MODEL_FILTER_SINCE;
     let failed = relevantContributions.filter(
-      (contribution) => contribution.contractVersion < USAGE_THREAD_BREAKDOWN_SINCE,
+      (contribution) => contribution.contractVersion < minimumVersion,
     ).length;
     for (const contribution of relevantContributions) {
-      if (contribution.contractVersion < USAGE_THREAD_BREAKDOWN_SINCE) continue;
+      if (contribution.contractVersion < minimumVersion) continue;
       const { environmentId } = contribution;
       const environmentInput =
         input.projectKey === undefined

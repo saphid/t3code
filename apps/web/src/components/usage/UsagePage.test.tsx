@@ -18,7 +18,9 @@ vi.mock("../WorkspaceBreadcrumb", () => ({
 vi.mock("../WorkspacePageContainer", () => ({ WorkspacePageContainer: "main" }));
 vi.mock("../WorkspacePageHeader", () => ({ WorkspacePageHeader: "header" }));
 vi.mock("./UsageLimits", () => ({ UsageLimitsSection: () => <div>CLIProxyAPI limits</div> }));
-vi.mock("./UsageThreadTable", () => ({ UsageThreadTable: () => <div>Thread breakdown</div> }));
+vi.mock("./UsageProjectThreads", () => ({
+  UsageProjectThreads: () => <div>Thread breakdown</div>,
+}));
 
 import { UsagePage } from "./UsagePage";
 
@@ -101,5 +103,11 @@ describe("UsagePage", () => {
     const markup = renderToStaticMarkup(<UsagePage />);
     expect(markup).toContain("Project One");
     expect(markup).toContain("Model prices");
+    expect(markup).toContain("Columns");
+    expect(markup).toContain("Expand Project One threads");
+    expect(markup).not.toContain('value="threads"');
+    expect(markup).toContain("Cache reads");
+    expect(markup).toContain(">Input<");
+    expect(markup).toContain(">Output<");
   });
 });
