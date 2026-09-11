@@ -12,6 +12,7 @@ Prefer source references over copied contracts:
 | Client/server entries and package validation  | [environment.ts](src/environment.ts)   | [Stream provider](examples/installable-stream-provider/)                        |
 | View identity, placement and JSON bounds      | [contracts.ts](src/contracts.ts)       | [Typed Files client](examples/files/extension.ts)                               |
 | View lifecycle and restoration                | [host.ts](src/host.ts)                 | [Read helper tests](test/authoring.test.mjs)                                    |
+| Persisted view state (save/restore schema)    | [authoring.ts](src/authoring.ts)       | [Persisted counter](examples/persisted-state/)                                  |
 | API streams                                   | [capabilities.ts](src/capabilities.ts) | [Live output](examples/installable-terminal-live-output/)                       |
 | Verified assets                               | [authoring.ts](src/authoring.ts)       | [Authored WASM asset](examples/authored-assets/)                                |
 

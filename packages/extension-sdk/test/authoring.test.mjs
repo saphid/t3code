@@ -3,6 +3,7 @@ import * as NodeAssert from "node:assert/strict";
 import React from "react";
 import TestRenderer from "react-test-renderer";
 import { defineExtension, requireApi, useApiRead } from "../dist/authoring.js";
+import { restoreStateValidator } from "../dist/authoring.js";
 import { workspaceFilesApi } from "../dist/catalogue.js";
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 NodeTest.test(
@@ -31,7 +32,11 @@ NodeTest.test(
     const client = p.client({ React });
     NodeAssert.deepEqual(client.manifest, p.package.manifest);
     NodeAssert.equal(client.surfaces[0].id, "test.reader/view");
-    NodeAssert.equal(client.surfaces[0].validateRestore({ unexpected: true }), false);
+    NodeAssert.equal(client.surfaces[0].validateRestore(null), true);
+    NodeAssert.throws(
+      () => client.surfaces[0].validateRestore({ unexpected: true }),
+      /"test\.reader\/view".*declares neither stateSchema nor validateRestore.*only null is accepted.*Declare a stateSchema/s,
+    );
     NodeAssert.throws(() =>
       defineExtension({
         id: "test.reader",
@@ -73,6 +78,46 @@ NodeTest.test("declared assets select format 4 and reject unverifiable declarati
       }),
     /media type/,
   );
+});
+NodeTest.test("stateSchema compiles to a null-safe validator with actionable errors", () => {
+  const p = defineExtension({
+    id: "test.notes",
+    version: "1.0.0",
+    surfaces: [
+      {
+        name: "view",
+        title: "Notes",
+        scope: "project",
+        stateVersion: 2,
+        stateSchema: { fields: { count: "number", label: "string" }, optional: ["label"] },
+        createView() {
+          return { renderer: () => null };
+        },
+      },
+    ],
+  });
+  const validate = p.client({ React }).surfaces[0].validateRestore;
+  NodeAssert.equal(validate(null), true);
+  NodeAssert.equal(validate({ count: 3 }), true);
+  NodeAssert.equal(validate({ count: 3, label: "x", future: true }), true);
+  NodeAssert.throws(
+    () => validate({ count: "3" }),
+    /"test\.notes\/view" \(stateVersion 2\): expected field "count" to be number, received string \("3"\).*Fix the value passed to session\.save/s,
+  );
+  NodeAssert.throws(
+    () => validate({ label: "x" }),
+    /missing required field "count" \(number\)\. Expected \{count: number, label\?: string\}; received \{"label":"x"\}/,
+  );
+  NodeAssert.throws(
+    () => validate(7),
+    /expected null \(nothing saved yet\) or an object matching \{count: number, label\?: string\}; received 7/,
+  );
+});
+NodeTest.test("restoreStateValidator is usable standalone for custom surfaces", () => {
+  const validate = restoreStateValidator("a.b/view", 1, { fields: { on: "boolean" } });
+  NodeAssert.equal(validate(null), true);
+  NodeAssert.equal(validate({ on: true }), true);
+  NodeAssert.throws(() => validate([1]), /expected null.*object matching \{on: boolean\}.*\[1\]/s);
 });
 NodeTest.test(
   "read helper suppresses old input, hidden and disposed results and resumes on show",
