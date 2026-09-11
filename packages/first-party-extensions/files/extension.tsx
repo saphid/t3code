@@ -10,9 +10,19 @@ import type { ClientHost } from "@t3tools/extension-sdk/environment";
 import type { ViewSession } from "@t3tools/extension-sdk/host";
 import { useEffect, useMemo, useState } from "react";
 
-import { parentPath, toggleExpanded, visibleRows, type TreeEntry } from "./viewModel.js";
+import {
+  describeRead,
+  mediaPreviewNotice,
+  parentPath,
+  previewKind,
+  toggleExpanded,
+  visibleRows,
+  type PreviewKind,
+  type TreeEntry,
+} from "./viewModel.js";
 
 const manifestId = "t3.files";
+const PREVIEW_ASSET_PATH = "assets/preview.png";
 
 function restoreState(value: unknown): value is { readonly relativePath: string } | null {
   if (value === null) return true;
@@ -95,6 +105,44 @@ function useWorkspaceTree(host: ClientHost, session: ViewSession) {
   };
 }
 
+/**
+ * Verified package-asset read (F2a path): `readAsset` re-resolves and
+ * re-verifies bytes on every call, so a stale object URL is renewed by
+ * re-running the effect rather than trusting a cached URL.
+ */
+function usePackageAsset(host: ClientHost, session: ViewSession, visible: boolean) {
+  const [asset, setAsset] = useState<{ url: string; status: string } | null>(null);
+  useEffect(() => {
+    if (!visible) return;
+    const controller = new AbortController();
+    const signal = AbortSignal.any([controller.signal, session.signal]);
+    let url: string | null = null;
+    void (async () => {
+      try {
+        if (!host.readAsset) throw new Error("This host cannot load package assets.");
+        const result = await host.readAsset(PREVIEW_ASSET_PATH, signal);
+        if (signal.aborted) return;
+        url = URL.createObjectURL(new Blob([result.bytes as BlobPart], { type: "image/png" }));
+        setAsset({
+          url,
+          status: `Package asset verified — ${result.bytes.byteLength.toLocaleString("en-US")} bytes, sha256 ${result.sha256.slice(0, 12)}…`,
+        });
+      } catch (error) {
+        if (!signal.aborted)
+          setAsset({
+            url: "",
+            status: error instanceof Error ? error.message : "Package asset unavailable",
+          });
+      }
+    })();
+    return () => {
+      controller.abort();
+      if (url !== null) URL.revokeObjectURL(url);
+    };
+  }, [host, session, visible]);
+  return asset;
+}
+
 function FilesView(props: { host: ClientHost; session: ViewSession }) {
   const { host, session } = props;
   const { entries, status, refresh, revision, visible } = useWorkspaceTree(host, session);
@@ -114,7 +162,14 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
     revision: number;
     contents: string;
     status: string;
+    truncated: boolean;
   } | null>(null);
+  const selectedKind: PreviewKind = selected ? previewKind(selected) : "text";
+  const packageAsset = usePackageAsset(
+    host,
+    session,
+    visible && selected !== null && selectedKind !== "text",
+  );
   const currentRead = read?.relativePath === selected && read.revision === revision ? read : null;
   const kindByPath = useMemo(() => new Map(entries.map((e) => [e.path, e.kind])), [entries]);
   const rows = useMemo(() => visibleRows(entries, expanded, query), [entries, expanded, query]);
@@ -129,20 +184,23 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
   };
 
   useEffect(() => {
-    if (!selected || !visible) return;
+    if (!selected || !visible || selectedKind !== "text") return;
     const controller = new AbortController();
     const signal = AbortSignal.any([controller.signal, session.signal]);
     void bindApi(workspaceFilesApi, host, session.context)
       .invoke("readText", { relativePath: selected }, signal)
       .then(
         (value) => {
-          if (!signal.aborted)
+          if (!signal.aborted) {
+            const described = describeRead(value);
             setRead({
               relativePath: selected,
               revision,
               contents: value.contents,
-              status: value.truncated ? "File truncated (read only)" : "File loaded (read only)",
+              status: described.status,
+              truncated: described.truncated,
             });
+          }
         },
         (error) => {
           if (!signal.aborted)
@@ -151,11 +209,12 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
               revision,
               contents: "",
               status: error instanceof Error ? error.message : "File unavailable",
+              truncated: false,
             });
         },
       );
     return () => controller.abort();
-  }, [host, selected, session, revision, visible]);
+  }, [host, selected, selectedKind, session, revision, visible]);
 
   const muted = "var(--muted-foreground, #667085)";
   return (
@@ -255,10 +314,14 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
           aria-label="File status"
           style={{ padding: "6px 10px", color: muted, fontSize: 11 }}
         >
-          {selected + ": " + (currentRead?.status ?? "Reading file")}
+          {selected +
+            ": " +
+            (selectedKind === "text"
+              ? (currentRead?.status ?? "Reading file")
+              : mediaPreviewNotice(selectedKind))}
         </output>
       )}
-      {selected && (
+      {selected && selectedKind === "text" && (
         <pre
           aria-label="File contents"
           style={{
@@ -274,14 +337,39 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
           {currentRead?.contents ?? ""}
         </pre>
       )}
+      {selected && selectedKind !== "text" && (
+        <figure
+          aria-label="Package asset preview"
+          style={{
+            margin: 0,
+            padding: 12,
+            borderTop: "1px solid var(--border, #dfe3e8)",
+            display: "grid",
+            gap: 8,
+            justifyItems: "start",
+          }}
+        >
+          {packageAsset?.url ? (
+            <img
+              src={packageAsset.url}
+              alt="Verified package asset rendered through the public asset surface"
+              style={{ imageRendering: "pixelated", width: 64, height: 64 }}
+            />
+          ) : null}
+          <figcaption style={{ color: muted, fontSize: 11 }}>
+            {packageAsset?.status ?? "Loading package asset"}
+          </figcaption>
+        </figure>
+      )}
     </section>
   );
 }
 
 export default defineExtension({
   id: manifestId,
-  version: "0.1.0",
+  version: "0.2.0",
   provides: [filePresentationApi.definition],
+  assets: [{ path: PREVIEW_ASSET_PATH, mediaType: "application/octet-stream" }],
   serverEntry: "server.ts",
   requires: [requireApi(workspaceTreeApi), requireApi(workspaceFilesApi)],
   surfaces: [

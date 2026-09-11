@@ -98,3 +98,94 @@ export function visibleRows(
   }
   return rows;
 }
+
+/** How the preview pane treats a selected path (F1 #1 text, #8 media). */
+export type PreviewKind = "text" | "image" | "video" | "audio" | "font" | "binary";
+
+const PREVIEW_KIND_BY_EXTENSION: Readonly<Record<string, PreviewKind>> = {
+  png: "image",
+  jpg: "image",
+  jpeg: "image",
+  gif: "image",
+  webp: "image",
+  avif: "image",
+  svg: "image",
+  ico: "image",
+  bmp: "image",
+  mp4: "video",
+  webm: "video",
+  mov: "video",
+  m4v: "video",
+  mp3: "audio",
+  wav: "audio",
+  ogg: "audio",
+  flac: "audio",
+  m4a: "audio",
+  woff: "font",
+  woff2: "font",
+  ttf: "font",
+  otf: "font",
+  pdf: "binary",
+  zip: "binary",
+  gz: "binary",
+  tar: "binary",
+  wasm: "binary",
+  bin: "binary",
+  dat: "binary",
+  exe: "binary",
+  dylib: "binary",
+  so: "binary",
+};
+
+/** Extension-based classification; unknown extensions preview as text. */
+export function previewKind(relativePath: string): PreviewKind {
+  const name = relativePath.split("/").at(-1) ?? "";
+  const dot = name.lastIndexOf(".");
+  if (dot <= 0 || dot === name.length - 1) return "text";
+  return PREVIEW_KIND_BY_EXTENSION[name.slice(dot + 1).toLowerCase()] ?? "text";
+}
+
+/** The public text-read contract result, minus the path the caller already knows. */
+export interface PreviewRead {
+  readonly contents: string;
+  readonly byteLength: number;
+  readonly truncated: boolean;
+}
+
+export interface PreviewStatus {
+  readonly status: string;
+  readonly shownByteLength: number;
+  readonly truncated: boolean;
+}
+
+const textEncoder = new TextEncoder();
+
+/**
+ * Honest truncation state for the preview pane (F1 #1). `byteLength` is the
+ * file's true size from the contract; `shownByteLength` is the UTF-8 length of
+ * what was actually returned, so a truncated preview never claims to show the
+ * whole file and never conflates char count with bytes.
+ */
+export function describeRead(read: PreviewRead): PreviewStatus {
+  const shownByteLength = textEncoder.encode(read.contents).byteLength;
+  if (read.truncated)
+    return {
+      status: `File truncated — showing first ${shownByteLength.toLocaleString("en-US")} of ${read.byteLength.toLocaleString("en-US")} bytes (read only)`,
+      shownByteLength,
+      truncated: true,
+    };
+  return {
+    status: `File loaded — ${read.byteLength.toLocaleString("en-US")} bytes (read only)`,
+    shownByteLength,
+    truncated: false,
+  };
+}
+
+/**
+ * Workspace media has no public read path yet (F1 #8 defers to
+ * t3.workspace/resources); the notice names the missing contract instead of
+ * pretending a placeholder is a preview.
+ */
+export function mediaPreviewNotice(kind: PreviewKind): string {
+  return `${kind} preview is not public yet — workspace media reads await the t3.workspace/resources contract`;
+}
