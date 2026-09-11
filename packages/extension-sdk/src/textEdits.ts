@@ -66,13 +66,126 @@ const revision = {
   pattern: "^[0-9a-f]{64}$",
 };
 const path = { type: "string", minLength: 1, maxLength: 512 };
-const contents = { type: "string", maxLength: EDITABLE_TEXT_MAX_BYTES };
+/**
+ * The semantic bound is 24000 UTF-8 BYTES of contents (EDITABLE_TEXT_MAX_BYTES).
+ * JSON Schema maxLength counts UTF-16 code units and cannot express bytes; since
+ * units never exceed bytes, maxLength 24000 is a sound advertisement that never
+ * rejects content the host would accept. Multibyte text reaches the byte bound
+ * below 24000 characters — validators and host IO enforce the byte bound exactly.
+ */
+const contents = {
+  type: "string",
+  maxLength: EDITABLE_TEXT_MAX_BYTES,
+  description: `Complete file contents; at most ${EDITABLE_TEXT_MAX_BYTES} UTF-8 bytes. Multibyte text reaches the bound below ${EDITABLE_TEXT_MAX_BYTES} characters.`,
+};
 /**
  * Discriminated unions use const-kind oneOf branches like the workspace tree
  * events. contents bounds are characters here; byte-level caps are enforced by
  * the host on both directions so escaped JSON stays inside the transport envelope.
  */
 export const textEditsApi: TypedApi<{
+  readSnapshot: { input: ReadSnapshotInput; output: ReadSnapshotResult };
+  save: { input: SaveInput; output: SaveResult };
+}> = defineApi<{
+  readSnapshot: { input: ReadSnapshotInput; output: ReadSnapshotResult };
+  save: { input: SaveInput; output: SaveResult };
+}>({
+  id: WORKSPACE_READ_TEXT_EDITS,
+  version: "1.1.0",
+  methods: [
+    {
+      name: "readSnapshot",
+      effect: "read",
+      requiredGrants: [WORKSPACE_READ_TEXT_GRANT],
+      inputSchema: {
+        type: "object",
+        additionalProperties: false,
+        required: ["relativePath"],
+        properties: { relativePath: path },
+      },
+      outputSchema: {
+        type: "object",
+        oneOf: [
+          {
+            type: "object",
+            additionalProperties: false,
+            required: ["kind", "relativePath", "contents", "revision"],
+            properties: {
+              kind: { const: "editable" },
+              relativePath: path,
+              contents,
+              revision,
+            },
+          },
+          {
+            type: "object",
+            additionalProperties: false,
+            required: ["kind", "relativePath", "reason"],
+            properties: {
+              kind: { const: "not-editable" },
+              relativePath: path,
+              reason: {
+                enum: [
+                  "not-found",
+                  "not-regular-file",
+                  "binary",
+                  "invalid-utf8",
+                  "oversized",
+                  "outside-workspace",
+                  "unsafe-path",
+                  "changed-during-read",
+                  "io-error",
+                ],
+              },
+            },
+          },
+        ],
+      },
+    },
+    {
+      name: "save",
+      effect: "write",
+      requiredGrants: [WORKSPACE_WRITE_TEXT],
+      inputSchema: {
+        type: "object",
+        additionalProperties: false,
+        required: ["relativePath", "expectedRevision", "contents"],
+        properties: {
+          relativePath: path,
+          expectedRevision: revision,
+          contents,
+        },
+      },
+      outputSchema: {
+        type: "object",
+        oneOf: [
+          {
+            type: "object",
+            additionalProperties: false,
+            required: ["kind", "relativePath", "revision"],
+            properties: { kind: { const: "saved" }, relativePath: path, revision },
+          },
+          {
+            type: "object",
+            additionalProperties: false,
+            required: ["kind", "relativePath"],
+            properties: { kind: { const: "conflict" }, relativePath: path },
+          },
+        ],
+      },
+    },
+  ],
+});
+
+/**
+ * Frozen published 1.0.0 definition, retained so providers built against it
+ * still pass canonical contract equality (see catalogue
+ * assertProvidedApiOwner). Its advertised 48000-character contents bound was
+ * never honored — enforcement was always the 24000-byte editable bound — but
+ * shared definitions are immutable per version, so the corrected schemas live
+ * on 1.1.0 above.
+ */
+export const textEditsApiV1: TypedApi<{
   readSnapshot: { input: ReadSnapshotInput; output: ReadSnapshotResult };
   save: { input: SaveInput; output: SaveResult };
 }> = defineApi<{
@@ -204,10 +317,22 @@ export function isTextRevision(value: unknown): value is TextRevision {
   return typeof value === "string" && /^[0-9a-f]{64}$/.test(value);
 }
 
+const utf8ByteLength = (value: string) => new TextEncoder().encode(value).length;
+const editableBoundError = (what: string) =>
+  new Error(
+    `${what} exceed the ${EDITABLE_TEXT_MAX_BYTES}-byte editable bound (UTF-8 encoded size, not character count).`,
+  );
+
 export function validateSaveInput(value: unknown): SaveInput {
   const input = requireObject(value, ["relativePath", "expectedRevision", "contents"]);
-  if (typeof input.contents !== "string" || input.contents.length > EDITABLE_TEXT_MAX_BYTES)
-    throw new Error("Editable text save exceeds the supported length.");
+  if (typeof input.contents !== "string") throw new Error("Expected string contents");
+  // A string longer than the bound in UTF-16 units always exceeds it in bytes;
+  // only encode when the byte count is not already decided.
+  if (
+    input.contents.length > EDITABLE_TEXT_MAX_BYTES ||
+    utf8ByteLength(input.contents) > EDITABLE_TEXT_MAX_BYTES
+  )
+    throw editableBoundError("Editable text contents");
   if (!isTextRevision(input.expectedRevision))
     throw new Error("Expected a sha-256 hex revision of the complete original bytes.");
   return {
@@ -228,6 +353,11 @@ export function validateReadSnapshotResult(value: unknown): ReadSnapshotResult {
     const full = requireObject(value, ["kind", "relativePath", "contents", "revision"]);
     if (typeof full.contents !== "string" || !isTextRevision(full.revision))
       throw new Error("Invalid editable snapshot");
+    if (
+      full.contents.length > EDITABLE_TEXT_MAX_BYTES ||
+      utf8ByteLength(full.contents) > EDITABLE_TEXT_MAX_BYTES
+    )
+      throw editableBoundError("Editable snapshot contents");
     return {
       kind: "editable",
       relativePath,

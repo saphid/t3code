@@ -76,8 +76,30 @@ export function copyJson<T>(value: T, maxBytes = MAX_PAYLOAD_BYTES): T {
   }
   visit(value, 0);
   const encoded = JSON.stringify(value);
-  if (new TextEncoder().encode(encoded).length > maxBytes)
-    throw new Error("Payload exceeds byte limit");
+  const encodedBytes = new TextEncoder().encode(encoded).length;
+  if (encodedBytes > maxBytes) {
+    // Only computed on failure: report the largest string leaf by dotted path
+    // so the caller can see which field blew the envelope.
+    let largest: { readonly path: string; readonly bytes: number } | undefined;
+    const findLargest = (item: unknown, path: string): void => {
+      if (typeof item === "string") {
+        const bytes = new TextEncoder().encode(item).length;
+        if (!largest || bytes > largest.bytes) largest = { path, bytes };
+        return;
+      }
+      if (Array.isArray(item)) item.forEach((child, i) => findLargest(child, `${path}[${i}]`));
+      else if (item && typeof item === "object")
+        for (const [key, child] of Object.entries(item))
+          findLargest(child, path ? `${path}.${key}` : key);
+    };
+    findLargest(value, "");
+    throw new Error(
+      `Payload exceeds byte limit (${encodedBytes} bytes > ${maxBytes}-byte envelope)` +
+        (largest
+          ? `; largest field "${largest.path || "(root)"}" is ${largest.bytes} UTF-8 bytes`
+          : ""),
+    );
+  }
   return JSON.parse(encoded) as T;
 }
 export function validateContext(value: ViewContext): ViewContext {
