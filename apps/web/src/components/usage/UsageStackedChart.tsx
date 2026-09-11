@@ -1,20 +1,30 @@
 import type { UsageTimelineCell } from "@t3tools/shared/usageMerge";
 import { useMemo, useState } from "react";
 
-import { formatDateTimeShort, formatTokens, formatUsd } from "@t3tools/shared/usageFormat";
+import {
+  formatDateTimeShort,
+  formatDayShort,
+  formatTokens,
+  formatUsd,
+} from "@t3tools/shared/usageFormat";
+
+import { cn } from "../../lib/utils";
+import { niceScale } from "./UsageProviderChart";
 
 const WIDTH = 960;
 const HEIGHT = 280;
 const TOP = 12;
 const BOTTOM = 24;
+const HOUR_MS = 60 * 60_000;
+const DAY_MS = 24 * HOUR_MS;
 const SOURCE_MS = {
   halfHour: 30 * 60_000,
-  hour: 60 * 60_000,
-  day: 24 * 60 * 60_000,
+  hour: HOUR_MS,
+  day: DAY_MS,
 } as const;
 
 export type UsageGrouping = "30m" | "1h" | "6h" | "12h" | "1d";
-export type UsageSeriesMode = "projects" | "providers";
+export type UsageSeriesMode = "projects" | "providers" | "models";
 export type UsageStackMetric = "cost" | "tokens";
 
 export interface UsageChartSeries {
@@ -25,10 +35,10 @@ export interface UsageChartSeries {
 
 export const GROUP_MS: Record<UsageGrouping, number> = {
   "30m": 30 * 60_000,
-  "1h": 60 * 60_000,
-  "6h": 6 * 60 * 60_000,
-  "12h": 12 * 60 * 60_000,
-  "1d": 24 * 60 * 60_000,
+  "1h": HOUR_MS,
+  "6h": 6 * HOUR_MS,
+  "12h": 12 * HOUR_MS,
+  "1d": DAY_MS,
 };
 
 export function projectSeriesKey(projectKey: string | null | undefined): string {
@@ -37,6 +47,77 @@ export function projectSeriesKey(projectKey: string | null | undefined): string 
     : projectKey === undefined
       ? "unknown"
       : `project:${projectKey}`;
+}
+
+/** Same key the page uses for model visibility, so hiding a model hides its series. */
+export function modelSeriesKey(provider: string, model: string): string {
+  return `${provider}\u0000${model}`;
+}
+
+/**
+ * Visual grouping that lands a window on roughly 24 to 90 points: hourly for a
+ * day, six-hourly up to ten days, daily beyond that.
+ */
+export function autoGrouping(sinceTime: string, untilTime: string): UsageGrouping {
+  const spanMs = Date.parse(untilTime) - Date.parse(sinceTime);
+  if (!Number.isFinite(spanMs) || spanMs <= 0) return "1d";
+  if (spanMs <= DAY_MS + HOUR_MS) return "1h";
+  if (spanMs <= 10 * DAY_MS) return "6h";
+  return "1d";
+}
+
+export interface TimeTick {
+  readonly ms: number;
+  readonly label: string;
+}
+
+/**
+ * Axis ticks for a window: six-hour marks within two days, otherwise local
+ * midnights thinned to at most eight labels. Midnights are found by walking
+ * hourly and watching the zoned calendar day change, which stays right across
+ * DST without any offset arithmetic.
+ */
+export function timeTicks(
+  sinceTime: string,
+  untilTime: string,
+  timeZone: string,
+): readonly TimeTick[] {
+  const sinceMs = Date.parse(sinceTime);
+  const untilMs = Date.parse(untilTime);
+  if (!Number.isFinite(sinceMs) || !Number.isFinite(untilMs) || untilMs <= sinceMs) return [];
+  if (untilMs - sinceMs <= 2 * DAY_MS) {
+    const ticks: TimeTick[] = [];
+    for (let ms = sinceMs + 6 * HOUR_MS; ms < untilMs; ms += 6 * HOUR_MS) {
+      ticks.push({ ms, label: formatDateTimeShort(new Date(ms).toISOString(), timeZone) });
+    }
+    return ticks;
+  }
+  let format: Intl.DateTimeFormat;
+  try {
+    format = new Intl.DateTimeFormat("en-CA", {
+      timeZone,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    });
+  } catch {
+    format = new Intl.DateTimeFormat("en-CA", {
+      timeZone: "UTC",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    });
+  }
+  const midnights: TimeTick[] = [];
+  let previousDay = format.format(new Date(sinceMs));
+  for (let ms = sinceMs + HOUR_MS; ms < untilMs; ms += HOUR_MS) {
+    const day = format.format(new Date(ms));
+    if (day === previousDay) continue;
+    previousDay = day;
+    midnights.push({ ms, label: formatDayShort(day) });
+  }
+  const every = Math.max(1, Math.ceil(midnights.length / 8));
+  return midnights.filter((_, index) => index % every === 0);
 }
 
 interface GroupedPoint {
@@ -102,7 +183,7 @@ export function groupTimeline(
   grouping: UsageGrouping,
   sinceTime: string,
   untilTime: string,
-  visibleModels: ReadonlySet<string>,
+  visibleModels?: ReadonlySet<string>,
 ): readonly GroupedPoint[] {
   const sinceMs = Date.parse(sinceTime);
   const untilMs = Date.parse(untilTime);
@@ -115,13 +196,18 @@ export function groupTimeline(
     models: new Map<string, Map<string, number>>(),
   }));
   for (const cell of cells) {
-    if (!visibleModels.has(`${cell.provider}\u0000${cell.model}`)) continue;
+    const modelKey = modelSeriesKey(cell.provider, cell.model);
+    if (visibleModels !== undefined && !visibleModels.has(modelKey)) continue;
     const timeMs = Date.parse(cell.periodStart);
     const index = Math.floor((timeMs - sinceMs) / groupMs);
     const point = mutable[index];
     if (point === undefined) continue;
     const seriesKey =
-      seriesMode === "providers" ? cell.provider : projectSeriesKey(cell.projectKey);
+      seriesMode === "providers"
+        ? cell.provider
+        : seriesMode === "models"
+          ? modelKey
+          : projectSeriesKey(cell.projectKey);
     const value = metric === "cost" ? cell.costUsd : cell.totalTokens;
     point.values.set(seriesKey, (point.values.get(seriesKey) ?? 0) + value);
     const models = point.models.get(seriesKey) ?? new Map<string, number>();
@@ -212,6 +298,10 @@ export function stackedAreaPath(
   return upper === "" || lower === "" ? "" : `${upper} ${lower.replace(/^M/, "L")} Z`;
 }
 
+/**
+ * Stacked area of the window by the chosen series. Static SVG with HTML axis
+ * labels so text stays crisp at any width; the only motion is the hover cursor.
+ */
 export function UsageStackedChart({
   cells,
   series,
@@ -230,7 +320,8 @@ export function UsageStackedChart({
   readonly cells: readonly UsageTimelineCell[];
   readonly series: readonly UsageChartSeries[];
   readonly visibleSeries: ReadonlySet<string>;
-  readonly visibleModels: ReadonlySet<string>;
+  /** Restricts cells to these model keys; omit to chart every model. */
+  readonly visibleModels?: ReadonlySet<string>;
   readonly seriesMode: UsageSeriesMode;
   readonly metric: UsageStackMetric;
   readonly grouping: UsageGrouping;
@@ -243,39 +334,76 @@ export function UsageStackedChart({
 }) {
   const [hoverMs, setHoverMs] = useState<number | null>(null);
   const sourceMs = SOURCE_MS[sourceResolution];
-  const shownSeries = series.filter((entry) => visibleSeries.has(entry.key));
+  const sinceMs = Date.parse(sinceTime);
+  const untilMs = Date.parse(untilTime);
+  const spanMs = untilMs - sinceMs;
+  const shownSeries = useMemo(
+    () => series.filter((entry) => visibleSeries.has(entry.key)),
+    [series, visibleSeries],
+  );
   const points = useMemo(
     () => groupTimeline(cells, seriesMode, metric, grouping, sinceTime, untilTime, visibleModels),
     [cells, grouping, metric, seriesMode, sinceTime, untilTime, visibleModels],
   );
-  const peak = Math.max(
-    0,
-    ...points.map((point) =>
-      shownSeries.reduce((sum, entry) => sum + (point.values.get(entry.key) ?? 0), 0),
-    ),
+  const peak = useMemo(
+    () =>
+      Math.max(
+        0,
+        ...points.map((point) =>
+          shownSeries.reduce((sum, entry) => sum + (point.values.get(entry.key) ?? 0), 0),
+        ),
+      ),
+    [points, shownSeries],
   );
+  const scale = useMemo(() => niceScale(peak, 4), [peak]);
+  const plotMax = scale.max > 0 ? scale.max : 1;
+  const ticks = useMemo(
+    () => timeTicks(sinceTime, untilTime, timeZone),
+    [sinceTime, timeZone, untilTime],
+  );
+  const plotHeight = HEIGHT - TOP - BOTTOM;
+  const yFor = (value: number) => TOP + plotHeight * (1 - value / plotMax);
+  const xFor = (ms: number) => (spanMs <= 0 ? 0 : ((ms - sinceMs) / spanMs) * WIDTH);
+  const format = (value: number) => (metric === "cost" ? formatUsd(value) : formatTokens(value));
+
   const hoveredPoint =
     hoverMs === null || points.length === 0
       ? null
-      : (points[
-          groupedPointIndexAt(hoverMs, Date.parse(sinceTime), grouping, points.length) ?? -1
-        ] ?? null);
+      : (points[groupedPointIndexAt(hoverMs, sinceMs, grouping, points.length) ?? -1] ?? null);
+  const hoverX = hoverMs === null ? null : sampleCenterX(hoverMs, sinceMs, untilMs, sourceMs);
+  const hoveredRows = useMemo(() => {
+    if (hoveredPoint === null) return [];
+    return shownSeries
+      .map((entry) => ({ entry, value: hoveredPoint.values.get(entry.key) ?? 0 }))
+      .filter((row) => row.value > 0)
+      .sort((left, right) => right.value - left.value);
+  }, [hoveredPoint, shownSeries]);
+  const hoveredTotal = hoveredRows.reduce((sum, row) => sum + row.value, 0);
   const active = series.find((entry) => entry.key === activeSeries) ?? null;
-  const activeValue =
-    active === null || hoveredPoint === null ? 0 : (hoveredPoint.values.get(active.key) ?? 0);
-  const modelRows =
-    active === null || hoveredPoint === null
+  const tooltipRows =
+    active === null
+      ? hoveredRows.slice(0, 6)
+      : [
+          ...hoveredRows.filter((row) => row.entry.key === active.key),
+          ...hoveredRows.filter((row) => row.entry.key !== active.key).slice(0, 5),
+        ];
+  const moreRows = hoveredRows.length - tooltipRows.length;
+  const activeModels =
+    active === null || hoveredPoint === null || seriesMode === "models"
       ? []
-      : [...(hoveredPoint.models.get(active.key) ?? new Map()).entries()]
+      : [...(hoveredPoint.models.get(active.key) ?? new Map<string, number>()).entries()]
           .sort((left, right) => right[1] - left[1])
-          .slice(0, 4);
+          .slice(0, 3);
+  const hoverPercent = hoverX === null ? null : (hoverX / WIDTH) * 100;
+  const tooltipOnLeft = hoverPercent !== null && hoverPercent > 58;
 
   return (
-    <div className="flex min-w-0 flex-col gap-2">
-      <div className="relative min-w-0 overflow-hidden border border-border bg-card/30">
+    <div className="flex min-w-0 flex-col gap-1">
+      <div className="relative min-w-0 rounded-md border border-border bg-card/30">
         <svg
           viewBox={`0 0 ${WIDTH} ${HEIGHT}`}
-          className="block h-[280px] w-full touch-pan-y"
+          preserveAspectRatio="none"
+          className="block h-60 w-full touch-pan-y"
           role="img"
           aria-label={`Stacked ${metric} by ${seriesMode}`}
           onPointerMove={(event) => {
@@ -284,35 +412,51 @@ export function UsageStackedChart({
               event.clientX,
               bounds.left,
               bounds.width,
-              Date.parse(sinceTime),
-              Date.parse(untilTime),
+              sinceMs,
+              untilMs,
               sourceMs,
             );
             if (sample !== null) setHoverMs(sample.startMs);
+            if (event.target === event.currentTarget && activeSeries !== null) {
+              onActiveSeriesChange(null);
+            }
           }}
           onPointerLeave={() => {
             setHoverMs(null);
             onActiveSeriesChange(null);
           }}
         >
-          {[0.25, 0.5, 0.75, 1].map((fraction) => (
+          {scale.ticks.map((tick) => (
             <line
-              key={fraction}
+              key={tick}
               x1={0}
               x2={WIDTH}
-              y1={TOP + (HEIGHT - TOP - BOTTOM) * fraction}
-              y2={TOP + (HEIGHT - TOP - BOTTOM) * fraction}
+              y1={yFor(tick)}
+              y2={yFor(tick)}
               stroke="currentColor"
-              className="text-border"
+              className={tick === 0 ? "text-border" : "text-border/60"}
+              vectorEffect="non-scaling-stroke"
+            />
+          ))}
+          {ticks.map((tick) => (
+            <line
+              key={tick.ms}
+              x1={xFor(tick.ms)}
+              x2={xFor(tick.ms)}
+              y1={TOP}
+              y2={HEIGHT - BOTTOM}
+              stroke="currentColor"
+              strokeDasharray="2 4"
+              className="text-border/50"
               vectorEffect="non-scaling-stroke"
             />
           ))}
           {shownSeries.map((entry, index) => (
             <path
               key={entry.key}
-              d={stackedAreaPath(points, shownSeries, index, peak)}
+              d={stackedAreaPath(points, shownSeries, index, plotMax)}
               fill={entry.color}
-              fillOpacity={activeSeries === null || activeSeries === entry.key ? 0.78 : 0.12}
+              fillOpacity={activeSeries === null || activeSeries === entry.key ? 0.78 : 0.14}
               stroke={entry.color}
               strokeWidth={activeSeries === entry.key ? 2 : 1}
               vectorEffect="non-scaling-stroke"
@@ -320,14 +464,10 @@ export function UsageStackedChart({
               className="transition-opacity"
             />
           ))}
-          {hoverMs === null ? null : (
+          {hoverX === null ? null : (
             <line
-              x1={
-                sampleCenterX(hoverMs, Date.parse(sinceTime), Date.parse(untilTime), sourceMs) ?? 0
-              }
-              x2={
-                sampleCenterX(hoverMs, Date.parse(sinceTime), Date.parse(untilTime), sourceMs) ?? 0
-              }
+              x1={hoverX}
+              x2={hoverX}
               y1={TOP}
               y2={HEIGHT - BOTTOM}
               stroke="currentColor"
@@ -337,31 +477,86 @@ export function UsageStackedChart({
             />
           )}
         </svg>
-        {active === null || hoveredPoint === null ? null : (
-          <div className="pointer-events-none absolute right-2 top-2 min-w-44 border border-border bg-popover/95 px-2.5 py-2 text-xs shadow-sm">
-            <div className="text-muted-foreground">
-              {formatDateTimeShort(new Date(hoverMs!).toISOString(), timeZone)} · {grouping} total
-            </div>
-            <div className="mt-1 flex items-center justify-between gap-4 font-medium text-foreground">
-              <span className="truncate">{active.label}</span>
-              <span className="tabular-nums">
-                {metric === "cost" ? formatUsd(activeValue) : formatTokens(activeValue)}
+        <div aria-hidden className="pointer-events-none absolute inset-0">
+          {scale.ticks
+            .filter((tick) => tick > 0)
+            .map((tick) => (
+              <span
+                key={tick}
+                className="absolute left-1.5 mt-0.5 rounded-sm bg-background/70 px-1 text-[10px] tabular-nums text-muted-foreground"
+                style={{ top: `${(yFor(tick) / HEIGHT) * 100}%` }}
+              >
+                {format(tick)}
               </span>
+            ))}
+        </div>
+        {peak === 0 ? (
+          <div className="pointer-events-none absolute inset-0 flex items-center justify-center text-xs text-muted-foreground">
+            No usage in this window
+          </div>
+        ) : null}
+        {hoveredPoint === null || hoverPercent === null ? null : (
+          <div
+            className="pointer-events-none absolute top-2 w-56 rounded-md border border-border bg-popover/95 px-2.5 py-2 text-xs shadow-sm"
+            style={{
+              left: `${hoverPercent}%`,
+              transform: tooltipOnLeft ? "translateX(calc(-100% - 12px))" : "translateX(12px)",
+            }}
+          >
+            <div className="flex items-baseline justify-between gap-3 text-muted-foreground">
+              <span>
+                {formatDateTimeShort(new Date(hoveredPoint.startMs).toISOString(), timeZone)}
+              </span>
+              <span>{grouping}</span>
             </div>
-            {modelRows.map(([model, value]) => (
-              <div key={model} className="mt-0.5 flex justify-between gap-4 text-muted-foreground">
-                <span className="max-w-36 truncate">{model}</span>
-                <span className="tabular-nums">
-                  {metric === "cost" ? formatUsd(value) : formatTokens(value)}
+            <div className="mt-1 flex items-baseline justify-between gap-3 font-medium text-foreground">
+              <span>Total</span>
+              <span className="tabular-nums">{format(hoveredTotal)}</span>
+            </div>
+            {tooltipRows.map((row) => (
+              <div
+                key={row.entry.key}
+                className={cn(
+                  "mt-0.5 flex items-center justify-between gap-3",
+                  row.entry.key === activeSeries ? "text-foreground" : "text-muted-foreground",
+                )}
+              >
+                <span className="flex min-w-0 items-center gap-1.5">
+                  <span
+                    aria-hidden
+                    className="size-2 shrink-0 rounded-[2px]"
+                    style={{ backgroundColor: row.entry.color }}
+                  />
+                  <span className="truncate">{row.entry.label}</span>
                 </span>
+                <span className="shrink-0 tabular-nums">{format(row.value)}</span>
               </div>
             ))}
+            {activeModels.map(([model, value]) => (
+              <div
+                key={model}
+                className="mt-0.5 flex justify-between gap-3 ps-3.5 text-muted-foreground/80"
+              >
+                <span className="truncate">{model}</span>
+                <span className="shrink-0 tabular-nums">{format(value)}</span>
+              </div>
+            ))}
+            {moreRows > 0 ? (
+              <div className="mt-0.5 text-muted-foreground/70">{moreRows} more</div>
+            ) : null}
           </div>
         )}
       </div>
-      <div className="flex items-center justify-between gap-3 text-xs text-muted-foreground">
-        <span>{formatDateTimeShort(sinceTime, timeZone)}</span>
-        <span>{formatDateTimeShort(untilTime, timeZone)}</span>
+      <div aria-hidden className="relative h-4 text-[10px] text-muted-foreground">
+        {ticks.map((tick) => (
+          <span
+            key={tick.ms}
+            className="absolute -translate-x-1/2 whitespace-nowrap"
+            style={{ left: `${spanMs <= 0 ? 0 : ((tick.ms - sinceMs) / spanMs) * 100}%` }}
+          >
+            {tick.label}
+          </span>
+        ))}
       </div>
     </div>
   );

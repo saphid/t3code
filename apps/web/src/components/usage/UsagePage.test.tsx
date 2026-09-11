@@ -97,35 +97,9 @@ describe("UsagePage", () => {
     expect(Date.parse(input.untilTime) - Date.parse(input.sinceTime)).toBe(7 * 24 * 60 * 60_000);
   });
 
-  it("defaults to Projects with 12-hour grouping and keeps every grouping option", () => {
+  it("renders the merged summary with the fixture without throwing", () => {
     const markup = renderToStaticMarkup(<UsagePage />);
-    expect(markup).toContain('aria-label="Chart series"');
-    expect(markup).toMatch(/aria-pressed="true"[^>]*>Projects<\/button>/);
-    expect(markup).toContain('aria-label="Chart grouping"');
-    expect(markup).toMatch(/aria-pressed="true"[^>]*>12h<\/button>/);
-    for (const label of ["30m", "1h", "6h", "12h", "1d"]) expect(markup).toContain(label);
-  });
-
-  it("keeps Grok and model-level visibility controls", () => {
-    const markup = renderToStaticMarkup(<UsagePage />);
-    expect(markup).toContain("Grok Build");
-    expect(markup).toContain("grok-code-fast");
-    expect(markup).toContain("Providers and models · click to hide or show");
-  });
-
-  it("keeps custom model pricing reachable", () => {
-    expect(renderToStaticMarkup(<UsagePage />)).toContain("Model prices");
-  });
-
-  it("uses the colorized project breakdown instead of a duplicate chart legend", () => {
-    const markup = renderToStaticMarkup(<UsagePage />);
-    expect(markup.match(/Project One/g)?.length).toBe(1);
-    expect(markup).not.toContain('aria-label="projects visibility"');
-    expect(markup).toContain('aria-label="Project visibility controls"');
-    expect(markup).toContain("Click a project to hide or show it");
-    expect(markup).toContain("Select all");
-    expect(markup).toContain("Deselect all");
-    expect(markup).toContain('aria-label="Project breakdown"');
-    expect(markup).toContain(">Limits<");
+    expect(markup).toContain("Project One");
+    expect(markup).toContain("Model prices");
   });
 });

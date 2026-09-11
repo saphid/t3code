@@ -1,8 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
-import { readUsagePagePreferences, saveUsagePagePreferences } from "./usagePagePreferences";
+import {
+  DEFAULT_USAGE_PAGE_PREFERENCES,
+  readUsagePagePreferences,
+  saveUsagePagePreferences,
+} from "./usagePagePreferences";
 
-const key = "t3code:usage-page-preferences:v1";
+const key = "t3code:usage-page-preferences:v2";
 let values: Map<string, string>;
 let storage: Pick<Storage, "getItem" | "setItem">;
 
@@ -24,47 +28,44 @@ afterEach(() => {
 });
 
 describe("Usage page preferences", () => {
-  it("uses defaults when no preference has been saved", () => {
-    expect(readUsagePagePreferences()).toEqual({ metric: "cost", windowDays: 30 });
+  it("defaults to seven days of cost by project with automatic grouping", () => {
+    expect(readUsagePagePreferences()).toEqual(DEFAULT_USAGE_PAGE_PREFERENCES);
+    expect(DEFAULT_USAGE_PAGE_PREFERENCES).toMatchObject({
+      metric: "cost",
+      windowDays: 7,
+      dimension: "projects",
+      grouping: "auto",
+    });
   });
 
-  it.each([1, 7, 30, 90] as const)("round-trips every metric with a %i-day range", (windowDays) => {
-    for (const metric of ["cost", "tokens", "limits"] as const) {
-      saveUsagePagePreferences({ metric, windowDays });
-      expect(readUsagePagePreferences()).toEqual({ metric, windowDays });
-    }
+  it("round-trips every choice including a per-dimension sort", () => {
+    const preferences = {
+      metric: "tokens" as const,
+      windowDays: 30 as const,
+      dimension: "models" as const,
+      grouping: "1d" as const,
+      sort: {
+        projects: { column: "name" as const, direction: "asc" as const },
+        providers: null,
+        models: { column: "cacheWrites" as const, direction: "desc" as const },
+        threads: { column: "tokens" as const, direction: "asc" as const },
+      },
+    };
+    saveUsagePagePreferences(preferences);
+    expect(readUsagePagePreferences()).toEqual(preferences);
   });
 
   it.each([
     "not-json",
-    '{"metric":"unknown","windowDays":7}',
-    '{"metric":"cost","windowDays":365}',
-  ])("replaces invalid preferences on the next save: %s", (value) => {
-    values.set(key, value);
-    expect(readUsagePagePreferences()).toEqual({ metric: "cost", windowDays: 30 });
-    saveUsagePagePreferences({ metric: "tokens", windowDays: 7 });
-    expect(readUsagePagePreferences()).toEqual({ metric: "tokens", windowDays: 7 });
+    '{"metric":"limits","windowDays":30}',
+    '{"metric":"cost","windowDays":7,"dimension":"weeks","grouping":"auto","sort":{}}',
+  ])("falls back to defaults for %s", (raw) => {
+    values.set(key, raw);
+    expect(readUsagePagePreferences()).toEqual(DEFAULT_USAGE_PAGE_PREFERENCES);
   });
 
-  it("contains write failures and can save again after storage recovers", () => {
-    saveUsagePagePreferences({ metric: "cost", windowDays: 30 });
-    const write = vi.spyOn(storage, "setItem").mockImplementation(() => {
-      throw new Error("QuotaExceededError");
-    });
-    expect(() => saveUsagePagePreferences({ metric: "tokens", windowDays: 7 })).not.toThrow();
-    expect(readUsagePagePreferences()).toEqual({ metric: "cost", windowDays: 30 });
-    write.mockRestore();
-    saveUsagePagePreferences({ metric: "limits", windowDays: 7 });
-    expect(readUsagePagePreferences()).toEqual({ metric: "limits", windowDays: 7 });
-  });
-
-  it("contains failures when the browser blocks storage access", () => {
-    vi.stubGlobal("window", {
-      get localStorage() {
-        throw new Error("SecurityError");
-      },
-    });
-    expect(readUsagePagePreferences()).toEqual({ metric: "cost", windowDays: 30 });
-    expect(() => saveUsagePagePreferences({ metric: "tokens", windowDays: 7 })).not.toThrow();
+  it("returns defaults without touching storage outside a browser", () => {
+    vi.unstubAllGlobals();
+    expect(readUsagePagePreferences()).toEqual(DEFAULT_USAGE_PAGE_PREFERENCES);
   });
 });

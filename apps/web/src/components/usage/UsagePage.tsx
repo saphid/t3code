@@ -2,7 +2,6 @@ import type { UsageProviderKind } from "@t3tools/contracts";
 import {
   AlertTriangleIcon,
   ChevronDownIcon,
-  ChevronRightIcon,
   RefreshCwIcon,
   SlidersHorizontalIcon,
 } from "lucide-react";
@@ -12,12 +11,12 @@ import {
   formatCount,
   formatDateTimeShort,
   formatDayShort,
-  formatPercent,
   formatTokens,
   formatUsd,
   makeWindow,
 } from "@t3tools/shared/usageFormat";
 import type { ProjectTotals } from "@t3tools/shared/usageMerge";
+
 import { isElectron } from "../../env";
 import { cn } from "../../lib/utils";
 import { usePrimaryEnvironmentId } from "../../state/environments";
@@ -27,6 +26,7 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import { Alert, AlertDescription, AlertTitle } from "../ui/alert";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
+import { Menu, MenuPopup, MenuRadioGroup, MenuRadioItem, MenuTrigger } from "../ui/menu";
 import { ScrollArea } from "../ui/scroll-area";
 import { SidebarInset } from "../ui/sidebar";
 import { Skeleton } from "../ui/skeleton";
@@ -34,47 +34,72 @@ import { Toggle, ToggleGroup } from "../ui/toggle-group";
 import { WorkspaceBreadcrumb, WorkspaceBreadcrumbItem } from "../WorkspaceBreadcrumb";
 import { WorkspacePageContainer } from "../WorkspacePageContainer";
 import { WorkspacePageHeader } from "../WorkspacePageHeader";
+import { UsageBreakdownTable, type BreakdownTableRow } from "./UsageBreakdownTable";
 import { UsageLimitsSection } from "./UsageLimits";
 import { UsagePriceOverrides } from "./UsagePriceOverrides";
 import { UsageThreadTable } from "./UsageThreadTable";
-import { PROVIDER_ORDER, PROVIDER_PRESENTATION, providersWithUsage } from "./usageProviders";
 import { evaluateDailyUsageBudget } from "./usageBudget";
 import {
+  defaultBreakdownSort,
+  toggleBreakdownSort,
+  type BreakdownColumn,
+} from "./usageBreakdownSort";
+import {
+  readUsagePagePreferences,
+  saveUsagePagePreferences,
+  type UsageDimension,
+  type UsagePagePreferences,
+} from "./usagePagePreferences";
+import { PROVIDER_PRESENTATION, providersWithUsage } from "./usageProviders";
+import {
+  autoGrouping,
+  modelSeriesKey,
   projectSeriesKey,
   UsageStackedChart,
   type UsageChartSeries,
   type UsageGrouping,
   type UsageSeriesMode,
-  type UsageStackMetric,
 } from "./UsageStackedChart";
 
-const WINDOW_OPTIONS = [
+type WindowPreset = UsagePagePreferences["windowDays"] | "custom";
+
+const WINDOW_OPTIONS: readonly { days: UsagePagePreferences["windowDays"]; label: string }[] = [
+  { days: 1, label: "24 hours" },
   { days: 7, label: "7 days" },
   { days: 30, label: "30 days" },
   { days: 90, label: "90 days" },
-  { days: 1, label: "24 hours" },
-] as const;
-const GROUP_OPTIONS: readonly { value: UsageGrouping; label: string }[] = [
-  { value: "30m", label: "30m" },
-  { value: "1h", label: "1h" },
-  { value: "6h", label: "6h" },
-  { value: "12h", label: "12h" },
-  { value: "1d", label: "1d" },
 ];
-const PROJECT_COLORS = [
-  "#4f7dd9",
-  "#d8a20b",
-  "#7e62c6",
-  "#d66a45",
-  "#3f9b7a",
-  "#b75b93",
-  "#6e8b3d",
-  "#b27635",
-  "#4d92a8",
-  "#8e6f5a",
-  "#6f7f9e",
-  "#777777",
+const DIMENSION_OPTIONS: readonly { value: UsageDimension; label: string }[] = [
+  { value: "projects", label: "Projects" },
+  { value: "providers", label: "Providers" },
+  { value: "models", label: "Models" },
+  { value: "threads", label: "Threads" },
+];
+const GROUPING_OPTIONS: readonly { value: UsagePagePreferences["grouping"]; label: string }[] = [
+  { value: "auto", label: "Auto" },
+  { value: "30m", label: "30 minutes" },
+  { value: "1h", label: "1 hour" },
+  { value: "6h", label: "6 hours" },
+  { value: "12h", label: "12 hours" },
+  { value: "1d", label: "1 day" },
+];
+/** Categorical series colors spaced for dark and light backgrounds. */
+const SERIES_COLORS = [
+  "#5b8def",
+  "#e0a52c",
+  "#3fae8c",
+  "#c65fa2",
+  "#8d78e6",
+  "#e26f4c",
+  "#7fb241",
+  "#d9c34a",
+  "#4aa8c9",
+  "#b8865b",
+  "#8f9bb3",
+  "#c94f6f",
 ] as const;
+const UNKNOWN_COLOR = "#777777";
+const MAX_CUSTOM_MS = 90 * 24 * 60 * 60_000;
 
 function exactWindow(days: number) {
   return makeWindow(days, undefined, "halfHour");
@@ -99,26 +124,32 @@ function setToggled<T extends string>(current: ReadonlySet<T>, key: T): Readonly
   return next;
 }
 
+function ratio(part: number, whole: number): number {
+  return whole === 0 ? 0 : part / whole;
+}
+
 export function UsagePage() {
   const [view, setView] = useState<"usage" | "limits">("usage");
-  const [metric, setMetric] = useState<UsageStackMetric>("cost");
-  const [seriesMode, setSeriesMode] = useState<UsageSeriesMode>("projects");
-  const [grouping, setGrouping] = useState<UsageGrouping>("12h");
-  const [windowSelection, setWindowSelection] = useState(() => ({
-    days: 7,
-    window: exactWindow(7),
-  }));
+  const [preferences, setPreferences] = useState(readUsagePagePreferences);
+  const updatePreferences = (patch: Partial<UsagePagePreferences>) => {
+    setPreferences((current) => {
+      const next = { ...current, ...patch };
+      saveUsagePagePreferences(next);
+      return next;
+    });
+  };
+  const { metric, dimension } = preferences;
+  const [windowSelection, setWindowSelection] = useState<{
+    preset: WindowPreset;
+    window: ReturnType<typeof exactWindow>;
+  }>(() => ({ preset: preferences.windowDays, window: exactWindow(preferences.windowDays) }));
   const [hiddenProjects, setHiddenProjects] = useState<ReadonlySet<string>>(new Set());
-  const [hiddenProviders, setHiddenProviders] = useState<ReadonlySet<UsageProviderKind>>(new Set());
+  const [hiddenProviders, setHiddenProviders] = useState<ReadonlySet<string>>(new Set());
   const [hiddenModels, setHiddenModels] = useState<ReadonlySet<string>>(new Set());
-  const [expandedProviders, setExpandedProviders] = useState<ReadonlySet<UsageProviderKind>>(
-    new Set(PROVIDER_ORDER),
-  );
   const [activeSeries, setActiveSeries] = useState<string | null>(null);
-  const [breakdown, setBreakdown] = useState<"projects" | "threads">("projects");
   const [modelPricesOpen, setModelPricesOpen] = useState(false);
 
-  const { days: windowDays, window } = windowSelection;
+  const { preset, window } = windowSelection;
   const { merged, environments, isPending, isPartial, isRefreshing, refreshError, refresh } =
     useUsage(window);
   const primaryEnvironmentId = usePrimaryEnvironmentId();
@@ -126,39 +157,37 @@ export function UsagePage() {
     reportFailure: false,
   });
   const settling = isPending && merged.availableThroughDay === null;
+  const untilTime = merged.availableThroughTime ?? window.untilTime!;
+  const grouping: UsageGrouping =
+    preferences.grouping === "auto"
+      ? autoGrouping(window.sinceTime!, untilTime)
+      : preferences.grouping;
   const activeProviders = useMemo(() => providersWithUsage(merged.providers), [merged.providers]);
 
-  const modelsByProvider = useMemo(
-    () =>
-      new Map(
-        PROVIDER_ORDER.map((provider) => [
-          provider,
-          merged.models.filter((model) => model.provider === provider),
-        ]),
-      ),
-    [merged.models],
-  );
-  const visibleModels = useMemo(() => {
-    const values = new Set<string>();
-    for (const model of merged.models) {
-      if (hiddenProviders.has(model.provider)) continue;
-      const key = `${model.provider}\u0000${model.model}`;
-      if (!hiddenModels.has(key)) values.add(key);
+  // Sessions that carried no trusted working directory live only in the
+  // timeline, so the projects table derives their row from the cells.
+  const unknownTotals = useMemo(() => {
+    let costUsd = 0;
+    let totalTokens = 0;
+    for (const cell of merged.timeline) {
+      if (cell.projectKey !== undefined) continue;
+      costUsd += cell.costUsd;
+      totalTokens += cell.totalTokens;
     }
-    return values;
-  }, [hiddenModels, hiddenProviders, merged.models]);
+    return costUsd > 0 || totalTokens > 0 ? { costUsd, totalTokens } : null;
+  }, [merged.timeline]);
 
   const projectSeries = useMemo<readonly UsageChartSeries[]>(() => {
     const values: UsageChartSeries[] = merged.projects.map((project, index) => ({
       key: projectSeriesKey(project.projectKey),
       label: projectLabel(project),
-      color: PROJECT_COLORS[index % PROJECT_COLORS.length]!,
+      color: SERIES_COLORS[index % SERIES_COLORS.length]!,
     }));
-    if (merged.timeline.some((cell) => cell.projectKey === undefined)) {
-      values.push({ key: "unknown", label: "Unknown attribution", color: "#777777" });
+    if (unknownTotals !== null) {
+      values.push({ key: "unknown", label: "Unknown attribution", color: UNKNOWN_COLOR });
     }
     return values;
-  }, [merged.projects, merged.timeline]);
+  }, [merged.projects, unknownTotals]);
   const providerSeries = useMemo<readonly UsageChartSeries[]>(
     () =>
       activeProviders.map((provider) => ({
@@ -168,46 +197,154 @@ export function UsagePage() {
       })),
     [activeProviders],
   );
-  const series = seriesMode === "projects" ? projectSeries : providerSeries;
+  const modelSeries = useMemo<readonly UsageChartSeries[]>(
+    () =>
+      merged.models.map((model, index) => ({
+        key: modelSeriesKey(model.provider, model.model),
+        label: model.model,
+        color: SERIES_COLORS[index % SERIES_COLORS.length]!,
+      })),
+    [merged.models],
+  );
+
+  const seriesMode: UsageSeriesMode = dimension === "threads" ? "projects" : dimension;
+  const series =
+    seriesMode === "projects"
+      ? projectSeries
+      : seriesMode === "providers"
+        ? providerSeries
+        : modelSeries;
+  const hiddenForSeries =
+    seriesMode === "projects"
+      ? hiddenProjects
+      : seriesMode === "providers"
+        ? hiddenProviders
+        : hiddenModels;
   const visibleSeries = useMemo(
+    () => new Set(series.filter((entry) => !hiddenForSeries.has(entry.key)).map((e) => e.key)),
+    [hiddenForSeries, series],
+  );
+  // Hidden rows in any dimension leave the chart, so the picture always matches
+  // the "Shown" footer of whichever table is open.
+  const chartCells = useMemo(
     () =>
-      new Set(
-        series
-          .filter((entry) =>
-            seriesMode === "projects"
-              ? !hiddenProjects.has(entry.key)
-              : !hiddenProviders.has(entry.key as UsageProviderKind),
-          )
-          .map((entry) => entry.key),
+      merged.timeline.filter(
+        (cell) =>
+          !hiddenProjects.has(projectSeriesKey(cell.projectKey)) &&
+          !hiddenProviders.has(cell.provider) &&
+          !hiddenModels.has(modelSeriesKey(cell.provider, cell.model)),
       ),
-    [hiddenProjects, hiddenProviders, series, seriesMode],
+    [hiddenModels, hiddenProjects, hiddenProviders, merged.timeline],
   );
-  const colorByProject = useMemo(
-    () => new Map(projectSeries.map((entry) => [entry.key, entry.color])),
-    [projectSeries],
-  );
-  const projectRows = useMemo(
+
+  const colorByKey = useMemo(
     () =>
-      [...merged.projects].sort((left, right) =>
-        metric === "cost" ? right.costUsd - left.costUsd : right.totalTokens - left.totalTokens,
-      ),
-    [merged.projects, metric],
+      new Map([...projectSeries, ...providerSeries, ...modelSeries].map((e) => [e.key, e.color])),
+    [modelSeries, projectSeries, providerSeries],
   );
+  const projectRows = useMemo<readonly BreakdownTableRow[]>(() => {
+    const rows: BreakdownTableRow[] = merged.projects.map((project) => {
+      const key = projectSeriesKey(project.projectKey);
+      return {
+        key,
+        label: projectLabel(project),
+        color: colorByKey.get(key) ?? UNKNOWN_COLOR,
+        costUsd: project.costUsd,
+        totalTokens: project.totalTokens,
+        share:
+          metric === "cost" ? project.costShare : ratio(project.totalTokens, merged.totalTokens),
+        cacheWriteTokens: project.cacheWriteTokens,
+        cacheWriteUsd: project.cacheWriteUsd,
+        sessions: null,
+      };
+    });
+    if (unknownTotals !== null) {
+      rows.push({
+        key: "unknown",
+        label: "Unknown attribution",
+        color: UNKNOWN_COLOR,
+        costUsd: unknownTotals.costUsd,
+        totalTokens: unknownTotals.totalTokens,
+        share:
+          metric === "cost"
+            ? ratio(unknownTotals.costUsd, merged.costUsd)
+            : ratio(unknownTotals.totalTokens, merged.totalTokens),
+        cacheWriteTokens: 0,
+        cacheWriteUsd: 0,
+        sessions: null,
+      });
+    }
+    return rows;
+  }, [colorByKey, merged.costUsd, merged.projects, merged.totalTokens, metric, unknownTotals]);
+  const providerRows = useMemo<readonly BreakdownTableRow[]>(
+    () =>
+      activeProviders.map((provider) => {
+        const totals = merged.providers.find((entry) => entry.provider === provider);
+        const models = merged.models.filter((model) => model.provider === provider);
+        const cacheWriteTokens = models.reduce((sum, model) => sum + model.cacheWriteTokens, 0);
+        const cacheWriteUsd = models.some(
+          (model) => model.cacheWriteTokens > 0 && model.cacheWriteUsd === null,
+        )
+          ? null
+          : models.reduce((sum, model) => sum + (model.cacheWriteUsd ?? 0), 0);
+        return {
+          key: provider,
+          label: PROVIDER_PRESENTATION[provider].label,
+          color: PROVIDER_PRESENTATION[provider].color,
+          costUsd: totals?.costUsd ?? 0,
+          totalTokens: totals?.totalTokens ?? 0,
+          share: metric === "cost" ? (totals?.costShare ?? 0) : (totals?.tokenShare ?? 0),
+          cacheWriteTokens,
+          cacheWriteUsd,
+          sessions: totals?.sessions ?? 0,
+        };
+      }),
+    [activeProviders, merged.models, merged.providers, metric],
+  );
+  const modelRows = useMemo<readonly BreakdownTableRow[]>(
+    () =>
+      merged.models.map((model) => {
+        const key = modelSeriesKey(model.provider, model.model);
+        return {
+          key,
+          label: model.model,
+          color: colorByKey.get(key) ?? UNKNOWN_COLOR,
+          provider: model.provider,
+          costUsd: model.costUsd,
+          totalTokens: model.totalTokens,
+          share: metric === "cost" ? model.costShare : ratio(model.totalTokens, merged.totalTokens),
+          cacheWriteTokens: model.cacheWriteTokens,
+          cacheWriteUsd: model.cacheWriteUsd,
+          sessions: null,
+        };
+      }),
+    [colorByKey, merged.models, merged.totalTokens, metric],
+  );
+
+  const sort = preferences.sort[dimension] ?? defaultBreakdownSort(metric);
+  const onSort = (column: BreakdownColumn) =>
+    updatePreferences({
+      sort: { ...preferences.sort, [dimension]: toggleBreakdownSort(sort, column) },
+    });
+
   const budgetAlert = useMemo(
     () => evaluateDailyUsageBudget(merged.daily, window.untilDay),
     [merged.daily, window.untilDay],
   );
 
-  const selectWindow = (days: number) => setWindowSelection({ days, window: exactWindow(days) });
+  const selectPreset = (days: UsagePagePreferences["windowDays"]) => {
+    setWindowSelection({ preset: days, window: exactWindow(days) });
+    updatePreferences({ windowDays: days });
+  };
   const setDate = (edge: "from" | "to", value: string) => {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return;
     const nextSince = edge === "from" ? localDayBoundary(value, false) : window.sinceTime!;
     const nextUntil = edge === "to" ? localDayBoundary(value, true) : window.untilTime!;
     if (nextSince === null || nextUntil === null) return;
     if (Date.parse(nextUntil) <= Date.parse(nextSince)) return;
-    if (Date.parse(nextUntil) - Date.parse(nextSince) > 90 * 24 * 60 * 60_000) return;
+    if (Date.parse(nextUntil) - Date.parse(nextSince) > MAX_CUSTOM_MS) return;
     setWindowSelection({
-      days: windowDays,
+      preset: "custom",
       window: {
         ...window,
         sinceDay: (edge === "from" ? value : window.sinceDay) as typeof window.sinceDay,
@@ -224,13 +361,17 @@ export function UsagePage() {
         void refreshProviders({ environmentId: primaryEnvironmentId, input: {} });
       return;
     }
-    const nextWindow = exactWindow(windowDays);
-    setWindowSelection({ days: windowDays, window: nextWindow });
+    if (preset === "custom") {
+      refresh(window);
+      return;
+    }
+    const nextWindow = exactWindow(preset);
+    setWindowSelection({ preset, window: nextWindow });
     refresh(nextWindow);
   };
 
   const topbar = (
-    <div className="flex w-full min-w-0 items-center gap-3">
+    <div className="flex w-full min-w-0 items-center gap-2">
       <WorkspaceBreadcrumb ariaLabel="Usage breadcrumb" className="min-w-0">
         <WorkspaceBreadcrumbItem current>
           <h1>Usage</h1>
@@ -264,28 +405,39 @@ export function UsagePage() {
     </div>
   );
 
+  const threadInput = {
+    sinceDay: window.sinceDay,
+    untilDay: window.untilDay,
+    timeZone: window.timeZone,
+    ...(window.sinceTime === undefined ? {} : { sinceTime: window.sinceTime }),
+    ...(window.untilTime === undefined ? {} : { untilTime: window.untilTime }),
+  };
+
   return (
     <SidebarInset className="h-dvh min-h-0 overflow-hidden overscroll-y-none bg-background text-foreground isolate">
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
         <WorkspacePageHeader electron={isElectron}>{topbar}</WorkspacePageHeader>
         <ScrollArea className="min-h-0 flex-1">
-          <WorkspacePageContainer width="wide">
+          <WorkspacePageContainer width="wide" className="gap-5">
             {view === "limits" ? (
               <UsageLimitsSection selectedEnvironmentIds={null} />
             ) : settling ? (
               <UsageSkeleton />
             ) : (
               <>
-                <div
-                  className="flex items-center gap-2 overflow-x-auto whitespace-nowrap"
-                  aria-label="Date selection"
-                >
+                <div className="flex flex-wrap items-center gap-2" aria-label="Date selection">
                   <ToggleGroup
                     aria-label="Usage period"
                     variant="segmented"
-                    value={[String(windowDays)]}
+                    value={[String(preset)]}
                     onValueChange={(next) => {
-                      if (next[0]) selectWindow(Number(next[0]));
+                      const value = next[0];
+                      if (value === "custom") {
+                        setWindowSelection({ preset: "custom", window });
+                        return;
+                      }
+                      const days = WINDOW_OPTIONS.find((o) => String(o.days) === value)?.days;
+                      if (days !== undefined) selectPreset(days);
                     }}
                   >
                     {WINDOW_OPTIONS.map((option) => (
@@ -293,25 +445,92 @@ export function UsagePage() {
                         {option.label}
                       </Toggle>
                     ))}
+                    <Toggle value="custom">Custom</Toggle>
                   </ToggleGroup>
-                  <Input
-                    aria-label="From day"
-                    type="date"
-                    value={window.sinceDay}
-                    onChange={(event) => setDate("from", event.target.value)}
-                    className="h-8 w-[9.5rem]"
-                  />
-                  <span className="text-xs text-muted-foreground">to</span>
-                  <Input
-                    aria-label="To day"
-                    type="date"
-                    value={window.untilDay}
-                    onChange={(event) => setDate("to", event.target.value)}
-                    className="h-8 w-[9.5rem]"
-                  />
+                  {preset === "custom" ? (
+                    <div className="flex items-center gap-2">
+                      <Input
+                        aria-label="From day"
+                        type="date"
+                        value={window.sinceDay}
+                        onChange={(event) => setDate("from", event.target.value)}
+                        className="h-7 w-[9.5rem]"
+                      />
+                      <span className="text-xs text-muted-foreground">to</span>
+                      <Input
+                        aria-label="To day"
+                        type="date"
+                        value={window.untilDay}
+                        onChange={(event) => setDate("to", event.target.value)}
+                        className="h-7 w-[9.5rem]"
+                      />
+                    </div>
+                  ) : (
+                    <span className="text-xs text-muted-foreground">
+                      {formatDateTimeShort(window.sinceTime!, window.timeZone)} to{" "}
+                      {formatDateTimeShort(untilTime, window.timeZone)}
+                    </span>
+                  )}
+                  <ToggleGroup
+                    aria-label="Metric"
+                    variant="segmented"
+                    value={[metric]}
+                    className="ms-auto"
+                    onValueChange={(next) => {
+                      const value = next[0];
+                      if (value === "cost" || value === "tokens")
+                        updatePreferences({ metric: value });
+                    }}
+                  >
+                    <Toggle value="cost">Cost</Toggle>
+                    <Toggle value="tokens">Tokens</Toggle>
+                  </ToggleGroup>
                 </div>
 
-                <CoverageNotice
+                <section className="flex flex-wrap items-end justify-between gap-x-8 gap-y-4">
+                  <div>
+                    <div className="text-4xl font-semibold tabular-nums tracking-tight">
+                      {metric === "cost"
+                        ? formatUsd(merged.costUsd)
+                        : formatTokens(merged.totalTokens)}
+                    </div>
+                    <div className="mt-1 text-xs text-muted-foreground">
+                      {metric === "cost" ? "API-rate estimate" : "Processed tokens"}
+                      {merged.sessionsExact
+                        ? ` · ${formatCount(merged.sessions)} sessions`
+                        : " · session count unavailable at this cutoff"}
+                    </div>
+                  </div>
+                  <dl className="grid grid-cols-3 gap-x-8 gap-y-1 text-sm">
+                    <Stat
+                      label={metric === "cost" ? "Tokens" : "Cost"}
+                      value={
+                        metric === "cost"
+                          ? formatTokens(merged.totalTokens)
+                          : formatUsd(merged.costUsd)
+                      }
+                      detail={`${formatTokens(merged.cachedInputTokens)} cached · ${formatTokens(
+                        merged.uncachedInputTokens,
+                      )} uncached · ${formatTokens(merged.outputTokens)} output`}
+                    />
+                    <Stat
+                      label="Cache writes, estimated"
+                      value={
+                        merged.costQuality.cacheWriteUsd === null
+                          ? "Unavailable"
+                          : formatUsd(merged.costQuality.cacheWriteUsd)
+                      }
+                      detail={`${formatTokens(merged.cacheCreationTokens)} tokens written`}
+                    />
+                    <Stat
+                      label="Cache savings"
+                      value={formatUsd(merged.costQuality.cacheSavingsUsd)}
+                      detail="vs. paying full input rates"
+                    />
+                  </dl>
+                </section>
+
+                <StatusLine
                   environments={environments}
                   availableThrough={merged.availableThroughTime}
                   lastUpdatedAt={merged.lastUpdatedAt}
@@ -338,213 +557,74 @@ export function UsagePage() {
                   </Alert>
                 )}
 
-                <section className="grid gap-5 lg:grid-cols-[minmax(13rem,17rem)_minmax(0,1fr)]">
-                  <aside className="flex min-w-0 flex-col gap-2">
-                    <div className="mb-2">
-                      <div className="text-3xl font-semibold tabular-nums">
-                        {metric === "cost"
-                          ? formatUsd(merged.costUsd)
-                          : formatTokens(merged.totalTokens)}
-                      </div>
-                      <div className="text-xs text-muted-foreground">
-                        {merged.sessionsExact
-                          ? `${formatCount(merged.sessions)} sessions · API estimate`
-                          : "Session count unavailable at this cutoff"}
-                      </div>
-                    </div>
-                    <div className="text-xs font-medium text-muted-foreground">
-                      Providers and models · click to hide or show
-                    </div>
-                    {activeProviders.map((provider) => {
-                      const expanded = expandedProviders.has(provider);
-                      const hidden = hiddenProviders.has(provider);
-                      const totals = merged.providers.find((entry) => entry.provider === provider);
-                      return (
-                        <div key={provider} className="border-b border-border/50 pb-1">
-                          <div className="flex items-center gap-1">
-                            <button
-                              type="button"
-                              aria-label={`${expanded ? "Collapse" : "Expand"} ${PROVIDER_PRESENTATION[provider].label}`}
-                              onClick={() =>
-                                setExpandedProviders((current) => setToggled(current, provider))
-                              }
-                              className="p-1 text-muted-foreground"
-                            >
-                              {expanded ? (
-                                <ChevronDownIcon className="size-3.5" />
-                              ) : (
-                                <ChevronRightIcon className="size-3.5" />
-                              )}
-                            </button>
-                            <button
-                              type="button"
-                              aria-pressed={!hidden}
-                              onClick={() =>
-                                setHiddenProviders((current) => setToggled(current, provider))
-                              }
-                              className={cn(
-                                "flex min-w-0 flex-1 items-center justify-between gap-2 rounded px-1 py-1 text-sm",
-                                hidden && "opacity-35 line-through",
-                              )}
-                            >
-                              <span className="flex min-w-0 items-center gap-2">
-                                <span
-                                  className="size-2.5 rounded-sm"
-                                  style={{ backgroundColor: PROVIDER_PRESENTATION[provider].color }}
-                                />
-                                <span className="truncate">
-                                  {PROVIDER_PRESENTATION[provider].label}
-                                </span>
-                              </span>
-                              <span className="text-xs tabular-nums text-muted-foreground">
-                                {metric === "cost"
-                                  ? formatUsd(totals?.costUsd ?? 0)
-                                  : formatTokens(totals?.totalTokens ?? 0)}
-                              </span>
-                            </button>
-                          </div>
-                          {expanded ? (
-                            <div className="ml-7 flex flex-col">
-                              {(modelsByProvider.get(provider) ?? []).map((model) => {
-                                const key = `${provider}\u0000${model.model}`;
-                                const modelHidden = hiddenModels.has(key);
-                                return (
-                                  <button
-                                    key={key}
-                                    type="button"
-                                    aria-pressed={!modelHidden}
-                                    onClick={() =>
-                                      setHiddenModels((current) => setToggled(current, key))
-                                    }
-                                    className={cn(
-                                      "flex items-center justify-between gap-2 rounded px-1 py-1 text-left text-xs",
-                                      modelHidden && "opacity-35 line-through",
-                                    )}
-                                  >
-                                    <span className="truncate">{model.model}</span>
-                                    <span className="tabular-nums text-muted-foreground">
-                                      {metric === "cost"
-                                        ? formatUsd(model.costUsd)
-                                        : formatTokens(model.totalTokens)}
-                                    </span>
-                                  </button>
-                                );
-                              })}
-                            </div>
-                          ) : null}
-                        </div>
-                      );
-                    })}
-                  </aside>
-
-                  <div className="flex min-w-0 flex-col gap-3">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <ToggleGroup
-                        aria-label="Chart series"
-                        variant="segmented"
-                        value={[seriesMode]}
-                        onValueChange={(next) => {
-                          const value = next[0];
-                          if (value === "projects" || value === "providers") {
-                            setSeriesMode(value);
-                            setActiveSeries(null);
-                          }
-                        }}
-                      >
-                        <Toggle value="providers">Providers</Toggle>
-                        <Toggle value="projects">Projects</Toggle>
-                      </ToggleGroup>
-                      <ToggleGroup
-                        aria-label="Chart grouping"
-                        variant="segmented"
-                        value={[grouping]}
-                        onValueChange={(next) => {
-                          const value = next[0] as UsageGrouping | undefined;
-                          if (value) setGrouping(value);
-                        }}
-                      >
-                        {GROUP_OPTIONS.map((option) => (
-                          <Toggle key={option.value} value={option.value}>
-                            {option.label}
-                          </Toggle>
-                        ))}
-                      </ToggleGroup>
-                      <ToggleGroup
-                        aria-label="Chart metric"
-                        variant="segmented"
-                        value={[metric]}
-                        className="ms-auto"
-                        onValueChange={(next) => {
-                          const value = next[0];
-                          if (value === "cost" || value === "tokens") setMetric(value);
-                        }}
-                      >
-                        <Toggle value="cost">Cost</Toggle>
-                        <Toggle value="tokens">Tokens</Toggle>
-                      </ToggleGroup>
-                    </div>
-                    <UsageStackedChart
-                      cells={merged.timeline}
-                      series={series}
-                      visibleSeries={visibleSeries}
-                      visibleModels={visibleModels}
-                      seriesMode={seriesMode}
-                      metric={metric}
-                      grouping={grouping}
-                      sourceResolution={window.resolution ?? "day"}
-                      sinceTime={window.sinceTime!}
-                      untilTime={merged.availableThroughTime ?? window.untilTime!}
-                      timeZone={window.timeZone}
-                      activeSeries={activeSeries}
-                      onActiveSeriesChange={setActiveSeries}
-                    />
-                  </div>
-                </section>
-
-                <section className="grid grid-cols-2 gap-x-6 gap-y-4 md:grid-cols-6">
-                  <Metric label="Processed tokens" value={formatTokens(merged.totalTokens)} />
-                  <Metric label="Cached input" value={formatTokens(merged.cachedInputTokens)} />
-                  <Metric label="Uncached input" value={formatTokens(merged.uncachedInputTokens)} />
-                  <Metric label="Output" value={formatTokens(merged.outputTokens)} />
-                  <Metric
-                    label="Cache writes, estimated"
-                    value={
-                      merged.costQuality.cacheWriteUsd === null
-                        ? "Unavailable"
-                        : formatUsd(merged.costQuality.cacheWriteUsd)
-                    }
-                  />
-                  <Metric
-                    label="Cache savings"
-                    value={formatUsd(merged.costQuality.cacheSavingsUsd)}
-                  />
-                </section>
-
                 <section className="flex flex-col gap-3">
-                  <div className="flex items-center justify-between gap-3">
-                    <h2 className="text-sm font-medium">Breakdown</h2>
+                  <div className="flex flex-wrap items-center gap-2">
                     <ToggleGroup
-                      aria-label="Usage breakdown"
+                      aria-label="Breakdown dimension"
                       variant="segmented"
-                      value={[breakdown]}
+                      value={[dimension]}
                       onValueChange={(next) => {
-                        const value = next[0];
-                        if (value === "projects" || value === "threads") setBreakdown(value);
+                        const value = DIMENSION_OPTIONS.find((o) => o.value === next[0])?.value;
+                        if (value !== undefined) {
+                          updatePreferences({ dimension: value });
+                          setActiveSeries(null);
+                        }
                       }}
                     >
-                      <Toggle value="projects">Projects</Toggle>
-                      <Toggle value="threads">Threads</Toggle>
+                      {DIMENSION_OPTIONS.map((option) => (
+                        <Toggle key={option.value} value={option.value}>
+                          {option.label}
+                        </Toggle>
+                      ))}
                     </ToggleGroup>
+                    {dimension === "threads" ? (
+                      <span className="text-xs text-muted-foreground">
+                        Chart stacked by project
+                      </span>
+                    ) : null}
+                    <Menu>
+                      <MenuTrigger
+                        render={<Button variant="ghost" size="sm" className="ms-auto" />}
+                        aria-label="Chart grouping"
+                      >
+                        <span className="text-muted-foreground">Group</span>
+                        {preferences.grouping === "auto" ? `Auto · ${grouping}` : grouping}
+                        <ChevronDownIcon aria-hidden className="size-3 opacity-60" />
+                      </MenuTrigger>
+                      <MenuPopup align="end">
+                        <MenuRadioGroup
+                          value={preferences.grouping}
+                          onValueChange={(value) => {
+                            const option = GROUPING_OPTIONS.find((o) => o.value === value);
+                            if (option) updatePreferences({ grouping: option.value });
+                          }}
+                        >
+                          {GROUPING_OPTIONS.map((option) => (
+                            <MenuRadioItem key={option.value} value={option.value}>
+                              {option.label}
+                            </MenuRadioItem>
+                          ))}
+                        </MenuRadioGroup>
+                      </MenuPopup>
+                    </Menu>
                   </div>
-                  {breakdown === "threads" ? (
+                  <UsageStackedChart
+                    cells={chartCells}
+                    series={series}
+                    visibleSeries={visibleSeries}
+                    seriesMode={seriesMode}
+                    metric={metric}
+                    grouping={grouping}
+                    sourceResolution={window.resolution ?? "day"}
+                    sinceTime={window.sinceTime!}
+                    untilTime={untilTime}
+                    timeZone={window.timeZone}
+                    activeSeries={activeSeries}
+                    onActiveSeriesChange={setActiveSeries}
+                  />
+                  {dimension === "threads" ? (
                     <UsageThreadTable
-                      input={{
-                        sinceDay: window.sinceDay,
-                        untilDay: window.untilDay,
-                        timeZone: window.timeZone,
-                        ...(window.sinceTime === undefined ? {} : { sinceTime: window.sinceTime }),
-                        ...(window.untilTime === undefined ? {} : { untilTime: window.untilTime }),
-                      }}
+                      input={threadInput}
                       providerContributions={merged.providerContributions}
                       summaryFailedEnvironments={
                         environments.filter(
@@ -553,83 +633,64 @@ export function UsagePage() {
                             merged.staleEnvironments.includes(entry.environmentId),
                         ).length
                       }
+                      sort={sort}
+                      onSort={onSort}
+                    />
+                  ) : dimension === "projects" ? (
+                    <UsageBreakdownTable
+                      ariaLabel="Project breakdown"
+                      nameLabel="Project"
+                      rows={projectRows}
+                      metric={metric}
+                      sort={sort}
+                      onSort={onSort}
+                      hidden={hiddenProjects}
+                      onToggleHidden={(key) => setHiddenProjects((c) => setToggled(c, key))}
+                      onSetAllHidden={(hidden) =>
+                        setHiddenProjects(
+                          hidden ? new Set(projectRows.map((r) => r.key)) : new Set(),
+                        )
+                      }
+                      activeKey={activeSeries}
+                      onActiveKeyChange={setActiveSeries}
+                    />
+                  ) : dimension === "providers" ? (
+                    <UsageBreakdownTable
+                      ariaLabel="Provider breakdown"
+                      nameLabel="Provider"
+                      rows={providerRows}
+                      metric={metric}
+                      sort={sort}
+                      onSort={onSort}
+                      hidden={hiddenProviders}
+                      onToggleHidden={(key) =>
+                        setHiddenProviders((c) => setToggled(c, key as UsageProviderKind))
+                      }
+                      onSetAllHidden={(hidden) =>
+                        setHiddenProviders(
+                          hidden ? new Set(providerRows.map((r) => r.key)) : new Set(),
+                        )
+                      }
+                      activeKey={activeSeries}
+                      onActiveKeyChange={setActiveSeries}
+                      showSessions
                     />
                   ) : (
-                    <div className="flex flex-col" aria-label="Project breakdown">
-                      <div
-                        className="flex items-center justify-between gap-3 border-b border-border/50 px-1 pb-2 text-xs text-muted-foreground"
-                        aria-label="Project visibility controls"
-                      >
-                        <span>Click a project to hide or show it</span>
-                        <span className="flex shrink-0 gap-3">
-                          <button
-                            type="button"
-                            onClick={() => setHiddenProjects(new Set())}
-                            className="hover:text-foreground"
-                          >
-                            Select all
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() =>
-                              setHiddenProjects(
-                                new Set(
-                                  projectRows.map((project) =>
-                                    projectSeriesKey(project.projectKey),
-                                  ),
-                                ),
-                              )
-                            }
-                            className="hover:text-foreground"
-                          >
-                            Deselect all
-                          </button>
-                        </span>
-                      </div>
-                      {projectRows.map((project) => {
-                        const key = projectSeriesKey(project.projectKey);
-                        const hidden = hiddenProjects.has(key);
-                        const highlighted = activeSeries === key;
-                        return (
-                          <button
-                            key={key}
-                            type="button"
-                            aria-pressed={!hidden}
-                            onClick={() => setHiddenProjects((current) => setToggled(current, key))}
-                            onPointerEnter={() => setActiveSeries(key)}
-                            onPointerLeave={() => setActiveSeries(null)}
-                            className={cn(
-                              "grid grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-4 border-b border-border/50 px-1 py-2 text-left text-sm transition-opacity",
-                              hidden && "opacity-35 line-through",
-                              highlighted && "bg-muted font-medium",
-                              activeSeries !== null && !highlighted && "opacity-25",
-                            )}
-                          >
-                            <span className="flex min-w-0 items-center gap-2">
-                              <span
-                                className="size-3 rounded-[3px]"
-                                style={{ backgroundColor: colorByProject.get(key) }}
-                              />
-                              <span className="truncate">{projectLabel(project)}</span>
-                            </span>
-                            <span className="tabular-nums">
-                              {metric === "cost"
-                                ? formatUsd(project.costUsd)
-                                : formatTokens(project.totalTokens)}
-                            </span>
-                            <span className="w-14 text-right tabular-nums text-muted-foreground">
-                              {formatPercent(
-                                metric === "cost"
-                                  ? project.costShare
-                                  : merged.totalTokens === 0
-                                    ? 0
-                                    : project.totalTokens / merged.totalTokens,
-                              )}
-                            </span>
-                          </button>
-                        );
-                      })}
-                    </div>
+                    <UsageBreakdownTable
+                      ariaLabel="Model breakdown"
+                      nameLabel="Model"
+                      rows={modelRows}
+                      metric={metric}
+                      sort={sort}
+                      onSort={onSort}
+                      hidden={hiddenModels}
+                      onToggleHidden={(key) => setHiddenModels((c) => setToggled(c, key))}
+                      onSetAllHidden={(hidden) =>
+                        setHiddenModels(hidden ? new Set(modelRows.map((r) => r.key)) : new Set())
+                      }
+                      activeKey={activeSeries}
+                      onActiveKeyChange={setActiveSeries}
+                    />
                   )}
                 </section>
               </>
@@ -648,16 +709,29 @@ export function UsagePage() {
   );
 }
 
-function Metric({ label, value }: { readonly label: string; readonly value: string }) {
+function Stat({
+  label,
+  value,
+  detail,
+}: {
+  readonly label: string;
+  readonly value: string;
+  readonly detail: string;
+}) {
   return (
-    <div className="flex min-w-0 flex-col gap-0.5">
-      <span className="text-xs text-muted-foreground">{label}</span>
-      <span className="text-base font-medium tabular-nums">{value}</span>
+    <div className="flex min-w-0 flex-col">
+      <dt className="text-xs text-muted-foreground">{label}</dt>
+      <dd className="text-base font-medium tabular-nums">{value}</dd>
+      <dd className="truncate text-[11px] text-muted-foreground/80">{detail}</dd>
     </div>
   );
 }
 
-function CoverageNotice({
+/**
+ * One quiet line about data freshness, with problems called out separately so
+ * a healthy page never shows a warning-shaped box.
+ */
+function StatusLine({
   environments,
   availableThrough,
   lastUpdatedAt,
@@ -675,28 +749,29 @@ function CoverageNotice({
   readonly timeZone: string;
 }) {
   const failed = environments.filter((entry) => entry.error !== null);
-  if (
-    failed.length === 0 &&
-    !isPartial &&
-    !isRefreshing &&
-    !refreshError &&
-    availableThrough === null &&
-    lastUpdatedAt === null
-  )
+  const problems = [
+    ...(isPartial ? ["Some environments are still reporting."] : []),
+    ...(refreshError ? [refreshError] : []),
+    ...failed.map((entry) => `${entry.label} could not report usage.`),
+  ];
+  if (availableThrough === null && lastUpdatedAt === null && problems.length === 0 && !isRefreshing)
     return null;
   return (
-    <div className="border border-border px-3 py-2 text-xs text-muted-foreground">
-      <span>Usage snapshots refresh automatically every 30 minutes. </span>
-      {availableThrough ? (
-        <span>Data through {formatDateTimeShort(availableThrough, timeZone)}. </span>
-      ) : null}
-      {lastUpdatedAt ? <span>Updated {formatDateTimeShort(lastUpdatedAt, timeZone)}. </span> : null}
-      {isPartial ? <span>Some environments are still reporting. </span> : null}
-      {isRefreshing ? <span>Refreshing usage. </span> : null}
-      {refreshError ? <span>{refreshError} </span> : null}
-      {failed.map((entry) => (
-        <span key={entry.label}>{entry.label} could not report usage. </span>
-      ))}
+    <div className="flex flex-col gap-1 text-xs text-muted-foreground">
+      <p>
+        {availableThrough
+          ? `Data through ${formatDateTimeShort(availableThrough, timeZone)}`
+          : null}
+        {lastUpdatedAt ? ` · updated ${formatDateTimeShort(lastUpdatedAt, timeZone)}` : null}
+        {" · refreshes every 30 minutes"}
+        {isRefreshing ? " · refreshing now" : null}
+      </p>
+      {problems.length === 0 ? null : (
+        <p className="flex items-center gap-1.5 text-warning">
+          <AlertTriangleIcon aria-hidden className="size-3.5 shrink-0" />
+          <span>{problems.join(" ")}</span>
+        </p>
+      )}
     </div>
   );
 }
@@ -704,12 +779,10 @@ function CoverageNotice({
 function UsageSkeleton() {
   return (
     <div className="flex flex-col gap-4">
-      <Skeleton className="h-8 w-full" />
-      <div className="grid gap-5 lg:grid-cols-[17rem_minmax(0,1fr)]">
-        <Skeleton className="h-80" />
-        <Skeleton className="h-80" />
-      </div>
-      <Skeleton className="h-40" />
+      <Skeleton className="h-7 w-full" />
+      <Skeleton className="h-20 w-full" />
+      <Skeleton className="h-60 w-full" />
+      <Skeleton className="h-40 w-full" />
     </div>
   );
 }

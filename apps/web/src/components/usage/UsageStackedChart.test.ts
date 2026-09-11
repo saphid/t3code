@@ -1,11 +1,13 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  autoGrouping,
   groupTimeline,
   groupedPointIndexAt,
   hoverSampleAt,
   projectSeriesKey,
   stackedAreaPath,
+  timeTicks,
 } from "./UsageStackedChart";
 
 const cells = [
@@ -110,5 +112,50 @@ describe("chart geometry", () => {
     expect(
       stackedAreaPath(points, [{ key: "project:env:id:one", label: "One", color: "#fff" }], 0, 3),
     ).toContain(" C");
+  });
+});
+
+describe("autoGrouping", () => {
+  it("picks hourly for a day, six-hourly for a week, daily beyond ten days", () => {
+    expect(autoGrouping("2026-09-10T08:00:00.000Z", "2026-09-11T08:00:00.000Z")).toBe("1h");
+    expect(autoGrouping("2026-09-04T08:00:00.000Z", "2026-09-11T08:00:00.000Z")).toBe("6h");
+    expect(autoGrouping("2026-08-12T08:00:00.000Z", "2026-09-11T08:00:00.000Z")).toBe("1d");
+    expect(autoGrouping("2026-09-11T08:00:00.000Z", "2026-09-11T08:00:00.000Z")).toBe("1d");
+  });
+});
+
+describe("timeTicks", () => {
+  it("marks local midnights for a multi-day window", () => {
+    const ticks = timeTicks(
+      "2026-09-04T15:00:00.000Z",
+      "2026-09-11T15:00:00.000Z",
+      "America/Chicago",
+    );
+    expect(ticks.map((tick) => tick.label)).toEqual([
+      "Sep 5",
+      "Sep 6",
+      "Sep 7",
+      "Sep 8",
+      "Sep 9",
+      "Sep 10",
+      "Sep 11",
+    ]);
+    // Chicago midnight in September is 05:00 UTC.
+    expect(new Date(ticks[0]!.ms).toISOString()).toBe("2026-09-05T05:00:00.000Z");
+  });
+
+  it("thins long windows to at most eight labels", () => {
+    const ticks = timeTicks("2026-06-13T00:00:00.000Z", "2026-09-11T00:00:00.000Z", "UTC");
+    expect(ticks.length).toBeLessThanOrEqual(8);
+    expect(ticks.length).toBeGreaterThan(4);
+  });
+
+  it("uses six-hour marks inside a day", () => {
+    const ticks = timeTicks("2026-09-10T08:00:00.000Z", "2026-09-11T08:00:00.000Z", "UTC");
+    expect(ticks.map((tick) => tick.ms)).toEqual([
+      Date.parse("2026-09-10T14:00:00.000Z"),
+      Date.parse("2026-09-10T20:00:00.000Z"),
+      Date.parse("2026-09-11T02:00:00.000Z"),
+    ]);
   });
 });

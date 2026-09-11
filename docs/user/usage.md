@@ -31,13 +31,18 @@ if the connected provider cannot report limits. Enter the hub's URL and manageme
 is stored on the server and never sent back to a client. Emails are blurred until clicked, as in
 provider settings.
 
-The usage chart defaults to **7 days**, **Projects**, and **12h** grouping. Every preset retains
-half-hour source buckets, including **24 hours**, **30 days**, and **90 days**. Use **30m**, **1h**,
-**6h**, **12h**, or **1d** to change only the visual grouping; the hover cursor still advances in
+The page opens on **7 days** of cost by project and remembers the period, metric, breakdown, grouping,
+and sort you last used. The **Cost** and **Tokens** switch changes every number on the page, including
+the headline total and which table column is emphasized. Every preset retains half-hour source
+buckets, including **24 hours**, **30 days**, and **90 days**. The chart groups those buckets
+automatically: hourly for a day, six-hourly for up to ten days, daily beyond that. Use **Group**
+above the chart to pin **30 minutes** through **1 day** instead; the hover cursor still advances in
 30-minute increments. The stacked boundaries use shape-preserving curves, while the values remain
-the exact totals for the selected grouping. The page labels the latest time represented by the data.
-Usage refreshes in the background when the server starts and every 30 minutes, so opening the page
-can use the last successful snapshot without waiting for a transcript scan. The Cost and Tokens switch sits with the graph.
+the exact totals for the selected grouping. The chart labels its value axis and marks each local
+midnight, and hovering any point lists that interval's total with its largest series. The page
+labels the latest time represented by the data. Usage refreshes in the background when the server
+starts and every 30 minutes, so opening the page can use the last successful snapshot without
+waiting for a transcript scan.
 Manually refreshing rescans every connected environment and refetches model pricing on each
 of them, so a newly released model that showed $0.00 gets a price without waiting for the daily
 pricing update.
@@ -67,8 +72,8 @@ These limits cover work T3 launches directly for every provider and client. A pr
 its own internal subagents, so T3 cannot reject those before the provider starts them. Use the
 agent-instruction fan-out limits and the independent usage watcher for that layer.
 
-The presets and custom date fields share one date-selection row. Custom ranges can span up to 90
-days.
+Choose **Custom** in the date row to type a start and end day. Custom ranges can span up to 90
+days, and picking a preset again returns to a rolling window.
 
 The breakdown's **Thread** view drills into where the spend went: sessions group into the T3 Code
 thread they belong to, with sessions that never ran through T3 Code listed under the first thing
@@ -87,10 +92,13 @@ writes show a dash; incomplete or unavailable pricing is labeled **Unavailable**
 Cache creation is a billing category, not evidence that a cache entry expired.
 
 Usage is attributed to the project whose folder a session ran in, including sessions driven
-outside T3 Code. Each project has the same color in the stacked graph and the project breakdown.
-Hovering either location highlights the same project everywhere. Click projects in the breakdown
-to show or hide several at once, or use **Select all** and **Deselect all**. Work outside every
-project and usage whose transcript has no trusted folder remain separate groups.
+outside T3 Code. The breakdown below the chart switches between **Projects**, **Providers**,
+**Models**, and **Threads**; the chart stacks by the same dimension, and each row keeps its color in
+both. Click a column header to sort by it and click again to reverse; the page remembers the sort
+for each dimension. Hovering a row highlights its series in the chart. The checkbox at the start of
+a row removes it from the chart and from the shown totals in the table footer, and the header
+checkbox shows or hides every row at once. Work outside every project and usage whose transcript has
+no trusted folder remain separate rows.
 
 If a window looks stale, refresh Limits to re-check every provider and hub.
 
@@ -125,7 +133,7 @@ T3 also limits concurrent top-level provider turns. Ready, idle sessions do not 
 CLIs may create their own internal subagents, which T3 cannot reject before the provider starts
 them.
 
-The left side lists providers and their models. Click a provider to show or hide all of its models,
-expand it to control individual models, and use the **Providers** graph when a provider-level view
-is more useful. Grok Build remains present in provider totals and model controls even when its
-sessions have unknown project attribution.
+The **Providers** view adds a session count per provider, and the **Models** view lists every model
+with its provider mark. Hiding a provider or model removes it from every view's chart, so the graph
+always shows exactly the rows that are checked. Grok Build remains present in provider totals and
+model rows even when its sessions have unknown project attribution.

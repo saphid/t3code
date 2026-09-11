@@ -50,7 +50,13 @@ describe("UsageThreadTable", () => {
     });
 
     const markup = renderToStaticMarkup(
-      <UsageThreadTable input={input} providerContributions={[]} summaryFailedEnvironments={0} />,
+      <UsageThreadTable
+        input={input}
+        providerContributions={[]}
+        summaryFailedEnvironments={0}
+        sort={{ column: "cost", direction: "desc" }}
+        onSort={() => {}}
+      />,
     );
 
     expect(markup).toContain("motion-safe:animate-skeleton");
@@ -65,7 +71,13 @@ describe("UsageThreadTable", () => {
     });
 
     const markup = renderToStaticMarkup(
-      <UsageThreadTable input={input} providerContributions={[]} summaryFailedEnvironments={2} />,
+      <UsageThreadTable
+        input={input}
+        providerContributions={[]}
+        summaryFailedEnvironments={2}
+        sort={{ column: "cost", direction: "desc" }}
+        onSort={() => {}}
+      />,
     );
 
     expect(markup).toContain("Thread activity could not be loaded");
@@ -113,7 +125,13 @@ describe("UsageThreadTable", () => {
     });
 
     const markup = renderToStaticMarkup(
-      <UsageThreadTable input={input} providerContributions={[]} summaryFailedEnvironments={0} />,
+      <UsageThreadTable
+        input={input}
+        providerContributions={[]}
+        summaryFailedEnvironments={0}
+        sort={{ column: "cost", direction: "desc" }}
+        onSort={() => {}}
+      />,
     );
 
     expect(markup).toContain('<button type="button" aria-expanded="false"');

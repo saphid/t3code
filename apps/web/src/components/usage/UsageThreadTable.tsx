@@ -22,8 +22,20 @@ import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Skeleton } from "../ui/skeleton";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { SortableHeader } from "./UsageBreakdownTable";
 import { UsageCacheWriteCell } from "./UsageCacheWriteCell";
+import { sortBreakdownRows, type BreakdownColumn } from "./usageBreakdownSort";
+import type { BreakdownSort } from "./usagePagePreferences";
 import { PROVIDER_PRESENTATION } from "./usageProviders";
+
+function threadTokens(row: UsageThreadRowWithEnvironment): number {
+  return (
+    row.totals.uncachedInputTokens +
+    row.totals.cachedInputTokens +
+    row.totals.cacheCreationTokens +
+    row.totals.outputTokens
+  );
+}
 
 /**
  * On-demand thread drill-down behind the summary. Mounted only while the
@@ -33,10 +45,14 @@ export function UsageThreadTable({
   input,
   providerContributions,
   summaryFailedEnvironments,
+  sort,
+  onSort,
 }: {
   readonly input: UsageThreadBreakdownInput;
   readonly providerContributions: readonly EnvironmentProviderContribution[];
   readonly summaryFailedEnvironments: number;
+  readonly sort: BreakdownSort;
+  readonly onSort: (column: BreakdownColumn) => void;
 }) {
   const { rows, truncatedRows, isPending, failedEnvironments } = useUsageThreads(
     input,
@@ -44,7 +60,22 @@ export function UsageThreadTable({
   );
   const unavailableEnvironments = failedEnvironments + summaryFailedEnvironments;
   const [openRows, setOpenRows] = useState<ReadonlySet<string>>(new Set());
-  const totalCostUsd = useMemo(() => rows.reduce((sum, row) => sum + row.costUsd, 0), [rows]);
+  const sortedRows = useMemo(() => {
+    const totalCostUsd = rows.reduce((sum, row) => sum + row.costUsd, 0);
+    return sortBreakdownRows(
+      rows.map((row) => ({
+        row,
+        label: row.title,
+        costUsd: row.costUsd,
+        totalTokens: threadTokens(row),
+        share: totalCostUsd === 0 ? 0 : row.costUsd / totalCostUsd,
+        cacheWriteTokens: row.totals.cacheCreationTokens,
+        cacheWriteUsd: row.cacheWriteUsd,
+        sessions: row.sessions,
+      })),
+      sort,
+    );
+  }, [rows, sort]);
 
   const toggleRow = (key: string) => {
     setOpenRows((current) => {
@@ -76,11 +107,11 @@ export function UsageThreadTable({
       </colgroup>
       <thead>
         <tr className="border-b border-border text-left text-xs text-muted-foreground">
-          <th className="py-2 font-normal">Thread</th>
-          <th className="py-2 text-right font-normal">Cost</th>
-          <th className="py-2 text-right font-normal">Cache writes</th>
-          <th className="py-2 text-right font-normal">Share</th>
-          <th className="py-2 text-right font-normal">Tokens</th>
+          <SortableHeader column="name" label="Thread" sort={sort} onSort={onSort} align="left" />
+          <SortableHeader column="cost" label="Cost" sort={sort} onSort={onSort} />
+          <SortableHeader column="cacheWrites" label="Cache writes" sort={sort} onSort={onSort} />
+          <SortableHeader column="share" label="Share" sort={sort} onSort={onSort} />
+          <SortableHeader column="tokens" label="Tokens" sort={sort} onSort={onSort} />
         </tr>
       </thead>
       <tbody>
@@ -93,21 +124,16 @@ export function UsageThreadTable({
             </td>
           </tr>
         ) : (
-          rows.map((row) => {
+          sortedRows.map(({ row, totalTokens, share }) => {
             const viewKey = `${row.environmentId}\u0000${row.key}`;
             const open = openRows.has(viewKey);
-            const tokens =
-              row.totals.uncachedInputTokens +
-              row.totals.cachedInputTokens +
-              row.totals.cacheCreationTokens +
-              row.totals.outputTokens;
             return (
               <ThreadRowGroup
                 key={viewKey}
                 row={row}
                 open={open}
-                tokens={tokens}
-                share={totalCostUsd === 0 ? 0 : row.costUsd / totalCostUsd}
+                tokens={totalTokens}
+                share={share}
                 sinceDay={input.sinceDay}
                 untilDay={input.untilDay}
                 onToggle={() => toggleRow(viewKey)}
