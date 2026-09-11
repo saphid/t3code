@@ -1289,6 +1289,21 @@ export async function createExtensionRuntime(options: RuntimeOptions): Promise<E
       if (record.contentHash !== expectedContentHash)
         return Promise.reject(new Error("Installed content changed"));
       current(record);
+      // Discovery only awaits providers the requester can serve or call: itself,
+      // the providers resolved for its declared API requirements, and its direct
+      // plugin dependencies. Unrelated providers still verify and start so their
+      // health and failure marking stay accurate, but their readiness is not on
+      // the critical path and their lifecycle changes cannot fail this call.
+      const related = new Set([record.id]);
+      const requiredApis = new Set(
+        [
+          ...(record.package.requires ?? []),
+          ...(record.package.dependencies ?? []).flatMap((dependency) => dependency.apis),
+        ].map((api) => api.id),
+      );
+      for (const api of broker.resolution().apis)
+        if (api.providerId && requiredApis.has(api.id)) related.add(api.providerId);
+      for (const dependency of record.package.dependencies ?? []) related.add(dependency.pluginId);
       for (const provider of installations.values()) {
         if (signal.aborted) throw new Error("Discovery cancelled");
         if (
@@ -1297,17 +1312,23 @@ export async function createExtensionRuntime(options: RuntimeOptions): Promise<E
             "available"
         )
           continue;
-        try {
-          await verify(provider);
-          current(provider);
-          await start(provider).ready;
-        } catch (error) {
-          if (disposed || installations.get(provider.id) !== provider)
-            throw new Error("Discovery installation changed", { cause: error });
-          health.set(provider.id, "failed");
-          broker.invalidate(affectedPlugins([provider.id]));
-          publishCatalogueChange();
-        }
+        const awaited = related.has(provider.id);
+        const ready = (async () => {
+          try {
+            await verify(provider);
+            current(provider);
+            await start(provider).ready;
+          } catch (error) {
+            if (disposed || installations.get(provider.id) !== provider) {
+              if (awaited) throw new Error("Discovery installation changed", { cause: error });
+              return;
+            }
+            health.set(provider.id, "failed");
+            broker.invalidate(affectedPlugins([provider.id]));
+            publishCatalogueChange();
+          }
+        })();
+        if (awaited) await ready;
       }
       return broker.discover(record, context, signal);
     },
