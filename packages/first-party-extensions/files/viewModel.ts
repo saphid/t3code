@@ -190,6 +190,83 @@ export function mediaPreviewNotice(kind: PreviewKind): string {
   return `${kind} preview is not public yet — workspace media reads await the t3.workspace/resources contract`;
 }
 
+/**
+ * Editor slice (P05-D): the `t3.workspace/text-edits@1.1.0` snapshot result
+ * mapped onto the panel's editing surface. The 24000-byte bound is an API
+ * checkpoint; `oversized` names the deferred full-size-editing blocker (#19)
+ * instead of pretending a truncated read is editable.
+ */
+export type SnapshotReason =
+  | "not-found"
+  | "not-regular-file"
+  | "binary"
+  | "invalid-utf8"
+  | "oversized"
+  | "outside-workspace"
+  | "unsafe-path"
+  | "changed-during-read"
+  | "io-error";
+
+export interface SnapshotRead {
+  readonly kind: "editable" | "not-editable";
+  readonly contents?: string;
+  readonly revision?: string;
+  readonly reason?: SnapshotReason;
+}
+
+export type EditorOpen =
+  | { readonly editable: true; readonly contents: string; readonly revision: string }
+  | { readonly editable: false; readonly reason: SnapshotReason; readonly message: string };
+
+const EDITABLE_TEXT_MAX_BYTES = 24000;
+
+const REASON_MESSAGES: Readonly<Record<SnapshotReason, string>> = {
+  "not-found": "File does not exist in this workspace",
+  "not-regular-file": "Not a regular file — only regular files can be edited",
+  binary: "Binary file — editing is not supported",
+  "invalid-utf8": "File is not valid UTF-8 — editing is not supported",
+  oversized: `File exceeds the ${EDITABLE_TEXT_MAX_BYTES.toLocaleString("en-US")}-byte editable bound — read only (full-size editing is not public yet)`,
+  "outside-workspace": "Path is outside the workspace",
+  "unsafe-path": "Path is not a safe workspace-relative path",
+  "changed-during-read": "File changed while it was being read — try again",
+  "io-error": "File could not be read",
+};
+
+/**
+ * Snapshot → editor state. Editable snapshots carry the contents and the
+ * revision saves compare against; everything else is read-only with the
+ * contract's named reason — never silent truncation of user edits.
+ */
+export function describeSnapshot(read: SnapshotRead): EditorOpen {
+  if (read.kind === "editable" && typeof read.contents === "string" && read.revision)
+    return { editable: true, contents: read.contents, revision: read.revision };
+  const reason: SnapshotReason = read.reason ?? "io-error";
+  return { editable: false, reason, message: REASON_MESSAGES[reason] };
+}
+
+export type SaveStateKind = "clean" | "dirty" | "saving" | "saved" | "conflict" | "error";
+
+/** Status line for the coordinator's observable state. */
+export function describeSaveState(state: {
+  readonly kind: SaveStateKind;
+  readonly message?: string;
+}): string {
+  switch (state.kind) {
+    case "clean":
+      return "No unsaved changes";
+    case "dirty":
+      return "Unsaved changes";
+    case "saving":
+      return "Saving";
+    case "saved":
+      return "Saved";
+    case "conflict":
+      return "File changed on disk — reload it or keep your version";
+    case "error":
+      return `Save failed${state.message ? `: ${state.message}` : ""} — your changes are kept`;
+  }
+}
+
 /** Kind selector values for the `t3.workspace/search` contract call. */
 export type SearchKindFilter = "all" | "file" | "directory";
 

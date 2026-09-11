@@ -1,5 +1,6 @@
 import {
   filePresentationApi,
+  textEditsApi,
   workspaceFilesApi,
   workspaceSearchApi,
   workspaceTreeApi,
@@ -9,16 +10,24 @@ import { defineExtension, requireApi } from "@t3tools/extension-sdk/authoring";
 import { bindApi, bindStreamApi } from "@t3tools/extension-sdk/capabilities";
 import type { ClientHost } from "@t3tools/extension-sdk/environment";
 import type { ViewSession } from "@t3tools/extension-sdk/host";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import {
+  FILE_SAVE_DEBOUNCE_MS,
+  FileEditCoordinator,
+  type EditorSaveState,
+} from "./saveCoordinator.js";
+import {
   describeRead,
+  describeSaveState,
   describeSearch,
+  describeSnapshot,
   mediaPreviewNotice,
   parentPath,
   previewKind,
   toggleExpanded,
   visibleRows,
+  type EditorOpen,
   type PreviewKind,
   type SearchKindFilter,
   type SearchResults,
@@ -149,6 +158,214 @@ function usePackageAsset(host: ClientHost, session: ViewSession, visible: boolea
   return asset;
 }
 
+interface EditorSurface {
+  readonly path: string;
+  readonly open: EditorOpen;
+  readonly contents: string;
+  readonly saveState: EditorSaveState;
+}
+
+/**
+ * Editor session for one workspace path (F1 #2/#3/#4). A package-owned
+ * FileEditCoordinator drives debounced autosave through the revisioned
+ * `t3.workspace/text-edits@1.1.0` contract: the textarea renders the buffered
+ * contents optimistically, saves compare-and-swap on the confirmed base
+ * revision, conflicts halt autosave until the user resolves them, and the
+ * session flushes pending edits when the file changes or the view unmounts —
+ * the native panel's unmount-dispose semantics.
+ */
+function useFileEditor(
+  host: ClientHost,
+  session: ViewSession,
+  selected: string | null,
+  selectedKind: PreviewKind,
+  refreshRevision: number,
+  visible: boolean,
+) {
+  const [surface, setSurface] = useState<EditorSurface | null>(null);
+  const activeRef = useRef<{ path: string; coordinator: FileEditCoordinator } | null>(null);
+  const lastRefreshRef = useRef(-1);
+  const editing = selected !== null && selectedKind === "text" && visible;
+
+  useEffect(() => {
+    const active = activeRef.current;
+    if (!editing || selected === null) {
+      if (active) {
+        active.coordinator.dispose();
+        activeRef.current = null;
+      }
+      // A stale surface is filtered at render (`surface.path === selected`), so
+      // nothing to clear synchronously here.
+      return;
+    }
+
+    const path = selected;
+    const controller = new AbortController();
+    const signal = AbortSignal.any([controller.signal, session.signal]);
+    let current = activeRef.current;
+    const pathChanged = !current || current.path !== path;
+    // Re-read the snapshot on open and on every tree refresh; identical
+    // revisions skip the network round-trip.
+    if (!pathChanged && refreshRevision === lastRefreshRef.current) {
+      return () => controller.abort();
+    }
+    lastRefreshRef.current = refreshRevision;
+    if (pathChanged) {
+      current?.coordinator.dispose();
+      const coordinator = new FileEditCoordinator({
+        debounceMs: FILE_SAVE_DEBOUNCE_MS,
+        persist: async (contents, expectedRevision) => {
+          try {
+            return await bindApi(textEditsApi, host, session.context).invoke(
+              "save",
+              { relativePath: path, expectedRevision, contents },
+              signal,
+            );
+          } catch (error) {
+            return {
+              kind: "error",
+              message: error instanceof Error ? error.message : "Save failed",
+            };
+          }
+        },
+        onStateChange: (saveState) =>
+          setSurface((previous) =>
+            previous && previous.path === path ? { ...previous, saveState } : previous,
+          ),
+      });
+      current = { path, coordinator };
+      activeRef.current = current;
+    }
+    const coordinator = current!.coordinator;
+
+    void (async () => {
+      try {
+        const snapshot = await bindApi(textEditsApi, host, session.context).invoke(
+          "readSnapshot",
+          { relativePath: path },
+          signal,
+        );
+        if (signal.aborted) return;
+        const open = describeSnapshot(snapshot);
+        if (!open.editable) {
+          setSurface({ path, open, contents: "", saveState: coordinator.state() });
+          return;
+        }
+        const kind = coordinator.state().kind;
+        if (kind === "dirty" || kind === "saving" || kind === "error") {
+          // Refresh reconciliation: the remote file moved under pending edits —
+          // latch the conflict rather than clobbering the user's buffer.
+          coordinator.noteRemoteRevision(open.revision);
+          setSurface((previous) => ({
+            path,
+            open,
+            contents: previous?.path === path ? previous.contents : coordinator.contents(),
+            saveState: coordinator.state(),
+          }));
+        } else {
+          coordinator.seed(open.revision, open.contents);
+          setSurface({
+            path,
+            open,
+            contents: open.contents,
+            saveState: coordinator.state(),
+          });
+        }
+      } catch (error) {
+        if (!signal.aborted)
+          setSurface((previous) => ({
+            path,
+            open: {
+              editable: false,
+              reason: "io-error",
+              message: error instanceof Error ? error.message : "File could not be read",
+            },
+            contents: previous?.path === path ? previous.contents : "",
+            saveState: coordinator.state(),
+          }));
+      }
+    })();
+    return () => controller.abort();
+  }, [host, session, selected, editing, refreshRevision]);
+
+  // Unmount flush: pending edits persist, exactly like the native panel's
+  // coordinator disposal.
+  useEffect(
+    () => () => {
+      activeRef.current?.coordinator.dispose();
+      activeRef.current = null;
+    },
+    [],
+  );
+
+  const change = (contents: string) => {
+    const active = activeRef.current;
+    if (!active || active.path !== selected) return;
+    active.coordinator.change(contents);
+    setSurface((previous) =>
+      previous && previous.path === selected ? { ...previous, contents } : previous,
+    );
+  };
+
+  /** Reload: discard local edits and adopt the remote snapshot. */
+  const reload = () => {
+    const active = activeRef.current;
+    if (!active || active.path !== selected) return;
+    const coordinator = active.coordinator;
+    const controller = new AbortController();
+    const signal = AbortSignal.any([controller.signal, session.signal]);
+    void bindApi(textEditsApi, host, session.context)
+      .invoke("readSnapshot", { relativePath: active.path }, signal)
+      .then((snapshot) => {
+        if (signal.aborted) return;
+        const open = describeSnapshot(snapshot);
+        if (open.editable) {
+          coordinator.adoptRemote(open.contents, open.revision);
+          setSurface({
+            path: active.path,
+            open,
+            contents: open.contents,
+            saveState: coordinator.state(),
+          });
+        } else {
+          setSurface((previous) =>
+            previous && previous.path === active.path
+              ? { ...previous, open, saveState: coordinator.state() }
+              : previous,
+          );
+        }
+      })
+      .finally(() => controller.abort());
+  };
+
+  /** Keep mine: deliberately write the buffer over the fresh remote revision. */
+  const keepMine = () => {
+    const active = activeRef.current;
+    if (!active || active.path !== selected) return;
+    const coordinator = active.coordinator;
+    const controller = new AbortController();
+    const signal = AbortSignal.any([controller.signal, session.signal]);
+    void bindApi(textEditsApi, host, session.context)
+      .invoke("readSnapshot", { relativePath: active.path }, signal)
+      .then((snapshot) => {
+        if (signal.aborted) return;
+        const open = describeSnapshot(snapshot);
+        if (open.editable) coordinator.forcePersist(open.revision);
+        else
+          setSurface((previous) =>
+            previous && previous.path === active.path
+              ? { ...previous, open, saveState: coordinator.state() }
+              : previous,
+          );
+      })
+      .finally(() => controller.abort());
+  };
+
+  const retry = () => activeRef.current?.coordinator.retry();
+
+  return { surface, change, reload, keepMine, retry };
+}
+
 function FilesView(props: { host: ClientHost; session: ViewSession }) {
   const { host, session } = props;
   const { entries, status, refresh, revision, visible } = useWorkspaceTree(host, session);
@@ -177,6 +394,7 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
     truncated: boolean;
   } | null>(null);
   const selectedKind: PreviewKind = selected ? previewKind(selected) : "text";
+  const editor = useFileEditor(host, session, selected, selectedKind, revision, visible);
   const packageAsset = usePackageAsset(
     host,
     session,
@@ -237,8 +455,14 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
     if (ancestors.length) setExpanded((previous) => new Set([...previous, ...ancestors]));
   };
 
+  const editorSurface = editor.surface?.path === selected ? editor.surface : null;
+
   useEffect(() => {
+    // The bounded preview read remains the fallback for files the text-edits
+    // contract reports as not-editable (oversized/binary/non-UTF-8) — shown
+    // read-only with the named reason, never silently editable.
     if (!selected || !visible || selectedKind !== "text") return;
+    if (editorSurface === null || editorSurface.open.editable) return;
     const controller = new AbortController();
     const signal = AbortSignal.any([controller.signal, session.signal]);
     void bindApi(workspaceFilesApi, host, session.context)
@@ -268,7 +492,7 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
         },
       );
     return () => controller.abort();
-  }, [host, selected, selectedKind, session, revision, visible]);
+  }, [host, selected, selectedKind, session, revision, visible, editorSurface]);
 
   const muted = "var(--muted-foreground, #667085)";
   return (
@@ -426,26 +650,107 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
           {selected +
             ": " +
             (selectedKind === "text"
-              ? (currentRead?.status ?? "Reading file")
+              ? editorSurface === null
+                ? "Reading file"
+                : editorSurface.open.editable
+                  ? describeSaveState(editorSurface.saveState)
+                  : editorSurface.open.message + (currentRead ? ` — ${currentRead.status}` : "")
               : mediaPreviewNotice(selectedKind))}
         </output>
       )}
-      {selected && selectedKind === "text" && (
-        <pre
-          aria-label="File contents"
+      {selected && selectedKind === "text" && editorSurface?.open.editable === true && (
+        <div
           style={{
-            overflow: "auto",
+            display: "flex",
+            flexDirection: "column",
             flex: 1,
-            margin: 0,
-            padding: 12,
+            minHeight: 0,
             borderTop: "1px solid var(--border, #dfe3e8)",
-            fontFamily: "var(--font-mono, ui-monospace, SFMono-Regular, Consolas, monospace)",
-            fontSize: 12,
           }}
         >
-          {currentRead?.contents ?? ""}
-        </pre>
+          <textarea
+            aria-label="File editor"
+            value={editorSurface.contents}
+            onChange={(event) => editor.change(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Escape") event.currentTarget.blur();
+            }}
+            spellCheck={false}
+            style={{
+              flex: 1,
+              minHeight: 0,
+              resize: "none",
+              border: "none",
+              outline: "none",
+              padding: 12,
+              color: "inherit",
+              background: "transparent",
+              fontFamily: "var(--font-mono, ui-monospace, SFMono-Regular, Consolas, monospace)",
+              fontSize: 12,
+            }}
+          />
+          {editorSurface.saveState.kind === "conflict" && (
+            <div
+              role="alert"
+              style={{
+                display: "flex",
+                gap: 6,
+                alignItems: "center",
+                padding: "6px 10px",
+                borderTop: "1px solid var(--border, #dfe3e8)",
+                fontSize: 11,
+                color: "var(--foreground, #20252d)",
+              }}
+            >
+              File changed on disk — your edits are kept.
+              <button type="button" onClick={editor.reload}>
+                Reload file
+              </button>
+              <button type="button" onClick={editor.keepMine}>
+                Keep my version
+              </button>
+            </div>
+          )}
+          {editorSurface.saveState.kind === "error" && (
+            <div
+              role="alert"
+              style={{
+                display: "flex",
+                gap: 6,
+                alignItems: "center",
+                padding: "6px 10px",
+                borderTop: "1px solid var(--border, #dfe3e8)",
+                fontSize: 11,
+                color: "var(--foreground, #20252d)",
+              }}
+            >
+              {describeSaveState(editorSurface.saveState)}
+              <button type="button" onClick={editor.retry}>
+                Retry save
+              </button>
+            </div>
+          )}
+        </div>
       )}
+      {selected &&
+        selectedKind === "text" &&
+        editorSurface !== null &&
+        !editorSurface.open.editable && (
+          <pre
+            aria-label="File contents"
+            style={{
+              overflow: "auto",
+              flex: 1,
+              margin: 0,
+              padding: 12,
+              borderTop: "1px solid var(--border, #dfe3e8)",
+              fontFamily: "var(--font-mono, ui-monospace, SFMono-Regular, Consolas, monospace)",
+              fontSize: 12,
+            }}
+          >
+            {currentRead?.contents ?? ""}
+          </pre>
+        )}
       {selected && selectedKind !== "text" && (
         <figure
           aria-label="Package asset preview"
@@ -476,7 +781,7 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
 
 export default defineExtension({
   id: manifestId,
-  version: "0.3.0",
+  version: "0.4.0",
   provides: [filePresentationApi.definition],
   assets: [{ path: PREVIEW_ASSET_PATH, mediaType: "application/octet-stream" }],
   serverEntry: "server.ts",
@@ -484,6 +789,7 @@ export default defineExtension({
     requireApi(workspaceTreeApi),
     requireApi(workspaceFilesApi),
     requireApi(workspaceSearchApi),
+    requireApi(textEditsApi),
   ],
   surfaces: [
     {

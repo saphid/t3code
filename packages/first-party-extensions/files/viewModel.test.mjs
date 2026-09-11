@@ -3,7 +3,9 @@ import * as NodeTest from "node:test";
 import {
   compareTreeEntries,
   describeRead,
+  describeSaveState,
   describeSearch,
+  describeSnapshot,
   filterEntries,
   mediaPreviewNotice,
   parentPath,
@@ -171,5 +173,54 @@ NodeTest.describe("mediaPreviewNotice", () => {
       NodeAssert.match(mediaPreviewNotice(kind), new RegExp(`^${kind} preview is not public yet`));
       NodeAssert.match(mediaPreviewNotice(kind), /t3\.workspace\/resources/);
     }
+  });
+});
+
+NodeTest.describe("describeSnapshot", () => {
+  NodeTest.it("opens editable snapshots with contents and revision", () => {
+    NodeAssert.deepEqual(
+      describeSnapshot({
+        kind: "editable",
+        contents: "hello\n",
+        revision: "a".repeat(64),
+      }),
+      { editable: true, contents: "hello\n", revision: "a".repeat(64) },
+    );
+  });
+
+  NodeTest.it(
+    "names the 24000-byte bound for oversized files — read-only, never silent truncation",
+    () => {
+      const open = describeSnapshot({ kind: "not-editable", reason: "oversized" });
+      NodeAssert.equal(open.editable, false);
+      NodeAssert.equal(open.reason, "oversized");
+      NodeAssert.match(open.message, /24,000-byte editable bound/);
+      NodeAssert.match(open.message, /read only/);
+    },
+  );
+
+  NodeTest.it("names binary and invalid-utf8 as read-only reasons", () => {
+    NodeAssert.match(
+      describeSnapshot({ kind: "not-editable", reason: "binary" }).message,
+      /Binary file/,
+    );
+    NodeAssert.match(
+      describeSnapshot({ kind: "not-editable", reason: "invalid-utf8" }).message,
+      /not valid UTF-8/,
+    );
+  });
+});
+
+NodeTest.describe("describeSaveState", () => {
+  NodeTest.it("labels every coordinator state", () => {
+    NodeAssert.equal(describeSaveState({ kind: "clean" }), "No unsaved changes");
+    NodeAssert.equal(describeSaveState({ kind: "dirty" }), "Unsaved changes");
+    NodeAssert.equal(describeSaveState({ kind: "saving" }), "Saving");
+    NodeAssert.equal(describeSaveState({ kind: "saved" }), "Saved");
+    NodeAssert.match(describeSaveState({ kind: "conflict" }), /changed on disk/);
+    NodeAssert.match(
+      describeSaveState({ kind: "error", message: "io" }),
+      /Save failed: io.*changes are kept/,
+    );
   });
 });
