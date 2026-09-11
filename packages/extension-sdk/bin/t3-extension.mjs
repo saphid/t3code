@@ -20,6 +20,12 @@ async function check(dir) {
     const bytes = await NodeFSP.readFile(NodePath.join(dir, name));
     hashes[name] = sha(bytes);
   }
+  for (const asset of pkg.format === 4 ? pkg.assets : []) {
+    const bytes = await NodeFSP.readFile(NodePath.join(dir, asset.path));
+    if (bytes.length !== asset.byteLength || sha(bytes) !== asset.sha256)
+      throw new Error("Package asset digest mismatch: " + asset.path);
+    hashes[asset.path] = asset.sha256;
+  }
   if (pkg.serverEntry) {
     const server = await import(
       NodeURL.pathToFileURL(NodePath.join(dir, pkg.serverEntry)).href + "?check=" + Date.now()
@@ -95,7 +101,30 @@ async function main() {
     const authored = (
       await import(NodeURL.pathToFileURL(NodePath.join(temp, "definition.mjs")).href)
     ).default;
-    const pkg = validateEnvironmentPackage(authored.package);
+    const declaredAssets = authored.assets ?? [];
+    const packedAssets = [];
+    const sourceRoot = await NodeFSP.realpath(dir);
+    for (const declared of declaredAssets) {
+      const source = NodePath.join(dir, declared.path);
+      const stat = await NodeFSP.lstat(source);
+      if (stat.isSymbolicLink() || !stat.isFile())
+        throw new Error("Asset source must be a regular file: " + declared.path);
+      if (!(await NodeFSP.realpath(source)).startsWith(sourceRoot + NodePath.sep))
+        throw new Error("Asset source escapes the source directory: " + declared.path);
+      const bytes = await NodeFSP.readFile(source);
+      packedAssets.push({
+        path: declared.path,
+        byteLength: bytes.length,
+        sha256: sha(bytes),
+        mediaType: declared.mediaType,
+      });
+      const target = NodePath.join(temp, declared.path);
+      await NodeFSP.mkdir(NodePath.dirname(target), { recursive: true });
+      await NodeFSP.copyFile(source, target);
+    }
+    const pkg = validateEnvironmentPackage(
+      packedAssets.length ? { ...authored.package, assets: packedAssets } : authored.package,
+    );
     if (
       authored.serverEntry &&
       (NodePath.isAbsolute(authored.serverEntry) ||

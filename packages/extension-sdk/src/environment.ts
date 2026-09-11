@@ -57,11 +57,16 @@ export interface EnvironmentPackageV2 extends Omit<
 export interface EnvironmentPackageV3 extends Omit<EnvironmentPackageV2, "format"> {
   readonly format: 3;
 }
+export const ENVIRONMENT_ASSET_MEDIA_TYPES = [
+  "application/wasm",
+  "application/octet-stream",
+  "font/woff2",
+] as const;
 export interface EnvironmentAsset {
   readonly path: string;
   readonly byteLength: number;
   readonly sha256: string;
-  readonly mediaType: "application/wasm" | "application/octet-stream" | "font/woff2";
+  readonly mediaType: (typeof ENVIRONMENT_ASSET_MEDIA_TYPES)[number];
 }
 export interface EnvironmentPackageV4 extends Omit<EnvironmentPackageV3, "format"> {
   readonly format: 4;
@@ -133,7 +138,7 @@ function validateEntry(value: string): void {
   )
     throw new Error("Entry must be a package-relative bundled ESM .mjs or .js file");
 }
-function validateAssetPath(value: string): void {
+export function validateAssetPath(value: unknown): void {
   if (
     typeof value !== "string" ||
     value.length === 0 ||
@@ -293,7 +298,7 @@ export function validateEnvironmentPackage(value: unknown): EnvironmentPackage {
         asset.byteLength > 4 * 1024 * 1024 ||
         typeof asset.sha256 !== "string" ||
         !/^[a-f0-9]{64}$/.test(asset.sha256) ||
-        !["application/wasm", "application/octet-stream", "font/woff2"].includes(asset.mediaType)
+        !ENVIRONMENT_ASSET_MEDIA_TYPES.includes(asset.mediaType)
       )
         throw new Error("Invalid package asset");
       validateAssetPath(asset.path);

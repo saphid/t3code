@@ -41,6 +41,39 @@ NodeTest.test(
     );
   },
 );
+NodeTest.test("declared assets select format 4 and reject unverifiable declarations", () => {
+  const authored = defineExtension({
+    id: "test.assets",
+    version: "1.0.0",
+    assets: [{ path: "assets/value.wasm", mediaType: "application/wasm" }],
+    serverEntry: "server.ts",
+  });
+  NodeAssert.equal(authored.package.format, 4);
+  NodeAssert.deepEqual(authored.package.assets, []);
+  NodeAssert.deepEqual(authored.assets, [
+    { path: "assets/value.wasm", mediaType: "application/wasm" },
+  ]);
+  NodeAssert.throws(
+    () =>
+      defineExtension({
+        id: "test.assets",
+        version: "1.0.0",
+        assets: [{ path: "../escape.wasm", mediaType: "application/wasm" }],
+        serverEntry: "server.ts",
+      }),
+    /Asset path/,
+  );
+  NodeAssert.throws(
+    () =>
+      defineExtension({
+        id: "test.assets",
+        version: "1.0.0",
+        assets: [{ path: "assets/x.png", mediaType: "image/png" }],
+        serverEntry: "server.ts",
+      }),
+    /media type/,
+  );
+});
 NodeTest.test(
   "read helper suppresses old input, hidden and disposed results and resumes on show",
   async () => {

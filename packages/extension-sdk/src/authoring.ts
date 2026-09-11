@@ -2,9 +2,12 @@ import type { SurfaceDescriptor, Json } from "./contracts.js";
 import type { SurfaceContribution, ViewSession } from "./host.js";
 import type { SurfaceRenderer } from "./react.js";
 import {
+  ENVIRONMENT_ASSET_MEDIA_TYPES,
+  validateAssetPath,
   validateEnvironmentPackage,
   type ClientHost,
   type ClientFactory,
+  type EnvironmentAsset,
   type EnvironmentPackage,
 } from "./environment.js";
 import {
@@ -32,6 +35,11 @@ export interface AuthoredSurface extends Omit<
     session: ViewSession,
   ): ReturnType<SurfaceContribution<SurfaceRenderer>["createView"]>;
 }
+/** A declared package asset. `path` is both source-relative and package-relative; the CLI supplies the verified byteLength and sha256 at pack time. */
+export interface AuthoredAsset {
+  readonly path: string;
+  readonly mediaType: EnvironmentAsset["mediaType"];
+}
 export interface ExtensionSource {
   readonly id: string;
   readonly version: string;
@@ -41,17 +49,26 @@ export interface ExtensionSource {
   readonly dependencies?: readonly PluginDependency[];
   /** Separate Node source entry, bundled only for the server. */
   readonly serverEntry?: string;
+  /** Verified files packed beside the entries; selecting assets emits package format 4. */
+  readonly assets?: readonly AuthoredAsset[];
 }
 export interface AuthoredExtension {
   readonly package: EnvironmentPackage;
   readonly client?: ClientFactory;
   readonly serverEntry?: string;
+  readonly assets?: readonly AuthoredAsset[];
 }
 
 /** Produces existing installable contracts. It neither installs code nor grants authority. */
 export function defineExtension(source: ExtensionSource): AuthoredExtension {
   const surfaces = source.surfaces ?? [];
   const provides = source.provides ?? [];
+  const assets = source.assets ?? [];
+  for (const asset of assets) {
+    validateAssetPath(asset?.path);
+    if (!ENVIRONMENT_ASSET_MEDIA_TYPES.includes(asset?.mediaType as EnvironmentAsset["mediaType"]))
+      throw new Error("Invalid package asset media type");
+  }
   const manifest = {
     id: source.id,
     version: source.version,
@@ -69,7 +86,7 @@ export function defineExtension(source: ExtensionSource): AuthoredExtension {
     ),
   };
   const pkg = validateEnvironmentPackage({
-    format: provides.some((api) => api.streams?.length) ? 3 : 2,
+    format: assets.length ? 4 : provides.some((api) => api.streams?.length) ? 3 : 2,
     manifest,
     ...(surfaces.length ? { clientEntry: "client.mjs" } : {}),
     ...(source.serverEntry ? { serverEntry: "server.mjs" } : {}),
@@ -77,9 +94,12 @@ export function defineExtension(source: ExtensionSource): AuthoredExtension {
     provides,
     requires: source.requires ?? [],
     dependencies: source.dependencies ?? [],
+    // The packer replaces this placeholder with verified digests; declared paths survive on the extension.
+    ...(assets.length ? { assets: [] } : {}),
   });
   return {
     package: pkg,
+    ...(assets.length ? { assets } : {}),
     ...(source.serverEntry ? { serverEntry: source.serverEntry } : {}),
     ...(surfaces.length
       ? {
