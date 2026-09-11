@@ -9,8 +9,13 @@
         "id": "example.persisted-state/view",
         "title": "Persisted counter",
         "scope": "thread",
-        "placements": ["side-panel"],
-        "clients": ["web", "desktop"],
+        "placements": [
+          "side-panel"
+        ],
+        "clients": [
+          "web",
+          "desktop"
+        ],
         "capabilities": [],
         "stateVersion": 1
       }
