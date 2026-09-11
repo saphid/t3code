@@ -91,7 +91,7 @@ export interface ApiAudit {
   readonly method: string;
   readonly providerId?: string;
   readonly generation: number;
-  readonly outcome: "completed" | "denied" | "failed";
+  readonly outcome: "completed" | "denied" | "failed" | "cancelled";
   readonly principal?: HostApiPrincipal;
   readonly operation?: "stream-open" | "stream-close";
 }
@@ -515,6 +515,7 @@ export function createApiBroker(options: {
           const callId = NodeCrypto.randomUUID();
           let source: AsyncIterator<ApiStreamEvent> | undefined;
           let started = false;
+          let opened = false;
           let admitted = false;
           let closed = false;
           let wasCancelled = false;
@@ -597,6 +598,7 @@ export function createApiBroker(options: {
           };
           const onCancel = () => {
             wasCancelled = true;
+            if (!closed) outcome = "cancelled";
             rejectCancelled(controller.signal.reason ?? new Error("API stream cancelled"));
             void finish();
           };
@@ -754,7 +756,7 @@ export function createApiBroker(options: {
             if (!iterable) throw new Error("API stream provider unavailable");
             source = iterable[Symbol.asyncIterator]();
             clearTimeout(deadline);
-            outcome = "failed";
+            opened = true;
             outcome = "completed";
             audit("stream-open");
           };
@@ -816,6 +818,7 @@ export function createApiBroker(options: {
                 }
                 return { done: false, value: frame };
               } catch (error) {
+                if (!closed && opened && !wasCancelled) outcome = "failed";
                 await finish();
                 throw error;
               } finally {
@@ -823,11 +826,12 @@ export function createApiBroker(options: {
               }
             },
             async return(): Promise<IteratorResult<ApiStreamFrame>> {
-              if (!closed) outcome = "completed";
+              if (!closed) outcome = "cancelled";
               await finish();
               return { done: true, value: undefined };
             },
             async throw(error: unknown): Promise<IteratorResult<ApiStreamFrame>> {
+              if (!closed) outcome = "cancelled";
               await finish();
               throw error;
             },

@@ -325,6 +325,78 @@ NodeTest.test(
 );
 
 NodeTest.test(
+  "stream-close audits a first-pull failure as failed, not completed",
+  { timeout: 5000 },
+  async () => {
+    const f = fixture(() => ({
+      async *[Symbol.asyncIterator]() {
+        throw new Error("source exploded");
+      },
+    }));
+    await NodeAssert.rejects(f.open().next(), /source exploded/);
+    NodeAssert.deepEqual(
+      f.audits.map((event) => [event.operation, event.outcome]),
+      [
+        ["stream-open", "completed"],
+        ["stream-close", "failed"],
+      ],
+    );
+  },
+);
+
+NodeTest.test(
+  "stream-close audits a later-pull failure as failed, not completed",
+  { timeout: 5000 },
+  async () => {
+    const f = fixture(() => ({
+      async *[Symbol.asyncIterator]() {
+        yield { type: "data", value: "ok" };
+        throw new Error("mid-stream exploded");
+      },
+    }));
+    const stream = f.open();
+    NodeAssert.equal((await stream.next()).value.value, "ok");
+    await NodeAssert.rejects(stream.next(), /mid-stream exploded/);
+    NodeAssert.deepEqual(
+      f.audits.map((event) => [event.operation, event.outcome]),
+      [
+        ["stream-open", "completed"],
+        ["stream-close", "failed"],
+      ],
+    );
+  },
+);
+
+NodeTest.test(
+  "stream-close audits consumer return and external cancellation as cancelled",
+  { timeout: 5000 },
+  async () => {
+    const f = fixture(() => ({
+      async *[Symbol.asyncIterator]() {
+        while (true) yield { type: "data", value: "ok" };
+      },
+    }));
+    const returned = f.open();
+    await returned.next();
+    await returned.return();
+    const controller = new AbortController();
+    const aborted = f.open(undefined, request, controller.signal);
+    await aborted.next();
+    controller.abort(new Error("went away"));
+    await NodeAssert.rejects(aborted.next(), /cancelled/);
+    NodeAssert.deepEqual(
+      f.audits.map((event) => [event.operation, event.outcome]),
+      [
+        ["stream-open", "completed"],
+        ["stream-close", "cancelled"],
+        ["stream-open", "completed"],
+        ["stream-close", "cancelled"],
+      ],
+    );
+  },
+);
+
+NodeTest.test(
   "provider selection changes suppress the pending frame",
   { timeout: 5000 },
   async () => {
