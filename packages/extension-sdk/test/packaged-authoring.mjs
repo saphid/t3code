@@ -1,4 +1,5 @@
 import * as NodeAssert from "node:assert/strict";
+import * as NodeChildProcess from "node:child_process";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
@@ -90,4 +91,61 @@ const assetModule = await WebAssembly.instantiate(assetBytes);
 NodeAssert.equal(assetModule.instance.exports.value(), 42);
 console.log(
   "Published format-4 example contains a valid declared WASM asset; installed host proof remains separate.",
+);
+
+// The packed CLI builds authored assets into a verified format-4 package.
+const authoredDir = NodePath.join(process.cwd(), "authored-assets-src");
+await NodeFSP.cp(NodePath.join(sdk, "examples/authored-assets"), authoredDir, {
+  recursive: true,
+});
+await NodeFSP.writeFile(
+  NodePath.join(authoredDir, "tsconfig.json"),
+  JSON.stringify({
+    compilerOptions: {
+      target: "ES2022",
+      module: "NodeNext",
+      moduleResolution: "NodeNext",
+      strict: true,
+      skipLibCheck: true,
+      noEmit: true,
+      lib: ["ES2022", "DOM"],
+    },
+    include: ["*.ts"],
+  }),
+);
+const cli = NodePath.join(sdk, "bin/t3-extension.mjs");
+function cliRun(args, expected = 0) {
+  const result = NodeChildProcess.spawnSync(process.execPath, [cli, ...args], {
+    cwd: authoredDir,
+    encoding: "utf8",
+    env: { ...process.env, CI: "true" },
+  });
+  if (result.status !== expected)
+    throw new Error(
+      `t3-extension ${args.join(" ")} exited ${result.status}\n${result.stdout}\n${result.stderr}`,
+    );
+  return result.stdout;
+}
+cliRun(["build", "."]);
+const authoredOut = NodePath.join(authoredDir, ".t3-extension");
+const authoredPackage = validateEnvironmentPackage(
+  JSON.parse(await NodeFSP.readFile(NodePath.join(authoredOut, "t3-extension.json"), "utf8")),
+);
+NodeAssert.equal(authoredPackage.format, 4);
+const authoredAsset = authoredPackage.assets[0];
+const authoredBytes = await NodeFSP.readFile(NodePath.join(authoredDir, "assets/value.wasm"));
+NodeAssert.equal(authoredAsset.byteLength, authoredBytes.byteLength);
+NodeAssert.equal(
+  authoredAsset.sha256,
+  NodeCrypto.createHash("sha256").update(authoredBytes).digest("hex"),
+);
+cliRun(["check", ".t3-extension"]);
+const packedAsset = NodePath.join(authoredOut, "assets/value.wasm");
+const packedBytes = await NodeFSP.readFile(packedAsset);
+await NodeFSP.writeFile(packedAsset, Buffer.alloc(packedBytes.length, 9));
+cliRun(["check", ".t3-extension"], 1);
+await NodeFSP.writeFile(packedAsset, packedBytes);
+cliRun(["check", ".t3-extension"]);
+console.log(
+  "Packed CLI generated and verified authored format-4 assets; corrupted output rejected.",
 );

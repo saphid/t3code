@@ -19,6 +19,7 @@
     "examples/installable-terminal-observer",
     "examples/installable-terminal-output",
     "examples/installable-package-assets",
+    "examples/authored-assets",
     "examples/installable-terminal-live-output",
     "src",
     "test",

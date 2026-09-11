@@ -13,9 +13,9 @@ Prefer source references over copied contracts:
 | View identity, placement and JSON bounds      | [contracts.ts](src/contracts.ts)       | [Typed Files client](examples/files/extension.ts)                               |
 | View lifecycle and restoration                | [host.ts](src/host.ts)                 | [Read helper tests](test/authoring.test.mjs)                                    |
 | API streams                                   | [capabilities.ts](src/capabilities.ts) | [Live output](examples/installable-terminal-live-output/)                       |
-| Verified assets                               | [environment.ts](src/environment.ts)   | [WASM example](examples/installable-package-assets/)                            |
+| Verified assets                               | [authoring.ts](src/authoring.ts)       | [Authored WASM asset](examples/authored-assets/)                                |
 
-The source and tests are included. Follow the named type/function first; read host internals only for an operation the public API cannot provide. defineExtension covers ordinary surfaces and API providers; the lower-level package contract remains available for assets and other contributions.
+The source and tests are included. Follow the named type/function first; read host internals only for an operation the public API cannot provide. defineExtension covers ordinary surfaces, API providers and declared assets; the CLI packs asset files and generates their integrity hashes, so byteLength/sha256 are never author inputs.
 
 A requirement selects an API/version; a named plugin dependency also declares the APIs used from it. Shared providers are explicitly selected in Settings. Installation grants and the authenticated session both constrain access. Discovery describes actual availability; a plausible API name or built-in panel does not prove an API exists. Missing/incompatible dependencies and revoked access must stay visibly unavailable.
 

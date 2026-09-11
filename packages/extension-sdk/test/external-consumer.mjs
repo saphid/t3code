@@ -22,7 +22,7 @@ const pkg = JSON.parse(NodeFS.readFileSync(NodePath.join(consumer, "package.json
 pkg.dependencies["@t3tools/extension-sdk"] =
   `file:${NodePath.join(artifact, "t3tools-extension-sdk-0.1.0.tgz")}`;
 NodeFS.writeFileSync(NodePath.join(consumer, "package.json"), JSON.stringify(pkg, null, 2));
-run("npm", ["install", "--ignore-scripts", "--omit=optional", "--no-audit", "--no-fund"], consumer);
+run("npm", ["install", "--ignore-scripts", "--no-audit", "--no-fund"], consumer);
 
 NodeFS.copyFileSync(
   NodePath.join(sdk, "test/packaged-authoring.mjs"),
