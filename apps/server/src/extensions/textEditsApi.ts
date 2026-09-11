@@ -5,6 +5,7 @@ import {
   ExtensionOperationError,
 } from "@t3tools/contracts";
 import {
+  EDITABLE_TEXT_MAX_BYTES,
   textEditsApi,
   validateReadSnapshotInput,
   validateSaveInput,
@@ -75,7 +76,7 @@ const authority = (
   });
 
 /**
- * Host provider for t3.workspace/text-edits@1.0.0.
+ * Host provider for t3.workspace/text-edits@1.1.0 (satisfies ^1.0.0 ranges).
  *
  * readSnapshot needs an authenticated principal carrying orchestration:read;
  * save needs orchestration:operate in addition to the transport write scope
@@ -140,7 +141,11 @@ export function createTextEditsApiProvider(
       const safe = yield* Effect.try({
         try: () => validateSaveInput(input),
         catch: (cleaned) =>
-          isOperationError(cleaned) ? cleaned : failure("Invalid editable text request."),
+          isOperationError(cleaned)
+            ? cleaned
+            : failure(
+                `Invalid editable text request: ${cleaned instanceof Error ? cleaned.message : String(cleaned)}`,
+              ),
       });
       const scope = yield* resolve(context).pipe(
         Effect.mapError(() => failure("Editable text is unavailable for this request.")),
@@ -181,7 +186,9 @@ export function createTextEditsApiProvider(
             ? signal.aborted
               ? "Editable text save was aborted before commit."
               : "Editable text save was not committed: authority or scope changed before commit."
-            : `Workspace resource cannot be accessed (${replaceOutcome.reason}).`,
+            : replaceOutcome.reason === "oversized"
+              ? `Editable text contents exceed the ${EDITABLE_TEXT_MAX_BYTES}-byte editable bound.`
+              : `Workspace resource cannot be accessed (${replaceOutcome.reason}).`,
         );
       // Immediately before the result leaves the provider: a revoked session
       // or moved workspace suppresses the outcome the broker would deliver. A

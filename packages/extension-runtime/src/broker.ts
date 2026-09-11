@@ -390,7 +390,10 @@ export function createApiBroker(options: {
           compile(provider.definition);
           const validator = validators.get(JSON.stringify([provider.definition, method.name]))!;
           const input = copyJson(request.input);
-          if (!validator.input(input)) throw new Error("API input does not match schema");
+          if (!validator.input(input))
+            throw new Error(
+              `API input does not match schema: ${ajv.errorsText(validator.input.errors)}`,
+            );
           const callers = [...authority.callers];
           const owner = provider.pluginId
             ? options.installations().find((item) => item.id === provider.pluginId)!
@@ -451,7 +454,10 @@ export function createApiBroker(options: {
                 ),
           );
           await check();
-          if (!validator.output(result)) throw new Error("API output does not match schema");
+          if (!validator.output(result))
+            throw new Error(
+              `API output does not match schema: ${ajv.errorsText(validator.output.errors)}`,
+            );
           outcome = "completed";
           return result;
         })(),
@@ -677,7 +683,10 @@ export function createApiBroker(options: {
             )!;
             eventValid = validator.event;
             const input = copyJson(request.input);
-            if (!validator.input(input)) throw new Error("API stream input does not match schema");
+            if (!validator.input(input))
+              throw new Error(
+                `API stream input does not match schema: ${ajv.errorsText(validator.input.errors)}`,
+              );
             const callers = [...authority.callers];
             const owner = provider.pluginId
               ? options.installations().find((item) => item.id === provider.pluginId)
@@ -778,10 +787,13 @@ export function createApiBroker(options: {
                   !event ||
                   typeof event !== "object" ||
                   Array.isArray(event) ||
-                  !["snapshot", "data", "reset", "closed"].includes(event.type) ||
-                  !eventValid?.(event.value)
+                  !["snapshot", "data", "reset", "closed"].includes(event.type)
                 )
                   throw new Error("API stream event does not match schema");
+                if (!eventValid?.(event.value))
+                  throw new Error(
+                    `API stream event does not match schema: ${ajv.errorsText(eventValid?.errors)}`,
+                  );
                 if (
                   event.cursor !== undefined &&
                   (typeof event.cursor !== "string" || event.cursor.length > 1024)

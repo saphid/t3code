@@ -6,7 +6,11 @@ import * as NodePath from "node:path";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { extensionWorkspaceRevision, ProjectId } from "@t3tools/contracts";
 import type { Json, ViewContext } from "@t3tools/extension-sdk/contracts";
-import { validateReadSnapshotResult, validateSaveResult } from "@t3tools/extension-sdk/catalogue";
+import {
+  EDITABLE_TEXT_MAX_BYTES,
+  validateReadSnapshotResult,
+  validateSaveResult,
+} from "@t3tools/extension-sdk/catalogue";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -630,4 +634,70 @@ it.effect("invalid inputs and unknown methods are rejected before any IO", () =>
     }
     expect(f.refreshes).toEqual([]);
   }).pipe(Effect.provide(services)),
+);
+
+it.effect("a 30000-character save rejects with the named byte bound, not an opaque IO error", () =>
+  Effect.gen(function* () {
+    const f = yield* fixture();
+    yield* writeFileUtf8(NodePath.join(f.root, "doc.txt"), "v1");
+    const denied = yield* Effect.flip(
+      f.call("save", {
+        relativePath: "doc.txt",
+        expectedRevision: sha256Hex("v1"),
+        contents: "x".repeat(30000),
+      }),
+    );
+    expect(denied.message).toContain("24000-byte editable bound");
+    expect(denied.message).not.toContain("cannot be accessed");
+    yield* Effect.flatMap(readFileUtf8(NodePath.join(f.root, "doc.txt")), (value) =>
+      Effect.sync(() => expect(value).toBe("v1")),
+    );
+    expect(f.refreshes).toEqual([]);
+  }).pipe(Effect.provide(services)),
+);
+
+it.effect(
+  "schema-admissible but byte-oversized saves reject with the named bound for every content class",
+  () =>
+    Effect.gen(function* () {
+      const f = yield* fixture();
+      yield* writeFileUtf8(NodePath.join(f.root, "doc.txt"), "v1");
+      const meta = f.metadata("operate");
+      const save = (relativePath: string, contents: string) =>
+        f.call("save", { relativePath, expectedRevision: sha256Hex("v1"), contents }, meta);
+      // UTF-16 units at or under the advertised maxLength but over 24000
+      // UTF-8 bytes: 2/3-byte and astral (surrogate-pair) classes.
+      for (const contents of [
+        "é".repeat(12001), // 12001 units, 24002 bytes
+        "界".repeat(8001), // 8001 units, 24003 bytes
+        "\u{1F600}".repeat(6001), // 12002 units, 24004 bytes
+      ]) {
+        const denied = yield* Effect.flip(save("doc.txt", contents));
+        expect(denied.message).toContain("24000-byte editable bound");
+      }
+      // At the byte bound each class saves cleanly (fresh file per class so
+      // the expected revision stays valid).
+      const classes = [
+        ["a", 1],
+        ["é", 2],
+        ["界", 3],
+        ["\u{1F600}", 4],
+      ] as const;
+      for (const [index, [unit, unitBytes]] of classes.entries()) {
+        const name = `bound-${index}.txt`;
+        yield* writeFileUtf8(NodePath.join(f.root, name), "v1");
+        const count = Math.floor(EDITABLE_TEXT_MAX_BYTES / unitBytes);
+        const contents =
+          unit.repeat(count) + "a".repeat(EDITABLE_TEXT_MAX_BYTES - count * unitBytes);
+        const result = yield* save(name, contents);
+        expect(result).toMatchObject({ kind: "saved", relativePath: name });
+      }
+      yield* Effect.flatMap(
+        readFileUtf8(NodePath.join(f.root, `bound-${classes.length - 1}.txt`)),
+        (value) =>
+          Effect.sync(() =>
+            expect(new TextEncoder().encode(value).length).toBe(EDITABLE_TEXT_MAX_BYTES),
+          ),
+      );
+    }).pipe(Effect.provide(services)),
 );

@@ -1,7 +1,7 @@
 import { defineApi, defineStreamApi, type ApiDefinition } from "./capabilities.js";
 import type { JsonObject } from "./environment.js";
 import type { WorkspaceReadTextInput, WorkspaceReadTextResult } from "./workspace.js";
-import { textEditsApi } from "./textEdits.js";
+import { textEditsApi, textEditsApiV1 } from "./textEdits.js";
 
 export {
   EDITABLE_TEXT_MAX_BYTES,
@@ -10,6 +10,7 @@ export {
   WORKSPACE_READ_TEXT_GRANT,
   WORKSPACE_WRITE_TEXT,
   textEditsApi,
+  textEditsApiV1,
   isTextRevision,
   validateReadSnapshotInput,
   validateReadSnapshotResult,
@@ -470,11 +471,16 @@ export const workspaceTreeApi = defineStreamApi<{
   ],
 });
 
-/** Contracts only: their presence does not advertise a functioning or authorized provider. */
+/**
+ * Contracts only: their presence does not advertise a functioning or
+ * authorized provider. Shared ids may hold multiple frozen versions (newest
+ * first); providers must match one of them canonically.
+ */
 export const GENERIC_API_CATALOGUE: readonly ApiDefinition[] = [
   workspaceFilesApi.definition,
   workspaceTreeApi.definition,
   textEditsApi.definition,
+  textEditsApiV1.definition,
   filePresentationApi.definition,
   terminalSessionsApi.definition,
   terminalOutputApi.definition,
@@ -495,9 +501,10 @@ function canonical(value: unknown): string {
 }
 export function assertProvidedApiOwner(pluginId: string, definition: ApiDefinition): void {
   if (definition.id.startsWith(pluginId + "/")) return;
-  const generic = GENERIC_API_CATALOGUE.find((item) => item.id === definition.id);
-  if (!generic || canonical(generic) !== canonical(definition))
-    throw new Error("Foreign API namespace or incompatible shared API contract");
+  const owned = GENERIC_API_CATALOGUE.some(
+    (item) => item.id === definition.id && canonical(item) === canonical(definition),
+  );
+  if (!owned) throw new Error("Foreign API namespace or incompatible shared API contract");
 }
 
 export const WORKSPACE_FILES_API = workspaceFilesApi.definition;
