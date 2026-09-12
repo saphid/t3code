@@ -186,6 +186,15 @@ export class TerminalManager extends Context.Service<
     ) => Effect.Effect<() => void, TerminalError>;
 
     /**
+     * Attach to a terminal session, starting it only when a launch cwd is
+     * supplied — and, for a stopped session, only when `restartIfNotRunning`.
+     * Unlike `open`, this never respawns a session the caller did not ask for.
+     */
+    readonly openOrAttach: (
+      input: TerminalAttachInput,
+    ) => Effect.Effect<TerminalSessionSnapshot, TerminalError>;
+
+    /**
      * Write input bytes to a terminal session.
      */
     readonly write: (input: TerminalWriteInput) => Effect.Effect<void, TerminalError>;
@@ -2842,7 +2851,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       resolveLaunchInputEnvironment(input).pipe(Effect.flatMap(openLocked)),
     );
 
-  const openOrAttachForStream = (input: TerminalAttachInput) =>
+  const openOrAttach: TerminalManager["Service"]["openOrAttach"] = (input) =>
     withThreadLock(
       input.threadId,
       Effect.gen(function* () {
@@ -3069,7 +3078,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
         return attachEvent ? listener(attachEvent) : Effect.void;
       });
 
-      const initialSnapshot = yield* openOrAttachForStream(input);
+      const initialSnapshot = yield* openOrAttach(input);
 
       yield* listener({
         type: "snapshot",
@@ -3374,6 +3383,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     readOutput,
     subscribeOutput,
     attachStream,
+    openOrAttach,
     write,
     resize,
     clear,

@@ -11,7 +11,8 @@
     "audit": "node ../scripts/audit-imports.mjs ."
   },
   "dependencies": {
-    "@t3tools/extension-sdk": "workspace:*"
+    "@t3tools/extension-sdk": "workspace:*",
+    "@t3tools/shared": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "catalog:",

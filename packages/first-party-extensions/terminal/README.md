@@ -1,19 +1,22 @@
-# @t3tools/extension-terminal — P07-A skeleton
+# @t3tools/extension-terminal — interactive terminal panel
 
-Read-only terminal observer plugin. Attaches to terminal sessions that already
-exist in the scoped thread (by terminal id) and renders their live output as
-text through the public contracts only:
+Interactive terminal plugin driven entirely by public contracts:
 
-- `t3.terminal/sessions` `inspect` — per-session status/label rows
+- `t3.terminal/sessions@^1.1.0` — `inspect` plus the `list` metadata stream
+  (snapshot → upsert/remove) that drives the session tabs
+- `t3.terminal/control@^1.0.0` — open (client-chosen id via
+  `nextTerminalId`), attach (`restartIfNotRunning`), write, resize, clear,
+  restart, close; all gated behind the distinct `t3.terminal/operate` grant
 - `t3.terminal/output-events` `subscribe` — snapshot → chunked output →
   reset/exit/closed lifecycle frames, reassembled in `viewModel.ts` under the
   native 512 KiB retained-buffer cap
 
-There is intentionally no input, spawn, resize, or VT (ghostty) rendering in
-this slice. Session enumeration is not publicly available yet — ids come from
-restored/persisted view state or manual entry. See
-`docs/internals/extensions/terminal-binding-disposition.md` for the full
-binding inventory and the deferred write path (`t3.terminal/control`).
+Package-side behavior: tabs reconcile with the strict-subset lag rule, input
+queues while a session is starting, fit→resize is latest-wins per session,
+destructive actions confirm inline, and a failed close falls back to an
+`exit\n` write. Output streams resubscribe on `identity-changed` so restarts
+show the new epoch. There is intentionally no VT (ghostty) rendering —
+output stays a bounded text view.
 
 - `pnpm run build` / `check` — pack and validate `.t3-extension/`
 - `pnpm test` — view-model unit tests (no real PTY)

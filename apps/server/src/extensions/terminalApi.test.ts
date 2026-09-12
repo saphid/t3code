@@ -41,7 +41,10 @@ const makeDeps = (
         Option.some({ projectId: ProjectId.make("project"), worktreePath: null, deletedAt: null }),
       ),
   },
-  terminal: { inspect },
+  terminal: {
+    inspect,
+    subscribeMetadata: () => Effect.die("unused metadata stream"),
+  },
 });
 const deps = makeDeps(() => Effect.die("native inspect must not run"));
 const authority = {
@@ -394,3 +397,193 @@ it("projects valid native metadata to exactly the public fields", async () => {
     updatedAt: "2026-09-10T00:00:00Z",
   });
 });
+
+/* ------------------------- list stream ------------------------- */
+
+const summary = (terminalId: string, extra: Partial<TerminalSummary> = {}): TerminalSummary => ({
+  threadId: "thread",
+  terminalId,
+  cwd: "/workspace",
+  worktreePath: null,
+  status: "running",
+  pid: 10,
+  exitCode: null,
+  exitSignal: null,
+  hasRunningSubprocess: false,
+  label: "",
+  updatedAt: "2026-09-12T00:00:00Z",
+  ...extra,
+});
+
+type MetadataListener = (
+  event: import("@t3tools/contracts").TerminalMetadataStreamEvent,
+) => Effect.Effect<void>;
+const metadataDeps = (emit: { current: MetadataListener | null }) => ({
+  environmentId: "env",
+  projects: {
+    getById: (input: { projectId: ProjectId }) =>
+      Effect.succeed(
+        Option.some({ projectId: input.projectId, workspaceRoot: "/workspace", deletedAt: null }),
+      ),
+  },
+  threads: {
+    getById: (_input: { threadId: ThreadId }) =>
+      Effect.succeed(
+        Option.some({ projectId: ProjectId.make("project"), worktreePath: null, deletedAt: null }),
+      ),
+  },
+  terminal: {
+    inspect: () => Effect.die("unused inspect"),
+    subscribeMetadata: (listener: MetadataListener) => {
+      emit.current = listener;
+      return Effect.succeed(() => {});
+    },
+  },
+});
+const metadata = (provider: { providerId: string }, scopes = [AuthTerminalOperateScope]) => ({
+  callId: "call",
+  rootCallerId: "root",
+  callerId: "caller",
+  providerId: provider.providerId,
+  providerGeneration: 1,
+  callerGenerations: [],
+  principal: { ...authority, scopes },
+});
+
+it("denies the list stream without terminal authority", () => {
+  const provider = createTerminalApiProvider(metadataDeps({ current: null }));
+  expect(() =>
+    provider.subscribe!("list", {}, context, signal, {
+      callId: "call",
+      rootCallerId: "root",
+      callerId: "caller",
+      providerId: provider.providerId,
+      providerGeneration: 1,
+      callerGenerations: [],
+    }),
+  ).toThrow("authority");
+});
+
+it("rejects an unknown stream name, input fields, and resume cursors", () => {
+  const provider = createTerminalApiProvider(metadataDeps({ current: null }));
+  const meta = metadata(provider);
+  expect(() => provider.subscribe!("peek", {}, context, signal, meta)).toThrow("unavailable");
+  expect(() => provider.subscribe!("list", { terminalId: "x" }, context, signal, meta)).toThrow(
+    "Invalid",
+  );
+  expect(() => provider.subscribe!("list", {}, context, signal, meta, "cursor")).toThrow("resume");
+});
+
+const nextTick = (times = 50) =>
+  Effect.promise(async () => {
+    for (let i = 0; i < times; i += 1) await new Promise((resolve) => setImmediate(resolve));
+  });
+
+it.effect("serves an in-scope snapshot then upsert/remove rows, filtering foreign scopes", () =>
+  Effect.gen(function* () {
+    const emit: { current: MetadataListener | null } = { current: null };
+    const provider = createTerminalApiProvider(metadataDeps(emit));
+    const iterable = provider.subscribe!("list", {}, context, signal, metadata(provider));
+    const iterator = iterable[Symbol.asyncIterator]();
+
+    const first = iterator.next();
+    // Emit the native snapshot once the subscription is wired.
+    for (let i = 0; i < 50 && emit.current === null; i += 1) yield* nextTick(1);
+    expect(emit.current).not.toBeNull();
+    yield* emit.current!({
+      type: "snapshot",
+      terminals: [
+        summary("term-1", { label: "zsh" }),
+        summary("other-thread", { threadId: "other" }),
+        summary("other-cwd", { cwd: "/elsewhere" }),
+      ],
+    });
+    const snapshotFrame = yield* Effect.promise(() => first);
+    expect(snapshotFrame.done).toBe(false);
+    expect(snapshotFrame.value).toEqual({
+      type: "snapshot",
+      value: {
+        kind: "snapshot",
+        terminals: [
+          {
+            terminalId: "term-1",
+            status: "running",
+            label: "zsh",
+            hasRunningSubprocess: false,
+            exitCode: null,
+            exitSignal: null,
+            updatedAt: "2026-09-12T00:00:00Z",
+          },
+        ],
+      },
+    });
+
+    const upsertFrame = iterator.next();
+    yield* emit.current!({ type: "upsert", terminal: summary("other", { threadId: "other" }) });
+    yield* emit.current!({ type: "upsert", terminal: summary("term-2") });
+    expect((yield* Effect.promise(() => upsertFrame)).value).toEqual({
+      type: "data",
+      value: {
+        kind: "upsert",
+        terminal: {
+          terminalId: "term-2",
+          status: "running",
+          label: "",
+          hasRunningSubprocess: false,
+          exitCode: null,
+          exitSignal: null,
+          updatedAt: "2026-09-12T00:00:00Z",
+        },
+      },
+    });
+
+    const removeFrame = iterator.next();
+    yield* emit.current!({ type: "remove", threadId: "other", terminalId: "ignored" });
+    yield* emit.current!({ type: "remove", threadId: "thread", terminalId: "term-1" });
+    expect((yield* Effect.promise(() => removeFrame)).value).toEqual({
+      type: "data",
+      value: { kind: "remove", terminalId: "term-1" },
+    });
+    yield* Effect.promise(async () => {
+      await iterator.return?.(undefined);
+    });
+  }),
+);
+
+it.effect("closes the list stream on oversized metadata and on >128 snapshots", () =>
+  Effect.gen(function* () {
+    const emit: { current: MetadataListener | null } = { current: null };
+    const provider = createTerminalApiProvider(metadataDeps(emit));
+    const iterator = provider.subscribe!("list", {}, context, signal, metadata(provider))[
+      Symbol.asyncIterator
+    ]();
+    const first = iterator.next();
+    for (let i = 0; i < 50 && emit.current === null; i += 1) yield* nextTick(1);
+    yield* emit.current!({
+      type: "snapshot",
+      terminals: [summary("term-1", { label: "x".repeat(129) })],
+    });
+    expect((yield* Effect.promise(() => first)).value).toEqual({
+      type: "closed",
+      value: { kind: "closed", reason: "terminal-error" },
+    });
+    expect((yield* Effect.promise(() => iterator.next())).done).toBe(true);
+
+    const emit2: { current: MetadataListener | null } = { current: null };
+    const provider2 = createTerminalApiProvider(metadataDeps(emit2));
+    const iterator2 = provider2.subscribe!("list", {}, context, signal, metadata(provider2))[
+      Symbol.asyncIterator
+    ]();
+    const first2 = iterator2.next();
+    for (let i = 0; i < 50 && emit2.current === null; i += 1) yield* nextTick(1);
+    yield* emit2.current!({
+      type: "snapshot",
+      terminals: Array.from({ length: 129 }, (_, i) => summary(`term-${i}`)),
+    });
+    expect((yield* Effect.promise(() => first2)).value).toEqual({
+      type: "closed",
+      value: { kind: "closed", reason: "overflow" },
+    });
+    expect((yield* Effect.promise(() => iterator2.next())).done).toBe(true);
+  }),
+);

@@ -34,6 +34,7 @@ import { ProjectionThreadRepository } from "../persistence/Services/ProjectionTh
 import { WorkspaceFileSystem } from "../workspace/WorkspaceFileSystem.ts";
 import { makeExtensionScopeResolver } from "./scope.ts";
 import { makeTerminalApiProvider } from "./terminalApi.ts";
+import { makeTerminalControlApiProvider } from "./terminalControlApi.ts";
 import { makeTerminalOutputApiProvider } from "./terminalOutputApi.ts";
 import { makeTerminalOutputEventsApiProvider } from "./terminalOutputEventsApi.ts";
 import { makeTextEditsApiProvider } from "./textEditsApi.ts";
@@ -70,6 +71,7 @@ export const make = Effect.fn("EnvironmentExtensions.make")(function* (
   const terminalApi = yield* makeTerminalApiProvider();
   const terminalOutputApi = yield* makeTerminalOutputApiProvider();
   const terminalOutputEventsApi = yield* makeTerminalOutputEventsApiProvider();
+  const terminalControlApi = yield* makeTerminalControlApiProvider();
   const textEditsApi = yield* makeTextEditsApiProvider();
   const catalogueChanges = yield* ExtensionCatalogueChanges;
   const resolve = makeExtensionScopeResolver({ environmentId, projects, threads });
@@ -116,6 +118,7 @@ export const make = Effect.fn("EnvironmentExtensions.make")(function* (
             terminalApi,
             terminalOutputApi,
             terminalOutputEventsApi,
+            terminalControlApi,
           ],
           onCatalogueChanged: () => Effect.runSync(catalogueChanges.publish),
           auditApi: (event) => {

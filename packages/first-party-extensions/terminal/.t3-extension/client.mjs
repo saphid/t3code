@@ -441,6 +441,8 @@ var __t3Client = (() => {
   var TERMINAL_OUTPUT = "t3.terminal/output";
   var TERMINAL_READ_OUTPUT = "t3.terminal/read-output";
   var TERMINAL_OUTPUT_EVENTS = "t3.terminal/output-events";
+  var TERMINAL_CONTROL = "t3.terminal/control";
+  var TERMINAL_OPERATE = "t3.terminal/operate";
   var WORKSPACE_SEARCH = "t3.workspace/search";
   var path2 = { type: "string", maxLength: 512 };
   var workspaceFilesApi = defineApi({
@@ -535,42 +537,244 @@ var __t3Client = (() => {
       }
     ]
   });
-  var terminalSessionsApi = defineApi({
+  var terminalSessionMetadataSchema = {
+    type: "object",
+    additionalProperties: false,
+    required: [
+      "terminalId",
+      "status",
+      "label",
+      "hasRunningSubprocess",
+      "exitCode",
+      "exitSignal",
+      "updatedAt"
+    ],
+    properties: {
+      terminalId: { type: "string", minLength: 1, maxLength: 128 },
+      status: { enum: ["starting", "running", "exited", "error"] },
+      label: { type: "string", maxLength: 128 },
+      hasRunningSubprocess: { type: "boolean" },
+      exitCode: { type: ["integer", "null"] },
+      exitSignal: { type: ["integer", "null"] },
+      updatedAt: { type: "string", maxLength: 64 }
+    }
+  };
+  var terminalSessionsInspectMethod = {
+    name: "inspect",
+    effect: "read",
+    requiredGrants: [TERMINAL_READ],
+    inputSchema: {
+      type: "object",
+      additionalProperties: false,
+      required: ["terminalId"],
+      properties: { terminalId: { type: "string", minLength: 1, maxLength: 128 } }
+    },
+    outputSchema: {
+      ...terminalSessionMetadataSchema,
+      type: ["object", "null"]
+    }
+  };
+  var terminalSessionsListEventSchema = {
+    oneOf: [
+      {
+        type: "object",
+        additionalProperties: false,
+        required: ["kind", "terminals"],
+        properties: {
+          kind: { const: "snapshot" },
+          terminals: { type: "array", maxItems: 128, items: terminalSessionMetadataSchema }
+        }
+      },
+      {
+        type: "object",
+        additionalProperties: false,
+        required: ["kind", "terminal"],
+        properties: {
+          kind: { const: "upsert" },
+          terminal: terminalSessionMetadataSchema
+        }
+      },
+      {
+        type: "object",
+        additionalProperties: false,
+        required: ["kind", "terminalId"],
+        properties: {
+          kind: { const: "remove" },
+          terminalId: { type: "string", minLength: 1, maxLength: 128 }
+        }
+      },
+      {
+        type: "object",
+        additionalProperties: false,
+        required: ["kind", "reason"],
+        properties: {
+          kind: { const: "closed" },
+          reason: { enum: ["overflow", "terminal-error"] }
+        }
+      }
+    ]
+  };
+  var terminalSessionsApi = defineStreamApi({
     id: TERMINAL_SESSIONS,
+    version: "1.1.0",
+    methods: [terminalSessionsInspectMethod],
+    streams: [
+      {
+        name: "list",
+        requiredGrants: [TERMINAL_READ],
+        inputSchema: { type: "object", additionalProperties: false, properties: {} },
+        eventSchema: terminalSessionsListEventSchema
+      }
+    ]
+  });
+  var terminalSessionsApiV1 = defineApi({
+    id: TERMINAL_SESSIONS,
+    version: "1.0.0",
+    methods: [terminalSessionsInspectMethod]
+  });
+  var terminalIdInput = { type: "string", minLength: 1, maxLength: 128 };
+  var terminalColsInput = { type: "integer", minimum: 1, maximum: 1e3 };
+  var terminalRowsInput = { type: "integer", minimum: 1, maximum: 500 };
+  var terminalCwdInput = { type: "string", minLength: 1, maxLength: 32768 };
+  var terminalWorktreePathInput = {
+    type: ["string", "null"],
+    minLength: 1,
+    maxLength: 32768
+  };
+  var terminalEnvInput = {
+    type: "object",
+    maxProperties: 128,
+    propertyNames: { pattern: "^[A-Za-z_][A-Za-z0-9_]*$", maxLength: 128 },
+    additionalProperties: { type: "string", maxLength: 8192 }
+  };
+  var terminalProviderInstanceInput = {
+    type: "string",
+    minLength: 1,
+    maxLength: 64,
+    pattern: "^[a-zA-Z][a-zA-Z0-9_-]*$"
+  };
+  var terminalSessionOutputSchema = terminalSessionMetadataSchema;
+  var terminalAckOutputSchema = {
+    type: "object",
+    additionalProperties: false,
+    properties: {}
+  };
+  var terminalLaunchOptionals = {
+    worktreePath: terminalWorktreePathInput,
+    cols: terminalColsInput,
+    rows: terminalRowsInput,
+    env: terminalEnvInput,
+    providerInstanceId: terminalProviderInstanceInput
+  };
+  var terminalControlApi = defineApi({
+    id: TERMINAL_CONTROL,
     version: "1.0.0",
     methods: [
       {
-        name: "inspect",
-        effect: "read",
-        requiredGrants: [TERMINAL_READ],
+        name: "open",
+        effect: "write",
+        requiredGrants: [TERMINAL_OPERATE],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["terminalId", "cwd"],
+          properties: {
+            terminalId: terminalIdInput,
+            cwd: terminalCwdInput,
+            ...terminalLaunchOptionals
+          }
+        },
+        outputSchema: terminalSessionOutputSchema
+      },
+      {
+        name: "attach",
+        effect: "write",
+        requiredGrants: [TERMINAL_OPERATE],
         inputSchema: {
           type: "object",
           additionalProperties: false,
           required: ["terminalId"],
-          properties: { terminalId: { type: "string", minLength: 1, maxLength: 128 } }
-        },
-        outputSchema: {
-          type: ["object", "null"],
-          additionalProperties: false,
-          required: [
-            "terminalId",
-            "status",
-            "label",
-            "hasRunningSubprocess",
-            "exitCode",
-            "exitSignal",
-            "updatedAt"
-          ],
           properties: {
-            terminalId: { type: "string", minLength: 1, maxLength: 128 },
-            status: { enum: ["starting", "running", "exited", "error"] },
-            label: { type: "string", maxLength: 128 },
-            hasRunningSubprocess: { type: "boolean" },
-            exitCode: { type: ["integer", "null"] },
-            exitSignal: { type: ["integer", "null"] },
-            updatedAt: { type: "string", maxLength: 64 }
+            terminalId: terminalIdInput,
+            cwd: terminalCwdInput,
+            restartIfNotRunning: { type: "boolean" },
+            ...terminalLaunchOptionals
           }
-        }
+        },
+        outputSchema: terminalSessionOutputSchema
+      },
+      {
+        name: "write",
+        effect: "write",
+        requiredGrants: [TERMINAL_OPERATE],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["terminalId", "data"],
+          properties: {
+            terminalId: terminalIdInput,
+            data: { type: "string", minLength: 1, maxLength: 65536 }
+          }
+        },
+        outputSchema: terminalAckOutputSchema
+      },
+      {
+        name: "resize",
+        effect: "write",
+        requiredGrants: [TERMINAL_OPERATE],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["terminalId", "cols", "rows"],
+          properties: {
+            terminalId: terminalIdInput,
+            cols: terminalColsInput,
+            rows: terminalRowsInput
+          }
+        },
+        outputSchema: terminalAckOutputSchema
+      },
+      {
+        name: "clear",
+        effect: "write",
+        requiredGrants: [TERMINAL_OPERATE],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["terminalId"],
+          properties: { terminalId: terminalIdInput }
+        },
+        outputSchema: terminalAckOutputSchema
+      },
+      {
+        name: "restart",
+        effect: "write",
+        requiredGrants: [TERMINAL_OPERATE],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["terminalId", "cwd", "cols", "rows"],
+          properties: {
+            terminalId: terminalIdInput,
+            cwd: terminalCwdInput,
+            ...terminalLaunchOptionals
+          }
+        },
+        outputSchema: terminalSessionOutputSchema
+      },
+      {
+        name: "close",
+        effect: "write",
+        requiredGrants: [TERMINAL_OPERATE],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            terminalId: terminalIdInput,
+            deleteHistory: { type: "boolean" }
+          }
+        },
+        outputSchema: terminalAckOutputSchema
       }
     ]
   });
@@ -864,7 +1068,9 @@ var __t3Client = (() => {
     filePresentationApi.definition,
     terminalSessionsApi.definition,
     terminalOutputApi.definition,
-    terminalOutputEventsApi.definition
+    terminalOutputEventsApi.definition,
+    terminalSessionsApiV1.definition,
+    terminalControlApi.definition
   ];
   function canonical(value) {
     if (Array.isArray(value))
@@ -884,8 +1090,10 @@ var __t3Client = (() => {
   var WORKSPACE_SEARCH_API = workspaceSearchApi.definition;
   var FILE_PRESENTATION_API = filePresentationApi.definition;
   var TERMINAL_SESSIONS_API = terminalSessionsApi.definition;
+  var TERMINAL_SESSIONS_API_V1 = terminalSessionsApiV1.definition;
   var TERMINAL_OUTPUT_API = terminalOutputApi.definition;
   var TERMINAL_OUTPUT_EVENTS_API = terminalOutputEventsApi.definition;
+  var TERMINAL_CONTROL_API = terminalControlApi.definition;
 
   // ../../extension-sdk/dist/environment.js
   var ENVIRONMENT_MANIFEST_FILE = "t3-extension.json";
@@ -1122,8 +1330,46 @@ var __t3Client = (() => {
     return { id: api.definition.id, versionRange };
   }
 
+  // ../../shared/src/projectScripts.ts
+  function projectScriptRuntimeEnv(input) {
+    const env = {
+      T3CODE_PROJECT_ROOT: input.project.cwd
+    };
+    if (input.worktreePath) {
+      env.T3CODE_WORKTREE_PATH = input.worktreePath;
+    }
+    if (input.extraEnv) {
+      return { ...env, ...input.extraEnv };
+    }
+    return env;
+  }
+
   // extension.tsx
   var import_react = __toESM(require_react(), 1);
+
+  // ../../shared/src/terminalLabels.ts
+  function getTerminalLabel(terminalId) {
+    const numericSuffix = /^term(?:inal)?-(\d+)$/i.exec(terminalId)?.[1];
+    if (numericSuffix) {
+      return `Terminal ${numericSuffix}`;
+    }
+    return terminalId;
+  }
+  function resolveTerminalSessionLabel(terminalId, summary) {
+    const trimmed = summary?.label?.trim();
+    if (trimmed && trimmed.length > 0) {
+      return trimmed;
+    }
+    return getTerminalLabel(terminalId);
+  }
+  function nextTerminalId(existingTerminalIds) {
+    const usedIds = new Set(existingTerminalIds.filter((id) => id.trim().length > 0));
+    let nextIndex = 1;
+    while (usedIds.has(`term-${nextIndex}`)) {
+      nextIndex += 1;
+    }
+    return `term-${nextIndex}`;
+  }
 
   // viewModel.ts
   var TERMINAL_BUFFER_MAX_BYTES = 512 * 1024;
@@ -1137,31 +1383,6 @@ var __t3Client = (() => {
     while (start < encoded.length && (encoded[start] & 192) === 128) start += 1;
     return new TextDecoder("utf-8", { ignoreBOM: true }).decode(encoded.subarray(start));
   }
-  function fallbackTerminalLabel(terminalId) {
-    const match = /^term-(\d+)$/.exec(terminalId);
-    return match ? `Terminal ${match[1]}` : "Terminal";
-  }
-  function describeSession(result) {
-    if (result === null) return null;
-    return {
-      terminalId: result.terminalId,
-      label: result.label || fallbackTerminalLabel(result.terminalId),
-      status: result.status,
-      hasRunningSubprocess: result.hasRunningSubprocess,
-      exitCode: result.exitCode,
-      updatedAt: result.updatedAt
-    };
-  }
-  function missingSessionRow(terminalId) {
-    return {
-      terminalId,
-      label: fallbackTerminalLabel(terminalId),
-      status: "closed",
-      hasRunningSubprocess: false,
-      exitCode: null,
-      updatedAt: null
-    };
-  }
   function normalizeTerminalIds(ids) {
     const seen = /* @__PURE__ */ new Set();
     const next = [];
@@ -1172,14 +1393,6 @@ var __t3Client = (() => {
       next.push(id);
     }
     return next;
-  }
-  function addTerminalId(ids, terminalId) {
-    const id = terminalId.trim();
-    if (id.length === 0 || id.length > 128) return [...ids];
-    return ids.includes(id) ? [...ids] : [...ids, id];
-  }
-  function removeTerminalId(ids, terminalId) {
-    return ids.filter((id) => id !== terminalId);
   }
   function resolveActiveTerminalId(ids, activeTerminalId) {
     if (ids.length === 0) return null;
@@ -1287,6 +1500,396 @@ var __t3Client = (() => {
       pending: null
     };
   }
+  function terminalIdListsEqual(left, right) {
+    if (left.length !== right.length) return false;
+    if (left.length === 0) return true;
+    const sortedLeft = left.toSorted((a, b) => a.localeCompare(b));
+    const sortedRight = right.toSorted((a, b) => a.localeCompare(b));
+    for (let index = 0; index < sortedLeft.length; index += 1) {
+      if (sortedLeft[index] !== sortedRight[index]) return false;
+    }
+    return true;
+  }
+  function serverTerminalIdsStrictSubsetOfClient(serverIds, clientIds) {
+    if (serverIds.length >= clientIds.length || clientIds.length === 0) return false;
+    const clientSet = new Set(clientIds);
+    for (const id of serverIds) {
+      if (!clientSet.has(id)) return false;
+    }
+    return true;
+  }
+  function reconcileTerminalIds(clientIds, serverIds) {
+    if (terminalIdListsEqual(clientIds, serverIds)) return [...clientIds];
+    if (serverTerminalIdsStrictSubsetOfClient(serverIds, clientIds)) return [...clientIds];
+    return [...serverIds];
+  }
+  function workspaceLaunchFromRevision(workspaceRevision) {
+    if (workspaceRevision === void 0) return null;
+    try {
+      const parsed = JSON.parse(workspaceRevision);
+      if (!Array.isArray(parsed) || parsed.length !== 2 || typeof parsed[0] !== "string" || parsed[0].trim().length === 0 || parsed[1] !== null && (typeof parsed[1] !== "string" || parsed[1].trim().length === 0))
+        return null;
+      const workspaceRoot = parsed[0];
+      const worktreePath = parsed[1];
+      return { cwd: worktreePath ?? workspaceRoot, workspaceRoot, worktreePath };
+    } catch {
+      return null;
+    }
+  }
+  var MAX_QUEUED_INPUT_BYTES = 64 * 1024;
+  var MAX_QUEUED_INPUT_WRITES = 128;
+  var MAX_WRITE_DATA_LENGTH = 65536;
+  var newTab = () => ({
+    meta: null,
+    starting: false,
+    queue: [],
+    queueBytes: 0,
+    exiting: false,
+    exitBanner: null,
+    confirm: null,
+    error: null,
+    resizeInFlight: null,
+    resizePending: null,
+    resizeSent: null
+  });
+  var clampDimension = (value, max) => Number.isSafeInteger(value) && value >= 1 && value <= max ? value : null;
+  var TerminalPanel = class {
+    #control;
+    #launch;
+    #schedule;
+    #onChange;
+    #ids;
+    #active;
+    #tabs = /* @__PURE__ */ new Map();
+    #stream = "connecting";
+    #panelError = null;
+    #disposed = false;
+    constructor(options) {
+      this.#control = options.control;
+      this.#launch = options.launch;
+      this.#schedule = options.schedule ?? ((callback) => setTimeout(callback, 0));
+      this.#onChange = options.onChange;
+      this.#ids = normalizeTerminalIds(options.restored?.terminalIds ?? []);
+      this.#active = resolveActiveTerminalId(this.#ids, options.restored?.activeTerminalId ?? null);
+      for (const id of this.#ids) this.#tabs.set(id, newTab());
+    }
+    get snapshot() {
+      return {
+        terminalIds: [...this.#ids],
+        activeTerminalId: this.#active,
+        tabs: this.#ids.map((id) => {
+          const tab = this.#tabs.get(id);
+          const meta = tab.meta;
+          return {
+            terminalId: id,
+            label: resolveTerminalSessionLabel(id, meta),
+            status: tab.starting ? "starting" : meta?.status ?? "closed",
+            hasRunningSubprocess: meta?.hasRunningSubprocess ?? false,
+            exitCode: meta?.exitCode ?? null,
+            starting: tab.starting,
+            exitBanner: tab.exitBanner,
+            confirmAction: tab.confirm,
+            error: tab.error,
+            queuedInputCount: tab.queue.length
+          };
+        }),
+        stream: this.#stream,
+        panelError: this.#panelError
+      };
+    }
+    /** Ids eligible for allocation: client list plus any tab we are tracking. */
+    get allocatableTerminalIds() {
+      return [.../* @__PURE__ */ new Set([...this.#ids, ...this.#tabs.keys()])];
+    }
+    #emit() {
+      this.#onChange?.();
+    }
+    #tab(terminalId) {
+      let tab = this.#tabs.get(terminalId);
+      if (!tab) {
+        tab = newTab();
+        this.#tabs.set(terminalId, tab);
+        if (!this.#ids.includes(terminalId)) this.#ids = [...this.#ids, terminalId];
+      }
+      return tab;
+    }
+    #removeTab(terminalId) {
+      this.#tabs.delete(terminalId);
+      this.#ids = this.#ids.filter((id) => id !== terminalId);
+      this.#active = resolveActiveTerminalId(this.#ids, this.#active);
+      this.#emit();
+    }
+    /** Banner + deferred removal on a live→exited/error transition (native #29). */
+    #observeMeta(next) {
+      const tab = this.#tab(next.terminalId);
+      const previous = tab.meta;
+      tab.meta = next;
+      if (!tab.exiting && (next.status === "exited" || next.status === "error") && previous !== null && (previous.status === "starting" || previous.status === "running")) {
+        tab.exiting = true;
+        tab.exitBanner = next.status === "exited" ? `Process exited (code ${next.exitCode ?? "unknown"})` : "Terminal error";
+        this.#schedule(() => {
+          if (!this.#disposed && this.#tabs.get(next.terminalId)?.exiting) {
+            this.#removeTab(next.terminalId);
+          }
+        });
+      }
+    }
+    applySessionsEvent(event) {
+      if (this.#disposed) return;
+      switch (event.kind) {
+        case "snapshot": {
+          this.#stream = "live";
+          const serverIds = event.terminals.map((terminal) => terminal.terminalId);
+          this.#ids = reconcileTerminalIds(this.#ids, serverIds);
+          for (const terminal of event.terminals) this.#observeMeta(terminal);
+          for (const id of this.#tabs.keys()) {
+            if (!this.#ids.includes(id)) this.#tabs.delete(id);
+          }
+          this.#active = resolveActiveTerminalId(this.#ids, this.#active);
+          break;
+        }
+        case "upsert":
+          this.#observeMeta(event.terminal);
+          break;
+        case "remove":
+          this.#removeTab(event.terminalId);
+          return;
+        case "closed":
+          this.#stream = "closed";
+          break;
+      }
+      this.#emit();
+    }
+    /**
+     * A (re)subscription means the last snapshot may be stale — tabs stay
+     * visible, but the stream is not authoritative until the next snapshot, so
+     * openTerminal's allocation gate must wait for it.
+     */
+    beginListStream() {
+      if (this.#stream === "connecting") return;
+      this.#stream = "connecting";
+      this.#emit();
+    }
+    markStreamDisconnected(message) {
+      this.#stream = "closed";
+      this.#panelError = message;
+      this.#emit();
+    }
+    /** Open a fresh terminal; the client picks the id (#15). */
+    async openTerminal() {
+      const launch = this.#launch;
+      if (!launch) {
+        this.#panelError = "Terminal requires a workspace scope.";
+        this.#emit();
+        return null;
+      }
+      if (this.#stream !== "live") {
+        this.#panelError = "Session list is still connecting.";
+        this.#emit();
+        return null;
+      }
+      const terminalId = nextTerminalId(this.allocatableTerminalIds);
+      const tab = this.#tab(terminalId);
+      tab.starting = true;
+      tab.error = null;
+      this.#ids = [...this.#ids.filter((id) => id !== terminalId), terminalId];
+      this.#active = terminalId;
+      this.#emit();
+      try {
+        const meta = await this.#control.open({
+          terminalId,
+          cwd: launch.cwd,
+          worktreePath: launch.worktreePath,
+          ...launch.cols !== void 0 ? { cols: launch.cols } : {},
+          ...launch.rows !== void 0 ? { rows: launch.rows } : {},
+          ...launch.env !== void 0 ? { env: launch.env } : {}
+        });
+        tab.starting = false;
+        this.#observeMeta(meta);
+        await this.#drain(terminalId);
+      } catch (error) {
+        tab.starting = false;
+        tab.queue = [];
+        tab.queueBytes = 0;
+        tab.error = error instanceof Error ? error.message : "Terminal open failed";
+        this.#emit();
+      }
+      return terminalId;
+    }
+    /** Attach a tracked id that has no live metadata (restore/edge). */
+    async startSession(terminalId) {
+      const launch = this.#launch;
+      const tab = this.#tabs.get(terminalId);
+      if (!tab || !launch || tab.starting) return;
+      if (tab.meta !== null && tab.meta.status !== "exited" && tab.meta.status !== "error") return;
+      tab.starting = true;
+      tab.exiting = false;
+      tab.exitBanner = null;
+      tab.error = null;
+      this.#emit();
+      try {
+        const meta = await this.#control.attach({
+          terminalId,
+          cwd: launch.cwd,
+          worktreePath: launch.worktreePath,
+          restartIfNotRunning: true,
+          ...launch.cols !== void 0 ? { cols: launch.cols } : {},
+          ...launch.rows !== void 0 ? { rows: launch.rows } : {},
+          ...launch.env !== void 0 ? { env: launch.env } : {}
+        });
+        tab.starting = false;
+        this.#observeMeta(meta);
+        await this.#drain(terminalId);
+      } catch (error) {
+        tab.starting = false;
+        tab.error = error instanceof Error ? error.message : "Terminal attach failed";
+        this.#emit();
+      }
+    }
+    /** Flush queued input and the pending fit-resize after a start resolves. */
+    async #drain(terminalId) {
+      const tab = this.#tabs.get(terminalId);
+      if (!tab) return;
+      const queued = tab.queue;
+      tab.queue = [];
+      tab.queueBytes = 0;
+      for (const data of queued) {
+        try {
+          await this.#control.write({ terminalId, data });
+        } catch (error) {
+          tab.error = error instanceof Error ? error.message : "Terminal write failed";
+          break;
+        }
+      }
+      const pending = tab.resizePending;
+      tab.resizePending = null;
+      if (pending) await this.#sendResize(terminalId, pending);
+      this.#emit();
+    }
+    /** Type into a terminal; input sent while the session starts is queued. */
+    sendInput(terminalId, data) {
+      const tab = this.#tabs.get(terminalId);
+      if (!tab || data.length === 0 || this.#disposed) return;
+      if (data.length > MAX_WRITE_DATA_LENGTH) {
+        tab.error = "Input exceeds the 64 KiB write bound.";
+        this.#emit();
+        return;
+      }
+      if (tab.starting) {
+        if (tab.queue.length >= MAX_QUEUED_INPUT_WRITES || tab.queueBytes + data.length > MAX_QUEUED_INPUT_BYTES) {
+          tab.error = "Input dropped: the pending-input queue is full.";
+        } else {
+          tab.queue.push(data);
+          tab.queueBytes += data.length;
+        }
+        this.#emit();
+        return;
+      }
+      this.#control.write({ terminalId, data }).catch((error) => {
+        tab.error = error instanceof Error ? error.message : "Terminal write failed";
+        this.#emit();
+      });
+    }
+    /** Latest-wins resize: a new fit while one is in flight replaces the pending one. */
+    resize(terminalId, cols, rows) {
+      const safeCols = clampDimension(cols, 1e3);
+      const safeRows = clampDimension(rows, 500);
+      if (safeCols === null || safeRows === null) return;
+      const tab = this.#tabs.get(terminalId);
+      if (!tab || this.#disposed) return;
+      const next = { cols: safeCols, rows: safeRows };
+      if (tab.resizeSent?.cols === next.cols && tab.resizeSent.rows === next.rows) return;
+      if (tab.starting || tab.resizeInFlight !== null) {
+        tab.resizePending = next;
+        return;
+      }
+      void this.#sendResize(terminalId, next);
+    }
+    async #sendResize(terminalId, size) {
+      const tab = this.#tabs.get(terminalId);
+      if (!tab) return;
+      tab.resizeInFlight = size;
+      try {
+        await this.#control.resize({ terminalId, cols: size.cols, rows: size.rows });
+        tab.resizeSent = size;
+      } catch (error) {
+        tab.error = error instanceof Error ? error.message : "Terminal resize failed";
+      } finally {
+        tab.resizeInFlight = null;
+        const pending = tab.resizePending;
+        tab.resizePending = null;
+        if (pending && !tab.starting) void this.#sendResize(terminalId, pending);
+        this.#emit();
+      }
+    }
+    requestAction(terminalId, action) {
+      const tab = this.#tabs.get(terminalId);
+      if (!tab || this.#disposed) return;
+      tab.confirm = action;
+      this.#emit();
+    }
+    cancelAction(terminalId) {
+      const tab = this.#tabs.get(terminalId);
+      if (!tab) return;
+      tab.confirm = null;
+      this.#emit();
+    }
+    /** Confirmed destructive action; close falls back to a plain `exit\n` write. */
+    async confirmAction(terminalId) {
+      const tab = this.#tabs.get(terminalId);
+      const action = tab?.confirm;
+      if (!tab || !action) return;
+      tab.confirm = null;
+      if (action === "close") {
+        try {
+          await this.#control.close({ terminalId, deleteHistory: true });
+        } catch {
+          try {
+            await this.#control.write({ terminalId, data: "exit\n" });
+          } catch {
+          }
+        }
+        this.#removeTab(terminalId);
+        return;
+      }
+      const launch = this.#launch;
+      try {
+        if (action === "clear") {
+          await this.#control.clear({ terminalId });
+        } else {
+          if (!launch) throw new Error("Terminal requires a workspace scope.");
+          tab.starting = true;
+          this.#emit();
+          const meta = await this.#control.restart({
+            terminalId,
+            cwd: launch.cwd,
+            worktreePath: launch.worktreePath,
+            cols: launch.cols ?? 80,
+            rows: launch.rows ?? 24,
+            ...launch.env !== void 0 ? { env: launch.env } : {}
+          });
+          tab.starting = false;
+          tab.exiting = false;
+          tab.exitBanner = null;
+          this.#observeMeta(meta);
+          await this.#drain(terminalId);
+          return;
+        }
+      } catch (error) {
+        tab.starting = false;
+        tab.error = error instanceof Error ? error.message : "Terminal action failed";
+      }
+      this.#emit();
+    }
+    activate(terminalId) {
+      if (!this.#ids.includes(terminalId)) return;
+      this.#active = terminalId;
+      this.#emit();
+    }
+    dispose() {
+      this.#disposed = true;
+    }
+  };
 
   // extension.tsx
   var import_jsx_runtime = __toESM(require_jsx_runtime(), 1);
@@ -1297,35 +1900,59 @@ var __t3Client = (() => {
     const candidate = value;
     return Object.keys(value).every((key) => key === "terminalIds" || key === "activeTerminalId") && (candidate.terminalIds === void 0 || Array.isArray(candidate.terminalIds) && candidate.terminalIds.every((id) => typeof id === "string")) && (candidate.activeTerminalId === void 0 || typeof candidate.activeTerminalId === "string" || candidate.activeTerminalId === null);
   }
-  function useSessionRows(host, session, terminalIds, visible, refreshRevision) {
-    const [rows, setRows] = (0, import_react.useState)(null);
-    const key = JSON.stringify([terminalIds, refreshRevision]);
+  function controlOps(host, session) {
+    const api = bindApi(terminalControlApi, host, session.context);
+    return {
+      open: (input) => api.invoke("open", input, session.signal),
+      attach: (input) => api.invoke("attach", input, session.signal),
+      write: (input) => api.invoke("write", input, session.signal),
+      resize: (input) => api.invoke("resize", input, session.signal),
+      clear: (input) => api.invoke("clear", input, session.signal),
+      restart: (input) => api.invoke("restart", input, session.signal),
+      close: (input) => api.invoke("close", input, session.signal)
+    };
+  }
+  function useSessionsStream(host, session, panel, visible) {
     (0, import_react.useEffect)(() => {
-      if (!visible || terminalIds.length === 0) return;
+      if (!visible) return;
       const controller = new AbortController();
       const signal = AbortSignal.any([controller.signal, session.signal]);
       void (async () => {
-        const api = bindApi(terminalSessionsApi, host, session.context);
-        try {
-          const sessions = await Promise.all(
-            terminalIds.map(async (terminalId) => {
-              const result = await api.invoke("inspect", { terminalId }, signal);
-              return describeSession(result) ?? missingSessionRow(terminalId);
-            })
-          );
-          if (!signal.aborted) setRows({ key, sessions, error: null });
-        } catch (error) {
-          if (!signal.aborted)
-            setRows({
-              key,
-              sessions: terminalIds.map(missingSessionRow),
-              error: error instanceof Error ? error.message : "Terminal status unavailable"
-            });
+        for (let attempt = 1; attempt <= 3 && !signal.aborted; attempt += 1) {
+          panel.beginListStream();
+          let closed = false;
+          try {
+            const stream = bindStreamApi(terminalSessionsApi, host, session.context).subscribe(
+              "list",
+              {},
+              signal
+            );
+            for await (const frame of stream) {
+              if (signal.aborted) return;
+              panel.applySessionsEvent(frame.value);
+              if (frame.value.kind === "closed") {
+                closed = true;
+                break;
+              }
+            }
+          } catch (error) {
+            if (!signal.aborted)
+              panel.markStreamDisconnected(
+                error instanceof Error ? error.message : "Session list unavailable"
+              );
+            return;
+          }
+          if (signal.aborted) return;
+          if (!closed) {
+            panel.markStreamDisconnected(null);
+            return;
+          }
+          await new Promise((resolve) => setTimeout(resolve, 400 * attempt));
         }
+        if (!signal.aborted) panel.markStreamDisconnected("Session list stream ended repeatedly.");
       })();
       return () => controller.abort();
-    }, [host, session, visible, key, terminalIds]);
-    return rows?.key === key ? rows : null;
+    }, [host, session, panel, visible]);
   }
   function useTerminalOutput(host, session, terminalId, visible) {
     const [state, setState] = (0, import_react.useState)(null);
@@ -1335,102 +1962,143 @@ var __t3Client = (() => {
       if (!visible || terminalId === null) return;
       const controller = new AbortController();
       const signal = AbortSignal.any([controller.signal, session.signal]);
-      const stateRef = { current: EMPTY_OUTPUT_BUFFER };
       void (async () => {
-        try {
-          const stream = bindStreamApi(terminalOutputEventsApi, host, session.context).subscribe(
-            "subscribe",
-            { terminalId },
-            signal
-          );
-          for await (const frame of stream) {
-            if (signal.aborted) return;
-            const applied = applyOutputEvent(
-              stateRef.current,
-              frame,
-              frame.value,
-              pendingRef.current
+        while (!signal.aborted) {
+          pendingRef.current = null;
+          const stateRef = { current: EMPTY_OUTPUT_BUFFER };
+          let resurrect = false;
+          try {
+            const stream = bindStreamApi(terminalOutputEventsApi, host, session.context).subscribe(
+              "subscribe",
+              { terminalId },
+              signal
             );
-            pendingRef.current = applied.pending;
-            stateRef.current = applied.buffer;
-            setState({ terminalId, buffer: applied.buffer });
-            if (applied.buffer.ended) return;
+            for await (const frame of stream) {
+              if (signal.aborted) return;
+              const value = frame.value;
+              if (value.kind === "closed") {
+                resurrect = value.reason === "identity-changed";
+                if (!resurrect && !stateRef.current.ended) {
+                  const applied2 = applyOutputEvent(
+                    stateRef.current,
+                    frame,
+                    value,
+                    pendingRef.current
+                  );
+                  pendingRef.current = applied2.pending;
+                  stateRef.current = applied2.buffer;
+                  setState({ terminalId, buffer: applied2.buffer });
+                }
+                break;
+              }
+              if (stateRef.current.ended) continue;
+              const applied = applyOutputEvent(stateRef.current, frame, value, pendingRef.current);
+              pendingRef.current = applied.pending;
+              stateRef.current = applied.buffer;
+              setState({ terminalId, buffer: applied.buffer });
+            }
+            if (!signal.aborted && !resurrect && pendingRef.current !== null) {
+              stateRef.current = {
+                ...EMPTY_OUTPUT_BUFFER,
+                status: "error",
+                statusText: "Output ended with an incomplete chunk group.",
+                ended: true
+              };
+              setState({ terminalId, buffer: stateRef.current });
+            }
+          } catch (error) {
+            if (!signal.aborted) {
+              const buffer = {
+                ...EMPTY_OUTPUT_BUFFER,
+                status: "error",
+                statusText: error instanceof Error ? error.message : "Terminal output unavailable",
+                ended: true
+              };
+              setState({ terminalId, buffer });
+            }
+            return;
           }
-          if (!signal.aborted && pendingRef.current !== null) {
-            stateRef.current = {
-              ...EMPTY_OUTPUT_BUFFER,
-              status: "error",
-              statusText: "Output ended with an incomplete chunk group.",
-              ended: true
-            };
-            setState({ terminalId, buffer: stateRef.current });
-          }
-        } catch (error) {
-          if (!signal.aborted) {
-            const buffer = {
-              ...EMPTY_OUTPUT_BUFFER,
-              status: "error",
-              statusText: error instanceof Error ? error.message : "Terminal output unavailable",
-              ended: true
-            };
-            stateRef.current = buffer;
-            setState({ terminalId, buffer });
-          }
+          if (!resurrect) return;
+          if (!signal.aborted) setState({ terminalId, buffer: EMPTY_OUTPUT_BUFFER });
         }
       })();
       return () => controller.abort();
     }, [host, session, terminalId, visible]);
     return state?.terminalId === terminalId ? state.buffer : null;
   }
+  function useFitResize(panel, terminalId, ref) {
+    (0, import_react.useEffect)(() => {
+      const element = ref.current;
+      if (!element || terminalId === null || typeof ResizeObserver === "undefined") return;
+      const fit = () => {
+        const rect = element.getBoundingClientRect();
+        const cols = Math.max(1, Math.floor(rect.width / 7.5));
+        const rows = Math.max(1, Math.floor(rect.height / 16));
+        panel.resize(terminalId, cols, rows);
+      };
+      fit();
+      const observer = new ResizeObserver(fit);
+      observer.observe(element);
+      return () => observer.disconnect();
+    }, [panel, terminalId, ref]);
+  }
+  var control = {
+    padding: "4px 8px",
+    border: "1px solid var(--border, #dfe3e8)",
+    borderRadius: 5,
+    background: "transparent",
+    color: "inherit",
+    font: "inherit",
+    fontSize: 12,
+    cursor: "pointer"
+  };
   function TerminalView(props) {
     const { host, session } = props;
-    const restored = session.restoreState && typeof session.restoreState === "object" && !Array.isArray(session.restoreState) ? session.restoreState : null;
-    const [terminalIds, setTerminalIds] = (0, import_react.useState)(
-      () => normalizeTerminalIds(restored?.terminalIds ?? [])
-    );
-    const [activeTerminalId, setActiveTerminalId] = (0, import_react.useState)(
-      restored?.activeTerminalId ?? null
-    );
-    const [newTerminalId, setNewTerminalId] = (0, import_react.useState)("");
+    const [, bump] = (0, import_react.useReducer)((value) => value + 1, 0);
+    const [panel] = (0, import_react.useState)(() => {
+      const restored = session.restoreState && typeof session.restoreState === "object" && !Array.isArray(session.restoreState) ? session.restoreState : null;
+      const workspace = workspaceLaunchFromRevision(session.context.workspaceRevision);
+      const launch = workspace === null ? null : {
+        cwd: workspace.cwd,
+        worktreePath: workspace.worktreePath,
+        env: projectScriptRuntimeEnv({
+          project: { cwd: workspace.workspaceRoot },
+          worktreePath: workspace.worktreePath
+        })
+      };
+      let panel2;
+      panel2 = new TerminalPanel({
+        control: controlOps(host, session),
+        launch,
+        restored,
+        onChange: () => {
+          const snapshot2 = panel2.snapshot;
+          session.save({
+            terminalIds: [...snapshot2.terminalIds],
+            activeTerminalId: snapshot2.activeTerminalId
+          });
+          bump();
+        }
+      });
+      return panel2;
+    });
     const [visible, setVisible] = (0, import_react.useState)(session.visible);
-    const [refreshRevision, setRefreshRevision] = (0, import_react.useState)(0);
+    const [input, setInput] = (0, import_react.useState)("");
+    const outputRef = (0, import_react.useRef)(null);
     (0, import_react.useEffect)(() => session.onVisibility(setVisible), [session]);
-    const resolvedActiveId = resolveActiveTerminalId(terminalIds, activeTerminalId);
-    const sessionRows = useSessionRows(host, session, terminalIds, visible, refreshRevision);
-    const output = useTerminalOutput(host, session, resolvedActiveId, visible);
-    const persist = (ids, active) => {
-      session.save({ terminalIds: [...ids], activeTerminalId: active });
-    };
-    const trackTerminal = () => {
-      const id = newTerminalId.trim();
-      if (!id) return;
-      const ids = addTerminalId(terminalIds, id);
-      setTerminalIds(ids);
-      setActiveTerminalId(id);
-      setNewTerminalId("");
-      persist(ids, id);
-    };
-    const untrackTerminal = (terminalId) => {
-      const ids = removeTerminalId(terminalIds, terminalId);
-      const active = resolveActiveTerminalId(ids, activeTerminalId);
-      setTerminalIds(ids);
-      setActiveTerminalId(active);
-      persist(ids, active);
-    };
-    const activate = (terminalId) => {
-      setActiveTerminalId(terminalId);
-      persist(terminalIds, terminalId);
+    (0, import_react.useEffect)(() => () => panel.dispose(), [panel]);
+    useSessionsStream(host, session, panel, visible);
+    const snapshot = panel.snapshot;
+    const activeId = snapshot.activeTerminalId;
+    const activeTab = snapshot.tabs.find((tab) => tab.terminalId === activeId) ?? null;
+    const output = useTerminalOutput(host, session, activeId, visible);
+    useFitResize(panel, activeId, outputRef);
+    const send = () => {
+      if (activeId === null || input.length === 0) return;
+      panel.sendInput(activeId, input + "\r");
+      setInput("");
     };
     const muted = "var(--muted-foreground, #667085)";
-    const control = {
-      padding: "4px 8px",
-      border: "1px solid var(--border, #dfe3e8)",
-      borderRadius: 5,
-      background: "transparent",
-      color: "inherit",
-      font: "inherit",
-      fontSize: 12
-    };
     return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
       "section",
       {
@@ -1454,32 +2122,21 @@ var __t3Client = (() => {
                 gap: 6,
                 padding: 8,
                 borderBottom: "1px solid var(--border, #dfe3e8)",
-                flexShrink: 0
+                flexShrink: 0,
+                alignItems: "center"
               },
               children: [
-                /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
-                  "input",
-                  {
-                    "aria-label": "Terminal ID",
-                    placeholder: "term-1",
-                    value: newTerminalId,
-                    onChange: (event) => setNewTerminalId(event.target.value),
-                    onKeyDown: (event) => {
-                      if (event.key === "Enter") trackTerminal();
-                    },
-                    style: { ...control, flex: 1, minWidth: 0 }
-                  }
-                ),
-                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { type: "button", onClick: trackTerminal, style: control, children: "Attach" }),
                 /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
                   "button",
                   {
                     type: "button",
-                    onClick: () => setRefreshRevision((value) => value + 1),
+                    onClick: () => void panel.openTerminal(),
+                    disabled: snapshot.stream !== "live",
                     style: control,
-                    children: "Refresh"
+                    children: "New terminal"
                   }
-                )
+                ),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { style: { color: muted, fontSize: 11 }, children: snapshot.stream === "closed" ? "Session list disconnected" : snapshot.stream === "connecting" ? "Connecting\u2026" : "" })
               ]
             }
           ),
@@ -1487,14 +2144,22 @@ var __t3Client = (() => {
             "ul",
             {
               "aria-label": "Terminal sessions",
-              style: { listStyle: "none", margin: 0, padding: 6, flexShrink: 0 },
-              children: (sessionRows?.sessions ?? terminalIds.map(missingSessionRow)).map((row) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("li", { style: { display: "flex", gap: 6, alignItems: "center" }, children: [
+              style: {
+                listStyle: "none",
+                margin: 0,
+                padding: 6,
+                flexShrink: 0,
+                display: "flex",
+                flexDirection: "column",
+                gap: 2
+              },
+              children: snapshot.tabs.map((tab) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("li", { style: { display: "flex", gap: 6, alignItems: "center" }, children: [
                 /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
                   "button",
                   {
                     type: "button",
-                    "aria-current": row.terminalId === resolvedActiveId ? "true" : void 0,
-                    onClick: () => activate(row.terminalId),
+                    "aria-current": tab.terminalId === activeId ? "true" : void 0,
+                    onClick: () => panel.activate(tab.terminalId),
                     style: {
                       flex: 1,
                       minWidth: 0,
@@ -1509,38 +2174,93 @@ var __t3Client = (() => {
                       textOverflow: "ellipsis",
                       whiteSpace: "nowrap",
                       color: "inherit",
-                      background: row.terminalId === resolvedActiveId ? "var(--accent, #e8eef7)" : "transparent"
+                      background: tab.terminalId === activeId ? "var(--accent, #e8eef7)" : "transparent"
                     },
-                    children: row.label
+                    children: tab.label
                   }
                 ),
                 /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { style: { color: muted, fontSize: 11 }, children: [
-                  row.status,
-                  row.hasRunningSubprocess ? " \xB7 running" : ""
+                  tab.status,
+                  tab.hasRunningSubprocess ? " \xB7 running" : "",
+                  tab.queuedInputCount > 0 ? ` \xB7 queued ${tab.queuedInputCount}` : ""
                 ] }),
-                /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
-                  "button",
-                  {
-                    type: "button",
-                    "aria-label": `Detach ${row.terminalId}`,
-                    onClick: () => untrackTerminal(row.terminalId),
-                    style: control,
-                    children: "\xD7"
-                  }
-                )
-              ] }, row.terminalId))
+                tab.confirmAction === null ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(import_jsx_runtime.Fragment, { children: [
+                  (tab.status === "exited" || tab.status === "error" || tab.status === "closed") && /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                    "button",
+                    {
+                      type: "button",
+                      "aria-label": `Start ${tab.terminalId}`,
+                      onClick: () => void panel.startSession(tab.terminalId),
+                      style: control,
+                      children: "Start"
+                    }
+                  ),
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                    "button",
+                    {
+                      type: "button",
+                      "aria-label": `Clear ${tab.terminalId}`,
+                      onClick: () => panel.requestAction(tab.terminalId, "clear"),
+                      style: control,
+                      children: "Clear"
+                    }
+                  ),
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                    "button",
+                    {
+                      type: "button",
+                      "aria-label": `Restart ${tab.terminalId}`,
+                      onClick: () => panel.requestAction(tab.terminalId, "restart"),
+                      style: control,
+                      children: "Restart"
+                    }
+                  ),
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                    "button",
+                    {
+                      type: "button",
+                      "aria-label": `Close ${tab.terminalId}`,
+                      onClick: () => panel.requestAction(tab.terminalId, "close"),
+                      style: control,
+                      children: "\xD7"
+                    }
+                  )
+                ] }) : /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(import_jsx_runtime.Fragment, { children: [
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { style: { color: muted, fontSize: 11 }, children: tab.confirmAction === "close" ? "Close this terminal?" : tab.confirmAction === "restart" ? "Restart this terminal?" : "Clear history?" }),
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                    "button",
+                    {
+                      type: "button",
+                      "aria-label": `Confirm ${tab.confirmAction} ${tab.terminalId}`,
+                      onClick: () => void panel.confirmAction(tab.terminalId),
+                      style: control,
+                      children: "Confirm"
+                    }
+                  ),
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                    "button",
+                    {
+                      type: "button",
+                      "aria-label": `Cancel ${tab.confirmAction} ${tab.terminalId}`,
+                      onClick: () => panel.cancelAction(tab.terminalId),
+                      style: control,
+                      children: "Cancel"
+                    }
+                  )
+                ] })
+              ] }, tab.terminalId))
             }
           ),
-          terminalIds.length === 0 && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { style: { padding: "6px 10px", color: muted, fontSize: 12, margin: 0 }, children: "No terminals tracked. Enter the id of a terminal already open in this thread." }),
-          sessionRows?.error && /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+          snapshot.tabs.length === 0 && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { style: { padding: "6px 10px", color: muted, fontSize: 12, margin: 0 }, children: "No terminals yet. New terminal opens a shell in this workspace." }),
+          snapshot.panelError && /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
             "output",
             {
-              "aria-label": "Session status",
+              "aria-label": "Panel status",
               style: { padding: "4px 10px", color: muted, fontSize: 11 },
-              children: sessionRows.error
+              children: snapshot.panelError
             }
           ),
-          resolvedActiveId !== null && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+          activeId !== null && activeTab !== null && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
             "div",
             {
               style: {
@@ -1557,15 +2277,17 @@ var __t3Client = (() => {
                     "aria-label": "Output status",
                     style: { padding: "6px 10px", color: muted, fontSize: 11, flexShrink: 0 },
                     children: [
-                      resolvedActiveId,
+                      activeId,
                       ": ",
-                      output?.statusText ?? "Connecting\u2026"
+                      activeTab.exitBanner ?? output?.statusText ?? "Connecting\u2026",
+                      activeTab.error ? ` \u2014 ${activeTab.error}` : ""
                     ]
                   }
                 ),
                 /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
                   "pre",
                   {
+                    ref: outputRef,
                     "aria-label": "Terminal output",
                     style: {
                       flex: 1,
@@ -1582,6 +2304,34 @@ var __t3Client = (() => {
                     },
                     children: output?.contents ?? ""
                   }
+                ),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+                  "div",
+                  {
+                    style: {
+                      display: "flex",
+                      gap: 6,
+                      padding: 8,
+                      borderTop: "1px solid var(--border, #dfe3e8)",
+                      flexShrink: 0
+                    },
+                    children: [
+                      /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                        "input",
+                        {
+                          "aria-label": "Terminal input",
+                          placeholder: activeTab.starting ? "Starting\u2026 input is queued" : "Type a command",
+                          value: input,
+                          onChange: (event) => setInput(event.target.value),
+                          onKeyDown: (event) => {
+                            if (event.key === "Enter") send();
+                          },
+                          style: { ...control, flex: 1, minWidth: 0, cursor: "text" }
+                        }
+                      ),
+                      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { type: "button", onClick: send, style: control, children: "Send" })
+                    ]
+                  }
                 )
               ]
             }
@@ -1591,7 +2341,7 @@ var __t3Client = (() => {
             {
               "aria-label": "Slice notice",
               style: { padding: "6px 10px", color: muted, fontSize: 11, flexShrink: 0 },
-              children: "Read-only skeleton: attaches to existing sessions and renders live output text. No input, spawn, or VT rendering yet."
+              children: "Interactive text terminal: input, resize, and lifecycle through the public control contract. VT rendering (Ghostty) and notifications are deferred slices."
             }
           )
         ]
@@ -1600,11 +2350,12 @@ var __t3Client = (() => {
   }
   var extension_default = defineExtension({
     id: manifestId,
-    version: "0.1.0",
+    version: "0.2.0",
     requires: [
       requireApi(terminalSessionsApi),
       requireApi(terminalOutputApi),
-      requireApi(terminalOutputEventsApi)
+      requireApi(terminalOutputEventsApi),
+      requireApi(terminalControlApi)
     ],
     surfaces: [
       {

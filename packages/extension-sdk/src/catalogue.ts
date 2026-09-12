@@ -1,4 +1,10 @@
-import { defineApi, defineStreamApi, type ApiDefinition } from "./capabilities.js";
+import {
+  defineApi,
+  defineStreamApi,
+  type ApiDefinition,
+  type TypedApi,
+  type TypedStreamApi,
+} from "./capabilities.js";
 import type { JsonObject } from "./environment.js";
 import type { WorkspaceReadTextInput, WorkspaceReadTextResult } from "./workspace.js";
 import { textEditsApi, textEditsApiV1 } from "./textEdits.js";
@@ -39,6 +45,12 @@ export const TERMINAL_READ = "t3.terminal/read";
 export const TERMINAL_OUTPUT = "t3.terminal/output";
 export const TERMINAL_READ_OUTPUT = "t3.terminal/read-output";
 export const TERMINAL_OUTPUT_EVENTS = "t3.terminal/output-events";
+export const TERMINAL_CONTROL = "t3.terminal/control";
+/**
+ * Distinct write grant for terminal lifecycle/input. Spawn/write authority
+ * never rides the read grants (`t3.terminal/read`, `t3.terminal/read-output`).
+ */
+export const TERMINAL_OPERATE = "t3.terminal/operate";
 export const WORKSPACE_SEARCH = "t3.workspace/search";
 export type WorkspaceSearchInput = {
   readonly query: string;
@@ -157,6 +169,60 @@ export type TerminalSessionResult = {
   readonly exitSignal: number | null;
   readonly updatedAt: string;
 } | null;
+/** The non-null session metadata projection shared by inspect, list and control results. */
+export type TerminalSessionMetadata = NonNullable<TerminalSessionResult>;
+export type TerminalSessionsListInput = Record<string, never>;
+export type TerminalSessionsListEvent =
+  | {
+      readonly kind: "snapshot";
+      readonly terminals: readonly TerminalSessionMetadata[];
+    }
+  | { readonly kind: "upsert"; readonly terminal: TerminalSessionMetadata }
+  | { readonly kind: "remove"; readonly terminalId: string }
+  | { readonly kind: "closed"; readonly reason: "overflow" | "terminal-error" };
+export type TerminalControlOpenInput = {
+  readonly terminalId: string;
+  readonly cwd: string;
+  readonly worktreePath?: string | null;
+  readonly cols?: number;
+  readonly rows?: number;
+  readonly env?: { readonly [key: string]: string };
+  readonly providerInstanceId?: string;
+};
+export type TerminalControlAttachInput = {
+  readonly terminalId: string;
+  readonly cwd?: string;
+  readonly worktreePath?: string | null;
+  readonly cols?: number;
+  readonly rows?: number;
+  readonly env?: { readonly [key: string]: string };
+  readonly providerInstanceId?: string;
+  readonly restartIfNotRunning?: boolean;
+};
+export type TerminalControlWriteInput = {
+  readonly terminalId: string;
+  readonly data: string;
+};
+export type TerminalControlResizeInput = {
+  readonly terminalId: string;
+  readonly cols: number;
+  readonly rows: number;
+};
+export type TerminalControlClearInput = { readonly terminalId: string };
+export type TerminalControlRestartInput = {
+  readonly terminalId: string;
+  readonly cwd: string;
+  readonly worktreePath?: string | null;
+  readonly cols: number;
+  readonly rows: number;
+  readonly env?: { readonly [key: string]: string };
+  readonly providerInstanceId?: string;
+};
+export type TerminalControlCloseInput = {
+  readonly terminalId?: string;
+  readonly deleteHistory?: boolean;
+};
+export type TerminalControlAck = Record<string, never>;
 const path = { type: "string", maxLength: 512 };
 export const workspaceFilesApi = defineApi<{
   listEntries: { input: WorkspaceListEntriesInput; output: WorkspaceListEntriesResult };
@@ -255,44 +321,282 @@ export const filePresentationApi = defineApi<{
     },
   ],
 });
-export const terminalSessionsApi = defineApi<{
+const terminalSessionMetadataSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: [
+    "terminalId",
+    "status",
+    "label",
+    "hasRunningSubprocess",
+    "exitCode",
+    "exitSignal",
+    "updatedAt",
+  ],
+  properties: {
+    terminalId: { type: "string", minLength: 1, maxLength: 128 },
+    status: { enum: ["starting", "running", "exited", "error"] },
+    label: { type: "string", maxLength: 128 },
+    hasRunningSubprocess: { type: "boolean" },
+    exitCode: { type: ["integer", "null"] },
+    exitSignal: { type: ["integer", "null"] },
+    updatedAt: { type: "string", maxLength: 64 },
+  },
+} as const;
+const terminalSessionsInspectMethod = {
+  name: "inspect",
+  effect: "read",
+  requiredGrants: [TERMINAL_READ],
+  inputSchema: {
+    type: "object",
+    additionalProperties: false,
+    required: ["terminalId"],
+    properties: { terminalId: { type: "string", minLength: 1, maxLength: 128 } },
+  },
+  outputSchema: {
+    ...terminalSessionMetadataSchema,
+    type: ["object", "null"],
+  },
+} as const;
+/**
+ * Thread-scoped live session list: a full snapshot followed by upsert/remove
+ * rows, folded from the native metadata stream. `closed` is the honest
+ * teardown signal; there is no resume cursor.
+ */
+const terminalSessionsListEventSchema = {
+  oneOf: [
+    {
+      type: "object",
+      additionalProperties: false,
+      required: ["kind", "terminals"],
+      properties: {
+        kind: { const: "snapshot" },
+        terminals: { type: "array", maxItems: 128, items: terminalSessionMetadataSchema },
+      },
+    },
+    {
+      type: "object",
+      additionalProperties: false,
+      required: ["kind", "terminal"],
+      properties: {
+        kind: { const: "upsert" },
+        terminal: terminalSessionMetadataSchema,
+      },
+    },
+    {
+      type: "object",
+      additionalProperties: false,
+      required: ["kind", "terminalId"],
+      properties: {
+        kind: { const: "remove" },
+        terminalId: { type: "string", minLength: 1, maxLength: 128 },
+      },
+    },
+    {
+      type: "object",
+      additionalProperties: false,
+      required: ["kind", "reason"],
+      properties: {
+        kind: { const: "closed" },
+        reason: { enum: ["overflow", "terminal-error"] },
+      },
+    },
+  ],
+} as const;
+/**
+ * Sessions metadata, newest version first. 1.1.0 adds the `list` stream;
+ * `inspect` is byte-identical to 1.0.0, which stays frozen below so consumers
+ * and providers built against it keep canonical equality.
+ */
+export const terminalSessionsApi: TypedApi<{
+  inspect: { input: TerminalSessionsInput; output: TerminalSessionResult };
+}> &
+  TypedStreamApi<{
+    list: { input: TerminalSessionsListInput; event: TerminalSessionsListEvent };
+  }> = defineStreamApi<{
+  list: { input: TerminalSessionsListInput; event: TerminalSessionsListEvent };
+}>({
+  id: TERMINAL_SESSIONS,
+  version: "1.1.0",
+  methods: [terminalSessionsInspectMethod],
+  streams: [
+    {
+      name: "list",
+      requiredGrants: [TERMINAL_READ],
+      inputSchema: { type: "object", additionalProperties: false, properties: {} },
+      eventSchema: terminalSessionsListEventSchema,
+    },
+  ],
+});
+/** Frozen published 1.0.0 definition; shared definitions are immutable per version. */
+export const terminalSessionsApiV1 = defineApi<{
   inspect: { input: TerminalSessionsInput; output: TerminalSessionResult };
 }>({
   id: TERMINAL_SESSIONS,
   version: "1.0.0",
+  methods: [terminalSessionsInspectMethod],
+});
+
+/** Bounds mirror the native RPC payloads in @t3tools/contracts terminal.ts. */
+const terminalIdInput = { type: "string", minLength: 1, maxLength: 128 } as const;
+const terminalColsInput = { type: "integer", minimum: 1, maximum: 1000 } as const;
+const terminalRowsInput = { type: "integer", minimum: 1, maximum: 500 } as const;
+const terminalCwdInput = { type: "string", minLength: 1, maxLength: 32768 } as const;
+const terminalWorktreePathInput = {
+  type: ["string", "null"],
+  minLength: 1,
+  maxLength: 32768,
+} as const;
+const terminalEnvInput = {
+  type: "object",
+  maxProperties: 128,
+  propertyNames: { pattern: "^[A-Za-z_][A-Za-z0-9_]*$", maxLength: 128 },
+  additionalProperties: { type: "string", maxLength: 8192 },
+} as const;
+const terminalProviderInstanceInput = {
+  type: "string",
+  minLength: 1,
+  maxLength: 64,
+  pattern: "^[a-zA-Z][a-zA-Z0-9_-]*$",
+} as const;
+const terminalSessionOutputSchema = terminalSessionMetadataSchema;
+const terminalAckOutputSchema = {
+  type: "object",
+  additionalProperties: false,
+  properties: {},
+} as const;
+const terminalLaunchOptionals = {
+  worktreePath: terminalWorktreePathInput,
+  cols: terminalColsInput,
+  rows: terminalRowsInput,
+  env: terminalEnvInput,
+  providerInstanceId: terminalProviderInstanceInput,
+} as const;
+
+/**
+ * Terminal lifecycle and input. Every method is a write under the distinct
+ * `t3.terminal/operate` grant — spawn authority is never conveyed by the read
+ * grants. `attach` is open-or-attach: it never spawns without `cwd`, and a
+ * stopped session respawns only when `restartIfNotRunning` is set. Reading
+ * output stays on `t3.terminal/output-events`, which cannot spawn.
+ */
+export const terminalControlApi = defineApi<{
+  open: { input: TerminalControlOpenInput; output: TerminalSessionMetadata };
+  attach: { input: TerminalControlAttachInput; output: TerminalSessionMetadata };
+  write: { input: TerminalControlWriteInput; output: TerminalControlAck };
+  resize: { input: TerminalControlResizeInput; output: TerminalControlAck };
+  clear: { input: TerminalControlClearInput; output: TerminalControlAck };
+  restart: { input: TerminalControlRestartInput; output: TerminalSessionMetadata };
+  close: { input: TerminalControlCloseInput; output: TerminalControlAck };
+}>({
+  id: TERMINAL_CONTROL,
+  version: "1.0.0",
   methods: [
     {
-      name: "inspect",
-      effect: "read",
-      requiredGrants: [TERMINAL_READ],
+      name: "open",
+      effect: "write",
+      requiredGrants: [TERMINAL_OPERATE],
+      inputSchema: {
+        type: "object",
+        additionalProperties: false,
+        required: ["terminalId", "cwd"],
+        properties: {
+          terminalId: terminalIdInput,
+          cwd: terminalCwdInput,
+          ...terminalLaunchOptionals,
+        },
+      },
+      outputSchema: terminalSessionOutputSchema,
+    },
+    {
+      name: "attach",
+      effect: "write",
+      requiredGrants: [TERMINAL_OPERATE],
       inputSchema: {
         type: "object",
         additionalProperties: false,
         required: ["terminalId"],
-        properties: { terminalId: { type: "string", minLength: 1, maxLength: 128 } },
-      },
-      outputSchema: {
-        type: ["object", "null"],
-        additionalProperties: false,
-        required: [
-          "terminalId",
-          "status",
-          "label",
-          "hasRunningSubprocess",
-          "exitCode",
-          "exitSignal",
-          "updatedAt",
-        ],
         properties: {
-          terminalId: { type: "string", minLength: 1, maxLength: 128 },
-          status: { enum: ["starting", "running", "exited", "error"] },
-          label: { type: "string", maxLength: 128 },
-          hasRunningSubprocess: { type: "boolean" },
-          exitCode: { type: ["integer", "null"] },
-          exitSignal: { type: ["integer", "null"] },
-          updatedAt: { type: "string", maxLength: 64 },
+          terminalId: terminalIdInput,
+          cwd: terminalCwdInput,
+          restartIfNotRunning: { type: "boolean" },
+          ...terminalLaunchOptionals,
         },
       },
+      outputSchema: terminalSessionOutputSchema,
+    },
+    {
+      name: "write",
+      effect: "write",
+      requiredGrants: [TERMINAL_OPERATE],
+      inputSchema: {
+        type: "object",
+        additionalProperties: false,
+        required: ["terminalId", "data"],
+        properties: {
+          terminalId: terminalIdInput,
+          data: { type: "string", minLength: 1, maxLength: 65536 },
+        },
+      },
+      outputSchema: terminalAckOutputSchema,
+    },
+    {
+      name: "resize",
+      effect: "write",
+      requiredGrants: [TERMINAL_OPERATE],
+      inputSchema: {
+        type: "object",
+        additionalProperties: false,
+        required: ["terminalId", "cols", "rows"],
+        properties: {
+          terminalId: terminalIdInput,
+          cols: terminalColsInput,
+          rows: terminalRowsInput,
+        },
+      },
+      outputSchema: terminalAckOutputSchema,
+    },
+    {
+      name: "clear",
+      effect: "write",
+      requiredGrants: [TERMINAL_OPERATE],
+      inputSchema: {
+        type: "object",
+        additionalProperties: false,
+        required: ["terminalId"],
+        properties: { terminalId: terminalIdInput },
+      },
+      outputSchema: terminalAckOutputSchema,
+    },
+    {
+      name: "restart",
+      effect: "write",
+      requiredGrants: [TERMINAL_OPERATE],
+      inputSchema: {
+        type: "object",
+        additionalProperties: false,
+        required: ["terminalId", "cwd", "cols", "rows"],
+        properties: {
+          terminalId: terminalIdInput,
+          cwd: terminalCwdInput,
+          ...terminalLaunchOptionals,
+        },
+      },
+      outputSchema: terminalSessionOutputSchema,
+    },
+    {
+      name: "close",
+      effect: "write",
+      requiredGrants: [TERMINAL_OPERATE],
+      inputSchema: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          terminalId: terminalIdInput,
+          deleteHistory: { type: "boolean" },
+        },
+      },
+      outputSchema: terminalAckOutputSchema,
     },
   ],
 });
@@ -622,6 +926,8 @@ export const GENERIC_API_CATALOGUE: readonly ApiDefinition[] = [
   terminalSessionsApi.definition,
   terminalOutputApi.definition,
   terminalOutputEventsApi.definition,
+  terminalSessionsApiV1.definition,
+  terminalControlApi.definition,
 ];
 function canonical(value: unknown): string {
   if (Array.isArray(value)) return "[" + value.map(canonical).join(",") + "]";
@@ -648,6 +954,8 @@ export const WORKSPACE_FILES_API = workspaceFilesApi.definition;
 export const WORKSPACE_SEARCH_API = workspaceSearchApi.definition;
 export const FILE_PRESENTATION_API = filePresentationApi.definition;
 export const TERMINAL_SESSIONS_API = terminalSessionsApi.definition;
+export const TERMINAL_SESSIONS_API_V1 = terminalSessionsApiV1.definition;
 
 export const TERMINAL_OUTPUT_API = terminalOutputApi.definition;
 export const TERMINAL_OUTPUT_EVENTS_API = terminalOutputEventsApi.definition;
+export const TERMINAL_CONTROL_API = terminalControlApi.definition;

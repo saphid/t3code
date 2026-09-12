@@ -197,6 +197,7 @@ function fixture() {
       subscribeOutput: () => Effect.succeed(() => {}),
       open: () => Effect.die("unused terminal open"),
       attachStream: () => Effect.die("unused terminal attach"),
+      openOrAttach: () => Effect.die("unused terminal openOrAttach"),
       write: () => Effect.die("unused terminal write"),
       resize: () => Effect.die("unused terminal resize"),
       clear: () => Effect.die("unused terminal clear"),

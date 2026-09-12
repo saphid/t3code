@@ -2,7 +2,7 @@
   "format": 2,
   "manifest": {
     "id": "t3.terminal",
-    "version": "0.1.0",
+    "version": "0.2.0",
     "apiVersion": 1,
     "surfaces": [
       {
@@ -28,7 +28,7 @@
   "requires": [
     {
       "id": "t3.terminal/sessions",
-      "versionRange": "^1.0.0"
+      "versionRange": "^1.1.0"
     },
     {
       "id": "t3.terminal/output",
@@ -36,6 +36,10 @@
     },
     {
       "id": "t3.terminal/output-events",
+      "versionRange": "^1.0.0"
+    },
+    {
+      "id": "t3.terminal/control",
       "versionRange": "^1.0.0"
     }
   ],
