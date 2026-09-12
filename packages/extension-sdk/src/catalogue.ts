@@ -1802,7 +1802,8 @@ const vcsDiffFileContentsStreamEventSchema = {
  * envelope, so a `truncated:true` preview can never be delivered by
  * `getPreview` — the smallest truncated body (one untracked file sliced at
  * 80 KB = 81 920 bytes) already exceeds it, and so does any untruncated
- * result past ~64 KiB, including most `getFileContents` payloads. The unary
+ * result past ~64 KiB — `getFileContents` payloads included once they cross
+ * the envelope. The unary
  * methods remain correct for small diffs; `streamPreview` and
  * `streamFileContents` (1.1.0) deliver the same bounded payloads as ≤64 KiB
  * frames: a `manifest` snapshot with per-source sha256/chunk counts, `chunk`

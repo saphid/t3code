@@ -1,5 +1,6 @@
 import * as NodeTest from "node:test";
 import * as NodeAssert from "node:assert/strict";
+import * as NodeCrypto from "node:crypto";
 import {
   GENERIC_API_CATALOGUE,
   VCS_CHANGES,
@@ -63,8 +64,16 @@ NodeTest.test(
       GENERIC_API_CATALOGUE.filter((d) => d.id === VCS_DIFF),
       [VCS_DIFF_API, VCS_DIFF_API_V1],
     );
-    // The frozen 1.0.0 keeps the shipped methods byte-identical.
+    // The frozen 1.0.0 keeps the shipped methods byte-identical. The deepEqual
+    // alone would pass trivially — V1 and 1.1.0 share the same method object
+    // references — so the V1 surface is also pinned by content hash.
     NodeAssert.deepEqual(VCS_DIFF_API_V1.methods, defs[VCS_DIFF].methods);
+    NodeAssert.equal(
+      NodeCrypto.createHash("sha256")
+        .update(JSON.stringify(VCS_DIFF_API_V1.methods))
+        .digest("hex"),
+      "58f9db9d4fbeefe7a2a9d9391770507ec763acd1448fba1c9436cc5e284bb50b",
+    );
     NodeAssert.equal(VCS_DIFF_API_V1.streams, undefined);
   },
 );
