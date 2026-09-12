@@ -324,7 +324,7 @@ describe("t3.resources/lease adapter", () => {
     }),
   );
 
-  it.effect("a resource thread outside the granted project is denied", () =>
+  it.effect("a resource thread outside the granted project reads as not-found", () =>
     Effect.gen(function* () {
       const provider = createResourcesLeaseApiProvider(
         makeDeps({
@@ -349,15 +349,15 @@ describe("t3.resources/lease adapter", () => {
         }),
       );
       // The context thread stays inside the granted project; the resource
-      // thread points elsewhere.
+      // thread points elsewhere — reported as not-found, not a distinct
+      // denial, so a granted caller cannot probe cross-project thread ids.
       const error = yield* invokeError(
         provider,
         "createPresentationUrl",
         { resource: { _tag: "workspace-file", threadId: "other-thread", path: "a.svg" } },
         makeContext(),
       );
-      expect(error.detail).toContain("ResourceLeaseKindDeniedError");
-      expect(error.detail).toContain("outside the granted project scope");
+      expect(error.detail).toContain("AssetWorkspaceContextNotFoundError");
     }),
   );
 

@@ -87,6 +87,13 @@ const decodeResource = Schema.decodeUnknownSync(Schema.Struct({ resource: AssetR
 });
 
 /** The claim kind minted, read back out of the signed payload — the honest value. */
+const KNOWN_CLAIM_KINDS = new Set<ResourceLeaseClaimKind>([
+  "workspace-file",
+  "workspace-file-exact",
+  "project-favicon",
+  "project-favicon-external",
+]);
+
 const mintedClaimKind = (relativeUrl: string): ResourceLeaseClaimKind | null => {
   try {
     const suffix = relativeUrl.slice("/api/assets/".length);
@@ -98,7 +105,8 @@ const mintedClaimKind = (relativeUrl: string): ResourceLeaseClaimKind | null => 
       claims !== null &&
       typeof claims === "object" &&
       "kind" in claims &&
-      typeof claims.kind === "string"
+      typeof claims.kind === "string" &&
+      KNOWN_CLAIM_KINDS.has(claims.kind as ResourceLeaseClaimKind)
     ) {
       return claims.kind as ResourceLeaseClaimKind;
     }
@@ -181,7 +189,13 @@ export function createResourcesLeaseApiProvider(
         }
         return true;
       },
-      catch: () => grantDenied(operation, kind, grant),
+      // A thrown check is a host fault, not a missing grant — name it
+      // differently so a plugin does not misdiagnose a transient failure.
+      catch: () =>
+        failure(
+          operation,
+          `ResourceLeaseGrantCheckError: could not evaluate grant '${grant}' for kind '${kind}'`,
+        ),
     }).pipe(
       Effect.flatMap((ok) => (ok ? Effect.void : Effect.fail(grantDenied(operation, kind, grant)))),
     );
@@ -276,11 +290,11 @@ export function createResourcesLeaseApiProvider(
         // The resource thread must live inside the invocation's granted
         // project — the broker already proved every caller holds
         // context.projectId, so equality keeps the lease inside that wall.
+        // Report it as not-found: a distinct denial would let a granted
+        // caller probe thread existence in other projects.
         if (thread.value.projectId !== scope.context.resource.projectId) {
-          return yield* kindDenied(
-            operation,
-            resource._tag,
-            "resolves outside the granted project scope.",
+          return yield* operationError(operation)(
+            new AssetWorkspaceContextNotFoundError({ resource }),
           );
         }
         const project = yield* dependencies.projects
@@ -314,17 +328,30 @@ export function createResourcesLeaseApiProvider(
             new AssetWorkspaceContextNotFoundError({ resource }),
           );
         }
-        const [requestedRoot, projectRoot] = yield* Effect.all([
+        // A caller-supplied cwd that fails to normalize (does not exist, is
+        // not traversable) must collapse into the same scope denial as a
+        // well-formed foreign root — a distinct normalization error would be
+        // a filesystem-existence oracle for arbitrary absolute paths.
+        const requestedRoot = yield* Effect.option(
           dependencies.normalizeWorkspaceRoot(resource.cwd),
-          dependencies.normalizeWorkspaceRoot(project.value.workspaceRoot),
-        ]).pipe(
-          Effect.mapError((cause) =>
-            operationError(operation)(
-              new AssetWorkspaceRootNormalizationError({ resource, cause }),
-            ),
-          ),
         );
-        if (requestedRoot !== projectRoot) {
+        if (Option.isNone(requestedRoot)) {
+          return yield* kindDenied(
+            operation,
+            resource._tag,
+            "resolves outside the granted project scope.",
+          );
+        }
+        const projectRoot = yield* dependencies
+          .normalizeWorkspaceRoot(project.value.workspaceRoot)
+          .pipe(
+            Effect.mapError((cause) =>
+              operationError(operation)(
+                new AssetWorkspaceRootNormalizationError({ resource, cause }),
+              ),
+            ),
+          );
+        if (requestedRoot.value !== projectRoot) {
           return yield* kindDenied(
             operation,
             resource._tag,
