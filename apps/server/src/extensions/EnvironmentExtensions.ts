@@ -38,6 +38,8 @@ import { makeTerminalControlApiProvider } from "./terminalControlApi.ts";
 import { makeTerminalOutputApiProvider } from "./terminalOutputApi.ts";
 import { makeTerminalOutputEventsApiProvider } from "./terminalOutputEventsApi.ts";
 import { makeTextEditsApiProvider } from "./textEditsApi.ts";
+import { makeVcsApiProviders } from "./vcsApi.ts";
+import { makeVcsDiffApiProvider } from "./vcsDiffApi.ts";
 import { boundedWorkspaceText } from "./workspaceText.ts";
 
 const decodeJson = Schema.decodeUnknownEffect(Schema.Json);
@@ -73,6 +75,8 @@ export const make = Effect.fn("EnvironmentExtensions.make")(function* (
   const terminalOutputEventsApi = yield* makeTerminalOutputEventsApiProvider();
   const terminalControlApi = yield* makeTerminalControlApiProvider();
   const textEditsApi = yield* makeTextEditsApiProvider();
+  const vcsApis = yield* makeVcsApiProviders();
+  const vcsDiffApi = yield* makeVcsDiffApiProvider();
   const catalogueChanges = yield* ExtensionCatalogueChanges;
   const resolve = makeExtensionScopeResolver({ environmentId, projects, threads });
   const read = Effect.fn("EnvironmentExtensions.readWorkspace")(function* (
@@ -119,6 +123,8 @@ export const make = Effect.fn("EnvironmentExtensions.make")(function* (
             terminalOutputApi,
             terminalOutputEventsApi,
             terminalControlApi,
+            ...vcsApis,
+            vcsDiffApi,
           ],
           onCatalogueChanged: () => Effect.runSync(catalogueChanges.publish),
           auditApi: (event) => {

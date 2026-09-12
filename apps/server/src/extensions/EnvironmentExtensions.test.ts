@@ -28,6 +28,13 @@ import { WorkspaceFileSystem } from "../workspace/WorkspaceFileSystem.ts";
 import { toSdkContext } from "./scope.ts";
 import { make } from "./EnvironmentExtensions.ts";
 import { TerminalManager } from "../terminal/Manager.ts";
+import { GitWorkflowService } from "../git/GitWorkflowService.ts";
+import { ReviewService } from "../review/ReviewService.ts";
+import * as ServerSettings from "../serverSettings.ts";
+import { GitVcsDriver } from "../vcs/GitVcsDriver.ts";
+import { VcsDriverRegistry } from "../vcs/VcsDriverRegistry.ts";
+import { VcsProvisioningService } from "../vcs/VcsProvisioningService.ts";
+import { VcsStatusBroadcaster } from "../vcs/VcsStatusBroadcaster.ts";
 
 const project = Schema.decodeUnknownSync(ProjectionProject)({
   projectId: "project-a",
@@ -245,6 +252,13 @@ function fixture() {
       writeFile: () => Effect.die("unused"),
     }),
     WorkspacePaths.layer,
+    Layer.mock(VcsStatusBroadcaster)({}),
+    Layer.mock(GitWorkflowService)({}),
+    Layer.mock(GitVcsDriver)({}),
+    Layer.mock(VcsDriverRegistry)({}),
+    Layer.mock(VcsProvisioningService)({}),
+    Layer.mock(ReviewService)({}),
+    ServerSettings.layerTest(),
     ServerConfig.layerTest(process.cwd(), { prefix: "t3-extension-service-test-" }),
   ).pipe(Layer.provideMerge(NodeServices.layer));
   return {

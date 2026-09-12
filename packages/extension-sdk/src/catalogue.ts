@@ -911,6 +911,916 @@ export const workspaceSearchApi = defineApi<{
   ],
 });
 
+/* ------------------------------------------------------------------------
+ * t3.vcs — backend-neutral source-control / diff contracts (P09).
+ *
+ * Grant split: `t3.vcs/read` covers every read method and the status stream;
+ * `t3.vcs/mutate` is the DISTINCT mutation grant — stage/commit/branch/
+ * worktree/pull/init never ride the read grant, and `effect:"write"` gives
+ * the broker a second barrier on top of the grant check.
+ *
+ * Capability honesty: `t3.vcs/repository.getCapabilities` reports the
+ * detected driver kind, the driver flag set, and per-operation support.
+ * Unsupported operations fail with the named VcsUnsupportedOperationError
+ * (mirrored as an ExtensionOperationError naming the operation + kind) —
+ * never a silent no-op or a fabricated empty result.
+ * --------------------------------------------------------------------- */
+export const VCS_READ = "t3.vcs/read";
+export const VCS_MUTATE = "t3.vcs/mutate";
+export const VCS_STATUS = "t3.vcs/status";
+export const VCS_REFS = "t3.vcs/refs";
+export const VCS_CHANGES = "t3.vcs/changes";
+export const VCS_DIFF = "t3.vcs/diff";
+export const VCS_REPOSITORY = "t3.vcs/repository";
+
+export type VcsDriverKindValue = "git" | "jj" | "unknown";
+export type VcsSourceControlProvider = {
+  readonly kind: "github" | "gitlab" | "azure-devops" | "bitbucket" | "unknown";
+  readonly name: string;
+  readonly baseUrl: string;
+};
+export type VcsStatusFile = {
+  readonly path: string;
+  readonly insertions: number;
+  readonly deletions: number;
+};
+export type VcsStatusChangeRequest = {
+  readonly number: number;
+  readonly title: string;
+  readonly url: string;
+  readonly baseRef: string;
+  readonly headRef: string;
+  readonly state: "open" | "closed" | "merged";
+  readonly isDraft?: boolean;
+  readonly updatedAt?: string | null;
+};
+/** Local status half — mirrors VcsStatusLocalResult with a declared file cap. */
+export type VcsStatusLocal = {
+  readonly isRepo: boolean;
+  readonly sourceControlProvider?: VcsSourceControlProvider;
+  readonly hasPrimaryRemote: boolean;
+  readonly isDefaultRef: boolean;
+  readonly refName: string | null;
+  readonly hasWorkingTreeChanges: boolean;
+  readonly workingTree: {
+    readonly files: readonly VcsStatusFile[];
+    readonly insertions: number;
+    readonly deletions: number;
+    /** True when the host sliced the file list at the contract bound. */
+    readonly truncated: boolean;
+  };
+};
+/** Remote status half — mirrors VcsStatusRemoteResult. */
+export type VcsStatusRemote = {
+  readonly hasUpstream: boolean;
+  readonly aheadCount: number;
+  readonly behindCount: number;
+  readonly aheadOfDefaultCount?: number;
+  readonly pr: VcsStatusChangeRequest | null;
+};
+export type VcsStatusResult = VcsStatusLocal & VcsStatusRemote;
+export type VcsStatusStreamEvent =
+  | {
+      readonly kind: "snapshot";
+      readonly local: VcsStatusLocal;
+      readonly remote: VcsStatusRemote | null;
+    }
+  | { readonly kind: "localUpdated"; readonly local: VcsStatusLocal }
+  | { readonly kind: "remoteUpdated"; readonly remote: VcsStatusRemote | null }
+  | { readonly kind: "closed"; readonly reason: "overflow" | "status-error" };
+export type VcsListRefsInput = {
+  readonly query?: string;
+  readonly cursor?: number;
+  readonly includeMatchingRemoteRefs?: boolean;
+  readonly refKind?: "all" | "local" | "remote";
+  readonly refresh?: boolean;
+  readonly limit?: number;
+};
+export type VcsRefEntry = {
+  readonly name: string;
+  readonly isRemote?: boolean;
+  readonly remoteName?: string;
+  readonly current: boolean;
+  readonly isDefault: boolean;
+  readonly worktreePath: string | null;
+};
+export type VcsListRefsResult = {
+  readonly refs: readonly VcsRefEntry[];
+  readonly isRepo: boolean;
+  readonly hasPrimaryRemote: boolean;
+  readonly nextCursor: number | null;
+  readonly totalCount: number;
+};
+export type VcsRefNameInput = { readonly refName: string };
+export type VcsCreateRefInput = { readonly refName: string; readonly switchRef?: boolean };
+export type VcsRefNameResult = { readonly refName: string };
+export type VcsSwitchRefResult = { readonly refName: string | null };
+/**
+ * Per-path index state the private status payload drops — porcelain XY is
+ * parsed for paths only upstream (GitVcsDriverCore), so a staging lane cannot
+ * be rendered from `status`. This is the narrow net-new read surface.
+ */
+export type VcsChangeEntry = {
+  readonly path: string;
+  readonly staged: boolean;
+  readonly unstaged: boolean;
+  readonly untracked: boolean;
+  readonly conflicted: boolean;
+};
+export type VcsChangesListResult = {
+  readonly isRepo: boolean;
+  readonly entries: readonly VcsChangeEntry[];
+  readonly truncated: boolean;
+};
+export type VcsPathsInput = { readonly paths: readonly string[] };
+export type VcsPathsResult = { readonly paths: readonly string[] };
+export type VcsCommitInput = {
+  readonly message: string;
+  readonly paths?: readonly string[];
+};
+export type VcsCommitResult = {
+  readonly commitSha: string;
+  readonly refName: string | null;
+};
+export type VcsDiffPreviewInput = {
+  readonly baseRef?: string;
+  readonly ignoreWhitespace?: boolean;
+};
+export type VcsDiffPreviewSource = {
+  readonly id: string;
+  readonly kind: "working-tree" | "branch-range";
+  readonly title: string;
+  readonly baseRef: string | null;
+  readonly headRef: string | null;
+  readonly diff: string;
+  readonly diffHash: string;
+  readonly truncated: boolean;
+};
+export type VcsDiffPreviewResult = {
+  readonly generatedAt: string;
+  readonly sources: readonly VcsDiffPreviewSource[];
+};
+export type VcsDiffFileContentsInput = {
+  readonly sourceKind: "working-tree" | "branch-range";
+  readonly changeType: "change" | "rename-pure" | "rename-changed" | "new" | "deleted";
+  readonly baseRef: string | null;
+  readonly headRef: string | null;
+  readonly oldPath: string;
+  readonly newPath: string;
+};
+export type VcsDiffFileContentsResult = {
+  readonly oldContents: string;
+  readonly newContents: string;
+};
+/** Per-operation support flags keyed by `api.method`. */
+export type VcsOperationsSupport = {
+  readonly "status.get": boolean;
+  readonly "status.refresh": boolean;
+  readonly "status.subscribe": boolean;
+  readonly "refs.list": boolean;
+  readonly "refs.create": boolean;
+  readonly "refs.switch": boolean;
+  readonly "changes.list": boolean;
+  readonly "changes.stage": boolean;
+  readonly "changes.unstage": boolean;
+  readonly "changes.commit": boolean;
+  readonly "diff.getPreview": boolean;
+  readonly "diff.getFileContents": boolean;
+  readonly "repository.pull": boolean;
+  readonly "repository.init": boolean;
+  readonly "repository.createWorktree": boolean;
+  readonly "repository.removeWorktree": boolean;
+};
+export type VcsDriverCapabilitiesInfo = {
+  readonly kind: VcsDriverKindValue;
+  readonly supportsWorktrees: boolean;
+  readonly supportsBookmarks: boolean;
+  readonly supportsAtomicSnapshot: boolean;
+  readonly supportsPushDefaultRemote: boolean;
+  readonly ignoreClassifier: "native" | "git-compatible-fallback";
+};
+export type VcsCapabilitiesResult = {
+  readonly detected: boolean;
+  readonly kind: VcsDriverKindValue | null;
+  /** Detection failure detail when a repository could not be resolved. */
+  readonly detail: string | null;
+  readonly driver: VcsDriverCapabilitiesInfo | null;
+  readonly operations: VcsOperationsSupport;
+};
+export type VcsPullResult = {
+  readonly status: "pulled" | "skipped_up_to_date";
+  readonly refName: string;
+  readonly upstreamRef: string | null;
+};
+export type VcsInitInput = { readonly kind?: "git" };
+export type VcsCreateWorktreeInput = {
+  readonly refName: string;
+  readonly newRefName?: string;
+  readonly baseRefName?: string;
+  readonly path: string | null;
+};
+export type VcsCreateWorktreeResult = {
+  readonly worktree: { readonly path: string; readonly refName: string };
+};
+export type VcsRemoveWorktreeInput = { readonly path: string; readonly force?: boolean };
+export type VcsEmptyResult = Record<string, never>;
+
+const vcsPath = { type: "string", minLength: 1, maxLength: 512 } as const;
+const vcsPathsInput = {
+  type: "array",
+  minItems: 1,
+  maxItems: 100,
+  items: vcsPath,
+} as const;
+/**
+ * `git check-ref-format` essentials enforced declaratively — a bound the
+ * private RPC leaves to the driver. Host-produced ref fields stay plain.
+ */
+const vcsRefNameInput = {
+  type: "string",
+  minLength: 1,
+  maxLength: 256,
+  allOf: [
+    { not: { pattern: "\\.\\." } },
+    { not: { pattern: "@\\{" } },
+    { not: { pattern: "[\\x00-\\x20~^:?*\\[\\\\]" } },
+    { not: { pattern: "(^|/)\\." } },
+    { not: { pattern: "//" } },
+    { not: { pattern: "^[/-]" } },
+    { not: { pattern: "[/.]$" } },
+    { not: { pattern: "\\.lock(/|$)" } },
+    { not: { pattern: "^@$" } },
+  ],
+} as const;
+const vcsRefNameOutput = { type: "string", minLength: 1, maxLength: 4096 } as const;
+const vcsRefNameOrNull = { type: ["string", "null"], minLength: 1, maxLength: 4096 } as const;
+/**
+ * Revision inputs (diff baseRef/headRef) accept revspecs, not just refnames —
+ * but a leading `-` would inject options into `git diff`/`git show` argv, and
+ * whitespace/control characters are never valid. Enforced declaratively.
+ */
+const vcsRevSpec = {
+  type: "string",
+  minLength: 1,
+  maxLength: 256,
+  allOf: [{ not: { pattern: "^-" } }, { not: { pattern: "[\\s\\x00-\\x1f]" } }],
+} as const;
+const vcsRevSpecOrNull = { anyOf: [{ type: "null" }, vcsRevSpec] } as const;
+const vcsStatusFileSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["path", "insertions", "deletions"],
+  properties: {
+    path: vcsPath,
+    insertions: { type: "integer", minimum: 0 },
+    deletions: { type: "integer", minimum: 0 },
+  },
+} as const;
+const vcsStatusLocalSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: [
+    "isRepo",
+    "hasPrimaryRemote",
+    "isDefaultRef",
+    "refName",
+    "hasWorkingTreeChanges",
+    "workingTree",
+  ],
+  properties: {
+    isRepo: { type: "boolean" },
+    sourceControlProvider: {
+      type: "object",
+      additionalProperties: false,
+      required: ["kind", "name", "baseUrl"],
+      properties: {
+        kind: { enum: ["github", "gitlab", "azure-devops", "bitbucket", "unknown"] },
+        name: { type: "string", minLength: 1, maxLength: 256 },
+        baseUrl: { type: "string", maxLength: 2048 },
+      },
+    },
+    hasPrimaryRemote: { type: "boolean" },
+    isDefaultRef: { type: "boolean" },
+    refName: vcsRefNameOrNull,
+    hasWorkingTreeChanges: { type: "boolean" },
+    workingTree: {
+      type: "object",
+      additionalProperties: false,
+      required: ["files", "insertions", "deletions", "truncated"],
+      properties: {
+        files: { type: "array", maxItems: 5000, items: vcsStatusFileSchema },
+        insertions: { type: "integer", minimum: 0 },
+        deletions: { type: "integer", minimum: 0 },
+        truncated: { type: "boolean" },
+      },
+    },
+  },
+} as const;
+const vcsChangeRequestSchema = {
+  type: ["object", "null"],
+  additionalProperties: false,
+  required: ["number", "title", "url", "baseRef", "headRef", "state"],
+  properties: {
+    number: { type: "integer", minimum: 1 },
+    title: { type: "string", minLength: 1, maxLength: 512 },
+    url: { type: "string", maxLength: 2048 },
+    baseRef: vcsRefNameOutput,
+    headRef: vcsRefNameOutput,
+    state: { enum: ["open", "closed", "merged"] },
+    isDraft: { type: "boolean" },
+    updatedAt: { type: ["string", "null"], maxLength: 64 },
+  },
+} as const;
+const vcsStatusRemoteSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["hasUpstream", "aheadCount", "behindCount", "pr"],
+  properties: {
+    hasUpstream: { type: "boolean" },
+    aheadCount: { type: "integer", minimum: 0 },
+    behindCount: { type: "integer", minimum: 0 },
+    aheadOfDefaultCount: { type: "integer", minimum: 0 },
+    pr: vcsChangeRequestSchema,
+  },
+} as const;
+const vcsStatusResultSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: [
+    "isRepo",
+    "hasPrimaryRemote",
+    "isDefaultRef",
+    "refName",
+    "hasWorkingTreeChanges",
+    "workingTree",
+    "hasUpstream",
+    "aheadCount",
+    "behindCount",
+    "pr",
+  ],
+  properties: {
+    ...vcsStatusLocalSchema.properties,
+    ...vcsStatusRemoteSchema.properties,
+  },
+} as const;
+const vcsEmptyInputSchema = {
+  type: "object",
+  additionalProperties: false,
+  properties: {},
+} as const;
+const vcsAckOutputSchema = {
+  type: "object",
+  additionalProperties: false,
+  properties: {},
+} as const;
+
+/** Public stream event shape — the private `_tag` union mirrored with `kind`. */
+const vcsStatusStreamEventSchema = {
+  oneOf: [
+    {
+      type: "object",
+      additionalProperties: false,
+      required: ["kind", "local", "remote"],
+      properties: {
+        kind: { const: "snapshot" },
+        local: vcsStatusLocalSchema,
+        remote: { anyOf: [vcsStatusRemoteSchema, { type: "null" }] },
+      },
+    },
+    {
+      type: "object",
+      additionalProperties: false,
+      required: ["kind", "local"],
+      properties: { kind: { const: "localUpdated" }, local: vcsStatusLocalSchema },
+    },
+    {
+      type: "object",
+      additionalProperties: false,
+      required: ["kind", "remote"],
+      properties: {
+        kind: { const: "remoteUpdated" },
+        remote: { anyOf: [vcsStatusRemoteSchema, { type: "null" }] },
+      },
+    },
+    {
+      type: "object",
+      additionalProperties: false,
+      required: ["kind", "reason"],
+      properties: {
+        kind: { const: "closed" },
+        reason: { enum: ["overflow", "status-error"] },
+      },
+    },
+  ],
+} as const;
+/**
+ * Working-tree + upstream status. `get` serves the cached/merged snapshot,
+ * `refresh` forces local+remote recompute; both mirror the private
+ * vcs.refreshStatus / subscribeVcsStatus semantics over
+ * VcsStatusBroadcaster. `subscribe` emits snapshot → localUpdated /
+ * remoteUpdated frames; there is no resume cursor.
+ */
+export const vcsStatusApi: TypedApi<{
+  get: { input: Record<string, never>; output: VcsStatusResult };
+  refresh: { input: Record<string, never>; output: VcsStatusResult };
+}> &
+  TypedStreamApi<{
+    subscribe: { input: Record<string, never>; event: VcsStatusStreamEvent };
+  }> = defineStreamApi<{
+  subscribe: { input: Record<string, never>; event: VcsStatusStreamEvent };
+}>({
+  id: VCS_STATUS,
+  version: "1.0.0",
+  methods: [
+    {
+      name: "get",
+      effect: "read",
+      requiredGrants: [VCS_READ],
+      inputSchema: vcsEmptyInputSchema,
+      outputSchema: vcsStatusResultSchema,
+    },
+    {
+      name: "refresh",
+      effect: "read",
+      requiredGrants: [VCS_READ],
+      inputSchema: vcsEmptyInputSchema,
+      outputSchema: vcsStatusResultSchema,
+    },
+  ],
+  streams: [
+    {
+      name: "subscribe",
+      requiredGrants: [VCS_READ],
+      inputSchema: vcsEmptyInputSchema,
+      eventSchema: vcsStatusStreamEventSchema,
+    },
+  ],
+});
+
+const vcsRefEntrySchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["name", "current", "isDefault", "worktreePath"],
+  properties: {
+    name: vcsRefNameOutput,
+    isRemote: { type: "boolean" },
+    remoteName: vcsRefNameOutput,
+    current: { type: "boolean" },
+    isDefault: { type: "boolean" },
+    worktreePath: { type: ["string", "null"], minLength: 1, maxLength: 32768 },
+  },
+} as const;
+/**
+ * Ref listing and checkout mutations. `list` mirrors vcs.listRefs (≤200 page,
+ * query/kind/remote filters); `create`/`switch` mirror vcs.createRef /
+ * vcs.switchRef and require `t3.vcs/mutate` — checkout moves the working
+ * tree, so it is never authorized by the read grant.
+ */
+export const vcsRefsApi = defineApi<{
+  list: { input: VcsListRefsInput; output: VcsListRefsResult };
+  create: { input: VcsCreateRefInput; output: VcsRefNameResult };
+  switch: { input: VcsRefNameInput; output: VcsSwitchRefResult };
+}>({
+  id: VCS_REFS,
+  version: "1.0.0",
+  methods: [
+    {
+      name: "list",
+      effect: "read",
+      requiredGrants: [VCS_READ],
+      inputSchema: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          query: { type: "string", maxLength: 256 },
+          cursor: { type: "integer", minimum: 0 },
+          includeMatchingRemoteRefs: { type: "boolean" },
+          refKind: { enum: ["all", "local", "remote"] },
+          refresh: { type: "boolean" },
+          limit: { type: "integer", minimum: 1, maximum: 200 },
+        },
+      },
+      outputSchema: {
+        type: "object",
+        additionalProperties: false,
+        required: ["refs", "isRepo", "hasPrimaryRemote", "nextCursor", "totalCount"],
+        properties: {
+          refs: { type: "array", maxItems: 200, items: vcsRefEntrySchema },
+          isRepo: { type: "boolean" },
+          hasPrimaryRemote: { type: "boolean" },
+          nextCursor: { type: ["integer", "null"], minimum: 0 },
+          totalCount: { type: "integer", minimum: 0 },
+        },
+      },
+    },
+    {
+      name: "create",
+      effect: "write",
+      requiredGrants: [VCS_MUTATE],
+      inputSchema: {
+        type: "object",
+        additionalProperties: false,
+        required: ["refName"],
+        properties: { refName: vcsRefNameInput, switchRef: { type: "boolean" } },
+      },
+      outputSchema: {
+        type: "object",
+        additionalProperties: false,
+        required: ["refName"],
+        properties: { refName: vcsRefNameOutput },
+      },
+    },
+    {
+      name: "switch",
+      effect: "write",
+      requiredGrants: [VCS_MUTATE],
+      inputSchema: {
+        type: "object",
+        additionalProperties: false,
+        required: ["refName"],
+        properties: { refName: vcsRefNameInput },
+      },
+      outputSchema: {
+        type: "object",
+        additionalProperties: false,
+        required: ["refName"],
+        properties: { refName: vcsRefNameOrNull },
+      },
+    },
+  ],
+});
+
+const vcsChangeEntrySchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["path", "staged", "unstaged", "untracked", "conflicted"],
+  properties: {
+    path: vcsPath,
+    staged: { type: "boolean" },
+    unstaged: { type: "boolean" },
+    untracked: { type: "boolean" },
+    conflicted: { type: "boolean" },
+  },
+} as const;
+/**
+ * Index staging. `list` exposes per-path staged/unstaged/untracked/
+ * conflicted state the private status payload drops (porcelain XY state —
+ * GitVcsDriverCore only keeps paths). `stage`/`unstage`/`commit` are the
+ * same driver operations the native stacked action performs
+ * (`add -A -- <paths>` / `reset` / `commit`), under `t3.vcs/mutate`.
+ * `commit.paths` mirrors native semantics: given → reset + add -A those
+ * paths only; omitted → add -A all changes.
+ */
+export const vcsChangesApi = defineApi<{
+  list: { input: Record<string, never>; output: VcsChangesListResult };
+  stage: { input: VcsPathsInput; output: VcsPathsResult };
+  unstage: { input: VcsPathsInput; output: VcsPathsResult };
+  commit: { input: VcsCommitInput; output: VcsCommitResult };
+}>({
+  id: VCS_CHANGES,
+  version: "1.0.0",
+  methods: [
+    {
+      name: "list",
+      effect: "read",
+      requiredGrants: [VCS_READ],
+      inputSchema: vcsEmptyInputSchema,
+      outputSchema: {
+        type: "object",
+        additionalProperties: false,
+        required: ["isRepo", "entries", "truncated"],
+        properties: {
+          isRepo: { type: "boolean" },
+          entries: { type: "array", maxItems: 5000, items: vcsChangeEntrySchema },
+          truncated: { type: "boolean" },
+        },
+      },
+    },
+    {
+      name: "stage",
+      effect: "write",
+      requiredGrants: [VCS_MUTATE],
+      inputSchema: {
+        type: "object",
+        additionalProperties: false,
+        required: ["paths"],
+        properties: { paths: vcsPathsInput },
+      },
+      outputSchema: {
+        type: "object",
+        additionalProperties: false,
+        required: ["paths"],
+        properties: { paths: vcsPathsInput },
+      },
+    },
+    {
+      name: "unstage",
+      effect: "write",
+      requiredGrants: [VCS_MUTATE],
+      inputSchema: {
+        type: "object",
+        additionalProperties: false,
+        required: ["paths"],
+        properties: { paths: vcsPathsInput },
+      },
+      outputSchema: {
+        type: "object",
+        additionalProperties: false,
+        required: ["paths"],
+        properties: { paths: vcsPathsInput },
+      },
+    },
+    {
+      name: "commit",
+      effect: "write",
+      requiredGrants: [VCS_MUTATE],
+      inputSchema: {
+        type: "object",
+        additionalProperties: false,
+        required: ["message"],
+        properties: {
+          message: { type: "string", minLength: 1, maxLength: 10000 },
+          paths: vcsPathsInput,
+        },
+      },
+      outputSchema: {
+        type: "object",
+        additionalProperties: false,
+        required: ["commitSha", "refName"],
+        properties: {
+          commitSha: { type: "string", minLength: 1, maxLength: 64 },
+          refName: vcsRefNameOrNull,
+        },
+      },
+    },
+  ],
+});
+
+const vcsDiffPreviewSourceSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["id", "kind", "title", "baseRef", "headRef", "diff", "diffHash", "truncated"],
+  properties: {
+    id: { type: "string", minLength: 1, maxLength: 64 },
+    kind: { enum: ["working-tree", "branch-range"] },
+    title: { type: "string", minLength: 1, maxLength: 256 },
+    baseRef: vcsRefNameOrNull,
+    headRef: vcsRefNameOrNull,
+    diff: { type: "string", maxLength: 512000 },
+    diffHash: { type: "string", minLength: 1, maxLength: 128 },
+    truncated: { type: "boolean" },
+  },
+} as const;
+/**
+ * Review-shaped diff reads (private review.getDiffPreview /
+ * review.getDiffFileContents). Native gates these on `review:write` though
+ * both are semantic reads — the public contract correctly puts them under
+ * `t3.vcs/read`. `diff` is capped at 512 000 chars; the adapter slices and
+ * ORs `truncated` because native joins a ≤120 KB tracked patch with up to
+ * 80 KB per untracked file. `getFileContents` is a git-only operation on
+ * the host today — other drivers fail by name.
+ */
+export const vcsDiffApi = defineApi<{
+  getPreview: { input: VcsDiffPreviewInput; output: VcsDiffPreviewResult };
+  getFileContents: { input: VcsDiffFileContentsInput; output: VcsDiffFileContentsResult };
+}>({
+  id: VCS_DIFF,
+  version: "1.0.0",
+  methods: [
+    {
+      name: "getPreview",
+      effect: "read",
+      requiredGrants: [VCS_READ],
+      inputSchema: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          baseRef: vcsRevSpec,
+          ignoreWhitespace: { type: "boolean" },
+        },
+      },
+      outputSchema: {
+        type: "object",
+        additionalProperties: false,
+        required: ["generatedAt", "sources"],
+        properties: {
+          generatedAt: { type: "string", maxLength: 64 },
+          sources: { type: "array", maxItems: 8, items: vcsDiffPreviewSourceSchema },
+        },
+      },
+    },
+    {
+      name: "getFileContents",
+      effect: "read",
+      requiredGrants: [VCS_READ],
+      inputSchema: {
+        type: "object",
+        additionalProperties: false,
+        required: ["sourceKind", "changeType", "baseRef", "headRef", "oldPath", "newPath"],
+        properties: {
+          sourceKind: { enum: ["working-tree", "branch-range"] },
+          changeType: { enum: ["change", "rename-pure", "rename-changed", "new", "deleted"] },
+          baseRef: vcsRevSpecOrNull,
+          headRef: vcsRevSpecOrNull,
+          oldPath: vcsPath,
+          newPath: vcsPath,
+        },
+      },
+      outputSchema: {
+        type: "object",
+        additionalProperties: false,
+        required: ["oldContents", "newContents"],
+        properties: {
+          oldContents: { type: "string", maxLength: 1048576 },
+          newContents: { type: "string", maxLength: 1048576 },
+        },
+      },
+    },
+  ],
+});
+
+const vcsOperationsSupportSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: [
+    "status.get",
+    "status.refresh",
+    "status.subscribe",
+    "refs.list",
+    "refs.create",
+    "refs.switch",
+    "changes.list",
+    "changes.stage",
+    "changes.unstage",
+    "changes.commit",
+    "diff.getPreview",
+    "diff.getFileContents",
+    "repository.pull",
+    "repository.init",
+    "repository.createWorktree",
+    "repository.removeWorktree",
+  ],
+  properties: {
+    "status.get": { type: "boolean" },
+    "status.refresh": { type: "boolean" },
+    "status.subscribe": { type: "boolean" },
+    "refs.list": { type: "boolean" },
+    "refs.create": { type: "boolean" },
+    "refs.switch": { type: "boolean" },
+    "changes.list": { type: "boolean" },
+    "changes.stage": { type: "boolean" },
+    "changes.unstage": { type: "boolean" },
+    "changes.commit": { type: "boolean" },
+    "diff.getPreview": { type: "boolean" },
+    "diff.getFileContents": { type: "boolean" },
+    "repository.pull": { type: "boolean" },
+    "repository.init": { type: "boolean" },
+    "repository.createWorktree": { type: "boolean" },
+    "repository.removeWorktree": { type: "boolean" },
+  },
+} as const;
+const vcsDriverCapabilitiesSchema = {
+  type: ["object", "null"],
+  additionalProperties: false,
+  required: [
+    "kind",
+    "supportsWorktrees",
+    "supportsBookmarks",
+    "supportsAtomicSnapshot",
+    "supportsPushDefaultRemote",
+    "ignoreClassifier",
+  ],
+  properties: {
+    kind: { enum: ["git", "jj", "unknown"] },
+    supportsWorktrees: { type: "boolean" },
+    supportsBookmarks: { type: "boolean" },
+    supportsAtomicSnapshot: { type: "boolean" },
+    supportsPushDefaultRemote: { type: "boolean" },
+    ignoreClassifier: { enum: ["native", "git-compatible-fallback"] },
+  },
+} as const;
+/**
+ * Repository-level capability discovery and authorized mutations.
+ * `getCapabilities` is the honesty mechanism — it names the detected kind,
+ * the driver flag set, and per-operation support so consumers never guess.
+ * `pull`/`init`/`createWorktree`/`removeWorktree` mirror the private
+ * vcs.pull / vcs.init / worktree RPCs under `t3.vcs/mutate`.
+ */
+export const vcsRepositoryApi = defineApi<{
+  getCapabilities: { input: Record<string, never>; output: VcsCapabilitiesResult };
+  pull: { input: Record<string, never>; output: VcsPullResult };
+  init: { input: VcsInitInput; output: VcsEmptyResult };
+  createWorktree: { input: VcsCreateWorktreeInput; output: VcsCreateWorktreeResult };
+  removeWorktree: { input: VcsRemoveWorktreeInput; output: VcsEmptyResult };
+}>({
+  id: VCS_REPOSITORY,
+  version: "1.0.0",
+  methods: [
+    {
+      name: "getCapabilities",
+      effect: "read",
+      requiredGrants: [VCS_READ],
+      inputSchema: vcsEmptyInputSchema,
+      outputSchema: {
+        type: "object",
+        additionalProperties: false,
+        required: ["detected", "kind", "detail", "driver", "operations"],
+        properties: {
+          detected: { type: "boolean" },
+          kind: { type: ["string", "null"], enum: ["git", "jj", "unknown", null] },
+          detail: { type: ["string", "null"], maxLength: 512 },
+          driver: vcsDriverCapabilitiesSchema,
+          operations: vcsOperationsSupportSchema,
+        },
+      },
+    },
+    {
+      name: "pull",
+      effect: "write",
+      requiredGrants: [VCS_MUTATE],
+      inputSchema: vcsEmptyInputSchema,
+      outputSchema: {
+        type: "object",
+        additionalProperties: false,
+        required: ["status", "refName", "upstreamRef"],
+        properties: {
+          status: { enum: ["pulled", "skipped_up_to_date"] },
+          refName: vcsRefNameOutput,
+          upstreamRef: vcsRefNameOrNull,
+        },
+      },
+    },
+    {
+      name: "init",
+      effect: "write",
+      requiredGrants: [VCS_MUTATE],
+      inputSchema: {
+        type: "object",
+        additionalProperties: false,
+        properties: { kind: { enum: ["git"] } },
+      },
+      outputSchema: vcsAckOutputSchema,
+    },
+    {
+      name: "createWorktree",
+      effect: "write",
+      requiredGrants: [VCS_MUTATE],
+      inputSchema: {
+        type: "object",
+        additionalProperties: false,
+        required: ["refName", "path"],
+        properties: {
+          refName: vcsRefNameInput,
+          newRefName: vcsRefNameInput,
+          baseRefName: vcsRefNameInput,
+          path: { type: ["string", "null"], minLength: 1, maxLength: 32768 },
+        },
+      },
+      outputSchema: {
+        type: "object",
+        additionalProperties: false,
+        required: ["worktree"],
+        properties: {
+          worktree: {
+            type: "object",
+            additionalProperties: false,
+            required: ["path", "refName"],
+            properties: {
+              path: { type: "string", minLength: 1, maxLength: 32768 },
+              refName: vcsRefNameOutput,
+            },
+          },
+        },
+      },
+    },
+    {
+      name: "removeWorktree",
+      effect: "write",
+      requiredGrants: [VCS_MUTATE],
+      inputSchema: {
+        type: "object",
+        additionalProperties: false,
+        required: ["path"],
+        properties: {
+          path: {
+            type: "string",
+            minLength: 1,
+            maxLength: 32768,
+          },
+          force: { type: "boolean" },
+        },
+      },
+      outputSchema: vcsAckOutputSchema,
+    },
+  ],
+});
+
+export const VCS_STATUS_API = vcsStatusApi.definition;
+export const VCS_REFS_API = vcsRefsApi.definition;
+export const VCS_CHANGES_API = vcsChangesApi.definition;
+export const VCS_DIFF_API = vcsDiffApi.definition;
+export const VCS_REPOSITORY_API = vcsRepositoryApi.definition;
+
 /**
  * Contracts only: their presence does not advertise a functioning or
  * authorized provider. Shared ids may hold multiple frozen versions (newest
@@ -928,6 +1838,11 @@ export const GENERIC_API_CATALOGUE: readonly ApiDefinition[] = [
   terminalOutputEventsApi.definition,
   terminalSessionsApiV1.definition,
   terminalControlApi.definition,
+  vcsStatusApi.definition,
+  vcsRefsApi.definition,
+  vcsChangesApi.definition,
+  vcsDiffApi.definition,
+  vcsRepositoryApi.definition,
 ];
 function canonical(value: unknown): string {
   if (Array.isArray(value)) return "[" + value.map(canonical).join(",") + "]";
