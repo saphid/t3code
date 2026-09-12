@@ -134,7 +134,7 @@ const caps = (overrides = {}) => ({
 });
 
 // Rows carry `ordinal` (their position); assertions compare the payload.
-const bare = ({ ordinal, ...rest }) => rest;
+const bare = ({ ordinal: _ordinal, ...rest }) => rest;
 
 const filesFrom = (diff = PATCH) => {
   const renderable = renderableFromPatch(diff);
