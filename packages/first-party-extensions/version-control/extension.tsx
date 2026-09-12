@@ -164,9 +164,12 @@ function useStatusStream(host: ClientHost, session: ViewSession, visible: boolea
 /**
  * Staging lanes re-read whenever the revision changes — the status
  * stream's `localRevision` for working-tree/HEAD changes plus the panel's
- * `mutationSerial` for index-only mutations (stage/unstage change no
- * status fingerprint, so the stream stays silent for them — verified
- * VcsStatusBroadcaster.ts:254-349). Freshness is re-read through the
+ * `mutationSerial` for index-only mutations (stage/unstage of TRACKED
+ * files change no status fingerprint, so the stream stays silent for
+ * them — verified VcsStatusBroadcaster.ts:254-349; the untracked lane
+ * is different: a staged-untracked path gains real numstat counts and
+ * DOES publish localUpdated — the serial covers both, so state stays
+ * honest regardless). Freshness is re-read through the
  * contract, never edited locally and never polled.
  */
 function useChangesList(
