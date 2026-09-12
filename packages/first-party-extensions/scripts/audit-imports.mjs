@@ -37,6 +37,8 @@ const PRIVATE_RPC_NAMES = [
   "projectsSearchEntries",
   "projectsSearchContents",
   "shellOpenInEditor",
+  // Asset minting is t3.resources/lease on the broker, never this wire method.
+  "assetsCreateUrl",
 ];
 
 /** Content patterns banned in both source and the shipped bundle. */
