@@ -23,6 +23,8 @@ import {
   ProjectionThreadRepository,
 } from "../persistence/Services/ProjectionThreads.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
+import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
+import * as ProjectFaviconResolver from "../project/ProjectFaviconResolver.ts";
 import { WorkspaceEntries } from "../workspace/WorkspaceEntries.ts";
 import { WorkspaceFileSystem } from "../workspace/WorkspaceFileSystem.ts";
 import { toSdkContext } from "./scope.ts";
@@ -258,6 +260,8 @@ function fixture() {
     Layer.mock(VcsDriverRegistry)({}),
     Layer.mock(VcsProvisioningService)({}),
     Layer.mock(ReviewService)({}),
+    Layer.mock(ProjectFaviconResolver.ProjectFaviconResolver)({}),
+    Layer.mock(ServerSecretStore.ServerSecretStore)({}),
     ServerSettings.layerTest(),
     ServerConfig.layerTest(process.cwd(), { prefix: "t3-extension-service-test-" }),
   ).pipe(Layer.provideMerge(NodeServices.layer));

@@ -14,7 +14,11 @@ import {
   type ExtensionManageInput,
   type ExtensionInvokeInput,
 } from "@t3tools/contracts";
-import { createExtensionRuntime, type HostApiRootAuthority } from "@t3tools/extension-runtime";
+import {
+  createExtensionRuntime,
+  type HostApiRootAuthority,
+  type Installation,
+} from "@t3tools/extension-runtime";
 import type { ViewContext } from "@t3tools/extension-sdk/contracts";
 import type { ToolDescriptor } from "@t3tools/extension-sdk/environment";
 import {
@@ -38,6 +42,7 @@ import { makeTerminalControlApiProvider } from "./terminalControlApi.ts";
 import { makeTerminalOutputApiProvider } from "./terminalOutputApi.ts";
 import { makeTerminalOutputEventsApiProvider } from "./terminalOutputEventsApi.ts";
 import { makeTextEditsApiProvider } from "./textEditsApi.ts";
+import { makeResourcesLeaseApiProvider } from "./resourcesLeaseApi.ts";
 import { makeVcsApiProviders } from "./vcsApi.ts";
 import { makeVcsDiffApiProvider } from "./vcsDiffApi.ts";
 import { boundedWorkspaceText } from "./workspaceText.ts";
@@ -79,6 +84,29 @@ export const make = Effect.fn("EnvironmentExtensions.make")(function* (
   const vcsDiffApi = yield* makeVcsDiffApiProvider();
   const catalogueChanges = yield* ExtensionCatalogueChanges;
   const resolve = makeExtensionScopeResolver({ environmentId, projects, threads });
+  const authorize = async (entry: Installation, capability: string, context: ViewContext) => {
+    if (
+      !entry.enabled ||
+      !entry.grants.capabilities.includes(capability) ||
+      !context.resource.projectId ||
+      !entry.grants.projectIds.includes(context.resource.projectId)
+    )
+      return false;
+    return Effect.runPromise(
+      resolve(context).pipe(
+        Effect.as(true),
+        Effect.catch(() => Effect.succeed(false)),
+      ),
+    );
+  };
+  // Late-bound: the runtime is created below with the providers that call this.
+  let extensionRuntime: Runtime | undefined;
+  const resourcesLeaseApi = yield* makeResourcesLeaseApiProvider(
+    async (callerId, grant, context) => {
+      const entry = extensionRuntime?.list().find((item) => item.id === callerId);
+      return entry !== undefined && (await authorize(entry, grant, context));
+    },
+  );
   const read = Effect.fn("EnvironmentExtensions.readWorkspace")(function* (
     input: unknown,
     context: ViewContext,
@@ -125,6 +153,7 @@ export const make = Effect.fn("EnvironmentExtensions.make")(function* (
             terminalControlApi,
             ...vcsApis,
             vcsDiffApi,
+            resourcesLeaseApi,
           ],
           onCatalogueChanged: () => Effect.runSync(catalogueChanges.publish),
           auditApi: (event) => {
@@ -144,21 +173,7 @@ export const make = Effect.fn("EnvironmentExtensions.make")(function* (
                 Effect.runPromise(read(input, context), { signal }),
             },
           ],
-          authorize: async (entry, capability, context) => {
-            if (
-              !entry.enabled ||
-              !entry.grants.capabilities.includes(capability) ||
-              !context.resource.projectId ||
-              !entry.grants.projectIds.includes(context.resource.projectId)
-            )
-              return false;
-            return Effect.runPromise(
-              resolve(context).pipe(
-                Effect.as(true),
-                Effect.catch(() => Effect.succeed(false)),
-              ),
-            );
-          },
+          authorize,
           timeoutMs: 15000,
         }),
       catch: (cause) => operationError("initialize", cause),
@@ -180,6 +195,7 @@ export const make = Effect.fn("EnvironmentExtensions.make")(function* (
       }).pipe(Effect.as(undefined));
     }),
   );
+  extensionRuntime = runtime;
   if (!runtime) {
     const unavailable = Effect.fail(
       initializationError ??

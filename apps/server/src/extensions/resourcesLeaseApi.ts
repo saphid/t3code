@@ -1,0 +1,430 @@
+import {
+  AssetResource,
+  AssetWorkspaceContextNotFoundError,
+  AssetWorkspaceContextResolutionError,
+  AssetWorkspaceRootNormalizationError,
+  AuthOrchestrationReadScope,
+  ExtensionOperationError,
+  ProjectId,
+  type ThreadId,
+} from "@t3tools/contracts";
+import {
+  RESOURCES_LEASE_API,
+  RESOURCE_LEASE_KIND_GRANTS,
+  RESOURCE_LEASE_SUPPORTED_KINDS,
+  type ResourceLeaseCapabilities,
+  type ResourceLeaseClaimKind,
+  type ResourceLeasePresentationUrl,
+} from "@t3tools/extension-sdk/catalogue";
+import type { Json, ViewContext } from "@t3tools/extension-sdk/contracts";
+import type {
+  HostApiInvocationMetadata,
+  HostApiPrincipal,
+  HostApiProvider,
+} from "@t3tools/extension-runtime";
+import * as Crypto from "effect/Crypto";
+import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Option from "effect/Option";
+import * as Path from "effect/Path";
+import * as Schema from "effect/Schema";
+import { issueAssetUrl } from "../assets/AssetAccess.ts";
+import { base64UrlDecodeUtf8 } from "../auth/utils.ts";
+import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
+import * as ServerConfig from "../config.ts";
+import { ServerEnvironment } from "../environment/ServerEnvironment.ts";
+import type { ProjectionRepositoryError } from "../persistence/Errors.ts";
+import {
+  ProjectionProjectRepository,
+  type ProjectionProject,
+} from "../persistence/Services/ProjectionProjects.ts";
+import {
+  ProjectionThreadRepository,
+  type ProjectionThread,
+} from "../persistence/Services/ProjectionThreads.ts";
+import * as ProjectFaviconResolver from "../project/ProjectFaviconResolver.ts";
+import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
+import { makeExtensionScopeResolver } from "./scope.ts";
+
+type LeaseIssueResult = Effect.Success<ReturnType<typeof issueAssetUrl>>;
+type LeaseIssueError = Effect.Error<ReturnType<typeof issueAssetUrl>>;
+
+const failure = (operation: string, detail: string) =>
+  new ExtensionOperationError({ operation, detail });
+const isOperationError = Schema.is(ExtensionOperationError);
+
+/** Mint-time denials carry a stable name in the detail so a caller can branch on it. */
+const kindDenied = (operation: string, kind: string, detail: string) =>
+  failure(operation, `ResourceLeaseKindDeniedError: kind '${kind}' ${detail}`);
+const grantDenied = (operation: string, kind: string, grant: string) =>
+  failure(
+    operation,
+    `ResourceLeaseGrantDeniedError: grant '${grant}' is required to mint kind '${kind}'`,
+  );
+
+/**
+ * Tag-preserving error mapping — the native Asset* failures surface their
+ * `_tag` so an invalid/outside-root mint is named, not a generic "failed"
+ * (mirrors the vcsDiffApi mapper).
+ */
+const operationError = (operation: string) => (cause: unknown) => {
+  if (isOperationError(cause)) return cause;
+  const tag =
+    cause !== null &&
+    typeof cause === "object" &&
+    "_tag" in cause &&
+    typeof (cause as { _tag: unknown })._tag === "string"
+      ? (cause as { _tag: string })._tag
+      : cause instanceof Error
+        ? cause.name
+        : undefined;
+  const message = cause instanceof Error ? cause.message : "Resource lease operation failed.";
+  return failure(operation, `${tag ? `${tag}: ` : ""}${message}`.slice(0, 512));
+};
+
+const decodeResource = Schema.decodeUnknownSync(Schema.Struct({ resource: AssetResource }), {
+  onExcessProperty: "error",
+});
+
+/** The claim kind minted, read back out of the signed payload — the honest value. */
+const KNOWN_CLAIM_KINDS = new Set<ResourceLeaseClaimKind>([
+  "workspace-file",
+  "workspace-file-exact",
+  "project-favicon",
+  "project-favicon-external",
+]);
+
+const mintedClaimKind = (relativeUrl: string): ResourceLeaseClaimKind | null => {
+  try {
+    const suffix = relativeUrl.slice("/api/assets/".length);
+    const token = suffix.slice(0, suffix.indexOf("/"));
+    const payload = token.split(".")[0];
+    if (!payload) return null;
+    const claims: unknown = JSON.parse(base64UrlDecodeUtf8(payload));
+    if (
+      claims !== null &&
+      typeof claims === "object" &&
+      "kind" in claims &&
+      typeof claims.kind === "string" &&
+      KNOWN_CLAIM_KINDS.has(claims.kind as ResourceLeaseClaimKind)
+    ) {
+      return claims.kind as ResourceLeaseClaimKind;
+    }
+  } catch {
+    /* fall through to null */
+  }
+  return null;
+};
+
+interface ResourcesLeaseApiDependencies {
+  readonly environmentId: string;
+  readonly projects: {
+    getById(input: {
+      projectId: ProjectId;
+    }): Effect.Effect<
+      Option.Option<
+        Pick<ProjectionProject, "projectId" | "workspaceRoot" | "faviconPath" | "deletedAt">
+      >,
+      ProjectionRepositoryError
+    >;
+  };
+  readonly threads: {
+    getById(input: {
+      threadId: ThreadId;
+    }): Effect.Effect<
+      Option.Option<Pick<ProjectionThread, "projectId" | "worktreePath" | "deletedAt">>,
+      ProjectionRepositoryError
+    >;
+  };
+  readonly normalizeWorkspaceRoot: (
+    workspaceRoot: string,
+  ) => Effect.Effect<string, WorkspacePaths.WorkspacePathsError>;
+  readonly issueUrl: (input: {
+    readonly resource: AssetResource;
+    readonly workspaceRoot?: string;
+    readonly projectFaviconPath?: string;
+  }) => Effect.Effect<LeaseIssueResult, LeaseIssueError>;
+  /**
+   * The broker's per-caller authorize check, reachable by installation id:
+   * enabled + capability listed + projectIds cover the context + scope still
+   * resolves. Wired by EnvironmentExtensions over the live runtime.
+   */
+  readonly authorizeGrant: (
+    callerId: string,
+    grant: string,
+    context: ViewContext,
+  ) => Promise<boolean>;
+}
+
+export function createResourcesLeaseApiProvider(
+  dependencies: ResourcesLeaseApiDependencies,
+): HostApiProvider {
+  const resolve = makeExtensionScopeResolver(dependencies);
+  const authorized = (principal: HostApiPrincipal | undefined) =>
+    principal !== undefined &&
+    principal.environmentId === dependencies.environmentId &&
+    principal.scopes.includes(AuthOrchestrationReadScope);
+
+  /**
+   * Every caller in the chain must hold the kind's grant — the broker's
+   * `requiredGrants` loop mirrored per-kind, which is why the method declares
+   * none. `callerId` is always the direct caller; `callerGenerations` carries
+   * the full chain when the broker populated it.
+   */
+  const requireKindGrant = (
+    operation: string,
+    kind: string,
+    grant: string,
+    context: ViewContext,
+    metadata: HostApiInvocationMetadata,
+  ): Effect.Effect<void, ExtensionOperationError> =>
+    Effect.tryPromise({
+      try: async () => {
+        const callerIds = new Set([
+          metadata.callerId,
+          ...metadata.callerGenerations.map((entry) => entry.pluginId),
+        ]);
+        for (const callerId of callerIds) {
+          if (!(await dependencies.authorizeGrant(callerId, grant, context))) return false;
+        }
+        return true;
+      },
+      // A thrown check is a host fault, not a missing grant — name it
+      // differently so a plugin does not misdiagnose a transient failure.
+      catch: () =>
+        failure(
+          operation,
+          `ResourceLeaseGrantCheckError: could not evaluate grant '${grant}' for kind '${kind}'`,
+        ),
+    }).pipe(
+      Effect.flatMap((ok) => (ok ? Effect.void : Effect.fail(grantDenied(operation, kind, grant)))),
+    );
+
+  /** Post-service re-checks — the vcsApi discipline: authority, kind grant, scope, signal. */
+  const postChecks = (
+    operation: string,
+    context: ViewContext,
+    scopeContext: ViewContext,
+    metadata: HostApiInvocationMetadata,
+    signal: AbortSignal,
+    kindGrant?: { readonly kind: string; readonly grant: string },
+  ): Effect.Effect<void, ExtensionOperationError> =>
+    Effect.gen(function* () {
+      yield* Effect.tryPromise({
+        try: () => metadata.assertAuthority?.() ?? Promise.resolve(),
+        catch: () => failure(operation, "Resource lease authority was revoked."),
+      });
+      if (kindGrant) {
+        yield* requireKindGrant(operation, kindGrant.kind, kindGrant.grant, context, metadata);
+      }
+      yield* resolve(scopeContext);
+      signal.throwIfAborted();
+    });
+
+  const invoke = (
+    method: string,
+    input: unknown,
+    context: ViewContext,
+    signal: AbortSignal,
+    metadata: HostApiInvocationMetadata,
+  ): Effect.Effect<Json, ExtensionOperationError> =>
+    Effect.gen(function* () {
+      signal.throwIfAborted();
+      const operation = `resources.lease.${method}`;
+      if (!authorized(metadata.principal)) {
+        return yield* failure(operation, "Resource lease authority is unavailable.");
+      }
+      const scope = yield* resolve(context);
+      if (method === "getCapabilities") {
+        yield* postChecks(operation, context, scope.context, metadata, signal);
+        return {
+          supportedKinds: [...RESOURCE_LEASE_SUPPORTED_KINDS],
+        } satisfies ResourceLeaseCapabilities;
+      }
+      if (method !== "createPresentationUrl") {
+        return yield* failure(operation, "Resource lease API method is unavailable.");
+      }
+      const safe = yield* Effect.try({
+        try: () => decodeResource(input),
+        catch: () => failure(operation, "Invalid resource lease request input."),
+      });
+      const resource = safe.resource;
+      const grant =
+        resource._tag in RESOURCE_LEASE_KIND_GRANTS
+          ? RESOURCE_LEASE_KIND_GRANTS[resource._tag as keyof typeof RESOURCE_LEASE_KIND_GRANTS]
+          : undefined;
+      if (grant === undefined) {
+        return yield* kindDenied(
+          operation,
+          resource._tag,
+          "is not mintable through t3.resources/lease.",
+        );
+      }
+      if (grant === null) {
+        return yield* kindDenied(
+          operation,
+          resource._tag,
+          "has no declared mint grant in this build.",
+        );
+      }
+      // Grant before resolution: an unauthorized caller must not learn whether
+      // a thread or project exists.
+      yield* requireKindGrant(operation, resource._tag, grant, context, metadata);
+
+      // Repository failures map to the native context-resolution error, and a
+      // missing/deleted row to context-not-found — exactly the ws.ts RPC's
+      // thread → project → workspaceRoot path.
+      const contextResolutionError = (cause: unknown) =>
+        operationError(operation)(new AssetWorkspaceContextResolutionError({ resource, cause }));
+
+      let issued: LeaseIssueResult;
+      if (resource._tag === "workspace-file") {
+        const thread = yield* dependencies.threads
+          .getById({ threadId: resource.threadId })
+          .pipe(Effect.mapError(contextResolutionError));
+        if (Option.isNone(thread) || thread.value.deletedAt !== null) {
+          return yield* operationError(operation)(
+            new AssetWorkspaceContextNotFoundError({ resource }),
+          );
+        }
+        // The resource thread must live inside the invocation's granted
+        // project — the broker already proved every caller holds
+        // context.projectId, so equality keeps the lease inside that wall.
+        // Report it as not-found: a distinct denial would let a granted
+        // caller probe thread existence in other projects.
+        if (thread.value.projectId !== scope.context.resource.projectId) {
+          return yield* operationError(operation)(
+            new AssetWorkspaceContextNotFoundError({ resource }),
+          );
+        }
+        const project = yield* dependencies.projects
+          .getById({ projectId: thread.value.projectId })
+          .pipe(Effect.mapError(contextResolutionError));
+        if (Option.isNone(project) || project.value.deletedAt !== null) {
+          return yield* operationError(operation)(
+            new AssetWorkspaceContextNotFoundError({ resource }),
+          );
+        }
+        issued = yield* dependencies
+          .issueUrl({
+            resource,
+            workspaceRoot: thread.value.worktreePath ?? project.value.workspaceRoot,
+          })
+          .pipe(Effect.mapError(operationError(operation)));
+      } else if (resource._tag === "project-favicon") {
+        const projectId = scope.context.resource.projectId;
+        if (!projectId) {
+          return yield* kindDenied(
+            operation,
+            resource._tag,
+            "requires a project-scoped invocation context.",
+          );
+        }
+        const project = yield* dependencies.projects
+          .getById({ projectId: ProjectId.make(projectId) })
+          .pipe(Effect.mapError(contextResolutionError));
+        if (Option.isNone(project) || project.value.deletedAt !== null) {
+          return yield* operationError(operation)(
+            new AssetWorkspaceContextNotFoundError({ resource }),
+          );
+        }
+        // A caller-supplied cwd that fails to normalize (does not exist, is
+        // not traversable) must collapse into the same scope denial as a
+        // well-formed foreign root — a distinct normalization error would be
+        // a filesystem-existence oracle for arbitrary absolute paths.
+        const requestedRoot = yield* Effect.option(
+          dependencies.normalizeWorkspaceRoot(resource.cwd),
+        );
+        if (Option.isNone(requestedRoot)) {
+          return yield* kindDenied(
+            operation,
+            resource._tag,
+            "resolves outside the granted project scope.",
+          );
+        }
+        const projectRoot = yield* dependencies
+          .normalizeWorkspaceRoot(project.value.workspaceRoot)
+          .pipe(
+            Effect.mapError((cause) =>
+              operationError(operation)(
+                new AssetWorkspaceRootNormalizationError({ resource, cause }),
+              ),
+            ),
+          );
+        if (requestedRoot.value !== projectRoot) {
+          return yield* kindDenied(
+            operation,
+            resource._tag,
+            "resolves outside the granted project scope.",
+          );
+        }
+        issued = yield* dependencies
+          .issueUrl({
+            resource,
+            ...(project.value.faviconPath ? { projectFaviconPath: project.value.faviconPath } : {}),
+          })
+          .pipe(Effect.mapError(operationError(operation)));
+      } else {
+        // Every remaining union member (attachment today) has a declared grant
+        // check above but no mint implementation in v1 — fail closed by name.
+        return yield* kindDenied(
+          operation,
+          resource._tag,
+          "has no mint implementation in this build.",
+        );
+      }
+
+      const kind = mintedClaimKind(issued.relativeUrl);
+      if (kind === null) {
+        return yield* failure(operation, "Minted lease did not carry decodable claims.");
+      }
+      yield* postChecks(operation, context, scope.context, metadata, signal, {
+        kind: resource._tag,
+        grant,
+      });
+      return {
+        url: issued.relativeUrl,
+        expiresAt: issued.expiresAt,
+        kind,
+      } satisfies ResourceLeasePresentationUrl;
+    });
+
+  return {
+    providerId: "t3.host-resources-lease",
+    definition: RESOURCES_LEASE_API,
+    requiresRootAuthority: true,
+    invoke: (method, input, context, signal, metadata) =>
+      Effect.runPromise(invoke(method, input, context, signal, metadata), { signal }),
+  };
+}
+
+export const makeResourcesLeaseApiProvider = Effect.fn("ResourcesLeaseApi.make")(function* (
+  authorizeGrant: ResourcesLeaseApiDependencies["authorizeGrant"],
+) {
+  const environment = yield* ServerEnvironment;
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const workspacePaths = yield* WorkspacePaths.WorkspacePaths;
+  const config = yield* ServerConfig.ServerConfig;
+  const faviconResolver = yield* ProjectFaviconResolver.ProjectFaviconResolver;
+  const secretStore = yield* ServerSecretStore.ServerSecretStore;
+  const crypto = yield* Crypto.Crypto;
+  const issueUrl: ResourcesLeaseApiDependencies["issueUrl"] = (input) =>
+    issueAssetUrl(input).pipe(
+      Effect.provideService(FileSystem.FileSystem, fileSystem),
+      Effect.provideService(Path.Path, path),
+      Effect.provideService(WorkspacePaths.WorkspacePaths, workspacePaths),
+      Effect.provideService(ServerConfig.ServerConfig, config),
+      Effect.provideService(ProjectFaviconResolver.ProjectFaviconResolver, faviconResolver),
+      Effect.provideService(ServerSecretStore.ServerSecretStore, secretStore),
+      Effect.provideService(Crypto.Crypto, crypto),
+    );
+  return createResourcesLeaseApiProvider({
+    environmentId: yield* environment.getEnvironmentId,
+    projects: yield* ProjectionProjectRepository,
+    threads: yield* ProjectionThreadRepository,
+    normalizeWorkspaceRoot: workspacePaths.normalizeWorkspaceRoot,
+    issueUrl,
+    authorizeGrant,
+  });
+});

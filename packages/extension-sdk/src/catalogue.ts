@@ -2039,6 +2039,197 @@ export const VCS_DIFF_API = vcsDiffApi.definition;
 export const VCS_DIFF_API_V1 = vcsDiffApiV1.definition;
 export const VCS_REPOSITORY_API = vcsRepositoryApi.definition;
 
+/* ------------------------------------------------------------------------
+ * t3.resources/lease — promoted binary/media presentation leases
+ * (docs/internals/extensions/resources-lease-design.md).
+ *
+ * `createPresentationUrl` mints the NATIVE signed asset URL
+ * (`/api/assets/<token>/<name>`, 1h HMAC claims, canonical-path containment
+ * re-checked at serve time) for a ResourceRef mirroring the private
+ * `AssetResource` union. The signed token IS the auth on the asset route —
+ * `<img>`/webviews cannot set headers — so mint-time is the only grant check
+ * and it is per-kind: the broker ANDs `requiredGrants` over every caller,
+ * which cannot express "the grant follows `resource._tag`", so both methods
+ * declare none and the host adapter enforces RESOURCE_LEASE_KIND_GRANTS for
+ * every caller in the chain, before and after minting.
+ *
+ * Grant map (v1): `workspace-file` and `project-favicon` ride
+ * `t3.workspace/resources` — the deferred P05-B contract's read grant,
+ * declared here ahead of the contract (a grant id and an API id are distinct
+ * registries, so the shared string cannot collide). `attachment` stays in the
+ * union but carries no grant until the messages/composer read grant exists;
+ * the adapter denies it by name. `media-file` (absolute paths are
+ * arbitrary-path minting, a spec non-goal) and `native-app-icon` (no v1
+ * consumer) are not in the union. ws-stream-class claims (`browser-surface`,
+ * `device-stream`) arrive with P08-B/P16 on the existing DeviceHubProxy
+ * wsTicket TTL semantics.
+ * --------------------------------------------------------------------- */
+export const RESOURCES_LEASE = "t3.resources/lease";
+/**
+ * The deferred P05-B `t3.workspace/resources` contract's read grant,
+ * declared ahead of that contract so presentation leases can be minted today.
+ */
+export const WORKSPACE_RESOURCES = "t3.workspace/resources";
+
+/** ResourceRef input kinds the contract accepts on the wire. */
+export type ResourceLeaseRefKind = "workspace-file" | "attachment" | "project-favicon";
+/** The claim kinds a v1 mint can produce; echoed back as `kind`. */
+export type ResourceLeaseClaimKind =
+  | "workspace-file"
+  | "workspace-file-exact"
+  | "project-favicon"
+  | "project-favicon-external";
+export type ResourceLeaseRef =
+  | {
+      readonly _tag: "workspace-file";
+      readonly threadId: string;
+      readonly path: string;
+    }
+  | {
+      readonly _tag: "attachment";
+      readonly attachmentId: string;
+      readonly fileName?: string;
+      readonly mimeType?: string;
+      readonly disposition?: "inline" | "attachment";
+    }
+  | {
+      readonly _tag: "project-favicon";
+      readonly cwd: string;
+      readonly path?: string | null;
+    };
+export type ResourceLeaseCreatePresentationUrlInput = { readonly resource: ResourceLeaseRef };
+export type ResourceLeasePresentationUrl = {
+  /** Server-relative minted path — resolve against the environment origin. */
+  readonly url: string;
+  readonly expiresAt: number;
+  readonly kind: ResourceLeaseClaimKind;
+};
+export type ResourceLeaseCapabilities = {
+  /** Kinds this build can mint for a caller holding the kind's grant. */
+  readonly supportedKinds: readonly ResourceLeaseRefKind[];
+};
+/**
+ * Mint-time authority per resource kind; `null` means no grant exists in this
+ * build and the adapter fails closed by name. `supportedKinds` is exactly the
+ * kinds with a declared grant.
+ */
+export const RESOURCE_LEASE_KIND_GRANTS: Readonly<Record<ResourceLeaseRefKind, string | null>> = {
+  "workspace-file": WORKSPACE_RESOURCES,
+  "project-favicon": WORKSPACE_RESOURCES,
+  attachment: null,
+};
+export const RESOURCE_LEASE_SUPPORTED_KINDS: readonly ResourceLeaseRefKind[] = (
+  Object.keys(RESOURCE_LEASE_KIND_GRANTS) as ResourceLeaseRefKind[]
+).filter((kind) => RESOURCE_LEASE_KIND_GRANTS[kind] !== null);
+
+const resourceLeaseRefSchema = {
+  oneOf: [
+    {
+      type: "object",
+      additionalProperties: false,
+      required: ["_tag", "threadId", "path"],
+      properties: {
+        _tag: { const: "workspace-file" },
+        threadId: { type: "string", minLength: 1, maxLength: 160 },
+        path: { type: "string", minLength: 1, maxLength: 1024 },
+      },
+    },
+    {
+      type: "object",
+      additionalProperties: false,
+      required: ["_tag", "attachmentId"],
+      properties: {
+        _tag: { const: "attachment" },
+        attachmentId: { type: "string", minLength: 1, maxLength: 256 },
+        fileName: { type: "string", minLength: 1, maxLength: 255 },
+        mimeType: { type: "string", minLength: 1, maxLength: 100 },
+        disposition: { enum: ["inline", "attachment"] },
+      },
+    },
+    {
+      type: "object",
+      additionalProperties: false,
+      required: ["_tag", "cwd"],
+      properties: {
+        _tag: { const: "project-favicon" },
+        cwd: { type: "string", minLength: 1, maxLength: 1024 },
+        path: {
+          type: ["string", "null"],
+          minLength: 1,
+          maxLength: 1024,
+          pattern: "\\.(?:avif|gif|ico|jpe?g|png|svg|webp)$",
+        },
+      },
+    },
+  ],
+} as const;
+
+export const resourcesLeaseApi = defineApi<{
+  createPresentationUrl: {
+    input: ResourceLeaseCreatePresentationUrlInput;
+    output: ResourceLeasePresentationUrl;
+  };
+  getCapabilities: { input: Record<string, never>; output: ResourceLeaseCapabilities };
+}>({
+  id: RESOURCES_LEASE,
+  version: "1.0.0",
+  methods: [
+    {
+      name: "createPresentationUrl",
+      effect: "read",
+      // Per-kind grants are enforced inside the host adapter — a method-level
+      // list can only express "every caller holds all of these".
+      requiredGrants: [],
+      inputSchema: {
+        type: "object",
+        additionalProperties: false,
+        required: ["resource"],
+        properties: { resource: resourceLeaseRefSchema },
+      },
+      outputSchema: {
+        type: "object",
+        additionalProperties: false,
+        required: ["url", "expiresAt", "kind"],
+        properties: {
+          url: { type: "string", minLength: 1, maxLength: 4096 },
+          expiresAt: { type: "number" },
+          kind: {
+            enum: [
+              "workspace-file",
+              "workspace-file-exact",
+              "project-favicon",
+              "project-favicon-external",
+            ],
+          },
+        },
+      },
+    },
+    {
+      name: "getCapabilities",
+      effect: "read",
+      requiredGrants: [],
+      inputSchema: {
+        type: "object",
+        additionalProperties: false,
+        properties: {},
+      },
+      outputSchema: {
+        type: "object",
+        additionalProperties: false,
+        required: ["supportedKinds"],
+        properties: {
+          supportedKinds: {
+            type: "array",
+            maxItems: 16,
+            items: { enum: ["workspace-file", "attachment", "project-favicon"] },
+          },
+        },
+      },
+    },
+  ],
+});
+export const RESOURCES_LEASE_API = resourcesLeaseApi.definition;
+
 /**
  * Contracts only: their presence does not advertise a functioning or
  * authorized provider. Shared ids may hold multiple frozen versions (newest
@@ -2062,6 +2253,7 @@ export const GENERIC_API_CATALOGUE: readonly ApiDefinition[] = [
   vcsDiffApi.definition,
   vcsRepositoryApi.definition,
   vcsDiffApiV1.definition,
+  resourcesLeaseApi.definition,
 ];
 function canonical(value: unknown): string {
   if (Array.isArray(value)) return "[" + value.map(canonical).join(",") + "]";
