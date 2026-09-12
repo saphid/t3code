@@ -23,6 +23,11 @@ Deferred slices: turn/checkpoint diffs (P12 orchestration boundary),
 diff-line comments (`t3.messages/enrichment`), base-ref picker and
 navigation chrome (B slice), mutations (none — this panel is read-only).
 
+Known transport limit: the broker's 64KiB invoke envelope means a
+`truncated: true` preview body (smallest slice ≥80KB) cannot cross the
+single-shot invoke path — large diffs fail with the named payload-limit
+error until the `t3.vcs/diff` stream surface lands (P09-B).
+
 Per-row dispositions and native citations:
 `docs/internals/extensions/vcs-diff-binding-disposition.md`.
 
