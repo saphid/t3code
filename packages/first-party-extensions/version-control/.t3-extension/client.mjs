@@ -51,13 +51,13 @@ var __t3Client = (() => {
     }
   });
 
-  // ../../projects/T3 Code/t3-extensions-authoring/packages/first-party-extensions/version-control/generated-client.ts
+  // generated-client.ts
   var generated_client_exports = {};
   __export(generated_client_exports, {
     default: () => generated_client_default
   });
 
-  // ../../projects/T3 Code/t3-extensions-authoring/packages/extension-sdk/dist/contracts.js
+  // ../../extension-sdk/dist/contracts.js
   var API_VERSION = 1;
   var MAX_PAYLOAD_BYTES = 64 * 1024;
   function assertId(value) {
@@ -145,7 +145,7 @@ var __t3Client = (() => {
     return manifest;
   }
 
-  // ../../projects/T3 Code/t3-extensions-authoring/packages/extension-sdk/dist/capabilities.js
+  // ../../extension-sdk/dist/capabilities.js
   function defineApi(definition) {
     return { definition: validateApiDefinition(definition) };
   }
@@ -238,7 +238,7 @@ var __t3Client = (() => {
     return api;
   }
 
-  // ../../projects/T3 Code/t3-extensions-authoring/packages/extension-sdk/dist/textEdits.js
+  // ../../extension-sdk/dist/textEdits.js
   var WORKSPACE_READ_TEXT_EDITS = "t3.workspace/text-edits";
   var WORKSPACE_READ_TEXT_GRANT = "t3.workspace/read-text";
   var WORKSPACE_WRITE_TEXT = "t3.workspace/write-text";
@@ -431,7 +431,7 @@ var __t3Client = (() => {
     ]
   });
 
-  // ../../projects/T3 Code/t3-extensions-authoring/packages/extension-sdk/dist/catalogue.js
+  // ../../extension-sdk/dist/catalogue.js
   var WORKSPACE_FILES = "t3.workspace/files";
   var WORKSPACE_LIST_ENTRIES = "t3.workspace/list-entries";
   var FILE_PRESENTATION = "t3.file/presentation";
@@ -1722,7 +1722,7 @@ var __t3Client = (() => {
   var TERMINAL_OUTPUT_EVENTS_API = terminalOutputEventsApi.definition;
   var TERMINAL_CONTROL_API = terminalControlApi.definition;
 
-  // ../../projects/T3 Code/t3-extensions-authoring/packages/extension-sdk/dist/environment.js
+  // ../../extension-sdk/dist/environment.js
   var ENVIRONMENT_MANIFEST_FILE = "t3-extension.json";
   var ENVIRONMENT_ASSET_MEDIA_TYPES = [
     "application/wasm",
@@ -1860,7 +1860,7 @@ var __t3Client = (() => {
     return { ...pkg, manifest };
   }
 
-  // ../../projects/T3 Code/t3-extensions-authoring/packages/extension-sdk/dist/authoring.js
+  // ../../extension-sdk/dist/authoring.js
   var statePreview = (state) => {
     const encoded = JSON.stringify(state);
     return encoded.length > 200 ? encoded.slice(0, 200) + "\u2026" : encoded;
@@ -1957,10 +1957,10 @@ var __t3Client = (() => {
     return { id: api.definition.id, versionRange };
   }
 
-  // ../../projects/T3 Code/t3-extensions-authoring/packages/first-party-extensions/version-control/extension.tsx
+  // extension.tsx
   var import_react = __toESM(require_react(), 1);
 
-  // ../../projects/T3 Code/t3-extensions-authoring/packages/first-party-extensions/version-control/viewModel.ts
+  // viewModel.ts
   var CHANGE_LANES = ["conflicted", "staged", "changes", "untracked"];
   function lanesFromChanges(entries) {
     const groups = { conflicted: [], staged: [], changes: [], untracked: [] };
@@ -2113,7 +2113,7 @@ var __t3Client = (() => {
     return { kind: "ready", capabilities };
   }
 
-  // ../../projects/T3 Code/t3-extensions-authoring/packages/first-party-extensions/version-control/extension.tsx
+  // extension.tsx
   var import_jsx_runtime = __toESM(require_jsx_runtime(), 1);
   var manifestId = "t3.version-control";
   var LANES = new Set(CHANGE_LANES);
@@ -2264,6 +2264,7 @@ var __t3Client = (() => {
     const { host, session } = props;
     const [visible, setVisible] = (0, import_react.useState)(session.visible);
     const [tick, setTick] = (0, import_react.useState)(0);
+    const [refreshError, setRefreshError] = (0, import_react.useState)(null);
     (0, import_react.useEffect)(() => session.onVisibility(setVisible), [session]);
     const restored = session.restoreState && typeof session.restoreState === "object" && !Array.isArray(session.restoreState) ? session.restoreState : null;
     const [selection, setSelection] = (0, import_react.useState)(
@@ -2283,7 +2284,10 @@ var __t3Client = (() => {
     const refresh = () => {
       const controller = new AbortController();
       const signal = AbortSignal.any([controller.signal, session.signal]);
-      void bindApi(vcsStatusApi, host, session.context).invoke("refresh", {}, signal).finally(() => controller.abort());
+      void bindApi(vcsStatusApi, host, session.context).invoke("refresh", {}, signal).then(
+        () => setRefreshError(null),
+        (error) => setRefreshError(error instanceof Error ? error.message : "Status refresh unavailable")
+      ).finally(() => controller.abort());
       setTick((value) => value + 1);
     };
     const select = (path3, lane) => {
@@ -2318,8 +2322,8 @@ var __t3Client = (() => {
                 alignItems: "center"
               },
               children: [
-                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { type: "button", onClick: refresh, style: control, children: "Refresh" }),
-                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { style: { color: muted, fontSize: 11 }, children: describeStatus(status) })
+                repo.kind === "ready" && repo.capabilities.operations["status.refresh"] === true && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { type: "button", onClick: refresh, style: control, children: "Refresh" }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { style: { color: muted, fontSize: 11 }, children: refreshError ?? describeStatus(status) })
               ]
             }
           ),
@@ -2510,10 +2514,10 @@ var __t3Client = (() => {
     ]
   });
 
-  // ../../projects/T3 Code/t3-extensions-authoring/packages/first-party-extensions/version-control/extension.ts
+  // extension.ts
   var extension_default2 = extension_default;
 
-  // ../../projects/T3 Code/t3-extensions-authoring/packages/first-party-extensions/version-control/generated-client.ts
+  // generated-client.ts
   var generated_client_default = extension_default2.client;
   return __toCommonJS(generated_client_exports);
 })();

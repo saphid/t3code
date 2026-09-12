@@ -241,6 +241,7 @@ function VersionControlView(props: { host: ClientHost; session: ViewSession }) {
   const { host, session } = props;
   const [visible, setVisible] = useState(session.visible);
   const [tick, setTick] = useState(0);
+  const [refreshError, setRefreshError] = useState<string | null>(null);
   useEffect(() => session.onVisibility(setVisible), [session]);
 
   const restored =
@@ -278,6 +279,11 @@ function VersionControlView(props: { host: ClientHost; session: ViewSession }) {
     const signal = AbortSignal.any([controller.signal, session.signal]);
     void bindApi(vcsStatusApi, host, session.context)
       .invoke("refresh", {}, signal)
+      .then(
+        () => setRefreshError(null),
+        (error) =>
+          setRefreshError(error instanceof Error ? error.message : "Status refresh unavailable"),
+      )
       .finally(() => controller.abort());
     setTick((value) => value + 1);
   };
@@ -312,10 +318,14 @@ function VersionControlView(props: { host: ClientHost; session: ViewSession }) {
           alignItems: "center",
         }}
       >
-        <button type="button" onClick={refresh} style={control}>
-          Refresh
-        </button>
-        <span style={{ color: muted, fontSize: 11 }}>{describeStatus(status)}</span>
+        {repo.kind === "ready" && repo.capabilities.operations["status.refresh"] === true && (
+          <button type="button" onClick={refresh} style={control}>
+            Refresh
+          </button>
+        )}
+        <span style={{ color: muted, fontSize: 11 }}>
+          {refreshError ?? describeStatus(status)}
+        </span>
       </header>
 
       {repo.kind === "loading" && (
