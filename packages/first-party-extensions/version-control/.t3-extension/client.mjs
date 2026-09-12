@@ -1459,60 +1459,186 @@ var __t3Client = (() => {
       truncated: { type: "boolean" }
     }
   };
-  var vcsDiffApi = defineApi({
-    id: VCS_DIFF,
-    version: "1.0.0",
-    methods: [
+  var vcsDiffPreviewInputSchema = {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      baseRef: vcsRevSpec,
+      ignoreWhitespace: { type: "boolean" }
+    }
+  };
+  var vcsDiffFileContentsInputSchema = {
+    type: "object",
+    additionalProperties: false,
+    required: ["sourceKind", "changeType", "baseRef", "headRef", "oldPath", "newPath"],
+    properties: {
+      sourceKind: { enum: ["working-tree", "branch-range"] },
+      changeType: { enum: ["change", "rename-pure", "rename-changed", "new", "deleted"] },
+      baseRef: vcsRevSpecOrNull,
+      headRef: vcsRevSpecOrNull,
+      oldPath: vcsPath,
+      newPath: vcsPath
+    }
+  };
+  var vcsDiffGetPreviewMethod = {
+    name: "getPreview",
+    effect: "read",
+    requiredGrants: [VCS_READ],
+    inputSchema: vcsDiffPreviewInputSchema,
+    outputSchema: {
+      type: "object",
+      additionalProperties: false,
+      required: ["generatedAt", "sources"],
+      properties: {
+        generatedAt: { type: "string", maxLength: 64 },
+        sources: { type: "array", maxItems: 8, items: vcsDiffPreviewSourceSchema }
+      }
+    }
+  };
+  var vcsDiffGetFileContentsMethod = {
+    name: "getFileContents",
+    effect: "read",
+    requiredGrants: [VCS_READ],
+    inputSchema: vcsDiffFileContentsInputSchema,
+    outputSchema: {
+      type: "object",
+      additionalProperties: false,
+      required: ["oldContents", "newContents"],
+      properties: {
+        oldContents: { type: "string", maxLength: 1048576 },
+        newContents: { type: "string", maxLength: 1048576 }
+      }
+    }
+  };
+  var vcsDiffSha256 = {
+    type: "string",
+    minLength: 64,
+    maxLength: 64,
+    pattern: "^[0-9a-f]{64}$"
+  };
+  var vcsDiffChunkData = { type: "string", maxLength: 8192 };
+  var vcsDiffStreamSourceSchema = {
+    type: "object",
+    additionalProperties: false,
+    required: [
+      "id",
+      "kind",
+      "title",
+      "baseRef",
+      "headRef",
+      "truncated",
+      "diffHash",
+      "diffByteLength",
+      "chunkCount"
+    ],
+    properties: {
+      id: { type: "string", minLength: 1, maxLength: 64 },
+      kind: { enum: ["working-tree", "branch-range"] },
+      title: { type: "string", minLength: 1, maxLength: 256 },
+      baseRef: vcsRefNameOrNull,
+      headRef: vcsRefNameOrNull,
+      truncated: { type: "boolean" },
+      diffHash: vcsDiffSha256,
+      diffByteLength: { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER },
+      chunkCount: { type: "integer", minimum: 0, maximum: 64 }
+    }
+  };
+  var vcsDiffPreviewStreamEventSchema = {
+    oneOf: [
       {
-        name: "getPreview",
-        effect: "read",
-        requiredGrants: [VCS_READ],
-        inputSchema: {
-          type: "object",
-          additionalProperties: false,
-          properties: {
-            baseRef: vcsRevSpec,
-            ignoreWhitespace: { type: "boolean" }
-          }
-        },
-        outputSchema: {
-          type: "object",
-          additionalProperties: false,
-          required: ["generatedAt", "sources"],
-          properties: {
-            generatedAt: { type: "string", maxLength: 64 },
-            sources: { type: "array", maxItems: 8, items: vcsDiffPreviewSourceSchema }
-          }
+        type: "object",
+        additionalProperties: false,
+        required: ["kind", "generatedAt", "sources"],
+        properties: {
+          kind: { const: "manifest" },
+          generatedAt: { type: "string", maxLength: 64 },
+          sources: { type: "array", maxItems: 8, items: vcsDiffStreamSourceSchema }
         }
       },
       {
-        name: "getFileContents",
-        effect: "read",
-        requiredGrants: [VCS_READ],
-        inputSchema: {
-          type: "object",
-          additionalProperties: false,
-          required: ["sourceKind", "changeType", "baseRef", "headRef", "oldPath", "newPath"],
-          properties: {
-            sourceKind: { enum: ["working-tree", "branch-range"] },
-            changeType: { enum: ["change", "rename-pure", "rename-changed", "new", "deleted"] },
-            baseRef: vcsRevSpecOrNull,
-            headRef: vcsRevSpecOrNull,
-            oldPath: vcsPath,
-            newPath: vcsPath
-          }
-        },
-        outputSchema: {
-          type: "object",
-          additionalProperties: false,
-          required: ["oldContents", "newContents"],
-          properties: {
-            oldContents: { type: "string", maxLength: 1048576 },
-            newContents: { type: "string", maxLength: 1048576 }
-          }
+        type: "object",
+        additionalProperties: false,
+        required: ["kind", "sourceIndex", "chunkIndex", "data"],
+        properties: {
+          kind: { const: "chunk" },
+          sourceIndex: { type: "integer", minimum: 0, maximum: 7 },
+          chunkIndex: { type: "integer", minimum: 0, maximum: 63 },
+          data: vcsDiffChunkData
+        }
+      },
+      {
+        type: "object",
+        additionalProperties: false,
+        required: ["kind", "payloadSha256"],
+        properties: {
+          kind: { const: "complete" },
+          payloadSha256: vcsDiffSha256
         }
       }
     ]
+  };
+  var vcsDiffFileContentsStreamEventSchema = {
+    oneOf: [
+      {
+        type: "object",
+        additionalProperties: false,
+        required: ["kind", "oldByteLength", "oldChunkCount", "newByteLength", "newChunkCount"],
+        properties: {
+          kind: { const: "manifest" },
+          // A surrogate pair straddling a boundary shrinks a chunk to 8 191
+          // units, so the worst case is ceil(1 048 576 / 8 191) = 129 chunks.
+          oldByteLength: { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER },
+          oldChunkCount: { type: "integer", minimum: 0, maximum: 129 },
+          newByteLength: { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER },
+          newChunkCount: { type: "integer", minimum: 0, maximum: 129 }
+        }
+      },
+      {
+        type: "object",
+        additionalProperties: false,
+        required: ["kind", "side", "chunkIndex", "data"],
+        properties: {
+          kind: { const: "chunk" },
+          side: { enum: ["old", "new"] },
+          chunkIndex: { type: "integer", minimum: 0, maximum: 128 },
+          data: vcsDiffChunkData
+        }
+      },
+      {
+        type: "object",
+        additionalProperties: false,
+        required: ["kind", "oldSha256", "newSha256"],
+        properties: {
+          kind: { const: "complete" },
+          oldSha256: vcsDiffSha256,
+          newSha256: vcsDiffSha256
+        }
+      }
+    ]
+  };
+  var vcsDiffApi = defineStreamApi({
+    id: VCS_DIFF,
+    version: "1.1.0",
+    methods: [vcsDiffGetPreviewMethod, vcsDiffGetFileContentsMethod],
+    streams: [
+      {
+        name: "streamPreview",
+        requiredGrants: [VCS_READ],
+        inputSchema: vcsDiffPreviewInputSchema,
+        eventSchema: vcsDiffPreviewStreamEventSchema
+      },
+      {
+        name: "streamFileContents",
+        requiredGrants: [VCS_READ],
+        inputSchema: vcsDiffFileContentsInputSchema,
+        eventSchema: vcsDiffFileContentsStreamEventSchema
+      }
+    ]
+  });
+  var vcsDiffApiV1 = defineApi({
+    id: VCS_DIFF,
+    version: "1.0.0",
+    methods: [vcsDiffGetPreviewMethod, vcsDiffGetFileContentsMethod]
   });
   var vcsOperationsSupportSchema = {
     type: "object",
@@ -1680,6 +1806,7 @@ var __t3Client = (() => {
   var VCS_REFS_API = vcsRefsApi.definition;
   var VCS_CHANGES_API = vcsChangesApi.definition;
   var VCS_DIFF_API = vcsDiffApi.definition;
+  var VCS_DIFF_API_V1 = vcsDiffApiV1.definition;
   var VCS_REPOSITORY_API = vcsRepositoryApi.definition;
   var GENERIC_API_CATALOGUE = [
     workspaceFilesApi.definition,
@@ -1697,7 +1824,8 @@ var __t3Client = (() => {
     vcsRefsApi.definition,
     vcsChangesApi.definition,
     vcsDiffApi.definition,
-    vcsRepositoryApi.definition
+    vcsRepositoryApi.definition,
+    vcsDiffApiV1.definition
   ];
   function canonical(value) {
     if (Array.isArray(value))
