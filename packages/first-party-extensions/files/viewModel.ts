@@ -1,3 +1,5 @@
+import { isWorkspaceImagePreviewPath } from "@t3tools/shared/filePreview";
+
 /**
  * Pure view-model for the Files tree panel. Owns F1 row #6's panel-local
  * behavior: ordering, expansion state, and name filtering over the flat entry
@@ -182,12 +184,264 @@ export function describeRead(read: PreviewRead): PreviewStatus {
 }
 
 /**
- * Workspace media has no public read path yet (F1 #8 defers to
- * t3.workspace/resources); the notice names the missing contract instead of
- * pretending a placeholder is a preview.
+ * Named state for kinds the workspace media lease cannot mint (F1 #8). The
+ * host's mint gate only accepts the image-preview and browser-document
+ * extension sets, so video, audio, fonts and other binaries are honest gaps,
+ * not fetch-and-hope previews.
  */
 export function mediaPreviewNotice(kind: PreviewKind): string {
-  return `${kind} preview is not public yet — workspace media reads await the t3.workspace/resources contract`;
+  return `${kind} preview is not available — workspace media leases mint only preview-safe types (images and PDF)`;
+}
+
+/* ------------------------------------------------------------------------
+ * Media lease preview (F1 #8 + #24): `t3.resources/lease` mints a signed
+ * `/api/assets/<token>/<name>` URL (1h TTL, token-is-the-auth at serve) that
+ * the view renders document-relative. Every transition below is a pure
+ * function so renewal timing and denial mapping are testable with an
+ * injected clock.
+ * --------------------------------------------------------------------- */
+
+/** What the view renders for a minted lease: `<img>` or the document viewer. */
+export type MediaLeasePreviewMode = "image" | "document";
+
+/**
+ * What a `workspace-file` lease can render for a path — the SAME predicate
+ * the host enforces at mint (`isWorkspacePreviewEntryPath`): image-preview
+ * extensions mint `workspace-file-exact` claims for `<img>`; `.pdf` mints a
+ * `workspace-file` claim served as application/pdf for the built-in document
+ * viewer. `.htm`/`.html` stay on the text path (`previewKind` classifies them
+ * as source) — browser-document preview is t3.browser's lane. `null` is a
+ * named gap; minting it would fail `AssetPreviewTypeValidationError` anyway.
+ */
+export function leasePreviewMode(relativePath: string): MediaLeasePreviewMode | null {
+  if (isWorkspaceImagePreviewPath(relativePath)) return "image";
+  if (relativePath.toLowerCase().endsWith(".pdf")) return "document";
+  return null;
+}
+
+/** Mint-time denials the adapter names in ExtensionOperationError detail. */
+export type MediaLeaseDenialReason =
+  | "grant-denied"
+  | "kind-denied"
+  | "not-previewable"
+  | "outside-workspace"
+  | "context-missing";
+
+export type MediaLeaseState =
+  | { readonly status: "idle" }
+  | { readonly status: "unsupported-kind"; readonly message: string }
+  | { readonly status: "minting"; readonly url?: string; readonly expiresAt?: number }
+  | {
+      readonly status: "ready";
+      readonly url: string;
+      readonly expiresAt: number;
+      /** A renewal mint failed while the current lease still serves. */
+      readonly renewalError?: string;
+    }
+  | { readonly status: "expired"; readonly url: string }
+  | {
+      readonly status: "denied";
+      readonly reason: MediaLeaseDenialReason;
+      readonly message: string;
+    }
+  | { readonly status: "unavailable"; readonly message: string };
+
+/** Re-mint this far before `expiresAt` so the rendered URL never lapses. */
+export const MEDIA_LEASE_RENEWAL_SKEW_MS = 5 * 60_000;
+
+/**
+ * What selecting a workspace path does to the preview. `hasThread` is the
+ * `workspace-file` resource's thread scope — the contract has no
+ * project-scope variant, so its absence is a named denial, not an invented
+ * ref.
+ */
+export function selectMediaLease(input: {
+  readonly path: string;
+  readonly hasThread: boolean;
+}): MediaLeaseState {
+  if (leasePreviewMode(input.path) === null)
+    return { status: "unsupported-kind", message: mediaPreviewNotice(previewKind(input.path)) };
+  if (!input.hasThread)
+    return {
+      status: "denied",
+      reason: "context-missing",
+      message:
+        "Media preview requires a thread-scoped context — this view was opened for a project only",
+    };
+  return { status: "minting" };
+}
+
+/**
+ * Capability gate after `getCapabilities`: null means `workspace-file` is
+ * mintable here; otherwise the named unsupported state — an absent kind is
+ * never a fetch-and-hope mint.
+ */
+export function mediaLeaseKindGate(supportedKinds: readonly string[]): MediaLeaseState | null {
+  return supportedKinds.includes("workspace-file")
+    ? null
+    : {
+        status: "unsupported-kind",
+        message:
+          "Media preview is not available — this server build cannot mint workspace-file leases",
+      };
+}
+
+export function mediaLeaseMinted(result: {
+  readonly url: string;
+  readonly expiresAt: number;
+}): MediaLeaseState {
+  return { status: "ready", url: result.url, expiresAt: result.expiresAt };
+}
+
+const LEASE_DENIALS: ReadonlyArray<{
+  readonly name: string;
+  readonly reason: MediaLeaseDenialReason;
+  readonly message: string;
+}> = [
+  {
+    name: "ResourceLeaseGrantDeniedError",
+    reason: "grant-denied",
+    message: "Media preview denied — the installation is missing the t3.workspace/resources grant",
+  },
+  {
+    name: "ResourceLeaseKindDeniedError",
+    reason: "kind-denied",
+    message: "Media preview denied — this resource kind is not mintable on this server",
+  },
+  {
+    name: "AssetPreviewTypeValidationError",
+    reason: "not-previewable",
+    message: "Media preview denied — this file type is not previewable through the workspace lease",
+  },
+  {
+    name: "AssetWorkspacePathValidationError",
+    reason: "outside-workspace",
+    message: "Media preview denied — the path resolves outside the granted workspace",
+  },
+  {
+    name: "AssetWorkspaceAssetNotFoundError",
+    reason: "context-missing",
+    message: "Media preview unavailable — the file no longer exists in the workspace",
+  },
+];
+
+const LEASE_CONTEXT_ERRORS = new Set([
+  "AssetWorkspaceContextNotFoundError",
+  "AssetWorkspaceContextResolutionError",
+  "AssetWorkspaceRootNormalizationError",
+]);
+
+/**
+ * Mint failure → named state. Every denial the adapter names stays a `denied`
+ * with its reason; an unnamed or host-side failure (including
+ * `ResourceLeaseGrantCheckError`, a grant evaluation fault) is `unavailable`,
+ * never coerced into a denial it isn't.
+ */
+export function mediaLeaseErrorState(
+  error: unknown,
+): Extract<MediaLeaseState, { readonly status: "denied" | "unavailable" }> {
+  const text = error instanceof Error ? error.message : String(error);
+  for (const denial of LEASE_DENIALS)
+    if (text.includes(denial.name))
+      return { status: "denied", reason: denial.reason, message: denial.message };
+  for (const name of LEASE_CONTEXT_ERRORS)
+    if (text.includes(name))
+      return {
+        status: "denied",
+        reason: "context-missing",
+        message: "Media preview unavailable — the workspace context could not be resolved",
+      };
+  return {
+    status: "unavailable",
+    message: `Media preview failed${text ? `: ${text.slice(0, 300)}` : ""}`,
+  };
+}
+
+/**
+ * A mint result failure. While a previous lease still serves (renewal in
+ * flight), keep it rendered with the failure named — the signed token is
+ * valid until `expiresAt` regardless of why the re-mint failed.
+ */
+export function mediaLeaseFailed(error: unknown, previous?: MediaLeaseState): MediaLeaseState {
+  const mapped = mediaLeaseErrorState(error);
+  if (
+    previous?.status === "minting" &&
+    previous.url !== undefined &&
+    previous.expiresAt !== undefined
+  )
+    return {
+      status: "ready",
+      url: previous.url,
+      expiresAt: previous.expiresAt,
+      renewalError: mapped.message,
+    };
+  return mapped;
+}
+
+/** Milliseconds until a live lease should be re-minted (0 when due or past). */
+export function mediaLeaseRenewalDelay(expiresAt: number, now: number): number {
+  return Math.max(0, expiresAt - MEDIA_LEASE_RENEWAL_SKEW_MS - now);
+}
+
+/** Renewal starts: the current URL keeps rendering while the re-mint runs. */
+export function mediaLeaseRenewing(state: MediaLeaseState): MediaLeaseState {
+  return state.status === "ready"
+    ? { status: "minting", url: state.url, expiresAt: state.expiresAt }
+    : state;
+}
+
+/**
+ * A rendered `<img>`/document load failure. Past `expiresAt` the token simply
+ * stopped serving — `expired` triggers a re-mint. Before expiry a fetch
+ * failure means the minted URL did not resolve on the environment's own
+ * origin (the lease serves same-origin only) — named, never a broken image.
+ */
+export function mediaLeaseAssetFailed(state: MediaLeaseState, now: number): MediaLeaseState {
+  if (state.status !== "ready") return state;
+  if (now >= state.expiresAt) return { status: "expired", url: state.url };
+  return {
+    status: "unavailable",
+    message:
+      "Preview could not be loaded — minted media URLs serve only on the environment's own origin",
+  };
+}
+
+/**
+ * The URL a media element should render: a live lease, or the previous one
+ * while its renewal mint is in flight. `expired`, denials and failures carry
+ * no renderable URL — the named state is the UI, never a broken element.
+ */
+export function mediaLeaseUrl(state: MediaLeaseState): string | null {
+  if (state.status === "ready") return state.url;
+  if (state.status === "minting") return state.url ?? null;
+  return null;
+}
+
+const leaseTime = (expiresAt: number) =>
+  new Date(expiresAt).toLocaleTimeString("en-US", { hour12: false });
+
+/** Status line for the media preview pane. */
+export function describeMediaLease(state: MediaLeaseState): string {
+  switch (state.status) {
+    case "idle":
+      return "";
+    case "unsupported-kind":
+      return state.message;
+    case "minting":
+      return state.url === undefined
+        ? "Preparing preview — minting a media lease"
+        : "Preview shown — renewing the media lease";
+    case "ready":
+      return state.renewalError === undefined
+        ? `Preview ready — lease renews automatically (expires ${leaseTime(state.expiresAt)})`
+        : `Preview shown — renewal failed (${state.renewalError}); the current lease expires ${leaseTime(state.expiresAt)}`;
+    case "expired":
+      return "Preview lease expired — renewing";
+    case "denied":
+      return state.message;
+    case "unavailable":
+      return state.message;
+  }
 }
 
 /**

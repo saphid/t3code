@@ -1,5 +1,6 @@
 import {
   filePresentationApi,
+  resourcesLeaseApi,
   textEditsApi,
   workspaceFilesApi,
   workspaceSearchApi,
@@ -18,16 +19,26 @@ import {
   type EditorSaveState,
 } from "./saveCoordinator.js";
 import {
+  describeMediaLease,
   describeRead,
   describeSaveState,
   describeSearch,
   describeSnapshot,
-  mediaPreviewNotice,
+  leasePreviewMode,
+  mediaLeaseAssetFailed,
+  mediaLeaseFailed,
+  mediaLeaseKindGate,
+  mediaLeaseMinted,
+  mediaLeaseRenewalDelay,
+  mediaLeaseRenewing,
+  mediaLeaseUrl,
+  selectMediaLease,
   parentPath,
   previewKind,
   toggleExpanded,
   visibleRows,
   type EditorOpen,
+  type MediaLeaseState,
   type PreviewKind,
   type SearchKindFilter,
   type SearchResults,
@@ -366,6 +377,145 @@ function useFileEditor(
   return { surface, change, reload, keepMine, retry };
 }
 
+/**
+ * Workspace media preview via `t3.resources/lease` (F1 #8 + #24). Selecting a
+ * previewable media file mints a signed `/api/assets/*` URL rendered
+ * document-relative; the lease renews `MEDIA_LEASE_RENEWAL_SKEW_MS` before
+ * expiry while visible, re-mints on tree refresh, and every named denial maps
+ * to an explicit state — a broken element is never the error UI. The minted
+ * URL resolves on the environment's own origin; a foreign-origin presentation
+ * 404s the foreign-signed token and the element's load failure reports the
+ * same-origin requirement instead of a broken image.
+ */
+function useMediaLease(
+  host: ClientHost,
+  session: ViewSession,
+  selected: string | null,
+  selectedKind: PreviewKind,
+  refreshRevision: number,
+  visible: boolean,
+) {
+  const active = selected !== null && selectedKind !== "text" && visible;
+  const mode = selected === null ? null : leasePreviewMode(selected);
+  const [lease, setLease] = useState<MediaLeaseState>({ status: "idle" });
+  const leaseRef = useRef<MediaLeaseState>({ status: "idle" });
+  const mintRef = useRef<(() => void) | null>(null);
+
+  useEffect(() => {
+    const commitLease = (next: MediaLeaseState | ((prev: MediaLeaseState) => MediaLeaseState)) => {
+      setLease((prev) => {
+        const value = typeof next === "function" ? next(prev) : next;
+        leaseRef.current = value;
+        return value;
+      });
+    };
+    mintRef.current = null;
+    if (!active || selected === null) {
+      commitLease({ status: "idle" });
+      return;
+    }
+    const path = selected;
+    const threadId = session.context.resource.threadId;
+    const initial = selectMediaLease({
+      path,
+      hasThread: typeof threadId === "string" && threadId.length > 0,
+    });
+    commitLease(initial);
+    if (initial.status !== "minting" || threadId === undefined) return;
+
+    const api = bindApi(resourcesLeaseApi, host, session.context);
+    const controller = new AbortController();
+    const signal = AbortSignal.any([controller.signal, session.signal]);
+    let renewalTimer: ReturnType<typeof setTimeout> | undefined;
+    let objectUrl: string | null = null;
+    const clearRenewal = () => {
+      if (renewalTimer !== undefined) {
+        clearTimeout(renewalTimer);
+        renewalTimer = undefined;
+      }
+    };
+
+    const mint = async () => {
+      try {
+        const capabilities = await api.invoke("getCapabilities", {}, signal);
+        if (signal.aborted) return;
+        const gate = mediaLeaseKindGate(capabilities.supportedKinds);
+        if (gate) {
+          commitLease(gate);
+          return;
+        }
+        const minted = await api.invoke(
+          "createPresentationUrl",
+          { resource: { _tag: "workspace-file", threadId, path } },
+          signal,
+        );
+        if (signal.aborted) return;
+        let url = minted.url;
+        if (leasePreviewMode(path) === "document") {
+          // An iframe does not reliably fire onerror for failed documents —
+          // fetch the lease first so a 404 lands in the named state, then hand
+          // the built-in viewer a same-origin blob URL (also avoids the frame
+          // downloading the document a second time).
+          const response = await fetch(minted.url, { signal });
+          if (signal.aborted) return;
+          if (!response.ok) {
+            commitLease(
+              mediaLeaseAssetFailed(
+                { status: "ready", url: minted.url, expiresAt: minted.expiresAt },
+                Date.now(),
+              ),
+            );
+            return;
+          }
+          const next = URL.createObjectURL(await response.blob());
+          if (signal.aborted) {
+            URL.revokeObjectURL(next);
+            return;
+          }
+          if (objectUrl !== null) URL.revokeObjectURL(objectUrl);
+          objectUrl = next;
+          url = next;
+        }
+        commitLease(mediaLeaseMinted({ url, expiresAt: minted.expiresAt }));
+        clearRenewal();
+        renewalTimer = setTimeout(
+          () => {
+            renewalTimer = undefined;
+            commitLease((prev) => mediaLeaseRenewing(prev));
+            void mint();
+          },
+          mediaLeaseRenewalDelay(minted.expiresAt, Date.now()),
+        );
+      } catch (error) {
+        if (!signal.aborted) commitLease((prev) => mediaLeaseFailed(error, prev));
+      }
+    };
+    mintRef.current = mint;
+    void mint();
+
+    return () => {
+      mintRef.current = null;
+      clearRenewal();
+      controller.abort();
+      if (objectUrl !== null) URL.revokeObjectURL(objectUrl);
+    };
+    // selectedKind gates via `active`; refreshRevision is an intentional
+    // trigger — a tree refresh re-mints so refreshed bytes stay honest.
+    // oxlint-disable-next-line react/exhaustive-effect-dependencies
+  }, [host, session, selected, selectedKind, refreshRevision, active]);
+
+  const notifyAssetFailed = () => {
+    const previous = leaseRef.current;
+    const next = mediaLeaseAssetFailed(previous, Date.now());
+    if (next === previous) return;
+    leaseRef.current = next;
+    setLease(next);
+    if (next.status === "expired") mintRef.current?.();
+  };
+
+  return { state: lease, mode, url: mediaLeaseUrl(lease), notifyAssetFailed };
+}
+
 function FilesView(props: { host: ClientHost; session: ViewSession }) {
   const { host, session } = props;
   const { entries, status, refresh, revision, visible } = useWorkspaceTree(host, session);
@@ -395,6 +545,7 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
   } | null>(null);
   const selectedKind: PreviewKind = selected ? previewKind(selected) : "text";
   const editor = useFileEditor(host, session, selected, selectedKind, revision, visible);
+  const media = useMediaLease(host, session, selected, selectedKind, revision, visible);
   const packageAsset = usePackageAsset(
     host,
     session,
@@ -652,7 +803,7 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
                 : editorSurface.open.editable
                   ? describeSaveState(editorSurface.saveState)
                   : editorSurface.open.message + (currentRead ? ` — ${currentRead.status}` : "")
-              : mediaPreviewNotice(selectedKind))}
+              : describeMediaLease(media.state))}
         </output>
       )}
       {selected && selectedKind === "text" && editorSurface?.open.editable === true && (
@@ -750,6 +901,44 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
         )}
       {selected && selectedKind !== "text" && (
         <figure
+          aria-label="Workspace media preview"
+          style={{
+            margin: 0,
+            padding: 12,
+            borderTop: "1px solid var(--border, #dfe3e8)",
+            display: "flex",
+            flexDirection: "column",
+            gap: 8,
+            flex: 1,
+            minHeight: 0,
+            overflow: "auto",
+          }}
+        >
+          {media.mode === "image" && media.url !== null ? (
+            <img
+              src={media.url}
+              alt={selected.split("/").at(-1)}
+              onError={media.notifyAssetFailed}
+              style={{ maxWidth: "100%", objectFit: "contain", alignSelf: "flex-start" }}
+            />
+          ) : null}
+          {media.mode === "document" && media.url !== null ? (
+            // The built-in PDF viewer needs an unsandboxed frame — parity with
+            // the native FilePreviewPanel; the lease only serves workspace-owned bytes.
+            // oxlint-disable-next-line react/iframe-missing-sandbox
+            <iframe
+              src={media.url}
+              title={selected.split("/").at(-1)}
+              style={{ flex: 1, minHeight: 0, width: "100%", border: 0, background: "#fff" }}
+            />
+          ) : null}
+          <figcaption style={{ color: muted, fontSize: 11 }}>
+            {describeMediaLease(media.state)}
+          </figcaption>
+        </figure>
+      )}
+      {selected && selectedKind !== "text" && (
+        <figure
           aria-label="Package asset preview"
           style={{
             margin: 0,
@@ -778,7 +967,7 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
 
 export default defineExtension({
   id: manifestId,
-  version: "0.4.0",
+  version: "0.5.0",
   provides: [filePresentationApi.definition],
   assets: [{ path: PREVIEW_ASSET_PATH, mediaType: "application/octet-stream" }],
   serverEntry: "server.ts",
@@ -787,6 +976,7 @@ export default defineExtension({
     requireApi(workspaceFilesApi),
     requireApi(workspaceSearchApi),
     requireApi(textEditsApi),
+    requireApi(resourcesLeaseApi),
   ],
   surfaces: [
     {

@@ -2,14 +2,26 @@ import * as NodeAssert from "node:assert/strict";
 import * as NodeTest from "node:test";
 import {
   compareTreeEntries,
+  describeMediaLease,
   describeRead,
   describeSaveState,
   describeSearch,
   describeSnapshot,
   filterEntries,
+  leasePreviewMode,
+  MEDIA_LEASE_RENEWAL_SKEW_MS,
+  mediaLeaseAssetFailed,
+  mediaLeaseErrorState,
+  mediaLeaseFailed,
+  mediaLeaseKindGate,
+  mediaLeaseMinted,
+  mediaLeaseRenewalDelay,
+  mediaLeaseRenewing,
+  mediaLeaseUrl,
   mediaPreviewNotice,
   parentPath,
   previewKind,
+  selectMediaLease,
   sortTreeEntries,
   toggleExpanded,
   visibleRows,
@@ -168,11 +180,178 @@ NodeTest.describe("describeSearch", () => {
 });
 
 NodeTest.describe("mediaPreviewNotice", () => {
-  NodeTest.it("names the missing contract instead of faking a preview", () => {
-    for (const kind of ["image", "video", "audio", "font", "binary"]) {
-      NodeAssert.match(mediaPreviewNotice(kind), new RegExp(`^${kind} preview is not public yet`));
-      NodeAssert.match(mediaPreviewNotice(kind), /t3\.workspace\/resources/);
+  NodeTest.it("names the lease mint bound instead of faking a preview", () => {
+    for (const kind of ["video", "audio", "font", "binary"]) {
+      NodeAssert.match(mediaPreviewNotice(kind), new RegExp(`^${kind} preview is not available`));
+      NodeAssert.match(mediaPreviewNotice(kind), /images and PDF/);
     }
+  });
+});
+
+NodeTest.describe("media lease preview", () => {
+  const minted = { url: "/api/assets/token/name.png", expiresAt: 4_000_000 };
+
+  NodeTest.it("gates render mode by the host mint set, never fetch-and-hope", () => {
+    for (const path of ["a.png", "dir/photo.JPG", "icon.svg", "x.webp", "y.avif", "z.ico"])
+      NodeAssert.equal(leasePreviewMode(path), "image");
+    NodeAssert.equal(leasePreviewMode("docs/spec.pdf"), "document");
+    NodeAssert.equal(leasePreviewMode("docs/SPEC.PDF"), "document");
+    // Mintable-by-the-host but intentionally not lease-previewed here:
+    // browser documents stay on the text path (t3.browser's lane).
+    NodeAssert.equal(leasePreviewMode("page.html"), null);
+    for (const path of [
+      "clip.mp4",
+      "song.mp3",
+      "font.woff2",
+      "image.bmp",
+      "archive.zip",
+      "README.md",
+    ])
+      NodeAssert.equal(leasePreviewMode(path), null);
+  });
+
+  NodeTest.it("select: mintable kind + thread context mints; gaps are named", () => {
+    NodeAssert.deepEqual(selectMediaLease({ path: "a.png", hasThread: true }), {
+      status: "minting",
+    });
+    const unsupported = selectMediaLease({ path: "clip.mp4", hasThread: true });
+    NodeAssert.equal(unsupported.status, "unsupported-kind");
+    NodeAssert.match(unsupported.message, /video preview is not available/);
+    const noThread = selectMediaLease({ path: "a.png", hasThread: false });
+    NodeAssert.equal(noThread.status, "denied");
+    NodeAssert.equal(noThread.reason, "context-missing");
+  });
+
+  NodeTest.it("capability gate: absent workspace-file kind is a named state", () => {
+    NodeAssert.equal(mediaLeaseKindGate(["workspace-file", "project-favicon"]), null);
+    const gated = mediaLeaseKindGate(["project-favicon"]);
+    NodeAssert.equal(gated?.status, "unsupported-kind");
+    NodeAssert.match(gated?.message ?? "", /cannot mint workspace-file leases/);
+  });
+
+  NodeTest.it("minted result lands ready with url and expiry", () => {
+    NodeAssert.deepEqual(mediaLeaseMinted(minted), {
+      status: "ready",
+      url: minted.url,
+      expiresAt: minted.expiresAt,
+    });
+  });
+
+  NodeTest.it("every named mint denial maps to denied with its reason", () => {
+    const cases = [
+      ["ResourceLeaseGrantDeniedError: grant 't3.workspace/resources' is required", "grant-denied"],
+      ["ResourceLeaseKindDeniedError: kind 'attachment'", "kind-denied"],
+      ["AssetPreviewTypeValidationError: not previewable", "not-previewable"],
+      ["AssetWorkspacePathValidationError: outside root", "outside-workspace"],
+      ["AssetWorkspaceAssetNotFoundError: missing", "context-missing"],
+      ["AssetWorkspaceContextNotFoundError: gone", "context-missing"],
+      ["AssetWorkspaceContextResolutionError: db", "context-missing"],
+      ["AssetWorkspaceRootNormalizationError: bad root", "context-missing"],
+    ];
+    for (const [detail, reason] of cases) {
+      const state = mediaLeaseErrorState(new Error(detail));
+      NodeAssert.equal(state.status, "denied", detail);
+      NodeAssert.equal(state.reason, reason, detail);
+      NodeAssert.ok(state.message.length > 0);
+    }
+  });
+
+  NodeTest.it("unnamed and host-fault failures map to unavailable, not denied", () => {
+    for (const detail of [
+      "ResourceLeaseGrantCheckError: could not evaluate grant",
+      "Resource lease authority is unavailable.",
+      "socket hangup",
+    ]) {
+      const state = mediaLeaseErrorState(new Error(detail));
+      NodeAssert.equal(state.status, "unavailable", detail);
+    }
+    NodeAssert.equal(mediaLeaseErrorState("boom").status, "unavailable");
+    NodeAssert.equal(mediaLeaseErrorState(new Error("")).status, "unavailable");
+  });
+
+  NodeTest.it("renewal delay fires the skew before expiry and clamps at zero", () => {
+    NodeAssert.equal(
+      mediaLeaseRenewalDelay(4_000_000, 1_000_000),
+      4_000_000 - MEDIA_LEASE_RENEWAL_SKEW_MS - 1_000_000,
+    );
+    NodeAssert.equal(mediaLeaseRenewalDelay(4_000_000, 4_000_000 - MEDIA_LEASE_RENEWAL_SKEW_MS), 0);
+    NodeAssert.equal(mediaLeaseRenewalDelay(4_000_000, 5_000_000), 0);
+  });
+
+  NodeTest.it("renewal keeps the live URL rendering while re-minting", () => {
+    const ready = mediaLeaseMinted(minted);
+    NodeAssert.deepEqual(mediaLeaseRenewing(ready), {
+      status: "minting",
+      url: minted.url,
+      expiresAt: minted.expiresAt,
+    });
+    NodeAssert.equal(mediaLeaseRenewing({ status: "idle" }).status, "idle");
+  });
+
+  NodeTest.it("a failed renewal keeps the still-valid lease with the failure named", () => {
+    const renewing = mediaLeaseRenewing(mediaLeaseMinted(minted));
+    const next = mediaLeaseFailed(new Error("ResourceLeaseGrantDeniedError: revoked"), renewing);
+    NodeAssert.equal(next.status, "ready");
+    NodeAssert.equal(next.url, minted.url);
+    NodeAssert.match(next.renewalError ?? "", /t3\.workspace\/resources grant/);
+    // An initial mint has no lease to fall back to — the denial is the state.
+    const initial = mediaLeaseFailed(new Error("ResourceLeaseGrantDeniedError: missing"), {
+      status: "minting",
+    });
+    NodeAssert.equal(initial.status, "denied");
+    NodeAssert.equal(initial.reason, "grant-denied");
+  });
+
+  NodeTest.it("asset load failure: pre-expiry names the origin gap, post-expiry is expired", () => {
+    const ready = mediaLeaseMinted(minted);
+    const early = mediaLeaseAssetFailed(ready, minted.expiresAt - 1);
+    NodeAssert.equal(early.status, "unavailable");
+    NodeAssert.match(early.message, /environment's own origin/);
+    NodeAssert.deepEqual(mediaLeaseAssetFailed(ready, minted.expiresAt), {
+      status: "expired",
+      url: minted.url,
+    });
+    NodeAssert.equal(mediaLeaseAssetFailed({ status: "idle" }, minted.expiresAt).status, "idle");
+  });
+
+  NodeTest.it("only a live lease exposes a renderable URL", () => {
+    NodeAssert.equal(mediaLeaseUrl(mediaLeaseMinted(minted)), minted.url);
+    NodeAssert.equal(
+      mediaLeaseUrl({ status: "minting", url: minted.url, expiresAt: minted.expiresAt }),
+      minted.url,
+    );
+    NodeAssert.equal(mediaLeaseUrl({ status: "minting" }), null);
+    NodeAssert.equal(mediaLeaseUrl({ status: "expired", url: minted.url }), null);
+    NodeAssert.equal(
+      mediaLeaseUrl({ status: "denied", reason: "grant-denied", message: "no" }),
+      null,
+    );
+  });
+
+  NodeTest.it("describes every state without relying on a broken element", () => {
+    NodeAssert.equal(describeMediaLease({ status: "idle" }), "");
+    NodeAssert.match(
+      describeMediaLease({ status: "unsupported-kind", message: "named gap" }),
+      /named gap/,
+    );
+    NodeAssert.match(describeMediaLease({ status: "minting" }), /minting a media lease/);
+    NodeAssert.match(
+      describeMediaLease({ status: "minting", url: minted.url, expiresAt: minted.expiresAt }),
+      /renewing the media lease/,
+    );
+    NodeAssert.match(describeMediaLease(mediaLeaseMinted(minted)), /Preview ready/);
+    NodeAssert.match(
+      describeMediaLease({ status: "expired", url: minted.url }),
+      /expired — renewing/,
+    );
+    NodeAssert.equal(
+      describeMediaLease({ status: "denied", reason: "grant-denied", message: "denied note" }),
+      "denied note",
+    );
+    NodeAssert.equal(
+      describeMediaLease({ status: "unavailable", message: "unavailable note" }),
+      "unavailable note",
+    );
   });
 });
 
