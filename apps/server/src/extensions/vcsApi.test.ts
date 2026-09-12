@@ -8,6 +8,7 @@ import {
   type VcsStatusStreamEvent as NativeVcsStatusStreamEvent,
 } from "@t3tools/contracts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as NodeCrypto from "node:crypto";
 import { it, expect, describe } from "@effect/vitest";
 import * as Data from "effect/Data";
 import * as Deferred from "effect/Deferred";
@@ -21,6 +22,7 @@ import * as Stream from "effect/Stream";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import type { HostApiProvider } from "@t3tools/extension-runtime";
+import type { ApiStreamEvent } from "@t3tools/extension-sdk/capabilities";
 import type { ViewContext } from "@t3tools/extension-sdk/contracts";
 import * as ServerConfig from "../config.ts";
 import { ReviewService, layer as reviewServiceLayer } from "../review/ReviewService.ts";
@@ -89,6 +91,7 @@ const meta = (
     environmentId: "env",
     scopes,
   },
+  assertAuthority: async () => {},
 });
 
 type Deps = Parameters<typeof createVcsApiProviders>[0];
@@ -969,6 +972,385 @@ it.layer(NodeServices.layer)("t3.vcs/diff adapter", (it) => {
           expect(created.worktree.path).toContain(worktreesDir);
           expect(created.worktree.refName).toBe("base");
           expect(yield* fs.exists(created.worktree.path)).toBe(true);
+        }),
+      );
+    }),
+  );
+
+  const collectStream = (
+    provider: HostApiProvider,
+    name: string,
+    input: unknown,
+    context: ViewContext,
+    scopes: readonly string[] = READ_AND_OPERATE,
+    resumeCursor?: string,
+  ) =>
+    Effect.tryPromise({
+      try: async () => {
+        const iterable = provider.subscribe!(
+          name,
+          input as Parameters<NonNullable<HostApiProvider["subscribe"]>>[1],
+          context,
+          signal,
+          meta(provider, scopes),
+          resumeCursor,
+        );
+        const events: ApiStreamEvent[] = [];
+        for await (const event of iterable) events.push(event);
+        return events;
+      },
+      catch: (cause) => new InvokeRejection({ cause }),
+    });
+
+  const collectStreamError = (...args: Parameters<typeof collectStream>) =>
+    collectStream(...args).pipe(
+      Effect.flip,
+      Effect.map((rejection) => {
+        if (!isOperationError(rejection.cause)) {
+          throw new Error(`expected ExtensionOperationError, got ${String(rejection.cause)}`);
+        }
+        return rejection.cause;
+      }),
+    );
+
+  it.effect(
+    "streamPreview delivers a driver-truncated diff in bounded frames with a verifiable terminal hash",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const workspace = yield* fs.makeTempDirectoryScoped({ prefix: "t3-vcs-ws-" });
+        const root = yield* fs.makeTempDirectoryScoped({
+          prefix: "t3-vcs-repo-",
+          directory: workspace,
+        });
+        yield* withVcsServices(workspace, ({ git, registry, provisioning, review, worktreesDir }) =>
+          Effect.gen(function* () {
+            yield* initRepo(git, root);
+            // ~160 KB committed then fully rewritten: the joined tracked patch
+            // crosses the driver's 120 KB cap, so the delivered body is a real
+            // truncated slice larger than the 64 KiB invoke envelope.
+            const before = Array.from(
+              { length: 4_000 },
+              (_, index) => `before-${index}-${"a".repeat(32)}`,
+            ).join("\n");
+            const after = Array.from(
+              { length: 4_000 },
+              (_, index) => `after-${index}-${"b".repeat(32)}`,
+            ).join("\n");
+            yield* fs.writeFileString(path.join(root, "a.txt"), before);
+            yield* git.execute({ operation: "test", cwd: root, args: ["add", "a.txt"] });
+            yield* git.execute({ operation: "test", cwd: root, args: ["commit", "-m", "seed"] });
+            yield* fs.writeFileString(path.join(root, "a.txt"), after);
+
+            const diff = createVcsDiffApiProvider({
+              ...makeDeps(root, { git, registry, provisioning, review, worktreesDir }),
+              review,
+            });
+            const context = makeContext(root);
+            const events = yield* collectStream(diff, "streamPreview", {}, context);
+
+            const manifest = events[0]!.value as {
+              kind: string;
+              generatedAt: string;
+              sources: readonly {
+                id: string;
+                kind: string;
+                truncated: boolean;
+                diffHash: string;
+                diffByteLength: number;
+                chunkCount: number;
+              }[];
+            };
+            expect(events[0]!.type).toBe("snapshot");
+            expect(manifest.kind).toBe("manifest");
+            const working = manifest.sources.find((source) => source.kind === "working-tree");
+            expect(working).toBeDefined();
+            expect(working!.truncated).toBe(true);
+            expect(working!.diffByteLength).toBeGreaterThan(64 * 1024);
+
+            const complete = events.at(-1)!.value as { kind: string; payloadSha256: string };
+            expect(complete.kind).toBe("complete");
+            const chunks = events.slice(1, -1);
+            for (const [index, event] of chunks.entries()) {
+              expect(event.type).toBe("data");
+              const value = event.value as {
+                kind: string;
+                sourceIndex: number;
+                chunkIndex: number;
+                data: string;
+              };
+              expect(value.kind).toBe("chunk");
+              expect(value.sourceIndex).toBe(0);
+              expect(value.chunkIndex).toBe(index);
+              expect(value.data.length).toBeLessThanOrEqual(8_192);
+              // Every emitted frame fits the broker's 64 KiB per-frame limit.
+              // @effect-diagnostics-next-line preferSchemaOverJson:off - measures the broker-serialized frame size.
+              expect(Buffer.byteLength(JSON.stringify(event))).toBeLessThanOrEqual(64 * 1024);
+            }
+            expect(chunks.length).toBe(working!.chunkCount);
+            expect(chunks.length).toBeGreaterThan(8);
+
+            const reassembled = chunks
+              .map((event) => (event.value as { data: string }).data)
+              .join("");
+            expect(Buffer.byteLength(reassembled, "utf8")).toBe(working!.diffByteLength);
+            const sha256 = (value: string) =>
+              NodeCrypto.createHash("sha256").update(value, "utf8").digest("hex");
+            expect(sha256(reassembled)).toBe(working!.diffHash);
+            expect(complete.payloadSha256).toBe(sha256(reassembled));
+          }),
+        );
+      }),
+  );
+
+  it.effect("streamPreview serves a small diff as one chunk matching the unary result", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const workspace = yield* fs.makeTempDirectoryScoped({ prefix: "t3-vcs-ws-" });
+      const root = yield* fs.makeTempDirectoryScoped({
+        prefix: "t3-vcs-repo-",
+        directory: workspace,
+      });
+      yield* withVcsServices(workspace, ({ git, registry, provisioning, review, worktreesDir }) =>
+        Effect.gen(function* () {
+          yield* initRepo(git, root);
+          yield* fs.writeFileString(path.join(root, "a.txt"), "before\n");
+          yield* git.execute({ operation: "test", cwd: root, args: ["add", "a.txt"] });
+          yield* git.execute({ operation: "test", cwd: root, args: ["commit", "-m", "seed"] });
+          yield* fs.writeFileString(path.join(root, "a.txt"), "after\n");
+
+          const diff = createVcsDiffApiProvider({
+            ...makeDeps(root, { git, registry, provisioning, review, worktreesDir }),
+            review,
+          });
+          const context = makeContext(root);
+          const events = yield* collectStream(diff, "streamPreview", {}, context);
+          expect(events).toHaveLength(3);
+          const manifest = events[0]!.value as {
+            sources: readonly { truncated: boolean; chunkCount: number; diffHash: string }[];
+          };
+          expect(manifest.sources[0]!.truncated).toBe(false);
+          expect(manifest.sources[0]!.chunkCount).toBe(1);
+          const reassembled = (events[1]!.value as { data: string }).data;
+
+          const unary = (yield* invoke(diff, "getPreview", {}, context)) as {
+            sources: readonly { diff: string; diffHash: string }[];
+          };
+          expect(reassembled).toBe(unary.sources[0]!.diff);
+          expect(manifest.sources[0]!.diffHash).toBe(unary.sources[0]!.diffHash);
+        }),
+      );
+    }),
+  );
+
+  it.effect("streamFileContents reassembles both sides with per-side integrity hashes", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const workspace = yield* fs.makeTempDirectoryScoped({ prefix: "t3-vcs-ws-" });
+      const root = yield* fs.makeTempDirectoryScoped({
+        prefix: "t3-vcs-repo-",
+        directory: workspace,
+      });
+      yield* withVcsServices(workspace, ({ git, registry, provisioning, review, worktreesDir }) =>
+        Effect.gen(function* () {
+          yield* initRepo(git, root);
+          // Both sides above the 64 KiB invoke envelope but under the 1 MiB bound.
+          const before = `${"old-line\n".repeat(8_000)}tail\n`;
+          const after = `${"new-line\n".repeat(8_000)}tail\n`;
+          yield* fs.writeFileString(path.join(root, "a.txt"), before);
+          yield* git.execute({ operation: "test", cwd: root, args: ["add", "a.txt"] });
+          yield* git.execute({ operation: "test", cwd: root, args: ["commit", "-m", "seed"] });
+          yield* fs.writeFileString(path.join(root, "a.txt"), after);
+
+          const diff = createVcsDiffApiProvider({
+            ...makeDeps(root, { git, registry, provisioning, review, worktreesDir }),
+            review,
+          });
+          const context = makeContext(root);
+          const events = yield* collectStream(
+            diff,
+            "streamFileContents",
+            {
+              sourceKind: "working-tree",
+              changeType: "change",
+              baseRef: null,
+              headRef: null,
+              oldPath: "a.txt",
+              newPath: "a.txt",
+            },
+            context,
+          );
+
+          const manifest = events[0]!.value as {
+            kind: string;
+            oldByteLength: number;
+            oldChunkCount: number;
+            newByteLength: number;
+            newChunkCount: number;
+          };
+          expect(manifest.kind).toBe("manifest");
+          expect(manifest.oldByteLength).toBeGreaterThan(64 * 1024);
+          expect(manifest.newByteLength).toBeGreaterThan(64 * 1024);
+          const complete = events.at(-1)!.value as {
+            kind: string;
+            oldSha256: string;
+            newSha256: string;
+          };
+          expect(complete.kind).toBe("complete");
+          const sha256 = (value: string) =>
+            NodeCrypto.createHash("sha256").update(value, "utf8").digest("hex");
+          const sides = { old: "", new: "" };
+          for (const event of events.slice(1, -1)) {
+            const value = event.value as { kind: string; side: "old" | "new"; data: string };
+            expect(value.kind).toBe("chunk");
+            expect(value.data.length).toBeLessThanOrEqual(8_192);
+            sides[value.side] += value.data;
+          }
+          expect(sides.old).toBe(before);
+          expect(sides.new).toBe(after);
+          expect(complete.oldSha256).toBe(sha256(before));
+          expect(complete.newSha256).toBe(sha256(after));
+        }),
+      );
+    }),
+  );
+
+  it.effect("streamFileContents never splits a surrogate pair across chunk boundaries", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const workspace = yield* fs.makeTempDirectoryScoped({ prefix: "t3-vcs-ws-" });
+      const root = yield* fs.makeTempDirectoryScoped({
+        prefix: "t3-vcs-repo-",
+        directory: workspace,
+      });
+      yield* withVcsServices(workspace, ({ git, registry, provisioning, review, worktreesDir }) =>
+        Effect.gen(function* () {
+          yield* initRepo(git, root);
+          // An astral pair straddles the first 8 192-unit boundary, so the
+          // first chunk must shrink to 8 191 units rather than split it.
+          const crafted = `${"a".repeat(8_191)}\u{1F980}${"z".repeat(100)}`;
+          yield* fs.writeFileString(path.join(root, "a.txt"), "x\n");
+          yield* git.execute({ operation: "test", cwd: root, args: ["add", "a.txt"] });
+          yield* git.execute({ operation: "test", cwd: root, args: ["commit", "-m", "seed"] });
+          yield* fs.writeFileString(path.join(root, "a.txt"), crafted);
+
+          const diff = createVcsDiffApiProvider({
+            ...makeDeps(root, { git, registry, provisioning, review, worktreesDir }),
+            review,
+          });
+          const context = makeContext(root);
+          const events = yield* collectStream(
+            diff,
+            "streamFileContents",
+            {
+              sourceKind: "working-tree",
+              changeType: "change",
+              baseRef: null,
+              headRef: null,
+              oldPath: "a.txt",
+              newPath: "a.txt",
+            },
+            context,
+          );
+          const manifest = events[0]!.value as { newChunkCount: number; newByteLength: number };
+          expect(manifest.newChunkCount).toBe(2);
+          expect(manifest.newByteLength).toBe(Buffer.byteLength(crafted, "utf8"));
+          const newChunks = events
+            .slice(1, -1)
+            .map((event) => event.value as { side: string; data: string })
+            .filter((chunk) => chunk.side === "new");
+          expect(newChunks).toHaveLength(2);
+          expect(newChunks[0]!.data).toBe("a".repeat(8_191));
+          expect(newChunks[1]!.data).toBe(`\u{1F980}${"z".repeat(100)}`);
+          expect(newChunks.map((chunk) => chunk.data).join("")).toBe(crafted);
+        }),
+      );
+    }),
+  );
+
+  it.effect(
+    "diff streams reject unknown names, resume cursors, bad input, and missing authority",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const workspace = yield* fs.makeTempDirectoryScoped({ prefix: "t3-vcs-ws-" });
+        const root = yield* fs.makeTempDirectoryScoped({
+          prefix: "t3-vcs-repo-",
+          directory: workspace,
+        });
+        yield* withVcsServices(workspace, ({ git, registry, provisioning, review, worktreesDir }) =>
+          Effect.gen(function* () {
+            yield* initRepo(git, root);
+            const diff = createVcsDiffApiProvider({
+              ...makeDeps(root, { git, registry, provisioning, review, worktreesDir }),
+              review,
+            });
+            const context = makeContext(root);
+
+            const unknown = yield* collectStreamError(diff, "nope", {}, context);
+            expect(unknown.detail).toContain("unavailable");
+            const resumed = yield* collectStreamError(
+              diff,
+              "streamPreview",
+              {},
+              context,
+              READ_AND_OPERATE,
+              "cursor-1",
+            );
+            expect(resumed.detail).toContain("resume");
+            const invalid = yield* collectStreamError(
+              diff,
+              "streamPreview",
+              { baseRef: "main", extra: true },
+              context,
+            );
+            expect(invalid.detail).toContain("Invalid");
+            const denied = yield* collectStreamError(diff, "streamPreview", {}, context, []);
+            expect(denied.detail).toContain("authority");
+          }),
+        );
+      }),
+  );
+
+  it.effect("streamPreview re-checks authority mid-stream and stops on revocation", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const workspace = yield* fs.makeTempDirectoryScoped({ prefix: "t3-vcs-ws-" });
+      const root = yield* fs.makeTempDirectoryScoped({
+        prefix: "t3-vcs-repo-",
+        directory: workspace,
+      });
+      yield* withVcsServices(workspace, ({ git, registry, provisioning, review, worktreesDir }) =>
+        Effect.gen(function* () {
+          yield* initRepo(git, root);
+          yield* fs.writeFileString(path.join(root, "a.txt"), `${"line\n".repeat(20_000)}`);
+          const diff = createVcsDiffApiProvider({
+            ...makeDeps(root, { git, registry, provisioning, review, worktreesDir }),
+            review,
+          });
+          const context = makeContext(root);
+          let allowed = true;
+          const failure = yield* Effect.tryPromise({
+            try: async () => {
+              const stream = diff.subscribe!("streamPreview", {}, context, signal, {
+                ...meta(diff),
+                assertAuthority: async () => {
+                  if (!allowed) throw new Error("revoked");
+                },
+              })[Symbol.asyncIterator]();
+              const manifest = await stream.next();
+              expect(manifest.done).toBe(false);
+              allowed = false;
+              await stream.next();
+            },
+            catch: () => new InvokeRejection({ cause: undefined }),
+          }).pipe(Effect.flip);
+          expect(failure).toBeInstanceOf(InvokeRejection);
         }),
       );
     }),

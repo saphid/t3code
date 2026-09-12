@@ -3,9 +3,13 @@ import { AuthOrchestrationReadScope, ExtensionOperationError } from "@t3tools/co
 import {
   VCS_DIFF_API,
   type VcsDiffFileContentsResult,
+  type VcsDiffFileContentsStreamEvent,
   type VcsDiffPreviewResult,
   type VcsDiffPreviewSource,
+  type VcsDiffPreviewStreamEvent,
+  type VcsDiffStreamSource,
 } from "@t3tools/extension-sdk/catalogue";
+import type { ApiStreamEvent } from "@t3tools/extension-sdk/capabilities";
 import type { ViewContext } from "@t3tools/extension-sdk/contracts";
 import type {
   HostApiInvocationMetadata,
@@ -25,10 +29,18 @@ import { makeExtensionScopeResolver } from "./scope.ts";
 /**
  * The public `diff` bound (512 000 chars) sits below the native joined cap
  * (≤120 KB tracked patch + ≤80 KB per untracked file); the adapter slices
- * and ORs `truncated` rather than fabricating a complete diff.
+ * and ORs `truncated` rather than fabricating a complete diff. Over invoke
+ * the tightest bound is neither of these — it is the broker's 64 KiB result
+ * envelope, so every `truncated:true` body (smallest is 81 920 bytes) fails
+ * at transport. The `streamPreview`/`streamFileContents` streams exist to
+ * deliver those payloads as ≤64 KiB frames; the slicing math below is shared
+ * verbatim so the bounds mean the same thing on both surfaces.
  */
 const MAX_DIFF_CHARS = 512_000;
 const MAX_FILE_CONTENTS_CHARS = 1_048_576;
+/** Contract chunk bound (UTF-16 units) — small enough that JSON escaping can never push a frame past 64 KiB. */
+const STREAM_CHUNK_UNITS = 8_192;
+const STREAM_FRAME_BUDGET = 64 * 1024;
 
 const pathSchema = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(512));
 /**
@@ -102,6 +114,50 @@ const toPublicSource = (source: {
     diffHash: NodeCrypto.createHash("sha256").update(diff).digest("hex"),
     truncated: source.truncated || source.diff.length > MAX_DIFF_CHARS,
   };
+};
+
+/**
+ * Fixed-unit chunks, split so a surrogate pair never straddles a boundary —
+ * the same rule terminal output uses, so a consumer that encodes each chunk
+ * to UTF-8 separately still reassembles the exact delivered bytes.
+ */
+const splitStreamChunks = (data: string): string[] => {
+  const chunks: string[] = [];
+  for (let start = 0; start < data.length;) {
+    let end = Math.min(start + STREAM_CHUNK_UNITS, data.length);
+    if (end < data.length) {
+      const previous = data.charCodeAt(end - 1);
+      const next = data.charCodeAt(end);
+      if (previous >= 0xd800 && previous <= 0xdbff && next >= 0xdc00 && next <= 0xdfff) {
+        end -= 1;
+      }
+    }
+    chunks.push(data.slice(start, end));
+    start = end;
+  }
+  return chunks;
+};
+
+/**
+ * Backstop check that an emitted event fits the broker's per-frame byte
+ * limit. Chunk frames are proven small by the 8 192-unit bound; manifest
+ * frames carry up to 8 sources with contract-bounded refs, so they are
+ * guarded here rather than proven — a violation fails the stream loudly.
+ */
+const assertStreamFrameFits = (value: object) => {
+  if (
+    Buffer.byteLength(
+      JSON.stringify({
+        streamId: "x".repeat(128),
+        sequence: Number.MAX_SAFE_INTEGER,
+        type: "snapshot",
+        value,
+      }),
+      "utf8",
+    ) > STREAM_FRAME_BUDGET
+  ) {
+    throw failure("VCS diff stream event exceeds encoded frame bounds.");
+  }
 };
 
 export function createVcsDiffApiProvider(
@@ -179,6 +235,142 @@ export function createVcsDiffApiProvider(
     requiresRootAuthority: true,
     invoke: (method, input, context, signal, metadata) =>
       Effect.runPromise(invoke(method, input, context, signal, metadata), { signal }),
+    subscribe: (name, input, context, signal, metadata, resumeCursor) => {
+      if (name !== "streamPreview" && name !== "streamFileContents")
+        throw failure("VCS diff stream is unavailable.");
+      if (resumeCursor !== undefined) throw failure("VCS diff stream resume is unsupported.");
+      // Authority first, like the unary path — an unauthorized caller must
+      // not learn whether its input parses.
+      if (!authorized(metadata.principal) || !metadata.assertAuthority)
+        throw failure("VCS authority is unavailable.");
+      const assertAuthority = metadata.assertAuthority;
+      const safe = (() => {
+        try {
+          return name === "streamPreview"
+            ? ({ kind: "preview", input: previewInput(input) } as const)
+            : ({ kind: "fileContents", input: fileContentsInput(input) } as const);
+        } catch {
+          throw failure("Invalid VCS diff stream request.");
+        }
+      })();
+      return (async function* (): AsyncGenerator<ApiStreamEvent> {
+        const run = <A, E>(effect: Effect.Effect<A, E>) => Effect.runPromise(effect, { signal });
+        signal.throwIfAborted();
+        const scope = await run(resolve(context));
+        // The unary discipline stretched over a finite transfer: re-resolve the
+        // scope and re-assert authority at each frame boundary so a revoked
+        // principal or moved workspace stops the stream mid-flight.
+        const guard = async () => {
+          signal.throwIfAborted();
+          await run(resolve(scope.context));
+          await assertAuthority();
+        };
+        if (safe.kind === "preview") {
+          const preview = await run(
+            dependencies.review
+              .getDiffPreview({
+                cwd: scope.cwd,
+                ...(safe.input.baseRef === undefined ? {} : { baseRef: safe.input.baseRef }),
+                ...(safe.input.ignoreWhitespace === undefined
+                  ? {}
+                  : { ignoreWhitespace: safe.input.ignoreWhitespace }),
+              })
+              .pipe(Effect.mapError(operationError)),
+          );
+          const sources = preview.sources.map(toPublicSource).map((source) => ({
+            source,
+            chunks: splitStreamChunks(source.diff),
+          }));
+          const manifest: VcsDiffPreviewStreamEvent = {
+            kind: "manifest",
+            generatedAt: DateTime.formatIso(preview.generatedAt),
+            sources: sources.map(({ source, chunks }): VcsDiffStreamSource => ({
+              id: source.id,
+              kind: source.kind,
+              title: source.title,
+              baseRef: source.baseRef,
+              headRef: source.headRef,
+              truncated: source.truncated,
+              diffHash: source.diffHash,
+              diffByteLength: Buffer.byteLength(source.diff, "utf8"),
+              chunkCount: chunks.length,
+            })),
+          };
+          assertStreamFrameFits(manifest);
+          yield { type: "snapshot", value: manifest };
+          const payloadHash = NodeCrypto.createHash("sha256");
+          for (const [sourceIndex, { chunks }] of sources.entries()) {
+            for (const [chunkIndex, data] of chunks.entries()) {
+              await guard();
+              payloadHash.update(data, "utf8");
+              const chunk: VcsDiffPreviewStreamEvent = {
+                kind: "chunk",
+                sourceIndex,
+                chunkIndex,
+                data,
+              };
+              assertStreamFrameFits(chunk);
+              yield { type: "data", value: chunk };
+            }
+          }
+          const complete: VcsDiffPreviewStreamEvent = {
+            kind: "complete",
+            payloadSha256: payloadHash.digest("hex"),
+          };
+          await guard();
+          yield { type: "data", value: complete };
+          return;
+        }
+        const contents = await run(
+          dependencies.review
+            .getDiffFileContents({ cwd: scope.cwd, ...safe.input })
+            .pipe(Effect.mapError(operationError)),
+        );
+        if (
+          contents.oldContents.length > MAX_FILE_CONTENTS_CHARS ||
+          contents.newContents.length > MAX_FILE_CONTENTS_CHARS
+        ) {
+          throw failure("VCS diff file contents exceed the public bounds.");
+        }
+        const sides = [
+          { side: "old" as const, contents: contents.oldContents },
+          { side: "new" as const, contents: contents.newContents },
+        ].map((entry) => ({ ...entry, chunks: splitStreamChunks(entry.contents) }));
+        const manifest: VcsDiffFileContentsStreamEvent = {
+          kind: "manifest",
+          oldByteLength: Buffer.byteLength(contents.oldContents, "utf8"),
+          oldChunkCount: sides[0]!.chunks.length,
+          newByteLength: Buffer.byteLength(contents.newContents, "utf8"),
+          newChunkCount: sides[1]!.chunks.length,
+        };
+        assertStreamFrameFits(manifest);
+        yield { type: "snapshot", value: manifest };
+        for (const { side, chunks } of sides) {
+          for (const [chunkIndex, data] of chunks.entries()) {
+            await guard();
+            const chunk: VcsDiffFileContentsStreamEvent = {
+              kind: "chunk",
+              side,
+              chunkIndex,
+              data,
+            };
+            assertStreamFrameFits(chunk);
+            yield { type: "data", value: chunk };
+          }
+        }
+        const complete: VcsDiffFileContentsStreamEvent = {
+          kind: "complete",
+          oldSha256: NodeCrypto.createHash("sha256")
+            .update(sides[0]!.contents, "utf8")
+            .digest("hex"),
+          newSha256: NodeCrypto.createHash("sha256")
+            .update(sides[1]!.contents, "utf8")
+            .digest("hex"),
+        };
+        await guard();
+        yield { type: "data", value: complete };
+      })();
+    },
   };
 }
 

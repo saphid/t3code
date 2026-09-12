@@ -6,6 +6,7 @@ import {
   VCS_CHANGES_API,
   VCS_DIFF,
   VCS_DIFF_API,
+  VCS_DIFF_API_V1,
   VCS_MUTATE,
   VCS_READ,
   VCS_REFS,
@@ -16,6 +17,7 @@ import {
   VCS_STATUS_API,
   vcsChangesApi,
   vcsDiffApi,
+  vcsDiffApiV1,
   vcsRefsApi,
   vcsRepositoryApi,
   vcsStatusApi,
@@ -38,17 +40,34 @@ const apis = {
 const methodsOf = (definition) =>
   Object.fromEntries((definition.methods ?? []).map((m) => [m.name, m]));
 
-NodeTest.test("t3.vcs/* contracts are frozen 1.0.0 catalogue entries, each registered once", () => {
-  for (const [id, definition] of Object.entries(defs)) {
-    NodeAssert.equal(definition.id, id);
-    NodeAssert.equal(definition.version, "1.0.0");
+NodeTest.test(
+  "t3.vcs/* contracts are catalogue entries, each registered per frozen version",
+  () => {
+    for (const [id, definition] of Object.entries(defs)) {
+      NodeAssert.equal(definition.id, id);
+      NodeAssert.equal(apis[id].definition, definition);
+    }
+    // t3.vcs/diff carries an additive 1.1.0 (streams) with the shipped 1.0.0
+    // frozen alongside; every other t3.vcs id is a single frozen 1.0.0 entry.
+    for (const id of [VCS_STATUS, VCS_REFS, VCS_CHANGES, VCS_REPOSITORY]) {
+      NodeAssert.equal(defs[id].version, "1.0.0");
+      NodeAssert.deepEqual(
+        GENERIC_API_CATALOGUE.filter((d) => d.id === id),
+        [defs[id]],
+      );
+    }
+    NodeAssert.equal(defs[VCS_DIFF].version, "1.1.0");
+    NodeAssert.equal(VCS_DIFF_API_V1.version, "1.0.0");
+    NodeAssert.equal(vcsDiffApiV1.definition, VCS_DIFF_API_V1);
     NodeAssert.deepEqual(
-      GENERIC_API_CATALOGUE.filter((d) => d.id === id),
-      [definition],
+      GENERIC_API_CATALOGUE.filter((d) => d.id === VCS_DIFF),
+      [VCS_DIFF_API, VCS_DIFF_API_V1],
     );
-    NodeAssert.equal(apis[id].definition, definition);
-  }
-});
+    // The frozen 1.0.0 keeps the shipped methods byte-identical.
+    NodeAssert.deepEqual(VCS_DIFF_API_V1.methods, defs[VCS_DIFF].methods);
+    NodeAssert.equal(VCS_DIFF_API_V1.streams, undefined);
+  },
+);
 
 NodeTest.test("reads ride t3.vcs/read and mutations ride the distinct t3.vcs/mutate grant", () => {
   const expectations = {
@@ -85,6 +104,59 @@ NodeTest.test("the status stream is read-granted and carries snapshot/update/clo
   const kinds = streams.subscribe.eventSchema.oneOf.map((variant) => variant.properties.kind.const);
   NodeAssert.deepEqual(kinds, ["snapshot", "localUpdated", "remoteUpdated", "closed"]);
 });
+
+NodeTest.test(
+  "the diff streams are read-granted, chunked under the frame envelope, and hash-terminated",
+  () => {
+    const streams = Object.fromEntries((VCS_DIFF_API.streams ?? []).map((s) => [s.name, s]));
+    NodeAssert.deepEqual(Object.keys(streams).sort(), ["streamFileContents", "streamPreview"]);
+    for (const stream of Object.values(streams)) {
+      NodeAssert.deepEqual(stream.requiredGrants, [VCS_READ], stream.name);
+      NodeAssert.equal(stream.inputSchema.additionalProperties, false, stream.name);
+    }
+    // Stream inputs are byte-identical to the unary method inputs.
+    const methods = methodsOf(VCS_DIFF_API);
+    NodeAssert.deepEqual(streams.streamPreview.inputSchema, methods.getPreview.inputSchema);
+    NodeAssert.deepEqual(
+      streams.streamFileContents.inputSchema,
+      methods.getFileContents.inputSchema,
+    );
+
+    const previewKinds = streams.streamPreview.eventSchema.oneOf.map(
+      (variant) => variant.properties.kind.const,
+    );
+    NodeAssert.deepEqual(previewKinds, ["manifest", "chunk", "complete"]);
+    const manifest = streams.streamPreview.eventSchema.oneOf[0];
+    NodeAssert.equal(manifest.properties.sources.maxItems, 8);
+    NodeAssert.equal(manifest.properties.sources.items.properties.chunkCount.maximum, 64);
+    NodeAssert.equal(
+      manifest.properties.sources.items.properties.diffHash.pattern,
+      "^[0-9a-f]{64}$",
+    );
+    const previewChunk = streams.streamPreview.eventSchema.oneOf[1];
+    // 8192 UTF-16 units per chunk: worst-case JSON escaping (6 bytes/unit)
+    // stays under the broker's 64 KiB frame limit with room for frame metadata.
+    NodeAssert.equal(previewChunk.properties.data.maxLength, 8192);
+    NodeAssert.equal(previewChunk.properties.chunkIndex.maximum, 63);
+    NodeAssert.equal(previewChunk.properties.sourceIndex.maximum, 7);
+    const previewComplete = streams.streamPreview.eventSchema.oneOf[2];
+    NodeAssert.equal(previewComplete.properties.payloadSha256.pattern, "^[0-9a-f]{64}$");
+
+    const contentsKinds = streams.streamFileContents.eventSchema.oneOf.map(
+      (variant) => variant.properties.kind.const,
+    );
+    NodeAssert.deepEqual(contentsKinds, ["manifest", "chunk", "complete"]);
+    const contentsManifest = streams.streamFileContents.eventSchema.oneOf[0];
+    // Surrogate-straddling boundaries shrink chunks to 8 191 units, so the
+    // worst case at the 1 MiB bound is ceil(1 048 576 / 8 191) = 129.
+    NodeAssert.equal(contentsManifest.properties.oldChunkCount.maximum, 129);
+    NodeAssert.equal(contentsManifest.properties.newChunkCount.maximum, 129);
+    const contentsChunk = streams.streamFileContents.eventSchema.oneOf[1];
+    NodeAssert.equal(contentsChunk.properties.data.maxLength, 8192);
+    NodeAssert.deepEqual(contentsChunk.properties.side.enum, ["old", "new"]);
+    NodeAssert.equal(contentsChunk.properties.chunkIndex.maximum, 128);
+  },
+);
 
 NodeTest.test("changes.list exposes honest per-path staging state", () => {
   const entry = methodsOf(defs[VCS_CHANGES]).list.outputSchema.properties.entries.items;

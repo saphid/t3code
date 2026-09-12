@@ -1072,6 +1072,62 @@ export type VcsDiffFileContentsResult = {
   readonly oldContents: string;
   readonly newContents: string;
 };
+/**
+ * Per-source descriptor announced in the `streamPreview` manifest frame —
+ * the unary `VcsDiffPreviewSource` fields minus the (chunked) `diff` body.
+ * `diffHash` is sha256 over the delivered body, same recompute as invoke;
+ * `chunkCount` chunk frames carry that body in `chunkIndex` order.
+ */
+export type VcsDiffStreamSource = {
+  readonly id: string;
+  readonly kind: "working-tree" | "branch-range";
+  readonly title: string;
+  readonly baseRef: string | null;
+  readonly headRef: string | null;
+  readonly truncated: boolean;
+  readonly diffHash: string;
+  readonly diffByteLength: number;
+  readonly chunkCount: number;
+};
+/**
+ * `streamPreview` frames: one `manifest` snapshot, then `chunk` data frames
+ * per source, then a `complete` data frame. `payloadSha256` is the sha256
+ * over the concatenated UTF-8 bytes of every delivered `diff` body in
+ * manifest order — consumers reassemble per source and verify end-to-end.
+ */
+export type VcsDiffPreviewStreamEvent =
+  | {
+      readonly kind: "manifest";
+      readonly generatedAt: string;
+      readonly sources: readonly VcsDiffStreamSource[];
+    }
+  | {
+      readonly kind: "chunk";
+      readonly sourceIndex: number;
+      readonly chunkIndex: number;
+      readonly data: string;
+    }
+  | { readonly kind: "complete"; readonly payloadSha256: string };
+/**
+ * `streamFileContents` frames: one `manifest` snapshot announcing per-side
+ * byte/chunk counts, then `chunk` data frames tagged by side, then a
+ * `complete` data frame with each side's sha256 over its delivered contents.
+ */
+export type VcsDiffFileContentsStreamEvent =
+  | {
+      readonly kind: "manifest";
+      readonly oldByteLength: number;
+      readonly oldChunkCount: number;
+      readonly newByteLength: number;
+      readonly newChunkCount: number;
+    }
+  | {
+      readonly kind: "chunk";
+      readonly side: "old" | "new";
+      readonly chunkIndex: number;
+      readonly data: string;
+    }
+  | { readonly kind: "complete"; readonly oldSha256: string; readonly newSha256: string };
 /** Per-operation support flags keyed by `api.method`. */
 export type VcsOperationsSupport = {
   readonly "status.get": boolean;
@@ -1571,6 +1627,168 @@ const vcsDiffPreviewSourceSchema = {
     truncated: { type: "boolean" },
   },
 } as const;
+const vcsDiffPreviewInputSchema = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    baseRef: vcsRevSpec,
+    ignoreWhitespace: { type: "boolean" },
+  },
+} as const;
+const vcsDiffFileContentsInputSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["sourceKind", "changeType", "baseRef", "headRef", "oldPath", "newPath"],
+  properties: {
+    sourceKind: { enum: ["working-tree", "branch-range"] },
+    changeType: { enum: ["change", "rename-pure", "rename-changed", "new", "deleted"] },
+    baseRef: vcsRevSpecOrNull,
+    headRef: vcsRevSpecOrNull,
+    oldPath: vcsPath,
+    newPath: vcsPath,
+  },
+} as const;
+const vcsDiffGetPreviewMethod = {
+  name: "getPreview",
+  effect: "read",
+  requiredGrants: [VCS_READ],
+  inputSchema: vcsDiffPreviewInputSchema,
+  outputSchema: {
+    type: "object",
+    additionalProperties: false,
+    required: ["generatedAt", "sources"],
+    properties: {
+      generatedAt: { type: "string", maxLength: 64 },
+      sources: { type: "array", maxItems: 8, items: vcsDiffPreviewSourceSchema },
+    },
+  },
+} as const;
+const vcsDiffGetFileContentsMethod = {
+  name: "getFileContents",
+  effect: "read",
+  requiredGrants: [VCS_READ],
+  inputSchema: vcsDiffFileContentsInputSchema,
+  outputSchema: {
+    type: "object",
+    additionalProperties: false,
+    required: ["oldContents", "newContents"],
+    properties: {
+      oldContents: { type: "string", maxLength: 1048576 },
+      newContents: { type: "string", maxLength: 1048576 },
+    },
+  },
+} as const;
+const vcsDiffSha256 = {
+  type: "string",
+  minLength: 64,
+  maxLength: 64,
+  pattern: "^[0-9a-f]{64}$",
+} as const;
+/**
+ * Chunk bodies stay at 8 192 UTF-16 units so the encoded broker frame can
+ * never reach 64 KiB even under pathological JSON escaping (≤6 bytes per
+ * unit). The adapter additionally verifies each wrapped frame's byte size.
+ */
+const vcsDiffChunkData = { type: "string", maxLength: 8192 } as const;
+const vcsDiffStreamSourceSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: [
+    "id",
+    "kind",
+    "title",
+    "baseRef",
+    "headRef",
+    "truncated",
+    "diffHash",
+    "diffByteLength",
+    "chunkCount",
+  ],
+  properties: {
+    id: { type: "string", minLength: 1, maxLength: 64 },
+    kind: { enum: ["working-tree", "branch-range"] },
+    title: { type: "string", minLength: 1, maxLength: 256 },
+    baseRef: vcsRefNameOrNull,
+    headRef: vcsRefNameOrNull,
+    truncated: { type: "boolean" },
+    diffHash: vcsDiffSha256,
+    diffByteLength: { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER },
+    chunkCount: { type: "integer", minimum: 0, maximum: 64 },
+  },
+} as const;
+const vcsDiffPreviewStreamEventSchema = {
+  oneOf: [
+    {
+      type: "object",
+      additionalProperties: false,
+      required: ["kind", "generatedAt", "sources"],
+      properties: {
+        kind: { const: "manifest" },
+        generatedAt: { type: "string", maxLength: 64 },
+        sources: { type: "array", maxItems: 8, items: vcsDiffStreamSourceSchema },
+      },
+    },
+    {
+      type: "object",
+      additionalProperties: false,
+      required: ["kind", "sourceIndex", "chunkIndex", "data"],
+      properties: {
+        kind: { const: "chunk" },
+        sourceIndex: { type: "integer", minimum: 0, maximum: 7 },
+        chunkIndex: { type: "integer", minimum: 0, maximum: 63 },
+        data: vcsDiffChunkData,
+      },
+    },
+    {
+      type: "object",
+      additionalProperties: false,
+      required: ["kind", "payloadSha256"],
+      properties: {
+        kind: { const: "complete" },
+        payloadSha256: vcsDiffSha256,
+      },
+    },
+  ],
+} as const;
+const vcsDiffFileContentsStreamEventSchema = {
+  oneOf: [
+    {
+      type: "object",
+      additionalProperties: false,
+      required: ["kind", "oldByteLength", "oldChunkCount", "newByteLength", "newChunkCount"],
+      properties: {
+        kind: { const: "manifest" },
+        // A surrogate pair straddling a boundary shrinks a chunk to 8 191
+        // units, so the worst case is ceil(1 048 576 / 8 191) = 129 chunks.
+        oldByteLength: { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER },
+        oldChunkCount: { type: "integer", minimum: 0, maximum: 129 },
+        newByteLength: { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER },
+        newChunkCount: { type: "integer", minimum: 0, maximum: 129 },
+      },
+    },
+    {
+      type: "object",
+      additionalProperties: false,
+      required: ["kind", "side", "chunkIndex", "data"],
+      properties: {
+        kind: { const: "chunk" },
+        side: { enum: ["old", "new"] },
+        chunkIndex: { type: "integer", minimum: 0, maximum: 128 },
+        data: vcsDiffChunkData,
+      },
+    },
+    {
+      type: "object",
+      additionalProperties: false,
+      required: ["kind", "oldSha256", "newSha256"],
+      properties: {
+        kind: { const: "complete" },
+        oldSha256: vcsDiffSha256,
+        newSha256: vcsDiffSha256,
+      },
+    },
+  ],
+} as const;
 /**
  * Review-shaped diff reads (private review.getDiffPreview /
  * review.getDiffFileContents). Native gates these on `review:write` though
@@ -1579,64 +1797,63 @@ const vcsDiffPreviewSourceSchema = {
  * ORs `truncated` because native joins a ≤120 KB tracked patch with up to
  * 80 KB per untracked file. `getFileContents` is a git-only operation on
  * the host today — other drivers fail by name.
+ *
+ * Envelope interaction: invoke results cross the broker's 64 KiB payload
+ * envelope, so a `truncated:true` preview can never be delivered by
+ * `getPreview` — the smallest truncated body (one untracked file sliced at
+ * 80 KB = 81 920 bytes) already exceeds it, and so does any untruncated
+ * result past ~64 KiB, including most `getFileContents` payloads. The unary
+ * methods remain correct for small diffs; `streamPreview` and
+ * `streamFileContents` (1.1.0) deliver the same bounded payloads as ≤64 KiB
+ * frames: a `manifest` snapshot with per-source sha256/chunk counts, `chunk`
+ * data frames, then a `complete` frame carrying the sha256 over the full
+ * delivered payload. Stream availability follows the unary support flags
+ * (`diff.getPreview` / `diff.getFileContents` in getCapabilities). Streams
+ * are one-shot — no resume cursor; cancel by abandoning the iterator.
  */
-export const vcsDiffApi = defineApi<{
+export const vcsDiffApi: TypedApi<{
+  getPreview: { input: VcsDiffPreviewInput; output: VcsDiffPreviewResult };
+  getFileContents: { input: VcsDiffFileContentsInput; output: VcsDiffFileContentsResult };
+}> &
+  TypedStreamApi<{
+    streamPreview: { input: VcsDiffPreviewInput; event: VcsDiffPreviewStreamEvent };
+    streamFileContents: {
+      input: VcsDiffFileContentsInput;
+      event: VcsDiffFileContentsStreamEvent;
+    };
+  }> = defineStreamApi<{
+  streamPreview: { input: VcsDiffPreviewInput; event: VcsDiffPreviewStreamEvent };
+  streamFileContents: {
+    input: VcsDiffFileContentsInput;
+    event: VcsDiffFileContentsStreamEvent;
+  };
+}>({
+  id: VCS_DIFF,
+  version: "1.1.0",
+  methods: [vcsDiffGetPreviewMethod, vcsDiffGetFileContentsMethod],
+  streams: [
+    {
+      name: "streamPreview",
+      requiredGrants: [VCS_READ],
+      inputSchema: vcsDiffPreviewInputSchema,
+      eventSchema: vcsDiffPreviewStreamEventSchema,
+    },
+    {
+      name: "streamFileContents",
+      requiredGrants: [VCS_READ],
+      inputSchema: vcsDiffFileContentsInputSchema,
+      eventSchema: vcsDiffFileContentsStreamEventSchema,
+    },
+  ],
+});
+/** Frozen published 1.0.0 definition; shared definitions are immutable per version. */
+export const vcsDiffApiV1 = defineApi<{
   getPreview: { input: VcsDiffPreviewInput; output: VcsDiffPreviewResult };
   getFileContents: { input: VcsDiffFileContentsInput; output: VcsDiffFileContentsResult };
 }>({
   id: VCS_DIFF,
   version: "1.0.0",
-  methods: [
-    {
-      name: "getPreview",
-      effect: "read",
-      requiredGrants: [VCS_READ],
-      inputSchema: {
-        type: "object",
-        additionalProperties: false,
-        properties: {
-          baseRef: vcsRevSpec,
-          ignoreWhitespace: { type: "boolean" },
-        },
-      },
-      outputSchema: {
-        type: "object",
-        additionalProperties: false,
-        required: ["generatedAt", "sources"],
-        properties: {
-          generatedAt: { type: "string", maxLength: 64 },
-          sources: { type: "array", maxItems: 8, items: vcsDiffPreviewSourceSchema },
-        },
-      },
-    },
-    {
-      name: "getFileContents",
-      effect: "read",
-      requiredGrants: [VCS_READ],
-      inputSchema: {
-        type: "object",
-        additionalProperties: false,
-        required: ["sourceKind", "changeType", "baseRef", "headRef", "oldPath", "newPath"],
-        properties: {
-          sourceKind: { enum: ["working-tree", "branch-range"] },
-          changeType: { enum: ["change", "rename-pure", "rename-changed", "new", "deleted"] },
-          baseRef: vcsRevSpecOrNull,
-          headRef: vcsRevSpecOrNull,
-          oldPath: vcsPath,
-          newPath: vcsPath,
-        },
-      },
-      outputSchema: {
-        type: "object",
-        additionalProperties: false,
-        required: ["oldContents", "newContents"],
-        properties: {
-          oldContents: { type: "string", maxLength: 1048576 },
-          newContents: { type: "string", maxLength: 1048576 },
-        },
-      },
-    },
-  ],
+  methods: [vcsDiffGetPreviewMethod, vcsDiffGetFileContentsMethod],
 });
 
 const vcsOperationsSupportSchema = {
@@ -1819,6 +2036,7 @@ export const VCS_STATUS_API = vcsStatusApi.definition;
 export const VCS_REFS_API = vcsRefsApi.definition;
 export const VCS_CHANGES_API = vcsChangesApi.definition;
 export const VCS_DIFF_API = vcsDiffApi.definition;
+export const VCS_DIFF_API_V1 = vcsDiffApiV1.definition;
 export const VCS_REPOSITORY_API = vcsRepositoryApi.definition;
 
 /**
@@ -1843,6 +2061,7 @@ export const GENERIC_API_CATALOGUE: readonly ApiDefinition[] = [
   vcsChangesApi.definition,
   vcsDiffApi.definition,
   vcsRepositoryApi.definition,
+  vcsDiffApiV1.definition,
 ];
 function canonical(value: unknown): string {
   if (Array.isArray(value)) return "[" + value.map(canonical).join(",") + "]";
