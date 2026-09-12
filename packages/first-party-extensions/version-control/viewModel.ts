@@ -1,14 +1,16 @@
 /**
- * Pure view-model for the Version Control panel skeleton (P10-A). Owns the
- * read-side model the view renders over the public `t3.vcs/*` contracts:
- * staging-lane grouping from `t3.vcs/changes` porcelain flags, the status
- * stream reduction, branch/upstream/ahead-behind text, refs rows, and the
- * repository-capability gate.
+ * Pure view-model for the Version Control panel (P10-A reads, P10-B
+ * mutations). Owns the model the view renders over the public `t3.vcs/*`
+ * contracts: staging-lane grouping from `t3.vcs/changes` porcelain flags,
+ * the status stream reduction, branch/upstream/ahead-behind text, refs
+ * rows, the repository-capability gate, and the mutation controls —
+ * per-row/per-lane stage actions, the commit plan, ref create/switch
+ * gating, and the single-flight mutation state.
  *
- * Dispositions covered: vcs-diff-binding-disposition.md rows 1, 2, 3, 9,
- * 14, 17, 30. Mutations (stage/commit/branch/pull) are the B slice — the
- * lanes here are read-only by design. Types come from the SDK catalogue;
- * the private wire shapes and client-runtime atoms stay host-side.
+ * Dispositions covered: vcs-diff-binding-disposition.md rows 1, 2, 3, 4,
+ * 5, 7 (message-commit half), 9, 10, 11, 14, 17, 30, 32. Types come from
+ * the SDK catalogue; the private wire shapes and client-runtime atoms
+ * stay host-side.
  */
 import type {
   VcsCapabilitiesResult,
@@ -96,6 +98,196 @@ export function describeEntry(entry: VcsChangeEntry): string {
   if (entry.staged) return "staged";
   if (entry.unstaged) return "modified";
   return "changed";
+}
+
+/* ---------------- mutation controls (rows 4, 5, 7, 10, 11, 32) ---------------- */
+
+/**
+ * The mutation operations this slice invokes. `stage`/`unstage`/`commit`
+ * map to `t3.vcs/changes` methods, `ref-create`/`ref-switch` to
+ * `t3.vcs/refs` methods — all `effect:"write"` under `t3.vcs/mutate`.
+ */
+export type MutationOp = "stage" | "unstage" | "commit" | "ref-create" | "ref-switch";
+
+/** The contract's vcsPathsInput bound — stage/unstage chunk to it, commit cannot exceed it. */
+export const VCS_PATHS_MAX = 100;
+
+export interface LaneMutation {
+  readonly op: "stage" | "unstage";
+  readonly label: string;
+}
+
+/**
+ * The bulk action a lane header offers (native parity: the lanes exist so
+ * the index is real state). `conflicted` offers none — the contract has
+ * no conflict-resolution operation and staging a conflicted path would
+ * mark it resolved silently.
+ */
+export function laneMutation(lane: ChangeLane): LaneMutation | null {
+  switch (lane) {
+    case "staged":
+      return { op: "unstage", label: "Unstage all" };
+    case "changes":
+    case "untracked":
+      return { op: "stage", label: "Stage all" };
+    case "conflicted":
+      return null;
+  }
+}
+
+/** The per-row action inside a lane; conflicted rows offer none. */
+export function entryMutation(lane: ChangeLane): LaneMutation | null {
+  const bulk = laneMutation(lane);
+  if (bulk === null) return null;
+  return { ...bulk, label: bulk.op === "stage" ? "Stage" : "Unstage" };
+}
+
+export interface CommitPlan {
+  /** Why the commit control is disabled; null when it may run. */
+  readonly disabled: string | null;
+  /** Button label, e.g. "Commit staged (2)" or "Commit all changes". */
+  readonly label: string;
+  /**
+   * `paths` to hand `changes.commit` — the staged lane when one exists
+   * (native's selected-subset semantics), undefined for commit-all
+   * (`add -A`, native's all-selected default).
+   */
+  readonly paths: readonly string[] | undefined;
+}
+
+/**
+ * Commit planning. The conflicted lane hard-blocks: the contract's
+ * prepare step is `reset` + `add -A`, which mid-merge clears unmerged
+ * index entries and stages conflict markers — native cannot see
+ * conflicted state to block it, this panel can and does. A staged set
+ * over the 100-path input bound also blocks: a commit cannot be chunked
+ * like stage/unstage, so the button would be a fake affordance — the
+ * honest out is unstaging down or unstaging all to commit-all.
+ */
+export function planCommit(lanes: LaneGroups, message: string): CommitPlan {
+  if (lanes.conflicted.length > 0) {
+    return {
+      disabled: "Resolve merge conflicts before committing",
+      label: "Commit",
+      paths: undefined,
+    };
+  }
+  const staged = lanes.staged.map((entry) => entry.path);
+  if (staged.length > VCS_PATHS_MAX) {
+    return {
+      disabled: `Over ${VCS_PATHS_MAX} staged paths — unstage some, or unstage all to commit every change`,
+      label: `Commit staged (${staged.length})`,
+      paths: undefined,
+    };
+  }
+  if (laneCount(lanes) === 0) {
+    return { disabled: "No changes to commit", label: "Commit", paths: undefined };
+  }
+  if (message.trim().length === 0) {
+    const label = staged.length > 0 ? `Commit staged (${staged.length})` : "Commit all changes";
+    return { disabled: "Enter a commit message", label, paths: undefined };
+  }
+  if (staged.length > 0) {
+    return {
+      disabled: null,
+      label: `Commit staged (${staged.length})`,
+      paths: staged,
+    };
+  }
+  return { disabled: null, label: "Commit all changes", paths: undefined };
+}
+
+/** Single-flight mutation phase — one op at a time, like native's serialized VCS actions. */
+export type MutationPhase =
+  | { readonly kind: "idle" }
+  | { readonly kind: "running"; readonly op: MutationOp; readonly label: string }
+  | { readonly kind: "succeeded"; readonly op: MutationOp; readonly detail: string }
+  | { readonly kind: "failed"; readonly op: MutationOp; readonly detail: string };
+
+export const IDLE_MUTATION: MutationPhase = { kind: "idle" };
+
+/**
+ * Begin a mutation. Returns null when one is already running — the view
+ * disables all mutation controls on `running`, so a null here is also the
+ * guard against a raced second click.
+ */
+export function startMutation(
+  phase: MutationPhase,
+  op: MutationOp,
+  label: string,
+): MutationPhase | null {
+  if (phase.kind === "running") return null;
+  return { kind: "running", op, label };
+}
+
+/** Settle the running op: rejection detail (the named error) or a success line. */
+export function settleMutation(
+  op: MutationOp,
+  result: { readonly ok: boolean; readonly detail: string },
+): MutationPhase {
+  return result.ok
+    ? { kind: "succeeded", op, detail: result.detail }
+    : { kind: "failed", op, detail: result.detail };
+}
+
+/** One-line rendering of the mutation phase for the panel status line. */
+export function describeMutation(phase: MutationPhase): string | null {
+  switch (phase.kind) {
+    case "idle":
+      return null;
+    case "running":
+      return `${phase.label}…`;
+    case "succeeded":
+      return phase.detail;
+    case "failed":
+      return phase.detail;
+  }
+}
+
+/** Branch-create plan: trimmed non-empty, no duplicate local name. */
+export function planRefCreate(
+  input: string,
+  rows: readonly RefRow[],
+): { readonly refName: string | null; readonly disabled: string | null } {
+  const refName = input.trim();
+  if (refName.length === 0) return { refName: null, disabled: "Enter a branch name" };
+  if (rows.some((row) => row.remote === null && row.name === refName)) {
+    return { refName: null, disabled: `Branch ${refName} already exists` };
+  }
+  return { refName, disabled: null };
+}
+
+/**
+ * Whether a ref row may be switched to. Current rows render no control at
+ * all; a ref checked out in a worktree is disabled by name — native
+ * retargets the thread to that worktree, which the project-scope panel
+ * has no contract for, and git would refuse the checkout anyway. A remote
+ * row whose tracking target is the current branch is a no-op, so it gets
+ * the reason instead of a dead button.
+ */
+export function refSwitchState(
+  row: RefRow,
+  currentBranch: string | null,
+): {
+  readonly ok: boolean;
+  readonly reason: string | null;
+} {
+  if (row.current) return { ok: false, reason: null };
+  if (row.worktreePath !== null) return { ok: false, reason: "Checked out in a worktree" };
+  if (row.remote !== null && row.name === currentBranch) {
+    return { ok: false, reason: "Remote of the current branch" };
+  }
+  return { ok: true, reason: null };
+}
+
+/**
+ * The `refs.switch` wire name for a row: remote refs must go out
+ * remote-qualified (`origin/main`) — the driver resolves
+ * `refs/remotes/<refName>` for its tracking-checkout matrix, and a bare
+ * name would check out a same-named LOCAL branch instead.
+ */
+export function refSwitchTarget(row: RefRow): string {
+  return row.remote === null ? row.name : `${row.remote}/${row.name}`;
 }
 
 /* ---------------- selection ---------------- */

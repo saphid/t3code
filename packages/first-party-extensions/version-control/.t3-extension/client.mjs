@@ -1997,6 +1997,94 @@ var __t3Client = (() => {
     if (entry.unstaged) return "modified";
     return "changed";
   }
+  var VCS_PATHS_MAX = 100;
+  function laneMutation(lane) {
+    switch (lane) {
+      case "staged":
+        return { op: "unstage", label: "Unstage all" };
+      case "changes":
+      case "untracked":
+        return { op: "stage", label: "Stage all" };
+      case "conflicted":
+        return null;
+    }
+  }
+  function entryMutation(lane) {
+    const bulk = laneMutation(lane);
+    if (bulk === null) return null;
+    return { ...bulk, label: bulk.op === "stage" ? "Stage" : "Unstage" };
+  }
+  function planCommit(lanes, message) {
+    if (lanes.conflicted.length > 0) {
+      return {
+        disabled: "Resolve merge conflicts before committing",
+        label: "Commit",
+        paths: void 0
+      };
+    }
+    const staged = lanes.staged.map((entry) => entry.path);
+    if (staged.length > VCS_PATHS_MAX) {
+      return {
+        disabled: `Over ${VCS_PATHS_MAX} staged paths \u2014 unstage some, or unstage all to commit every change`,
+        label: `Commit staged (${staged.length})`,
+        paths: void 0
+      };
+    }
+    if (laneCount(lanes) === 0) {
+      return { disabled: "No changes to commit", label: "Commit", paths: void 0 };
+    }
+    if (message.trim().length === 0) {
+      const label = staged.length > 0 ? `Commit staged (${staged.length})` : "Commit all changes";
+      return { disabled: "Enter a commit message", label, paths: void 0 };
+    }
+    if (staged.length > 0) {
+      return {
+        disabled: null,
+        label: `Commit staged (${staged.length})`,
+        paths: staged
+      };
+    }
+    return { disabled: null, label: "Commit all changes", paths: void 0 };
+  }
+  var IDLE_MUTATION = { kind: "idle" };
+  function startMutation(phase, op, label) {
+    if (phase.kind === "running") return null;
+    return { kind: "running", op, label };
+  }
+  function settleMutation(op, result) {
+    return result.ok ? { kind: "succeeded", op, detail: result.detail } : { kind: "failed", op, detail: result.detail };
+  }
+  function describeMutation(phase) {
+    switch (phase.kind) {
+      case "idle":
+        return null;
+      case "running":
+        return `${phase.label}\u2026`;
+      case "succeeded":
+        return phase.detail;
+      case "failed":
+        return phase.detail;
+    }
+  }
+  function planRefCreate(input, rows) {
+    const refName = input.trim();
+    if (refName.length === 0) return { refName: null, disabled: "Enter a branch name" };
+    if (rows.some((row) => row.remote === null && row.name === refName)) {
+      return { refName: null, disabled: `Branch ${refName} already exists` };
+    }
+    return { refName, disabled: null };
+  }
+  function refSwitchState(row, currentBranch) {
+    if (row.current) return { ok: false, reason: null };
+    if (row.worktreePath !== null) return { ok: false, reason: "Checked out in a worktree" };
+    if (row.remote !== null && row.name === currentBranch) {
+      return { ok: false, reason: "Remote of the current branch" };
+    }
+    return { ok: true, reason: null };
+  }
+  function refSwitchTarget(row) {
+    return row.remote === null ? row.name : `${row.remote}/${row.name}`;
+  }
   function retainSelection(selection, lanes) {
     if (selection === null) return null;
     if (lanes[selection.lane].some((entry) => entry.path === selection.path)) return selection;
@@ -2207,7 +2295,7 @@ var __t3Client = (() => {
   function useChangesList(host, session, visible, isRepo, revision2) {
     const [result, setResult] = (0, import_react.useState)(null);
     (0, import_react.useEffect)(() => {
-      if (!visible || !isRepo || revision2 === 0) return;
+      if (!visible || !isRepo || revision2 === "") return;
       const controller = new AbortController();
       const signal = AbortSignal.any([controller.signal, session.signal]);
       void bindApi(vcsChangesApi, host, session.context).invoke("list", {}, signal).then(
@@ -2216,21 +2304,25 @@ var __t3Client = (() => {
         },
         (error) => {
           if (!signal.aborted)
-            setResult({
+            setResult((prev) => ({
               key: revision2,
-              changes: null,
+              // A failed re-read keeps the last-good lanes — a settled
+              // mutation re-reads every time, so blanking on each settle
+              // would flash the panel empty once per click.
+              changes: prev?.changes ?? null,
               error: error instanceof Error ? error.message : "Changes list unavailable"
-            });
+            }));
         }
       );
       return () => controller.abort();
     }, [host, session, visible, isRepo, revision2]);
-    return result?.key === revision2 ? result : { changes: null, error: null };
+    if (result === null) return { changes: null, error: null };
+    return { changes: result.changes, error: result.key === revision2 ? result.error : null };
   }
   function useRefsList(host, session, visible, isRepo, revision2) {
     const [result, setResult] = (0, import_react.useState)(null);
     (0, import_react.useEffect)(() => {
-      if (!visible || !isRepo || revision2 === 0) return;
+      if (!visible || !isRepo || revision2 === "") return;
       const controller = new AbortController();
       const signal = AbortSignal.any([controller.signal, session.signal]);
       void bindApi(vcsRefsApi, host, session.context).invoke("list", { refKind: "all" }, signal).then(
@@ -2239,16 +2331,17 @@ var __t3Client = (() => {
         },
         (error) => {
           if (!signal.aborted)
-            setResult({
+            setResult((prev) => ({
               key: revision2,
-              refs: null,
+              refs: prev?.refs ?? null,
               error: error instanceof Error ? error.message : "Refs list unavailable"
-            });
+            }));
         }
       );
       return () => controller.abort();
     }, [host, session, visible, isRepo, revision2]);
-    return result?.key === revision2 ? result : { refs: null, error: null };
+    if (result === null) return { refs: null, error: null };
+    return { refs: result.refs, error: result.key === revision2 ? result.error : null };
   }
   var control = {
     padding: "4px 8px",
@@ -2260,11 +2353,17 @@ var __t3Client = (() => {
     fontSize: 12,
     cursor: "pointer"
   };
+  var muted = "var(--muted-foreground, #667085)";
   function VersionControlView(props) {
     const { host, session } = props;
     const [visible, setVisible] = (0, import_react.useState)(session.visible);
     const [tick, setTick] = (0, import_react.useState)(0);
     const [refreshError, setRefreshError] = (0, import_react.useState)(null);
+    const [mutation, setMutation] = (0, import_react.useState)(IDLE_MUTATION);
+    const [mutationSerial, setMutationSerial] = (0, import_react.useState)(0);
+    const [commitMessage, setCommitMessage] = (0, import_react.useState)("");
+    const [newRefName, setNewRefName] = (0, import_react.useState)("");
+    const inFlight = (0, import_react.useRef)(false);
     (0, import_react.useEffect)(() => session.onVisibility(setVisible), [session]);
     const restored = session.restoreState && typeof session.restoreState === "object" && !Array.isArray(session.restoreState) ? session.restoreState : null;
     const [selection, setSelection] = (0, import_react.useState)(
@@ -2274,13 +2373,87 @@ var __t3Client = (() => {
     const repo = repositoryState(capabilities, capsError);
     const status = useStatusStream(host, session, visible && repo.kind === "ready", tick);
     const isRepo = status.local?.isRepo === true;
-    const changes = useChangesList(host, session, visible, isRepo, status.localRevision);
-    const refs = useRefsList(host, session, visible, isRepo, status.localRevision);
+    const listRevision = status.localRevision === 0 ? "" : `${status.localRevision}:${mutationSerial}`;
+    const changes = useChangesList(host, session, visible, isRepo, listRevision);
+    const refs = useRefsList(host, session, visible, isRepo, listRevision);
     const lanes = (0, import_react.useMemo)(() => lanesFromChanges(changes.changes?.entries ?? []), [changes.changes]);
     const selected = retainSelection(selection, lanes);
     const selectedEntry = selected === null ? null : lanes[selected.lane].find((e) => e.path === selected.path) ?? null;
     const selectedStat = selected === null ? null : numstatFor(status.local, selected.path);
     const rows = (0, import_react.useMemo)(() => refRows(refs.refs), [refs.refs]);
+    const ops = repo.kind === "ready" ? repo.capabilities.operations : null;
+    const canStage = ops?.["changes.stage"] === true;
+    const canUnstage = ops?.["changes.unstage"] === true;
+    const canCommit = ops?.["changes.commit"] === true;
+    const canCreateRef = ops?.["refs.create"] === true;
+    const canSwitchRef = ops?.["refs.switch"] === true;
+    const busy = mutation.kind === "running";
+    const commit = planCommit(lanes, commitMessage);
+    const create = planRefCreate(newRefName, rows);
+    const currentBranch = rows.find((row) => row.current && row.remote === null)?.name ?? null;
+    const runMutation = (op, label, invoke) => {
+      if (inFlight.current) return;
+      inFlight.current = true;
+      setMutation((phase) => startMutation(phase, op, label) ?? phase);
+      const controller = new AbortController();
+      const signal = AbortSignal.any([controller.signal, session.signal]);
+      invoke(signal).then(
+        (detail) => setMutation(settleMutation(op, { ok: true, detail })),
+        (error) => setMutation(
+          settleMutation(op, {
+            ok: false,
+            detail: `${label} failed: ${error instanceof Error ? error.message : "operation unavailable"}`
+          })
+        )
+      ).finally(() => {
+        inFlight.current = false;
+        controller.abort();
+        setMutationSerial((value) => value + 1);
+      });
+    };
+    const runPaths = (op, paths, label) => runMutation(op, label, async (signal) => {
+      const changesApi = bindApi(vcsChangesApi, host, session.context);
+      for (let index = 0; index < paths.length; index += VCS_PATHS_MAX) {
+        await changesApi.invoke(op, { paths: paths.slice(index, index + VCS_PATHS_MAX) }, signal);
+      }
+      const noun = `${paths.length} path${paths.length === 1 ? "" : "s"}`;
+      return op === "stage" ? `Staged ${noun}` : `Unstaged ${noun}`;
+    });
+    const runCommit = () => {
+      const plan = planCommit(lanes, commitMessage);
+      if (plan.disabled !== null) return;
+      const message = commitMessage.trim();
+      runMutation(
+        "commit",
+        "Committing",
+        (signal) => bindApi(vcsChangesApi, host, session.context).invoke(
+          "commit",
+          plan.paths === void 0 ? { message } : { message, paths: [...plan.paths] },
+          signal
+        ).then((result) => {
+          setCommitMessage("");
+          return `Committed ${result.commitSha.slice(0, 12)}${result.refName !== null ? ` on ${result.refName}` : ""}`;
+        })
+      );
+    };
+    const runCreateRef = () => {
+      const plan = planRefCreate(newRefName, rows);
+      if (plan.refName === null) return;
+      const refName = plan.refName;
+      runMutation(
+        "ref-create",
+        `Creating branch ${refName}`,
+        (signal) => bindApi(vcsRefsApi, host, session.context).invoke("create", { refName, switchRef: true }, signal).then((result) => {
+          setNewRefName("");
+          return `Created and switched to ${result.refName}`;
+        })
+      );
+    };
+    const runSwitchRef = (refName) => runMutation(
+      "ref-switch",
+      `Switching to ${refName}`,
+      (signal) => bindApi(vcsRefsApi, host, session.context).invoke("switch", { refName }, signal).then((result) => `Switched to ${result.refName ?? refName}`)
+    );
     const refresh = () => {
       const controller = new AbortController();
       const signal = AbortSignal.any([controller.signal, session.signal]);
@@ -2294,7 +2467,6 @@ var __t3Client = (() => {
       setSelection({ path: path3, lane });
       session.save({ selectedPath: path3, selectedLane: lane });
     };
-    const muted = "var(--muted-foreground, #667085)";
     return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
       "section",
       {
@@ -2335,7 +2507,7 @@ var __t3Client = (() => {
           repo.kind === "no-repository" && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("p", { role: "note", style: { padding: "6px 10px", color: muted, fontSize: 12, margin: 0 }, children: [
             "This workspace is not a repository",
             repo.detail ? ` \u2014 ${repo.detail}` : "",
-            ". Repository init and clone controls arrive with the mutation slice (t3.vcs/mutate)."
+            ". Repository init and clone controls remain a deferred slice."
           ] }),
           repo.kind === "unsupported" && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("p", { role: "note", style: { padding: "6px 10px", color: muted, fontSize: 12, margin: 0 }, children: [
             "Unsupported repository driver: ",
@@ -2344,6 +2516,20 @@ var __t3Client = (() => {
             repo.detail
           ] }),
           repo.kind === "ready" && isRepo && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { style: { flex: 1, minHeight: 0, overflow: "auto", padding: 6 }, children: [
+            describeMutation(mutation) !== null && /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+              "output",
+              {
+                "aria-label": "Mutation status",
+                role: mutation.kind === "failed" ? "alert" : "status",
+                style: {
+                  display: "block",
+                  padding: "4px 6px",
+                  color: mutation.kind === "failed" ? "var(--destructive, #b42318)" : muted,
+                  fontSize: 11
+                },
+                children: describeMutation(mutation)
+              }
+            ),
             changes.error !== null && /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
               "output",
               {
@@ -2353,8 +2539,12 @@ var __t3Client = (() => {
               }
             ),
             changes.changes !== null && laneCount(lanes) === 0 && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { style: { padding: "4px 6px", color: muted, fontSize: 12, margin: 0 }, children: "Working tree clean \u2014 nothing staged, modified, or untracked." }),
-            CHANGE_LANES.map(
-              (lane) => lanes[lane].length === 0 ? null : /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { "aria-label": laneTitle(lane), style: { marginBottom: 8 }, children: [
+            CHANGE_LANES.map((lane) => {
+              const bulk = laneMutation(lane);
+              const rowAction = entryMutation(lane);
+              const bulkAllowed = bulk !== null && (bulk.op === "stage" ? canStage : canUnstage);
+              const rowAllowed = rowAction !== null && (rowAction.op === "stage" ? canStage : canUnstage);
+              return lanes[lane].length === 0 ? null : /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { "aria-label": laneTitle(lane), style: { marginBottom: 8 }, children: [
                 /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
                   "h3",
                   {
@@ -2365,49 +2555,152 @@ var __t3Client = (() => {
                       fontWeight: 600,
                       color: muted,
                       textTransform: "uppercase",
-                      letterSpacing: 0.4
+                      letterSpacing: 0.4,
+                      display: "flex",
+                      justifyContent: "space-between",
+                      alignItems: "center",
+                      gap: 6
                     },
                     children: [
-                      laneTitle(lane),
-                      " (",
-                      lanes[lane].length,
-                      ")"
+                      /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { children: [
+                        laneTitle(lane),
+                        " (",
+                        lanes[lane].length,
+                        ")"
+                      ] }),
+                      bulkAllowed && /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                        "button",
+                        {
+                          type: "button",
+                          disabled: busy,
+                          onClick: () => runPaths(
+                            bulk.op,
+                            lanes[lane].map((entry) => entry.path),
+                            `${bulk.op === "stage" ? "Staging" : "Unstaging"} ${lanes[lane].length} paths`
+                          ),
+                          style: { ...control, padding: "1px 6px", fontSize: 11 },
+                          children: bulk.label
+                        }
+                      )
                     ]
                   }
                 ),
-                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("ul", { style: { listStyle: "none", margin: 0, padding: 0 }, children: lanes[lane].map((entry) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("li", { children: /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("ul", { style: { listStyle: "none", margin: 0, padding: 0 }, children: lanes[lane].map((entry) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("li", { style: { display: "flex", alignItems: "center", gap: 4 }, children: [
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+                    "button",
+                    {
+                      type: "button",
+                      "aria-current": selected?.path === entry.path && selected.lane === lane ? "true" : void 0,
+                      onClick: () => select(entry.path, lane),
+                      style: {
+                        flex: 1,
+                        minWidth: 0,
+                        textAlign: "left",
+                        font: "inherit",
+                        fontSize: 12,
+                        padding: "4px 6px",
+                        border: "1px solid transparent",
+                        borderRadius: 5,
+                        cursor: "pointer",
+                        color: "var(--foreground, #20252d)",
+                        background: selected?.path === entry.path && selected.lane === lane ? "var(--accent, #e8eef7)" : "transparent",
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                        whiteSpace: "nowrap"
+                      },
+                      children: [
+                        entry.path,
+                        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { style: { color: muted }, children: [
+                          " \u2014 ",
+                          describeEntry(entry)
+                        ] })
+                      ]
+                    }
+                  ),
+                  rowAllowed && /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                    "button",
+                    {
+                      type: "button",
+                      disabled: busy,
+                      onClick: () => runPaths(
+                        rowAction.op,
+                        [entry.path],
+                        `${rowAction.op === "stage" ? "Staging" : "Unstaging"} ${entry.path}`
+                      ),
+                      style: { ...control, padding: "1px 6px", fontSize: 11, flexShrink: 0 },
+                      children: rowAction.label
+                    }
+                  )
+                ] }, entry.path)) })
+              ] }, lane);
+            }),
+            canCommit && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { "aria-label": "Commit", style: { marginTop: 4, marginBottom: 8 }, children: [
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                "h3",
+                {
+                  style: {
+                    margin: 0,
+                    padding: "2px 6px",
+                    fontSize: 11,
+                    fontWeight: 600,
+                    color: muted,
+                    textTransform: "uppercase",
+                    letterSpacing: 0.4
+                  },
+                  children: "Commit"
+                }
+              ),
+              status.local?.isDefaultRef === true && /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                "p",
+                {
+                  style: {
+                    margin: 0,
+                    padding: "2px 6px",
+                    fontSize: 11,
+                    color: "var(--warning, #b54708)"
+                  },
+                  children: "Warning: committing on the default branch"
+                }
+              ),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                "textarea",
+                {
+                  "aria-label": "Commit message",
+                  value: commitMessage,
+                  disabled: busy,
+                  onChange: (event) => setCommitMessage(event.target.value),
+                  placeholder: "Commit message",
+                  rows: 2,
+                  style: {
+                    display: "block",
+                    width: "100%",
+                    boxSizing: "border-box",
+                    margin: "4px 0",
+                    padding: "4px 6px",
+                    font: "inherit",
+                    fontSize: 12,
+                    border: "1px solid var(--border, #dfe3e8)",
+                    borderRadius: 5,
+                    background: "transparent",
+                    color: "inherit",
+                    resize: "vertical"
+                  }
+                }
+              ),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { style: { display: "flex", alignItems: "center", gap: 6 }, children: [
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
                   "button",
                   {
                     type: "button",
-                    "aria-current": selected?.path === entry.path && selected.lane === lane ? "true" : void 0,
-                    onClick: () => select(entry.path, lane),
-                    style: {
-                      display: "block",
-                      width: "100%",
-                      textAlign: "left",
-                      font: "inherit",
-                      fontSize: 12,
-                      padding: "4px 6px",
-                      border: "1px solid transparent",
-                      borderRadius: 5,
-                      cursor: "pointer",
-                      color: "var(--foreground, #20252d)",
-                      background: selected?.path === entry.path && selected.lane === lane ? "var(--accent, #e8eef7)" : "transparent",
-                      overflow: "hidden",
-                      textOverflow: "ellipsis",
-                      whiteSpace: "nowrap"
-                    },
-                    children: [
-                      entry.path,
-                      /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { style: { color: muted }, children: [
-                        " \u2014 ",
-                        describeEntry(entry)
-                      ] })
-                    ]
+                    disabled: busy || commit.disabled !== null,
+                    onClick: runCommit,
+                    style: control,
+                    children: commit.label
                   }
-                ) }, entry.path)) })
-              ] }, lane)
-            ),
+                ),
+                commit.disabled !== null && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { style: { color: muted, fontSize: 11 }, children: commit.disabled })
+              ] })
+            ] }),
             /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { "aria-label": "Refs", style: { marginTop: 4 }, children: [
               /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
                 "h3",
@@ -2427,6 +2720,61 @@ var __t3Client = (() => {
                   ]
                 }
               ),
+              canCreateRef && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+                "div",
+                {
+                  style: {
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 4,
+                    padding: "2px 6px 4px"
+                  },
+                  children: [
+                    /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                      "input",
+                      {
+                        "aria-label": "New branch name",
+                        value: newRefName,
+                        disabled: busy,
+                        onChange: (event) => setNewRefName(event.target.value),
+                        onKeyDown: (event) => {
+                          if (event.key === "Enter") runCreateRef();
+                        },
+                        placeholder: "New branch name",
+                        style: {
+                          flex: 1,
+                          minWidth: 0,
+                          font: "inherit",
+                          fontSize: 12,
+                          padding: "3px 6px",
+                          border: "1px solid var(--border, #dfe3e8)",
+                          borderRadius: 5,
+                          background: "transparent",
+                          color: "inherit"
+                        }
+                      }
+                    ),
+                    /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                      "button",
+                      {
+                        type: "button",
+                        disabled: busy || create.refName === null,
+                        onClick: runCreateRef,
+                        style: { ...control, padding: "2px 6px", fontSize: 11, flexShrink: 0 },
+                        children: "Create & switch"
+                      }
+                    )
+                  ]
+                }
+              ),
+              canCreateRef && create.disabled !== null && newRefName.trim() !== "" && /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                "output",
+                {
+                  "aria-label": "Branch create status",
+                  style: { display: "block", padding: "0 6px 4px", color: muted, fontSize: 11 },
+                  children: create.disabled
+                }
+              ),
               refs.error !== null && /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
                 "output",
                 {
@@ -2435,20 +2783,54 @@ var __t3Client = (() => {
                   children: refs.error
                 }
               ),
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("ul", { style: { listStyle: "none", margin: 0, padding: 0 }, children: rows.map((row) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
-                "li",
-                {
-                  style: { padding: "3px 6px", fontSize: 12 },
-                  children: [
-                    row.remote !== null ? `${row.remote}/${row.name}` : row.name,
-                    describeRef(row) !== "" && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { style: { color: muted }, children: [
-                      " \u2014 ",
-                      describeRef(row)
-                    ] })
-                  ]
-                },
-                (row.remote ?? "") + row.name
-              )) })
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("ul", { style: { listStyle: "none", margin: 0, padding: 0 }, children: rows.map((row) => {
+                const switchState = refSwitchState(row, currentBranch);
+                return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+                  "li",
+                  {
+                    style: {
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 6,
+                      padding: "3px 6px",
+                      fontSize: 12
+                    },
+                    children: [
+                      /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+                        "span",
+                        {
+                          style: {
+                            flex: 1,
+                            minWidth: 0,
+                            overflow: "hidden",
+                            textOverflow: "ellipsis",
+                            whiteSpace: "nowrap"
+                          },
+                          children: [
+                            row.name,
+                            describeRef(row) !== "" && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { style: { color: muted }, children: [
+                              " \u2014 ",
+                              describeRef(row)
+                            ] })
+                          ]
+                        }
+                      ),
+                      canSwitchRef && !row.current && !switchState.ok && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { style: { color: muted, fontSize: 11, flexShrink: 0 }, children: switchState.reason }),
+                      canSwitchRef && switchState.ok && /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                        "button",
+                        {
+                          type: "button",
+                          disabled: busy,
+                          onClick: () => runSwitchRef(refSwitchTarget(row)),
+                          style: { ...control, padding: "1px 6px", fontSize: 11, flexShrink: 0 },
+                          children: "Switch"
+                        }
+                      )
+                    ]
+                  },
+                  `${row.remote ?? ""}:${row.name}`
+                );
+              }) })
             ] })
           ] }),
           selected !== null && selectedEntry !== null && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
@@ -2481,7 +2863,7 @@ var __t3Client = (() => {
                 borderTop: "1px solid var(--border, #dfe3e8)",
                 flexShrink: 0
               },
-              children: "Read-only skeleton on t3.vcs: status, staging lanes, and refs. Stage/commit/branch/pull, pull requests, and diff rendering are deferred slices."
+              children: "Version Control on t3.vcs: status, staging lanes, stage/unstage/commit, and branch create/switch (t3.vcs/mutate). Pull/init/worktrees, pull requests, and diff rendering are deferred slices."
             }
           )
         ]
@@ -2490,7 +2872,7 @@ var __t3Client = (() => {
   }
   var extension_default = defineExtension({
     id: manifestId,
-    version: "0.1.0",
+    version: "0.2.0",
     requires: [
       requireApi(vcsStatusApi),
       requireApi(vcsChangesApi),
