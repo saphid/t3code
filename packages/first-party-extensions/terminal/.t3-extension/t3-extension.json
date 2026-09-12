@@ -1,0 +1,43 @@
+{
+  "format": 2,
+  "manifest": {
+    "id": "t3.terminal",
+    "version": "0.1.0",
+    "apiVersion": 1,
+    "surfaces": [
+      {
+        "id": "t3.terminal/view",
+        "title": "Terminal",
+        "scope": "thread",
+        "placements": [
+          "side-panel",
+          "bottom-dock"
+        ],
+        "clients": [
+          "web",
+          "desktop"
+        ],
+        "capabilities": [],
+        "stateVersion": 1
+      }
+    ]
+  },
+  "clientEntry": "client.mjs",
+  "tools": [],
+  "provides": [],
+  "requires": [
+    {
+      "id": "t3.terminal/sessions",
+      "versionRange": "^1.0.0"
+    },
+    {
+      "id": "t3.terminal/output",
+      "versionRange": "^1.0.0"
+    },
+    {
+      "id": "t3.terminal/output-events",
+      "versionRange": "^1.0.0"
+    }
+  ],
+  "dependencies": []
+}
