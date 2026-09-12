@@ -403,10 +403,7 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
   const currentRead = read?.relativePath === selected && read.revision === revision ? read : null;
   const kindByPath = useMemo(() => new Map(entries.map((e) => [e.path, e.kind])), [entries]);
   const searching = query.trim() !== "";
-  const rows = useMemo(
-    () => visibleRows(entries, expanded, searching ? "" : ""),
-    [entries, expanded, searching],
-  );
+  const rows = useMemo(() => visibleRows(entries, expanded, ""), [entries, expanded]);
   useEffect(() => {
     const needle = query.trim();
     if (!needle || !visible) return;
