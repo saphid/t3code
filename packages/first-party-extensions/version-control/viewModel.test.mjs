@@ -4,18 +4,28 @@ import {
   CHANGE_LANES,
   CONNECTING_STATUS,
   EMPTY_LANES,
+  IDLE_MUTATION,
   applyStatusEvent,
   branchLabel,
   describeEntry,
+  describeMutation,
   describeRef,
   describeStatus,
+  entryMutation,
   laneCount,
+  laneMutation,
   laneTitle,
   lanesFromChanges,
   numstatFor,
+  planCommit,
+  planRefCreate,
   refRows,
+  refSwitchState,
+  refSwitchTarget,
   repositoryState,
   retainSelection,
+  settleMutation,
+  startMutation,
   syncLabel,
   workingTreeLabel,
 } from "./viewModel.ts";
@@ -311,6 +321,173 @@ NodeTest.describe("vcs view model — status text", () => {
     NodeAssert.deepEqual(numstatFor(withStats, "b.txt"), { insertions: 0, deletions: 9 });
     NodeAssert.equal(numstatFor(withStats, "missing.txt"), null);
     NodeAssert.equal(numstatFor(null, "a.txt"), null);
+  });
+});
+
+NodeTest.describe("vcs view model — mutation controls", () => {
+  NodeTest.it("maps lanes to bulk stage/unstage actions; conflicted offers none", () => {
+    NodeAssert.deepEqual(laneMutation("changes"), { op: "stage", label: "Stage all" });
+    NodeAssert.deepEqual(laneMutation("untracked"), { op: "stage", label: "Stage all" });
+    NodeAssert.deepEqual(laneMutation("staged"), { op: "unstage", label: "Unstage all" });
+    NodeAssert.equal(laneMutation("conflicted"), null);
+  });
+
+  NodeTest.it("maps rows to per-file stage/unstage; conflicted rows offer none", () => {
+    NodeAssert.equal(entryMutation("changes")?.label, "Stage");
+    NodeAssert.equal(entryMutation("untracked")?.label, "Stage");
+    NodeAssert.equal(entryMutation("staged")?.label, "Unstage");
+    NodeAssert.equal(entryMutation("conflicted"), null);
+    NodeAssert.equal(entryMutation("staged")?.op, "unstage");
+  });
+});
+
+NodeTest.describe("vcs view model — commit plan", () => {
+  const cleanLanes = EMPTY_LANES;
+  const stagedOnly = lanesFromChanges([change("a.txt", { staged: true })]);
+  const unstagedOnly = lanesFromChanges([
+    change("a.txt", { unstaged: true }),
+    change("b.txt", { untracked: true }),
+  ]);
+  const conflicted = lanesFromChanges([
+    change("a.txt", { staged: true }),
+    change("conflict.txt", { conflicted: true }),
+  ]);
+
+  NodeTest.it("commits the staged set when a staged lane exists", () => {
+    const plan = planCommit(stagedOnly, "ship it");
+    NodeAssert.equal(plan.disabled, null);
+    NodeAssert.equal(plan.label, "Commit staged (1)");
+    NodeAssert.deepEqual(plan.paths, ["a.txt"]);
+  });
+
+  NodeTest.it("commits all changes when nothing is staged (native default)", () => {
+    const plan = planCommit(unstagedOnly, "ship it");
+    NodeAssert.equal(plan.disabled, null);
+    NodeAssert.equal(plan.label, "Commit all changes");
+    NodeAssert.equal(plan.paths, undefined);
+  });
+
+  NodeTest.it("blocks without a message — the contract requires one", () => {
+    NodeAssert.equal(planCommit(stagedOnly, "").disabled, "Enter a commit message");
+    NodeAssert.equal(planCommit(unstagedOnly, "   ").disabled, "Enter a commit message");
+    NodeAssert.equal(planCommit(stagedOnly, "").label, "Commit staged (1)");
+  });
+
+  NodeTest.it("hard-blocks while the conflicted lane is non-empty", () => {
+    const plan = planCommit(conflicted, "resolve and commit");
+    NodeAssert.equal(plan.disabled, "Resolve merge conflicts before committing");
+    NodeAssert.equal(plan.paths, undefined);
+  });
+
+  NodeTest.it("blocks on a clean tree", () => {
+    NodeAssert.equal(planCommit(cleanLanes, "msg").disabled, "No changes to commit");
+  });
+
+  NodeTest.it("blocks a staged set over the 100-path input bound — a commit cannot chunk", () => {
+    const bigStaged = lanesFromChanges(
+      Array.from({ length: 101 }, (_, index) => change(`f${index}.txt`, { staged: true })),
+    );
+    const plan = planCommit(bigStaged, "msg");
+    NodeAssert.match(plan.disabled ?? "", /Over 100 staged paths/);
+    NodeAssert.equal(plan.paths, undefined);
+    NodeAssert.equal(plan.label, "Commit staged (101)");
+    // 100 staged paths is still committable.
+    const atBound = lanesFromChanges(
+      Array.from({ length: 100 }, (_, index) => change(`f${index}.txt`, { staged: true })),
+    );
+    NodeAssert.equal(planCommit(atBound, "msg").disabled, null);
+    NodeAssert.equal(planCommit(atBound, "msg").paths?.length, 100);
+  });
+});
+
+NodeTest.describe("vcs view model — mutation phase machine", () => {
+  NodeTest.it("idle -> running -> succeeded/failed; running refuses a second op", () => {
+    const running = startMutation(IDLE_MUTATION, "stage", "Staging 2 paths");
+    NodeAssert.deepEqual(running, { kind: "running", op: "stage", label: "Staging 2 paths" });
+    NodeAssert.equal(startMutation(running, "commit", "Committing"), null);
+    const ok = settleMutation("stage", { ok: true, detail: "Staged 2 paths" });
+    NodeAssert.deepEqual(ok, { kind: "succeeded", op: "stage", detail: "Staged 2 paths" });
+    const failed = settleMutation("stage", { ok: false, detail: "Staging failed: denied" });
+    NodeAssert.deepEqual(failed, {
+      kind: "failed",
+      op: "stage",
+      detail: "Staging failed: denied",
+    });
+    NodeAssert.notEqual(startMutation(ok, "unstage", "Unstaging"), null);
+    NodeAssert.notEqual(startMutation(failed, "unstage", "Unstaging"), null);
+  });
+
+  NodeTest.it("describes every phase for the status line", () => {
+    NodeAssert.equal(describeMutation(IDLE_MUTATION), null);
+    NodeAssert.equal(
+      describeMutation({ kind: "running", op: "commit", label: "Committing" }),
+      "Committing…",
+    );
+    NodeAssert.equal(
+      describeMutation({ kind: "succeeded", op: "commit", detail: "Committed abc on main" }),
+      "Committed abc on main",
+    );
+    NodeAssert.equal(
+      describeMutation({ kind: "failed", op: "stage", detail: "Stage failed: denied" }),
+      "Stage failed: denied",
+    );
+  });
+});
+
+NodeTest.describe("vcs view model — ref create/switch gating", () => {
+  // Remote rows carry the wire shape refRows produces: bare name + remote.
+  const rows = [
+    { name: "main", current: true, isDefault: true, remote: null, worktreePath: null },
+    { name: "topic", current: false, isDefault: false, remote: null, worktreePath: null },
+    { name: "wt", current: false, isDefault: false, remote: null, worktreePath: "/wt/wt" },
+    { name: "main", current: false, isDefault: false, remote: "origin", worktreePath: null },
+    { name: "feature", current: false, isDefault: false, remote: "origin", worktreePath: null },
+  ];
+  const currentBranch = rows.find((r) => r.current && r.remote === null)?.name ?? null;
+
+  NodeTest.it("trims input, rejects empty and duplicate local names", () => {
+    NodeAssert.deepEqual(planRefCreate("  feature/x  ", rows), {
+      refName: "feature/x",
+      disabled: null,
+    });
+    NodeAssert.equal(planRefCreate("   ", rows).refName, null);
+    NodeAssert.equal(planRefCreate("   ", rows).disabled, "Enter a branch name");
+    NodeAssert.equal(planRefCreate("main", rows).refName, null);
+    NodeAssert.match(planRefCreate("main", rows).disabled ?? "", /already exists/);
+    // A remote ref origin/main must not block creating local "main" —
+    // check against a remote-only row set:
+    NodeAssert.equal(
+      planRefCreate("main", [rows[3]]).refName,
+      "main",
+      "remote origin/main does not collide with local main",
+    );
+  });
+
+  NodeTest.it("gates switch by current/worktree/remote-of-current state", () => {
+    NodeAssert.deepEqual(refSwitchState(rows[0], currentBranch), {
+      ok: false,
+      reason: null,
+    }); // current: no control
+    NodeAssert.deepEqual(refSwitchState(rows[1], currentBranch), { ok: true, reason: null });
+    NodeAssert.deepEqual(refSwitchState(rows[2], currentBranch), {
+      ok: false,
+      reason: "Checked out in a worktree",
+    });
+    // origin/main while on main: the tracking checkout lands where we
+    // already are — a no-op gets the reason, not a button.
+    NodeAssert.deepEqual(refSwitchState(rows[3], currentBranch), {
+      ok: false,
+      reason: "Remote of the current branch",
+    });
+    NodeAssert.deepEqual(refSwitchState(rows[4], currentBranch), { ok: true, reason: null });
+  });
+
+  NodeTest.it("sends remote refs remote-qualified on the wire", () => {
+    // The driver resolves refs/remotes/<refName> — a bare name would
+    // check out a same-named LOCAL branch instead of tracking the remote.
+    NodeAssert.equal(refSwitchTarget(rows[1]), "topic");
+    NodeAssert.equal(refSwitchTarget(rows[3]), "origin/main");
+    NodeAssert.equal(refSwitchTarget(rows[4]), "origin/feature");
   });
 });
 
