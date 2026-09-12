@@ -547,6 +547,12 @@ it.layer(NodeServices.layer)("t3.vcs adapters", (it) => {
           expect(listed.isRepo).toBe(true);
           expect(listed.refs.some((ref) => ref.name === "main" && ref.current)).toBe(true);
 
+          // Contract allows `query: ""` (cleared search field) — must list unfiltered.
+          const emptyQuery = (yield* invoke(refs, "list", { query: "" }, context)) as {
+            refs: readonly { name: string }[];
+          };
+          expect(emptyQuery.refs.some((ref) => ref.name === "main")).toBe(true);
+
           yield* invoke(refs, "create", { refName: "feature-a", switchRef: true }, context);
           expect(yield* gitOutput(git, root, ["branch", "--show-current"])).toBe("feature-a");
           yield* invoke(refs, "switch", { refName: "main" }, context);

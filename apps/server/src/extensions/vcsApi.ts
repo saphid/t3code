@@ -82,7 +82,7 @@ const refNameSchema = Schema.String.check(
 );
 const refsListInput = Schema.decodeUnknownSync(
   Schema.Struct({
-    query: Schema.optional(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(256))),
+    query: Schema.optional(Schema.String.check(Schema.isMaxLength(256))),
     cursor: Schema.optional(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
     includeMatchingRemoteRefs: Schema.optional(Schema.Boolean),
     refKind: Schema.optional(Schema.Literals(["all", "local", "remote"])),
@@ -699,7 +699,8 @@ export function createVcsApiProviders(dependencies: VcsApiDependencies): HostApi
         decode: refsListInput,
         run: (safe, scope) =>
           dependencies.gitWorkflow
-            .listRefs({ cwd: scope.cwd, ...safe })
+            // Contract allows `query: ""` (cleared search field); normalize to absent.
+            .listRefs({ cwd: scope.cwd, ...safe, query: safe.query || undefined })
             .pipe(Effect.map(toPublicListRefs)),
       }),
       create: runMethod({
