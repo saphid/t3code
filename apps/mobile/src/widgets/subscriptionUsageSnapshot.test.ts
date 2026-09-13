@@ -108,6 +108,69 @@ describe("subscription widget snapshots", () => {
     expect(snapshot.rows[0]?.label).toBe("Hub · Codex 1");
     expect(JSON.stringify(snapshot)).not.toContain("example.com");
   });
+  it.each(["hub", "environment"] as const)(
+    "uses the freshest reading for the same account reported by another %s",
+    (origin) => {
+      const newerLimits = {
+        checkedAt: "2026-09-05T12:05:00.000Z",
+        windows: [{ ...window, usedPercent: 10 }],
+      };
+      const input = new Map([
+        [
+          EnvironmentId.make("native"),
+          {
+            entry: { target: { label: "Laptop" } },
+            serverConfig: {
+              providers: [
+                provider({ usageLimits: { ...limits, windows: [{ ...window, usedPercent: 90 }] } }),
+              ],
+              usageLimitSources: [],
+            },
+          },
+        ],
+        [
+          EnvironmentId.make("other"),
+          {
+            entry: { target: { label: "Desktop" } },
+            serverConfig: {
+              providers: origin === "environment" ? [provider({ usageLimits: newerLimits })] : [],
+              usageLimitSources:
+                origin === "hub"
+                  ? [
+                      {
+                        id: UsageLimitSourceId.make("hub"),
+                        kind: "cliproxy" as const,
+                        label: "Hub",
+                        checkedAt: newerLimits.checkedAt,
+                        accounts: [
+                          {
+                            id: "account",
+                            driver: ProviderDriverKind.make("codex"),
+                            email: " PRIVATE@example.com ",
+                            usageLimits: newerLimits,
+                          },
+                        ],
+                      },
+                    ]
+                  : [],
+            },
+          },
+        ],
+      ]);
+      for (const entries of [input, new Map([...input].toReversed())]) {
+        const snapshot = buildSubscriptionUsageSnapshot(entries, deepLink);
+        expect(snapshot.totalRows).toBe(1);
+        expect(snapshot.rows).toMatchObject([
+          { usedPercent: 10, checkedAt: Date.parse(newerLimits.checkedAt) },
+        ]);
+        expect(JSON.stringify(snapshot)).not.toContain("example.com");
+      }
+      input.delete(EnvironmentId.make("other"));
+      expect(buildSubscriptionUsageSnapshot(input, deepLink).rows).toMatchObject([
+        { usedPercent: 90 },
+      ]);
+    },
+  );
   it("keeps unavailable quotas distinct from zero usage and omits provider error messages", () => {
     const snapshot = buildSubscriptionUsageSnapshot(
       presentations([

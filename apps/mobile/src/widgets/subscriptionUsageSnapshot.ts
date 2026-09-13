@@ -1,5 +1,10 @@
-import type { ServerProvider, ServerProviderUsageLimits } from "@t3tools/contracts";
-import { collectLimitSources, collectLimitsGroups } from "@t3tools/shared/usageLimits";
+import type { ServerProviderUsageLimits } from "@t3tools/contracts";
+import {
+  collectLimitAccounts,
+  limitsNotice,
+  providersWithLimits,
+  type LimitPresentations,
+} from "@t3tools/shared/usageLimits";
 
 export interface SubscriptionUsageRow {
   readonly label: string;
@@ -17,20 +22,18 @@ export interface SubscriptionUsageSnapshot {
   readonly deepLink: string;
 }
 
-type Presentations = Parameters<typeof collectLimitsGroups>[0] &
-  Parameters<typeof collectLimitSources>[0];
 const MAX_AGE = 30 * 60_000;
 
 /** Only display data crosses into OS storage; credentials and emails stay in the app. */
 export function buildSubscriptionUsageSnapshot(
-  presentations: Presentations,
+  presentations: LimitPresentations,
   deepLink: string,
 ): SubscriptionUsageSnapshot {
   const rows: SubscriptionUsageRow[] = [];
-  const add = (label: string, limits: ServerProviderUsageLimits, sourceFailed = false) => {
+  const add = (label: string, limits: ServerProviderUsageLimits) => {
     const parsedCheckedAt = Date.parse(limits.checkedAt);
     const checkedAt = Number.isFinite(parsedCheckedAt) ? parsedCheckedAt : 0;
-    if (limits.unavailable || sourceFailed || limits.windows.length === 0) {
+    if (limits.unavailable || limits.windows.length === 0) {
       rows.push({
         label,
         window:
@@ -60,36 +63,51 @@ export function buildSubscriptionUsageSnapshot(
       });
     }
   };
-  const driverLabel = (driver: string) => ({ codex: "Codex", claudeAgent: "Claude" })[driver];
-  // Home screens have no reveal control, so email-bearing names fall back to the driver.
-  const providerLimitsLabel = (provider: ServerProvider) => {
-    const displayName = provider.displayName?.trim();
-    return (
-      (displayName && !displayName.includes("@") ? displayName : undefined) ||
-      driverLabel(provider.driver) ||
-      String(provider.driver)
+  const driverLabels: Readonly<Record<string, string>> = { codex: "Codex", claudeAgent: "Claude" };
+  // Home screens have no reveal control, so email-bearing names use a generic label.
+  const safeLabel = (value: string | null | undefined, fallback: string) =>
+    value?.trim() && !value.includes("@") ? value.trim() : fallback;
+  for (const [index, account] of collectLimitAccounts(presentations).entries()) {
+    const driver = driverLabels[account.driver] ?? String(account.driver);
+    const name = safeLabel(account.displayName, driver);
+    const origin = account.sourceLabel
+      ? safeLabel(account.sourceLabel, "Hub")
+      : presentations.size > 1
+        ? account.environments.map((entry) => safeLabel(entry.label, "Environment")).join(", ")
+        : "";
+    add(
+      origin ? `${origin} · ${name}${account.sourceLabel ? ` ${index + 1}` : ""}` : name,
+      account.limits,
     );
-  };
-  for (const group of collectLimitsGroups(presentations)) {
-    for (const provider of group.providers) {
-      if (!provider.usageLimits) continue;
-      const label = providerLimitsLabel(provider);
+  }
+  // Usable quotas come exclusively from the shared account selection. Keep
+  // unavailable readings visible without copying private probe errors to OS storage.
+  for (const presentation of presentations.values()) {
+    const label = (name: string) =>
+      presentations.size > 1
+        ? `${safeLabel(presentation.entry.target.label, "Environment")} · ${name}`
+        : name;
+    for (const provider of providersWithLimits(presentation.serverConfig?.providers ?? [])) {
+      if (!provider.usageLimits || limitsNotice(provider.usageLimits) === null) continue;
       add(
-        group.environmentLabel ? `${group.environmentLabel} · ${label}` : label,
+        label(
+          safeLabel(provider.displayName, driverLabels[provider.driver] ?? String(provider.driver)),
+        ),
         provider.usageLimits,
       );
     }
-  }
-  for (const source of collectLimitSources(presentations)) {
-    for (const [index, account] of source.accounts.entries()) {
-      add(
-        `${source.label} · ${driverLabel(account.driver) ?? account.driver} ${index + 1}`,
-        account.usageLimits,
-        Boolean(source.error),
-      );
-    }
-    if (source.error && source.accounts.length === 0) {
-      add(source.label, { checkedAt: source.checkedAt, windows: [] });
+    for (const source of presentation.serverConfig?.usageLimitSources ?? []) {
+      const name = label(safeLabel(source.label, "Hub"));
+      for (const [index, account] of source.accounts.entries()) {
+        if (limitsNotice(account.usageLimits) === null) continue;
+        add(
+          `${name} · ${driverLabels[account.driver] ?? account.driver} ${index + 1}`,
+          account.usageLimits,
+        );
+      }
+      if (source.error && source.accounts.length === 0) {
+        add(name, { checkedAt: source.checkedAt, windows: [] });
+      }
     }
   }
   // Most constrained windows stay visible in the smallest families. Stable
