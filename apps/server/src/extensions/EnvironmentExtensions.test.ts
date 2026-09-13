@@ -30,6 +30,7 @@ import { WorkspaceFileSystem } from "../workspace/WorkspaceFileSystem.ts";
 import { toSdkContext } from "./scope.ts";
 import { make } from "./EnvironmentExtensions.ts";
 import { TerminalManager } from "../terminal/Manager.ts";
+import { PreviewManager } from "../preview/Manager.ts";
 import { GitWorkflowService } from "../git/GitWorkflowService.ts";
 import { ReviewService } from "../review/ReviewService.ts";
 import * as ServerSettings from "../serverSettings.ts";
@@ -262,6 +263,7 @@ function fixture() {
     Layer.mock(ReviewService)({}),
     Layer.mock(ProjectFaviconResolver.ProjectFaviconResolver)({}),
     Layer.mock(ServerSecretStore.ServerSecretStore)({}),
+    Layer.mock(PreviewManager)({}),
     ServerSettings.layerTest(),
     ServerConfig.layerTest(process.cwd(), { prefix: "t3-extension-service-test-" }),
   ).pipe(Layer.provideMerge(NodeServices.layer));

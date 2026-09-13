@@ -6,7 +6,7 @@ import {
   ThreadId,
   extensionWorkspaceRevision,
 } from "@t3tools/contracts";
-import { WORKSPACE_RESOURCES } from "@t3tools/extension-sdk/catalogue";
+import { BROWSER_SESSIONS, WORKSPACE_RESOURCES } from "@t3tools/extension-sdk/catalogue";
 import type { ViewContext } from "@t3tools/extension-sdk/contracts";
 import type { HostApiProvider } from "@t3tools/extension-runtime";
 import { it, expect, describe } from "@effect/vitest";
@@ -91,7 +91,26 @@ const makeDeps = (overrides: Partial<Deps> = {}): Deps => ({
       ),
   },
   normalizeWorkspaceRoot: (root) => Effect.succeed(root),
+  preview: {
+    list: () =>
+      Effect.succeed({
+        sessions: [
+          {
+            threadId: "thread",
+            tabId: "tab-1",
+            navStatus: { _tag: "Idle" },
+            canGoBack: false,
+            canGoForward: false,
+            updatedAt: "2026-09-14T00:00:00.000Z",
+          },
+        ],
+        serverEpoch: "epoch-1",
+        revision: 0,
+      }),
+  },
   issueUrl: () => Effect.succeed({ relativeUrl: fakeUrl("workspace-file"), expiresAt: 999 }),
+  issueBrowserSurface: () =>
+    Effect.succeed({ relativeUrl: fakeUrl("browser-surface", "browser-surface"), expiresAt: 999 }),
   authorizeGrant: async () => true,
   ...overrides,
 });
@@ -468,7 +487,11 @@ describe("t3.resources/lease adapter", () => {
       const result = (yield* invoke(provider, "getCapabilities", {}, makeContext())) as {
         supportedKinds: string[];
       };
-      expect(result.supportedKinds).toEqual(["workspace-file", "project-favicon"]);
+      expect(result.supportedKinds).toEqual([
+        "workspace-file",
+        "project-favicon",
+        "browser-surface",
+      ]);
     }),
   );
 
@@ -478,6 +501,253 @@ describe("t3.resources/lease adapter", () => {
       const { principal: _dropped, ...anonymous } = meta(provider);
       const error = yield* invokeError(provider, "getCapabilities", {}, makeContext(), anonymous);
       expect(error.detail).toContain("authority is unavailable");
+    }),
+  );
+
+  const browserSurfaceInput = {
+    resource: {
+      _tag: "browser-surface",
+      threadId: "thread",
+      tabId: "tab-1",
+      serverEpoch: "epoch-1",
+      allowedCommands: ["attach", "present"],
+    },
+  };
+
+  it.effect("mints a browser-surface lease under the sessions grant, bound to the live epoch", () =>
+    Effect.gen(function* () {
+      let grant: string | undefined;
+      let issued:
+        | {
+            environmentId: string;
+            threadId: string;
+            tabId: string;
+            serverEpoch: string;
+            allowedCommands: readonly string[];
+          }
+        | undefined;
+      const provider = createResourcesLeaseApiProvider(
+        makeDeps({
+          authorizeGrant: async (_callerId, requested) => {
+            grant = requested;
+            return true;
+          },
+          issueBrowserSurface: (input) => {
+            issued = input;
+            return Effect.succeed({
+              relativeUrl: fakeUrl("browser-surface", "browser-surface"),
+              expiresAt: 7,
+            });
+          },
+        }),
+      );
+      const result = (yield* invoke(
+        provider,
+        "createPresentationUrl",
+        browserSurfaceInput,
+        makeContext(),
+      )) as { url: string; expiresAt: number; kind: string };
+      expect(result.kind).toBe("browser-surface");
+      expect(result.expiresAt).toBe(7);
+      expect(grant).toBe(BROWSER_SESSIONS);
+      expect(issued).toEqual({
+        environmentId: "env",
+        threadId: "thread",
+        tabId: "tab-1",
+        // The live manager epoch, never the caller-claimed value.
+        serverEpoch: "epoch-1",
+        allowedCommands: ["attach", "present"],
+      });
+    }),
+  );
+
+  it.effect("denies browser-surface without the sessions grant, before any mint", () =>
+    Effect.gen(function* () {
+      let minted = false;
+      const provider = createResourcesLeaseApiProvider(
+        makeDeps({
+          authorizeGrant: async () => false,
+          issueBrowserSurface: () => {
+            minted = true;
+            return Effect.die("must not mint");
+          },
+        }),
+      );
+      const error = yield* invokeError(
+        provider,
+        "createPresentationUrl",
+        browserSurfaceInput,
+        makeContext(),
+      );
+      expect(error.detail).toContain("ResourceLeaseGrantDeniedError");
+      expect(error.detail).toContain(BROWSER_SESSIONS);
+      expect(minted).toBe(false);
+    }),
+  );
+
+  it.effect("denies a stale epoch by name — a lease never re-binds", () =>
+    Effect.gen(function* () {
+      let minted = false;
+      const provider = createResourcesLeaseApiProvider(
+        makeDeps({
+          preview: {
+            list: () => Effect.succeed({ sessions: [], serverEpoch: "epoch-2", revision: 3 }),
+          },
+          issueBrowserSurface: () => {
+            minted = true;
+            return Effect.die("must not mint");
+          },
+        }),
+      );
+      const error = yield* invokeError(
+        provider,
+        "createPresentationUrl",
+        browserSurfaceInput,
+        makeContext(),
+      );
+      expect(error.detail).toContain("ResourceLeaseSessionBindingError");
+      expect(error.detail).toContain("epoch");
+      expect(minted).toBe(false);
+    }),
+  );
+
+  it.effect("denies a session that does not exist on the claimed thread", () =>
+    Effect.gen(function* () {
+      let minted = false;
+      const provider = createResourcesLeaseApiProvider(
+        makeDeps({
+          preview: {
+            list: () => Effect.succeed({ sessions: [], serverEpoch: "epoch-1", revision: 0 }),
+          },
+          issueBrowserSurface: () => {
+            minted = true;
+            return Effect.die("must not mint");
+          },
+        }),
+      );
+      const error = yield* invokeError(
+        provider,
+        "createPresentationUrl",
+        browserSurfaceInput,
+        makeContext(),
+      );
+      expect(error.detail).toContain("ResourceLeaseSessionBindingError");
+      expect(error.detail).toContain("tab-1");
+      expect(minted).toBe(false);
+    }),
+  );
+
+  it.effect("collapses missing and cross-project threads into one binding denial", () =>
+    Effect.gen(function* () {
+      const contextThread = {
+        projectId: ProjectId.make("project"),
+        worktreePath: null,
+        deletedAt: null,
+      };
+      const provider = createResourcesLeaseApiProvider(
+        makeDeps({
+          threads: {
+            getById: ({ threadId }) =>
+              Effect.succeed(
+                threadId === ThreadId.make("thread") ? Option.some(contextThread) : Option.none(),
+              ),
+          },
+          issueBrowserSurface: () => Effect.die("must not mint"),
+        }),
+      );
+      const missing = yield* invokeError(
+        provider,
+        "createPresentationUrl",
+        {
+          resource: { ...browserSurfaceInput.resource, threadId: "ghost" },
+        },
+        makeContext(),
+      );
+      expect(missing.detail).toContain("ResourceLeaseSessionBindingError");
+
+      const crossProject = createResourcesLeaseApiProvider(
+        makeDeps({
+          threads: {
+            getById: ({ threadId }) =>
+              Effect.succeed(
+                Option.some(
+                  threadId === ThreadId.make("thread")
+                    ? contextThread
+                    : {
+                        projectId: ProjectId.make("other-project"),
+                        worktreePath: null,
+                        deletedAt: null,
+                      },
+                ),
+              ),
+          },
+          issueBrowserSurface: () => Effect.die("must not mint"),
+        }),
+      );
+      const foreign = yield* invokeError(
+        crossProject,
+        "createPresentationUrl",
+        {
+          resource: { ...browserSurfaceInput.resource, threadId: "foreign" },
+        },
+        makeContext(),
+      );
+      // Same name and message — no thread-existence oracle across projects.
+      expect(foreign.detail).toBe(missing.detail);
+    }),
+  );
+
+  it.effect("rejects malformed command sets at the schema boundary", () =>
+    Effect.gen(function* () {
+      let minted = false;
+      const provider = createResourcesLeaseApiProvider(
+        makeDeps({
+          issueBrowserSurface: () => {
+            minted = true;
+            return Effect.die("must not mint");
+          },
+        }),
+      );
+      for (const allowedCommands of [[], ["navigate"], ["attach", "execute"]]) {
+        const error = yield* invokeError(
+          provider,
+          "createPresentationUrl",
+          { resource: { ...browserSurfaceInput.resource, allowedCommands } },
+          makeContext(),
+        );
+        expect(error.detail).toContain("Invalid resource lease request input.");
+      }
+      expect(minted).toBe(false);
+    }),
+  );
+
+  it.effect("re-checks authority after a browser-surface mint — revocation cancels", () =>
+    Effect.gen(function* () {
+      let minted = false;
+      const provider = createResourcesLeaseApiProvider(
+        makeDeps({
+          issueBrowserSurface: () => {
+            minted = true;
+            return Effect.succeed({
+              relativeUrl: fakeUrl("browser-surface", "browser-surface"),
+              expiresAt: 1,
+            });
+          },
+        }),
+      );
+      let issued = false;
+      const error = yield* invokeError(
+        provider,
+        "createPresentationUrl",
+        browserSurfaceInput,
+        makeContext(),
+        meta(provider, [], async () => {
+          issued = minted;
+          throw new Error("revoked");
+        }),
+      );
+      expect(error.detail).toContain("revoked");
+      expect(issued).toBe(true);
     }),
   );
 });
