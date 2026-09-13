@@ -1059,6 +1059,863 @@ var __t3Client = (() => {
       }
     ]
   });
+  var VCS_READ = "t3.vcs/read";
+  var VCS_MUTATE = "t3.vcs/mutate";
+  var VCS_STATUS = "t3.vcs/status";
+  var VCS_REFS = "t3.vcs/refs";
+  var VCS_CHANGES = "t3.vcs/changes";
+  var VCS_DIFF = "t3.vcs/diff";
+  var VCS_REPOSITORY = "t3.vcs/repository";
+  var vcsPath = { type: "string", minLength: 1, maxLength: 512 };
+  var vcsPathsInput = {
+    type: "array",
+    minItems: 1,
+    maxItems: 100,
+    items: vcsPath
+  };
+  var vcsRefNameInput = {
+    type: "string",
+    minLength: 1,
+    maxLength: 256,
+    allOf: [
+      { not: { pattern: "\\.\\." } },
+      { not: { pattern: "@\\{" } },
+      { not: { pattern: "[\\x00-\\x20~^:?*\\[\\\\]" } },
+      { not: { pattern: "(^|/)\\." } },
+      { not: { pattern: "//" } },
+      { not: { pattern: "^[/-]" } },
+      { not: { pattern: "[/.]$" } },
+      { not: { pattern: "\\.lock(/|$)" } },
+      { not: { pattern: "^@$" } }
+    ]
+  };
+  var vcsRefNameOutput = { type: "string", minLength: 1, maxLength: 4096 };
+  var vcsRefNameOrNull = { type: ["string", "null"], minLength: 1, maxLength: 4096 };
+  var vcsRevSpec = {
+    type: "string",
+    minLength: 1,
+    maxLength: 256,
+    allOf: [{ not: { pattern: "^-" } }, { not: { pattern: "[\\s\\x00-\\x1f]" } }]
+  };
+  var vcsRevSpecOrNull = { anyOf: [{ type: "null" }, vcsRevSpec] };
+  var vcsStatusFileSchema = {
+    type: "object",
+    additionalProperties: false,
+    required: ["path", "insertions", "deletions"],
+    properties: {
+      path: vcsPath,
+      insertions: { type: "integer", minimum: 0 },
+      deletions: { type: "integer", minimum: 0 }
+    }
+  };
+  var vcsStatusLocalSchema = {
+    type: "object",
+    additionalProperties: false,
+    required: [
+      "isRepo",
+      "hasPrimaryRemote",
+      "isDefaultRef",
+      "refName",
+      "hasWorkingTreeChanges",
+      "workingTree"
+    ],
+    properties: {
+      isRepo: { type: "boolean" },
+      sourceControlProvider: {
+        type: "object",
+        additionalProperties: false,
+        required: ["kind", "name", "baseUrl"],
+        properties: {
+          kind: { enum: ["github", "gitlab", "azure-devops", "bitbucket", "unknown"] },
+          name: { type: "string", minLength: 1, maxLength: 256 },
+          baseUrl: { type: "string", maxLength: 2048 }
+        }
+      },
+      hasPrimaryRemote: { type: "boolean" },
+      isDefaultRef: { type: "boolean" },
+      refName: vcsRefNameOrNull,
+      hasWorkingTreeChanges: { type: "boolean" },
+      workingTree: {
+        type: "object",
+        additionalProperties: false,
+        required: ["files", "insertions", "deletions", "truncated"],
+        properties: {
+          files: { type: "array", maxItems: 5e3, items: vcsStatusFileSchema },
+          insertions: { type: "integer", minimum: 0 },
+          deletions: { type: "integer", minimum: 0 },
+          truncated: { type: "boolean" }
+        }
+      }
+    }
+  };
+  var vcsChangeRequestSchema = {
+    type: ["object", "null"],
+    additionalProperties: false,
+    required: ["number", "title", "url", "baseRef", "headRef", "state"],
+    properties: {
+      number: { type: "integer", minimum: 1 },
+      title: { type: "string", minLength: 1, maxLength: 512 },
+      url: { type: "string", maxLength: 2048 },
+      baseRef: vcsRefNameOutput,
+      headRef: vcsRefNameOutput,
+      state: { enum: ["open", "closed", "merged"] },
+      isDraft: { type: "boolean" },
+      updatedAt: { type: ["string", "null"], maxLength: 64 }
+    }
+  };
+  var vcsStatusRemoteSchema = {
+    type: "object",
+    additionalProperties: false,
+    required: ["hasUpstream", "aheadCount", "behindCount", "pr"],
+    properties: {
+      hasUpstream: { type: "boolean" },
+      aheadCount: { type: "integer", minimum: 0 },
+      behindCount: { type: "integer", minimum: 0 },
+      aheadOfDefaultCount: { type: "integer", minimum: 0 },
+      pr: vcsChangeRequestSchema
+    }
+  };
+  var vcsStatusResultSchema = {
+    type: "object",
+    additionalProperties: false,
+    required: [
+      "isRepo",
+      "hasPrimaryRemote",
+      "isDefaultRef",
+      "refName",
+      "hasWorkingTreeChanges",
+      "workingTree",
+      "hasUpstream",
+      "aheadCount",
+      "behindCount",
+      "pr"
+    ],
+    properties: {
+      ...vcsStatusLocalSchema.properties,
+      ...vcsStatusRemoteSchema.properties
+    }
+  };
+  var vcsEmptyInputSchema = {
+    type: "object",
+    additionalProperties: false,
+    properties: {}
+  };
+  var vcsAckOutputSchema = {
+    type: "object",
+    additionalProperties: false,
+    properties: {}
+  };
+  var vcsStatusStreamEventSchema = {
+    oneOf: [
+      {
+        type: "object",
+        additionalProperties: false,
+        required: ["kind", "local", "remote"],
+        properties: {
+          kind: { const: "snapshot" },
+          local: vcsStatusLocalSchema,
+          remote: { anyOf: [vcsStatusRemoteSchema, { type: "null" }] }
+        }
+      },
+      {
+        type: "object",
+        additionalProperties: false,
+        required: ["kind", "local"],
+        properties: { kind: { const: "localUpdated" }, local: vcsStatusLocalSchema }
+      },
+      {
+        type: "object",
+        additionalProperties: false,
+        required: ["kind", "remote"],
+        properties: {
+          kind: { const: "remoteUpdated" },
+          remote: { anyOf: [vcsStatusRemoteSchema, { type: "null" }] }
+        }
+      },
+      {
+        type: "object",
+        additionalProperties: false,
+        required: ["kind", "reason"],
+        properties: {
+          kind: { const: "closed" },
+          reason: { enum: ["overflow", "status-error"] }
+        }
+      }
+    ]
+  };
+  var vcsStatusApi = defineStreamApi({
+    id: VCS_STATUS,
+    version: "1.0.0",
+    methods: [
+      {
+        name: "get",
+        effect: "read",
+        requiredGrants: [VCS_READ],
+        inputSchema: vcsEmptyInputSchema,
+        outputSchema: vcsStatusResultSchema
+      },
+      {
+        name: "refresh",
+        effect: "read",
+        requiredGrants: [VCS_READ],
+        inputSchema: vcsEmptyInputSchema,
+        outputSchema: vcsStatusResultSchema
+      }
+    ],
+    streams: [
+      {
+        name: "subscribe",
+        requiredGrants: [VCS_READ],
+        inputSchema: vcsEmptyInputSchema,
+        eventSchema: vcsStatusStreamEventSchema
+      }
+    ]
+  });
+  var vcsRefEntrySchema = {
+    type: "object",
+    additionalProperties: false,
+    required: ["name", "current", "isDefault", "worktreePath"],
+    properties: {
+      name: vcsRefNameOutput,
+      isRemote: { type: "boolean" },
+      remoteName: vcsRefNameOutput,
+      current: { type: "boolean" },
+      isDefault: { type: "boolean" },
+      worktreePath: { type: ["string", "null"], minLength: 1, maxLength: 32768 }
+    }
+  };
+  var vcsRefsApi = defineApi({
+    id: VCS_REFS,
+    version: "1.0.0",
+    methods: [
+      {
+        name: "list",
+        effect: "read",
+        requiredGrants: [VCS_READ],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            query: { type: "string", maxLength: 256 },
+            cursor: { type: "integer", minimum: 0 },
+            includeMatchingRemoteRefs: { type: "boolean" },
+            refKind: { enum: ["all", "local", "remote"] },
+            refresh: { type: "boolean" },
+            limit: { type: "integer", minimum: 1, maximum: 200 }
+          }
+        },
+        outputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["refs", "isRepo", "hasPrimaryRemote", "nextCursor", "totalCount"],
+          properties: {
+            refs: { type: "array", maxItems: 200, items: vcsRefEntrySchema },
+            isRepo: { type: "boolean" },
+            hasPrimaryRemote: { type: "boolean" },
+            nextCursor: { type: ["integer", "null"], minimum: 0 },
+            totalCount: { type: "integer", minimum: 0 }
+          }
+        }
+      },
+      {
+        name: "create",
+        effect: "write",
+        requiredGrants: [VCS_MUTATE],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["refName"],
+          properties: { refName: vcsRefNameInput, switchRef: { type: "boolean" } }
+        },
+        outputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["refName"],
+          properties: { refName: vcsRefNameOutput }
+        }
+      },
+      {
+        name: "switch",
+        effect: "write",
+        requiredGrants: [VCS_MUTATE],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["refName"],
+          properties: { refName: vcsRefNameInput }
+        },
+        outputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["refName"],
+          properties: { refName: vcsRefNameOrNull }
+        }
+      }
+    ]
+  });
+  var vcsChangeEntrySchema = {
+    type: "object",
+    additionalProperties: false,
+    required: ["path", "staged", "unstaged", "untracked", "conflicted"],
+    properties: {
+      path: vcsPath,
+      staged: { type: "boolean" },
+      unstaged: { type: "boolean" },
+      untracked: { type: "boolean" },
+      conflicted: { type: "boolean" }
+    }
+  };
+  var vcsChangesApi = defineApi({
+    id: VCS_CHANGES,
+    version: "1.0.0",
+    methods: [
+      {
+        name: "list",
+        effect: "read",
+        requiredGrants: [VCS_READ],
+        inputSchema: vcsEmptyInputSchema,
+        outputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["isRepo", "entries", "truncated"],
+          properties: {
+            isRepo: { type: "boolean" },
+            entries: { type: "array", maxItems: 5e3, items: vcsChangeEntrySchema },
+            truncated: { type: "boolean" }
+          }
+        }
+      },
+      {
+        name: "stage",
+        effect: "write",
+        requiredGrants: [VCS_MUTATE],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["paths"],
+          properties: { paths: vcsPathsInput }
+        },
+        outputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["paths"],
+          properties: { paths: vcsPathsInput }
+        }
+      },
+      {
+        name: "unstage",
+        effect: "write",
+        requiredGrants: [VCS_MUTATE],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["paths"],
+          properties: { paths: vcsPathsInput }
+        },
+        outputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["paths"],
+          properties: { paths: vcsPathsInput }
+        }
+      },
+      {
+        name: "commit",
+        effect: "write",
+        requiredGrants: [VCS_MUTATE],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["message"],
+          properties: {
+            message: { type: "string", minLength: 1, maxLength: 1e4 },
+            paths: vcsPathsInput
+          }
+        },
+        outputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["commitSha", "refName"],
+          properties: {
+            commitSha: { type: "string", minLength: 1, maxLength: 64 },
+            refName: vcsRefNameOrNull
+          }
+        }
+      }
+    ]
+  });
+  var vcsDiffPreviewSourceSchema = {
+    type: "object",
+    additionalProperties: false,
+    required: ["id", "kind", "title", "baseRef", "headRef", "diff", "diffHash", "truncated"],
+    properties: {
+      id: { type: "string", minLength: 1, maxLength: 64 },
+      kind: { enum: ["working-tree", "branch-range"] },
+      title: { type: "string", minLength: 1, maxLength: 256 },
+      baseRef: vcsRefNameOrNull,
+      headRef: vcsRefNameOrNull,
+      diff: { type: "string", maxLength: 512e3 },
+      diffHash: { type: "string", minLength: 1, maxLength: 128 },
+      truncated: { type: "boolean" }
+    }
+  };
+  var vcsDiffPreviewInputSchema = {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      baseRef: vcsRevSpec,
+      ignoreWhitespace: { type: "boolean" }
+    }
+  };
+  var vcsDiffFileContentsInputSchema = {
+    type: "object",
+    additionalProperties: false,
+    required: ["sourceKind", "changeType", "baseRef", "headRef", "oldPath", "newPath"],
+    properties: {
+      sourceKind: { enum: ["working-tree", "branch-range"] },
+      changeType: { enum: ["change", "rename-pure", "rename-changed", "new", "deleted"] },
+      baseRef: vcsRevSpecOrNull,
+      headRef: vcsRevSpecOrNull,
+      oldPath: vcsPath,
+      newPath: vcsPath
+    }
+  };
+  var vcsDiffGetPreviewMethod = {
+    name: "getPreview",
+    effect: "read",
+    requiredGrants: [VCS_READ],
+    inputSchema: vcsDiffPreviewInputSchema,
+    outputSchema: {
+      type: "object",
+      additionalProperties: false,
+      required: ["generatedAt", "sources"],
+      properties: {
+        generatedAt: { type: "string", maxLength: 64 },
+        sources: { type: "array", maxItems: 8, items: vcsDiffPreviewSourceSchema }
+      }
+    }
+  };
+  var vcsDiffGetFileContentsMethod = {
+    name: "getFileContents",
+    effect: "read",
+    requiredGrants: [VCS_READ],
+    inputSchema: vcsDiffFileContentsInputSchema,
+    outputSchema: {
+      type: "object",
+      additionalProperties: false,
+      required: ["oldContents", "newContents"],
+      properties: {
+        oldContents: { type: "string", maxLength: 1048576 },
+        newContents: { type: "string", maxLength: 1048576 }
+      }
+    }
+  };
+  var vcsDiffSha256 = {
+    type: "string",
+    minLength: 64,
+    maxLength: 64,
+    pattern: "^[0-9a-f]{64}$"
+  };
+  var vcsDiffChunkData = { type: "string", maxLength: 8192 };
+  var vcsDiffStreamSourceSchema = {
+    type: "object",
+    additionalProperties: false,
+    required: [
+      "id",
+      "kind",
+      "title",
+      "baseRef",
+      "headRef",
+      "truncated",
+      "diffHash",
+      "diffByteLength",
+      "chunkCount"
+    ],
+    properties: {
+      id: { type: "string", minLength: 1, maxLength: 64 },
+      kind: { enum: ["working-tree", "branch-range"] },
+      title: { type: "string", minLength: 1, maxLength: 256 },
+      baseRef: vcsRefNameOrNull,
+      headRef: vcsRefNameOrNull,
+      truncated: { type: "boolean" },
+      diffHash: vcsDiffSha256,
+      diffByteLength: { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER },
+      chunkCount: { type: "integer", minimum: 0, maximum: 64 }
+    }
+  };
+  var vcsDiffPreviewStreamEventSchema = {
+    oneOf: [
+      {
+        type: "object",
+        additionalProperties: false,
+        required: ["kind", "generatedAt", "sources"],
+        properties: {
+          kind: { const: "manifest" },
+          generatedAt: { type: "string", maxLength: 64 },
+          sources: { type: "array", maxItems: 8, items: vcsDiffStreamSourceSchema }
+        }
+      },
+      {
+        type: "object",
+        additionalProperties: false,
+        required: ["kind", "sourceIndex", "chunkIndex", "data"],
+        properties: {
+          kind: { const: "chunk" },
+          sourceIndex: { type: "integer", minimum: 0, maximum: 7 },
+          chunkIndex: { type: "integer", minimum: 0, maximum: 63 },
+          data: vcsDiffChunkData
+        }
+      },
+      {
+        type: "object",
+        additionalProperties: false,
+        required: ["kind", "payloadSha256"],
+        properties: {
+          kind: { const: "complete" },
+          payloadSha256: vcsDiffSha256
+        }
+      }
+    ]
+  };
+  var vcsDiffFileContentsStreamEventSchema = {
+    oneOf: [
+      {
+        type: "object",
+        additionalProperties: false,
+        required: ["kind", "oldByteLength", "oldChunkCount", "newByteLength", "newChunkCount"],
+        properties: {
+          kind: { const: "manifest" },
+          // A surrogate pair straddling a boundary shrinks a chunk to 8 191
+          // units, so the worst case is ceil(1 048 576 / 8 191) = 129 chunks.
+          oldByteLength: { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER },
+          oldChunkCount: { type: "integer", minimum: 0, maximum: 129 },
+          newByteLength: { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER },
+          newChunkCount: { type: "integer", minimum: 0, maximum: 129 }
+        }
+      },
+      {
+        type: "object",
+        additionalProperties: false,
+        required: ["kind", "side", "chunkIndex", "data"],
+        properties: {
+          kind: { const: "chunk" },
+          side: { enum: ["old", "new"] },
+          chunkIndex: { type: "integer", minimum: 0, maximum: 128 },
+          data: vcsDiffChunkData
+        }
+      },
+      {
+        type: "object",
+        additionalProperties: false,
+        required: ["kind", "oldSha256", "newSha256"],
+        properties: {
+          kind: { const: "complete" },
+          oldSha256: vcsDiffSha256,
+          newSha256: vcsDiffSha256
+        }
+      }
+    ]
+  };
+  var vcsDiffApi = defineStreamApi({
+    id: VCS_DIFF,
+    version: "1.1.0",
+    methods: [vcsDiffGetPreviewMethod, vcsDiffGetFileContentsMethod],
+    streams: [
+      {
+        name: "streamPreview",
+        requiredGrants: [VCS_READ],
+        inputSchema: vcsDiffPreviewInputSchema,
+        eventSchema: vcsDiffPreviewStreamEventSchema
+      },
+      {
+        name: "streamFileContents",
+        requiredGrants: [VCS_READ],
+        inputSchema: vcsDiffFileContentsInputSchema,
+        eventSchema: vcsDiffFileContentsStreamEventSchema
+      }
+    ]
+  });
+  var vcsDiffApiV1 = defineApi({
+    id: VCS_DIFF,
+    version: "1.0.0",
+    methods: [vcsDiffGetPreviewMethod, vcsDiffGetFileContentsMethod]
+  });
+  var vcsOperationsSupportSchema = {
+    type: "object",
+    additionalProperties: false,
+    required: [
+      "status.get",
+      "status.refresh",
+      "status.subscribe",
+      "refs.list",
+      "refs.create",
+      "refs.switch",
+      "changes.list",
+      "changes.stage",
+      "changes.unstage",
+      "changes.commit",
+      "diff.getPreview",
+      "diff.getFileContents",
+      "repository.pull",
+      "repository.init",
+      "repository.createWorktree",
+      "repository.removeWorktree"
+    ],
+    properties: {
+      "status.get": { type: "boolean" },
+      "status.refresh": { type: "boolean" },
+      "status.subscribe": { type: "boolean" },
+      "refs.list": { type: "boolean" },
+      "refs.create": { type: "boolean" },
+      "refs.switch": { type: "boolean" },
+      "changes.list": { type: "boolean" },
+      "changes.stage": { type: "boolean" },
+      "changes.unstage": { type: "boolean" },
+      "changes.commit": { type: "boolean" },
+      "diff.getPreview": { type: "boolean" },
+      "diff.getFileContents": { type: "boolean" },
+      "repository.pull": { type: "boolean" },
+      "repository.init": { type: "boolean" },
+      "repository.createWorktree": { type: "boolean" },
+      "repository.removeWorktree": { type: "boolean" }
+    }
+  };
+  var vcsDriverCapabilitiesSchema = {
+    type: ["object", "null"],
+    additionalProperties: false,
+    required: [
+      "kind",
+      "supportsWorktrees",
+      "supportsBookmarks",
+      "supportsAtomicSnapshot",
+      "supportsPushDefaultRemote",
+      "ignoreClassifier"
+    ],
+    properties: {
+      kind: { enum: ["git", "jj", "unknown"] },
+      supportsWorktrees: { type: "boolean" },
+      supportsBookmarks: { type: "boolean" },
+      supportsAtomicSnapshot: { type: "boolean" },
+      supportsPushDefaultRemote: { type: "boolean" },
+      ignoreClassifier: { enum: ["native", "git-compatible-fallback"] }
+    }
+  };
+  var vcsRepositoryApi = defineApi({
+    id: VCS_REPOSITORY,
+    version: "1.0.0",
+    methods: [
+      {
+        name: "getCapabilities",
+        effect: "read",
+        requiredGrants: [VCS_READ],
+        inputSchema: vcsEmptyInputSchema,
+        outputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["detected", "kind", "detail", "driver", "operations"],
+          properties: {
+            detected: { type: "boolean" },
+            kind: { type: ["string", "null"], enum: ["git", "jj", "unknown", null] },
+            detail: { type: ["string", "null"], maxLength: 512 },
+            driver: vcsDriverCapabilitiesSchema,
+            operations: vcsOperationsSupportSchema
+          }
+        }
+      },
+      {
+        name: "pull",
+        effect: "write",
+        requiredGrants: [VCS_MUTATE],
+        inputSchema: vcsEmptyInputSchema,
+        outputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["status", "refName", "upstreamRef"],
+          properties: {
+            status: { enum: ["pulled", "skipped_up_to_date"] },
+            refName: vcsRefNameOutput,
+            upstreamRef: vcsRefNameOrNull
+          }
+        }
+      },
+      {
+        name: "init",
+        effect: "write",
+        requiredGrants: [VCS_MUTATE],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          properties: { kind: { enum: ["git"] } }
+        },
+        outputSchema: vcsAckOutputSchema
+      },
+      {
+        name: "createWorktree",
+        effect: "write",
+        requiredGrants: [VCS_MUTATE],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["refName", "path"],
+          properties: {
+            refName: vcsRefNameInput,
+            newRefName: vcsRefNameInput,
+            baseRefName: vcsRefNameInput,
+            path: { type: ["string", "null"], minLength: 1, maxLength: 32768 }
+          }
+        },
+        outputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["worktree"],
+          properties: {
+            worktree: {
+              type: "object",
+              additionalProperties: false,
+              required: ["path", "refName"],
+              properties: {
+                path: { type: "string", minLength: 1, maxLength: 32768 },
+                refName: vcsRefNameOutput
+              }
+            }
+          }
+        }
+      },
+      {
+        name: "removeWorktree",
+        effect: "write",
+        requiredGrants: [VCS_MUTATE],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["path"],
+          properties: {
+            path: {
+              type: "string",
+              minLength: 1,
+              maxLength: 32768
+            },
+            force: { type: "boolean" }
+          }
+        },
+        outputSchema: vcsAckOutputSchema
+      }
+    ]
+  });
+  var VCS_STATUS_API = vcsStatusApi.definition;
+  var VCS_REFS_API = vcsRefsApi.definition;
+  var VCS_CHANGES_API = vcsChangesApi.definition;
+  var VCS_DIFF_API = vcsDiffApi.definition;
+  var VCS_DIFF_API_V1 = vcsDiffApiV1.definition;
+  var VCS_REPOSITORY_API = vcsRepositoryApi.definition;
+  var RESOURCES_LEASE = "t3.resources/lease";
+  var WORKSPACE_RESOURCES = "t3.workspace/resources";
+  var RESOURCE_LEASE_KIND_GRANTS = {
+    "workspace-file": WORKSPACE_RESOURCES,
+    "project-favicon": WORKSPACE_RESOURCES,
+    attachment: null
+  };
+  var RESOURCE_LEASE_SUPPORTED_KINDS = Object.keys(RESOURCE_LEASE_KIND_GRANTS).filter((kind) => RESOURCE_LEASE_KIND_GRANTS[kind] !== null);
+  var resourceLeaseRefSchema = {
+    oneOf: [
+      {
+        type: "object",
+        additionalProperties: false,
+        required: ["_tag", "threadId", "path"],
+        properties: {
+          _tag: { const: "workspace-file" },
+          threadId: { type: "string", minLength: 1, maxLength: 160 },
+          path: { type: "string", minLength: 1, maxLength: 1024 }
+        }
+      },
+      {
+        type: "object",
+        additionalProperties: false,
+        required: ["_tag", "attachmentId"],
+        properties: {
+          _tag: { const: "attachment" },
+          attachmentId: { type: "string", minLength: 1, maxLength: 256 },
+          fileName: { type: "string", minLength: 1, maxLength: 255 },
+          mimeType: { type: "string", minLength: 1, maxLength: 100 },
+          disposition: { enum: ["inline", "attachment"] }
+        }
+      },
+      {
+        type: "object",
+        additionalProperties: false,
+        required: ["_tag", "cwd"],
+        properties: {
+          _tag: { const: "project-favicon" },
+          cwd: { type: "string", minLength: 1, maxLength: 1024 },
+          path: {
+            type: ["string", "null"],
+            minLength: 1,
+            maxLength: 1024,
+            pattern: "\\.(?:avif|gif|ico|jpe?g|png|svg|webp)$"
+          }
+        }
+      }
+    ]
+  };
+  var resourcesLeaseApi = defineApi({
+    id: RESOURCES_LEASE,
+    version: "1.0.0",
+    methods: [
+      {
+        name: "createPresentationUrl",
+        effect: "read",
+        // Per-kind grants are enforced inside the host adapter — a method-level
+        // list can only express "every caller holds all of these".
+        requiredGrants: [],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["resource"],
+          properties: { resource: resourceLeaseRefSchema }
+        },
+        outputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["url", "expiresAt", "kind"],
+          properties: {
+            url: { type: "string", minLength: 1, maxLength: 4096 },
+            expiresAt: { type: "number" },
+            kind: {
+              enum: [
+                "workspace-file",
+                "workspace-file-exact",
+                "project-favicon",
+                "project-favicon-external"
+              ]
+            }
+          }
+        }
+      },
+      {
+        name: "getCapabilities",
+        effect: "read",
+        requiredGrants: [],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          properties: {}
+        },
+        outputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["supportedKinds"],
+          properties: {
+            supportedKinds: {
+              type: "array",
+              maxItems: 16,
+              items: { enum: ["workspace-file", "attachment", "project-favicon"] }
+            }
+          }
+        }
+      }
+    ]
+  });
+  var RESOURCES_LEASE_API = resourcesLeaseApi.definition;
   var GENERIC_API_CATALOGUE = [
     workspaceFilesApi.definition,
     workspaceTreeApi.definition,
@@ -1070,7 +1927,14 @@ var __t3Client = (() => {
     terminalOutputApi.definition,
     terminalOutputEventsApi.definition,
     terminalSessionsApiV1.definition,
-    terminalControlApi.definition
+    terminalControlApi.definition,
+    vcsStatusApi.definition,
+    vcsRefsApi.definition,
+    vcsChangesApi.definition,
+    vcsDiffApi.definition,
+    vcsRepositoryApi.definition,
+    vcsDiffApiV1.definition,
+    resourcesLeaseApi.definition
   ];
   function canonical(value) {
     if (Array.isArray(value))
@@ -1373,6 +2237,19 @@ var __t3Client = (() => {
 
   // viewModel.ts
   var TERMINAL_BUFFER_MAX_BYTES = 512 * 1024;
+  var OVERFLOW_RESUBSCRIBE_WINDOW_MS = 1e4;
+  var OVERFLOW_RESUBSCRIBE_MAX = 3;
+  var EMPTY_OVERFLOW_STREAK = { attempts: 0, lastAt: 0 };
+  var noteOutputFrameForStreak = (value, streak, now) => {
+    if (value.kind !== "closed") return streak;
+    if (value.reason === "identity-changed") return EMPTY_OVERFLOW_STREAK;
+    if (value.reason !== "overflow") return streak;
+    return {
+      attempts: streak.attempts > 0 && now - streak.lastAt < OVERFLOW_RESUBSCRIBE_WINDOW_MS ? streak.attempts + 1 : 1,
+      lastAt: now
+    };
+  };
+  var isResumableOutputClose = (reason, overflowAttempts) => reason === "identity-changed" || reason === "overflow" && overflowAttempts <= OVERFLOW_RESUBSCRIBE_MAX;
   var textEncoder = new TextEncoder();
   var utf8Bytes = (value) => textEncoder.encode(value).byteLength;
   function tailByBytes(value, maxBytes) {
@@ -1663,9 +2540,12 @@ var __t3Client = (() => {
     /**
      * A (re)subscription means the last snapshot may be stale — tabs stay
      * visible, but the stream is not authoritative until the next snapshot, so
-     * openTerminal's allocation gate must wait for it.
+     * openTerminal's allocation gate must wait for it. It also means the view
+     * is alive: React replays effect cleanup in dev, and a tombstone from that
+     * fake unmount would otherwise swallow every later sessions frame.
      */
     beginListStream() {
+      this.#disposed = false;
       if (this.#stream === "connecting") return;
       this.#stream = "connecting";
       this.#emit();
@@ -1963,6 +2843,8 @@ var __t3Client = (() => {
       const controller = new AbortController();
       const signal = AbortSignal.any([controller.signal, session.signal]);
       void (async () => {
+        let streak = EMPTY_OVERFLOW_STREAK;
+        let overflowClose = false;
         while (!signal.aborted) {
           pendingRef.current = null;
           const stateRef = { current: EMPTY_OUTPUT_BUFFER };
@@ -1976,8 +2858,10 @@ var __t3Client = (() => {
             for await (const frame of stream) {
               if (signal.aborted) return;
               const value = frame.value;
+              streak = noteOutputFrameForStreak(value, streak, Date.now());
               if (value.kind === "closed") {
-                resurrect = value.reason === "identity-changed";
+                overflowClose = value.reason === "overflow";
+                resurrect = isResumableOutputClose(value.reason, streak.attempts);
                 if (!resurrect && !stateRef.current.ended) {
                   const applied2 = applyOutputEvent(
                     stateRef.current,
@@ -2020,6 +2904,8 @@ var __t3Client = (() => {
           }
           if (!resurrect) return;
           if (!signal.aborted) setState({ terminalId, buffer: EMPTY_OUTPUT_BUFFER });
+          if (overflowClose && streak.attempts > 1 && !signal.aborted)
+            await new Promise((resolve) => setTimeout(resolve, 300 * streak.attempts));
         }
       })();
       return () => controller.abort();

@@ -2,13 +2,18 @@ import * as NodeAssert from "node:assert/strict";
 import * as NodeTest from "node:test";
 import {
   EMPTY_OUTPUT_BUFFER,
+  EMPTY_OVERFLOW_STREAK,
+  OVERFLOW_RESUBSCRIBE_MAX,
+  OVERFLOW_RESUBSCRIBE_WINDOW_MS,
   TERMINAL_BUFFER_MAX_BYTES,
   addTerminalId,
   applyOutputEvent,
   describeSession,
   fallbackTerminalLabel,
+  isResumableOutputClose,
   missingSessionRow,
   normalizeTerminalIds,
+  noteOutputFrameForStreak,
   removeTerminalId,
   resolveActiveTerminalId,
 } from "./viewModel.ts";
@@ -237,6 +242,67 @@ NodeTest.describe("terminal view model — output stream", () => {
       new TextEncoder().encode(buffer.contents).byteLength <= TERMINAL_BUFFER_MAX_BYTES,
     );
     NodeAssert.ok(buffer.contents.endsWith("😀tail"));
+  });
+});
+
+NodeTest.describe("terminal view model — output overflow resubscribe policy", () => {
+  const closedValue = (reason) => ({
+    kind: "closed",
+    terminalId: "term-1",
+    streamEpoch: "epoch-1",
+    reason,
+  });
+
+  NodeTest.it("bounds a sustained flood even though every cycle delivers a snapshot", () => {
+    // The provider preserves the snapshot ahead of every closed:overflow,
+    // so frames fed through the streak must not reset it — only the time
+    // window can. Simulate snapshot→overflow cycles close together in time.
+    let streak = EMPTY_OVERFLOW_STREAK;
+    const outcomes = [];
+    for (let cycle = 0; cycle < OVERFLOW_RESUBSCRIBE_MAX + 2; cycle += 1) {
+      const now = 1_000 + cycle * 500;
+      streak = noteOutputFrameForStreak(snapshotValue(), streak, now);
+      streak = noteOutputFrameForStreak(closedValue("overflow"), streak, now);
+      outcomes.push(isResumableOutputClose("overflow", streak.attempts));
+    }
+    NodeAssert.deepEqual(outcomes, [true, true, true, false, false]);
+  });
+
+  NodeTest.it("resets the streak after a quiet gap", () => {
+    let streak = EMPTY_OVERFLOW_STREAK;
+    for (let i = 0; i < OVERFLOW_RESUBSCRIBE_MAX; i += 1) {
+      streak = noteOutputFrameForStreak(closedValue("overflow"), streak, i * 100);
+    }
+    NodeAssert.equal(streak.attempts, OVERFLOW_RESUBSCRIBE_MAX);
+    NodeAssert.equal(isResumableOutputClose("overflow", streak.attempts), true);
+    // A later isolated overflow counts as a fresh streak.
+    streak = noteOutputFrameForStreak(
+      closedValue("overflow"),
+      streak,
+      streak.lastAt + OVERFLOW_RESUBSCRIBE_WINDOW_MS + 1,
+    );
+    NodeAssert.equal(streak.attempts, 1);
+    NodeAssert.equal(isResumableOutputClose("overflow", streak.attempts), true);
+  });
+
+  NodeTest.it("clears the streak on identity-changed and stays ended on terminal reasons", () => {
+    let streak = EMPTY_OVERFLOW_STREAK;
+    streak = noteOutputFrameForStreak(closedValue("overflow"), streak, 1_000);
+    streak = noteOutputFrameForStreak(closedValue("overflow"), streak, 1_500);
+    NodeAssert.equal(streak.attempts, 2);
+    // A new epoch starts a fresh streak.
+    streak = noteOutputFrameForStreak(closedValue("identity-changed"), streak, 2_000);
+    NodeAssert.equal(streak, EMPTY_OVERFLOW_STREAK);
+    streak = noteOutputFrameForStreak(closedValue("overflow"), streak, 2_500);
+    NodeAssert.equal(streak.attempts, 1);
+    // Terminal close reasons never resume and don't touch the streak.
+    NodeAssert.equal(isResumableOutputClose("terminal-error", 0), false);
+    NodeAssert.equal(isResumableOutputClose("terminal-closed", 0), false);
+    NodeAssert.equal(
+      noteOutputFrameForStreak(closedValue("terminal-error"), streak, 3_000),
+      streak,
+    );
+    NodeAssert.equal(isResumableOutputClose("identity-changed", 99), true);
   });
 });
 
@@ -587,6 +653,23 @@ NodeTest.describe("terminal panel — exit UX", () => {
     const panel = new TerminalPanel({ control: fakeControl(), launch });
     panel.applySessionsEvent({ kind: "closed", reason: "overflow" });
     NodeAssert.equal(panel.snapshot.stream, "closed");
+    panel.dispose();
+  });
+
+  NodeTest.it("re-arms a disposed panel when a fresh list stream begins", () => {
+    const panel = new TerminalPanel({ control: fakeControl(), launch });
+    // React replays effect cleanup in dev: the panel's own useState object
+    // survives while the cleanup's dispose() tombstones it. Frames arriving
+    // before the next subscription are correctly swallowed...
+    panel.dispose();
+    panel.applySessionsEvent({ kind: "snapshot", terminals: [meta("term-1")] });
+    NodeAssert.equal(panel.snapshot.stream, "connecting");
+    // ...but the replayed effect re-subscribes, and a fresh stream means the
+    // view is alive again — the snapshot must land.
+    panel.beginListStream();
+    panel.applySessionsEvent({ kind: "snapshot", terminals: [meta("term-1")] });
+    NodeAssert.equal(panel.snapshot.stream, "live");
+    NodeAssert.deepEqual(panel.snapshot.terminalIds, ["term-1"]);
     panel.dispose();
   });
 });

@@ -7,6 +7,7 @@ import type {
   TerminalControlResizeInput,
   TerminalControlRestartInput,
   TerminalControlWriteInput,
+  TerminalOutputEventsClosed,
   TerminalOutputEventsValue,
   TerminalSessionMetadata,
   TerminalSessionResult,
@@ -16,6 +17,53 @@ import { nextTerminalId, resolveTerminalSessionLabel } from "@t3tools/shared/ter
 
 /** Matches the native client retained-output cap (client-runtime terminalOutput.ts:45). */
 export const TERMINAL_BUFFER_MAX_BYTES = 512 * 1024;
+
+/**
+ * Overflow-resubscribe window: the provider preserves the subscription's
+ * snapshot ahead of every `closed:overflow`, so a delivered frame cannot
+ * bound a sustained flood — overflows close together in time keep counting,
+ * while a quiet gap resets the streak.
+ */
+export const OVERFLOW_RESUBSCRIBE_WINDOW_MS = 10_000;
+export const OVERFLOW_RESUBSCRIBE_MAX = 3;
+
+export interface OverflowStreak {
+  readonly attempts: number;
+  readonly lastAt: number;
+}
+
+export const EMPTY_OVERFLOW_STREAK: OverflowStreak = { attempts: 0, lastAt: 0 };
+
+/**
+ * Streak update for one delivered output frame. Only `closed:overflow`
+ * counts, and only the time window resets the streak — the snapshot the
+ * provider preserves ahead of every overflow close must not. A new epoch
+ * (`identity-changed`) clears it; other frames leave it alone.
+ */
+export const noteOutputFrameForStreak = (
+  value: TerminalOutputEventsValue,
+  streak: OverflowStreak,
+  now: number,
+): OverflowStreak => {
+  if (value.kind !== "closed") return streak;
+  if (value.reason === "identity-changed") return EMPTY_OVERFLOW_STREAK;
+  if (value.reason !== "overflow") return streak;
+  return {
+    attempts:
+      streak.attempts > 0 && now - streak.lastAt < OVERFLOW_RESUBSCRIBE_WINDOW_MS
+        ? streak.attempts + 1
+        : 1,
+    lastAt: now,
+  };
+};
+
+/** `closed` reasons a fresh output subscription can recover from. */
+export const isResumableOutputClose = (
+  reason: TerminalOutputEventsClosed["reason"],
+  overflowAttempts: number,
+) =>
+  reason === "identity-changed" ||
+  (reason === "overflow" && overflowAttempts <= OVERFLOW_RESUBSCRIBE_MAX);
 
 export interface SessionRow {
   readonly terminalId: string;
@@ -541,9 +589,12 @@ export class TerminalPanel {
   /**
    * A (re)subscription means the last snapshot may be stale — tabs stay
    * visible, but the stream is not authoritative until the next snapshot, so
-   * openTerminal's allocation gate must wait for it.
+   * openTerminal's allocation gate must wait for it. It also means the view
+   * is alive: React replays effect cleanup in dev, and a tombstone from that
+   * fake unmount would otherwise swallow every later sessions frame.
    */
   beginListStream() {
+    this.#disposed = false;
     if (this.#stream === "connecting") return;
     this.#stream = "connecting";
     this.#emit();
