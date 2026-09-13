@@ -30,7 +30,9 @@ public struct ThreadDetailView: View {
     @State private var didRestoreDraft = false
     @State private var draftSaveTask: Task<Void, Never>?
     @State private var draftSaveError: String?
-    @State private var toolSurface: FeatureThreadToolSurface?
+    private let workspaceToolSurface: Binding<FeatureThreadToolSurface?>?
+    @State private var localToolSurface: FeatureThreadToolSurface?
+    @State private var lastToolSurface = FeatureThreadToolSurface.files
     @State private var branchPullRequest: FeaturePullRequest?
     @State private var linkedMediaPreview: FeatureLinkedMediaPreview?
     @State private var linkedMediaPreviewError: String?
@@ -46,7 +48,8 @@ public struct ThreadDetailView: View {
         submitMessage: @escaping (FeatureMessageSubmission) async -> Bool,
         onNavigateBack: @escaping () -> Void = {},
         draftStore: FeatureComposerDraftStore = .shared,
-        managesThreadPresentation: Bool = true
+        managesThreadPresentation: Bool = true,
+        workspaceToolSurface: Binding<FeatureThreadToolSurface?>? = nil
     ) {
         self.model = model
         self.thread = thread
@@ -54,120 +57,30 @@ public struct ThreadDetailView: View {
         self.onNavigateBack = onNavigateBack
         self.draftStore = draftStore
         self.managesThreadPresentation = managesThreadPresentation
+        self.workspaceToolSurface = workspaceToolSurface
     }
 
     public var body: some View {
-        Group {
-            if let detail {
-                timeline(detail)
-            } else if isOpening {
-                FeatureThreadOpeningView()
-            } else {
-                ContentUnavailableView {
-                    Label("Thread unavailable", systemImage: "exclamationmark.bubble")
-                } description: {
-                    Text("The thread could not be loaded.")
-                } actions: {
-                    Button("Retry", action: reloadThread)
-                }
-            }
-        }
-        .background(T3Colors.background)
-        .navigationBarTitleDisplayMode(.inline)
-        .navigationBarBackButtonHidden(false)
-        .t3NavigationChrome()
-        .toolbar {
-            ToolbarItem(placement: .principal) {
-                threadHeaderTitle
-            }
-            ToolbarItem(placement: .primaryAction) {
-                threadActionsMenu
-            }
-        }
-        .task(id: thread.id) {
-            guard managesThreadPresentation else { return }
-            isLoading = true
-            await model.runThreadPresentation(id: thread.id) {
-                isLoading = false
-            }
-        }
-        .task(id: thread.id) {
-            // A cached thread can already show its composer while the server
-            // is catching up. Local drafts must not wait for that request.
-            guard !didRestoreDraft else { return }
-            await restoreDraft(from: composerDraft, key: draftKey)
-        }
-        .task(id: pullRequestObservationID) {
-            await observeThreadPullRequest()
-        }
-        .task(id: workspaceCatalogID) {
-            if let environmentID = currentThread.environmentID, let cwd = workspaceCatalogPath,
-               let instanceID = selection?.providerID ?? currentSelection?.providerID {
-                await model.refreshWorkspaceProviders(environmentID: environmentID, cwd: cwd, instanceID: instanceID)
-            }
-        }
-        .environment(\.providerSetupContext, currentThread.environmentID.map {
-            ProviderSetupContext(model: model, environmentID: $0)
-        })
-        .onChange(of: draft) { scheduleDraftSave() }
-        .onChange(of: selection) { scheduleDraftSave() }
-        .onChange(of: threadConnectionState) { _, state in
-            if state == .connected,
-               case .failed = model.detailLoadStates[thread.id],
-               !isOpening {
-                reloadThread()
-            }
-        }
-        .onChange(of: scenePhase) { _, phase in
-            if phase != .active {
-                persistDraftBeforeLeaving()
-            }
-        }
-        .onDisappear {
-            visualizationOpenTask?.cancel()
-            visualizationOpenTask = nil
-            persistDraftBeforeLeaving()
-        }
-        .onChange(of: thread.id) { _, _ in
-            visualizationOpenTask?.cancel()
-            visualizationOpenTask = nil
-        }
-        .sheet(item: $toolSurface) { surface in
-            NavigationStack {
-                Group {
-                    switch surface {
-                    case .files:
-                        FeatureFilesView(
-                            client: model.client,
-                            threadID: thread.id,
-                            workspaceRoot: markdownImageContext?.workspaceRoot
-                        )
-                    case let .file(path):
-                        FeatureFilesView(
-                            client: model.client,
-                            threadID: thread.id,
-                            initialPath: path,
-                            workspaceRoot: markdownImageContext?.workspaceRoot
-                        )
-                    case .review:
-                        FeatureReviewView(client: model.client, threadID: thread.id)
-                    case .sourceControl:
-                        FeatureSourceControlView(client: model.client, threadID: thread.id)
-                    case .terminal:
-                        FeatureTerminalView(client: model.client, threadID: thread.id)
-                    }
-                }
-                .toolbar {
-                    ToolbarItem(placement: .cancellationAction) {
-                        Button("Done") {
-                            toolSurface = nil
-                        }
-                    }
-                }
-            }
+        conversationContent
+        .sheet(item: $localToolSurface) { surface in
+            FeatureWorkspaceToolPanel(
+                client: model.client,
+                threadID: thread.id,
+                workspaceRoot: markdownImageContext?.workspaceRoot,
+                surface: surface,
+                onSelect: { toolSurface = $0 },
+                onClose: { toolSurface = nil }
+            )
             .presentationDetents([.large])
             .presentationDragIndicator(.visible)
             .t3CodeSizing(steps: codeSizeSteps)
+        }
+        .onChange(of: toolSurface?.id) { _, _ in
+            if let toolSurface { lastToolSurface = toolSurface }
+        }
+        .onChange(of: thread.id) { _, _ in
+            toolSurface = nil
+            lastToolSurface = .files
         }
         .alert("Message not sent", isPresented: $sendFailed) {
             // Refocusing happens here rather than when the send fails: the
@@ -275,6 +188,107 @@ public struct ThreadDetailView: View {
             Button("OK", role: .cancel) {}
         } message: {
             Text(linkedMediaPreviewError ?? "The file could not be opened.")
+        }
+    }
+
+    private var conversationContent: some View {
+        Group {
+            if let detail {
+                timeline(detail)
+            } else if isOpening {
+                FeatureThreadOpeningView()
+            } else {
+                ContentUnavailableView {
+                    Label("Thread unavailable", systemImage: "exclamationmark.bubble")
+                } description: {
+                    Text("The thread could not be loaded.")
+                } actions: {
+                    Button("Retry", action: reloadThread)
+                }
+            }
+        }
+        .background(T3Colors.background)
+        .navigationBarTitleDisplayMode(.inline)
+        .navigationBarBackButtonHidden(false)
+        .t3NavigationChrome()
+        .toolbar {
+            ToolbarItem(placement: .principal) {
+                threadHeaderTitle
+            }
+            ToolbarItem(placement: .primaryAction) {
+                threadActionsMenu
+            }
+            if horizontalSizeClass == .regular {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button(
+                        toolSurface == nil ? "Show workspace panel" : "Hide workspace panel",
+                        systemImage: "sidebar.trailing"
+                    ) {
+                        toolSurface = toolSurface == nil ? lastToolSurface : nil
+                    }
+                    .keyboardShortcut("0", modifiers: [.command, .option])
+                    .accessibilityIdentifier("thread-workspace-panel-toggle")
+                }
+            }
+        }
+        .task(id: thread.id) {
+            guard managesThreadPresentation else { return }
+            isLoading = true
+            await model.runThreadPresentation(id: thread.id) {
+                isLoading = false
+            }
+        }
+        .task(id: thread.id) {
+            // A cached thread can already show its composer while the server
+            // is catching up. Local drafts must not wait for that request.
+            guard !didRestoreDraft else { return }
+            await restoreDraft(from: composerDraft, key: draftKey)
+        }
+        .task(id: pullRequestObservationID) {
+            await observeThreadPullRequest()
+        }
+        .task(id: workspaceCatalogID) {
+            if let environmentID = currentThread.environmentID, let cwd = workspaceCatalogPath,
+               let instanceID = selection?.providerID ?? currentSelection?.providerID {
+                await model.refreshWorkspaceProviders(environmentID: environmentID, cwd: cwd, instanceID: instanceID)
+            }
+        }
+        .environment(\.providerSetupContext, currentThread.environmentID.map {
+            ProviderSetupContext(model: model, environmentID: $0)
+        })
+        .onChange(of: draft) { scheduleDraftSave() }
+        .onChange(of: selection) { scheduleDraftSave() }
+        .onChange(of: threadConnectionState) { _, state in
+            if state == .connected,
+               case .failed = model.detailLoadStates[thread.id],
+               !isOpening {
+                reloadThread()
+            }
+        }
+        .onChange(of: scenePhase) { _, phase in
+            if phase != .active {
+                persistDraftBeforeLeaving()
+            }
+        }
+        .onDisappear {
+            visualizationOpenTask?.cancel()
+            visualizationOpenTask = nil
+            persistDraftBeforeLeaving()
+        }
+        .onChange(of: thread.id) { _, _ in
+            visualizationOpenTask?.cancel()
+            visualizationOpenTask = nil
+        }
+    }
+
+    private var toolSurface: FeatureThreadToolSurface? {
+        get {
+            if let workspaceToolSurface { return workspaceToolSurface.wrappedValue }
+            return localToolSurface
+        }
+        nonmutating set {
+            if let workspaceToolSurface { workspaceToolSurface.wrappedValue = newValue }
+            else { localToolSurface = newValue }
         }
     }
 
@@ -1276,23 +1290,6 @@ private struct FeatureThreadOpeningView: View {
     }
 }
 
-private enum FeatureThreadToolSurface: Identifiable {
-    case files
-    case file(String)
-    case review
-    case sourceControl
-    case terminal
-
-    var id: String {
-        switch self {
-        case .files: "files"
-        case let .file(path): "file:\(path)"
-        case .review: "review"
-        case .sourceControl: "sourceControl"
-        case .terminal: "terminal"
-        }
-    }
-}
 
 struct ThreadPullRequestDestination: Equatable {
     let number: Int

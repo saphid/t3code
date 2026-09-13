@@ -46,6 +46,7 @@ public struct WorkspaceView: View {
     @State private var opensAddEnvironmentAfterFilterDismiss = false
     @State private var showingAddEnvironment = false
     @State private var showingSettings = false
+    @State private var workspaceToolSurface: FeatureThreadToolSurface?
     @State private var renamingThread: FeatureThread?
     @State private var deletingThread: FeatureThread?
     @State private var renameTitle = ""
@@ -152,6 +153,32 @@ public struct WorkspaceView: View {
                 }
         }
         .navigationSplitViewStyle(.balanced)
+        // Outside the split view, the inspector owns its toolbar and survives
+        // iPadOS switching between an overlay and a trailing column on rotation.
+        .inspector(isPresented: Binding(
+            get: { workspaceToolSurface != nil },
+            set: { if !$0 { workspaceToolSurface = nil } }
+        )) {
+            if let surface = workspaceToolSurface,
+               let thread = model.snapshot.threads.first(where: { $0.id == selectedThreadID }) {
+                let currentThread = model.details[thread.id]?.thread ?? thread
+                FeatureWorkspaceToolPanel(
+                    client: model.client,
+                    threadID: thread.id,
+                    workspaceRoot: currentThread.worktreePath ?? model.snapshot.projects.first(where: {
+                        $0.id == currentThread.projectID
+                    })?.path,
+                    surface: surface,
+                    onSelect: { workspaceToolSurface = $0 },
+                    onClose: { workspaceToolSurface = nil }
+                )
+                .modifier(WorkspaceInspectorSizing(isResizable: horizontalSizeClass == .regular))
+                .presentationDetents([.large])
+                .presentationDragIndicator(.visible)
+                .t3CodeSizing(steps: model.snapshot.settings.codeSize.steps)
+            }
+        }
+        .onChange(of: selectedThreadID) { _, _ in workspaceToolSurface = nil }
         .task(id: presentedThreadID) { [id = presentedThreadID] in
             guard let id else { return }
             await model.runThreadPresentation(id: id)
@@ -375,7 +402,8 @@ public struct WorkspaceView: View {
                 thread: thread,
                 submitMessage: submitMessage,
                 onNavigateBack: closeSelectedThread,
-                managesThreadPresentation: false
+                managesThreadPresentation: false,
+                workspaceToolSurface: $workspaceToolSurface
             )
             .id(id)
         } else {
