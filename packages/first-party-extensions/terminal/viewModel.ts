@@ -541,9 +541,12 @@ export class TerminalPanel {
   /**
    * A (re)subscription means the last snapshot may be stale — tabs stay
    * visible, but the stream is not authoritative until the next snapshot, so
-   * openTerminal's allocation gate must wait for it.
+   * openTerminal's allocation gate must wait for it. It also means the view
+   * is alive: React replays effect cleanup in dev, and a tombstone from that
+   * fake unmount would otherwise swallow every later sessions frame.
    */
   beginListStream() {
+    this.#disposed = false;
     if (this.#stream === "connecting") return;
     this.#stream = "connecting";
     this.#emit();

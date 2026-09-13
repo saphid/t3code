@@ -589,6 +589,23 @@ NodeTest.describe("terminal panel — exit UX", () => {
     NodeAssert.equal(panel.snapshot.stream, "closed");
     panel.dispose();
   });
+
+  NodeTest.it("re-arms a disposed panel when a fresh list stream begins", () => {
+    const panel = new TerminalPanel({ control: fakeControl(), launch });
+    // React replays effect cleanup in dev: the panel's own useState object
+    // survives while the cleanup's dispose() tombstones it. Frames arriving
+    // before the next subscription are correctly swallowed...
+    panel.dispose();
+    panel.applySessionsEvent({ kind: "snapshot", terminals: [meta("term-1")] });
+    NodeAssert.equal(panel.snapshot.stream, "connecting");
+    // ...but the replayed effect re-subscribes, and a fresh stream means the
+    // view is alive again — the snapshot must land.
+    panel.beginListStream();
+    panel.applySessionsEvent({ kind: "snapshot", terminals: [meta("term-1")] });
+    NodeAssert.equal(panel.snapshot.stream, "live");
+    NodeAssert.deepEqual(panel.snapshot.terminalIds, ["term-1"]);
+    panel.dispose();
+  });
 });
 
 NodeTest.describe("terminal panel — workspace launch", () => {
