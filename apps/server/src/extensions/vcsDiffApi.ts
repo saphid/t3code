@@ -277,48 +277,11 @@ export function createVcsDiffApiProvider(
               })
               .pipe(Effect.mapError(operationError)),
           );
-          const sources = preview.sources.map(toPublicSource).map((source) => ({
-            source,
-            chunks: splitStreamChunks(source.diff),
-          }));
-          const manifest: VcsDiffPreviewStreamEvent = {
-            kind: "manifest",
+          yield* streamDiffPreview({
+            sources: preview.sources,
             generatedAt: DateTime.formatIso(preview.generatedAt),
-            sources: sources.map(({ source, chunks }): VcsDiffStreamSource => ({
-              id: source.id,
-              kind: source.kind,
-              title: source.title,
-              baseRef: source.baseRef,
-              headRef: source.headRef,
-              truncated: source.truncated,
-              diffHash: source.diffHash,
-              diffByteLength: Buffer.byteLength(source.diff, "utf8"),
-              chunkCount: chunks.length,
-            })),
-          };
-          assertStreamFrameFits(manifest);
-          yield { type: "snapshot", value: manifest };
-          const payloadHash = NodeCrypto.createHash("sha256");
-          for (const [sourceIndex, { chunks }] of sources.entries()) {
-            for (const [chunkIndex, data] of chunks.entries()) {
-              await guard();
-              payloadHash.update(data, "utf8");
-              const chunk: VcsDiffPreviewStreamEvent = {
-                kind: "chunk",
-                sourceIndex,
-                chunkIndex,
-                data,
-              };
-              assertStreamFrameFits(chunk);
-              yield { type: "data", value: chunk };
-            }
-          }
-          const complete: VcsDiffPreviewStreamEvent = {
-            kind: "complete",
-            payloadSha256: payloadHash.digest("hex"),
-          };
-          await guard();
-          yield { type: "data", value: complete };
+            guard,
+          });
           return;
         }
         const contents = await run(
@@ -383,3 +346,54 @@ export const makeVcsDiffApiProvider = Effect.fn("VcsDiffApi.make")(function* () 
     review: yield* ReviewService,
   });
 });
+
+/** Shared checkpoint and repository diff transport; hashes describe delivered text. */
+export async function* streamDiffPreview(input: {
+  readonly sources: readonly Parameters<typeof toPublicSource>[0][];
+  readonly generatedAt: string;
+  readonly guard: () => Promise<void>;
+}): AsyncGenerator<ApiStreamEvent> {
+  const sources = input.sources.map(toPublicSource).map((source) => ({
+    source,
+    chunks: splitStreamChunks(source.diff),
+  }));
+  const manifest: VcsDiffPreviewStreamEvent = {
+    kind: "manifest",
+    generatedAt: input.generatedAt,
+    sources: sources.map(({ source, chunks }): VcsDiffStreamSource => ({
+      id: source.id,
+      kind: source.kind,
+      title: source.title,
+      baseRef: source.baseRef,
+      headRef: source.headRef,
+      truncated: source.truncated,
+      diffHash: source.diffHash,
+      diffByteLength: Buffer.byteLength(source.diff, "utf8"),
+      chunkCount: chunks.length,
+    })),
+  };
+  assertStreamFrameFits(manifest);
+  await input.guard();
+  yield { type: "snapshot", value: manifest };
+  const payloadHash = NodeCrypto.createHash("sha256");
+  for (const [sourceIndex, { chunks }] of sources.entries()) {
+    for (const [chunkIndex, data] of chunks.entries()) {
+      await input.guard();
+      payloadHash.update(data, "utf8");
+      const chunk: VcsDiffPreviewStreamEvent = {
+        kind: "chunk",
+        sourceIndex,
+        chunkIndex,
+        data,
+      };
+      assertStreamFrameFits(chunk);
+      yield { type: "data", value: chunk };
+    }
+  }
+  const complete: VcsDiffPreviewStreamEvent = {
+    kind: "complete",
+    payloadSha256: payloadHash.digest("hex"),
+  };
+  await input.guard();
+  yield { type: "data", value: complete };
+}

@@ -204,7 +204,7 @@ export function validateApiDefinition(value: ApiDefinition): ApiDefinition {
     if (!method || typeof method !== "object") throw new Error("Invalid API method");
     if (
       typeof method.name !== "string" ||
-      !/^[a-z][a-zA-Z0-9]{0,79}$/.test(method.name) ||
+      !/^(?=.{1,80}$)[a-z][a-zA-Z0-9]*(?:\.[a-z][a-zA-Z0-9]*)*$/.test(method.name) ||
       names.has(method.name)
     )
       throw new Error("Duplicate or invalid API method");

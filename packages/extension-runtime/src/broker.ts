@@ -301,7 +301,10 @@ export function createApiBroker(options: {
     if (pending.size >= 64) throw new Error("API concurrency limit reached");
     const request = copyJson(unsafe);
     assertId(request.id);
-    if (typeof request.method !== "string" || !/^[a-z][a-zA-Z0-9]{0,79}$/.test(request.method))
+    if (
+      typeof request.method !== "string" ||
+      !/^(?=.{1,80}$)[a-z][a-zA-Z0-9]*(?:\.[a-z][a-zA-Z0-9]*)*$/.test(request.method)
+    )
       throw new Error("Invalid API method");
     if (
       request.requestId !== undefined &&
@@ -384,7 +387,10 @@ export function createApiBroker(options: {
           if (!satisfies(provider.definition.version, request.versionRange))
             throw new Error("Incompatible API version");
           const method = provider.definition.methods?.find((item) => item.name === request.method);
-          if (!method) throw new Error("API method unavailable");
+          if (!method)
+            throw new Error(
+              `API method unavailable: UnsupportedOperation ${request.id}#${request.method}`,
+            );
           if (method.effect === "write" && !authority.allowWrite)
             throw new Error("Read-only API authority cannot invoke writes");
           compile(provider.definition);
@@ -412,7 +418,7 @@ export function createApiBroker(options: {
                   !caller.grants.capabilities.includes(grant) ||
                   !(await options.authorize(caller, grant, context))
                 )
-                  throw new Error("API capability denied");
+                  throw new Error(`API capability denied: ${grant}`);
               }
             }
             if (providerGeneration(provider) !== stamp) throw new Error("Stale API generation");
@@ -678,7 +684,10 @@ export function createApiBroker(options: {
             if (!satisfies(provider.definition.version, request.versionRange))
               throw new Error("Incompatible API version");
             const stream = provider.definition.streams?.find((item) => item.name === request.name);
-            if (!stream) throw new Error("API stream unavailable");
+            if (!stream)
+              throw new Error(
+                `API stream unavailable: UnsupportedOperation ${request.id}#${request.name}`,
+              );
             compile(provider.definition);
             const validator = validators.get(
               JSON.stringify([provider.definition, "stream", stream.name]),
@@ -710,7 +719,7 @@ export function createApiBroker(options: {
                     !caller.grants.capabilities.includes(grant) ||
                     !(await options.authorize(caller, grant, captured))
                   )
-                    throw new Error("API capability denied");
+                    throw new Error(`API capability denied: ${grant}`);
                 }
               }
               active();

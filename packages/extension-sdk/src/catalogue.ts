@@ -1,3 +1,5 @@
+import { defineOrchestrationStatusApi, orchestrationControlApi } from "./orchestration.js";
+export * from "./orchestration.js";
 import {
   defineApi,
   defineStreamApi,
@@ -2236,7 +2238,12 @@ export const RESOURCES_LEASE_API = resourcesLeaseApi.definition;
  * authorized provider. Shared ids may hold multiple frozen versions (newest
  * first); providers must match one of them canonically.
  */
+export const orchestrationStatusApi = defineOrchestrationStatusApi(vcsDiffPreviewStreamEventSchema);
+export const ORCHESTRATION_STATUS_API = orchestrationStatusApi.definition;
+
 export const GENERIC_API_CATALOGUE: readonly ApiDefinition[] = [
+  orchestrationStatusApi.definition,
+  orchestrationControlApi.definition,
   workspaceFilesApi.definition,
   workspaceTreeApi.definition,
   workspaceSearchApi.definition,

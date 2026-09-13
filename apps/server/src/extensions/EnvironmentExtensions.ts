@@ -1,3 +1,4 @@
+import { makeOrchestrationApiProviders } from "./orchestration/v1.ts";
 import { makeWorkspaceSearchApiProvider } from "./workspaceSearchApi.ts";
 import { makeWorkspaceTreeApiProvider } from "./workspaceTreeApi.ts";
 import { ExtensionCatalogueChanges } from "./catalogueChanges.ts";
@@ -82,6 +83,7 @@ export const make = Effect.fn("EnvironmentExtensions.make")(function* (
   const textEditsApi = yield* makeTextEditsApiProvider();
   const vcsApis = yield* makeVcsApiProviders();
   const vcsDiffApi = yield* makeVcsDiffApiProvider();
+  const orchestrationApis = yield* makeOrchestrationApiProviders();
   const catalogueChanges = yield* ExtensionCatalogueChanges;
   const resolve = makeExtensionScopeResolver({ environmentId, projects, threads });
   const authorize = async (entry: Installation, capability: string, context: ViewContext) => {
@@ -153,6 +155,7 @@ export const make = Effect.fn("EnvironmentExtensions.make")(function* (
             terminalControlApi,
             ...vcsApis,
             vcsDiffApi,
+            ...orchestrationApis,
             resourcesLeaseApi,
           ],
           onCatalogueChanged: () => Effect.runSync(catalogueChanges.publish),

@@ -1,0 +1,12 @@
+{
+  "kind": "package-check",
+  "installed": false,
+  "packageId": "example.orchestration-contracts",
+  "version": "1.0.0",
+  "hashes": {
+    "t3-extension.json": "c46e1eed830b37bd2ddbf46b0d850a84e12953e5923edf564f3181bf12882430",
+    "client.mjs": "3db46bc44e6c519c72f4694b3d44521c688b492a6a21639eff31f005db4669e9"
+  },
+  "generator": "t3-extension",
+  "sourceEntrySha256": "63a609a752cd82d33b85e258ef6504fbaab616eb7c873e802e55b3c983050c71"
+}
