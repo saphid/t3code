@@ -2,12 +2,16 @@ import * as NodeAssert from "node:assert/strict";
 import * as NodeTest from "node:test";
 import {
   EMPTY_OUTPUT_BUFFER,
+  OVERFLOW_RESUBSCRIBE_MAX,
+  OVERFLOW_RESUBSCRIBE_WINDOW_MS,
   TERMINAL_BUFFER_MAX_BYTES,
   addTerminalId,
   applyOutputEvent,
   describeSession,
   fallbackTerminalLabel,
+  isResumableOutputClose,
   missingSessionRow,
+  nextOverflowAttempts,
   normalizeTerminalIds,
   removeTerminalId,
   resolveActiveTerminalId,
@@ -237,6 +241,46 @@ NodeTest.describe("terminal view model — output stream", () => {
       new TextEncoder().encode(buffer.contents).byteLength <= TERMINAL_BUFFER_MAX_BYTES,
     );
     NodeAssert.ok(buffer.contents.endsWith("😀tail"));
+  });
+});
+
+NodeTest.describe("terminal view model — output overflow resubscribe policy", () => {
+  NodeTest.it("bounds a sustained flood even though every cycle delivers a snapshot", () => {
+    // The provider preserves the snapshot ahead of every closed:overflow,
+    // so delivered frames can never bound the streak — only the time window
+    // can. Simulate snapshot→overflow cycles close together in time.
+    let attempts = 0;
+    let lastAt = 0;
+    const outcomes = [];
+    for (let cycle = 0; cycle < OVERFLOW_RESUBSCRIBE_MAX + 2; cycle += 1) {
+      const now = 1_000 + cycle * 500;
+      attempts = nextOverflowAttempts(attempts, lastAt, now);
+      lastAt = now;
+      outcomes.push(isResumableOutputClose("overflow", attempts));
+    }
+    NodeAssert.deepEqual(outcomes, [true, true, true, false, false]);
+  });
+
+  NodeTest.it("resets the streak after a quiet gap", () => {
+    let attempts = 0;
+    let lastAt = 0;
+    for (let i = 0; i < 3; i += 1) {
+      attempts = nextOverflowAttempts(attempts, lastAt, i * 100);
+      lastAt = i * 100;
+    }
+    NodeAssert.equal(attempts, OVERFLOW_RESUBSCRIBE_MAX);
+    NodeAssert.equal(isResumableOutputClose("overflow", attempts), true);
+    // A later isolated overflow counts as a fresh streak.
+    const later = lastAt + OVERFLOW_RESUBSCRIBE_WINDOW_MS + 1;
+    attempts = nextOverflowAttempts(attempts, lastAt, later);
+    NodeAssert.equal(attempts, 1);
+    NodeAssert.equal(isResumableOutputClose("overflow", attempts), true);
+  });
+
+  NodeTest.it("resumes on identity-changed and stays ended on terminal reasons", () => {
+    NodeAssert.equal(isResumableOutputClose("identity-changed", 99), true);
+    NodeAssert.equal(isResumableOutputClose("terminal-error", 0), false);
+    NodeAssert.equal(isResumableOutputClose("terminal-closed", 0), false);
   });
 });
 

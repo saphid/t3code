@@ -7,6 +7,7 @@ import type {
   TerminalControlResizeInput,
   TerminalControlRestartInput,
   TerminalControlWriteInput,
+  TerminalOutputEventsClosed,
   TerminalOutputEventsValue,
   TerminalSessionMetadata,
   TerminalSessionResult,
@@ -16,6 +17,26 @@ import { nextTerminalId, resolveTerminalSessionLabel } from "@t3tools/shared/ter
 
 /** Matches the native client retained-output cap (client-runtime terminalOutput.ts:45). */
 export const TERMINAL_BUFFER_MAX_BYTES = 512 * 1024;
+
+/**
+ * Overflow-resubscribe window: the provider preserves the subscription's
+ * snapshot ahead of every `closed:overflow`, so a delivered frame cannot
+ * bound a sustained flood — overflows close together in time keep counting,
+ * while a quiet gap resets the streak.
+ */
+export const OVERFLOW_RESUBSCRIBE_WINDOW_MS = 10_000;
+export const OVERFLOW_RESUBSCRIBE_MAX = 3;
+
+export const nextOverflowAttempts = (attempts: number, lastAt: number, now: number) =>
+  now - lastAt < OVERFLOW_RESUBSCRIBE_WINDOW_MS ? attempts + 1 : 1;
+
+/** `closed` reasons a fresh output subscription can recover from. */
+export const isResumableOutputClose = (
+  reason: TerminalOutputEventsClosed["reason"],
+  overflowAttempts: number,
+) =>
+  reason === "identity-changed" ||
+  (reason === "overflow" && overflowAttempts <= OVERFLOW_RESUBSCRIBE_MAX);
 
 export interface SessionRow {
   readonly terminalId: string;

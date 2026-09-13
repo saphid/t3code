@@ -1894,15 +1894,18 @@ export default function (__t3Host) {
     var VCS_REPOSITORY_API = vcsRepositoryApi.definition;
     var RESOURCES_LEASE = "t3.resources/lease";
     var WORKSPACE_RESOURCES = "t3.workspace/resources";
+    var BROWSER_SESSIONS = "t3.browser/sessions";
+    var BROWSER_SURFACE_COMMANDS = ["attach", "present", "release"];
     var RESOURCE_LEASE_KIND_GRANTS = {
       "workspace-file": WORKSPACE_RESOURCES,
       "project-favicon": WORKSPACE_RESOURCES,
       attachment: null,
+      "browser-surface": BROWSER_SESSIONS,
     };
     var RESOURCE_LEASE_SUPPORTED_KINDS = Object.keys(RESOURCE_LEASE_KIND_GRANTS).filter(
       (kind) => RESOURCE_LEASE_KIND_GRANTS[kind] !== null,
     );
-    var resourceLeaseRefSchema = {
+    var resourceLeaseRefSchemaV1 = {
       oneOf: [
         {
           type: "object",
@@ -1943,7 +1946,93 @@ export default function (__t3Host) {
         },
       ],
     };
+    var resourceLeaseBrowserSurfaceCommandsSchema = {
+      type: "array",
+      minItems: 1,
+      maxItems: 3,
+      uniqueItems: true,
+      items: { enum: [...BROWSER_SURFACE_COMMANDS] },
+    };
+    var resourceLeaseRefSchema = {
+      oneOf: [
+        ...resourceLeaseRefSchemaV1.oneOf,
+        {
+          type: "object",
+          additionalProperties: false,
+          required: ["_tag", "threadId", "tabId", "serverEpoch", "allowedCommands"],
+          properties: {
+            _tag: { const: "browser-surface" },
+            threadId: { type: "string", minLength: 1, maxLength: 160 },
+            tabId: { type: "string", minLength: 1, maxLength: 128 },
+            serverEpoch: { type: "string", minLength: 1, maxLength: 128 },
+            allowedCommands: resourceLeaseBrowserSurfaceCommandsSchema,
+          },
+        },
+      ],
+    };
     var resourcesLeaseApi = defineApi({
+      id: RESOURCES_LEASE,
+      version: "1.1.0",
+      methods: [
+        {
+          name: "createPresentationUrl",
+          effect: "read",
+          // Per-kind grants are enforced inside the host adapter — a method-level
+          // list can only express "every caller holds all of these".
+          requiredGrants: [],
+          inputSchema: {
+            type: "object",
+            additionalProperties: false,
+            required: ["resource"],
+            properties: { resource: resourceLeaseRefSchema },
+          },
+          outputSchema: {
+            type: "object",
+            additionalProperties: false,
+            required: ["url", "expiresAt", "kind"],
+            properties: {
+              url: { type: "string", minLength: 1, maxLength: 4096 },
+              expiresAt: { type: "number" },
+              kind: {
+                enum: [
+                  "workspace-file",
+                  "workspace-file-exact",
+                  "project-favicon",
+                  "project-favicon-external",
+                  "browser-surface",
+                ],
+              },
+            },
+          },
+        },
+        {
+          name: "getCapabilities",
+          effect: "read",
+          requiredGrants: [],
+          inputSchema: {
+            type: "object",
+            additionalProperties: false,
+            properties: {},
+          },
+          outputSchema: {
+            type: "object",
+            additionalProperties: false,
+            required: ["supportedKinds"],
+            properties: {
+              supportedKinds: {
+                type: "array",
+                maxItems: 16,
+                items: {
+                  enum: ["workspace-file", "attachment", "project-favicon", "browser-surface"],
+                },
+              },
+            },
+          },
+        },
+      ],
+    });
+    var RESOURCES_LEASE_API = resourcesLeaseApi.definition;
+    var resourcesLeaseApiV1 = defineApi({
       id: RESOURCES_LEASE,
       version: "1.0.0",
       methods: [
@@ -1957,7 +2046,7 @@ export default function (__t3Host) {
             type: "object",
             additionalProperties: false,
             required: ["resource"],
-            properties: { resource: resourceLeaseRefSchema },
+            properties: { resource: resourceLeaseRefSchemaV1 },
           },
           outputSchema: {
             type: "object",
@@ -2001,7 +2090,7 @@ export default function (__t3Host) {
         },
       ],
     });
-    var RESOURCES_LEASE_API = resourcesLeaseApi.definition;
+    var RESOURCES_LEASE_API_V1 = resourcesLeaseApiV1.definition;
     var GENERIC_API_CATALOGUE = [
       workspaceFilesApi.definition,
       workspaceTreeApi.definition,
@@ -2021,6 +2110,7 @@ export default function (__t3Host) {
       vcsRepositoryApi.definition,
       vcsDiffApiV1.definition,
       resourcesLeaseApi.definition,
+      resourcesLeaseApiV1.definition,
     ];
     function canonical(value) {
       if (Array.isArray(value)) return "[" + value.map(canonical).join(",") + "]";
@@ -2410,6 +2500,13 @@ export default function (__t3Host) {
 
     // viewModel.ts
     var TERMINAL_BUFFER_MAX_BYTES = 512 * 1024;
+    var OVERFLOW_RESUBSCRIBE_WINDOW_MS = 1e4;
+    var OVERFLOW_RESUBSCRIBE_MAX = 3;
+    var nextOverflowAttempts = (attempts, lastAt, now) =>
+      now - lastAt < OVERFLOW_RESUBSCRIBE_WINDOW_MS ? attempts + 1 : 1;
+    var isResumableOutputClose = (reason, overflowAttempts) =>
+      reason === "identity-changed" ||
+      (reason === "overflow" && overflowAttempts <= OVERFLOW_RESUBSCRIBE_MAX);
     var textEncoder = new TextEncoder();
     var utf8Bytes = (value) => textEncoder.encode(value).byteLength;
     function tailByBytes(value, maxBytes) {
@@ -3057,6 +3154,7 @@ export default function (__t3Host) {
         const signal = AbortSignal.any([controller.signal, session.signal]);
         void (async () => {
           let overflowAttempts = 0;
+          let lastOverflowAt = 0;
           while (!signal.aborted) {
             pendingRef.current = null;
             const stateRef = { current: EMPTY_OUTPUT_BUFFER };
@@ -3071,10 +3169,12 @@ export default function (__t3Host) {
                 if (signal.aborted) return;
                 const value = frame.value;
                 if (value.kind === "closed") {
-                  if (value.reason === "overflow") overflowAttempts += 1;
-                  resurrect =
-                    value.reason === "identity-changed" ||
-                    (value.reason === "overflow" && overflowAttempts <= 3);
+                  if (value.reason === "overflow") {
+                    const now = Date.now();
+                    overflowAttempts = nextOverflowAttempts(overflowAttempts, lastOverflowAt, now);
+                    lastOverflowAt = now;
+                  }
+                  resurrect = isResumableOutputClose(value.reason, overflowAttempts);
                   if (!resurrect && !stateRef.current.ended) {
                     const applied2 = applyOutputEvent(
                       stateRef.current,
@@ -3089,7 +3189,6 @@ export default function (__t3Host) {
                   break;
                 }
                 if (stateRef.current.ended) continue;
-                overflowAttempts = 0;
                 const applied = applyOutputEvent(
                   stateRef.current,
                   frame,
@@ -3124,6 +3223,8 @@ export default function (__t3Host) {
             }
             if (!resurrect) return;
             if (!signal.aborted) setState({ terminalId, buffer: EMPTY_OUTPUT_BUFFER });
+            if (overflowAttempts > 1 && !signal.aborted)
+              await new Promise((resolve) => setTimeout(resolve, 300 * overflowAttempts));
           }
         })();
         return () => controller.abort();
