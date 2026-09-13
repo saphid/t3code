@@ -190,7 +190,7 @@ export function describeRead(read: PreviewRead): PreviewStatus {
  * not fetch-and-hope previews.
  */
 export function mediaPreviewNotice(kind: PreviewKind): string {
-  return `${kind} preview is not available — workspace media leases mint only preview-safe types (images and PDF)`;
+  return `${kind} preview is not available — the workspace media lease does not mint this file type`;
 }
 
 /* ------------------------------------------------------------------------
@@ -392,9 +392,10 @@ export function mediaLeaseRenewing(state: MediaLeaseState): MediaLeaseState {
 
 /**
  * A rendered `<img>`/document load failure. Past `expiresAt` the token simply
- * stopped serving — `expired` triggers a re-mint. Before expiry a fetch
- * failure means the minted URL did not resolve on the environment's own
- * origin (the lease serves same-origin only) — named, never a broken image.
+ * stopped serving — `expired` triggers a re-mint. Before expiry the fetch
+ * failed for another reason (the file moved, the view is remote to the
+ * environment, or the URL otherwise did not resolve on this origin) — named,
+ * never a broken image.
  */
 export function mediaLeaseAssetFailed(state: MediaLeaseState, now: number): MediaLeaseState {
   if (state.status !== "ready") return state;
@@ -402,8 +403,13 @@ export function mediaLeaseAssetFailed(state: MediaLeaseState, now: number): Medi
   return {
     status: "unavailable",
     message:
-      "Preview could not be loaded — minted media URLs serve only on the environment's own origin",
+      "Preview could not be loaded — the minted URL did not resolve on this origin (the file may have moved, or this view is remote to the environment)",
   };
+}
+
+/** A live lease reaching its TTL with no landed renewal: go expired. */
+export function mediaLeaseExpire(state: MediaLeaseState): MediaLeaseState {
+  return state.status === "ready" ? { status: "expired", url: state.url } : state;
 }
 
 /**

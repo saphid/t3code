@@ -12,6 +12,7 @@ import {
   MEDIA_LEASE_RENEWAL_SKEW_MS,
   mediaLeaseAssetFailed,
   mediaLeaseErrorState,
+  mediaLeaseExpire,
   mediaLeaseFailed,
   mediaLeaseKindGate,
   mediaLeaseMinted,
@@ -181,10 +182,13 @@ NodeTest.describe("describeSearch", () => {
 
 NodeTest.describe("mediaPreviewNotice", () => {
   NodeTest.it("names the lease mint bound instead of faking a preview", () => {
-    for (const kind of ["video", "audio", "font", "binary"]) {
+    for (const kind of ["image", "video", "audio", "font", "binary"]) {
       NodeAssert.match(mediaPreviewNotice(kind), new RegExp(`^${kind} preview is not available`));
-      NodeAssert.match(mediaPreviewNotice(kind), /images and PDF/);
+      NodeAssert.match(mediaPreviewNotice(kind), /does not mint this file type/);
     }
+    // .bmp classifies as image but is outside the mintable set — the message
+    // must not claim "images" are mintable wholesale.
+    NodeAssert.match(mediaPreviewNotice("image"), /image preview is not available/);
   });
 });
 
@@ -306,12 +310,21 @@ NodeTest.describe("media lease preview", () => {
     const ready = mediaLeaseMinted(minted);
     const early = mediaLeaseAssetFailed(ready, minted.expiresAt - 1);
     NodeAssert.equal(early.status, "unavailable");
-    NodeAssert.match(early.message, /environment's own origin/);
+    NodeAssert.match(early.message, /did not resolve on this origin/);
     NodeAssert.deepEqual(mediaLeaseAssetFailed(ready, minted.expiresAt), {
       status: "expired",
       url: minted.url,
     });
     NodeAssert.equal(mediaLeaseAssetFailed({ status: "idle" }, minted.expiresAt).status, "idle");
+  });
+
+  NodeTest.it("a live lease reaching its TTL goes expired; other states hold", () => {
+    NodeAssert.deepEqual(mediaLeaseExpire(mediaLeaseMinted(minted)), {
+      status: "expired",
+      url: minted.url,
+    });
+    NodeAssert.equal(mediaLeaseExpire({ status: "minting" }).status, "minting");
+    NodeAssert.equal(mediaLeaseExpire({ status: "idle" }).status, "idle");
   });
 
   NodeTest.it("only a live lease exposes a renderable URL", () => {

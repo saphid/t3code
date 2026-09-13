@@ -26,6 +26,7 @@ import {
   describeSnapshot,
   leasePreviewMode,
   mediaLeaseAssetFailed,
+  mediaLeaseExpire,
   mediaLeaseFailed,
   mediaLeaseKindGate,
   mediaLeaseMinted,
@@ -384,8 +385,8 @@ function useFileEditor(
  * expiry while visible, re-mints on tree refresh, and every named denial maps
  * to an explicit state — a broken element is never the error UI. The minted
  * URL resolves on the environment's own origin; a foreign-origin presentation
- * 404s the foreign-signed token and the element's load failure reports the
- * same-origin requirement instead of a broken image.
+ * 404s the foreign-signed token and the element's load failure lands in the
+ * named unavailable state instead of a broken image.
  */
 function useMediaLease(
   host: ClientHost,
@@ -427,7 +428,6 @@ function useMediaLease(
     const controller = new AbortController();
     const signal = AbortSignal.any([controller.signal, session.signal]);
     let renewalTimer: ReturnType<typeof setTimeout> | undefined;
-    let objectUrl: string | null = null;
     const clearRenewal = () => {
       if (renewalTimer !== undefined) {
         clearTimeout(renewalTimer);
@@ -450,12 +450,12 @@ function useMediaLease(
           signal,
         );
         if (signal.aborted) return;
-        let url = minted.url;
         if (leasePreviewMode(path) === "document") {
           // An iframe does not reliably fire onerror for failed documents —
-          // fetch the lease first so a 404 lands in the named state, then hand
-          // the built-in viewer a same-origin blob URL (also avoids the frame
-          // downloading the document a second time).
+          // preflight the lease so a 404 lands in the named state. The frame
+          // gets the minted URL itself: a blob: URL would be refused by
+          // desktop's frame-src 'self' CSP, and the route's private max-age
+          // cache means the frame's own fetch is not a second download.
           const response = await fetch(minted.url, { signal });
           if (signal.aborted) return;
           if (!response.ok) {
@@ -467,16 +467,10 @@ function useMediaLease(
             );
             return;
           }
-          const next = URL.createObjectURL(await response.blob());
-          if (signal.aborted) {
-            URL.revokeObjectURL(next);
-            return;
-          }
-          if (objectUrl !== null) URL.revokeObjectURL(objectUrl);
-          objectUrl = next;
-          url = next;
+          await response.arrayBuffer();
+          if (signal.aborted) return;
         }
-        commitLease(mediaLeaseMinted({ url, expiresAt: minted.expiresAt }));
+        commitLease(mediaLeaseMinted(minted));
         clearRenewal();
         renewalTimer = setTimeout(
           () => {
@@ -487,7 +481,23 @@ function useMediaLease(
           mediaLeaseRenewalDelay(minted.expiresAt, Date.now()),
         );
       } catch (error) {
-        if (!signal.aborted) commitLease((prev) => mediaLeaseFailed(error, prev));
+        if (signal.aborted) return;
+        const next = mediaLeaseFailed(error, leaseRef.current);
+        commitLease(next);
+        if (next.status === "ready") {
+          // Renewal failed but the current lease still serves — re-arm at
+          // expiresAt so the state goes expired and re-mints rather than
+          // asserting a live lease past its TTL.
+          clearRenewal();
+          renewalTimer = setTimeout(
+            () => {
+              renewalTimer = undefined;
+              commitLease((prev) => mediaLeaseExpire(prev));
+              void mint();
+            },
+            Math.max(0, next.expiresAt - Date.now()),
+          );
+        }
       }
     };
     mintRef.current = mint;
@@ -497,7 +507,6 @@ function useMediaLease(
       mintRef.current = null;
       clearRenewal();
       controller.abort();
-      if (objectUrl !== null) URL.revokeObjectURL(objectUrl);
     };
     // selectedKind gates via `active`; refreshRevision is an intentional
     // trigger — a tree refresh re-mints so refreshed bytes stay honest.
