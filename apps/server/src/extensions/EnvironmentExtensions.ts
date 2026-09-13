@@ -45,6 +45,7 @@ import { makeTextEditsApiProvider } from "./textEditsApi.ts";
 import { makeResourcesLeaseApiProvider } from "./resourcesLeaseApi.ts";
 import { makeVcsApiProviders } from "./vcsApi.ts";
 import { makeVcsDiffApiProvider } from "./vcsDiffApi.ts";
+import { makePrsApiProvider } from "./prs/v1.ts";
 import { boundedWorkspaceText } from "./workspaceText.ts";
 
 const decodeJson = Schema.decodeUnknownEffect(Schema.Json);
@@ -82,6 +83,7 @@ export const make = Effect.fn("EnvironmentExtensions.make")(function* (
   const textEditsApi = yield* makeTextEditsApiProvider();
   const vcsApis = yield* makeVcsApiProviders();
   const vcsDiffApi = yield* makeVcsDiffApiProvider();
+  const prsApi = yield* makePrsApiProvider();
   const catalogueChanges = yield* ExtensionCatalogueChanges;
   const resolve = makeExtensionScopeResolver({ environmentId, projects, threads });
   const authorize = async (entry: Installation, capability: string, context: ViewContext) => {
@@ -153,6 +155,7 @@ export const make = Effect.fn("EnvironmentExtensions.make")(function* (
             terminalControlApi,
             ...vcsApis,
             vcsDiffApi,
+            prsApi,
             resourcesLeaseApi,
           ],
           onCatalogueChanged: () => Effect.runSync(catalogueChanges.publish),

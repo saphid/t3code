@@ -118,6 +118,11 @@ import {
 import * as ProjectionSnapshotQuery from "./orchestration/Services/ProjectionSnapshotQuery.ts";
 import { ThreadDeletionReactor } from "./orchestration/Services/ThreadDeletionReactor.ts";
 import * as PullRequestSyncReactor from "./orchestration/PullRequestSyncReactor.ts";
+import * as PullRequestService from "./pullRequest/PullRequestService.ts";
+import {
+  PullRequestProviderRegistry,
+  fromProviders,
+} from "./pullRequest/PullRequestProviderRegistry.ts";
 import { SqlitePersistenceMemory } from "./persistence/Layers/Sqlite.ts";
 import { OrchestrationEventStoreLive } from "./persistence/Layers/OrchestrationEventStore.ts";
 import { OrchestrationEventStore } from "./persistence/Services/OrchestrationEventStore.ts";
@@ -530,6 +535,8 @@ const buildAppUnderTest = (options?: {
     threadDeletionReactor?: Partial<ThreadDeletionReactor["Service"]>;
     analyticsService?: Partial<AnalyticsService.AnalyticsService["Service"]>;
     projectionSnapshotQuery?: Partial<ProjectionSnapshotQuery.ProjectionSnapshotQuery["Service"]>;
+    pullRequests?: Partial<PullRequestService.PullRequestService["Service"]>;
+    pullRequestProviderRegistry?: PullRequestProviderRegistry["Service"];
     checkpointDiffQuery?: Partial<CheckpointDiffQuery.CheckpointDiffQuery["Service"]>;
     browserTraceCollector?: Partial<BrowserTraceCollector.BrowserTraceCollector["Service"]>;
     serverLifecycleEvents?: Partial<ServerLifecycleEvents.ServerLifecycleEvents["Service"]>;
@@ -967,6 +974,13 @@ const buildAppUnderTest = (options?: {
             drain: Effect.void,
             requestSync: () => Effect.void,
           }),
+          Layer.mock(PullRequestService.PullRequestService)({
+            ...options?.layers?.pullRequests,
+          }),
+          Layer.succeed(
+            PullRequestProviderRegistry,
+            options?.layers?.pullRequestProviderRegistry ?? fromProviders([]),
+          ),
         ),
       ),
       Layer.provide(

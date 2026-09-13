@@ -38,6 +38,13 @@ import { GitVcsDriver } from "../vcs/GitVcsDriver.ts";
 import { VcsDriverRegistry } from "../vcs/VcsDriverRegistry.ts";
 import { VcsProvisioningService } from "../vcs/VcsProvisioningService.ts";
 import { VcsStatusBroadcaster } from "../vcs/VcsStatusBroadcaster.ts";
+import { PullRequestService } from "../pullRequest/PullRequestService.ts";
+import {
+  PullRequestProviderRegistry,
+  fromProviders,
+} from "../pullRequest/PullRequestProviderRegistry.ts";
+import * as ProjectionSnapshotQuery from "../orchestration/Services/ProjectionSnapshotQuery.ts";
+import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
 
 const project = Schema.decodeUnknownSync(ProjectionProject)({
   projectId: "project-a",
@@ -264,6 +271,12 @@ function fixture() {
     Layer.mock(ProjectFaviconResolver.ProjectFaviconResolver)({}),
     Layer.mock(ServerSecretStore.ServerSecretStore)({}),
     Layer.mock(PreviewManager)({}),
+    Layer.mock(PullRequestService)({}),
+    Layer.succeed(PullRequestProviderRegistry, fromProviders([])),
+    Layer.mock(ProjectionSnapshotQuery.ProjectionSnapshotQuery)({
+      getProjectShellById: () => Effect.succeed(Option.none()),
+    }),
+    SqlitePersistenceMemory,
     ServerSettings.layerTest(),
     ServerConfig.layerTest(process.cwd(), { prefix: "t3-extension-service-test-" }),
   ).pipe(Layer.provideMerge(NodeServices.layer));
