@@ -557,3 +557,187 @@ export function describeSearch(result: SearchResults | null, query: string, limi
   const suffix = result.truncated ? ` — showing first ${count}, refine the query` : "";
   return `${count}${result.truncated ? "+" : ""} match${count === 1 && !result.truncated ? "" : "es"} for “${needle}” (limit ${limit})${suffix}`;
 }
+
+/* ------------------------------------------------------------------------
+ * Contents search (F1 #7b): the shipped `searchContents` method on the same
+ * `t3.workspace/search` API. One match record per matching line; the count
+ * line reports matching lines and distinct files, both straight off the
+ * wire — `truncated` and `regexFallbackError` are surfaced verbatim.
+ * --------------------------------------------------------------------- */
+
+/** One `searchContents` result record: a line carrying ≥1 match ranges. */
+export interface ContentSearchMatch {
+  readonly path: string;
+  readonly lineNumber: number;
+  readonly lineContent: string;
+  readonly matchRanges: readonly { readonly start: number; readonly end: number }[];
+}
+
+export interface ContentSearchResults {
+  readonly matches: readonly ContentSearchMatch[];
+  readonly truncated: boolean;
+  readonly regexFallbackError?: string;
+}
+
+export interface ContentMatchSegment {
+  readonly text: string;
+  readonly match: boolean;
+}
+
+/**
+ * Line content → renderable segments with the contract's `matchRanges`
+ * highlighted. Ranges are sorted, clamped to the line, and overlapping or
+ * out-of-bounds ranges are dropped — the contract says they are ordered and
+ * in-bounds, but a nonconforming host must not corrupt the line the user sees.
+ */
+export function contentMatchSegments(
+  lineContent: string,
+  matchRanges: readonly { readonly start: number; readonly end: number }[],
+): ContentMatchSegment[] {
+  const ranges = matchRanges
+    .filter((range) => Number.isFinite(range.start) && Number.isFinite(range.end))
+    .map((range) => ({
+      start: Math.max(0, Math.min(range.start, lineContent.length)),
+      end: Math.max(0, Math.min(range.end, lineContent.length)),
+    }))
+    .filter((range) => range.end > range.start)
+    .toSorted((a, b) => a.start - b.start || a.end - b.end);
+  // Overlapping ranges merge so every byte the host reported stays marked.
+  const merged: { start: number; end: number }[] = [];
+  for (const range of ranges) {
+    const last = merged[merged.length - 1];
+    if (last !== undefined && range.start <= last.end) last.end = Math.max(last.end, range.end);
+    else merged.push({ ...range });
+  }
+  const segments: ContentMatchSegment[] = [];
+  let cursor = 0;
+  for (const range of merged) {
+    if (range.start > cursor)
+      segments.push({ text: lineContent.slice(cursor, range.start), match: false });
+    segments.push({ text: lineContent.slice(range.start, range.end), match: true });
+    cursor = range.end;
+  }
+  if (cursor < lineContent.length) segments.push({ text: lineContent.slice(cursor), match: false });
+  if (segments.length === 0) segments.push({ text: lineContent, match: false });
+  return segments;
+}
+
+/**
+ * Honest status for a contents search: "N matches in M files" — matches are
+ * matching lines (the contract's granularity), files are distinct paths.
+ * `truncated` comes straight off the wire and names the limit; a regex
+ * fallback error is appended so a literal-substring fallback never
+ * masquerades as the regex the user asked for.
+ */
+export function describeContentSearch(
+  result: ContentSearchResults | null,
+  query: string,
+  limit: number,
+): string {
+  const needle = query.trim();
+  if (!needle) return "";
+  if (result === null) return `Searching contents for “${needle}”`;
+  const lines = result.matches.length;
+  const files = new Set(result.matches.map((match) => match.path)).size;
+  const fallback = result.regexFallbackError ? ` — ${result.regexFallbackError}` : "";
+  if (lines === 0) return `No contents matches for “${needle}”${fallback}`;
+  const suffix = result.truncated ? ` — showing first ${lines}, refine the query` : "";
+  return `${lines}${result.truncated ? "+" : ""} match${lines === 1 && !result.truncated ? "" : "es"} in ${files} file${files === 1 ? "" : "s"} for “${needle}” (limit ${limit})${suffix}${fallback}`;
+}
+
+/* ------------------------------------------------------------------------
+ * Open in external editor (F1 #17): the public `t3.file/presentation.open`
+ * path. The host's provider selection IS the picker — files, browser, or a
+ * future editor provider can all provide the API — so resolving honestly is
+ * the entire surface: report the descriptor or name the failure, never fake
+ * an editor launch.
+ * --------------------------------------------------------------------- */
+
+/**
+ * Safety check before `t3.file/presentation.open`: the path must be
+ * workspace-relative — reject absolute, empty, `..` and backslash segments.
+ * Same predicate the diff panel ported; kept package-local because the
+ * sibling package's view model is not a shared contract.
+ */
+export function presentationPath(path: string): string | null {
+  if (
+    path.length === 0 ||
+    path.startsWith("/") ||
+    path.includes("\\") ||
+    path.split("/").some((segment) => segment === "" || segment === "..")
+  ) {
+    return null;
+  }
+  return path;
+}
+
+/** Honest report of a resolved `t3.file/presentation.open` descriptor. */
+export function describePresentation(result: {
+  readonly surfaceId: string;
+  readonly placement: string;
+}): string {
+  return `opens in ${result.surfaceId} · ${result.placement}`;
+}
+
+export type FileOpenState =
+  | { readonly status: "idle" }
+  | { readonly status: "resolving" }
+  | { readonly status: "resolved"; readonly message: string }
+  | { readonly status: "denied"; readonly message: string }
+  | { readonly status: "unavailable"; readonly message: string };
+
+/**
+ * `presentation.open` invoke failure → named state. The broker delivers the
+ * resolution reason code or the capability denial as the error message, so
+ * match those strings exactly: grant denial is `denied` (recoverable by
+ * granting `t3.file/open` at install), resolution failures are `unavailable`,
+ * and anything else reports its detail — never a silent no-op.
+ */
+export function fileOpenFailed(
+  error: unknown,
+): Extract<FileOpenState, { readonly status: "denied" | "unavailable" }> {
+  const text = error instanceof Error ? error.message : String(error);
+  if (text.includes("capability denied"))
+    return {
+      status: "denied",
+      message: "Open is denied — this installation is missing the t3.file/open grant",
+    };
+  if (text.includes("provider-selection-required"))
+    return {
+      status: "unavailable",
+      message:
+        "Several providers can open files — pick one for t3.file/presentation in extension settings",
+    };
+  if (
+    text.includes("missing-api") ||
+    text.includes("selected-provider-unavailable") ||
+    text.includes("API unavailable")
+  )
+    return {
+      status: "unavailable",
+      message: "Open is unavailable — no provider is selected for t3.file/presentation",
+    };
+  return {
+    status: "unavailable",
+    message: `Open failed${text ? `: ${text.slice(0, 300)}` : ""}`,
+  };
+}
+
+/** Status line for the open-in-presentation action. */
+export function describeFileOpen(state: FileOpenState): string {
+  switch (state.status) {
+    case "idle":
+      return "";
+    case "resolving":
+      return "Resolving presentation…";
+    case "resolved":
+    case "denied":
+    case "unavailable":
+      return state.message;
+  }
+}
+
+/** Which selected paths offer the rendered-markdown view (F1 #22). */
+export function isMarkdownPath(relativePath: string): boolean {
+  return /\.(?:md|mdx)$/i.test(relativePath);
+}

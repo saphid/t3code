@@ -2,12 +2,18 @@ import * as NodeAssert from "node:assert/strict";
 import * as NodeTest from "node:test";
 import {
   compareTreeEntries,
+  contentMatchSegments,
+  describeContentSearch,
+  describeFileOpen,
   describeMediaLease,
+  describePresentation,
   describeRead,
   describeSaveState,
   describeSearch,
   describeSnapshot,
+  fileOpenFailed,
   filterEntries,
+  isMarkdownPath,
   leasePreviewMode,
   MEDIA_LEASE_RENEWAL_SKEW_MS,
   mediaLeaseAssetFailed,
@@ -22,6 +28,7 @@ import {
   mediaLeaseUrl,
   mediaPreviewNotice,
   parentPath,
+  presentationPath,
   previewKind,
   selectMediaLease,
   sortTreeEntries,
@@ -423,5 +430,139 @@ NodeTest.describe("describeSaveState", () => {
       describeSaveState({ kind: "error", message: "io" }),
       /Save failed: io.*changes are kept/,
     );
+  });
+});
+
+NodeTest.describe("contentMatchSegments", () => {
+  NodeTest.it("splits a line into match and non-match segments", () => {
+    NodeAssert.deepEqual(contentMatchSegments("foo bar foo", [{ start: 4, end: 7 }]), [
+      { text: "foo ", match: false },
+      { text: "bar", match: true },
+      { text: " foo", match: false },
+    ]);
+  });
+
+  NodeTest.it("returns the whole line unmatched when no ranges apply", () => {
+    NodeAssert.deepEqual(contentMatchSegments("plain", []), [{ text: "plain", match: false }]);
+  });
+
+  NodeTest.it("clamps, sorts and merges out-of-bounds or overlapping ranges", () => {
+    NodeAssert.deepEqual(
+      contentMatchSegments("abcdef", [
+        { start: 4, end: 99 },
+        { start: 0, end: 2 },
+        { start: 1, end: 3 },
+        { start: 2, end: 2 },
+        { start: -5, end: 1 },
+      ]),
+      [
+        { text: "abc", match: true },
+        { text: "d", match: false },
+        { text: "ef", match: true },
+      ],
+    );
+  });
+});
+
+NodeTest.describe("describeContentSearch", () => {
+  const match = (path, lineNumber, extra = 0) => ({
+    path,
+    lineNumber,
+    lineContent: "line",
+    matchRanges: Array.from({ length: extra + 1 }, (_, i) => ({ start: i, end: i + 1 })),
+  });
+
+  NodeTest.it("reports pending, empty, success and truncated states", () => {
+    NodeAssert.equal(describeContentSearch(null, "needle", 100), "Searching contents for “needle”");
+    NodeAssert.equal(
+      describeContentSearch({ matches: [], truncated: false }, "needle", 100),
+      "No contents matches for “needle”",
+    );
+    NodeAssert.equal(
+      describeContentSearch(
+        { matches: [match("a.ts", 3), match("a.ts", 9), match("dir/b.ts", 1)], truncated: false },
+        "needle",
+        100,
+      ),
+      "3 matches in 2 files for “needle” (limit 100)",
+    );
+    NodeAssert.match(
+      describeContentSearch({ matches: [match("a.ts", 1)], truncated: true }, "n", 100),
+      /^1\+ matches in 1 file for “n” \(limit 100\) — showing first 1, refine the query$/,
+    );
+  });
+
+  NodeTest.it("appends a regex fallback error verbatim", () => {
+    NodeAssert.match(
+      describeContentSearch(
+        { matches: [match("a.ts", 1)], truncated: false, regexFallbackError: "regex unsupported" },
+        "n",
+        100,
+      ),
+      /— regex unsupported$/,
+    );
+  });
+});
+
+NodeTest.describe("open in presentation (F1 #17)", () => {
+  NodeTest.it("presentationPath rejects unsafe paths", () => {
+    for (const bad of ["", "/abs/x", "a/../b", "a\\b", "a//b", ".."])
+      NodeAssert.equal(presentationPath(bad), null, bad);
+    NodeAssert.equal(presentationPath("src/a.ts"), "src/a.ts");
+  });
+
+  NodeTest.it("describePresentation reports the resolved descriptor", () => {
+    NodeAssert.equal(
+      describePresentation({ surfaceId: "t3.files/view", placement: "side-panel" }),
+      "opens in t3.files/view · side-panel",
+    );
+  });
+
+  NodeTest.it("fileOpenFailed names the t3.file/open grant denial", () => {
+    const state = fileOpenFailed(new Error("API capability denied: t3.file/open"));
+    NodeAssert.equal(state.status, "denied");
+    NodeAssert.match(state.message, /t3\.file\/open grant/);
+  });
+
+  NodeTest.it("fileOpenFailed maps resolution failures to unavailable", () => {
+    NodeAssert.equal(
+      fileOpenFailed(new Error("provider-selection-required")).status,
+      "unavailable",
+    );
+    NodeAssert.match(
+      fileOpenFailed(new Error("provider-selection-required")).message,
+      /pick one for t3\.file\/presentation/,
+    );
+    NodeAssert.equal(fileOpenFailed(new Error("missing-api")).status, "unavailable");
+    NodeAssert.equal(
+      fileOpenFailed(new Error("selected-provider-unavailable")).status,
+      "unavailable",
+    );
+  });
+
+  NodeTest.it("fileOpenFailed reports generic errors with their detail", () => {
+    const state = fileOpenFailed(new Error("disk gone"));
+    NodeAssert.equal(state.status, "unavailable");
+    NodeAssert.equal(state.message, "Open failed: disk gone");
+    NodeAssert.match(fileOpenFailed("string failure").message, /Open failed: string failure/);
+  });
+
+  NodeTest.it("describeFileOpen labels every state", () => {
+    NodeAssert.equal(describeFileOpen({ status: "idle" }), "");
+    NodeAssert.equal(describeFileOpen({ status: "resolving" }), "Resolving presentation…");
+    NodeAssert.equal(
+      describeFileOpen({ status: "resolved", message: "opens in x · y" }),
+      "opens in x · y",
+    );
+    NodeAssert.equal(describeFileOpen({ status: "denied", message: "nope" }), "nope");
+  });
+});
+
+NodeTest.describe("isMarkdownPath (F1 #22)", () => {
+  NodeTest.it("matches the native isMarkdownPreviewFile extensions", () => {
+    for (const yes of ["README.md", "docs/guide.MD", "x.mdx", "a/b.MDX"])
+      NodeAssert.equal(isMarkdownPath(yes), true, yes);
+    for (const no of ["x.txt", "md", "x.md.bak", "x.markdown"])
+      NodeAssert.equal(isMarkdownPath(no), false, no);
   });
 });
