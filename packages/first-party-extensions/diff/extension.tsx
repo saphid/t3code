@@ -572,11 +572,19 @@ function DiffPanelView(props: { host: ClientHost; session: ViewSession }) {
     };
   }, [sourceKey]);
 
-  // Reveal-in-file: select, uncollapse, then scroll the section into view.
+  // Reveal-in-file is one-shot: the request lives in a ref and a tick state
+  // re-runs the effect once after the uncollapse commit. Later collapse-set
+  // changes (collapse-all, another file toggled) must not yank the scroll
+  // back — the cleared ref makes the effect a no-op for them.
+  const revealTarget = useRef<string | null>(null);
+  const [revealTick, setRevealTick] = useState(0);
   useEffect(() => {
-    if (fileKey === null || sourceKey === null || collapsedFiles.has(fileKey)) return;
-    sectionRefs.current.get(fileKey)?.scrollIntoView({ block: "start" });
-  }, [fileKey, collapsedFiles, sourceKey]);
+    if (revealTick === 0) return;
+    const key = revealTarget.current;
+    if (key === null || collapsedFiles.has(key)) return;
+    sectionRefs.current.get(key)?.scrollIntoView({ block: "start" });
+    revealTarget.current = null;
+  }, [revealTick, collapsedFiles]);
 
   const persist = (
     nextSource: string | null,
@@ -603,6 +611,8 @@ function DiffPanelView(props: { host: ClientHost; session: ViewSession }) {
       return next;
     });
     setFileKey(row.key);
+    revealTarget.current = row.key;
+    setRevealTick((tick) => tick + 1);
     persist(source?.id ?? null, row.key, baseRef, ignoreWhitespace);
   };
   const chooseBaseRef = (value: string) => {
