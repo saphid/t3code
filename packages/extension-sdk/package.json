@@ -25,6 +25,7 @@
     "test",
     "bin",
     "examples/start-here",
+    "examples/orchestration-contracts",
     "examples/files",
     "HOST.md",
     "examples/api-provider",

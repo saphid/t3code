@@ -39,6 +39,7 @@
   },
   "devDependencies": {
     "@effect/vitest": "catalog:",
+    "@t3tools/client-runtime": "workspace:*",
     "@t3tools/contracts": "workspace:*",
     "@t3tools/extension-runtime": "workspace:*",
     "@t3tools/extension-sdk": "workspace:*",

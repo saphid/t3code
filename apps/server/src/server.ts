@@ -1,3 +1,4 @@
+import { OrchestrationCommandReceiptRepositoryLive } from "./persistence/Layers/OrchestrationCommandReceipts.ts";
 import * as ExtensionCatalogueChanges from "./extensions/catalogueChanges.ts";
 import { ProjectionProjectRepositoryLive } from "./persistence/Layers/ProjectionProjects.ts";
 import { ProjectionThreadRepositoryLive } from "./persistence/Layers/ProjectionThreads.ts";
@@ -570,7 +571,11 @@ export const makeRoutesLayer = Layer.mergeAll(
   Layer.provide(PreviewAutomationBroker.layer),
   Layer.provide(
     EnvironmentExtensions.layer.pipe(
-      Layer.provide([ProjectionProjectRepositoryLive, ProjectionThreadRepositoryLive]),
+      Layer.provide([
+        ProjectionProjectRepositoryLive,
+        ProjectionThreadRepositoryLive,
+        OrchestrationCommandReceiptRepositoryLive,
+      ]),
     ),
   ),
   Layer.provide(ExtensionCatalogueChanges.layer),

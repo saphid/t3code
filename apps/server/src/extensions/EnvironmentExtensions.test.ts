@@ -1,3 +1,8 @@
+import { CheckpointDiffQuery } from "../checkpointing/CheckpointDiffQuery.ts";
+import { OrchestrationCommandReceiptRepository } from "../persistence/Services/OrchestrationCommandReceipts.ts";
+import { OrchestrationEngineService } from "../orchestration/Services/OrchestrationEngine.ts";
+import { ProjectionSnapshotQuery } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
+import { ProviderService } from "../provider/Services/ProviderService.ts";
 import * as ExtensionCatalogueChanges from "./catalogueChanges.ts";
 import { expect, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -200,6 +205,11 @@ function fixture() {
     return runtime;
   };
   const services = Layer.mergeAll(
+    Layer.mock(CheckpointDiffQuery)({}),
+    Layer.mock(OrchestrationCommandReceiptRepository)({}),
+    Layer.mock(OrchestrationEngineService)({}),
+    Layer.mock(ProjectionSnapshotQuery)({}),
+    Layer.mock(ProviderService)({}),
     ExtensionCatalogueChanges.layer,
     Layer.succeed(TerminalManager, {
       inspect: () => Effect.succeed(null),
