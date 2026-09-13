@@ -3998,10 +3998,15 @@ ${prefix}`;
         controllers.clear();
       };
     }, [sourceKey]);
+    const revealTarget = (0, import_react.useRef)(null);
+    const [revealTick, setRevealTick] = (0, import_react.useState)(0);
     (0, import_react.useEffect)(() => {
-      if (fileKey === null || sourceKey === null || collapsedFiles.has(fileKey)) return;
-      sectionRefs.current.get(fileKey)?.scrollIntoView({ block: "start" });
-    }, [fileKey, collapsedFiles, sourceKey]);
+      if (revealTick === 0) return;
+      const key = revealTarget.current;
+      if (key === null || collapsedFiles.has(key)) return;
+      sectionRefs.current.get(key)?.scrollIntoView({ block: "start" });
+      revealTarget.current = null;
+    }, [revealTick, collapsedFiles]);
     const persist = (nextSource, nextFile, nextBase, nextWhitespace) => {
       session.save({
         ...nextSource !== null ? { sourceId: nextSource } : {},
@@ -4022,6 +4027,8 @@ ${prefix}`;
         return next;
       });
       setFileKey(row.key);
+      revealTarget.current = row.key;
+      setRevealTick((tick2) => tick2 + 1);
       persist(source?.id ?? null, row.key, baseRef, ignoreWhitespace);
     };
     const chooseBaseRef = (value) => {
