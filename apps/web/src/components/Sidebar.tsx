@@ -1561,6 +1561,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
     return (
       <li
         data-thread-item
+        data-thread-pinned={props.isPinned}
         {...sortableRootProps}
         {...(fileDropHandlers ?? {})}
         className={cn(
