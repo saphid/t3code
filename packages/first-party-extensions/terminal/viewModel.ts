@@ -27,8 +27,35 @@ export const TERMINAL_BUFFER_MAX_BYTES = 512 * 1024;
 export const OVERFLOW_RESUBSCRIBE_WINDOW_MS = 10_000;
 export const OVERFLOW_RESUBSCRIBE_MAX = 3;
 
-export const nextOverflowAttempts = (attempts: number, lastAt: number, now: number) =>
-  now - lastAt < OVERFLOW_RESUBSCRIBE_WINDOW_MS ? attempts + 1 : 1;
+export interface OverflowStreak {
+  readonly attempts: number;
+  readonly lastAt: number;
+}
+
+export const EMPTY_OVERFLOW_STREAK: OverflowStreak = { attempts: 0, lastAt: 0 };
+
+/**
+ * Streak update for one delivered output frame. Only `closed:overflow`
+ * counts, and only the time window resets the streak — the snapshot the
+ * provider preserves ahead of every overflow close must not. A new epoch
+ * (`identity-changed`) clears it; other frames leave it alone.
+ */
+export const noteOutputFrameForStreak = (
+  value: TerminalOutputEventsValue,
+  streak: OverflowStreak,
+  now: number,
+): OverflowStreak => {
+  if (value.kind !== "closed") return streak;
+  if (value.reason === "identity-changed") return EMPTY_OVERFLOW_STREAK;
+  if (value.reason !== "overflow") return streak;
+  return {
+    attempts:
+      streak.attempts > 0 && now - streak.lastAt < OVERFLOW_RESUBSCRIBE_WINDOW_MS
+        ? streak.attempts + 1
+        : 1,
+    lastAt: now,
+  };
+};
 
 /** `closed` reasons a fresh output subscription can recover from. */
 export const isResumableOutputClose = (

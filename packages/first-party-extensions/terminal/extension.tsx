@@ -14,10 +14,11 @@ import { useEffect, useReducer, useRef, useState, type RefObject } from "react";
 
 import {
   EMPTY_OUTPUT_BUFFER,
+  EMPTY_OVERFLOW_STREAK,
   TerminalPanel,
   applyOutputEvent,
   isResumableOutputClose,
-  nextOverflowAttempts,
+  noteOutputFrameForStreak,
   workspaceLaunchFromRevision,
   type OutputBuffer,
   type TerminalControlOps,
@@ -131,13 +132,13 @@ function useTerminalOutput(
       // new epoch's snapshot. `overflow` is the provider's retained window
       // filling before the first pulls drained it — a fresh subscription
       // starts from a new snapshot that already carries the retained tail,
-      // so resubscribing recovers without losing content. The attempt count
-      // is windowed in time because the preserved snapshot lands before
-      // every overflow close — delivered frames cannot bound a flood — and
-      // repeat overflows back off; exit/error reasons stay ended — the
-      // banner and list stream carry that UX.
-      let overflowAttempts = 0;
-      let lastOverflowAt = 0;
+      // so resubscribing recovers without losing content. The streak is
+      // windowed in time because the preserved snapshot lands before every
+      // overflow close — delivered frames cannot bound a flood — and repeat
+      // overflows back off; exit/error reasons stay ended — the banner and
+      // list stream carry that UX.
+      let streak = EMPTY_OVERFLOW_STREAK;
+      let overflowClose = false;
       while (!signal.aborted) {
         pendingRef.current = null;
         const stateRef = { current: EMPTY_OUTPUT_BUFFER as OutputBuffer };
@@ -151,13 +152,10 @@ function useTerminalOutput(
           for await (const frame of stream) {
             if (signal.aborted) return;
             const value = frame.value as TerminalOutputEventsValue;
+            streak = noteOutputFrameForStreak(value, streak, Date.now());
             if (value.kind === "closed") {
-              if (value.reason === "overflow") {
-                const now = Date.now();
-                overflowAttempts = nextOverflowAttempts(overflowAttempts, lastOverflowAt, now);
-                lastOverflowAt = now;
-              }
-              resurrect = isResumableOutputClose(value.reason, overflowAttempts);
+              overflowClose = value.reason === "overflow";
+              resurrect = isResumableOutputClose(value.reason, streak.attempts);
               // Other closed reasons (exit/error/exhausted overflow) still
               // end the buffer — apply the frame so the rendered state
               // tells the truth.
@@ -205,8 +203,8 @@ function useTerminalOutput(
         if (!signal.aborted) setState({ terminalId, buffer: EMPTY_OUTPUT_BUFFER });
         // Repeat overflow means the provider window is still saturated —
         // back off before resubscribing like the sessions loop does.
-        if (overflowAttempts > 1 && !signal.aborted)
-          await new Promise((resolve) => setTimeout(resolve, 300 * overflowAttempts));
+        if (overflowClose && streak.attempts > 1 && !signal.aborted)
+          await new Promise((resolve) => setTimeout(resolve, 300 * streak.attempts));
       }
     })();
     return () => controller.abort();
