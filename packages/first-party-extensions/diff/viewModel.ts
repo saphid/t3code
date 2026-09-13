@@ -20,8 +20,16 @@ import { parsePatchFiles } from "@pierre/diffs/utils/parsePatchFiles";
 import type {
   VcsCapabilitiesResult,
   VcsDiffFileContentsInput,
+  VcsDiffFileContentsResult,
+  VcsDiffFileContentsStreamEvent,
+  VcsDiffPreviewInput,
   VcsDiffPreviewResult,
   VcsDiffPreviewSource,
+  VcsDiffPreviewStreamEvent,
+  VcsDiffStreamSource,
+  VcsRefEntry,
+  VcsStatusLocal,
+  VcsStatusStreamEvent,
 } from "@t3tools/extension-sdk/catalogue";
 
 /* ---------------- paths ---------------- */
@@ -436,4 +444,782 @@ export function diffCapabilityState(
     };
   }
   return { kind: "ready" };
+}
+
+/* ---------------- stream-vs-unary delivery policy ---------------- */
+
+/**
+ * The broker wraps every invoke result in a 64 KiB envelope; its named
+ * rejection is the only authoritative "too big" signal — no contract
+ * exposes diff byte size beforehand, and status line counts do not
+ * measure it (context lines, headers, untracked bodies, renames, and
+ * binary markers all decouple the two). Unary stays the cheap common
+ * path; this predicate is the control signal for the stream fallback.
+ */
+export function isEnvelopeRejection(error: unknown): boolean {
+  return error instanceof Error && /byte limit/i.test(error.message);
+}
+
+/** Sticky stream verdicts are keyed per preview input. */
+export function previewDeliveryKey(input: VcsDiffPreviewInput): string {
+  return `${input.baseRef ?? ""}|${input.ignoreWhitespace === true ? "w" : ""}`;
+}
+
+/** …and per expanded file within one delivered source. */
+export function contentsDeliveryKey(
+  source: Pick<VcsDiffPreviewSource, "id" | "diffHash">,
+  row: Pick<DiffFileRow, "key">,
+): string {
+  return `${source.id}:${source.diffHash}:${row.key}`;
+}
+
+export type FetchOutcome<T> =
+  | { readonly kind: "ready"; readonly result: T; readonly via: "unary" | "stream" }
+  | { readonly kind: "error"; readonly detail: string }
+  | { readonly kind: "cancelled" };
+
+/** Upper bound on remembered stream verdicts; clears wholesale when hit. */
+export const MAX_STREAM_KEYS = 64;
+
+/**
+ * Unary-first preview fetch with the named-envelope fallback: a
+ * `byte limit` rejection records the input's key in `streamKeys` (the
+ * sticky verdict — a diff large once is usually large across refreshes)
+ * and retries over `streamPreview`, whose reassembly must verify before
+ * anything is returned. Cancellation is silent at every stage.
+ */
+export async function fetchDiffPreview(options: {
+  readonly input: VcsDiffPreviewInput;
+  readonly invoke: (input: VcsDiffPreviewInput) => Promise<VcsDiffPreviewResult>;
+  readonly stream: (
+    input: VcsDiffPreviewInput,
+  ) => AsyncIterable<StreamFrameLike<VcsDiffPreviewStreamEvent>>;
+  readonly streamKeys: Set<string>;
+  readonly signal: AbortSignal;
+}): Promise<FetchOutcome<VcsDiffPreviewResult>> {
+  const { input, invoke, stream, streamKeys, signal } = options;
+  const key = previewDeliveryKey(input);
+  if (!streamKeys.has(key)) {
+    try {
+      const result = await invoke(input);
+      return signal.aborted ? { kind: "cancelled" } : { kind: "ready", result, via: "unary" };
+    } catch (error) {
+      if (signal.aborted) return { kind: "cancelled" };
+      if (!isEnvelopeRejection(error)) {
+        return {
+          kind: "error",
+          detail: error instanceof Error ? error.message : "Diff preview unavailable",
+        };
+      }
+      if (streamKeys.size >= MAX_STREAM_KEYS) streamKeys.clear();
+      streamKeys.add(key);
+    }
+  }
+  return fetchStreamedPreview(stream(input), signal);
+}
+
+async function fetchStreamedPreview(
+  stream: AsyncIterable<StreamFrameLike<VcsDiffPreviewStreamEvent>>,
+  signal: AbortSignal,
+): Promise<FetchOutcome<VcsDiffPreviewResult>> {
+  let collected: Awaited<ReturnType<typeof collectPreviewStream>>;
+  try {
+    collected = await collectPreviewStream(stream, signal);
+  } catch (error) {
+    if (signal.aborted) return { kind: "cancelled" };
+    return {
+      kind: "error",
+      detail: error instanceof Error ? error.message : "Diff stream unavailable",
+    };
+  }
+  return streamOutcome(collected, signal);
+}
+
+function streamOutcome<T>(
+  collected:
+    | { readonly kind: "verified"; readonly result: T }
+    | { readonly kind: "protocol" | "incomplete" | "mismatch"; readonly detail: string }
+    | { readonly kind: "cancelled" },
+  signal: AbortSignal,
+): FetchOutcome<T> {
+  switch (collected.kind) {
+    case "verified":
+      return signal.aborted
+        ? { kind: "cancelled" }
+        : { kind: "ready", result: collected.result, via: "stream" };
+    case "cancelled":
+      return { kind: "cancelled" };
+    case "protocol":
+      return { kind: "error", detail: `Diff stream protocol error: ${collected.detail}` };
+    case "incomplete":
+      return {
+        kind: "error",
+        detail: `Diff stream ended before completing — ${collected.detail}. Refresh to retry.`,
+      };
+    case "mismatch":
+      return {
+        kind: "error",
+        detail: `Diff verification failed: ${collected.detail}. Nothing is shown.`,
+      };
+  }
+}
+
+/**
+ * Same unary-first/stream-fallback policy for `getFileContents` — its
+ * 1 MB/side contract bound sits far above the invoke envelope, so large
+ * files hit the identical cliff.
+ */
+export async function fetchFileContents(options: {
+  readonly input: VcsDiffFileContentsInput;
+  readonly deliveryKey: string;
+  readonly invoke: (input: VcsDiffFileContentsInput) => Promise<VcsDiffFileContentsResult>;
+  readonly stream: (
+    input: VcsDiffFileContentsInput,
+  ) => AsyncIterable<StreamFrameLike<VcsDiffFileContentsStreamEvent>>;
+  readonly streamKeys: Set<string>;
+  readonly signal: AbortSignal;
+}): Promise<FetchOutcome<VcsDiffFileContentsResult>> {
+  const { input, deliveryKey, invoke, stream, streamKeys, signal } = options;
+  if (!streamKeys.has(deliveryKey)) {
+    try {
+      const result = await invoke(input);
+      return signal.aborted ? { kind: "cancelled" } : { kind: "ready", result, via: "unary" };
+    } catch (error) {
+      if (signal.aborted) return { kind: "cancelled" };
+      if (!isEnvelopeRejection(error)) {
+        return {
+          kind: "error",
+          detail: error instanceof Error ? error.message : "File contents unavailable",
+        };
+      }
+      if (streamKeys.size >= MAX_STREAM_KEYS) streamKeys.clear();
+      streamKeys.add(deliveryKey);
+    }
+  }
+  let collected: Awaited<ReturnType<typeof collectFileContentsStream>>;
+  try {
+    collected = await collectFileContentsStream(stream(input), signal);
+  } catch (error) {
+    if (signal.aborted) return { kind: "cancelled" };
+    return {
+      kind: "error",
+      detail: error instanceof Error ? error.message : "File contents stream unavailable",
+    };
+  }
+  return streamOutcome(collected, signal);
+}
+
+/* ---------------- stream reassembly + verification ---------------- */
+
+export interface StreamFrameLike<T> {
+  readonly value: T;
+}
+
+/** Terminal failure kinds a stream delivery can end in. */
+export type StreamFailure =
+  | { readonly kind: "protocol"; readonly detail: string }
+  | { readonly kind: "incomplete"; readonly detail: string }
+  | { readonly kind: "mismatch"; readonly detail: string }
+  | { readonly kind: "cancelled" };
+
+async function sha256Hex(text: string): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
+  return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+function utf8Length(text: string): number {
+  return new TextEncoder().encode(text).length;
+}
+
+export interface PreviewAssembly {
+  readonly manifest: {
+    readonly generatedAt: string;
+    readonly sources: readonly VcsDiffStreamSource[];
+  } | null;
+  /** Per-source chunks in arrival order; strict `chunkIndex` sequence. */
+  readonly chunks: readonly (readonly string[])[];
+  readonly complete: string | null;
+}
+
+export function createPreviewAssembly(): PreviewAssembly {
+  return { manifest: null, chunks: [], complete: null };
+}
+
+type FoldResult<T> =
+  | { readonly ok: true; readonly assembly: T }
+  | { readonly ok: false; readonly detail: string };
+
+/**
+ * Fold one `streamPreview` event. Frames must arrive manifest → ordered
+ * chunks → complete; out-of-order, duplicated, or undeclared chunks are
+ * protocol failures — accepting them would hide transport breakage.
+ */
+export function applyPreviewStreamEvent(
+  assembly: PreviewAssembly,
+  event: VcsDiffPreviewStreamEvent,
+): FoldResult<PreviewAssembly> {
+  if (assembly.complete !== null) {
+    return { ok: false, detail: "stream continued after the complete frame" };
+  }
+  if (event.kind === "manifest") {
+    if (assembly.manifest !== null) return { ok: false, detail: "duplicate manifest frame" };
+    return {
+      ok: true,
+      assembly: {
+        manifest: { generatedAt: event.generatedAt, sources: event.sources },
+        chunks: event.sources.map(() => []),
+        complete: null,
+      },
+    };
+  }
+  if (assembly.manifest === null) {
+    return { ok: false, detail: `${event.kind} frame arrived before the manifest` };
+  }
+  if (event.kind === "chunk") {
+    const source = assembly.manifest.sources[event.sourceIndex];
+    if (source === undefined) {
+      return { ok: false, detail: `chunk for unknown sourceIndex ${event.sourceIndex}` };
+    }
+    if (event.chunkIndex >= source.chunkCount) {
+      return {
+        ok: false,
+        detail: `chunkIndex ${event.chunkIndex} exceeds declared chunkCount ${source.chunkCount} for source ${source.id}`,
+      };
+    }
+    const received = assembly.chunks[event.sourceIndex] ?? [];
+    if (event.chunkIndex !== received.length) {
+      return {
+        ok: false,
+        detail: `out-of-order chunk ${event.chunkIndex} for source ${source.id} (expected ${received.length})`,
+      };
+    }
+    const chunks = assembly.chunks.slice();
+    chunks[event.sourceIndex] = [...received, event.data];
+    return { ok: true, assembly: { ...assembly, chunks } };
+  }
+  return { ok: true, assembly: { ...assembly, complete: event.payloadSha256 } };
+}
+
+export type PreviewVerification =
+  | { readonly kind: "verified"; readonly result: VcsDiffPreviewResult }
+  | StreamFailure;
+
+/**
+ * Terminal verification: declared chunk counts, reassembled UTF-8 byte
+ * lengths, per-source sha256, then the whole-payload sha256 — in that
+ * order, before a single byte reaches the render path.
+ */
+export async function verifyPreviewAssembly(
+  assembly: PreviewAssembly,
+): Promise<PreviewVerification> {
+  if (assembly.manifest === null) {
+    return { kind: "incomplete", detail: "stream ended before the manifest" };
+  }
+  if (assembly.complete === null) {
+    return { kind: "incomplete", detail: "stream ended before the complete frame" };
+  }
+  const bodies: string[] = [];
+  for (const [index, source] of assembly.manifest.sources.entries()) {
+    const chunks = assembly.chunks[index] ?? [];
+    if (chunks.length !== source.chunkCount) {
+      return {
+        kind: "incomplete",
+        detail: `source ${source.id}: received ${chunks.length} of ${source.chunkCount} declared chunks`,
+      };
+    }
+    const body = chunks.join("");
+    if (utf8Length(body) !== source.diffByteLength) {
+      return {
+        kind: "mismatch",
+        detail: `source ${source.id}: reassembled byte length does not match the manifest`,
+      };
+    }
+    if ((await sha256Hex(body)) !== source.diffHash) {
+      return {
+        kind: "mismatch",
+        detail: `source ${source.id}: reassembled bytes do not match the manifest hash`,
+      };
+    }
+    bodies.push(body);
+  }
+  if ((await sha256Hex(bodies.join(""))) !== assembly.complete) {
+    return { kind: "mismatch", detail: "reassembled payload does not match the terminal checksum" };
+  }
+  const manifest = assembly.manifest;
+  return {
+    kind: "verified",
+    result: {
+      generatedAt: manifest.generatedAt,
+      sources: manifest.sources.map((source, index) => ({
+        id: source.id,
+        kind: source.kind,
+        title: source.title,
+        baseRef: source.baseRef,
+        headRef: source.headRef,
+        diff: bodies[index] ?? "",
+        diffHash: source.diffHash,
+        truncated: source.truncated,
+      })),
+    },
+  };
+}
+
+/**
+ * Consume a `streamPreview` iterable into a verified preview. The abort
+ * signal is checked before every frame and leaving the loop abandons the
+ * iterator — the contract's cancellation mechanism. Nothing is produced
+ * before the terminal checksum verifies, so unverified bytes can never
+ * reach the caller.
+ */
+export async function collectPreviewStream(
+  stream: AsyncIterable<StreamFrameLike<VcsDiffPreviewStreamEvent>>,
+  signal: AbortSignal,
+): Promise<PreviewVerification> {
+  let assembly = createPreviewAssembly();
+  for await (const frame of stream) {
+    if (signal.aborted) return { kind: "cancelled" };
+    const next = applyPreviewStreamEvent(assembly, frame.value);
+    if (!next.ok) return { kind: "protocol", detail: next.detail };
+    assembly = next.assembly;
+  }
+  if (signal.aborted) return { kind: "cancelled" };
+  return verifyPreviewAssembly(assembly);
+}
+
+export interface FileContentsAssembly {
+  readonly manifest: {
+    readonly oldByteLength: number;
+    readonly oldChunkCount: number;
+    readonly newByteLength: number;
+    readonly newChunkCount: number;
+  } | null;
+  readonly sides: {
+    readonly old: readonly string[];
+    readonly new: readonly string[];
+  };
+  readonly complete: { readonly oldSha256: string; readonly newSha256: string } | null;
+}
+
+export function createFileContentsAssembly(): FileContentsAssembly {
+  return { manifest: null, sides: { old: [], new: [] }, complete: null };
+}
+
+/** `streamFileContents` fold — identical ordering rules, per side. */
+export function applyFileContentsStreamEvent(
+  assembly: FileContentsAssembly,
+  event: VcsDiffFileContentsStreamEvent,
+): FoldResult<FileContentsAssembly> {
+  if (assembly.complete !== null) {
+    return { ok: false, detail: "stream continued after the complete frame" };
+  }
+  if (event.kind === "manifest") {
+    if (assembly.manifest !== null) return { ok: false, detail: "duplicate manifest frame" };
+    return {
+      ok: true,
+      assembly: {
+        manifest: {
+          oldByteLength: event.oldByteLength,
+          oldChunkCount: event.oldChunkCount,
+          newByteLength: event.newByteLength,
+          newChunkCount: event.newChunkCount,
+        },
+        sides: { old: [], new: [] },
+        complete: null,
+      },
+    };
+  }
+  if (assembly.manifest === null) {
+    return { ok: false, detail: `${event.kind} frame arrived before the manifest` };
+  }
+  if (event.kind === "chunk") {
+    const declared =
+      event.side === "old" ? assembly.manifest.oldChunkCount : assembly.manifest.newChunkCount;
+    if (event.chunkIndex >= declared) {
+      return {
+        ok: false,
+        detail: `chunkIndex ${event.chunkIndex} exceeds declared ${event.side} chunkCount ${declared}`,
+      };
+    }
+    const received = assembly.sides[event.side];
+    if (event.chunkIndex !== received.length) {
+      return {
+        ok: false,
+        detail: `out-of-order ${event.side} chunk ${event.chunkIndex} (expected ${received.length})`,
+      };
+    }
+    return {
+      ok: true,
+      assembly: {
+        ...assembly,
+        sides: { ...assembly.sides, [event.side]: [...received, event.data] },
+      },
+    };
+  }
+  return {
+    ok: true,
+    assembly: {
+      ...assembly,
+      complete: { oldSha256: event.oldSha256, newSha256: event.newSha256 },
+    },
+  };
+}
+
+export type FileContentsVerification =
+  | { readonly kind: "verified"; readonly result: VcsDiffFileContentsResult }
+  | StreamFailure;
+
+/** Per-side verification of a reassembled `streamFileContents` delivery. */
+export async function verifyFileContentsAssembly(
+  assembly: FileContentsAssembly,
+): Promise<FileContentsVerification> {
+  if (assembly.manifest === null) {
+    return { kind: "incomplete", detail: "stream ended before the manifest" };
+  }
+  if (assembly.complete === null) {
+    return { kind: "incomplete", detail: "stream ended before the complete frame" };
+  }
+  const manifest = assembly.manifest;
+  const complete = assembly.complete;
+  const sides = [
+    {
+      name: "old" as const,
+      chunks: assembly.sides.old,
+      chunkCount: manifest.oldChunkCount,
+      byteLength: manifest.oldByteLength,
+      sha256: complete.oldSha256,
+    },
+    {
+      name: "new" as const,
+      chunks: assembly.sides.new,
+      chunkCount: manifest.newChunkCount,
+      byteLength: manifest.newByteLength,
+      sha256: complete.newSha256,
+    },
+  ];
+  const bodies: { old?: string; new?: string } = {};
+  for (const side of sides) {
+    if (side.chunks.length !== side.chunkCount) {
+      return {
+        kind: "incomplete",
+        detail: `${side.name} side: received ${side.chunks.length} of ${side.chunkCount} declared chunks`,
+      };
+    }
+    const body = side.chunks.join("");
+    if (utf8Length(body) !== side.byteLength) {
+      return {
+        kind: "mismatch",
+        detail: `${side.name} side: reassembled byte length does not match the manifest`,
+      };
+    }
+    if ((await sha256Hex(body)) !== side.sha256) {
+      return {
+        kind: "mismatch",
+        detail: `${side.name} side: reassembled bytes do not match the complete-frame hash`,
+      };
+    }
+    bodies[side.name] = body;
+  }
+  return {
+    kind: "verified",
+    result: { oldContents: bodies.old ?? "", newContents: bodies.new ?? "" },
+  };
+}
+
+/** `streamFileContents` consumer — the same abandon-and-verify discipline. */
+export async function collectFileContentsStream(
+  stream: AsyncIterable<StreamFrameLike<VcsDiffFileContentsStreamEvent>>,
+  signal: AbortSignal,
+): Promise<FileContentsVerification> {
+  let assembly = createFileContentsAssembly();
+  for await (const frame of stream) {
+    if (signal.aborted) return { kind: "cancelled" };
+    const next = applyFileContentsStreamEvent(assembly, frame.value);
+    if (!next.ok) return { kind: "protocol", detail: next.detail };
+    assembly = next.assembly;
+  }
+  if (signal.aborted) return { kind: "cancelled" };
+  return verifyFileContentsAssembly(assembly);
+}
+
+/* ---------------- status-stream refresh ---------------- */
+
+export interface DiffStatusRefresh {
+  /**
+   * Fingerprint of the last local status the stream delivered. The
+   * preview refreshes once per *distinct* fingerprint — the native
+   * discipline of one refresh per mutation event, never per frame.
+   */
+  readonly fingerprint: string | null;
+  readonly revision: number;
+  readonly stream: "connecting" | "live" | "ended";
+  readonly detail: string | null;
+}
+
+export const CONNECTING_DIFF_STATUS: DiffStatusRefresh = {
+  fingerprint: null,
+  revision: 0,
+  stream: "connecting",
+  detail: null,
+};
+
+/** The local-status fields a diff actually reads. */
+export function localStatusFingerprint(local: VcsStatusLocal): string {
+  return [
+    local.refName ?? "",
+    local.hasWorkingTreeChanges ? "1" : "0",
+    local.workingTree.files.length,
+    local.workingTree.insertions,
+    local.workingTree.deletions,
+    local.workingTree.truncated ? "1" : "0",
+  ].join("|");
+}
+
+/**
+ * Fold a `t3.vcs/status` frame into the refresh model. The first
+ * snapshot sets the baseline without bumping the revision — the preview
+ * already loads on mount — while a reconnect snapshot whose fingerprint
+ * moved refreshes exactly once. `remoteUpdated` never refreshes: the
+ * diff reads local refs and the working tree, not remote bookkeeping.
+ */
+export function foldDiffStatusEvent(
+  model: DiffStatusRefresh,
+  event: VcsStatusStreamEvent,
+): DiffStatusRefresh {
+  switch (event.kind) {
+    case "snapshot": {
+      const fingerprint = localStatusFingerprint(event.local);
+      const changed = model.fingerprint !== null && model.fingerprint !== fingerprint;
+      return {
+        fingerprint,
+        revision: model.revision + (changed ? 1 : 0),
+        stream: "live",
+        detail: null,
+      };
+    }
+    case "localUpdated": {
+      const fingerprint = localStatusFingerprint(event.local);
+      return {
+        ...model,
+        fingerprint,
+        revision: model.revision + (model.fingerprint !== fingerprint ? 1 : 0),
+        stream: "live",
+      };
+    }
+    case "remoteUpdated":
+      return model;
+    case "closed":
+      return {
+        ...model,
+        stream: "ended",
+        detail:
+          event.reason === "overflow"
+            ? "The status stream overflowed its event queue."
+            : "The status stream reported a status error.",
+      };
+  }
+}
+
+/* ---------------- base-ref choices ---------------- */
+
+export interface BaseRefChoice {
+  readonly id: string;
+  readonly label: string;
+  /** The value sent as `baseRef` — local name, or remote name for remote-only refs. */
+  readonly refName: string;
+  readonly remote: boolean;
+}
+
+function remoteBranchName(ref: VcsRefEntry): string {
+  if (ref.remoteName !== undefined && ref.name.startsWith(`${ref.remoteName}/`)) {
+    return ref.name.slice(ref.remoteName.length + 1);
+  }
+  return ref.name;
+}
+
+/**
+ * Pairs each local ref with its same-named remote (preferring `origin`),
+ * then appends the unpaired remote refs — the native
+ * `buildBaseRefChoices` shape over the public `VcsRefEntry` list.
+ */
+export function buildBaseRefChoices(refs: readonly VcsRefEntry[]): readonly BaseRefChoice[] {
+  const localRefs = refs.filter((ref) => ref.isRemote !== true);
+  const remoteRefs = refs.filter((ref) => ref.isRemote === true);
+  const unusedRemotes = new Set(remoteRefs);
+  const paired = localRefs.map((local) => {
+    const matches = remoteRefs.filter(
+      (remote) => unusedRemotes.has(remote) && remoteBranchName(remote) === local.name,
+    );
+    const remote =
+      matches.find((candidate) => candidate.remoteName === "origin") ?? matches[0] ?? null;
+    if (remote !== null) unusedRemotes.delete(remote);
+    return {
+      id: `local:${local.name}`,
+      label: local.name,
+      refName: local.name,
+      remote: remote !== null,
+    };
+  });
+  const remoteOnly = remoteRefs
+    .filter((remote) => unusedRemotes.has(remote))
+    .map((remote) => ({
+      id: `remote:${remote.name}`,
+      label: remote.name,
+      refName: remote.name,
+      remote: true,
+    }));
+  return [...paired, ...remoteOnly];
+}
+
+/** Substring filter over the label and the sent ref name. */
+export function filterBaseRefChoices(
+  choices: readonly BaseRefChoice[],
+  query: string,
+): readonly BaseRefChoice[] {
+  const normalized = query.trim().toLocaleLowerCase();
+  if (normalized.length === 0) return choices;
+  return choices.filter(
+    (choice) =>
+      choice.label.toLocaleLowerCase().includes(normalized) ||
+      choice.refName.toLocaleLowerCase().includes(normalized),
+  );
+}
+
+/* ---------------- file tree ---------------- */
+
+export type DiffTreeRow =
+  | {
+      readonly kind: "dir";
+      /** Trailing-slash directory path — the collapse-state key, as native uses. */
+      readonly path: string;
+      readonly name: string;
+      readonly depth: number;
+      readonly collapsed: boolean;
+      readonly fileCount: number;
+    }
+  | {
+      readonly kind: "file";
+      readonly row: DiffFileRow;
+      readonly name: string;
+      readonly depth: number;
+    };
+
+interface DirNode {
+  readonly dirs: Map<string, DirNode>;
+  readonly files: DiffFileRow[];
+}
+
+function countTreeFiles(node: DirNode): number {
+  let count = node.files.length;
+  for (const child of node.dirs.values()) count += countTreeFiles(child);
+  return count;
+}
+
+/**
+ * Flat indented tree rows for the file pane — the native diffFileTree
+ * semantics (every directory on the way to a file, parents before
+ * children) as a package-owned row list: directories first, then files,
+ * each alphabetically sorted; collapsed directories hide descendants.
+ */
+export function diffTreeRows(
+  files: readonly DiffFileRow[],
+  collapsedDirs: ReadonlySet<string>,
+): readonly DiffTreeRow[] {
+  const root: DirNode = { dirs: new Map(), files: [] };
+  for (const row of files) {
+    const segments = row.path.split("/");
+    let node = root;
+    for (const segment of segments.slice(0, -1)) {
+      let child = node.dirs.get(segment);
+      if (child === undefined) {
+        child = { dirs: new Map(), files: [] };
+        node.dirs.set(segment, child);
+      }
+      node = child;
+    }
+    node.files.push(row);
+  }
+  const rows: DiffTreeRow[] = [];
+  const walk = (node: DirNode, path: string, depth: number) => {
+    for (const [name, child] of [...node.dirs.entries()].sort(([a], [b]) => a.localeCompare(b))) {
+      const dirPath = `${path}${name}/`;
+      rows.push({
+        kind: "dir",
+        path: dirPath,
+        name,
+        depth,
+        collapsed: collapsedDirs.has(dirPath),
+        fileCount: countTreeFiles(child),
+      });
+      if (!collapsedDirs.has(dirPath)) walk(child, dirPath, depth + 1);
+    }
+    for (const file of [...node.files].sort((a, b) => a.path.localeCompare(b.path))) {
+      rows.push({
+        kind: "file",
+        row: file,
+        name: file.path.split("/").pop() ?? file.path,
+        depth,
+      });
+    }
+  };
+  walk(root, "", 0);
+  return rows;
+}
+
+/* ---------------- collapse-all ---------------- */
+
+/** Ported verbatim from the native diffCollapse semantics. */
+export function areAllDiffFilesCollapsed(
+  fileKeys: readonly string[],
+  collapsedFileKeys: ReadonlySet<string>,
+): boolean {
+  return fileKeys.length > 0 && fileKeys.every((key) => collapsedFileKeys.has(key));
+}
+
+export function toggleAllDiffFiles(
+  fileKeys: readonly string[],
+  collapsedFileKeys: ReadonlySet<string>,
+): ReadonlySet<string> {
+  return areAllDiffFilesCollapsed(fileKeys, collapsedFileKeys) ? new Set() : new Set(fileKeys);
+}
+
+export function toggleCollapsedKey(
+  collapsedKeys: ReadonlySet<string>,
+  key: string,
+): ReadonlySet<string> {
+  const next = new Set(collapsedKeys);
+  if (next.has(key)) {
+    next.delete(key);
+  } else {
+    next.add(key);
+  }
+  return next;
+}
+
+/* ---------------- file presentation (open-in-editor) ---------------- */
+
+/**
+ * Safety check before `t3.file/presentation.open`: the path must be
+ * workspace-relative — the safety half of the native
+ * `resolveDiffPathForWorkspace` (reject absolute, empty, and `..`
+ * segments). No repo-root remap exists on the public surface, so paths
+ * are passed through as delivered.
+ */
+export function presentationPath(path: string): string | null {
+  if (
+    path.length === 0 ||
+    path.startsWith("/") ||
+    path.includes("\\") ||
+    path.split("/").some((segment) => segment === "" || segment === "..")
+  ) {
+    return null;
+  }
+  return path;
+}
+
+/** Honest report of a resolved `t3.file/presentation.open` descriptor. */
+export function describePresentation(result: {
+  readonly surfaceId: string;
+  readonly placement: string;
+}): string {
+  return `opens in ${result.surfaceId} · ${result.placement}`;
 }
