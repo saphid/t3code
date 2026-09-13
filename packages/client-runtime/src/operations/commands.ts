@@ -53,7 +53,9 @@ export type InterruptThreadTurnInput = CommandInput<"thread.turn.interrupt">;
 export type RespondToThreadApprovalInput = CommandInput<"thread.approval.respond">;
 export type RespondToThreadUserInputInput = CommandInput<"thread.user-input.respond">;
 export type DismissThreadUserInputInput = CommandInput<"thread.user-input.dismiss">;
-export type RevertThreadCheckpointInput = CommandInput<"thread.checkpoint.revert">;
+export type RevertThreadCheckpointInput = CommandInput<"thread.checkpoint.revert"> & {
+  readonly restoreFiles?: boolean;
+};
 export type StopThreadSessionInput = CommandInput<"thread.session.stop">;
 export type ArmThreadUsageResumeInput = CommandInput<"thread.usage-resume.arm">;
 export type DisarmThreadUsageResumeInput = CommandInput<"thread.usage-resume.disarm">;
@@ -380,9 +382,10 @@ export const dismissThreadUserInput: (input: DismissThreadUserInputInput) => Com
 export const revertThreadCheckpoint: (input: RevertThreadCheckpointInput) => CommandEffect =
   Effect.fn("EnvironmentCommands.revertThreadCheckpoint")(function* (input) {
     const metadata = yield* timestampedCommandMetadata(input);
+    const { restoreFiles, ...command } = input;
     return yield* dispatch({
-      ...input,
-      type: "thread.checkpoint.revert",
+      ...command,
+      type: restoreFiles === false ? "thread.conversation.revert" : "thread.checkpoint.revert",
       commandId: metadata.commandId,
       createdAt: metadata.createdAt,
     });
