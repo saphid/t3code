@@ -454,8 +454,9 @@ function useMediaLease(
           // An iframe does not reliably fire onerror for failed documents —
           // preflight the lease so a 404 lands in the named state. The frame
           // gets the minted URL itself: a blob: URL would be refused by
-          // desktop's frame-src 'self' CSP, and the route's private max-age
-          // cache means the frame's own fetch is not a second download.
+          // desktop's frame-src 'self' CSP. The route's private max-age cache
+          // dedupes the frame's fetch on web; the t3code:// scheme has no
+          // HTTP cache, so desktop re-fetches once through the local proxy.
           const response = await fetch(minted.url, { signal });
           if (signal.aborted) return;
           if (!response.ok) {
@@ -941,9 +942,6 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
               style={{ flex: 1, minHeight: 0, width: "100%", border: 0, background: "#fff" }}
             />
           ) : null}
-          <figcaption style={{ color: muted, fontSize: 11 }}>
-            {describeMediaLease(media.state)}
-          </figcaption>
         </figure>
       )}
       {selected && selectedKind !== "text" && (

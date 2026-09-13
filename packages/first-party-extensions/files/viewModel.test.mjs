@@ -15,6 +15,7 @@ import {
   mediaLeaseExpire,
   mediaLeaseFailed,
   mediaLeaseKindGate,
+  MEDIA_LEASE_MIN_RENEWAL_DELAY_MS,
   mediaLeaseMinted,
   mediaLeaseRenewalDelay,
   mediaLeaseRenewing,
@@ -273,13 +274,21 @@ NodeTest.describe("media lease preview", () => {
     NodeAssert.equal(mediaLeaseErrorState(new Error("")).status, "unavailable");
   });
 
-  NodeTest.it("renewal delay fires the skew before expiry and clamps at zero", () => {
+  NodeTest.it("renewal delay fires the skew before expiry and floors above zero", () => {
     NodeAssert.equal(
       mediaLeaseRenewalDelay(4_000_000, 1_000_000),
       4_000_000 - MEDIA_LEASE_RENEWAL_SKEW_MS - 1_000_000,
     );
-    NodeAssert.equal(mediaLeaseRenewalDelay(4_000_000, 4_000_000 - MEDIA_LEASE_RENEWAL_SKEW_MS), 0);
-    NodeAssert.equal(mediaLeaseRenewalDelay(4_000_000, 5_000_000), 0);
+    // A due-or-past renewal must still wait the floor — no tight mint loop.
+    NodeAssert.equal(
+      mediaLeaseRenewalDelay(4_000_000, 4_000_000 - MEDIA_LEASE_RENEWAL_SKEW_MS),
+      MEDIA_LEASE_MIN_RENEWAL_DELAY_MS,
+    );
+    NodeAssert.equal(
+      mediaLeaseRenewalDelay(4_000_000, 5_000_000),
+      MEDIA_LEASE_MIN_RENEWAL_DELAY_MS,
+    );
+    NodeAssert.ok(MEDIA_LEASE_MIN_RENEWAL_DELAY_MS < MEDIA_LEASE_RENEWAL_SKEW_MS);
   });
 
   NodeTest.it("renewal keeps the live URL rendering while re-minting", () => {

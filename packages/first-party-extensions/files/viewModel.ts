@@ -248,6 +248,8 @@ export type MediaLeaseState =
 
 /** Re-mint this far before `expiresAt` so the rendered URL never lapses. */
 export const MEDIA_LEASE_RENEWAL_SKEW_MS = 5 * 60_000;
+/** Floor on the renewal delay — a short-TTL lease must not spin a mint loop. */
+export const MEDIA_LEASE_MIN_RENEWAL_DELAY_MS = 30_000;
 
 /**
  * What selecting a workspace path does to the preview. `hasThread` is the
@@ -378,9 +380,14 @@ export function mediaLeaseFailed(error: unknown, previous?: MediaLeaseState): Me
   return mapped;
 }
 
-/** Milliseconds until a live lease should be re-minted (0 when due or past). */
+/**
+ * Milliseconds until a live lease should be re-minted: `expiresAt` minus the
+ * skew, floored at `MEDIA_LEASE_MIN_RENEWAL_DELAY_MS` so a mint returning an
+ * already-due expiry (short-TTL host build, skewed clock) cannot spin an
+ * unbounded tight mint loop.
+ */
 export function mediaLeaseRenewalDelay(expiresAt: number, now: number): number {
-  return Math.max(0, expiresAt - MEDIA_LEASE_RENEWAL_SKEW_MS - now);
+  return Math.max(MEDIA_LEASE_MIN_RENEWAL_DELAY_MS, expiresAt - MEDIA_LEASE_RENEWAL_SKEW_MS - now);
 }
 
 /** Renewal starts: the current URL keeps rendering while the re-mint runs. */
