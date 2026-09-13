@@ -39,12 +39,16 @@ createPresentationUrl(resource: ResourceRef) → { url: string, expiresAt: numbe
   (threadId + path), `workspace-file-exact` (workspaceRoot + path), `attachment`
   (attachmentId), `project-favicon`. Host-generated opaque IDs where they exist
   (attachmentId); path-based refs stay path-based (native does the same).
-- **Two lease classes**, distinguished by the claim kind, not by the method:
+- **Lease classes**, distinguished by the claim kind, not by the method:
   - `http-asset` — 1h TTL, cacheable, for `<img>`/webview file presentation
     (workspace-file, attachment, favicon). This is today's behavior, unchanged.
+  - `presentation-lease` — 1h TTL, carries attachment/presentation rights for a
+    host surface rather than an asset URL. `browser-surface` shipped in this
+    class (decision: a presentation attachment is not a one-shot upgrade; it
+    binds engine session id + epoch + allowed command set for its TTL).
   - `ws-stream` — one-shot, short-lived ticket bound to a single upgrade attempt
-    (DeviceHubProxy wsTicket semantics). v1 ships NO ws-stream kinds; `browser-surface`
-    arrives with P08-B, `device-stream` with P16, each with its own decision record.
+    (DeviceHubProxy wsTicket semantics). v1 ships NO ws-stream kinds;
+    `device-stream` arrives with P16 with its own decision record.
 - **Grant map (mint-time authority)**: each kind maps to exactly one extension grant —
   workspace-file → `t3.workspace/resources` read (the deferred P05-B contract; until it
   lands, workspace-file kinds are unavailable to plugins and the adapter fails closed);
