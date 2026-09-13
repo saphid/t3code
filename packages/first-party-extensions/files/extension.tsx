@@ -2,6 +2,7 @@ import {
   filePresentationApi,
   resourcesLeaseApi,
   textEditsApi,
+  workspaceChangesApi,
   workspaceFilesApi,
   workspaceSearchApi,
   workspaceTreeApi,
@@ -24,6 +25,7 @@ import {
   describeSaveState,
   describeSearch,
   describeSnapshot,
+  editorSavePending,
   leasePreviewMode,
   mediaLeaseAssetFailed,
   mediaLeaseExpire,
@@ -36,6 +38,7 @@ import {
   selectMediaLease,
   parentPath,
   previewKind,
+  shouldHandleMutation,
   toggleExpanded,
   visibleRows,
   type EditorOpen,
@@ -50,6 +53,8 @@ const manifestId = "t3.files";
 const PREVIEW_ASSET_PATH = "assets/preview.png";
 const SEARCH_LIMIT = 100;
 const SEARCH_DEBOUNCE_MS = 150;
+const CHANGES_RETRY_MS = 250;
+const CHANGES_ERROR_RETRY_MS = 1000;
 
 function restoreState(value: unknown): value is { readonly relativePath: string } | null {
   if (value === null) return true;
@@ -130,6 +135,58 @@ function useWorkspaceTree(host: ClientHost, session: ViewSession) {
     visible,
     refresh: () => setRefresh((value) => value + 1),
   };
+}
+
+/**
+ * The `t3.workspace/changes` fold — the host's per-thread mutation counter.
+ * The stream is the orchestration signal (completed command_execution /
+ * file_change items), not a filesystem watcher: edits made outside the agent
+ * never arrive here and stay manual-refresh only, matching the native panel.
+ * A folded stream loses nothing across a close — every resubscribe opens with
+ * a snapshot carrying the latest seq, so `closed:overflow` just reconnects.
+ */
+function useWorkspaceChanges(host: ClientHost, session: ViewSession, visible: boolean) {
+  const [mutationSeq, setMutationSeq] = useState<number | null>(null);
+  const threadId = session.context.resource.threadId;
+  useEffect(() => {
+    if (!visible || typeof threadId !== "string" || threadId.length === 0) return;
+    const controller = new AbortController();
+    const signal = AbortSignal.any([controller.signal, session.signal]);
+    const delay = (ms: number) =>
+      new Promise<void>((resolve) => {
+        const timer = setTimeout(resolve, ms);
+        signal.addEventListener(
+          "abort",
+          () => {
+            clearTimeout(timer);
+            resolve();
+          },
+          { once: true },
+        );
+      });
+    void (async () => {
+      while (!signal.aborted) {
+        let retry = CHANGES_RETRY_MS;
+        try {
+          const stream = bindStreamApi(workspaceChangesApi, host, session.context).subscribe(
+            "subscribeChanges",
+            { threadId },
+            signal,
+          );
+          for await (const frame of stream) {
+            if (frame.value.kind === "closed") break;
+            setMutationSeq(frame.value.mutationSeq);
+          }
+        } catch {
+          if (signal.aborted) return;
+          retry = CHANGES_ERROR_RETRY_MS;
+        }
+        await delay(retry);
+      }
+    })();
+    return () => controller.abort();
+  }, [host, session, visible, threadId]);
+  return mutationSeq;
 }
 
 /**
@@ -562,6 +619,33 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
     visible && selected !== null && selectedKind !== "text",
   );
   const currentRead = read?.relativePath === selected && read.revision === revision ? read : null;
+  const mutationSeq = useWorkspaceChanges(host, session, visible);
+  const handledMutationRef = useRef<number | null>(null);
+  // Native parity: a bump while the selected file's save state is latched
+  // (dirty/saving/conflict/error) stays pending instead of clobbering local
+  // edits; when the latch opens the pending seq fires one catch-up refresh.
+  const savePending =
+    editor.surface?.path === selected &&
+    editor.surface !== null &&
+    editorSavePending(editor.surface.saveState.kind);
+  useEffect(() => {
+    if (mutationSeq === null) return;
+    // The first observed seq is this view's baseline, not a new mutation.
+    if (handledMutationRef.current === null) {
+      handledMutationRef.current = mutationSeq;
+      return;
+    }
+    if (
+      !shouldHandleMutation({
+        enabled: visible && !savePending,
+        mutationSeq,
+        handledSeq: handledMutationRef.current,
+      })
+    )
+      return;
+    handledMutationRef.current = mutationSeq;
+    refresh();
+  }, [visible, savePending, mutationSeq, refresh]);
   const kindByPath = useMemo(() => new Map(entries.map((e) => [e.path, e.kind])), [entries]);
   const searching = query.trim() !== "";
   const rows = useMemo(() => visibleRows(entries, expanded, ""), [entries, expanded]);
@@ -974,7 +1058,7 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
 
 export default defineExtension({
   id: manifestId,
-  version: "0.5.0",
+  version: "0.6.0",
   provides: [filePresentationApi.definition],
   assets: [{ path: PREVIEW_ASSET_PATH, mediaType: "application/octet-stream" }],
   serverEntry: "server.ts",
@@ -982,6 +1066,7 @@ export default defineExtension({
     requireApi(workspaceTreeApi),
     requireApi(workspaceFilesApi),
     requireApi(workspaceSearchApi),
+    requireApi(workspaceChangesApi),
     requireApi(textEditsApi),
     requireApi(resourcesLeaseApi),
   ],

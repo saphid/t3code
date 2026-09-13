@@ -1,6 +1,8 @@
 import * as ExtensionCatalogueChanges from "./extensions/catalogueChanges.ts";
 import { ProjectionProjectRepositoryLive } from "./persistence/Layers/ProjectionProjects.ts";
+import { ProjectionThreadActivityRepositoryLive } from "./persistence/Layers/ProjectionThreadActivities.ts";
 import { ProjectionThreadRepositoryLive } from "./persistence/Layers/ProjectionThreads.ts";
+import { ProjectionTurnRepositoryLive } from "./persistence/Layers/ProjectionTurns.ts";
 import * as EnvironmentExtensions from "./extensions/EnvironmentExtensions.ts";
 import { extensionsHttpApiLayer } from "./extensions/http.ts";
 import { EnvironmentHttpApi, ProviderDriverKind } from "@t3tools/contracts";
@@ -570,7 +572,12 @@ export const makeRoutesLayer = Layer.mergeAll(
   Layer.provide(PreviewAutomationBroker.layer),
   Layer.provide(
     EnvironmentExtensions.layer.pipe(
-      Layer.provide([ProjectionProjectRepositoryLive, ProjectionThreadRepositoryLive]),
+      Layer.provide([
+        ProjectionProjectRepositoryLive,
+        ProjectionThreadRepositoryLive,
+        ProjectionThreadActivityRepositoryLive,
+        ProjectionTurnRepositoryLive,
+      ]),
     ),
   ),
   Layer.provide(ExtensionCatalogueChanges.layer),

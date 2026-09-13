@@ -513,6 +513,30 @@ export function describeSnapshot(read: SnapshotRead): EditorOpen {
 
 export type SaveStateKind = "clean" | "dirty" | "saving" | "saved" | "conflict" | "error";
 
+/**
+ * Whether the coordinator holds local work a remote refresh must not
+ * clobber — the plugin-side form of the native panel's `selectedFilePending`
+ * gate. `conflict` is the latched case; `dirty`/`saving`/`error` are the same
+ * "unresolved local edits" pending.
+ */
+export function editorSavePending(kind: SaveStateKind): boolean {
+  return kind === "dirty" || kind === "saving" || kind === "conflict" || kind === "error";
+}
+
+/**
+ * Mutation-refresh gate for `t3.workspace/changes`, mirroring the native
+ * `useWorkspaceMutationRefresh` handled-token semantics: a seq different from
+ * the handled one fires exactly one refresh; while `enabled` is false the
+ * bump stays unhandled, so it still fires when the latch opens.
+ */
+export function shouldHandleMutation(input: {
+  readonly enabled: boolean;
+  readonly mutationSeq: number;
+  readonly handledSeq: number | null;
+}): boolean {
+  return input.enabled && input.mutationSeq !== input.handledSeq;
+}
+
 /** Status line for the coordinator's observable state. */
 export function describeSaveState(state: {
   readonly kind: SaveStateKind;

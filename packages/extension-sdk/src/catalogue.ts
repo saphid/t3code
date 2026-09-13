@@ -52,6 +52,13 @@ export const TERMINAL_CONTROL = "t3.terminal/control";
  */
 export const TERMINAL_OPERATE = "t3.terminal/operate";
 export const WORKSPACE_SEARCH = "t3.workspace/search";
+/**
+ * Broad workspace read grant — mutation-signal streams carry read metadata
+ * about the plugin's own thread workspace, never file bytes, so they ride
+ * this grant rather than a narrower read-text capability.
+ */
+export const WORKSPACE_READ = "t3.workspace/read";
+export const WORKSPACE_CHANGES = "t3.workspace/changes";
 export type WorkspaceSearchInput = {
   readonly query: string;
   readonly limit?: number;
@@ -907,6 +914,90 @@ export const workspaceSearchApi = defineApi<{
           regexFallbackError: { type: "string", maxLength: 512 },
         },
       },
+    },
+  ],
+});
+
+/* ------------------------------------------------------------------------
+ * t3.workspace/changes — the workspace mutation signal. The host folds the
+ * plugin's own thread activity stream (completed command_execution /
+ * file_change tool items — the same fold the native file panels consume) into
+ * a monotonically increasing per-thread `mutationSeq`. It is deliberately NOT
+ * a filesystem watcher: external edits made outside the agent never appear,
+ * matching native behavior. A `snapshot` frame carries the folded latest seq;
+ * each `mutation` frame bumps it; `closed:overflow` is recoverable —
+ * resubscribing re-delivers the latest seq in a fresh snapshot, so a folded
+ * stream loses nothing. Raw activity payloads never cross the wire.
+ * --------------------------------------------------------------------- */
+export type WorkspaceChangesInput = { readonly threadId: string };
+export type WorkspaceMutationKind = "command_execution" | "file_change";
+export type WorkspaceChangesEvent =
+  | { readonly kind: "snapshot"; readonly mutationSeq: number }
+  | {
+      readonly kind: "mutation";
+      readonly mutationSeq: number;
+      readonly kinds: readonly WorkspaceMutationKind[];
+      readonly at: string;
+    }
+  | { readonly kind: "closed"; readonly reason: "overflow" | "watch-error" };
+
+const mutationSeqField = {
+  type: "integer",
+  minimum: 0,
+  maximum: Number.MAX_SAFE_INTEGER,
+} as const;
+const workspaceChangesEventSchema = {
+  oneOf: [
+    {
+      type: "object",
+      additionalProperties: false,
+      required: ["kind", "mutationSeq"],
+      properties: { kind: { const: "snapshot" }, mutationSeq: mutationSeqField },
+    },
+    {
+      type: "object",
+      additionalProperties: false,
+      required: ["kind", "mutationSeq", "kinds", "at"],
+      properties: {
+        kind: { const: "mutation" },
+        mutationSeq: mutationSeqField,
+        kinds: {
+          type: "array",
+          minItems: 1,
+          maxItems: 2,
+          items: { enum: ["command_execution", "file_change"] },
+        },
+        at: { type: "string", minLength: 1, maxLength: 64 },
+      },
+    },
+    {
+      type: "object",
+      additionalProperties: false,
+      required: ["kind", "reason"],
+      properties: {
+        kind: { const: "closed" },
+        reason: { enum: ["overflow", "watch-error"] },
+      },
+    },
+  ],
+} as const;
+export const workspaceChangesApi = defineStreamApi<{
+  subscribeChanges: { input: WorkspaceChangesInput; event: WorkspaceChangesEvent };
+}>({
+  id: WORKSPACE_CHANGES,
+  version: "1.0.0",
+  methods: [],
+  streams: [
+    {
+      name: "subscribeChanges",
+      requiredGrants: [WORKSPACE_READ],
+      inputSchema: {
+        type: "object",
+        additionalProperties: false,
+        required: ["threadId"],
+        properties: { threadId: { type: "string", minLength: 1, maxLength: 128 } },
+      },
+      eventSchema: workspaceChangesEventSchema,
     },
   ],
 });
@@ -2240,6 +2331,7 @@ export const GENERIC_API_CATALOGUE: readonly ApiDefinition[] = [
   workspaceFilesApi.definition,
   workspaceTreeApi.definition,
   workspaceSearchApi.definition,
+  workspaceChangesApi.definition,
   textEditsApi.definition,
   textEditsApiV1.definition,
   filePresentationApi.definition,
@@ -2279,6 +2371,7 @@ export function assertProvidedApiOwner(pluginId: string, definition: ApiDefiniti
 
 export const WORKSPACE_FILES_API = workspaceFilesApi.definition;
 export const WORKSPACE_SEARCH_API = workspaceSearchApi.definition;
+export const WORKSPACE_CHANGES_API = workspaceChangesApi.definition;
 export const FILE_PRESENTATION_API = filePresentationApi.definition;
 export const TERMINAL_SESSIONS_API = terminalSessionsApi.definition;
 export const TERMINAL_SESSIONS_API_V1 = terminalSessionsApiV1.definition;

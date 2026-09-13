@@ -7,6 +7,7 @@ import {
   describeSaveState,
   describeSearch,
   describeSnapshot,
+  editorSavePending,
   filterEntries,
   leasePreviewMode,
   MEDIA_LEASE_RENEWAL_SKEW_MS,
@@ -24,6 +25,7 @@ import {
   parentPath,
   previewKind,
   selectMediaLease,
+  shouldHandleMutation,
   sortTreeEntries,
   toggleExpanded,
   visibleRows,
@@ -422,6 +424,33 @@ NodeTest.describe("describeSaveState", () => {
     NodeAssert.match(
       describeSaveState({ kind: "error", message: "io" }),
       /Save failed: io.*changes are kept/,
+    );
+  });
+});
+
+NodeTest.describe("editorSavePending", () => {
+  NodeTest.it("latches dirty, saving, conflict and error — the states with local work", () => {
+    for (const kind of ["dirty", "saving", "conflict", "error"])
+      NodeAssert.equal(editorSavePending(kind), true, kind);
+    for (const kind of ["clean", "saved"]) NodeAssert.equal(editorSavePending(kind), false, kind);
+  });
+});
+
+NodeTest.describe("shouldHandleMutation", () => {
+  NodeTest.it("fires once per mutationSeq bump", () => {
+    NodeAssert.equal(shouldHandleMutation({ enabled: true, mutationSeq: 3, handledSeq: 2 }), true);
+    NodeAssert.equal(shouldHandleMutation({ enabled: true, mutationSeq: 3, handledSeq: 3 }), false);
+  });
+  NodeTest.it("keeps a bump pending while the save latch holds, firing after it opens", () => {
+    const bumped = { enabled: false, mutationSeq: 4, handledSeq: 3 };
+    NodeAssert.equal(shouldHandleMutation(bumped), false);
+    // The latch released: the same seq is still unhandled and now fires.
+    NodeAssert.equal(shouldHandleMutation({ ...bumped, enabled: true }), true);
+  });
+  NodeTest.it("treats the first observed seq as handled by the caller baseline", () => {
+    NodeAssert.equal(
+      shouldHandleMutation({ enabled: true, mutationSeq: 0, handledSeq: null }),
+      true,
     );
   });
 });
