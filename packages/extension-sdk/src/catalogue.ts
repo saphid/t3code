@@ -1146,7 +1146,15 @@ export type VcsOperationsSupport = {
   readonly "repository.init": boolean;
   readonly "repository.createWorktree": boolean;
   readonly "repository.removeWorktree": boolean;
+  readonly "repository.push": boolean;
+  readonly "repository.fetch": boolean;
+  readonly "repository.listRemotes": boolean;
 };
+/** The operations map a frozen 1.0.0 host reports — the 16 shipped keys only. */
+export type VcsOperationsSupportV1 = Omit<
+  VcsOperationsSupport,
+  "repository.push" | "repository.fetch" | "repository.listRemotes"
+>;
 export type VcsDriverCapabilitiesInfo = {
   readonly kind: VcsDriverKindValue;
   readonly supportsWorktrees: boolean;
@@ -1163,10 +1171,34 @@ export type VcsCapabilitiesResult = {
   readonly driver: VcsDriverCapabilitiesInfo | null;
   readonly operations: VcsOperationsSupport;
 };
+/** Frozen 1.0.0 getCapabilities output — narrower operations map only. */
+export type VcsCapabilitiesResultV1 = Omit<VcsCapabilitiesResult, "operations"> & {
+  readonly operations: VcsOperationsSupportV1;
+};
 export type VcsPullResult = {
   readonly status: "pulled" | "skipped_up_to_date";
   readonly refName: string;
   readonly upstreamRef: string | null;
+};
+/** Mirrors the driver's GitPushResult under the contract's ref naming. */
+export type VcsPushResult = {
+  readonly status: "pushed" | "skipped_up_to_date";
+  readonly refName: string;
+  readonly upstreamRef: string | null;
+  readonly setUpstream: boolean;
+};
+/** Fetch remote-tracking refs for one remote or, when omitted, every remote. */
+export type VcsFetchInput = { readonly remoteName?: string };
+export type VcsFetchResult = { readonly remotes: readonly string[] };
+export type VcsRemoteEntry = {
+  readonly name: string;
+  readonly url: string;
+  readonly pushUrl: string | null;
+  readonly isPrimary: boolean;
+};
+export type VcsListRemotesResult = {
+  readonly isRepo: boolean;
+  readonly remotes: readonly VcsRemoteEntry[];
 };
 export type VcsInitInput = { readonly kind?: "git" };
 export type VcsCreateWorktreeInput = {
@@ -1857,7 +1889,7 @@ export const vcsDiffApiV1 = defineApi<{
   methods: [vcsDiffGetPreviewMethod, vcsDiffGetFileContentsMethod],
 });
 
-const vcsOperationsSupportSchema = {
+const vcsOperationsSupportSchemaV1 = {
   type: "object",
   additionalProperties: false,
   required: [
@@ -1897,6 +1929,23 @@ const vcsOperationsSupportSchema = {
     "repository.removeWorktree": { type: "boolean" },
   },
 } as const;
+/** 1.1.0 operations map — 1.0.0 keys plus the push/fetch/listRemotes rows. */
+const vcsOperationsSupportSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: [
+    ...vcsOperationsSupportSchemaV1.required,
+    "repository.push",
+    "repository.fetch",
+    "repository.listRemotes",
+  ],
+  properties: {
+    ...vcsOperationsSupportSchemaV1.properties,
+    "repository.push": { type: "boolean" },
+    "repository.fetch": { type: "boolean" },
+    "repository.listRemotes": { type: "boolean" },
+  },
+} as const;
 const vcsDriverCapabilitiesSchema = {
   type: ["object", "null"],
   additionalProperties: false,
@@ -1917,15 +1966,232 @@ const vcsDriverCapabilitiesSchema = {
     ignoreClassifier: { enum: ["native", "git-compatible-fallback"] },
   },
 } as const;
+const vcsCapabilitiesResultSchemaV1 = {
+  type: "object",
+  additionalProperties: false,
+  required: ["detected", "kind", "detail", "driver", "operations"],
+  properties: {
+    detected: { type: "boolean" },
+    kind: { type: ["string", "null"], enum: ["git", "jj", "unknown", null] },
+    detail: { type: ["string", "null"], maxLength: 512 },
+    driver: vcsDriverCapabilitiesSchema,
+    operations: vcsOperationsSupportSchemaV1,
+  },
+} as const;
+const vcsCapabilitiesResultSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["detected", "kind", "detail", "driver", "operations"],
+  properties: {
+    detected: { type: "boolean" },
+    kind: { type: ["string", "null"], enum: ["git", "jj", "unknown", null] },
+    detail: { type: ["string", "null"], maxLength: 512 },
+    driver: vcsDriverCapabilitiesSchema,
+    operations: vcsOperationsSupportSchema,
+  },
+} as const;
+const vcsRepositoryGetCapabilitiesMethodV1 = {
+  name: "getCapabilities",
+  effect: "read",
+  requiredGrants: [VCS_READ],
+  inputSchema: vcsEmptyInputSchema,
+  outputSchema: vcsCapabilitiesResultSchemaV1,
+} as const;
+const vcsRepositoryGetCapabilitiesMethod = {
+  name: "getCapabilities",
+  effect: "read",
+  requiredGrants: [VCS_READ],
+  inputSchema: vcsEmptyInputSchema,
+  outputSchema: vcsCapabilitiesResultSchema,
+} as const;
+const vcsRepositoryPullMethod = {
+  name: "pull",
+  effect: "write",
+  requiredGrants: [VCS_MUTATE],
+  inputSchema: vcsEmptyInputSchema,
+  outputSchema: {
+    type: "object",
+    additionalProperties: false,
+    required: ["status", "refName", "upstreamRef"],
+    properties: {
+      status: { enum: ["pulled", "skipped_up_to_date"] },
+      refName: vcsRefNameOutput,
+      upstreamRef: vcsRefNameOrNull,
+    },
+  },
+} as const;
+const vcsRepositoryInitMethod = {
+  name: "init",
+  effect: "write",
+  requiredGrants: [VCS_MUTATE],
+  inputSchema: {
+    type: "object",
+    additionalProperties: false,
+    properties: { kind: { enum: ["git"] } },
+  },
+  outputSchema: vcsAckOutputSchema,
+} as const;
+const vcsRepositoryCreateWorktreeMethod = {
+  name: "createWorktree",
+  effect: "write",
+  requiredGrants: [VCS_MUTATE],
+  inputSchema: {
+    type: "object",
+    additionalProperties: false,
+    required: ["refName", "path"],
+    properties: {
+      refName: vcsRefNameInput,
+      newRefName: vcsRefNameInput,
+      baseRefName: vcsRefNameInput,
+      path: { type: ["string", "null"], minLength: 1, maxLength: 32768 },
+    },
+  },
+  outputSchema: {
+    type: "object",
+    additionalProperties: false,
+    required: ["worktree"],
+    properties: {
+      worktree: {
+        type: "object",
+        additionalProperties: false,
+        required: ["path", "refName"],
+        properties: {
+          path: { type: "string", minLength: 1, maxLength: 32768 },
+          refName: vcsRefNameOutput,
+        },
+      },
+    },
+  },
+} as const;
+const vcsRepositoryRemoveWorktreeMethod = {
+  name: "removeWorktree",
+  effect: "write",
+  requiredGrants: [VCS_MUTATE],
+  inputSchema: {
+    type: "object",
+    additionalProperties: false,
+    required: ["path"],
+    properties: {
+      path: {
+        type: "string",
+        minLength: 1,
+        maxLength: 32768,
+      },
+      force: { type: "boolean" },
+    },
+  },
+  outputSchema: vcsAckOutputSchema,
+} as const;
+const vcsRepositoryPushMethod = {
+  name: "push",
+  effect: "write",
+  requiredGrants: [VCS_MUTATE],
+  inputSchema: vcsEmptyInputSchema,
+  outputSchema: {
+    type: "object",
+    additionalProperties: false,
+    required: ["status", "refName", "upstreamRef", "setUpstream"],
+    properties: {
+      status: { enum: ["pushed", "skipped_up_to_date"] },
+      refName: vcsRefNameOutput,
+      upstreamRef: vcsRefNameOrNull,
+      setUpstream: { type: "boolean" },
+    },
+  },
+} as const;
+/** Remote names reject option-injection prefixes and whitespace/controls. */
+const vcsRemoteNameInput = {
+  type: "string",
+  minLength: 1,
+  maxLength: 256,
+  allOf: [{ not: { pattern: "^-" } }, { not: { pattern: "[\\s\\x00-\\x1f]" } }],
+} as const;
+const vcsRepositoryFetchMethod = {
+  name: "fetch",
+  effect: "write",
+  requiredGrants: [VCS_MUTATE],
+  inputSchema: {
+    type: "object",
+    additionalProperties: false,
+    properties: { remoteName: vcsRemoteNameInput },
+  },
+  outputSchema: {
+    type: "object",
+    additionalProperties: false,
+    required: ["remotes"],
+    properties: {
+      remotes: {
+        type: "array",
+        maxItems: 64,
+        items: { type: "string", minLength: 1, maxLength: 256 },
+      },
+    },
+  },
+} as const;
+const vcsRepositoryListRemotesMethod = {
+  name: "listRemotes",
+  effect: "read",
+  requiredGrants: [VCS_READ],
+  inputSchema: vcsEmptyInputSchema,
+  outputSchema: {
+    type: "object",
+    additionalProperties: false,
+    required: ["isRepo", "remotes"],
+    properties: {
+      isRepo: { type: "boolean" },
+      remotes: {
+        type: "array",
+        maxItems: 64,
+        items: {
+          type: "object",
+          additionalProperties: false,
+          required: ["name", "url", "pushUrl", "isPrimary"],
+          properties: {
+            name: { type: "string", minLength: 1, maxLength: 256 },
+            url: { type: "string", minLength: 1, maxLength: 2048 },
+            pushUrl: { type: ["string", "null"], minLength: 1, maxLength: 2048 },
+            isPrimary: { type: "boolean" },
+          },
+        },
+      },
+    },
+  },
+} as const;
 /**
  * Repository-level capability discovery and authorized mutations.
  * `getCapabilities` is the honesty mechanism — it names the detected kind,
  * the driver flag set, and per-operation support so consumers never guess.
  * `pull`/`init`/`createWorktree`/`removeWorktree` mirror the private
- * vcs.pull / vcs.init / worktree RPCs under `t3.vcs/mutate`.
+ * vcs.pull / vcs.init / worktree RPCs under `t3.vcs/mutate`; 1.1.0 adds the
+ * sync primitives `push`/`fetch` (write, mutate grant — fetch writes
+ * remote-tracking refs) and `listRemotes` (read) off the driver interface.
  */
 export const vcsRepositoryApi = defineApi<{
   getCapabilities: { input: Record<string, never>; output: VcsCapabilitiesResult };
+  pull: { input: Record<string, never>; output: VcsPullResult };
+  init: { input: VcsInitInput; output: VcsEmptyResult };
+  createWorktree: { input: VcsCreateWorktreeInput; output: VcsCreateWorktreeResult };
+  removeWorktree: { input: VcsRemoveWorktreeInput; output: VcsEmptyResult };
+  push: { input: Record<string, never>; output: VcsPushResult };
+  fetch: { input: VcsFetchInput; output: VcsFetchResult };
+  listRemotes: { input: Record<string, never>; output: VcsListRemotesResult };
+}>({
+  id: VCS_REPOSITORY,
+  version: "1.1.0",
+  methods: [
+    vcsRepositoryGetCapabilitiesMethod,
+    vcsRepositoryPullMethod,
+    vcsRepositoryInitMethod,
+    vcsRepositoryCreateWorktreeMethod,
+    vcsRepositoryRemoveWorktreeMethod,
+    vcsRepositoryPushMethod,
+    vcsRepositoryFetchMethod,
+    vcsRepositoryListRemotesMethod,
+  ],
+});
+/** Frozen published 1.0.0 definition; shared definitions are immutable per version. */
+export const vcsRepositoryApiV1 = defineApi<{
+  getCapabilities: { input: Record<string, never>; output: VcsCapabilitiesResultV1 };
   pull: { input: Record<string, never>; output: VcsPullResult };
   init: { input: VcsInitInput; output: VcsEmptyResult };
   createWorktree: { input: VcsCreateWorktreeInput; output: VcsCreateWorktreeResult };
@@ -1934,102 +2200,11 @@ export const vcsRepositoryApi = defineApi<{
   id: VCS_REPOSITORY,
   version: "1.0.0",
   methods: [
-    {
-      name: "getCapabilities",
-      effect: "read",
-      requiredGrants: [VCS_READ],
-      inputSchema: vcsEmptyInputSchema,
-      outputSchema: {
-        type: "object",
-        additionalProperties: false,
-        required: ["detected", "kind", "detail", "driver", "operations"],
-        properties: {
-          detected: { type: "boolean" },
-          kind: { type: ["string", "null"], enum: ["git", "jj", "unknown", null] },
-          detail: { type: ["string", "null"], maxLength: 512 },
-          driver: vcsDriverCapabilitiesSchema,
-          operations: vcsOperationsSupportSchema,
-        },
-      },
-    },
-    {
-      name: "pull",
-      effect: "write",
-      requiredGrants: [VCS_MUTATE],
-      inputSchema: vcsEmptyInputSchema,
-      outputSchema: {
-        type: "object",
-        additionalProperties: false,
-        required: ["status", "refName", "upstreamRef"],
-        properties: {
-          status: { enum: ["pulled", "skipped_up_to_date"] },
-          refName: vcsRefNameOutput,
-          upstreamRef: vcsRefNameOrNull,
-        },
-      },
-    },
-    {
-      name: "init",
-      effect: "write",
-      requiredGrants: [VCS_MUTATE],
-      inputSchema: {
-        type: "object",
-        additionalProperties: false,
-        properties: { kind: { enum: ["git"] } },
-      },
-      outputSchema: vcsAckOutputSchema,
-    },
-    {
-      name: "createWorktree",
-      effect: "write",
-      requiredGrants: [VCS_MUTATE],
-      inputSchema: {
-        type: "object",
-        additionalProperties: false,
-        required: ["refName", "path"],
-        properties: {
-          refName: vcsRefNameInput,
-          newRefName: vcsRefNameInput,
-          baseRefName: vcsRefNameInput,
-          path: { type: ["string", "null"], minLength: 1, maxLength: 32768 },
-        },
-      },
-      outputSchema: {
-        type: "object",
-        additionalProperties: false,
-        required: ["worktree"],
-        properties: {
-          worktree: {
-            type: "object",
-            additionalProperties: false,
-            required: ["path", "refName"],
-            properties: {
-              path: { type: "string", minLength: 1, maxLength: 32768 },
-              refName: vcsRefNameOutput,
-            },
-          },
-        },
-      },
-    },
-    {
-      name: "removeWorktree",
-      effect: "write",
-      requiredGrants: [VCS_MUTATE],
-      inputSchema: {
-        type: "object",
-        additionalProperties: false,
-        required: ["path"],
-        properties: {
-          path: {
-            type: "string",
-            minLength: 1,
-            maxLength: 32768,
-          },
-          force: { type: "boolean" },
-        },
-      },
-      outputSchema: vcsAckOutputSchema,
-    },
+    vcsRepositoryGetCapabilitiesMethodV1,
+    vcsRepositoryPullMethod,
+    vcsRepositoryInitMethod,
+    vcsRepositoryCreateWorktreeMethod,
+    vcsRepositoryRemoveWorktreeMethod,
   ],
 });
 
@@ -2039,6 +2214,7 @@ export const VCS_CHANGES_API = vcsChangesApi.definition;
 export const VCS_DIFF_API = vcsDiffApi.definition;
 export const VCS_DIFF_API_V1 = vcsDiffApiV1.definition;
 export const VCS_REPOSITORY_API = vcsRepositoryApi.definition;
+export const VCS_REPOSITORY_API_V1 = vcsRepositoryApiV1.definition;
 
 /* ------------------------------------------------------------------------
  * t3.resources/lease — promoted binary/media presentation leases
@@ -2253,6 +2429,7 @@ export const GENERIC_API_CATALOGUE: readonly ApiDefinition[] = [
   vcsChangesApi.definition,
   vcsDiffApi.definition,
   vcsRepositoryApi.definition,
+  vcsRepositoryApiV1.definition,
   vcsDiffApiV1.definition,
   resourcesLeaseApi.definition,
 ];
