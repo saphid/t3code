@@ -126,8 +126,13 @@ function useTerminalOutput(
     void (async () => {
       // A restart changes the session incarnation: the provider closes the
       // stream with `identity-changed` and a fresh subscription starts at the
-      // new epoch's snapshot. Other end states (exit/close/overflow/error)
-      // stay ended — the banner and list stream carry that UX.
+      // new epoch's snapshot. `overflow` is the provider's retained window
+      // filling before the first pulls drained it — a fresh subscription
+      // starts from a new snapshot that already carries the retained tail,
+      // so resubscribing recovers without losing content. Bounded attempts
+      // keep a flooding terminal from spinning; exit/error reasons stay
+      // ended — the banner and list stream carry that UX.
+      let overflowAttempts = 0;
       while (!signal.aborted) {
         pendingRef.current = null;
         const stateRef = { current: EMPTY_OUTPUT_BUFFER as OutputBuffer };
@@ -142,9 +147,13 @@ function useTerminalOutput(
             if (signal.aborted) return;
             const value = frame.value as TerminalOutputEventsValue;
             if (value.kind === "closed") {
-              resurrect = value.reason === "identity-changed";
-              // Other closed reasons (overflow/error) still end the buffer —
-              // apply the frame so the rendered state tells the truth.
+              if (value.reason === "overflow") overflowAttempts += 1;
+              resurrect =
+                value.reason === "identity-changed" ||
+                (value.reason === "overflow" && overflowAttempts <= 3);
+              // Other closed reasons (exit/error/exhausted overflow) still
+              // end the buffer — apply the frame so the rendered state
+              // tells the truth.
               if (!resurrect && !stateRef.current.ended) {
                 const applied = applyOutputEvent(
                   stateRef.current,
@@ -159,6 +168,7 @@ function useTerminalOutput(
               break;
             }
             if (stateRef.current.ended) continue; // scan for a trailing closed frame
+            overflowAttempts = 0; // delivered frames prove the stream drains
             const applied = applyOutputEvent(stateRef.current, frame, value, pendingRef.current);
             pendingRef.current = applied.pending;
             stateRef.current = applied.buffer;

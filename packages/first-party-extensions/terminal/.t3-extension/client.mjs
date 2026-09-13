@@ -3056,6 +3056,7 @@ export default function (__t3Host) {
         const controller = new AbortController();
         const signal = AbortSignal.any([controller.signal, session.signal]);
         void (async () => {
+          let overflowAttempts = 0;
           while (!signal.aborted) {
             pendingRef.current = null;
             const stateRef = { current: EMPTY_OUTPUT_BUFFER };
@@ -3070,7 +3071,10 @@ export default function (__t3Host) {
                 if (signal.aborted) return;
                 const value = frame.value;
                 if (value.kind === "closed") {
-                  resurrect = value.reason === "identity-changed";
+                  if (value.reason === "overflow") overflowAttempts += 1;
+                  resurrect =
+                    value.reason === "identity-changed" ||
+                    (value.reason === "overflow" && overflowAttempts <= 3);
                   if (!resurrect && !stateRef.current.ended) {
                     const applied2 = applyOutputEvent(
                       stateRef.current,
@@ -3085,6 +3089,7 @@ export default function (__t3Host) {
                   break;
                 }
                 if (stateRef.current.ended) continue;
+                overflowAttempts = 0;
                 const applied = applyOutputEvent(
                   stateRef.current,
                   frame,
