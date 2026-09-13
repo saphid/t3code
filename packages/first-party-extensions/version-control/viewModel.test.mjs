@@ -19,15 +19,21 @@ import {
   numstatFor,
   planCommit,
   planRefCreate,
+  planWorktreeCreate,
+  pullState,
+  pushState,
   refRows,
   refSwitchState,
   refSwitchTarget,
+  remoteRows,
   repositoryState,
   retainSelection,
   settleMutation,
   startMutation,
   syncLabel,
+  canWorktreeRef,
   workingTreeLabel,
+  worktreeRows,
 } from "./viewModel.ts";
 
 const change = (path, flags) => ({
@@ -86,6 +92,9 @@ const caps = (overrides = {}) => ({
     "repository.init": true,
     "repository.createWorktree": true,
     "repository.removeWorktree": true,
+    "repository.push": true,
+    "repository.fetch": true,
+    "repository.listRemotes": true,
   },
   ...overrides,
 });
@@ -550,11 +559,162 @@ NodeTest.describe("vcs view model — repository gate", () => {
         "repository.init": false,
         "repository.createWorktree": false,
         "repository.removeWorktree": false,
+        "repository.push": false,
+        "repository.fetch": false,
+        "repository.listRemotes": false,
       },
     });
     const unsupported = repositoryState(nonGit, null);
     NodeAssert.equal(unsupported.kind, "unsupported");
     NodeAssert.equal(unsupported.driverKind, "jj");
     NodeAssert.equal(repositoryState(caps(), null).kind, "ready");
+  });
+});
+
+NodeTest.describe("vcs view model — pull gating", () => {
+  const onMain = local({ hasWorkingTreeChanges: false });
+
+  NodeTest.it("requires a branch, an upstream, and a fast-forwardable behind count", () => {
+    NodeAssert.equal(pullState(null, remote()).disabled, "Repository status pending");
+    NodeAssert.equal(
+      pullState(local({ refName: null }), remote()).disabled,
+      "Detached HEAD — checkout a ref before pulling",
+    );
+    NodeAssert.equal(pullState(onMain, null).disabled, "Upstream status pending");
+    NodeAssert.equal(
+      pullState(onMain, remote({ hasUpstream: false })).disabled,
+      "No upstream configured",
+    );
+    NodeAssert.equal(pullState(onMain, remote({ behindCount: 0 })).disabled, "Already up to date");
+    // Diverged can never fast-forward — native shows the same rebase hint.
+    NodeAssert.equal(
+      pullState(onMain, remote({ behindCount: 2, aheadCount: 1 })).disabled,
+      "Diverged from upstream — rebase or merge first",
+    );
+  });
+
+  NodeTest.it("enables with the behind count in the label", () => {
+    const plan = pullState(onMain, remote({ behindCount: 3 }));
+    NodeAssert.equal(plan.disabled, null);
+    NodeAssert.equal(plan.label, "Pull ↓3");
+  });
+});
+
+NodeTest.describe("vcs view model — push gating", () => {
+  const clean = local({ hasWorkingTreeChanges: false });
+
+  NodeTest.it("mirrors native's disabled reasons in order", () => {
+    NodeAssert.equal(pushState(null, remote()).disabled, "Repository status pending");
+    NodeAssert.equal(
+      pushState(local({ refName: null, hasWorkingTreeChanges: false }), remote()).disabled,
+      "Detached HEAD — checkout a ref before pushing",
+    );
+    NodeAssert.equal(
+      pushState(local({ hasWorkingTreeChanges: true }), remote()).disabled,
+      "Commit local changes before pushing",
+    );
+    NodeAssert.equal(pushState(clean, null).disabled, "Upstream status pending");
+    NodeAssert.equal(
+      pushState(clean, remote({ behindCount: 2, aheadCount: 0 })).disabled,
+      "Behind upstream — pull first",
+    );
+    NodeAssert.equal(
+      pushState(clean, remote({ behindCount: 1, aheadCount: 2 })).disabled,
+      "Diverged from upstream — rebase or merge first",
+    );
+  });
+
+  NodeTest.it("publishes via the driver's -u path when a primary remote exists", () => {
+    // No upstream, no remote at all: native's "Publish repository" dialog —
+    // deferred, so the panel names the missing remote instead.
+    NodeAssert.equal(
+      pushState(clean, remote({ hasUpstream: false, aheadCount: 2 })).disabled,
+      'Add an "origin" remote before pushing',
+    );
+    // No upstream but a remote and commits ahead of base: native's push
+    // action, which lands on the driver's push -u publish path.
+    const publish = pushState(
+      local({ hasWorkingTreeChanges: false, hasPrimaryRemote: true }),
+      remote({ hasUpstream: false, aheadCount: 2 }),
+    );
+    NodeAssert.equal(publish.disabled, null);
+    NodeAssert.equal(publish.label, "Push ↑2");
+    // Nothing ahead of base → the native "No local commits to push" hint.
+    NodeAssert.equal(
+      pushState(
+        local({ hasWorkingTreeChanges: false, hasPrimaryRemote: true }),
+        remote({ hasUpstream: false, aheadCount: 0 }),
+      ).disabled,
+      "No local commits to push",
+    );
+  });
+
+  NodeTest.it("enables ahead-of-upstream pushes with the count in the label", () => {
+    const plan = pushState(clean, remote({ aheadCount: 2 }));
+    NodeAssert.equal(plan.disabled, null);
+    NodeAssert.equal(plan.label, "Push ↑2");
+    NodeAssert.equal(
+      pushState(clean, remote({ aheadCount: 0 })).disabled,
+      "No local commits to push",
+    );
+  });
+});
+
+NodeTest.describe("vcs view model — remotes and worktrees", () => {
+  const rows = [
+    { name: "main", current: true, isDefault: true, remote: null, worktreePath: null },
+    { name: "topic", current: false, isDefault: false, remote: null, worktreePath: null },
+    { name: "wt", current: false, isDefault: false, remote: null, worktreePath: "/wt/wt" },
+    { name: "main", current: false, isDefault: false, remote: "origin", worktreePath: null },
+  ];
+
+  NodeTest.it("projects listRemotes into display rows", () => {
+    NodeAssert.deepEqual(
+      remoteRows({
+        isRepo: true,
+        remotes: [
+          { name: "origin", url: "/r/origin.git", pushUrl: null, isPrimary: true },
+          { name: "fork", url: "/r/fork.git", pushUrl: "/r/fork-push.git", isPrimary: false },
+        ],
+      }),
+      [
+        { name: "origin", url: "/r/origin.git", isPrimary: true },
+        { name: "fork", url: "/r/fork.git", isPrimary: false },
+      ],
+    );
+    NodeAssert.deepEqual(remoteRows(null), []);
+  });
+
+  NodeTest.it(
+    "derives worktree rows from refs worktreePath, excluding the current checkout",
+    () => {
+      NodeAssert.deepEqual(worktreeRows(rows), [{ refName: "wt", path: "/wt/wt" }]);
+    },
+  );
+
+  NodeTest.it("gates per-ref worktree creation to non-current local refs", () => {
+    NodeAssert.equal(canWorktreeRef(rows[0]), false); // current checkout
+    NodeAssert.equal(canWorktreeRef(rows[1]), true); // free local branch
+    NodeAssert.equal(canWorktreeRef(rows[2]), false); // already in a worktree
+    NodeAssert.equal(canWorktreeRef(rows[3]), false); // remote ref
+  });
+
+  NodeTest.it("plans new-branch worktrees off the current branch", () => {
+    const plan = planWorktreeCreate("  feature/x ", rows, "main");
+    NodeAssert.deepEqual(plan, {
+      branch: "feature/x",
+      refName: "main",
+      baseRefName: "main",
+      disabled: null,
+    });
+    NodeAssert.equal(planWorktreeCreate("", rows, "main").disabled, "Enter a branch name");
+    NodeAssert.match(planWorktreeCreate("topic", rows, "main").disabled ?? "", /already exists/);
+    // Detached HEAD: start point is HEAD itself, no base branch to name.
+    NodeAssert.deepEqual(planWorktreeCreate("fix", rows, null), {
+      branch: "fix",
+      refName: "HEAD",
+      baseRefName: null,
+      disabled: null,
+    });
   });
 });

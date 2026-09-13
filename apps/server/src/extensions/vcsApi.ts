@@ -20,8 +20,11 @@ import {
   type VcsChangeEntry,
   type VcsChangesListResult,
   type VcsEmptyResult,
+  type VcsFetchResult,
   type VcsListRefsResult,
+  type VcsListRemotesResult,
   type VcsOperationsSupport,
+  type VcsPushResult,
   type VcsStatusLocal,
   type VcsStatusRemote,
   type VcsStatusResult,
@@ -38,6 +41,7 @@ import { resolveServerBackgroundActivitySettings } from "@t3tools/shared/backgro
 import * as NodePath from "node:path";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { ServerConfig } from "../config.ts";
@@ -130,6 +134,17 @@ const removeWorktreeInput = Schema.decodeUnknownSync(
     path: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(MAX_WORKTREE_PATH)),
     force: Schema.optional(Schema.Boolean),
   }),
+  { onExcessProperty: "error" },
+);
+/** Mirrors the contract-side remote-name bound: no `-` prefix or whitespace/controls. */
+const VCS_REMOTE_NAME_PATTERN = /^[^-\s][^\s\p{Cc}]{0,255}$/u;
+const remoteNameSchema = Schema.String.check(
+  Schema.isMinLength(1),
+  Schema.isMaxLength(MAX_REF_NAME),
+  Schema.isPattern(VCS_REMOTE_NAME_PATTERN),
+);
+const fetchInput = Schema.decodeUnknownSync(
+  Schema.Struct({ remoteName: Schema.optional(remoteNameSchema) }),
   { onExcessProperty: "error" },
 );
 
@@ -344,6 +359,10 @@ const operationsSupport = (
     "repository.init": true,
     "repository.createWorktree": worktrees,
     "repository.removeWorktree": worktrees,
+    "repository.push": git,
+    "repository.fetch": git,
+    // listRemotes is a required VcsDriver method — any detected driver serves it.
+    "repository.listRemotes": handle !== null,
   };
 };
 const NO_OPERATIONS = operationsSupport(null);
@@ -365,10 +384,14 @@ interface VcsApiDependencies extends ScopeDependencies {
     | "createRef"
     | "switchRef"
     | "pullCurrentBranch"
+    | "fetchRemote"
     | "createWorktree"
     | "removeWorktree"
   >;
-  readonly git: Pick<GitVcsDriver["Service"], "execute" | "prepareCommitContext" | "commit">;
+  readonly git: Pick<
+    GitVcsDriver["Service"],
+    "execute" | "prepareCommitContext" | "commit" | "pushCurrentBranch"
+  >;
   readonly vcsRegistry: Pick<VcsDriverRegistry["Service"], "detect" | "resolve">;
   readonly vcsProvisioning: Pick<VcsProvisioningService["Service"], "initRepository">;
   readonly worktreesDir: string;
@@ -879,6 +902,72 @@ export function createVcsApiProviders(dependencies: VcsApiDependencies): HostApi
         run: Effect.fn("vcs.repository.pull")(function* (_safe, scope) {
           yield* requireGit("vcs.repository.pull", scope.cwd);
           return yield* dependencies.gitWorkflow.pullCurrentBranch(scope.cwd);
+        }),
+      }),
+      push: runMethod({
+        operation: "vcs.repository.push",
+        requiredScope: AuthOrchestrationOperateScope,
+        decode: emptyInput,
+        refreshAfter: true,
+        run: Effect.fn("vcs.repository.push")(function* (_safe, scope) {
+          yield* requireGit("vcs.repository.push", scope.cwd);
+          const result = yield* dependencies.git.pushCurrentBranch(scope.cwd, null);
+          return {
+            status: result.status,
+            refName: result.branch,
+            upstreamRef: result.upstreamBranch ?? null,
+            setUpstream: result.setUpstream ?? false,
+          } satisfies VcsPushResult;
+        }),
+      }),
+      fetch: runMethod({
+        operation: "vcs.repository.fetch",
+        requiredScope: AuthOrchestrationOperateScope,
+        decode: fetchInput,
+        refreshAfter: true,
+        run: Effect.fn("vcs.repository.fetch")(function* (safe, scope) {
+          const handle = yield* requireGit("vcs.repository.fetch", scope.cwd);
+          const remoteNames =
+            safe.remoteName === undefined
+              ? (yield* handle.driver.listRemotes(scope.cwd)).remotes.map((remote) => remote.name)
+              : [safe.remoteName];
+          if (remoteNames.length === 0) {
+            return yield* failure(
+              "vcs.repository.fetch",
+              "No remotes are configured in the scoped workspace.",
+            );
+          }
+          yield* Effect.forEach(remoteNames, (remoteName) =>
+            dependencies.gitWorkflow.fetchRemote({ cwd: scope.cwd, remoteName }),
+          );
+          return { remotes: remoteNames } satisfies VcsFetchResult;
+        }),
+      }),
+      listRemotes: runMethod({
+        operation: "vcs.repository.listRemotes",
+        requiredScope: AuthOrchestrationReadScope,
+        decode: emptyInput,
+        run: Effect.fn("vcs.repository.listRemotes")(function* (_safe, scope) {
+          const handle = yield* dependencies.vcsRegistry.detect({ cwd: scope.cwd });
+          if (!handle) {
+            return { isRepo: false, remotes: [] } satisfies VcsListRemotesResult;
+          }
+          const result = yield* handle.driver.listRemotes(scope.cwd);
+          const remotes = result.remotes
+            .filter(
+              (remote) =>
+                remote.name.length <= MAX_REF_NAME &&
+                remote.url.length <= 2048 &&
+                (Option.isNone(remote.pushUrl) || remote.pushUrl.value.length <= 2048),
+            )
+            .slice(0, 64)
+            .map((remote) => ({
+              name: remote.name,
+              url: remote.url,
+              pushUrl: Option.getOrNull(remote.pushUrl),
+              isPrimary: remote.isPrimary,
+            }));
+          return { isRepo: true, remotes } satisfies VcsListRemotesResult;
         }),
       }),
       init: runMethod({

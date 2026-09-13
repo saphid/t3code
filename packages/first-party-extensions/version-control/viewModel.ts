@@ -16,6 +16,7 @@ import type {
   VcsCapabilitiesResult,
   VcsChangeEntry,
   VcsListRefsResult,
+  VcsListRemotesResult,
   VcsRefEntry,
   VcsStatusLocal,
   VcsStatusRemote,
@@ -105,9 +106,21 @@ export function describeEntry(entry: VcsChangeEntry): string {
 /**
  * The mutation operations this slice invokes. `stage`/`unstage`/`commit`
  * map to `t3.vcs/changes` methods, `ref-create`/`ref-switch` to
- * `t3.vcs/refs` methods — all `effect:"write"` under `t3.vcs/mutate`.
+ * `t3.vcs/refs` methods, and `pull`/`push`/`fetch`/`init`/worktree ops to
+ * `t3.vcs/repository` — all `effect:"write"` under `t3.vcs/mutate`.
  */
-export type MutationOp = "stage" | "unstage" | "commit" | "ref-create" | "ref-switch";
+export type MutationOp =
+  | "stage"
+  | "unstage"
+  | "commit"
+  | "ref-create"
+  | "ref-switch"
+  | "pull"
+  | "push"
+  | "fetch"
+  | "init"
+  | "worktree-create"
+  | "worktree-remove";
 
 /** The contract's vcsPathsInput bound — stage/unstage chunk to it, commit cannot exceed it. */
 export const VCS_PATHS_MAX = 100;
@@ -288,6 +301,145 @@ export function refSwitchState(
  */
 export function refSwitchTarget(row: RefRow): string {
   return row.remote === null ? row.name : `${row.remote}/${row.name}`;
+}
+
+/* ---------------- repository sync ops (P10-C rows 7, 8) ---------------- */
+
+export interface SyncControlState {
+  /** Why the control is disabled; null when it may run. */
+  readonly disabled: string | null;
+  readonly label: string;
+}
+
+/**
+ * Pull gating mirrors the native quick action (GitActionsControl.logic.ts):
+ * `pull --ff-only` only exists when the branch tracks an upstream, and a
+ * diverged branch can never fast-forward — native disables sync with a
+ * rebase/merge hint rather than offering a pull that must fail.
+ */
+export function pullState(
+  local: VcsStatusLocal | null,
+  remote: VcsStatusRemote | null,
+): SyncControlState {
+  if (local === null) return { disabled: "Repository status pending", label: "Pull" };
+  if (local.refName === null)
+    return { disabled: "Detached HEAD — checkout a ref before pulling", label: "Pull" };
+  if (remote === null) return { disabled: "Upstream status pending", label: "Pull" };
+  if (!remote.hasUpstream) return { disabled: "No upstream configured", label: "Pull" };
+  if (remote.behindCount > 0 && remote.aheadCount > 0)
+    return { disabled: "Diverged from upstream — rebase or merge first", label: "Pull" };
+  if (remote.behindCount === 0) return { disabled: "Already up to date", label: "Pull" };
+  return { disabled: null, label: `Pull ↓${remote.behindCount}` };
+}
+
+/**
+ * Push gating mirrors the native menu item's disabled reasons in the same
+ * order (GitActionsControl.logic.ts): detached HEAD, dirty tree, behind or
+ * diverged upstream, then the no-upstream cases — no pushable remote at all
+ * (native's "Publish repository" dialog, a deferred slice) versus the
+ * ahead-of-base case, where the driver's `push -u` publish path is exactly
+ * what native's push action runs. `aheadCount` without an upstream counts
+ * against the base branch, so the same number labels the button.
+ */
+export function pushState(
+  local: VcsStatusLocal | null,
+  remote: VcsStatusRemote | null,
+): SyncControlState {
+  if (local === null) return { disabled: "Repository status pending", label: "Push" };
+  if (local.refName === null)
+    return { disabled: "Detached HEAD — checkout a ref before pushing", label: "Push" };
+  if (local.hasWorkingTreeChanges)
+    return { disabled: "Commit local changes before pushing", label: "Push" };
+  if (remote === null) return { disabled: "Upstream status pending", label: "Push" };
+  if (remote.behindCount > 0)
+    return {
+      disabled:
+        remote.aheadCount > 0
+          ? "Diverged from upstream — rebase or merge first"
+          : "Behind upstream — pull first",
+      label: "Push",
+    };
+  if (!remote.hasUpstream && !local.hasPrimaryRemote)
+    return { disabled: 'Add an "origin" remote before pushing', label: "Push" };
+  if (remote.aheadCount === 0) return { disabled: "No local commits to push", label: "Push" };
+  return { disabled: null, label: `Push ↑${remote.aheadCount}` };
+}
+
+/* ---------------- remotes + worktrees (P10-C rows 12, 13) ---------------- */
+
+export interface RemoteRow {
+  readonly name: string;
+  readonly url: string;
+  readonly isPrimary: boolean;
+}
+
+export function remoteRows(result: VcsListRemotesResult | null): readonly RemoteRow[] {
+  return (result?.remotes ?? []).map((remote) => ({
+    name: remote.name,
+    url: remote.url,
+    isPrimary: remote.isPrimary,
+  }));
+}
+
+export interface WorktreeRow {
+  readonly refName: string;
+  readonly path: string;
+}
+
+/**
+ * Worktree rows are derived from `refs.list` `worktreePath` — the same
+ * field native's branch selector uses; there is no separate worktree-list
+ * RPC. The current checkout's own row is excluded (a worktree cannot
+ * remove itself). A detached-HEAD worktree maps to no ref and is
+ * invisible, matching native's branch-based listing.
+ */
+export function worktreeRows(rows: readonly RefRow[]): readonly WorktreeRow[] {
+  return rows.flatMap((row) =>
+    row.worktreePath !== null && !row.current
+      ? [{ refName: row.name, path: row.worktreePath }]
+      : [],
+  );
+}
+
+/**
+ * Whether a ref may be checked out in a new worktree: local only, not the
+ * current checkout, and not already checked out elsewhere (git refuses
+ * the same branch in two worktrees). No control renders otherwise — the
+ * ref row already names the worktree/busy state.
+ */
+export function canWorktreeRef(row: RefRow): boolean {
+  return row.remote === null && !row.current && row.worktreePath === null;
+}
+
+/**
+ * Plan for "new worktree on a new branch" — the native thread-bootstrap
+ * shape (`refName` = start point, `newRefName` = the branch to create,
+ * `baseRefName` = merge-base bookkeeping). The host assigns the path
+ * (`path: null`), so no picker is needed. On a detached HEAD the start
+ * point is HEAD itself; baseRefName is omitted since it names a branch.
+ */
+export function planWorktreeCreate(
+  input: string,
+  rows: readonly RefRow[],
+  currentBranch: string | null,
+): {
+  readonly branch: string | null;
+  readonly refName: string | null;
+  readonly baseRefName: string | null;
+  readonly disabled: string | null;
+} {
+  const branch = input.trim();
+  const none = { branch: null, refName: null, baseRefName: null } as const;
+  if (branch.length === 0) return { ...none, disabled: "Enter a branch name" };
+  if (rows.some((row) => row.remote === null && row.name === branch)) {
+    return { ...none, disabled: `Branch ${branch} already exists` };
+  }
+  return {
+    branch,
+    refName: currentBranch ?? "HEAD",
+    baseRefName: currentBranch,
+    disabled: null,
+  };
 }
 
 /* ---------------- selection ---------------- */

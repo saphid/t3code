@@ -14,6 +14,7 @@ import {
   VCS_REFS_API,
   VCS_REPOSITORY,
   VCS_REPOSITORY_API,
+  VCS_REPOSITORY_API_V1,
   VCS_STATUS,
   VCS_STATUS_API,
   vcsChangesApi,
@@ -21,6 +22,7 @@ import {
   vcsDiffApiV1,
   vcsRefsApi,
   vcsRepositoryApi,
+  vcsRepositoryApiV1,
   vcsStatusApi,
 } from "../dist/catalogue.js";
 
@@ -48,9 +50,10 @@ NodeTest.test(
       NodeAssert.equal(definition.id, id);
       NodeAssert.equal(apis[id].definition, definition);
     }
-    // t3.vcs/diff carries an additive 1.1.0 (streams) with the shipped 1.0.0
-    // frozen alongside; every other t3.vcs id is a single frozen 1.0.0 entry.
-    for (const id of [VCS_STATUS, VCS_REFS, VCS_CHANGES, VCS_REPOSITORY]) {
+    // t3.vcs/diff and t3.vcs/repository carry additive 1.1.0 entries with the
+    // shipped 1.0.0 frozen alongside; every other t3.vcs id is a single
+    // frozen 1.0.0 entry.
+    for (const id of [VCS_STATUS, VCS_REFS, VCS_CHANGES]) {
       NodeAssert.equal(defs[id].version, "1.0.0");
       NodeAssert.deepEqual(
         GENERIC_API_CATALOGUE.filter((d) => d.id === id),
@@ -73,6 +76,30 @@ NodeTest.test(
       "58f9db9d4fbeefe7a2a9d9391770507ec763acd1448fba1c9436cc5e284bb50b",
     );
     NodeAssert.equal(VCS_DIFF_API_V1.streams, undefined);
+
+    NodeAssert.equal(defs[VCS_REPOSITORY].version, "1.1.0");
+    NodeAssert.equal(VCS_REPOSITORY_API_V1.version, "1.0.0");
+    NodeAssert.equal(vcsRepositoryApiV1.definition, VCS_REPOSITORY_API_V1);
+    NodeAssert.deepEqual(
+      GENERIC_API_CATALOGUE.filter((d) => d.id === VCS_REPOSITORY),
+      [VCS_REPOSITORY_API, VCS_REPOSITORY_API_V1],
+    );
+    // The frozen 1.0.0 repository surface is the five shipped methods —
+    // getCapabilities with the 16-key operations map, pull, init, and the
+    // two worktree methods — pinned by content hash.
+    NodeAssert.deepEqual(Object.keys(methodsOf(VCS_REPOSITORY_API_V1)).sort(), [
+      "createWorktree",
+      "getCapabilities",
+      "init",
+      "pull",
+      "removeWorktree",
+    ]);
+    NodeAssert.equal(
+      NodeCrypto.createHash("sha256")
+        .update(JSON.stringify(VCS_REPOSITORY_API_V1.methods))
+        .digest("hex"),
+      "d72a4271c789fdb5b344ecab35923d0ae1f8891a56b846eae170181b34f97c9d",
+    );
   },
 );
 
@@ -88,6 +115,9 @@ NodeTest.test("reads ride t3.vcs/read and mutations ride the distinct t3.vcs/mut
       init: "write",
       createWorktree: "write",
       removeWorktree: "write",
+      push: "write",
+      fetch: "write",
+      listRemotes: "read",
     },
   };
   for (const [id, methods] of Object.entries(expectations)) {
@@ -254,8 +284,17 @@ NodeTest.test("getCapabilities reports driver kind, flags, and per-operation sup
     "refs.switch",
     "repository.pull",
     "repository.createWorktree",
+    "repository.push",
+    "repository.fetch",
+    "repository.listRemotes",
     "diff.getFileContents",
   ]) {
     NodeAssert.equal(operations.properties[key].type, "boolean", key);
+  }
+  // The frozen 1.0.0 operations map carries none of the 1.1.0 keys.
+  const operationsV1 =
+    methodsOf(VCS_REPOSITORY_API_V1).getCapabilities.outputSchema.properties.operations;
+  for (const key of ["repository.push", "repository.fetch", "repository.listRemotes"]) {
+    NodeAssert.equal(operationsV1.properties[key], undefined, `frozen 1.0.0 must lack ${key}`);
   }
 });

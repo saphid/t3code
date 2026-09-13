@@ -170,6 +170,7 @@ const makeDeps = (
     createRef: (input) => services.git.createRef(input),
     switchRef: (input) => services.git.switchRef(input),
     pullCurrentBranch: (cwd) => services.git.pullCurrentBranch(cwd),
+    fetchRemote: (input) => services.git.fetchRemote(input),
     createWorktree: (input) => services.git.createWorktree(input),
     removeWorktree: (input) => services.git.removeWorktree(input),
   },
@@ -600,6 +601,204 @@ it.layer(NodeServices.layer)("t3.vcs adapters", (it) => {
     }),
   );
 
+  it.effect("pushes, fetches, pulls, and lists remotes against a local-path upstream", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const workspace = yield* fs.makeTempDirectoryScoped({ prefix: "t3-vcs-ws-" });
+      const root = yield* fs.makeTempDirectoryScoped({
+        prefix: "t3-vcs-repo-",
+        directory: workspace,
+      });
+      yield* withVcsServices(workspace, ({ git, registry, provisioning, review, worktreesDir }) =>
+        Effect.gen(function* () {
+          yield* initRepo(git, root);
+          yield* fs.writeFileString(path.join(root, "a.txt"), "a\n");
+          yield* git.execute({ operation: "test", cwd: root, args: ["add", "a.txt"] });
+          yield* git.execute({ operation: "test", cwd: root, args: ["commit", "-m", "seed"] });
+          const bare = path.join(workspace, "remote.git");
+          yield* git.execute({
+            operation: "test",
+            cwd: workspace,
+            args: ["init", "--bare", "-b", "main", bare],
+          });
+          const providers = createVcsApiProviders(
+            makeDeps(root, { git, registry, provisioning, review, worktreesDir }),
+          );
+          const repository = providerOf(providers, "t3.vcs/repository");
+          const context = makeContext(root);
+
+          const empty = (yield* invoke(repository, "listRemotes", {}, context)) as {
+            isRepo: boolean;
+            remotes: readonly unknown[];
+          };
+          expect(empty).toEqual({ isRepo: true, remotes: [] });
+          yield* git.execute({
+            operation: "test",
+            cwd: root,
+            args: ["remote", "add", "origin", bare],
+          });
+          const listed = (yield* invoke(repository, "listRemotes", {}, context)) as {
+            remotes: readonly {
+              name: string;
+              url: string;
+              pushUrl: string | null;
+              isPrimary: boolean;
+            }[];
+          };
+          // `git remote -v` reports a push line for every remote, so
+          // pushUrl is the configured push URL — verbatim, not resolved.
+          expect(listed.remotes).toEqual([
+            { name: "origin", url: bare, pushUrl: bare, isPrimary: true },
+          ]);
+
+          const fetched = (yield* invoke(repository, "fetch", {}, context)) as {
+            remotes: readonly string[];
+          };
+          expect(fetched.remotes).toEqual(["origin"]);
+          const named = (yield* invoke(repository, "fetch", { remoteName: "origin" }, context)) as {
+            remotes: readonly string[];
+          };
+          expect(named.remotes).toEqual(["origin"]);
+          const badName = yield* invokeError(repository, "fetch", { remoteName: "--all" }, context);
+          expect(badName.detail).toContain("Invalid");
+
+          // No upstream yet: push publishes with -u onto the primary remote.
+          const published = (yield* invoke(repository, "push", {}, context)) as {
+            status: string;
+            refName: string;
+            upstreamRef: string | null;
+            setUpstream: boolean;
+          };
+          expect(published).toEqual({
+            status: "pushed",
+            refName: "main",
+            upstreamRef: "origin/main",
+            setUpstream: true,
+          });
+          const skipped = (yield* invoke(repository, "push", {}, context)) as {
+            status: string;
+          };
+          expect(skipped.status).toBe("skipped_up_to_date");
+
+          // Advance the upstream from a clone, then pull through the contract.
+          const other = path.join(workspace, "other");
+          yield* git.execute({
+            operation: "test",
+            cwd: workspace,
+            args: ["clone", bare, other],
+          });
+          yield* git.execute({
+            operation: "test",
+            cwd: other,
+            args: ["config", "user.email", "test@test.com"],
+          });
+          yield* git.execute({
+            operation: "test",
+            cwd: other,
+            args: ["config", "user.name", "Test"],
+          });
+          yield* fs.writeFileString(path.join(other, "b.txt"), "b\n");
+          yield* git.execute({ operation: "test", cwd: other, args: ["add", "b.txt"] });
+          yield* git.execute({ operation: "test", cwd: other, args: ["commit", "-m", "upstream"] });
+          yield* git.execute({
+            operation: "test",
+            cwd: other,
+            args: ["push", "origin", "main"],
+          });
+          const pulled = (yield* invoke(repository, "pull", {}, context)) as {
+            status: string;
+            refName: string;
+            upstreamRef: string | null;
+          };
+          expect(pulled.status).toBe("pulled");
+          expect(pulled.upstreamRef).toBe("origin/main");
+          expect(yield* fs.exists(path.join(root, "b.txt"))).toBe(true);
+          const again = (yield* invoke(repository, "pull", {}, context)) as { status: string };
+          expect(again.status).toBe("skipped_up_to_date");
+
+          // Detached HEAD push fails with the named driver error.
+          yield* git.execute({
+            operation: "test",
+            cwd: root,
+            args: ["checkout", "--detach", "HEAD"],
+          });
+          const detached = yield* invokeError(repository, "push", {}, context);
+          expect(detached.detail).toContain("detached");
+        }),
+      );
+    }),
+  );
+
+  it.effect("creates, lists, and removes worktrees inside the host worktrees directory", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const workspace = yield* fs.makeTempDirectoryScoped({ prefix: "t3-vcs-ws-" });
+      const root = yield* fs.makeTempDirectoryScoped({
+        prefix: "t3-vcs-repo-",
+        directory: workspace,
+      });
+      yield* withVcsServices(workspace, ({ git, registry, provisioning, review, worktreesDir }) =>
+        Effect.gen(function* () {
+          yield* initRepo(git, root);
+          yield* fs.writeFileString(path.join(root, "a.txt"), "a\n");
+          yield* git.execute({ operation: "test", cwd: root, args: ["add", "a.txt"] });
+          yield* git.execute({ operation: "test", cwd: root, args: ["commit", "-m", "seed"] });
+          const providers = createVcsApiProviders(
+            makeDeps(root, { git, registry, provisioning, review, worktreesDir }),
+          );
+          const repository = providerOf(providers, "t3.vcs/repository");
+          const refs = providerOf(providers, "t3.vcs/refs");
+          const context = makeContext(root);
+
+          const escaped = yield* invokeError(
+            repository,
+            "createWorktree",
+            { refName: "main", newRefName: "escape", path: "../escape" },
+            context,
+          );
+          expect(escaped.detail).toContain("worktrees");
+
+          const created = (yield* invoke(
+            repository,
+            "createWorktree",
+            { refName: "main", newRefName: "wt-branch", baseRefName: "main", path: null },
+            context,
+          )) as { worktree: { path: string; refName: string } };
+          expect(created.worktree.refName).toBe("wt-branch");
+          expect(created.worktree.path.startsWith(worktreesDir)).toBe(true);
+
+          const listed = (yield* invoke(refs, "list", {}, context)) as {
+            refs: readonly { name: string; worktreePath: string | null }[];
+          };
+          // refs.list reports the canonical path (/var → /private/var on macOS).
+          const createdReal = yield* fs.realPath(created.worktree.path);
+          expect(listed.refs.find((ref) => ref.name === "wt-branch")?.worktreePath).toBe(
+            createdReal,
+          );
+
+          // A dirty worktree refuses plain removal, then yields to force.
+          yield* fs.writeFileString(path.join(created.worktree.path, "dirty.txt"), "dirty\n");
+          const refused = yield* invokeError(
+            repository,
+            "removeWorktree",
+            { path: created.worktree.path },
+            context,
+          );
+          expect(refused.detail).toContain("GitCommandError");
+          yield* invoke(
+            repository,
+            "removeWorktree",
+            { path: created.worktree.path, force: true },
+            context,
+          );
+          expect(yield* fs.exists(created.worktree.path)).toBe(false);
+        }),
+      );
+    }),
+  );
+
   it.effect("reports honest capabilities and named unsupported errors for a non-git driver", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -651,11 +850,19 @@ it.layer(NodeServices.layer)("t3.vcs adapters", (it) => {
           expect(capabilities.kind).toBe("jj");
           expect(capabilities.operations["changes.stage"]).toBe(false);
           expect(capabilities.operations["repository.createWorktree"]).toBe(false);
+          // 1.1.0 sync ops are git-only; listRemotes rides the driver interface.
+          expect(capabilities.operations["repository.push"]).toBe(false);
+          expect(capabilities.operations["repository.fetch"]).toBe(false);
+          expect(capabilities.operations["repository.listRemotes"]).toBe(true);
 
           const stagedError = yield* invokeError(changes, "stage", { paths: ["a.txt"] }, context);
           expect(stagedError.detail).toContain("VcsUnsupportedOperationError");
           const listedError = yield* invokeError(changes, "list", {}, context);
           expect(listedError.detail).toContain("VcsUnsupportedOperationError");
+          const pushError = yield* invokeError(repository, "push", {}, context);
+          expect(pushError.detail).toContain("VcsUnsupportedOperationError");
+          const fetchError = yield* invokeError(repository, "fetch", {}, context);
+          expect(fetchError.detail).toContain("VcsUnsupportedOperationError");
         }),
       );
     }),
