@@ -5,8 +5,11 @@ import {
   AssetWorkspaceRootNormalizationError,
   AuthOrchestrationReadScope,
   ExtensionOperationError,
+  PreviewTabId,
   ProjectId,
-  type ThreadId,
+  type PreviewListResult,
+  ThreadId,
+  TrimmedNonEmptyString,
 } from "@t3tools/contracts";
 import {
   RESOURCES_LEASE_API,
@@ -28,12 +31,17 @@ import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
-import { issueAssetUrl } from "../assets/AssetAccess.ts";
+import {
+  BrowserSurfaceIssueError,
+  issueAssetUrl,
+  issueBrowserSurfaceUrl,
+} from "../assets/AssetAccess.ts";
 import { base64UrlDecodeUtf8 } from "../auth/utils.ts";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as ServerConfig from "../config.ts";
 import { ServerEnvironment } from "../environment/ServerEnvironment.ts";
 import type { ProjectionRepositoryError } from "../persistence/Errors.ts";
+import * as PreviewManager from "../preview/Manager.ts";
 import {
   ProjectionProjectRepository,
   type ProjectionProject,
@@ -61,6 +69,13 @@ const grantDenied = (operation: string, kind: string, grant: string) =>
     operation,
     `ResourceLeaseGrantDeniedError: grant '${grant}' is required to mint kind '${kind}'`,
   );
+/**
+ * A browser-surface ref names a live engine session: the session must exist
+ * at the claimed epoch. Missing and epoch-mismatched sessions are named
+ * denials — never silently re-bound (the design's P08-B obligation).
+ */
+const bindingDenied = (operation: string, detail: string) =>
+  failure(operation, `ResourceLeaseSessionBindingError: ${detail}`);
 
 /**
  * Tag-preserving error mapping — the native Asset* failures surface their
@@ -82,9 +97,26 @@ const operationError = (operation: string) => (cause: unknown) => {
   return failure(operation, `${tag ? `${tag}: ` : ""}${message}`.slice(0, 512));
 };
 
-const decodeResource = Schema.decodeUnknownSync(Schema.Struct({ resource: AssetResource }), {
-  onExcessProperty: "error",
+/**
+ * The browser-surface ref is not an `AssetResource` member: that union is
+ * also the private `assetsCreateUrl` RPC input, and the design allows only
+ * the browser sessions contract holder to mint these claims.
+ */
+const BrowserSurfaceRef = Schema.TaggedStruct("browser-surface", {
+  threadId: ThreadId,
+  tabId: PreviewTabId,
+  serverEpoch: TrimmedNonEmptyString,
+  allowedCommands: Schema.Array(Schema.Literals(["attach", "present", "release"])).check(
+    Schema.isMinLength(1),
+  ),
 });
+
+const decodeResource = Schema.decodeUnknownSync(
+  Schema.Struct({ resource: Schema.Union([AssetResource, BrowserSurfaceRef]) }),
+  {
+    onExcessProperty: "error",
+  },
+);
 
 /** The claim kind minted, read back out of the signed payload — the honest value. */
 const KNOWN_CLAIM_KINDS = new Set<ResourceLeaseClaimKind>([
@@ -92,6 +124,7 @@ const KNOWN_CLAIM_KINDS = new Set<ResourceLeaseClaimKind>([
   "workspace-file-exact",
   "project-favicon",
   "project-favicon-external",
+  "browser-surface",
 ]);
 
 const mintedClaimKind = (relativeUrl: string): ResourceLeaseClaimKind | null => {
@@ -144,6 +177,23 @@ interface ResourcesLeaseApiDependencies {
     readonly workspaceRoot?: string;
     readonly projectFaviconPath?: string;
   }) => Effect.Effect<LeaseIssueResult, LeaseIssueError>;
+  /**
+   * The live engine registry, narrowed to what mint-time binding needs:
+   * does `(threadId, tabId)` name a session at the manager's current epoch.
+   */
+  readonly preview: {
+    readonly list: (input: { readonly threadId: ThreadId }) => Effect.Effect<PreviewListResult>;
+  };
+  readonly issueBrowserSurface: (input: {
+    readonly environmentId: string;
+    readonly threadId: string;
+    readonly tabId: string;
+    readonly serverEpoch: string;
+    readonly allowedCommands: ReadonlyArray<"attach" | "present" | "release">;
+  }) => Effect.Effect<
+    { readonly relativeUrl: string; readonly expiresAt: number },
+    BrowserSurfaceIssueError
+  >;
   /**
    * The broker's per-caller authorize check, reachable by installation id:
    * enabled + capability listed + projectIds cover the context + scope still
@@ -274,14 +324,16 @@ export function createResourcesLeaseApiProvider(
       // Repository failures map to the native context-resolution error, and a
       // missing/deleted row to context-not-found — exactly the ws.ts RPC's
       // thread → project → workspaceRoot path.
-      const contextResolutionError = (cause: unknown) =>
-        operationError(operation)(new AssetWorkspaceContextResolutionError({ resource, cause }));
+      const contextResolutionError = (resolvedResource: AssetResource, cause: unknown) =>
+        operationError(operation)(
+          new AssetWorkspaceContextResolutionError({ resource: resolvedResource, cause }),
+        );
 
-      let issued: LeaseIssueResult;
+      let issued: { readonly relativeUrl: string; readonly expiresAt: number };
       if (resource._tag === "workspace-file") {
         const thread = yield* dependencies.threads
           .getById({ threadId: resource.threadId })
-          .pipe(Effect.mapError(contextResolutionError));
+          .pipe(Effect.mapError((cause) => contextResolutionError(resource, cause)));
         if (Option.isNone(thread) || thread.value.deletedAt !== null) {
           return yield* operationError(operation)(
             new AssetWorkspaceContextNotFoundError({ resource }),
@@ -299,7 +351,7 @@ export function createResourcesLeaseApiProvider(
         }
         const project = yield* dependencies.projects
           .getById({ projectId: thread.value.projectId })
-          .pipe(Effect.mapError(contextResolutionError));
+          .pipe(Effect.mapError((cause) => contextResolutionError(resource, cause)));
         if (Option.isNone(project) || project.value.deletedAt !== null) {
           return yield* operationError(operation)(
             new AssetWorkspaceContextNotFoundError({ resource }),
@@ -322,7 +374,7 @@ export function createResourcesLeaseApiProvider(
         }
         const project = yield* dependencies.projects
           .getById({ projectId: ProjectId.make(projectId) })
-          .pipe(Effect.mapError(contextResolutionError));
+          .pipe(Effect.mapError((cause) => contextResolutionError(resource, cause)));
         if (Option.isNone(project) || project.value.deletedAt !== null) {
           return yield* operationError(operation)(
             new AssetWorkspaceContextNotFoundError({ resource }),
@@ -362,6 +414,45 @@ export function createResourcesLeaseApiProvider(
           .issueUrl({
             resource,
             ...(project.value.faviconPath ? { projectFaviconPath: project.value.faviconPath } : {}),
+          })
+          .pipe(Effect.mapError(operationError(operation)));
+      } else if (resource._tag === "browser-surface") {
+        // Same thread → project containment wall as workspace-file, but the
+        // denial collapses into the binding error: missing, deleted, and
+        // cross-project threads must not be distinguishable to the caller.
+        const thread = yield* dependencies.threads
+          .getById({ threadId: resource.threadId })
+          .pipe(Effect.mapError(operationError(operation)));
+        if (
+          Option.isNone(thread) ||
+          thread.value.deletedAt !== null ||
+          thread.value.projectId !== scope.context.resource.projectId
+        ) {
+          return yield* bindingDenied(
+            operation,
+            "the claimed thread does not resolve inside the granted scope.",
+          );
+        }
+        const listed = yield* dependencies.preview.list({ threadId: resource.threadId });
+        if (listed.serverEpoch !== resource.serverEpoch) {
+          return yield* bindingDenied(
+            operation,
+            "the claimed engine epoch does not match the live engine epoch.",
+          );
+        }
+        if (!listed.sessions.some((session) => session.tabId === resource.tabId)) {
+          return yield* bindingDenied(
+            operation,
+            `session '${resource.tabId}' does not exist on the claimed thread.`,
+          );
+        }
+        issued = yield* dependencies
+          .issueBrowserSurface({
+            environmentId: dependencies.environmentId,
+            threadId: resource.threadId,
+            tabId: resource.tabId,
+            serverEpoch: listed.serverEpoch,
+            allowedCommands: resource.allowedCommands,
           })
           .pipe(Effect.mapError(operationError(operation)));
       } else {
@@ -409,6 +500,7 @@ export const makeResourcesLeaseApiProvider = Effect.fn("ResourcesLeaseApi.make")
   const faviconResolver = yield* ProjectFaviconResolver.ProjectFaviconResolver;
   const secretStore = yield* ServerSecretStore.ServerSecretStore;
   const crypto = yield* Crypto.Crypto;
+  const preview = yield* PreviewManager.PreviewManager;
   const issueUrl: ResourcesLeaseApiDependencies["issueUrl"] = (input) =>
     issueAssetUrl(input).pipe(
       Effect.provideService(FileSystem.FileSystem, fileSystem),
@@ -419,12 +511,18 @@ export const makeResourcesLeaseApiProvider = Effect.fn("ResourcesLeaseApi.make")
       Effect.provideService(ServerSecretStore.ServerSecretStore, secretStore),
       Effect.provideService(Crypto.Crypto, crypto),
     );
+  const issueBrowserSurface: ResourcesLeaseApiDependencies["issueBrowserSurface"] = (input) =>
+    issueBrowserSurfaceUrl(input).pipe(
+      Effect.provideService(ServerSecretStore.ServerSecretStore, secretStore),
+    );
   return createResourcesLeaseApiProvider({
     environmentId: yield* environment.getEnvironmentId,
     projects: yield* ProjectionProjectRepository,
     threads: yield* ProjectionThreadRepository,
+    preview,
     normalizeWorkspaceRoot: workspacePaths.normalizeWorkspaceRoot,
     issueUrl,
+    issueBrowserSurface,
     authorizeGrant,
   });
 });

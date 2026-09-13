@@ -2054,16 +2054,19 @@ export const VCS_REPOSITORY_API = vcsRepositoryApi.definition;
  * declare none and the host adapter enforces RESOURCE_LEASE_KIND_GRANTS for
  * every caller in the chain, before and after minting.
  *
- * Grant map (v1): `workspace-file` and `project-favicon` ride
+ * Grant map: `workspace-file` and `project-favicon` ride
  * `t3.workspace/resources` — the deferred P05-B contract's read grant,
  * declared here ahead of the contract (a grant id and an API id are distinct
- * registries, so the shared string cannot collide). `attachment` stays in the
- * union but carries no grant until the messages/composer read grant exists;
- * the adapter denies it by name. `media-file` (absolute paths are
- * arbitrary-path minting, a spec non-goal) and `native-app-icon` (no v1
- * consumer) are not in the union. ws-stream-class claims (`browser-surface`,
- * `device-stream`) arrive with P08-B/P16 on the existing DeviceHubProxy
- * wsTicket TTL semantics.
+ * registries, so the shared string cannot collide). `browser-surface` rides
+ * `t3.browser/sessions` — the deferred P08-B contract's id, declared the same
+ * way: only the browser sessions contract holder may vend presentation
+ * leases onto a live engine session. `attachment` stays in the union but
+ * carries no grant until the messages/composer read grant exists; the
+ * adapter denies it by name. `media-file` (absolute paths are arbitrary-path
+ * minting, a spec non-goal) and `native-app-icon` (no consumer) are not in
+ * the union. ws-stream-class claims (`device-stream`) arrive with P16 on the
+ * existing DeviceHubProxy wsTicket TTL semantics; `browser-surface` is a
+ * URL/presentation-class claim, not ws-stream.
  * --------------------------------------------------------------------- */
 export const RESOURCES_LEASE = "t3.resources/lease";
 /**
@@ -2071,15 +2074,38 @@ export const RESOURCES_LEASE = "t3.resources/lease";
  * declared ahead of that contract so presentation leases can be minted today.
  */
 export const WORKSPACE_RESOURCES = "t3.workspace/resources";
+/**
+ * The deferred P08-B `t3.browser/sessions` contract's id, declared ahead of
+ * that contract as the `browser-surface` mint grant — the sessions contract
+ * holder is the only authority the design allows to bind a presentation
+ * lease to an engine session.
+ */
+export const BROWSER_SESSIONS = "t3.browser/sessions";
+
+/**
+ * The closed command vocabulary a `browser-surface` lease may carry — the
+ * presentation-attachment channel's verbs: bind the session's presentation
+ * (`attach`), drive bounds/visibility/stacking (`present`), and release
+ * without closing the session (`release`). Engine commands (navigate,
+ * reload, zoom, DevTools, …) are `t3.browser/sessions` methods checked per
+ * call by the broker and are deliberately not encodable in a lease.
+ */
+export const BROWSER_SURFACE_COMMANDS = ["attach", "present", "release"] as const;
+export type BrowserSurfaceCommand = (typeof BROWSER_SURFACE_COMMANDS)[number];
 
 /** ResourceRef input kinds the contract accepts on the wire. */
-export type ResourceLeaseRefKind = "workspace-file" | "attachment" | "project-favicon";
-/** The claim kinds a v1 mint can produce; echoed back as `kind`. */
+export type ResourceLeaseRefKind =
+  | "workspace-file"
+  | "attachment"
+  | "project-favicon"
+  | "browser-surface";
+/** The claim kinds a mint can produce; echoed back as `kind`. */
 export type ResourceLeaseClaimKind =
   | "workspace-file"
   | "workspace-file-exact"
   | "project-favicon"
-  | "project-favicon-external";
+  | "project-favicon-external"
+  | "browser-surface";
 export type ResourceLeaseRef =
   | {
       readonly _tag: "workspace-file";
@@ -2097,6 +2123,13 @@ export type ResourceLeaseRef =
       readonly _tag: "project-favicon";
       readonly cwd: string;
       readonly path?: string | null;
+    }
+  | {
+      readonly _tag: "browser-surface";
+      readonly threadId: string;
+      readonly tabId: string;
+      readonly serverEpoch: string;
+      readonly allowedCommands: readonly BrowserSurfaceCommand[];
     };
 export type ResourceLeaseCreatePresentationUrlInput = { readonly resource: ResourceLeaseRef };
 export type ResourceLeasePresentationUrl = {
@@ -2109,6 +2142,21 @@ export type ResourceLeaseCapabilities = {
   /** Kinds this build can mint for a caller holding the kind's grant. */
   readonly supportedKinds: readonly ResourceLeaseRefKind[];
 };
+/** Frozen 1.0.0 wire shapes — before `browser-surface` joined the union. */
+export type ResourceLeaseRefV1 = Exclude<ResourceLeaseRef, { readonly _tag: "browser-surface" }>;
+export type ResourceLeaseClaimKindV1 = Exclude<ResourceLeaseClaimKind, "browser-surface">;
+export type ResourceLeaseRefKindV1 = Exclude<ResourceLeaseRefKind, "browser-surface">;
+export type ResourceLeaseCreatePresentationUrlInputV1 = {
+  readonly resource: ResourceLeaseRefV1;
+};
+export type ResourceLeasePresentationUrlV1 = {
+  readonly url: string;
+  readonly expiresAt: number;
+  readonly kind: ResourceLeaseClaimKindV1;
+};
+export type ResourceLeaseCapabilitiesV1 = {
+  readonly supportedKinds: readonly ResourceLeaseRefKindV1[];
+};
 /**
  * Mint-time authority per resource kind; `null` means no grant exists in this
  * build and the adapter fails closed by name. `supportedKinds` is exactly the
@@ -2118,12 +2166,13 @@ export const RESOURCE_LEASE_KIND_GRANTS: Readonly<Record<ResourceLeaseRefKind, s
   "workspace-file": WORKSPACE_RESOURCES,
   "project-favicon": WORKSPACE_RESOURCES,
   attachment: null,
+  "browser-surface": BROWSER_SESSIONS,
 };
 export const RESOURCE_LEASE_SUPPORTED_KINDS: readonly ResourceLeaseRefKind[] = (
   Object.keys(RESOURCE_LEASE_KIND_GRANTS) as ResourceLeaseRefKind[]
 ).filter((kind) => RESOURCE_LEASE_KIND_GRANTS[kind] !== null);
 
-const resourceLeaseRefSchema = {
+const resourceLeaseRefSchemaV1 = {
   oneOf: [
     {
       type: "object",
@@ -2165,12 +2214,108 @@ const resourceLeaseRefSchema = {
   ],
 } as const;
 
+const resourceLeaseBrowserSurfaceCommandsSchema = {
+  type: "array",
+  minItems: 1,
+  maxItems: 3,
+  uniqueItems: true,
+  items: { enum: [...BROWSER_SURFACE_COMMANDS] },
+} as const;
+
+/** 1.1.0 input union — the shipped 1.0.0 branches plus `browser-surface`. */
+const resourceLeaseRefSchema = {
+  oneOf: [
+    ...resourceLeaseRefSchemaV1.oneOf,
+    {
+      type: "object",
+      additionalProperties: false,
+      required: ["_tag", "threadId", "tabId", "serverEpoch", "allowedCommands"],
+      properties: {
+        _tag: { const: "browser-surface" },
+        threadId: { type: "string", minLength: 1, maxLength: 160 },
+        tabId: { type: "string", minLength: 1, maxLength: 128 },
+        serverEpoch: { type: "string", minLength: 1, maxLength: 128 },
+        allowedCommands: resourceLeaseBrowserSurfaceCommandsSchema,
+      },
+    },
+  ],
+} as const;
+
 export const resourcesLeaseApi = defineApi<{
   createPresentationUrl: {
     input: ResourceLeaseCreatePresentationUrlInput;
     output: ResourceLeasePresentationUrl;
   };
   getCapabilities: { input: Record<string, never>; output: ResourceLeaseCapabilities };
+}>({
+  id: RESOURCES_LEASE,
+  version: "1.1.0",
+  methods: [
+    {
+      name: "createPresentationUrl",
+      effect: "read",
+      // Per-kind grants are enforced inside the host adapter — a method-level
+      // list can only express "every caller holds all of these".
+      requiredGrants: [],
+      inputSchema: {
+        type: "object",
+        additionalProperties: false,
+        required: ["resource"],
+        properties: { resource: resourceLeaseRefSchema },
+      },
+      outputSchema: {
+        type: "object",
+        additionalProperties: false,
+        required: ["url", "expiresAt", "kind"],
+        properties: {
+          url: { type: "string", minLength: 1, maxLength: 4096 },
+          expiresAt: { type: "number" },
+          kind: {
+            enum: [
+              "workspace-file",
+              "workspace-file-exact",
+              "project-favicon",
+              "project-favicon-external",
+              "browser-surface",
+            ],
+          },
+        },
+      },
+    },
+    {
+      name: "getCapabilities",
+      effect: "read",
+      requiredGrants: [],
+      inputSchema: {
+        type: "object",
+        additionalProperties: false,
+        properties: {},
+      },
+      outputSchema: {
+        type: "object",
+        additionalProperties: false,
+        required: ["supportedKinds"],
+        properties: {
+          supportedKinds: {
+            type: "array",
+            maxItems: 16,
+            items: {
+              enum: ["workspace-file", "attachment", "project-favicon", "browser-surface"],
+            },
+          },
+        },
+      },
+    },
+  ],
+});
+export const RESOURCES_LEASE_API = resourcesLeaseApi.definition;
+/** Frozen published 1.0.0 definition; shared definitions are immutable per version. */
+export const resourcesLeaseApiV1 = defineApi<{
+  createPresentationUrl: {
+    input: ResourceLeaseCreatePresentationUrlInputV1;
+    output: ResourceLeasePresentationUrlV1;
+  };
+  getCapabilities: { input: Record<string, never>; output: ResourceLeaseCapabilitiesV1 };
 }>({
   id: RESOURCES_LEASE,
   version: "1.0.0",
@@ -2185,7 +2330,7 @@ export const resourcesLeaseApi = defineApi<{
         type: "object",
         additionalProperties: false,
         required: ["resource"],
-        properties: { resource: resourceLeaseRefSchema },
+        properties: { resource: resourceLeaseRefSchemaV1 },
       },
       outputSchema: {
         type: "object",
@@ -2229,7 +2374,7 @@ export const resourcesLeaseApi = defineApi<{
     },
   ],
 });
-export const RESOURCES_LEASE_API = resourcesLeaseApi.definition;
+export const RESOURCES_LEASE_API_V1 = resourcesLeaseApiV1.definition;
 
 /**
  * Contracts only: their presence does not advertise a functioning or
@@ -2255,6 +2400,7 @@ export const GENERIC_API_CATALOGUE: readonly ApiDefinition[] = [
   vcsRepositoryApi.definition,
   vcsDiffApiV1.definition,
   resourcesLeaseApi.definition,
+  resourcesLeaseApiV1.definition,
 ];
 function canonical(value: unknown): string {
   if (Array.isArray(value)) return "[" + value.map(canonical).join(",") + "]";
