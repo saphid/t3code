@@ -28,7 +28,11 @@ export function UsageLimitCountdown({
   const remaining = targetMs - Date.now();
   let label: ReactNode;
   if (remaining <= 0) {
-    label = prefix === null ? "now" : "ready soon";
+    // A passed window can't take the "in <time>" shape — "resets in ready
+    // soon"-style concatenations read as broken English — so the preposition
+    // collapses ("resets now", "tokens return now"). A null prefix still
+    // renders the bare value.
+    label = prefix === null ? "now" : `${prefix.replace(/\sin$/, "")} now`;
   } else {
     const totalMinutes = Math.ceil(remaining / 60_000);
     label =
@@ -38,7 +42,7 @@ export function UsageLimitCountdown({
   }
   return (
     <span className={cn("tabular-nums", className)}>
-      {prefix === null ? label : `${prefix} ${label}`}
+      {prefix === null || remaining <= 0 ? label : `${prefix} ${label}`}
     </span>
   );
 }
