@@ -1640,7 +1640,7 @@ var __t3Client = (() => {
     version: "1.0.0",
     methods: [vcsDiffGetPreviewMethod, vcsDiffGetFileContentsMethod]
   });
-  var vcsOperationsSupportSchema = {
+  var vcsOperationsSupportSchemaV1 = {
     type: "object",
     additionalProperties: false,
     required: [
@@ -1680,6 +1680,22 @@ var __t3Client = (() => {
       "repository.removeWorktree": { type: "boolean" }
     }
   };
+  var vcsOperationsSupportSchema = {
+    type: "object",
+    additionalProperties: false,
+    required: [
+      ...vcsOperationsSupportSchemaV1.required,
+      "repository.push",
+      "repository.fetch",
+      "repository.listRemotes"
+    ],
+    properties: {
+      ...vcsOperationsSupportSchemaV1.properties,
+      "repository.push": { type: "boolean" },
+      "repository.fetch": { type: "boolean" },
+      "repository.listRemotes": { type: "boolean" }
+    }
+  };
   var vcsDriverCapabilitiesSchema = {
     type: ["object", "null"],
     additionalProperties: false,
@@ -1700,106 +1716,219 @@ var __t3Client = (() => {
       ignoreClassifier: { enum: ["native", "git-compatible-fallback"] }
     }
   };
-  var vcsRepositoryApi = defineApi({
-    id: VCS_REPOSITORY,
-    version: "1.0.0",
-    methods: [
-      {
-        name: "getCapabilities",
-        effect: "read",
-        requiredGrants: [VCS_READ],
-        inputSchema: vcsEmptyInputSchema,
-        outputSchema: {
+  var vcsCapabilitiesResultSchemaV1 = {
+    type: "object",
+    additionalProperties: false,
+    required: ["detected", "kind", "detail", "driver", "operations"],
+    properties: {
+      detected: { type: "boolean" },
+      kind: { type: ["string", "null"], enum: ["git", "jj", "unknown", null] },
+      detail: { type: ["string", "null"], maxLength: 512 },
+      driver: vcsDriverCapabilitiesSchema,
+      operations: vcsOperationsSupportSchemaV1
+    }
+  };
+  var vcsCapabilitiesResultSchema = {
+    type: "object",
+    additionalProperties: false,
+    required: ["detected", "kind", "detail", "driver", "operations"],
+    properties: {
+      detected: { type: "boolean" },
+      kind: { type: ["string", "null"], enum: ["git", "jj", "unknown", null] },
+      detail: { type: ["string", "null"], maxLength: 512 },
+      driver: vcsDriverCapabilitiesSchema,
+      operations: vcsOperationsSupportSchema
+    }
+  };
+  var vcsRepositoryGetCapabilitiesMethodV1 = {
+    name: "getCapabilities",
+    effect: "read",
+    requiredGrants: [VCS_READ],
+    inputSchema: vcsEmptyInputSchema,
+    outputSchema: vcsCapabilitiesResultSchemaV1
+  };
+  var vcsRepositoryGetCapabilitiesMethod = {
+    name: "getCapabilities",
+    effect: "read",
+    requiredGrants: [VCS_READ],
+    inputSchema: vcsEmptyInputSchema,
+    outputSchema: vcsCapabilitiesResultSchema
+  };
+  var vcsRepositoryPullMethod = {
+    name: "pull",
+    effect: "write",
+    requiredGrants: [VCS_MUTATE],
+    inputSchema: vcsEmptyInputSchema,
+    outputSchema: {
+      type: "object",
+      additionalProperties: false,
+      required: ["status", "refName", "upstreamRef"],
+      properties: {
+        status: { enum: ["pulled", "skipped_up_to_date"] },
+        refName: vcsRefNameOutput,
+        upstreamRef: vcsRefNameOrNull
+      }
+    }
+  };
+  var vcsRepositoryInitMethod = {
+    name: "init",
+    effect: "write",
+    requiredGrants: [VCS_MUTATE],
+    inputSchema: {
+      type: "object",
+      additionalProperties: false,
+      properties: { kind: { enum: ["git"] } }
+    },
+    outputSchema: vcsAckOutputSchema
+  };
+  var vcsRepositoryCreateWorktreeMethod = {
+    name: "createWorktree",
+    effect: "write",
+    requiredGrants: [VCS_MUTATE],
+    inputSchema: {
+      type: "object",
+      additionalProperties: false,
+      required: ["refName", "path"],
+      properties: {
+        refName: vcsRefNameInput,
+        newRefName: vcsRefNameInput,
+        baseRefName: vcsRefNameInput,
+        path: { type: ["string", "null"], minLength: 1, maxLength: 32768 }
+      }
+    },
+    outputSchema: {
+      type: "object",
+      additionalProperties: false,
+      required: ["worktree"],
+      properties: {
+        worktree: {
           type: "object",
           additionalProperties: false,
-          required: ["detected", "kind", "detail", "driver", "operations"],
+          required: ["path", "refName"],
           properties: {
-            detected: { type: "boolean" },
-            kind: { type: ["string", "null"], enum: ["git", "jj", "unknown", null] },
-            detail: { type: ["string", "null"], maxLength: 512 },
-            driver: vcsDriverCapabilitiesSchema,
-            operations: vcsOperationsSupportSchema
+            path: { type: "string", minLength: 1, maxLength: 32768 },
+            refName: vcsRefNameOutput
           }
         }
-      },
-      {
-        name: "pull",
-        effect: "write",
-        requiredGrants: [VCS_MUTATE],
-        inputSchema: vcsEmptyInputSchema,
-        outputSchema: {
-          type: "object",
-          additionalProperties: false,
-          required: ["status", "refName", "upstreamRef"],
-          properties: {
-            status: { enum: ["pulled", "skipped_up_to_date"] },
-            refName: vcsRefNameOutput,
-            upstreamRef: vcsRefNameOrNull
-          }
+      }
+    }
+  };
+  var vcsRepositoryRemoveWorktreeMethod = {
+    name: "removeWorktree",
+    effect: "write",
+    requiredGrants: [VCS_MUTATE],
+    inputSchema: {
+      type: "object",
+      additionalProperties: false,
+      required: ["path"],
+      properties: {
+        path: {
+          type: "string",
+          minLength: 1,
+          maxLength: 32768
+        },
+        force: { type: "boolean" }
+      }
+    },
+    outputSchema: vcsAckOutputSchema
+  };
+  var vcsRepositoryPushMethod = {
+    name: "push",
+    effect: "write",
+    requiredGrants: [VCS_MUTATE],
+    inputSchema: vcsEmptyInputSchema,
+    outputSchema: {
+      type: "object",
+      additionalProperties: false,
+      required: ["status", "refName", "upstreamRef", "setUpstream"],
+      properties: {
+        status: { enum: ["pushed", "skipped_up_to_date"] },
+        refName: vcsRefNameOutput,
+        upstreamRef: vcsRefNameOrNull,
+        setUpstream: { type: "boolean" }
+      }
+    }
+  };
+  var vcsRemoteNameInput = {
+    type: "string",
+    minLength: 1,
+    maxLength: 256,
+    allOf: [{ not: { pattern: "^-" } }, { not: { pattern: "[\\s\\x00-\\x1f]" } }]
+  };
+  var vcsRepositoryFetchMethod = {
+    name: "fetch",
+    effect: "write",
+    requiredGrants: [VCS_MUTATE],
+    inputSchema: {
+      type: "object",
+      additionalProperties: false,
+      properties: { remoteName: vcsRemoteNameInput }
+    },
+    outputSchema: {
+      type: "object",
+      additionalProperties: false,
+      required: ["remotes"],
+      properties: {
+        remotes: {
+          type: "array",
+          maxItems: 64,
+          items: { type: "string", minLength: 1, maxLength: 256 }
         }
-      },
-      {
-        name: "init",
-        effect: "write",
-        requiredGrants: [VCS_MUTATE],
-        inputSchema: {
-          type: "object",
-          additionalProperties: false,
-          properties: { kind: { enum: ["git"] } }
-        },
-        outputSchema: vcsAckOutputSchema
-      },
-      {
-        name: "createWorktree",
-        effect: "write",
-        requiredGrants: [VCS_MUTATE],
-        inputSchema: {
-          type: "object",
-          additionalProperties: false,
-          required: ["refName", "path"],
-          properties: {
-            refName: vcsRefNameInput,
-            newRefName: vcsRefNameInput,
-            baseRefName: vcsRefNameInput,
-            path: { type: ["string", "null"], minLength: 1, maxLength: 32768 }
-          }
-        },
-        outputSchema: {
-          type: "object",
-          additionalProperties: false,
-          required: ["worktree"],
-          properties: {
-            worktree: {
-              type: "object",
-              additionalProperties: false,
-              required: ["path", "refName"],
-              properties: {
-                path: { type: "string", minLength: 1, maxLength: 32768 },
-                refName: vcsRefNameOutput
-              }
+      }
+    }
+  };
+  var vcsRepositoryListRemotesMethod = {
+    name: "listRemotes",
+    effect: "read",
+    requiredGrants: [VCS_READ],
+    inputSchema: vcsEmptyInputSchema,
+    outputSchema: {
+      type: "object",
+      additionalProperties: false,
+      required: ["isRepo", "remotes"],
+      properties: {
+        isRepo: { type: "boolean" },
+        remotes: {
+          type: "array",
+          maxItems: 64,
+          items: {
+            type: "object",
+            additionalProperties: false,
+            required: ["name", "url", "pushUrl", "isPrimary"],
+            properties: {
+              name: { type: "string", minLength: 1, maxLength: 256 },
+              url: { type: "string", minLength: 1, maxLength: 2048 },
+              pushUrl: { type: ["string", "null"], minLength: 1, maxLength: 2048 },
+              isPrimary: { type: "boolean" }
             }
           }
         }
-      },
-      {
-        name: "removeWorktree",
-        effect: "write",
-        requiredGrants: [VCS_MUTATE],
-        inputSchema: {
-          type: "object",
-          additionalProperties: false,
-          required: ["path"],
-          properties: {
-            path: {
-              type: "string",
-              minLength: 1,
-              maxLength: 32768
-            },
-            force: { type: "boolean" }
-          }
-        },
-        outputSchema: vcsAckOutputSchema
       }
+    }
+  };
+  var vcsRepositoryApi = defineApi({
+    id: VCS_REPOSITORY,
+    version: "1.1.0",
+    methods: [
+      vcsRepositoryGetCapabilitiesMethod,
+      vcsRepositoryPullMethod,
+      vcsRepositoryInitMethod,
+      vcsRepositoryCreateWorktreeMethod,
+      vcsRepositoryRemoveWorktreeMethod,
+      vcsRepositoryPushMethod,
+      vcsRepositoryFetchMethod,
+      vcsRepositoryListRemotesMethod
+    ]
+  });
+  var vcsRepositoryApiV1 = defineApi({
+    id: VCS_REPOSITORY,
+    version: "1.0.0",
+    methods: [
+      vcsRepositoryGetCapabilitiesMethodV1,
+      vcsRepositoryPullMethod,
+      vcsRepositoryInitMethod,
+      vcsRepositoryCreateWorktreeMethod,
+      vcsRepositoryRemoveWorktreeMethod
     ]
   });
   var VCS_STATUS_API = vcsStatusApi.definition;
@@ -1808,6 +1937,115 @@ var __t3Client = (() => {
   var VCS_DIFF_API = vcsDiffApi.definition;
   var VCS_DIFF_API_V1 = vcsDiffApiV1.definition;
   var VCS_REPOSITORY_API = vcsRepositoryApi.definition;
+  var VCS_REPOSITORY_API_V1 = vcsRepositoryApiV1.definition;
+  var RESOURCES_LEASE = "t3.resources/lease";
+  var WORKSPACE_RESOURCES = "t3.workspace/resources";
+  var RESOURCE_LEASE_KIND_GRANTS = {
+    "workspace-file": WORKSPACE_RESOURCES,
+    "project-favicon": WORKSPACE_RESOURCES,
+    attachment: null
+  };
+  var RESOURCE_LEASE_SUPPORTED_KINDS = Object.keys(RESOURCE_LEASE_KIND_GRANTS).filter((kind) => RESOURCE_LEASE_KIND_GRANTS[kind] !== null);
+  var resourceLeaseRefSchema = {
+    oneOf: [
+      {
+        type: "object",
+        additionalProperties: false,
+        required: ["_tag", "threadId", "path"],
+        properties: {
+          _tag: { const: "workspace-file" },
+          threadId: { type: "string", minLength: 1, maxLength: 160 },
+          path: { type: "string", minLength: 1, maxLength: 1024 }
+        }
+      },
+      {
+        type: "object",
+        additionalProperties: false,
+        required: ["_tag", "attachmentId"],
+        properties: {
+          _tag: { const: "attachment" },
+          attachmentId: { type: "string", minLength: 1, maxLength: 256 },
+          fileName: { type: "string", minLength: 1, maxLength: 255 },
+          mimeType: { type: "string", minLength: 1, maxLength: 100 },
+          disposition: { enum: ["inline", "attachment"] }
+        }
+      },
+      {
+        type: "object",
+        additionalProperties: false,
+        required: ["_tag", "cwd"],
+        properties: {
+          _tag: { const: "project-favicon" },
+          cwd: { type: "string", minLength: 1, maxLength: 1024 },
+          path: {
+            type: ["string", "null"],
+            minLength: 1,
+            maxLength: 1024,
+            pattern: "\\.(?:avif|gif|ico|jpe?g|png|svg|webp)$"
+          }
+        }
+      }
+    ]
+  };
+  var resourcesLeaseApi = defineApi({
+    id: RESOURCES_LEASE,
+    version: "1.0.0",
+    methods: [
+      {
+        name: "createPresentationUrl",
+        effect: "read",
+        // Per-kind grants are enforced inside the host adapter — a method-level
+        // list can only express "every caller holds all of these".
+        requiredGrants: [],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["resource"],
+          properties: { resource: resourceLeaseRefSchema }
+        },
+        outputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["url", "expiresAt", "kind"],
+          properties: {
+            url: { type: "string", minLength: 1, maxLength: 4096 },
+            expiresAt: { type: "number" },
+            kind: {
+              enum: [
+                "workspace-file",
+                "workspace-file-exact",
+                "project-favicon",
+                "project-favicon-external"
+              ]
+            }
+          }
+        }
+      },
+      {
+        name: "getCapabilities",
+        effect: "read",
+        requiredGrants: [],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          properties: {}
+        },
+        outputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["supportedKinds"],
+          properties: {
+            supportedKinds: {
+              type: "array",
+              maxItems: 16,
+              items: { enum: ["workspace-file", "attachment", "project-favicon"] }
+            }
+          }
+        }
+      }
+    ]
+  });
+  var RESOURCES_LEASE_API = resourcesLeaseApi.definition;
   var GENERIC_API_CATALOGUE = [
     workspaceFilesApi.definition,
     workspaceTreeApi.definition,
@@ -1825,7 +2063,9 @@ var __t3Client = (() => {
     vcsChangesApi.definition,
     vcsDiffApi.definition,
     vcsRepositoryApi.definition,
-    vcsDiffApiV1.definition
+    vcsRepositoryApiV1.definition,
+    vcsDiffApiV1.definition,
+    resourcesLeaseApi.definition
   ];
   function canonical(value) {
     if (Array.isArray(value))
@@ -2213,6 +2453,63 @@ var __t3Client = (() => {
   function refSwitchTarget(row) {
     return row.remote === null ? row.name : `${row.remote}/${row.name}`;
   }
+  function pullState(local, remote) {
+    if (local === null) return { disabled: "Repository status pending", label: "Pull" };
+    if (local.refName === null)
+      return { disabled: "Detached HEAD \u2014 checkout a ref before pulling", label: "Pull" };
+    if (remote === null) return { disabled: "Upstream status pending", label: "Pull" };
+    if (!remote.hasUpstream) return { disabled: "No upstream configured", label: "Pull" };
+    if (remote.behindCount > 0 && remote.aheadCount > 0)
+      return { disabled: "Diverged from upstream \u2014 rebase or merge first", label: "Pull" };
+    if (remote.behindCount === 0) return { disabled: "Already up to date", label: "Pull" };
+    return { disabled: null, label: `Pull \u2193${remote.behindCount}` };
+  }
+  function pushState(local, remote) {
+    if (local === null) return { disabled: "Repository status pending", label: "Push" };
+    if (local.refName === null)
+      return { disabled: "Detached HEAD \u2014 checkout a ref before pushing", label: "Push" };
+    if (local.hasWorkingTreeChanges)
+      return { disabled: "Commit local changes before pushing", label: "Push" };
+    if (remote === null) return { disabled: "Upstream status pending", label: "Push" };
+    if (remote.behindCount > 0)
+      return {
+        disabled: remote.aheadCount > 0 ? "Diverged from upstream \u2014 rebase or merge first" : "Behind upstream \u2014 pull first",
+        label: "Push"
+      };
+    if (!remote.hasUpstream && !local.hasPrimaryRemote)
+      return { disabled: 'Add an "origin" remote before pushing', label: "Push" };
+    if (remote.aheadCount === 0) return { disabled: "No local commits to push", label: "Push" };
+    return { disabled: null, label: `Push \u2191${remote.aheadCount}` };
+  }
+  function remoteRows(result) {
+    return (result?.remotes ?? []).map((remote) => ({
+      name: remote.name,
+      url: remote.url,
+      isPrimary: remote.isPrimary
+    }));
+  }
+  function worktreeRows(rows) {
+    return rows.flatMap(
+      (row) => row.worktreePath !== null && !row.current ? [{ refName: row.name, path: row.worktreePath }] : []
+    );
+  }
+  function canWorktreeRef(row) {
+    return row.remote === null && !row.current && row.worktreePath === null;
+  }
+  function planWorktreeCreate(input, rows, currentBranch) {
+    const branch = input.trim();
+    const none = { branch: null, refName: null, baseRefName: null };
+    if (branch.length === 0) return { ...none, disabled: "Enter a branch name" };
+    if (rows.some((row) => row.remote === null && row.name === branch)) {
+      return { ...none, disabled: `Branch ${branch} already exists` };
+    }
+    return {
+      branch,
+      refName: currentBranch ?? "HEAD",
+      baseRefName: currentBranch,
+      disabled: null
+    };
+  }
   function retainSelection(selection, lanes) {
     if (selection === null) return null;
     if (lanes[selection.lane].some((entry) => entry.path === selection.path)) return selection;
@@ -2332,6 +2629,7 @@ var __t3Client = (() => {
   // extension.tsx
   var import_jsx_runtime = __toESM(require_jsx_runtime(), 1);
   var manifestId = "t3.version-control";
+  var REPOSITORY_API_RANGE = "^1.0.0";
   var LANES = new Set(CHANGE_LANES);
   function restoreState(value) {
     if (value === null) return true;
@@ -2345,7 +2643,7 @@ var __t3Client = (() => {
       if (!visible) return;
       const controller = new AbortController();
       const signal = AbortSignal.any([controller.signal, session.signal]);
-      void bindApi(vcsRepositoryApi, host, session.context).invoke("getCapabilities", {}, signal).then(
+      void bindApi(vcsRepositoryApi, host, session.context, REPOSITORY_API_RANGE).invoke("getCapabilities", {}, signal).then(
         (capabilities) => {
           if (!signal.aborted) setResult({ key: tick, capabilities, error: null });
         },
@@ -2471,6 +2769,30 @@ var __t3Client = (() => {
     if (result === null) return { refs: null, error: null };
     return { refs: result.refs, error: result.key === revision2 ? result.error : null };
   }
+  function useRemotesList(host, session, visible, enabled, revision2) {
+    const [result, setResult] = (0, import_react.useState)(null);
+    (0, import_react.useEffect)(() => {
+      if (!visible || !enabled || revision2 === "") return;
+      const controller = new AbortController();
+      const signal = AbortSignal.any([controller.signal, session.signal]);
+      void bindApi(vcsRepositoryApi, host, session.context, REPOSITORY_API_RANGE).invoke("listRemotes", {}, signal).then(
+        (remotes) => {
+          if (!signal.aborted) setResult({ key: revision2, remotes, error: null });
+        },
+        (error) => {
+          if (!signal.aborted)
+            setResult((prev) => ({
+              key: revision2,
+              remotes: prev?.remotes ?? null,
+              error: error instanceof Error ? error.message : "Remotes list unavailable"
+            }));
+        }
+      );
+      return () => controller.abort();
+    }, [host, session, visible, enabled, revision2]);
+    if (result === null) return { remotes: null, error: null };
+    return { remotes: result.remotes, error: result.key === revision2 ? result.error : null };
+  }
   var control = {
     padding: "4px 8px",
     border: "1px solid var(--border, #dfe3e8)",
@@ -2491,6 +2813,10 @@ var __t3Client = (() => {
     const [mutationSerial, setMutationSerial] = (0, import_react.useState)(0);
     const [commitMessage, setCommitMessage] = (0, import_react.useState)("");
     const [newRefName, setNewRefName] = (0, import_react.useState)("");
+    const [newWorktreeName, setNewWorktreeName] = (0, import_react.useState)("");
+    const [worktreeRemoveFailures, setWorktreeRemoveFailures] = (0, import_react.useState)(
+      /* @__PURE__ */ new Set()
+    );
     const inFlight = (0, import_react.useRef)(false);
     (0, import_react.useEffect)(() => session.onVisibility(setVisible), [session]);
     const restored = session.restoreState && typeof session.restoreState === "object" && !Array.isArray(session.restoreState) ? session.restoreState : null;
@@ -2504,21 +2830,40 @@ var __t3Client = (() => {
     const listRevision = status.localRevision === 0 ? "" : `${status.localRevision}:${mutationSerial}`;
     const changes = useChangesList(host, session, visible, isRepo, listRevision);
     const refs = useRefsList(host, session, visible, isRepo, listRevision);
+    const ops = repo.kind === "ready" ? repo.capabilities.operations : null;
+    const remotes = useRemotesList(
+      host,
+      session,
+      visible,
+      isRepo && ops?.["repository.listRemotes"] === true,
+      listRevision
+    );
     const lanes = (0, import_react.useMemo)(() => lanesFromChanges(changes.changes?.entries ?? []), [changes.changes]);
     const selected = retainSelection(selection, lanes);
     const selectedEntry = selected === null ? null : lanes[selected.lane].find((e) => e.path === selected.path) ?? null;
     const selectedStat = selected === null ? null : numstatFor(status.local, selected.path);
     const rows = (0, import_react.useMemo)(() => refRows(refs.refs), [refs.refs]);
-    const ops = repo.kind === "ready" ? repo.capabilities.operations : null;
+    const remoteList = (0, import_react.useMemo)(() => remoteRows(remotes.remotes), [remotes.remotes]);
+    const worktrees = (0, import_react.useMemo)(() => worktreeRows(rows), [rows]);
     const canStage = ops?.["changes.stage"] === true;
     const canUnstage = ops?.["changes.unstage"] === true;
     const canCommit = ops?.["changes.commit"] === true;
     const canCreateRef = ops?.["refs.create"] === true;
     const canSwitchRef = ops?.["refs.switch"] === true;
+    const canPull = ops?.["repository.pull"] === true;
+    const canPush = ops?.["repository.push"] === true;
+    const canFetch = ops?.["repository.fetch"] === true;
+    const canListRemotes = ops?.["repository.listRemotes"] === true;
+    const canInit = capabilities?.operations["repository.init"] === true;
+    const canCreateWorktree = ops?.["repository.createWorktree"] === true;
+    const canRemoveWorktree = ops?.["repository.removeWorktree"] === true;
     const busy = mutation.kind === "running";
     const commit = planCommit(lanes, commitMessage);
     const create = planRefCreate(newRefName, rows);
     const currentBranch = rows.find((row) => row.current && row.remote === null)?.name ?? null;
+    const pull = pullState(status.local, status.remote);
+    const push = pushState(status.local, status.remote);
+    const worktreePlan = planWorktreeCreate(newWorktreeName, rows, currentBranch);
     const runMutation = (op, label, invoke) => {
       if (inFlight.current) return;
       inFlight.current = true;
@@ -2582,6 +2927,62 @@ var __t3Client = (() => {
       `Switching to ${refName}`,
       (signal) => bindApi(vcsRefsApi, host, session.context).invoke("switch", { refName }, signal).then((result) => `Switched to ${result.refName ?? refName}`)
     );
+    const repository = () => bindApi(vcsRepositoryApi, host, session.context, REPOSITORY_API_RANGE);
+    const runPull = () => runMutation(
+      "pull",
+      "Pulling",
+      (signal) => repository().invoke("pull", {}, signal).then(
+        (result) => result.status === "pulled" ? `Pulled ${result.refName} from ${result.upstreamRef ?? "upstream"}` : "Already up to date"
+      )
+    );
+    const runPush = () => runMutation(
+      "push",
+      "Pushing",
+      (signal) => repository().invoke("push", {}, signal).then(
+        (result) => result.status === "pushed" ? `Pushed ${result.refName}${result.upstreamRef !== null ? ` \u2192 ${result.upstreamRef}` : ""}${result.setUpstream ? " (upstream set)" : ""}` : "Already up to date"
+      )
+    );
+    const runFetch = (remoteName) => runMutation(
+      "fetch",
+      remoteName === void 0 ? "Fetching all remotes" : `Fetching ${remoteName}`,
+      (signal) => repository().invoke("fetch", remoteName === void 0 ? {} : { remoteName }, signal).then((result) => `Fetched ${result.remotes.join(", ")}`)
+    );
+    const runInit = () => runMutation(
+      "init",
+      "Initializing repository",
+      (signal) => repository().invoke("init", {}, signal).then(() => {
+        setTick((value) => value + 1);
+        return "Initialized a Git repository";
+      })
+    );
+    const runCreateWorktree = (plan) => runMutation(
+      "worktree-create",
+      `Creating worktree`,
+      (signal) => repository().invoke(
+        "createWorktree",
+        {
+          refName: plan.refName,
+          path: null,
+          ...plan.newRefName === void 0 ? {} : { newRefName: plan.newRefName },
+          ...plan.baseRefName === void 0 || plan.baseRefName === null ? {} : { baseRefName: plan.baseRefName }
+        },
+        signal
+      ).then((result) => {
+        setNewWorktreeName("");
+        return `Created worktree ${result.worktree.path} (${result.worktree.refName})`;
+      })
+    );
+    const runRemoveWorktree = (path3, force) => runMutation(
+      "worktree-remove",
+      `Removing worktree`,
+      (signal) => repository().invoke("removeWorktree", force ? { path: path3, force: true } : { path: path3 }, signal).then(
+        () => `Removed worktree ${path3}`,
+        (error) => {
+          setWorktreeRemoveFailures((prev) => new Set(prev).add(path3));
+          throw error;
+        }
+      )
+    );
     const refresh = () => {
       const controller = new AbortController();
       const signal = AbortSignal.any([controller.signal, session.signal]);
@@ -2632,10 +3033,35 @@ var __t3Client = (() => {
             "Repository status unavailable \u2014 ",
             repo.detail
           ] }),
+          describeMutation(mutation) !== null && /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+            "output",
+            {
+              "aria-label": "Mutation status",
+              role: mutation.kind === "failed" ? "alert" : "status",
+              style: {
+                display: "block",
+                padding: "4px 10px",
+                color: mutation.kind === "failed" ? "var(--destructive, #b42318)" : muted,
+                fontSize: 11
+              },
+              children: describeMutation(mutation)
+            }
+          ),
           repo.kind === "no-repository" && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("p", { role: "note", style: { padding: "6px 10px", color: muted, fontSize: 12, margin: 0 }, children: [
             "This workspace is not a repository",
             repo.detail ? ` \u2014 ${repo.detail}` : "",
-            ". Repository init and clone controls remain a deferred slice."
+            ".",
+            canInit && /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+              "button",
+              {
+                type: "button",
+                disabled: busy,
+                onClick: runInit,
+                style: { ...control, marginLeft: 6 },
+                children: "Initialize Git repository"
+              }
+            ),
+            !canInit && " Repository init is not supported by the detected drivers."
           ] }),
           repo.kind === "unsupported" && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("p", { role: "note", style: { padding: "6px 10px", color: muted, fontSize: 12, margin: 0 }, children: [
             "Unsupported repository driver: ",
@@ -2644,18 +3070,34 @@ var __t3Client = (() => {
             repo.detail
           ] }),
           repo.kind === "ready" && isRepo && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { style: { flex: 1, minHeight: 0, overflow: "auto", padding: 6 }, children: [
-            describeMutation(mutation) !== null && /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
-              "output",
+            (canPull || canPush) && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+              "section",
               {
-                "aria-label": "Mutation status",
-                role: mutation.kind === "failed" ? "alert" : "status",
-                style: {
-                  display: "block",
-                  padding: "4px 6px",
-                  color: mutation.kind === "failed" ? "var(--destructive, #b42318)" : muted,
-                  fontSize: 11
-                },
-                children: describeMutation(mutation)
+                "aria-label": "Sync",
+                style: { display: "flex", alignItems: "center", gap: 6, padding: "2px 6px 6px" },
+                children: [
+                  canPull && /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                    "button",
+                    {
+                      type: "button",
+                      disabled: busy || pull.disabled !== null,
+                      onClick: runPull,
+                      style: control,
+                      children: pull.label
+                    }
+                  ),
+                  canPush && /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                    "button",
+                    {
+                      type: "button",
+                      disabled: busy || push.disabled !== null,
+                      onClick: runPush,
+                      style: control,
+                      children: push.label
+                    }
+                  ),
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { style: { color: muted, fontSize: 11 }, children: [canPull ? pull.disabled : null, canPush ? push.disabled : null].filter((reason) => reason !== null).join(" \xB7 ") })
+                ]
               }
             ),
             changes.error !== null && /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
@@ -2953,12 +3395,261 @@ var __t3Client = (() => {
                           style: { ...control, padding: "1px 6px", fontSize: 11, flexShrink: 0 },
                           children: "Switch"
                         }
+                      ),
+                      canCreateWorktree && canWorktreeRef(row) && /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                        "button",
+                        {
+                          type: "button",
+                          disabled: busy,
+                          onClick: () => runCreateWorktree({ refName: row.name }),
+                          style: { ...control, padding: "1px 6px", fontSize: 11, flexShrink: 0 },
+                          children: "Worktree"
+                        }
                       )
                     ]
                   },
                   `${row.remote ?? ""}:${row.name}`
                 );
               }) })
+            ] }),
+            (canCreateWorktree || canRemoveWorktree) && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { "aria-label": "Worktrees", style: { marginTop: 4 }, children: [
+              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+                "h3",
+                {
+                  style: {
+                    margin: 0,
+                    padding: "2px 6px",
+                    fontSize: 11,
+                    fontWeight: 600,
+                    color: muted,
+                    textTransform: "uppercase",
+                    letterSpacing: 0.4
+                  },
+                  children: [
+                    "Worktrees",
+                    worktrees.length > 0 ? ` (${worktrees.length})` : ""
+                  ]
+                }
+              ),
+              canCreateWorktree && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+                "div",
+                {
+                  style: {
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 4,
+                    padding: "2px 6px 4px"
+                  },
+                  children: [
+                    /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                      "input",
+                      {
+                        "aria-label": "New worktree branch",
+                        value: newWorktreeName,
+                        disabled: busy,
+                        onChange: (event) => setNewWorktreeName(event.target.value),
+                        onKeyDown: (event) => {
+                          if (event.key === "Enter" && worktreePlan.branch !== null && worktreePlan.refName !== null)
+                            runCreateWorktree({
+                              refName: worktreePlan.refName,
+                              newRefName: worktreePlan.branch,
+                              baseRefName: worktreePlan.baseRefName ?? void 0
+                            });
+                        },
+                        placeholder: "New worktree branch",
+                        style: {
+                          flex: 1,
+                          minWidth: 0,
+                          font: "inherit",
+                          fontSize: 12,
+                          padding: "3px 6px",
+                          border: "1px solid var(--border, #dfe3e8)",
+                          borderRadius: 5,
+                          background: "transparent",
+                          color: "inherit"
+                        }
+                      }
+                    ),
+                    /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                      "button",
+                      {
+                        type: "button",
+                        disabled: busy || worktreePlan.branch === null,
+                        onClick: () => {
+                          if (worktreePlan.branch === null || worktreePlan.refName === null) return;
+                          runCreateWorktree({
+                            refName: worktreePlan.refName,
+                            newRefName: worktreePlan.branch,
+                            baseRefName: worktreePlan.baseRefName ?? void 0
+                          });
+                        },
+                        style: { ...control, padding: "2px 6px", fontSize: 11, flexShrink: 0 },
+                        children: "Create worktree"
+                      }
+                    )
+                  ]
+                }
+              ),
+              canCreateWorktree && worktreePlan.disabled !== null && newWorktreeName.trim() !== "" && /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                "output",
+                {
+                  "aria-label": "Worktree create status",
+                  style: { display: "block", padding: "0 6px 4px", color: muted, fontSize: 11 },
+                  children: worktreePlan.disabled
+                }
+              ),
+              worktrees.length === 0 && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { style: { margin: 0, padding: "2px 6px 4px", color: muted, fontSize: 11 }, children: "No additional worktrees." }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("ul", { style: { listStyle: "none", margin: 0, padding: 0 }, children: worktrees.map((worktree) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+                "li",
+                {
+                  style: {
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 6,
+                    padding: "3px 6px",
+                    fontSize: 12
+                  },
+                  children: [
+                    /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+                      "span",
+                      {
+                        style: {
+                          flex: 1,
+                          minWidth: 0,
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                          whiteSpace: "nowrap"
+                        },
+                        children: [
+                          worktree.refName,
+                          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { style: { color: muted }, children: [
+                            " \u2014 ",
+                            worktree.path
+                          ] })
+                        ]
+                      }
+                    ),
+                    canRemoveWorktree && /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                      "button",
+                      {
+                        type: "button",
+                        disabled: busy,
+                        onClick: () => runRemoveWorktree(worktree.path, false),
+                        style: { ...control, padding: "1px 6px", fontSize: 11, flexShrink: 0 },
+                        children: "Remove"
+                      }
+                    ),
+                    canRemoveWorktree && worktreeRemoveFailures.has(worktree.path) && /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                      "button",
+                      {
+                        type: "button",
+                        disabled: busy,
+                        onClick: () => runRemoveWorktree(worktree.path, true),
+                        style: {
+                          ...control,
+                          padding: "1px 6px",
+                          fontSize: 11,
+                          flexShrink: 0,
+                          color: "var(--destructive, #b42318)"
+                        },
+                        children: "Force remove"
+                      }
+                    )
+                  ]
+                },
+                worktree.path
+              )) })
+            ] }),
+            canListRemotes && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { "aria-label": "Remotes", style: { marginTop: 4 }, children: [
+              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+                "h3",
+                {
+                  style: {
+                    margin: 0,
+                    padding: "2px 6px",
+                    fontSize: 11,
+                    fontWeight: 600,
+                    color: muted,
+                    textTransform: "uppercase",
+                    letterSpacing: 0.4,
+                    display: "flex",
+                    justifyContent: "space-between",
+                    alignItems: "center",
+                    gap: 6
+                  },
+                  children: [
+                    /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { children: [
+                      "Remotes",
+                      remoteList.length > 0 ? ` (${remoteList.length})` : ""
+                    ] }),
+                    canFetch && remoteList.length > 0 && /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                      "button",
+                      {
+                        type: "button",
+                        disabled: busy,
+                        onClick: () => runFetch(),
+                        style: { ...control, padding: "1px 6px", fontSize: 11 },
+                        children: "Fetch all"
+                      }
+                    )
+                  ]
+                }
+              ),
+              remotes.error !== null && /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                "output",
+                {
+                  "aria-label": "Remotes status",
+                  style: { display: "block", padding: "4px 6px", color: muted, fontSize: 11 },
+                  children: remotes.error
+                }
+              ),
+              remotes.remotes !== null && remoteList.length === 0 && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { style: { margin: 0, padding: "2px 6px 4px", color: muted, fontSize: 11 }, children: "No remotes configured." }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("ul", { style: { listStyle: "none", margin: 0, padding: 0 }, children: remoteList.map((remote) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+                "li",
+                {
+                  style: {
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 6,
+                    padding: "3px 6px",
+                    fontSize: 12
+                  },
+                  children: [
+                    /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+                      "span",
+                      {
+                        style: {
+                          flex: 1,
+                          minWidth: 0,
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                          whiteSpace: "nowrap"
+                        },
+                        children: [
+                          remote.name,
+                          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { style: { color: muted }, children: [
+                            " ",
+                            "\u2014 ",
+                            remote.url,
+                            remote.isPrimary ? " \xB7 primary" : ""
+                          ] })
+                        ]
+                      }
+                    ),
+                    canFetch && /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                      "button",
+                      {
+                        type: "button",
+                        disabled: busy,
+                        onClick: () => runFetch(remote.name),
+                        style: { ...control, padding: "1px 6px", fontSize: 11, flexShrink: 0 },
+                        children: "Fetch"
+                      }
+                    )
+                  ]
+                },
+                remote.name
+              )) })
             ] })
           ] }),
           selected !== null && selectedEntry !== null && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
@@ -2991,7 +3682,7 @@ var __t3Client = (() => {
                 borderTop: "1px solid var(--border, #dfe3e8)",
                 flexShrink: 0
               },
-              children: "Version Control on t3.vcs: status, staging lanes, stage/unstage/commit, and branch create/switch (t3.vcs/mutate). Pull/init/worktrees, pull requests, and diff rendering are deferred slices."
+              children: "Version Control on t3.vcs: status, staging lanes, stage/unstage/commit, branch create/switch, pull/push/fetch, init, worktrees, and remotes (t3.vcs/mutate). Pull requests, publish/clone, stash, and diff rendering are deferred slices."
             }
           )
         ]
@@ -3000,12 +3691,12 @@ var __t3Client = (() => {
   }
   var extension_default = defineExtension({
     id: manifestId,
-    version: "0.2.0",
+    version: "0.3.0",
     requires: [
       requireApi(vcsStatusApi),
       requireApi(vcsChangesApi),
       requireApi(vcsRefsApi),
-      requireApi(vcsRepositoryApi)
+      requireApi(vcsRepositoryApi, REPOSITORY_API_RANGE)
     ],
     surfaces: [
       {
