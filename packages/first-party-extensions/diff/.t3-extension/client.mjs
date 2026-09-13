@@ -51,13 +51,13 @@ var __t3Client = (() => {
     }
   });
 
-  // generated-client.ts
+  // ../../../projects/T3 Code/t3-extensions-authoring/packages/first-party-extensions/diff/generated-client.ts
   var generated_client_exports = {};
   __export(generated_client_exports, {
     default: () => generated_client_default
   });
 
-  // ../../extension-sdk/dist/contracts.js
+  // ../../../projects/T3 Code/t3-extensions-authoring/packages/extension-sdk/dist/contracts.js
   var API_VERSION = 1;
   var MAX_PAYLOAD_BYTES = 64 * 1024;
   function assertId(value) {
@@ -145,7 +145,7 @@ var __t3Client = (() => {
     return manifest;
   }
 
-  // ../../extension-sdk/dist/capabilities.js
+  // ../../../projects/T3 Code/t3-extensions-authoring/packages/extension-sdk/dist/capabilities.js
   function defineApi(definition) {
     return { definition: validateApiDefinition(definition) };
   }
@@ -161,6 +161,21 @@ var __t3Client = (() => {
     if (!validated.streams?.length)
       throw new Error("Expected API stream definitions");
     return { definition: validated };
+  }
+  function bindStreamApi(api, client, context, versionRange = "^" + api.definition.version) {
+    return {
+      subscribe(name, input, signal, options) {
+        return client.subscribeApi({
+          id: api.definition.id,
+          versionRange,
+          name,
+          input,
+          context,
+          ...options?.cursor === void 0 ? {} : { cursor: options.cursor },
+          ...options?.expectedGeneration === void 0 ? {} : { expectedGeneration: options.expectedGeneration }
+        }, signal);
+      }
+    };
   }
   function validateRangeText(value) {
     if (typeof value !== "string" || !value.trim() || value.length > 200)
@@ -223,7 +238,7 @@ var __t3Client = (() => {
     return api;
   }
 
-  // ../../extension-sdk/dist/textEdits.js
+  // ../../../projects/T3 Code/t3-extensions-authoring/packages/extension-sdk/dist/textEdits.js
   var WORKSPACE_READ_TEXT_EDITS = "t3.workspace/text-edits";
   var WORKSPACE_READ_TEXT_GRANT = "t3.workspace/read-text";
   var WORKSPACE_WRITE_TEXT = "t3.workspace/write-text";
@@ -416,7 +431,7 @@ var __t3Client = (() => {
     ]
   });
 
-  // ../../extension-sdk/dist/catalogue.js
+  // ../../../projects/T3 Code/t3-extensions-authoring/packages/extension-sdk/dist/catalogue.js
   var WORKSPACE_FILES = "t3.workspace/files";
   var WORKSPACE_LIST_ENTRIES = "t3.workspace/list-entries";
   var FILE_PRESENTATION = "t3.file/presentation";
@@ -1444,60 +1459,186 @@ var __t3Client = (() => {
       truncated: { type: "boolean" }
     }
   };
-  var vcsDiffApi = defineApi({
-    id: VCS_DIFF,
-    version: "1.0.0",
-    methods: [
+  var vcsDiffPreviewInputSchema = {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      baseRef: vcsRevSpec,
+      ignoreWhitespace: { type: "boolean" }
+    }
+  };
+  var vcsDiffFileContentsInputSchema = {
+    type: "object",
+    additionalProperties: false,
+    required: ["sourceKind", "changeType", "baseRef", "headRef", "oldPath", "newPath"],
+    properties: {
+      sourceKind: { enum: ["working-tree", "branch-range"] },
+      changeType: { enum: ["change", "rename-pure", "rename-changed", "new", "deleted"] },
+      baseRef: vcsRevSpecOrNull,
+      headRef: vcsRevSpecOrNull,
+      oldPath: vcsPath,
+      newPath: vcsPath
+    }
+  };
+  var vcsDiffGetPreviewMethod = {
+    name: "getPreview",
+    effect: "read",
+    requiredGrants: [VCS_READ],
+    inputSchema: vcsDiffPreviewInputSchema,
+    outputSchema: {
+      type: "object",
+      additionalProperties: false,
+      required: ["generatedAt", "sources"],
+      properties: {
+        generatedAt: { type: "string", maxLength: 64 },
+        sources: { type: "array", maxItems: 8, items: vcsDiffPreviewSourceSchema }
+      }
+    }
+  };
+  var vcsDiffGetFileContentsMethod = {
+    name: "getFileContents",
+    effect: "read",
+    requiredGrants: [VCS_READ],
+    inputSchema: vcsDiffFileContentsInputSchema,
+    outputSchema: {
+      type: "object",
+      additionalProperties: false,
+      required: ["oldContents", "newContents"],
+      properties: {
+        oldContents: { type: "string", maxLength: 1048576 },
+        newContents: { type: "string", maxLength: 1048576 }
+      }
+    }
+  };
+  var vcsDiffSha256 = {
+    type: "string",
+    minLength: 64,
+    maxLength: 64,
+    pattern: "^[0-9a-f]{64}$"
+  };
+  var vcsDiffChunkData = { type: "string", maxLength: 8192 };
+  var vcsDiffStreamSourceSchema = {
+    type: "object",
+    additionalProperties: false,
+    required: [
+      "id",
+      "kind",
+      "title",
+      "baseRef",
+      "headRef",
+      "truncated",
+      "diffHash",
+      "diffByteLength",
+      "chunkCount"
+    ],
+    properties: {
+      id: { type: "string", minLength: 1, maxLength: 64 },
+      kind: { enum: ["working-tree", "branch-range"] },
+      title: { type: "string", minLength: 1, maxLength: 256 },
+      baseRef: vcsRefNameOrNull,
+      headRef: vcsRefNameOrNull,
+      truncated: { type: "boolean" },
+      diffHash: vcsDiffSha256,
+      diffByteLength: { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER },
+      chunkCount: { type: "integer", minimum: 0, maximum: 64 }
+    }
+  };
+  var vcsDiffPreviewStreamEventSchema = {
+    oneOf: [
       {
-        name: "getPreview",
-        effect: "read",
-        requiredGrants: [VCS_READ],
-        inputSchema: {
-          type: "object",
-          additionalProperties: false,
-          properties: {
-            baseRef: vcsRevSpec,
-            ignoreWhitespace: { type: "boolean" }
-          }
-        },
-        outputSchema: {
-          type: "object",
-          additionalProperties: false,
-          required: ["generatedAt", "sources"],
-          properties: {
-            generatedAt: { type: "string", maxLength: 64 },
-            sources: { type: "array", maxItems: 8, items: vcsDiffPreviewSourceSchema }
-          }
+        type: "object",
+        additionalProperties: false,
+        required: ["kind", "generatedAt", "sources"],
+        properties: {
+          kind: { const: "manifest" },
+          generatedAt: { type: "string", maxLength: 64 },
+          sources: { type: "array", maxItems: 8, items: vcsDiffStreamSourceSchema }
         }
       },
       {
-        name: "getFileContents",
-        effect: "read",
-        requiredGrants: [VCS_READ],
-        inputSchema: {
-          type: "object",
-          additionalProperties: false,
-          required: ["sourceKind", "changeType", "baseRef", "headRef", "oldPath", "newPath"],
-          properties: {
-            sourceKind: { enum: ["working-tree", "branch-range"] },
-            changeType: { enum: ["change", "rename-pure", "rename-changed", "new", "deleted"] },
-            baseRef: vcsRevSpecOrNull,
-            headRef: vcsRevSpecOrNull,
-            oldPath: vcsPath,
-            newPath: vcsPath
-          }
-        },
-        outputSchema: {
-          type: "object",
-          additionalProperties: false,
-          required: ["oldContents", "newContents"],
-          properties: {
-            oldContents: { type: "string", maxLength: 1048576 },
-            newContents: { type: "string", maxLength: 1048576 }
-          }
+        type: "object",
+        additionalProperties: false,
+        required: ["kind", "sourceIndex", "chunkIndex", "data"],
+        properties: {
+          kind: { const: "chunk" },
+          sourceIndex: { type: "integer", minimum: 0, maximum: 7 },
+          chunkIndex: { type: "integer", minimum: 0, maximum: 63 },
+          data: vcsDiffChunkData
+        }
+      },
+      {
+        type: "object",
+        additionalProperties: false,
+        required: ["kind", "payloadSha256"],
+        properties: {
+          kind: { const: "complete" },
+          payloadSha256: vcsDiffSha256
         }
       }
     ]
+  };
+  var vcsDiffFileContentsStreamEventSchema = {
+    oneOf: [
+      {
+        type: "object",
+        additionalProperties: false,
+        required: ["kind", "oldByteLength", "oldChunkCount", "newByteLength", "newChunkCount"],
+        properties: {
+          kind: { const: "manifest" },
+          // A surrogate pair straddling a boundary shrinks a chunk to 8 191
+          // units, so the worst case is ceil(1 048 576 / 8 191) = 129 chunks.
+          oldByteLength: { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER },
+          oldChunkCount: { type: "integer", minimum: 0, maximum: 129 },
+          newByteLength: { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER },
+          newChunkCount: { type: "integer", minimum: 0, maximum: 129 }
+        }
+      },
+      {
+        type: "object",
+        additionalProperties: false,
+        required: ["kind", "side", "chunkIndex", "data"],
+        properties: {
+          kind: { const: "chunk" },
+          side: { enum: ["old", "new"] },
+          chunkIndex: { type: "integer", minimum: 0, maximum: 128 },
+          data: vcsDiffChunkData
+        }
+      },
+      {
+        type: "object",
+        additionalProperties: false,
+        required: ["kind", "oldSha256", "newSha256"],
+        properties: {
+          kind: { const: "complete" },
+          oldSha256: vcsDiffSha256,
+          newSha256: vcsDiffSha256
+        }
+      }
+    ]
+  };
+  var vcsDiffApi = defineStreamApi({
+    id: VCS_DIFF,
+    version: "1.1.0",
+    methods: [vcsDiffGetPreviewMethod, vcsDiffGetFileContentsMethod],
+    streams: [
+      {
+        name: "streamPreview",
+        requiredGrants: [VCS_READ],
+        inputSchema: vcsDiffPreviewInputSchema,
+        eventSchema: vcsDiffPreviewStreamEventSchema
+      },
+      {
+        name: "streamFileContents",
+        requiredGrants: [VCS_READ],
+        inputSchema: vcsDiffFileContentsInputSchema,
+        eventSchema: vcsDiffFileContentsStreamEventSchema
+      }
+    ]
+  });
+  var vcsDiffApiV1 = defineApi({
+    id: VCS_DIFF,
+    version: "1.0.0",
+    methods: [vcsDiffGetPreviewMethod, vcsDiffGetFileContentsMethod]
   });
   var vcsOperationsSupportSchema = {
     type: "object",
@@ -1665,7 +1806,116 @@ var __t3Client = (() => {
   var VCS_REFS_API = vcsRefsApi.definition;
   var VCS_CHANGES_API = vcsChangesApi.definition;
   var VCS_DIFF_API = vcsDiffApi.definition;
+  var VCS_DIFF_API_V1 = vcsDiffApiV1.definition;
   var VCS_REPOSITORY_API = vcsRepositoryApi.definition;
+  var RESOURCES_LEASE = "t3.resources/lease";
+  var WORKSPACE_RESOURCES = "t3.workspace/resources";
+  var RESOURCE_LEASE_KIND_GRANTS = {
+    "workspace-file": WORKSPACE_RESOURCES,
+    "project-favicon": WORKSPACE_RESOURCES,
+    attachment: null
+  };
+  var RESOURCE_LEASE_SUPPORTED_KINDS = Object.keys(RESOURCE_LEASE_KIND_GRANTS).filter((kind) => RESOURCE_LEASE_KIND_GRANTS[kind] !== null);
+  var resourceLeaseRefSchema = {
+    oneOf: [
+      {
+        type: "object",
+        additionalProperties: false,
+        required: ["_tag", "threadId", "path"],
+        properties: {
+          _tag: { const: "workspace-file" },
+          threadId: { type: "string", minLength: 1, maxLength: 160 },
+          path: { type: "string", minLength: 1, maxLength: 1024 }
+        }
+      },
+      {
+        type: "object",
+        additionalProperties: false,
+        required: ["_tag", "attachmentId"],
+        properties: {
+          _tag: { const: "attachment" },
+          attachmentId: { type: "string", minLength: 1, maxLength: 256 },
+          fileName: { type: "string", minLength: 1, maxLength: 255 },
+          mimeType: { type: "string", minLength: 1, maxLength: 100 },
+          disposition: { enum: ["inline", "attachment"] }
+        }
+      },
+      {
+        type: "object",
+        additionalProperties: false,
+        required: ["_tag", "cwd"],
+        properties: {
+          _tag: { const: "project-favicon" },
+          cwd: { type: "string", minLength: 1, maxLength: 1024 },
+          path: {
+            type: ["string", "null"],
+            minLength: 1,
+            maxLength: 1024,
+            pattern: "\\.(?:avif|gif|ico|jpe?g|png|svg|webp)$"
+          }
+        }
+      }
+    ]
+  };
+  var resourcesLeaseApi = defineApi({
+    id: RESOURCES_LEASE,
+    version: "1.0.0",
+    methods: [
+      {
+        name: "createPresentationUrl",
+        effect: "read",
+        // Per-kind grants are enforced inside the host adapter — a method-level
+        // list can only express "every caller holds all of these".
+        requiredGrants: [],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["resource"],
+          properties: { resource: resourceLeaseRefSchema }
+        },
+        outputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["url", "expiresAt", "kind"],
+          properties: {
+            url: { type: "string", minLength: 1, maxLength: 4096 },
+            expiresAt: { type: "number" },
+            kind: {
+              enum: [
+                "workspace-file",
+                "workspace-file-exact",
+                "project-favicon",
+                "project-favicon-external"
+              ]
+            }
+          }
+        }
+      },
+      {
+        name: "getCapabilities",
+        effect: "read",
+        requiredGrants: [],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          properties: {}
+        },
+        outputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["supportedKinds"],
+          properties: {
+            supportedKinds: {
+              type: "array",
+              maxItems: 16,
+              items: { enum: ["workspace-file", "attachment", "project-favicon"] }
+            }
+          }
+        }
+      }
+    ]
+  });
+  var RESOURCES_LEASE_API = resourcesLeaseApi.definition;
   var GENERIC_API_CATALOGUE = [
     workspaceFilesApi.definition,
     workspaceTreeApi.definition,
@@ -1682,7 +1932,9 @@ var __t3Client = (() => {
     vcsRefsApi.definition,
     vcsChangesApi.definition,
     vcsDiffApi.definition,
-    vcsRepositoryApi.definition
+    vcsRepositoryApi.definition,
+    vcsDiffApiV1.definition,
+    resourcesLeaseApi.definition
   ];
   function canonical(value) {
     if (Array.isArray(value))
@@ -1707,7 +1959,7 @@ var __t3Client = (() => {
   var TERMINAL_OUTPUT_EVENTS_API = terminalOutputEventsApi.definition;
   var TERMINAL_CONTROL_API = terminalControlApi.definition;
 
-  // ../../extension-sdk/dist/environment.js
+  // ../../../projects/T3 Code/t3-extensions-authoring/packages/extension-sdk/dist/environment.js
   var ENVIRONMENT_MANIFEST_FILE = "t3-extension.json";
   var ENVIRONMENT_ASSET_MEDIA_TYPES = [
     "application/wasm",
@@ -1845,7 +2097,7 @@ var __t3Client = (() => {
     return { ...pkg, manifest };
   }
 
-  // ../../extension-sdk/dist/authoring.js
+  // ../../../projects/T3 Code/t3-extensions-authoring/packages/extension-sdk/dist/authoring.js
   var statePreview = (state) => {
     const encoded = JSON.stringify(state);
     return encoded.length > 200 ? encoded.slice(0, 200) + "\u2026" : encoded;
@@ -1942,10 +2194,10 @@ var __t3Client = (() => {
     return { id: api.definition.id, versionRange };
   }
 
-  // extension.tsx
+  // ../../../projects/T3 Code/t3-extensions-authoring/packages/first-party-extensions/diff/extension.tsx
   var import_react = __toESM(require_react(), 1);
 
-  // ../../../node_modules/.pnpm/@pierre+diffs@1.3.0-beta.10_patch_hash=0ccee155b93b63d810e2c1a40c1fd676fb6fbcfa72cf6430_61e9491b81eb5c1b21f7baa527073f84/node_modules/@pierre/diffs/dist/constants.js
+  // ../../../projects/T3 Code/t3-extensions-authoring/node_modules/.pnpm/@pierre+diffs@1.3.0-beta.10_patch_hash=0ccee155b93b63d810e2c1a40c1fd676fb6fbcfa72cf6430_61e9491b81eb5c1b21f7baa527073f84/node_modules/@pierre/diffs/dist/constants.js
   var DIFFS_DEVELOPMENT_BUILD = (() => {
     try {
       return true;
@@ -1974,7 +2226,7 @@ var __t3Client = (() => {
     fromEnd: 0
   });
 
-  // ../../../node_modules/.pnpm/@pierre+diffs@1.3.0-beta.10_patch_hash=0ccee155b93b63d810e2c1a40c1fd676fb6fbcfa72cf6430_61e9491b81eb5c1b21f7baa527073f84/node_modules/@pierre/diffs/dist/utils/cleanLastNewline.js
+  // ../../../projects/T3 Code/t3-extensions-authoring/node_modules/.pnpm/@pierre+diffs@1.3.0-beta.10_patch_hash=0ccee155b93b63d810e2c1a40c1fd676fb6fbcfa72cf6430_61e9491b81eb5c1b21f7baa527073f84/node_modules/@pierre/diffs/dist/utils/cleanLastNewline.js
   function cleanLastNewline(contents2) {
     let end = contents2.length;
     if (contents2.charCodeAt(end - 1) === 10) {
@@ -1984,7 +2236,7 @@ var __t3Client = (() => {
     return contents2.slice(0, end);
   }
 
-  // ../../../node_modules/.pnpm/@pierre+diffs@1.3.0-beta.10_patch_hash=0ccee155b93b63d810e2c1a40c1fd676fb6fbcfa72cf6430_61e9491b81eb5c1b21f7baa527073f84/node_modules/@pierre/diffs/dist/utils/detachString.js
+  // ../../../projects/T3 Code/t3-extensions-authoring/node_modules/.pnpm/@pierre+diffs@1.3.0-beta.10_patch_hash=0ccee155b93b63d810e2c1a40c1fd676fb6fbcfa72cf6430_61e9491b81eb5c1b21f7baa527073f84/node_modules/@pierre/diffs/dist/utils/detachString.js
   var stringDetachEncoder = new TextEncoder();
   var stringDetachDecoder = new TextDecoder("utf-8", { ignoreBOM: true });
   var SURROGATE_CODE_UNIT_PATTERN = /[\uD800-\uDFFF]/;
@@ -2002,7 +2254,7 @@ var __t3Client = (() => {
     return stringDetachDecoder.decode(stringDetachBuffer.subarray(0, written));
   }
 
-  // ../../../node_modules/.pnpm/@pierre+diffs@1.3.0-beta.10_patch_hash=0ccee155b93b63d810e2c1a40c1fd676fb6fbcfa72cf6430_61e9491b81eb5c1b21f7baa527073f84/node_modules/@pierre/diffs/dist/utils/realignChangeContent.js
+  // ../../../projects/T3 Code/t3-extensions-authoring/node_modules/.pnpm/@pierre+diffs@1.3.0-beta.10_patch_hash=0ccee155b93b63d810e2c1a40c1fd676fb6fbcfa72cf6430_61e9491b81eb5c1b21f7baa527073f84/node_modules/@pierre/diffs/dist/utils/realignChangeContent.js
   var MAX_ALIGNMENT_COMPARISONS = 4096;
   var MIN_IMPROVEMENT_PER_PAIR = 0.5;
   function realignChangeContentBySimilarity(diff) {
@@ -2121,7 +2373,7 @@ var __t3Client = (() => {
     return (prefix + suffix) / maxLength;
   }
 
-  // ../../../node_modules/.pnpm/@pierre+diffs@1.3.0-beta.10_patch_hash=0ccee155b93b63d810e2c1a40c1fd676fb6fbcfa72cf6430_61e9491b81eb5c1b21f7baa527073f84/node_modules/@pierre/diffs/dist/utils/parsePatchFiles.js
+  // ../../../projects/T3 Code/t3-extensions-authoring/node_modules/.pnpm/@pierre+diffs@1.3.0-beta.10_patch_hash=0ccee155b93b63d810e2c1a40c1fd676fb6fbcfa72cf6430_61e9491b81eb5c1b21f7baa527073f84/node_modules/@pierre/diffs/dist/utils/parsePatchFiles.js
   function processPatch(data, cacheKeyPrefix, throwOnError) {
     try {
       return _processPatch(data, cacheKeyPrefix, throwOnError);
@@ -2602,7 +2854,7 @@ ${prefix}`;
     };
   }
 
-  // viewModel.ts
+  // ../../../projects/T3 Code/t3-extensions-authoring/packages/first-party-extensions/diff/viewModel.ts
   function resolveDiffPath(raw) {
     if (raw.startsWith("a/") || raw.startsWith("b/")) return raw.slice(2);
     return raw;
@@ -2846,8 +3098,493 @@ ${prefix}`;
     }
     return { kind: "ready" };
   }
+  function isEnvelopeRejection(error) {
+    return error instanceof Error && /byte limit/i.test(error.message);
+  }
+  function previewDeliveryKey(input) {
+    return `${input.baseRef ?? ""}|${input.ignoreWhitespace === true ? "w" : ""}`;
+  }
+  function contentsDeliveryKey(source, row) {
+    return `${source.id}:${source.diffHash}:${row.key}`;
+  }
+  var MAX_STREAM_KEYS = 64;
+  async function fetchDiffPreview(options) {
+    const { input, invoke, stream, streamKeys, signal } = options;
+    const key = previewDeliveryKey(input);
+    if (!streamKeys.has(key)) {
+      try {
+        const result = await invoke(input);
+        return signal.aborted ? { kind: "cancelled" } : { kind: "ready", result, via: "unary" };
+      } catch (error) {
+        if (signal.aborted) return { kind: "cancelled" };
+        if (!isEnvelopeRejection(error)) {
+          return {
+            kind: "error",
+            detail: error instanceof Error ? error.message : "Diff preview unavailable"
+          };
+        }
+        if (streamKeys.size >= MAX_STREAM_KEYS) streamKeys.clear();
+        streamKeys.add(key);
+      }
+    }
+    return fetchStreamedPreview(stream(input), signal);
+  }
+  async function fetchStreamedPreview(stream, signal) {
+    let collected;
+    try {
+      collected = await collectPreviewStream(stream, signal);
+    } catch (error) {
+      if (signal.aborted) return { kind: "cancelled" };
+      return {
+        kind: "error",
+        detail: error instanceof Error ? error.message : "Diff stream unavailable"
+      };
+    }
+    return streamOutcome(collected, signal);
+  }
+  function streamOutcome(collected, signal) {
+    switch (collected.kind) {
+      case "verified":
+        return signal.aborted ? { kind: "cancelled" } : { kind: "ready", result: collected.result, via: "stream" };
+      case "cancelled":
+        return { kind: "cancelled" };
+      case "protocol":
+        return { kind: "error", detail: `Diff stream protocol error: ${collected.detail}` };
+      case "incomplete":
+        return {
+          kind: "error",
+          detail: `Diff stream ended before completing \u2014 ${collected.detail}. Refresh to retry.`
+        };
+      case "mismatch":
+        return {
+          kind: "error",
+          detail: `Diff verification failed: ${collected.detail}. Nothing is shown.`
+        };
+    }
+  }
+  async function fetchFileContents(options) {
+    const { input, deliveryKey, invoke, stream, streamKeys, signal } = options;
+    if (!streamKeys.has(deliveryKey)) {
+      try {
+        const result = await invoke(input);
+        return signal.aborted ? { kind: "cancelled" } : { kind: "ready", result, via: "unary" };
+      } catch (error) {
+        if (signal.aborted) return { kind: "cancelled" };
+        if (!isEnvelopeRejection(error)) {
+          return {
+            kind: "error",
+            detail: error instanceof Error ? error.message : "File contents unavailable"
+          };
+        }
+        if (streamKeys.size >= MAX_STREAM_KEYS) streamKeys.clear();
+        streamKeys.add(deliveryKey);
+      }
+    }
+    let collected;
+    try {
+      collected = await collectFileContentsStream(stream(input), signal);
+    } catch (error) {
+      if (signal.aborted) return { kind: "cancelled" };
+      return {
+        kind: "error",
+        detail: error instanceof Error ? error.message : "File contents stream unavailable"
+      };
+    }
+    return streamOutcome(collected, signal);
+  }
+  async function sha256Hex(text) {
+    const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
+    return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+  }
+  function utf8Length(text) {
+    return new TextEncoder().encode(text).length;
+  }
+  function createPreviewAssembly() {
+    return { manifest: null, chunks: [], complete: null };
+  }
+  function applyPreviewStreamEvent(assembly, event) {
+    if (assembly.complete !== null) {
+      return { ok: false, detail: "stream continued after the complete frame" };
+    }
+    if (event.kind === "manifest") {
+      if (assembly.manifest !== null) return { ok: false, detail: "duplicate manifest frame" };
+      return {
+        ok: true,
+        assembly: {
+          manifest: { generatedAt: event.generatedAt, sources: event.sources },
+          chunks: event.sources.map(() => []),
+          complete: null
+        }
+      };
+    }
+    if (assembly.manifest === null) {
+      return { ok: false, detail: `${event.kind} frame arrived before the manifest` };
+    }
+    if (event.kind === "chunk") {
+      const source = assembly.manifest.sources[event.sourceIndex];
+      if (source === void 0) {
+        return { ok: false, detail: `chunk for unknown sourceIndex ${event.sourceIndex}` };
+      }
+      if (event.chunkIndex >= source.chunkCount) {
+        return {
+          ok: false,
+          detail: `chunkIndex ${event.chunkIndex} exceeds declared chunkCount ${source.chunkCount} for source ${source.id}`
+        };
+      }
+      const received = assembly.chunks[event.sourceIndex] ?? [];
+      if (event.chunkIndex !== received.length) {
+        return {
+          ok: false,
+          detail: `out-of-order chunk ${event.chunkIndex} for source ${source.id} (expected ${received.length})`
+        };
+      }
+      const chunks = assembly.chunks.slice();
+      chunks[event.sourceIndex] = [...received, event.data];
+      return { ok: true, assembly: { ...assembly, chunks } };
+    }
+    return { ok: true, assembly: { ...assembly, complete: event.payloadSha256 } };
+  }
+  async function verifyPreviewAssembly(assembly) {
+    if (assembly.manifest === null) {
+      return { kind: "incomplete", detail: "stream ended before the manifest" };
+    }
+    if (assembly.complete === null) {
+      return { kind: "incomplete", detail: "stream ended before the complete frame" };
+    }
+    const bodies = [];
+    for (const [index, source] of assembly.manifest.sources.entries()) {
+      const chunks = assembly.chunks[index] ?? [];
+      if (chunks.length !== source.chunkCount) {
+        return {
+          kind: "incomplete",
+          detail: `source ${source.id}: received ${chunks.length} of ${source.chunkCount} declared chunks`
+        };
+      }
+      const body = chunks.join("");
+      if (utf8Length(body) !== source.diffByteLength) {
+        return {
+          kind: "mismatch",
+          detail: `source ${source.id}: reassembled byte length does not match the manifest`
+        };
+      }
+      if (await sha256Hex(body) !== source.diffHash) {
+        return {
+          kind: "mismatch",
+          detail: `source ${source.id}: reassembled bytes do not match the manifest hash`
+        };
+      }
+      bodies.push(body);
+    }
+    if (await sha256Hex(bodies.join("")) !== assembly.complete) {
+      return { kind: "mismatch", detail: "reassembled payload does not match the terminal checksum" };
+    }
+    const manifest = assembly.manifest;
+    return {
+      kind: "verified",
+      result: {
+        generatedAt: manifest.generatedAt,
+        sources: manifest.sources.map((source, index) => ({
+          id: source.id,
+          kind: source.kind,
+          title: source.title,
+          baseRef: source.baseRef,
+          headRef: source.headRef,
+          diff: bodies[index] ?? "",
+          diffHash: source.diffHash,
+          truncated: source.truncated
+        }))
+      }
+    };
+  }
+  async function collectPreviewStream(stream, signal) {
+    let assembly = createPreviewAssembly();
+    for await (const frame of stream) {
+      if (signal.aborted) return { kind: "cancelled" };
+      const next = applyPreviewStreamEvent(assembly, frame.value);
+      if (!next.ok) return { kind: "protocol", detail: next.detail };
+      assembly = next.assembly;
+    }
+    if (signal.aborted) return { kind: "cancelled" };
+    return verifyPreviewAssembly(assembly);
+  }
+  function createFileContentsAssembly() {
+    return { manifest: null, sides: { old: [], new: [] }, complete: null };
+  }
+  function applyFileContentsStreamEvent(assembly, event) {
+    if (assembly.complete !== null) {
+      return { ok: false, detail: "stream continued after the complete frame" };
+    }
+    if (event.kind === "manifest") {
+      if (assembly.manifest !== null) return { ok: false, detail: "duplicate manifest frame" };
+      return {
+        ok: true,
+        assembly: {
+          manifest: {
+            oldByteLength: event.oldByteLength,
+            oldChunkCount: event.oldChunkCount,
+            newByteLength: event.newByteLength,
+            newChunkCount: event.newChunkCount
+          },
+          sides: { old: [], new: [] },
+          complete: null
+        }
+      };
+    }
+    if (assembly.manifest === null) {
+      return { ok: false, detail: `${event.kind} frame arrived before the manifest` };
+    }
+    if (event.kind === "chunk") {
+      const declared = event.side === "old" ? assembly.manifest.oldChunkCount : assembly.manifest.newChunkCount;
+      if (event.chunkIndex >= declared) {
+        return {
+          ok: false,
+          detail: `chunkIndex ${event.chunkIndex} exceeds declared ${event.side} chunkCount ${declared}`
+        };
+      }
+      const received = assembly.sides[event.side];
+      if (event.chunkIndex !== received.length) {
+        return {
+          ok: false,
+          detail: `out-of-order ${event.side} chunk ${event.chunkIndex} (expected ${received.length})`
+        };
+      }
+      return {
+        ok: true,
+        assembly: {
+          ...assembly,
+          sides: { ...assembly.sides, [event.side]: [...received, event.data] }
+        }
+      };
+    }
+    return {
+      ok: true,
+      assembly: {
+        ...assembly,
+        complete: { oldSha256: event.oldSha256, newSha256: event.newSha256 }
+      }
+    };
+  }
+  async function verifyFileContentsAssembly(assembly) {
+    if (assembly.manifest === null) {
+      return { kind: "incomplete", detail: "stream ended before the manifest" };
+    }
+    if (assembly.complete === null) {
+      return { kind: "incomplete", detail: "stream ended before the complete frame" };
+    }
+    const manifest = assembly.manifest;
+    const complete = assembly.complete;
+    const sides = [
+      {
+        name: "old",
+        chunks: assembly.sides.old,
+        chunkCount: manifest.oldChunkCount,
+        byteLength: manifest.oldByteLength,
+        sha256: complete.oldSha256
+      },
+      {
+        name: "new",
+        chunks: assembly.sides.new,
+        chunkCount: manifest.newChunkCount,
+        byteLength: manifest.newByteLength,
+        sha256: complete.newSha256
+      }
+    ];
+    const bodies = {};
+    for (const side of sides) {
+      if (side.chunks.length !== side.chunkCount) {
+        return {
+          kind: "incomplete",
+          detail: `${side.name} side: received ${side.chunks.length} of ${side.chunkCount} declared chunks`
+        };
+      }
+      const body = side.chunks.join("");
+      if (utf8Length(body) !== side.byteLength) {
+        return {
+          kind: "mismatch",
+          detail: `${side.name} side: reassembled byte length does not match the manifest`
+        };
+      }
+      if (await sha256Hex(body) !== side.sha256) {
+        return {
+          kind: "mismatch",
+          detail: `${side.name} side: reassembled bytes do not match the complete-frame hash`
+        };
+      }
+      bodies[side.name] = body;
+    }
+    return {
+      kind: "verified",
+      result: { oldContents: bodies.old ?? "", newContents: bodies.new ?? "" }
+    };
+  }
+  async function collectFileContentsStream(stream, signal) {
+    let assembly = createFileContentsAssembly();
+    for await (const frame of stream) {
+      if (signal.aborted) return { kind: "cancelled" };
+      const next = applyFileContentsStreamEvent(assembly, frame.value);
+      if (!next.ok) return { kind: "protocol", detail: next.detail };
+      assembly = next.assembly;
+    }
+    if (signal.aborted) return { kind: "cancelled" };
+    return verifyFileContentsAssembly(assembly);
+  }
+  var CONNECTING_DIFF_STATUS = {
+    fingerprint: null,
+    revision: 0,
+    stream: "connecting",
+    detail: null
+  };
+  function localStatusFingerprint(local) {
+    return [
+      local.refName ?? "",
+      local.hasWorkingTreeChanges ? "1" : "0",
+      local.workingTree.files.length,
+      local.workingTree.insertions,
+      local.workingTree.deletions,
+      local.workingTree.truncated ? "1" : "0"
+    ].join("|");
+  }
+  function foldDiffStatusEvent(model, event) {
+    switch (event.kind) {
+      case "snapshot": {
+        const fingerprint = localStatusFingerprint(event.local);
+        const changed = model.fingerprint !== null && model.fingerprint !== fingerprint;
+        return {
+          fingerprint,
+          revision: model.revision + (changed ? 1 : 0),
+          stream: "live",
+          detail: null
+        };
+      }
+      case "localUpdated": {
+        const fingerprint = localStatusFingerprint(event.local);
+        return {
+          ...model,
+          fingerprint,
+          revision: model.revision + (model.fingerprint !== fingerprint ? 1 : 0),
+          stream: "live"
+        };
+      }
+      case "remoteUpdated":
+        return model;
+      case "closed":
+        return {
+          ...model,
+          stream: "ended",
+          detail: event.reason === "overflow" ? "The status stream overflowed its event queue." : "The status stream reported a status error."
+        };
+    }
+  }
+  function remoteBranchName(ref) {
+    if (ref.remoteName !== void 0 && ref.name.startsWith(`${ref.remoteName}/`)) {
+      return ref.name.slice(ref.remoteName.length + 1);
+    }
+    return ref.name;
+  }
+  function buildBaseRefChoices(refs) {
+    const localRefs = refs.filter((ref) => ref.isRemote !== true);
+    const remoteRefs = refs.filter((ref) => ref.isRemote === true);
+    const unusedRemotes = new Set(remoteRefs);
+    const paired = localRefs.map((local) => {
+      const matches = remoteRefs.filter(
+        (remote2) => unusedRemotes.has(remote2) && remoteBranchName(remote2) === local.name
+      );
+      const remote = matches.find((candidate) => candidate.remoteName === "origin") ?? matches[0] ?? null;
+      if (remote !== null) unusedRemotes.delete(remote);
+      return {
+        id: `local:${local.name}`,
+        label: local.name,
+        refName: local.name,
+        remote: remote !== null
+      };
+    });
+    const remoteOnly = remoteRefs.filter((remote) => unusedRemotes.has(remote)).map((remote) => ({
+      id: `remote:${remote.name}`,
+      label: remote.name,
+      refName: remote.name,
+      remote: true
+    }));
+    return [...paired, ...remoteOnly];
+  }
+  function filterBaseRefChoices(choices, query) {
+    const normalized = query.trim().toLocaleLowerCase();
+    if (normalized.length === 0) return choices;
+    return choices.filter(
+      (choice) => choice.label.toLocaleLowerCase().includes(normalized) || choice.refName.toLocaleLowerCase().includes(normalized)
+    );
+  }
+  function countTreeFiles(node) {
+    let count = node.files.length;
+    for (const child of node.dirs.values()) count += countTreeFiles(child);
+    return count;
+  }
+  function diffTreeRows(files, collapsedDirs) {
+    const root = { dirs: /* @__PURE__ */ new Map(), files: [] };
+    for (const row of files) {
+      const segments = row.path.split("/");
+      let node = root;
+      for (const segment of segments.slice(0, -1)) {
+        let child = node.dirs.get(segment);
+        if (child === void 0) {
+          child = { dirs: /* @__PURE__ */ new Map(), files: [] };
+          node.dirs.set(segment, child);
+        }
+        node = child;
+      }
+      node.files.push(row);
+    }
+    const rows = [];
+    const walk = (node, path3, depth) => {
+      for (const [name, child] of [...node.dirs.entries()].sort(([a], [b]) => a.localeCompare(b))) {
+        const dirPath = `${path3}${name}/`;
+        rows.push({
+          kind: "dir",
+          path: dirPath,
+          name,
+          depth,
+          collapsed: collapsedDirs.has(dirPath),
+          fileCount: countTreeFiles(child)
+        });
+        if (!collapsedDirs.has(dirPath)) walk(child, dirPath, depth + 1);
+      }
+      for (const file of [...node.files].sort((a, b) => a.path.localeCompare(b.path))) {
+        rows.push({
+          kind: "file",
+          row: file,
+          name: file.path.split("/").pop() ?? file.path,
+          depth
+        });
+      }
+    };
+    walk(root, "", 0);
+    return rows;
+  }
+  function areAllDiffFilesCollapsed(fileKeys, collapsedFileKeys) {
+    return fileKeys.length > 0 && fileKeys.every((key) => collapsedFileKeys.has(key));
+  }
+  function toggleAllDiffFiles(fileKeys, collapsedFileKeys) {
+    return areAllDiffFilesCollapsed(fileKeys, collapsedFileKeys) ? /* @__PURE__ */ new Set() : new Set(fileKeys);
+  }
+  function toggleCollapsedKey(collapsedKeys, key) {
+    const next = new Set(collapsedKeys);
+    if (next.has(key)) {
+      next.delete(key);
+    } else {
+      next.add(key);
+    }
+    return next;
+  }
+  function presentationPath(path3) {
+    if (path3.length === 0 || path3.startsWith("/") || path3.includes("\\") || path3.split("/").some((segment) => segment === "" || segment === "..")) {
+      return null;
+    }
+    return path3;
+  }
+  function describePresentation(result) {
+    return `opens in ${result.surfaceId} \xB7 ${result.placement}`;
+  }
 
-  // extension.tsx
+  // ../../../projects/T3 Code/t3-extensions-authoring/packages/first-party-extensions/diff/extension.tsx
   var import_jsx_runtime = __toESM(require_jsx_runtime(), 1);
   var manifestId = "t3.diff";
   var patchParseCache = /* @__PURE__ */ new Map();
@@ -2863,7 +3600,9 @@ ${prefix}`;
     if (value === null) return true;
     if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
     const record = value;
-    return Object.keys(record).every((key) => key === "sourceId" || key === "fileKey") && (record.sourceId === void 0 || typeof record.sourceId === "string") && (record.fileKey === void 0 || typeof record.fileKey === "string");
+    return Object.keys(record).every(
+      (key) => key === "sourceId" || key === "fileKey" || key === "baseRef" || key === "ignoreWhitespace"
+    ) && (record.sourceId === void 0 || typeof record.sourceId === "string") && (record.fileKey === void 0 || typeof record.fileKey === "string") && (record.baseRef === void 0 || typeof record.baseRef === "string") && (record.ignoreWhitespace === void 0 || typeof record.ignoreWhitespace === "boolean");
   }
   function useCapabilities(host, session, visible, tick) {
     const [result, setResult] = (0, import_react.useState)(null);
@@ -2888,51 +3627,131 @@ ${prefix}`;
     }, [host, session, visible, tick]);
     return result?.key === tick ? result : { capabilities: null, error: null };
   }
-  function useDiffPreview(host, session, visible, tick) {
-    const [result, setResult] = (0, import_react.useState)(null);
+  function useStatusRefresh(host, session, enabled) {
+    const [model, setModel] = (0, import_react.useState)(CONNECTING_DIFF_STATUS);
     (0, import_react.useEffect)(() => {
-      if (!visible) return;
+      if (!enabled) return;
       const controller = new AbortController();
       const signal = AbortSignal.any([controller.signal, session.signal]);
-      void bindApi(vcsDiffApi, host, session.context).invoke("getPreview", {}, signal).then(
-        (preview) => {
-          if (!signal.aborted) setResult({ key: tick, preview, error: null });
-        },
-        (error) => {
-          if (!signal.aborted)
-            setResult({
-              key: tick,
-              preview: null,
-              error: error instanceof Error ? error.message : "Diff preview unavailable"
+      void (async () => {
+        let status = CONNECTING_DIFF_STATUS;
+        setModel(status);
+        for (let attempt = 1; attempt <= 3 && !signal.aborted; attempt += 1) {
+          let closed = false;
+          try {
+            const stream = bindStreamApi(vcsStatusApi, host, session.context).subscribe(
+              "subscribe",
+              {},
+              signal
+            );
+            for await (const frame of stream) {
+              if (signal.aborted) return;
+              status = foldDiffStatusEvent(status, frame.value);
+              setModel(status);
+              if (frame.value.kind === "closed") {
+                closed = true;
+                break;
+              }
+            }
+          } catch (error) {
+            if (!signal.aborted)
+              setModel({
+                ...status,
+                stream: "ended",
+                detail: error instanceof Error ? error.message : "Status stream unavailable"
+              });
+            return;
+          }
+          if (signal.aborted) return;
+          if (!closed) {
+            setModel({
+              ...status,
+              stream: "ended",
+              detail: "Status stream ended unexpectedly."
             });
+            return;
+          }
+          await new Promise((resolve) => setTimeout(resolve, 400 * attempt));
         }
-      );
+        if (!signal.aborted)
+          setModel({ ...status, stream: "ended", detail: "Status stream ended repeatedly." });
+      })();
       return () => controller.abort();
-    }, [host, session, visible, tick]);
-    return result?.key === tick ? result : { preview: null, error: null };
+    }, [host, session, enabled]);
+    return model;
   }
-  function useFileContents(host, session, request) {
+  function useRefs(host, session, enabled, revision2) {
     const [result, setResult] = (0, import_react.useState)(null);
     (0, import_react.useEffect)(() => {
-      if (request === null) return;
+      if (!enabled) return;
       const controller = new AbortController();
       const signal = AbortSignal.any([controller.signal, session.signal]);
-      void bindApi(vcsDiffApi, host, session.context).invoke("getFileContents", request.input, signal).then(
-        (contents2) => {
-          if (!signal.aborted) setResult({ key: request.key, contents: contents2, error: null });
+      const api = bindApi(vcsRefsApi, host, session.context);
+      void Promise.all([
+        api.invoke("list", { refKind: "local", limit: 200 }, signal),
+        api.invoke("list", { refKind: "remote", limit: 200 }, signal)
+      ]).then(
+        ([local, remote]) => {
+          if (!signal.aborted)
+            setResult({
+              key: revision2,
+              refs: {
+                refs: [...local.refs, ...remote.refs],
+                isRepo: local.isRepo,
+                hasPrimaryRemote: local.hasPrimaryRemote,
+                nextCursor: null,
+                totalCount: local.totalCount + remote.totalCount
+              },
+              error: null
+            });
         },
         (error) => {
           if (!signal.aborted)
-            setResult({
-              key: request.key,
-              contents: null,
-              error: error instanceof Error ? error.message : "File contents unavailable"
-            });
+            setResult((prev) => ({
+              key: revision2,
+              refs: prev?.refs ?? null,
+              error: error instanceof Error ? error.message : "Refs unavailable"
+            }));
         }
       );
       return () => controller.abort();
-    }, [host, session, request]);
-    return result?.key === request?.key ? result : null;
+    }, [host, session, enabled, revision2]);
+    return result?.key === revision2 ? result : { refs: null, error: null };
+  }
+  function useDiffPreview(host, session, enabled, requestKey, input) {
+    const [result, setResult] = (0, import_react.useState)(null);
+    const streamKeys = (0, import_react.useRef)(/* @__PURE__ */ new Set());
+    (0, import_react.useEffect)(() => {
+      if (!enabled) return;
+      const controller = new AbortController();
+      const signal = AbortSignal.any([controller.signal, session.signal]);
+      const api = bindApi(vcsDiffApi, host, session.context);
+      const streams = bindStreamApi(vcsDiffApi, host, session.context);
+      void fetchDiffPreview({
+        input,
+        invoke: (next) => api.invoke("getPreview", next, signal),
+        stream: (next) => streams.subscribe("streamPreview", next, signal),
+        streamKeys: streamKeys.current,
+        signal
+      }).then((outcome) => {
+        if (signal.aborted || outcome.kind === "cancelled") return;
+        setResult(
+          (prev) => outcome.kind === "ready" ? { key: requestKey, preview: outcome.result, error: null, pending: false } : {
+            key: requestKey,
+            preview: prev?.preview ?? null,
+            error: outcome.detail,
+            pending: false
+          }
+        );
+      });
+      return () => controller.abort();
+    }, [host, session, enabled, requestKey, input]);
+    return {
+      // Last-good preview stays up across refreshes and key changes.
+      preview: result?.preview ?? null,
+      error: result?.key === requestKey ? result.error : null,
+      pending: result?.key !== requestKey || result.pending
+    };
   }
   var control = {
     padding: "4px 8px",
@@ -2959,7 +3778,12 @@ ${prefix}`;
     color: "var(--muted-foreground, #667085)",
     userSelect: "none"
   };
-  function DiffRow({ row }) {
+  var iconButton = {
+    ...control,
+    padding: "2px 6px",
+    fontSize: 11
+  };
+  function DiffRow({ row, wrap }) {
     if (row.kind === "gap") {
       return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
         "div",
@@ -2986,6 +3810,8 @@ ${prefix}`;
       {
         style: {
           ...rowBase,
+          whiteSpace: wrap ? "pre-wrap" : "pre",
+          wordBreak: wrap ? "break-all" : void 0,
           background: addition ? "color-mix(in srgb, var(--success, #2da44e) 14%, transparent)" : deletion ? "color-mix(in srgb, var(--destructive, #cf222e) 12%, transparent)" : "transparent"
         },
         children: [
@@ -2993,6 +3819,123 @@ ${prefix}`;
           /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { style: gutter, children: addition || row.kind === "context" ? row.newLine ?? "" : "" }),
           /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { style: { color: "var(--muted-foreground, #667085)", userSelect: "none", width: 14 }, children: addition ? "+" : deletion ? "\u2212" : " " }),
           /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { style: { overflow: "hidden", textOverflow: "ellipsis" }, children: row.text })
+        ]
+      }
+    );
+  }
+  function FileSection({
+    row,
+    selected,
+    collapsed,
+    wrap,
+    expansion,
+    action,
+    onToggleCollapsed,
+    onExpand,
+    onOpen,
+    onCopy,
+    registerSection
+  }) {
+    const muted = "var(--muted-foreground, #667085)";
+    const expanded = expansion?.status === "loaded" ? expansion.contents : void 0;
+    const rows = (0, import_react.useMemo)(
+      () => collapsed || row.binary || row.textless ? [] : fileRows(row, expanded),
+      [collapsed, row, expanded]
+    );
+    return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+      "section",
+      {
+        ref: registerSection,
+        "aria-label": displayPath(row),
+        style: {
+          borderBottom: "1px solid var(--border, #dfe3e8)",
+          outline: selected ? "1px solid var(--accent, #b7cff0)" : void 0,
+          outlineOffset: -1
+        },
+        children: [
+          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+            "header",
+            {
+              style: {
+                display: "flex",
+                alignItems: "center",
+                gap: 6,
+                padding: "4px 8px",
+                fontSize: 12,
+                position: "sticky",
+                top: 0,
+                background: "var(--background, #fff)",
+                zIndex: 1
+              },
+              children: [
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                  "button",
+                  {
+                    type: "button",
+                    "aria-expanded": !collapsed,
+                    "aria-label": `${collapsed ? "Expand" : "Collapse"} ${displayPath(row)}`,
+                    onClick: () => onToggleCollapsed(row.key),
+                    style: { ...iconButton, width: 20, textAlign: "center" },
+                    children: collapsed ? "\u25B8" : "\u25BE"
+                  }
+                ),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+                  "span",
+                  {
+                    style: {
+                      fontFamily: "var(--font-mono, ui-monospace, monospace)",
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      whiteSpace: "nowrap",
+                      flex: 1
+                    },
+                    children: [
+                      displayPath(row),
+                      /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { style: { color: muted }, children: [
+                        " ",
+                        "\u2014 ",
+                        row.binary ? "binary" : changeTypeLabel(row.changeType),
+                        fileStatLabel(row) !== "" ? ` ${fileStatLabel(row)}` : ""
+                      ] })
+                    ]
+                  }
+                ),
+                canExpandFile(row) && !collapsed && /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                  "button",
+                  {
+                    type: "button",
+                    style: iconButton,
+                    disabled: expansion?.status === "loading",
+                    onClick: () => onExpand(row),
+                    children: expansion?.status === "loaded" ? "Context loaded" : "Full context"
+                  }
+                ),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { type: "button", style: iconButton, onClick: () => onOpen(row), children: "Open" }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { type: "button", style: iconButton, onClick: () => onCopy(row), children: "Copy path" })
+              ]
+            }
+          ),
+          action !== null && action.key === row.key && /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+            "p",
+            {
+              role: action.status === "error" ? "alert" : "note",
+              style: { margin: 0, padding: "2px 10px", color: muted, fontSize: 11 },
+              children: action.detail
+            }
+          ),
+          !collapsed && row.binary && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("p", { role: "note", style: { padding: "4px 10px", color: muted, fontSize: 12, margin: 0 }, children: [
+            row.path,
+            " is a binary file \u2014 no text diff is available."
+          ] }),
+          !collapsed && row.textless && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("p", { role: "note", style: { padding: "4px 10px", color: muted, fontSize: 12, margin: 0 }, children: [
+            "No textual changes in the patch for ",
+            displayPath(row),
+            "."
+          ] }),
+          !collapsed && rows.map((line) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)(DiffRow, { row: line, wrap }, line.ordinal)),
+          !collapsed && expansion?.status === "loading" && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { style: { padding: "4px 10px", color: muted, fontSize: 11, margin: 0 }, children: "Loading file contents\u2026" }),
+          !collapsed && expansion?.status === "error" && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { role: "alert", style: { padding: "4px 10px", color: muted, fontSize: 11, margin: 0 }, children: expansion.detail }),
+          !collapsed && expansion?.status === "loaded" && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { style: { padding: "4px 10px", color: muted, fontSize: 11, margin: 0 }, children: "Full file context loaded via t3.vcs/diff." })
         ]
       }
     );
@@ -3005,45 +3948,168 @@ ${prefix}`;
     const restored = session.restoreState && typeof session.restoreState === "object" && !Array.isArray(session.restoreState) ? session.restoreState : null;
     const [sourceId, setSourceId] = (0, import_react.useState)(restored?.sourceId ?? null);
     const [fileKey, setFileKey] = (0, import_react.useState)(restored?.fileKey ?? null);
-    const [expandKey, setExpandKey] = (0, import_react.useState)(null);
+    const [baseRef, setBaseRef] = (0, import_react.useState)(restored?.baseRef ?? "");
+    const [ignoreWhitespace, setIgnoreWhitespace] = (0, import_react.useState)(
+      restored?.ignoreWhitespace ?? false
+    );
+    const [wrap, setWrap] = (0, import_react.useState)(false);
+    const [collapsedFiles, setCollapsedFiles] = (0, import_react.useState)(/* @__PURE__ */ new Set());
+    const [collapsedDirs, setCollapsedDirs] = (0, import_react.useState)(/* @__PURE__ */ new Set());
+    const [expansions, setExpansions] = (0, import_react.useState)(/* @__PURE__ */ new Map());
+    const [action, setAction] = (0, import_react.useState)(
+      null
+    );
+    const expandControllers = (0, import_react.useRef)(/* @__PURE__ */ new Map());
+    const contentStreamKeys = (0, import_react.useRef)(/* @__PURE__ */ new Set());
+    const sectionRefs = (0, import_react.useRef)(/* @__PURE__ */ new Map());
     const { capabilities, error: capsError } = useCapabilities(host, session, visible, tick);
     const gate = diffCapabilityState(capabilities, capsError);
     const ready = gate.kind === "ready";
-    const { preview: previewData, error: previewError } = useDiffPreview(
-      host,
-      session,
-      visible && ready,
-      tick
+    const status = useStatusRefresh(host, session, visible && ready);
+    const previewInput = (0, import_react.useMemo)(
+      () => ({
+        ...baseRef !== "" ? { baseRef } : {},
+        ...ignoreWhitespace ? { ignoreWhitespace: true } : {}
+      }),
+      [baseRef, ignoreWhitespace]
     );
-    const preview = previewState(previewData, previewError);
+    const requestKey = `${tick}:${status.revision}:${previewDeliveryKey(previewInput)}`;
+    const {
+      preview: previewData,
+      error: previewError,
+      pending
+    } = useDiffPreview(host, session, visible && ready, requestKey, previewInput);
+    const preview = previewState(previewData, previewData === null ? previewError : null);
+    const { refs } = useRefs(host, session, visible && ready, status.revision);
     const source = selectSource(preview.kind === "ready" ? preview.result : null, sourceId);
     const renderable = source === null ? null : renderableFor(source.diffHash, source.diff);
     const files = renderable?.kind === "files" ? renderable.files : [];
     const selected = retainFileSelection(files, fileKey);
-    const expandRequest = selected !== null && source !== null && expandKey === selected.key && canExpandFile(selected) ? { key: `${source.diffHash}:${selected.key}`, input: fileContentsInput(source, selected) } : null;
-    const expansion = useFileContents(host, session, expandRequest);
-    const expanded = expansion?.contents ?? void 0;
-    const rows = selected === null ? [] : fileRows(selected, expanded);
-    const persist = (nextSource, nextFile) => {
+    const treeRows = diffTreeRows(files, collapsedDirs);
+    const fileKeys = files.map((row) => row.key);
+    const allCollapsed = areAllDiffFilesCollapsed(fileKeys, collapsedFiles);
+    const baseRefChoices = (0, import_react.useMemo)(() => buildBaseRefChoices(refs?.refs ?? []), [refs]);
+    const sourceKey = source?.diffHash ?? null;
+    (0, import_react.useEffect)(() => {
+      if (sourceKey === null) return;
+      const controllers = expandControllers.current;
+      return () => {
+        for (const controller of controllers.values()) controller.abort();
+        controllers.clear();
+      };
+    }, [sourceKey]);
+    (0, import_react.useEffect)(() => {
+      if (fileKey === null || sourceKey === null || collapsedFiles.has(fileKey)) return;
+      sectionRefs.current.get(fileKey)?.scrollIntoView({ block: "start" });
+    }, [fileKey, collapsedFiles, sourceKey]);
+    const persist = (nextSource, nextFile, nextBase, nextWhitespace) => {
       session.save({
         ...nextSource !== null ? { sourceId: nextSource } : {},
-        ...nextFile !== null ? { fileKey: nextFile } : {}
+        ...nextFile !== null ? { fileKey: nextFile } : {},
+        ...nextBase !== "" ? { baseRef: nextBase } : {},
+        ...nextWhitespace ? { ignoreWhitespace: true } : {}
       });
     };
     const chooseSource = (id) => {
       setSourceId(id);
       setFileKey(null);
-      setExpandKey(null);
-      persist(id, null);
+      persist(id, null, baseRef, ignoreWhitespace);
     };
-    const chooseFile = (row) => {
-      const next = row.key === fileKey ? null : row.key;
-      setFileKey(next);
-      setExpandKey(null);
-      persist(source?.id ?? null, next);
+    const revealFile = (row) => {
+      setCollapsedFiles((current) => {
+        const next = new Set(current);
+        next.delete(row.key);
+        return next;
+      });
+      setFileKey(row.key);
+      persist(source?.id ?? null, row.key, baseRef, ignoreWhitespace);
+    };
+    const chooseBaseRef = (value) => {
+      setBaseRef(value);
+      persist(source?.id ?? null, fileKey, value, ignoreWhitespace);
+    };
+    const chooseWhitespace = (value) => {
+      setIgnoreWhitespace(value);
+      persist(source?.id ?? null, fileKey, baseRef, value);
+    };
+    const expandFile = (row) => {
+      if (source === null) return;
+      const key = `${source.diffHash}:${row.key}`;
+      if (expansions.has(key)) return;
+      const controller = new AbortController();
+      expandControllers.current.set(key, controller);
+      const signal = AbortSignal.any([controller.signal, session.signal]);
+      setExpansions((prev) => {
+        const next = new Map(prev);
+        if (next.size > 64) next.clear();
+        return next.set(key, { status: "loading" });
+      });
+      const input = fileContentsInput(source, row);
+      const api = bindApi(vcsDiffApi, host, session.context);
+      const streams = bindStreamApi(vcsDiffApi, host, session.context);
+      void fetchFileContents({
+        input,
+        deliveryKey: contentsDeliveryKey(source, row),
+        invoke: (next) => api.invoke("getFileContents", next, signal),
+        stream: (next) => streams.subscribe("streamFileContents", next, signal),
+        streamKeys: contentStreamKeys.current,
+        signal
+      }).then((outcome) => {
+        expandControllers.current.delete(key);
+        if (signal.aborted || outcome.kind === "cancelled") return;
+        setExpansions(
+          (prev) => new Map(prev).set(
+            key,
+            outcome.kind === "ready" ? { status: "loaded", contents: outcome.result } : { status: "error", detail: outcome.detail }
+          )
+        );
+      });
+    };
+    const openInEditor = (row) => {
+      const path3 = presentationPath(row.path);
+      if (path3 === null) {
+        setAction({
+          key: row.key,
+          status: "error",
+          detail: `${displayPath(row)} cannot be opened \u2014 not a workspace-relative path.`
+        });
+        return;
+      }
+      const controller = new AbortController();
+      const signal = AbortSignal.any([controller.signal, session.signal]);
+      setAction({ key: row.key, status: "loading", detail: "Resolving presentation\u2026" });
+      void bindApi(filePresentationApi, host, session.context).invoke("open", { relativePath: path3 }, signal).then(
+        (result) => {
+          if (!signal.aborted)
+            setAction({ key: row.key, status: "resolved", detail: describePresentation(result) });
+        },
+        (error) => {
+          if (!signal.aborted)
+            setAction({
+              key: row.key,
+              status: "error",
+              detail: error instanceof Error ? error.message : "Presentation unavailable"
+            });
+        }
+      );
+    };
+    const copyPath = (row) => {
+      if (typeof navigator === "undefined" || navigator.clipboard === void 0) {
+        setAction({ key: row.key, status: "error", detail: "Clipboard unavailable" });
+        return;
+      }
+      void navigator.clipboard.writeText(row.path).then(
+        () => setAction({ key: row.key, status: "copied", detail: `Copied ${row.path}` }),
+        (error) => setAction({
+          key: row.key,
+          status: "error",
+          detail: error instanceof Error ? error.message : "Copy failed"
+        })
+      );
     };
     const muted = "var(--muted-foreground, #667085)";
     const sources = preview.kind === "ready" ? preview.result.sources : [];
+    const filteredBaseChoices = filterBaseRefChoices(baseRefChoices, baseRef);
     return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
       "section",
       {
@@ -3087,7 +4153,55 @@ ${prefix}`;
                     children: describeSource(item)
                   },
                   item.id
-                ))
+                )),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                  "input",
+                  {
+                    type: "text",
+                    "aria-label": "Base ref",
+                    placeholder: "Base ref (automatic)",
+                    list: "t3-diff-base-refs",
+                    value: baseRef,
+                    onChange: (event) => chooseBaseRef(event.target.value),
+                    style: { ...control, width: 140 }
+                  }
+                ),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("datalist", { id: "t3-diff-base-refs", children: filteredBaseChoices.map((choice) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: choice.refName, children: choice.label }, choice.id)) }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { style: { display: "flex", alignItems: "center", gap: 4, fontSize: 12 }, children: [
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                    "input",
+                    {
+                      type: "checkbox",
+                      checked: ignoreWhitespace,
+                      onChange: (event) => chooseWhitespace(event.target.checked)
+                    }
+                  ),
+                  "Ignore whitespace"
+                ] }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { style: { display: "flex", alignItems: "center", gap: 4, fontSize: 12 }, children: [
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                    "input",
+                    {
+                      type: "checkbox",
+                      checked: wrap,
+                      onChange: (event) => setWrap(event.target.checked)
+                    }
+                  ),
+                  "Wrap"
+                ] }),
+                files.length > 0 && /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                  "button",
+                  {
+                    type: "button",
+                    style: control,
+                    onClick: () => setCollapsedFiles(toggleAllDiffFiles(fileKeys, collapsedFiles)),
+                    children: allCollapsed ? "Expand all" : "Collapse all"
+                  }
+                ),
+                status.stream === "ended" && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { role: "note", style: { color: muted, fontSize: 11 }, children: [
+                  status.detail ?? "Status stream ended",
+                  " \u2014 refresh is manual."
+                ] })
               ]
             }
           ),
@@ -3110,7 +4224,12 @@ ${prefix}`;
           ready && preview.kind === "loading" && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { role: "note", style: { padding: "6px 10px", color: muted, fontSize: 12, margin: 0 }, children: "Loading diff\u2026" }),
           ready && preview.kind === "error" && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { role: "alert", style: { padding: "6px 10px", color: muted, fontSize: 12, margin: 0 }, children: preview.detail }),
           ready && preview.kind === "empty" && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { role: "note", style: { padding: "6px 10px", color: muted, fontSize: 12, margin: 0 }, children: "No diff sources reported for this workspace." }),
+          ready && previewData !== null && previewError !== null && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("p", { role: "alert", style: { padding: "6px 10px", color: muted, fontSize: 12, margin: 0 }, children: [
+            "Refresh failed \u2014 ",
+            previewError
+          ] }),
           ready && preview.kind === "ready" && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { style: { flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }, children: [
+            pending && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { role: "note", style: { padding: "2px 10px", color: muted, fontSize: 11, margin: 0 }, children: "Refreshing\u2026" }),
             source?.truncated === true && /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
               "p",
               {
@@ -3156,84 +4275,101 @@ ${prefix}`;
                     padding: 4,
                     overflow: "auto",
                     flexShrink: 0,
-                    maxHeight: "38%",
+                    maxHeight: "34%",
                     borderBottom: "1px solid var(--border, #dfe3e8)"
                   },
-                  children: files.map((row) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("li", { children: /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
-                    "button",
-                    {
-                      type: "button",
-                      "aria-current": selected?.key === row.key ? "true" : void 0,
-                      onClick: () => chooseFile(row),
-                      style: {
-                        display: "block",
-                        width: "100%",
-                        textAlign: "left",
-                        font: "inherit",
-                        fontSize: 12,
-                        padding: "4px 6px",
-                        border: "1px solid transparent",
-                        borderRadius: 5,
-                        cursor: "pointer",
-                        color: "var(--foreground, #20252d)",
-                        background: selected?.key === row.key ? "var(--accent, #e8eef7)" : "transparent",
-                        overflow: "hidden",
-                        textOverflow: "ellipsis",
-                        whiteSpace: "nowrap"
-                      },
-                      children: [
-                        displayPath(row),
-                        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { style: { color: muted }, children: [
-                          " ",
-                          "\u2014 ",
-                          row.binary ? "binary" : changeTypeLabel(row.changeType),
-                          fileStatLabel(row) !== "" ? ` ${fileStatLabel(row)}` : ""
-                        ] })
-                      ]
-                    }
-                  ) }, row.key))
-                }
-              ),
-              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { style: { flex: 1, minHeight: 0, overflow: "auto" }, "aria-label": "File diff", children: [
-                selected === null && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { style: { padding: "6px 10px", color: muted, fontSize: 12, margin: 0 }, children: "Select a file to inspect its changes." }),
-                selected !== null && selected.binary && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("p", { role: "note", style: { padding: "6px 10px", color: muted, fontSize: 12 }, children: [
-                  selected.path,
-                  " is a binary file \u2014 no text diff is available."
-                ] }),
-                selected !== null && selected.textless && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("p", { role: "note", style: { padding: "6px 10px", color: muted, fontSize: 12 }, children: [
-                  "No textual changes in the patch for ",
-                  displayPath(selected),
-                  "."
-                ] }),
-                selected !== null && !selected.binary && !selected.textless && rows.map((row) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)(DiffRow, { row }, row.ordinal))
-              ] }),
-              selected !== null && canExpandFile(selected) && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
-                "footer",
-                {
-                  style: {
-                    padding: "6px 10px",
-                    borderTop: "1px solid var(--border, #dfe3e8)",
-                    flexShrink: 0,
-                    display: "flex",
-                    gap: 8,
-                    alignItems: "center"
-                  },
-                  children: [
-                    expanded === void 0 && expansion === null && /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                  children: treeRows.map(
+                    (row) => row.kind === "dir" ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("li", { children: /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
                       "button",
                       {
                         type: "button",
-                        style: control,
-                        onClick: () => setExpandKey(selected.key),
-                        children: "Load full file context"
+                        "aria-expanded": !row.collapsed,
+                        onClick: () => setCollapsedDirs(toggleCollapsedKey(collapsedDirs, row.path)),
+                        style: {
+                          display: "block",
+                          width: "100%",
+                          textAlign: "left",
+                          font: "inherit",
+                          fontSize: 12,
+                          padding: "3px 6px",
+                          paddingLeft: 6 + row.depth * 14,
+                          border: "none",
+                          background: "transparent",
+                          cursor: "pointer",
+                          color: muted
+                        },
+                        children: [
+                          row.collapsed ? "\u25B8" : "\u25BE",
+                          " ",
+                          row.name,
+                          "/",
+                          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { children: [
+                            " (",
+                            row.fileCount,
+                            ")"
+                          ] })
+                        ]
                       }
-                    ),
-                    expandRequest !== null && expansion === null && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { style: { color: muted, fontSize: 11 }, children: "Loading file contents\u2026" }),
-                    expansion?.error != null && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { role: "alert", style: { color: muted, fontSize: 11 }, children: expansion.error }),
-                    expanded !== void 0 && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { style: { color: muted, fontSize: 11 }, children: "Full file context loaded via t3.vcs/diff." })
-                  ]
+                    ) }, row.path) : /* @__PURE__ */ (0, import_jsx_runtime.jsx)("li", { children: /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+                      "button",
+                      {
+                        type: "button",
+                        "aria-current": selected?.key === row.row.key ? "true" : void 0,
+                        onClick: () => revealFile(row.row),
+                        style: {
+                          display: "block",
+                          width: "100%",
+                          textAlign: "left",
+                          font: "inherit",
+                          fontSize: 12,
+                          padding: "4px 6px",
+                          paddingLeft: 6 + row.depth * 14 + 14,
+                          border: "1px solid transparent",
+                          borderRadius: 5,
+                          cursor: "pointer",
+                          color: "var(--foreground, #20252d)",
+                          background: selected?.key === row.row.key ? "var(--accent, #e8eef7)" : "transparent",
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                          whiteSpace: "nowrap"
+                        },
+                        children: [
+                          row.name,
+                          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { style: { color: muted }, children: [
+                            " ",
+                            "\u2014 ",
+                            row.row.binary ? "binary" : changeTypeLabel(row.row.changeType),
+                            fileStatLabel(row.row) !== "" ? ` ${fileStatLabel(row.row)}` : ""
+                          ] })
+                        ]
+                      }
+                    ) }, row.row.key)
+                  )
                 }
-              )
+              ),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { style: { flex: 1, minHeight: 0, overflow: "auto" }, "aria-label": "File diffs", children: [
+                files.length === 0 && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { style: { padding: "6px 10px", color: muted, fontSize: 12, margin: 0 }, children: "Select a file to inspect its changes." }),
+                source !== null && files.map((row) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                  FileSection,
+                  {
+                    row,
+                    selected: selected?.key === row.key,
+                    collapsed: collapsedFiles.has(row.key),
+                    wrap,
+                    expansion: expansions.get(`${source.diffHash}:${row.key}`),
+                    action,
+                    onToggleCollapsed: (key) => setCollapsedFiles(toggleCollapsedKey(collapsedFiles, key)),
+                    onExpand: expandFile,
+                    onOpen: openInEditor,
+                    onCopy: copyPath,
+                    registerSection: (el) => {
+                      if (el !== null) sectionRefs.current.set(row.key, el);
+                      else sectionRefs.current.delete(row.key);
+                    }
+                  },
+                  row.key
+                ))
+              ] })
             ] })
           ] }),
           /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
@@ -3247,7 +4383,7 @@ ${prefix}`;
                 borderTop: "1px solid var(--border, #dfe3e8)",
                 flexShrink: 0
               },
-              children: "Read-only diff skeleton on t3.vcs/diff: workspace + base-range previews, per-file hunks, full-context expansion. Turn diffs, line comments, and navigation chrome are deferred slices."
+              children: "Read-only diff on t3.vcs/diff 1.1: unary small previews, sha256-verified streams for large payloads, status-driven refresh. Split view, comments, and turn diffs are deferred slices."
             }
           )
         ]
@@ -3256,8 +4392,14 @@ ${prefix}`;
   }
   var extension_default = defineExtension({
     id: manifestId,
-    version: "0.1.0",
-    requires: [requireApi(vcsDiffApi), requireApi(vcsRepositoryApi)],
+    version: "0.2.0",
+    requires: [
+      requireApi(vcsDiffApi),
+      requireApi(vcsRepositoryApi),
+      requireApi(vcsStatusApi),
+      requireApi(vcsRefsApi),
+      requireApi(filePresentationApi)
+    ],
     surfaces: [
       {
         name: "view",
@@ -3275,10 +4417,10 @@ ${prefix}`;
     ]
   });
 
-  // extension.ts
+  // ../../../projects/T3 Code/t3-extensions-authoring/packages/first-party-extensions/diff/extension.ts
   var extension_default2 = extension_default;
 
-  // generated-client.ts
+  // ../../../projects/T3 Code/t3-extensions-authoring/packages/first-party-extensions/diff/generated-client.ts
   var generated_client_default = extension_default2.client;
   return __toCommonJS(generated_client_exports);
 })();
