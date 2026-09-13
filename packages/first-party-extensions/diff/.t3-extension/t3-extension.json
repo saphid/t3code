@@ -2,7 +2,7 @@
   "format": 2,
   "manifest": {
     "id": "t3.diff",
-    "version": "0.1.0",
+    "version": "0.2.0",
     "apiVersion": 1,
     "surfaces": [
       {
@@ -27,10 +27,22 @@
   "requires": [
     {
       "id": "t3.vcs/diff",
-      "versionRange": "^1.0.0"
+      "versionRange": "^1.1.0"
     },
     {
       "id": "t3.vcs/repository",
+      "versionRange": "^1.0.0"
+    },
+    {
+      "id": "t3.vcs/status",
+      "versionRange": "^1.0.0"
+    },
+    {
+      "id": "t3.vcs/refs",
+      "versionRange": "^1.0.0"
+    },
+    {
+      "id": "t3.file/presentation",
       "versionRange": "^1.0.0"
     }
   ],
