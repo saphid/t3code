@@ -1045,7 +1045,7 @@ public struct FeatureSettings: Sendable, Equatable, Codable {
     public var defaultSelection: FeatureSelection?
 
     public init(
-        appearance: FeatureAppearance = .system,
+        appearance: FeatureAppearance = .dark,
         textSize: FeatureTextSizeAdjustment = .standard,
         codeSize: FeatureTextSizeAdjustment = .standard,
         hapticsEnabled: Bool = true,
@@ -1077,7 +1077,7 @@ public struct FeatureSettings: Sendable, Equatable, Codable {
         appearance = try container.decodeIfPresent(
             FeatureAppearance.self,
             forKey: .appearance
-        ) ?? .system
+        ) ?? .dark
         textSize = try container.decodeIfPresent(
             FeatureTextSizeAdjustment.self,
             forKey: .textSize

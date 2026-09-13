@@ -5,8 +5,8 @@ import Testing
 @Suite("Agent awareness projection")
 struct PlatformAgentAwarenessTests {
     @Test
-    func settingsDefaultToSystemAppearanceAndRoundTripLightMode() throws {
-        #expect(FeatureSettings().appearance == .system)
+    func settingsDefaultToDarkAppearanceAndRoundTripLightMode() throws {
+        #expect(FeatureSettings().appearance == .dark)
 
         var settings = FeatureSettings()
         settings.appearance = .light
