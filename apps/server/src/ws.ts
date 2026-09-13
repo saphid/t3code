@@ -83,6 +83,7 @@ import {
   type ProviderDriverKind,
   type ProviderInstanceId,
   ThreadId,
+  TurnItemId,
   type TerminalAttachStreamEvent,
   type TerminalError,
   type TerminalEvent,
@@ -135,8 +136,14 @@ import {
   THREAD_RESUME_MAX_REPLAY_EVENTS,
 } from "./orchestration-v2/ThreadStream.ts";
 import {
+  buildGetThreadProjectionResult,
+  decodeThreadHistoryCursor,
+  InvalidThreadHistoryCursorError,
+  OLDER_THREAD_USER_TURN_LIMIT,
+  selectHistoryPageFromCursorOrError,
   THREAD_HISTORY_SNAPSHOT_ROW_LIMIT,
   THREAD_HISTORY_PAGE_POLICY,
+  type ThreadHistoryCursorPayload,
 } from "./orchestration-v2/threadHistoryPaging.ts";
 import {
   projectDomainEventForWire,
@@ -1783,13 +1790,111 @@ const makeWsRpcLayer = (
         [ORCHESTRATION_V2_WS_METHODS.getThreadProjection]: (input) =>
           observeRpcEffect(
             ORCHESTRATION_V2_WS_METHODS.getThreadProjection,
-            threadManagement.getThreadProjection(input.threadId).pipe(
-              Effect.map(projectThreadProjectionForWire),
+            threadManagement
+              .getThreadSnapshotWindow(input.threadId, {
+                rowLimit: THREAD_HISTORY_SNAPSHOT_ROW_LIMIT,
+                userTurnLimit: THREAD_HISTORY_PAGE_POLICY.maxUserTurns,
+              })
+              .pipe(
+                Effect.map((snapshot) =>
+                  buildGetThreadProjectionResult({
+                    projection: projectThreadProjectionForWire(snapshot.projection),
+                    snapshotSequence: snapshot.snapshotSequence,
+                  }),
+                ),
+                Effect.mapError(
+                  (cause) =>
+                    new OrchestrationV2GetThreadProjectionError({
+                      threadId: input.threadId,
+                      message: `Failed to load orchestration V2 thread ${input.threadId}`,
+                      cause,
+                    }),
+                ),
+              ),
+            {
+              "rpc.aggregate": "orchestrationV2",
+              "orchestration_v2.thread_id": input.threadId,
+            },
+          ),
+        [ORCHESTRATION_V2_WS_METHODS.getThreadHistoryPage]: (input) =>
+          observeRpcEffect(
+            ORCHESTRATION_V2_WS_METHODS.getThreadHistoryPage,
+            Effect.gen(function* () {
+              let decodedCursor: ThreadHistoryCursorPayload;
+              try {
+                decodedCursor = decodeThreadHistoryCursor(input.historyCursor);
+              } catch (cause) {
+                if (cause instanceof InvalidThreadHistoryCursorError) {
+                  return yield* new OrchestrationV2GetThreadProjectionError({
+                    threadId: input.threadId,
+                    message: "Invalid thread history cursor.",
+                    reason: "invalid_history_cursor",
+                    cause,
+                  });
+                }
+                return yield* new OrchestrationV2GetThreadProjectionError({
+                  threadId: input.threadId,
+                  message: `Failed to load orchestration V2 thread ${input.threadId} history`,
+                  cause,
+                });
+              }
+              const snapshot = yield* threadManagement
+                .getThreadSnapshotWindow(input.threadId, {
+                  rowLimit: THREAD_HISTORY_SNAPSHOT_ROW_LIMIT,
+                  userTurnLimit: OLDER_THREAD_USER_TURN_LIMIT,
+                  anchorItemId: TurnItemId.make(decodedCursor.si),
+                  anchorThreadId: ThreadId.make(decodedCursor.st),
+                })
+                .pipe(
+                  Effect.mapError(
+                    (cause) =>
+                      new OrchestrationV2GetThreadProjectionError({
+                        threadId: input.threadId,
+                        message: `Failed to load orchestration V2 thread ${input.threadId} history`,
+                        cause,
+                      }),
+                  ),
+                );
+              const pageOrError = selectHistoryPageFromCursorOrError({
+                items: projectThreadProjectionForWire(snapshot.projection).visibleTurnItems,
+                cursor: input.historyCursor,
+                snapshotSequence: snapshot.snapshotSequence,
+              });
+              if (pageOrError._tag === "invalid_cursor") {
+                return yield* new OrchestrationV2GetThreadProjectionError({
+                  threadId: input.threadId,
+                  message: "Invalid thread history cursor.",
+                  reason: "invalid_history_cursor",
+                });
+              }
+              if (pageOrError._tag === "error") {
+                return yield* new OrchestrationV2GetThreadProjectionError({
+                  threadId: input.threadId,
+                  message: `Failed to load orchestration V2 thread ${input.threadId} history`,
+                  cause: pageOrError.cause,
+                });
+              }
+              return {
+                snapshotSequence: snapshot.snapshotSequence,
+                items: pageOrError.page.items,
+                nextCursor: pageOrError.page.nextCursor,
+                hasMoreHistory: pageOrError.page.hasMoreHistory,
+              };
+            }),
+            {
+              "rpc.aggregate": "orchestrationV2",
+              "orchestration_v2.thread_id": input.threadId,
+            },
+          ),
+        [ORCHESTRATION_V2_WS_METHODS.getThreadCheckpointContext]: (input) =>
+          observeRpcEffect(
+            ORCHESTRATION_V2_WS_METHODS.getThreadCheckpointContext,
+            threadManagement.getCheckpointContext(input.threadId).pipe(
               Effect.mapError(
                 (cause) =>
                   new OrchestrationV2GetThreadProjectionError({
                     threadId: input.threadId,
-                    message: `Failed to load orchestration V2 thread ${input.threadId}`,
+                    message: `Failed to load orchestration V2 thread ${input.threadId} checkpoint context`,
                     cause,
                   }),
               ),
