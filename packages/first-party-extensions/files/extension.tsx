@@ -13,17 +13,24 @@ import type { ClientHost } from "@t3tools/extension-sdk/environment";
 import type { ViewSession } from "@t3tools/extension-sdk/host";
 import { useEffect, useMemo, useRef, useState } from "react";
 
+import { parseMarkdown, type MarkdownBlock, type MarkdownInline } from "./markdown.js";
 import {
   FILE_SAVE_DEBOUNCE_MS,
   FileEditCoordinator,
   type EditorSaveState,
 } from "./saveCoordinator.js";
 import {
+  contentMatchSegments,
+  describeContentSearch,
+  describeFileOpen,
   describeMediaLease,
+  describePresentation,
   describeRead,
   describeSaveState,
   describeSearch,
   describeSnapshot,
+  fileOpenFailed,
+  isMarkdownPath,
   leasePreviewMode,
   mediaLeaseAssetFailed,
   mediaLeaseExpire,
@@ -35,10 +42,13 @@ import {
   mediaLeaseUrl,
   selectMediaLease,
   parentPath,
+  presentationPath,
   previewKind,
   toggleExpanded,
   visibleRows,
+  type ContentSearchResults,
   type EditorOpen,
+  type FileOpenState,
   type MediaLeaseState,
   type PreviewKind,
   type SearchKindFilter,
@@ -526,16 +536,239 @@ function useMediaLease(
   return { state: lease, mode, url: mediaLeaseUrl(lease), notifyAssetFailed };
 }
 
+const HEADING_SIZE: readonly number[] = [0, 22, 18, 16, 14, 13, 12];
+
+/** Short content digest — enough for sibling-unique, rerender-stable keys. */
+function nodeDigest(value: unknown): string {
+  const text = JSON.stringify(value);
+  let hash = 5381;
+  for (let i = 0; i < text.length; i += 1) hash = ((hash << 5) + hash + text.charCodeAt(i)) | 0;
+  return hash.toString(36);
+}
+
+/**
+ * Data-derived keys for rendered node lists: content digest plus the
+ * occurrence count among identical siblings. Stable across re-parses of the
+ * same source and unique without positional index keys.
+ */
+function keyed<T>(items: readonly T[], keyOf: (item: T) => string) {
+  const seen = new Map<string, number>();
+  return items.map((item) => {
+    const base = keyOf(item);
+    const occurrence = seen.get(base) ?? 0;
+    seen.set(base, occurrence + 1);
+    return { item, key: `${base}#${occurrence}` };
+  });
+}
+
+/** One inline markdown node → a host-React element. */
+function MarkdownInlineNode(props: { readonly node: MarkdownInline }) {
+  const node = props.node;
+  switch (node.type) {
+    case "text":
+      return node.text;
+    case "code":
+      return (
+        <code
+          style={{
+            fontFamily: "var(--font-mono, ui-monospace, SFMono-Regular, Consolas, monospace)",
+            fontSize: "0.92em",
+            background: "var(--muted, #f2f4f7)",
+            borderRadius: 4,
+            padding: "0 3px",
+          }}
+        >
+          {node.text}
+        </code>
+      );
+    case "strong":
+      return (
+        <strong>
+          <MarkdownInlines nodes={node.children} />
+        </strong>
+      );
+    case "em":
+      return (
+        <em>
+          <MarkdownInlines nodes={node.children} />
+        </em>
+      );
+    case "delete":
+      return (
+        <del>
+          <MarkdownInlines nodes={node.children} />
+        </del>
+      );
+    case "link":
+      return node.safe ? (
+        <a href={node.href} target="_blank" rel="noreferrer">
+          <MarkdownInlines nodes={node.children} />
+        </a>
+      ) : (
+        // Unsafe/relative destinations stay visible but never navigable.
+        <span>
+          <MarkdownInlines nodes={node.children} /> ({node.href})
+        </span>
+      );
+    case "image":
+      return (
+        <span style={{ color: "var(--muted-foreground, #667085)" }}>
+          [image: {node.alt || node.src}]
+        </span>
+      );
+    case "break":
+      return <br />;
+  }
+}
+
+/**
+ * Inline markdown → host-React elements. Every text node is escaped by React;
+ * the only attribute ever emitted is `href` on a safe-scheme anchor, so the
+ * markup source has no injection surface at all.
+ */
+function MarkdownInlines(props: { readonly nodes: readonly MarkdownInline[] }) {
+  return keyed(props.nodes, (node) => `i:${nodeDigest(node)}`).map(({ item, key }) => (
+    <MarkdownInlineNode key={key} node={item} />
+  ));
+}
+
+/** One block → host-React elements; plain elements only, no raw HTML. */
+function MarkdownBlockNode(props: { readonly block: MarkdownBlock }) {
+  const block = props.block;
+  switch (block.type) {
+    case "heading": {
+      const Tag = `h${block.level}` as "h1" | "h2" | "h3" | "h4" | "h5" | "h6";
+      return (
+        <Tag
+          style={{
+            fontSize: HEADING_SIZE[block.level],
+            fontWeight: 600,
+            margin: "14px 0 6px",
+          }}
+        >
+          <MarkdownInlines nodes={block.children} />
+        </Tag>
+      );
+    }
+    case "paragraph":
+      return (
+        <p style={{ margin: "0 0 10px" }}>
+          <MarkdownInlines nodes={block.children} />
+        </p>
+      );
+    case "code":
+      return (
+        <figure style={{ margin: "0 0 10px" }}>
+          {block.info !== "" && (
+            <figcaption
+              style={{
+                color: "var(--muted-foreground, #667085)",
+                fontSize: 11,
+                marginBottom: 2,
+              }}
+            >
+              {block.info}
+            </figcaption>
+          )}
+          <pre
+            style={{
+              margin: 0,
+              padding: 10,
+              overflow: "auto",
+              background: "var(--muted, #f2f4f7)",
+              borderRadius: 6,
+              fontFamily: "var(--font-mono, ui-monospace, SFMono-Regular, Consolas, monospace)",
+              fontSize: 12,
+            }}
+          >
+            <code>{block.text}</code>
+          </pre>
+        </figure>
+      );
+    case "quote":
+      return (
+        <blockquote
+          style={{
+            margin: "0 0 10px",
+            paddingLeft: 12,
+            borderLeft: "3px solid var(--border, #dfe3e8)",
+            color: "var(--muted-foreground, #667085)",
+          }}
+        >
+          <MarkdownBlocks blocks={block.children} />
+        </blockquote>
+      );
+    case "list": {
+      const ListTag = block.ordered ? "ol" : "ul";
+      return (
+        <ListTag style={{ margin: "0 0 10px", paddingLeft: 24 }}>
+          {keyed(block.items, (item) => `li:${nodeDigest(item)}`).map(({ item, key }) => (
+            <li key={key} style={{ marginBottom: 4 }}>
+              {item.task !== undefined && (
+                <input
+                  type="checkbox"
+                  checked={item.task.checked}
+                  disabled
+                  readOnly
+                  aria-label={item.task.checked ? "Completed task" : "Incomplete task"}
+                  style={{ marginRight: 6 }}
+                />
+              )}
+              <MarkdownBlocks blocks={item.children} />
+            </li>
+          ))}
+        </ListTag>
+      );
+    }
+    case "rule":
+      return (
+        <hr
+          style={{ border: 0, borderTop: "1px solid var(--border, #dfe3e8)", margin: "14px 0" }}
+        />
+      );
+  }
+}
+
+/**
+ * Block tree → host-React elements for the rendered-markdown preview (F1 #22).
+ * Plain elements only — no raw HTML, no user-controlled attributes.
+ */
+function MarkdownBlocks(props: { readonly blocks: readonly MarkdownBlock[] }) {
+  return keyed(props.blocks, (block) => `b:${nodeDigest(block)}`).map(({ item, key }) => (
+    <MarkdownBlockNode key={key} block={item} />
+  ));
+}
+
+/** The rendered-markdown surface: block view plus the named-subset caption. */
+function RenderedMarkdown(props: { readonly blocks: readonly MarkdownBlock[] }) {
+  return (
+    <div style={{ flex: 1, minHeight: 0, overflow: "auto", padding: 12 }}>
+      <article
+        aria-label="Rendered markdown"
+        style={{ lineHeight: 1.55, overflowWrap: "break-word" }}
+      >
+        <MarkdownBlocks blocks={props.blocks} />
+      </article>
+      <footer style={{ color: "var(--muted-foreground, #667085)", fontSize: 11, marginTop: 12 }}>
+        Rendered preview — markdown subset (raw HTML, tables and images are not rendered; task lists
+        are read-only)
+      </footer>
+    </div>
+  );
+}
+
 function FilesView(props: { host: ClientHost; session: ViewSession }) {
   const { host, session } = props;
   const { entries, status, refresh, revision, visible } = useWorkspaceTree(host, session);
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(() => new Set());
   const [query, setQuery] = useState("");
+  const [searchMode, setSearchMode] = useState<"names" | "contents">("names");
   const [kindFilter, setKindFilter] = useState<SearchKindFilter>("all");
   const [search, setSearch] = useState<{
     key: string;
-    results: SearchResults | null;
-    error: string | null;
+    outcome:
+      | { mode: "names"; results: SearchResults | null; error: string | null }
+      | { mode: "contents"; results: ContentSearchResults | null; error: string | null };
   } | null>(null);
   const restoredPath =
     session.restoreState &&
@@ -565,14 +798,44 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
   const kindByPath = useMemo(() => new Map(entries.map((e) => [e.path, e.kind])), [entries]);
   const searching = query.trim() !== "";
   const rows = useMemo(() => visibleRows(entries, expanded, ""), [entries, expanded]);
+  const [fileOpen, setFileOpen] = useState<{ path: string; state: FileOpenState } | null>(null);
+  // Rendered-vs-source is a preference, not a property of one file — the same
+  // shape as the native panel's localStorage flag, kept in view state only.
+  const [renderMarkdown, setRenderMarkdown] = useState(false);
   useEffect(() => {
     const needle = query.trim();
     if (!needle || !visible) return;
-    const key = `${needle} ${kindFilter} ${revision}`;
+    const key = `${searchMode} ${needle} ${kindFilter} ${revision}`;
     const controller = new AbortController();
     const signal = AbortSignal.any([controller.signal, session.signal]);
     const timer = setTimeout(() => {
-      void bindApi(workspaceSearchApi, host, session.context)
+      const api = bindApi(workspaceSearchApi, host, session.context);
+      if (searchMode === "contents") {
+        // The contents contract has no kind field — the selector is disabled
+        // in this mode rather than silently ignored (F1 #7b).
+        void api.invoke("searchContents", { query: needle, limit: SEARCH_LIMIT }, signal).then(
+          (result) => {
+            if (!signal.aborted)
+              setSearch({ key, outcome: { mode: "contents", results: result, error: null } });
+          },
+          (error) => {
+            if (!signal.aborted)
+              setSearch({
+                key,
+                outcome: {
+                  mode: "contents",
+                  results: null,
+                  error:
+                    error instanceof Error
+                      ? error.message
+                      : "Workspace contents search unavailable",
+                },
+              });
+          },
+        );
+        return;
+      }
+      void api
         .invoke(
           "search",
           {
@@ -584,14 +847,18 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
         )
         .then(
           (result) => {
-            if (!signal.aborted) setSearch({ key, results: result, error: null });
+            if (!signal.aborted)
+              setSearch({ key, outcome: { mode: "names", results: result, error: null } });
           },
           (error) => {
             if (!signal.aborted)
               setSearch({
                 key,
-                results: null,
-                error: error instanceof Error ? error.message : "Workspace search unavailable",
+                outcome: {
+                  mode: "names",
+                  results: null,
+                  error: error instanceof Error ? error.message : "Workspace search unavailable",
+                },
               });
           },
         );
@@ -600,9 +867,11 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
       clearTimeout(timer);
       controller.abort();
     };
-  }, [host, session, query, kindFilter, revision, visible]);
+  }, [host, session, query, kindFilter, searchMode, revision, visible]);
   const activeSearch =
-    searching && search?.key === `${query.trim()} ${kindFilter} ${revision}` ? search : null;
+    searching && search?.key === `${searchMode} ${query.trim()} ${kindFilter} ${revision}`
+      ? search
+      : null;
 
   const select = (path: string) => {
     setSelected(path);
@@ -613,7 +882,56 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
     if (ancestors.length) setExpanded((previous) => new Set([...previous, ...ancestors]));
   };
 
+  // F1 #17: the public open path is `t3.file/presentation.open` — the host's
+  // provider selection is the picker, so this resolves the descriptor and
+  // reports it (or the named failure) verbatim. Requires stays without the
+  // self-provided API: files provides t3.file/presentation, and a
+  // self-requirement would trip the resolver's cyclic-dependency check.
+  const openInPresentation = () => {
+    if (selected === null) return;
+    const path = presentationPath(selected);
+    if (path === null) {
+      setFileOpen({
+        path: selected,
+        state: {
+          status: "unavailable",
+          message: `${selected} cannot be opened — not a workspace-relative path`,
+        },
+      });
+      return;
+    }
+    const controller = new AbortController();
+    const signal = AbortSignal.any([controller.signal, session.signal]);
+    setFileOpen({ path, state: { status: "resolving" } });
+    void bindApi(filePresentationApi, host, session.context)
+      .invoke("open", { relativePath: path }, signal)
+      .then(
+        (result) => {
+          if (!signal.aborted)
+            setFileOpen({
+              path,
+              state: { status: "resolved", message: describePresentation(result) },
+            });
+        },
+        (error) => {
+          if (!signal.aborted) setFileOpen({ path, state: fileOpenFailed(error) });
+        },
+      )
+      .finally(() => controller.abort());
+  };
+
   const editorSurface = editor.surface?.path === selected ? editor.surface : null;
+  // F1 #22: rendered markdown draws from the buffer the surface already read —
+  // the live editor contents when editable, else the bounded preview read.
+  const markdownText =
+    selected !== null && isMarkdownPath(selected)
+      ? ((editorSurface?.open.editable === true ? editorSurface.contents : currentRead?.contents) ??
+        null)
+      : null;
+  const markdownBlocks = useMemo(
+    () => (renderMarkdown && markdownText !== null ? parseMarkdown(markdownText) : null),
+    [renderMarkdown, markdownText],
+  );
 
   useEffect(() => {
     // The bounded preview read remains the fallback for files the text-edits
@@ -679,10 +997,18 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
         <button type="button" onClick={refresh}>
           Refresh files
         </button>
+        <select
+          aria-label="Search mode"
+          value={searchMode}
+          onChange={(event) => setSearchMode(event.target.value as "names" | "contents")}
+        >
+          <option value="names">File names</option>
+          <option value="contents">File contents</option>
+        </select>
         <input
           type="search"
           aria-label="Search workspace files"
-          placeholder="Search files"
+          placeholder={searchMode === "contents" ? "Search file contents" : "Search files"}
           value={query}
           onChange={(event) => setQuery(event.target.value)}
           onKeyDown={(event) => {
@@ -694,8 +1020,11 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
           style={{ flex: 1, minWidth: 0 }}
         />
         <select
-          aria-label="Search kind"
+          aria-label={
+            searchMode === "contents" ? "Search kind — not used for contents search" : "Search kind"
+          }
           value={kindFilter}
+          disabled={searchMode === "contents"}
           onChange={(event) => setKindFilter(event.target.value as SearchKindFilter)}
         >
           <option value="all">All</option>
@@ -715,48 +1044,118 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
         }}
       >
         {searching
-          ? (activeSearch?.results?.entries ?? []).map((entry) => (
-              <li key={entry.path}>
-                <button
-                  type="button"
-                  aria-current={entry.path === selected ? "true" : undefined}
-                  onClick={() =>
-                    entry.kind === "directory"
-                      ? (setQuery(""),
-                        setExpanded((previous) => {
-                          const next = new Set(previous);
-                          for (
-                            let ancestor: string | null = entry.path;
-                            ancestor !== null;
-                            ancestor = parentPath(ancestor)
-                          )
-                            next.add(ancestor);
-                          return next;
-                        }))
-                      : select(entry.path)
-                  }
-                  style={{
-                    display: "block",
-                    width: "100%",
-                    textAlign: "left",
-                    font: "inherit",
-                    fontSize: 12,
-                    padding: "4px 6px",
-                    border: "1px solid transparent",
-                    borderRadius: 5,
-                    cursor: "pointer",
-                    color: "var(--foreground, #20252d)",
-                    background: entry.path === selected ? "var(--accent, #e8eef7)" : "transparent",
-                    overflow: "hidden",
-                    textOverflow: "ellipsis",
-                    whiteSpace: "nowrap",
-                  }}
-                >
-                  {entry.kind === "directory" ? "▸ " : ""}
-                  {entry.path}
-                </button>
-              </li>
-            ))
+          ? activeSearch?.outcome.mode === "contents"
+            ? keyed(
+                activeSearch.outcome.results?.matches ?? [],
+                (match) => `${match.path}:${match.lineNumber}`,
+              ).map(({ item: match, key }) => (
+                <li key={key}>
+                  <button
+                    type="button"
+                    aria-current={match.path === selected ? "true" : undefined}
+                    onClick={() => select(match.path)}
+                    style={{
+                      display: "block",
+                      width: "100%",
+                      textAlign: "left",
+                      font: "inherit",
+                      fontSize: 12,
+                      padding: "4px 6px",
+                      border: "1px solid transparent",
+                      borderRadius: 5,
+                      cursor: "pointer",
+                      color: "var(--foreground, #20252d)",
+                      background:
+                        match.path === selected ? "var(--accent, #e8eef7)" : "transparent",
+                    }}
+                  >
+                    <span
+                      style={{
+                        display: "block",
+                        color: muted,
+                        fontSize: 11,
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                        whiteSpace: "nowrap",
+                      }}
+                    >
+                      {match.path}:{match.lineNumber}
+                    </span>
+                    <span
+                      style={{
+                        display: "block",
+                        fontFamily:
+                          "var(--font-mono, ui-monospace, SFMono-Regular, Consolas, monospace)",
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                        whiteSpace: "nowrap",
+                      }}
+                    >
+                      {keyed(
+                        contentMatchSegments(match.lineContent, match.matchRanges),
+                        (segment) => `s:${segment.match}:${nodeDigest(segment.text)}`,
+                      ).map(({ item: segment, key: segmentKey }) =>
+                        segment.match ? (
+                          <mark
+                            key={segmentKey}
+                            style={{ background: "var(--accent, #e8eef7)", color: "inherit" }}
+                          >
+                            {segment.text}
+                          </mark>
+                        ) : (
+                          <span key={segmentKey}>{segment.text}</span>
+                        ),
+                      )}
+                    </span>
+                  </button>
+                </li>
+              ))
+            : (activeSearch?.outcome.mode === "names"
+                ? (activeSearch.outcome.results?.entries ?? [])
+                : []
+              ).map((entry) => (
+                <li key={entry.path}>
+                  <button
+                    type="button"
+                    aria-current={entry.path === selected ? "true" : undefined}
+                    onClick={() =>
+                      entry.kind === "directory"
+                        ? (setQuery(""),
+                          setExpanded((previous) => {
+                            const next = new Set(previous);
+                            for (
+                              let ancestor: string | null = entry.path;
+                              ancestor !== null;
+                              ancestor = parentPath(ancestor)
+                            )
+                              next.add(ancestor);
+                            return next;
+                          }))
+                        : select(entry.path)
+                    }
+                    style={{
+                      display: "block",
+                      width: "100%",
+                      textAlign: "left",
+                      font: "inherit",
+                      fontSize: 12,
+                      padding: "4px 6px",
+                      border: "1px solid transparent",
+                      borderRadius: 5,
+                      cursor: "pointer",
+                      color: "var(--foreground, #20252d)",
+                      background:
+                        entry.path === selected ? "var(--accent, #e8eef7)" : "transparent",
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    {entry.kind === "directory" ? "▸ " : ""}
+                    {entry.path}
+                  </button>
+                </li>
+              ))
           : rows.map((row) => (
               <li key={row.entry.path}>
                 <button
@@ -796,8 +1195,18 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
       </ul>
       <output aria-label="Tree status" style={{ padding: "6px 10px", color: muted, fontSize: 11 }}>
         {searching
-          ? (activeSearch?.error ??
-            describeSearch(activeSearch?.results ?? null, query, SEARCH_LIMIT))
+          ? (activeSearch?.outcome.error ??
+            (searchMode === "contents"
+              ? describeContentSearch(
+                  activeSearch?.outcome.mode === "contents" ? activeSearch.outcome.results : null,
+                  query,
+                  SEARCH_LIMIT,
+                )
+              : describeSearch(
+                  activeSearch?.outcome.mode === "names" ? activeSearch.outcome.results : null,
+                  query,
+                  SEARCH_LIMIT,
+                )))
           : status + (kindByPath.size > 0 ? ` — ${entries.length} entries` : "")}
       </output>
       {selected && (
@@ -816,6 +1225,36 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
               : describeMediaLease(media.state))}
         </output>
       )}
+      {selected && (
+        <div
+          role="toolbar"
+          aria-label="File actions"
+          style={{
+            display: "flex",
+            gap: 8,
+            alignItems: "center",
+            padding: "4px 10px",
+            borderTop: "1px solid var(--border, #dfe3e8)",
+            flexShrink: 0,
+          }}
+        >
+          <button type="button" onClick={openInPresentation}>
+            Open in…
+          </button>
+          {isMarkdownPath(selected) && selectedKind === "text" && (
+            <button
+              type="button"
+              aria-pressed={renderMarkdown}
+              onClick={() => setRenderMarkdown((value) => !value)}
+            >
+              {renderMarkdown ? "Show markdown source" : "Show rendered markdown"}
+            </button>
+          )}
+          {fileOpen !== null && fileOpen.path === selected && fileOpen.state.status !== "idle" && (
+            <span style={{ color: muted, fontSize: 11 }}>{describeFileOpen(fileOpen.state)}</span>
+          )}
+        </div>
+      )}
       {selected && selectedKind === "text" && editorSurface?.open.editable === true && (
         <div
           style={{
@@ -826,27 +1265,31 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
             borderTop: "1px solid var(--border, #dfe3e8)",
           }}
         >
-          <textarea
-            aria-label="File editor"
-            value={editorSurface.contents}
-            onChange={(event) => editor.change(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === "Escape") event.currentTarget.blur();
-            }}
-            spellCheck={false}
-            style={{
-              flex: 1,
-              minHeight: 0,
-              resize: "none",
-              border: "none",
-              outline: "none",
-              padding: 12,
-              color: "inherit",
-              background: "transparent",
-              fontFamily: "var(--font-mono, ui-monospace, SFMono-Regular, Consolas, monospace)",
-              fontSize: 12,
-            }}
-          />
+          {markdownBlocks !== null ? (
+            <RenderedMarkdown blocks={markdownBlocks} />
+          ) : (
+            <textarea
+              aria-label="File editor"
+              value={editorSurface.contents}
+              onChange={(event) => editor.change(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Escape") event.currentTarget.blur();
+              }}
+              spellCheck={false}
+              style={{
+                flex: 1,
+                minHeight: 0,
+                resize: "none",
+                border: "none",
+                outline: "none",
+                padding: 12,
+                color: "inherit",
+                background: "transparent",
+                fontFamily: "var(--font-mono, ui-monospace, SFMono-Regular, Consolas, monospace)",
+                fontSize: 12,
+              }}
+            />
+          )}
           {editorSurface.saveState.kind === "conflict" && (
             <div
               role="alert"
@@ -893,7 +1336,20 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
       {selected &&
         selectedKind === "text" &&
         editorSurface !== null &&
-        !editorSurface.open.editable && (
+        !editorSurface.open.editable &&
+        (markdownBlocks !== null ? (
+          <div
+            style={{
+              display: "flex",
+              flexDirection: "column",
+              flex: 1,
+              minHeight: 0,
+              borderTop: "1px solid var(--border, #dfe3e8)",
+            }}
+          >
+            <RenderedMarkdown blocks={markdownBlocks} />
+          </div>
+        ) : (
           <pre
             aria-label="File contents"
             style={{
@@ -908,7 +1364,7 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
           >
             {currentRead?.contents ?? ""}
           </pre>
-        )}
+        ))}
       {selected && selectedKind !== "text" && (
         <figure
           aria-label="Workspace media preview"
@@ -974,7 +1430,7 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
 
 export default defineExtension({
   id: manifestId,
-  version: "0.5.0",
+  version: "0.6.0",
   provides: [filePresentationApi.definition],
   assets: [{ path: PREVIEW_ASSET_PATH, mediaType: "application/octet-stream" }],
   serverEntry: "server.ts",

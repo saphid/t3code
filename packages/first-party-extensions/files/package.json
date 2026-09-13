@@ -6,7 +6,7 @@
   "scripts": {
     "build": "t3-extension build .",
     "check": "t3-extension check .t3-extension",
-    "test": "node --test --experimental-strip-types viewModel.test.mjs saveCoordinator.test.mjs",
+    "test": "node --test --experimental-strip-types viewModel.test.mjs saveCoordinator.test.mjs markdown.test.mjs",
     "typecheck": "tsc -p tsconfig.json",
     "audit": "node ../scripts/audit-imports.mjs ."
   },
