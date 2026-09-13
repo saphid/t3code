@@ -25,6 +25,7 @@ struct HomeThreadCollectionView: UIViewRepresentable {
     let onRegenerateTitle: (FeatureThread) -> Void
     let onArchive: (FeatureThread, Bool) -> Void
     let onSettle: (FeatureThread, Bool, @escaping (Bool) -> Void) -> Void
+    let onChooseSnooze: (FeatureThread) -> Void
     let onSnooze: (FeatureThread, Date?) -> Void
     let onPin: (FeatureThread, Bool) -> Void
     let onDelete: (FeatureThread) -> Void
@@ -330,8 +331,7 @@ struct HomeThreadCollectionView: UIViewRepresentable {
             let configuration = UISwipeActionsConfiguration(
                 actions: actions.map { contextualAction($0, for: thread) }
             )
-            // The leading edge only ever carries the pin toggle, which is
-            // reversible, so a full swipe can run it directly.
+            // Pin/Unpin keeps the full swipe; Snooze/Wake requires a button tap.
             configuration.performsFirstActionWithFullSwipe =
                 HomeThreadSwipeAction.performsLeadingFullSwipe(with: actions)
             return configuration
@@ -401,6 +401,10 @@ struct HomeThreadCollectionView: UIViewRepresentable {
                 parent.onPin(thread, pinned)
             case let .setSettled(settled):
                 parent.onSettle(thread, settled) { _ in }
+            case .chooseSnooze:
+                parent.onChooseSnooze(thread)
+            case .wake:
+                parent.onSnooze(thread, nil)
             }
         }
 
@@ -615,9 +619,7 @@ struct HomeThreadCollectionView: UIViewRepresentable {
                         actions.append(accessibilityAction("Wake", systemImage: "bell") { coordinator in
                             coordinator.parent.onSnooze(thread, nil)
                         })
-                    } else if thread.state != .queued,
-                              thread.state != .waitingForApproval,
-                              thread.state != .waitingForInput {
+                    } else if thread.canSnoozeNow {
                         actions.append(contentsOf: DailyUXSnoozePresets.resolve(now: .now).map { preset in
                             accessibilityAction("Snooze: \(preset.label)", systemImage: "clock") { coordinator in
                                 coordinator.parent.onSnooze(thread, preset.until)
@@ -777,10 +779,7 @@ struct HomeThreadCollectionView: UIViewRepresentable {
                                 self?.parent.onSnooze(thread, preset.until)
                             }
                         }
-                        let snoozeIsDisabled = thread.state == .queued
-                            || thread.state == .waitingForApproval
-                            || thread.state == .waitingForInput
-                        if snoozeIsDisabled {
+                        if !thread.canSnoozeNow {
                             children.forEach { $0.attributes = .disabled }
                         }
                         let snooze = UIMenu(
@@ -973,6 +972,8 @@ enum HomeThreadSwipeAction: Equatable {
     case settle
     case reopen
     case archive
+    case snooze
+    case wake
 
     /// The lifecycle mutation an action requests. Keeping it separate from the
     /// action keeps the swipe wiring verifiable and forces every case through
@@ -982,6 +983,8 @@ enum HomeThreadSwipeAction: Equatable {
         case setArchived(Bool)
         case setPinned(Bool)
         case setSettled(Bool)
+        case chooseSnooze
+        case wake
     }
 
     /// Settlement owns the edge slot on every row that can settle, so a full
@@ -1019,14 +1022,26 @@ enum HomeThreadSwipeAction: Equatable {
         return actions
     }
 
-    /// The leading swipe is a dedicated pin toggle, mirroring the context
-    /// menu's availability: archived rows offer nothing on this edge.
+    /// Pin/Unpin owns the leading edge and full swipe. Snooze/Wake follows it
+    /// when available, using the same eligibility as the context menu.
     static func leadingActions(
         for thread: FeatureThread,
-        isArchived: Bool
+        isArchived: Bool,
+        at now: Date = .now
     ) -> [HomeThreadSwipeAction] {
-        guard !isArchived, thread.canTogglePin else { return [] }
-        return [thread.pinnedAt != nil ? .unpin : .pin]
+        guard !isArchived else { return [] }
+        var actions: [HomeThreadSwipeAction] = []
+        if thread.canTogglePin {
+            actions.append(thread.pinnedAt != nil ? .unpin : .pin)
+        }
+        if thread.canToggleSnooze {
+            if thread.isEffectivelySnoozed(at: now) {
+                actions.append(.wake)
+            } else if thread.canSnoozeNow {
+                actions.append(.snooze)
+            }
+        }
+        return actions
     }
 
     /// The trailing full swipe is armed only when the edge action settles or
@@ -1057,6 +1072,8 @@ enum HomeThreadSwipeAction: Equatable {
         case .unpin: .setPinned(false)
         case .settle: .setSettled(true)
         case .reopen: .setSettled(false)
+        case .snooze: .chooseSnooze
+        case .wake: .wake
         }
     }
 
@@ -1069,6 +1086,8 @@ enum HomeThreadSwipeAction: Equatable {
         case .settle: "Settle"
         case .reopen: "Reopen"
         case .archive: "Archive"
+        case .snooze: "Snooze"
+        case .wake: "Wake"
         }
     }
 
@@ -1081,6 +1100,8 @@ enum HomeThreadSwipeAction: Equatable {
         case .settle: "checkmark"
         case .reopen: "arrow.counterclockwise"
         case .archive: "archivebox"
+        case .snooze: "clock"
+        case .wake: "bell"
         }
     }
 
@@ -1092,10 +1113,11 @@ enum HomeThreadSwipeAction: Equatable {
     var backgroundColor: UIColor? {
         switch self {
         case .delete: nil
-        case .restore, .unpin, .reopen: .systemBlue
+        case .restore, .unpin, .reopen, .wake: .systemBlue
         case .pin: .systemOrange
         case .settle: .systemGreen
         case .archive: .systemGray
+        case .snooze: .systemIndigo
         }
     }
 }
