@@ -69,9 +69,7 @@ NodeTest.test(
     // references — so the V1 surface is also pinned by content hash.
     NodeAssert.deepEqual(VCS_DIFF_API_V1.methods, defs[VCS_DIFF].methods);
     NodeAssert.equal(
-      NodeCrypto.createHash("sha256")
-        .update(JSON.stringify(VCS_DIFF_API_V1.methods))
-        .digest("hex"),
+      NodeCrypto.createHash("sha256").update(JSON.stringify(VCS_DIFF_API_V1.methods)).digest("hex"),
       "58f9db9d4fbeefe7a2a9d9391770507ec763acd1448fba1c9436cc5e284bb50b",
     );
     NodeAssert.equal(VCS_DIFF_API_V1.streams, undefined);
