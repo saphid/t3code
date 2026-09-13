@@ -2376,6 +2376,274 @@ export const resourcesLeaseApiV1 = defineApi<{
 });
 export const RESOURCES_LEASE_API_V1 = resourcesLeaseApiV1.definition;
 
+export const COMPOSER_CONTEXT = "t3.composer/context";
+export const COMPOSER_WRITE = "t3.composer/write";
+export const MESSAGES_ENRICHMENT = "t3.messages/enrichment";
+export const MESSAGES_WRITE = "t3.messages/write";
+
+export type ComposerContextRef = {
+  readonly path: string;
+  readonly startLine?: number;
+  readonly endLine?: number;
+  readonly excerpt?: string;
+};
+export type ComposerContextInsertInput = {
+  readonly threadId?: string;
+  readonly refs: readonly ComposerContextRef[];
+};
+export type ComposerContextInsertResult = {
+  readonly inserted: number;
+  readonly target: string;
+};
+export type ComposerDraftStateResult = {
+  readonly draft: {
+    readonly prompt: string;
+    readonly contextCounts: {
+      readonly files: number;
+      readonly images: number;
+      readonly terminalContexts: number;
+      readonly elementContexts: number;
+      readonly previewAnnotations: number;
+      readonly reviewComments: number;
+    };
+  } | null;
+};
+export type ComposerCapabilities = {
+  readonly adapter: string;
+  readonly transport: "server" | "client" | "unavailable";
+  readonly detail: string | null;
+  readonly operations: {
+    readonly insertContext: boolean;
+    readonly getDraftState: boolean;
+  };
+};
+export type MessagesEnrichmentAnnotation = {
+  readonly filePath: string;
+  readonly startLine: number;
+  readonly endLine: number;
+  readonly body: string;
+  readonly excerpt?: string;
+};
+export type MessagesAttachAnnotationInput = {
+  readonly threadId?: string;
+  readonly annotation: MessagesEnrichmentAnnotation;
+};
+export type MessagesAttachAnnotationResult = {
+  readonly annotationId: string;
+};
+export type MessagesEnrichmentCapabilities = {
+  readonly adapter: string;
+  readonly transport: "server" | "client" | "unavailable";
+  readonly detail: string | null;
+  readonly operations: {
+    readonly attachAnnotation: boolean;
+  };
+};
+
+const composerThreadIdInput = { type: "string", minLength: 1, maxLength: 128 } as const;
+const composerLineInput = { type: "integer", minimum: 1, maximum: 1_000_000 } as const;
+const composerContextRefSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["path"],
+  properties: {
+    path: { type: "string", minLength: 1, maxLength: 512 },
+    startLine: composerLineInput,
+    endLine: composerLineInput,
+    excerpt: { type: "string", maxLength: 8192 },
+  },
+} as const;
+const composerTransportOutput = (operations: readonly string[]) =>
+  ({
+    type: "object",
+    additionalProperties: false,
+    required: ["adapter", "transport", "detail", "operations"],
+    properties: {
+      adapter: { type: "string", maxLength: 64 },
+      transport: { enum: ["server", "client", "unavailable"] },
+      detail: { type: ["string", "null"], maxLength: 512 },
+      operations: {
+        type: "object",
+        additionalProperties: false,
+        required: [...operations],
+        properties: Object.fromEntries(operations.map((name) => [name, { type: "boolean" }])),
+      },
+    },
+  }) as const;
+const composerEmptyInputSchema = {
+  type: "object",
+  additionalProperties: false,
+  properties: {},
+} as const;
+
+/**
+ * Composer draft context. The draft store is client-local, so `insertContext`
+ * and `getDraftState` apply only once a client-adapter transport exists; until
+ * then the host adapter reports them unsupported through `getCapabilities` and
+ * fails invocations with a named error rather than silently no-opping.
+ * Free-form send stays with `t3.orchestration/control` — this contract only
+ * ever mutates draft content.
+ */
+export const composerContextApi = defineApi<{
+  getCapabilities: { input: Record<string, never>; output: ComposerCapabilities };
+  insertContext: {
+    input: ComposerContextInsertInput;
+    output: ComposerContextInsertResult;
+  };
+  getDraftState: { input: { threadId?: string }; output: ComposerDraftStateResult };
+}>({
+  id: COMPOSER_CONTEXT,
+  version: "1.0.0",
+  methods: [
+    {
+      name: "getCapabilities",
+      effect: "read",
+      // Capability discovery is grant-free so callers can tell "no capability"
+      // apart from "no grant" — authority gates the mutations, not the report.
+      requiredGrants: [],
+      inputSchema: composerEmptyInputSchema,
+      outputSchema: composerTransportOutput(["insertContext", "getDraftState"]),
+    },
+    {
+      name: "insertContext",
+      effect: "write",
+      requiredGrants: [COMPOSER_WRITE],
+      inputSchema: {
+        type: "object",
+        additionalProperties: false,
+        required: ["refs"],
+        properties: {
+          threadId: composerThreadIdInput,
+          refs: {
+            type: "array",
+            minItems: 1,
+            maxItems: 8,
+            items: composerContextRefSchema,
+          },
+        },
+      },
+      outputSchema: {
+        type: "object",
+        additionalProperties: false,
+        required: ["inserted", "target"],
+        properties: {
+          inserted: { type: "integer", minimum: 0, maximum: 8 },
+          target: { type: "string", minLength: 1, maxLength: 256 },
+        },
+      },
+    },
+    {
+      name: "getDraftState",
+      effect: "read",
+      // Draft state carries the user's unsent words — it sits under the same
+      // write authority as the mutations on this contract.
+      requiredGrants: [COMPOSER_WRITE],
+      inputSchema: {
+        type: "object",
+        additionalProperties: false,
+        properties: { threadId: composerThreadIdInput },
+      },
+      outputSchema: {
+        type: "object",
+        additionalProperties: false,
+        required: ["draft"],
+        properties: {
+          draft: {
+            type: ["object", "null"],
+            additionalProperties: false,
+            required: ["prompt", "contextCounts"],
+            properties: {
+              prompt: { type: "string", maxLength: 65536 },
+              contextCounts: {
+                type: "object",
+                additionalProperties: false,
+                required: [
+                  "files",
+                  "images",
+                  "terminalContexts",
+                  "elementContexts",
+                  "previewAnnotations",
+                  "reviewComments",
+                ],
+                properties: {
+                  files: { type: "integer", minimum: 0, maximum: 10000 },
+                  images: { type: "integer", minimum: 0, maximum: 10000 },
+                  terminalContexts: { type: "integer", minimum: 0, maximum: 10000 },
+                  elementContexts: { type: "integer", minimum: 0, maximum: 10000 },
+                  previewAnnotations: { type: "integer", minimum: 0, maximum: 10000 },
+                  reviewComments: { type: "integer", minimum: 0, maximum: 10000 },
+                },
+              },
+            },
+          },
+        },
+      },
+    },
+  ],
+});
+
+/**
+ * Review-style draft annotation. The native path is composer-insert only —
+ * `buildFileReviewComment` + `addReviewComment` on the client draft store —
+ * and annotations serialize into the next sent message. There is no
+ * message-level annotation entity, so turn/sent-message enrichment is not
+ * expressible and stays deferred.
+ */
+export const messagesEnrichmentApi = defineApi<{
+  getCapabilities: { input: Record<string, never>; output: MessagesEnrichmentCapabilities };
+  attachAnnotation: {
+    input: MessagesAttachAnnotationInput;
+    output: MessagesAttachAnnotationResult;
+  };
+}>({
+  id: MESSAGES_ENRICHMENT,
+  version: "1.0.0",
+  methods: [
+    {
+      name: "getCapabilities",
+      effect: "read",
+      requiredGrants: [],
+      inputSchema: composerEmptyInputSchema,
+      outputSchema: composerTransportOutput(["attachAnnotation"]),
+    },
+    {
+      name: "attachAnnotation",
+      effect: "write",
+      requiredGrants: [MESSAGES_WRITE],
+      inputSchema: {
+        type: "object",
+        additionalProperties: false,
+        required: ["annotation"],
+        properties: {
+          threadId: composerThreadIdInput,
+          annotation: {
+            type: "object",
+            additionalProperties: false,
+            required: ["filePath", "startLine", "endLine", "body"],
+            properties: {
+              filePath: { type: "string", minLength: 1, maxLength: 512 },
+              startLine: composerLineInput,
+              endLine: composerLineInput,
+              body: { type: "string", minLength: 1, maxLength: 8192 },
+              excerpt: { type: "string", maxLength: 32768 },
+            },
+          },
+        },
+      },
+      outputSchema: {
+        type: "object",
+        additionalProperties: false,
+        required: ["annotationId"],
+        properties: {
+          annotationId: { type: "string", minLength: 1, maxLength: 256 },
+        },
+      },
+    },
+  ],
+});
+export const COMPOSER_CONTEXT_API = composerContextApi.definition;
+export const MESSAGES_ENRICHMENT_API = messagesEnrichmentApi.definition;
+
 /**
  * Contracts only: their presence does not advertise a functioning or
  * authorized provider. Shared ids may hold multiple frozen versions (newest
@@ -2401,6 +2669,8 @@ export const GENERIC_API_CATALOGUE: readonly ApiDefinition[] = [
   vcsDiffApiV1.definition,
   resourcesLeaseApi.definition,
   resourcesLeaseApiV1.definition,
+  composerContextApi.definition,
+  messagesEnrichmentApi.definition,
 ];
 function canonical(value: unknown): string {
   if (Array.isArray(value)) return "[" + value.map(canonical).join(",") + "]";
