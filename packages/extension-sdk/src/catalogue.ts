@@ -36,6 +36,66 @@ export type {
   TextRevision,
 } from "./textEdits.js";
 
+/** Read-only environment loopback suggestions, not an engine or arbitrary URL probe. */
+export const BROWSER_LOCAL_SERVERS = "t3.browser/local-servers";
+export const BROWSER_READ_LOCAL_SERVERS = "t3.browser/read-local-servers";
+export type BrowserLocalServersSnapshot = {
+  readonly kind: "snapshot";
+  readonly scope: "environment";
+  readonly servers: readonly { readonly url: string; readonly port: number }[];
+  readonly truncated: boolean;
+};
+export type BrowserLocalServersEvent =
+  | BrowserLocalServersSnapshot
+  | { readonly kind: "closed"; readonly reason: "source-unavailable" };
+export const browserLocalServersApi = defineStreamApi<{
+  subscribe: { input: Record<string, never>; event: BrowserLocalServersEvent };
+}>({
+  id: BROWSER_LOCAL_SERVERS,
+  version: "1.0.0",
+  methods: [],
+  streams: [
+    {
+      name: "subscribe",
+      requiredGrants: [BROWSER_READ_LOCAL_SERVERS],
+      inputSchema: { type: "object", additionalProperties: false, properties: {} },
+      eventSchema: {
+        oneOf: [
+          {
+            type: "object",
+            additionalProperties: false,
+            required: ["kind", "scope", "servers", "truncated"],
+            properties: {
+              kind: { const: "snapshot" },
+              scope: { const: "environment" },
+              truncated: { type: "boolean" },
+              servers: {
+                type: "array",
+                maxItems: 64,
+                items: {
+                  type: "object",
+                  additionalProperties: false,
+                  required: ["url", "port"],
+                  properties: {
+                    url: { type: "string", minLength: 1, maxLength: 256 },
+                    port: { type: "integer", minimum: 1, maximum: 65535 },
+                  },
+                },
+              },
+            },
+          },
+          {
+            type: "object",
+            additionalProperties: false,
+            required: ["kind", "reason"],
+            properties: { kind: { const: "closed" }, reason: { const: "source-unavailable" } },
+          },
+        ],
+      },
+    },
+  ],
+});
+
 export const WORKSPACE_FILES = "t3.workspace/files";
 export const WORKSPACE_LIST_ENTRIES = "t3.workspace/list-entries";
 export const FILE_PRESENTATION = "t3.file/presentation";
@@ -2237,6 +2297,7 @@ export const RESOURCES_LEASE_API = resourcesLeaseApi.definition;
  * first); providers must match one of them canonically.
  */
 export const GENERIC_API_CATALOGUE: readonly ApiDefinition[] = [
+  browserLocalServersApi.definition,
   workspaceFilesApi.definition,
   workspaceTreeApi.definition,
   workspaceSearchApi.definition,

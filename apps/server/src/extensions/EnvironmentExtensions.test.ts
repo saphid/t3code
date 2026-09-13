@@ -1,3 +1,4 @@
+import { PortDiscovery } from "../preview/PortScanner.ts";
 import * as ExtensionCatalogueChanges from "./catalogueChanges.ts";
 import { expect, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -200,6 +201,7 @@ function fixture() {
   };
   const services = Layer.mergeAll(
     ExtensionCatalogueChanges.layer,
+    Layer.mock(PortDiscovery)({}),
     Layer.succeed(TerminalManager, {
       inspect: () => Effect.succeed(null),
       readOutput: () => Effect.succeed(null),

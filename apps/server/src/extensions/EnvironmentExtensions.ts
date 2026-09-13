@@ -1,3 +1,4 @@
+import { makeBrowserLocalServersApiProvider } from "./browserLocalServersApi.ts";
 import { makeWorkspaceSearchApiProvider } from "./workspaceSearchApi.ts";
 import { makeWorkspaceTreeApiProvider } from "./workspaceTreeApi.ts";
 import { ExtensionCatalogueChanges } from "./catalogueChanges.ts";
@@ -72,6 +73,7 @@ export const make = Effect.fn("EnvironmentExtensions.make")(function* (
   const projects = yield* ProjectionProjectRepository;
   const threads = yield* ProjectionThreadRepository;
   const workspace = yield* WorkspaceFileSystem;
+  const browserLocalServersApi = yield* makeBrowserLocalServersApiProvider();
   const workspaceApi = yield* makeWorkspaceApiProvider();
   const workspaceTreeApi = yield* makeWorkspaceTreeApiProvider();
   const workspaceSearchApi = yield* makeWorkspaceSearchApiProvider();
@@ -143,6 +145,7 @@ export const make = Effect.fn("EnvironmentExtensions.make")(function* (
             ? { workerUrl: new URL("./extension-worker.mjs", import.meta.url) }
             : {}),
           apiProviders: [
+            browserLocalServersApi,
             workspaceApi,
             workspaceTreeApi,
             workspaceSearchApi,
