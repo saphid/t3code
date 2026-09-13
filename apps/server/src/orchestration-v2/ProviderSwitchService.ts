@@ -51,6 +51,12 @@ export class ProviderSwitchServiceV2 extends Context.Service<
   ProviderSwitchServiceV2Shape
 >()("t3/orchestration-v2/ProviderSwitchService/ProviderSwitchServiceV2") {}
 
+// Stopped and errored records stay in session history but can no longer be
+// restarted or released; only live sessions participate in a transition.
+const isLiveProviderSession = (
+  session: OrchestrationV2ThreadProjection["providerSessions"][number],
+) => session.status !== "stopped" && session.status !== "error";
+
 export const layer: Layer.Layer<
   ProviderSwitchServiceV2,
   never,
@@ -84,7 +90,10 @@ export const layer: Layer.Layer<
           const targetInstance = yield* Effect.option(getMetadata(targetModelSelection.instanceId));
           const targetAdapter = yield* Effect.option(adapters.get(targetModelSelection.instanceId));
           const currentSession = projection.providerSessions
-            .filter((session) => session.providerInstanceId === current.instanceId)
+            .filter(
+              (session) =>
+                session.providerInstanceId === current.instanceId && isLiveProviderSession(session),
+            )
             .toSorted(
               (left, right) =>
                 DateTime.toEpochMillis(right.updatedAt) - DateTime.toEpochMillis(left.updatedAt),
@@ -174,8 +183,10 @@ export const layer: Layer.Layer<
             )[0];
           const releaseProviderSessionIds = projection.providerSessions
             .filter((session) => {
-              if (session.status === "stopped" || session.status === "error") return false;
+              if (!isLiveProviderSession(session)) return false;
               if (transition.type === "restart_and_resume") {
+                // Other live records may serve pooled or delegated bindings;
+                // only the session being replaced is released.
                 return session.id === currentSession?.id;
               }
               if (transition.type === "create_with_handoff") {

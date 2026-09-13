@@ -3,6 +3,7 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   ProviderSessionId,
+  ProviderThreadId,
   ThreadId,
   type OrchestrationV2ThreadProjection,
 } from "@t3tools/contracts";
@@ -48,6 +49,19 @@ function projection(): OrchestrationV2ThreadProjection {
     ],
     providerThreads: [],
   } as unknown as OrchestrationV2ThreadProjection;
+}
+
+function deadSessionRecord(
+  id: string,
+  status: "stopped" | "error",
+  updatedAt: DateTime.Utc = DateTime.add(now, { seconds: 1 }),
+) {
+  return {
+    ...projection().providerSessions[0]!,
+    id: ProviderSessionId.make(id),
+    status,
+    updatedAt,
+  };
 }
 
 function testLayer(metadata: Readonly<Record<string, { continuationKey: string }>>) {
@@ -99,6 +113,132 @@ it.effect(
         testLayer({ [currentInstanceId]: { continuationKey: "codex:account:primary" } }),
       ),
     ),
+);
+
+for (const deadStatus of ["stopped", "error"] as const) {
+  it.effect(
+    `restarts and releases the live session when a newer ${deadStatus} session exists`,
+    () =>
+      Effect.gen(function* () {
+        const service = yield* ProviderSwitch.ProviderSwitchServiceV2;
+        const thread = projection();
+        const result = yield* service.plan({
+          projection: {
+            ...thread,
+            providerSessions: [
+              ...thread.providerSessions,
+              deadSessionRecord("dead_session", deadStatus),
+            ],
+          },
+          targetModelSelection: { instanceId: currentInstanceId, model: "gpt-5.2-codex" },
+        });
+        assert.equal(result.transition.type, "restart_and_resume");
+        assert.deepEqual(result.releaseProviderSessionIds, [currentSessionId]);
+      }).pipe(
+        Effect.provide(
+          testLayer({ [currentInstanceId]: { continuationKey: "codex:account:primary" } }),
+        ),
+      ),
+  );
+}
+
+it.effect("releases the newest live session, not the newest record overall", () =>
+  Effect.gen(function* () {
+    const service = yield* ProviderSwitch.ProviderSwitchServiceV2;
+    const thread = projection();
+    const newerLiveSessionId = ProviderSessionId.make("session_newer_live");
+    const result = yield* service.plan({
+      projection: {
+        ...thread,
+        providerSessions: [
+          ...thread.providerSessions,
+          {
+            ...thread.providerSessions[0]!,
+            id: newerLiveSessionId,
+            updatedAt: DateTime.add(now, { seconds: 1 }),
+          },
+          deadSessionRecord("dead_session", "stopped", DateTime.add(now, { seconds: 2 })),
+        ],
+      },
+      targetModelSelection: { instanceId: currentInstanceId, model: "gpt-5.2-codex" },
+    });
+    assert.equal(result.transition.type, "restart_and_resume");
+    assert.deepEqual(result.releaseProviderSessionIds, [newerLiveSessionId]);
+  }).pipe(
+    Effect.provide(
+      testLayer({ [currentInstanceId]: { continuationKey: "codex:account:primary" } }),
+    ),
+  ),
+);
+
+it.effect("creates a fresh session with handoff when every recorded session is dead", () =>
+  Effect.gen(function* () {
+    const service = yield* ProviderSwitch.ProviderSwitchServiceV2;
+    const thread = projection();
+    const result = yield* service.plan({
+      projection: {
+        ...thread,
+        providerSessions: [
+          deadSessionRecord("dead_session_older", "stopped"),
+          deadSessionRecord("dead_session_newer", "error", DateTime.add(now, { seconds: 2 })),
+        ],
+      },
+      targetModelSelection: { instanceId: currentInstanceId, model: "gpt-5.2-codex" },
+    });
+    assert.equal(result.transition.type, "create_with_handoff");
+    assert.deepEqual(result.releaseProviderSessionIds, []);
+  }).pipe(
+    Effect.provide(
+      testLayer({ [currentInstanceId]: { continuationKey: "codex:account:primary" } }),
+    ),
+  ),
+);
+
+it.effect("falls back to the native provider thread when every recorded session is dead", () =>
+  Effect.gen(function* () {
+    const service = yield* ProviderSwitch.ProviderSwitchServiceV2;
+    const thread = projection();
+    const result = yield* service.plan({
+      projection: {
+        ...thread,
+        thread: {
+          ...thread.thread,
+          activeProviderThreadId: ProviderThreadId.make("provider-thread:native"),
+        },
+        providerSessions: [deadSessionRecord("dead_session", "stopped")],
+        providerThreads: [
+          {
+            id: ProviderThreadId.make("provider-thread:native"),
+            driver,
+            providerInstanceId: currentInstanceId,
+            providerSessionId: ProviderSessionId.make("dead_session"),
+            appThreadId: thread.thread.id,
+            ownerNodeId: null,
+            nativeThreadRef: {
+              driver,
+              nativeId: "native-thread:abc",
+              strength: "strong",
+            },
+            nativeConversationHeadRef: null,
+            status: "idle",
+            firstRunOrdinal: null,
+            lastRunOrdinal: null,
+            handoffIds: [],
+            forkedFrom: null,
+            createdAt: now,
+            updatedAt: now,
+          },
+        ],
+      },
+      targetModelSelection: { instanceId: currentInstanceId, model: "gpt-5.2-codex" },
+    });
+    assert.equal(result.transition.type, "restart_and_resume");
+    assert.deepEqual(result.releaseProviderSessionIds, []);
+  }).pipe(
+    Effect.provide(
+      testLayer({ [currentInstanceId]: { continuationKey: "codex:account:primary" } }),
+    ),
+  ),
 );
 
 it.effect("distinguishes compatible and incompatible instances of the same driver", () =>
