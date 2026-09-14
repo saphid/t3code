@@ -64,7 +64,8 @@
     {
       "type": "commit",
       "repository": "saphid/t3code",
-      "sha": "4c9c441f00f28121a611eed3513546eb8fd39c92"
+      "sha": "4089cf5dd7dc3369c905b08b46106a406a3e7cbb",
+      "name": "Navigation history controls"
     },
     {
       "type": "commit",
