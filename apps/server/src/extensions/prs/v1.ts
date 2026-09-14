@@ -3,10 +3,16 @@ import {
   AuthOrchestrationReadScope,
   ExtensionOperationError,
   ProjectId,
+  PullRequestOperationError,
+  PullRequestUnavailableError,
+  pullRequestHostOf,
   type PullRequestActivity as NativePullRequestActivity,
   type PullRequestDetail as NativePullRequestDetail,
   type PullRequestListResult as NativePullRequestListResult,
   type PullRequestRef as NativePullRequestRef,
+  type RepositoryIdentity,
+  type SourceControlProviderKind,
+  type ThreadPullRequestKey,
 } from "@t3tools/contracts";
 import {
   PRS_READ_API,
@@ -30,7 +36,7 @@ import {
   type VcsDiffFileContentsStreamEvent,
 } from "@t3tools/extension-sdk/catalogue";
 import type { ApiStreamEvent } from "@t3tools/extension-sdk/capabilities";
-import type { Json, ViewContext } from "@t3tools/extension-sdk/contracts";
+import { copyJson, type Json, type ViewContext } from "@t3tools/extension-sdk/contracts";
 import type {
   HostApiInvocationMetadata,
   HostApiPrincipal,
@@ -46,6 +52,10 @@ import { ServerEnvironment } from "../../environment/ServerEnvironment.ts";
 import { ProjectionProjectRepository } from "../../persistence/Services/ProjectionProjects.ts";
 import { ProjectionThreadRepository } from "../../persistence/Services/ProjectionThreads.ts";
 import { ProjectionSnapshotQuery } from "../../orchestration/Services/ProjectionSnapshotQuery.ts";
+import {
+  detectSourceControlProviderFromRemoteUrl,
+  sourceControlRepositorySelector,
+} from "@t3tools/shared/sourceControl";
 import { PullRequestService, type PullRequestError } from "../../pullRequest/PullRequestService.ts";
 import type { PullRequestProviderApi } from "../../pullRequest/PullRequestProvider.ts";
 import { PullRequestProviderRegistry } from "../../pullRequest/PullRequestProviderRegistry.ts";
@@ -260,27 +270,31 @@ const NO_PR_OPERATIONS: PrsOperationsSupport = {
   "prs.subscribeRefreshes": true,
 };
 
-const operationsSupport = (apis: ReadonlyArray<PullRequestProviderApi>): PrsOperationsSupport => {
-  const configured = apis.length > 0;
+const isPullRequestUnavailableError = Schema.is(PullRequestUnavailableError);
+
+/**
+ * Declared support comes from the granted project's own provider
+ * implementation — the exact api object its calls would reach — so an
+ * optional member the provider never implemented reads false rather than
+ * inheriting some other host's answer.
+ */
+const operationsSupport = (api: PullRequestProviderApi | null): PrsOperationsSupport => {
+  if (api === null) return NO_PR_OPERATIONS;
   return {
     ...NO_PR_OPERATIONS,
-    "prs.list": configured,
-    "prs.listStats": configured,
-    "prs.summary": configured,
-    "prs.detail": configured,
-    "prs.activity": configured,
-    "prs.threadComments": apis.some((api) => api.getReviewThreadComments !== undefined),
-    // The service answers null where the host keeps no stack objects; the
-    // flag still reports whether stacks can ever carry data.
-    "prs.stack": apis.some((api) => api.getChangeRequestStack !== undefined),
-    "prs.reviewerCandidates": apis.some(
-      (api) => api.capabilities.reviewers.listCandidates === true,
-    ),
-    "prs.labelCandidates": apis.some((api) => api.capabilities.labels === true),
-    "prs.streamDiff": apis.some((api) => api.capabilities.diff),
-    "prs.streamDiffFileContents": apis.some(
-      (api) => api.capabilities.diff && api.getDiffFileContents !== undefined,
-    ),
+    "prs.list": true,
+    "prs.listStats": api.listChangeRequestStats !== undefined,
+    "prs.summary": true,
+    "prs.detail": true,
+    "prs.activity": true,
+    "prs.threadComments": api.getReviewThreadComments !== undefined,
+    "prs.stack": api.getChangeRequestStack !== undefined,
+    "prs.reviewerCandidates": api.capabilities.reviewers.listCandidates === true,
+    "prs.labelCandidates":
+      api.capabilities.labels === true && api.listLabelCandidates !== undefined,
+    "prs.streamDiff": api.capabilities.diff === true,
+    "prs.streamDiffFileContents":
+      api.capabilities.diff === true && api.getDiffFileContents !== undefined,
   };
 };
 
@@ -329,8 +343,113 @@ export function createPrsApiProvider(dependencies: PrsApiDependencies): HostApiP
 
   const projectIdOf = (scope: Scope) => ProjectId.make(scope.context.resource.projectId!);
 
-  /** A public `PrsRef` becomes the native `PullRequestRef` with the scoped project injected. */
-  const nativeRef = (
+  /**
+   * The granted project's repository identity, resolved server-side. Every
+   * reference-taking operation binds to this: plugin-supplied `host` and
+   * `repository` are validated against it and never forwarded, so a
+   * reference cannot make the native service route to another project's
+   * credentials.
+   */
+  interface BoundRepository {
+    readonly projectId: ProjectId;
+    readonly identity: RepositoryIdentity | null;
+    /** Null when the remote's provider cannot be identified server-side. */
+    readonly kind: SourceControlProviderKind | null;
+    readonly host: string | null;
+    readonly repository: string | null;
+    readonly api: PullRequestProviderApi | null;
+  }
+
+  const bindRepository = Effect.fn("PrsApi.bindRepository")(function* (scope: Scope) {
+    const projectId = projectIdOf(scope);
+    const shell = yield* dependencies.projectionSnapshotQuery.getProjectShellById(projectId).pipe(
+      Effect.mapError(
+        (cause) =>
+          new PullRequestOperationError({
+            operation: "resolveRepository",
+            detail: "The granted project could not be read.",
+            cause,
+          }),
+      ),
+    );
+    const identity = Option.getOrNull(shell)?.repositoryIdentity ?? null;
+    if (identity === null) {
+      return { projectId, identity, kind: null, host: null, repository: null, api: null };
+    }
+    let kind = identity.provider as SourceControlProviderKind | undefined;
+    if (kind === "unknown") {
+      kind =
+        detectSourceControlProviderFromRemoteUrl(identity.locator.remoteUrl)?.kind ?? "unknown";
+    }
+    const known = kind === undefined || kind === "unknown" ? null : kind;
+    return {
+      projectId,
+      identity,
+      kind: known,
+      host: pullRequestHostOf(identity, kind ?? "unknown"),
+      repository: sourceControlRepositorySelector(identity),
+      api: known === null ? null : dependencies.prRegistry.get(known),
+    };
+  });
+
+  type HostedRepository = BoundRepository & {
+    readonly repository: string;
+    readonly host: string;
+    readonly api: PullRequestProviderApi;
+  };
+
+  /**
+   * Host-bound operations require the granted project to resolve to a
+   * repository identity served by a registered provider. Anything less is
+   * `provider-unsupported` by name — never an empty stand-in result.
+   */
+  const requireHosted = (
+    bound: BoundRepository,
+  ): Effect.Effect<HostedRepository, PullRequestError> =>
+    bound.api === null || bound.repository === null || bound.host === null
+      ? Effect.fail(new PullRequestUnavailableError({ reason: "provider-unsupported" }))
+      : Effect.succeed({
+          ...bound,
+          repository: bound.repository,
+          host: bound.host,
+          api: bound.api,
+        });
+
+  /**
+   * The native `PullRequestRef` a plugin ref may become: the granted
+   * project's own repository selector and the requested number, with NO
+   * host. Inside `requireProject` a hostless ref can only ever resolve to
+   * the project itself — the cross-project host fallback is unreachable —
+   * and a ref naming any other repository or host is refused before the
+   * native service is invoked.
+   */
+  const boundRef = (
+    bound: {
+      readonly projectId: ProjectId;
+      readonly repository: string;
+      readonly host: string;
+    },
+    ref: {
+      readonly host?: string | undefined;
+      readonly repository: string;
+      readonly number: number;
+    },
+  ): Effect.Effect<NativePullRequestRef, PullRequestError> =>
+    ref.repository.trim().toLowerCase() !== bound.repository.toLowerCase() ||
+    (ref.host !== undefined && ref.host.trim().toLowerCase() !== bound.host)
+      ? Effect.fail(
+          new PullRequestOperationError({
+            operation: "resolveRepository",
+            detail: "The change request does not belong to the granted project.",
+          }),
+        )
+      : Effect.succeed({
+          projectId: bound.projectId,
+          repository: bound.repository,
+          number: ref.number,
+        } satisfies NativePullRequestRef);
+
+  const bindRef = (
     scope: Scope,
     ref: {
       readonly host?: string | undefined;
@@ -338,50 +457,53 @@ export function createPrsApiProvider(dependencies: PrsApiDependencies): HostApiP
       readonly number: number;
     },
   ) =>
-    ({
-      projectId: projectIdOf(scope),
-      ...(ref.host === undefined ? {} : { host: ref.host }),
-      repository: ref.repository,
-      number: ref.number,
-    }) satisfies NativePullRequestRef;
+    bindRepository(scope).pipe(
+      Effect.flatMap(requireHosted),
+      Effect.flatMap((hosted) => boundRef(hosted, ref)),
+    );
+
+  /** Halving that always terminates: floor(1/2) is 0, so a length-one
+      collection reaches empty in one step and no loop can stall on a single
+      still-oversized entry. */
+  const shrink = <T>(items: ReadonlyArray<T>): T[] => items.slice(0, Math.floor(items.length / 2));
 
   /**
-   * A reference's host-level link key; the project's own host where the ref
-   * names none. Same derivation as the ws handler, so `linkedThreads` answers
-   * the same threads the native surface would.
+   * JSON.stringify silently drops `undefined` members but the broker's
+   * copyJson rejects them; strip them up front so a native result carrying
+   * an explicitly-undefined optional field is delivered, not refused.
    */
-  const resolveSyncKey = (ref: NativePullRequestRef) =>
-    ref.host !== undefined && ref.repository.includes("/")
-      ? Effect.succeed(pullRequestSyncKey(ref))
-      : dependencies.projectionSnapshotQuery.getProjectShellById(ref.projectId).pipe(
-          Effect.map((project) =>
-            pullRequestSyncKey(ref, Option.getOrUndefined(project)?.repositoryIdentity),
-          ),
-          Effect.orElseSucceed(() => null),
-        );
+  const stripUndefinedMembers = (value: unknown): unknown => {
+    if (Array.isArray(value)) return value.map(stripUndefinedMembers);
+    if (value !== null && typeof value === "object")
+      return Object.fromEntries(
+        Object.entries(value)
+          .filter(([, member]) => member !== undefined)
+          .map(([key, member]) => [key, stripUndefinedMembers(member)]),
+      );
+    return value;
+  };
 
   /**
    * Delivered results must fit the invoke envelope. Collections are cut from
-   * the tail until the serialized answer fits; `nextCursors` are dropped when
-   * entries were cut, because those cursors describe positions past rows the
-   * caller never saw — resuming from them would silently skip PRs.
-   *
-   * Public DTOs are the native shapes minus `| undefined` members:
-   * exactOptionalPropertyTypes gives every `Schema.optional` field a
-   * `?: T | undefined` declaration the `Json` union cannot carry, and
-   * `undefined` never survives the broker's copyJson round-trip. The `as`
-   * casts below record that identity; the api's own outputSchema validates
-   * every result on the way out.
+   * the tail — strict halving, never `max(1, …)` — until the serialized
+   * answer fits, and every loss is disclosed on the `truncated` flag.
+   * Continuation cursors are dropped whenever entries were cut, because a
+   * cursor describes the position after the full native page — resuming from
+   * it would silently skip rows the caller never saw. The honest recovery
+   * from a truncated page is a narrower query or a smaller limit. Whatever
+   * still exceeds the budget with every collection empty is irreducible;
+   * `runMethod`'s envelope check then fails the operation by name rather
+   * than handing the broker a frame it must reject.
    */
   const boundList = (result: NativePullRequestListResult): PrsListResult => {
     let entries = result.entries.slice(0, MAX_LIST_ENTRIES);
-    while (entries.length > 0 && byteLength({ ...result, entries }) > MAX_RESULT_BYTES) {
-      entries = entries.slice(0, Math.max(1, Math.floor(entries.length / 2)));
+    const assembled = () => ({ ...result, entries });
+    while (entries.length > 0 && byteLength(assembled()) > MAX_RESULT_BYTES) {
+      entries = shrink(entries);
     }
     const cut = entries.length < result.entries.length;
     return {
-      ...result,
-      entries,
+      ...assembled(),
       ...(cut ? { truncated: true, nextCursors: {} } : {}),
     } as PrsListResult;
   };
@@ -403,42 +525,50 @@ export function createPrsApiProvider(dependencies: PrsApiDependencies): HostApiP
       comments: thread.comments.map(capComment),
     })) as readonly PrsReviewThread[];
     let commits = result.commits.slice(0, MAX_ACTIVITY_COMMITS) as readonly PrsCommit[];
+    let reviewers = result.reviewers;
+    let reactions = result.reactions;
     if (
       reviewThreads.length < result.reviewThreads.length ||
       commits.length < result.commits.length
     )
       truncated = true;
-    const assembled = (): PrsActivity => ({
-      ...(result.author === undefined ? {} : { author: result.author }),
-      ...(result.reviewers === undefined ? {} : { reviewers: result.reviewers }),
-      comments,
-      commentCount: result.commentCount,
-      commentsTruncated,
-      reviewThreads,
-      commits,
-      ...(result.reactions === undefined ? {} : { reactions: result.reactions }),
-      truncated,
-    });
-    let next = assembled() as PrsActivity;
-    // A pathological conversation (a hundred near-bound bodies) still has to
-    // fit the envelope; drop the oldest-heavy tails before failing it.
-    while (byteLength(next) > MAX_RESULT_BYTES && commits.length > 0) {
-      commits = commits.slice(0, Math.max(1, Math.floor(commits.length / 2)));
+    const assembled = (): PrsActivity =>
+      ({
+        ...(result.author === undefined ? {} : { author: result.author }),
+        ...(reviewers === undefined ? {} : { reviewers }),
+        comments,
+        commentCount: result.commentCount,
+        commentsTruncated,
+        reviewThreads,
+        commits,
+        ...(reactions === undefined ? {} : { reactions }),
+        truncated,
+      }) as PrsActivity;
+    const tooBig = () => byteLength(assembled()) > MAX_RESULT_BYTES;
+    // Least-informative collections empty first; each pass strictly halves,
+    // so every while reaches zero and the sequence always terminates.
+    while (reactions !== undefined && reactions.length > 0 && tooBig()) {
+      reactions = shrink(reactions);
       truncated = true;
-      next = assembled();
     }
-    while (byteLength(next) > MAX_RESULT_BYTES && reviewThreads.length > 0) {
-      reviewThreads = reviewThreads.slice(0, Math.max(1, Math.floor(reviewThreads.length / 2)));
+    while (reviewers !== undefined && reviewers.length > 0 && tooBig()) {
+      reviewers = shrink(reviewers);
       truncated = true;
-      next = assembled();
     }
-    while (byteLength(next) > MAX_RESULT_BYTES && comments.length > 0) {
-      comments = comments.slice(0, Math.max(1, Math.floor(comments.length / 2)));
+    while (commits.length > 0 && tooBig()) {
+      commits = shrink(commits);
+      truncated = true;
+    }
+    while (reviewThreads.length > 0 && tooBig()) {
+      reviewThreads = shrink(reviewThreads);
+      truncated = true;
+    }
+    while (comments.length > 0 && tooBig()) {
+      comments = shrink(comments);
       commentsTruncated = true;
       truncated = true;
-      next = assembled();
     }
-    return next;
+    return assembled();
   };
 
   const boundDetail = (detail: NativePullRequestDetail): PrsDetail => {
@@ -447,29 +577,67 @@ export function createPrsApiProvider(dependencies: PrsApiDependencies): HostApiP
   };
 
   const boundThreadComments = <
-    T extends { readonly comments: ReadonlyArray<{ readonly body: string }> },
+    T extends {
+      readonly comments: ReadonlyArray<{ readonly body: string }>;
+      readonly nextCursor: string | null;
+    },
   >(
     result: T,
-  ): T => ({
-    ...result,
-    comments: result.comments
-      .slice(0, MAX_THREAD_COMMENTS)
-      .map((comment) => ({ ...comment, body: capBody(comment.body).body })),
-  });
+  ): T & { readonly truncated: boolean } => {
+    let truncated = false;
+    let dropped = result.comments.length > MAX_THREAD_COMMENTS;
+    let comments = result.comments.slice(0, MAX_THREAD_COMMENTS).map((comment) => {
+      const { body, cut } = capBody(comment.body);
+      if (cut) truncated = true;
+      return cut ? { ...comment, body } : comment;
+    });
+    const assembled = (): T & { readonly truncated: boolean } => ({
+      ...result,
+      comments,
+      nextCursor: dropped ? null : result.nextCursor,
+      truncated: truncated || dropped,
+    });
+    while (comments.length > 0 && byteLength(assembled()) > MAX_RESULT_BYTES) {
+      comments = shrink(comments);
+      dropped = true;
+    }
+    return assembled();
+  };
 
-  const boundCandidates = <T extends { readonly candidates: ReadonlyArray<unknown> }>(
+  const boundCandidates = <
+    T extends {
+      readonly candidates: ReadonlyArray<unknown>;
+      readonly truncated: boolean;
+    },
+  >(
     result: T,
     bound: number,
   ): T => {
-    const candidates = result.candidates.slice(0, bound);
-    return candidates.length < result.candidates.length
-      ? { ...result, candidates, truncated: true }
-      : { ...result, candidates };
+    let candidates = result.candidates.slice(0, bound);
+    const assembled = (): T => ({
+      ...result,
+      candidates,
+      truncated: result.truncated || candidates.length < result.candidates.length,
+    });
+    while (candidates.length > 0 && byteLength(assembled()) > MAX_RESULT_BYTES) {
+      candidates = shrink(candidates);
+    }
+    return assembled();
   };
 
-  const boundLinkedThreads = <T extends { readonly threads: ReadonlyArray<unknown> }>(
-    result: T,
-  ): T => ({ ...result, threads: result.threads.slice(0, MAX_LINKED_THREADS) });
+  const boundLinkedThreads = (
+    threads: PrsLinkedThreadsResult["threads"],
+  ): PrsLinkedThreadsResult => {
+    let kept = threads.slice(0, MAX_LINKED_THREADS);
+    const assembled = (): PrsLinkedThreadsResult => ({
+      threads: kept,
+      truncated: kept.length < threads.length,
+    });
+    while (kept.length > 0 && byteLength(assembled()) > MAX_RESULT_BYTES) {
+      kept = shrink(kept);
+    }
+    return assembled();
+  };
 
   const runMethod = <Input, Output extends Json>(args: {
     readonly operation: string;
@@ -489,13 +657,28 @@ export function createPrsApiProvider(dependencies: PrsApiDependencies): HostApiP
       const result = yield* args
         .run(safe, scope)
         .pipe(Effect.mapError(operationError(args.operation)));
+      // The wire image cannot carry `undefined` members — the broker's
+      // copyJson rejects them before stringify — so optional fields that
+      // arrived explicitly undefined are stripped here first, then copyJson
+      // normalizes to the shipped image and enforces the encoded budget.
+      // Whatever trimming could not fit — an irreducible fixed section, one
+      // entry larger than the envelope — fails the operation by name rather
+      // than surfacing a broker rejection.
+      const delivered = yield* Effect.try({
+        try: () => copyJson(stripUndefinedMembers(result), MAX_RESULT_BYTES) as Output,
+        catch: (cause) =>
+          failure(
+            args.operation,
+            `The pull request result is not deliverable: ${cause instanceof Error ? cause.message : String(cause)}`,
+          ),
+      });
       yield* Effect.tryPromise({
         try: () => metadata.assertAuthority?.() ?? Promise.resolve(),
         catch: () => failure(args.operation, "Pull request authority was revoked."),
       });
       yield* resolve(scope.context);
       signal.throwIfAborted();
-      return result;
+      return delivered;
     });
 
   const invokeProvider =
@@ -533,6 +716,13 @@ export function createPrsApiProvider(dependencies: PrsApiDependencies): HostApiP
      * rather than delivering a mid-file prefix the manifest could not resume
      * from honestly.
      */
+    const hosted = yield* bindRepository(scope).pipe(
+      Effect.flatMap(requireHosted),
+      Effect.mapError(operationError("prs.streamDiff")),
+    );
+    const ref = yield* boundRef(hosted, safe).pipe(
+      Effect.mapError(operationError("prs.streamDiff")),
+    );
     let patch = "";
     let truncated = false;
     let nextCursor: string | null = null;
@@ -541,10 +731,9 @@ export function createPrsApiProvider(dependencies: PrsApiDependencies): HostApiP
     for (;;) {
       const slice = yield* dependencies.pullRequests
         .diff({
-          projectId: projectIdOf(scope),
-          ...(safe.host === undefined ? {} : { host: safe.host }),
-          repository: safe.repository,
-          number: safe.number,
+          projectId: ref.projectId,
+          repository: ref.repository,
+          number: ref.number,
           ...(cursor === undefined ? {} : { cursor }),
           ...(safe.commit === undefined ? {} : { commit: safe.commit }),
         })
@@ -574,9 +763,9 @@ export function createPrsApiProvider(dependencies: PrsApiDependencies): HostApiP
       chunks,
       manifest: {
         kind: "manifest" as const,
-        repository: safe.repository,
-        number: safe.number,
-        ...(safe.host === undefined ? {} : { host: safe.host }),
+        repository: ref.repository,
+        number: ref.number,
+        host: hosted.host,
         ...(safe.commit === undefined ? {} : { commit: safe.commit }),
         diffHash: sha256(patch),
         diffByteLength: Buffer.byteLength(patch, "utf8"),
@@ -598,153 +787,235 @@ export function createPrsApiProvider(dependencies: PrsApiDependencies): HostApiP
         decode: emptyInput,
         run: Effect.fn("prs.getCapabilities")(function* (_safe, scope) {
           /**
-           * The native listing is the honest probe: it already resolves the
-           * scoped project's repository to a host, reports every host's
-           * configured state, and fails by name when the only host's tool or
-           * credentials are unusable. A project whose repository resolves to
-           * no host answers an empty provider list, which is `hosted:false` —
-           * the capability honesty the contract promises, rather than an
-           * invented host.
+           * Two distinct answers. `hosted`/`providers`/`reason`/`detail`
+           * come from probing the native listing — it reports every host
+           * this project's remotes resolve to, whether its tool and
+           * credentials work right now, and a stable `PullRequestError`
+           * reason when they do not. `operations` is declared support, from
+           * the granted project's own provider implementation — an optional
+           * member the provider never implemented reads false rather than
+           * borrowing some other configured host's answer.
            */
+          const bound = yield* bindRepository(scope);
           const probe = yield* dependencies.pullRequests
-            .list({ state: "open", projectIds: [projectIdOf(scope)], limit: 1 })
+            .list({ state: "open", projectIds: [bound.projectId], limit: 1 })
             .pipe(
               Effect.map(
                 (result) =>
-                  ({ providers: result.providers, detail: null }) as {
+                  ({ providers: result.providers, reason: null, detail: null }) as {
                     readonly providers: PrsCapabilitiesResult["providers"];
+                    readonly reason: PrsCapabilitiesResult["reason"];
                     readonly detail: string | null;
                   },
               ),
               Effect.catch((cause: PullRequestError) =>
                 Effect.succeed({
-                  providers: [],
+                  providers: [] as PrsCapabilitiesResult["providers"],
+                  reason: isPullRequestUnavailableError(cause) ? cause.reason : null,
                   detail: cause.message.slice(0, 512),
                 }),
               ),
             );
-          const apis = probe.providers
-            .filter((provider) => provider.configured)
-            .map((provider) => dependencies.prRegistry.get(provider.kind))
-            .filter((api): api is PullRequestProviderApi => api !== null);
+          const hosted = bound.api !== null && bound.repository !== null && bound.host !== null;
+          const unhosted = new PullRequestUnavailableError({ reason: "provider-unsupported" });
           return {
-            hosted: probe.providers.length > 0,
-            detail: probe.detail,
+            hosted,
+            reason: probe.reason ?? (hosted ? null : unhosted.reason),
+            detail: probe.detail ?? (hosted ? null : unhosted.message),
             providers: probe.providers,
-            operations: operationsSupport(apis),
+            operations: operationsSupport(bound.api),
           } satisfies PrsCapabilitiesResult;
         }),
       }),
       list: runMethod({
         operation: "prs.list",
         decode: listInput,
-        run: (safe, scope) =>
-          dependencies.pullRequests
-            .list({ ...safe, projectIds: [projectIdOf(scope)] })
-            .pipe(Effect.map(boundList)),
+        run: Effect.fn("prs.list")(function* (safe, scope) {
+          const bound = yield* bindRepository(scope).pipe(Effect.flatMap(requireHosted));
+          // The optional host filter may only ever narrow to this project's
+          // own host — any other value would ask the service to enumerate
+          // foreign checkouts under this project's credentials.
+          if (safe.host !== undefined && safe.host.trim().toLowerCase() !== bound.host) {
+            return yield* new PullRequestOperationError({
+              operation: "resolveRepository",
+              detail: "The change request host is not the granted project's host.",
+            });
+          }
+          const { host: _host, ...rest } = safe;
+          return yield* dependencies.pullRequests
+            .list({ ...rest, projectIds: [bound.projectId] })
+            .pipe(Effect.map(boundList));
+        }),
       }),
       listStats: runMethod({
         operation: "prs.listStats",
         decode: listStatsInput,
-        run: (safe, scope) =>
-          dependencies.pullRequests
-            .listStats({
-              refs: safe.refs.map((ref) => nativeRef(scope, ref)),
-            })
-            .pipe(Effect.map((result): PrsListStatsResult => result as PrsListStatsResult)),
+        run: Effect.fn("prs.listStats")(function* (safe, scope) {
+          const bound = yield* bindRepository(scope).pipe(Effect.flatMap(requireHosted));
+          // The service silently skips refs whose provider lacks the
+          // optional stats API; the contract fails by name instead.
+          if (bound.api.listChangeRequestStats === undefined) {
+            return yield* new PullRequestOperationError({
+              operation: "listStats",
+              detail: "This host does not report per-change-request line counts.",
+            });
+          }
+          const refs = yield* Effect.forEach(safe.refs, (ref) => boundRef(bound, ref));
+          return yield* dependencies.pullRequests
+            .listStats({ refs })
+            .pipe(Effect.map((result): PrsListStatsResult => result as PrsListStatsResult));
+        }),
       }),
       summary: runMethod({
         operation: "prs.summary",
         decode: refInput,
         run: (safe, scope) =>
-          dependencies.pullRequests
-            .summary(nativeRef(scope, safe))
-            .pipe(Effect.map((result): PrsSummary => result as PrsSummary)),
+          bindRef(scope, safe).pipe(
+            Effect.flatMap((ref) => dependencies.pullRequests.summary(ref)),
+            Effect.map((result): PrsSummary => result as PrsSummary),
+          ),
       }),
       detail: runMethod({
         operation: "prs.detail",
         decode: refInput,
         run: (safe, scope) =>
-          dependencies.pullRequests.detail(nativeRef(scope, safe)).pipe(Effect.map(boundDetail)),
+          bindRef(scope, safe).pipe(
+            Effect.flatMap((ref) => dependencies.pullRequests.detail(ref)),
+            Effect.map(boundDetail),
+          ),
       }),
       activity: runMethod({
         operation: "prs.activity",
         decode: refInput,
         run: (safe, scope) =>
-          dependencies.pullRequests
-            .activity(nativeRef(scope, safe))
-            .pipe(Effect.map(boundActivity)),
+          bindRef(scope, safe).pipe(
+            Effect.flatMap((ref) => dependencies.pullRequests.activity(ref)),
+            Effect.map(boundActivity),
+          ),
       }),
       threadComments: runMethod({
         operation: "prs.threadComments",
         decode: threadCommentsInput,
         run: (safe, scope) =>
-          dependencies.pullRequests
-            .threadComments({
-              ...nativeRef(scope, safe),
-              threadId: safe.threadId,
-              cursor: safe.cursor,
-            })
-            .pipe(
-              Effect.map(
-                (result): PrsThreadCommentsResult =>
-                  boundThreadComments(result) as PrsThreadCommentsResult,
-              ),
+          bindRef(scope, safe).pipe(
+            Effect.flatMap((ref) =>
+              dependencies.pullRequests.threadComments({
+                ...ref,
+                threadId: safe.threadId,
+                cursor: safe.cursor,
+              }),
             ),
+            Effect.map(
+              (result): PrsThreadCommentsResult =>
+                boundThreadComments(result) as PrsThreadCommentsResult,
+            ),
+          ),
       }),
       stack: runMethod({
         operation: "prs.stack",
         decode: refInput,
-        run: (safe, scope) =>
-          dependencies.pullRequests
-            .stack(nativeRef(scope, safe))
-            .pipe(Effect.map((result): PrsStack | null => result as PrsStack | null)),
+        run: Effect.fn("prs.stack")(function* (safe, scope) {
+          const bound = yield* bindRepository(scope).pipe(Effect.flatMap(requireHosted));
+          // The service answers null both for "not stacked" and for "this
+          // host keeps no stack objects"; the contract fails the second by
+          // name instead.
+          if (bound.api.getChangeRequestStack === undefined) {
+            return yield* new PullRequestOperationError({
+              operation: "stack",
+              detail: "This host does not track change-request stacks.",
+            });
+          }
+          const ref = yield* boundRef(bound, safe);
+          return yield* dependencies.pullRequests
+            .stack(ref)
+            .pipe(Effect.map((result): PrsStack | null => result as PrsStack | null));
+        }),
       }),
       linkedThreads: runMethod({
         operation: "prs.linkedThreads",
         decode: refInput,
         run: Effect.fn("prs.linkedThreads")(function* (safe, scope) {
-          const key = yield* resolveSyncKey(nativeRef(scope, safe));
-          if (key === null) return { threads: [] } satisfies PrsLinkedThreadsResult;
-          return (yield* listLinkedPullRequestThreads(key).pipe(
+          const bound = yield* bindRepository(scope);
+          let key: ThreadPullRequestKey | null;
+          if (bound.repository !== null && bound.host !== null && bound.identity !== null) {
+            // A hosted project: the ref must name its own repository —
+            // boundRef performs that check — and the link key is derived
+            // from the server-side identity, never from caller input.
+            yield* boundRef(
+              {
+                projectId: bound.projectId,
+                repository: bound.repository,
+                host: bound.host,
+              },
+              safe,
+            );
+            key = pullRequestSyncKey(
+              { projectId: bound.projectId, repository: bound.repository, number: safe.number },
+              bound.identity,
+            );
+          } else {
+            // A local-only project has no identity to bind to; the caller's
+            // own host/repository form the key, and the row filter below
+            // still restricts results to this project's threads.
+            key =
+              safe.host === undefined
+                ? null
+                : pullRequestSyncKey(
+                    {
+                      projectId: bound.projectId,
+                      host: safe.host,
+                      repository: safe.repository,
+                      number: safe.number,
+                    },
+                    null,
+                  );
+          }
+          if (key === null) return { threads: [], truncated: false };
+          const result = yield* listLinkedPullRequestThreads(key).pipe(
             Effect.provideService(SqlClient.SqlClient, dependencies.sql),
-            Effect.map(boundLinkedThreads),
-          )) as PrsLinkedThreadsResult;
+          );
+          // The join matches links recorded under any project sharing this
+          // host/repository/number; a plugin only ever sees threads of the
+          // project it was granted.
+          return boundLinkedThreads(
+            result.threads.filter((thread) => thread.projectId === bound.projectId),
+          );
         }),
       }),
       reviewerCandidates: runMethod({
         operation: "prs.reviewerCandidates",
         decode: refInput,
         run: (safe, scope) =>
-          dependencies.pullRequests
-            .reviewerCandidates(nativeRef(scope, safe))
-            .pipe(
-              Effect.map(
-                (result): PrsReviewerCandidateList =>
-                  boundCandidates(result, MAX_CANDIDATES) as PrsReviewerCandidateList,
-              ),
+          bindRef(scope, safe).pipe(
+            Effect.flatMap((ref) => dependencies.pullRequests.reviewerCandidates(ref)),
+            Effect.map(
+              (result): PrsReviewerCandidateList =>
+                boundCandidates(result, MAX_CANDIDATES) as PrsReviewerCandidateList,
             ),
+          ),
       }),
       labelCandidates: runMethod({
         operation: "prs.labelCandidates",
         decode: refInput,
         run: (safe, scope) =>
-          dependencies.pullRequests
-            .labelCandidates(nativeRef(scope, safe))
-            .pipe(
-              Effect.map(
-                (result): PrsLabelCandidateList =>
-                  boundCandidates(result, MAX_LABEL_CANDIDATES) as PrsLabelCandidateList,
-              ),
+          bindRef(scope, safe).pipe(
+            Effect.flatMap((ref) => dependencies.pullRequests.labelCandidates(ref)),
+            Effect.map(
+              (result): PrsLabelCandidateList =>
+                boundCandidates(result, MAX_LABEL_CANDIDATES) as PrsLabelCandidateList,
             ),
+          ),
       }),
       invalidate: runMethod({
         operation: "prs.invalidate",
         decode: invalidateInput,
         run: Effect.fn("prs.invalidate")(function* (safe, scope) {
-          yield* dependencies.pullRequests.invalidate(
-            safe.reference === undefined ? {} : { reference: nativeRef(scope, safe.reference) },
-          );
+          if (safe.reference === undefined) {
+            yield* dependencies.pullRequests.invalidate({});
+            return {};
+          }
+          const ref = yield* bindRef(scope, safe.reference);
+          yield* dependencies.pullRequests.invalidate({ reference: ref });
           return {};
         }),
       }),
@@ -944,13 +1215,19 @@ export function createPrsApiProvider(dependencies: PrsApiDependencies): HostApiP
           yield { type: "data", value: complete };
           return;
         }
+        const fileContentsRef = await run(
+          bindRepository(scope).pipe(
+            Effect.flatMap(requireHosted),
+            Effect.flatMap((hosted) => boundRef(hosted, safe.input)),
+            Effect.mapError(operationError("prs.streamDiffFileContents")),
+          ),
+        );
         const contents = await run(
           dependencies.pullRequests
             .diffFileContents({
-              projectId: projectIdOf(scope),
-              ...(safe.input.host === undefined ? {} : { host: safe.input.host }),
-              repository: safe.input.repository,
-              number: safe.input.number,
+              projectId: fileContentsRef.projectId,
+              repository: fileContentsRef.repository,
+              number: fileContentsRef.number,
               ...(safe.input.commit === undefined ? {} : { commit: safe.input.commit }),
               changeType: safe.input.changeType,
               oldPath: safe.input.oldPath,

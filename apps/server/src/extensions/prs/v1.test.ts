@@ -17,7 +17,10 @@ import * as NodeCrypto from "node:crypto";
 import { it, expect } from "@effect/vitest";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
+import * as KeyValueStore from "effect/unstable/persistence/KeyValueStore";
+import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Persistence from "effect/unstable/persistence/Persistence";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
@@ -25,7 +28,15 @@ import type { HostApiProvider } from "@t3tools/extension-runtime";
 import type { ApiStreamEvent } from "@t3tools/extension-sdk/capabilities";
 import type { ViewContext } from "@t3tools/extension-sdk/contracts";
 import type { PullRequestProviderApi } from "../../pullRequest/PullRequestProvider.ts";
-import { fromProviders } from "../../pullRequest/PullRequestProviderRegistry.ts";
+import {
+  PullRequestProviderRegistry,
+  fromProviders,
+} from "../../pullRequest/PullRequestProviderRegistry.ts";
+import * as PullRequestReadCache from "../../pullRequest/PullRequestReadCache.ts";
+import * as PullRequestService from "../../pullRequest/PullRequestService.ts";
+import * as ProjectionSnapshotQuery from "../../orchestration/Services/ProjectionSnapshotQuery.ts";
+import * as SourceControlProviderRegistry from "../../sourceControl/SourceControlProviderRegistry.ts";
+import * as SourceControlRateLimit from "../../sourceControl/SourceControlRateLimit.ts";
 import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
 import { createPrsApiProvider } from "./v1.ts";
 
@@ -269,14 +280,28 @@ const githubProviderApi = (
     getReviewThreadComments: () => Effect.die("unused"),
     getChangeRequestStack: () => Effect.die("unused"),
     getDiffFileContents: () => Effect.die("unused"),
+    listChangeRequestStats: () => Effect.die("unused"),
+    listLabelCandidates: () => Effect.die("unused"),
     ...extras,
   }) as PullRequestProviderApi;
 
+const GITHUB_IDENTITY: NonNullable<OrchestrationProjectShell["repositoryIdentity"]> = {
+  canonicalKey: "github.com/owner/repo",
+  locator: {
+    source: "git-remote",
+    remoteName: "origin",
+    remoteUrl: "https://github.com/owner/repo.git",
+  },
+  provider: "github",
+  displayName: "owner/repo",
+};
+
 const projectShell = (
-  repositoryIdentity: OrchestrationProjectShell["repositoryIdentity"] = null,
+  repositoryIdentity: OrchestrationProjectShell["repositoryIdentity"] = GITHUB_IDENTITY,
+  id: string = PROJECT_ID,
 ): OrchestrationProjectShell =>
   ({
-    id: PROJECT_ID,
+    id: ProjectId.make(id),
     title: "Project",
     workspaceRoot: WORKSPACE_ROOT,
     repositoryIdentity,
@@ -290,6 +315,7 @@ const makeDeps = (
   pullRequests: Partial<Deps["pullRequests"]>,
   options: {
     readonly registry?: Deps["prRegistry"];
+    readonly shells?: ReadonlyArray<OrchestrationProjectShell>;
     readonly shell?: OrchestrationProjectShell;
     readonly sql?: SqlClient.SqlClient;
   } = {},
@@ -325,9 +351,16 @@ const makeDeps = (
     subscribeRefreshes: Stream.never,
     ...pullRequests,
   },
-  prRegistry: options.registry ?? fromProviders([]),
+  prRegistry: options.registry ?? fromProviders([githubProviderApi()]),
   projectionSnapshotQuery: {
-    getProjectShellById: () => Effect.succeed(Option.some(options.shell ?? projectShell())),
+    getProjectShellById: (projectId) =>
+      Effect.succeed(
+        Option.fromNullishOr(
+          options.shells !== undefined
+            ? options.shells.find((shell) => shell.id === projectId)
+            : (options.shell ?? projectShell()),
+        ),
+      ),
   },
   sql: options.sql ?? ({} as SqlClient.SqlClient),
 });
@@ -460,19 +493,23 @@ it.layer(NodeServices.layer)("t3.prs/read adapter", (it) => {
   it.effect("getCapabilities reports a hostless project honestly", () =>
     Effect.gen(function* () {
       const provider = createPrsApiProvider(
-        makeDeps({
-          list: () => Effect.succeed({ ...listResult, providers: [], entries: [] }),
-        }),
+        makeDeps(
+          { list: () => Effect.succeed({ ...listResult, providers: [], entries: [] }) },
+          { shell: projectShell(null), registry: fromProviders([]) },
+        ),
       );
       const capabilities = (yield* invoke(provider, "getCapabilities", {}, makeContext())) as {
         hosted: boolean;
+        reason: string | null;
         detail: string | null;
         providers: readonly unknown[];
         operations: Record<string, boolean>;
       };
       expect(capabilities.hosted).toBe(false);
+      expect(capabilities.reason).toBe("provider-unsupported");
       expect(capabilities.providers).toEqual([]);
       expect(capabilities.operations["prs.list"]).toBe(false);
+      expect(capabilities.operations["prs.listStats"]).toBe(false);
       expect(capabilities.operations["prs.detail"]).toBe(false);
       expect(capabilities.operations["prs.streamDiff"]).toBe(false);
       // Environment-local operations do not need a host.
@@ -482,7 +519,7 @@ it.layer(NodeServices.layer)("t3.prs/read adapter", (it) => {
     }),
   );
 
-  it.effect("getCapabilities names the probe failure when the host is unreachable", () =>
+  it.effect("getCapabilities keeps the stable reason when the host is unreachable", () =>
     Effect.gen(function* () {
       const provider = createPrsApiProvider(
         makeDeps({
@@ -494,29 +531,31 @@ it.layer(NodeServices.layer)("t3.prs/read adapter", (it) => {
       );
       const capabilities = (yield* invoke(provider, "getCapabilities", {}, makeContext())) as {
         hosted: boolean;
+        reason: string | null;
         detail: string | null;
         operations: Record<string, boolean>;
       };
-      expect(capabilities.hosted).toBe(false);
+      // The host is declared — the project's provider exists — while the
+      // credential/tool probe reports the stable reason it cannot run.
+      expect(capabilities.hosted).toBe(true);
+      expect(capabilities.reason).toBe("cli-missing");
       expect(capabilities.detail).toContain("GitHub CLI");
-      expect(capabilities.operations["prs.list"]).toBe(false);
+      expect(capabilities.operations["prs.list"]).toBe(true);
     }),
   );
 
   it.effect("getCapabilities derives operation support from the configured provider api", () =>
     Effect.gen(function* () {
-      const provider = createPrsApiProvider(
-        makeDeps(
-          { list: () => Effect.succeed(listResult) },
-          { registry: fromProviders([githubProviderApi()]) },
-        ),
-      );
+      const provider = createPrsApiProvider(makeDeps({ list: () => Effect.succeed(listResult) }));
       const capabilities = (yield* invoke(provider, "getCapabilities", {}, makeContext())) as {
         hosted: boolean;
+        reason: string | null;
         operations: Record<string, boolean>;
       };
       expect(capabilities.hosted).toBe(true);
+      expect(capabilities.reason).toBeNull();
       expect(capabilities.operations["prs.list"]).toBe(true);
+      expect(capabilities.operations["prs.listStats"]).toBe(true);
       expect(capabilities.operations["prs.detail"]).toBe(true);
       expect(capabilities.operations["prs.threadComments"]).toBe(true);
       expect(capabilities.operations["prs.stack"]).toBe(true);
@@ -540,6 +579,8 @@ it.layer(NodeServices.layer)("t3.prs/read adapter", (it) => {
                   getReviewThreadComments: undefined,
                   getChangeRequestStack: undefined,
                   getDiffFileContents: undefined,
+                  listChangeRequestStats: undefined,
+                  listLabelCandidates: undefined,
                 },
               ),
             ]),
@@ -550,9 +591,11 @@ it.layer(NodeServices.layer)("t3.prs/read adapter", (it) => {
         operations: Record<string, boolean>;
       };
       expect(capabilities.operations["prs.list"]).toBe(true);
+      expect(capabilities.operations["prs.listStats"]).toBe(false);
       expect(capabilities.operations["prs.threadComments"]).toBe(false);
       expect(capabilities.operations["prs.stack"]).toBe(false);
       expect(capabilities.operations["prs.reviewerCandidates"]).toBe(false);
+      expect(capabilities.operations["prs.labelCandidates"]).toBe(false);
       expect(capabilities.operations["prs.streamDiff"]).toBe(false);
       expect(capabilities.operations["prs.streamDiffFileContents"]).toBe(false);
     }),
@@ -807,24 +850,26 @@ it.layer(NodeServices.layer)("t3.prs/read adapter", (it) => {
     }),
   );
 
-  it.effect("linkedThreads answers seeded links and empty when no host key resolves", () =>
+  it.effect("linkedThreads answers seeded links and only the granted project's", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
       yield* sql`
         INSERT INTO projection_threads (
           thread_id, project_id, title, model_selection_json, created_at, updated_at, deleted_at
-        ) VALUES (
-          'thread-1', 'project', 'Linked thread', '{"instanceId":"codex","model":"gpt-5.4"}',
-          ${NOW}, ${NOW}, NULL
-        )
+        ) VALUES
+          ('thread-1', 'project', 'Linked thread', '{"instanceId":"codex","model":"gpt-5.4"}',
+           ${NOW}, ${NOW}, NULL),
+          ('thread-2', 'other', 'Foreign thread', '{"instanceId":"codex","model":"gpt-5.4"}',
+           ${NOW}, ${NOW}, NULL)
       `;
       yield* sql`
         INSERT INTO projection_thread_pull_requests (
           thread_id, host, repository, number, url, source, linked_at
-        ) VALUES (
-          'thread-1', 'github.com', 'owner/repo', 42,
-          'https://github.com/owner/repo/pull/42', 'linked', ${NOW}
-        )
+        ) VALUES
+          ('thread-1', 'github.com', 'owner/repo', 42,
+           'https://github.com/owner/repo/pull/42', 'linked', ${NOW}),
+          ('thread-2', 'github.com', 'owner/repo', 42,
+           'https://github.com/owner/repo/pull/42', 'linked', ${NOW})
       `;
       const provider = createPrsApiProvider(makeDeps({}, { sql }));
       const context = makeContext();
@@ -833,21 +878,490 @@ it.layer(NodeServices.layer)("t3.prs/read adapter", (it) => {
         "linkedThreads",
         { host: "GitHub.com", repository: "Owner/Repo", number: 42 },
         context,
-      )) as { threads: readonly { id: string; title: string }[] };
+      )) as { threads: readonly { id: string; projectId: string }[]; truncated: boolean };
+      // Same host/repository/number — but the other project's thread is
+      // never disclosed.
+      expect(linked.truncated).toBe(false);
       expect(linked.threads).toHaveLength(1);
       expect(linked.threads[0]!.id).toBe("thread-1");
+      expect(linked.threads[0]!.projectId).toBe("project");
 
-      // No host on the ref and no repository identity on the project shell:
-      // no host-level key exists, so the answer is empty rather than an error.
-      const hostless = createPrsApiProvider(makeDeps({}, { sql }));
+      // A ref naming any other repository or host is refused before the
+      // link key is even derived.
+      const foreign = yield* invokeError(
+        provider,
+        "linkedThreads",
+        { repository: "other/repo", number: 7 },
+        context,
+      );
+      expect(foreign.operation).toBe("prs.linkedThreads");
+      const foreignHost = yield* invokeError(
+        provider,
+        "linkedThreads",
+        { host: "ghe.example.com", repository: "owner/repo", number: 42 },
+        context,
+      );
+      expect(foreignHost.operation).toBe("prs.linkedThreads");
+
+      // A local-only granted project has no server-side identity to bind:
+      // the caller's own host/repository form the key, and rows are still
+      // restricted to its own threads.
+      const local = createPrsApiProvider(
+        makeDeps({}, { shell: projectShell(null), registry: fromProviders([]), sql }),
+      );
+      const localLinked = (yield* invoke(
+        local,
+        "linkedThreads",
+        { host: "github.com", repository: "owner/repo", number: 42 },
+        context,
+      )) as { threads: readonly { id: string }[] };
+      expect(localLinked.threads.map((thread) => thread.id)).toEqual(["thread-1"]);
+
+      // Without a host or an identity there is no host-level key — empty,
+      // not an error.
       const unhosted = (yield* invoke(
-        hostless,
+        local,
         "linkedThreads",
         { repository: "owner/repo", number: 42 },
         context,
-      )) as { threads: readonly unknown[] };
+      )) as { threads: readonly unknown[]; truncated: boolean };
       expect(unhosted.threads).toEqual([]);
+      expect(unhosted.truncated).toBe(false);
     }).pipe(Effect.provide(SqlitePersistenceMemory)),
+  );
+
+  it.effect("denies references naming another repository or host before the native service", () =>
+    Effect.gen(function* () {
+      const calls: unknown[] = [];
+      const record = (method: string) => (input: unknown) => {
+        calls.push({ method, input });
+        return Effect.die("must not reach the native service");
+      };
+      const provider = createPrsApiProvider(
+        makeDeps({
+          summary: record("summary"),
+          detail: record("detail"),
+          activity: record("activity"),
+          threadComments: record("threadComments"),
+          stack: record("stack"),
+          diff: record("diff"),
+          diffFileContents: record("diffFileContents"),
+          reviewerCandidates: record("reviewerCandidates"),
+          labelCandidates: record("labelCandidates"),
+          invalidate: record("invalidate"),
+          listStats: record("listStats"),
+        }),
+      );
+      const context = makeContext();
+
+      // Another repository on the same host.
+      const otherRepo = { repository: "other/repo", number: 7 };
+      for (const [method, input] of [
+        ["summary", otherRepo],
+        ["detail", otherRepo],
+        ["activity", otherRepo],
+        ["threadComments", { ...otherRepo, threadId: "t", cursor: "c" }],
+        ["stack", otherRepo],
+        ["reviewerCandidates", otherRepo],
+        ["labelCandidates", otherRepo],
+        ["listStats", { refs: [otherRepo] }],
+        ["invalidate", { reference: otherRepo }],
+      ] as const) {
+        const error = yield* invokeError(provider, method, input, context);
+        expect(error.operation).toBe(`prs.${method}`);
+      }
+
+      // The granted repository on another configured host.
+      const otherHost = { host: "ghe.example.com", repository: "owner/repo", number: 42 };
+      for (const method of ["detail", "stack", "reviewerCandidates"] as const) {
+        const error = yield* invokeError(provider, method, otherHost, context);
+        expect(error.operation).toBe(`prs.${method}`);
+      }
+
+      // The streams take the same boundary.
+      const diffError = yield* collectStreamError(provider, "streamDiff", otherRepo, context);
+      expect(diffError.operation).toBe("prs.streamDiff");
+      const contentsError = yield* collectStreamError(
+        provider,
+        "streamDiffFileContents",
+        { ...otherRepo, changeType: "change", oldPath: "a", newPath: "a" },
+        context,
+      );
+      expect(contentsError.operation).toBe("prs.streamDiffFileContents");
+
+      // list's optional host filter may only name this project's own host.
+      const listForeign = yield* invokeError(
+        provider,
+        "list",
+        { state: "open", host: "ghe.example.com" },
+        context,
+      );
+      expect(listForeign.operation).toBe("prs.list");
+
+      expect(calls).toHaveLength(0);
+    }),
+  );
+
+  it.effect("a local-only granted project fails host-bound operations by name", () =>
+    Effect.gen(function* () {
+      const calls: unknown[] = [];
+      const provider = createPrsApiProvider(
+        makeDeps(
+          {
+            detail: (input) => {
+              calls.push(input);
+              return Effect.succeed(detail);
+            },
+            list: (input) => {
+              calls.push(input);
+              return Effect.succeed(listResult);
+            },
+          },
+          { shell: projectShell(null), registry: fromProviders([]) },
+        ),
+      );
+      const context = makeContext();
+      for (const [method, input] of [
+        ["list", { state: "open" }],
+        ["detail", REF],
+        ["summary", REF],
+        ["activity", REF],
+        ["stack", REF],
+      ] as const) {
+        const error = yield* invokeError(provider, method, input, context);
+        expect(error.operation).toBe(`prs.${method}`);
+        expect(error.message).toContain("provider-unsupported");
+      }
+      const diffError = yield* collectStreamError(provider, "streamDiff", REF, context);
+      expect(diffError.operation).toBe("prs.streamDiff");
+      expect(calls).toHaveLength(0);
+    }),
+  );
+
+  it.effect("listStats and stack fail by name when the provider lacks the optional api", () =>
+    Effect.gen(function* () {
+      const provider = createPrsApiProvider(
+        makeDeps(
+          {
+            listStats: () => Effect.die("must not reach the service"),
+            stack: () => Effect.die("must not reach the service"),
+          },
+          {
+            registry: fromProviders([
+              githubProviderApi(
+                {},
+                {
+                  listChangeRequestStats: undefined,
+                  getChangeRequestStack: undefined,
+                },
+              ),
+            ]),
+          },
+        ),
+      );
+      const context = makeContext();
+      const stats = yield* invokeError(provider, "listStats", { refs: [REF] }, context);
+      expect(stats.operation).toBe("prs.listStats");
+      expect(stats.message).toContain("listStats");
+      const stack = yield* invokeError(provider, "stack", REF, context);
+      expect(stack.operation).toBe("prs.stack");
+      expect(stack.message).toContain("stack");
+    }),
+  );
+
+  it.effect("threadComments discloses truncation and drops an unsafe continuation", () =>
+    Effect.gen(function* () {
+      const provider = createPrsApiProvider(
+        makeDeps({
+          threadComments: () =>
+            Effect.succeed({
+              comments: Array.from({ length: 140 }, (_, index) => ({
+                id: `t${index}`,
+                author: null,
+                body: `reply ${index}`,
+                createdAt: NOW,
+                url: null,
+              })),
+              nextCursor: "page-2",
+            }),
+        }),
+      );
+      const got = (yield* invoke(
+        provider,
+        "threadComments",
+        { ...REF, threadId: "thread-1", cursor: "c0" },
+        makeContext(),
+      )) as {
+        comments: readonly unknown[];
+        nextCursor: string | null;
+        truncated: boolean;
+      };
+      expect(got.comments).toHaveLength(100);
+      expect(got.truncated).toBe(true);
+      // "page-2" resumes past comments the caller never saw — it must not
+      // be handed out on a cut page.
+      expect(got.nextCursor).toBeNull();
+    }),
+  );
+
+  it.effect("oversized singletons terminate instead of stalling the trim loop", () =>
+    Effect.gen(function* () {
+      const provider = createPrsApiProvider(
+        makeDeps({
+          activity: () =>
+            Effect.succeed({
+              ...activity,
+              // One commit whose headline alone exceeds the whole envelope:
+              // the old `max(1, floor(n/2))` loop never progressed here.
+              commits: [
+                {
+                  oid: "abc123",
+                  messageHeadline: "x".repeat(64 * 1024),
+                  committedDate: NOW,
+                },
+              ],
+            }),
+        }),
+      );
+      const got = (yield* invoke(provider, "activity", REF, makeContext())) as {
+        commits: readonly unknown[];
+        truncated: boolean;
+      };
+      expect(got.commits).toHaveLength(0);
+      expect(got.truncated).toBe(true);
+    }),
+  );
+
+  it.effect("the least-informative collections empty before comments do", () =>
+    Effect.gen(function* () {
+      const provider = createPrsApiProvider(
+        makeDeps({
+          activity: () =>
+            Effect.succeed({
+              ...activity,
+              reviewers: Array.from({ length: 30 }, (_, index) => ({
+                login: `r${index}`,
+                name: null,
+                avatarUrl: null,
+              })),
+              reactions: Array.from({ length: 30 }, (_, index) => ({
+                content: "heart" as const,
+                count: 1,
+                actors: [`u${index}`],
+                viewerHasReacted: false,
+              })),
+              commits: Array.from({ length: 30 }, (_, index) => ({
+                oid: `oid${index}`,
+                messageHeadline: `commit ${index} ${"y".repeat(4096)}`,
+                committedDate: NOW,
+              })),
+            }),
+        }),
+      );
+      const got = (yield* invoke(provider, "activity", REF, makeContext())) as {
+        reviewers?: readonly unknown[];
+        reactions?: readonly unknown[];
+        commits: readonly unknown[];
+        comments: readonly unknown[];
+        truncated: boolean;
+      };
+      expect(got.truncated).toBe(true);
+      // Reactions/reviewers go first; the single comment survives.
+      expect(got.reactions ?? []).toHaveLength(0);
+      expect(got.reviewers ?? []).toHaveLength(0);
+      expect(got.comments).toHaveLength(1);
+    }),
+  );
+
+  it.effect("an irreducible result fails the operation by name rather than hanging", () =>
+    Effect.gen(function* () {
+      const provider = createPrsApiProvider(
+        makeDeps({
+          // No collection remains once detail's own fields exceed the
+          // envelope — the bound cannot be satisfied, so the operation
+          // fails by name instead of looping or returning past the limit.
+          detail: () =>
+            Effect.succeed({
+              ...detail,
+              checks: Array.from({ length: 300 }, (_, index) => ({
+                name: `check ${index} ${"z".repeat(512)}`,
+                status: "success" as const,
+                description: null,
+                url: null,
+              })),
+            }),
+        }),
+      );
+      const error = yield* invokeError(provider, "detail", REF, makeContext());
+      expect(error.operation).toBe("prs.detail");
+      expect(error.message).toContain("byte limit");
+    }),
+  );
+
+  it.effect("explicitly-undefined optional members are normalized, not rejected", () =>
+    Effect.gen(function* () {
+      const provider = createPrsApiProvider(
+        makeDeps({
+          detail: () => Effect.succeed({ ...detail, viewer: undefined }),
+        }),
+      );
+      const got = (yield* invoke(provider, "detail", REF, makeContext())) as Record<
+        string,
+        unknown
+      >;
+      expect(got.title).toBe("Ship it");
+      expect("viewer" in got).toBe(false);
+    }),
+  );
+
+  it.effect("binds every reference to the granted project through the real service", () =>
+    Effect.gen(function* () {
+      const calls: {
+        readonly cwd: string;
+        readonly repository: string;
+        readonly number: number;
+      }[] = [];
+      const projectA = projectShell(GITHUB_IDENTITY);
+      const projectB = projectShell(
+        {
+          canonicalKey: "github.com/other/repo",
+          locator: {
+            source: "git-remote",
+            remoteName: "origin",
+            remoteUrl: "https://github.com/other/repo.git",
+          },
+          provider: "github",
+          displayName: "other/repo",
+        },
+        "other",
+      );
+      const api = githubProviderApi(
+        {},
+        {
+          getViewer: () => Effect.succeed("bilal"),
+          getChangeRequest: (input) => {
+            calls.push(input);
+            return Effect.succeed({
+              number: input.number,
+              title: `Change request ${input.number}`,
+              url: `https://github.com/owner/repo/pull/${input.number}`,
+              author: { login: "octocat", name: null, avatarUrl: null },
+              headBranch: "feature",
+              baseBranch: "main",
+              state: "open" as const,
+              isDraft: false,
+              mergeability: "mergeable" as const,
+              additions: 1,
+              deletions: 0,
+              createdAt: NOW,
+              updatedAt: NOW,
+              reviewRequestLogins: [],
+              labels: [],
+              body: "the body",
+              changedFiles: 1,
+              mergedAt: null,
+              closedAt: null,
+              reviewers: [],
+              checks: [],
+              mergeCapabilities: { merge: true, squash: true, rebase: true },
+              viewerPermissions: {
+                actions: ["merge" as const],
+                comment: true,
+                resolve: true,
+                verdicts: ["approve" as const],
+                requestReviewers: true,
+              },
+            });
+          },
+          getDiff: () =>
+            Effect.succeed({
+              patch: "diff --git a/a b/a\n+x\n",
+              truncated: false,
+              nextCursor: null,
+            }),
+          getDiffFileContents: () => Effect.succeed({ oldContents: "a\n", newContents: "b\n" }),
+        },
+      );
+      const service = yield* PullRequestService.make.pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            Layer.succeed(PullRequestProviderRegistry, fromProviders([api])),
+            Layer.mock(SourceControlProviderRegistry.SourceControlProviderRegistry)({
+              resolveHandle: () => Effect.die("Unexpected provider refinement"),
+            }),
+            Layer.mock(ProjectionSnapshotQuery.ProjectionSnapshotQuery)({
+              getShellSnapshot: () =>
+                Effect.succeed({
+                  snapshotSequence: 1,
+                  projects: [projectA, projectB],
+                  threads: [],
+                  updatedAt: NOW,
+                }),
+            }),
+            SourceControlRateLimit.layer,
+            Layer.effect(PullRequestReadCache.PullRequestReadCache, PullRequestReadCache.make).pipe(
+              Layer.provide(Persistence.layerKvs),
+              Layer.provide(KeyValueStore.layerMemory),
+              Layer.provide(NodeServices.layer),
+            ),
+          ),
+        ),
+      );
+      const provider = createPrsApiProvider({
+        ...makeDeps({}, { shells: [projectA, projectB], registry: fromProviders([api]) }),
+        pullRequests: service,
+      });
+      const context = makeContext();
+
+      // The project's own repository routes to its own checkout.
+      const own = (yield* invoke(provider, "detail", REF, context)) as { number: number };
+      expect(own.number).toBe(42);
+      expect(calls).toHaveLength(1);
+      expect(calls[0]!.cwd).toBe(WORKSPACE_ROOT);
+      expect(calls[0]!.repository).toBe("owner/repo");
+
+      // Another repository on the same host — which the unguarded host path
+      // would have resolved to project B's checkout — is refused before the
+      // service sees it.
+      const otherRepo = yield* invokeError(
+        provider,
+        "detail",
+        { repository: "other/repo", number: 7 },
+        context,
+      );
+      expect(otherRepo.operation).toBe("prs.detail");
+
+      // The granted repository named under another host is refused too.
+      const otherHost = yield* invokeError(
+        provider,
+        "detail",
+        { host: "ghe.example.com", repository: "owner/repo", number: 42 },
+        context,
+      );
+      expect(otherHost.operation).toBe("prs.detail");
+
+      // Reference-taking streams hold the same boundary.
+      const streamDenied = yield* collectStreamError(
+        provider,
+        "streamDiff",
+        { repository: "other/repo", number: 7 },
+        context,
+      );
+      expect(streamDenied.operation).toBe("prs.streamDiff");
+      expect(calls).toHaveLength(1);
+
+      // A hosted ref spelled differently still binds: case-insensitive
+      // host/repository equivalence routes to the same own checkout.
+      const ownAgain = (yield* invoke(
+        provider,
+        "detail",
+        { host: "GitHub.com", repository: "Owner/Repo", number: 43 },
+        context,
+      )) as { number: number };
+      expect(ownAgain.number).toBe(43);
+      expect(calls).toHaveLength(2);
+      expect(calls[1]!.cwd).toBe(WORKSPACE_ROOT);
+    }),
   );
 
   it.effect("re-checks authority after the native read", () =>

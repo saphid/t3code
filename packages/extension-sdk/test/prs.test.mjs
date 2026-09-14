@@ -70,6 +70,13 @@ NodeTest.test(
       "hosted",
       "operations",
       "providers",
+      "reason",
+    ]);
+    NodeAssert.deepEqual(output.properties.reason.enum, [
+      "cli-missing",
+      "cli-unauthenticated",
+      "provider-unsupported",
+      null,
     ]);
     const operations = output.properties.operations;
     for (const key of [
@@ -84,6 +91,15 @@ NodeTest.test(
     }
   },
 );
+
+NodeTest.test("truncation is disclosed on every capped collection result", () => {
+  const comments = methods.threadComments.outputSchema;
+  NodeAssert.ok(comments.required.includes("truncated"));
+  NodeAssert.equal(comments.properties.truncated.type, "boolean");
+  const linked = methods.linkedThreads.outputSchema;
+  NodeAssert.ok(linked.required.includes("truncated"));
+  NodeAssert.equal(linked.properties.truncated.type, "boolean");
+});
 
 NodeTest.test("streamDiff frames a whole patch under the vcs 1.1.0 frame family", () => {
   const stream = streams.streamDiff;

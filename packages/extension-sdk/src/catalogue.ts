@@ -2571,6 +2571,8 @@ export type PrsLinkedThreadsResult = {
     readonly title: string;
     readonly archivedAt: string | null;
   }[];
+  /** Rows were dropped to stay within the result bound. */
+  readonly truncated: boolean;
 };
 export type PrsCapabilities = {
   readonly diff: boolean;
@@ -2706,7 +2708,16 @@ export type PrsThreadCommentsInput = PrsRef & {
 };
 export type PrsThreadCommentsResult = {
   readonly comments: readonly PrsThreadComment[];
+  /**
+   * Host-issued resume point for the next page — null when comments were
+   * dropped to fit the result bound, since that cursor describes the
+   * position after rows the caller never received. The honest recovery from
+   * a dropped tail is `truncated:true` + `nextCursor:null`; re-read with a
+   * narrower target rather than resuming past unseen comments.
+   */
   readonly nextCursor: string | null;
+  /** Comments were dropped (count or byte bound) or bodies were cut. */
+  readonly truncated: boolean;
 };
 export type PrsReviewerCandidate = PrsActor & {
   readonly id: string;
@@ -2795,15 +2806,21 @@ export type PrsOperationsSupport = {
 };
 export type PrsCapabilitiesResult = {
   /**
-   * The scoped project resolves to at least one PR host. False on a
-   * local-only repository — every host-bound operation then fails by name
-   * (provider-unsupported) rather than answering an empty list.
+   * The scoped project resolves to a PR host backed by a registered
+   * provider. False on a local-only repository or an unimplemented host —
+   * every host-bound operation then fails by name (provider-unsupported)
+   * rather than answering an empty list.
    */
   readonly hosted: boolean;
   /**
-   * Why nothing can be read right now, when the host probe itself failed —
-   * e.g. the host's CLI is missing or unauthenticated. Null when the probe
-   * succeeded (per-host detail lives on `providers[].detail`).
+   * The stable machine reason reads fail: `cli-missing`,
+   * `cli-unauthenticated`, or `provider-unsupported`. Null when the probe
+   * succeeded (per-host state lives on `providers[]`).
+   */
+  readonly reason: "cli-missing" | "cli-unauthenticated" | "provider-unsupported" | null;
+  /**
+   * Human-readable detail behind `reason` — e.g. which tool or credential
+   * is missing. Null when the probe succeeded.
    */
   readonly detail: string | null;
   readonly providers: readonly PrsProviderSummary[];
@@ -3333,7 +3350,7 @@ const prsStackSchema = {
 const prsLinkedThreadsSchema = {
   type: "object",
   additionalProperties: false,
-  required: ["threads"],
+  required: ["threads", "truncated"],
   properties: {
     threads: {
       type: "array",
@@ -3350,15 +3367,17 @@ const prsLinkedThreadsSchema = {
         },
       },
     },
+    truncated: { type: "boolean" },
   },
 } as const;
 const prsThreadCommentsResultSchema = {
   type: "object",
   additionalProperties: false,
-  required: ["comments", "nextCursor"],
+  required: ["comments", "nextCursor", "truncated"],
   properties: {
     comments: { type: "array", maxItems: 100, items: prsThreadCommentSchema },
     nextCursor: { type: ["string", "null"], minLength: 1, maxLength: 4096 },
+    truncated: { type: "boolean" },
   },
 } as const;
 const prsReviewerCandidateListSchema = {
@@ -3448,9 +3467,12 @@ const prsOperationsSupportSchema = {
 const prsCapabilitiesResultSchema = {
   type: "object",
   additionalProperties: false,
-  required: ["hosted", "detail", "providers", "operations"],
+  required: ["hosted", "reason", "detail", "providers", "operations"],
   properties: {
     hosted: { type: "boolean" },
+    reason: {
+      enum: ["cli-missing", "cli-unauthenticated", "provider-unsupported", null],
+    },
     detail: { type: ["string", "null"], maxLength: 1024 },
     providers: { type: "array", maxItems: 100, items: prsProviderSummarySchema },
     operations: prsOperationsSupportSchema,
