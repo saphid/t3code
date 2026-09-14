@@ -13,6 +13,7 @@ vi.mock("../../state/presentation", () => ({
   environmentPresentations: { presentationsAtom: null },
 }));
 vi.mock("../../state/server", () => ({ serverEnvironment: { refreshProviders: null } }));
+vi.mock("../../state/environments", () => ({ usePrimaryEnvironmentId: () => "test" }));
 vi.mock("../../state/use-atom-command", () => ({ useAtomCommand: () => state.refreshProviders }));
 vi.mock("../../env", () => ({ isElectron: false }));
 vi.mock("../../hooks/useSettings", () => ({ usePrimarySettings: () => "24h" }));
@@ -83,6 +84,12 @@ vi.mock("../settings/providerDriverMeta", () => ({ getDriverOption: () => ({ lab
 import { UsagePage } from "./UsagePage";
 
 let renderer: ReactTestRenderer;
+const selectSection = (section: "usage" | "limits") => {
+  renderer.root
+    .findAll((node) => node.type === "div" && node.props["aria-label"] === "Usage section")[0]!
+    .props.onValueChange([section]);
+};
+
 beforeEach(() => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   vi.spyOn(Date, "now").mockReturnValue(Date.parse("2026-09-11T12:00:00Z"));
@@ -133,45 +140,38 @@ afterEach(async () => {
   vi.unstubAllGlobals();
 });
 
-it.each([0, 1])(
-  "refreshes the visible limits countdown with refresh button %i without switching tabs, even when quota is unchanged",
-  async (buttonIndex) => {
-    await act(() => {
-      renderer = create(<UsagePage />);
-    });
-    expect(
-      JSON.stringify(renderer.toJSON(), (key, value) => (key === "props" ? undefined : value)),
-    ).toContain("in 2h 0m");
-    vi.mocked(Date.now).mockReturnValue(Date.parse("2026-09-11T12:30:00Z"));
-    await act(async () => {
-      renderer.root
-        .findAllByProps({ "aria-label": "Refresh limits" })
-        .filter((node) => node.type === "button")
-        .at(buttonIndex)!
-        .props.onClick();
-    });
-    expect(state.refreshProviders).toHaveBeenCalledWith({ environmentId: "test", input: {} });
-    expect(
-      JSON.stringify(renderer.toJSON(), (key, value) => (key === "props" ? undefined : value)),
-    ).toContain("in 1h 30m");
-    expect(
-      JSON.stringify(renderer.toJSON(), (key, value) => (key === "props" ? undefined : value)),
-    ).not.toContain("in 2h 0m");
-  },
-);
+it("refreshes the visible limits countdown without switching sections when quota is unchanged", async () => {
+  await act(() => {
+    renderer = create(<UsagePage />);
+  });
+  await act(() => selectSection("limits"));
+  expect(
+    JSON.stringify(renderer.toJSON(), (key, value) => (key === "props" ? undefined : value)),
+  ).toContain("in 2h 0m");
+  vi.mocked(Date.now).mockReturnValue(Date.parse("2026-09-11T12:30:00Z"));
+  await act(async () => {
+    renderer.root
+      .findAllByProps({ "aria-label": "Refresh limits" })
+      .find((node) => node.type === "button")!
+      .props.onClick();
+  });
+  expect(state.refreshProviders).toHaveBeenCalledWith({ environmentId: "test", input: {} });
+  expect(
+    JSON.stringify(renderer.toJSON(), (key, value) => (key === "props" ? undefined : value)),
+  ).toContain("in 1h 30m");
+  expect(
+    JSON.stringify(renderer.toJSON(), (key, value) => (key === "props" ? undefined : value)),
+  ).not.toContain("in 2h 0m");
+});
 
 it("uses the current time when returning to limits from tokens", async () => {
   await act(() => {
     renderer = create(<UsagePage />);
   });
-  const selectMetric = (metric: string) => {
-    renderer.root
-      .findAll((node) => node.type === "div" && node.props["aria-label"] === "Usage metric")[0]!
-      .props.onValueChange([metric]);
-  };
-  await act(() => selectMetric("tokens"));
+  await act(() => selectSection("limits"));
+  await act(() => selectSection("usage"));
   vi.mocked(Date.now).mockReturnValue(Date.parse("2026-09-11T13:00:00Z"));
-  await act(() => selectMetric("limits"));
+  await act(() => selectSection("limits"));
   expect(
     JSON.stringify(renderer.toJSON(), (key, value) => (key === "props" ? undefined : value)),
   ).toContain("in 1h 0m");
