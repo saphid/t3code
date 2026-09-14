@@ -41,7 +41,14 @@ export interface ModelTotals {
   readonly cacheWriteTokens: number;
   readonly cacheWriteUsd: number | null;
   readonly records: number;
+  /** Records whose tokens are counted but whose model had no price. */
+  readonly unpricedRecords: number;
   readonly costShare: number;
+}
+
+/** A model whose every record lacked rates has an unknown cost, not a zero one. */
+export function isModelCostUnknown(model: ModelTotals): boolean {
+  return model.records > 0 && model.unpricedRecords >= model.records;
 }
 
 /** One project's slice of the window. `project` is null for buckets that ran outside every project. */
@@ -442,6 +449,7 @@ export function mergeUsage(
       cacheWriteUsd: number;
       cacheWriteComplete: boolean;
       records: number;
+      unpricedRecords: number;
     }
   >();
   // Keyed by stable project id where available, with a namespaced title
@@ -600,6 +608,7 @@ export function mergeUsage(
         cacheWriteUsd: 0,
         cacheWriteComplete: true,
         records: 0,
+        unpricedRecords: 0,
       };
       model.costUsd += bucket.costUsd;
       model.totalTokens += tokens;
@@ -607,6 +616,7 @@ export function mergeUsage(
       model.cacheWriteUsd += bucket.cacheWriteUsd ?? 0;
       model.cacheWriteComplete &&= bucketCacheWriteComplete;
       model.records += bucket.records;
+      model.unpricedRecords += bucket.unpricedRecords;
       modelAccumulator.set(modelKey, model);
 
       const day = dailyAccumulator.get(bucket.day) ?? {
@@ -667,6 +677,7 @@ export function mergeUsage(
       cacheWriteTokens: totals.cacheWriteTokens,
       cacheWriteUsd: totals.cacheWriteComplete ? totals.cacheWriteUsd : null,
       records: totals.records,
+      unpricedRecords: totals.unpricedRecords,
       costShare: costUsd === 0 ? 0 : totals.costUsd / costUsd,
     }))
     .sort((a, b) => b.costUsd - a.costUsd || b.totalTokens - a.totalTokens);

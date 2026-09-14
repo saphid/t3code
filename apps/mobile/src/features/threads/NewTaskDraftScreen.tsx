@@ -99,6 +99,7 @@ import {
   restoreComposerDraftSnapshot,
   scheduleUnusedComposerAttachmentCleanup,
   type ComposerDraft,
+  updateComposerDraftSettings,
   waitForComposerDraftsLoaded,
 } from "../../state/use-composer-drafts";
 import { useEnvironmentServerConfig, useProjects } from "../../state/entities";
