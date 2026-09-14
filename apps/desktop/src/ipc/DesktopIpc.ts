@@ -17,8 +17,7 @@ export interface DesktopIpcSenderWebContents {
 }
 
 export interface DesktopIpcInvokeEvent {
-  /** Absent only in tests that fabricate events; Electron always sets it. */
-  readonly sender?: DesktopIpcSenderWebContents;
+  readonly sender: { readonly id: number };
 }
 
 export interface DesktopIpcSyncEvent {
