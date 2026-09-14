@@ -101,6 +101,7 @@ function setToggled<T extends string>(current: ReadonlySet<T>, key: T): Readonly
 
 export function UsagePage() {
   const [view, setView] = useState<"usage" | "limits">("usage");
+  const [limitsNow, setLimitsNow] = useState(() => Date.now());
   const [metric, setMetric] = useState<UsageStackMetric>("cost");
   const [seriesMode, setSeriesMode] = useState<UsageSeriesMode>("projects");
   const [grouping, setGrouping] = useState<UsageGrouping>("12h");
@@ -220,8 +221,13 @@ export function UsagePage() {
   };
   const refreshWindow = () => {
     if (view === "limits") {
-      if (primaryEnvironmentId)
-        void refreshProviders({ environmentId: primaryEnvironmentId, input: {} });
+      if (primaryEnvironmentId) {
+        void refreshProviders({ environmentId: primaryEnvironmentId, input: {} }).finally(() =>
+          setLimitsNow(Date.now()),
+        );
+      } else {
+        setLimitsNow(Date.now());
+      }
       return;
     }
     const nextWindow = exactWindow(windowDays);
@@ -243,7 +249,10 @@ export function UsagePage() {
         className="ms-auto"
         onValueChange={(next) => {
           const value = next[0];
-          if (value === "usage" || value === "limits") setView(value);
+          if (value === "usage" || value === "limits") {
+            if (value === "limits") setLimitsNow(Date.now());
+            setView(value);
+          }
         }}
       >
         <Toggle value="usage">Usage</Toggle>
@@ -271,7 +280,7 @@ export function UsagePage() {
         <ScrollArea className="min-h-0 flex-1">
           <WorkspacePageContainer width="wide">
             {view === "limits" ? (
-              <UsageLimitsSection selectedEnvironmentIds={null} />
+              <UsageLimitsSection selectedEnvironmentIds={null} now={limitsNow} />
             ) : settling ? (
               <UsageSkeleton />
             ) : (
