@@ -186,7 +186,7 @@
     {
       "type": "commit",
       "repository": "saphid/t3code",
-      "sha": "2db04f7a0bf2537e1aa8d66078f4bf2a19779ef0",
+      "sha": "c6930fd6827764caa9e1a1abb82110786739ad28",
       "name": "Nightly 1675 integration compatibility"
     }
   ]
