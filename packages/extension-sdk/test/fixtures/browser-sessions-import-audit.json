@@ -1,0 +1,11 @@
+{
+  "package": "example.browser-sessions",
+  "root": "/Users/saphid/projects/T3 Code/t3-extensions-authoring/packages/extension-sdk/examples/browser-sessions/",
+  "files": {
+    "extension.ts": "0925e9e6b091552b7bb9e3dfc029a883b7802375259b9d62380497a72346984a",
+    "server.ts": "18ea1ae3bc8456841482a5a01627144e15e13b91446f38acfc917a1c59f71e66",
+    ".t3-extension/t3-extension.json": "fead8d77f9a8ada25764bbd48804c9ef0c99bc9d1cd98f4bcfb1577cc919610e",
+    ".t3-extension/server.mjs": "465c3a09915aca6038423261464eb76ce80f01fb68918c23261ade2bb0f14da0"
+  },
+  "findings": []
+}

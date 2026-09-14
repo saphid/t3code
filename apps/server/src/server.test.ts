@@ -927,9 +927,15 @@ const buildAppUnderTest = (options?: {
             refresh: () => Effect.void,
             close: () => Effect.void,
             list: () => Effect.succeed({ sessions: [], serverEpoch: "test-server", revision: 0 }),
+            listDetails: () =>
+              Effect.succeed({ sessions: [], serverEpoch: "test-server", revision: 0 }),
             events: Stream.empty,
             subscribeEvents: Effect.flatMap(PubSub.unbounded<PreviewEvent>(), (pubsub) =>
               PubSub.subscribe(pubsub),
+            ),
+            subscribeDetails: Effect.flatMap(
+              PubSub.unbounded<PreviewManager.PreviewInternalEvent>(),
+              (pubsub) => PubSub.subscribe(pubsub),
             ),
           }),
           Layer.mock(PortScanner.PortDiscovery)({
