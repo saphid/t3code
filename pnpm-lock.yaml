@@ -1039,9 +1039,15 @@ importers:
       '@types/react':
         specifier: ^19.2.14
         version: 19.2.16
+      '@types/react-test-renderer':
+        specifier: 19.1.0
+        version: 19.1.0
       react:
         specifier: ^19.0.0
         version: 19.2.6
+      react-test-renderer:
+        specifier: 19.2.6
+        version: 19.2.6(react@19.2.6)
       typescript:
         specifier: 'catalog:'
         version: 7.0.2

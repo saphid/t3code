@@ -11,6 +11,7 @@ import {
   describeSaveState,
   describeSearch,
   describeSnapshot,
+  editorSavePending,
   fileOpenFailed,
   filterEntries,
   isMarkdownPath,
@@ -31,6 +32,7 @@ import {
   presentationPath,
   previewKind,
   selectMediaLease,
+  shouldHandleMutation,
   sortTreeEntries,
   toggleExpanded,
   visibleRows,
@@ -564,5 +566,38 @@ NodeTest.describe("isMarkdownPath (F1 #22)", () => {
       NodeAssert.equal(isMarkdownPath(yes), true, yes);
     for (const no of ["x.txt", "md", "x.md.bak", "x.markdown"])
       NodeAssert.equal(isMarkdownPath(no), false, no);
+  });
+});
+NodeTest.describe("editorSavePending", () => {
+  NodeTest.it("latches dirty, saving, conflict and error — the states with local work", () => {
+    for (const kind of ["dirty", "saving", "conflict", "error"])
+      NodeAssert.equal(editorSavePending(kind), true, kind);
+    for (const kind of ["clean", "saved"]) NodeAssert.equal(editorSavePending(kind), false, kind);
+  });
+});
+
+NodeTest.describe("shouldHandleMutation", () => {
+  NodeTest.it("fires once per mutationSeq bump", () => {
+    NodeAssert.equal(shouldHandleMutation({ enabled: true, mutationSeq: 3, handledSeq: 2 }), true);
+    NodeAssert.equal(shouldHandleMutation({ enabled: true, mutationSeq: 3, handledSeq: 3 }), false);
+  });
+  NodeTest.it("keeps a bump pending while the save latch holds, firing after it opens", () => {
+    const bumped = { enabled: false, mutationSeq: 4, handledSeq: 3 };
+    NodeAssert.equal(shouldHandleMutation(bumped), false);
+    // The latch released: the same seq is still unhandled and now fires.
+    NodeAssert.equal(shouldHandleMutation({ ...bumped, enabled: true }), true);
+  });
+  NodeTest.it("fires on the first observed nonzero seq — no baseline suppression", () => {
+    // A mutation folded before this view subscribed still counts: the first
+    // seq may post-date the initial tree/file reads, so it must refresh once.
+    NodeAssert.equal(
+      shouldHandleMutation({ enabled: true, mutationSeq: 3, handledSeq: null }),
+      true,
+    );
+    // seq 0 is the empty fold — nothing mutated, nothing to re-read.
+    NodeAssert.equal(
+      shouldHandleMutation({ enabled: true, mutationSeq: 0, handledSeq: null }),
+      false,
+    );
   });
 });

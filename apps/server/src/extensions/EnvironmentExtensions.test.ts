@@ -27,6 +27,8 @@ import {
   ProjectionThread,
   ProjectionThreadRepository,
 } from "../persistence/Services/ProjectionThreads.ts";
+import { ProjectionThreadActivityRepository } from "../persistence/Services/ProjectionThreadActivities.ts";
+import { ProjectionTurnRepository } from "../persistence/Services/ProjectionTurns.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as ProjectFaviconResolver from "../project/ProjectFaviconResolver.ts";
@@ -273,6 +275,13 @@ function fixture() {
       writeFile: () => Effect.die("unused"),
     }),
     WorkspacePaths.layer,
+    Layer.mock(OrchestrationEngineService)({}),
+    Layer.mock(ProjectionThreadActivityRepository)({
+      listByThreadId: () => Effect.succeed([]),
+    }),
+    Layer.mock(ProjectionTurnRepository)({
+      listByThreadId: () => Effect.succeed([]),
+    }),
     Layer.mock(VcsStatusBroadcaster)({}),
     Layer.mock(GitWorkflowService)({}),
     Layer.mock(GitVcsDriver)({}),

@@ -1,5 +1,6 @@
 import { makeBrowserLocalServersApiProvider } from "./browserLocalServersApi.ts";
 import { makeOrchestrationApiProviders } from "./orchestration/v1.ts";
+import { makeWorkspaceChangesApiProvider } from "./workspaceChangesApi.ts";
 import { makeWorkspaceSearchApiProvider } from "./workspaceSearchApi.ts";
 import { makeWorkspaceTreeApiProvider } from "./workspaceTreeApi.ts";
 import { ExtensionCatalogueChanges } from "./catalogueChanges.ts";
@@ -80,6 +81,7 @@ export const make = Effect.fn("EnvironmentExtensions.make")(function* (
   const workspaceApi = yield* makeWorkspaceApiProvider();
   const workspaceTreeApi = yield* makeWorkspaceTreeApiProvider();
   const workspaceSearchApi = yield* makeWorkspaceSearchApiProvider();
+  const workspaceChangesApi = yield* makeWorkspaceChangesApiProvider();
   const terminalApi = yield* makeTerminalApiProvider();
   const terminalOutputApi = yield* makeTerminalOutputApiProvider();
   const terminalOutputEventsApi = yield* makeTerminalOutputEventsApiProvider();
@@ -155,6 +157,7 @@ export const make = Effect.fn("EnvironmentExtensions.make")(function* (
             workspaceApi,
             workspaceTreeApi,
             workspaceSearchApi,
+            workspaceChangesApi,
             textEditsApi,
             terminalApi,
             terminalOutputApi,
