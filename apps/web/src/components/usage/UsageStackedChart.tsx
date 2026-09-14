@@ -538,9 +538,9 @@ export function UsageStackedChart({
           {selection ? (
             <rect
               x={Math.min(selection.start, selection.end)}
-              y={0}
+              y={TOP}
               width={Math.abs(selection.end - selection.start)}
-              height={HEIGHT}
+              height={plotHeight}
               className="fill-primary/20 stroke-primary"
               strokeWidth={1}
               vectorEffect="non-scaling-stroke"

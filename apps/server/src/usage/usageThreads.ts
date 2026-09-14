@@ -10,6 +10,7 @@
  * @module usageThreads
  */
 import type {
+  UsageCostComponents,
   ProjectId,
   ThreadId,
   UsageAgentRow,
@@ -19,6 +20,11 @@ import type {
   UsageThreadRow,
   UsageTokenTotals,
 } from "@t3tools/contracts";
+import {
+  addUsageCostComponents,
+  ZERO_USAGE_COST_COMPONENTS,
+} from "@t3tools/shared/usageCostComponents";
+
 import { UsageDay } from "@t3tools/contracts";
 
 import { makeDayFormatter, type ProjectAttribution } from "./usageAggregation.ts";
@@ -45,6 +51,7 @@ interface MutableAgentSlice {
   totals: UsageTokenTotals;
   costUsd: number;
   cacheWriteUsd: number;
+  componentCosts: UsageCostComponents;
   cacheWriteComplete: boolean;
 }
 
@@ -59,6 +66,7 @@ export interface SessionUsageGroup {
   readonly totals: UsageTokenTotals;
   readonly costUsd: number;
   readonly cacheWriteUsd: number;
+  readonly componentCosts?: UsageCostComponents;
   readonly cacheWriteComplete: boolean;
   readonly daily: ReadonlyMap<string, MutableComponentCosts>;
   readonly agents: ReadonlyMap<string, MutableAgentSlice>;
@@ -75,6 +83,7 @@ interface MutableSessionGroup {
   totals: UsageTokenTotals;
   costUsd: number;
   cacheWriteUsd: number;
+  componentCosts: UsageCostComponents;
   cacheWriteComplete: boolean;
   daily: Map<string, MutableComponentCosts>;
   agents: Map<string, MutableAgentSlice>;
@@ -180,6 +189,7 @@ export class ThreadUsageAccumulator {
         totals: EMPTY_TOTALS,
         costUsd: 0,
         cacheWriteUsd: 0,
+        componentCosts: ZERO_USAGE_COST_COMPONENTS,
         cacheWriteComplete: true,
         daily: new Map(),
         agents: new Map(),
@@ -199,6 +209,22 @@ export class ThreadUsageAccumulator {
       priced.costSource === "modelPriced"
         ? cacheWriteUsd(this.#options.rates, record.model, record.totals)
         : 0;
+    const pricedComponents = usageComponentCosts(this.#options.rates, record.model, record.totals);
+    const componentCosts = {
+      inputUsd:
+        priced.costSource === "modelPriced" || record.totals.uncachedInputTokens === 0
+          ? pricedComponents.inputUsd
+          : null,
+      outputUsd:
+        priced.costSource === "modelPriced" || record.totals.outputTokens === 0
+          ? pricedComponents.outputUsd
+          : null,
+      cacheReadUsd:
+        priced.costSource === "modelPriced" || record.totals.cachedInputTokens === 0
+          ? pricedComponents.cacheReadUsd
+          : null,
+    };
+    group.componentCosts = addUsageCostComponents(group.componentCosts, componentCosts);
     group.totals = addTotals(group.totals, record.totals);
     group.costUsd += priced.costUsd;
     group.cacheWriteUsd += writeUsd;
@@ -223,12 +249,14 @@ export class ThreadUsageAccumulator {
           totals: EMPTY_TOTALS,
           costUsd: 0,
           cacheWriteUsd: 0,
+          componentCosts: ZERO_USAGE_COST_COMPONENTS,
           cacheWriteComplete: true,
         };
         group.agents.set(context.agentId, agent);
       }
       agent.totals = addTotals(agent.totals, record.totals);
       agent.costUsd += priced.costUsd;
+      agent.componentCosts = addUsageCostComponents(agent.componentCosts, componentCosts);
       agent.cacheWriteUsd += writeUsd;
       agent.cacheWriteComplete &&= cacheWriteComplete;
     }
@@ -252,6 +280,7 @@ export class ThreadUsageAccumulator {
       project: group.project,
       totals: group.totals,
       costUsd: group.costUsd,
+      componentCosts: group.componentCosts,
       cacheWriteUsd: group.cacheWriteUsd,
       cacheWriteComplete: group.cacheWriteComplete,
       daily: group.daily,
@@ -296,6 +325,7 @@ interface MutableThreadRow {
   costUsd: number;
   sessionKeys: Set<string>;
   cacheWriteUsd: number;
+  componentCosts: UsageCostComponents;
   cacheWriteComplete: boolean;
   groupedRows: number;
   daily: Map<string, MutableComponentCosts>;
@@ -367,6 +397,7 @@ function toAgentRow([agentId, slice]: readonly [string, MutableAgentSlice]): Usa
     agentId,
     totals: slice.totals,
     costUsd: slice.costUsd,
+    componentCosts: slice.componentCosts,
     cacheWriteUsd: slice.cacheWriteComplete ? slice.cacheWriteUsd : null,
   };
 }
@@ -389,6 +420,7 @@ function boundedAgentRows(
     (combined, [, slice]) => ({
       totals: addTotals(combined.totals, slice.totals),
       costUsd: combined.costUsd + slice.costUsd,
+      componentCosts: addUsageCostComponents(combined.componentCosts, slice.componentCosts),
       cacheWriteUsd: combined.cacheWriteUsd + slice.cacheWriteUsd,
       cacheWriteComplete: combined.cacheWriteComplete && slice.cacheWriteComplete,
     }),
@@ -396,6 +428,7 @@ function boundedAgentRows(
       totals: EMPTY_TOTALS,
       costUsd: 0,
       cacheWriteUsd: 0,
+      componentCosts: ZERO_USAGE_COST_COMPONENTS,
       cacheWriteComplete: true,
     },
   );
@@ -443,6 +476,7 @@ export function foldThreadRows(
         costUsd: 0,
         sessionKeys: new Set(),
         cacheWriteUsd: 0,
+        componentCosts: ZERO_USAGE_COST_COMPONENTS,
         cacheWriteComplete: true,
         groupedRows: 0,
         daily: new Map(),
@@ -454,6 +488,7 @@ export function foldThreadRows(
 
     row.totals = addTotals(row.totals, group.totals);
     row.costUsd += group.costUsd;
+    row.componentCosts = addUsageCostComponents(row.componentCosts, group.componentCosts);
     row.sessionKeys.add(group.sessionKey);
     row.cacheWriteUsd += group.cacheWriteUsd;
     row.cacheWriteComplete &&= group.cacheWriteComplete;
@@ -465,12 +500,14 @@ export function foldThreadRows(
           totals: EMPTY_TOTALS,
           costUsd: 0,
           cacheWriteUsd: 0,
+          componentCosts: ZERO_USAGE_COST_COMPONENTS,
           cacheWriteComplete: true,
         };
         row.agents.set(agentId, agent);
       }
       agent.totals = addTotals(agent.totals, slice.totals);
       agent.costUsd += slice.costUsd;
+      agent.componentCosts = addUsageCostComponents(agent.componentCosts, slice.componentCosts);
       agent.cacheWriteUsd += slice.cacheWriteUsd;
       agent.cacheWriteComplete &&= slice.cacheWriteComplete;
     }
@@ -525,6 +562,7 @@ export function foldThreadRows(
         costUsd: 0,
         sessionKeys: new Set(),
         cacheWriteUsd: 0,
+        componentCosts: ZERO_USAGE_COST_COMPONENTS,
         cacheWriteComplete: true,
         groupedRows: 0,
         daily: new Map(),
@@ -536,6 +574,10 @@ export function foldThreadRows(
     remainder.groupedRows += 1;
     remainder.totals = addTotals(remainder.totals, omittedRow.totals);
     remainder.costUsd += omittedRow.costUsd;
+    remainder.componentCosts = addUsageCostComponents(
+      remainder.componentCosts,
+      omittedRow.componentCosts,
+    );
     for (const sessionKey of omittedRow.sessionKeys) remainder.sessionKeys.add(sessionKey);
     remainder.cacheWriteUsd += omittedRow.cacheWriteUsd;
     remainder.cacheWriteComplete &&= omittedRow.cacheWriteComplete;
@@ -547,12 +589,14 @@ export function foldThreadRows(
           totals: EMPTY_TOTALS,
           costUsd: 0,
           cacheWriteUsd: 0,
+          componentCosts: ZERO_USAGE_COST_COMPONENTS,
           cacheWriteComplete: true,
         };
         remainder.agents.set(agentId, agent);
       }
       agent.totals = addTotals(agent.totals, slice.totals);
       agent.costUsd += slice.costUsd;
+      agent.componentCosts = addUsageCostComponents(agent.componentCosts, slice.componentCosts);
       agent.cacheWriteUsd += slice.cacheWriteUsd;
       agent.cacheWriteComplete &&= slice.cacheWriteComplete;
     }
@@ -582,6 +626,7 @@ export function foldThreadRows(
       ...(row.project === "" ? {} : { project: row.project }),
       totals: row.totals,
       costUsd: row.costUsd,
+      componentCosts: row.componentCosts,
       cacheWriteUsd: row.cacheWriteComplete ? row.cacheWriteUsd : null,
       sessions: row.sessionKeys.size,
       ...(row.groupedRows === 0 ? {} : { groupedRows: row.groupedRows }),

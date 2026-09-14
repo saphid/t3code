@@ -15,6 +15,7 @@ const row = (key: string, costUsd: number): BreakdownTableRow => ({
   outputTokens: 30,
   cacheReadTokens: 40,
   sessions: null,
+  componentCosts: { inputUsd: 1.23, outputUsd: 2.34, cacheReadUsd: 3.45 },
 });
 
 describe("UsageBreakdownTable", () => {
@@ -32,6 +33,15 @@ describe("UsageBreakdownTable", () => {
     onActiveKeyChange: vi.fn(),
     onToggleFavorite: vi.fn(),
   };
+  it("renders component cells and footer in the selected units", () => {
+    const cost = renderToStaticMarkup(<UsageBreakdownTable {...props} />);
+    const tokens = renderToStaticMarkup(<UsageBreakdownTable {...props} metric="tokens" />);
+    expect(cost).toContain("$1.23");
+    expect(cost).toContain("$2.46");
+    expect(tokens).not.toContain("$1.23");
+    expect(tokens).toContain(">20<");
+    expect(tokens).toContain(">40<");
+  });
   it("keeps favorites above cost-sorted rows without loading collapsed threads", () => {
     const renderThreads = vi.fn();
     const markup = renderToStaticMarkup(

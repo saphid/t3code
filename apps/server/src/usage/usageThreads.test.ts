@@ -61,6 +61,33 @@ const NO_ATTRIBUTION: ThreadAttribution = {
 };
 
 describe("ThreadUsageAccumulator", () => {
+  it("preserves component prices through threads and bounded subagent remainders", () => {
+    const context = { sessionKey: "claude:session-a", agentId: "one" };
+    const groups = accumulate([
+      [record(), context],
+      [record(), { ...context, agentId: "two" }],
+    ]);
+    const result = foldThreadRows(groups, NO_ATTRIBUTION, { cap: 1 });
+    const expected = { inputUsd: 0.002, outputUsd: 0.005, cacheReadUsd: 0.002 };
+    expect(result.rows[0]?.componentCosts).toEqual(expected);
+    expect(result.rows[0]?.agents[0]?.componentCosts).toEqual(expected);
+    const remainder = foldThreadRows(
+      accumulate([
+        [record(), context],
+        [
+          record({ sessionId: "session-b", reportedCostUsd: 1 }),
+          { sessionKey: "claude:session-b", agentId: null },
+        ],
+      ]),
+      NO_ATTRIBUTION,
+      { cap: 1 },
+    );
+    expect(remainder.rows[0]?.componentCosts).toEqual({
+      inputUsd: null,
+      outputUsd: null,
+      cacheReadUsd: null,
+    });
+  });
   it("filters model switches and subagents before calculating thread totals and daily costs", () => {
     const accumulator = new ThreadUsageAccumulator({
       timeZone: "UTC",

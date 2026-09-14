@@ -45,6 +45,35 @@ describe("toggleBreakdownSort", () => {
 });
 
 describe("sortBreakdownRows", () => {
+  it.each(["input", "output", "cacheReads", "cacheWrites"] as const)(
+    "sorts %s in the selected units",
+    (column) => {
+      const rows = [
+        row("More tokens", {
+          inputTokens: 100,
+          outputTokens: 100,
+          cacheReadTokens: 100,
+          cacheWriteTokens: 100,
+          cacheWriteUsd: 1,
+          componentCosts: { inputUsd: 1, outputUsd: 1, cacheReadUsd: 1 },
+        }),
+        row("More dollars", {
+          inputTokens: 10,
+          outputTokens: 10,
+          cacheReadTokens: 10,
+          cacheWriteTokens: 10,
+          cacheWriteUsd: 9,
+          componentCosts: { inputUsd: 9, outputUsd: 9, cacheReadUsd: 9 },
+        }),
+        row("Unavailable", { cacheWriteUsd: null }),
+      ];
+      const labels = (metric: "cost" | "tokens", direction: "asc" | "desc") =>
+        sortBreakdownRows(rows, { column, direction }, metric).map((row) => row.label);
+      expect(labels("cost", "desc")).toEqual(["More dollars", "More tokens", "Unavailable"]);
+      expect(labels("cost", "asc")).toEqual(["More tokens", "More dollars", "Unavailable"]);
+      expect(labels("tokens", "desc").slice(0, 2)).toEqual(["More tokens", "More dollars"]);
+    },
+  );
   const rows = [
     row("Orbit", { costUsd: 5, totalTokens: 50, cacheWriteTokens: 10, cacheWriteUsd: null }),
     row("atlas", { costUsd: 12, totalTokens: 20, cacheWriteTokens: 4, cacheWriteUsd: 0.4 }),

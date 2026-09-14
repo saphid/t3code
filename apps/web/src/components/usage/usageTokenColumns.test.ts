@@ -19,11 +19,23 @@ const cell: UsageTimelineCell = {
   },
 };
 describe("usageTokenColumns", () => {
+  it("adds actual component prices across models and preserves partial availability", () => {
+    const first = { ...cell, componentCosts: { inputUsd: 1, outputUsd: 2, cacheReadUsd: 3 } };
+    const second = {
+      ...cell,
+      model: "other",
+      componentCosts: { inputUsd: 4, outputUsd: null, cacheReadUsd: 6 },
+    };
+    expect(
+      usageTokenColumns([first, second], (entry) => entry.provider).get("codex")?.componentCosts,
+    ).toEqual({ inputUsd: 5, outputUsd: null, cacheReadUsd: 9 });
+  });
   it("keeps fresh input, cached reads, writes, and reasoning disjoint", () => {
     expect(usageTokenColumns([cell, cell], (entry) => entry.provider).get("codex")).toEqual({
       inputTokens: 40,
       outputTokens: 60,
       cacheReadTokens: 80,
+      componentCosts: { inputUsd: null, outputUsd: null, cacheReadUsd: null },
     });
   });
   it("does not show zero when a source lacks component counts", () => {
@@ -32,6 +44,7 @@ describe("usageTokenColumns", () => {
       inputTokens: null,
       outputTokens: null,
       cacheReadTokens: null,
+      componentCosts: { inputUsd: null, outputUsd: null, cacheReadUsd: null },
     });
   });
 });

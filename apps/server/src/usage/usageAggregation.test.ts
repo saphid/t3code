@@ -64,6 +64,29 @@ function aggregate(
 }
 
 describe("UsageAggregator", () => {
+  it("exposes separate model-priced components without splitting reported totals", () => {
+    expect(aggregate([record()]).buckets[0]?.componentCosts).toEqual({
+      inputUsd: 0.001,
+      outputUsd: 0.0025,
+      cacheReadUsd: 0.001,
+    });
+    expect(
+      aggregate([record(), record({ reportedCostUsd: 5 })]).buckets[0]?.componentCosts,
+    ).toEqual({
+      inputUsd: null,
+      outputUsd: null,
+      cacheReadUsd: null,
+    });
+    expect(
+      aggregate([
+        record({ model: "unknown", totals: { ...record().totals, uncachedInputTokens: 0 } }),
+      ]).buckets[0]?.componentCosts,
+    ).toEqual({
+      inputUsd: 0,
+      outputUsd: null,
+      cacheReadUsd: null,
+    });
+  });
   it("requires exact bounds for hourly aggregation", () => {
     expect(
       () =>
@@ -287,6 +310,11 @@ describe("UsageAggregator", () => {
       sessions: ["session-a"],
     });
     expect(aggregator.finish().buckets[0]?.cacheSavingsUsd).toBeCloseTo(0.009, 9);
+    expect(aggregator.finish().buckets[0]?.componentCosts).toEqual({
+      inputUsd: null,
+      outputUsd: null,
+      cacheReadUsd: null,
+    });
   });
 
   it("counts only legacy null-cost rows in a mixed provenance cell", () => {
@@ -345,8 +373,34 @@ describe("UsageAggregator", () => {
     expect(bucket.costSource).toBe("unpriced");
     expect(bucket.records).toBe(2);
     expect(bucket.unpricedRecords).toBe(2);
+    expect(bucket.componentCosts).toEqual({ inputUsd: null, outputUsd: null, cacheReadUsd: null });
+    expect(bucket.cacheWriteUsd).toBeUndefined();
   });
 
+  it("prices cached aggregates the same as transcript records", () => {
+    const aggregator = new UsageAggregator({
+      timeZone: "UTC",
+      sinceDay: "2026-08-01",
+      untilDay: "2026-08-31",
+      rates,
+    });
+    aggregator.addAggregate({
+      bucketStartMs: Date.parse("2026-08-07T04:00:00Z"),
+      provider: "claude",
+      model: "claude-fable-5",
+      totals: record().totals,
+      pricedTotals: record().totals,
+      savingsTotals: record().totals,
+      reportedCostUsd: 0,
+      records: 1,
+      unpricedRecords: 0,
+      providerReportedRecords: 0,
+      sessions: ["session-a"],
+    });
+    expect(aggregator.finish().buckets[0]?.componentCosts).toEqual(
+      aggregate([record()]).buckets[0]?.componentCosts,
+    );
+  });
   it("drops records outside the window", () => {
     const result = aggregate([record({ timestampMs: Date.parse("2026-07-01T12:00:00Z") })]);
 

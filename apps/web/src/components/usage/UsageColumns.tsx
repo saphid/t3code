@@ -1,3 +1,4 @@
+import type { UsageStackMetric } from "./UsageStackedChart";
 import { Columns3Icon } from "lucide-react";
 import { formatCount, formatPercent, formatTokens, formatUsd } from "@t3tools/shared/usageFormat";
 
@@ -58,12 +59,22 @@ export function UsageMetricCells({
   columns,
   color,
   muted = false,
+  metric,
 }: {
   readonly row: Omit<SortableBreakdownRow, "label">;
   readonly columns: readonly UsageMetricColumn[];
   readonly color?: string;
   readonly muted?: boolean;
+  readonly metric: UsageStackMetric;
 }) {
+  const component = (tokens: number | null | undefined, cost: number | null | undefined) => {
+    const value = metric === "cost" ? cost : tokens;
+    return value == null
+      ? "Unavailable"
+      : metric === "cost"
+        ? formatUsd(value)
+        : formatTokens(value);
+  };
   return columns.map((column) => {
     let value;
     switch (column) {
@@ -74,23 +85,16 @@ export function UsageMetricCells({
         value = formatTokens(row.totalTokens);
         break;
       case "input":
-        value = row.inputTokens == null ? "Unavailable" : formatTokens(row.inputTokens);
+        value = component(row.inputTokens, row.componentCosts?.inputUsd);
         break;
       case "output":
-        value = row.outputTokens == null ? "Unavailable" : formatTokens(row.outputTokens);
+        value = component(row.outputTokens, row.componentCosts?.outputUsd);
         break;
       case "cacheReads":
-        value = row.cacheReadTokens == null ? "Unavailable" : formatTokens(row.cacheReadTokens);
+        value = component(row.cacheReadTokens, row.componentCosts?.cacheReadUsd);
         break;
       case "cacheWrites":
-        value = (
-          <span>
-            {formatTokens(row.cacheWriteTokens)}
-            <span className="block text-[10px] text-muted-foreground">
-              {row.cacheWriteUsd === null ? "Cost unavailable" : formatUsd(row.cacheWriteUsd)}
-            </span>
-          </span>
-        );
+        value = component(row.cacheWriteTokens, row.cacheWriteUsd);
         break;
       case "sessions":
         value = row.sessions === null ? "Unavailable" : formatCount(row.sessions);

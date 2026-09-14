@@ -1,3 +1,4 @@
+import type { UsageStackMetric } from "./UsageStackedChart";
 import type {
   UsageProviderKind,
   UsageThreadBreakdownInput,
@@ -166,6 +167,7 @@ export function UsageThreadTable({
 }
 
 export function ThreadRowGroup({
+  metric = "tokens",
   row,
   open,
   tokens,
@@ -175,6 +177,7 @@ export function ThreadRowGroup({
   onToggle,
   columns,
 }: {
+  readonly metric?: UsageStackMetric;
   readonly row: UsageThreadRowWithEnvironment;
   readonly open: boolean;
   readonly tokens: number;
@@ -246,9 +249,11 @@ export function ThreadRowGroup({
         </td>
         {columns ? (
           <UsageMetricCells
+            metric={metric}
             columns={columns}
             row={{
               costUsd: row.costUsd,
+              ...(row.componentCosts ? { componentCosts: row.componentCosts } : {}),
               totalTokens: tokens,
               share,
               cacheWriteTokens: row.totals.cacheCreationTokens,

@@ -83,6 +83,30 @@ function environment(id: string, usageSummary: UsageSummary): EnvironmentUsage {
 }
 
 describe("mergeUsage", () => {
+  it("preserves optional component costs on timeline cells", () => {
+    const costs = { inputUsd: 1, outputUsd: null, cacheReadUsd: 2 };
+    const source = [{ provider: "claude" as const, hostId: "mac", homePath: "/a/.claude" }];
+    const merged = mergeUsage(
+      [
+        environment(
+          "env-a",
+          summary(
+            [
+              bucket({ hourStart: "2026-08-07T00:00:00Z", componentCosts: costs }),
+              bucket({ hourStart: "2026-08-07T00:00:00Z", model: "older" }),
+            ],
+            source,
+          ),
+        ),
+      ],
+      USAGE_CONTRACT_VERSION,
+    );
+    expect(merged.timeline).toHaveLength(2);
+    expect(merged.timeline.find((cell) => cell.model === "claude-fable-5")?.componentCosts).toEqual(
+      costs,
+    );
+    expect(merged.timeline.find((cell) => cell.model === "older")?.componentCosts).toBeUndefined();
+  });
   it("sums environments that read different transcript directories", () => {
     const merged = mergeUsage(
       [

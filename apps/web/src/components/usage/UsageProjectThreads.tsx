@@ -1,4 +1,8 @@
 import {
+  addUsageCostComponents,
+  ZERO_USAGE_COST_COMPONENTS,
+} from "@t3tools/shared/usageCostComponents";
+import {
   USAGE_THREAD_MODEL_FILTER_SINCE,
   type UsageThreadBreakdownInput,
   type UsageProviderKind,
@@ -87,6 +91,7 @@ export function UsageProjectThreads({
           row,
           label: row.title,
           costUsd: row.costUsd,
+          ...(row.componentCosts ? { componentCosts: row.componentCosts } : {}),
           totalTokens,
           share: total === 0 ? 0 : (metric === "cost" ? row.costUsd : totalTokens) / total,
           cacheWriteTokens: row.totals.cacheCreationTokens,
@@ -98,6 +103,7 @@ export function UsageProjectThreads({
         };
       }),
       sort,
+      metric,
     );
   }, [rows, metric, sort]);
   const providers = [...new Set(models.map((entry) => entry.provider))];
@@ -107,6 +113,7 @@ export function UsageProjectThreads({
   const filteredTotal = sorted.reduce(
     (total, row) => ({
       costUsd: total.costUsd + row.costUsd,
+      componentCosts: addUsageCostComponents(total.componentCosts, row.componentCosts),
       totalTokens: total.totalTokens + row.totalTokens,
       inputTokens: total.inputTokens + row.inputTokens,
       outputTokens: total.outputTokens + row.outputTokens,
@@ -121,6 +128,7 @@ export function UsageProjectThreads({
     }),
     {
       costUsd: 0,
+      componentCosts: ZERO_USAGE_COST_COMPONENTS,
       totalTokens: 0,
       inputTokens: 0,
       outputTokens: 0,
@@ -223,6 +231,7 @@ export function UsageProjectThreads({
             const key = `${row.environmentId}\u0000${row.key}`;
             return (
               <ThreadRowGroup
+                metric={metric}
                 key={key}
                 row={row}
                 tokens={totalTokens}
@@ -255,7 +264,7 @@ export function UsageProjectThreads({
             <tr className="border-b border-border text-xs text-muted-foreground">
               <td />
               <td className="py-2">Filtered threads</td>
-              <UsageMetricCells row={filteredTotal} columns={columns} />
+              <UsageMetricCells metric={metric} row={filteredTotal} columns={columns} />
             </tr>
           ) : null}
           {truncatedRows > 0 || unavailable > 0 ? (

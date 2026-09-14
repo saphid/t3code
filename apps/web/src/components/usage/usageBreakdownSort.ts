@@ -1,3 +1,4 @@
+import type { UsageCostComponents } from "@t3tools/contracts";
 import type { BreakdownSort } from "./usagePagePreferences";
 import type { UsageStackMetric } from "./UsageStackedChart";
 
@@ -5,6 +6,7 @@ export type BreakdownColumn = BreakdownSort["column"];
 
 /** The fields every breakdown table (projects, providers, models, threads) can sort on. */
 export interface SortableBreakdownRow {
+  readonly componentCosts?: UsageCostComponents;
   readonly label: string;
   readonly costUsd: number;
   readonly totalTokens: number;
@@ -41,7 +43,11 @@ export function toggleBreakdownSort(
   return { column, direction: column === "name" ? "asc" : "desc" };
 }
 
-function sortValue(row: SortableBreakdownRow, column: BreakdownColumn): number | string | null {
+function sortValue(
+  row: SortableBreakdownRow,
+  column: BreakdownColumn,
+  metric: UsageStackMetric,
+): number | string | null {
   switch (column) {
     case "name":
       return row.label;
@@ -52,15 +58,15 @@ function sortValue(row: SortableBreakdownRow, column: BreakdownColumn): number |
     case "share":
       return row.share;
     case "cacheWrites":
-      return row.cacheWriteTokens;
+      return metric === "cost" ? row.cacheWriteUsd : row.cacheWriteTokens;
     case "sessions":
       return row.sessions;
     case "input":
-      return row.inputTokens ?? null;
+      return (metric === "cost" ? row.componentCosts?.inputUsd : row.inputTokens) ?? null;
     case "output":
-      return row.outputTokens ?? null;
+      return (metric === "cost" ? row.componentCosts?.outputUsd : row.outputTokens) ?? null;
     case "cacheReads":
-      return row.cacheReadTokens ?? null;
+      return (metric === "cost" ? row.componentCosts?.cacheReadUsd : row.cacheReadTokens) ?? null;
   }
 }
 
@@ -72,13 +78,14 @@ function sortValue(row: SortableBreakdownRow, column: BreakdownColumn): number |
 export function sortBreakdownRows<T extends SortableBreakdownRow>(
   rows: readonly T[],
   sort: BreakdownSort,
+  metric: UsageStackMetric = "tokens",
 ): readonly T[] {
   const sign = sort.direction === "asc" ? 1 : -1;
   return rows
     .map((row, index) => ({ row, index }))
     .sort((left, right) => {
-      const a = sortValue(left.row, sort.column);
-      const b = sortValue(right.row, sort.column);
+      const a = sortValue(left.row, sort.column, metric);
+      const b = sortValue(right.row, sort.column, metric);
       if (a === null && b === null) return left.index - right.index;
       if (a === null) return 1;
       if (b === null) return -1;

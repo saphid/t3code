@@ -253,13 +253,21 @@ export function cacheWriteUsd(table: RateTable, model: string, totals: UsageToke
 }
 
 export interface UsageComponentCosts {
+  readonly inputUsd: number;
+  readonly outputUsd: number;
   readonly cacheWriteUsd: number;
   readonly cacheReadUsd: number;
   /** Fresh input plus output. */
   readonly freshUsd: number;
 }
 
-const ZERO_COMPONENTS: UsageComponentCosts = { cacheWriteUsd: 0, cacheReadUsd: 0, freshUsd: 0 };
+const ZERO_COMPONENTS: UsageComponentCosts = {
+  inputUsd: 0,
+  outputUsd: 0,
+  cacheWriteUsd: 0,
+  cacheReadUsd: 0,
+  freshUsd: 0,
+};
 
 /**
  * Splits model-priced usage into cache writes, cache reads, and everything
@@ -274,6 +282,8 @@ export function usageComponentCosts(
   const rate = lookupRate(table, model);
   if (rate === null) return ZERO_COMPONENTS;
   return {
+    inputUsd: totals.uncachedInputTokens * rate.inputCostPerToken,
+    outputUsd: totals.outputTokens * rate.outputCostPerToken,
     cacheWriteUsd: cacheCreationCost(totals, rate),
     cacheReadUsd: totals.cachedInputTokens * rate.cacheReadCostPerToken,
     freshUsd:

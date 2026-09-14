@@ -84,6 +84,7 @@ export interface UsageTimelineCell {
   readonly totalTokens: number;
   /** Original bucket components, retained for client breakdown columns. */
   readonly totals?: UsageBucket["totals"];
+  readonly componentCosts?: UsageBucket["componentCosts"];
 }
 
 export interface CostQuality {
@@ -540,6 +541,7 @@ export function mergeUsage(
           costUsd: bucket.costUsd,
           totalTokens: tokens,
           totals: bucket.totals,
+          ...(bucket.componentCosts ? { componentCosts: bucket.componentCosts } : {}),
         });
       }
       // Unknown attribution stays in unfiltered totals but never claims to be

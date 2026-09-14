@@ -21,7 +21,7 @@ import { NonNegativeInt, ProjectId, ThreadId, TrimmedNonEmptyString } from "./ba
  * client renders partial coverage when an environment reports an older version
  * rather than failing the whole page.
  */
-export const USAGE_CONTRACT_VERSION = 14 as const;
+export const USAGE_CONTRACT_VERSION = 15 as const;
 
 /**
  * Oldest {@link UsageSummary} version a current client will still merge.
@@ -31,7 +31,8 @@ export const USAGE_CONTRACT_VERSION = 14 as const;
  * projects from unknown attribution, and v10 adds the separate thread-breakdown
  * request. v11 adds optional cache-write costs, and v12 adds optional
  * cache-write TTL counters. v13 adds half-hour timeline buckets. v14 supports
- * provider/model filtering in thread breakdown requests. v4/v5
+ * provider/model filtering in thread breakdown requests. v15 adds optional component costs.
+ * v4/v5
  * summaries remain decodable for mixed-version
  * clients, but summaries without coverage are not merged because the client
  * cannot treat them as bounded snapshots.
@@ -95,6 +96,14 @@ export const UsageTokenTotals = Schema.Struct({
 });
 export type UsageTokenTotals = typeof UsageTokenTotals.Type;
 
+/** A null component has tokens whose cost cannot be split accurately. */
+export const UsageCostComponents = Schema.Struct({
+  inputUsd: Schema.NullOr(Schema.Number),
+  outputUsd: Schema.NullOr(Schema.Number),
+  cacheReadUsd: Schema.NullOr(Schema.Number),
+});
+export type UsageCostComponents = typeof UsageCostComponents.Type;
+
 /**
  * One `(day, hourStart?, project, provider, model)` cell. `hourStart` is the
  * UTC start instant of a rolling bucket and is present for hourly and
@@ -127,6 +136,7 @@ export const UsageBucket = Schema.Struct({
   model: TrimmedNonEmptyString,
   totals: UsageTokenTotals,
   costUsd: Schema.Number,
+  componentCosts: Schema.optional(UsageCostComponents),
   /**
    * What the cached input would have cost at full input rates minus what it
    * actually cost. Requires the rate table, so it is computed alongside cost
@@ -289,6 +299,7 @@ export const UsageAgentRow = Schema.Struct({
   agentId: TrimmedNonEmptyString,
   totals: UsageTokenTotals,
   costUsd: Schema.Number,
+  componentCosts: Schema.optional(UsageCostComponents),
   /** `null` when cache-creation tokens lack a model-priced estimate. */
   cacheWriteUsd: Schema.NullOr(Schema.Number),
 });
@@ -327,6 +338,7 @@ export const UsageThreadRow = Schema.Struct({
   project: Schema.optional(TrimmedNonEmptyString),
   totals: UsageTokenTotals,
   costUsd: Schema.Number,
+  componentCosts: Schema.optional(UsageCostComponents),
   /** `null` when cache-creation tokens lack a model-priced estimate. */
   cacheWriteUsd: Schema.NullOr(Schema.Number),
   /** Distinct transcript sessions folded into this row. */

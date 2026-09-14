@@ -14,15 +14,26 @@
  * @module usageAggregation
  */
 import type {
+  UsageCostComponents,
   ProjectId,
   UsageBucket,
   UsageDay,
   UsageResolution,
   UsageTokenTotals,
 } from "@t3tools/contracts";
+import {
+  addUsageCostComponents,
+  ZERO_USAGE_COST_COMPONENTS,
+} from "@t3tools/shared/usageCostComponents";
 
 import { addTotals, EMPTY_TOTALS, type UsageRecord } from "./usageTranscripts.ts";
-import { cacheSavingsUsd, cacheWriteUsd, priceUsage, type RateTable } from "./usagePricing.ts";
+import {
+  cacheSavingsUsd,
+  cacheWriteUsd,
+  usageComponentCosts,
+  priceUsage,
+  type RateTable,
+} from "./usagePricing.ts";
 
 /**
  * Formats an instant as a `YYYY-MM-DD` day in `timeZone`.
@@ -116,6 +127,7 @@ interface MutableBucket {
   costUsd: number;
   cacheSavingsUsd: number;
   cacheWriteUsd: number;
+  componentCosts: UsageCostComponents;
   cacheWriteComplete: boolean;
   records: number;
   unpricedRecords: number;
@@ -258,6 +270,7 @@ export class UsageAggregator {
         costUsd: 0,
         cacheSavingsUsd: 0,
         cacheWriteUsd: 0,
+        componentCosts: ZERO_USAGE_COST_COMPONENTS,
         cacheWriteComplete: true,
         records: 0,
         unpricedRecords: 0,
@@ -274,6 +287,21 @@ export class UsageAggregator {
       record.reportedCostUsd,
     );
 
+    const components = usageComponentCosts(this.#options.rates, record.model, record.totals);
+    bucket.componentCosts = addUsageCostComponents(bucket.componentCosts, {
+      inputUsd:
+        priced.costSource === "modelPriced" || record.totals.uncachedInputTokens === 0
+          ? components.inputUsd
+          : null,
+      outputUsd:
+        priced.costSource === "modelPriced" || record.totals.outputTokens === 0
+          ? components.outputUsd
+          : null,
+      cacheReadUsd:
+        priced.costSource === "modelPriced" || record.totals.cachedInputTokens === 0
+          ? components.cacheReadUsd
+          : null,
+    });
     bucket.totals = addTotals(bucket.totals, record.totals);
     bucket.costUsd += priced.costUsd;
     bucket.cacheSavingsUsd += cacheSavingsUsd(this.#options.rates, record.model, record.totals);
@@ -333,6 +361,7 @@ export class UsageAggregator {
         costUsd: 0,
         cacheSavingsUsd: 0,
         cacheWriteUsd: 0,
+        componentCosts: ZERO_USAGE_COST_COMPONENTS,
         cacheWriteComplete: true,
         records: 0,
         unpricedRecords: 0,
@@ -364,6 +393,26 @@ export class UsageAggregator {
       aggregate.legacyPricing === true
         ? legacyUnpricedRecords
         : aggregate.unpricedRecords + unpricedByMissingRates;
+    const components = usageComponentCosts(
+      this.#options.rates,
+      aggregate.model,
+      aggregate.pricedTotals,
+    );
+    const component = (
+      tokens: "uncachedInputTokens" | "outputTokens" | "cachedInputTokens",
+      cost: number,
+    ) =>
+      aggregate.totals[tokens] === 0
+        ? 0
+        : priced.costSource === "modelPriced" &&
+            aggregate.pricedTotals[tokens] === aggregate.totals[tokens]
+          ? cost
+          : null;
+    bucket.componentCosts = addUsageCostComponents(bucket.componentCosts, {
+      inputUsd: component("uncachedInputTokens", components.inputUsd),
+      outputUsd: component("outputTokens", components.outputUsd),
+      cacheReadUsd: component("cachedInputTokens", components.cacheReadUsd),
+    });
     bucket.totals = addTotals(bucket.totals, aggregate.totals);
     bucket.costUsd += aggregate.reportedCostUsd + (legacyUnpriced ? 0 : priced.costUsd);
     bucket.cacheSavingsUsd += cacheSavingsUsd(
@@ -373,7 +422,8 @@ export class UsageAggregator {
     );
     if (
       aggregate.totals.cacheCreationTokens === 0 ||
-      aggregate.pricedTotals.cacheCreationTokens === aggregate.totals.cacheCreationTokens
+      (priced.costSource === "modelPriced" &&
+        aggregate.pricedTotals.cacheCreationTokens === aggregate.totals.cacheCreationTokens)
     ) {
       bucket.cacheWriteUsd += cacheWriteUsd(
         this.#options.rates,
@@ -412,6 +462,7 @@ export class UsageAggregator {
         model,
         totals: bucket.totals,
         costUsd: bucket.costUsd,
+        componentCosts: bucket.componentCosts,
         cacheSavingsUsd: bucket.cacheSavingsUsd,
         ...(bucket.cacheWriteComplete ? { cacheWriteUsd: bucket.cacheWriteUsd } : {}),
         costSource: resolveCostSource(bucket),

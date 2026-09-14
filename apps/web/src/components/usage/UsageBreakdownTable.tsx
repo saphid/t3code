@@ -1,3 +1,7 @@
+import {
+  addUsageCostComponents,
+  ZERO_USAGE_COST_COMPONENTS,
+} from "@t3tools/shared/usageCostComponents";
 import type { UsageProviderKind } from "@t3tools/contracts";
 import {
   ArrowDownIcon,
@@ -86,6 +90,7 @@ const NO_HIDDEN_COLUMNS: readonly UsageMetricColumn[] = [];
 export function UsageBreakdownTable({
   rows,
   nameLabel,
+  metric,
   sort,
   onSort,
   hidden,
@@ -119,13 +124,13 @@ export function UsageBreakdownTable({
 }) {
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set());
   const sorted = useMemo(() => {
-    const ordered = sortBreakdownRows(rows, sort);
+    const ordered = sortBreakdownRows(rows, sort, metric);
     const favorites = new Set(favoriteProjects);
     return [
       ...ordered.filter((row) => favorites.has(row.key)),
       ...ordered.filter((row) => !favorites.has(row.key)),
     ];
-  }, [rows, sort, favoriteProjects]);
+  }, [rows, sort, metric, favoriteProjects]);
   const columns = USAGE_COLUMNS.filter(
     ({ key }) => !hiddenColumns.includes(key) && (key !== "sessions" || showSessions),
   );
@@ -137,6 +142,10 @@ export function UsageBreakdownTable({
       ? null
       : shown.reduce((total, row) => total + (row[key] ?? 0), 0);
   const shownTotals = {
+    componentCosts: shown.reduce(
+      (total, row) => addUsageCostComponents(total, row.componentCosts),
+      ZERO_USAGE_COST_COMPONENTS,
+    ),
     costUsd: shown.reduce((total, row) => total + row.costUsd, 0),
     totalTokens: shown.reduce((total, row) => total + row.totalTokens, 0),
     share: shown.reduce((total, row) => total + row.share, 0),
@@ -154,7 +163,7 @@ export function UsageBreakdownTable({
       <table className="w-full text-sm" aria-label={ariaLabel}>
         <thead>
           <tr className="border-b border-border text-xs text-muted-foreground">
-            <th scope="col" className="w-8 py-2">
+            <th scope="col" className="w-8 py-2 text-left">
               <Checkbox
                 checked={hiddenCount === 0 && rows.length > 0}
                 indeterminate={hiddenCount > 0 && hiddenCount < rows.length}
@@ -280,6 +289,7 @@ export function UsageBreakdownTable({
                       </div>
                     </td>
                     <UsageMetricCells
+                      metric={metric}
                       row={row}
                       columns={columnKeys}
                       color={row.color}
@@ -301,7 +311,7 @@ export function UsageBreakdownTable({
                   ? `Shown, ${formatCount(shown.length)} of ${formatCount(rows.length)}`
                   : "Total"}
               </td>
-              <UsageMetricCells row={shownTotals} columns={columnKeys} />
+              <UsageMetricCells metric={metric} row={shownTotals} columns={columnKeys} />
             </tr>
           </tfoot>
         ) : null}

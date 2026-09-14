@@ -33,7 +33,8 @@ provider settings.
 
 The page opens on **7 days** of cost by project and remembers the period, metric, breakdown, grouping,
 and sort you last used. The **Cost** and **Tokens** switch changes the headline, chart, shares,
-and default row order. The table keeps both metrics available. Every preset retains half-hour source
+and default row order. Input, Output, Cache reads, and Cache writes show and sort by dollars in
+Cost mode and token counts in Tokens mode. The explicit Cost and Tokens total columns remain available. Every preset retains half-hour source
 buckets, including **24 hours**, **30 days**, and **90 days**. The chart groups those buckets
 automatically: hourly for a day, six-hourly for up to ten days, daily beyond that. Use **Group**
 above the chart to pin **30 minutes** through **1 day** instead; the hover cursor still advances in
@@ -106,9 +107,11 @@ the remaining projects. Click its star again to remove it from favorites.
 Use **Columns** to show or hide Cost, Share, Tokens, Input, Output, Cache reads, and Cache writes.
 The provider table also offers Sessions. Column choices and favorites are remembered on this client.
 The nested thread table uses the same columns, with its own sortable headers. **Input** counts
-uncached input; cache reads and cache writes are separate token counts. Output includes reasoning,
-so these four columns add up to Tokens without counting reasoning twice. Cache writes show the
-token count with its estimated cost beneath it. Narrow windows let the table scroll horizontally.
+uncached input; cache reads and cache writes are separate components. Output includes reasoning,
+so the four token counts add up to Tokens without counting reasoning twice. Their dollar values
+use each model's rates. Missing pricing or provider-reported totals that cannot be split show
+**Unavailable**, and sort after priced values in either direction. Narrow windows let the table
+scroll horizontally.
 
 The **Cache writes, estimated** total prices cache-creation tokens at each model's cache-write rate.
 It only applies to model-priced records that report cache-creation tokens. Rows without cache
