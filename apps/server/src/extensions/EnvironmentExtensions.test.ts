@@ -3,6 +3,7 @@ import { OrchestrationCommandReceiptRepository } from "../persistence/Services/O
 import { OrchestrationEngineService } from "../orchestration/Services/OrchestrationEngine.ts";
 import { ProjectionSnapshotQuery } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
 import { ProviderService } from "../provider/Services/ProviderService.ts";
+import { PortDiscovery } from "../preview/PortScanner.ts";
 import * as ExtensionCatalogueChanges from "./catalogueChanges.ts";
 import { expect, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -211,6 +212,7 @@ function fixture() {
     Layer.mock(ProjectionSnapshotQuery)({}),
     Layer.mock(ProviderService)({}),
     ExtensionCatalogueChanges.layer,
+    Layer.mock(PortDiscovery)({}),
     Layer.succeed(TerminalManager, {
       inspect: () => Effect.succeed(null),
       readOutput: () => Effect.succeed(null),

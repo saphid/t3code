@@ -32,7 +32,8 @@
     "examples/api-consumer",
     "examples/native-files-tree",
     "examples/editable-files",
-    "examples/persisted-state"
+    "examples/persisted-state",
+    "examples/browser-local-servers"
   ],
   "type": "module",
   "exports": {
