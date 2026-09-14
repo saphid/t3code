@@ -6,6 +6,10 @@ import {
   buildPreviewAnnotationPrompt,
   capturePreviewAnnotationScreenshot,
   extractTrailingPreviewAnnotation,
+  PREVIEW_ANNOTATION_COMMENT_MAX_CHARS,
+  PREVIEW_ANNOTATION_CONTEXT_ELEMENTS_MAX,
+  PREVIEW_ANNOTATION_PROMPT_MAX_BYTES,
+  PREVIEW_ANNOTATION_STYLE_CHANGES_MAX,
 } from "./previewAnnotation.ts";
 
 const annotation = {
@@ -107,6 +111,96 @@ NodeTest.describe("buildPreviewAnnotationPrompt", () => {
         "Page: Preview",
       ),
     );
+  });
+
+  NodeTest.it("clamps an oversized comment and keeps the delimiters", () => {
+    // Reviewer repro: a 1M-char comment must not produce a 1M-char prompt.
+    const result = buildPreviewAnnotationPrompt({
+      ...annotation,
+      comment: "x".repeat(1_000_000),
+    });
+    NodeAssert.ok(result.startsWith("<preview_annotation>\n"));
+    NodeAssert.ok(result.endsWith("\n</preview_annotation>"));
+    const commentLine = result.split("\n").find((line) => line.startsWith("Comment: "));
+    NodeAssert.ok(commentLine);
+    NodeAssert.ok(commentLine.length <= PREVIEW_ANNOTATION_COMMENT_MAX_CHARS + "Comment: ".length);
+    NodeAssert.ok(commentLine.endsWith("…"));
+    NodeAssert.ok(result.length < 10_000);
+  });
+
+  NodeTest.it("caps style changes and clamps each field", () => {
+    const styleChanges = Array.from(
+      { length: PREVIEW_ANNOTATION_STYLE_CHANGES_MAX + 10 },
+      (_, i) => ({
+        targetId: `t${i}`,
+        selector: ".card",
+        property: `prop-${i}-${"p".repeat(500)}`,
+        previousValue: "v".repeat(500),
+        value: "n".repeat(500),
+      }),
+    );
+    const result = buildPreviewAnnotationPrompt({ ...annotation, styleChanges });
+    const changeLines = result.split("\n").filter((line) => line.startsWith("- "));
+    NodeAssert.equal(changeLines.length, PREVIEW_ANNOTATION_STYLE_CHANGES_MAX);
+    NodeAssert.ok(changeLines.every((line) => line.length < 900));
+  });
+
+  NodeTest.it("bounds picked elements and clamps long selector/source fields", () => {
+    const huge = (element) => ({
+      id: `e-${element}`,
+      rect: { x: 0, y: 0, width: 1, height: 1 },
+      element: {
+        ...elementAnnotation.elements[0].element,
+        selector: `.x${"s".repeat(5000)}`,
+        componentName: `Comp${"n".repeat(5000)}`,
+        source: {
+          functionName: `fn${"f".repeat(5000)}`,
+          fileName: `src/${"d".repeat(5000)}.tsx`,
+          lineNumber: 1,
+          columnNumber: 1,
+        },
+      },
+    });
+    const elements = Array.from({ length: PREVIEW_ANNOTATION_CONTEXT_ELEMENTS_MAX + 8 }, (_, i) =>
+      huge(i),
+    );
+    const result = buildPreviewAnnotationPrompt({ ...elementAnnotation, elements });
+    NodeAssert.ok(
+      result.includes(`Targets: ${elements.length} selected elements`),
+      "the Targets line still reports the real count",
+    );
+    NodeAssert.ok(
+      result.match(/^- </gm).length <= PREVIEW_ANNOTATION_CONTEXT_ELEMENTS_MAX,
+      "context entries are capped",
+    );
+    NodeAssert.ok(!result.includes("s".repeat(2000)), "selector is clamped");
+    NodeAssert.ok(!result.includes("d".repeat(2000)), "source fileName is clamped");
+    NodeAssert.ok(!result.includes("f".repeat(2000)), "source functionName is clamped");
+  });
+
+  NodeTest.it("keeps the serialized prompt under the byte cap with delimiters intact", () => {
+    const encoder = new TextEncoder();
+    // 16 elements each carrying max-size html/styles — ~11 KB of context
+    // apiece — cannot all fit under the serialized cap; extras drop whole.
+    const fat = (i) => ({
+      id: `fat-${i}`,
+      rect: { x: 0, y: 0, width: 1, height: 1 },
+      element: {
+        ...elementAnnotation.elements[0].element,
+        htmlPreview: "界".repeat(4000),
+        styles: "界".repeat(4000),
+      },
+    });
+    const elements = Array.from({ length: PREVIEW_ANNOTATION_CONTEXT_ELEMENTS_MAX }, (_, i) =>
+      fat(i),
+    );
+    const result = buildPreviewAnnotationPrompt({ ...elementAnnotation, elements });
+    NodeAssert.ok(encoder.encode(result).length <= PREVIEW_ANNOTATION_PROMPT_MAX_BYTES);
+    NodeAssert.ok(result.startsWith("<preview_annotation>\n"));
+    NodeAssert.ok(result.endsWith("\n</preview_annotation>"));
+    if (result.includes("<element_context>")) {
+      NodeAssert.ok(result.includes("</element_context>"), "context block is never torn");
+    }
   });
 });
 

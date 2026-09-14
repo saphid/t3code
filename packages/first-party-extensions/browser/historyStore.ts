@@ -181,11 +181,17 @@ export function recentHistoryEntries(
 
 /**
  * session.save serializes through the SDK's bounded JSON envelope, which
- * localStorage-backed native history never had to fit. Drops the oldest
- * entries until `record` (with `history` attached) serializes under the
- * budget, so a worst-case 50 × 2048-char list can never make save throw.
+ * localStorage-backed native history never had to fit. The SDK measures
+ * the payload as UTF-8 bytes (`TextEncoder().encode(JSON.stringify(v))`,
+ * `MAX_PAYLOAD_BYTES = 64 * 1024`), so this budget must measure bytes too —
+ * string.length undercounts non-ASCII titles and lets a "fitting" list make
+ * session.save throw. Drops the oldest entries until `record` (with
+ * `history` attached) encodes under the budget; ~8 KiB of the envelope is
+ * reserved for the record fields alongside `history`.
  */
 export const HISTORY_SAVE_BUDGET_BYTES = 56_000;
+
+const historyByteEncoder = new TextEncoder();
 
 export function fitHistoryToSaveBudget(
   record: Readonly<Record<string, unknown>>,
@@ -193,7 +199,10 @@ export function fitHistoryToSaveBudget(
   budgetBytes = HISTORY_SAVE_BUDGET_BYTES,
 ): BrowserHistoryEntry[] {
   let next = entries.slice(0, BROWSER_HISTORY_MAX_ENTRIES_PER_PROJECT);
-  while (next.length > 0 && JSON.stringify({ ...record, history: next }).length > budgetBytes)
+  while (
+    next.length > 0 &&
+    historyByteEncoder.encode(JSON.stringify({ ...record, history: next })).length > budgetBytes
+  )
     next = next.slice(0, -1);
   return next;
 }

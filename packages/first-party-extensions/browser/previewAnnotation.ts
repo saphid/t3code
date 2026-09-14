@@ -9,7 +9,48 @@
  */
 import type { PreviewAnnotationPayload } from "@t3tools/contracts";
 
-import { buildElementContextBlock, normalizeElementContextSelection } from "./elementContext.ts";
+import {
+  buildElementContextBlock,
+  type ElementContextSelection,
+  normalizeElementContextSelection,
+} from "./elementContext.ts";
+
+/**
+ * Bounds the native module never needed: the payload crosses a boundary we
+ * don't control (the picker), so every string field is char-clamped, the
+ * repeated groups are count-capped, and the serialized prompt is capped in
+ * UTF-8 bytes — the same unit the SDK save envelope measures. Element
+ * contexts are dropped last-to-first until the block fits; if even the
+ * bounded head overflows, the body is truncated byte-safely. Both
+ * `<preview_annotation>` delimiters are always preserved.
+ */
+export const PREVIEW_ANNOTATION_ID_MAX_CHARS = 256;
+export const PREVIEW_ANNOTATION_PAGE_MAX_CHARS = 2_048;
+export const PREVIEW_ANNOTATION_COMMENT_MAX_CHARS = 8_000;
+export const PREVIEW_ANNOTATION_STYLE_CHANGES_MAX = 32;
+export const PREVIEW_ANNOTATION_STYLE_FIELD_MAX_CHARS = 256;
+export const PREVIEW_ANNOTATION_CONTEXT_ELEMENTS_MAX = 16;
+export const PREVIEW_ANNOTATION_PROMPT_MAX_BYTES = 56_000;
+
+const annotationByteEncoder = new TextEncoder();
+const annotationByteLength = (value: string): number => annotationByteEncoder.encode(value).length;
+
+const clampChars = (value: string, max: number): string =>
+  value.length <= max ? value : `${value.slice(0, max - 1)}…`;
+
+/** Byte-safe truncation: never splits a UTF-8 sequence, ends with "…". */
+function truncateToUtf8Bytes(value: string, maxBytes: number): string {
+  const encoded = annotationByteEncoder.encode(value);
+  if (encoded.length <= maxBytes) return value;
+  const truncated = new TextDecoder().decode(encoded.subarray(0, Math.max(0, maxBytes - 3)));
+  return `${truncated.replace(/\uFFFD+$/u, "")}…`;
+}
+
+function serializePrompt(lines: string[], contexts: ElementContextSelection[]): string {
+  const block = buildElementContextBlock(contexts);
+  const body = block ? [...lines, block] : lines;
+  return ["<preview_annotation>", ...body, "</preview_annotation>"].join("\n");
+}
 
 const TRAILING_PREVIEW_ANNOTATION_BLOCK_PATTERN =
   /\n*<preview_annotation>\n((?:(?!<preview_annotation>)[\s\S])*)\n<\/preview_annotation>\s*$/;
@@ -30,10 +71,14 @@ export interface ExtractedPreviewAnnotation {
 
 export function buildPreviewAnnotationPrompt(annotation: PreviewAnnotationPayload): string {
   const lines = ["Preview annotation:"];
-  lines.push(`Id: ${annotation.id}`);
-  const title = annotation.pageTitle?.trim() || annotation.pageUrl.trim() || "Preview";
+  lines.push(`Id: ${clampChars(annotation.id, PREVIEW_ANNOTATION_ID_MAX_CHARS)}`);
+  const title = clampChars(
+    annotation.pageTitle?.trim() || annotation.pageUrl.trim() || "Preview",
+    PREVIEW_ANNOTATION_PAGE_MAX_CHARS,
+  );
   lines.push(`Page: ${title}`);
-  if (annotation.comment.trim()) lines.push(`Comment: ${annotation.comment.trim()}`);
+  const comment = clampChars(annotation.comment.trim(), PREVIEW_ANNOTATION_COMMENT_MAX_CHARS);
+  if (comment) lines.push(`Comment: ${comment}`);
   const targets: string[] = [];
   if (annotation.elements.length > 0) {
     targets.push(
@@ -51,21 +96,39 @@ export function buildPreviewAnnotationPrompt(annotation: PreviewAnnotationPayloa
     );
   }
   if (targets.length > 0) lines.push(`Targets: ${targets.join(", ")}.`);
-  if (annotation.styleChanges.length > 0) {
+  const styleChanges = annotation.styleChanges.slice(0, PREVIEW_ANNOTATION_STYLE_CHANGES_MAX);
+  if (styleChanges.length > 0) {
     lines.push("Requested visual changes:");
-    for (const change of annotation.styleChanges) {
-      lines.push(`- ${change.property}: ${change.previousValue || "(unset)"} → ${change.value}`);
+    for (const change of styleChanges) {
+      lines.push(
+        `- ${clampChars(change.property, PREVIEW_ANNOTATION_STYLE_FIELD_MAX_CHARS)}: ` +
+          `${clampChars(change.previousValue, PREVIEW_ANNOTATION_STYLE_FIELD_MAX_CHARS) || "(unset)"} → ` +
+          clampChars(change.value, PREVIEW_ANNOTATION_STYLE_FIELD_MAX_CHARS),
+      );
     }
   }
   if (annotation.screenshot) {
     lines.push("The attached screenshot is the annotated preview crop.");
   }
   const elementContexts = annotation.elements
+    .slice(0, PREVIEW_ANNOTATION_CONTEXT_ELEMENTS_MAX)
     .map((target) => normalizeElementContextSelection(target.element))
     .filter((context) => context !== null);
-  const elementBlock = buildElementContextBlock(elementContexts);
-  if (elementBlock) lines.push(elementBlock);
-  return ["<preview_annotation>", ...lines, "</preview_annotation>"].join("\n");
+  let contextCount = elementContexts.length;
+  let text = serializePrompt(lines, elementContexts.slice(0, contextCount));
+  while (contextCount > 0 && annotationByteLength(text) > PREVIEW_ANNOTATION_PROMPT_MAX_BYTES) {
+    contextCount -= 1;
+    text = serializePrompt(lines, elementContexts.slice(0, contextCount));
+  }
+  if (annotationByteLength(text) > PREVIEW_ANNOTATION_PROMPT_MAX_BYTES) {
+    const wrapperBytes = annotationByteLength("<preview_annotation>\n\n</preview_annotation>");
+    text = [
+      "<preview_annotation>",
+      truncateToUtf8Bytes(lines.join("\n"), PREVIEW_ANNOTATION_PROMPT_MAX_BYTES - wrapperBytes),
+      "</preview_annotation>",
+    ].join("\n");
+  }
+  return text;
 }
 
 export function appendPreviewAnnotationPrompt(

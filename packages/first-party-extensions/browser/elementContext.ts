@@ -11,6 +11,16 @@ import type { PickedElementPayload, PickedElementStackFrame } from "@t3tools/con
 const ELEMENT_CONTEXT_HTML_PREVIEW_LIMIT = 4000;
 const ELEMENT_CONTEXT_STYLES_LIMIT = 4000;
 const ELEMENT_CONTEXT_LABEL_TAG_MAX = 24;
+// Every picker-supplied string is clamped before it can reach a prompt or
+// persisted state — the picker's output is untrusted in size even though
+// its shape is contracted.
+const ELEMENT_CONTEXT_PAGE_URL_LIMIT = 2048;
+const ELEMENT_CONTEXT_PAGE_TITLE_LIMIT = 512;
+const ELEMENT_CONTEXT_TAG_NAME_LIMIT = 64;
+const ELEMENT_CONTEXT_SELECTOR_LIMIT = 1024;
+const ELEMENT_CONTEXT_COMPONENT_NAME_LIMIT = 128;
+const ELEMENT_CONTEXT_FUNCTION_NAME_LIMIT = 256;
+const ELEMENT_CONTEXT_FILE_NAME_LIMIT = 512;
 
 /**
  * Stable, persistable element selection captured from the in-app preview
@@ -53,23 +63,35 @@ function normalizeText(value: string): string {
 export function normalizeElementContextSelection(
   raw: PickedElementPayload,
 ): ElementContextSelection | null {
-  const pageUrl = raw.pageUrl.trim();
-  const tagName = raw.tagName.trim().toLowerCase();
+  const pageUrl = truncateString(raw.pageUrl.trim(), ELEMENT_CONTEXT_PAGE_URL_LIMIT);
+  const tagName = truncateString(raw.tagName.trim().toLowerCase(), ELEMENT_CONTEXT_TAG_NAME_LIMIT);
   if (pageUrl.length === 0 || tagName.length === 0) {
     return null;
   }
   const stackFrame = raw.source ?? raw.stack[0] ?? null;
+  const trimmedTitle = raw.pageTitle?.trim();
   return {
     pageUrl,
-    pageTitle: raw.pageTitle?.trim() ?? null,
+    pageTitle:
+      trimmedTitle === undefined
+        ? null
+        : truncateString(trimmedTitle, ELEMENT_CONTEXT_PAGE_TITLE_LIMIT),
     tagName,
-    selector: raw.selector?.trim() || null,
+    selector: raw.selector?.trim()
+      ? truncateString(raw.selector.trim(), ELEMENT_CONTEXT_SELECTOR_LIMIT)
+      : null,
     htmlPreview: truncateString(normalizeText(raw.htmlPreview), ELEMENT_CONTEXT_HTML_PREVIEW_LIMIT),
-    componentName: raw.componentName?.trim() || null,
+    componentName: raw.componentName?.trim()
+      ? truncateString(raw.componentName.trim(), ELEMENT_CONTEXT_COMPONENT_NAME_LIMIT)
+      : null,
     source: stackFrame
       ? {
-          functionName: stackFrame.functionName?.trim() || null,
-          fileName: stackFrame.fileName?.trim() || null,
+          functionName: stackFrame.functionName?.trim()
+            ? truncateString(stackFrame.functionName.trim(), ELEMENT_CONTEXT_FUNCTION_NAME_LIMIT)
+            : null,
+          fileName: stackFrame.fileName?.trim()
+            ? truncateString(stackFrame.fileName.trim(), ELEMENT_CONTEXT_FILE_NAME_LIMIT)
+            : null,
           lineNumber: stackFrame.lineNumber ?? null,
           columnNumber: stackFrame.columnNumber ?? null,
         }

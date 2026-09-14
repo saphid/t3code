@@ -238,6 +238,32 @@ NodeTest.describe("fitHistoryToSaveBudget", () => {
     NodeAssert.equal(fitted[0]?.url, entries[0]?.url, "keeps the most recent entries");
   });
 
+  NodeTest.it("budgets UTF-8 bytes, not UTF-16 chars (the SDK envelope measures bytes)", () => {
+    // Reviewer repro: 512 × "界" titles are 512 chars but 1,536 bytes each —
+    // a char-counted budget keeps ~39 entries that encode to ~66 KB and make
+    // session.save throw. The byte budget must trim until the encoded
+    // record actually fits.
+    const encoder = new TextEncoder();
+    const entries = Array.from({ length: BROWSER_HISTORY_MAX_ENTRIES_PER_PROJECT }, (_, i) =>
+      entry({
+        url: `http://uni-${i}.test/`,
+        lastVisitedAt: i,
+        title: "界".repeat(BROWSER_HISTORY_MAX_TITLE_LENGTH),
+      }),
+    );
+    const fitted = fitHistoryToSaveBudget({ url: "http://uni.test/" }, entries);
+    NodeAssert.ok(fitted.length < entries.length);
+    NodeAssert.ok(
+      encoder.encode(JSON.stringify({ url: "http://uni.test/", history: fitted })).length <= 56_000,
+      "encoded record fits the byte budget",
+    );
+    NodeAssert.ok(
+      encoder.encode(JSON.stringify({ url: "http://uni.test/", history: entries })).length > 65_536,
+      "the untrimmed list really did exceed the SDK envelope",
+    );
+    NodeAssert.equal(fitted[0]?.url, entries[0]?.url, "keeps the most recent entries");
+  });
+
   NodeTest.it("leaves a fitting list untouched", () => {
     const entries = [entry(), entry({ url: "http://b.test/", lastVisitedAt: 900 })];
     NodeAssert.deepEqual(fitHistoryToSaveBudget({}, entries), entries);

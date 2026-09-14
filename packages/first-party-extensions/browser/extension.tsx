@@ -34,7 +34,7 @@ const manifestId = "t3.browser";
 type PersistedViewState = {
   readonly relativePath?: string;
   readonly url?: string;
-  readonly history?: readonly Json[];
+  readonly history?: Json;
 };
 
 function restoreState(value: unknown): value is PersistedViewState | null {
@@ -43,9 +43,10 @@ function restoreState(value: unknown): value is PersistedViewState | null {
   const record = value as Record<string, unknown>;
   return Object.keys(record).every((key) => {
     if (key === "relativePath" || key === "url") return typeof record[key] === "string";
-    // Entries are deep-sanitized on read (sanitizeHistoryEntries mirrors the
-    // native migrate step); the validator only checks the container shape.
-    if (key === "history") return Array.isArray(record[key]);
+    // Any malformed history container sanitizes to [] on read — the native
+    // migrate step drops a bad list but keeps the browser usable, so the
+    // container is never a reason to take the whole view unavailable.
+    if (key === "history") return true;
     return false;
   });
 }
