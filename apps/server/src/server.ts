@@ -323,8 +323,10 @@ const SourceControlProviderRegistryLayerLive = SourceControlProviderRegistry.lay
   Layer.provideMerge(VcsDriverRegistryLayerLive),
 );
 
+// provideMerge so the extension adapter reports per-provider capabilities off
+// the same registry instance the service reads through.
 const PullRequestServiceLive = PullRequestService.layer.pipe(
-  Layer.provide(PullRequestProviderRegistry.layer),
+  Layer.provideMerge(PullRequestProviderRegistry.layer),
   Layer.provide(PullRequestReadCache.layer),
   Layer.provide(SourceControlProviderRegistryLayerLive),
   Layer.provide(SourceControlRateLimit.layer),

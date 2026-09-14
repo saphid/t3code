@@ -2614,6 +2614,1435 @@ export const resourcesLeaseApiV1 = defineApi<{
 });
 export const RESOURCES_LEASE_API_V1 = resourcesLeaseApiV1.definition;
 
+/* ------------------------------------------------------------------------
+ * t3.prs/read — change-request (pull request) browser reads (P10C-PR).
+ *
+ * The native Version Control surface is fundamentally a PR browser; this is
+ * the read side of that surface for plugins. Every method maps 1:1 onto a
+ * native `pullRequests.*` read — the adapter calls PullRequestService and
+ * never shells out to a host CLI itself.
+ *
+ * Grant: `t3.prs/read` covers every method and stream. Mutations
+ * (pullRequests.runAction/update/comment/updateComment/submitReview/
+ * replyToThread/setThreadResolution/setReaction/requestReviewers/setLabels —
+ * all operate-scoped natively) are a later control contract, named deferred.
+ *
+ * Auth boundary: reads run on the environment's git-host credentials (the
+ * signed-in gh/glab/az CLI or the server's configured Bitbucket token). The
+ * plugin never supplies credentials — there is no auth field on any input —
+ * and a project with no PR host or no working credentials fails by name
+ * (PullRequestUnavailableError reason: cli-missing / cli-unauthenticated /
+ * provider-unsupported) rather than returning an empty success.
+ *
+ * Capability honesty: `getCapabilities` reports the hosts the scoped project
+ * resolves to (native PullRequestProviderSummary verbatim) plus a
+ * per-operation support map derived from each configured host's provider —
+ * e.g. Azure DevOps declares no diff capability, so `prs.streamDiff` reports
+ * false there while `prs.list` stays true.
+ * --------------------------------------------------------------------- */
+export const PRS_READ = "t3.prs/read";
+
+export type PrsProviderKind = "github" | "gitlab" | "azure-devops" | "bitbucket" | "unknown";
+export type PrsActor = {
+  readonly login: string;
+  readonly name: string | null;
+  readonly avatarUrl: string | null;
+};
+export type PrsLabel = { readonly name: string; readonly color: string | null };
+export type PrsReaction = {
+  readonly content:
+    | "thumbs-up"
+    | "thumbs-down"
+    | "laugh"
+    | "hooray"
+    | "confused"
+    | "heart"
+    | "rocket"
+    | "eyes";
+  readonly count: number;
+  readonly actors: readonly string[];
+  readonly viewerHasReacted: boolean;
+};
+export type PrsCheck = {
+  readonly name: string;
+  readonly status:
+    | "pending"
+    | "action-required"
+    | "success"
+    | "failure"
+    | "skipped"
+    | "neutral"
+    | "cancelled";
+  readonly description: string | null;
+  readonly url: string | null;
+};
+/**
+ * One change request addressed on a host. `projectId` is absent: the
+ * extension's project scope supplies it, exactly like the native
+ * PullRequestRef the adapter constructs. `host` keeps the native cross-repo
+ * routing — a thread in a frontend project may name a backend PR on the same
+ * host.
+ */
+export type PrsRef = {
+  readonly host?: string;
+  readonly repository: string;
+  readonly number: number;
+};
+export type PrsListFilters = {
+  readonly draft?: "only" | "hide";
+  readonly review?: "approved" | "changes-requested" | "review-required" | "none";
+  readonly checks?: "passing" | "failing";
+  readonly labels?: readonly (readonly string[])[];
+  readonly excludedLabels?: readonly string[];
+  readonly author?: string;
+};
+export type PrsListInput = {
+  readonly state: "all" | "open" | "closed" | "merged";
+  readonly involvement?: "all" | "reviewing" | "authored";
+  readonly filters?: PrsListFilters;
+  readonly host?: string;
+  readonly limit?: number;
+  readonly cursors?: Readonly<Record<string, string>>;
+  readonly query?: string;
+};
+export type PrsStackMembership = {
+  readonly number: number;
+  readonly position: number;
+  readonly size: number;
+  readonly base: string;
+};
+export type PrsListEntry = {
+  readonly stack?: PrsStackMembership;
+  readonly provider: PrsProviderKind;
+  readonly host: string;
+  readonly projectId: string;
+  readonly projectTitle: string;
+  readonly repository: string;
+  readonly number: number;
+  readonly title: string;
+  readonly url: string;
+  readonly author: PrsActor | null;
+  readonly headBranch: string;
+  readonly baseBranch: string;
+  readonly state: "open" | "closed" | "merged";
+  readonly isDraft: boolean;
+  readonly mergeability: "mergeable" | "conflicting" | "unknown";
+  readonly additions: number;
+  readonly deletions: number;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+  readonly viewerReviewRequested: boolean;
+  readonly labels: readonly PrsLabel[];
+  readonly reviewDecision?: "approved" | "changes-requested" | "review-required";
+  readonly checksState?: "passing" | "failing" | "pending";
+};
+export type PrsProviderSummary = {
+  readonly host: string;
+  readonly kind: PrsProviderKind;
+  readonly searchesOnHost: boolean;
+  readonly projectCount: number;
+  readonly configured: boolean;
+  readonly detail: string | null;
+};
+export type PrsListProjectError = {
+  readonly projectId: string;
+  readonly projectTitle: string;
+  readonly message: string;
+};
+export type PrsListResult = {
+  readonly viewers: Readonly<Record<string, string>>;
+  readonly providers: readonly PrsProviderSummary[];
+  readonly entries: readonly PrsListEntry[];
+  readonly errors: readonly PrsListProjectError[];
+  readonly truncated: boolean;
+  readonly nextCursors: Readonly<Record<string, string>>;
+};
+export type PrsListStatsInput = { readonly refs: readonly PrsRef[] };
+export type PrsDiffStat = {
+  readonly projectId: string;
+  readonly repository: string;
+  readonly number: number;
+  readonly additions: number;
+  readonly deletions: number;
+};
+export type PrsListStatsResult = { readonly stats: readonly PrsDiffStat[] };
+export type PrsSummary = {
+  readonly provider: PrsProviderKind;
+  readonly projectId: string;
+  readonly repository: string;
+  readonly number: number;
+  readonly title: string;
+  readonly url: string;
+  readonly state: "open" | "closed" | "merged";
+  readonly isDraft?: boolean;
+  readonly headBranch: string;
+  readonly baseBranch: string;
+  readonly closedAt?: string | null;
+  readonly mergedAt?: string | null;
+  readonly updatedAt: string;
+  readonly author?: PrsActor | null;
+  readonly additions?: number;
+  readonly deletions?: number;
+  readonly changedFiles?: number;
+  readonly reviewDecision?: "approved" | "changes-requested" | "review-required" | null;
+  readonly checksState?: "passing" | "failing" | "pending" | null;
+  readonly mergeability?: "mergeable" | "conflicting" | "unknown";
+};
+export type PrsStack = {
+  readonly id: string;
+  readonly number: number;
+  readonly url: string;
+  readonly base: string;
+  readonly layers: readonly {
+    readonly number: number;
+    readonly title?: string;
+    readonly isDraft?: boolean;
+    readonly headSha?: string;
+    readonly headBranch: string;
+    readonly state: "open" | "closed" | "merged";
+  }[];
+};
+export type PrsLinkedThreadsResult = {
+  readonly threads: readonly {
+    readonly id: string;
+    readonly projectId: string;
+    readonly title: string;
+    readonly archivedAt: string | null;
+  }[];
+  /** Rows were dropped to stay within the result bound. */
+  readonly truncated: boolean;
+};
+export type PrsCapabilities = {
+  readonly diff: boolean;
+  readonly comment: boolean;
+  readonly actions: readonly string[];
+  readonly mergeMethods: readonly ("merge" | "squash" | "rebase")[];
+  readonly updateMethods?: readonly ("merge" | "rebase")[];
+  readonly search: boolean;
+  readonly reactions?: boolean;
+  readonly review: {
+    readonly inlineComment: boolean;
+    readonly reply: boolean;
+    readonly resolve: boolean;
+    readonly verdicts: readonly ("comment" | "approve" | "request-changes")[];
+  };
+  readonly reviewers: { readonly request: boolean; readonly listCandidates: boolean };
+  readonly edit?: { readonly changeRequest: boolean; readonly comment: boolean };
+  readonly stacks?: boolean;
+  readonly stackActions?: boolean;
+  readonly labels?: boolean;
+};
+export type PrsViewerPermissions = {
+  readonly stackRebase?: boolean;
+  readonly actions: readonly string[];
+  readonly comment: boolean;
+  readonly resolve: boolean;
+  readonly verdicts: readonly ("comment" | "approve" | "request-changes")[];
+  readonly requestReviewers: boolean;
+  readonly updateMethods?: readonly ("merge" | "rebase")[];
+  readonly labels?: boolean;
+};
+export type PrsDetail = {
+  readonly provider: PrsProviderKind;
+  readonly capabilities: PrsCapabilities;
+  readonly viewerPermissions: PrsViewerPermissions;
+  readonly projectId: string;
+  readonly projectTitle: string;
+  readonly workspaceRoot: string;
+  readonly repository: string;
+  readonly number: number;
+  readonly title: string;
+  readonly body: string;
+  /** True when the adapter cut `body` at the contract's character bound. */
+  readonly bodyTruncated?: boolean;
+  readonly url: string;
+  readonly author: PrsActor | null;
+  readonly state: "open" | "closed" | "merged";
+  readonly isDraft: boolean;
+  readonly mergeability: "mergeable" | "conflicting" | "unknown";
+  readonly additions: number;
+  readonly deletions: number;
+  readonly changedFiles: number;
+  readonly headBranch: string;
+  readonly headRepositoryNameWithOwner?: string | null;
+  readonly baseBranch: string;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+  readonly mergedAt: string | null;
+  readonly closedAt: string | null;
+  readonly reviewers: readonly PrsActor[];
+  readonly labels: readonly PrsLabel[];
+  readonly checks: readonly PrsCheck[];
+  readonly mergeCapabilities: {
+    readonly merge: boolean;
+    readonly squash: boolean;
+    readonly rebase: boolean;
+  };
+  readonly viewer?: string;
+  readonly baseComparison?: "up-to-date" | "behind" | "unknown";
+  readonly behindBy?: number;
+  readonly autoMergeEnabled?: boolean;
+  readonly autoMergeMethod?: "merge" | "squash" | "rebase";
+  readonly workflowApprovalsRequired?: number;
+};
+export type PrsComment = {
+  readonly id: string;
+  readonly kind: "issue-comment" | "review-comment" | "review";
+  readonly author: PrsActor | null;
+  readonly body: string;
+  readonly createdAt: string;
+  readonly url: string | null;
+  readonly path: string | null;
+  readonly reviewState: string | null;
+  readonly reactions?: readonly PrsReaction[];
+};
+export type PrsThreadComment = {
+  readonly id: string;
+  readonly author: PrsActor | null;
+  readonly body: string;
+  readonly createdAt: string;
+  readonly url: string | null;
+  readonly reactions?: readonly PrsReaction[];
+};
+export type PrsReviewThread = {
+  readonly id: string;
+  readonly path: string;
+  readonly line: number | null;
+  readonly side: "left" | "right";
+  readonly isResolved: boolean;
+  readonly isOutdated: boolean;
+  readonly comments: readonly PrsThreadComment[];
+  readonly commentCount?: number;
+  readonly nextCommentsCursor?: string;
+};
+export type PrsCommit = {
+  readonly oid: string;
+  readonly messageHeadline: string;
+  readonly committedDate: string;
+  readonly additions?: number;
+  readonly deletions?: number;
+  readonly authors?: readonly PrsActor[];
+};
+export type PrsActivity = {
+  readonly author?: PrsActor | null;
+  readonly reviewers?: readonly PrsActor[];
+  readonly comments: readonly PrsComment[];
+  readonly commentCount: number;
+  readonly commentsTruncated: boolean;
+  readonly reviewThreads: readonly PrsReviewThread[];
+  readonly commits: readonly PrsCommit[];
+  readonly reactions?: readonly PrsReaction[];
+  /**
+   * The adapter cut something to fit the public bounds — a tail of
+   * comments/reviewThreads/commits, or a body past the per-body character
+   * bound. `commentsTruncated` is the native flag and is OR-ed in when
+   * comments were cut.
+   */
+  readonly truncated: boolean;
+};
+export type PrsThreadCommentsInput = PrsRef & {
+  readonly threadId: string;
+  readonly cursor: string;
+};
+export type PrsThreadCommentsResult = {
+  readonly comments: readonly PrsThreadComment[];
+  /**
+   * Host-issued resume point for the next page — null when comments were
+   * dropped to fit the result bound, since that cursor describes the
+   * position after rows the caller never received. A truncated page is an
+   * explicitly lossy partial response: `threadComments` exposes no
+   * page-size or query control, so dropped rows cannot be recovered
+   * through this API — `truncated:true` + `nextCursor:null` is the honest
+   * terminal state, not a retryable cursor.
+   */
+  readonly nextCursor: string | null;
+  /** Comments were dropped (count or byte bound) or bodies were cut. */
+  readonly truncated: boolean;
+};
+export type PrsReviewerCandidate = PrsActor & {
+  readonly id: string;
+  readonly kind: "user" | "team";
+  readonly isRequested: boolean;
+};
+export type PrsReviewerCandidateList = {
+  readonly candidates: readonly PrsReviewerCandidate[];
+  readonly truncated: boolean;
+};
+export type PrsLabelCandidate = PrsLabel & {
+  readonly description: string | null;
+  readonly isApplied: boolean;
+};
+export type PrsLabelCandidateList = {
+  readonly candidates: readonly PrsLabelCandidate[];
+  readonly truncated: boolean;
+};
+export type PrsInvalidateInput = { readonly reference?: PrsRef };
+export type PrsDiffInput = PrsRef & {
+  /** One commit's own changes, rather than the whole change request. */
+  readonly commit?: string;
+  /** Resume point issued by a previous truncated stream, verbatim. */
+  readonly cursor?: string;
+};
+export type PrsDiffFileContentsInput = PrsRef & {
+  readonly commit?: string;
+  readonly changeType: "change" | "rename-pure" | "rename-changed" | "new" | "deleted";
+  readonly oldPath: string;
+  readonly newPath: string;
+};
+export type PrsOmittedFileStat = {
+  readonly path: string;
+  readonly additions: number;
+  readonly deletions: number;
+};
+/**
+ * `streamDiff` frames — the `t3.vcs/diff@1.1.0` family (manifest snapshot →
+ * chunk data frames → complete) applied to one pull-request patch. The
+ * adapter walks the host's own diff slices (`pullRequests.diff`) until the
+ * diff is whole or the delivered-byte budget is hit; `nextCursor` is the
+ * host-issued resume point for a follow-up stream. `diffHash` /
+ * `payloadSha256` are sha256 over the delivered UTF-8 patch text, in chunk
+ * order — the same verification the vcs diff streams run.
+ */
+export type PrsDiffStreamEvent =
+  | {
+      readonly kind: "manifest";
+      readonly repository: string;
+      readonly number: number;
+      readonly host?: string;
+      readonly commit?: string;
+      readonly diffHash: string;
+      readonly diffByteLength: number;
+      readonly chunkCount: number;
+      readonly truncated: boolean;
+      readonly nextCursor: string | null;
+      readonly omittedFileStats?: readonly PrsOmittedFileStat[];
+    }
+  | { readonly kind: "chunk"; readonly chunkIndex: number; readonly data: string }
+  | { readonly kind: "complete"; readonly payloadSha256: string };
+/**
+ * `subscribeRefreshes` events — one per host-read invalidation cycle. The
+ * stream closes with a named reason rather than going silent when the
+ * consumer falls behind or the native stream fails.
+ */
+export type PrsRefreshedEvent =
+  | { readonly kind: "refreshed"; readonly revision: number }
+  | { readonly kind: "closed"; readonly reason: "overflow" | "refresh-error" };
+/** Per-operation support flags keyed by `prs.<method>`/`prs.<stream>`. */
+export type PrsOperationsSupport = {
+  readonly "prs.list": boolean;
+  readonly "prs.listStats": boolean;
+  readonly "prs.summary": boolean;
+  readonly "prs.detail": boolean;
+  readonly "prs.activity": boolean;
+  readonly "prs.threadComments": boolean;
+  readonly "prs.linkedThreads": boolean;
+  readonly "prs.stack": boolean;
+  readonly "prs.reviewerCandidates": boolean;
+  readonly "prs.labelCandidates": boolean;
+  readonly "prs.invalidate": boolean;
+  readonly "prs.streamDiff": boolean;
+  readonly "prs.streamDiffFileContents": boolean;
+  readonly "prs.subscribeRefreshes": boolean;
+};
+export type PrsCapabilitiesResult = {
+  /**
+   * The scoped project resolves to a PR host backed by a registered
+   * provider. False on a local-only repository or an unimplemented host —
+   * every host-bound operation then fails by name (provider-unsupported)
+   * rather than answering an empty list.
+   */
+  readonly hosted: boolean;
+  /**
+   * The stable machine reason reads fail: `cli-missing`,
+   * `cli-unauthenticated`, or `provider-unsupported`. Null when the probe
+   * succeeded (per-host state lives on `providers[]`).
+   */
+  readonly reason: "cli-missing" | "cli-unauthenticated" | "provider-unsupported" | null;
+  /**
+   * Human-readable detail behind `reason` — e.g. which tool or credential
+   * is missing. Null when the probe succeeded.
+   */
+  readonly detail: string | null;
+  readonly providers: readonly PrsProviderSummary[];
+  readonly operations: PrsOperationsSupport;
+};
+
+const prsActorSchema = {
+  type: ["object", "null"],
+  additionalProperties: false,
+  required: ["login", "name", "avatarUrl"],
+  properties: {
+    login: { type: "string", minLength: 1, maxLength: 256 },
+    name: { type: ["string", "null"], maxLength: 512 },
+    avatarUrl: { type: ["string", "null"], maxLength: 4096 },
+  },
+} as const;
+const prsLabelSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["name", "color"],
+  properties: {
+    name: { type: "string", minLength: 1, maxLength: 512 },
+    color: { type: ["string", "null"], maxLength: 64 },
+  },
+} as const;
+const prsReactionSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["content", "count", "actors", "viewerHasReacted"],
+  properties: {
+    content: {
+      enum: ["thumbs-up", "thumbs-down", "laugh", "hooray", "confused", "heart", "rocket", "eyes"],
+    },
+    count: { type: "integer", minimum: 1 },
+    actors: {
+      type: "array",
+      maxItems: 500,
+      items: { type: "string", minLength: 1, maxLength: 256 },
+    },
+    viewerHasReacted: { type: "boolean" },
+  },
+} as const;
+const prsCheckSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["name", "status", "description", "url"],
+  properties: {
+    name: { type: "string", minLength: 1, maxLength: 512 },
+    status: {
+      enum: ["pending", "action-required", "success", "failure", "skipped", "neutral", "cancelled"],
+    },
+    description: { type: ["string", "null"], maxLength: 4096 },
+    url: { type: ["string", "null"], maxLength: 4096 },
+  },
+} as const;
+const prsRepositoryField = { type: "string", minLength: 1, maxLength: 512 } as const;
+const prsHostField = { type: "string", minLength: 1, maxLength: 256 } as const;
+const prsRefInputSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["repository", "number"],
+  properties: {
+    host: prsHostField,
+    repository: prsRepositoryField,
+    number: { type: "integer", minimum: 1 },
+  },
+} as const;
+const prsListFiltersSchema = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    draft: { enum: ["only", "hide"] },
+    review: { enum: ["approved", "changes-requested", "review-required", "none"] },
+    checks: { enum: ["passing", "failing"] },
+    labels: {
+      type: "array",
+      maxItems: 10,
+      items: {
+        type: "array",
+        maxItems: 10,
+        items: { type: "string", minLength: 1, maxLength: 200 },
+      },
+    },
+    excludedLabels: {
+      type: "array",
+      maxItems: 10,
+      items: { type: "string", minLength: 1, maxLength: 200 },
+    },
+    author: { type: "string", minLength: 1, maxLength: 200 },
+  },
+} as const;
+const prsCursorsSchema = {
+  type: "object",
+  additionalProperties: { type: "string", minLength: 1, maxLength: 4096 },
+  maxProperties: 100,
+} as const;
+const prsProviderSummarySchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["host", "kind", "searchesOnHost", "projectCount", "configured", "detail"],
+  properties: {
+    host: prsHostField,
+    kind: { enum: ["github", "gitlab", "azure-devops", "bitbucket", "unknown"] },
+    searchesOnHost: { type: "boolean" },
+    projectCount: { type: "integer", minimum: 1 },
+    configured: { type: "boolean" },
+    detail: { type: ["string", "null"], maxLength: 1024 },
+  },
+} as const;
+const prsListEntrySchema = {
+  type: "object",
+  additionalProperties: false,
+  required: [
+    "provider",
+    "host",
+    "projectId",
+    "projectTitle",
+    "repository",
+    "number",
+    "title",
+    "url",
+    "author",
+    "headBranch",
+    "baseBranch",
+    "state",
+    "isDraft",
+    "mergeability",
+    "additions",
+    "deletions",
+    "createdAt",
+    "updatedAt",
+    "viewerReviewRequested",
+    "labels",
+  ],
+  properties: {
+    stack: {
+      type: "object",
+      additionalProperties: false,
+      required: ["number", "position", "size", "base"],
+      properties: {
+        number: { type: "integer", minimum: 1 },
+        position: { type: "integer", minimum: 1 },
+        size: { type: "integer", minimum: 1 },
+        base: { type: "string", minLength: 1, maxLength: 1024 },
+      },
+    },
+    provider: { enum: ["github", "gitlab", "azure-devops", "bitbucket", "unknown"] },
+    host: prsHostField,
+    projectId: { type: "string", minLength: 1, maxLength: 160 },
+    projectTitle: { type: "string", minLength: 1, maxLength: 512 },
+    repository: prsRepositoryField,
+    number: { type: "integer", minimum: 1 },
+    title: { type: "string", minLength: 1, maxLength: 2048 },
+    url: { type: "string", minLength: 1, maxLength: 4096 },
+    author: prsActorSchema,
+    headBranch: { type: "string", minLength: 1, maxLength: 1024 },
+    baseBranch: { type: "string", minLength: 1, maxLength: 1024 },
+    state: { enum: ["open", "closed", "merged"] },
+    isDraft: { type: "boolean" },
+    mergeability: { enum: ["mergeable", "conflicting", "unknown"] },
+    additions: { type: "integer", minimum: 0 },
+    deletions: { type: "integer", minimum: 0 },
+    createdAt: { type: "string", maxLength: 64 },
+    updatedAt: { type: "string", maxLength: 64 },
+    viewerReviewRequested: { type: "boolean" },
+    labels: { type: "array", maxItems: 100, items: prsLabelSchema },
+    reviewDecision: { enum: ["approved", "changes-requested", "review-required"] },
+    checksState: { enum: ["passing", "failing", "pending"] },
+  },
+} as const;
+const prsListResultSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["viewers", "providers", "entries", "errors", "truncated", "nextCursors"],
+  properties: {
+    viewers: {
+      type: "object",
+      additionalProperties: { type: "string", minLength: 1, maxLength: 256 },
+      maxProperties: 100,
+    },
+    providers: { type: "array", maxItems: 100, items: prsProviderSummarySchema },
+    entries: { type: "array", maxItems: 100, items: prsListEntrySchema },
+    errors: {
+      type: "array",
+      maxItems: 100,
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: ["projectId", "projectTitle", "message"],
+        properties: {
+          projectId: { type: "string", minLength: 1, maxLength: 160 },
+          projectTitle: { type: "string", minLength: 1, maxLength: 512 },
+          message: { type: "string", minLength: 1, maxLength: 1024 },
+        },
+      },
+    },
+    truncated: { type: "boolean" },
+    nextCursors: prsCursorsSchema,
+  },
+} as const;
+const prsReviewVerdictsSchema = {
+  type: "array",
+  maxItems: 3,
+  items: { enum: ["comment", "approve", "request-changes"] },
+} as const;
+const prsActionsSchema = {
+  type: "array",
+  maxItems: 16,
+  items: {
+    enum: [
+      "merge",
+      "ready",
+      "draft",
+      "close",
+      "reopen",
+      "update-branch",
+      "enable-auto-merge",
+      "disable-auto-merge",
+      "revert",
+      "approve-workflows",
+    ],
+  },
+} as const;
+const prsMergeMethodsSchema = {
+  type: "array",
+  maxItems: 3,
+  items: { enum: ["merge", "squash", "rebase"] },
+} as const;
+const prsUpdateMethodsSchema = {
+  type: "array",
+  maxItems: 2,
+  items: { enum: ["merge", "rebase"] },
+} as const;
+const prsCapabilitiesSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["diff", "comment", "actions", "mergeMethods", "search", "review", "reviewers"],
+  properties: {
+    diff: { type: "boolean" },
+    comment: { type: "boolean" },
+    actions: prsActionsSchema,
+    mergeMethods: prsMergeMethodsSchema,
+    updateMethods: prsUpdateMethodsSchema,
+    search: { type: "boolean" },
+    reactions: { type: "boolean" },
+    review: {
+      type: "object",
+      additionalProperties: false,
+      required: ["inlineComment", "reply", "resolve", "verdicts"],
+      properties: {
+        inlineComment: { type: "boolean" },
+        reply: { type: "boolean" },
+        resolve: { type: "boolean" },
+        verdicts: prsReviewVerdictsSchema,
+      },
+    },
+    reviewers: {
+      type: "object",
+      additionalProperties: false,
+      required: ["request", "listCandidates"],
+      properties: {
+        request: { type: "boolean" },
+        listCandidates: { type: "boolean" },
+      },
+    },
+    edit: {
+      type: "object",
+      additionalProperties: false,
+      required: ["changeRequest", "comment"],
+      properties: {
+        changeRequest: { type: "boolean" },
+        comment: { type: "boolean" },
+      },
+    },
+    stacks: { type: "boolean" },
+    stackActions: { type: "boolean" },
+    labels: { type: "boolean" },
+  },
+} as const;
+const prsViewerPermissionsSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["actions", "comment", "resolve", "verdicts", "requestReviewers"],
+  properties: {
+    stackRebase: { type: "boolean" },
+    actions: prsActionsSchema,
+    comment: { type: "boolean" },
+    resolve: { type: "boolean" },
+    verdicts: prsReviewVerdictsSchema,
+    requestReviewers: { type: "boolean" },
+    updateMethods: prsUpdateMethodsSchema,
+    labels: { type: "boolean" },
+  },
+} as const;
+const prsDetailSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: [
+    "provider",
+    "capabilities",
+    "viewerPermissions",
+    "projectId",
+    "projectTitle",
+    "workspaceRoot",
+    "repository",
+    "number",
+    "title",
+    "body",
+    "url",
+    "author",
+    "state",
+    "isDraft",
+    "mergeability",
+    "additions",
+    "deletions",
+    "changedFiles",
+    "headBranch",
+    "baseBranch",
+    "createdAt",
+    "updatedAt",
+    "mergedAt",
+    "closedAt",
+    "reviewers",
+    "labels",
+    "checks",
+    "mergeCapabilities",
+  ],
+  properties: {
+    provider: { enum: ["github", "gitlab", "azure-devops", "bitbucket", "unknown"] },
+    capabilities: prsCapabilitiesSchema,
+    viewerPermissions: prsViewerPermissionsSchema,
+    projectId: { type: "string", minLength: 1, maxLength: 160 },
+    projectTitle: { type: "string", minLength: 1, maxLength: 512 },
+    workspaceRoot: { type: "string", minLength: 1, maxLength: 32768 },
+    repository: prsRepositoryField,
+    number: { type: "integer", minimum: 1 },
+    title: { type: "string", minLength: 1, maxLength: 2048 },
+    // Delivered bodies are cut at this bound; bodyTruncated says so.
+    body: { type: "string", maxLength: 16384 },
+    bodyTruncated: { type: "boolean" },
+    url: { type: "string", minLength: 1, maxLength: 4096 },
+    author: prsActorSchema,
+    state: { enum: ["open", "closed", "merged"] },
+    isDraft: { type: "boolean" },
+    mergeability: { enum: ["mergeable", "conflicting", "unknown"] },
+    additions: { type: "integer", minimum: 0 },
+    deletions: { type: "integer", minimum: 0 },
+    changedFiles: { type: "integer", minimum: 0 },
+    headBranch: { type: "string", minLength: 1, maxLength: 1024 },
+    headRepositoryNameWithOwner: { type: ["string", "null"], minLength: 1, maxLength: 1024 },
+    baseBranch: { type: "string", minLength: 1, maxLength: 1024 },
+    createdAt: { type: "string", maxLength: 64 },
+    updatedAt: { type: "string", maxLength: 64 },
+    mergedAt: { type: ["string", "null"], maxLength: 64 },
+    closedAt: { type: ["string", "null"], maxLength: 64 },
+    reviewers: { type: "array", maxItems: 100, items: prsActorSchema },
+    labels: { type: "array", maxItems: 100, items: prsLabelSchema },
+    checks: { type: "array", maxItems: 200, items: prsCheckSchema },
+    mergeCapabilities: {
+      type: "object",
+      additionalProperties: false,
+      required: ["merge", "squash", "rebase"],
+      properties: {
+        merge: { type: "boolean" },
+        squash: { type: "boolean" },
+        rebase: { type: "boolean" },
+      },
+    },
+    viewer: { type: "string", minLength: 1, maxLength: 256 },
+    baseComparison: { enum: ["up-to-date", "behind", "unknown"] },
+    behindBy: { type: "integer", minimum: 0 },
+    autoMergeEnabled: { type: "boolean" },
+    autoMergeMethod: { enum: ["merge", "squash", "rebase"] },
+    workflowApprovalsRequired: { type: "integer", minimum: 0 },
+  },
+} as const;
+const prsCommentSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["id", "kind", "author", "body", "createdAt", "url", "path", "reviewState"],
+  properties: {
+    id: { type: "string", minLength: 1, maxLength: 512 },
+    kind: { enum: ["issue-comment", "review-comment", "review"] },
+    author: prsActorSchema,
+    body: { type: "string", maxLength: 8192 },
+    createdAt: { type: "string", maxLength: 64 },
+    url: { type: ["string", "null"], maxLength: 4096 },
+    path: { type: ["string", "null"], maxLength: 1024 },
+    reviewState: { type: ["string", "null"], maxLength: 64 },
+    reactions: { type: "array", maxItems: 8, items: prsReactionSchema },
+  },
+} as const;
+const prsThreadCommentSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["id", "author", "body", "createdAt", "url"],
+  properties: {
+    id: { type: "string", minLength: 1, maxLength: 512 },
+    author: prsActorSchema,
+    body: { type: "string", maxLength: 8192 },
+    createdAt: { type: "string", maxLength: 64 },
+    url: { type: ["string", "null"], maxLength: 4096 },
+    reactions: { type: "array", maxItems: 8, items: prsReactionSchema },
+  },
+} as const;
+const prsReviewThreadSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["id", "path", "line", "side", "isResolved", "isOutdated", "comments"],
+  properties: {
+    id: { type: "string", minLength: 1, maxLength: 512 },
+    path: { type: "string", minLength: 1, maxLength: 1024 },
+    line: { type: ["integer", "null"], minimum: 1 },
+    side: { enum: ["left", "right"] },
+    isResolved: { type: "boolean" },
+    isOutdated: { type: "boolean" },
+    comments: { type: "array", maxItems: 100, items: prsThreadCommentSchema },
+    commentCount: { type: "integer", minimum: 0 },
+    nextCommentsCursor: { type: "string", minLength: 1, maxLength: 4096 },
+  },
+} as const;
+const prsActivitySchema = {
+  type: "object",
+  additionalProperties: false,
+  required: [
+    "comments",
+    "commentCount",
+    "commentsTruncated",
+    "reviewThreads",
+    "commits",
+    "truncated",
+  ],
+  properties: {
+    author: prsActorSchema,
+    reviewers: { type: "array", maxItems: 100, items: prsActorSchema },
+    comments: { type: "array", maxItems: 100, items: prsCommentSchema },
+    commentCount: { type: "integer", minimum: 0 },
+    commentsTruncated: { type: "boolean" },
+    reviewThreads: { type: "array", maxItems: 100, items: prsReviewThreadSchema },
+    commits: {
+      type: "array",
+      maxItems: 250,
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: ["oid", "messageHeadline", "committedDate"],
+        properties: {
+          oid: { type: "string", minLength: 1, maxLength: 128 },
+          messageHeadline: { type: "string", maxLength: 4096 },
+          committedDate: { type: "string", maxLength: 64 },
+          additions: { type: "integer", minimum: 0 },
+          deletions: { type: "integer", minimum: 0 },
+          authors: { type: "array", maxItems: 8, items: prsActorSchema },
+        },
+      },
+    },
+    reactions: { type: "array", maxItems: 8, items: prsReactionSchema },
+    truncated: { type: "boolean" },
+  },
+} as const;
+const prsSummarySchema = {
+  type: "object",
+  additionalProperties: false,
+  required: [
+    "provider",
+    "projectId",
+    "repository",
+    "number",
+    "title",
+    "url",
+    "state",
+    "headBranch",
+    "baseBranch",
+    "updatedAt",
+  ],
+  properties: {
+    provider: { enum: ["github", "gitlab", "azure-devops", "bitbucket", "unknown"] },
+    projectId: { type: "string", minLength: 1, maxLength: 160 },
+    repository: prsRepositoryField,
+    number: { type: "integer", minimum: 1 },
+    title: { type: "string", minLength: 1, maxLength: 2048 },
+    url: { type: "string", minLength: 1, maxLength: 4096 },
+    state: { enum: ["open", "closed", "merged"] },
+    isDraft: { type: "boolean" },
+    headBranch: { type: "string", minLength: 1, maxLength: 1024 },
+    baseBranch: { type: "string", minLength: 1, maxLength: 1024 },
+    closedAt: { type: ["string", "null"], maxLength: 64 },
+    mergedAt: { type: ["string", "null"], maxLength: 64 },
+    updatedAt: { type: "string", maxLength: 64 },
+    author: prsActorSchema,
+    additions: { type: "integer", minimum: 0 },
+    deletions: { type: "integer", minimum: 0 },
+    changedFiles: { type: "integer", minimum: 0 },
+    reviewDecision: { enum: ["approved", "changes-requested", "review-required", null] },
+    checksState: { enum: ["passing", "failing", "pending", null] },
+    mergeability: { enum: ["mergeable", "conflicting", "unknown"] },
+  },
+} as const;
+const prsStackSchema = {
+  type: ["object", "null"],
+  additionalProperties: false,
+  required: ["id", "number", "url", "base", "layers"],
+  properties: {
+    id: { type: "string", minLength: 1, maxLength: 512 },
+    number: { type: "integer", minimum: 1 },
+    url: { type: "string", minLength: 1, maxLength: 4096 },
+    base: { type: "string", minLength: 1, maxLength: 1024 },
+    layers: {
+      type: "array",
+      maxItems: 100,
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: ["number", "headBranch", "state"],
+        properties: {
+          number: { type: "integer", minimum: 1 },
+          title: { type: "string", maxLength: 2048 },
+          isDraft: { type: "boolean" },
+          headSha: { type: "string", minLength: 1, maxLength: 128 },
+          headBranch: { type: "string", minLength: 1, maxLength: 1024 },
+          state: { enum: ["open", "closed", "merged"] },
+        },
+      },
+    },
+  },
+} as const;
+const prsLinkedThreadsSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["threads", "truncated"],
+  properties: {
+    threads: {
+      type: "array",
+      maxItems: 200,
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: ["id", "projectId", "title", "archivedAt"],
+        properties: {
+          id: { type: "string", minLength: 1, maxLength: 160 },
+          projectId: { type: "string", minLength: 1, maxLength: 160 },
+          title: { type: "string", maxLength: 2048 },
+          archivedAt: { type: ["string", "null"], maxLength: 64 },
+        },
+      },
+    },
+    truncated: { type: "boolean" },
+  },
+} as const;
+const prsThreadCommentsResultSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["comments", "nextCursor", "truncated"],
+  properties: {
+    comments: { type: "array", maxItems: 100, items: prsThreadCommentSchema },
+    nextCursor: { type: ["string", "null"], minLength: 1, maxLength: 4096 },
+    truncated: { type: "boolean" },
+  },
+} as const;
+const prsReviewerCandidateListSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["candidates", "truncated"],
+  properties: {
+    candidates: {
+      type: "array",
+      maxItems: 200,
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: ["login", "name", "avatarUrl", "id", "kind", "isRequested"],
+        properties: {
+          login: { type: "string", minLength: 1, maxLength: 256 },
+          name: { type: ["string", "null"], maxLength: 512 },
+          avatarUrl: { type: ["string", "null"], maxLength: 4096 },
+          id: { type: "string", minLength: 1, maxLength: 512 },
+          kind: { enum: ["user", "team"] },
+          isRequested: { type: "boolean" },
+        },
+      },
+    },
+    truncated: { type: "boolean" },
+  },
+} as const;
+const prsLabelCandidateListSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["candidates", "truncated"],
+  properties: {
+    candidates: {
+      type: "array",
+      maxItems: 500,
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: ["name", "color", "description", "isApplied"],
+        properties: {
+          name: { type: "string", minLength: 1, maxLength: 512 },
+          color: { type: ["string", "null"], maxLength: 64 },
+          description: { type: ["string", "null"], maxLength: 4096 },
+          isApplied: { type: "boolean" },
+        },
+      },
+    },
+    truncated: { type: "boolean" },
+  },
+} as const;
+const prsOperationsSupportSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: [
+    "prs.list",
+    "prs.listStats",
+    "prs.summary",
+    "prs.detail",
+    "prs.activity",
+    "prs.threadComments",
+    "prs.linkedThreads",
+    "prs.stack",
+    "prs.reviewerCandidates",
+    "prs.labelCandidates",
+    "prs.invalidate",
+    "prs.streamDiff",
+    "prs.streamDiffFileContents",
+    "prs.subscribeRefreshes",
+  ],
+  properties: {
+    "prs.list": { type: "boolean" },
+    "prs.listStats": { type: "boolean" },
+    "prs.summary": { type: "boolean" },
+    "prs.detail": { type: "boolean" },
+    "prs.activity": { type: "boolean" },
+    "prs.threadComments": { type: "boolean" },
+    "prs.linkedThreads": { type: "boolean" },
+    "prs.stack": { type: "boolean" },
+    "prs.reviewerCandidates": { type: "boolean" },
+    "prs.labelCandidates": { type: "boolean" },
+    "prs.invalidate": { type: "boolean" },
+    "prs.streamDiff": { type: "boolean" },
+    "prs.streamDiffFileContents": { type: "boolean" },
+    "prs.subscribeRefreshes": { type: "boolean" },
+  },
+} as const;
+const prsCapabilitiesResultSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["hosted", "reason", "detail", "providers", "operations"],
+  properties: {
+    hosted: { type: "boolean" },
+    reason: {
+      enum: ["cli-missing", "cli-unauthenticated", "provider-unsupported", null],
+    },
+    detail: { type: ["string", "null"], maxLength: 1024 },
+    providers: { type: "array", maxItems: 100, items: prsProviderSummarySchema },
+    operations: prsOperationsSupportSchema,
+  },
+} as const;
+const prsEmptyInputSchema = {
+  type: "object",
+  additionalProperties: false,
+  properties: {},
+} as const;
+const prsEmptyOutputSchema = {
+  type: "object",
+  additionalProperties: false,
+  properties: {},
+} as const;
+const prsDiffStreamEventSchema = {
+  oneOf: [
+    {
+      type: "object",
+      additionalProperties: false,
+      required: [
+        "kind",
+        "repository",
+        "number",
+        "diffHash",
+        "diffByteLength",
+        "chunkCount",
+        "truncated",
+        "nextCursor",
+      ],
+      properties: {
+        kind: { const: "manifest" },
+        repository: prsRepositoryField,
+        number: { type: "integer", minimum: 1 },
+        host: prsHostField,
+        commit: { type: "string", minLength: 1, maxLength: 128 },
+        diffHash: vcsDiffSha256,
+        diffByteLength: { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER },
+        // The adapter's 4 Mi-unit delivered bound / 8 192-unit chunks = 512.
+        chunkCount: { type: "integer", minimum: 0, maximum: 512 },
+        truncated: { type: "boolean" },
+        nextCursor: { type: ["string", "null"], minLength: 1, maxLength: 4096 },
+        omittedFileStats: {
+          type: "array",
+          maxItems: 1000,
+          items: {
+            type: "object",
+            additionalProperties: false,
+            required: ["path", "additions", "deletions"],
+            properties: {
+              path: { type: "string", minLength: 1, maxLength: 1024 },
+              additions: { type: "number" },
+              deletions: { type: "number" },
+            },
+          },
+        },
+      },
+    },
+    {
+      type: "object",
+      additionalProperties: false,
+      required: ["kind", "chunkIndex", "data"],
+      properties: {
+        kind: { const: "chunk" },
+        chunkIndex: { type: "integer", minimum: 0, maximum: 511 },
+        data: vcsDiffChunkData,
+      },
+    },
+    {
+      type: "object",
+      additionalProperties: false,
+      required: ["kind", "payloadSha256"],
+      properties: { kind: { const: "complete" }, payloadSha256: vcsDiffSha256 },
+    },
+  ],
+} as const;
+const prsRefreshedEventSchema = {
+  oneOf: [
+    {
+      type: "object",
+      additionalProperties: false,
+      required: ["kind", "revision"],
+      properties: {
+        kind: { const: "refreshed" },
+        revision: { type: "integer", minimum: 0 },
+      },
+    },
+    {
+      type: "object",
+      additionalProperties: false,
+      required: ["kind", "reason"],
+      properties: {
+        kind: { const: "closed" },
+        reason: { enum: ["overflow", "refresh-error"] },
+      },
+    },
+  ],
+} as const;
+const prsDiffInputSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["repository", "number"],
+  properties: {
+    host: prsHostField,
+    repository: prsRepositoryField,
+    number: { type: "integer", minimum: 1 },
+    commit: { type: "string", minLength: 1, maxLength: 128 },
+    cursor: { type: "string", minLength: 1, maxLength: 4096 },
+  },
+} as const;
+const prsDiffFileContentsInputSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["repository", "number", "changeType", "oldPath", "newPath"],
+  properties: {
+    host: prsHostField,
+    repository: prsRepositoryField,
+    number: { type: "integer", minimum: 1 },
+    commit: { type: "string", minLength: 1, maxLength: 128 },
+    changeType: { enum: ["change", "rename-pure", "rename-changed", "new", "deleted"] },
+    oldPath: { type: "string", minLength: 1, maxLength: 1024 },
+    newPath: { type: "string", minLength: 1, maxLength: 1024 },
+  },
+} as const;
+/**
+ * The pull-request read surface. `list`/`detail`/`activity`/`threadComments`/
+ * `stack`/`summary`/`linkedThreads`/`listStats`/`reviewerCandidates`/
+ * `labelCandidates`/`invalidate` mirror the same-named `pullRequests.*`
+ * reads; `streamDiff`/`streamDiffFileContents` cover the native diff
+ * (HTTP-routed natively) as `t3.vcs/diff@1.1.0`-family frames so payload
+ * size never matters; `subscribeRefreshes` mirrors the native refresh
+ * counter so a plugin re-reads exactly when the native client would.
+ */
+export const prsReadApi: TypedApi<{
+  getCapabilities: { input: Record<string, never>; output: PrsCapabilitiesResult };
+  list: { input: PrsListInput; output: PrsListResult };
+  listStats: { input: PrsListStatsInput; output: PrsListStatsResult };
+  summary: { input: PrsRef; output: PrsSummary };
+  detail: { input: PrsRef; output: PrsDetail };
+  activity: { input: PrsRef; output: PrsActivity };
+  threadComments: { input: PrsThreadCommentsInput; output: PrsThreadCommentsResult };
+  stack: { input: PrsRef; output: PrsStack | null };
+  linkedThreads: { input: PrsRef; output: PrsLinkedThreadsResult };
+  reviewerCandidates: { input: PrsRef; output: PrsReviewerCandidateList };
+  labelCandidates: { input: PrsRef; output: PrsLabelCandidateList };
+  invalidate: { input: PrsInvalidateInput; output: Record<string, never> };
+}> &
+  TypedStreamApi<{
+    streamDiff: { input: PrsDiffInput; event: PrsDiffStreamEvent };
+    streamDiffFileContents: {
+      input: PrsDiffFileContentsInput;
+      event: VcsDiffFileContentsStreamEvent;
+    };
+    subscribeRefreshes: { input: Record<string, never>; event: PrsRefreshedEvent };
+  }> = defineStreamApi<{
+  streamDiff: { input: PrsDiffInput; event: PrsDiffStreamEvent };
+  streamDiffFileContents: {
+    input: PrsDiffFileContentsInput;
+    event: VcsDiffFileContentsStreamEvent;
+  };
+  subscribeRefreshes: { input: Record<string, never>; event: PrsRefreshedEvent };
+}>({
+  id: PRS_READ,
+  version: "1.0.0",
+  methods: [
+    {
+      name: "getCapabilities",
+      effect: "read",
+      requiredGrants: [PRS_READ],
+      inputSchema: prsEmptyInputSchema,
+      outputSchema: prsCapabilitiesResultSchema,
+    },
+    {
+      name: "list",
+      effect: "read",
+      requiredGrants: [PRS_READ],
+      inputSchema: {
+        type: "object",
+        additionalProperties: false,
+        required: ["state"],
+        properties: {
+          state: { enum: ["all", "open", "closed", "merged"] },
+          involvement: { enum: ["all", "reviewing", "authored"] },
+          filters: prsListFiltersSchema,
+          host: prsHostField,
+          limit: { type: "integer", minimum: 1, maximum: 50 },
+          cursors: prsCursorsSchema,
+          query: { type: "string", minLength: 1, maxLength: 200 },
+        },
+      },
+      outputSchema: prsListResultSchema,
+    },
+    {
+      name: "listStats",
+      effect: "read",
+      requiredGrants: [PRS_READ],
+      inputSchema: {
+        type: "object",
+        additionalProperties: false,
+        required: ["refs"],
+        properties: {
+          refs: { type: "array", minItems: 1, maxItems: 100, items: prsRefInputSchema },
+        },
+      },
+      outputSchema: {
+        type: "object",
+        additionalProperties: false,
+        required: ["stats"],
+        properties: {
+          stats: {
+            type: "array",
+            maxItems: 100,
+            items: {
+              type: "object",
+              additionalProperties: false,
+              required: ["projectId", "repository", "number", "additions", "deletions"],
+              properties: {
+                projectId: { type: "string", minLength: 1, maxLength: 160 },
+                repository: prsRepositoryField,
+                number: { type: "integer", minimum: 1 },
+                additions: { type: "integer", minimum: 0 },
+                deletions: { type: "integer", minimum: 0 },
+              },
+            },
+          },
+        },
+      },
+    },
+    {
+      name: "summary",
+      effect: "read",
+      requiredGrants: [PRS_READ],
+      inputSchema: prsRefInputSchema,
+      outputSchema: prsSummarySchema,
+    },
+    {
+      name: "detail",
+      effect: "read",
+      requiredGrants: [PRS_READ],
+      inputSchema: prsRefInputSchema,
+      outputSchema: prsDetailSchema,
+    },
+    {
+      name: "activity",
+      effect: "read",
+      requiredGrants: [PRS_READ],
+      inputSchema: prsRefInputSchema,
+      outputSchema: prsActivitySchema,
+    },
+    {
+      name: "threadComments",
+      effect: "read",
+      requiredGrants: [PRS_READ],
+      inputSchema: {
+        type: "object",
+        additionalProperties: false,
+        required: ["repository", "number", "threadId", "cursor"],
+        properties: {
+          host: prsHostField,
+          repository: prsRepositoryField,
+          number: { type: "integer", minimum: 1 },
+          threadId: { type: "string", minLength: 1, maxLength: 512 },
+          cursor: { type: "string", minLength: 1, maxLength: 4096 },
+        },
+      },
+      outputSchema: prsThreadCommentsResultSchema,
+    },
+    {
+      name: "stack",
+      effect: "read",
+      requiredGrants: [PRS_READ],
+      inputSchema: prsRefInputSchema,
+      outputSchema: prsStackSchema,
+    },
+    {
+      name: "linkedThreads",
+      effect: "read",
+      requiredGrants: [PRS_READ],
+      inputSchema: prsRefInputSchema,
+      outputSchema: prsLinkedThreadsSchema,
+    },
+    {
+      name: "reviewerCandidates",
+      effect: "read",
+      requiredGrants: [PRS_READ],
+      inputSchema: prsRefInputSchema,
+      outputSchema: prsReviewerCandidateListSchema,
+    },
+    {
+      name: "labelCandidates",
+      effect: "read",
+      requiredGrants: [PRS_READ],
+      inputSchema: prsRefInputSchema,
+      outputSchema: prsLabelCandidateListSchema,
+    },
+    {
+      name: "invalidate",
+      effect: "read",
+      requiredGrants: [PRS_READ],
+      inputSchema: {
+        type: "object",
+        additionalProperties: false,
+        properties: { reference: prsRefInputSchema },
+      },
+      outputSchema: prsEmptyOutputSchema,
+    },
+  ],
+  streams: [
+    {
+      name: "streamDiff",
+      requiredGrants: [PRS_READ],
+      inputSchema: prsDiffInputSchema,
+      eventSchema: prsDiffStreamEventSchema,
+    },
+    {
+      name: "streamDiffFileContents",
+      requiredGrants: [PRS_READ],
+      inputSchema: prsDiffFileContentsInputSchema,
+      eventSchema: vcsDiffFileContentsStreamEventSchema,
+    },
+    {
+      name: "subscribeRefreshes",
+      requiredGrants: [PRS_READ],
+      inputSchema: prsEmptyInputSchema,
+      eventSchema: prsRefreshedEventSchema,
+    },
+  ],
+});
+export const PRS_READ_API = prsReadApi.definition;
+
 export const COMPOSER_CONTEXT = "t3.composer/context";
 export const COMPOSER_WRITE = "t3.composer/write";
 export const MESSAGES_ENRICHMENT = "t3.messages/enrichment";
@@ -2924,6 +4353,7 @@ export const GENERIC_API_CATALOGUE: readonly ApiDefinition[] = [
   vcsDiffApiV1.definition,
   resourcesLeaseApi.definition,
   resourcesLeaseApiV1.definition,
+  prsReadApi.definition,
   composerContextApi.definition,
   messagesEnrichmentApi.definition,
 ];
