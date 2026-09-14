@@ -2711,9 +2711,11 @@ export type PrsThreadCommentsResult = {
   /**
    * Host-issued resume point for the next page — null when comments were
    * dropped to fit the result bound, since that cursor describes the
-   * position after rows the caller never received. The honest recovery from
-   * a dropped tail is `truncated:true` + `nextCursor:null`; re-read with a
-   * narrower target rather than resuming past unseen comments.
+   * position after rows the caller never received. A truncated page is an
+   * explicitly lossy partial response: `threadComments` exposes no
+   * page-size or query control, so dropped rows cannot be recovered
+   * through this API — `truncated:true` + `nextCursor:null` is the honest
+   * terminal state, not a retryable cursor.
    */
   readonly nextCursor: string | null;
   /** Comments were dropped (count or byte bound) or bodies were cut. */

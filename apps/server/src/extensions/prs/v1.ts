@@ -57,7 +57,10 @@ import {
   sourceControlRepositorySelector,
 } from "@t3tools/shared/sourceControl";
 import { PullRequestService, type PullRequestError } from "../../pullRequest/PullRequestService.ts";
-import type { PullRequestProviderApi } from "../../pullRequest/PullRequestProvider.ts";
+import type {
+  PullRequestProviderApi,
+  PullRequestProviderError,
+} from "../../pullRequest/PullRequestProvider.ts";
 import { PullRequestProviderRegistry } from "../../pullRequest/PullRequestProviderRegistry.ts";
 import { listLinkedPullRequestThreads } from "../../pullRequest/linkedThreads.ts";
 import { pullRequestSyncKey } from "../../pullRequest/pullRequestSyncKey.ts";
@@ -212,6 +215,26 @@ const operationError = (operation: string) => (cause: unknown) => {
   return failure(operation, `${label}${message}`.slice(0, 512));
 };
 
+/**
+ * The native stats read erases a provider failure into an empty page —
+ * the right call for the page's best-effort numbers, wrong for a contract
+ * that promises working credentials or a named failure. This preserves
+ * the provider's stable reason the same way the service's strict reads
+ * do: a missing or unauthenticated tool surfaces as
+ * `PullRequestUnavailableError` (cli-missing / cli-unauthenticated),
+ * anything else as an operation error carrying the provider's detail.
+ */
+const providerFailure =
+  (operation: string) =>
+  (error: PullRequestProviderError): PullRequestError =>
+    error.reason === "missing-tool" || error.reason === "unauthenticated"
+      ? new PullRequestUnavailableError({
+          reason: error.reason === "missing-tool" ? "cli-missing" : "cli-unauthenticated",
+          provider: error.provider,
+          cause: error,
+        })
+      : new PullRequestOperationError({ operation, detail: error.detail, cause: error });
+
 const sha256 = (text: string) => NodeCrypto.createHash("sha256").update(text, "utf8").digest("hex");
 const byteLength = (value: unknown) => Buffer.byteLength(JSON.stringify(value), "utf8");
 const capBody = (body: string, bound = MAX_COMMENT_BODY_CHARS) =>
@@ -353,6 +376,7 @@ export function createPrsApiProvider(dependencies: PrsApiDependencies): HostApiP
   interface BoundRepository {
     readonly projectId: ProjectId;
     readonly identity: RepositoryIdentity | null;
+    readonly workspaceRoot: string | null;
     /** Null when the remote's provider cannot be identified server-side. */
     readonly kind: SourceControlProviderKind | null;
     readonly host: string | null;
@@ -372,9 +396,18 @@ export function createPrsApiProvider(dependencies: PrsApiDependencies): HostApiP
           }),
       ),
     );
-    const identity = Option.getOrNull(shell)?.repositoryIdentity ?? null;
-    if (identity === null) {
-      return { projectId, identity, kind: null, host: null, repository: null, api: null };
+    const resolved = Option.getOrNull(shell);
+    const identity = resolved?.repositoryIdentity ?? null;
+    if (identity === null || resolved === null) {
+      return {
+        projectId,
+        identity,
+        workspaceRoot: resolved?.workspaceRoot ?? null,
+        kind: null,
+        host: null,
+        repository: null,
+        api: null,
+      };
     }
     let kind = identity.provider as SourceControlProviderKind | undefined;
     if (kind === "unknown") {
@@ -385,6 +418,7 @@ export function createPrsApiProvider(dependencies: PrsApiDependencies): HostApiP
     return {
       projectId,
       identity,
+      workspaceRoot: resolved.workspaceRoot,
       kind: known,
       host: pullRequestHostOf(identity, kind ?? "unknown"),
       repository: sourceControlRepositorySelector(identity),
@@ -393,6 +427,7 @@ export function createPrsApiProvider(dependencies: PrsApiDependencies): HostApiP
   });
 
   type HostedRepository = BoundRepository & {
+    readonly workspaceRoot: string;
     readonly repository: string;
     readonly host: string;
     readonly api: PullRequestProviderApi;
@@ -406,10 +441,14 @@ export function createPrsApiProvider(dependencies: PrsApiDependencies): HostApiP
   const requireHosted = (
     bound: BoundRepository,
   ): Effect.Effect<HostedRepository, PullRequestError> =>
-    bound.api === null || bound.repository === null || bound.host === null
+    bound.api === null ||
+    bound.repository === null ||
+    bound.host === null ||
+    bound.workspaceRoot === null
       ? Effect.fail(new PullRequestUnavailableError({ reason: "provider-unsupported" }))
       : Effect.succeed({
           ...bound,
+          workspaceRoot: bound.workspaceRoot,
           repository: bound.repository,
           host: bound.host,
           api: bound.api,
@@ -854,16 +893,42 @@ export function createPrsApiProvider(dependencies: PrsApiDependencies): HostApiP
           const bound = yield* bindRepository(scope).pipe(Effect.flatMap(requireHosted));
           // The service silently skips refs whose provider lacks the
           // optional stats API; the contract fails by name instead.
-          if (bound.api.listChangeRequestStats === undefined) {
+          const readStats = bound.api.listChangeRequestStats;
+          if (readStats === undefined) {
             return yield* new PullRequestOperationError({
               operation: "listStats",
               detail: "This host does not report per-change-request line counts.",
             });
           }
           const refs = yield* Effect.forEach(safe.refs, (ref) => boundRef(bound, ref));
-          return yield* dependencies.pullRequests
-            .listStats({ refs })
-            .pipe(Effect.map((result): PrsListStatsResult => result as PrsListStatsResult));
+          /**
+           * Strict read, not `PullRequestService.listStats`: the service
+           * erases a provider failure into `{stats: []}` — right for the
+           * page's best-effort numbers, wrong here, where a missing or
+           * unauthenticated tool must fail by name with its stable reason.
+           * The provider is called directly with the bound project's own
+           * checkout and repository; nothing caller-supplied routes it.
+           */
+          const read = yield* readStats({
+            cwd: bound.workspaceRoot,
+            host: bound.host,
+            changeRequests: refs.map((ref) => ({
+              repository: ref.repository,
+              number: ref.number,
+            })),
+          }).pipe(Effect.mapError(providerFailure("listStats")));
+          const wanted = new Set(refs.map((ref) => ref.number));
+          return {
+            stats: read
+              .filter((stat) => wanted.has(stat.number))
+              .map((stat) => ({
+                projectId: bound.projectId,
+                repository: stat.repository,
+                number: stat.number,
+                additions: stat.additions,
+                deletions: stat.deletions,
+              })),
+          } satisfies PrsListStatsResult;
         }),
       }),
       summary: runMethod({

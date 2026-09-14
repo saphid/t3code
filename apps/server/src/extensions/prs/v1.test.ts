@@ -27,7 +27,10 @@ import * as SqlClient from "effect/unstable/sql/SqlClient";
 import type { HostApiProvider } from "@t3tools/extension-runtime";
 import type { ApiStreamEvent } from "@t3tools/extension-sdk/capabilities";
 import type { ViewContext } from "@t3tools/extension-sdk/contracts";
-import type { PullRequestProviderApi } from "../../pullRequest/PullRequestProvider.ts";
+import {
+  PullRequestProviderError,
+  type PullRequestProviderApi,
+} from "../../pullRequest/PullRequestProvider.ts";
 import {
   PullRequestProviderRegistry,
   fromProviders,
@@ -1067,6 +1070,136 @@ it.layer(NodeServices.layer)("t3.prs/read adapter", (it) => {
       expect(stack.operation).toBe("prs.stack");
       expect(stack.message).toContain("stack");
     }),
+  );
+
+  it.effect("listStats reads stats strictly through the bound provider", () =>
+    Effect.gen(function* () {
+      const calls: { cwd: string; host: string; changeRequests: readonly unknown[] }[] = [];
+      const provider = createPrsApiProvider(
+        makeDeps(
+          {
+            // The strict path never reaches the service — the service would
+            // erase a provider failure into an empty page.
+            listStats: () => Effect.die("must not reach the service"),
+          },
+          {
+            registry: fromProviders([
+              githubProviderApi(
+                {},
+                {
+                  listChangeRequestStats: (input) => {
+                    calls.push(input);
+                    return Effect.succeed([
+                      { repository: "owner/repo", number: 42, additions: 10, deletions: 2 },
+                      // A row the caller never asked for is filtered out.
+                      { repository: "owner/repo", number: 99, additions: 1, deletions: 1 },
+                    ]);
+                  },
+                },
+              ),
+            ]),
+          },
+        ),
+      );
+      const result = (yield* invoke(provider, "listStats", { refs: [REF] }, makeContext())) as {
+        stats: readonly {
+          projectId: string;
+          repository: string;
+          number: number;
+          additions: number;
+          deletions: number;
+        }[];
+      };
+      expect(calls).toHaveLength(1);
+      expect(calls[0]!.cwd).toBe(WORKSPACE_ROOT);
+      expect(calls[0]!.host).toBe("github.com");
+      expect(calls[0]!.changeRequests).toEqual([{ repository: "owner/repo", number: 42 }]);
+      expect(result.stats).toEqual([
+        {
+          projectId: "project",
+          repository: "owner/repo",
+          number: 42,
+          additions: 10,
+          deletions: 2,
+        },
+      ]);
+    }),
+  );
+
+  it.effect(
+    "listStats fails by name with the stable reason when the provider is unusable (real service)",
+    () =>
+      Effect.gen(function* () {
+        /**
+         * The round-2 reproduction: a provider whose stats call fails with
+         * an unusable-host reason must NOT produce `{stats: []}` — the
+         * native service's best-effort page semantics — but fail
+         * `prs.listStats` with cli-unauthenticated / cli-missing named.
+         */
+        for (const [reason, stable] of [
+          ["unauthenticated", "cli-unauthenticated"],
+          ["missing-tool", "cli-missing"],
+        ] as const) {
+          const attempts: unknown[] = [];
+          const api = githubProviderApi(
+            {},
+            {
+              getViewer: () => Effect.succeed("bilal"),
+              listChangeRequestStats: (input) => {
+                attempts.push(input);
+                return Effect.fail(
+                  new PullRequestProviderError({
+                    provider: "github",
+                    operation: "listChangeRequestStats",
+                    reason,
+                    detail:
+                      reason === "unauthenticated"
+                        ? "HTTP 401: Bad credentials"
+                        : "gh: command not found",
+                  }),
+                );
+              },
+            },
+          );
+          const service = yield* PullRequestService.make.pipe(
+            Effect.provide(
+              Layer.mergeAll(
+                Layer.succeed(PullRequestProviderRegistry, fromProviders([api])),
+                Layer.mock(SourceControlProviderRegistry.SourceControlProviderRegistry)({
+                  resolveHandle: () => Effect.die("Unexpected provider refinement"),
+                }),
+                Layer.mock(ProjectionSnapshotQuery.ProjectionSnapshotQuery)({
+                  getShellSnapshot: () =>
+                    Effect.succeed({
+                      snapshotSequence: 1,
+                      projects: [projectShell()],
+                      threads: [],
+                      updatedAt: NOW,
+                    }),
+                }),
+                SourceControlRateLimit.layer,
+                Layer.effect(
+                  PullRequestReadCache.PullRequestReadCache,
+                  PullRequestReadCache.make,
+                ).pipe(
+                  Layer.provide(Persistence.layerKvs),
+                  Layer.provide(KeyValueStore.layerMemory),
+                  Layer.provide(NodeServices.layer),
+                ),
+              ),
+            ),
+          );
+          const provider = createPrsApiProvider({
+            ...makeDeps({}, { registry: fromProviders([api]) }),
+            pullRequests: service,
+          });
+          const error = yield* invokeError(provider, "listStats", { refs: [REF] }, makeContext());
+          expect(error.operation).toBe("prs.listStats");
+          expect(error.message).toContain(stable);
+          // One real failing provider attempt — never an empty success.
+          expect(attempts).toHaveLength(1);
+        }
+      }),
   );
 
   it.effect("threadComments discloses truncation and drops an unsafe continuation", () =>
