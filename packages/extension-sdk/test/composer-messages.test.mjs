@@ -1,5 +1,6 @@
 import * as NodeTest from "node:test";
 import * as NodeAssert from "node:assert/strict";
+import { MAX_PAYLOAD_BYTES } from "../dist/contracts.js";
 import {
   COMPOSER_CONTEXT,
   COMPOSER_CONTEXT_API,
@@ -73,7 +74,7 @@ NodeTest.test("insertContext input is closed and bounded", () => {
   NodeAssert.equal(ref.additionalProperties, false);
   NodeAssert.deepEqual(ref.required, ["path"]);
   NodeAssert.equal(ref.properties.path.maxLength, 512);
-  NodeAssert.equal(ref.properties.excerpt.maxLength, 8192);
+  NodeAssert.equal(ref.properties.excerpt.maxLength, 512);
   NodeAssert.equal(input.properties.threadId.maxLength, 128);
 });
 
@@ -85,8 +86,8 @@ NodeTest.test("attachAnnotation input is closed and bounded", () => {
   NodeAssert.equal(annotation.additionalProperties, false);
   NodeAssert.deepEqual(annotation.required, ["filePath", "startLine", "endLine", "body"]);
   NodeAssert.equal(annotation.properties.filePath.maxLength, 512);
-  NodeAssert.equal(annotation.properties.body.maxLength, 8192);
-  NodeAssert.equal(annotation.properties.excerpt.maxLength, 32768);
+  NodeAssert.equal(annotation.properties.body.maxLength, 4096);
+  NodeAssert.equal(annotation.properties.excerpt.maxLength, 4096);
 });
 
 NodeTest.test("capability honesty output names per-op support and transport", () => {
@@ -101,4 +102,90 @@ NodeTest.test("capability honesty output names per-op support and transport", ()
     NodeAssert.deepEqual(output.properties.operations.required, ops);
     NodeAssert.equal(output.properties.operations.additionalProperties, false);
   }
+});
+
+const utf8Bytes = (value) => new TextEncoder().encode(JSON.stringify(value)).length;
+// Worst-case JSON expansion is 6 bytes per char (C0 controls → \uXXXX escapes).
+const worst = (length) => "\u0000".repeat(length);
+
+NodeTest.test("schema-maximum inputs always fit the 64 KiB invoke envelope", () => {
+  // insertContext: threadId + 8 refs at path/excerpt/line maxima.
+  const insert = {
+    threadId: worst(128),
+    refs: Array.from({ length: 8 }, () => ({
+      path: worst(512),
+      startLine: 1000000,
+      endLine: 1000000,
+      excerpt: worst(512),
+    })),
+  };
+  NodeAssert.ok(
+    utf8Bytes(insert) < MAX_PAYLOAD_BYTES,
+    `insertContext worst case ${utf8Bytes(insert)} >= ${MAX_PAYLOAD_BYTES}`,
+  );
+  // attachAnnotation: threadId + filePath + body + excerpt at maxima.
+  const annotation = {
+    threadId: worst(128),
+    annotation: {
+      filePath: worst(512),
+      startLine: 1000000,
+      endLine: 1000000,
+      body: worst(4096),
+      excerpt: worst(4096),
+    },
+  };
+  NodeAssert.ok(
+    utf8Bytes(annotation) < MAX_PAYLOAD_BYTES,
+    `attachAnnotation worst case ${utf8Bytes(annotation)} >= ${MAX_PAYLOAD_BYTES}`,
+  );
+  // getDraftState output: prompt at maxLength + counts + flag.
+  const draft = {
+    draft: {
+      prompt: worst(10000),
+      promptTruncated: true,
+      contextCounts: {
+        files: 10000,
+        images: 10000,
+        terminalContexts: 10000,
+        elementContexts: 10000,
+        previewAnnotations: 10000,
+        reviewComments: 10000,
+      },
+    },
+  };
+  NodeAssert.ok(
+    utf8Bytes(draft) < MAX_PAYLOAD_BYTES,
+    `getDraftState worst case ${utf8Bytes(draft)} >= ${MAX_PAYLOAD_BYTES}`,
+  );
+});
+
+NodeTest.test("unicode and escaped boundaries stay inside the envelope", () => {
+  // 4-byte emoji are the widest unescaped content; C0 controls the widest escaped.
+  const emoji = "😀".repeat(5000); // 5,000 non-BMP chars = 10,000 UTF-16 units (the maxLength domain)
+  const draft = {
+    draft: {
+      prompt: emoji,
+      promptTruncated: false,
+      contextCounts: {
+        files: 0,
+        images: 0,
+        terminalContexts: 0,
+        elementContexts: 0,
+        previewAnnotations: 0,
+        reviewComments: 0,
+      },
+    },
+  };
+  NodeAssert.ok(utf8Bytes(draft) < MAX_PAYLOAD_BYTES);
+  const escapable = '"\\\n'.repeat(1024); // 4,096 chars of quote/backslash/newline
+  const annotation = {
+    annotation: {
+      filePath: "a.ts",
+      startLine: 1,
+      endLine: 2,
+      body: escapable,
+      excerpt: escapable,
+    },
+  };
+  NodeAssert.ok(utf8Bytes(annotation) < MAX_PAYLOAD_BYTES);
 });

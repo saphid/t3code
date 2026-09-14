@@ -2398,6 +2398,7 @@ export type ComposerContextInsertResult = {
 export type ComposerDraftStateResult = {
   readonly draft: {
     readonly prompt: string;
+    readonly promptTruncated: boolean;
     readonly contextCounts: {
       readonly files: number;
       readonly images: number;
@@ -2450,7 +2451,9 @@ const composerContextRefSchema = {
     path: { type: "string", minLength: 1, maxLength: 512 },
     startLine: composerLineInput,
     endLine: composerLineInput,
-    excerpt: { type: "string", maxLength: 8192 },
+    // 8 refs at these bounds encode to ≤51 KB worst-case (6 bytes/char for
+    // C0 escapes) — inside the broker's 64 KiB copyJson envelope.
+    excerpt: { type: "string", maxLength: 512 },
   },
 } as const;
 const composerTransportOutput = (operations: readonly string[]) =>
@@ -2551,9 +2554,14 @@ export const composerContextApi = defineApi<{
           draft: {
             type: ["object", "null"],
             additionalProperties: false,
-            required: ["prompt", "contextCounts"],
+            required: ["prompt", "promptTruncated", "contextCounts"],
             properties: {
-              prompt: { type: "string", maxLength: 65536 },
+              // 10,000 chars worst-case encodes to 60,000 UTF-8 bytes
+              // (6/char for C0 escapes) — the response always fits the
+              // broker's 64 KiB copyJson envelope. Longer drafts are cut
+              // on a char boundary and disclosed via promptTruncated.
+              prompt: { type: "string", maxLength: 10000 },
+              promptTruncated: { type: "boolean" },
               contextCounts: {
                 type: "object",
                 additionalProperties: false,
@@ -2624,8 +2632,10 @@ export const messagesEnrichmentApi = defineApi<{
               filePath: { type: "string", minLength: 1, maxLength: 512 },
               startLine: composerLineInput,
               endLine: composerLineInput,
-              body: { type: "string", minLength: 1, maxLength: 8192 },
-              excerpt: { type: "string", maxLength: 32768 },
+              // body + excerpt at 4,096 chars each keep the worst-case
+              // encoded request (~53 KB) inside the 64 KiB invoke envelope.
+              body: { type: "string", minLength: 1, maxLength: 4096 },
+              excerpt: { type: "string", maxLength: 4096 },
             },
           },
         },
