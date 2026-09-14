@@ -22,6 +22,7 @@ import * as Effect from "effect/Effect";
 import * as Deferred from "effect/Deferred";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
 import * as Scheduler from "effect/Scheduler";
@@ -46,7 +47,7 @@ function claudeLine(
   messageId = `msg_${id}`,
   requestId = `req_${id}`,
 ): string {
-  const usesTimestamp = Number.isFinite(Date.parse(modelOrTimestamp));
+  const usesTimestamp = /^\d{4}-\d{2}-\d{2}T/.test(modelOrTimestamp);
   const timestamp = usesTimestamp ? modelOrTimestamp : "2026-08-01T10:00:00Z";
   const model = usesTimestamp ? "claude-fable-5" : modelOrTimestamp;
   return `${JSON.stringify({
@@ -282,6 +283,12 @@ describe("UsageService", () => {
             claudeLine(4, 1000),
           );
         });
+        const configuredProjects = yield* Effect.promise(() =>
+          NodeFSP.realpath(NodePath.join(configured, "projects")),
+        );
+        const environmentProjects = yield* Effect.promise(() =>
+          NodeFSP.realpath(NodePath.join(environmentHome, "projects")),
+        );
         yield* Effect.gen(function* () {
           const settingsService = yield* ServerSettings.ServerSettingsService;
           const service = yield* UsageService.make;
@@ -289,7 +296,7 @@ describe("UsageService", () => {
           assert.strictEqual(totalOutputTokens(first), 7);
           assert.include(
             first.sources.map((source) => source.fingerprint.resolvedHomePath),
-            NodePath.join(configured, "projects"),
+            configuredProjects,
           );
           yield* settingsService.updateSettings({
             providerInstances: {
@@ -306,7 +313,7 @@ describe("UsageService", () => {
           assert.strictEqual(totalOutputTokens(second), 8);
           assert.include(
             second.sources.map((source) => source.fingerprint.resolvedHomePath),
-            NodePath.join(environmentHome, "projects"),
+            environmentProjects,
           );
         }).pipe(
           Effect.provide(
@@ -447,6 +454,9 @@ describe("UsageService", () => {
       yield* Effect.gen(function* () {
         const settingsService = yield* ServerSettings.ServerSettingsService;
         const fileSystem = yield* FileSystem.FileSystem;
+        const claudeProjects = yield* Effect.promise(() =>
+          NodeFSP.realpath(NodePath.join(home, "claude", "projects")),
+        );
         const firstScanStarted = yield* Deferred.make<void>();
         const secondScanStarted = yield* Deferred.make<void>();
         const releaseRates = yield* Deferred.make<void>();
@@ -457,7 +467,7 @@ describe("UsageService", () => {
             exists: (path) =>
               fileSystem.exists(path).pipe(
                 Effect.tap(() => {
-                  if (path !== NodePath.join(home, "claude", "projects")) return Effect.void;
+                  if (path !== claudeProjects) return Effect.void;
                   homeProbes += 1;
                   return Deferred.succeed(
                     homeProbes === 1 ? firstScanStarted : secondScanStarted,
@@ -484,8 +494,8 @@ describe("UsageService", () => {
           },
         });
         const second = yield* service.readSummary(WINDOW).pipe(Effect.forkChild);
-        yield* Deferred.await(secondScanStarted);
         yield* Deferred.succeed(releaseRates, undefined);
+        yield* Deferred.await(secondScanStarted);
 
         const original = yield* Fiber.join(first);
         const updated = yield* Fiber.join(second);

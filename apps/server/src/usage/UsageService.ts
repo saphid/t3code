@@ -16,10 +16,15 @@
  * @module UsageService
  */
 import * as NodeOS from "node:os";
+import * as NodeCrypto from "node:crypto";
 
 import {
+  ClaudeSettings,
+  CodexSettings,
+  type ProviderInstanceConfig,
   USAGE_CONTRACT_VERSION,
   ProjectId,
+  type ServerSettings as ServerSettingsValue,
   UsageDay,
   UsageSummary as UsageSummarySchema,
   UsageSource as UsageSourceSchema,
@@ -55,11 +60,11 @@ import { ProjectionProjectRepository } from "../persistence/Services/ProjectionP
 import { ProjectionThreadRepository } from "../persistence/Services/ProjectionThreads.ts";
 import * as ProviderSessionRuntime from "../persistence/ProviderSessionRuntime.ts";
 import * as ServerSettings from "../serverSettings.ts";
-import { resolveClaudeHomePath } from "../provider/Drivers/ClaudeHome.ts";
 import { resolveCodexHomeLayout } from "../provider/Drivers/CodexHomeLayout.ts";
+import { mergeProviderInstanceEnvironment } from "../provider/ProviderInstanceEnvironment.ts";
 import { makeDayFormatter, makeProjectResolver, UsageAggregator } from "./usageAggregation.ts";
 import { addTotals, EMPTY_TOTALS, type UsageRecord } from "./usageTranscripts.ts";
-import { parseRateTable, priceUsage, type RateTable } from "./usagePricing.ts";
+import { createOverrideRateTable, parseRateTable, type RateTable } from "./usagePricing.ts";
 import {
   listTranscriptFilesDetailed,
   readDirectoryVolumeIdDetailed,
@@ -96,6 +101,9 @@ const MAX_HALF_HOUR_WINDOW_MS = 90 * 24 * 60 * 60 * 1000;
 
 /** Longest window the UI offers, plus slack. Older entries are pruned. */
 const CACHE_RETENTION_DAYS = 90;
+
+const decodeCodexSettings = Schema.decodeOption(CodexSettings);
+const decodeClaudeSettings = Schema.decodeOption(ClaudeSettings);
 
 /**
  * Maximum rows sent per breakdown request, including grouped remainders. A
@@ -272,7 +280,11 @@ function formatInstant(epochMs: number): string {
   return DateTime.formatIso(DateTime.makeUnsafe(epochMs));
 }
 
-function snapshotKey(input: UsageSummaryInput): string {
+function snapshotKey(
+  input: UsageSummaryInput,
+  priceOverrides: ServerSettingsValue["usagePriceOverrides"],
+  transcriptSettingsKey: string,
+): string {
   return JSON.stringify([
     input.timeZone,
     input.sinceDay,
@@ -280,6 +292,8 @@ function snapshotKey(input: UsageSummaryInput): string {
     input.resolution ?? "day",
     input.sinceTime ?? null,
     input.untilTime ?? null,
+    priceOverrides,
+    transcriptSettingsKey,
   ]);
 }
 
@@ -657,57 +671,105 @@ export const make = Effect.gen(function* () {
     Effect.withSpan("UsageService.refreshRates"),
   );
 
-  /**
-   * Claude's config dir is the home itself when overridden, but a default
-   * install nests transcripts under `~/.claude/projects`. Probe both.
-   */
-  const resolveClaudeTranscriptDir = (homePath: string) =>
-    Effect.gen(function* () {
-      const nested = path.join(homePath, ".claude", "projects");
-      const nestedExists = yield* fileSystem
-        .exists(nested)
-        .pipe(Effect.catchCause(() => Effect.succeed(false)));
-      return nestedExists ? nested : path.join(homePath, "projects");
-    });
+  // A settings failure must not silently discard custom rates or transcript homes.
+  const readSettings = settingsService.getSettings.pipe(
+    Effect.catchCause(
+      (cause) =>
+        new UsageReadError({
+          reason: "scanFailed",
+          detail: "Server settings could not be read.",
+          cause: Cause.squash(cause),
+        }),
+    ),
+  );
+
+  const transcriptSettingsKey = (settings: ServerSettingsValue): string => {
+    const homeFields = (config: unknown) => {
+      if (typeof config !== "object" || config === null || Array.isArray(config)) return null;
+      const value = config as Record<string, unknown>;
+      return [
+        typeof value.homePath === "string" ? value.homePath : null,
+        typeof value.shadowHomePath === "string" ? value.shadowHomePath : null,
+      ];
+    };
+    const instances = Object.entries(settings.providerInstances)
+      .map(([instanceId, instance]) => [
+        instanceId,
+        instance.driver,
+        homeFields(instance.config),
+        instance.environment
+          ?.filter((entry) => ["CLAUDE_CONFIG_DIR", "CODEX_HOME", "GROK_HOME"].includes(entry.name))
+          .map((entry) => [entry.name, entry.value])
+          .toSorted(([left], [right]) => String(left).localeCompare(String(right))) ?? [],
+      ])
+      .toSorted(([left], [right]) => String(left).localeCompare(String(right)));
+    return NodeCrypto.createHash("sha256")
+      .update(
+        JSON.stringify([
+          homeFields(settings.providers.claudeAgent),
+          homeFields(settings.providers.codex),
+          hostEnvironment.CLAUDE_CONFIG_DIR ?? null,
+          hostEnvironment.CODEX_HOME ?? null,
+          hostEnvironment.GROK_HOME ?? null,
+          instances,
+        ]),
+      )
+      .digest("hex");
+  };
 
   /** Resolves the transcript directory for each provider. */
-  const resolveTranscriptDirs = Effect.fn("UsageService.resolveTranscriptDirs")(function* () {
-    // A settings failure must surface as an error: swallowing it here would
-    // present "zero usage from every provider" as a valid answer.
-    const settings = yield* settingsService.getSettings.pipe(
-      Effect.catchCause(
-        (cause) =>
-          new UsageReadError({
-            reason: "scanFailed",
-            // Bounded description; the squashed failure travels as the cause.
-            // Squashed, not the Cause tree: a full tree in a Defect field is
-            // the unbounded wire payload the bounded detail exists to avoid.
-            detail: "Server settings could not be read.",
-            cause: Cause.squash(cause),
-          }),
-      ),
-    );
-
-    const claudeHome = yield* resolveClaudeHomePath(settings.providers.claudeAgent);
-    const claudeDir = yield* resolveClaudeTranscriptDir(claudeHome);
-    const codexLayout = yield* resolveCodexHomeLayout(settings.providers.codex);
-    // Grok Settings only expose the binary path; home is `$GROK_HOME` or `~/.grok`.
-    // Empty/whitespace GROK_HOME must fall back: coalescing alone would scan cwd.
-    const grokHomeEnv = hostEnvironment["GROK_HOME"]?.trim() ?? "";
-    const grokHome =
-      grokHomeEnv.length > 0
-        ? path.resolve(expandHomePath(grokHomeEnv))
-        : path.join(NodeOS.homedir(), ".grok");
-
-    return [
-      { provider: "claude" as const, dir: claudeDir },
-      { provider: "codex" as const, dir: path.join(codexLayout.sharedHomePath, "sessions") },
-      {
-        provider: "grok" as const,
-        dir: path.join(grokHome, "sessions"),
-        fileName: "updates.jsonl",
-      },
-    ];
+  const resolveTranscriptDirs = Effect.fn("UsageService.resolveTranscriptDirs")(function* (
+    settings: ServerSettingsValue,
+  ) {
+    const dirs: Array<{ provider: UsageProviderKind; dir: string; fileName?: string }> = [];
+    const seen = new Set<string>();
+    for (const driver of ["claudeAgent", "codex", "grok"] as const) {
+      // Disabled accounts still have history. Explicit default slots replace
+      // the legacy settings, just as they do in the provider registry.
+      const instances: Array<Pick<ProviderInstanceConfig, "config" | "environment">> =
+        Object.values(settings.providerInstances).filter((instance) => instance.driver === driver);
+      if (!Object.hasOwn(settings.providerInstances, driver)) {
+        instances.push({ config: settings.providers[driver] });
+      }
+      for (const instance of instances) {
+        const environment = mergeProviderInstanceEnvironment(instance.environment, hostEnvironment);
+        const provider = driver === "claudeAgent" ? "claude" : driver;
+        let home: string;
+        if (driver === "codex") {
+          const decoded = decodeCodexSettings(instance.config ?? {});
+          if (Option.isNone(decoded)) continue;
+          const config = decoded.value;
+          const environmentHome = environment.CODEX_HOME?.trim();
+          const layout = yield* resolveCodexHomeLayout(
+            !config.homePath.trim() && !config.shadowHomePath.trim() && environmentHome
+              ? { ...config, homePath: environmentHome }
+              : config,
+          );
+          home = layout.sharedHomePath;
+        } else if (driver === "claudeAgent") {
+          const decoded = decodeClaudeSettings(instance.config ?? {});
+          if (Option.isNone(decoded)) continue;
+          const configured = decoded.value.homePath.trim();
+          home = configured
+            ? expandHomePath(configured)
+            : environment.CLAUDE_CONFIG_DIR?.trim() || path.join(NodeOS.homedir(), ".claude");
+        } else {
+          home = expandHomePath(
+            environment.GROK_HOME?.trim() || path.join(NodeOS.homedir(), ".grok"),
+          );
+        }
+        const directory = path.resolve(home, provider === "claude" ? "projects" : "sessions");
+        // Account aliases and Codex auth overlays can share the same history.
+        const dir = yield* fileSystem
+          .realPath(directory)
+          .pipe(Effect.orElseSucceed(() => directory));
+        const key = `${provider}\0${dir}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        dirs.push({ provider, dir, ...(provider === "grok" ? { fileName: "updates.jsonl" } : {}) });
+      }
+    }
+    return dirs;
   });
 
   /**
@@ -977,10 +1039,15 @@ export const make = Effect.gen(function* () {
     readonly complete: boolean;
   }
 
-  const collectDirs = Effect.fn("UsageService.collectDirs")(function* (windowStartMs: number) {
+  const collectDirs = Effect.fn("UsageService.collectDirs")(function* (
+    windowStartMs: number,
+    settings: ServerSettingsValue,
+  ) {
     // The home resolvers ask for `Path` themselves; satisfy them from the
     // instance we already hold so the scan stays context-free.
-    const dirs = yield* resolveTranscriptDirs().pipe(Effect.provideService(Path.Path, path));
+    const dirs = yield* resolveTranscriptDirs(settings).pipe(
+      Effect.provideService(Path.Path, path),
+    );
     const scanned: ScannedDir[] = [];
     for (const { provider, dir, fileName } of dirs) {
       const volume = yield* Effect.promise(() => readDirectoryVolumeIdDetailed(dir));
@@ -1031,7 +1098,10 @@ export const make = Effect.gen(function* () {
     return scanned;
   });
 
-  const scanSummary = Effect.fn("UsageService.scanSummary")(function* (input: UsageSummaryInput) {
+  const scanSummary = Effect.fn("UsageService.scanSummary")(function* (
+    input: UsageSummaryInput,
+    settings: ServerSettingsValue,
+  ) {
     if (input.sinceDay > input.untilDay) {
       return yield* new UsageReadError({
         reason: "invalidWindow",
@@ -1084,9 +1154,13 @@ export const make = Effect.gen(function* () {
     // loads while transcripts stream instead of gating them: a cold rates
     // fetch on a slow network no longer delays the scan by its own timeout.
     const [, scannedDirs] = yield* Effect.all(
-      [ensureRates({ allowNetwork: true, force: false }), collectDirs(windowStartMs)],
+      [ensureRates({ allowNetwork: true, force: false }), collectDirs(windowStartMs, settings)],
       { concurrency: 2 },
     );
+    const effectiveRates = new Map([
+      ...rates,
+      ...createOverrideRateTable(settings.usagePriceOverrides),
+    ]);
 
     const projectResolver = yield* resolveProjects();
     const aggregator = new UsageAggregator({
@@ -1098,7 +1172,7 @@ export const make = Effect.gen(function* () {
           : UsageDay.make(completeThroughDay),
       resolution: input.resolution ?? "day",
       ...hourlyWindow,
-      rates,
+      rates: effectiveRates,
       resolveProject: projectResolver,
     });
 
@@ -1224,7 +1298,6 @@ export const make = Effect.gen(function* () {
       ...unkeyedLedgerRecords,
       ...ledgerRecordsByKey.values(),
     ]) {
-      const priced = priceUsage(rates, record.model, record.totals, record.reportedCostUsd);
       const resolvedProject = projectResolver(record.cwd);
       const aggregate: LedgerAggregate = {
         hostId,
@@ -1239,15 +1312,14 @@ export const make = Effect.gen(function* () {
           ? {}
           : { projectId: resolvedProject.projectId, project: resolvedProject.title }),
         totals: record.totals,
-        pricedTotals: priced.costSource === "modelPriced" ? record.totals : EMPTY_TOTALS,
+        pricedTotals: record.reportedCostUsd === null ? record.totals : EMPTY_TOTALS,
         savingsTotals: record.totals,
         legacyPricing: false,
         legacyPricingRecords: 0,
-        reportedCostUsd:
-          priced.costSource === "providerReported" ? (record.reportedCostUsd ?? 0) : 0,
+        reportedCostUsd: record.reportedCostUsd ?? 0,
         records: 1,
-        unpricedRecords: priced.costSource === "unpriced" ? 1 : 0,
-        providerReportedRecords: priced.costSource === "providerReported" ? 1 : 0,
+        unpricedRecords: 0,
+        providerReportedRecords: record.reportedCostUsd === null ? 0 : 1,
         sessions: record.sessionId.length === 0 ? [] : [record.sessionId],
       };
       mergeLedgerAggregate(ledgerAggregates, aggregate);
@@ -1315,13 +1387,17 @@ export const make = Effect.gen(function* () {
 
   const scanKey = snapshotKey;
 
-  const scanAndPersist = (input: UsageSummaryInput) => {
+  const scanAndPersist = (
+    input: UsageSummaryInput,
+    settings: ServerSettingsValue,
+    key = scanKey(input, settings.usagePriceOverrides, transcriptSettingsKey(settings)),
+  ) => {
     const scan = (isCanonicalLedgerInput(input) ? ensureUsageLedgerLoaded : Effect.void).pipe(
-      Effect.andThen(scanSummary(input)),
+      Effect.andThen(scanSummary(input, settings)),
       Effect.tap((result) =>
         Effect.sync(() => {
           const summary = result.summary;
-          usageSnapshots.set(scanKey(input), summary);
+          usageSnapshots.set(key, summary);
           while (usageSnapshots.size > MAX_USAGE_SNAPSHOTS) {
             const oldest = [...usageSnapshots.entries()].toSorted(([, left], [, right]) =>
               (left.coverage?.generatedAt ?? left.readAt).localeCompare(
@@ -1366,16 +1442,17 @@ export const make = Effect.gen(function* () {
     // executes, which would otherwise wedge all later canonical refreshes.
     return Effect.suspend(() =>
       Effect.gen(function* () {
+        const settings = yield* readSettings;
         const requestedCommonPreset = isCommonPreset(input);
         const nowMs = yield* Clock.currentTimeMillis;
         if (!requestedCommonPreset || !isWithinLedgerRetention(input, nowMs)) {
-          return yield* scanAndPersist(input);
+          return yield* scanAndPersist(input, settings);
         }
         return yield* Effect.uninterruptibleMask((restore) =>
           Effect.gen(function* () {
             const canonicalSummary = (summary: UsageSummary) =>
               requestedCommonPreset && !isCanonicalLedgerInput(input)
-                ? readPresetFromLedger(input).pipe(
+                ? readPresetFromLedger(input, settings).pipe(
                     Effect.flatMap((preset) =>
                       preset === null
                         ? Effect.fail(
@@ -1398,7 +1475,7 @@ export const make = Effect.gen(function* () {
                       detail: "The canonical usage refresh did not complete.",
                     }),
                   )
-                : readPresetFromLedger(input).pipe(
+                : readPresetFromLedger(input, settings).pipe(
                     Effect.flatMap((requested) =>
                       requested === null
                         ? Effect.fail(
@@ -1418,7 +1495,7 @@ export const make = Effect.gen(function* () {
               ? input
               : (yield* defaultDailyInputs)[0]!;
             yield* refreshHooks.beforeCanonicalScan;
-            const summary = yield* restore(scanAndPersist(canonicalInput)).pipe(
+            const summary = yield* restore(scanAndPersist(canonicalInput, settings)).pipe(
               Effect.onExit((exit) =>
                 Effect.sync(() => {
                   if (canonicalRefreshWaiter === waiter) canonicalRefreshWaiter = null;
@@ -1444,6 +1521,7 @@ export const make = Effect.gen(function* () {
   /** Derives a requested preset from the durable normalized record ledger. */
   const readPresetFromLedger = Effect.fn("UsageService.readPresetFromLedger")(function* (
     input: UsageSummaryInput,
+    settings: ServerSettingsValue,
   ) {
     yield* ensureUsageLedgerLoaded;
     if (usageLedgerGeneratedAtMs <= 0 && canonicalRefreshWaiter !== null) {
@@ -1479,13 +1557,17 @@ export const make = Effect.gen(function* () {
         : input.untilDay < completeThroughDay
           ? input.untilDay
           : UsageDay.make(completeThroughDay);
+    const effectiveRates = new Map([
+      ...rates,
+      ...createOverrideRateTable(settings.usagePriceOverrides),
+    ]);
     const aggregator = new UsageAggregator({
       timeZone: input.timeZone,
       sinceDay: input.sinceDay,
       untilDay: effectiveUntil,
       resolution: input.resolution ?? "day",
       ...hourlyWindow,
-      rates,
+      rates: effectiveRates,
     });
     const sessions = new Map<string, Set<string>>();
     for (const entry of usageLedger.values()) {
@@ -1554,9 +1636,10 @@ export const make = Effect.gen(function* () {
   });
 
   const readSummary = Effect.fn("UsageService.readSummary")(function* (input: UsageSummaryInput) {
-    const key = scanKey(input);
+    const settings = yield* readSettings;
+    const key = scanKey(input, settings.usagePriceOverrides, transcriptSettingsKey(settings));
     if (isCommonPreset(input)) {
-      const normalized = yield* readPresetFromLedger(input);
+      const normalized = yield* readPresetFromLedger(input, settings);
       if (normalized !== null) return normalized;
       // The project dimension was added after the compact ledger. Rebuild an
       // older ledger before serving a half-hour request, otherwise its totals
@@ -1588,7 +1671,7 @@ export const make = Effect.gen(function* () {
         inflightScans.set(key, created);
         // Detached so one departing client cannot tear the scan out from under
         // the fibers awaiting it; a finished scan warms the cache either way.
-        yield* scanAndPersist(input).pipe(
+        yield* scanAndPersist(input, settings, key).pipe(
           Effect.onExit((exit) =>
             Effect.sync(() => inflightScans.delete(key)).pipe(
               Effect.andThen(Deferred.done(created, exit)),
@@ -1770,16 +1853,23 @@ export const make = Effect.gen(function* () {
     yield* ensureRates({ allowNetwork: false, force: false });
     yield* ensureScanCacheLoaded;
 
-    const dirs = yield* resolveTranscriptDirs().pipe(Effect.provideService(Path.Path, path));
+    const settings = yield* readSettings;
+    const dirs = yield* resolveTranscriptDirs(settings).pipe(
+      Effect.provideService(Path.Path, path),
+    );
     const windowStartMs =
       (exactWindow?.sinceTimeMs ?? DateTime.toEpochMillis(windowStart.value)) - MTIME_SLACK_MS;
 
+    const effectiveRates = new Map([
+      ...rates,
+      ...createOverrideRateTable(settings.usagePriceOverrides),
+    ]);
     const accumulator = new ThreadUsageAccumulator({
       timeZone: input.timeZone,
       sinceDay: input.sinceDay,
       untilDay: input.untilDay,
       ...exactWindow,
-      rates,
+      rates: effectiveRates,
       resolveProject: yield* resolveProjects(),
     });
 
