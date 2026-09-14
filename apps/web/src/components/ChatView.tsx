@@ -383,7 +383,11 @@ import {
   hasDismissedResumeCompaction,
   shouldOfferResumeCompaction,
 } from "./chat/ContextWindowMeter.logic";
-import { deriveLatestContextWindowSnapshot, formatContextWindowTokens } from "../lib/contextWindow";
+import {
+  contextWindowReachedThreadLimit,
+  deriveLatestContextWindowSnapshot,
+  formatContextWindowTokens,
+} from "../lib/contextWindow";
 import {
   DRAFT_HERO_TRANSITION_ANIMATION_ID,
   DRAFT_HERO_TRANSITION_DURATION_MS,
@@ -1482,6 +1486,9 @@ export default function ChatView(props: ChatViewProps) {
   const writeTerminal = useAtomCommand(terminalEnvironment.write, "terminal write");
   const closeTerminalMutation = useAtomCommand(terminalEnvironment.close, "terminal close");
   const createThread = useAtomCommand(threadEnvironment.create, { reportFailure: false });
+  const generateThreadHandover = useAtomCommand(threadEnvironment.generateHandover, {
+    reportFailure: false,
+  });
   const deleteThread = useAtomCommand(threadEnvironment.delete, { reportFailure: false });
   const updateThreadMetadata = useAtomCommand(threadEnvironment.updateMetadata, {
     reportFailure: false,
@@ -2878,6 +2885,9 @@ export default function ChatView(props: ChatViewProps) {
     () => deriveLatestContextWindowSnapshot(threadActivities),
     [threadActivities],
   );
+  const activeThreadReachedContextLimit =
+    serverConfig !== null &&
+    contextWindowReachedThreadLimit(activeContextWindow, settings.threadContextTokenLimit);
   const workLogEntries = useMemo(() => deriveWorkLogEntries(threadActivities), [threadActivities]);
   // Native subagent fold: memoized by activity-list identity, shared by the
   // Agents surface, live strip, and workflow cards. v2Projection is null
@@ -6252,6 +6262,7 @@ export default function ChatView(props: ChatViewProps) {
         pendingThreadHandovers.save(sourceThreadKey, handover);
         setHandoverStateVersion((version) => version + 1);
       }
+      if (handover === undefined) return;
 
       if (routeThreadKeyRef.current !== sourceThreadKey) {
         return;
