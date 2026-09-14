@@ -23,6 +23,7 @@ import * as ProcessRunner from "../processRunner.ts";
 import * as ProviderInstanceRegistry from "../provider/Services/ProviderInstanceRegistry.ts";
 import type { ProviderInstance } from "../provider/ProviderDriver.ts";
 import * as TextGeneration from "../textGeneration/TextGeneration.ts";
+import { OPENAI_API_KEY_SECRET_NAME } from "../voice/broker.ts";
 import { resolveServerEnvironmentLabel } from "./ServerEnvironmentLabel.ts";
 import { detectServerEnvironmentMachineKind } from "./ServerEnvironmentMachine.ts";
 
@@ -255,6 +256,15 @@ const makeWithProviderRegistry = (
       // descriptor request rather than baked in at startup.
       getDescriptor: Effect.gen(function* () {
         const agentActivityPublishing = yield* readAgentActivityPublishingActive(secrets);
+        const openAiKey = yield* secrets
+          .get(OPENAI_API_KEY_SECRET_NAME)
+          .pipe(
+            Effect.catch((cause) =>
+              Effect.logWarning("failed to read the OpenAI API key secret", { cause }).pipe(
+                Effect.as(Option.none<Uint8Array>()),
+              ),
+            ),
+          );
         const instances = Option.match(providerInstanceRegistry, {
           onNone: () => Effect.succeed<ReadonlyArray<ProviderInstance>>([]),
           onSome: (registry) => registry.listInstances,
@@ -267,6 +277,7 @@ const makeWithProviderRegistry = (
             ...descriptor.capabilities,
             agentActivityPublishing,
             threadHandoverGeneration,
+            ...(Option.isSome(openAiKey) ? { voiceLive: true } : {}),
           },
         };
       }),
