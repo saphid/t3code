@@ -16,6 +16,15 @@ extraction blocker. The package therefore:
   `t3.browser/view`,
 - renders an explicit engine-unavailable notice where the page would be.
 
+Package-owned helpers ported from the native panel (`historyStore.ts`,
+`runtimeTabId.ts`, `previewAnnotation.ts`, `elementContext.ts`) — see the
+binding-disposition doc for the row-by-row citations. One honesty note:
+the persisted URL history is **per view record** (per thread), not
+per-project like the native `byProjectKey` store. `session.save` cannot
+aggregate across threads, so project-shared history is a named deferral
+(P08-HISTORY-PERSISTENCE) — the stored list is provisional behavior for a
+single surface, useful groundwork, not parity for that row.
+
 Per-row dispositions and native citations:
 `docs/internals/extensions/browser-binding-disposition.md`.
 

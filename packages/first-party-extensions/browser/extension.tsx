@@ -1,9 +1,18 @@
 import { filePresentationApi } from "@t3tools/extension-sdk/catalogue";
 import { defineExtension } from "@t3tools/extension-sdk/authoring";
+import type { Json } from "@t3tools/extension-sdk/contracts";
 import type { ClientHost } from "@t3tools/extension-sdk/environment";
 import type { ViewSession } from "@t3tools/extension-sdk/host";
 import { useState } from "react";
 
+import {
+  type BrowserHistoryEntry,
+  fitHistoryToSaveBudget,
+  recentHistoryEntries,
+  recordHistoryVisit,
+  removeHistoryUrl,
+  sanitizeHistoryEntries,
+} from "./historyStore.js";
 import {
   canGoBack,
   canGoForward,
@@ -22,15 +31,24 @@ import {
 
 const manifestId = "t3.browser";
 
-function restoreState(
-  value: unknown,
-): value is { readonly relativePath?: string; readonly url?: string } | null {
+type PersistedViewState = {
+  readonly relativePath?: string;
+  readonly url?: string;
+  readonly history?: Json;
+};
+
+function restoreState(value: unknown): value is PersistedViewState | null {
   if (value === null) return true;
   if (typeof value !== "object" || Array.isArray(value)) return false;
   const record = value as Record<string, unknown>;
-  return Object.keys(record).every(
-    (key) => (key === "relativePath" || key === "url") && typeof record[key] === "string",
-  );
+  return Object.keys(record).every((key) => {
+    if (key === "relativePath" || key === "url") return typeof record[key] === "string";
+    // Any malformed history container sanitizes to [] on read — the native
+    // migrate step drops a bad list but keeps the browser usable, so the
+    // container is never a reason to take the whole view unavailable.
+    if (key === "history") return true;
+    return false;
+  });
 }
 
 /**
@@ -49,11 +67,39 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
     return initialNavigationState;
   });
   const [address, setAddress] = useState<string>(restored?.url ?? restored?.relativePath ?? "");
+  const [history, setHistory] = useState<readonly BrowserHistoryEntry[]>(() =>
+    sanitizeHistoryEntries(restored?.history),
+  );
 
-  const submit = (raw: string) => {
-    const next = submitAddress(state, raw);
+  /**
+   * Persist the restore record: the url the view reopens on plus the
+   * per-project history list. fitHistoryToSaveBudget keeps the record under
+   * the SDK's bounded save envelope by dropping the oldest entries.
+   */
+  const persist = (entries: readonly BrowserHistoryEntry[], url: string | null) => {
+    const base: { url?: string; relativePath?: string } = url
+      ? { url }
+      : restored?.relativePath
+        ? { relativePath: restored.relativePath }
+        : {};
+    session.save({ ...base, history: fitHistoryToSaveBudget(base, entries) });
+  };
+
+  /** Commit a navigation state; every landed target is a recorded visit. */
+  const commit = (next: NavigationState) => {
     setState(next);
-    if (next.status.kind === "target") session.save({ url: next.status.url });
+    if (next.status.kind !== "target") return;
+    const entries = recordHistoryVisit(history, next.status.url, Date.now());
+    setHistory(entries);
+    persist(entries, next.status.url);
+  };
+
+  const submit = (raw: string) => commit(submitAddress(state, raw));
+
+  const removeRecent = (rawUrl: string) => {
+    const entries = removeHistoryUrl(history, rawUrl);
+    setHistory(entries);
+    persist(entries, currentUrl(state));
   };
 
   const url = currentUrl(state);
@@ -96,7 +142,7 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
           type="button"
           aria-label="Back"
           disabled={!canGoBack(state)}
-          onClick={() => setState(goBack(state))}
+          onClick={() => commit(goBack(state))}
           style={buttonStyle}
         >
           ←
@@ -105,7 +151,7 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
           type="button"
           aria-label="Forward"
           disabled={!canGoForward(state)}
-          onClick={() => setState(goForward(state))}
+          onClick={() => commit(goForward(state))}
           style={buttonStyle}
         >
           →
@@ -114,7 +160,7 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
           type="button"
           aria-label="Reload"
           disabled={state.status.kind !== "target"}
-          onClick={() => setState(reload(state))}
+          onClick={() => commit(reload(state))}
           style={buttonStyle}
         >
           ⟳
@@ -160,7 +206,45 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
             {ENGINE_UNAVAILABLE_NOTICE}
           </p>
         )}
-        {recentTargets(state).length > 0 && (
+        {state.status.kind !== "target" && recentHistoryEntries(history).length > 0 && (
+          <ul
+            aria-label="Recently used"
+            style={{ listStyle: "none", margin: 0, padding: 0, fontSize: 12 }}
+          >
+            {recentHistoryEntries(history).map((entry) => {
+              const parsed = new URL(entry.url);
+              const path = parsed.pathname === "/" ? "" : parsed.pathname;
+              const label = `${parsed.host}${path}${parsed.search}${parsed.hash}`;
+              return (
+                <li key={entry.url} style={{ display: "flex", gap: 6, alignItems: "baseline" }}>
+                  <button
+                    type="button"
+                    onClick={() => submit(entry.url)}
+                    style={{
+                      ...buttonStyle,
+                      border: "none",
+                      padding: "2px 0",
+                      textAlign: "left",
+                      textDecoration: "underline",
+                      color: muted,
+                    }}
+                  >
+                    {entry.title ? `${entry.title} — ${label}` : label}
+                  </button>
+                  <button
+                    type="button"
+                    aria-label={`Remove ${label} from history`}
+                    onClick={() => removeRecent(entry.url)}
+                    style={{ ...buttonStyle, border: "none", padding: "0 2px", color: muted }}
+                  >
+                    ×
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+        {state.status.kind === "target" && recentTargets(state).length > 0 && (
           <ul
             aria-label="Requested targets"
             style={{ listStyle: "none", margin: 0, padding: 0, fontSize: 12 }}
