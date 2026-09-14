@@ -23,7 +23,7 @@
     {
       "type": "commit",
       "repository": "saphid/t3code",
-      "sha": "28feb979ee15424771f14666fdd32161d9e44435",
+      "sha": "f2efadd86f0b86d4269505778727bbe6f6dcc2f4",
       "name": "Durable custom update sources"
     },
     {
@@ -44,7 +44,7 @@
     {
       "type": "commit",
       "repository": "saphid/t3code",
-      "sha": "c40ccff111d9f133082c04dd7cc1cc609b833034"
+      "sha": "c1aa902da5a0190ca5cf9fb10f7715b80a8886e3"
     },
     {
       "type": "commit",
@@ -59,12 +59,12 @@
     {
       "type": "commit",
       "repository": "saphid/t3code",
-      "sha": "eb894da697d717d3b94c3ad6844f60be6001fe0e"
+      "sha": "030f750b986aacaf27294b4815f8397e7c2d8375"
     },
     {
       "type": "commit",
       "repository": "saphid/t3code",
-      "sha": "4089cf5dd7dc3369c905b08b46106a406a3e7cbb",
+      "sha": "1ef65414889adec31fc3b4bd73b755e0942ee081",
       "name": "Navigation history controls"
     },
     {
@@ -169,7 +169,7 @@
     {
       "type": "commit",
       "repository": "saphid/t3code",
-      "sha": "606ab34736dbc5ce7e7eb3e09cc2ede5f3a4143e",
+      "sha": "23658f69473148528fa49f1d0c5c8c21b0c7889c",
       "name": "Separate Fork Nightly release streams"
     },
     {
@@ -189,6 +189,12 @@
       "repository": "saphid/t3code",
       "sha": "787542b6c61c54b06372179fc5877265346dfa54",
       "name": "Nightly 1675 integration compatibility"
+    },
+    {
+      "type": "commit",
+      "repository": "saphid/t3code",
+      "sha": "6a43b55eb7f3d11ac9fd1871cf3f0d9893345248",
+      "name": "GPT Live voice with fast commands and existing-thread updates"
     }
   ]
 }
