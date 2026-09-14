@@ -447,10 +447,17 @@ NodeTest.describe("shouldHandleMutation", () => {
     // The latch released: the same seq is still unhandled and now fires.
     NodeAssert.equal(shouldHandleMutation({ ...bumped, enabled: true }), true);
   });
-  NodeTest.it("treats the first observed seq as handled by the caller baseline", () => {
+  NodeTest.it("fires on the first observed nonzero seq — no baseline suppression", () => {
+    // A mutation folded before this view subscribed still counts: the first
+    // seq may post-date the initial tree/file reads, so it must refresh once.
+    NodeAssert.equal(
+      shouldHandleMutation({ enabled: true, mutationSeq: 3, handledSeq: null }),
+      true,
+    );
+    // seq 0 is the empty fold — nothing mutated, nothing to re-read.
     NodeAssert.equal(
       shouldHandleMutation({ enabled: true, mutationSeq: 0, handledSeq: null }),
-      true,
+      false,
     );
   });
 });

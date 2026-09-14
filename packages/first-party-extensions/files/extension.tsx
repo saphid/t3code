@@ -14,17 +14,13 @@ import type { ClientHost } from "@t3tools/extension-sdk/environment";
 import type { ViewSession } from "@t3tools/extension-sdk/host";
 import { useEffect, useMemo, useRef, useState } from "react";
 
-import {
-  FILE_SAVE_DEBOUNCE_MS,
-  FileEditCoordinator,
-  type EditorSaveState,
-} from "./saveCoordinator.js";
+import { useFileEditor } from "./editorSession.js";
+import { useMutationRefresh, useWorkspaceChanges } from "./mutationRefresh.js";
 import {
   describeMediaLease,
   describeRead,
   describeSaveState,
   describeSearch,
-  describeSnapshot,
   editorSavePending,
   leasePreviewMode,
   mediaLeaseAssetFailed,
@@ -38,10 +34,8 @@ import {
   selectMediaLease,
   parentPath,
   previewKind,
-  shouldHandleMutation,
   toggleExpanded,
   visibleRows,
-  type EditorOpen,
   type MediaLeaseState,
   type PreviewKind,
   type SearchKindFilter,
@@ -53,8 +47,6 @@ const manifestId = "t3.files";
 const PREVIEW_ASSET_PATH = "assets/preview.png";
 const SEARCH_LIMIT = 100;
 const SEARCH_DEBOUNCE_MS = 150;
-const CHANGES_RETRY_MS = 250;
-const CHANGES_ERROR_RETRY_MS = 1000;
 
 function restoreState(value: unknown): value is { readonly relativePath: string } | null {
   if (value === null) return true;
@@ -138,58 +130,6 @@ function useWorkspaceTree(host: ClientHost, session: ViewSession) {
 }
 
 /**
- * The `t3.workspace/changes` fold — the host's per-thread mutation counter.
- * The stream is the orchestration signal (completed command_execution /
- * file_change items), not a filesystem watcher: edits made outside the agent
- * never arrive here and stay manual-refresh only, matching the native panel.
- * A folded stream loses nothing across a close — every resubscribe opens with
- * a snapshot carrying the latest seq, so `closed:overflow` just reconnects.
- */
-function useWorkspaceChanges(host: ClientHost, session: ViewSession, visible: boolean) {
-  const [mutationSeq, setMutationSeq] = useState<number | null>(null);
-  const threadId = session.context.resource.threadId;
-  useEffect(() => {
-    if (!visible || typeof threadId !== "string" || threadId.length === 0) return;
-    const controller = new AbortController();
-    const signal = AbortSignal.any([controller.signal, session.signal]);
-    const delay = (ms: number) =>
-      new Promise<void>((resolve) => {
-        const timer = setTimeout(resolve, ms);
-        signal.addEventListener(
-          "abort",
-          () => {
-            clearTimeout(timer);
-            resolve();
-          },
-          { once: true },
-        );
-      });
-    void (async () => {
-      while (!signal.aborted) {
-        let retry = CHANGES_RETRY_MS;
-        try {
-          const stream = bindStreamApi(workspaceChangesApi, host, session.context).subscribe(
-            "subscribeChanges",
-            { threadId },
-            signal,
-          );
-          for await (const frame of stream) {
-            if (frame.value.kind === "closed") break;
-            setMutationSeq(frame.value.mutationSeq);
-          }
-        } catch {
-          if (signal.aborted) return;
-          retry = CHANGES_ERROR_RETRY_MS;
-        }
-        await delay(retry);
-      }
-    })();
-    return () => controller.abort();
-  }, [host, session, visible, threadId]);
-  return mutationSeq;
-}
-
-/**
  * Verified package-asset read (F2a path): `readAsset` re-resolves and
  * re-verifies bytes on every call, so a stale object URL is renewed by
  * re-running the effect rather than trusting a cached URL.
@@ -225,214 +165,6 @@ function usePackageAsset(host: ClientHost, session: ViewSession, visible: boolea
     };
   }, [host, session, visible]);
   return asset;
-}
-
-interface EditorSurface {
-  readonly path: string;
-  readonly open: EditorOpen;
-  readonly contents: string;
-  readonly saveState: EditorSaveState;
-}
-
-/**
- * Editor session for one workspace path (F1 #2/#3/#4). A package-owned
- * FileEditCoordinator drives debounced autosave through the revisioned
- * `t3.workspace/text-edits@1.1.0` contract: the textarea renders the buffered
- * contents optimistically, saves compare-and-swap on the confirmed base
- * revision, conflicts halt autosave until the user resolves them, and the
- * session flushes pending edits when the file changes or the view unmounts —
- * the native panel's unmount-dispose semantics.
- */
-function useFileEditor(
-  host: ClientHost,
-  session: ViewSession,
-  selected: string | null,
-  selectedKind: PreviewKind,
-  refreshRevision: number,
-  visible: boolean,
-) {
-  const [surface, setSurface] = useState<EditorSurface | null>(null);
-  const activeRef = useRef<{ path: string; coordinator: FileEditCoordinator } | null>(null);
-  const lastRefreshRef = useRef(-1);
-  const editing = selected !== null && selectedKind === "text" && visible;
-
-  useEffect(() => {
-    const active = activeRef.current;
-    if (!editing || selected === null) {
-      if (active) {
-        active.coordinator.dispose();
-        activeRef.current = null;
-      }
-      // A stale surface is filtered at render (`surface.path === selected`), so
-      // nothing to clear synchronously here.
-      return;
-    }
-
-    const path = selected;
-    const controller = new AbortController();
-    const signal = AbortSignal.any([controller.signal, session.signal]);
-    let current = activeRef.current;
-    const pathChanged = !current || current.path !== path;
-    // Re-read the snapshot on open and on every tree refresh; identical
-    // revisions skip the network round-trip.
-    if (!pathChanged && refreshRevision === lastRefreshRef.current) {
-      return () => controller.abort();
-    }
-    lastRefreshRef.current = refreshRevision;
-    if (pathChanged) {
-      current?.coordinator.dispose();
-      const coordinator = new FileEditCoordinator({
-        debounceMs: FILE_SAVE_DEBOUNCE_MS,
-        persist: async (contents, expectedRevision) => {
-          try {
-            return await bindApi(textEditsApi, host, session.context).invoke(
-              "save",
-              { relativePath: path, expectedRevision, contents },
-              signal,
-            );
-          } catch (error) {
-            return {
-              kind: "error",
-              message: error instanceof Error ? error.message : "Save failed",
-            };
-          }
-        },
-        onStateChange: (saveState) =>
-          setSurface((previous) =>
-            previous && previous.path === path ? { ...previous, saveState } : previous,
-          ),
-      });
-      current = { path, coordinator };
-      activeRef.current = current;
-    }
-    const coordinator = current!.coordinator;
-
-    void (async () => {
-      try {
-        const snapshot = await bindApi(textEditsApi, host, session.context).invoke(
-          "readSnapshot",
-          { relativePath: path },
-          signal,
-        );
-        if (signal.aborted) return;
-        const open = describeSnapshot(snapshot);
-        if (!open.editable) {
-          setSurface({ path, open, contents: "", saveState: coordinator.state() });
-          return;
-        }
-        const kind = coordinator.state().kind;
-        if (kind === "dirty" || kind === "saving" || kind === "error") {
-          // Refresh reconciliation: the remote file moved under pending edits —
-          // latch the conflict rather than clobbering the user's buffer.
-          coordinator.noteRemoteRevision(open.revision);
-          setSurface((previous) => ({
-            path,
-            open,
-            contents: previous?.path === path ? previous.contents : coordinator.contents(),
-            saveState: coordinator.state(),
-          }));
-        } else {
-          coordinator.seed(open.revision, open.contents);
-          setSurface({
-            path,
-            open,
-            contents: open.contents,
-            saveState: coordinator.state(),
-          });
-        }
-      } catch (error) {
-        if (!signal.aborted)
-          setSurface((previous) => ({
-            path,
-            open: {
-              editable: false,
-              reason: "io-error",
-              message: error instanceof Error ? error.message : "File could not be read",
-            },
-            contents: previous?.path === path ? previous.contents : "",
-            saveState: coordinator.state(),
-          }));
-      }
-    })();
-    return () => controller.abort();
-  }, [host, session, selected, editing, refreshRevision]);
-
-  // Unmount flush: pending edits persist, exactly like the native panel's
-  // coordinator disposal.
-  useEffect(
-    () => () => {
-      activeRef.current?.coordinator.dispose();
-      activeRef.current = null;
-    },
-    [],
-  );
-
-  const change = (contents: string) => {
-    const active = activeRef.current;
-    if (!active || active.path !== selected) return;
-    active.coordinator.change(contents);
-    setSurface((previous) =>
-      previous && previous.path === selected ? { ...previous, contents } : previous,
-    );
-  };
-
-  /** Reload: discard local edits and adopt the remote snapshot. */
-  const reload = () => {
-    const active = activeRef.current;
-    if (!active || active.path !== selected) return;
-    const coordinator = active.coordinator;
-    const controller = new AbortController();
-    const signal = AbortSignal.any([controller.signal, session.signal]);
-    void bindApi(textEditsApi, host, session.context)
-      .invoke("readSnapshot", { relativePath: active.path }, signal)
-      .then((snapshot) => {
-        if (signal.aborted) return;
-        const open = describeSnapshot(snapshot);
-        if (open.editable) {
-          coordinator.adoptRemote(open.contents, open.revision);
-          setSurface({
-            path: active.path,
-            open,
-            contents: open.contents,
-            saveState: coordinator.state(),
-          });
-        } else {
-          setSurface((previous) =>
-            previous && previous.path === active.path
-              ? { ...previous, open, saveState: coordinator.state() }
-              : previous,
-          );
-        }
-      })
-      .finally(() => controller.abort());
-  };
-
-  /** Keep mine: deliberately write the buffer over the fresh remote revision. */
-  const keepMine = () => {
-    const active = activeRef.current;
-    if (!active || active.path !== selected) return;
-    const coordinator = active.coordinator;
-    const controller = new AbortController();
-    const signal = AbortSignal.any([controller.signal, session.signal]);
-    void bindApi(textEditsApi, host, session.context)
-      .invoke("readSnapshot", { relativePath: active.path }, signal)
-      .then((snapshot) => {
-        if (signal.aborted) return;
-        const open = describeSnapshot(snapshot);
-        if (open.editable) coordinator.forcePersist(open.revision);
-        else
-          setSurface((previous) =>
-            previous && previous.path === active.path
-              ? { ...previous, open, saveState: coordinator.state() }
-              : previous,
-          );
-      })
-      .finally(() => controller.abort());
-  };
-
-  const retry = () => activeRef.current?.coordinator.retry();
-
-  return { surface, change, reload, keepMine, retry };
 }
 
 /**
@@ -619,8 +351,7 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
     visible && selected !== null && selectedKind !== "text",
   );
   const currentRead = read?.relativePath === selected && read.revision === revision ? read : null;
-  const mutationSeq = useWorkspaceChanges(host, session, visible);
-  const handledMutationRef = useRef<number | null>(null);
+  const changes = useWorkspaceChanges(host, session, visible);
   // Native parity: a bump while the selected file's save state is latched
   // (dirty/saving/conflict/error) stays pending instead of clobbering local
   // edits; when the latch opens the pending seq fires one catch-up refresh.
@@ -628,24 +359,11 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
     editor.surface?.path === selected &&
     editor.surface !== null &&
     editorSavePending(editor.surface.saveState.kind);
-  useEffect(() => {
-    if (mutationSeq === null) return;
-    // The first observed seq is this view's baseline, not a new mutation.
-    if (handledMutationRef.current === null) {
-      handledMutationRef.current = mutationSeq;
-      return;
-    }
-    if (
-      !shouldHandleMutation({
-        enabled: visible && !savePending,
-        mutationSeq,
-        handledSeq: handledMutationRef.current,
-      })
-    )
-      return;
-    handledMutationRef.current = mutationSeq;
-    refresh();
-  }, [visible, savePending, mutationSeq, refresh]);
+  useMutationRefresh({
+    mutationSeq: changes.mutationSeq,
+    enabled: visible && !savePending,
+    refresh,
+  });
   const kindByPath = useMemo(() => new Map(entries.map((e) => [e.path, e.kind])), [entries]);
   const searching = query.trim() !== "";
   const rows = useMemo(() => visibleRows(entries, expanded, ""), [entries, expanded]);
@@ -882,7 +600,11 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
         {searching
           ? (activeSearch?.error ??
             describeSearch(activeSearch?.results ?? null, query, SEARCH_LIMIT))
-          : status + (kindByPath.size > 0 ? ` — ${entries.length} entries` : "")}
+          : status +
+            (kindByPath.size > 0 ? ` — ${entries.length} entries` : "") +
+            (changes.status === "degraded"
+              ? " · agent updates unavailable — use Refresh files"
+              : "")}
       </output>
       {selected && (
         <output

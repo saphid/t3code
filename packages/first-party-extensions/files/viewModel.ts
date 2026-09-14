@@ -528,13 +528,18 @@ export function editorSavePending(kind: SaveStateKind): boolean {
  * `useWorkspaceMutationRefresh` handled-token semantics: a seq different from
  * the handled one fires exactly one refresh; while `enabled` is false the
  * bump stays unhandled, so it still fires when the latch opens.
+ *
+ * The first observed seq is NOT a baseline: any nonzero value may fold
+ * mutations that landed before the view's initial reads completed, so it
+ * must refresh once — the native hook likewise fires on the first non-null
+ * token. `seq === 0` is the empty fold (native's null token) and never fires.
  */
 export function shouldHandleMutation(input: {
   readonly enabled: boolean;
   readonly mutationSeq: number;
   readonly handledSeq: number | null;
 }): boolean {
-  return input.enabled && input.mutationSeq !== input.handledSeq;
+  return input.enabled && input.mutationSeq > 0 && input.mutationSeq !== input.handledSeq;
 }
 
 /** Status line for the coordinator's observable state. */

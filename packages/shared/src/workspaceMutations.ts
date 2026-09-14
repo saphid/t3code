@@ -118,17 +118,20 @@ export class WorkspaceMutationFold {
     }
   >();
   private readonly checkpointTurnCounts = new Map<string, number>();
-  private latest: string | null = null;
-  private latestType: WorkspaceMutationItemType | null = null;
+  private latestRow: {
+    readonly activity: WorkspaceMutationActivityLike;
+    readonly itemType: WorkspaceMutationItemType;
+  } | null = null;
 
   get latestId(): string | null {
-    return this.latest;
+    return this.latestRow?.activity.id ?? null;
   }
 
   get latestItemType(): WorkspaceMutationItemType | null {
-    return this.latestType;
+    return this.latestRow?.itemType ?? null;
   }
 
+  /** Full rescan — reserved for invalidating changes (latest-row upsert/removal, revert, reset). */
   private recompute(): boolean {
     let newest: {
       activity: WorkspaceMutationActivityLike;
@@ -137,9 +140,8 @@ export class WorkspaceMutationFold {
     for (const row of this.rows.values()) {
       if (newest === null || compareOrder(newest.activity, row.activity) < 0) newest = row;
     }
-    const changed = newest?.activity.id !== this.latest;
-    this.latest = newest?.activity.id ?? null;
-    this.latestType = newest?.itemType ?? null;
+    const changed = newest?.activity.id !== this.latestRow?.activity.id;
+    this.latestRow = newest;
     return changed;
   }
 
@@ -155,18 +157,34 @@ export class WorkspaceMutationFold {
       if (turn.checkpointTurnCount === undefined) continue;
       this.checkpointTurnCounts.set(turn.turnId, turn.checkpointTurnCount);
     }
-    for (const activity of activities) this.applyActivity(activity);
+    // One insert pass plus a single maximum scan: seeding N rows costs N
+    // comparisons, not the N(N-1)/2 a per-row rescan would burn synchronously
+    // on the server's event loop.
+    for (const activity of activities) {
+      const itemType = workspaceMutationItemType(activity);
+      if (itemType !== null) this.rows.set(activity.id, { activity, itemType });
+    }
+    this.recompute();
   }
 
   /** Fold one appended/upserted activity; returns true when the folded latest id changed. */
   applyActivity(activity: WorkspaceMutationActivityLike): boolean {
     const itemType = workspaceMutationItemType(activity);
     if (itemType === null) {
+      // Removing any row but the current maximum cannot move the fold.
+      const wasLatest = activity.id === this.latestId;
       if (!this.rows.delete(activity.id)) return false;
-    } else {
-      this.rows.set(activity.id, { activity, itemType });
+      return wasLatest ? this.recompute() : false;
     }
-    return this.recompute();
+    this.rows.set(activity.id, { activity, itemType });
+    // An upsert of the current maximum may have moved its order key either
+    // way; only a rescan proves which row is newest. Every other case settles
+    // with one comparison.
+    if (activity.id === this.latestId) return this.recompute();
+    if (this.latestRow !== null && compareOrder(this.latestRow.activity, activity) >= 0)
+      return false;
+    this.latestRow = { activity, itemType };
+    return true;
   }
 
   /** Record a checkpoint's turn-count so a later revert retains the same turns the projection does. */
@@ -198,7 +216,7 @@ export class WorkspaceMutationFold {
 
   /** Mirror the projection's `thread.created` row wipe. */
   reset(): boolean {
-    if (this.rows.size === 0 && this.latest === null) return false;
+    if (this.rows.size === 0 && this.latestRow === null) return false;
     this.rows.clear();
     this.checkpointTurnCounts.clear();
     return this.recompute();

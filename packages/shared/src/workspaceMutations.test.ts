@@ -124,6 +124,63 @@ describe("WorkspaceMutationFold", () => {
     ).toBe(false);
     expect(fold.latestId).toBe("new");
   });
+  it("seeds pick the canonical newest row regardless of input order or duplicates", () => {
+    const fold = new WorkspaceMutationFold();
+    fold.seed(
+      [
+        activity({ itemType: "file_change", id: "z-newest", sequence: 9 }),
+        activity({ itemType: "command_execution", id: "a-oldest", sequence: 1 }),
+        activity({ itemType: "file_change", id: "z-newest", sequence: 9 }),
+        activity({ itemType: "message", id: "unrelated", sequence: 20 }),
+      ],
+      [],
+    );
+    expect(fold.latestId).toBe("z-newest");
+    expect(fold.latestItemType).toBe("file_change");
+  });
+  it("falls back to the surviving newest row when the latest stops qualifying", () => {
+    const fold = new WorkspaceMutationFold();
+    fold.applyActivity(activity({ itemType: "file_change", id: "a", sequence: 1 }));
+    fold.applyActivity(activity({ itemType: "command_execution", id: "b", sequence: 2 }));
+    expect(
+      fold.applyActivity(
+        activity({
+          kind: "tool.updated",
+          itemType: "command_execution",
+          status: "inProgress",
+          id: "b",
+          sequence: 2,
+        }),
+      ),
+    ).toBe(true);
+    expect(fold.latestId).toBe("a");
+  });
+  it("re-scans when the latest row's own upsert moves its order key", () => {
+    const fold = new WorkspaceMutationFold();
+    fold.applyActivity(activity({ itemType: "file_change", id: "a", sequence: 5 }));
+    fold.applyActivity(activity({ itemType: "command_execution", id: "b", sequence: 9 }));
+    expect(
+      fold.applyActivity(activity({ itemType: "command_execution", id: "b", sequence: 1 })),
+    ).toBe(true);
+    expect(fold.latestId).toBe("a");
+  });
+  it("ignores removal of rows below the latest", () => {
+    const fold = new WorkspaceMutationFold();
+    fold.applyActivity(activity({ itemType: "file_change", id: "a", sequence: 1 }));
+    fold.applyActivity(activity({ itemType: "command_execution", id: "b", sequence: 2 }));
+    expect(
+      fold.applyActivity(
+        activity({
+          kind: "tool.updated",
+          itemType: "file_change",
+          status: "inProgress",
+          id: "a",
+          sequence: 1,
+        }),
+      ),
+    ).toBe(false);
+    expect(fold.latestId).toBe("b");
+  });
   it("drops reverted turns and moves latest back", () => {
     const fold = new WorkspaceMutationFold();
     fold.seed(
