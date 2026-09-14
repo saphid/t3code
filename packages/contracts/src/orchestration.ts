@@ -34,6 +34,7 @@ import {
 
 export const ORCHESTRATION_WS_METHODS = {
   dispatchCommand: "orchestration.dispatchCommand",
+  generateHandover: "orchestration.generateHandover",
   getWorkflowScript: "orchestration.getWorkflowScript",
   getTurnDiff: "orchestration.getTurnDiff",
   getFullThreadDiff: "orchestration.getFullThreadDiff",
@@ -2203,6 +2204,10 @@ export const OrchestrationRpcSchemas = {
   dispatchCommand: {
     input: ClientOrchestrationCommand,
     output: DispatchResult,
+  },
+  generateHandover: {
+    input: Schema.Struct({ threadId: ThreadId }),
+    output: Schema.Struct({ handover: TrimmedNonEmptyString }),
   },
   getWorkflowScript: {
     input: OrchestrationGetWorkflowScriptInput,
