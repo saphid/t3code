@@ -597,14 +597,11 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
             ))}
       </ul>
       <output aria-label="Tree status" style={{ padding: "6px 10px", color: muted, fontSize: 11 }}>
-        {searching
+        {(searching
           ? (activeSearch?.error ??
             describeSearch(activeSearch?.results ?? null, query, SEARCH_LIMIT))
-          : status +
-            (kindByPath.size > 0 ? ` — ${entries.length} entries` : "") +
-            (changes.status === "degraded"
-              ? " · agent updates unavailable — use Refresh files"
-              : "")}
+          : status + (kindByPath.size > 0 ? ` — ${entries.length} entries` : "")) +
+          (changes.status === "degraded" ? " · agent updates unavailable — use Refresh files" : "")}
       </output>
       {selected && (
         <output

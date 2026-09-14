@@ -218,6 +218,75 @@ NodeTest.describe("useWorkspaceChanges", () => {
     }
   });
 
+  // R2-m1: a stream that dies AFTER delivering frames is the common
+  // established-connection loss — it must flip to degraded, and stay
+  // unavailable until a fresh frame proves recovery.
+  NodeTest.it(
+    "marks a post-snapshot stream failure degraded until a fresh frame recovers",
+    async () => {
+      const subscribes = [];
+      let failNext = null;
+      let fail = false;
+      const host = {
+        subscribeApi(request, signal) {
+          subscribes.push(request);
+          if (fail) throw new Error("still down");
+          return (async function* () {
+            yield { value: { kind: "snapshot", mutationSeq: 4 } };
+            // Park until aborted or until the test kills this stream.
+            await new Promise((resolve, reject) => {
+              failNext = reject;
+              signal.addEventListener("abort", resolve, { once: true });
+            });
+          })();
+        },
+      };
+      let probeStatus = "idle";
+      function Probe() {
+        const changes = useWorkspaceChanges(host, session, true, { retryMs: 5, errorRetryMs: 5 });
+        React.useEffect(() => {
+          probeStatus = changes.status;
+        });
+        return null;
+      }
+      let root;
+      try {
+        await act(async () => {
+          root = create(e(Probe, {}));
+          await sleep(10);
+        });
+        NodeAssert.equal(probeStatus, "live");
+        NodeAssert.equal(subscribes.length, 1);
+        NodeAssert.ok(failNext !== null, "stream parked after the snapshot");
+        // Kill the established stream while resubscribes still fail — the
+        // status must drop to degraded and stay there across attempts.
+        fail = true;
+        await act(async () => {
+          failNext(new Error("transport disconnected"));
+          await sleep(10);
+        });
+        NodeAssert.equal(probeStatus, "degraded", "post-snapshot failure is not live");
+        for (let i = 0; i < 3; i += 1) {
+          await act(async () => {
+            await sleep(10);
+          });
+          NodeAssert.equal(probeStatus, "degraded", "failed resubscribes stay unavailable");
+        }
+        fail = false;
+        for (let i = 0; i < 10; i += 1) {
+          if (probeStatus === "live") break;
+          await act(async () => {
+            await sleep(10);
+          });
+        }
+        NodeAssert.ok(subscribes.length >= 3, "the dead stream was retried");
+        NodeAssert.equal(probeStatus, "live");
+      } finally {
+        if (root) await act(async () => root.unmount());
+      }
+    },
+  );
+
   NodeTest.it(
     "reports degraded while retries fail and recovers when the stream returns",
     async () => {

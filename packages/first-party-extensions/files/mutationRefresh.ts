@@ -62,9 +62,6 @@ export function useWorkspaceChanges(
     void (async () => {
       while (!signal.aborted) {
         let retry = retryMs;
-        let sawFrame = false;
-        // Each attempt starts connecting — retries after a degraded patch too.
-        setStreamStatus("connecting");
         try {
           const stream = bindStreamApi(workspaceChangesApi, host, session.context).subscribe(
             "subscribeChanges",
@@ -73,7 +70,6 @@ export function useWorkspaceChanges(
           );
           for await (const frame of stream) {
             if (frame.value.kind === "closed") break;
-            sawFrame = true;
             setStreamStatus("live");
             setMutationSeq(frame.value.mutationSeq);
           }
@@ -81,9 +77,10 @@ export function useWorkspaceChanges(
           if (signal.aborted) return;
           retry = errorRetryMs;
         }
-        // A healthy subscribe always opens with the snapshot; an attempt that
-        // delivered nothing (or threw) means the stream is down.
-        if (!sawFrame && !signal.aborted) setStreamStatus("degraded");
+        // Any non-aborted end or failure — including one after delivered
+        // frames — means updates are not flowing. Degraded holds through the
+        // retry attempt too: only a fresh frame re-establishes live.
+        if (!signal.aborted) setStreamStatus("degraded");
         await delay(retry);
       }
     })();
