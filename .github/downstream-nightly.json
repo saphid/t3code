@@ -6,45 +6,45 @@
     {
       "type": "commit",
       "repository": "saphid/t3code",
-      "sha": "41c9e34eeebe2f8565a2020f496cd5a6a4ed0a17",
+      "sha": "d58c327355d9a45d306d5e6fd7eedc7c32f2de09",
       "name": "Natural-language thread search"
     },
     {
       "type": "commit",
       "repository": "saphid/t3code",
-      "sha": "3011abd6857397387d3e7b8e90d6877eec7e1000"
+      "sha": "7b0c1eac18d6ec0a4e88a643bf6f98db78655411"
     },
     {
       "type": "commit",
       "repository": "saphid/t3code",
-      "sha": "bdbb1e21a9fc38cd41c5e99db8d45a0d9debe955",
+      "sha": "693f43c67e030ab16e2bc53b2cd645be2ec2fed5",
       "name": "Context-limit handovers"
     },
     {
       "type": "commit",
       "repository": "saphid/t3code",
-      "sha": "129efe901606b9ccbca1c4d7149e3385889fe737",
+      "sha": "28feb979ee15424771f14666fdd32161d9e44435",
       "name": "Durable custom update sources"
     },
     {
       "type": "commit",
       "repository": "saphid/t3code",
-      "sha": "dcdca4ef0d69236590b669ea596f276c09a3bdcf"
+      "sha": "7476e27333f8f58d7488202a1a86424c7ec56ef5"
     },
     {
       "type": "commit",
       "repository": "saphid/t3code",
-      "sha": "2f555ed3141b16d8fac523ce11e978691082b9d8"
+      "sha": "d21ce602b03ba6b349155b1f2ccb9744acc12c9c"
     },
     {
       "type": "commit",
       "repository": "saphid/t3code",
-      "sha": "0c1ab2ec4dcd28c23cc06a43514b63ceeb251eac"
+      "sha": "eae750159cffc15c6dd29b2b770cc4beb4d25438"
     },
     {
       "type": "commit",
       "repository": "saphid/t3code",
-      "sha": "660c7e06a4be16b351b5e0a5e6f023979a9cbd5a"
+      "sha": "c40ccff111d9f133082c04dd7cc1cc609b833034"
     },
     {
       "type": "commit",
@@ -59,17 +59,17 @@
     {
       "type": "commit",
       "repository": "saphid/t3code",
-      "sha": "c8ea3cbeb8abdd4aa985a4488233b8b3e598c058"
+      "sha": "eb894da697d717d3b94c3ad6844f60be6001fe0e"
     },
     {
       "type": "commit",
       "repository": "saphid/t3code",
-      "sha": "f80db0e45f9b763094c0507f714a6b0a6c383549"
+      "sha": "4c9c441f00f28121a611eed3513546eb8fd39c92"
     },
     {
       "type": "commit",
       "repository": "saphid/t3code",
-      "sha": "71095c163f92c65bf28375175a196c09d38af482"
+      "sha": "193a4ddb0965ad8db158927814b4eaab3a8714a0"
     },
     {
       "type": "commit",
@@ -94,7 +94,7 @@
     {
       "type": "commit",
       "repository": "saphid/t3code",
-      "sha": "1567f76ee5503c1f5f6e8c1a87e4bfb6520ef63e"
+      "sha": "14acd53392007cbfbe1a60a47f668fa0442fdf64"
     },
     {
       "type": "commit",
@@ -114,7 +114,7 @@
     {
       "type": "commit",
       "repository": "saphid/t3code",
-      "sha": "ddafee1fca15c1b86575eea25152077ed0d5e270",
+      "sha": "d3c2035d374cba088b053a0775d16f8f92f44e51",
       "name": "Project spend usage dashboard"
     },
     {
@@ -126,7 +126,7 @@
     {
       "type": "commit",
       "repository": "saphid/t3code",
-      "sha": "3e4e731c86769f0c3b819770161b4f9f520902b7",
+      "sha": "499e23bec43adce4d7f142533ae950e740809299",
       "name": "Configurable concurrent thread limit"
     },
     {
@@ -150,19 +150,13 @@
     {
       "type": "commit",
       "repository": "saphid/t3code",
-      "sha": "efddd20306e2471cedaeb9721a592bbb4cf160c3",
+      "sha": "0c84909c05313f1c388dfb4e76f8315e7b2ac5b3",
       "name": "Preserve upstream usage and thread seams"
     },
     {
       "type": "commit",
       "repository": "saphid/t3code",
-      "sha": "c6965eeb7457d9f2e788138624c64e26eb98a912",
-      "name": "Drain web worker test cleanup"
-    },
-    {
-      "type": "commit",
-      "repository": "saphid/t3code",
-      "sha": "00cc38f86f3784f1e99b78ef5a557e676c573b1d",
+      "sha": "b8dae697e2492b3a1686eef3ad4012a0fa87839b",
       "name": "Nightly 1316 usage integration compatibility"
     },
     {
@@ -188,6 +182,12 @@
       "repository": "saphid/t3code",
       "sha": "3c65e73264c1938cc53695a7a0a9977559ff8ed5",
       "name": "Deterministic cold highlighter test on hosted runners"
+    },
+    {
+      "type": "commit",
+      "repository": "saphid/t3code",
+      "sha": "2db04f7a0bf2537e1aa8d66078f4bf2a19779ef0",
+      "name": "Nightly 1675 integration compatibility"
     }
   ]
 }
