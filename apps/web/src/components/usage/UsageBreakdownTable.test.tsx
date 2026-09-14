@@ -63,4 +63,18 @@ describe("UsageBreakdownTable", () => {
     expect(markup).toContain("Cache writes");
     expect(markup).toContain("$21.00");
   });
+  it("allows outside and unknown attribution rows to be favorited", () => {
+    const markup = renderToStaticMarkup(
+      <UsageBreakdownTable
+        {...props}
+        rows={[row("outside", 1), row("unknown", 2), row("Atlas", 20)]}
+        favoriteProjects={["outside", "unknown"]}
+      />,
+    );
+    expect(markup).toContain('aria-label="Unfavorite outside"');
+    expect(markup).toContain('aria-label="Unfavorite unknown"');
+    expect(markup.indexOf('aria-label="Unfavorite outside"')).toBeLessThan(
+      markup.indexOf('aria-label="Favorite Atlas"'),
+    );
+  });
 });

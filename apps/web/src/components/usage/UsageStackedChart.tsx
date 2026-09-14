@@ -417,8 +417,9 @@ export function UsageStackedChart({
           viewBox={`0 0 ${WIDTH} ${HEIGHT}`}
           preserveAspectRatio="none"
           className={cn(
-            "block h-60 w-full touch-pan-y",
+            "block h-60 w-full touch-pan-y outline-none",
             onSelectRange && "cursor-crosshair select-none",
+            !selection && "focus-visible:ring-2 focus-visible:ring-ring",
           )}
           role="img"
           aria-label={`Stacked ${metric} by ${seriesMode}${onSelectRange ? ". Drag to select a time range. Escape cancels; double-click resets." : ""}`}

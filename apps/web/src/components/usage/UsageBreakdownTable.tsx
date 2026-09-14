@@ -163,7 +163,7 @@ export function UsageBreakdownTable({
       <table className="w-full text-sm" aria-label={ariaLabel}>
         <thead>
           <tr className="border-b border-border text-xs text-muted-foreground">
-            <th scope="col" className="w-8 py-2 text-left">
+            <th scope="col" className="w-10 min-w-10 py-2 pr-4 pl-2 text-left">
               <Checkbox
                 checked={hiddenCount === 0 && rows.length > 0}
                 indeterminate={hiddenCount > 0 && hiddenCount < rows.length}
@@ -219,7 +219,7 @@ export function UsageBreakdownTable({
                       isHidden && "text-muted-foreground",
                     )}
                   >
-                    <td className="py-2">
+                    <td className="w-10 min-w-10 py-2 pr-4 pl-2">
                       <Checkbox
                         checked={!isHidden}
                         onCheckedChange={() => onToggleHidden(row.key)}
@@ -228,7 +228,7 @@ export function UsageBreakdownTable({
                     </td>
                     <td className="py-2">
                       <div className="flex items-center gap-2 pr-4">
-                        {onToggleFavorite && row.key !== "unknown" && row.key !== "outside" ? (
+                        {onToggleFavorite ? (
                           <button
                             type="button"
                             aria-label={`${favorite ? "Unfavorite" : "Favorite"} ${row.label}`}
