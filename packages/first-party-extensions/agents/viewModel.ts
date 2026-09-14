@@ -174,15 +174,23 @@ export function scriptTerminalBaseId(script: Pick<WorkspaceScript, "name">): str
 }
 
 /**
- * Overflow allocation: the dedicated per-script terminal is tried first; when
- * it reports a running subprocess the next free `<base>-N` id is used — the
- * client-chosen-id rule (the server never allocates terminal ids).
+ * Per-mount nonce baked into overflow ids. A recreated panel generates a new
+ * nonce and therefore never re-picks ids a previous incarnation may have left
+ * running, and concurrent clients allocate disjoint families — neither
+ * `open` nor `attach` is create-exclusive, so a deterministic `-2` suffix is
+ * not safe allocation on its own.
  */
-export function nextScriptTerminalId(baseId: string, taken: ReadonlySet<string>): string {
-  if (!taken.has(baseId)) return baseId;
-  let index = 2;
-  while (taken.has(`${baseId}-${index}`)) index += 1;
-  return `${baseId}-${index}`;
+export function scriptRunNonce(random: () => number = Math.random): string {
+  return `${Date.now().toString(36)}${random().toString(36).slice(2, 8)}`;
+}
+
+/** Dedicated id plus bounded nonce-keyed overflow candidates for one run. */
+export const SCRIPT_RUN_MAX_CANDIDATES = 4;
+export function scriptTerminalCandidates(baseId: string, nonce: string): readonly string[] {
+  const candidates = [baseId];
+  for (let index = 2; index <= SCRIPT_RUN_MAX_CANDIDATES; index += 1)
+    candidates.push(`${baseId}-${nonce}-${index}`);
+  return candidates;
 }
 
 /** The busy half of the native allocation rule: a running subprocess means "allocate new". */
@@ -192,13 +200,140 @@ export function terminalBusy(
   return metadata?.hasRunningSubprocess === true;
 }
 
+/** Session metadata the run glue consumes — structural over the control contract's result. */
+export interface ScriptTerminalMetadata {
+  readonly terminalId: string;
+  readonly status: string;
+  readonly hasRunningSubprocess: boolean;
+}
+
+/**
+ * Whether a returned session is safe to write a script command into: it must
+ * be the session that was asked for, alive, and running no foreground
+ * subprocess. The control contract returns an existing session for a claimed
+ * id instead of failing, so every returned session is verified before write —
+ * a busy terminal must never receive script input.
+ */
+export function claimableTerminal(
+  metadata: ScriptTerminalMetadata | null,
+  expectedId: string,
+): metadata is ScriptTerminalMetadata {
+  return (
+    metadata !== null &&
+    metadata.terminalId === expectedId &&
+    (metadata.status === "starting" || metadata.status === "running") &&
+    metadata.hasRunningSubprocess === false
+  );
+}
+
+function terminalRejection(metadata: ScriptTerminalMetadata | null, expectedId: string): string {
+  if (metadata === null) return "no session returned";
+  if (metadata.terminalId !== expectedId)
+    return `identity mismatch (server returned ${metadata.terminalId})`;
+  if (metadata.status !== "starting" && metadata.status !== "running")
+    return `session ${metadata.status}`;
+  return "busy — foreground process running";
+}
+
+/** Minimal `t3.terminal/control` surface the run glue needs (injected for tests). */
+export interface ScriptRunControlOps {
+  attach(input: {
+    readonly terminalId: string;
+    readonly restartIfNotRunning: boolean;
+    readonly cwd: string;
+    readonly worktreePath: string | null;
+    readonly env: Record<string, string>;
+    readonly cols: number;
+    readonly rows: number;
+  }): Promise<ScriptTerminalMetadata | null>;
+  write(input: { readonly terminalId: string; readonly data: string }): Promise<unknown>;
+}
+
+/**
+ * Row-18 run glue. Walks the candidate ids — the dedicated per-script id
+ * first, then nonce-keyed overflow ids — attaching each with
+ * `restartIfNotRunning` (spawn when absent, respawn when stopped, return
+ * as-is when running). The returned session is checked before write, so a
+ * collision with a live terminal owned by a previous panel or another client
+ * skips to the next candidate instead of feeding its foreground process. If
+ * every candidate is unclaimable the run fails by name with each rejection —
+ * a missing write beats a misdirected one.
+ */
+export async function runWorkspaceScript(options: {
+  readonly control: ScriptRunControlOps;
+  readonly script: WorkspaceScript;
+  readonly workspace: ScriptWorkspace;
+  readonly nonce: string;
+  readonly report: (run: ScriptRun) => void;
+}): Promise<ScriptRun> {
+  const { control, script, workspace, nonce, report } = options;
+  const launch = {
+    cwd: workspace.cwd,
+    worktreePath: workspace.worktreePath,
+    env: scriptRuntimeEnv(workspace),
+    cols: SCRIPT_TERMINAL_COLS,
+    rows: SCRIPT_TERMINAL_ROWS,
+  } as const;
+  const rejections: string[] = [];
+  let terminalId: string | null = null;
+  for (const [index, candidate] of scriptTerminalCandidates(
+    scriptTerminalBaseId(script),
+    nonce,
+  ).entries()) {
+    terminalId = candidate;
+    const stage: ScriptRunStage = index === 0 ? "attach" : "claim";
+    report({ kind: "running", stage, terminalId });
+    let metadata: ScriptTerminalMetadata | null;
+    try {
+      metadata = await control.attach({
+        terminalId,
+        restartIfNotRunning: true,
+        ...launch,
+      });
+    } catch (error) {
+      rejections.push(
+        `${terminalId}: ${error instanceof Error ? error.message : "terminal control unavailable"}`,
+      );
+      continue;
+    }
+    if (!claimableTerminal(metadata, terminalId)) {
+      rejections.push(`${terminalId}: ${terminalRejection(metadata, terminalId)}`);
+      continue;
+    }
+    report({ kind: "running", stage: "write", terminalId });
+    try {
+      await control.write({ terminalId, data: scriptWriteData(script.command) });
+    } catch (error) {
+      const failure: ScriptRun = {
+        kind: "failed",
+        stage: "write",
+        terminalId,
+        message: error instanceof Error ? error.message : "terminal control unavailable",
+      };
+      report(failure);
+      return failure;
+    }
+    const sent: ScriptRun = { kind: "sent", terminalId, status: metadata.status };
+    report(sent);
+    return sent;
+  }
+  const failure: ScriptRun = {
+    kind: "failed",
+    stage: "claim",
+    terminalId,
+    message: `no claimable script terminal — ${rejections.join("; ")}`,
+  };
+  report(failure);
+  return failure;
+}
+
 /** Native writes `${command}\r` to run a project script (ChatView runProjectScript). */
 export function scriptWriteData(command: string): string {
   return `${command}\r`;
 }
 
 /** Script-run state machine for the panel's run rows. */
-export type ScriptRunStage = "attach" | "respawn" | "write";
+export type ScriptRunStage = "attach" | "claim" | "write";
 export type ScriptRun =
   | {
       readonly kind: "running";
@@ -218,8 +353,8 @@ export function describeScriptRun(run: ScriptRun): string {
     case "running":
       return run.stage === "write"
         ? `Sending command to ${run.terminalId}…`
-        : run.stage === "respawn"
-          ? `Dedicated terminal busy — opening ${run.terminalId}…`
+        : run.stage === "claim"
+          ? `Dedicated terminal busy — trying ${run.terminalId}…`
           : `Opening terminal ${run.terminalId}…`;
     case "sent":
       return `Sent to ${run.terminalId} (session ${run.status}) — output appears in the terminal surface`;
@@ -227,8 +362,8 @@ export function describeScriptRun(run: ScriptRun): string {
       return `Run failed while ${
         run.stage === "write"
           ? "writing the command"
-          : run.stage === "respawn"
-            ? "opening an overflow terminal"
+          : run.stage === "claim"
+            ? "claiming a free script terminal"
             : "opening the terminal"
       }${run.terminalId ? ` (${run.terminalId})` : ""}: ${run.message}`;
   }
@@ -272,9 +407,15 @@ export const DEFERRED_SECTIONS: readonly DeferredSection[] = [
     rows: "16",
   },
   {
-    title: "Agent logs, session deep links, session scan",
+    title: "Agent logs and session deep links",
     blocker: "no native web/desktop binding exists — net-new design",
-    rows: "20–22",
+    rows: "20–21",
+  },
+  {
+    title: "Agent session scan/import (welcome wizard)",
+    blocker:
+      "native provisioning scan exists (agentSessions scan/import RPC) but is not in the shipped contract surface — needs a narrow public scan contract (NEW-NARROW)",
+    rows: "22",
   },
 ];
 

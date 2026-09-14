@@ -3,25 +3,20 @@ import { defineExtension, requireApi, useApiRead } from "@t3tools/extension-sdk/
 import { bindApi } from "@t3tools/extension-sdk/capabilities";
 import type { ClientHost } from "@t3tools/extension-sdk/environment";
 import type { ViewSession } from "@t3tools/extension-sdk/host";
-import { useRef, useState } from "react";
+import { useState } from "react";
 
 import {
   DEFERRED_SECTIONS,
   HOST_CHROME_NOTE,
   ROSTER_UNAVAILABLE_NOTICE,
-  SCRIPT_TERMINAL_COLS,
-  SCRIPT_TERMINAL_ROWS,
   SCRIPTS_SCOPE_NOTE,
   describeScriptRun,
-  nextScriptTerminalId,
   parseT3ProjectFile,
-  scriptRuntimeEnv,
-  scriptTerminalBaseId,
-  scriptWriteData,
-  terminalBusy,
+  runWorkspaceScript,
+  scriptRunNonce,
   workspaceFromRevision,
   type ScriptRun,
-  type ScriptRunStage,
+  type ScriptWorkspace,
   type WorkspaceScript,
 } from "./viewModel.js";
 
@@ -41,59 +36,29 @@ const control = {
 
 /**
  * Run a checked-in script through t3.terminal/control — the row-18 glue. The
- * dedicated per-script terminal is attached (spawning on first use, respawning
- * when stopped); a busy terminal overflows to a numbered client-chosen id,
- * matching the native busy-terminal allocation rule.
+ * dedicated per-script terminal is claimed first; busy or foreign sessions
+ * overflow to nonce-keyed client-chosen ids, and no write ever reaches a
+ * returned session that still has a foreground subprocess.
  */
 async function runScript(
   host: ClientHost,
   session: ViewSession,
   script: WorkspaceScript,
-  workspace: NonNullable<ReturnType<typeof workspaceFromRevision>>,
-  takenTerminalIds: Set<string>,
+  workspace: ScriptWorkspace,
+  nonce: string,
   report: (run: ScriptRun) => void,
 ): Promise<void> {
   const api = bindApi(terminalControlApi, host, session.context);
-  const launch = {
-    cwd: workspace.cwd,
-    worktreePath: workspace.worktreePath,
-    env: scriptRuntimeEnv(workspace),
-    cols: SCRIPT_TERMINAL_COLS,
-    rows: SCRIPT_TERMINAL_ROWS,
-  } as const;
-  let stage: ScriptRunStage = "attach";
-  let terminalId: string | null = scriptTerminalBaseId(script);
-  try {
-    report({ kind: "running", stage, terminalId });
-    let metadata = await api.invoke(
-      "attach",
-      { terminalId, restartIfNotRunning: true, ...launch },
-      session.signal,
-    );
-    if (terminalBusy(metadata)) {
-      takenTerminalIds.add(terminalId);
-      terminalId = nextScriptTerminalId(terminalId, takenTerminalIds);
-      stage = "respawn";
-      report({ kind: "running", stage, terminalId });
-      metadata = await api.invoke("open", { terminalId, ...launch }, session.signal);
-    }
-    takenTerminalIds.add(terminalId);
-    stage = "write";
-    report({ kind: "running", stage, terminalId });
-    await api.invoke(
-      "write",
-      { terminalId, data: scriptWriteData(script.command) },
-      session.signal,
-    );
-    report({ kind: "sent", terminalId, status: metadata.status });
-  } catch (error) {
-    report({
-      kind: "failed",
-      stage,
-      terminalId,
-      message: error instanceof Error ? error.message : "Terminal control unavailable",
-    });
-  }
+  await runWorkspaceScript({
+    control: {
+      attach: (input) => api.invoke("attach", input, session.signal),
+      write: (input) => api.invoke("write", input, session.signal),
+    },
+    script,
+    workspace,
+    nonce,
+    report,
+  });
 }
 
 function AgentsView(props: { host: ClientHost; session: ViewSession }) {
@@ -103,11 +68,14 @@ function AgentsView(props: { host: ClientHost; session: ViewSession }) {
     relativePath: "t3.json",
   });
   const [runs, setRuns] = useState<Record<string, ScriptRun>>({});
-  const takenTerminalIds = useRef(new Set<string>());
+  // Fresh per panel mount: recreated panels never re-pick overflow ids their
+  // previous incarnation may have left running; concurrent clients allocate
+  // disjoint families.
+  const [runNonce] = useState(scriptRunNonce);
 
   const run = (script: WorkspaceScript) => {
     if (!workspace || runs[script.name]?.kind === "running") return;
-    void runScript(host, session, script, workspace, takenTerminalIds.current, (next) =>
+    void runScript(host, session, script, workspace, runNonce, (next) =>
       setRuns((current) => ({ ...current, [script.name]: next })),
     );
   };

@@ -6,13 +6,17 @@ import {
   HOST_CHROME_NOTE,
   ROSTER_UNAVAILABLE_NOTICE,
   SCRIPTS_SCOPE_NOTE,
+  SCRIPT_RUN_MAX_CANDIDATES,
   T3_PROJECT_FILE_MAX_SCRIPTS,
+  claimableTerminal,
   describeScriptRun,
-  nextScriptTerminalId,
   parseT3ProjectFile,
+  runWorkspaceScript,
+  scriptRunNonce,
   scriptRuntimeEnv,
   scriptSlug,
   scriptTerminalBaseId,
+  scriptTerminalCandidates,
   scriptWriteData,
   terminalBusy,
   workspaceFromRevision,
@@ -147,19 +151,51 @@ NodeTest.describe("script terminal ids", () => {
     NodeAssert.equal(scriptTerminalBaseId({ name: "a".repeat(80) }).length <= 128, true);
   });
 
-  NodeTest.it("allocates the next free numbered id when the base is busy", () => {
-    const taken = new Set();
-    NodeAssert.equal(nextScriptTerminalId("t3-agents-dev", taken), "t3-agents-dev");
-    taken.add("t3-agents-dev");
-    NodeAssert.equal(nextScriptTerminalId("t3-agents-dev", taken), "t3-agents-dev-2");
-    taken.add("t3-agents-dev-2");
-    NodeAssert.equal(nextScriptTerminalId("t3-agents-dev", taken), "t3-agents-dev-3");
+  NodeTest.it("overflow ids carry the mount nonce so recreated panels never re-pick them", () => {
+    const candidates = scriptTerminalCandidates("t3-agents-dev", "n1");
+    NodeAssert.deepEqual(candidates, [
+      "t3-agents-dev",
+      "t3-agents-dev-n1-2",
+      "t3-agents-dev-n1-3",
+      "t3-agents-dev-n1-4",
+    ]);
+    NodeAssert.equal(candidates.length, SCRIPT_RUN_MAX_CANDIDATES);
+    const otherMount = scriptTerminalCandidates("t3-agents-dev", "n2");
+    for (const id of otherMount.slice(1))
+      NodeAssert.ok(!candidates.includes(id), `${id} disjoint across mounts`);
+    NodeAssert.equal(scriptRunNonce() === scriptRunNonce(), false);
   });
 
   NodeTest.it("reads the busy half of the native allocation rule", () => {
     NodeAssert.equal(terminalBusy({ hasRunningSubprocess: true }), true);
     NodeAssert.equal(terminalBusy({ hasRunningSubprocess: false }), false);
     NodeAssert.equal(terminalBusy(null), false);
+  });
+
+  NodeTest.it("claims only the asked-for session when it is alive and not busy", () => {
+    const id = "t3-agents-dev";
+    const live = { terminalId: id, status: "running", hasRunningSubprocess: false };
+    NodeAssert.equal(claimableTerminal(live, id), true);
+    NodeAssert.equal(
+      claimableTerminal({ terminalId: id, status: "starting", hasRunningSubprocess: false }, id),
+      true,
+    );
+    NodeAssert.equal(
+      claimableTerminal({ terminalId: id, status: "running", hasRunningSubprocess: true }, id),
+      false,
+    );
+    NodeAssert.equal(
+      claimableTerminal({ terminalId: id, status: "exited", hasRunningSubprocess: false }, id),
+      false,
+    );
+    NodeAssert.equal(
+      claimableTerminal(
+        { terminalId: "t3-agents-other", status: "running", hasRunningSubprocess: false },
+        id,
+      ),
+      false,
+    );
+    NodeAssert.equal(claimableTerminal(null, id), false);
   });
 });
 
@@ -174,8 +210,8 @@ NodeTest.describe("script run state machine", () => {
       "Opening terminal t3-agents-dev…",
     );
     NodeAssert.match(
-      describeScriptRun({ kind: "running", stage: "respawn", terminalId: "t3-agents-dev-2" }),
-      /busy.*t3-agents-dev-2/,
+      describeScriptRun({ kind: "running", stage: "claim", terminalId: "t3-agents-dev-n1-2" }),
+      /busy.*t3-agents-dev-n1-2/,
     );
     NodeAssert.match(
       describeScriptRun({ kind: "sent", terminalId: "t3-agents-dev", status: "running" }),
@@ -193,6 +229,171 @@ NodeTest.describe("script run state machine", () => {
   });
 });
 
+NodeTest.describe("runWorkspaceScript glue", () => {
+  const workspace = { cwd: "/repo", workspaceRoot: "/repo", worktreePath: null };
+  const script = {
+    name: "Dev",
+    command: "vp run dev",
+    icon: null,
+    runOnWorktreeCreate: false,
+    previewUrl: null,
+  };
+  const meta = (terminalId, overrides = {}) => ({
+    terminalId,
+    status: "running",
+    hasRunningSubprocess: false,
+    ...overrides,
+  });
+
+  NodeTest.it("claims the dedicated terminal and writes the command", async () => {
+    const calls = [];
+    const control = {
+      attach: async (input) => {
+        calls.push({ method: "attach", input });
+        return meta(input.terminalId);
+      },
+      write: async (input) => {
+        calls.push({ method: "write", input });
+        return {};
+      },
+    };
+    const reports = [];
+    const result = await runWorkspaceScript({
+      control,
+      script,
+      workspace,
+      nonce: "n1",
+      report: (run) => reports.push(run),
+    });
+    NodeAssert.deepEqual(result, {
+      kind: "sent",
+      terminalId: "t3-agents-dev",
+      status: "running",
+    });
+    NodeAssert.equal(calls.filter((c) => c.method === "attach").length, 1);
+    NodeAssert.deepEqual(calls.at(-1), {
+      method: "write",
+      input: { terminalId: "t3-agents-dev", data: "vp run dev\r" },
+    });
+    NodeAssert.equal(calls[0].input.env.T3CODE_PROJECT_ROOT, "/repo");
+  });
+
+  NodeTest.it("overflows past a busy dedicated terminal to a nonce-keyed id", async () => {
+    const writes = [];
+    const control = {
+      attach: async (input) =>
+        meta(input.terminalId, {
+          hasRunningSubprocess: input.terminalId === "t3-agents-dev",
+        }),
+      write: async (input) => {
+        writes.push(input);
+        return {};
+      },
+    };
+    const result = await runWorkspaceScript({
+      control,
+      script,
+      workspace,
+      nonce: "n1",
+      report: () => {},
+    });
+    NodeAssert.equal(result.kind, "sent");
+    NodeAssert.equal(result.terminalId, "t3-agents-dev-n1-2");
+    NodeAssert.deepEqual(writes, [{ terminalId: "t3-agents-dev-n1-2", data: "vp run dev\r" }]);
+  });
+
+  NodeTest.it(
+    "never writes to a returned busy overflow terminal (recreated-panel collision)",
+    async () => {
+      // A previous panel mount left t3-agents-dev and the deterministic
+      // overflow busy; the server returns those same running sessions for the
+      // requested ids (attach is not create-exclusive). The run must skip
+      // every busy session and write only to a confirmed-free candidate.
+      const calls = [];
+      const control = {
+        attach: async (input) => {
+          calls.push({ method: "attach", input });
+          const preExisting = !input.terminalId.endsWith("-4");
+          return meta(input.terminalId, { hasRunningSubprocess: preExisting });
+        },
+        write: async (input) => {
+          calls.push({ method: "write", input });
+          return {};
+        },
+      };
+      const result = await runWorkspaceScript({
+        control,
+        script,
+        workspace,
+        nonce: "n1",
+        report: () => {},
+      });
+      NodeAssert.equal(result.kind, "sent");
+      NodeAssert.equal(result.terminalId, "t3-agents-dev-n1-4");
+      const writes = calls.filter((c) => c.method === "write");
+      NodeAssert.deepEqual(writes, [
+        { method: "write", input: { terminalId: "t3-agents-dev-n1-4", data: "vp run dev\r" } },
+      ]);
+      for (const busy of ["t3-agents-dev", "t3-agents-dev-n1-2", "t3-agents-dev-n1-3"])
+        NodeAssert.ok(
+          writes.every((c) => c.input.terminalId !== busy),
+          `no write to busy ${busy}`,
+        );
+    },
+  );
+
+  NodeTest.it("fails by name with zero writes when every candidate is busy", async () => {
+    const writes = [];
+    const control = {
+      attach: async (input) => meta(input.terminalId, { hasRunningSubprocess: true }),
+      write: async (input) => {
+        writes.push(input);
+        return {};
+      },
+    };
+    const reports = [];
+    const result = await runWorkspaceScript({
+      control,
+      script,
+      workspace,
+      nonce: "n1",
+      report: (run) => reports.push(run),
+    });
+    NodeAssert.equal(result.kind, "failed");
+    NodeAssert.equal(writes.length, 0);
+    NodeAssert.match(result.message, /no claimable script terminal/);
+    NodeAssert.match(result.message, /busy/);
+  });
+
+  NodeTest.it(
+    "treats an attach rejection as a claim failure and tries the next candidate",
+    async () => {
+      const writes = [];
+      const control = {
+        attach: async (input) => {
+          if (input.terminalId === "t3-agents-dev")
+            throw new Error("Terminal session is unavailable in the requested workspace");
+          return meta(input.terminalId);
+        },
+        write: async (input) => {
+          writes.push(input);
+          return {};
+        },
+      };
+      const result = await runWorkspaceScript({
+        control,
+        script,
+        workspace,
+        nonce: "n1",
+        report: () => {},
+      });
+      NodeAssert.equal(result.kind, "sent");
+      NodeAssert.equal(result.terminalId, "t3-agents-dev-n1-2");
+      NodeAssert.equal(writes.length, 1);
+    },
+  );
+});
+
 NodeTest.describe("deferred sections", () => {
   NodeTest.it("name every blocked row family with its blocker", () => {
     const blockers = DEFERRED_SECTIONS.map((section) => section.blocker).join(" | ");
@@ -200,8 +401,19 @@ NodeTest.describe("deferred sections", () => {
     NodeAssert.match(blockers, /P12/);
     NodeAssert.match(blockers, /net-new design/);
     const rows = new Set(DEFERRED_SECTIONS.flatMap((section) => section.rows.split(/[–,]\s*/)));
-    for (const row of ["2", "6", "9", "15", "16", "20"])
+    for (const row of ["2", "6", "9", "15", "16", "20", "22"])
       NodeAssert.ok(rows.has(row), `deferred sections name parity row ${row}`);
+  });
+
+  NodeTest.it("separates the scan/import row (22) from the net-new rows (20-21)", () => {
+    const scan = DEFERRED_SECTIONS.find((section) => section.rows === "22");
+    NodeAssert.ok(scan, "row 22 gets its own section");
+    NodeAssert.match(scan.blocker, /provisioning scan exists/);
+    NodeAssert.match(scan.blocker, /narrow public scan contract/);
+    NodeAssert.doesNotMatch(scan.blocker, /no native .* binding exists/);
+    const netNew = DEFERRED_SECTIONS.find((section) => section.rows === "20–21");
+    NodeAssert.ok(netNew, "rows 20-21 keep their own section");
+    NodeAssert.match(netNew.blocker, /net-new design/);
   });
 
   NodeTest.it("name the scripts-list and host-chrome boundaries", () => {
