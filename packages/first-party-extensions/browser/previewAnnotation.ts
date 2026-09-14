@@ -19,10 +19,14 @@ import {
  * Bounds the native module never needed: the payload crosses a boundary we
  * don't control (the picker), so every string field is char-clamped, the
  * repeated groups are count-capped, and the serialized prompt is capped in
- * UTF-8 bytes — the same unit the SDK save envelope measures. Element
- * contexts are dropped last-to-first until the block fits; if even the
- * bounded head overflows, the body is truncated byte-safely. Both
- * `<preview_annotation>` delimiters are always preserved.
+ * bytes — measured exactly as the SDK envelope measures it:
+ * `TextEncoder().encode(JSON.stringify(prompt))`. JSON escaping inflates
+ * quotes, backslashes, and control characters up to 6×, so measuring the
+ * raw text would let "fitting" prompts still be rejected by `copyJson`.
+ * Element contexts are dropped last-to-first until the block fits; if even
+ * the bounded head overflows, the body is truncated against the serialized
+ * size. Both `<preview_annotation>` delimiters — and any included
+ * `<element_context>` block — are always preserved whole.
  */
 export const PREVIEW_ANNOTATION_ID_MAX_CHARS = 256;
 export const PREVIEW_ANNOTATION_PAGE_MAX_CHARS = 2_048;
@@ -33,17 +37,34 @@ export const PREVIEW_ANNOTATION_CONTEXT_ELEMENTS_MAX = 16;
 export const PREVIEW_ANNOTATION_PROMPT_MAX_BYTES = 56_000;
 
 const annotationByteEncoder = new TextEncoder();
-const annotationByteLength = (value: string): number => annotationByteEncoder.encode(value).length;
+/** The unit the SDK envelope enforces: UTF-8 bytes of the escaped JSON. */
+const serializedByteLength = (value: string): number =>
+  annotationByteEncoder.encode(JSON.stringify(value)).length;
 
 const clampChars = (value: string, max: number): string =>
   value.length <= max ? value : `${value.slice(0, max - 1)}…`;
 
-/** Byte-safe truncation: never splits a UTF-8 sequence, ends with "…". */
-function truncateToUtf8Bytes(value: string, maxBytes: number): string {
-  const encoded = annotationByteEncoder.encode(value);
-  if (encoded.length <= maxBytes) return value;
-  const truncated = new TextDecoder().decode(encoded.subarray(0, Math.max(0, maxBytes - 3)));
-  return `${truncated.replace(/\uFFFD+$/u, "")}…`;
+/**
+ * Largest body prefix whose *serialized* prompt fits the byte cap — a
+ * binary search, since escaping makes per-character cost variable (up to
+ * 6× for control chars). Only ever called when the head alone overflows,
+ * so the returned body always ends with "…".
+ */
+function truncateBodyToSerializedFit(body: string): string {
+  const render = (inner: string) => `<preview_annotation>\n${inner}\n</preview_annotation>`;
+  let lo = 0;
+  let hi = body.length;
+  while (lo < hi) {
+    const mid = (lo + hi + 1) >> 1;
+    if (
+      serializedByteLength(render(`${body.slice(0, mid)}…`)) <= PREVIEW_ANNOTATION_PROMPT_MAX_BYTES
+    ) {
+      lo = mid;
+    } else {
+      hi = mid - 1;
+    }
+  }
+  return `${body.slice(0, lo)}…`;
 }
 
 function serializePrompt(lines: string[], contexts: ElementContextSelection[]): string {
@@ -116,15 +137,17 @@ export function buildPreviewAnnotationPrompt(annotation: PreviewAnnotationPayloa
     .filter((context) => context !== null);
   let contextCount = elementContexts.length;
   let text = serializePrompt(lines, elementContexts.slice(0, contextCount));
-  while (contextCount > 0 && annotationByteLength(text) > PREVIEW_ANNOTATION_PROMPT_MAX_BYTES) {
+  while (contextCount > 0 && serializedByteLength(text) > PREVIEW_ANNOTATION_PROMPT_MAX_BYTES) {
     contextCount -= 1;
     text = serializePrompt(lines, elementContexts.slice(0, contextCount));
   }
-  if (annotationByteLength(text) > PREVIEW_ANNOTATION_PROMPT_MAX_BYTES) {
-    const wrapperBytes = annotationByteLength("<preview_annotation>\n\n</preview_annotation>");
+  if (serializedByteLength(text) > PREVIEW_ANNOTATION_PROMPT_MAX_BYTES) {
+    // Even the bounded head overflowed — only reachable when fields are
+    // packed with characters JSON must escape. The head carries no
+    // element_context block, so truncating it cannot tear one.
     text = [
       "<preview_annotation>",
-      truncateToUtf8Bytes(lines.join("\n"), PREVIEW_ANNOTATION_PROMPT_MAX_BYTES - wrapperBytes),
+      truncateBodyToSerializedFit(lines.join("\n")),
       "</preview_annotation>",
     ].join("\n");
   }

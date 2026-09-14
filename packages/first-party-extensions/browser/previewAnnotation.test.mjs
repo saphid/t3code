@@ -1,6 +1,8 @@
 import * as NodeAssert from "node:assert/strict";
 import * as NodeTest from "node:test";
 
+import { copyJson } from "@t3tools/extension-sdk/contracts";
+
 import {
   appendPreviewAnnotationPrompt,
   buildPreviewAnnotationPrompt,
@@ -197,6 +199,68 @@ NodeTest.describe("buildPreviewAnnotationPrompt", () => {
     const result = buildPreviewAnnotationPrompt({ ...elementAnnotation, elements });
     NodeAssert.ok(encoder.encode(result).length <= PREVIEW_ANNOTATION_PROMPT_MAX_BYTES);
     NodeAssert.ok(result.startsWith("<preview_annotation>\n"));
+    NodeAssert.ok(result.endsWith("\n</preview_annotation>"));
+    if (result.includes("<element_context>")) {
+      NodeAssert.ok(result.includes("</element_context>"), "context block is never torn");
+    }
+  });
+
+  NodeTest.it("bounds the JSON-serialized size — the unit the SDK envelope measures", () => {
+    // Round-2 review repro: the cap must account for JSON escaping — a
+    // NUL-heavy payload is ~6× larger once serialized, and raw-byte
+    // measurement let copyJson reject the prompt. Every escaped-glyph
+    // class must serialize under the cap and pass the real SDK gate.
+    const serializedBytes = (value) => new TextEncoder().encode(JSON.stringify(value)).length;
+    const heavy = (ch) => ({
+      ...annotation,
+      id: ch.repeat(256),
+      pageTitle: ch.repeat(2048),
+      comment: ch.repeat(8000),
+      styleChanges: Array.from({ length: PREVIEW_ANNOTATION_STYLE_CHANGES_MAX }, (_, i) => ({
+        targetId: `t${i}`,
+        selector: null,
+        property: ch.repeat(256),
+        previousValue: ch.repeat(256),
+        value: ch.repeat(256),
+      })),
+      elements: [],
+      regions: [],
+      strokes: [],
+      screenshot: null,
+    });
+    for (const ch of ['"', "\\", "\u0000", "界", "\n"]) {
+      const result = buildPreviewAnnotationPrompt(heavy(ch));
+      NodeAssert.ok(
+        serializedBytes(result) <= PREVIEW_ANNOTATION_PROMPT_MAX_BYTES,
+        `serialized size for ${JSON.stringify(ch)} fits the cap`,
+      );
+      NodeAssert.ok(result.startsWith("<preview_annotation>\n"));
+      NodeAssert.ok(result.endsWith("\n</preview_annotation>"));
+      NodeAssert.doesNotThrow(() => copyJson(result), "the real SDK envelope accepts it");
+    }
+  });
+
+  NodeTest.it("keeps whole element_context blocks under the serialized cap", () => {
+    // Escape-heavy contexts: quotes + control chars inflate serialization;
+    // contexts must drop whole, never mid-block.
+    const escaped = (i) => ({
+      id: `esc-${i}`,
+      rect: { x: 0, y: 0, width: 1, height: 1 },
+      element: {
+        ...elementAnnotation.elements[0].element,
+        htmlPreview: '"\\\n'.repeat(1000),
+        styles: '"\\\n'.repeat(1000),
+      },
+    });
+    const elements = Array.from({ length: PREVIEW_ANNOTATION_CONTEXT_ELEMENTS_MAX }, (_, i) =>
+      escaped(i),
+    );
+    const result = buildPreviewAnnotationPrompt({ ...elementAnnotation, elements });
+    NodeAssert.ok(
+      new TextEncoder().encode(JSON.stringify(result)).length <=
+        PREVIEW_ANNOTATION_PROMPT_MAX_BYTES,
+    );
+    NodeAssert.doesNotThrow(() => copyJson(result));
     NodeAssert.ok(result.endsWith("\n</preview_annotation>"));
     if (result.includes("<element_context>")) {
       NodeAssert.ok(result.includes("</element_context>"), "context block is never torn");
