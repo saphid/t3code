@@ -75,6 +75,13 @@ agent-instruction fan-out limits and the independent usage watcher for that laye
 Choose **Custom** in the date row to type a start and end day. Custom ranges can span up to 90
 days, and picking a preset again returns to a rolling window.
 
+Drag across the chart in either direction to select a narrower time range. The selection snaps
+to half-hour source buckets and updates the chart, summary, and breakdown. Thread breakdowns use
+the selected range too.
+The date row shows the exact selected times. Drag again to narrow further; **Reset zoom** or a
+double-click on the chart restores the range before your first selection. Press Escape to cancel
+an unfinished drag. The Custom date controls remain available as a keyboard alternative.
+
 Expand a project in the breakdown to see its threads: sessions group into the T3 Code
 thread they belong to, with sessions that never ran through T3 Code listed under the first thing
 you asked in them. Grok Build has no trusted prompt title, so its rows use a short session label.

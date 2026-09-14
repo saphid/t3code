@@ -39,6 +39,7 @@ import { UsageLimitsSection } from "./UsageLimits";
 import { UsagePriceOverrides } from "./UsagePriceOverrides";
 import { UsageProjectThreads } from "./UsageProjectThreads";
 import { UsageColumns } from "./UsageColumns";
+import { selectedUsageWindow } from "./usageChartSelection";
 import { usageTokenColumns } from "./usageTokenColumns";
 import { evaluateDailyUsageBudget } from "./usageBudget";
 import {
@@ -63,7 +64,7 @@ import {
   type UsageSeriesMode,
 } from "./UsageStackedChart";
 
-type WindowPreset = UsagePagePreferences["windowDays"] | "custom";
+type WindowPreset = UsagePagePreferences["windowDays"] | "custom" | "selection";
 
 const WINDOW_OPTIONS: readonly { days: UsagePagePreferences["windowDays"]; label: string }[] = [
   { days: 1, label: "24 hours" },
@@ -144,6 +145,7 @@ export function UsagePage() {
     preset: WindowPreset;
     window: ReturnType<typeof exactWindow>;
   }>(() => ({ preset: preferences.windowDays, window: exactWindow(preferences.windowDays) }));
+  const [zoomBase, setZoomBase] = useState<typeof windowSelection | null>(null);
   const [hiddenProjects, setHiddenProjects] = useState<ReadonlySet<string>>(new Set());
   const [hiddenProviders, setHiddenProviders] = useState<ReadonlySet<string>>(new Set());
   const [hiddenModels, setHiddenModels] = useState<ReadonlySet<string>>(new Set());
@@ -385,6 +387,7 @@ export function UsagePage() {
   );
 
   const selectPreset = (days: UsagePagePreferences["windowDays"]) => {
+    setZoomBase(null);
     setWindowSelection({ preset: days, window: exactWindow(days) });
     updatePreferences({ windowDays: days });
   };
@@ -395,6 +398,7 @@ export function UsagePage() {
     if (nextSince === null || nextUntil === null) return;
     if (Date.parse(nextUntil) <= Date.parse(nextSince)) return;
     if (Date.parse(nextUntil) - Date.parse(nextSince) > MAX_CUSTOM_MS) return;
+    setZoomBase(null);
     setWindowSelection({
       preset: "custom",
       window: {
@@ -413,7 +417,7 @@ export function UsagePage() {
         void refreshProviders({ environmentId: primaryEnvironmentId, input: {} });
       return;
     }
-    if (preset === "custom") {
+    if (preset === "custom" || preset === "selection") {
       refresh(window);
       return;
     }
@@ -485,6 +489,7 @@ export function UsagePage() {
                     onValueChange={(next) => {
                       const value = next[0];
                       if (value === "custom") {
+                        setZoomBase(null);
                         setWindowSelection({ preset: "custom", window });
                         return;
                       }
@@ -539,21 +544,21 @@ export function UsagePage() {
                   </ToggleGroup>
                 </div>
 
-                <section className="flex flex-wrap items-end justify-between gap-x-8 gap-y-4">
-                  <div>
-                    <div className="text-4xl font-semibold tabular-nums tracking-tight">
-                      {metric === "cost"
-                        ? formatUsd(merged.costUsd)
-                        : formatTokens(merged.totalTokens)}
-                    </div>
-                    <div className="mt-1 text-xs text-muted-foreground">
-                      {metric === "cost" ? "API-rate estimate" : "Processed tokens"}
-                      {merged.sessionsExact
-                        ? ` · ${formatCount(merged.sessions)} sessions`
-                        : " · session count unavailable at this cutoff"}
-                    </div>
-                  </div>
-                  <dl className="grid w-full grid-cols-[repeat(auto-fit,minmax(min(100%,12rem),1fr))] gap-4 text-sm">
+                <section aria-label="Usage summary">
+                  <dl className="grid grid-cols-[repeat(auto-fit,minmax(min(100%,12rem),1fr))] gap-4 text-sm">
+                    <Stat
+                      label={metric === "cost" ? "API-rate estimate" : "Processed tokens"}
+                      value={
+                        metric === "cost"
+                          ? formatUsd(merged.costUsd)
+                          : formatTokens(merged.totalTokens)
+                      }
+                      detail={
+                        merged.sessionsExact
+                          ? `${formatCount(merged.sessions)} sessions`
+                          : "Session count unavailable at this cutoff"
+                      }
+                    />
                     <Stat
                       label={metric === "cost" ? "Tokens" : "Cost"}
                       value={
@@ -655,7 +660,37 @@ export function UsagePage() {
                       </MenuPopup>
                     </Menu>
                   </div>
+                  <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
+                    <span>Drag to select a time range · double-click to reset</span>
+                    {zoomBase ? (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => {
+                          setWindowSelection(zoomBase);
+                          setZoomBase(null);
+                        }}
+                      >
+                        Reset zoom
+                      </Button>
+                    ) : null}
+                  </div>
                   <UsageStackedChart
+                    key={`${window.sinceTime}:${untilTime}`}
+                    onSelectRange={(range) => {
+                      setZoomBase((base) => base ?? windowSelection);
+                      setWindowSelection({
+                        preset: "selection",
+                        window: selectedUsageWindow(window, range),
+                      });
+                      setActiveSeries(null);
+                    }}
+                    onResetRange={() => {
+                      if (zoomBase) {
+                        setWindowSelection(zoomBase);
+                        setZoomBase(null);
+                      }
+                    }}
                     cells={chartCells}
                     series={series}
                     visibleSeries={visibleSeries}

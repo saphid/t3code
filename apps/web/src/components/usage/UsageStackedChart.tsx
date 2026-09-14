@@ -1,5 +1,5 @@
 import type { UsageTimelineCell } from "@t3tools/shared/usageMerge";
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 
 import {
   formatDateTimeShort,
@@ -10,6 +10,7 @@ import {
 
 import { cn } from "../../lib/utils";
 import { niceScale } from "./UsageProviderChart";
+import { chartSelection } from "./usageChartSelection";
 
 const WIDTH = 960;
 const HEIGHT = 280;
@@ -316,6 +317,8 @@ export function UsageStackedChart({
   timeZone,
   activeSeries,
   onActiveSeriesChange,
+  onSelectRange,
+  onResetRange,
 }: {
   readonly cells: readonly UsageTimelineCell[];
   readonly series: readonly UsageChartSeries[];
@@ -331,8 +334,18 @@ export function UsageStackedChart({
   readonly timeZone: string;
   readonly activeSeries: string | null;
   readonly onActiveSeriesChange: (series: string | null) => void;
+  readonly onSelectRange?: (range: { sinceTime: string; untilTime: string }) => void;
+  readonly onResetRange?: () => void;
 }) {
   const [hoverMs, setHoverMs] = useState<number | null>(null);
+  const dragStart = useRef<{ pointerId: number; x: number; width: number; left: number } | null>(
+    null,
+  );
+  const [selection, setSelection] = useState<{ start: number; end: number } | null>(null);
+  const cancelSelection = () => {
+    dragStart.current = null;
+    setSelection(null);
+  };
   const sourceMs = SOURCE_MS[sourceResolution];
   const sinceMs = Date.parse(sinceTime);
   const untilMs = Date.parse(untilTime);
@@ -403,10 +416,66 @@ export function UsageStackedChart({
         <svg
           viewBox={`0 0 ${WIDTH} ${HEIGHT}`}
           preserveAspectRatio="none"
-          className="block h-60 w-full touch-pan-y"
+          className={cn(
+            "block h-60 w-full touch-pan-y",
+            onSelectRange && "cursor-crosshair select-none",
+          )}
           role="img"
-          aria-label={`Stacked ${metric} by ${seriesMode}`}
+          aria-label={`Stacked ${metric} by ${seriesMode}${onSelectRange ? ". Drag to select a time range. Escape cancels; double-click resets." : ""}`}
+          tabIndex={onSelectRange ? 0 : undefined}
+          onKeyDown={(event) => {
+            if (event.key === "Escape") cancelSelection();
+          }}
+          onDoubleClick={onResetRange}
+          onPointerDown={(event) => {
+            if (!onSelectRange || event.button !== 0 || !event.isPrimary) return;
+            const bounds = event.currentTarget.getBoundingClientRect();
+            dragStart.current = {
+              pointerId: event.pointerId,
+              x: event.clientX - bounds.left,
+              left: bounds.left,
+              width: bounds.width,
+            };
+            setSelection({
+              start: ((event.clientX - bounds.left) / bounds.width) * WIDTH,
+              end: ((event.clientX - bounds.left) / bounds.width) * WIDTH,
+            });
+            setHoverMs(null);
+            onActiveSeriesChange(null);
+            event.currentTarget.focus();
+            event.currentTarget.setPointerCapture(event.pointerId);
+          }}
+          onPointerUp={(event) => {
+            const drag = dragStart.current;
+            if (!drag || drag.pointerId !== event.pointerId) return;
+            const range = chartSelection(
+              drag.x,
+              event.clientX - drag.left,
+              drag.width,
+              sinceMs,
+              untilMs,
+              sourceMs,
+            );
+            cancelSelection();
+            if (event.currentTarget.hasPointerCapture(event.pointerId))
+              event.currentTarget.releasePointerCapture(event.pointerId);
+            if (range) onSelectRange?.(range);
+          }}
+          onPointerCancel={cancelSelection}
+          onLostPointerCapture={cancelSelection}
           onPointerMove={(event) => {
+            const drag = dragStart.current;
+            if (drag) {
+              if (drag.pointerId === event.pointerId)
+                setSelection({
+                  start: (drag.x / drag.width) * WIDTH,
+                  end: Math.min(
+                    WIDTH,
+                    Math.max(0, ((event.clientX - drag.left) / drag.width) * WIDTH),
+                  ),
+                });
+              return;
+            }
             const bounds = event.currentTarget.getBoundingClientRect();
             const sample = hoverSampleAt(
               event.clientX,
@@ -460,10 +529,24 @@ export function UsageStackedChart({
               stroke={entry.color}
               strokeWidth={activeSeries === entry.key ? 2 : 1}
               vectorEffect="non-scaling-stroke"
-              onPointerEnter={() => onActiveSeriesChange(entry.key)}
+              onPointerEnter={() => {
+                if (!dragStart.current) onActiveSeriesChange(entry.key);
+              }}
               className="transition-opacity"
             />
           ))}
+          {selection ? (
+            <rect
+              x={Math.min(selection.start, selection.end)}
+              y={0}
+              width={Math.abs(selection.end - selection.start)}
+              height={HEIGHT}
+              className="fill-primary/20 stroke-primary"
+              strokeWidth={1}
+              vectorEffect="non-scaling-stroke"
+              pointerEvents="none"
+            />
+          ) : null}
           {hoverX === null ? null : (
             <line
               x1={hoverX}
