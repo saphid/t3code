@@ -117,9 +117,7 @@ function Harness({
 
 async function renderHarness(input: UsageSummaryInput, onView: (view: UsageView) => void) {
   const document = installTestDom();
-  // The mobile app does not ship react-dom types, but the lightweight host
-  // renderer keeps this hook test independent from a native runtime.
-  // @ts-expect-error react-dom is only used by this test harness.
+  // The lightweight host renderer keeps this hook test independent from a native runtime.
   const { createRoot } = await import("react-dom/client");
   const root = createRoot(document.createElement("div") as unknown as Element);
   await act(() => root.render(createElement(Harness, { input, onView })));
