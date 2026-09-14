@@ -10,8 +10,8 @@ export type UsageMetricColumn = Exclude<BreakdownColumn, "name">;
 
 export const USAGE_COLUMNS: readonly { key: UsageMetricColumn; label: string }[] = [
   { key: "cost", label: "Cost" },
-  { key: "share", label: "Share" },
   { key: "tokens", label: "Tokens" },
+  { key: "share", label: "Share" },
   { key: "input", label: "Input" },
   { key: "output", label: "Output" },
   { key: "cacheReads", label: "Cache reads" },
@@ -20,10 +20,12 @@ export const USAGE_COLUMNS: readonly { key: UsageMetricColumn; label: string }[]
 ];
 
 export function UsageColumns({
+  metric,
   hidden,
   onChange,
   showSessions = false,
 }: {
+  readonly metric: UsageStackMetric;
   readonly hidden: readonly UsageMetricColumn[];
   readonly onChange: (hidden: readonly UsageMetricColumn[]) => void;
   readonly showSessions?: boolean;
@@ -34,20 +36,21 @@ export function UsageColumns({
         <Columns3Icon aria-hidden className="size-3.5" /> Columns
       </MenuTrigger>
       <MenuPopup align="end">
-        {USAGE_COLUMNS.filter(({ key }) => key !== "sessions" || showSessions).map(
-          ({ key, label }) => (
-            <MenuCheckboxItem
-              key={key}
-              checked={!hidden.includes(key)}
-              closeOnClick={false}
-              onCheckedChange={(checked) =>
-                onChange(checked ? hidden.filter((column) => column !== key) : [...hidden, key])
-              }
-            >
-              {label}
-            </MenuCheckboxItem>
-          ),
-        )}
+        {USAGE_COLUMNS.filter(
+          ({ key }) =>
+            key !== (metric === "cost" ? "tokens" : "cost") && (key !== "sessions" || showSessions),
+        ).map(({ key, label }) => (
+          <MenuCheckboxItem
+            key={key}
+            checked={!hidden.includes(key)}
+            closeOnClick={false}
+            onCheckedChange={(checked) =>
+              onChange(checked ? hidden.filter((column) => column !== key) : [...hidden, key])
+            }
+          >
+            {label}
+          </MenuCheckboxItem>
+        ))}
       </MenuPopup>
     </Menu>
   );

@@ -92,7 +92,11 @@ describe("mergeUsage", () => {
           "env-a",
           summary(
             [
-              bucket({ hourStart: "2026-08-07T00:00:00Z", componentCosts: costs }),
+              bucket({
+                hourStart: "2026-08-07T00:00:00Z",
+                cacheWriteUsd: 3.5,
+                componentCosts: costs,
+              }),
               bucket({ hourStart: "2026-08-07T00:00:00Z", model: "older" }),
             ],
             source,
@@ -102,6 +106,9 @@ describe("mergeUsage", () => {
       USAGE_CONTRACT_VERSION,
     );
     expect(merged.timeline).toHaveLength(2);
+    expect(merged.timeline.find((cell) => cell.model === "claude-fable-5")?.cacheWriteUsd).toBe(
+      3.5,
+    );
     expect(merged.timeline.find((cell) => cell.model === "claude-fable-5")?.componentCosts).toEqual(
       costs,
     );

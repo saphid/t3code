@@ -408,7 +408,6 @@ export function UsageStackedChart({
           .sort((left, right) => right[1] - left[1])
           .slice(0, 3);
   const hoverPercent = hoverX === null ? null : (hoverX / WIDTH) * 100;
-  const tooltipOnLeft = hoverPercent !== null && hoverPercent > 58;
 
   return (
     <div className="flex min-w-0 flex-col gap-1">
@@ -576,15 +575,16 @@ export function UsageStackedChart({
         </div>
         {peak === 0 ? (
           <div className="pointer-events-none absolute inset-0 flex items-center justify-center text-xs text-muted-foreground">
-            No usage in this window
+            {visibleSeries.size === 0 && series.length > 0
+              ? "All series hidden. Select rows in the breakdown to show usage."
+              : "No usage in this window"}
           </div>
         ) : null}
         {hoveredPoint === null || hoverPercent === null ? null : (
           <div
-            className="pointer-events-none absolute top-2 w-56 rounded-md border border-border bg-popover/95 px-2.5 py-2 text-xs shadow-sm"
+            className="pointer-events-none absolute top-2 w-56 max-w-[calc(100%-1rem)] rounded-md border border-border bg-popover/95 px-2.5 py-2 text-xs shadow-sm"
             style={{
-              left: `${hoverPercent}%`,
-              transform: tooltipOnLeft ? "translateX(calc(-100% - 12px))" : "translateX(12px)",
+              left: `clamp(8px, calc(${hoverPercent}% + 12px), max(8px, calc(100% - 14rem - 8px)))`,
             }}
           >
             <div className="flex items-baseline justify-between gap-3 text-muted-foreground">

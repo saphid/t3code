@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  breakdownSortForMetric,
   defaultBreakdownSort,
   sortBreakdownRows,
   toggleBreakdownSort,
@@ -23,6 +24,16 @@ const row = (
 });
 
 describe("defaultBreakdownSort", () => {
+  it("moves total sorts with the visible units but preserves component sorts", () => {
+    expect(breakdownSortForMetric({ column: "cost", direction: "asc" }, "tokens")).toEqual({
+      column: "tokens",
+      direction: "asc",
+    });
+    expect(breakdownSortForMetric({ column: "output", direction: "desc" }, "cost")).toEqual({
+      column: "output",
+      direction: "desc",
+    });
+  });
   it("follows the metric the page is showing", () => {
     expect(defaultBreakdownSort("cost")).toEqual({ column: "cost", direction: "desc" });
     expect(defaultBreakdownSort("tokens")).toEqual({ column: "tokens", direction: "desc" });

@@ -34,7 +34,7 @@ provider settings.
 The page opens on **7 days** of cost by project and remembers the period, metric, breakdown, grouping,
 and sort you last used. The **Cost** and **Tokens** switch changes the headline, chart, shares,
 and default row order. Input, Output, Cache reads, and Cache writes show and sort by dollars in
-Cost mode and token counts in Tokens mode. The explicit Cost and Tokens total columns remain available. Every preset retains half-hour source
+Cost mode and token counts in Tokens mode. The total column follows the selected metric too. The four summary tiles keep their labels and positions. Every preset retains half-hour source
 buckets, including **24 hours**, **30 days**, and **90 days**. The chart groups those buckets
 automatically: hourly for a day, six-hourly for up to ten days, daily beyond that. Use **Group**
 above the chart to pin **30 minutes** through **1 day** instead; the hover cursor still advances in
@@ -74,7 +74,9 @@ its own internal subagents, so T3 cannot reject those before the provider starts
 agent-instruction fan-out limits and the independent usage watcher for that layer.
 
 Choose **Custom** in the date row to type a start and end day. Custom ranges can span up to 90
-days, and picking a preset again returns to a rolling window.
+days, and picking a preset again returns to a rolling window. Custom ranges cover whole local
+calendar days, even after zooming into part of a day. Invalid ranges show an explanation and keep
+the last valid data visible. The period controls identify the timezone.
 
 Drag across the chart in either direction to select a narrower time range. The selection snaps
 to half-hour source buckets and updates the chart, summary, and breakdown. Thread breakdowns use
@@ -104,7 +106,7 @@ older environments show an update message instead of returning misleading totals
 Star a project to keep it above the other projects. Sorting applies within favorites and within
 the remaining projects. Click its star again to remove it from favorites.
 
-Use **Columns** to show or hide Cost, Share, Tokens, Input, Output, Cache reads, and Cache writes.
+Use **Columns** to show or hide the selected total metric, Share, Input, Output, Cache reads, and Cache writes.
 The provider table also offers Sessions. Column choices and favorites are remembered on this client.
 The nested thread table uses the same columns, with its own sortable headers. **Input** counts
 uncached input; cache reads and cache writes are separate components. Output includes reasoning,
@@ -115,13 +117,14 @@ scroll horizontally.
 
 The **Cache writes, estimated** total prices cache-creation tokens at each model's cache-write rate.
 It only applies to model-priced records that report cache-creation tokens. Rows without cache
-writes show a dash; incomplete or unavailable pricing is labeled **Unavailable** instead of zero.
+writes show zero; incomplete or unavailable pricing is labeled **Unavailable** instead of zero.
 Cache creation is a billing category, not evidence that a cache entry expired.
 
 Usage is attributed to the project whose folder a session ran in, including sessions driven
 outside T3 Code. The breakdown below the chart switches between **Projects**, **Providers**,
 and **Models**; the chart stacks by the same dimension, and each row keeps its color in
-both. Click a column header to sort by it and click again to reverse; the page remembers the sort
+both. Project and model colors stay attached to their identities when dates or rankings change.
+Click a column header to sort by it and click again to reverse; the page remembers the sort
 for each dimension. Hovering a row highlights its series in the chart. The checkbox at the start of
 a row removes it from the chart and from the shown totals in the table footer, and the header
 checkbox shows or hides every row at once. The table is the chart legend; there is no separate

@@ -285,6 +285,9 @@ export function ThreadRowGroup({
       {open ? (
         <tr className="border-b border-border/50">
           <td colSpan={columns ? columns.length + 2 : 5} className="py-3 ps-9">
+            <p className="mb-1 text-[11px] text-muted-foreground">
+              Daily API-rate estimates, shown in dollars independently of the table metric.
+            </p>
             <UsageThreadDailyChart daily={row.daily} sinceDay={sinceDay} untilDay={untilDay} />
             {row.agents.map((agent) => {
               const agentTokens =
@@ -304,7 +307,9 @@ export function ThreadRowGroup({
                     <span className="truncate">{agent.agentId}</span>
                   </span>
                   <span className="shrink-0 tabular-nums">
-                    {formatUsd(agent.costUsd)} · {formatTokens(agentTokens)} tokens
+                    {metric === "cost"
+                      ? formatUsd(agent.costUsd)
+                      : `${formatTokens(agentTokens)} tokens`}
                   </span>
                 </div>
               );

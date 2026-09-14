@@ -3,7 +3,17 @@ import { mergeUsage } from "@t3tools/shared/usageMerge";
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
-const testState = vi.hoisted(() => ({ useUsage: vi.fn() }));
+const testState = vi.hoisted(() => ({ useUsage: vi.fn(), metric: "cost" as "cost" | "tokens" }));
+vi.mock("./usagePagePreferences", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./usagePagePreferences")>();
+  return {
+    ...actual,
+    readUsagePagePreferences: () => ({
+      ...actual.DEFAULT_USAGE_PAGE_PREFERENCES,
+      metric: testState.metric,
+    }),
+  };
+});
 
 vi.mock("../../env", () => ({ isElectron: false }));
 vi.mock("../../state/environments", () => ({ usePrimaryEnvironmentId: () => null }));
@@ -27,6 +37,7 @@ import { UsagePage } from "./UsagePage";
 const projectId = ProjectId.make("project-one");
 
 beforeEach(() => {
+  testState.metric = "cost";
   const merged = {
     ...mergeUsage([], USAGE_CONTRACT_VERSION),
     costUsd: 12,
@@ -92,6 +103,16 @@ beforeEach(() => {
 });
 
 describe("UsagePage", () => {
+  it("keeps summary units fixed and shows only token totals in Tokens mode", () => {
+    testState.metric = "tokens";
+    const markup = renderToStaticMarkup(<UsagePage />);
+    expect(markup).toContain("API-rate estimate");
+    const table = markup.slice(markup.indexOf("<table"), markup.indexOf("</table>"));
+    expect(table).not.toContain(">Cost<");
+    expect(table).toContain(">Tokens<");
+    expect(markup).not.toContain("Processed tokens");
+    expect(markup).toContain(">Tokens<");
+  });
   it("requests a seven-day half-hour timeline by default", () => {
     renderToStaticMarkup(<UsagePage />);
     const input = testState.useUsage.mock.calls.at(-1)?.[0];

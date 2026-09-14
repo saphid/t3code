@@ -97,3 +97,11 @@ export function sortBreakdownRows<T extends SortableBreakdownRow>(
     })
     .map((entry) => entry.row);
 }
+
+/** A total-column sort follows the visible total when the metric changes. */
+export function breakdownSortForMetric(
+  sort: BreakdownSort,
+  metric: UsageStackMetric,
+): BreakdownSort {
+  return sort.column === "cost" || sort.column === "tokens" ? { ...sort, column: metric } : sort;
+}

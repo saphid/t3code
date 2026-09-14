@@ -132,7 +132,10 @@ export function UsageBreakdownTable({
     ];
   }, [rows, sort, metric, favoriteProjects]);
   const columns = USAGE_COLUMNS.filter(
-    ({ key }) => !hiddenColumns.includes(key) && (key !== "sessions" || showSessions),
+    ({ key }) =>
+      key !== (metric === "cost" ? "tokens" : "cost") &&
+      !hiddenColumns.includes(key) &&
+      (key !== "sessions" || showSessions),
   );
   const columnKeys = columns.map(({ key }) => key);
   const shown = rows.filter((row) => !hidden.has(row.key));

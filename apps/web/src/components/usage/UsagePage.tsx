@@ -1,3 +1,4 @@
+import { customUsageRange, usageSeriesColor } from "./usagePresentation";
 import type { UsageProviderKind } from "@t3tools/contracts";
 import {
   AlertTriangleIcon,
@@ -43,6 +44,7 @@ import { selectedUsageWindow } from "./usageChartSelection";
 import { usageTokenColumns } from "./usageTokenColumns";
 import { evaluateDailyUsageBudget } from "./usageBudget";
 import {
+  breakdownSortForMetric,
   defaultBreakdownSort,
   toggleBreakdownSort,
   type BreakdownColumn,
@@ -101,17 +103,9 @@ const SERIES_COLORS = [
   "#c94f6f",
 ] as const;
 const UNKNOWN_COLOR = "#777777";
-const MAX_CUSTOM_MS = 90 * 24 * 60 * 60_000;
 
 function exactWindow(days: number) {
   return makeWindow(days, undefined, "halfHour");
-}
-
-function localDayBoundary(day: string, nextDay: boolean): string | null {
-  const [year, month, date] = day.split("-").map(Number);
-  if (!year || !month || !date) return null;
-  const value = new Date(year, month - 1, date + (nextDay ? 1 : 0));
-  return Number.isNaN(value.getTime()) ? null : value.toISOString();
 }
 
 function projectLabel(project: Pick<ProjectTotals, "projectKey" | "project">): string {
@@ -145,6 +139,8 @@ export function UsagePage() {
     preset: WindowPreset;
     window: ReturnType<typeof exactWindow>;
   }>(() => ({ preset: preferences.windowDays, window: exactWindow(preferences.windowDays) }));
+  const [customDates, setCustomDates] = useState<{ from: string; to: string } | null>(null);
+  const [dateError, setDateError] = useState<string | null>(null);
   const [zoomBase, setZoomBase] = useState<typeof windowSelection | null>(null);
   const [hiddenProjects, setHiddenProjects] = useState<ReadonlySet<string>>(new Set());
   const [hiddenProviders, setHiddenProviders] = useState<ReadonlySet<string>>(new Set());
@@ -173,20 +169,26 @@ export function UsagePage() {
     let costUsd = 0;
     let totalTokens = 0;
     let cacheWriteTokens = 0;
+    let cacheWriteUsd: number | null = 0;
     for (const cell of merged.timeline) {
       if (cell.projectKey !== undefined) continue;
       costUsd += cell.costUsd;
       totalTokens += cell.totalTokens;
       cacheWriteTokens += cell.totals?.cacheCreationTokens ?? 0;
+      if (cell.cacheWriteUsd === undefined && (cell.totals?.cacheCreationTokens ?? 0) > 0)
+        cacheWriteUsd = null;
+      else if (cacheWriteUsd !== null) cacheWriteUsd += cell.cacheWriteUsd ?? 0;
     }
-    return costUsd > 0 || totalTokens > 0 ? { costUsd, totalTokens, cacheWriteTokens } : null;
+    return costUsd > 0 || totalTokens > 0
+      ? { costUsd, totalTokens, cacheWriteTokens, cacheWriteUsd }
+      : null;
   }, [merged.timeline]);
 
   const projectSeries = useMemo<readonly UsageChartSeries[]>(() => {
-    const values: UsageChartSeries[] = merged.projects.map((project, index) => ({
+    const values: UsageChartSeries[] = merged.projects.map((project) => ({
       key: projectSeriesKey(project.projectKey),
       label: projectLabel(project),
-      color: SERIES_COLORS[index % SERIES_COLORS.length]!,
+      color: usageSeriesColor(projectSeriesKey(project.projectKey), SERIES_COLORS),
     }));
     if (unknownTotals !== null) {
       values.push({ key: "unknown", label: "Unknown attribution", color: UNKNOWN_COLOR });
@@ -204,10 +206,10 @@ export function UsagePage() {
   );
   const modelSeries = useMemo<readonly UsageChartSeries[]>(
     () =>
-      merged.models.map((model, index) => ({
+      merged.models.map((model) => ({
         key: modelSeriesKey(model.provider, model.model),
         label: model.model,
-        color: SERIES_COLORS[index % SERIES_COLORS.length]!,
+        color: usageSeriesColor(modelSeriesKey(model.provider, model.model), SERIES_COLORS),
       })),
     [merged.models],
   );
@@ -313,7 +315,7 @@ export function UsagePage() {
             ? ratio(unknownTotals.costUsd, merged.costUsd)
             : ratio(unknownTotals.totalTokens, merged.totalTokens),
         cacheWriteTokens: unknownTotals.cacheWriteTokens,
-        cacheWriteUsd: unknownTotals.cacheWriteTokens === 0 ? 0 : null,
+        cacheWriteUsd: unknownTotals.cacheWriteUsd,
         sessions: null,
       });
     }
@@ -374,8 +376,14 @@ export function UsagePage() {
     [colorByKey, merged.models, merged.totalTokens, metric, tokenColumns.models],
   );
 
-  const sort =
-    preferences.sort[dimension] ?? defaultBreakdownSort(metric, preferences.hiddenColumns);
+  const sort = breakdownSortForMetric(
+    preferences.sort[dimension] ?? defaultBreakdownSort(metric, preferences.hiddenColumns),
+    metric,
+  );
+  const threadSort = breakdownSortForMetric(
+    preferences.sort.threads ?? defaultBreakdownSort(metric, preferences.hiddenColumns),
+    metric,
+  );
   const onSort = (column: BreakdownColumn) =>
     updatePreferences({
       sort: { ...preferences.sort, [dimension]: toggleBreakdownSort(sort, column) },
@@ -387,30 +395,38 @@ export function UsagePage() {
   );
 
   const selectPreset = (days: UsagePagePreferences["windowDays"]) => {
+    setDateError(null);
+    setCustomDates(null);
     setZoomBase(null);
     setWindowSelection({ preset: days, window: exactWindow(days) });
     updatePreferences({ windowDays: days });
   };
-  const setDate = (edge: "from" | "to", value: string) => {
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return;
-    const nextSince = edge === "from" ? localDayBoundary(value, false) : window.sinceTime!;
-    const nextUntil = edge === "to" ? localDayBoundary(value, true) : window.untilTime!;
-    if (nextSince === null || nextUntil === null) return;
-    if (Date.parse(nextUntil) <= Date.parse(nextSince)) return;
-    if (Date.parse(nextUntil) - Date.parse(nextSince) > MAX_CUSTOM_MS) return;
+  const applyCustomDates = (dates: { from: string; to: string }) => {
+    setCustomDates(dates);
+    const range = customUsageRange(dates.from, dates.to);
+    if (range.error !== undefined) {
+      setDateError(range.error);
+      return;
+    }
+    setDateError(null);
     setZoomBase(null);
     setWindowSelection({
       preset: "custom",
       window: {
         ...window,
-        sinceDay: (edge === "from" ? value : window.sinceDay) as typeof window.sinceDay,
-        untilDay: (edge === "to" ? value : window.untilDay) as typeof window.untilDay,
-        sinceTime: nextSince,
-        untilTime: nextUntil,
+        sinceDay: dates.from as typeof window.sinceDay,
+        untilDay: dates.to as typeof window.untilDay,
+        sinceTime: range.sinceTime,
+        untilTime: range.untilTime,
         resolution: "halfHour",
       },
     });
   };
+  const setDate = (edge: "from" | "to", value: string) =>
+    applyCustomDates({
+      ...(customDates ?? { from: window.sinceDay, to: window.untilDay }),
+      [edge]: value,
+    });
   const refreshWindow = () => {
     if (view === "limits") {
       if (primaryEnvironmentId)
@@ -489,8 +505,8 @@ export function UsagePage() {
                     onValueChange={(next) => {
                       const value = next[0];
                       if (value === "custom") {
-                        setZoomBase(null);
                         setWindowSelection({ preset: "custom", window });
+                        applyCustomDates({ from: window.sinceDay, to: window.untilDay });
                         return;
                       }
                       const days = WINDOW_OPTIONS.find((o) => String(o.days) === value)?.days;
@@ -508,16 +524,20 @@ export function UsagePage() {
                     <div className="flex items-center gap-2">
                       <Input
                         aria-label="From day"
+                        aria-invalid={dateError !== null}
+                        aria-describedby={dateError ? "usage-date-error" : undefined}
                         type="date"
-                        value={window.sinceDay}
+                        value={customDates?.from ?? window.sinceDay}
                         onChange={(event) => setDate("from", event.target.value)}
                         className="h-7 w-[9.5rem]"
                       />
                       <span className="text-xs text-muted-foreground">to</span>
                       <Input
                         aria-label="To day"
+                        aria-invalid={dateError !== null}
+                        aria-describedby={dateError ? "usage-date-error" : undefined}
                         type="date"
-                        value={window.untilDay}
+                        value={customDates?.to ?? window.untilDay}
                         onChange={(event) => setDate("to", event.target.value)}
                         className="h-7 w-[9.5rem]"
                       />
@@ -528,6 +548,16 @@ export function UsagePage() {
                       {formatDateTimeShort(untilTime, window.timeZone)}
                     </span>
                   )}
+                  <span className="text-xs text-muted-foreground">{window.timeZone}</span>
+                  {dateError ? (
+                    <span
+                      id="usage-date-error"
+                      role="alert"
+                      className="basis-full text-xs text-destructive"
+                    >
+                      {dateError} Showing the last valid range.
+                    </span>
+                  ) : null}
                   <ToggleGroup
                     aria-label="Metric"
                     variant="segmented"
@@ -547,12 +577,8 @@ export function UsagePage() {
                 <section aria-label="Usage summary">
                   <dl className="grid grid-cols-[repeat(auto-fit,minmax(min(100%,12rem),1fr))] gap-4 text-sm">
                     <Stat
-                      label={metric === "cost" ? "API-rate estimate" : "Processed tokens"}
-                      value={
-                        metric === "cost"
-                          ? formatUsd(merged.costUsd)
-                          : formatTokens(merged.totalTokens)
-                      }
+                      label="API-rate estimate"
+                      value={formatUsd(merged.costUsd)}
                       detail={
                         merged.sessionsExact
                           ? `${formatCount(merged.sessions)} sessions`
@@ -560,12 +586,8 @@ export function UsagePage() {
                       }
                     />
                     <Stat
-                      label={metric === "cost" ? "Tokens" : "Cost"}
-                      value={
-                        metric === "cost"
-                          ? formatTokens(merged.totalTokens)
-                          : formatUsd(merged.costUsd)
-                      }
+                      label="Tokens"
+                      value={formatTokens(merged.totalTokens)}
                       detail={`${formatTokens(merged.cachedInputTokens)} cached · ${formatTokens(
                         merged.uncachedInputTokens,
                       )} uncached · ${formatTokens(merged.outputTokens)} output`}
@@ -678,6 +700,8 @@ export function UsagePage() {
                   <UsageStackedChart
                     key={`${window.sinceTime}:${untilTime}`}
                     onSelectRange={(range) => {
+                      setDateError(null);
+                      setCustomDates(null);
                       setZoomBase((base) => base ?? windowSelection);
                       setWindowSelection({
                         preset: "selection",
@@ -714,6 +738,7 @@ export function UsagePage() {
                       </p>
                     </div>
                     <UsageColumns
+                      metric={metric}
                       showSessions={dimension === "providers"}
                       hidden={preferences.hiddenColumns ?? []}
                       onChange={(hiddenColumns) => {
@@ -767,19 +792,12 @@ export function UsagePage() {
                             models={modelsByProject.get(key) ?? []}
                             columns={columns}
                             metric={metric}
-                            sort={
-                              preferences.sort.threads ??
-                              defaultBreakdownSort(metric, preferences.hiddenColumns)
-                            }
+                            sort={threadSort}
                             onSort={(column) =>
                               updatePreferences({
                                 sort: {
                                   ...preferences.sort,
-                                  threads: toggleBreakdownSort(
-                                    preferences.sort.threads ??
-                                      defaultBreakdownSort(metric, preferences.hiddenColumns),
-                                    column,
-                                  ),
+                                  threads: toggleBreakdownSort(threadSort, column),
                                 },
                               })
                             }

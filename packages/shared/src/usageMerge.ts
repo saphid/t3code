@@ -85,6 +85,7 @@ export interface UsageTimelineCell {
   /** Original bucket components, retained for client breakdown columns. */
   readonly totals?: UsageBucket["totals"];
   readonly componentCosts?: UsageBucket["componentCosts"];
+  readonly cacheWriteUsd?: number;
 }
 
 export interface CostQuality {
@@ -541,6 +542,7 @@ export function mergeUsage(
           costUsd: bucket.costUsd,
           totalTokens: tokens,
           totals: bucket.totals,
+          ...(bucket.cacheWriteUsd === undefined ? {} : { cacheWriteUsd: bucket.cacheWriteUsd }),
           ...(bucket.componentCosts ? { componentCosts: bucket.componentCosts } : {}),
         });
       }

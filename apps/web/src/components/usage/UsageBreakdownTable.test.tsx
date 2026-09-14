@@ -39,6 +39,8 @@ describe("UsageBreakdownTable", () => {
     expect(cost).toContain("$1.23");
     expect(cost).toContain("$2.46");
     expect(tokens).not.toContain("$1.23");
+    expect(tokens).not.toContain(">Cost<");
+    expect(cost).not.toContain(">Tokens<");
     expect(tokens).toContain(">20<");
     expect(tokens).toContain(">40<");
   });
