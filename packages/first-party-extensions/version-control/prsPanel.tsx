@@ -258,11 +258,13 @@ function usePrsList(
       .then(
         (result) => {
           if (!signal.aborted)
-            setState((prev) => ({
+            setState(() => ({
               key,
-              // A re-read answers the same question — replace rows in
-              // place so a state transition never duplicates a row.
-              entries: mergePrsEntries(prev?.key === key ? prev.entries : [], result.entries),
+              // A re-read answers the same question — a row that left the
+              // fresh page (a closed PR under the open filter, a renamed
+              // search hit) must leave the list rather than linger stale.
+              // Continuation pages merge on their own path in loadMore.
+              entries: result.entries,
               result,
               error: null,
               pending: false,
@@ -1046,7 +1048,8 @@ export function PullRequestsPanel(props: {
   const [refreshError, setRefreshError] = useState<string | null>(null);
   const [pagingThread, setPagingThread] = useState<string | null>(null);
   // Paged-in comment tails keep the new cursor + truncation flag so a
-  // thread pages forward instead of refetching the same page.
+  // thread pages forward instead of refetching the same page. Keys fold
+  // the selected ref in — a thread id is only unique within its PR.
   const [pagedThreads, setPagedThreads] = useState<
     ReadonlyMap<
       string,
@@ -1106,9 +1109,12 @@ export function PullRequestsPanel(props: {
     setTick((value) => value + 1);
   };
 
+  const selectedKey = selected === null ? null : prsRefKey(selected);
   const loadThreadComments = (thread: PrsReviewThread) => {
-    if (selected === null || thread.nextCommentsCursor === undefined) return;
+    if (selected === null || selectedKey === null || thread.nextCommentsCursor === undefined)
+      return;
     const cursor = thread.nextCommentsCursor;
+    const pageKey = `${selectedKey}\n${thread.id}`;
     setPagingThread(thread.id);
     const controller = new AbortController();
     const signal = AbortSignal.any([controller.signal, session.signal]);
@@ -1119,8 +1125,8 @@ export function PullRequestsPanel(props: {
           if (!signal.aborted)
             setPagedThreads((prev) => {
               const next = new Map(prev);
-              const prior = next.get(thread.id);
-              next.set(thread.id, {
+              const prior = next.get(pageKey);
+              next.set(pageKey, {
                 comments: [...(prior?.comments ?? []), ...page.comments],
                 nextCursor: page.nextCursor,
                 truncated: page.truncated,
@@ -1519,7 +1525,7 @@ export function PullRequestsPanel(props: {
                         <p style={{ ...noteStyle, fontSize: 11 }}>No review threads.</p>
                       )}
                       {activity.reviewThreads.map((thread) => {
-                        const paged = pagedThreads.get(thread.id);
+                        const paged = pagedThreads.get(`${selectedKey}\n${thread.id}`);
                         const merged: PrsReviewThread =
                           paged === undefined
                             ? thread
@@ -1535,7 +1541,11 @@ export function PullRequestsPanel(props: {
                             canPage={ops?.["prs.threadComments"] === true}
                             paging={pagingThread === thread.id}
                             unrecoverable={
-                              paged !== undefined && paged.truncated && paged.nextCursor === null
+                              paged !== undefined
+                                ? paged.truncated && paged.nextCursor === null
+                                : thread.nextCommentsCursor === undefined &&
+                                  thread.commentCount !== undefined &&
+                                  thread.commentCount > thread.comments.length
                             }
                             onLoadMore={loadThreadComments}
                           />

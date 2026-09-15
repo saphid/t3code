@@ -51,13 +51,13 @@ var __t3Client = (() => {
     }
   });
 
-  // ../../../.t3/worktrees/t3-extensions-authoring/vcs-pr-ui/packages/first-party-extensions/version-control/generated-client.ts
+  // generated-client.ts
   var generated_client_exports = {};
   __export(generated_client_exports, {
     default: () => generated_client_default
   });
 
-  // ../../../.t3/worktrees/t3-extensions-authoring/vcs-pr-ui/packages/extension-sdk/dist/contracts.js
+  // ../../extension-sdk/dist/contracts.js
   var API_VERSION = 1;
   var MAX_PAYLOAD_BYTES = 64 * 1024;
   function assertId(value) {
@@ -145,7 +145,7 @@ var __t3Client = (() => {
     return manifest;
   }
 
-  // ../../../.t3/worktrees/t3-extensions-authoring/vcs-pr-ui/packages/extension-sdk/dist/capabilities.js
+  // ../../extension-sdk/dist/capabilities.js
   function defineApi(definition) {
     return { definition: validateApiDefinition(definition) };
   }
@@ -238,7 +238,7 @@ var __t3Client = (() => {
     return api;
   }
 
-  // ../../../.t3/worktrees/t3-extensions-authoring/vcs-pr-ui/packages/extension-sdk/dist/orchestration.js
+  // ../../extension-sdk/dist/orchestration.js
   var ORCHESTRATION_STATUS = "t3.orchestration/status";
   var ORCHESTRATION_CONTROL = "t3.orchestration/control";
   var ORCHESTRATION_READ = "t3.orchestration/read";
@@ -464,7 +464,7 @@ var __t3Client = (() => {
   }
   var ORCHESTRATION_CONTROL_API = orchestrationControlApi.definition;
 
-  // ../../../.t3/worktrees/t3-extensions-authoring/vcs-pr-ui/packages/extension-sdk/dist/textEdits.js
+  // ../../extension-sdk/dist/textEdits.js
   var WORKSPACE_READ_TEXT_EDITS = "t3.workspace/text-edits";
   var WORKSPACE_READ_TEXT_GRANT = "t3.workspace/read-text";
   var WORKSPACE_WRITE_TEXT = "t3.workspace/write-text";
@@ -657,7 +657,7 @@ var __t3Client = (() => {
     ]
   });
 
-  // ../../../.t3/worktrees/t3-extensions-authoring/vcs-pr-ui/packages/extension-sdk/dist/catalogue.js
+  // ../../extension-sdk/dist/catalogue.js
   var BROWSER_LOCAL_SERVERS = "t3.browser/local-servers";
   var BROWSER_READ_LOCAL_SERVERS = "t3.browser/read-local-servers";
   var browserLocalServersApi = defineStreamApi({
@@ -3647,7 +3647,7 @@ var __t3Client = (() => {
   var TERMINAL_OUTPUT_EVENTS_API = terminalOutputEventsApi.definition;
   var TERMINAL_CONTROL_API = terminalControlApi.definition;
 
-  // ../../../.t3/worktrees/t3-extensions-authoring/vcs-pr-ui/packages/extension-sdk/dist/environment.js
+  // ../../extension-sdk/dist/environment.js
   var ENVIRONMENT_MANIFEST_FILE = "t3-extension.json";
   var ENVIRONMENT_ASSET_MEDIA_TYPES = [
     "application/wasm",
@@ -3785,7 +3785,7 @@ var __t3Client = (() => {
     return { ...pkg, manifest };
   }
 
-  // ../../../.t3/worktrees/t3-extensions-authoring/vcs-pr-ui/packages/extension-sdk/dist/authoring.js
+  // ../../extension-sdk/dist/authoring.js
   var statePreview = (state2) => {
     const encoded = JSON.stringify(state2);
     return encoded.length > 200 ? encoded.slice(0, 200) + "\u2026" : encoded;
@@ -3882,10 +3882,10 @@ var __t3Client = (() => {
     return { id: api.definition.id, versionRange };
   }
 
-  // ../../../.t3/worktrees/t3-extensions-authoring/vcs-pr-ui/packages/first-party-extensions/version-control/extension.tsx
+  // extension.tsx
   var import_react2 = __toESM(require_react(), 1);
 
-  // ../../../.t3/worktrees/t3-extensions-authoring/vcs-pr-ui/packages/first-party-extensions/version-control/viewModel.ts
+  // viewModel.ts
   var CHANGE_LANES = ["conflicted", "staged", "changes", "untracked"];
   function lanesFromChanges(entries) {
     const groups = { conflicted: [], staged: [], changes: [], untracked: [] };
@@ -4183,10 +4183,10 @@ var __t3Client = (() => {
     return { kind: "ready", capabilities };
   }
 
-  // ../../../.t3/worktrees/t3-extensions-authoring/vcs-pr-ui/packages/first-party-extensions/version-control/prsPanel.tsx
+  // prsPanel.tsx
   var import_react = __toESM(require_react(), 1);
 
-  // ../../../.t3/worktrees/t3-extensions-authoring/vcs-pr-ui/node_modules/.pnpm/@pierre+diffs@1.3.0-beta.10_patch_hash=0ccee155b93b63d810e2c1a40c1fd676fb6fbcfa72cf6430_61e9491b81eb5c1b21f7baa527073f84/node_modules/@pierre/diffs/dist/constants.js
+  // ../../../node_modules/.pnpm/@pierre+diffs@1.3.0-beta.10_patch_hash=0ccee155b93b63d810e2c1a40c1fd676fb6fbcfa72cf6430_61e9491b81eb5c1b21f7baa527073f84/node_modules/@pierre/diffs/dist/constants.js
   var DIFFS_DEVELOPMENT_BUILD = (() => {
     try {
       return true;
@@ -4215,7 +4215,7 @@ var __t3Client = (() => {
     fromEnd: 0
   });
 
-  // ../../../.t3/worktrees/t3-extensions-authoring/vcs-pr-ui/node_modules/.pnpm/@pierre+diffs@1.3.0-beta.10_patch_hash=0ccee155b93b63d810e2c1a40c1fd676fb6fbcfa72cf6430_61e9491b81eb5c1b21f7baa527073f84/node_modules/@pierre/diffs/dist/utils/cleanLastNewline.js
+  // ../../../node_modules/.pnpm/@pierre+diffs@1.3.0-beta.10_patch_hash=0ccee155b93b63d810e2c1a40c1fd676fb6fbcfa72cf6430_61e9491b81eb5c1b21f7baa527073f84/node_modules/@pierre/diffs/dist/utils/cleanLastNewline.js
   function cleanLastNewline(contents2) {
     let end = contents2.length;
     if (contents2.charCodeAt(end - 1) === 10) {
@@ -4225,7 +4225,7 @@ var __t3Client = (() => {
     return contents2.slice(0, end);
   }
 
-  // ../../../.t3/worktrees/t3-extensions-authoring/vcs-pr-ui/node_modules/.pnpm/@pierre+diffs@1.3.0-beta.10_patch_hash=0ccee155b93b63d810e2c1a40c1fd676fb6fbcfa72cf6430_61e9491b81eb5c1b21f7baa527073f84/node_modules/@pierre/diffs/dist/utils/detachString.js
+  // ../../../node_modules/.pnpm/@pierre+diffs@1.3.0-beta.10_patch_hash=0ccee155b93b63d810e2c1a40c1fd676fb6fbcfa72cf6430_61e9491b81eb5c1b21f7baa527073f84/node_modules/@pierre/diffs/dist/utils/detachString.js
   var stringDetachEncoder = new TextEncoder();
   var stringDetachDecoder = new TextDecoder("utf-8", { ignoreBOM: true });
   var SURROGATE_CODE_UNIT_PATTERN = /[\uD800-\uDFFF]/;
@@ -4243,7 +4243,7 @@ var __t3Client = (() => {
     return stringDetachDecoder.decode(stringDetachBuffer.subarray(0, written));
   }
 
-  // ../../../.t3/worktrees/t3-extensions-authoring/vcs-pr-ui/node_modules/.pnpm/@pierre+diffs@1.3.0-beta.10_patch_hash=0ccee155b93b63d810e2c1a40c1fd676fb6fbcfa72cf6430_61e9491b81eb5c1b21f7baa527073f84/node_modules/@pierre/diffs/dist/utils/realignChangeContent.js
+  // ../../../node_modules/.pnpm/@pierre+diffs@1.3.0-beta.10_patch_hash=0ccee155b93b63d810e2c1a40c1fd676fb6fbcfa72cf6430_61e9491b81eb5c1b21f7baa527073f84/node_modules/@pierre/diffs/dist/utils/realignChangeContent.js
   var MAX_ALIGNMENT_COMPARISONS = 4096;
   var MIN_IMPROVEMENT_PER_PAIR = 0.5;
   function realignChangeContentBySimilarity(diff) {
@@ -4362,7 +4362,7 @@ var __t3Client = (() => {
     return (prefix + suffix) / maxLength;
   }
 
-  // ../../../.t3/worktrees/t3-extensions-authoring/vcs-pr-ui/node_modules/.pnpm/@pierre+diffs@1.3.0-beta.10_patch_hash=0ccee155b93b63d810e2c1a40c1fd676fb6fbcfa72cf6430_61e9491b81eb5c1b21f7baa527073f84/node_modules/@pierre/diffs/dist/utils/parsePatchFiles.js
+  // ../../../node_modules/.pnpm/@pierre+diffs@1.3.0-beta.10_patch_hash=0ccee155b93b63d810e2c1a40c1fd676fb6fbcfa72cf6430_61e9491b81eb5c1b21f7baa527073f84/node_modules/@pierre/diffs/dist/utils/parsePatchFiles.js
   function processPatch(data, cacheKeyPrefix, throwOnError) {
     try {
       return _processPatch(data, cacheKeyPrefix, throwOnError);
@@ -4843,7 +4843,7 @@ ${prefix}`;
     };
   }
 
-  // ../../../.t3/worktrees/t3-extensions-authoring/vcs-pr-ui/packages/first-party-extensions/version-control/prsViewModel.ts
+  // prsViewModel.ts
   function prsGate(capabilities, error) {
     if (error !== null) return { kind: "error", detail: error };
     if (capabilities === null) return { kind: "loading" };
@@ -5313,7 +5313,7 @@ ${ref.number}`;
   }
   var PRS_MUTATIONS_DEFERRED = "Pull-request mutations are not part of this contract \u2014 merge and update actions, comments, reviews, thread resolution, reactions, reviewers, and labels are deferred to a later control contract.";
 
-  // ../../../.t3/worktrees/t3-extensions-authoring/vcs-pr-ui/packages/first-party-extensions/version-control/prsPanel.tsx
+  // prsPanel.tsx
   var import_jsx_runtime = __toESM(require_jsx_runtime(), 1);
   var muted = "var(--muted-foreground, #667085)";
   var control = {
@@ -5449,11 +5449,13 @@ ${ref.number}`;
       void bindApi(prsReadApi, host, session.context).invoke("list", input, signal).then(
         (result) => {
           if (!signal.aborted)
-            setState((prev) => ({
+            setState(() => ({
               key,
-              // A re-read answers the same question — replace rows in
-              // place so a state transition never duplicates a row.
-              entries: mergePrsEntries(prev?.key === key ? prev.entries : [], result.entries),
+              // A re-read answers the same question — a row that left the
+              // fresh page (a closed PR under the open filter, a renamed
+              // search hit) must leave the list rather than linger stale.
+              // Continuation pages merge on their own path in loadMore.
+              entries: result.entries,
               result,
               error: null,
               pending: false,
@@ -6147,9 +6149,13 @@ ${ref.number}`;
       ).finally(() => controller.abort());
       setTick((value) => value + 1);
     };
+    const selectedKey = selected === null ? null : prsRefKey(selected);
     const loadThreadComments = (thread) => {
-      if (selected === null || thread.nextCommentsCursor === void 0) return;
+      if (selected === null || selectedKey === null || thread.nextCommentsCursor === void 0)
+        return;
       const cursor = thread.nextCommentsCursor;
+      const pageKey = `${selectedKey}
+${thread.id}`;
       setPagingThread(thread.id);
       const controller = new AbortController();
       const signal = AbortSignal.any([controller.signal, session.signal]);
@@ -6158,8 +6164,8 @@ ${ref.number}`;
           if (!signal.aborted)
             setPagedThreads((prev) => {
               const next = new Map(prev);
-              const prior = next.get(thread.id);
-              next.set(thread.id, {
+              const prior = next.get(pageKey);
+              next.set(pageKey, {
                 comments: [...prior?.comments ?? [], ...page.comments],
                 nextCursor: page.nextCursor,
                 truncated: page.truncated
@@ -6443,7 +6449,8 @@ ${ref.number}`;
                     ] }),
                     activity.reviewThreads.length === 0 && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { style: { ...noteStyle, fontSize: 11 }, children: "No review threads." }),
                     activity.reviewThreads.map((thread) => {
-                      const paged = pagedThreads.get(thread.id);
+                      const paged = pagedThreads.get(`${selectedKey}
+${thread.id}`);
                       const merged = paged === void 0 ? thread : {
                         ...thread,
                         comments: [...thread.comments, ...paged.comments],
@@ -6455,7 +6462,7 @@ ${ref.number}`;
                           thread: merged,
                           canPage: ops?.["prs.threadComments"] === true,
                           paging: pagingThread === thread.id,
-                          unrecoverable: paged !== void 0 && paged.truncated && paged.nextCursor === null,
+                          unrecoverable: paged !== void 0 ? paged.truncated && paged.nextCursor === null : thread.nextCommentsCursor === void 0 && thread.commentCount !== void 0 && thread.commentCount > thread.comments.length,
                           onLoadMore: loadThreadComments
                         },
                         thread.id
@@ -6520,7 +6527,7 @@ ${ref.number}`;
     );
   }
 
-  // ../../../.t3/worktrees/t3-extensions-authoring/vcs-pr-ui/packages/first-party-extensions/version-control/extension.tsx
+  // extension.tsx
   var import_jsx_runtime2 = __toESM(require_jsx_runtime(), 1);
   var manifestId = "t3.version-control";
   var REPOSITORY_API_RANGE = "^1.0.0";
@@ -7707,10 +7714,10 @@ ${ref.number}`;
     ]
   });
 
-  // ../../../.t3/worktrees/t3-extensions-authoring/vcs-pr-ui/packages/first-party-extensions/version-control/extension.ts
+  // extension.ts
   var extension_default2 = extension_default;
 
-  // ../../../.t3/worktrees/t3-extensions-authoring/vcs-pr-ui/packages/first-party-extensions/version-control/generated-client.ts
+  // generated-client.ts
   var generated_client_default = extension_default2.client;
   return __toCommonJS(generated_client_exports);
 })();
