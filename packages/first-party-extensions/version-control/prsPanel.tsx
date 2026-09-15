@@ -115,6 +115,21 @@ const headingStyle = {
   letterSpacing: 0.4,
 } as const;
 
+/**
+ * A paged tail can repeat a comment the head already carried (host-side
+ * edits, retried pages) — merge by id so a duplicate never double-renders
+ * or collides on a React key.
+ */
+const mergeThreadComments = (
+  head: readonly PrsThreadComment[],
+  tail: readonly PrsThreadComment[],
+) => {
+  const seen = new Set(head.map((comment) => comment.id));
+  const merged = [...head];
+  for (const comment of tail) if (!seen.has(comment.id)) merged.push(comment);
+  return merged;
+};
+
 const message = (error: unknown, fallback: string) =>
   error instanceof Error ? error.message : fallback;
 
@@ -1090,7 +1105,10 @@ export function PullRequestsPanel(props: {
   const [involvement, setInvolvement] = useState<PrsInvolvement>("all");
   const [query, setQuery] = useState("");
   const [refreshError, setRefreshError] = useState<string | null>(null);
-  const [pagingThread, setPagingThread] = useState<string | null>(null);
+  // One pending comment-page request per (scope, thread) — keyed entries
+  // so paging a second thread neither re-arms the first thread's button
+  // nor lets one settle clear another's loading marker.
+  const [pagingThreads, setPagingThreads] = useState<ReadonlySet<string>>(new Set());
   // Paged-in comment tails keep the new cursor + truncation flag so a
   // thread pages forward instead of refetching the same page. Tails are
   // bound to the exact `activity` payload they extend — a re-read (new
@@ -1110,9 +1128,14 @@ export function PullRequestsPanel(props: {
       }
     >;
   } | null>(null);
-  // Advances whenever the scope changes; a page that resolves under an
-  // older generation is dropped before it can touch the map.
-  const pagedGeneration = useRef({ scope: null as string | null, generation: 0 });
+  // Advances whenever the scope OR the activity payload changes; a page
+  // that resolves under an older generation is dropped before it can
+  // touch the map.
+  const pagedGeneration = useRef({
+    scope: null as string | null,
+    activity: null as PrsActivity | null,
+    generation: 0,
+  });
 
   const { capabilities, error: capsError } = usePrsCapabilities(host, session, visible, tick);
   const gate = prsGate(capabilities, capsError);
@@ -1176,12 +1199,14 @@ export function PullRequestsPanel(props: {
   const selectedKey = selected === null ? null : prsRefKey(selected);
   const pagedScope = selectedKey === null ? null : `${revision}\n${selectedKey}`;
   useEffect(() => {
-    if (pagedGeneration.current.scope !== pagedScope)
+    const current = pagedGeneration.current;
+    if (current.scope !== pagedScope || current.activity !== sections.activity)
       pagedGeneration.current = {
         scope: pagedScope,
-        generation: pagedGeneration.current.generation + 1,
+        activity: sections.activity,
+        generation: current.generation + 1,
       };
-  }, [pagedScope]);
+  }, [pagedScope, sections.activity]);
   const loadThreadComments = (thread: PrsReviewThread) => {
     if (
       selected === null ||
@@ -1194,7 +1219,11 @@ export function PullRequestsPanel(props: {
     const scope = pagedScope;
     const head = sections.activity;
     const generation = pagedGeneration.current.generation;
-    setPagingThread(thread.id);
+    const pendingKey = `${scope}\n${thread.id}`;
+    // A second click while the same page is in flight would re-request the
+    // identical cursor — the response would re-append the same comments.
+    if (pagingThreads.has(pendingKey)) return;
+    setPagingThreads((prev) => new Set(prev).add(pendingKey));
     const controller = new AbortController();
     const signal = AbortSignal.any([controller.signal, session.signal]);
     void bindApi(prsReadApi, host, session.context)
@@ -1203,12 +1232,13 @@ export function PullRequestsPanel(props: {
         (page) => {
           if (signal.aborted || generation !== pagedGeneration.current.generation) return;
           setPagedThreads((prev) => {
-            const map = new Map(
-              prev?.scope === scope && prev?.activity === head ? prev.map : undefined,
-            );
+            // A response carrying an older head inside the current scope
+            // must not replace the newer map — drop it instead.
+            if (prev !== null && prev.scope === scope && prev.activity !== head) return prev;
+            const map = new Map(prev?.scope === scope ? prev.map : undefined);
             const prior = map.get(thread.id);
             map.set(thread.id, {
-              comments: [...(prior?.comments ?? []), ...page.comments],
+              comments: mergeThreadComments(prior?.comments ?? [], page.comments),
               nextCursor: page.nextCursor,
               truncated: page.truncated,
               error: null,
@@ -1221,9 +1251,8 @@ export function PullRequestsPanel(props: {
           // The fetched tail and the failed cursor survive — the failure
           // is named on the thread and the same button retries the page.
           setPagedThreads((prev) => {
-            const map = new Map(
-              prev?.scope === scope && prev?.activity === head ? prev.map : undefined,
-            );
+            if (prev !== null && prev.scope === scope && prev.activity !== head) return prev;
+            const map = new Map(prev?.scope === scope ? prev.map : undefined);
             const prior = map.get(thread.id);
             map.set(thread.id, {
               comments: prior?.comments ?? [],
@@ -1236,7 +1265,13 @@ export function PullRequestsPanel(props: {
         },
       )
       .finally(() => {
-        setPagingThread(null);
+        // Clear only this request's marker — other threads may still page.
+        setPagingThreads((prev) => {
+          if (!prev.has(pendingKey)) return prev;
+          const next = new Set(prev);
+          next.delete(pendingKey);
+          return next;
+        });
         controller.abort();
       });
   };
@@ -1646,7 +1681,7 @@ export function PullRequestsPanel(props: {
                             ? thread
                             : {
                                 ...thread,
-                                comments: [...thread.comments, ...paged.comments],
+                                comments: mergeThreadComments(thread.comments, paged.comments),
                                 nextCommentsCursor: paged.nextCursor ?? undefined,
                               };
                         return (
@@ -1654,7 +1689,10 @@ export function PullRequestsPanel(props: {
                             key={thread.id}
                             thread={merged}
                             canPage={ops?.["prs.threadComments"] === true}
-                            paging={pagingThread === thread.id}
+                            paging={
+                              pagedScope !== null &&
+                              pagingThreads.has(`${pagedScope}\n${thread.id}`)
+                            }
                             unrecoverable={
                               paged !== undefined
                                 ? paged.truncated && paged.nextCursor === null
