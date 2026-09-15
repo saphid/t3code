@@ -1,8 +1,8 @@
 # @t3tools/extension-diff
 
 First-party Diff panel (`t3.diff`) as an installable SDK extension —
-P11-A skeleton + P11-B stream adoption and B-slice parity, on the
-`t3.vcs/*` contracts (P09/P09-B).
+P11-A skeleton + P11-B stream adoption and B-slice parity, plus the
+P12 turn/checkpoint mode, on `t3.vcs/*` and `t3.orchestration/*`.
 
 This is a read-oriented panel. It consumes `t3.vcs/read` plus the
 `t3.file/open` grant (open-in-editor resolution):
@@ -37,13 +37,30 @@ This is a read-oriented panel. It consumes `t3.vcs/read` plus the
 - freshness via `t3.vcs/status.subscribe`: one refresh per distinct
   local-status fingerprint (never per frame, never polled), bounded
   resubscribe on `closed`, honest "stream ended" fallback to manual
-  Refresh.
+  Refresh,
+- a Turns mode over `t3.orchestration/status` (`t3.orchestration/read`
+  grant): `subscribeAgents` feeds the checkpoint picker (newest first,
+  baseline turn excluded), `getTurnDiff`/`getThreadDiff` deliver
+  turn-scoped or whole-thread diffs through the same sha256-verified
+  stream collector as large workspace previews. Selection reconciles
+  when a revert removes checkpoints, and a stale turn falls back to the
+  newest survivor — nothing is fabricated when the projection has no
+  checkpoints yet,
+- checkpoint revert via `t3.orchestration/control`
+  (`t3.orchestration/operate` grant): the button only appears when
+  `getCapabilities` advertises `checkpoint.revert`, asks for
+  confirmation, and reports pending/accepted/rejected/invoke-failure
+  honestly. An accepted receipt means the decider recorded the request;
+  it does not claim the filesystem restore finished,
+- turn-mode expansion is disabled on purpose: checkpoint commits are
+  root commits, so `getFileContents`'s merge-base path cannot expand
+  turn sources — the panel says so instead of issuing requests that
+  cannot resolve.
 
 Deferred slices: split view + Pierre renderer features (react-dom is
-bundler-banned), turn/checkpoint diffs (P12 orchestration boundary),
-diff-line comments (`t3.messages/enrichment`), repo-root→workspace path
-remapping for open (no public repo-root contract), mutations (none —
-this panel is read-only).
+bundler-banned), diff-line comments (`t3.messages/enrichment`),
+repo-root→workspace path remapping for open (no public repo-root
+contract).
 
 Per-row dispositions and native citations:
 `docs/internals/extensions/vcs-diff-binding-disposition.md`.

@@ -214,7 +214,7 @@ var __t3Client = (() => {
     for (const method of api.methods ?? []) {
       if (!method || typeof method !== "object")
         throw new Error("Invalid API method");
-      if (typeof method.name !== "string" || !/^[a-z][a-zA-Z0-9]{0,79}$/.test(method.name) || names.has(method.name))
+      if (typeof method.name !== "string" || !/^(?=.{1,80}$)[a-z][a-zA-Z0-9]*(?:\.[a-z][a-zA-Z0-9]*)*$/.test(method.name) || names.has(method.name))
         throw new Error("Duplicate or invalid API method");
       names.add(method.name);
       if (method.effect !== "read" && method.effect !== "write")
@@ -237,6 +237,232 @@ var __t3Client = (() => {
     }
     return api;
   }
+
+  // ../../extension-sdk/dist/orchestration.js
+  var ORCHESTRATION_STATUS = "t3.orchestration/status";
+  var ORCHESTRATION_CONTROL = "t3.orchestration/control";
+  var ORCHESTRATION_READ = "t3.orchestration/read";
+  var ORCHESTRATION_OPERATE = "t3.orchestration/operate";
+  var ORCHESTRATION_CONTROL_OPS = [
+    "turn.start",
+    "turn.interrupt",
+    "session.stop",
+    "approval.respond",
+    "userInput.respond",
+    "userInput.dismiss",
+    "thread.settle",
+    "thread.unsettle",
+    "checkpoint.revert"
+  ];
+  var str = { type: "string", maxLength: 32768 };
+  var id = { type: "string", minLength: 1, maxLength: 160 };
+  var num = { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER };
+  var bool = { type: "boolean" };
+  var nullable = (schema) => ({ anyOf: [schema, { type: "null" }] });
+  var obj = (properties, required = Object.keys(properties)) => ({
+    type: "object",
+    additionalProperties: false,
+    properties,
+    required
+  });
+  var arr = (items, maxItems = 100) => ({ type: "array", items, maxItems });
+  var empty = obj({});
+  var decision = { enum: ["accept", "acceptForSession", "acceptAlways", "decline", "cancel"] };
+  var receipt = obj({
+    commandId: id,
+    status: { enum: ["accepted", "rejected"] },
+    sequence: num,
+    error: nullable(str)
+  });
+  var agentProps = {
+    id: str,
+    kind: { enum: ["subagent", "subagent_batch", "workflow", "workflow_agent"] },
+    title: str,
+    status: {
+      enum: [
+        "pending",
+        "running",
+        "waiting",
+        "idle",
+        "completed",
+        "failed",
+        "cancelled",
+        "interrupted"
+      ]
+    },
+    activationCount: num,
+    usage: nullable(obj({
+      totalTokens: num,
+      inputTokens: num,
+      cachedInputTokens: num,
+      outputTokens: num,
+      reasoningOutputTokens: num,
+      toolUses: num,
+      durationMs: { type: "number" }
+    }, ["totalTokens"])),
+    phases: arr(obj({ index: num, title: str })),
+    runHandles: nullable(obj({ runId: str, scriptPath: str, transcriptDir: str, sessionUrl: str }, [])),
+    recentActivity: arr(obj({ at: str, summary: str })),
+    firstSeenAt: str,
+    updatedAt: str
+  };
+  for (const key of [
+    "role",
+    "model",
+    "effort",
+    "progress",
+    "lastToolName",
+    "result",
+    "error",
+    "outputFile",
+    "parentAgentId",
+    "phaseTitle",
+    "workflowName",
+    "startedAt",
+    "completedAt"
+  ])
+    agentProps[key] = nullable(str);
+  for (const key of ["agentIndex", "phaseIndex", "attempt"])
+    agentProps[key] = nullable(num);
+  var approval = obj({
+    requestId: id,
+    requestKind: { enum: ["command", "file-read", "file-change", "mcp-elicitation"] },
+    createdAt: str,
+    detail: str,
+    appName: str,
+    options: arr(obj({ decision, label: str, warning: str }, ["decision", "label"]))
+  }, ["requestId", "requestKind", "createdAt"]);
+  var question = obj({
+    id: str,
+    header: str,
+    question: str,
+    options: arr(obj({ label: str, description: str, value: str }, ["label", "description"])),
+    allowCustomAnswer: bool,
+    multiSelect: bool
+  }, ["id", "header", "question", "options"]);
+  var sessionProps = {
+    threadId: id,
+    status: { enum: ["idle", "starting", "running", "ready", "interrupted", "stopped", "error"] },
+    providerName: nullable(str),
+    providerInstanceId: id,
+    runtimeMode: { enum: ["full-access", "approval-required", "auto", "auto-accept-edits"] },
+    activeTurnId: nullable(id),
+    lastError: nullable(str),
+    updatedAt: str
+  };
+  var state = {
+    agents: arr(obj(agentProps)),
+    pendingApprovals: arr(approval),
+    pendingUserInputs: arr(obj({ requestId: id, createdAt: str, questions: arr(question), dismissible: bool })),
+    checkpoints: arr(obj({
+      turnId: id,
+      checkpointTurnCount: num,
+      checkpointRef: str,
+      status: { enum: ["ready", "missing", "error"] },
+      files: arr(obj({ path: str, kind: str, additions: num, deletions: num }), 1e4),
+      assistantMessageId: nullable(id),
+      completedAt: str
+    }), 1e4),
+    session: nullable(obj(sessionProps, Object.keys(sessionProps).filter((k) => k !== "providerInstanceId"))),
+    turn: nullable(obj({
+      turnId: id,
+      state: { enum: ["running", "completed", "interrupted", "error"] },
+      requestedAt: str,
+      startedAt: nullable(str),
+      completedAt: nullable(str),
+      assistantMessageId: nullable(id),
+      sourceProposedPlan: obj({ threadId: id, planId: id })
+    }, ["turnId", "state", "requestedAt", "startedAt", "completedAt", "assistantMessageId"])),
+    receipts: arr(receipt),
+    retention: obj({ agentsCap: { const: 100 }, receiptsCap: { const: 100 } })
+  };
+  var eventSchema = {
+    oneOf: [
+      obj({ kind: { enum: ["snapshot", "updated"] }, streamEpoch: id, revision: num, ...state }),
+      obj({ kind: { const: "receipt" }, streamEpoch: id, revision: num, receipt }),
+      obj({ kind: { const: "closed" }, streamEpoch: id, reason: { const: "overflow" } })
+    ]
+  };
+  var guard = { commandId: id, expectedEpoch: id, expectedRevision: num };
+  var operationInputs = {
+    "turn.start": obj({
+      ...guard,
+      attachments: {},
+      bootstrap: {},
+      sourceProposedPlan: {},
+      text: str,
+      modelSelection: obj({ instanceId: id, model: str, options: { type: "object", additionalProperties: true } }, ["instanceId", "model"]),
+      runtimeMode: { enum: ["full-access", "approval-required", "auto", "auto-accept-edits"] },
+      interactionMode: { enum: ["default", "plan"] },
+      titleSeed: str
+    }, ["text"]),
+    "turn.interrupt": obj({ ...guard, turnId: id }, []),
+    "session.stop": obj({ ...guard, onlyIfSettled: bool }, []),
+    "approval.respond": obj({ ...guard, requestId: id, decision }, ["requestId", "decision"]),
+    "userInput.respond": obj({ ...guard, requestId: id, answers: { type: "object", additionalProperties: true } }, ["requestId", "answers"]),
+    "userInput.dismiss": obj({ ...guard, requestId: id }, ["requestId"]),
+    "thread.settle": obj(guard, []),
+    "thread.unsettle": obj(guard, []),
+    "checkpoint.revert": obj({ ...guard, turnCount: num }, ["turnCount"])
+  };
+  var orchestrationControlApi = defineApi({
+    id: ORCHESTRATION_CONTROL,
+    version: "1.0.0",
+    methods: ORCHESTRATION_CONTROL_OPS.map((name) => ({
+      name,
+      effect: "write",
+      requiredGrants: [ORCHESTRATION_OPERATE],
+      inputSchema: operationInputs[name],
+      outputSchema: receipt
+    }))
+  });
+  function defineOrchestrationStatusApi(diffEventSchema) {
+    return defineStreamApi({
+      id: ORCHESTRATION_STATUS,
+      version: "1.0.0",
+      methods: [
+        {
+          name: "getCapabilities",
+          effect: "read",
+          requiredGrants: [ORCHESTRATION_READ],
+          inputSchema: empty,
+          outputSchema: obj({
+            operations: { type: "object", additionalProperties: bool },
+            streamEpoch: id,
+            revision: num
+          })
+        },
+        {
+          name: "getWorkflowScript",
+          effect: "read",
+          requiredGrants: [ORCHESTRATION_READ],
+          inputSchema: obj({ workflowId: id }),
+          outputSchema: obj({ contents: { type: "string", maxLength: 8192 }, truncated: bool })
+        }
+      ],
+      streams: [
+        {
+          name: "subscribeAgents",
+          requiredGrants: [ORCHESTRATION_READ],
+          inputSchema: empty,
+          eventSchema
+        },
+        {
+          name: "getTurnDiff",
+          requiredGrants: [ORCHESTRATION_READ],
+          inputSchema: { oneOf: [obj({ turnId: id }), obj({ turnCount: { ...num, minimum: 1 } })] },
+          eventSchema: diffEventSchema
+        },
+        {
+          name: "getThreadDiff",
+          requiredGrants: [ORCHESTRATION_READ],
+          inputSchema: empty,
+          eventSchema: diffEventSchema
+        }
+      ]
+    });
+  }
+  var ORCHESTRATION_CONTROL_API = orchestrationControlApi.definition;
 
   // ../../extension-sdk/dist/textEdits.js
   var WORKSPACE_READ_TEXT_EDITS = "t3.workspace/text-edits";
@@ -432,6 +658,53 @@ var __t3Client = (() => {
   });
 
   // ../../extension-sdk/dist/catalogue.js
+  var BROWSER_LOCAL_SERVERS = "t3.browser/local-servers";
+  var BROWSER_READ_LOCAL_SERVERS = "t3.browser/read-local-servers";
+  var browserLocalServersApi = defineStreamApi({
+    id: BROWSER_LOCAL_SERVERS,
+    version: "1.0.0",
+    methods: [],
+    streams: [
+      {
+        name: "subscribe",
+        requiredGrants: [BROWSER_READ_LOCAL_SERVERS],
+        inputSchema: { type: "object", additionalProperties: false, properties: {} },
+        eventSchema: {
+          oneOf: [
+            {
+              type: "object",
+              additionalProperties: false,
+              required: ["kind", "scope", "servers", "truncated"],
+              properties: {
+                kind: { const: "snapshot" },
+                scope: { const: "environment" },
+                truncated: { type: "boolean" },
+                servers: {
+                  type: "array",
+                  maxItems: 64,
+                  items: {
+                    type: "object",
+                    additionalProperties: false,
+                    required: ["url", "port"],
+                    properties: {
+                      url: { type: "string", minLength: 1, maxLength: 256 },
+                      port: { type: "integer", minimum: 1, maximum: 65535 }
+                    }
+                  }
+                }
+              }
+            },
+            {
+              type: "object",
+              additionalProperties: false,
+              required: ["kind", "reason"],
+              properties: { kind: { const: "closed" }, reason: { const: "source-unavailable" } }
+            }
+          ]
+        }
+      }
+    ]
+  });
   var WORKSPACE_FILES = "t3.workspace/files";
   var WORKSPACE_LIST_ENTRIES = "t3.workspace/list-entries";
   var FILE_PRESENTATION = "t3.file/presentation";
@@ -444,6 +717,8 @@ var __t3Client = (() => {
   var TERMINAL_CONTROL = "t3.terminal/control";
   var TERMINAL_OPERATE = "t3.terminal/operate";
   var WORKSPACE_SEARCH = "t3.workspace/search";
+  var WORKSPACE_READ = "t3.workspace/read";
+  var WORKSPACE_CHANGES = "t3.workspace/changes";
   var path2 = { type: "string", maxLength: 512 };
   var workspaceFilesApi = defineApi({
     id: WORKSPACE_FILES,
@@ -1059,6 +1334,64 @@ var __t3Client = (() => {
       }
     ]
   });
+  var mutationSeqField = {
+    type: "integer",
+    minimum: 0,
+    maximum: Number.MAX_SAFE_INTEGER
+  };
+  var workspaceChangesEventSchema = {
+    oneOf: [
+      {
+        type: "object",
+        additionalProperties: false,
+        required: ["kind", "mutationSeq"],
+        properties: { kind: { const: "snapshot" }, mutationSeq: mutationSeqField }
+      },
+      {
+        type: "object",
+        additionalProperties: false,
+        required: ["kind", "mutationSeq", "kinds", "at"],
+        properties: {
+          kind: { const: "mutation" },
+          mutationSeq: mutationSeqField,
+          kinds: {
+            type: "array",
+            minItems: 1,
+            maxItems: 2,
+            items: { enum: ["command_execution", "file_change"] }
+          },
+          at: { type: "string", minLength: 1, maxLength: 64 }
+        }
+      },
+      {
+        type: "object",
+        additionalProperties: false,
+        required: ["kind", "reason"],
+        properties: {
+          kind: { const: "closed" },
+          reason: { enum: ["overflow", "watch-error"] }
+        }
+      }
+    ]
+  };
+  var workspaceChangesApi = defineStreamApi({
+    id: WORKSPACE_CHANGES,
+    version: "1.0.0",
+    methods: [],
+    streams: [
+      {
+        name: "subscribeChanges",
+        requiredGrants: [WORKSPACE_READ],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["threadId"],
+          properties: { threadId: { type: "string", minLength: 1, maxLength: 128 } }
+        },
+        eventSchema: workspaceChangesEventSchema
+      }
+    ]
+  });
   var VCS_READ = "t3.vcs/read";
   var VCS_MUTATE = "t3.vcs/mutate";
   var VCS_STATUS = "t3.vcs/status";
@@ -1640,7 +1973,7 @@ var __t3Client = (() => {
     version: "1.0.0",
     methods: [vcsDiffGetPreviewMethod, vcsDiffGetFileContentsMethod]
   });
-  var vcsOperationsSupportSchema = {
+  var vcsOperationsSupportSchemaV1 = {
     type: "object",
     additionalProperties: false,
     required: [
@@ -1680,6 +2013,22 @@ var __t3Client = (() => {
       "repository.removeWorktree": { type: "boolean" }
     }
   };
+  var vcsOperationsSupportSchema = {
+    type: "object",
+    additionalProperties: false,
+    required: [
+      ...vcsOperationsSupportSchemaV1.required,
+      "repository.push",
+      "repository.fetch",
+      "repository.listRemotes"
+    ],
+    properties: {
+      ...vcsOperationsSupportSchemaV1.properties,
+      "repository.push": { type: "boolean" },
+      "repository.fetch": { type: "boolean" },
+      "repository.listRemotes": { type: "boolean" }
+    }
+  };
   var vcsDriverCapabilitiesSchema = {
     type: ["object", "null"],
     additionalProperties: false,
@@ -1700,106 +2049,219 @@ var __t3Client = (() => {
       ignoreClassifier: { enum: ["native", "git-compatible-fallback"] }
     }
   };
-  var vcsRepositoryApi = defineApi({
-    id: VCS_REPOSITORY,
-    version: "1.0.0",
-    methods: [
-      {
-        name: "getCapabilities",
-        effect: "read",
-        requiredGrants: [VCS_READ],
-        inputSchema: vcsEmptyInputSchema,
-        outputSchema: {
+  var vcsCapabilitiesResultSchemaV1 = {
+    type: "object",
+    additionalProperties: false,
+    required: ["detected", "kind", "detail", "driver", "operations"],
+    properties: {
+      detected: { type: "boolean" },
+      kind: { type: ["string", "null"], enum: ["git", "jj", "unknown", null] },
+      detail: { type: ["string", "null"], maxLength: 512 },
+      driver: vcsDriverCapabilitiesSchema,
+      operations: vcsOperationsSupportSchemaV1
+    }
+  };
+  var vcsCapabilitiesResultSchema = {
+    type: "object",
+    additionalProperties: false,
+    required: ["detected", "kind", "detail", "driver", "operations"],
+    properties: {
+      detected: { type: "boolean" },
+      kind: { type: ["string", "null"], enum: ["git", "jj", "unknown", null] },
+      detail: { type: ["string", "null"], maxLength: 512 },
+      driver: vcsDriverCapabilitiesSchema,
+      operations: vcsOperationsSupportSchema
+    }
+  };
+  var vcsRepositoryGetCapabilitiesMethodV1 = {
+    name: "getCapabilities",
+    effect: "read",
+    requiredGrants: [VCS_READ],
+    inputSchema: vcsEmptyInputSchema,
+    outputSchema: vcsCapabilitiesResultSchemaV1
+  };
+  var vcsRepositoryGetCapabilitiesMethod = {
+    name: "getCapabilities",
+    effect: "read",
+    requiredGrants: [VCS_READ],
+    inputSchema: vcsEmptyInputSchema,
+    outputSchema: vcsCapabilitiesResultSchema
+  };
+  var vcsRepositoryPullMethod = {
+    name: "pull",
+    effect: "write",
+    requiredGrants: [VCS_MUTATE],
+    inputSchema: vcsEmptyInputSchema,
+    outputSchema: {
+      type: "object",
+      additionalProperties: false,
+      required: ["status", "refName", "upstreamRef"],
+      properties: {
+        status: { enum: ["pulled", "skipped_up_to_date"] },
+        refName: vcsRefNameOutput,
+        upstreamRef: vcsRefNameOrNull
+      }
+    }
+  };
+  var vcsRepositoryInitMethod = {
+    name: "init",
+    effect: "write",
+    requiredGrants: [VCS_MUTATE],
+    inputSchema: {
+      type: "object",
+      additionalProperties: false,
+      properties: { kind: { enum: ["git"] } }
+    },
+    outputSchema: vcsAckOutputSchema
+  };
+  var vcsRepositoryCreateWorktreeMethod = {
+    name: "createWorktree",
+    effect: "write",
+    requiredGrants: [VCS_MUTATE],
+    inputSchema: {
+      type: "object",
+      additionalProperties: false,
+      required: ["refName", "path"],
+      properties: {
+        refName: vcsRefNameInput,
+        newRefName: vcsRefNameInput,
+        baseRefName: vcsRefNameInput,
+        path: { type: ["string", "null"], minLength: 1, maxLength: 32768 }
+      }
+    },
+    outputSchema: {
+      type: "object",
+      additionalProperties: false,
+      required: ["worktree"],
+      properties: {
+        worktree: {
           type: "object",
           additionalProperties: false,
-          required: ["detected", "kind", "detail", "driver", "operations"],
+          required: ["path", "refName"],
           properties: {
-            detected: { type: "boolean" },
-            kind: { type: ["string", "null"], enum: ["git", "jj", "unknown", null] },
-            detail: { type: ["string", "null"], maxLength: 512 },
-            driver: vcsDriverCapabilitiesSchema,
-            operations: vcsOperationsSupportSchema
+            path: { type: "string", minLength: 1, maxLength: 32768 },
+            refName: vcsRefNameOutput
           }
         }
-      },
-      {
-        name: "pull",
-        effect: "write",
-        requiredGrants: [VCS_MUTATE],
-        inputSchema: vcsEmptyInputSchema,
-        outputSchema: {
-          type: "object",
-          additionalProperties: false,
-          required: ["status", "refName", "upstreamRef"],
-          properties: {
-            status: { enum: ["pulled", "skipped_up_to_date"] },
-            refName: vcsRefNameOutput,
-            upstreamRef: vcsRefNameOrNull
-          }
+      }
+    }
+  };
+  var vcsRepositoryRemoveWorktreeMethod = {
+    name: "removeWorktree",
+    effect: "write",
+    requiredGrants: [VCS_MUTATE],
+    inputSchema: {
+      type: "object",
+      additionalProperties: false,
+      required: ["path"],
+      properties: {
+        path: {
+          type: "string",
+          minLength: 1,
+          maxLength: 32768
+        },
+        force: { type: "boolean" }
+      }
+    },
+    outputSchema: vcsAckOutputSchema
+  };
+  var vcsRepositoryPushMethod = {
+    name: "push",
+    effect: "write",
+    requiredGrants: [VCS_MUTATE],
+    inputSchema: vcsEmptyInputSchema,
+    outputSchema: {
+      type: "object",
+      additionalProperties: false,
+      required: ["status", "refName", "upstreamRef", "setUpstream"],
+      properties: {
+        status: { enum: ["pushed", "skipped_up_to_date"] },
+        refName: vcsRefNameOutput,
+        upstreamRef: vcsRefNameOrNull,
+        setUpstream: { type: "boolean" }
+      }
+    }
+  };
+  var vcsRemoteNameInput = {
+    type: "string",
+    minLength: 1,
+    maxLength: 256,
+    allOf: [{ not: { pattern: "^-" } }, { not: { pattern: "[\\s\\x00-\\x1f]" } }]
+  };
+  var vcsRepositoryFetchMethod = {
+    name: "fetch",
+    effect: "write",
+    requiredGrants: [VCS_MUTATE],
+    inputSchema: {
+      type: "object",
+      additionalProperties: false,
+      properties: { remoteName: vcsRemoteNameInput }
+    },
+    outputSchema: {
+      type: "object",
+      additionalProperties: false,
+      required: ["remotes"],
+      properties: {
+        remotes: {
+          type: "array",
+          maxItems: 64,
+          items: { type: "string", minLength: 1, maxLength: 256 }
         }
-      },
-      {
-        name: "init",
-        effect: "write",
-        requiredGrants: [VCS_MUTATE],
-        inputSchema: {
-          type: "object",
-          additionalProperties: false,
-          properties: { kind: { enum: ["git"] } }
-        },
-        outputSchema: vcsAckOutputSchema
-      },
-      {
-        name: "createWorktree",
-        effect: "write",
-        requiredGrants: [VCS_MUTATE],
-        inputSchema: {
-          type: "object",
-          additionalProperties: false,
-          required: ["refName", "path"],
-          properties: {
-            refName: vcsRefNameInput,
-            newRefName: vcsRefNameInput,
-            baseRefName: vcsRefNameInput,
-            path: { type: ["string", "null"], minLength: 1, maxLength: 32768 }
-          }
-        },
-        outputSchema: {
-          type: "object",
-          additionalProperties: false,
-          required: ["worktree"],
-          properties: {
-            worktree: {
-              type: "object",
-              additionalProperties: false,
-              required: ["path", "refName"],
-              properties: {
-                path: { type: "string", minLength: 1, maxLength: 32768 },
-                refName: vcsRefNameOutput
-              }
+      }
+    }
+  };
+  var vcsRepositoryListRemotesMethod = {
+    name: "listRemotes",
+    effect: "read",
+    requiredGrants: [VCS_READ],
+    inputSchema: vcsEmptyInputSchema,
+    outputSchema: {
+      type: "object",
+      additionalProperties: false,
+      required: ["isRepo", "remotes"],
+      properties: {
+        isRepo: { type: "boolean" },
+        remotes: {
+          type: "array",
+          maxItems: 64,
+          items: {
+            type: "object",
+            additionalProperties: false,
+            required: ["name", "url", "pushUrl", "isPrimary"],
+            properties: {
+              name: { type: "string", minLength: 1, maxLength: 256 },
+              url: { type: "string", minLength: 1, maxLength: 2048 },
+              pushUrl: { type: ["string", "null"], minLength: 1, maxLength: 2048 },
+              isPrimary: { type: "boolean" }
             }
           }
         }
-      },
-      {
-        name: "removeWorktree",
-        effect: "write",
-        requiredGrants: [VCS_MUTATE],
-        inputSchema: {
-          type: "object",
-          additionalProperties: false,
-          required: ["path"],
-          properties: {
-            path: {
-              type: "string",
-              minLength: 1,
-              maxLength: 32768
-            },
-            force: { type: "boolean" }
-          }
-        },
-        outputSchema: vcsAckOutputSchema
       }
+    }
+  };
+  var vcsRepositoryApi = defineApi({
+    id: VCS_REPOSITORY,
+    version: "1.1.0",
+    methods: [
+      vcsRepositoryGetCapabilitiesMethod,
+      vcsRepositoryPullMethod,
+      vcsRepositoryInitMethod,
+      vcsRepositoryCreateWorktreeMethod,
+      vcsRepositoryRemoveWorktreeMethod,
+      vcsRepositoryPushMethod,
+      vcsRepositoryFetchMethod,
+      vcsRepositoryListRemotesMethod
+    ]
+  });
+  var vcsRepositoryApiV1 = defineApi({
+    id: VCS_REPOSITORY,
+    version: "1.0.0",
+    methods: [
+      vcsRepositoryGetCapabilitiesMethodV1,
+      vcsRepositoryPullMethod,
+      vcsRepositoryInitMethod,
+      vcsRepositoryCreateWorktreeMethod,
+      vcsRepositoryRemoveWorktreeMethod
     ]
   });
   var VCS_STATUS_API = vcsStatusApi.definition;
@@ -1808,15 +2270,19 @@ var __t3Client = (() => {
   var VCS_DIFF_API = vcsDiffApi.definition;
   var VCS_DIFF_API_V1 = vcsDiffApiV1.definition;
   var VCS_REPOSITORY_API = vcsRepositoryApi.definition;
+  var VCS_REPOSITORY_API_V1 = vcsRepositoryApiV1.definition;
   var RESOURCES_LEASE = "t3.resources/lease";
   var WORKSPACE_RESOURCES = "t3.workspace/resources";
+  var BROWSER_SESSIONS = "t3.browser/sessions";
+  var BROWSER_SURFACE_COMMANDS = ["attach", "present", "release"];
   var RESOURCE_LEASE_KIND_GRANTS = {
     "workspace-file": WORKSPACE_RESOURCES,
     "project-favicon": WORKSPACE_RESOURCES,
-    attachment: null
+    attachment: null,
+    "browser-surface": BROWSER_SESSIONS
   };
   var RESOURCE_LEASE_SUPPORTED_KINDS = Object.keys(RESOURCE_LEASE_KIND_GRANTS).filter((kind) => RESOURCE_LEASE_KIND_GRANTS[kind] !== null);
-  var resourceLeaseRefSchema = {
+  var resourceLeaseRefSchemaV1 = {
     oneOf: [
       {
         type: "object",
@@ -1857,7 +2323,93 @@ var __t3Client = (() => {
       }
     ]
   };
+  var resourceLeaseBrowserSurfaceCommandsSchema = {
+    type: "array",
+    minItems: 1,
+    maxItems: 3,
+    uniqueItems: true,
+    items: { enum: [...BROWSER_SURFACE_COMMANDS] }
+  };
+  var resourceLeaseRefSchema = {
+    oneOf: [
+      ...resourceLeaseRefSchemaV1.oneOf,
+      {
+        type: "object",
+        additionalProperties: false,
+        required: ["_tag", "threadId", "tabId", "serverEpoch", "allowedCommands"],
+        properties: {
+          _tag: { const: "browser-surface" },
+          threadId: { type: "string", minLength: 1, maxLength: 160 },
+          tabId: { type: "string", minLength: 1, maxLength: 128 },
+          serverEpoch: { type: "string", minLength: 1, maxLength: 128 },
+          allowedCommands: resourceLeaseBrowserSurfaceCommandsSchema
+        }
+      }
+    ]
+  };
   var resourcesLeaseApi = defineApi({
+    id: RESOURCES_LEASE,
+    version: "1.1.0",
+    methods: [
+      {
+        name: "createPresentationUrl",
+        effect: "read",
+        // Per-kind grants are enforced inside the host adapter — a method-level
+        // list can only express "every caller holds all of these".
+        requiredGrants: [],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["resource"],
+          properties: { resource: resourceLeaseRefSchema }
+        },
+        outputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["url", "expiresAt", "kind"],
+          properties: {
+            url: { type: "string", minLength: 1, maxLength: 4096 },
+            expiresAt: { type: "number" },
+            kind: {
+              enum: [
+                "workspace-file",
+                "workspace-file-exact",
+                "project-favicon",
+                "project-favicon-external",
+                "browser-surface"
+              ]
+            }
+          }
+        }
+      },
+      {
+        name: "getCapabilities",
+        effect: "read",
+        requiredGrants: [],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          properties: {}
+        },
+        outputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["supportedKinds"],
+          properties: {
+            supportedKinds: {
+              type: "array",
+              maxItems: 16,
+              items: {
+                enum: ["workspace-file", "attachment", "project-favicon", "browser-surface"]
+              }
+            }
+          }
+        }
+      }
+    ]
+  });
+  var RESOURCES_LEASE_API = resourcesLeaseApi.definition;
+  var resourcesLeaseApiV1 = defineApi({
     id: RESOURCES_LEASE,
     version: "1.0.0",
     methods: [
@@ -1871,7 +2423,7 @@ var __t3Client = (() => {
           type: "object",
           additionalProperties: false,
           required: ["resource"],
-          properties: { resource: resourceLeaseRefSchema }
+          properties: { resource: resourceLeaseRefSchemaV1 }
         },
         outputSchema: {
           type: "object",
@@ -1915,11 +2467,1141 @@ var __t3Client = (() => {
       }
     ]
   });
-  var RESOURCES_LEASE_API = resourcesLeaseApi.definition;
+  var RESOURCES_LEASE_API_V1 = resourcesLeaseApiV1.definition;
+  var PRS_READ = "t3.prs/read";
+  var prsActorSchema = {
+    type: ["object", "null"],
+    additionalProperties: false,
+    required: ["login", "name", "avatarUrl"],
+    properties: {
+      login: { type: "string", minLength: 1, maxLength: 256 },
+      name: { type: ["string", "null"], maxLength: 512 },
+      avatarUrl: { type: ["string", "null"], maxLength: 4096 }
+    }
+  };
+  var prsLabelSchema = {
+    type: "object",
+    additionalProperties: false,
+    required: ["name", "color"],
+    properties: {
+      name: { type: "string", minLength: 1, maxLength: 512 },
+      color: { type: ["string", "null"], maxLength: 64 }
+    }
+  };
+  var prsReactionSchema = {
+    type: "object",
+    additionalProperties: false,
+    required: ["content", "count", "actors", "viewerHasReacted"],
+    properties: {
+      content: {
+        enum: ["thumbs-up", "thumbs-down", "laugh", "hooray", "confused", "heart", "rocket", "eyes"]
+      },
+      count: { type: "integer", minimum: 1 },
+      actors: {
+        type: "array",
+        maxItems: 500,
+        items: { type: "string", minLength: 1, maxLength: 256 }
+      },
+      viewerHasReacted: { type: "boolean" }
+    }
+  };
+  var prsCheckSchema = {
+    type: "object",
+    additionalProperties: false,
+    required: ["name", "status", "description", "url"],
+    properties: {
+      name: { type: "string", minLength: 1, maxLength: 512 },
+      status: {
+        enum: ["pending", "action-required", "success", "failure", "skipped", "neutral", "cancelled"]
+      },
+      description: { type: ["string", "null"], maxLength: 4096 },
+      url: { type: ["string", "null"], maxLength: 4096 }
+    }
+  };
+  var prsRepositoryField = { type: "string", minLength: 1, maxLength: 512 };
+  var prsHostField = { type: "string", minLength: 1, maxLength: 256 };
+  var prsRefInputSchema = {
+    type: "object",
+    additionalProperties: false,
+    required: ["repository", "number"],
+    properties: {
+      host: prsHostField,
+      repository: prsRepositoryField,
+      number: { type: "integer", minimum: 1 }
+    }
+  };
+  var prsListFiltersSchema = {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      draft: { enum: ["only", "hide"] },
+      review: { enum: ["approved", "changes-requested", "review-required", "none"] },
+      checks: { enum: ["passing", "failing"] },
+      labels: {
+        type: "array",
+        maxItems: 10,
+        items: {
+          type: "array",
+          maxItems: 10,
+          items: { type: "string", minLength: 1, maxLength: 200 }
+        }
+      },
+      excludedLabels: {
+        type: "array",
+        maxItems: 10,
+        items: { type: "string", minLength: 1, maxLength: 200 }
+      },
+      author: { type: "string", minLength: 1, maxLength: 200 }
+    }
+  };
+  var prsCursorsSchema = {
+    type: "object",
+    additionalProperties: { type: "string", minLength: 1, maxLength: 4096 },
+    maxProperties: 100
+  };
+  var prsProviderSummarySchema = {
+    type: "object",
+    additionalProperties: false,
+    required: ["host", "kind", "searchesOnHost", "projectCount", "configured", "detail"],
+    properties: {
+      host: prsHostField,
+      kind: { enum: ["github", "gitlab", "azure-devops", "bitbucket", "unknown"] },
+      searchesOnHost: { type: "boolean" },
+      projectCount: { type: "integer", minimum: 1 },
+      configured: { type: "boolean" },
+      detail: { type: ["string", "null"], maxLength: 1024 }
+    }
+  };
+  var prsListEntrySchema = {
+    type: "object",
+    additionalProperties: false,
+    required: [
+      "provider",
+      "host",
+      "projectId",
+      "projectTitle",
+      "repository",
+      "number",
+      "title",
+      "url",
+      "author",
+      "headBranch",
+      "baseBranch",
+      "state",
+      "isDraft",
+      "mergeability",
+      "additions",
+      "deletions",
+      "createdAt",
+      "updatedAt",
+      "viewerReviewRequested",
+      "labels"
+    ],
+    properties: {
+      stack: {
+        type: "object",
+        additionalProperties: false,
+        required: ["number", "position", "size", "base"],
+        properties: {
+          number: { type: "integer", minimum: 1 },
+          position: { type: "integer", minimum: 1 },
+          size: { type: "integer", minimum: 1 },
+          base: { type: "string", minLength: 1, maxLength: 1024 }
+        }
+      },
+      provider: { enum: ["github", "gitlab", "azure-devops", "bitbucket", "unknown"] },
+      host: prsHostField,
+      projectId: { type: "string", minLength: 1, maxLength: 160 },
+      projectTitle: { type: "string", minLength: 1, maxLength: 512 },
+      repository: prsRepositoryField,
+      number: { type: "integer", minimum: 1 },
+      title: { type: "string", minLength: 1, maxLength: 2048 },
+      url: { type: "string", minLength: 1, maxLength: 4096 },
+      author: prsActorSchema,
+      headBranch: { type: "string", minLength: 1, maxLength: 1024 },
+      baseBranch: { type: "string", minLength: 1, maxLength: 1024 },
+      state: { enum: ["open", "closed", "merged"] },
+      isDraft: { type: "boolean" },
+      mergeability: { enum: ["mergeable", "conflicting", "unknown"] },
+      additions: { type: "integer", minimum: 0 },
+      deletions: { type: "integer", minimum: 0 },
+      createdAt: { type: "string", maxLength: 64 },
+      updatedAt: { type: "string", maxLength: 64 },
+      viewerReviewRequested: { type: "boolean" },
+      labels: { type: "array", maxItems: 100, items: prsLabelSchema },
+      reviewDecision: { enum: ["approved", "changes-requested", "review-required"] },
+      checksState: { enum: ["passing", "failing", "pending"] }
+    }
+  };
+  var prsListResultSchema = {
+    type: "object",
+    additionalProperties: false,
+    required: ["viewers", "providers", "entries", "errors", "truncated", "nextCursors"],
+    properties: {
+      viewers: {
+        type: "object",
+        additionalProperties: { type: "string", minLength: 1, maxLength: 256 },
+        maxProperties: 100
+      },
+      providers: { type: "array", maxItems: 100, items: prsProviderSummarySchema },
+      entries: { type: "array", maxItems: 100, items: prsListEntrySchema },
+      errors: {
+        type: "array",
+        maxItems: 100,
+        items: {
+          type: "object",
+          additionalProperties: false,
+          required: ["projectId", "projectTitle", "message"],
+          properties: {
+            projectId: { type: "string", minLength: 1, maxLength: 160 },
+            projectTitle: { type: "string", minLength: 1, maxLength: 512 },
+            message: { type: "string", minLength: 1, maxLength: 1024 }
+          }
+        }
+      },
+      truncated: { type: "boolean" },
+      nextCursors: prsCursorsSchema
+    }
+  };
+  var prsReviewVerdictsSchema = {
+    type: "array",
+    maxItems: 3,
+    items: { enum: ["comment", "approve", "request-changes"] }
+  };
+  var prsActionsSchema = {
+    type: "array",
+    maxItems: 16,
+    items: {
+      enum: [
+        "merge",
+        "ready",
+        "draft",
+        "close",
+        "reopen",
+        "update-branch",
+        "enable-auto-merge",
+        "disable-auto-merge",
+        "revert",
+        "approve-workflows"
+      ]
+    }
+  };
+  var prsMergeMethodsSchema = {
+    type: "array",
+    maxItems: 3,
+    items: { enum: ["merge", "squash", "rebase"] }
+  };
+  var prsUpdateMethodsSchema = {
+    type: "array",
+    maxItems: 2,
+    items: { enum: ["merge", "rebase"] }
+  };
+  var prsCapabilitiesSchema = {
+    type: "object",
+    additionalProperties: false,
+    required: ["diff", "comment", "actions", "mergeMethods", "search", "review", "reviewers"],
+    properties: {
+      diff: { type: "boolean" },
+      comment: { type: "boolean" },
+      actions: prsActionsSchema,
+      mergeMethods: prsMergeMethodsSchema,
+      updateMethods: prsUpdateMethodsSchema,
+      search: { type: "boolean" },
+      reactions: { type: "boolean" },
+      review: {
+        type: "object",
+        additionalProperties: false,
+        required: ["inlineComment", "reply", "resolve", "verdicts"],
+        properties: {
+          inlineComment: { type: "boolean" },
+          reply: { type: "boolean" },
+          resolve: { type: "boolean" },
+          verdicts: prsReviewVerdictsSchema
+        }
+      },
+      reviewers: {
+        type: "object",
+        additionalProperties: false,
+        required: ["request", "listCandidates"],
+        properties: {
+          request: { type: "boolean" },
+          listCandidates: { type: "boolean" }
+        }
+      },
+      edit: {
+        type: "object",
+        additionalProperties: false,
+        required: ["changeRequest", "comment"],
+        properties: {
+          changeRequest: { type: "boolean" },
+          comment: { type: "boolean" }
+        }
+      },
+      stacks: { type: "boolean" },
+      stackActions: { type: "boolean" },
+      labels: { type: "boolean" }
+    }
+  };
+  var prsViewerPermissionsSchema = {
+    type: "object",
+    additionalProperties: false,
+    required: ["actions", "comment", "resolve", "verdicts", "requestReviewers"],
+    properties: {
+      stackRebase: { type: "boolean" },
+      actions: prsActionsSchema,
+      comment: { type: "boolean" },
+      resolve: { type: "boolean" },
+      verdicts: prsReviewVerdictsSchema,
+      requestReviewers: { type: "boolean" },
+      updateMethods: prsUpdateMethodsSchema,
+      labels: { type: "boolean" }
+    }
+  };
+  var prsDetailSchema = {
+    type: "object",
+    additionalProperties: false,
+    required: [
+      "provider",
+      "capabilities",
+      "viewerPermissions",
+      "projectId",
+      "projectTitle",
+      "workspaceRoot",
+      "repository",
+      "number",
+      "title",
+      "body",
+      "url",
+      "author",
+      "state",
+      "isDraft",
+      "mergeability",
+      "additions",
+      "deletions",
+      "changedFiles",
+      "headBranch",
+      "baseBranch",
+      "createdAt",
+      "updatedAt",
+      "mergedAt",
+      "closedAt",
+      "reviewers",
+      "labels",
+      "checks",
+      "mergeCapabilities"
+    ],
+    properties: {
+      provider: { enum: ["github", "gitlab", "azure-devops", "bitbucket", "unknown"] },
+      capabilities: prsCapabilitiesSchema,
+      viewerPermissions: prsViewerPermissionsSchema,
+      projectId: { type: "string", minLength: 1, maxLength: 160 },
+      projectTitle: { type: "string", minLength: 1, maxLength: 512 },
+      workspaceRoot: { type: "string", minLength: 1, maxLength: 32768 },
+      repository: prsRepositoryField,
+      number: { type: "integer", minimum: 1 },
+      title: { type: "string", minLength: 1, maxLength: 2048 },
+      // Delivered bodies are cut at this bound; bodyTruncated says so.
+      body: { type: "string", maxLength: 16384 },
+      bodyTruncated: { type: "boolean" },
+      url: { type: "string", minLength: 1, maxLength: 4096 },
+      author: prsActorSchema,
+      state: { enum: ["open", "closed", "merged"] },
+      isDraft: { type: "boolean" },
+      mergeability: { enum: ["mergeable", "conflicting", "unknown"] },
+      additions: { type: "integer", minimum: 0 },
+      deletions: { type: "integer", minimum: 0 },
+      changedFiles: { type: "integer", minimum: 0 },
+      headBranch: { type: "string", minLength: 1, maxLength: 1024 },
+      headRepositoryNameWithOwner: { type: ["string", "null"], minLength: 1, maxLength: 1024 },
+      baseBranch: { type: "string", minLength: 1, maxLength: 1024 },
+      createdAt: { type: "string", maxLength: 64 },
+      updatedAt: { type: "string", maxLength: 64 },
+      mergedAt: { type: ["string", "null"], maxLength: 64 },
+      closedAt: { type: ["string", "null"], maxLength: 64 },
+      reviewers: { type: "array", maxItems: 100, items: prsActorSchema },
+      labels: { type: "array", maxItems: 100, items: prsLabelSchema },
+      checks: { type: "array", maxItems: 200, items: prsCheckSchema },
+      mergeCapabilities: {
+        type: "object",
+        additionalProperties: false,
+        required: ["merge", "squash", "rebase"],
+        properties: {
+          merge: { type: "boolean" },
+          squash: { type: "boolean" },
+          rebase: { type: "boolean" }
+        }
+      },
+      viewer: { type: "string", minLength: 1, maxLength: 256 },
+      baseComparison: { enum: ["up-to-date", "behind", "unknown"] },
+      behindBy: { type: "integer", minimum: 0 },
+      autoMergeEnabled: { type: "boolean" },
+      autoMergeMethod: { enum: ["merge", "squash", "rebase"] },
+      workflowApprovalsRequired: { type: "integer", minimum: 0 }
+    }
+  };
+  var prsCommentSchema = {
+    type: "object",
+    additionalProperties: false,
+    required: ["id", "kind", "author", "body", "createdAt", "url", "path", "reviewState"],
+    properties: {
+      id: { type: "string", minLength: 1, maxLength: 512 },
+      kind: { enum: ["issue-comment", "review-comment", "review"] },
+      author: prsActorSchema,
+      body: { type: "string", maxLength: 8192 },
+      createdAt: { type: "string", maxLength: 64 },
+      url: { type: ["string", "null"], maxLength: 4096 },
+      path: { type: ["string", "null"], maxLength: 1024 },
+      reviewState: { type: ["string", "null"], maxLength: 64 },
+      reactions: { type: "array", maxItems: 8, items: prsReactionSchema }
+    }
+  };
+  var prsThreadCommentSchema = {
+    type: "object",
+    additionalProperties: false,
+    required: ["id", "author", "body", "createdAt", "url"],
+    properties: {
+      id: { type: "string", minLength: 1, maxLength: 512 },
+      author: prsActorSchema,
+      body: { type: "string", maxLength: 8192 },
+      createdAt: { type: "string", maxLength: 64 },
+      url: { type: ["string", "null"], maxLength: 4096 },
+      reactions: { type: "array", maxItems: 8, items: prsReactionSchema }
+    }
+  };
+  var prsReviewThreadSchema = {
+    type: "object",
+    additionalProperties: false,
+    required: ["id", "path", "line", "side", "isResolved", "isOutdated", "comments"],
+    properties: {
+      id: { type: "string", minLength: 1, maxLength: 512 },
+      path: { type: "string", minLength: 1, maxLength: 1024 },
+      line: { type: ["integer", "null"], minimum: 1 },
+      side: { enum: ["left", "right"] },
+      isResolved: { type: "boolean" },
+      isOutdated: { type: "boolean" },
+      comments: { type: "array", maxItems: 100, items: prsThreadCommentSchema },
+      commentCount: { type: "integer", minimum: 0 },
+      nextCommentsCursor: { type: "string", minLength: 1, maxLength: 4096 }
+    }
+  };
+  var prsActivitySchema = {
+    type: "object",
+    additionalProperties: false,
+    required: [
+      "comments",
+      "commentCount",
+      "commentsTruncated",
+      "reviewThreads",
+      "commits",
+      "truncated"
+    ],
+    properties: {
+      author: prsActorSchema,
+      reviewers: { type: "array", maxItems: 100, items: prsActorSchema },
+      comments: { type: "array", maxItems: 100, items: prsCommentSchema },
+      commentCount: { type: "integer", minimum: 0 },
+      commentsTruncated: { type: "boolean" },
+      reviewThreads: { type: "array", maxItems: 100, items: prsReviewThreadSchema },
+      commits: {
+        type: "array",
+        maxItems: 250,
+        items: {
+          type: "object",
+          additionalProperties: false,
+          required: ["oid", "messageHeadline", "committedDate"],
+          properties: {
+            oid: { type: "string", minLength: 1, maxLength: 128 },
+            messageHeadline: { type: "string", maxLength: 4096 },
+            committedDate: { type: "string", maxLength: 64 },
+            additions: { type: "integer", minimum: 0 },
+            deletions: { type: "integer", minimum: 0 },
+            authors: { type: "array", maxItems: 8, items: prsActorSchema }
+          }
+        }
+      },
+      reactions: { type: "array", maxItems: 8, items: prsReactionSchema },
+      truncated: { type: "boolean" }
+    }
+  };
+  var prsSummarySchema = {
+    type: "object",
+    additionalProperties: false,
+    required: [
+      "provider",
+      "projectId",
+      "repository",
+      "number",
+      "title",
+      "url",
+      "state",
+      "headBranch",
+      "baseBranch",
+      "updatedAt"
+    ],
+    properties: {
+      provider: { enum: ["github", "gitlab", "azure-devops", "bitbucket", "unknown"] },
+      projectId: { type: "string", minLength: 1, maxLength: 160 },
+      repository: prsRepositoryField,
+      number: { type: "integer", minimum: 1 },
+      title: { type: "string", minLength: 1, maxLength: 2048 },
+      url: { type: "string", minLength: 1, maxLength: 4096 },
+      state: { enum: ["open", "closed", "merged"] },
+      isDraft: { type: "boolean" },
+      headBranch: { type: "string", minLength: 1, maxLength: 1024 },
+      baseBranch: { type: "string", minLength: 1, maxLength: 1024 },
+      closedAt: { type: ["string", "null"], maxLength: 64 },
+      mergedAt: { type: ["string", "null"], maxLength: 64 },
+      updatedAt: { type: "string", maxLength: 64 },
+      author: prsActorSchema,
+      additions: { type: "integer", minimum: 0 },
+      deletions: { type: "integer", minimum: 0 },
+      changedFiles: { type: "integer", minimum: 0 },
+      reviewDecision: { enum: ["approved", "changes-requested", "review-required", null] },
+      checksState: { enum: ["passing", "failing", "pending", null] },
+      mergeability: { enum: ["mergeable", "conflicting", "unknown"] }
+    }
+  };
+  var prsStackSchema = {
+    type: ["object", "null"],
+    additionalProperties: false,
+    required: ["id", "number", "url", "base", "layers"],
+    properties: {
+      id: { type: "string", minLength: 1, maxLength: 512 },
+      number: { type: "integer", minimum: 1 },
+      url: { type: "string", minLength: 1, maxLength: 4096 },
+      base: { type: "string", minLength: 1, maxLength: 1024 },
+      layers: {
+        type: "array",
+        maxItems: 100,
+        items: {
+          type: "object",
+          additionalProperties: false,
+          required: ["number", "headBranch", "state"],
+          properties: {
+            number: { type: "integer", minimum: 1 },
+            title: { type: "string", maxLength: 2048 },
+            isDraft: { type: "boolean" },
+            headSha: { type: "string", minLength: 1, maxLength: 128 },
+            headBranch: { type: "string", minLength: 1, maxLength: 1024 },
+            state: { enum: ["open", "closed", "merged"] }
+          }
+        }
+      }
+    }
+  };
+  var prsLinkedThreadsSchema = {
+    type: "object",
+    additionalProperties: false,
+    required: ["threads", "truncated"],
+    properties: {
+      threads: {
+        type: "array",
+        maxItems: 200,
+        items: {
+          type: "object",
+          additionalProperties: false,
+          required: ["id", "projectId", "title", "archivedAt"],
+          properties: {
+            id: { type: "string", minLength: 1, maxLength: 160 },
+            projectId: { type: "string", minLength: 1, maxLength: 160 },
+            title: { type: "string", maxLength: 2048 },
+            archivedAt: { type: ["string", "null"], maxLength: 64 }
+          }
+        }
+      },
+      truncated: { type: "boolean" }
+    }
+  };
+  var prsThreadCommentsResultSchema = {
+    type: "object",
+    additionalProperties: false,
+    required: ["comments", "nextCursor", "truncated"],
+    properties: {
+      comments: { type: "array", maxItems: 100, items: prsThreadCommentSchema },
+      nextCursor: { type: ["string", "null"], minLength: 1, maxLength: 4096 },
+      truncated: { type: "boolean" }
+    }
+  };
+  var prsReviewerCandidateListSchema = {
+    type: "object",
+    additionalProperties: false,
+    required: ["candidates", "truncated"],
+    properties: {
+      candidates: {
+        type: "array",
+        maxItems: 200,
+        items: {
+          type: "object",
+          additionalProperties: false,
+          required: ["login", "name", "avatarUrl", "id", "kind", "isRequested"],
+          properties: {
+            login: { type: "string", minLength: 1, maxLength: 256 },
+            name: { type: ["string", "null"], maxLength: 512 },
+            avatarUrl: { type: ["string", "null"], maxLength: 4096 },
+            id: { type: "string", minLength: 1, maxLength: 512 },
+            kind: { enum: ["user", "team"] },
+            isRequested: { type: "boolean" }
+          }
+        }
+      },
+      truncated: { type: "boolean" }
+    }
+  };
+  var prsLabelCandidateListSchema = {
+    type: "object",
+    additionalProperties: false,
+    required: ["candidates", "truncated"],
+    properties: {
+      candidates: {
+        type: "array",
+        maxItems: 500,
+        items: {
+          type: "object",
+          additionalProperties: false,
+          required: ["name", "color", "description", "isApplied"],
+          properties: {
+            name: { type: "string", minLength: 1, maxLength: 512 },
+            color: { type: ["string", "null"], maxLength: 64 },
+            description: { type: ["string", "null"], maxLength: 4096 },
+            isApplied: { type: "boolean" }
+          }
+        }
+      },
+      truncated: { type: "boolean" }
+    }
+  };
+  var prsOperationsSupportSchema = {
+    type: "object",
+    additionalProperties: false,
+    required: [
+      "prs.list",
+      "prs.listStats",
+      "prs.summary",
+      "prs.detail",
+      "prs.activity",
+      "prs.threadComments",
+      "prs.linkedThreads",
+      "prs.stack",
+      "prs.reviewerCandidates",
+      "prs.labelCandidates",
+      "prs.invalidate",
+      "prs.streamDiff",
+      "prs.streamDiffFileContents",
+      "prs.subscribeRefreshes"
+    ],
+    properties: {
+      "prs.list": { type: "boolean" },
+      "prs.listStats": { type: "boolean" },
+      "prs.summary": { type: "boolean" },
+      "prs.detail": { type: "boolean" },
+      "prs.activity": { type: "boolean" },
+      "prs.threadComments": { type: "boolean" },
+      "prs.linkedThreads": { type: "boolean" },
+      "prs.stack": { type: "boolean" },
+      "prs.reviewerCandidates": { type: "boolean" },
+      "prs.labelCandidates": { type: "boolean" },
+      "prs.invalidate": { type: "boolean" },
+      "prs.streamDiff": { type: "boolean" },
+      "prs.streamDiffFileContents": { type: "boolean" },
+      "prs.subscribeRefreshes": { type: "boolean" }
+    }
+  };
+  var prsCapabilitiesResultSchema = {
+    type: "object",
+    additionalProperties: false,
+    required: ["hosted", "reason", "detail", "providers", "operations"],
+    properties: {
+      hosted: { type: "boolean" },
+      reason: {
+        enum: ["cli-missing", "cli-unauthenticated", "provider-unsupported", null]
+      },
+      detail: { type: ["string", "null"], maxLength: 1024 },
+      providers: { type: "array", maxItems: 100, items: prsProviderSummarySchema },
+      operations: prsOperationsSupportSchema
+    }
+  };
+  var prsEmptyInputSchema = {
+    type: "object",
+    additionalProperties: false,
+    properties: {}
+  };
+  var prsEmptyOutputSchema = {
+    type: "object",
+    additionalProperties: false,
+    properties: {}
+  };
+  var prsDiffStreamEventSchema = {
+    oneOf: [
+      {
+        type: "object",
+        additionalProperties: false,
+        required: [
+          "kind",
+          "repository",
+          "number",
+          "diffHash",
+          "diffByteLength",
+          "chunkCount",
+          "truncated",
+          "nextCursor"
+        ],
+        properties: {
+          kind: { const: "manifest" },
+          repository: prsRepositoryField,
+          number: { type: "integer", minimum: 1 },
+          host: prsHostField,
+          commit: { type: "string", minLength: 1, maxLength: 128 },
+          diffHash: vcsDiffSha256,
+          diffByteLength: { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER },
+          // The adapter's 4 Mi-unit delivered bound / 8 192-unit chunks = 512.
+          chunkCount: { type: "integer", minimum: 0, maximum: 512 },
+          truncated: { type: "boolean" },
+          nextCursor: { type: ["string", "null"], minLength: 1, maxLength: 4096 },
+          omittedFileStats: {
+            type: "array",
+            maxItems: 1e3,
+            items: {
+              type: "object",
+              additionalProperties: false,
+              required: ["path", "additions", "deletions"],
+              properties: {
+                path: { type: "string", minLength: 1, maxLength: 1024 },
+                additions: { type: "number" },
+                deletions: { type: "number" }
+              }
+            }
+          }
+        }
+      },
+      {
+        type: "object",
+        additionalProperties: false,
+        required: ["kind", "chunkIndex", "data"],
+        properties: {
+          kind: { const: "chunk" },
+          chunkIndex: { type: "integer", minimum: 0, maximum: 511 },
+          data: vcsDiffChunkData
+        }
+      },
+      {
+        type: "object",
+        additionalProperties: false,
+        required: ["kind", "payloadSha256"],
+        properties: { kind: { const: "complete" }, payloadSha256: vcsDiffSha256 }
+      }
+    ]
+  };
+  var prsRefreshedEventSchema = {
+    oneOf: [
+      {
+        type: "object",
+        additionalProperties: false,
+        required: ["kind", "revision"],
+        properties: {
+          kind: { const: "refreshed" },
+          revision: { type: "integer", minimum: 0 }
+        }
+      },
+      {
+        type: "object",
+        additionalProperties: false,
+        required: ["kind", "reason"],
+        properties: {
+          kind: { const: "closed" },
+          reason: { enum: ["overflow", "refresh-error"] }
+        }
+      }
+    ]
+  };
+  var prsDiffInputSchema = {
+    type: "object",
+    additionalProperties: false,
+    required: ["repository", "number"],
+    properties: {
+      host: prsHostField,
+      repository: prsRepositoryField,
+      number: { type: "integer", minimum: 1 },
+      commit: { type: "string", minLength: 1, maxLength: 128 },
+      cursor: { type: "string", minLength: 1, maxLength: 4096 }
+    }
+  };
+  var prsDiffFileContentsInputSchema = {
+    type: "object",
+    additionalProperties: false,
+    required: ["repository", "number", "changeType", "oldPath", "newPath"],
+    properties: {
+      host: prsHostField,
+      repository: prsRepositoryField,
+      number: { type: "integer", minimum: 1 },
+      commit: { type: "string", minLength: 1, maxLength: 128 },
+      changeType: { enum: ["change", "rename-pure", "rename-changed", "new", "deleted"] },
+      oldPath: { type: "string", minLength: 1, maxLength: 1024 },
+      newPath: { type: "string", minLength: 1, maxLength: 1024 }
+    }
+  };
+  var prsReadApi = defineStreamApi({
+    id: PRS_READ,
+    version: "1.0.0",
+    methods: [
+      {
+        name: "getCapabilities",
+        effect: "read",
+        requiredGrants: [PRS_READ],
+        inputSchema: prsEmptyInputSchema,
+        outputSchema: prsCapabilitiesResultSchema
+      },
+      {
+        name: "list",
+        effect: "read",
+        requiredGrants: [PRS_READ],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["state"],
+          properties: {
+            state: { enum: ["all", "open", "closed", "merged"] },
+            involvement: { enum: ["all", "reviewing", "authored"] },
+            filters: prsListFiltersSchema,
+            host: prsHostField,
+            limit: { type: "integer", minimum: 1, maximum: 50 },
+            cursors: prsCursorsSchema,
+            query: { type: "string", minLength: 1, maxLength: 200 }
+          }
+        },
+        outputSchema: prsListResultSchema
+      },
+      {
+        name: "listStats",
+        effect: "read",
+        requiredGrants: [PRS_READ],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["refs"],
+          properties: {
+            refs: { type: "array", minItems: 1, maxItems: 100, items: prsRefInputSchema }
+          }
+        },
+        outputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["stats"],
+          properties: {
+            stats: {
+              type: "array",
+              maxItems: 100,
+              items: {
+                type: "object",
+                additionalProperties: false,
+                required: ["projectId", "repository", "number", "additions", "deletions"],
+                properties: {
+                  projectId: { type: "string", minLength: 1, maxLength: 160 },
+                  repository: prsRepositoryField,
+                  number: { type: "integer", minimum: 1 },
+                  additions: { type: "integer", minimum: 0 },
+                  deletions: { type: "integer", minimum: 0 }
+                }
+              }
+            }
+          }
+        }
+      },
+      {
+        name: "summary",
+        effect: "read",
+        requiredGrants: [PRS_READ],
+        inputSchema: prsRefInputSchema,
+        outputSchema: prsSummarySchema
+      },
+      {
+        name: "detail",
+        effect: "read",
+        requiredGrants: [PRS_READ],
+        inputSchema: prsRefInputSchema,
+        outputSchema: prsDetailSchema
+      },
+      {
+        name: "activity",
+        effect: "read",
+        requiredGrants: [PRS_READ],
+        inputSchema: prsRefInputSchema,
+        outputSchema: prsActivitySchema
+      },
+      {
+        name: "threadComments",
+        effect: "read",
+        requiredGrants: [PRS_READ],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["repository", "number", "threadId", "cursor"],
+          properties: {
+            host: prsHostField,
+            repository: prsRepositoryField,
+            number: { type: "integer", minimum: 1 },
+            threadId: { type: "string", minLength: 1, maxLength: 512 },
+            cursor: { type: "string", minLength: 1, maxLength: 4096 }
+          }
+        },
+        outputSchema: prsThreadCommentsResultSchema
+      },
+      {
+        name: "stack",
+        effect: "read",
+        requiredGrants: [PRS_READ],
+        inputSchema: prsRefInputSchema,
+        outputSchema: prsStackSchema
+      },
+      {
+        name: "linkedThreads",
+        effect: "read",
+        requiredGrants: [PRS_READ],
+        inputSchema: prsRefInputSchema,
+        outputSchema: prsLinkedThreadsSchema
+      },
+      {
+        name: "reviewerCandidates",
+        effect: "read",
+        requiredGrants: [PRS_READ],
+        inputSchema: prsRefInputSchema,
+        outputSchema: prsReviewerCandidateListSchema
+      },
+      {
+        name: "labelCandidates",
+        effect: "read",
+        requiredGrants: [PRS_READ],
+        inputSchema: prsRefInputSchema,
+        outputSchema: prsLabelCandidateListSchema
+      },
+      {
+        name: "invalidate",
+        effect: "read",
+        requiredGrants: [PRS_READ],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          properties: { reference: prsRefInputSchema }
+        },
+        outputSchema: prsEmptyOutputSchema
+      }
+    ],
+    streams: [
+      {
+        name: "streamDiff",
+        requiredGrants: [PRS_READ],
+        inputSchema: prsDiffInputSchema,
+        eventSchema: prsDiffStreamEventSchema
+      },
+      {
+        name: "streamDiffFileContents",
+        requiredGrants: [PRS_READ],
+        inputSchema: prsDiffFileContentsInputSchema,
+        eventSchema: vcsDiffFileContentsStreamEventSchema
+      },
+      {
+        name: "subscribeRefreshes",
+        requiredGrants: [PRS_READ],
+        inputSchema: prsEmptyInputSchema,
+        eventSchema: prsRefreshedEventSchema
+      }
+    ]
+  });
+  var PRS_READ_API = prsReadApi.definition;
+  var COMPOSER_CONTEXT = "t3.composer/context";
+  var COMPOSER_WRITE = "t3.composer/write";
+  var MESSAGES_ENRICHMENT = "t3.messages/enrichment";
+  var MESSAGES_WRITE = "t3.messages/write";
+  var composerThreadIdInput = { type: "string", minLength: 1, maxLength: 128 };
+  var composerLineInput = { type: "integer", minimum: 1, maximum: 1e6 };
+  var composerContextRefSchema = {
+    type: "object",
+    additionalProperties: false,
+    required: ["path"],
+    properties: {
+      path: { type: "string", minLength: 1, maxLength: 512 },
+      startLine: composerLineInput,
+      endLine: composerLineInput,
+      // 8 refs at these bounds encode to ≤51 KB worst-case (6 bytes/char for
+      // C0 escapes) — inside the broker's 64 KiB copyJson envelope.
+      excerpt: { type: "string", maxLength: 512 }
+    }
+  };
+  var composerTransportOutput = (operations) => ({
+    type: "object",
+    additionalProperties: false,
+    required: ["adapter", "transport", "detail", "operations"],
+    properties: {
+      adapter: { type: "string", maxLength: 64 },
+      transport: { enum: ["server", "client", "unavailable"] },
+      detail: { type: ["string", "null"], maxLength: 512 },
+      operations: {
+        type: "object",
+        additionalProperties: false,
+        required: [...operations],
+        properties: Object.fromEntries(operations.map((name) => [name, { type: "boolean" }]))
+      }
+    }
+  });
+  var composerEmptyInputSchema = {
+    type: "object",
+    additionalProperties: false,
+    properties: {}
+  };
+  var composerContextApi = defineApi({
+    id: COMPOSER_CONTEXT,
+    version: "1.0.0",
+    methods: [
+      {
+        name: "getCapabilities",
+        effect: "read",
+        // Capability discovery is grant-free so callers can tell "no capability"
+        // apart from "no grant" — authority gates the mutations, not the report.
+        requiredGrants: [],
+        inputSchema: composerEmptyInputSchema,
+        outputSchema: composerTransportOutput(["insertContext", "getDraftState"])
+      },
+      {
+        name: "insertContext",
+        effect: "write",
+        requiredGrants: [COMPOSER_WRITE],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["refs"],
+          properties: {
+            threadId: composerThreadIdInput,
+            refs: {
+              type: "array",
+              minItems: 1,
+              maxItems: 8,
+              items: composerContextRefSchema
+            }
+          }
+        },
+        outputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["inserted", "target"],
+          properties: {
+            inserted: { type: "integer", minimum: 0, maximum: 8 },
+            target: { type: "string", minLength: 1, maxLength: 256 }
+          }
+        }
+      },
+      {
+        name: "getDraftState",
+        effect: "read",
+        // Draft state carries the user's unsent words — it sits under the same
+        // write authority as the mutations on this contract.
+        requiredGrants: [COMPOSER_WRITE],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          properties: { threadId: composerThreadIdInput }
+        },
+        outputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["draft"],
+          properties: {
+            draft: {
+              type: ["object", "null"],
+              additionalProperties: false,
+              required: ["prompt", "promptTruncated", "contextCounts"],
+              properties: {
+                // 10,000 chars worst-case encodes to 60,000 UTF-8 bytes
+                // (6/char for C0 escapes) — the response always fits the
+                // broker's 64 KiB copyJson envelope. Longer drafts are cut
+                // on a char boundary and disclosed via promptTruncated.
+                prompt: { type: "string", maxLength: 1e4 },
+                promptTruncated: { type: "boolean" },
+                contextCounts: {
+                  type: "object",
+                  additionalProperties: false,
+                  required: [
+                    "files",
+                    "images",
+                    "terminalContexts",
+                    "elementContexts",
+                    "previewAnnotations",
+                    "reviewComments"
+                  ],
+                  properties: {
+                    files: { type: "integer", minimum: 0, maximum: 1e4 },
+                    images: { type: "integer", minimum: 0, maximum: 1e4 },
+                    terminalContexts: { type: "integer", minimum: 0, maximum: 1e4 },
+                    elementContexts: { type: "integer", minimum: 0, maximum: 1e4 },
+                    previewAnnotations: { type: "integer", minimum: 0, maximum: 1e4 },
+                    reviewComments: { type: "integer", minimum: 0, maximum: 1e4 }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    ]
+  });
+  var messagesEnrichmentApi = defineApi({
+    id: MESSAGES_ENRICHMENT,
+    version: "1.0.0",
+    methods: [
+      {
+        name: "getCapabilities",
+        effect: "read",
+        requiredGrants: [],
+        inputSchema: composerEmptyInputSchema,
+        outputSchema: composerTransportOutput(["attachAnnotation"])
+      },
+      {
+        name: "attachAnnotation",
+        effect: "write",
+        requiredGrants: [MESSAGES_WRITE],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["annotation"],
+          properties: {
+            threadId: composerThreadIdInput,
+            annotation: {
+              type: "object",
+              additionalProperties: false,
+              required: ["filePath", "startLine", "endLine", "body"],
+              properties: {
+                filePath: { type: "string", minLength: 1, maxLength: 512 },
+                startLine: composerLineInput,
+                endLine: composerLineInput,
+                // body + excerpt at 4,096 chars each keep the worst-case
+                // encoded request (~53 KB) inside the 64 KiB invoke envelope.
+                body: { type: "string", minLength: 1, maxLength: 4096 },
+                excerpt: { type: "string", maxLength: 4096 }
+              }
+            }
+          }
+        },
+        outputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["annotationId"],
+          properties: {
+            annotationId: { type: "string", minLength: 1, maxLength: 256 }
+          }
+        }
+      }
+    ]
+  });
+  var COMPOSER_CONTEXT_API = composerContextApi.definition;
+  var MESSAGES_ENRICHMENT_API = messagesEnrichmentApi.definition;
+  var orchestrationStatusApi = defineOrchestrationStatusApi(vcsDiffPreviewStreamEventSchema);
+  var ORCHESTRATION_STATUS_API = orchestrationStatusApi.definition;
   var GENERIC_API_CATALOGUE = [
+    orchestrationStatusApi.definition,
+    orchestrationControlApi.definition,
+    browserLocalServersApi.definition,
     workspaceFilesApi.definition,
     workspaceTreeApi.definition,
     workspaceSearchApi.definition,
+    workspaceChangesApi.definition,
     textEditsApi.definition,
     textEditsApiV1.definition,
     filePresentationApi.definition,
@@ -1933,8 +3615,13 @@ var __t3Client = (() => {
     vcsChangesApi.definition,
     vcsDiffApi.definition,
     vcsRepositoryApi.definition,
+    vcsRepositoryApiV1.definition,
     vcsDiffApiV1.definition,
-    resourcesLeaseApi.definition
+    resourcesLeaseApi.definition,
+    resourcesLeaseApiV1.definition,
+    prsReadApi.definition,
+    composerContextApi.definition,
+    messagesEnrichmentApi.definition
   ];
   function canonical(value) {
     if (Array.isArray(value))
@@ -1952,6 +3639,7 @@ var __t3Client = (() => {
   }
   var WORKSPACE_FILES_API = workspaceFilesApi.definition;
   var WORKSPACE_SEARCH_API = workspaceSearchApi.definition;
+  var WORKSPACE_CHANGES_API = workspaceChangesApi.definition;
   var FILE_PRESENTATION_API = filePresentationApi.definition;
   var TERMINAL_SESSIONS_API = terminalSessionsApi.definition;
   var TERMINAL_SESSIONS_API_V1 = terminalSessionsApiV1.definition;
@@ -2098,8 +3786,8 @@ var __t3Client = (() => {
   }
 
   // ../../extension-sdk/dist/authoring.js
-  var statePreview = (state) => {
-    const encoded = JSON.stringify(state);
+  var statePreview = (state2) => {
+    const encoded = JSON.stringify(state2);
     return encoded.length > 200 ? encoded.slice(0, 200) + "\u2026" : encoded;
   };
   var shapeText = (schema) => {
@@ -2108,20 +3796,20 @@ var __t3Client = (() => {
   };
   var restoreFix = "Fix the value passed to session.save() or the stored record. If the persisted shape changed on purpose, update the surface's stateSchema and bump stateVersion so incompatible saves are not restored.";
   function restoreStateValidator(surfaceId, stateVersion, schema) {
-    return (state) => {
-      if (state === null)
+    return (state2) => {
+      if (state2 === null)
         return true;
       const prefix = `Invalid restore state for "${surfaceId}" (stateVersion ${stateVersion}): `;
       const expected = `expected null (nothing saved yet) or an object matching ${shapeText(schema)}`;
-      if (typeof state !== "object" || Array.isArray(state))
-        throw new Error(`${prefix}${expected}; received ${statePreview(state)}. ${restoreFix}`);
+      if (typeof state2 !== "object" || Array.isArray(state2))
+        throw new Error(`${prefix}${expected}; received ${statePreview(state2)}. ${restoreFix}`);
       const optional = new Set(schema.optional ?? []);
       for (const [key, type] of Object.entries(schema.fields)) {
-        const value = state[key];
+        const value = state2[key];
         if (value === void 0) {
           if (optional.has(key))
             continue;
-          throw new Error(`${prefix}missing required field "${key}" (${type}). Expected ${shapeText(schema)}; received ${statePreview(state)}. ${restoreFix}`);
+          throw new Error(`${prefix}missing required field "${key}" (${type}). Expected ${shapeText(schema)}; received ${statePreview(state2)}. ${restoreFix}`);
         }
         if (typeof value !== type)
           throw new Error(`${prefix}expected field "${key}" to be ${type}, received ${typeof value} (${statePreview(value)}). Expected ${shapeText(schema)}. ${restoreFix}`);
@@ -2130,10 +3818,10 @@ var __t3Client = (() => {
     };
   }
   function nullOnlyValidator(surfaceId) {
-    return (state) => {
-      if (state === null)
+    return (state2) => {
+      if (state2 === null)
         return true;
-      throw new Error(`Invalid restore state for "${surfaceId}": the surface received persisted state ${statePreview(state)} but declares neither stateSchema nor validateRestore, so only null is accepted. Declare a stateSchema (or a validateRestore predicate) on the surface, and bump stateVersion if the shape differs from older saves.`);
+      throw new Error(`Invalid restore state for "${surfaceId}": the surface received persisted state ${statePreview(state2)} but declares neither stateSchema nor validateRestore, so only null is accepted. Declare a stateSchema (or a validateRestore predicate) on the surface, and bump stateVersion if the shape differs from older saves.`);
     };
   }
   function defineExtension(source) {
@@ -2179,10 +3867,10 @@ var __t3Client = (() => {
         client: (host) => ({
           manifest: pkg.manifest,
           surfaces: surfaces.map((surface) => {
-            const id = source.id + "/" + surface.name;
+            const id2 = source.id + "/" + surface.name;
             return {
-              id,
-              validateRestore: surface.validateRestore ?? (surface.stateSchema ? restoreStateValidator(id, surface.stateVersion ?? 1, surface.stateSchema) : nullOnlyValidator(id)),
+              id: id2,
+              validateRestore: surface.validateRestore ?? (surface.stateSchema ? restoreStateValidator(id2, surface.stateVersion ?? 1, surface.stateSchema) : nullOnlyValidator(id2)),
               createView: (session) => surface.createView(host, session)
             };
           })
@@ -3583,6 +5271,100 @@ ${prefix}`;
   function describePresentation(result) {
     return `opens in ${result.surfaceId} \xB7 ${result.placement}`;
   }
+  var CONNECTING_AGENTS = {
+    revision: 0,
+    streamEpoch: null,
+    stream: "connecting",
+    detail: null,
+    checkpoints: [],
+    session: null
+  };
+  function foldAgentsEvent(model, event) {
+    switch (event.kind) {
+      case "snapshot":
+      case "updated":
+        return {
+          revision: event.revision,
+          streamEpoch: event.streamEpoch,
+          stream: "live",
+          detail: null,
+          checkpoints: event.checkpoints,
+          session: event.session
+        };
+      case "receipt":
+        return { ...model, revision: event.revision, streamEpoch: event.streamEpoch };
+      case "closed":
+        return {
+          ...model,
+          stream: "ended",
+          detail: "The orchestration stream overflowed its event queue."
+        };
+    }
+  }
+  function turnChoiceDetail(checkpoint) {
+    const files = checkpoint.files.length;
+    let additions = 0;
+    let deletions = 0;
+    for (const file of checkpoint.files) {
+      additions += file.additions;
+      deletions += file.deletions;
+    }
+    const stats = `${files} file${files === 1 ? "" : "s"} \xB7 +${additions} \u2212${deletions}`;
+    if (checkpoint.status === "missing") return `checkpoint missing \xB7 ${stats}`;
+    if (checkpoint.status === "error") return `checkpoint error \xB7 ${stats}`;
+    return stats;
+  }
+  function turnChoices(checkpoints) {
+    return checkpoints.filter((checkpoint) => checkpoint.checkpointTurnCount >= 1).map((checkpoint) => ({
+      turnId: checkpoint.turnId,
+      turnCount: checkpoint.checkpointTurnCount,
+      label: `Turn ${checkpoint.checkpointTurnCount}`,
+      detail: turnChoiceDetail(checkpoint),
+      status: checkpoint.status
+    })).sort((left, right) => right.turnCount - left.turnCount);
+  }
+  function reconcileTurnSelection(choices, wanted) {
+    if (choices.length === 0) return wanted?.kind === "thread" ? wanted : null;
+    if (wanted === null) {
+      const latest2 = choices[0];
+      return latest2 === void 0 ? null : { kind: "turn", turnId: latest2.turnId, turnCount: latest2.turnCount };
+    }
+    if (wanted.kind === "thread") return wanted;
+    const found = choices.find((choice) => choice.turnId === wanted.turnId);
+    if (found !== void 0) {
+      return { kind: "turn", turnId: found.turnId, turnCount: found.turnCount };
+    }
+    const latest = choices[0];
+    return latest === void 0 ? null : { kind: "turn", turnId: latest.turnId, turnCount: latest.turnCount };
+  }
+  function orchestrationCapabilityState(capabilities, error) {
+    if (error !== null) return { kind: "unavailable", detail: error };
+    if (capabilities === null) return { kind: "loading" };
+    return {
+      kind: "ready",
+      operations: capabilities.operations,
+      streamEpoch: capabilities.streamEpoch,
+      revision: capabilities.revision
+    };
+  }
+  function revertTarget(selection, choices) {
+    if (selection?.kind !== "turn") return null;
+    return choices.find((choice) => choice.turnId === selection.turnId) ?? null;
+  }
+  function fetchTurnDiff(stream, signal) {
+    return fetchStreamedPreview(stream, signal);
+  }
+  function checkpointRevertInput(choice, guard2) {
+    return {
+      turnCount: choice.turnCount,
+      commandId: guard2.commandId,
+      ...guard2.expectedEpoch !== void 0 ? { expectedEpoch: guard2.expectedEpoch } : {},
+      ...guard2.expectedRevision !== void 0 ? { expectedRevision: guard2.expectedRevision } : {}
+    };
+  }
+  function describeRevertReceipt(receipt2) {
+    return receipt2.status === "accepted" ? "Revert accepted \u2014 the workspace is being restored; later checkpoints are discarded." : `Revert rejected: ${receipt2.error ?? "no detail reported"}`;
+  }
 
   // extension.tsx
   var import_jsx_runtime = __toESM(require_jsx_runtime(), 1);
@@ -3601,8 +5383,8 @@ ${prefix}`;
     if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
     const record = value;
     return Object.keys(record).every(
-      (key) => key === "sourceId" || key === "fileKey" || key === "baseRef" || key === "ignoreWhitespace"
-    ) && (record.sourceId === void 0 || typeof record.sourceId === "string") && (record.fileKey === void 0 || typeof record.fileKey === "string") && (record.baseRef === void 0 || typeof record.baseRef === "string") && (record.ignoreWhitespace === void 0 || typeof record.ignoreWhitespace === "boolean");
+      (key) => key === "mode" || key === "sourceId" || key === "fileKey" || key === "baseRef" || key === "ignoreWhitespace" || key === "turnId"
+    ) && (record.mode === void 0 || record.mode === "workspace" || record.mode === "turns") && (record.sourceId === void 0 || typeof record.sourceId === "string") && (record.fileKey === void 0 || typeof record.fileKey === "string") && (record.baseRef === void 0 || typeof record.baseRef === "string") && (record.ignoreWhitespace === void 0 || typeof record.ignoreWhitespace === "boolean") && (record.turnId === void 0 || typeof record.turnId === "string");
   }
   function useCapabilities(host, session, visible, tick) {
     const [result, setResult] = (0, import_react.useState)(null);
@@ -3753,6 +5535,115 @@ ${prefix}`;
       pending: result?.key !== requestKey || result.pending
     };
   }
+  function useOrchestrationCapabilities(host, session, enabled, tick) {
+    const [result, setResult] = (0, import_react.useState)(null);
+    (0, import_react.useEffect)(() => {
+      if (!enabled) return;
+      const controller = new AbortController();
+      const signal = AbortSignal.any([controller.signal, session.signal]);
+      void bindApi(orchestrationStatusApi, host, session.context).invoke("getCapabilities", {}, signal).then(
+        (capabilities) => {
+          if (!signal.aborted) setResult({ key: tick, capabilities, error: null });
+        },
+        (error) => {
+          if (!signal.aborted)
+            setResult({
+              key: tick,
+              capabilities: null,
+              error: error instanceof Error ? error.message : "Orchestration capabilities unavailable"
+            });
+        }
+      );
+      return () => controller.abort();
+    }, [host, session, enabled, tick]);
+    return result?.key === tick ? result : { capabilities: null, error: null };
+  }
+  function useAgentsStatus(host, session, enabled) {
+    const [model, setModel] = (0, import_react.useState)(CONNECTING_AGENTS);
+    (0, import_react.useEffect)(() => {
+      if (!enabled) return;
+      const controller = new AbortController();
+      const signal = AbortSignal.any([controller.signal, session.signal]);
+      void (async () => {
+        let status = CONNECTING_AGENTS;
+        setModel(status);
+        for (let attempt = 1; attempt <= 3 && !signal.aborted; attempt += 1) {
+          let closed = false;
+          try {
+            const stream = bindStreamApi(orchestrationStatusApi, host, session.context).subscribe(
+              "subscribeAgents",
+              {},
+              signal
+            );
+            for await (const frame of stream) {
+              if (signal.aborted) return;
+              status = foldAgentsEvent(status, frame.value);
+              setModel(status);
+              if (frame.value.kind === "closed") {
+                closed = true;
+                break;
+              }
+            }
+          } catch (error) {
+            if (!signal.aborted)
+              setModel({
+                ...status,
+                stream: "ended",
+                detail: error instanceof Error ? error.message : "Orchestration stream unavailable"
+              });
+            return;
+          }
+          if (signal.aborted) return;
+          if (!closed) {
+            setModel({
+              ...status,
+              stream: "ended",
+              detail: "Orchestration stream ended unexpectedly."
+            });
+            return;
+          }
+          await new Promise((resolve) => setTimeout(resolve, 400 * attempt));
+        }
+        if (!signal.aborted)
+          setModel({ ...status, stream: "ended", detail: "Orchestration stream ended repeatedly." });
+      })();
+      return () => controller.abort();
+    }, [host, session, enabled]);
+    return model;
+  }
+  function useTurnDiff(host, session, enabled, requestKey, selection) {
+    const [result, setResult] = (0, import_react.useState)(null);
+    const selectionKey = selection === null ? null : selection.kind === "thread" ? "thread" : `turn:${selection.turnId}`;
+    const selectionTurnId = selection?.kind === "turn" ? selection.turnId : null;
+    (0, import_react.useEffect)(() => {
+      if (!enabled || selectionKey === null) return;
+      const controller = new AbortController();
+      const signal = AbortSignal.any([controller.signal, session.signal]);
+      const streams = bindStreamApi(orchestrationStatusApi, host, session.context);
+      const stream = selectionTurnId === null ? streams.subscribe("getThreadDiff", {}, signal) : streams.subscribe("getTurnDiff", { turnId: selectionTurnId }, signal);
+      void fetchTurnDiff(stream, signal).then((outcome) => {
+        if (signal.aborted || outcome.kind === "cancelled") return;
+        setResult(
+          (prev) => outcome.kind === "ready" ? { key: requestKey, selection: selectionKey, preview: outcome.result, error: null } : {
+            key: requestKey,
+            selection: selectionKey,
+            // Last-good data is kept only within the same selection — a
+            // reverted checkpoint's patch must never stand in for a
+            // survivor's diff.
+            preview: prev?.selection === selectionKey ? prev.preview : null,
+            error: outcome.detail
+          }
+        );
+      });
+      return () => controller.abort();
+    }, [host, session, enabled, requestKey, selectionKey, selectionTurnId]);
+    const retained = selectionKey !== null && result?.selection === selectionKey ? result : null;
+    return {
+      preview: retained?.preview ?? null,
+      error: result?.key === requestKey ? result.error : null,
+      pending: enabled && selectionKey !== null && result?.key !== requestKey
+    };
+  }
   var control = {
     padding: "4px 8px",
     border: "1px solid var(--border, #dfe3e8)",
@@ -3829,6 +5720,7 @@ ${prefix}`;
     collapsed,
     wrap,
     expansion,
+    expandable,
     action,
     onToggleCollapsed,
     onExpand,
@@ -3900,7 +5792,7 @@ ${prefix}`;
                     ]
                   }
                 ),
-                canExpandFile(row) && !collapsed && /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                expandable && canExpandFile(row) && !collapsed && /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
                   "button",
                   {
                     type: "button",
@@ -3946,6 +5838,10 @@ ${prefix}`;
     const [tick, setTick] = (0, import_react.useState)(0);
     (0, import_react.useEffect)(() => session.onVisibility(setVisible), [session]);
     const restored = session.restoreState && typeof session.restoreState === "object" && !Array.isArray(session.restoreState) ? session.restoreState : null;
+    const [mode, setMode] = (0, import_react.useState)(restored?.mode === "turns" ? "turns" : "workspace");
+    const [turnWanted, setTurnWanted] = (0, import_react.useState)(
+      restored?.mode === "turns" ? restored.turnId !== void 0 ? { kind: "turn", turnId: restored.turnId, turnCount: 0 } : { kind: "thread" } : null
+    );
     const [sourceId, setSourceId] = (0, import_react.useState)(restored?.sourceId ?? null);
     const [fileKey, setFileKey] = (0, import_react.useState)(restored?.fileKey ?? null);
     const [baseRef, setBaseRef] = (0, import_react.useState)(restored?.baseRef ?? "");
@@ -3959,6 +5855,7 @@ ${prefix}`;
     const [action, setAction] = (0, import_react.useState)(
       null
     );
+    const [revert, setRevert] = (0, import_react.useState)(null);
     const expandControllers = (0, import_react.useRef)(/* @__PURE__ */ new Map());
     const contentStreamKeys = (0, import_react.useRef)(/* @__PURE__ */ new Set());
     const sectionRefs = (0, import_react.useRef)(/* @__PURE__ */ new Map());
@@ -3981,7 +5878,36 @@ ${prefix}`;
     } = useDiffPreview(host, session, visible && ready, requestKey, previewInput);
     const preview = previewState(previewData, previewData === null ? previewError : null);
     const { refs } = useRefs(host, session, visible && ready, status.revision);
-    const source = selectSource(preview.kind === "ready" ? preview.result : null, sourceId);
+    const turnsOpen = visible && ready && mode === "turns";
+    const orchCaps = useOrchestrationCapabilities(host, session, turnsOpen, tick);
+    const orchGate = orchestrationCapabilityState(orchCaps.capabilities, orchCaps.error);
+    const agents = useAgentsStatus(
+      host,
+      session,
+      turnsOpen && orchGate.kind === "ready" && orchGate.operations["subscribeAgents"] === true
+    );
+    const choices = (0, import_react.useMemo)(() => turnChoices(agents.checkpoints), [agents.checkpoints]);
+    const turnSelection = reconcileTurnSelection(choices, turnWanted);
+    const turnDiffOps = orchGate.kind === "ready" && orchGate.operations["getTurnDiff"] === true && orchGate.operations["getThreadDiff"] === true;
+    const turnRequestKey = `${tick}:${agents.revision}:${turnSelection === null ? "none" : turnSelection.kind === "thread" ? "thread" : `turn:${turnSelection.turnId}`}`;
+    const turnDiff = useTurnDiff(
+      host,
+      session,
+      turnsOpen && turnDiffOps,
+      turnRequestKey,
+      turnSelection
+    );
+    const turnPreview = previewState(
+      turnDiff.preview,
+      turnDiff.preview === null ? turnDiff.error : null
+    );
+    const revertChoice = revertTarget(turnSelection, choices);
+    if (revert?.status === "confirming" && revert.choice.turnId !== (revertChoice?.turnId ?? null)) {
+      setRevert(null);
+    }
+    const activePreview = mode === "turns" ? turnPreview : preview;
+    const activePending = mode === "turns" ? turnDiff.pending : pending;
+    const source = mode === "turns" ? activePreview.kind === "ready" ? activePreview.result.sources[0] ?? null : null : selectSource(preview.kind === "ready" ? preview.result : null, sourceId);
     const renderable = source === null ? null : renderableFor(source.diffHash, source.diff);
     const files = renderable?.kind === "files" ? renderable.files : [];
     const selected = retainFileSelection(files, fileKey);
@@ -4007,18 +5933,54 @@ ${prefix}`;
       sectionRefs.current.get(key)?.scrollIntoView({ block: "start" });
       revealTarget.current = null;
     }, [revealTick, collapsedFiles]);
-    const persist = (nextSource, nextFile, nextBase, nextWhitespace) => {
+    const persist = (next) => {
       session.save({
-        ...nextSource !== null ? { sourceId: nextSource } : {},
-        ...nextFile !== null ? { fileKey: nextFile } : {},
-        ...nextBase !== "" ? { baseRef: nextBase } : {},
-        ...nextWhitespace ? { ignoreWhitespace: true } : {}
+        mode: next.mode,
+        ...next.sourceId !== null ? { sourceId: next.sourceId } : {},
+        ...next.fileKey !== null ? { fileKey: next.fileKey } : {},
+        ...next.baseRef !== "" ? { baseRef: next.baseRef } : {},
+        ...next.ignoreWhitespace ? { ignoreWhitespace: true } : {},
+        ...next.turnId !== void 0 ? { turnId: next.turnId } : {}
       });
     };
-    const chooseSource = (id) => {
-      setSourceId(id);
+    const persistSelection = (next) => persist({
+      mode: next.mode,
+      sourceId: next.mode === "turns" ? null : next.sourceId,
+      fileKey: next.fileKey,
+      baseRef: next.baseRef,
+      ignoreWhitespace: next.ignoreWhitespace,
+      turnId: next.mode === "turns" && turnSelection?.kind === "turn" ? turnSelection.turnId : void 0
+    });
+    const chooseMode = (nextMode) => {
+      if (nextMode === mode) return;
+      setMode(nextMode);
       setFileKey(null);
-      persist(id, null, baseRef, ignoreWhitespace);
+      setRevert(null);
+      persistSelection({
+        mode: nextMode,
+        sourceId: source?.id ?? null,
+        fileKey: null,
+        baseRef,
+        ignoreWhitespace
+      });
+    };
+    const chooseTurn = (selection) => {
+      setTurnWanted(selection);
+      setFileKey(null);
+      setRevert(null);
+      persist({
+        mode: "turns",
+        sourceId: null,
+        fileKey: null,
+        baseRef,
+        ignoreWhitespace,
+        turnId: selection.kind === "turn" ? selection.turnId : void 0
+      });
+    };
+    const chooseSource = (id2) => {
+      setSourceId(id2);
+      setFileKey(null);
+      persistSelection({ mode, sourceId: id2, fileKey: null, baseRef, ignoreWhitespace });
     };
     const revealFile = (row) => {
       setCollapsedFiles((current) => {
@@ -4029,18 +5991,85 @@ ${prefix}`;
       setFileKey(row.key);
       revealTarget.current = row.key;
       setRevealTick((tick2) => tick2 + 1);
-      persist(source?.id ?? null, row.key, baseRef, ignoreWhitespace);
+      persistSelection({
+        mode,
+        sourceId: source?.id ?? null,
+        fileKey: row.key,
+        baseRef,
+        ignoreWhitespace
+      });
     };
     const chooseBaseRef = (value) => {
       setBaseRef(value);
-      persist(source?.id ?? null, fileKey, value, ignoreWhitespace);
+      persistSelection({
+        mode,
+        sourceId: source?.id ?? null,
+        fileKey,
+        baseRef: value,
+        ignoreWhitespace
+      });
     };
     const chooseWhitespace = (value) => {
       setIgnoreWhitespace(value);
-      persist(source?.id ?? null, fileKey, baseRef, value);
+      persistSelection({
+        mode,
+        sourceId: source?.id ?? null,
+        fileKey,
+        baseRef,
+        ignoreWhitespace: value
+      });
+    };
+    const confirmRevert = (choice) => {
+      setRevert({
+        choice,
+        status: "confirming",
+        detail: `Restore the workspace to ${choice.label}? Checkpoints from later turns are discarded.`,
+        // Guards freeze with the target: a world that moved on while the
+        // dialog sat open rejects by name instead of reverting a surprise.
+        // Before the agents stream delivers an epoch there is nothing honest
+        // to compare against, so they stay omitted.
+        ...agents.streamEpoch !== null ? {
+          guards: {
+            expectedEpoch: agents.streamEpoch,
+            expectedRevision: agents.revision
+          }
+        } : {}
+      });
+    };
+    const runRevert = () => {
+      if (revert === null || revert.status !== "confirming") return;
+      const confirmed = revert;
+      const controller = new AbortController();
+      const signal = AbortSignal.any([controller.signal, session.signal]);
+      setRevert({ ...confirmed, status: "pending", detail: "Reverting\u2026" });
+      void bindApi(orchestrationControlApi, host, session.context).invoke(
+        "checkpoint.revert",
+        checkpointRevertInput(confirmed.choice, {
+          commandId: crypto.randomUUID(),
+          ...confirmed.guards
+        }),
+        signal
+      ).then(
+        (receipt2) => {
+          if (!signal.aborted)
+            setRevert({
+              ...confirmed,
+              status: "resolved",
+              detail: describeRevertReceipt(receipt2)
+            });
+        },
+        (error) => {
+          if (!signal.aborted)
+            setRevert({
+              ...confirmed,
+              status: "error",
+              detail: error instanceof Error ? error.message : "Revert unavailable"
+            });
+        }
+      );
     };
     const expandFile = (row) => {
-      if (source === null) return;
+      if (source === null || mode === "turns") return;
       const key = `${source.diffHash}:${row.key}`;
       if (expansions.has(key)) return;
       const controller = new AbortController();
@@ -4117,6 +6146,7 @@ ${prefix}`;
     const muted = "var(--muted-foreground, #667085)";
     const sources = preview.kind === "ready" ? preview.result.sources : [];
     const filteredBaseChoices = filterBaseRefChoices(baseRefChoices, baseRef);
+    const revertCapable = orchGate.kind === "ready" && orchGate.operations["checkpoint.revert"] === true;
     return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
       "section",
       {
@@ -4146,7 +6176,22 @@ ${prefix}`;
               },
               children: [
                 /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { type: "button", onClick: () => setTick((value) => value + 1), style: control, children: "Refresh" }),
-                sources.map((item) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                ["workspace", "turns"].map((value) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                  "button",
+                  {
+                    type: "button",
+                    "aria-current": mode === value ? "true" : void 0,
+                    onClick: () => chooseMode(value),
+                    style: {
+                      ...control,
+                      fontWeight: mode === value ? 600 : 400,
+                      background: mode === value ? "var(--accent, #e8eef7)" : "transparent"
+                    },
+                    children: value === "workspace" ? "Workspace" : "Turns"
+                  },
+                  value
+                )),
+                mode === "workspace" && sources.map((item) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
                   "button",
                   {
                     type: "button",
@@ -4161,29 +6206,82 @@ ${prefix}`;
                   },
                   item.id
                 )),
-                /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
-                  "input",
-                  {
-                    type: "text",
-                    "aria-label": "Base ref",
-                    placeholder: "Base ref (automatic)",
-                    list: "t3-diff-base-refs",
-                    value: baseRef,
-                    onChange: (event) => chooseBaseRef(event.target.value),
-                    style: { ...control, width: 140 }
-                  }
-                ),
-                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("datalist", { id: "t3-diff-base-refs", children: filteredBaseChoices.map((choice) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: choice.refName, children: choice.label }, choice.id)) }),
-                /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { style: { display: "flex", alignItems: "center", gap: 4, fontSize: 12 }, children: [
+                mode === "turns" && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(import_jsx_runtime.Fragment, { children: [
+                  choices.map((choice) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+                    "button",
+                    {
+                      type: "button",
+                      "aria-current": turnSelection?.kind === "turn" && turnSelection.turnId === choice.turnId ? "true" : void 0,
+                      onClick: () => chooseTurn({
+                        kind: "turn",
+                        turnId: choice.turnId,
+                        turnCount: choice.turnCount
+                      }),
+                      style: {
+                        ...control,
+                        fontWeight: turnSelection?.kind === "turn" && turnSelection.turnId === choice.turnId ? 600 : 400,
+                        background: turnSelection?.kind === "turn" && turnSelection.turnId === choice.turnId ? "var(--accent, #e8eef7)" : "transparent"
+                      },
+                      children: [
+                        choice.label,
+                        choice.detail !== "" && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { style: { marginLeft: 6, opacity: 0.6, fontSize: 11 }, children: choice.detail })
+                      ]
+                    },
+                    choice.turnId
+                  )),
+                  choices.length > 0 && /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                    "button",
+                    {
+                      type: "button",
+                      "aria-current": turnSelection?.kind === "thread" ? "true" : void 0,
+                      onClick: () => chooseTurn({ kind: "thread" }),
+                      style: {
+                        ...control,
+                        fontWeight: turnSelection?.kind === "thread" ? 600 : 400,
+                        background: turnSelection?.kind === "thread" ? "var(--accent, #e8eef7)" : "transparent"
+                      },
+                      children: "All turns"
+                    }
+                  ),
+                  revertChoice !== null && revertCapable && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+                    "button",
+                    {
+                      type: "button",
+                      style: { ...control, color: "var(--destructive, #cf222e)" },
+                      disabled: revert?.status === "pending",
+                      onClick: () => confirmRevert(revertChoice),
+                      children: [
+                        "Revert to ",
+                        revertChoice.label
+                      ]
+                    }
+                  )
+                ] }),
+                mode === "workspace" && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(import_jsx_runtime.Fragment, { children: [
                   /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
                     "input",
                     {
-                      type: "checkbox",
-                      checked: ignoreWhitespace,
-                      onChange: (event) => chooseWhitespace(event.target.checked)
+                      type: "text",
+                      "aria-label": "Base ref",
+                      placeholder: "Base ref (automatic)",
+                      list: "t3-diff-base-refs",
+                      value: baseRef,
+                      onChange: (event) => chooseBaseRef(event.target.value),
+                      style: { ...control, width: 140 }
                     }
                   ),
-                  "Ignore whitespace"
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("datalist", { id: "t3-diff-base-refs", children: filteredBaseChoices.map((choice) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: choice.refName, children: choice.label }, choice.id)) }),
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { style: { display: "flex", alignItems: "center", gap: 4, fontSize: 12 }, children: [
+                    /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                      "input",
+                      {
+                        type: "checkbox",
+                        checked: ignoreWhitespace,
+                        onChange: (event) => chooseWhitespace(event.target.checked)
+                      }
+                    ),
+                    "Ignore whitespace"
+                  ] })
                 ] }),
                 /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { style: { display: "flex", alignItems: "center", gap: 4, fontSize: 12 }, children: [
                   /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
@@ -4205,8 +6303,12 @@ ${prefix}`;
                     children: allCollapsed ? "Expand all" : "Collapse all"
                   }
                 ),
-                status.stream === "ended" && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { role: "note", style: { color: muted, fontSize: 11 }, children: [
+                mode === "workspace" && status.stream === "ended" && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { role: "note", style: { color: muted, fontSize: 11 }, children: [
                   status.detail ?? "Status stream ended",
+                  " \u2014 refresh is manual."
+                ] }),
+                mode === "turns" && agents.stream === "ended" && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { role: "note", style: { color: muted, fontSize: 11 }, children: [
+                  agents.detail ?? "Orchestration stream ended",
                   " \u2014 refresh is manual."
                 ] })
               ]
@@ -4228,15 +6330,50 @@ ${prefix}`;
             ". ",
             gate.detail
           ] }),
-          ready && preview.kind === "loading" && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { role: "note", style: { padding: "6px 10px", color: muted, fontSize: 12, margin: 0 }, children: "Loading diff\u2026" }),
-          ready && preview.kind === "error" && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { role: "alert", style: { padding: "6px 10px", color: muted, fontSize: 12, margin: 0 }, children: preview.detail }),
-          ready && preview.kind === "empty" && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { role: "note", style: { padding: "6px 10px", color: muted, fontSize: 12, margin: 0 }, children: "No diff sources reported for this workspace." }),
-          ready && previewData !== null && previewError !== null && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("p", { role: "alert", style: { padding: "6px 10px", color: muted, fontSize: 12, margin: 0 }, children: [
+          ready && mode === "turns" && orchGate.kind === "loading" && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { role: "note", style: { padding: "6px 10px", color: muted, fontSize: 12, margin: 0 }, children: "Reading orchestration capabilities\u2026" }),
+          ready && mode === "turns" && orchGate.kind === "unavailable" && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("p", { role: "alert", style: { padding: "6px 10px", color: muted, fontSize: 12, margin: 0 }, children: [
+            "Turn diffs unavailable \u2014 ",
+            orchGate.detail
+          ] }),
+          ready && mode === "turns" && orchGate.kind === "ready" && !turnDiffOps && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { role: "note", style: { padding: "6px 10px", color: muted, fontSize: 12, margin: 0 }, children: "This thread's orchestration status does not offer turn or thread diffs." }),
+          ready && mode === "turns" && orchGate.kind === "ready" && turnDiffOps && agents.stream === "live" && choices.length === 0 && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { role: "note", style: { padding: "6px 10px", color: muted, fontSize: 12, margin: 0 }, children: "No checkpoints recorded for this thread yet \u2014 turn diffs appear after a completed turn." }),
+          ready && mode === "turns" && revert !== null && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+            "div",
+            {
+              role: revert.status === "error" ? "alert" : "note",
+              style: {
+                display: "flex",
+                gap: 6,
+                alignItems: "center",
+                padding: "6px 10px",
+                color: revert.status === "error" ? "var(--destructive, #cf222e)" : muted,
+                fontSize: 12,
+                margin: 0,
+                borderBottom: "1px solid var(--border, #dfe3e8)",
+                flexShrink: 0
+              },
+              children: [
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { style: { flex: 1 }, children: revert.detail }),
+                revert.status === "confirming" && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(import_jsx_runtime.Fragment, { children: [
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { type: "button", style: iconButton, onClick: runRevert, children: "Confirm revert" }),
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { type: "button", style: iconButton, onClick: () => setRevert(null), children: "Cancel" })
+                ] })
+              ]
+            }
+          ),
+          ready && (mode !== "turns" || turnSelection !== null) && activePreview.kind === "loading" && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { role: "note", style: { padding: "6px 10px", color: muted, fontSize: 12, margin: 0 }, children: "Loading diff\u2026" }),
+          ready && activePreview.kind === "error" && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { role: "alert", style: { padding: "6px 10px", color: muted, fontSize: 12, margin: 0 }, children: activePreview.detail }),
+          ready && mode === "workspace" && activePreview.kind === "empty" && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { role: "note", style: { padding: "6px 10px", color: muted, fontSize: 12, margin: 0 }, children: "No diff sources reported for this workspace." }),
+          ready && mode === "workspace" && previewData !== null && previewError !== null && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("p", { role: "alert", style: { padding: "6px 10px", color: muted, fontSize: 12, margin: 0 }, children: [
             "Refresh failed \u2014 ",
             previewError
           ] }),
-          ready && preview.kind === "ready" && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { style: { flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }, children: [
-            pending && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { role: "note", style: { padding: "2px 10px", color: muted, fontSize: 11, margin: 0 }, children: "Refreshing\u2026" }),
+          ready && mode === "turns" && turnDiff.preview !== null && turnDiff.error !== null && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("p", { role: "alert", style: { padding: "6px 10px", color: muted, fontSize: 12, margin: 0 }, children: [
+            "Refresh failed \u2014 ",
+            turnDiff.error
+          ] }),
+          ready && activePreview.kind === "ready" && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { style: { flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }, children: [
+            activePending && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { role: "note", style: { padding: "2px 10px", color: muted, fontSize: 11, margin: 0 }, children: "Refreshing\u2026" }),
             source?.truncated === true && /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
               "p",
               {
@@ -4364,6 +6501,7 @@ ${prefix}`;
                     collapsed: collapsedFiles.has(row.key),
                     wrap,
                     expansion: expansions.get(`${source.diffHash}:${row.key}`),
+                    expandable: mode === "workspace",
                     action,
                     onToggleCollapsed: (key) => setCollapsedFiles(toggleCollapsedKey(collapsedFiles, key)),
                     onExpand: expandFile,
@@ -4390,7 +6528,7 @@ ${prefix}`;
                 borderTop: "1px solid var(--border, #dfe3e8)",
                 flexShrink: 0
               },
-              children: "Read-only diff on t3.vcs/diff 1.1: unary small previews, sha256-verified streams for large payloads, status-driven refresh. Split view, comments, and turn diffs are deferred slices."
+              children: "Read-only diff on t3.vcs/diff 1.1 + t3.orchestration: unary small previews, sha256-verified streams for large payloads and turn diffs, status-driven refresh. Checkpoint diffs are view-only \u2014 revert runs through t3.orchestration/control. Split view and diff-line comments are deferred slices."
             }
           )
         ]
@@ -4399,13 +6537,15 @@ ${prefix}`;
   }
   var extension_default = defineExtension({
     id: manifestId,
-    version: "0.2.0",
+    version: "0.3.0",
     requires: [
       requireApi(vcsDiffApi),
       requireApi(vcsRepositoryApi),
       requireApi(vcsStatusApi),
       requireApi(vcsRefsApi),
-      requireApi(filePresentationApi)
+      requireApi(filePresentationApi),
+      requireApi(orchestrationStatusApi),
+      requireApi(orchestrationControlApi)
     ],
     surfaces: [
       {

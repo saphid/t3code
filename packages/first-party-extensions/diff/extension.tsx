@@ -1,9 +1,13 @@
 import {
   filePresentationApi,
+  orchestrationControlApi,
+  orchestrationStatusApi,
   vcsDiffApi,
   vcsRefsApi,
   vcsRepositoryApi,
   vcsStatusApi,
+  type OrchestrationCapabilities,
+  type OrchestrationReceipt,
   type VcsCapabilitiesResult,
   type VcsDiffFileContentsResult,
   type VcsDiffPreviewInput,
@@ -23,28 +27,41 @@ import {
   changeTypeLabel,
   CONNECTING_DIFF_STATUS,
   contentsDeliveryKey,
+  checkpointRevertInput,
   describePresentation,
+  describeRevertReceipt,
   describeSource,
   diffCapabilityState,
   diffTreeRows,
   displayPath,
   fetchDiffPreview,
   fetchFileContents,
+  fetchTurnDiff,
   fileContentsInput,
   fileRows,
   fileStatLabel,
   filterBaseRefChoices,
+  foldAgentsEvent,
   foldDiffStatusEvent,
+  orchestrationCapabilityState,
   presentationPath,
   previewDeliveryKey,
   previewState,
+  reconcileTurnSelection,
   renderableFromPatch,
   retainFileSelection,
+  revertTarget,
   selectSource,
   toggleAllDiffFiles,
   toggleCollapsedKey,
+  turnChoices,
+  CONNECTING_AGENTS,
+  type AgentsModel,
   type DiffFileRow,
+  type DiffMode,
   type DiffStatusRefresh,
+  type TurnChoice,
+  type TurnSelection,
 } from "./viewModel.js";
 
 const manifestId = "t3.diff";
@@ -66,10 +83,13 @@ function renderableFor(diffHash: string, diff: string) {
 }
 
 interface RestoredState {
+  readonly mode?: string;
   readonly sourceId?: string;
   readonly fileKey?: string;
   readonly baseRef?: string;
   readonly ignoreWhitespace?: boolean;
+  /** Persisted turn selection — `turnId` for a turn pick, absent + mode "turns" for the whole thread. */
+  readonly turnId?: string;
 }
 
 function restoreState(value: unknown): value is RestoredState | null {
@@ -79,12 +99,19 @@ function restoreState(value: unknown): value is RestoredState | null {
   return (
     Object.keys(record).every(
       (key) =>
-        key === "sourceId" || key === "fileKey" || key === "baseRef" || key === "ignoreWhitespace",
+        key === "mode" ||
+        key === "sourceId" ||
+        key === "fileKey" ||
+        key === "baseRef" ||
+        key === "ignoreWhitespace" ||
+        key === "turnId",
     ) &&
+    (record.mode === undefined || record.mode === "workspace" || record.mode === "turns") &&
     (record.sourceId === undefined || typeof record.sourceId === "string") &&
     (record.fileKey === undefined || typeof record.fileKey === "string") &&
     (record.baseRef === undefined || typeof record.baseRef === "string") &&
-    (record.ignoreWhitespace === undefined || typeof record.ignoreWhitespace === "boolean")
+    (record.ignoreWhitespace === undefined || typeof record.ignoreWhitespace === "boolean") &&
+    (record.turnId === undefined || typeof record.turnId === "string")
   );
 }
 
@@ -284,6 +311,165 @@ function useDiffPreview(
   };
 }
 
+/**
+ * Orchestration capabilities — the authority for which turn-mode
+ * operations exist on this thread. A missing `t3.orchestration/read`
+ * grant surfaces here as the named invocation error, and a missing
+ * `t3.orchestration/operate` grant surfaces at the control invoke.
+ */
+function useOrchestrationCapabilities(
+  host: ClientHost,
+  session: ViewSession,
+  enabled: boolean,
+  tick: number,
+) {
+  const [result, setResult] = useState<{
+    key: number;
+    capabilities: OrchestrationCapabilities | null;
+    error: string | null;
+  } | null>(null);
+  useEffect(() => {
+    if (!enabled) return;
+    const controller = new AbortController();
+    const signal = AbortSignal.any([controller.signal, session.signal]);
+    void bindApi(orchestrationStatusApi, host, session.context)
+      .invoke("getCapabilities", {}, signal)
+      .then(
+        (capabilities) => {
+          if (!signal.aborted) setResult({ key: tick, capabilities, error: null });
+        },
+        (error) => {
+          if (!signal.aborted)
+            setResult({
+              key: tick,
+              capabilities: null,
+              error:
+                error instanceof Error ? error.message : "Orchestration capabilities unavailable",
+            });
+        },
+      );
+    return () => controller.abort();
+  }, [host, session, enabled, tick]);
+  return result?.key === tick ? result : { capabilities: null, error: null };
+}
+
+/**
+ * `subscribeAgents` while turn mode is open — the checkpoint list drives
+ * the turn picker and the revision drives turn-diff refetches after a
+ * revert. Same bounded-resubscribe discipline as the status stream.
+ */
+function useAgentsStatus(host: ClientHost, session: ViewSession, enabled: boolean) {
+  const [model, setModel] = useState<AgentsModel>(CONNECTING_AGENTS);
+  useEffect(() => {
+    if (!enabled) return;
+    const controller = new AbortController();
+    const signal = AbortSignal.any([controller.signal, session.signal]);
+    void (async () => {
+      let status: AgentsModel = CONNECTING_AGENTS;
+      setModel(status);
+      for (let attempt = 1; attempt <= 3 && !signal.aborted; attempt += 1) {
+        let closed = false;
+        try {
+          const stream = bindStreamApi(orchestrationStatusApi, host, session.context).subscribe(
+            "subscribeAgents",
+            {},
+            signal,
+          );
+          for await (const frame of stream) {
+            if (signal.aborted) return;
+            status = foldAgentsEvent(status, frame.value);
+            setModel(status);
+            if (frame.value.kind === "closed") {
+              closed = true;
+              break;
+            }
+          }
+        } catch (error) {
+          if (!signal.aborted)
+            setModel({
+              ...status,
+              stream: "ended",
+              detail: error instanceof Error ? error.message : "Orchestration stream unavailable",
+            });
+          return;
+        }
+        if (signal.aborted) return;
+        if (!closed) {
+          setModel({
+            ...status,
+            stream: "ended",
+            detail: "Orchestration stream ended unexpectedly.",
+          });
+          return;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 400 * attempt));
+      }
+      if (!signal.aborted)
+        setModel({ ...status, stream: "ended", detail: "Orchestration stream ended repeatedly." });
+    })();
+    return () => controller.abort();
+  }, [host, session, enabled]);
+  return model;
+}
+
+/**
+ * Turn-mode diff fetch: `getTurnDiff`/`getThreadDiff` are finite verified
+ * streams (no unary variant), so this subscribes once per requestKey and
+ * hands the iterable straight to the shared collector.
+ */
+function useTurnDiff(
+  host: ClientHost,
+  session: ViewSession,
+  enabled: boolean,
+  requestKey: string,
+  selection: TurnSelection | null,
+) {
+  const [result, setResult] = useState<{
+    key: string;
+    /** Which picker selection produced `preview`; mismatches never render. */
+    selection: string;
+    preview: VcsDiffPreviewResult | null;
+    error: string | null;
+  } | null>(null);
+  const selectionKey =
+    selection === null ? null : selection.kind === "thread" ? "thread" : `turn:${selection.turnId}`;
+  const selectionTurnId = selection?.kind === "turn" ? selection.turnId : null;
+  useEffect(() => {
+    if (!enabled || selectionKey === null) return;
+    const controller = new AbortController();
+    const signal = AbortSignal.any([controller.signal, session.signal]);
+    const streams = bindStreamApi(orchestrationStatusApi, host, session.context);
+    const stream =
+      selectionTurnId === null
+        ? streams.subscribe("getThreadDiff", {}, signal)
+        : streams.subscribe("getTurnDiff", { turnId: selectionTurnId }, signal);
+    void fetchTurnDiff(stream, signal).then((outcome) => {
+      if (signal.aborted || outcome.kind === "cancelled") return;
+      setResult((prev) =>
+        outcome.kind === "ready"
+          ? { key: requestKey, selection: selectionKey, preview: outcome.result, error: null }
+          : {
+              key: requestKey,
+              selection: selectionKey,
+              // Last-good data is kept only within the same selection — a
+              // reverted checkpoint's patch must never stand in for a
+              // survivor's diff.
+              preview: prev?.selection === selectionKey ? prev.preview : null,
+              error: outcome.detail,
+            },
+      );
+    });
+    return () => controller.abort();
+    // selectionKey folds turnId/thread identity into requestKey's deps.
+  }, [host, session, enabled, requestKey, selectionKey, selectionTurnId]);
+  const retained = selectionKey !== null && result?.selection === selectionKey ? result : null;
+  return {
+    preview: retained?.preview ?? null,
+    error: result?.key === requestKey ? result.error : null,
+    pending: enabled && selectionKey !== null && result?.key !== requestKey,
+  };
+}
+
 /** Per-file expansion state; keyed `sourceHash:fileKey` so stale entries can never paint. */
 type Expansion =
   | { readonly status: "loading" }
@@ -371,6 +557,7 @@ function FileSection({
   collapsed,
   wrap,
   expansion,
+  expandable,
   action,
   onToggleCollapsed,
   onExpand,
@@ -383,6 +570,7 @@ function FileSection({
   collapsed: boolean;
   wrap: boolean;
   expansion: Expansion | undefined;
+  expandable: boolean;
   action: { key: string; status: string; detail: string } | null;
   onToggleCollapsed: (key: string) => void;
   onExpand: (row: DiffFileRow) => void;
@@ -444,7 +632,7 @@ function FileSection({
             {fileStatLabel(row) !== "" ? ` ${fileStatLabel(row)}` : ""}
           </span>
         </span>
-        {canExpandFile(row) && !collapsed && (
+        {expandable && canExpandFile(row) && !collapsed && (
           <button
             type="button"
             style={iconButton}
@@ -511,6 +699,14 @@ function DiffPanelView(props: { host: ClientHost; session: ViewSession }) {
     !Array.isArray(session.restoreState)
       ? (session.restoreState as RestoredState)
       : null;
+  const [mode, setMode] = useState<DiffMode>(restored?.mode === "turns" ? "turns" : "workspace");
+  const [turnWanted, setTurnWanted] = useState<TurnSelection | null>(
+    restored?.mode === "turns"
+      ? restored.turnId !== undefined
+        ? { kind: "turn", turnId: restored.turnId, turnCount: 0 }
+        : { kind: "thread" }
+      : null,
+  );
   const [sourceId, setSourceId] = useState<string | null>(restored?.sourceId ?? null);
   const [fileKey, setFileKey] = useState<string | null>(restored?.fileKey ?? null);
   const [baseRef, setBaseRef] = useState<string>(restored?.baseRef ?? "");
@@ -524,6 +720,16 @@ function DiffPanelView(props: { host: ClientHost; session: ViewSession }) {
   const [action, setAction] = useState<{ key: string; status: string; detail: string } | null>(
     null,
   );
+  const [revert, setRevert] = useState<{
+    /** The checkpoint the dialog named — frozen at confirm-open, never re-resolved. */
+    readonly choice: TurnChoice;
+    readonly status: "confirming" | "pending" | "resolved" | "error";
+    readonly detail: string;
+    readonly guards?: {
+      readonly expectedEpoch: string;
+      readonly expectedRevision: number;
+    };
+  } | null>(null);
   const expandControllers = useRef(new Map<string, AbortController>());
   const contentStreamKeys = useRef(new Set<string>());
   const sectionRefs = useRef(new Map<string, HTMLElement>());
@@ -551,7 +757,59 @@ function DiffPanelView(props: { host: ClientHost; session: ViewSession }) {
   const preview = previewState(previewData, previewData === null ? previewError : null);
   const { refs } = useRefs(host, session, visible && ready, status.revision);
 
-  const source = selectSource(preview.kind === "ready" ? preview.result : null, sourceId);
+  // --- turn/checkpoint mode: orchestration status drives the picker and
+  // capabilities, and the selected turn's diff arrives over the same
+  // verified stream family as repository previews.
+  const turnsOpen = visible && ready && mode === "turns";
+  const orchCaps = useOrchestrationCapabilities(host, session, turnsOpen, tick);
+  const orchGate = orchestrationCapabilityState(orchCaps.capabilities, orchCaps.error);
+  const agents = useAgentsStatus(
+    host,
+    session,
+    turnsOpen && orchGate.kind === "ready" && orchGate.operations["subscribeAgents"] === true,
+  );
+  const choices = useMemo(() => turnChoices(agents.checkpoints), [agents.checkpoints]);
+  const turnSelection = reconcileTurnSelection(choices, turnWanted);
+  const turnDiffOps =
+    orchGate.kind === "ready" &&
+    orchGate.operations["getTurnDiff"] === true &&
+    orchGate.operations["getThreadDiff"] === true;
+  const turnRequestKey = `${tick}:${agents.revision}:${
+    turnSelection === null
+      ? "none"
+      : turnSelection.kind === "thread"
+        ? "thread"
+        : `turn:${turnSelection.turnId}`
+  }`;
+  const turnDiff = useTurnDiff(
+    host,
+    session,
+    turnsOpen && turnDiffOps,
+    turnRequestKey,
+    turnSelection,
+  );
+  const turnPreview = previewState(
+    turnDiff.preview,
+    turnDiff.preview === null ? turnDiff.error : null,
+  );
+
+  // A confirmation is bound to the checkpoint it named: if the projection
+  // drops that checkpoint or reconciliation moves the selection to a
+  // survivor, the frozen text would lie about what Confirm sends — dismiss
+  // it rather than revert a checkpoint the user never saw named.
+  const revertChoice = revertTarget(turnSelection, choices);
+  if (revert?.status === "confirming" && revert.choice.turnId !== (revertChoice?.turnId ?? null)) {
+    setRevert(null);
+  }
+
+  const activePreview = mode === "turns" ? turnPreview : preview;
+  const activePending = mode === "turns" ? turnDiff.pending : pending;
+  const source =
+    mode === "turns"
+      ? activePreview.kind === "ready"
+        ? (activePreview.result.sources[0] ?? null)
+        : null
+      : selectSource(preview.kind === "ready" ? preview.result : null, sourceId);
   const renderable = source === null ? null : renderableFor(source.diffHash, source.diff);
   const files = renderable?.kind === "files" ? renderable.files : [];
   const selected = retainFileSelection(files, fileKey);
@@ -586,23 +844,71 @@ function DiffPanelView(props: { host: ClientHost; session: ViewSession }) {
     revealTarget.current = null;
   }, [revealTick, collapsedFiles]);
 
-  const persist = (
-    nextSource: string | null,
-    nextFile: string | null,
-    nextBase: string,
-    nextWhitespace: boolean,
-  ) => {
+  const persist = (next: {
+    readonly mode: DiffMode;
+    readonly sourceId: string | null;
+    readonly fileKey: string | null;
+    readonly baseRef: string;
+    readonly ignoreWhitespace: boolean;
+    readonly turnId?: string;
+  }) => {
     session.save({
-      ...(nextSource !== null ? { sourceId: nextSource } : {}),
-      ...(nextFile !== null ? { fileKey: nextFile } : {}),
-      ...(nextBase !== "" ? { baseRef: nextBase } : {}),
-      ...(nextWhitespace ? { ignoreWhitespace: true } : {}),
+      mode: next.mode,
+      ...(next.sourceId !== null ? { sourceId: next.sourceId } : {}),
+      ...(next.fileKey !== null ? { fileKey: next.fileKey } : {}),
+      ...(next.baseRef !== "" ? { baseRef: next.baseRef } : {}),
+      ...(next.ignoreWhitespace ? { ignoreWhitespace: true } : {}),
+      ...(next.turnId !== undefined ? { turnId: next.turnId } : {}),
+    });
+  };
+  // Every field the caller just changed is passed explicitly — reading the
+  // current render's state here would persist the previous values.
+  const persistSelection = (next: {
+    readonly mode: DiffMode;
+    readonly sourceId: string | null;
+    readonly fileKey: string | null;
+    readonly baseRef: string;
+    readonly ignoreWhitespace: boolean;
+  }) =>
+    persist({
+      mode: next.mode,
+      sourceId: next.mode === "turns" ? null : next.sourceId,
+      fileKey: next.fileKey,
+      baseRef: next.baseRef,
+      ignoreWhitespace: next.ignoreWhitespace,
+      turnId:
+        next.mode === "turns" && turnSelection?.kind === "turn" ? turnSelection.turnId : undefined,
+    });
+  const chooseMode = (nextMode: DiffMode) => {
+    if (nextMode === mode) return;
+    setMode(nextMode);
+    setFileKey(null);
+    setRevert(null);
+    persistSelection({
+      mode: nextMode,
+      sourceId: source?.id ?? null,
+      fileKey: null,
+      baseRef,
+      ignoreWhitespace,
+    });
+  };
+  const chooseTurn = (selection: TurnSelection) => {
+    setTurnWanted(selection);
+    setFileKey(null);
+    setRevert(null);
+    persist({
+      mode: "turns",
+      sourceId: null,
+      fileKey: null,
+      baseRef,
+      ignoreWhitespace,
+      turnId: selection.kind === "turn" ? selection.turnId : undefined,
     });
   };
   const chooseSource = (id: string) => {
     setSourceId(id);
     setFileKey(null);
-    persist(id, null, baseRef, ignoreWhitespace);
+    persistSelection({ mode, sourceId: id, fileKey: null, baseRef, ignoreWhitespace });
   };
   const revealFile = (row: DiffFileRow) => {
     setCollapsedFiles((current) => {
@@ -613,19 +919,93 @@ function DiffPanelView(props: { host: ClientHost; session: ViewSession }) {
     setFileKey(row.key);
     revealTarget.current = row.key;
     setRevealTick((tick) => tick + 1);
-    persist(source?.id ?? null, row.key, baseRef, ignoreWhitespace);
+    persistSelection({
+      mode,
+      sourceId: source?.id ?? null,
+      fileKey: row.key,
+      baseRef,
+      ignoreWhitespace,
+    });
   };
   const chooseBaseRef = (value: string) => {
     setBaseRef(value);
-    persist(source?.id ?? null, fileKey, value, ignoreWhitespace);
+    persistSelection({
+      mode,
+      sourceId: source?.id ?? null,
+      fileKey,
+      baseRef: value,
+      ignoreWhitespace,
+    });
   };
   const chooseWhitespace = (value: boolean) => {
     setIgnoreWhitespace(value);
-    persist(source?.id ?? null, fileKey, baseRef, value);
+    persistSelection({
+      mode,
+      sourceId: source?.id ?? null,
+      fileKey,
+      baseRef,
+      ignoreWhitespace: value,
+    });
+  };
+
+  const confirmRevert = (choice: TurnChoice) => {
+    setRevert({
+      choice,
+      status: "confirming",
+      detail: `Restore the workspace to ${choice.label}? Checkpoints from later turns are discarded.`,
+      // Guards freeze with the target: a world that moved on while the
+      // dialog sat open rejects by name instead of reverting a surprise.
+      // Before the agents stream delivers an epoch there is nothing honest
+      // to compare against, so they stay omitted.
+      ...(agents.streamEpoch !== null
+        ? {
+            guards: {
+              expectedEpoch: agents.streamEpoch,
+              expectedRevision: agents.revision,
+            },
+          }
+        : {}),
+    });
+  };
+  const runRevert = () => {
+    if (revert === null || revert.status !== "confirming") return;
+    const confirmed = revert;
+    const controller = new AbortController();
+    const signal = AbortSignal.any([controller.signal, session.signal]);
+    setRevert({ ...confirmed, status: "pending", detail: "Reverting…" });
+    void bindApi(orchestrationControlApi, host, session.context)
+      .invoke(
+        "checkpoint.revert",
+        checkpointRevertInput(confirmed.choice, {
+          commandId: crypto.randomUUID(),
+          ...confirmed.guards,
+        }),
+        signal,
+      )
+      .then(
+        (receipt: OrchestrationReceipt) => {
+          if (!signal.aborted)
+            setRevert({
+              ...confirmed,
+              status: "resolved",
+              detail: describeRevertReceipt(receipt),
+            });
+        },
+        (error) => {
+          if (!signal.aborted)
+            setRevert({
+              ...confirmed,
+              status: "error",
+              detail: error instanceof Error ? error.message : "Revert unavailable",
+            });
+        },
+      );
   };
 
   const expandFile = (row: DiffFileRow) => {
-    if (source === null) return;
+    // Checkpoint diffs carry no repository refs — `getFileContents` only
+    // serves workspace/branch sources, so turn mode never expands.
+    if (source === null || mode === "turns") return;
     const key = `${source.diffHash}:${row.key}`;
     if (expansions.has(key)) return;
     const controller = new AbortController();
@@ -710,6 +1090,8 @@ function DiffPanelView(props: { host: ClientHost; session: ViewSession }) {
   const muted = "var(--muted-foreground, #667085)";
   const sources = preview.kind === "ready" ? preview.result.sources : [];
   const filteredBaseChoices = filterBaseRefChoices(baseRefChoices, baseRef);
+  const revertCapable =
+    orchGate.kind === "ready" && orchGate.operations["checkpoint.revert"] === true;
   return (
     <section
       aria-label="Diff"
@@ -738,45 +1120,128 @@ function DiffPanelView(props: { host: ClientHost; session: ViewSession }) {
         <button type="button" onClick={() => setTick((value) => value + 1)} style={control}>
           Refresh
         </button>
-        {sources.map((item) => (
+        {(["workspace", "turns"] as const).map((value) => (
           <button
-            key={item.id}
+            key={value}
             type="button"
-            aria-current={source?.id === item.id ? "true" : undefined}
-            onClick={() => chooseSource(item.id)}
+            aria-current={mode === value ? "true" : undefined}
+            onClick={() => chooseMode(value)}
             style={{
               ...control,
-              fontWeight: source?.id === item.id ? 600 : 400,
-              background: source?.id === item.id ? "var(--accent, #e8eef7)" : "transparent",
+              fontWeight: mode === value ? 600 : 400,
+              background: mode === value ? "var(--accent, #e8eef7)" : "transparent",
             }}
           >
-            {describeSource(item)}
+            {value === "workspace" ? "Workspace" : "Turns"}
           </button>
         ))}
-        <input
-          type="text"
-          aria-label="Base ref"
-          placeholder="Base ref (automatic)"
-          list="t3-diff-base-refs"
-          value={baseRef}
-          onChange={(event) => chooseBaseRef(event.target.value)}
-          style={{ ...control, width: 140 }}
-        />
-        <datalist id="t3-diff-base-refs">
-          {filteredBaseChoices.map((choice) => (
-            <option key={choice.id} value={choice.refName}>
-              {choice.label}
-            </option>
+        {mode === "workspace" &&
+          sources.map((item) => (
+            <button
+              key={item.id}
+              type="button"
+              aria-current={source?.id === item.id ? "true" : undefined}
+              onClick={() => chooseSource(item.id)}
+              style={{
+                ...control,
+                fontWeight: source?.id === item.id ? 600 : 400,
+                background: source?.id === item.id ? "var(--accent, #e8eef7)" : "transparent",
+              }}
+            >
+              {describeSource(item)}
+            </button>
           ))}
-        </datalist>
-        <label style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 12 }}>
-          <input
-            type="checkbox"
-            checked={ignoreWhitespace}
-            onChange={(event) => chooseWhitespace(event.target.checked)}
-          />
-          Ignore whitespace
-        </label>
+        {mode === "turns" && (
+          <>
+            {choices.map((choice) => (
+              <button
+                key={choice.turnId}
+                type="button"
+                aria-current={
+                  turnSelection?.kind === "turn" && turnSelection.turnId === choice.turnId
+                    ? "true"
+                    : undefined
+                }
+                onClick={() =>
+                  chooseTurn({
+                    kind: "turn",
+                    turnId: choice.turnId,
+                    turnCount: choice.turnCount,
+                  })
+                }
+                style={{
+                  ...control,
+                  fontWeight:
+                    turnSelection?.kind === "turn" && turnSelection.turnId === choice.turnId
+                      ? 600
+                      : 400,
+                  background:
+                    turnSelection?.kind === "turn" && turnSelection.turnId === choice.turnId
+                      ? "var(--accent, #e8eef7)"
+                      : "transparent",
+                }}
+              >
+                {choice.label}
+                {choice.detail !== "" && (
+                  <span style={{ marginLeft: 6, opacity: 0.6, fontSize: 11 }}>{choice.detail}</span>
+                )}
+              </button>
+            ))}
+            {choices.length > 0 && (
+              <button
+                type="button"
+                aria-current={turnSelection?.kind === "thread" ? "true" : undefined}
+                onClick={() => chooseTurn({ kind: "thread" })}
+                style={{
+                  ...control,
+                  fontWeight: turnSelection?.kind === "thread" ? 600 : 400,
+                  background:
+                    turnSelection?.kind === "thread" ? "var(--accent, #e8eef7)" : "transparent",
+                }}
+              >
+                All turns
+              </button>
+            )}
+            {revertChoice !== null && revertCapable && (
+              <button
+                type="button"
+                style={{ ...control, color: "var(--destructive, #cf222e)" }}
+                disabled={revert?.status === "pending"}
+                onClick={() => confirmRevert(revertChoice)}
+              >
+                Revert to {revertChoice.label}
+              </button>
+            )}
+          </>
+        )}
+        {mode === "workspace" && (
+          <>
+            <input
+              type="text"
+              aria-label="Base ref"
+              placeholder="Base ref (automatic)"
+              list="t3-diff-base-refs"
+              value={baseRef}
+              onChange={(event) => chooseBaseRef(event.target.value)}
+              style={{ ...control, width: 140 }}
+            />
+            <datalist id="t3-diff-base-refs">
+              {filteredBaseChoices.map((choice) => (
+                <option key={choice.id} value={choice.refName}>
+                  {choice.label}
+                </option>
+              ))}
+            </datalist>
+            <label style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 12 }}>
+              <input
+                type="checkbox"
+                checked={ignoreWhitespace}
+                onChange={(event) => chooseWhitespace(event.target.checked)}
+              />
+              Ignore whitespace
+            </label>
+          </>
+        )}
         <label style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 12 }}>
           <input
             type="checkbox"
@@ -794,9 +1259,14 @@ function DiffPanelView(props: { host: ClientHost; session: ViewSession }) {
             {allCollapsed ? "Expand all" : "Collapse all"}
           </button>
         )}
-        {status.stream === "ended" && (
+        {mode === "workspace" && status.stream === "ended" && (
           <span role="note" style={{ color: muted, fontSize: 11 }}>
             {status.detail ?? "Status stream ended"} — refresh is manual.
+          </span>
+        )}
+        {mode === "turns" && agents.stream === "ended" && (
+          <span role="note" style={{ color: muted, fontSize: 11 }}>
+            {agents.detail ?? "Orchestration stream ended"} — refresh is manual.
           </span>
         )}
       </header>
@@ -823,30 +1293,92 @@ function DiffPanelView(props: { host: ClientHost; session: ViewSession }) {
         </p>
       )}
 
-      {ready && preview.kind === "loading" && (
+      {ready && mode === "turns" && orchGate.kind === "loading" && (
         <p role="note" style={{ padding: "6px 10px", color: muted, fontSize: 12, margin: 0 }}>
-          Loading diff…
+          Reading orchestration capabilities…
         </p>
       )}
-      {ready && preview.kind === "error" && (
+      {ready && mode === "turns" && orchGate.kind === "unavailable" && (
         <p role="alert" style={{ padding: "6px 10px", color: muted, fontSize: 12, margin: 0 }}>
-          {preview.detail}
+          Turn diffs unavailable — {orchGate.detail}
         </p>
       )}
-      {ready && preview.kind === "empty" && (
+      {ready && mode === "turns" && orchGate.kind === "ready" && !turnDiffOps && (
+        <p role="note" style={{ padding: "6px 10px", color: muted, fontSize: 12, margin: 0 }}>
+          This thread's orchestration status does not offer turn or thread diffs.
+        </p>
+      )}
+      {ready &&
+        mode === "turns" &&
+        orchGate.kind === "ready" &&
+        turnDiffOps &&
+        agents.stream === "live" &&
+        choices.length === 0 && (
+          <p role="note" style={{ padding: "6px 10px", color: muted, fontSize: 12, margin: 0 }}>
+            No checkpoints recorded for this thread yet — turn diffs appear after a completed turn.
+          </p>
+        )}
+
+      {ready && mode === "turns" && revert !== null && (
+        <div
+          role={revert.status === "error" ? "alert" : "note"}
+          style={{
+            display: "flex",
+            gap: 6,
+            alignItems: "center",
+            padding: "6px 10px",
+            color: revert.status === "error" ? "var(--destructive, #cf222e)" : muted,
+            fontSize: 12,
+            margin: 0,
+            borderBottom: "1px solid var(--border, #dfe3e8)",
+            flexShrink: 0,
+          }}
+        >
+          <span style={{ flex: 1 }}>{revert.detail}</span>
+          {revert.status === "confirming" && (
+            <>
+              <button type="button" style={iconButton} onClick={runRevert}>
+                Confirm revert
+              </button>
+              <button type="button" style={iconButton} onClick={() => setRevert(null)}>
+                Cancel
+              </button>
+            </>
+          )}
+        </div>
+      )}
+
+      {ready &&
+        (mode !== "turns" || turnSelection !== null) &&
+        activePreview.kind === "loading" && (
+          <p role="note" style={{ padding: "6px 10px", color: muted, fontSize: 12, margin: 0 }}>
+            Loading diff…
+          </p>
+        )}
+      {ready && activePreview.kind === "error" && (
+        <p role="alert" style={{ padding: "6px 10px", color: muted, fontSize: 12, margin: 0 }}>
+          {activePreview.detail}
+        </p>
+      )}
+      {ready && mode === "workspace" && activePreview.kind === "empty" && (
         <p role="note" style={{ padding: "6px 10px", color: muted, fontSize: 12, margin: 0 }}>
           No diff sources reported for this workspace.
         </p>
       )}
-      {ready && previewData !== null && previewError !== null && (
+      {ready && mode === "workspace" && previewData !== null && previewError !== null && (
         <p role="alert" style={{ padding: "6px 10px", color: muted, fontSize: 12, margin: 0 }}>
           Refresh failed — {previewError}
         </p>
       )}
+      {ready && mode === "turns" && turnDiff.preview !== null && turnDiff.error !== null && (
+        <p role="alert" style={{ padding: "6px 10px", color: muted, fontSize: 12, margin: 0 }}>
+          Refresh failed — {turnDiff.error}
+        </p>
+      )}
 
-      {ready && preview.kind === "ready" && (
+      {ready && activePreview.kind === "ready" && (
         <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
-          {pending && (
+          {activePending && (
             <p role="note" style={{ padding: "2px 10px", color: muted, fontSize: 11, margin: 0 }}>
               Refreshing…
             </p>
@@ -984,6 +1516,7 @@ function DiffPanelView(props: { host: ClientHost; session: ViewSession }) {
                       collapsed={collapsedFiles.has(row.key)}
                       wrap={wrap}
                       expansion={expansions.get(`${source.diffHash}:${row.key}`)}
+                      expandable={mode === "workspace"}
                       action={action}
                       onToggleCollapsed={(key) =>
                         setCollapsedFiles(toggleCollapsedKey(collapsedFiles, key))
@@ -1013,8 +1546,10 @@ function DiffPanelView(props: { host: ClientHost; session: ViewSession }) {
           flexShrink: 0,
         }}
       >
-        Read-only diff on t3.vcs/diff 1.1: unary small previews, sha256-verified streams for large
-        payloads, status-driven refresh. Split view, comments, and turn diffs are deferred slices.
+        Read-only diff on t3.vcs/diff 1.1 + t3.orchestration: unary small previews, sha256-verified
+        streams for large payloads and turn diffs, status-driven refresh. Checkpoint diffs are
+        view-only — revert runs through t3.orchestration/control. Split view and diff-line comments
+        are deferred slices.
       </output>
     </section>
   );
@@ -1022,13 +1557,15 @@ function DiffPanelView(props: { host: ClientHost; session: ViewSession }) {
 
 export default defineExtension({
   id: manifestId,
-  version: "0.2.0",
+  version: "0.3.0",
   requires: [
     requireApi(vcsDiffApi),
     requireApi(vcsRepositoryApi),
     requireApi(vcsStatusApi),
     requireApi(vcsRefsApi),
     requireApi(filePresentationApi),
+    requireApi(orchestrationStatusApi),
+    requireApi(orchestrationControlApi),
   ],
   surfaces: [
     {
