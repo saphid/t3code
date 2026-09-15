@@ -79,7 +79,9 @@ calendar days, even after zooming into part of a day. Invalid ranges show an exp
 the last valid data visible. The period controls identify the timezone.
 
 Drag across the chart in either direction to select a narrower time range. The selection snaps
-to half-hour source buckets and updates the chart, summary, and breakdown. Thread breakdowns use
+to half-hour source buckets. A subtle neutral band with a thin border marks only the selected
+area, stopping at the chart baseline. The selection updates the chart, summary, and breakdown.
+Thread breakdowns use
 the selected range too.
 The date row shows the exact selected times. Drag again to narrow further; **Reset zoom** or a
 double-click on the chart restores the range before your first selection. Press Escape to cancel
@@ -91,6 +93,10 @@ you asked in them. Grok Build has no trusted prompt title, so its rows use a sho
 Expanding a row splits its daily model-priced cost into cache writes, cache
 reads, and fresh input plus output, alongside any Claude subagents the thread spawned.
 Provider-reported totals are not split into estimated components.
+Use the chevron before a project name to show its threads, then a thread's chevron to show its
+subagents and daily chart. Subagents appear as indented rows using the enabled metric columns.
+Their shares are relative to their parent thread, and their usage is already included in its totals.
+Threads with no reported subagents say so when expanded.
 Each connected environment contributes at most 40 rows per expanded project, reserving room to group lower-cost rows
 under **Other threads** by provider and project. Those grouped rows stay in the totals, so the
 thread view still adds up to the selected project.

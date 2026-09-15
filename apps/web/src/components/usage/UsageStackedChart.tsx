@@ -541,7 +541,8 @@ export function UsageStackedChart({
               y={TOP}
               width={Math.abs(selection.end - selection.start)}
               height={plotHeight}
-              className="fill-primary/20 stroke-primary"
+              className="fill-foreground stroke-muted-foreground"
+              fillOpacity={0.07}
               strokeWidth={1}
               vectorEffect="non-scaling-stroke"
               pointerEvents="none"

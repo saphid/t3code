@@ -203,6 +203,7 @@ export function ThreadRowGroup({
                     type="button"
                     onClick={onToggle}
                     aria-expanded={open}
+                    aria-label={`${open ? "Collapse" : "Expand"} ${row.title} details and subagents`}
                     className="flex min-w-0 flex-1 cursor-pointer items-center gap-1.5 rounded-sm text-left outline-none focus-visible:ring-2 focus-visible:ring-ring"
                   />
                 }
@@ -282,38 +283,93 @@ export function ThreadRowGroup({
           </>
         )}
       </tr>
+      {open && columns
+        ? row.agents.map((agent) => {
+            const agentTokens =
+              agent.totals.uncachedInputTokens +
+              agent.totals.cachedInputTokens +
+              agent.totals.cacheCreationTokens +
+              agent.totals.outputTokens;
+            const parentValue = metric === "cost" ? row.costUsd : tokens;
+            const agentValue = metric === "cost" ? agent.costUsd : agentTokens;
+            return (
+              <tr
+                key={agent.agentId}
+                className="border-b border-border/30 bg-muted/20 text-xs text-muted-foreground"
+              >
+                <td />
+                <td className="py-2">
+                  <div className="flex min-w-0 items-center gap-2 ps-9 pr-4">
+                    <Badge variant="outline" size="sm" className="shrink-0 font-normal">
+                      subagent
+                    </Badge>
+                    <Tooltip>
+                      <TooltipTrigger
+                        render={<span tabIndex={0} className="min-w-0 max-w-48 truncate" />}
+                      >
+                        {agent.agentId}
+                      </TooltipTrigger>
+                      <TooltipPopup side="top">{agent.agentId}</TooltipPopup>
+                    </Tooltip>
+                  </div>
+                </td>
+                <UsageMetricCells
+                  metric={metric}
+                  columns={columns}
+                  row={{
+                    costUsd: agent.costUsd,
+                    ...(agent.componentCosts ? { componentCosts: agent.componentCosts } : {}),
+                    totalTokens: agentTokens,
+                    share: parentValue > 0 ? agentValue / parentValue : 0,
+                    inputTokens: agent.totals.uncachedInputTokens,
+                    outputTokens: agent.totals.outputTokens,
+                    cacheReadTokens: agent.totals.cachedInputTokens,
+                    cacheWriteTokens: agent.totals.cacheCreationTokens,
+                    cacheWriteUsd:
+                      agent.cacheWriteUsd ?? (agent.totals.cacheCreationTokens === 0 ? 0 : null),
+                    sessions: null,
+                  }}
+                />
+              </tr>
+            );
+          })
+        : null}
       {open ? (
         <tr className="border-b border-border/50">
           <td colSpan={columns ? columns.length + 2 : 5} className="py-3 ps-9">
             <p className="mb-1 text-[11px] text-muted-foreground">
               Daily API-rate estimates, shown in dollars independently of the table metric.
+              {row.agents.length > 0
+                ? " Subagent shares are relative to this thread; their usage is already included in its totals."
+                : " No subagents reported in this window."}
             </p>
             <UsageThreadDailyChart daily={row.daily} sinceDay={sinceDay} untilDay={untilDay} />
-            {row.agents.map((agent) => {
-              const agentTokens =
-                agent.totals.uncachedInputTokens +
-                agent.totals.cachedInputTokens +
-                agent.totals.cacheCreationTokens +
-                agent.totals.outputTokens;
-              return (
-                <div
-                  key={agent.agentId}
-                  className="flex items-baseline justify-between gap-4 py-1 text-xs text-muted-foreground"
-                >
-                  <span className="flex min-w-0 items-center gap-1.5">
-                    <Badge variant="outline" size="sm" className="shrink-0 font-normal">
-                      agent
-                    </Badge>
-                    <span className="truncate">{agent.agentId}</span>
-                  </span>
-                  <span className="shrink-0 tabular-nums">
-                    {metric === "cost"
-                      ? formatUsd(agent.costUsd)
-                      : `${formatTokens(agentTokens)} tokens`}
-                  </span>
-                </div>
-              );
-            })}
+            {!columns &&
+              row.agents.map((agent) => {
+                const agentTokens =
+                  agent.totals.uncachedInputTokens +
+                  agent.totals.cachedInputTokens +
+                  agent.totals.cacheCreationTokens +
+                  agent.totals.outputTokens;
+                return (
+                  <div
+                    key={agent.agentId}
+                    className="flex items-baseline justify-between gap-4 py-1 text-xs text-muted-foreground"
+                  >
+                    <span className="flex min-w-0 items-center gap-1.5">
+                      <Badge variant="outline" size="sm" className="shrink-0 font-normal">
+                        agent
+                      </Badge>
+                      <span className="truncate">{agent.agentId}</span>
+                    </span>
+                    <span className="shrink-0 tabular-nums">
+                      {metric === "cost"
+                        ? formatUsd(agent.costUsd)
+                        : `${formatTokens(agentTokens)} tokens`}
+                    </span>
+                  </div>
+                );
+              })}
           </td>
         </tr>
       ) : null}

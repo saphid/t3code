@@ -28,7 +28,7 @@ vi.mock("./usageProviders", () => ({
   },
 }));
 
-import { UsageThreadTable } from "./UsageThreadTable";
+import { ThreadRowGroup, UsageThreadTable } from "./UsageThreadTable";
 
 const input = {
   sinceDay: UsageDay.make("2026-08-01"),
@@ -41,6 +41,78 @@ beforeEach(() => {
 });
 
 describe("UsageThreadTable", () => {
+  it("reveals subagent rows under their thread with aligned metric columns", () => {
+    const totals = {
+      uncachedInputTokens: 10,
+      cachedInputTokens: 20,
+      cacheCreationTokens: 0,
+      outputTokens: 30,
+      reasoningTokens: 0,
+    };
+    const props = {
+      row: {
+        environmentId: EnvironmentId.make("environment-one"),
+        key: "thread-one",
+        threadId: null,
+        title: "Parent",
+        provider: "claude" as const,
+        totals,
+        costUsd: 10,
+        cacheWriteUsd: 0,
+        sessions: 1,
+        daily: [],
+        agents: [
+          {
+            agentId: "child-one",
+            cacheWriteUsd: 0,
+            totals,
+            costUsd: 2,
+            componentCosts: { inputUsd: 0.5, outputUsd: 1, cacheReadUsd: 0.5 },
+          },
+        ],
+      },
+      tokens: 120,
+      share: 1,
+      sinceDay: input.sinceDay,
+      untilDay: input.untilDay,
+      onToggle: vi.fn(),
+      columns: ["cost", "share", "input", "output", "cacheReads", "cacheWrites"] as const,
+    };
+    const closed = renderToStaticMarkup(
+      <table>
+        <tbody>
+          <ThreadRowGroup {...props} open={false} />
+        </tbody>
+      </table>,
+    );
+    expect(closed).not.toContain("child-one");
+    expect(closed).toContain('aria-label="Expand Parent details and subagents"');
+    const cost = renderToStaticMarkup(
+      <table>
+        <tbody>
+          <ThreadRowGroup {...props} metric="cost" open />
+        </tbody>
+      </table>,
+    );
+    expect(cost).toContain("child-one");
+    expect(cost).toContain("$0.50");
+    expect(cost).toContain("20.0%");
+    expect(cost).toContain("already included in its totals");
+    const tokens = renderToStaticMarkup(
+      <table>
+        <tbody>
+          <ThreadRowGroup
+            {...props}
+            columns={["tokens", "share", "input", "output"]}
+            metric="tokens"
+            open
+          />
+        </tbody>
+      </table>,
+    );
+    expect(tokens).toContain("50.0%");
+    expect(tokens).not.toContain("$0.50");
+  });
   it("uses the shared skeleton treatment while thread data is pending", () => {
     testState.useUsageThreads.mockReturnValue({
       rows: [],

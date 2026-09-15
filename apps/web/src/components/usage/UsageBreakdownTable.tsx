@@ -280,11 +280,11 @@ export function UsageBreakdownTable({
                               isHidden && "line-through",
                             )}
                           >
-                            <RowLabel label={row.label} />
                             <Chevron
                               aria-hidden
-                              className="size-3.5 shrink-0 text-muted-foreground"
+                              className="size-4 shrink-0 text-muted-foreground"
                             />
+                            <RowLabel label={row.label} />
                           </button>
                         ) : (
                           <RowLabel label={row.label} />
