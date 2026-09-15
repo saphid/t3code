@@ -51,13 +51,13 @@ var __t3Client = (() => {
     }
   });
 
-  // ../../../../../private/tmp/t3-diff-adopt/packages/first-party-extensions/diff/generated-client.ts
+  // generated-client.ts
   var generated_client_exports = {};
   __export(generated_client_exports, {
     default: () => generated_client_default
   });
 
-  // ../../../../../private/tmp/t3-diff-adopt/packages/extension-sdk/dist/contracts.js
+  // ../../extension-sdk/dist/contracts.js
   var API_VERSION = 1;
   var MAX_PAYLOAD_BYTES = 64 * 1024;
   function assertId(value) {
@@ -145,7 +145,7 @@ var __t3Client = (() => {
     return manifest;
   }
 
-  // ../../../../../private/tmp/t3-diff-adopt/packages/extension-sdk/dist/capabilities.js
+  // ../../extension-sdk/dist/capabilities.js
   function defineApi(definition) {
     return { definition: validateApiDefinition(definition) };
   }
@@ -238,7 +238,7 @@ var __t3Client = (() => {
     return api;
   }
 
-  // ../../../../../private/tmp/t3-diff-adopt/packages/extension-sdk/dist/orchestration.js
+  // ../../extension-sdk/dist/orchestration.js
   var ORCHESTRATION_STATUS = "t3.orchestration/status";
   var ORCHESTRATION_CONTROL = "t3.orchestration/control";
   var ORCHESTRATION_READ = "t3.orchestration/read";
@@ -464,7 +464,7 @@ var __t3Client = (() => {
   }
   var ORCHESTRATION_CONTROL_API = orchestrationControlApi.definition;
 
-  // ../../../../../private/tmp/t3-diff-adopt/packages/extension-sdk/dist/textEdits.js
+  // ../../extension-sdk/dist/textEdits.js
   var WORKSPACE_READ_TEXT_EDITS = "t3.workspace/text-edits";
   var WORKSPACE_READ_TEXT_GRANT = "t3.workspace/read-text";
   var WORKSPACE_WRITE_TEXT = "t3.workspace/write-text";
@@ -657,7 +657,7 @@ var __t3Client = (() => {
     ]
   });
 
-  // ../../../../../private/tmp/t3-diff-adopt/packages/extension-sdk/dist/catalogue.js
+  // ../../extension-sdk/dist/catalogue.js
   var BROWSER_LOCAL_SERVERS = "t3.browser/local-servers";
   var BROWSER_READ_LOCAL_SERVERS = "t3.browser/read-local-servers";
   var browserLocalServersApi = defineStreamApi({
@@ -3647,7 +3647,7 @@ var __t3Client = (() => {
   var TERMINAL_OUTPUT_EVENTS_API = terminalOutputEventsApi.definition;
   var TERMINAL_CONTROL_API = terminalControlApi.definition;
 
-  // ../../../../../private/tmp/t3-diff-adopt/packages/extension-sdk/dist/environment.js
+  // ../../extension-sdk/dist/environment.js
   var ENVIRONMENT_MANIFEST_FILE = "t3-extension.json";
   var ENVIRONMENT_ASSET_MEDIA_TYPES = [
     "application/wasm",
@@ -3785,7 +3785,7 @@ var __t3Client = (() => {
     return { ...pkg, manifest };
   }
 
-  // ../../../../../private/tmp/t3-diff-adopt/packages/extension-sdk/dist/authoring.js
+  // ../../extension-sdk/dist/authoring.js
   var statePreview = (state2) => {
     const encoded = JSON.stringify(state2);
     return encoded.length > 200 ? encoded.slice(0, 200) + "\u2026" : encoded;
@@ -3882,10 +3882,10 @@ var __t3Client = (() => {
     return { id: api.definition.id, versionRange };
   }
 
-  // ../../../../../private/tmp/t3-diff-adopt/packages/first-party-extensions/diff/extension.tsx
+  // extension.tsx
   var import_react = __toESM(require_react(), 1);
 
-  // ../../../../../private/tmp/t3-diff-adopt/node_modules/.pnpm/@pierre+diffs@1.3.0-beta.10_patch_hash=0ccee155b93b63d810e2c1a40c1fd676fb6fbcfa72cf6430_61e9491b81eb5c1b21f7baa527073f84/node_modules/@pierre/diffs/dist/constants.js
+  // ../../../node_modules/.pnpm/@pierre+diffs@1.3.0-beta.10_patch_hash=0ccee155b93b63d810e2c1a40c1fd676fb6fbcfa72cf6430_61e9491b81eb5c1b21f7baa527073f84/node_modules/@pierre/diffs/dist/constants.js
   var DIFFS_DEVELOPMENT_BUILD = (() => {
     try {
       return true;
@@ -3914,7 +3914,7 @@ var __t3Client = (() => {
     fromEnd: 0
   });
 
-  // ../../../../../private/tmp/t3-diff-adopt/node_modules/.pnpm/@pierre+diffs@1.3.0-beta.10_patch_hash=0ccee155b93b63d810e2c1a40c1fd676fb6fbcfa72cf6430_61e9491b81eb5c1b21f7baa527073f84/node_modules/@pierre/diffs/dist/utils/cleanLastNewline.js
+  // ../../../node_modules/.pnpm/@pierre+diffs@1.3.0-beta.10_patch_hash=0ccee155b93b63d810e2c1a40c1fd676fb6fbcfa72cf6430_61e9491b81eb5c1b21f7baa527073f84/node_modules/@pierre/diffs/dist/utils/cleanLastNewline.js
   function cleanLastNewline(contents2) {
     let end = contents2.length;
     if (contents2.charCodeAt(end - 1) === 10) {
@@ -3924,7 +3924,7 @@ var __t3Client = (() => {
     return contents2.slice(0, end);
   }
 
-  // ../../../../../private/tmp/t3-diff-adopt/node_modules/.pnpm/@pierre+diffs@1.3.0-beta.10_patch_hash=0ccee155b93b63d810e2c1a40c1fd676fb6fbcfa72cf6430_61e9491b81eb5c1b21f7baa527073f84/node_modules/@pierre/diffs/dist/utils/detachString.js
+  // ../../../node_modules/.pnpm/@pierre+diffs@1.3.0-beta.10_patch_hash=0ccee155b93b63d810e2c1a40c1fd676fb6fbcfa72cf6430_61e9491b81eb5c1b21f7baa527073f84/node_modules/@pierre/diffs/dist/utils/detachString.js
   var stringDetachEncoder = new TextEncoder();
   var stringDetachDecoder = new TextDecoder("utf-8", { ignoreBOM: true });
   var SURROGATE_CODE_UNIT_PATTERN = /[\uD800-\uDFFF]/;
@@ -3942,7 +3942,7 @@ var __t3Client = (() => {
     return stringDetachDecoder.decode(stringDetachBuffer.subarray(0, written));
   }
 
-  // ../../../../../private/tmp/t3-diff-adopt/node_modules/.pnpm/@pierre+diffs@1.3.0-beta.10_patch_hash=0ccee155b93b63d810e2c1a40c1fd676fb6fbcfa72cf6430_61e9491b81eb5c1b21f7baa527073f84/node_modules/@pierre/diffs/dist/utils/realignChangeContent.js
+  // ../../../node_modules/.pnpm/@pierre+diffs@1.3.0-beta.10_patch_hash=0ccee155b93b63d810e2c1a40c1fd676fb6fbcfa72cf6430_61e9491b81eb5c1b21f7baa527073f84/node_modules/@pierre/diffs/dist/utils/realignChangeContent.js
   var MAX_ALIGNMENT_COMPARISONS = 4096;
   var MIN_IMPROVEMENT_PER_PAIR = 0.5;
   function realignChangeContentBySimilarity(diff) {
@@ -4061,7 +4061,7 @@ var __t3Client = (() => {
     return (prefix + suffix) / maxLength;
   }
 
-  // ../../../../../private/tmp/t3-diff-adopt/node_modules/.pnpm/@pierre+diffs@1.3.0-beta.10_patch_hash=0ccee155b93b63d810e2c1a40c1fd676fb6fbcfa72cf6430_61e9491b81eb5c1b21f7baa527073f84/node_modules/@pierre/diffs/dist/utils/parsePatchFiles.js
+  // ../../../node_modules/.pnpm/@pierre+diffs@1.3.0-beta.10_patch_hash=0ccee155b93b63d810e2c1a40c1fd676fb6fbcfa72cf6430_61e9491b81eb5c1b21f7baa527073f84/node_modules/@pierre/diffs/dist/utils/parsePatchFiles.js
   function processPatch(data, cacheKeyPrefix, throwOnError) {
     try {
       return _processPatch(data, cacheKeyPrefix, throwOnError);
@@ -4542,7 +4542,7 @@ ${prefix}`;
     };
   }
 
-  // ../../../../../private/tmp/t3-diff-adopt/packages/first-party-extensions/diff/viewModel.ts
+  // viewModel.ts
   function resolveDiffPath(raw) {
     if (raw.startsWith("a/") || raw.startsWith("b/")) return raw.slice(2);
     return raw;
@@ -5366,7 +5366,7 @@ ${prefix}`;
     return receipt2.status === "accepted" ? "Revert accepted \u2014 the workspace is being restored; later checkpoints are discarded." : `Revert rejected: ${receipt2.error ?? "no detail reported"}`;
   }
 
-  // ../../../../../private/tmp/t3-diff-adopt/packages/first-party-extensions/diff/extension.tsx
+  // extension.tsx
   var import_jsx_runtime = __toESM(require_jsx_runtime(), 1);
   var manifestId = "t3.diff";
   var patchParseCache = /* @__PURE__ */ new Map();
@@ -6524,10 +6524,10 @@ ${prefix}`;
     ]
   });
 
-  // ../../../../../private/tmp/t3-diff-adopt/packages/first-party-extensions/diff/extension.ts
+  // extension.ts
   var extension_default2 = extension_default;
 
-  // ../../../../../private/tmp/t3-diff-adopt/packages/first-party-extensions/diff/generated-client.ts
+  // generated-client.ts
   var generated_client_default = extension_default2.client;
   return __toCommonJS(generated_client_exports);
 })();
