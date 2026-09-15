@@ -1,6 +1,7 @@
 import * as NodeAssert from "node:assert/strict";
 import * as NodeTest from "node:test";
 import {
+  CONNECTING_AGENTS,
   CONNECTING_DIFF_STATUS,
   MAX_EXPANDED_CONTEXT_LINES,
   areAllDiffFilesCollapsed,
@@ -8,31 +9,39 @@ import {
   buildBaseRefChoices,
   canExpandFile,
   changeTypeLabel,
+  checkpointRevertInput,
   collectFileContentsStream,
   collectPreviewStream,
   contentsDeliveryKey,
   describePresentation,
+  describeRevertReceipt,
   describeSource,
   diffCapabilityState,
   diffTreeRows,
   displayPath,
   fetchDiffPreview,
   fetchFileContents,
+  fetchTurnDiff,
   fileContentsInput,
   fileRows,
   fileStatLabel,
   filterBaseRefChoices,
+  foldAgentsEvent,
   foldDiffStatusEvent,
   isEnvelopeRejection,
   localStatusFingerprint,
+  orchestrationCapabilityState,
   presentationPath,
   previewDeliveryKey,
   previewState,
+  reconcileTurnSelection,
   renderableFromPatch,
   retainFileSelection,
+  revertTarget,
   selectSource,
   toggleAllDiffFiles,
   toggleCollapsedKey,
+  turnChoices,
 } from "./viewModel.ts";
 
 // A real git-shaped working-tree patch: tracked change with two hunks
@@ -1048,5 +1057,197 @@ NodeTest.test("describePresentation: honest resolution report", () => {
   NodeAssert.equal(
     describePresentation({ surfaceId: "t3.files/view", placement: "side-panel" }),
     "opens in t3.files/view · side-panel",
+  );
+});
+
+/* ---------------- turn/checkpoint mode (t3.orchestration) ---------------- */
+
+const checkpoint = (turnCount, over = {}) => ({
+  turnId: `turn-${turnCount}`,
+  checkpointTurnCount: turnCount,
+  checkpointRef: `refs/t3/checkpoints/dGhyZWFk/turn/${turnCount}`,
+  status: "ready",
+  files: [
+    { path: "a.txt", kind: "change", additions: 10, deletions: 2 },
+    { path: "b.txt", kind: "new", additions: 30, deletions: 0 },
+  ],
+  assistantMessageId: null,
+  completedAt: "2026-09-14T00:00:00.000Z",
+  ...over,
+});
+
+const agentsSnapshot = (checkpoints, over = {}) => ({
+  kind: "snapshot",
+  streamEpoch: "epoch-1",
+  revision: 7,
+  agents: [],
+  pendingApprovals: [],
+  pendingUserInputs: [],
+  checkpoints,
+  session: null,
+  turn: null,
+  receipts: [],
+  retention: { agentsCap: 100, receiptsCap: 100 },
+  ...over,
+});
+
+NodeTest.test("foldAgentsEvent: snapshot carries checkpoints, receipt keeps the model", () => {
+  let model = foldAgentsEvent(CONNECTING_AGENTS, agentsSnapshot([checkpoint(1), checkpoint(2)]));
+  NodeAssert.equal(model.stream, "live");
+  NodeAssert.equal(model.revision, 7);
+  NodeAssert.equal(model.streamEpoch, "epoch-1");
+  NodeAssert.equal(model.checkpoints.length, 2);
+  const withReceipt = foldAgentsEvent(model, {
+    kind: "receipt",
+    streamEpoch: "epoch-1",
+    revision: 8,
+    receipt: { commandId: "c1", status: "accepted", sequence: 8, error: null },
+  });
+  NodeAssert.equal(withReceipt.revision, 8, "receipt frames carry the stream revision forward");
+  NodeAssert.equal(withReceipt.checkpoints.length, 2, "receipt frames keep the checkpoint list");
+  const closed = foldAgentsEvent(withReceipt, {
+    kind: "closed",
+    streamEpoch: "epoch-1",
+    reason: "overflow",
+  });
+  NodeAssert.equal(closed.stream, "ended");
+  NodeAssert.match(closed.detail, /overflow/);
+  NodeAssert.equal(closed.checkpoints.length, 2, "ended stream keeps the last checkpoint list");
+});
+
+NodeTest.test("turnChoices: newest-first, turn 0 filtered out, status notes honest", () => {
+  const choices = turnChoices([
+    checkpoint(0),
+    checkpoint(1),
+    checkpoint(2, { status: "missing" }),
+    checkpoint(3),
+  ]);
+  NodeAssert.deepEqual(
+    choices.map((choice) => choice.turnCount),
+    [3, 2, 1],
+    "descending turn order, baseline excluded",
+  );
+  NodeAssert.equal(choices[0].label, "Turn 3");
+  NodeAssert.equal(choices[0].detail, "2 files · +40 −2");
+  NodeAssert.match(choices[1].detail, /checkpoint missing/);
+});
+
+NodeTest.test(
+  "reconcileTurnSelection: null adopts latest, dropped turn falls back, thread sticks",
+  () => {
+    const choices = turnChoices([checkpoint(1), checkpoint(2)]);
+    NodeAssert.deepEqual(reconcileTurnSelection(choices, null), {
+      kind: "turn",
+      turnId: "turn-2",
+      turnCount: 2,
+    });
+    NodeAssert.deepEqual(
+      reconcileTurnSelection(choices, { kind: "turn", turnId: "turn-9", turnCount: 9 }),
+      { kind: "turn", turnId: "turn-2", turnCount: 2 },
+      "a reverted turn reconciles to the newest survivor",
+    );
+    NodeAssert.deepEqual(
+      reconcileTurnSelection(choices, { kind: "thread" }),
+      { kind: "thread" },
+      "whole-thread selection survives checkpoint churn",
+    );
+    NodeAssert.equal(reconcileTurnSelection([], { kind: "turn", turnId: "t", turnCount: 1 }), null);
+    NodeAssert.deepEqual(
+      reconcileTurnSelection([], { kind: "thread" }),
+      { kind: "thread" },
+      "whole-thread stays selected so an empty projection does not silently switch modes",
+    );
+  },
+);
+
+NodeTest.test("orchestrationCapabilityState: error wins, then loading, then ready", () => {
+  NodeAssert.deepEqual(
+    orchestrationCapabilityState(null, "API capability denied: t3.orchestration/read"),
+    {
+      kind: "unavailable",
+      detail: "API capability denied: t3.orchestration/read",
+    },
+  );
+  NodeAssert.deepEqual(orchestrationCapabilityState(null, null), { kind: "loading" });
+  const ready = orchestrationCapabilityState(
+    {
+      operations: { getTurnDiff: true, "checkpoint.revert": false },
+      streamEpoch: "e",
+      revision: 3,
+    },
+    null,
+  );
+  NodeAssert.equal(ready.kind, "ready");
+  NodeAssert.equal(ready.operations["checkpoint.revert"], false);
+});
+
+NodeTest.test("revertTarget: only a selected turn choice can be reverted", () => {
+  const choices = turnChoices([checkpoint(1), checkpoint(2)]);
+  NodeAssert.equal(
+    revertTarget({ kind: "turn", turnId: "turn-1", turnCount: 1 }, choices)?.turnCount,
+    1,
+  );
+  NodeAssert.equal(revertTarget({ kind: "thread" }, choices), null);
+  NodeAssert.equal(
+    revertTarget({ kind: "turn", turnId: "gone", turnCount: 9 }, choices),
+    null,
+    "a reverted-away selection exposes no target",
+  );
+});
+
+NodeTest.test(
+  "fetchTurnDiff: stream-only verified delivery through the shared collector",
+  async () => {
+    const body = "diff --git a/a.txt b/a.txt\n+turn-change\n".repeat(2_000);
+    const { events, bodies } = await previewFixture([body]);
+    const outcome = await fetchTurnDiff(fakeStream(events), SIGNAL_OK);
+    NodeAssert.equal(outcome.kind, "ready");
+    NodeAssert.equal(outcome.via, "stream");
+    NodeAssert.equal(outcome.result.sources[0].diff, bodies[0]);
+  },
+);
+
+NodeTest.test("fetchTurnDiff: OrchestrationCheckpointUnavailable surfaces by name", async () => {
+  const failing = {
+    async *[Symbol.asyncIterator]() {
+      throw new Error("OrchestrationCheckpointUnavailable");
+    },
+  };
+  const outcome = await fetchTurnDiff(failing, SIGNAL_OK);
+  NodeAssert.equal(outcome.kind, "error");
+  NodeAssert.match(outcome.detail, /OrchestrationCheckpointUnavailable/);
+});
+
+NodeTest.test("checkpointRevertInput + describeRevertReceipt: honest control edge", () => {
+  const input = checkpointRevertInput(
+    { turnId: "turn-2", turnCount: 2, label: "Turn 2", detail: "", status: "ready" },
+    { commandId: "cmd-1", expectedEpoch: "epoch-1", expectedRevision: 7 },
+  );
+  NodeAssert.deepEqual(input, {
+    turnCount: 2,
+    commandId: "cmd-1",
+    expectedEpoch: "epoch-1",
+    expectedRevision: 7,
+  });
+  NodeAssert.deepEqual(
+    checkpointRevertInput(
+      { turnId: "turn-2", turnCount: 2, label: "Turn 2", detail: "", status: "ready" },
+      { commandId: "cmd-2" },
+    ),
+    { turnCount: 2, commandId: "cmd-2" },
+    "absent stream guards are omitted, never sent as null",
+  );
+  NodeAssert.match(
+    describeRevertReceipt({ commandId: "cmd-1", status: "accepted", sequence: 5, error: null }),
+    /Revert accepted/,
+  );
+  NodeAssert.match(
+    describeRevertReceipt({
+      commandId: "cmd-1",
+      status: "rejected",
+      sequence: 5,
+      error: "OrchestrationStaleRevision",
+    }),
+    /Revert rejected: OrchestrationStaleRevision/,
   );
 });

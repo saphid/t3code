@@ -239,9 +239,7 @@ export type OrchestrationCapabilities = {
   readonly streamEpoch: string;
   readonly revision: number;
 };
-export type TurnDiffInput =
-  | { readonly turnId: string; readonly turnCount?: never }
-  | { readonly turnCount: number; readonly turnId?: never };
+export type TurnDiffInput = { readonly turnId: string } | { readonly turnCount: number };
 
 const str = { type: "string", maxLength: 32768 } as const;
 const id = { type: "string", minLength: 1, maxLength: 160 } as const;

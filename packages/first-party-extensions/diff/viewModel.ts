@@ -12,12 +12,17 @@
  * re-derived here over the delivered full-file contents.
  *
  * Dispositions covered: vcs-diff-binding-disposition.md rows 30, 34, 35.
- * Turn/checkpoint diffs (rows 36/37) are the P12 boundary; diff-line
- * comments wait on t3.messages/enrichment.
+ * Turn/checkpoint diffs (rows 36/37) ride the P12 `t3.orchestration/*`
+ * contracts below; diff-line comments wait on t3.messages/enrichment.
  */
 import type { FileDiffMetadata } from "@pierre/diffs/types";
 import { parsePatchFiles } from "@pierre/diffs/utils/parsePatchFiles";
 import type {
+  AgentsEvent,
+  OrchestrationCapabilities,
+  OrchestrationCheckpoint,
+  OrchestrationReceipt,
+  OrchestrationSession,
   VcsCapabilitiesResult,
   VcsDiffFileContentsInput,
   VcsDiffFileContentsResult,
@@ -1222,4 +1227,219 @@ export function describePresentation(result: {
   readonly placement: string;
 }): string {
   return `opens in ${result.surfaceId} · ${result.placement}`;
+}
+
+/* ---------------- turn/checkpoint mode (t3.orchestration) ---------------- */
+
+/** The panel's two data paths: repository sources vs turn-scoped checkpoint diffs. */
+export type DiffMode = "workspace" | "turns";
+
+/**
+ * The agents-stream fold the panel needs: the checkpoint list drives the
+ * turn picker, the session row labels it, and `revision`/`streamEpoch`
+ * mirror the projection so a revert receipt can be reconciled against the
+ * state it was issued on. Agents/approvals never reach the diff view.
+ */
+export interface AgentsModel {
+  readonly revision: number;
+  readonly streamEpoch: string | null;
+  readonly stream: "connecting" | "live" | "ended";
+  readonly detail: string | null;
+  readonly checkpoints: readonly OrchestrationCheckpoint[];
+  readonly session: OrchestrationSession | null;
+}
+
+export const CONNECTING_AGENTS: AgentsModel = {
+  revision: 0,
+  streamEpoch: null,
+  stream: "connecting",
+  detail: null,
+  checkpoints: [],
+  session: null,
+};
+
+/**
+ * Fold one `subscribeAgents` frame. `closed` names the overflow reason —
+ * the only close the contract emits — and leaves the last checkpoints
+ * visible while the view resubscribes.
+ */
+export function foldAgentsEvent(model: AgentsModel, event: AgentsEvent): AgentsModel {
+  switch (event.kind) {
+    case "snapshot":
+    case "updated":
+      return {
+        revision: event.revision,
+        streamEpoch: event.streamEpoch,
+        stream: "live",
+        detail: null,
+        checkpoints: event.checkpoints,
+        session: event.session,
+      };
+    case "receipt":
+      // Control invokes return their receipts directly; the stream copy is
+      // for other clients and carries nothing the diff panel renders.
+      return { ...model, revision: event.revision, streamEpoch: event.streamEpoch };
+    case "closed":
+      return {
+        ...model,
+        stream: "ended",
+        detail: "The orchestration stream overflowed its event queue.",
+      };
+  }
+}
+
+/** One pickable checkpoint, newest-first. */
+export interface TurnChoice {
+  readonly turnId: string;
+  readonly turnCount: number;
+  /** `Turn 3` — the checkpoint sequence the server diffs on. */
+  readonly label: string;
+  /** `3 files · +40 −12`, or the checkpoint status when it is not ready. */
+  readonly detail: string;
+  readonly status: OrchestrationCheckpoint["status"];
+}
+
+function turnChoiceDetail(checkpoint: OrchestrationCheckpoint): string {
+  const files = checkpoint.files.length;
+  let additions = 0;
+  let deletions = 0;
+  for (const file of checkpoint.files) {
+    additions += file.additions;
+    deletions += file.deletions;
+  }
+  const stats = `${files} file${files === 1 ? "" : "s"} · +${additions} −${deletions}`;
+  if (checkpoint.status === "missing") return `checkpoint missing · ${stats}`;
+  if (checkpoint.status === "error") return `checkpoint error · ${stats}`;
+  return stats;
+}
+
+/** Latest-first picker rows; turn 0 is a baseline, never a choice. */
+export function turnChoices(
+  checkpoints: readonly OrchestrationCheckpoint[],
+): readonly TurnChoice[] {
+  return checkpoints
+    .filter((checkpoint) => checkpoint.checkpointTurnCount >= 1)
+    .map((checkpoint) => ({
+      turnId: checkpoint.turnId,
+      turnCount: checkpoint.checkpointTurnCount,
+      label: `Turn ${checkpoint.checkpointTurnCount}`,
+      detail: turnChoiceDetail(checkpoint),
+      status: checkpoint.status,
+    }))
+    .sort((left, right) => right.turnCount - left.turnCount);
+}
+
+/**
+ * What the turn picker selected: one checkpoint's diff (`getTurnDiff`) or
+ * the whole thread's accumulated diff (`getThreadDiff`).
+ */
+export type TurnSelection =
+  | { readonly kind: "turn"; readonly turnId: string; readonly turnCount: number }
+  | { readonly kind: "thread" };
+
+/**
+ * Keep the selection honest across projection updates: a reverted turn
+ * falls back to the newest surviving choice, and a null selection adopts
+ * the latest turn so the mode never opens empty when checkpoints exist.
+ */
+export function reconcileTurnSelection(
+  choices: readonly TurnChoice[],
+  wanted: TurnSelection | null,
+): TurnSelection | null {
+  if (choices.length === 0) return wanted?.kind === "thread" ? wanted : null;
+  if (wanted === null) {
+    const latest = choices[0];
+    return latest === undefined
+      ? null
+      : { kind: "turn", turnId: latest.turnId, turnCount: latest.turnCount };
+  }
+  if (wanted.kind === "thread") return wanted;
+  const found = choices.find((choice) => choice.turnId === wanted.turnId);
+  if (found !== undefined) {
+    return { kind: "turn", turnId: found.turnId, turnCount: found.turnCount };
+  }
+  const latest = choices[0];
+  return latest === undefined
+    ? null
+    : { kind: "turn", turnId: latest.turnId, turnCount: latest.turnCount };
+}
+
+/** The capability half of the turn-mode gate — `getCapabilities` on status. */
+export type OrchestrationCapabilityState =
+  | { readonly kind: "loading" }
+  | { readonly kind: "unavailable"; readonly detail: string }
+  | {
+      readonly kind: "ready";
+      readonly operations: Readonly<Record<string, boolean>>;
+      readonly streamEpoch: string;
+      readonly revision: number;
+    };
+
+/**
+ * `getCapabilities` is the authority for what the turn lane may offer —
+ * a missing `t3.orchestration/read` grant arrives here as the named
+ * error, never as an empty capability map.
+ */
+export function orchestrationCapabilityState(
+  capabilities: OrchestrationCapabilities | null,
+  error: string | null,
+): OrchestrationCapabilityState {
+  if (error !== null) return { kind: "unavailable", detail: error };
+  if (capabilities === null) return { kind: "loading" };
+  return {
+    kind: "ready",
+    operations: capabilities.operations,
+    streamEpoch: capabilities.streamEpoch,
+    revision: capabilities.revision,
+  };
+}
+
+/** The checkpoint row a revert button may target; `null` hides it. */
+export function revertTarget(
+  selection: TurnSelection | null,
+  choices: readonly TurnChoice[],
+): TurnChoice | null {
+  if (selection?.kind !== "turn") return null;
+  return choices.find((choice) => choice.turnId === selection.turnId) ?? null;
+}
+
+/**
+ * Turn diffs arrive only over the stream — there is no unary variant and
+ * no envelope cliff to detect. Reassembly still runs the full manifest /
+ * ordering / sha256 verification before anything is called ready.
+ */
+export function fetchTurnDiff(
+  stream: AsyncIterable<StreamFrameLike<VcsDiffPreviewStreamEvent>>,
+  signal: AbortSignal,
+): Promise<FetchOutcome<VcsDiffPreviewResult>> {
+  return fetchStreamedPreview(stream, signal);
+}
+
+/** The `checkpoint.revert` input for a picker row, with the guard fields. */
+export function checkpointRevertInput(
+  choice: TurnChoice,
+  guard: {
+    readonly commandId: string;
+    readonly expectedEpoch?: string;
+    readonly expectedRevision?: number;
+  },
+): {
+  readonly turnCount: number;
+  readonly commandId: string;
+  readonly expectedEpoch?: string;
+  readonly expectedRevision?: number;
+} {
+  return {
+    turnCount: choice.turnCount,
+    commandId: guard.commandId,
+    ...(guard.expectedEpoch !== undefined ? { expectedEpoch: guard.expectedEpoch } : {}),
+    ...(guard.expectedRevision !== undefined ? { expectedRevision: guard.expectedRevision } : {}),
+  };
+}
+
+/** Receipt text: acceptance is the contract edge; rejection carries its named error. */
+export function describeRevertReceipt(receipt: OrchestrationReceipt): string {
+  return receipt.status === "accepted"
+    ? "Revert accepted — the workspace is being restored; later checkpoints are discarded."
+    : `Revert rejected: ${receipt.error ?? "no detail reported"}`;
 }
